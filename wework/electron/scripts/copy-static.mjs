@@ -1,9 +1,20 @@
-import { cp, mkdir, rm } from 'node:fs/promises'
+import { cp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
+// Native decisions consume the same immutable translations as the workbench.
+for (const language of ['en', 'zh-CN']) {
+  const { workbench } = JSON.parse(
+    await readFile(resolve(root, `../src/i18n/locales/${language}/common.json`), 'utf8')
+  )
+  const copy = Object.fromEntries(
+    Object.entries(workbench).filter(([key]) => key.startsWith('core_dsh_plugins_'))
+  )
+  await mkdir(resolve(root, 'dist/locales'), { recursive: true })
+  await writeFile(resolve(root, `dist/locales/${language}.json`), JSON.stringify(copy))
+}
 await mkdir(resolve(root, 'dist/runtime'), { recursive: true })
 await cp(
   resolve(root, 'src/runtime/legacy-release-layout.mjs'),

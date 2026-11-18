@@ -79,11 +79,19 @@ export function StandInSourceConnections({
     })
   const searchSequence = useRef(0)
   const failSearch = (sequence: number, cause: unknown) => {
-    if (sequence === searchSequence.current)
+    if (sequence === searchSequence.current) {
+      const code =
+        cause && typeof cause === 'object' && 'code' in cause ? String(cause.code) : undefined
       setError({
-        message: getStandInErrorMessage(cause),
-        code: cause && typeof cause === 'object' && 'code' in cause ? cause.code : undefined,
+        message:
+          code === 'connection_cli_request_unavailable'
+            ? t('standIn.workspace.connection_cli_request_unavailable', {
+                provider: provider.displayName,
+              })
+            : getStandInErrorMessage(cause),
+        code,
       })
+    }
   }
   const search = async (cursor?: string) => {
     if (busy || !query.trim()) return

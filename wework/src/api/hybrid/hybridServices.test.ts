@@ -1,4 +1,5 @@
 import { DshExecutorTransportError } from '@/api/dsh/executorTransport'
+import * as desktopHost from '@/api/dsh/desktopHost'
 import { ApiError } from '@/api/http'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import { useWorkbenchModels } from '@/features/workbench/useWorkbenchModels'
@@ -1319,6 +1320,90 @@ describe('execution status write-back on history reads', () => {
 })
 
 describe('createHybridWorkbenchServices', () => {
+  it('keeps remote history reads on their authorized transport when an address retains model metadata', async () => {
+    const invoke = vi.spyOn(desktopHost, 'invokeDesktopHost')
+    const request = {
+      deviceId: 'cloud-device',
+      taskId: 'runtime-1',
+      query: 'needle',
+      runtimeHandle: {
+        modelConfig: {
+          wework_model_kind: 'model-interface',
+          wework_local_model_id: 'local-model:deleted',
+          model_provider: 'local-deleted',
+        },
+      },
+    }
+    const result = { matches: [], totalMatches: 0, isCapped: false }
+    mocks.cloudRuntimeIpcRequest.mockReset().mockResolvedValue(result)
+    try {
+      await expect(
+        createServices().runtimeWorkApi!.searchRuntimeTranscript(request)
+      ).resolves.toEqual(result)
+      expect(mocks.cloudRuntimeIpcRequest).toHaveBeenCalledExactlyOnceWith(
+        'runtime.tasks.transcript.search',
+        request,
+        'cloud-device'
+      )
+      expect(
+        invoke.mock.calls.some(([capability]) => capability === 'modelConfiguration.requestRuntime')
+      ).toBe(false)
+    } finally {
+      invoke.mockRestore()
+    }
+  })
+
+  it('routes native model references with the selected cloud destination, account and device', async () => {
+    const invoke = vi
+      .spyOn(desktopHost, 'invokeDesktopHost')
+      .mockResolvedValue({ automation: { id: 'created' } })
+    try {
+      const services = createServices()
+      await services.automationApi!.createAutomation({
+        source: 'cloud',
+        name: 'Native model',
+        prompt: 'Run remotely',
+        schedule: { type: 'interval', value: 1, unit: 'hours' },
+        timezone: 'UTC',
+        enabled: true,
+        conversationMode: 'independent',
+        notificationPolicy: 'all_runs',
+        taskRequest: {
+          deviceId: 'cloud-device',
+          teamId: 1,
+          runtime: 'codex',
+          message: 'Run remotely',
+          modelConfig: {
+            wework_model_kind: 'model-interface',
+            wework_local_model_id: 'local-model:saved',
+            model_provider: 'local-saved',
+            api_key: 'dummy',
+          },
+        },
+      })
+      expect(invoke).toHaveBeenCalledWith(
+        'modelConfiguration.requestRuntime',
+        expect.objectContaining({
+          method: 'runtime.automations.create',
+          deviceId: 'cloud-device',
+          expectedUserId: 9,
+          target: {
+            apiBaseUrl: 'https://cloud.example.com/api',
+            socketBaseUrl: 'https://cloud.example.com',
+            socketPath: '/socket.io',
+          },
+        })
+      )
+      expect(
+        mocks.cloudRuntimeIpcRequest.mock.calls.some(
+          ([method]) => method === 'runtime.automations.create'
+        )
+      ).toBe(false)
+    } finally {
+      invoke.mockRestore()
+    }
+  })
+
   it('sends current cloud credentials and model identity to the remote prediction device', async () => {
     mocks.cloudRuntimeIpcRequest.mockResolvedValue({ suggestion: '请继续' })
     const services = createServices()
@@ -1447,6 +1532,31 @@ describe('createHybridWorkbenchServices', () => {
     ])
     await services.runtimeWorkApi!.listRuntimeWork({ deviceId: 'app-record-22' })
     expect(mocks.cloudListRuntimeWork).toHaveBeenCalledWith({ deviceId: 'app-record-22' })
+    await services.runtimeWorkApi!.listRuntimeWork({
+      deviceId: 'installation-b',
+      pendingOnly: true,
+      preferCached: true,
+    })
+    expect(mocks.cloudListRuntimeWork).toHaveBeenLastCalledWith({
+      deviceId: 'app-record-22',
+      pendingOnly: true,
+      preferCached: true,
+    })
+    const address = {
+      deviceId: 'app-record-22',
+      taskId: 'peer-question',
+      workspacePath: '/peer-workspace',
+    }
+    const transcript = { runtime: 'codex', turns: [], messages: [], running: false }
+    mocks.cloudServices.runtimeWorkApi.getRuntimeTranscript.mockResolvedValue(transcript)
+    await expect(services.runtimeWorkApi!.getRuntimeTranscript(address)).resolves.toBe(transcript)
+    expect(mocks.cloudServices.runtimeWorkApi.getRuntimeTranscript).toHaveBeenCalledWith(address)
+    const answer = { address, message: 'Keep existing behavior', clientMessageId: 'peer-answer' }
+    await expect(services.runtimeWorkApi!.sendRuntimeMessage(answer)).resolves.toEqual({
+      accepted: true,
+    })
+    expect(mocks.cloudServices.runtimeWorkApi.sendRuntimeMessage).toHaveBeenCalledWith(answer)
+    expect(mocks.localServices.runtimeWorkApi.getRuntimeTranscript).not.toHaveBeenCalled()
     expect(mocks.localListRuntimeWork).not.toHaveBeenCalled()
     expect(mocks.cloudRuntimeIpcRequest).not.toHaveBeenCalled()
     mocks.cloudListDevices.mockResolvedValue([
@@ -1457,6 +1567,10 @@ describe('createHybridWorkbenchServices', () => {
     expect((await services.deviceApi.listDevices()).map(device => device.device_id)).toEqual([
       'local-device',
     ])
+    await expect(
+      services.runtimeWorkApi!.listRuntimeWork({ deviceId: 'app-record-22', pendingOnly: true })
+    ).rejects.toThrow('executor-not-found:app-record-22')
+    expect(mocks.cloudListRuntimeWork).toHaveBeenCalledTimes(2)
   })
 
   it('reclassifies a cached cloud runtime client when discovery identifies a peer App', async () => {
@@ -1867,16 +1981,134 @@ describe('createHybridWorkbenchServices', () => {
     mocks.localListModels.mockRejectedValue(new Error('Local catalog unavailable'))
     const services = createServices()
 
-    const initial = await services.modelApi.listModels()
-    expect(initial.data).toEqual([])
+    await services.modelApi.listModels()
 
     await vi.waitFor(async () => {
       const refreshed = await services.modelApi.listModels()
       expect(refreshed.data.map(model => model.name)).toEqual(['codex-gpt-5.5'])
     })
 
-    expect(warning).toHaveBeenCalledWith('[Wework] Failed to list local models', expect.any(Error))
+    expect(warning).toHaveBeenCalledWith(
+      '[Wework] Failed to refresh local models',
+      expect.any(Error)
+    )
     warning.mockRestore()
+  })
+
+  it('publishes cloud models while native discovery is pending, then publishes local completion', async () => {
+    let finishLocal!: (response: { data: (typeof chatCompletionsModel)[] }) => void
+    const pending = new Promise<{ data: (typeof chatCompletionsModel)[] }>(resolve => {
+      finishLocal = resolve
+    })
+    mocks.localListModels.mockReturnValue(pending)
+    mocks.cloudListModels.mockResolvedValue({ data: [responsesModel] })
+    const services = createServices()
+    const changed = vi.fn()
+    const unsubscribe = services.modelApi.subscribe?.(changed)
+    let initial: string[] | undefined
+    const read = services.modelApi.listModels().then(response => {
+      initial = response.data.map(model => model.name)
+    })
+    try {
+      await vi.waitFor(() => expect(initial).toEqual(['responses-model']))
+      await read
+      expect(mocks.localListModels).toHaveBeenCalledOnce()
+      expect((await services.modelApi.listModels()).data.map(model => model.name)).toEqual([
+        'responses-model',
+      ])
+      finishLocal({ data: [chatCompletionsModel] })
+      await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(2))
+      expect((await services.modelApi.listModels()).data.map(model => model.name)).toEqual([
+        'chat-completions-model',
+        'responses-model',
+      ])
+      expect(mocks.localListModels).toHaveBeenCalledOnce()
+    } finally {
+      finishLocal({ data: [] })
+      unsubscribe?.()
+    }
+  })
+
+  it('keeps both source snapshots during refresh and publishes each successful removal separately', async () => {
+    mocks.localListModels.mockResolvedValue({ data: [chatCompletionsModel] })
+    mocks.cloudListModels.mockResolvedValue({ data: [responsesModel] })
+    const services = createServices()
+    const unsubscribe = services.modelApi.subscribe?.(vi.fn())
+    let finishLocal!: (response: { data: [] }) => void
+    let finishCloud!: (response: { data: [] }) => void
+    try {
+      await vi.waitFor(async () => {
+        expect((await services.modelApi.listModels()).data.map(model => model.name)).toEqual([
+          'chat-completions-model',
+          'responses-model',
+        ])
+      })
+      mocks.localListModels.mockReturnValue(new Promise(resolve => (finishLocal = resolve)))
+      mocks.cloudListModels.mockReturnValue(new Promise(resolve => (finishCloud = resolve)))
+      services.modelApi.refresh?.()
+      let duringRefresh: string[] | undefined
+      const read = services.modelApi.listModels().then(response => {
+        duringRefresh = response.data.map(model => model.name)
+      })
+      await vi.waitFor(() =>
+        expect(duringRefresh).toEqual(['chat-completions-model', 'responses-model'])
+      )
+      await read
+      finishLocal({ data: [] })
+      await vi.waitFor(async () =>
+        expect((await services.modelApi.listModels()).data.map(model => model.name)).toEqual([
+          'responses-model',
+        ])
+      )
+      finishCloud({ data: [] })
+      await vi.waitFor(async () => expect((await services.modelApi.listModels()).data).toEqual([]))
+      expect(mocks.localListModels).toHaveBeenCalledTimes(2)
+      expect(mocks.cloudListModels).toHaveBeenCalledTimes(2)
+    } finally {
+      finishLocal?.({ data: [] })
+      finishCloud?.({ data: [] })
+      unsubscribe?.()
+    }
+  })
+
+  it('invalidates pre-edit local discovery without cancelling the independent cloud read', async () => {
+    const oldLocal = deferred<{ data: [] }>()
+    const cloud = deferred<{ data: (typeof responsesModel)[] }>()
+    mocks.localListModels
+      .mockReturnValueOnce(oldLocal.promise)
+      .mockResolvedValue({ data: [chatCompletionsModel] })
+    mocks.cloudListModels.mockReturnValue(cloud.promise)
+    const services = createServices()
+    const changed = vi.fn()
+    const unsubscribe = services.modelApi.subscribe?.(changed)
+    const initialRead = services.modelApi.listModels()
+    try {
+      await vi.waitFor(() => expect(mocks.localListModels).toHaveBeenCalledOnce())
+      const oldLocalSignal = mocks.localListModels.mock.calls[0][0].signal
+      const cloudSignal = mocks.cloudListModels.mock.calls[0][0].signal
+      services.modelApi.refresh?.({ invalidateLocal: true })
+      services.modelApi.refresh?.({ invalidateLocal: true })
+      await vi.waitFor(() => expect(mocks.localListModels).toHaveBeenCalledTimes(2))
+      expect(oldLocalSignal.aborted).toBe(true)
+      expect(cloudSignal.aborted).toBe(false)
+      expect(mocks.cloudListModels).toHaveBeenCalledOnce()
+      await vi.waitFor(async () =>
+        expect((await services.modelApi.listModels()).data).toEqual([chatCompletionsModel])
+      )
+      oldLocal.resolve({ data: [] })
+      await initialRead
+      expect((await services.modelApi.listModels()).data).toEqual([chatCompletionsModel])
+      cloud.resolve({ data: [responsesModel] })
+      await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(2))
+      expect((await services.modelApi.listModels()).data.map(model => model.name)).toEqual([
+        'chat-completions-model',
+        'responses-model',
+      ])
+    } finally {
+      oldLocal.resolve({ data: [] })
+      cloud.resolve({ data: [] })
+      unsubscribe?.()
+    }
   })
 
   it('waits for an explicit refresh after a cloud model request fails', async () => {
