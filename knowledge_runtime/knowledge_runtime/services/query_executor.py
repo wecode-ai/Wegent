@@ -9,14 +9,15 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from knowledge_runtime.services.config_loader import RuntimeConfigLoader
+from knowledge_runtime.services.config_resolver import QueryConfig
+from knowledge_runtime.services.query_planner import QueryPlan, QueryPlanner
+
 from knowledge_engine.embedding.factory import (
     create_embedding_model_from_runtime_config,
 )
 from knowledge_engine.query.executor import QueryExecutor as KnowledgeQueryExecutor
 from knowledge_engine.storage.factory import create_storage_backend_from_runtime_config
-from knowledge_runtime.services.config_loader import RuntimeConfigLoader
-from knowledge_runtime.services.config_resolver import QueryConfig
-from knowledge_runtime.services.query_planner import QueryPlan, QueryPlanner
 from shared.event_reporting.catalogs.knowledge._common import loaded_scalar
 from shared.event_reporting.catalogs.knowledge.quality import RetrievalResultObserver
 from shared.knowledge_module import QueryTarget, query_documents
@@ -104,6 +105,7 @@ class QueryExecutor:
             query=plan.normalized_query,
             metadata_condition=request.metadata_condition,
             max_results=request.max_results,
+            deduplicate_by_document=request.deduplicate_by_document,
         )
         result_records = result["records"]
         observer = RetrievalResultObserver.start(len(result_records))

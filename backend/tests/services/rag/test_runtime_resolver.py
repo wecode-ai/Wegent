@@ -175,11 +175,13 @@ def test_build_query_runtime_spec_maps_runtime_budget():
         restricted_mode=True,
         enabled_index_families=["chunk_vector", "summary_vector"],
         retrieval_policy="summary_first",
+        deduplicate_by_document=True,
     )
 
     assert spec.knowledge_base_ids == [1]
     assert spec.query == "release checklist"
     assert spec.max_results == 3
+    assert spec.deduplicate_by_document is True
     assert spec.route_mode == "auto"
     assert spec.scope == RetrievalScope(document_ids=[10])
     assert spec.user_id == 5
@@ -206,6 +208,7 @@ def test_build_query_runtime_spec_omits_budget_without_context_window():
     )
 
     assert spec.direct_injection_budget is None
+    assert spec.deduplicate_by_document is False
     assert spec.enabled_index_families == ["chunk_vector"]
     assert spec.retrieval_policy == "chunk_only"
 

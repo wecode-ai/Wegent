@@ -191,6 +191,36 @@ def test_query_runtime_spec_defaults_remote_compatible_fields():
     assert spec.retrieval_policy == "chunk_only"
 
 
+@pytest.mark.parametrize("model_type", [QueryRuntimeSpec, RemoteQueryRequest])
+def test_document_diversity_defaults_off_and_round_trips_booleans(model_type):
+    payload = {"user_id": 7, "knowledge_base_ids": [1], "query": "how to ship"}
+    assert model_type.model_validate(payload).deduplicate_by_document is False
+
+    for value in (False, True):
+        request = model_type.model_validate(
+            {**payload, "deduplicate_by_document": value}
+        )
+        assert request.deduplicate_by_document is value
+        assert (
+            model_type.model_validate_json(
+                request.model_dump_json()
+            ).deduplicate_by_document
+            is value
+        )
+
+
+@pytest.mark.parametrize("model_type", [QueryRuntimeSpec, RemoteQueryRequest])
+@pytest.mark.parametrize("value", [None, 0, 1, "true", "false", "0", "1"])
+def test_document_diversity_requires_a_strict_boolean(model_type, value):
+    with pytest.raises(ValidationError, match="deduplicate_by_document"):
+        model_type(
+            user_id=7,
+            knowledge_base_ids=[1],
+            query="how to ship",
+            deduplicate_by_document=value,
+        )
+
+
 def test_delete_runtime_spec_keeps_reference_fields():
     spec = DeleteRuntimeSpec(
         knowledge_base_id=7,

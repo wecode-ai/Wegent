@@ -65,6 +65,8 @@ class ExternalKnowledgeNode(BaseModel):
     children: List["ExternalKnowledgeNode"] = Field(default_factory=list)
     source_type: Optional[str] = None
     index_status: Optional[str] = None
+    short_summary: Optional[str] = None
+    summary_status: Optional[str] = None
     file_extension: Optional[str] = None
     content_readable: bool = False
     downloadable: bool = False
@@ -107,6 +109,9 @@ class ExternalSearchContentResponse(BaseModel):
 
     query: str
     total: int
+    total_returned: int = 0
+    returned_document_count: int = 0
+    deduplicate_by_document: bool = False
     total_estimated_tokens: int
     searched_knowledge_base_ids: List[int] = Field(default_factory=list)
     ignored_knowledge_base_ids: List[int] = Field(default_factory=list)

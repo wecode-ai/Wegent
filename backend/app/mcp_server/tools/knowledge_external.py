@@ -4,11 +4,10 @@
 
 """External MCP tools for trusted knowledge base integrations."""
 
-import json
 import logging
 from dataclasses import dataclass
 from functools import partial
-from typing import Optional
+from typing import Any, Optional
 
 from starlette.concurrency import run_in_threadpool
 
@@ -132,8 +131,8 @@ def _get_external_user():
     return _external_knowledge_request_user.get()
 
 
-def _json_error(message: str, code: str = "bad_request") -> str:
-    return json.dumps({"error": message, "code": code}, ensure_ascii=False)
+def _json_error(message: str, code: str = "bad_request") -> dict[str, Any]:
+    return {"error": message, "code": code}
 
 
 def _is_int(value) -> bool:
@@ -274,7 +273,7 @@ def _list_knowledge_bases_sync(
     *,
     user_id: int,
     filters: ExternalKnowledgeBaseListFilters,
-) -> str:
+) -> dict[str, Any]:
     db = SessionLocal()
     try:
         page_kbs, total = KnowledgeService.list_external_knowledge_bases(
@@ -323,7 +322,7 @@ def _list_knowledge_bases_sync(
             limit=filters.limit,
             offset=filters.offset,
             items=items,
-        ).model_dump_json()
+        ).model_dump(mode="json")
     except Exception as exc:
         logger.exception("wegent_kb_list_knowledge_bases failed: %s", exc)
         return _json_error(INTERNAL_ERROR_MESSAGE, "internal_error")
@@ -341,7 +340,7 @@ def _list_nodes_sync(
     limit: int,
     offset: int,
     document_download_exempt: bool = False,
-) -> str:
+) -> dict[str, Any]:
     db = SessionLocal()
     try:
         kb, has_access = KnowledgeService.get_knowledge_base(
@@ -406,7 +405,7 @@ def _list_nodes_sync(
             has_more=has_more,
             items=items,
             warnings=warnings,
-        ).model_dump_json()
+        ).model_dump(mode="json")
     except ExternalKnowledgeInputError as exc:
         return _json_error(str(exc), exc.code)
     except Exception as exc:
@@ -422,7 +421,7 @@ def _get_document_content_sync(
     document_id: int,
     offset: int,
     limit: int,
-) -> str:
+) -> dict[str, Any]:
     from app.services.knowledge.read_reporting import (
         report_read,
         suppressed_read_events,
@@ -470,7 +469,7 @@ def _get_document_content_sync(
             total_length=result["total_length"],
             has_more=result["has_more"],
             index_status=_document_index_status(access.document),
-        ).model_dump_json()
+        ).model_dump(mode="json")
         event_result = result
         return response
     except ExternalDocumentAccessError as exc:
@@ -500,7 +499,7 @@ def _get_document_download_sync(
     disposition: str,
     resource_url: str,
     document_download_exempt: bool = False,
-) -> str:
+) -> dict[str, Any]:
     db = SessionLocal()
     try:
         access = get_document_file_or_raise(
@@ -531,7 +530,7 @@ def _get_document_download_sync(
             file_size=access.file_size,
             downloadable=access.downloadable,
             previewable=access.previewable,
-        ).model_dump_json()
+        ).model_dump(mode="json")
     except ExternalDocumentAccessError as exc:
         return _json_error(str(exc), exc.code)
     except Exception as exc:
@@ -554,6 +553,7 @@ def _prepare_search_content_sync(
     query: str,
     requested_ids: list[int],
     max_results: int,
+    deduplicate_by_document: bool = False,
 ) -> SearchPreparation:
     search_rate_limit_status = _search_rate_limit_status(user_id)
     if search_rate_limit_status == ExternalMcpRateLimitStatus.LIMITED:
@@ -599,6 +599,7 @@ def _prepare_search_content_sync(
             knowledge_base_ids=target_ids,
             query=query,
             max_results=max_results,
+            deduplicate_by_document=deduplicate_by_document,
             route_mode="rag_retrieval",
             user_id=user_id,
             user_name=user_name,
@@ -627,7 +628,7 @@ async def wegent_kb_list_knowledge_bases(
     owner_user_ids: Optional[list[int]] = None,
     limit: int = DEFAULT_KNOWLEDGE_BASE_LIST_LIMIT,
     offset: int = 0,
-) -> str:
+) -> dict[str, Any]:
     """List knowledge bases visible to the authenticated external user."""
     user = _get_external_user()
     if not user:
@@ -662,8 +663,8 @@ async def wegent_kb_list_nodes(
     include_inactive: bool = True,
     limit: int = DEFAULT_DIRECT_NODE_LIMIT,
     offset: int = 0,
-) -> str:
-    """List folder and document nodes in a knowledge base."""
+) -> dict[str, Any]:
+    """List folders and documents with short summaries or parsed text previews."""
     user = _get_external_user()
     if not user:
         return _json_error("Authentication required", "unauthorized")
@@ -708,7 +709,7 @@ async def wegent_kb_get_document_content(
     document_id: int,
     offset: int = 0,
     limit: int = MAX_DOCUMENT_READ_LIMIT,
-) -> str:
+) -> dict[str, Any]:
     """Read parsed text content for an accessible knowledge document."""
     user = _get_external_user()
     if not user:
@@ -736,7 +737,7 @@ async def wegent_kb_get_document_content(
 async def wegent_kb_get_document_download(
     document_id: int,
     disposition: str = "inline",
-) -> str:
+) -> dict[str, Any]:
     """Get a short-lived original file download credential for a document."""
     user = _get_external_user()
     if not user:
@@ -769,8 +770,9 @@ async def wegent_kb_search_content(
     query: str,
     knowledge_base_ids: Optional[list[int]] = None,
     max_results: int = 10,
-) -> str:
-    """Search document content in accessible knowledge bases."""
+    deduplicate_by_document: bool = False,
+) -> dict[str, Any]:
+    """Search content, optionally returning one top-ranked hit per document."""
     user = _get_external_user()
     if not user:
         return _json_error("Authentication required", "unauthorized")
@@ -788,6 +790,8 @@ async def wegent_kb_search_content(
         return _json_error("max_results must be an integer")
     if max_results < 1 or max_results > MAX_SEARCH_RESULTS:
         return _json_error(f"max_results must be between 1 and {MAX_SEARCH_RESULTS}")
+    if not _is_bool(deduplicate_by_document):
+        return _json_error("deduplicate_by_document must be a boolean")
     if knowledge_base_ids is None:
         return _json_error("knowledge_base_ids is required")
     if not isinstance(knowledge_base_ids, list):
@@ -803,10 +807,10 @@ async def wegent_kb_search_content(
         )
 
     effective_ids: list[int] = []
-    response_json: str
+    response_payload: dict[str, Any]
 
     async def execute_search() -> dict:
-        nonlocal response_json
+        nonlocal response_payload
         preparation = await run_in_threadpool(
             partial(
                 _prepare_search_content_sync,
@@ -815,6 +819,7 @@ async def wegent_kb_search_content(
                 query=normalized_query,
                 requested_ids=requested_ids,
                 max_results=max_results,
+                deduplicate_by_document=deduplicate_by_document,
             )
         )
         effective_ids.extend(preparation.target_ids)
@@ -838,15 +843,24 @@ async def wegent_kb_search_content(
                 )
             )
 
-        response_json = ExternalSearchContentResponse(
+        response_payload = ExternalSearchContentResponse(
             query=normalized_query,
             total=result.get("total", len(records)),
+            total_returned=len(records),
+            returned_document_count=len(
+                {
+                    (record.knowledge_base_id, record.document_id)
+                    for record in records
+                    if record.document_id is not None
+                }
+            ),
+            deduplicate_by_document=deduplicate_by_document,
             total_estimated_tokens=result.get("total_estimated_tokens", 0),
             searched_knowledge_base_ids=preparation.target_ids,
             ignored_knowledge_base_ids=preparation.ignored_knowledge_base_ids,
             warnings=preparation.warnings,
             records=records,
-        ).model_dump_json()
+        ).model_dump(mode="json")
         return result
 
     try:
@@ -859,7 +873,7 @@ async def wegent_kb_search_content(
             actor_user_id=user.id,
             execute=execute_search,
         )
-        return response_json
+        return response_payload
     except SearchPreparationError as exc:
         return _json_error(str(exc), exc.code)
     except Exception as exc:
