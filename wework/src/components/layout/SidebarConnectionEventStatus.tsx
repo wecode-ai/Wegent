@@ -1,5 +1,5 @@
 import { sidebarEventState } from '@/lib/sidebar-event-state'
-import { Bell, CircleAlert } from 'lucide-react'
+import { CircleAlert, Radio } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ConnectionEventSubscription } from '@/lib/runtime-connection-events'
@@ -24,7 +24,7 @@ export function SidebarConnectionEventStatus({
           : state === 'preparing'
             ? t('workbench.connection_event_preparing', '正在设置事件等待')
             : t('workbench.sidebar_event_waiting', '等待事件')
-  const Icon = failed ? CircleAlert : Bell
+  const Icon = failed ? CircleAlert : Radio
   return (
     <Tooltip label={label} testId={`runtime-local-task-event-tooltip-${taskId}`}>
       <span
