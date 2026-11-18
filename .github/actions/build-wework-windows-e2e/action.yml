@@ -109,6 +109,7 @@ runs:
         test -s wework/electron/release/WeWork-win32-${{ inputs.arch }}/resources/bundled-plugins.tar.gz
         test -f wework/electron/release/WeWork-win32-${{ inputs.arch }}/resources/e2e-client/socket.io-client.cjs
         test -f wework/electron/release/WeWork-win32-${{ inputs.arch }}/resources/e2e-client/yaml.cjs
+        test -f wework/electron/release/WeWork-win32-${{ inputs.arch }}/resources/e2e-client/mobile-local-payload.cjs
         test -f wework/electron/release/WeWork-win32-${{ inputs.arch }}/resources/components.json
 
     - name: Save Windows build dependencies

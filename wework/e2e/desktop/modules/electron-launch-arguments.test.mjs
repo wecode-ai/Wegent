@@ -17,7 +17,7 @@ test('appends scenario-specific Electron switches', () => {
   )
 })
 
-test('preserves root Linux sandbox switches before scenario arguments', () => {
+test('preserves root Linux sandbox switches and the default GPU process boundary', () => {
   assert.deepEqual(
     resolveElectronLaunchArguments({
       platform: 'linux',
@@ -29,7 +29,6 @@ test('preserves root Linux sandbox switches before scenario arguments', () => {
     [
       '--no-sandbox',
       '--disable-gpu',
-      '--in-process-gpu',
       '--disable-dev-shm-usage',
       '--proxy-server=socks5://127.0.0.1:1080',
     ]
@@ -78,14 +77,7 @@ test('appends Chromium verbose logging switches when a diagnostic run requests t
       isolatedXvfb: 'true',
       verboseLoggingArguments: ['--enable-logging=stderr', '--v=1'],
     }),
-    [
-      '--no-sandbox',
-      '--disable-gpu',
-      '--in-process-gpu',
-      '--disable-dev-shm-usage',
-      '--enable-logging=stderr',
-      '--v=1',
-    ]
+    ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--enable-logging=stderr', '--v=1']
   )
   // Production win32 scenario arguments always include file logging; the later
   // --enable-logging=file wins under Chromium's last-wins switch semantics, so

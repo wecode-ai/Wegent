@@ -53,6 +53,7 @@ test('PR builds and trusted main warmup share exact artifacts and complete nativ
     'codex.exe',
     'socket.io-client.cjs',
     'yaml.cjs',
+    'mobile-local-payload.cjs',
   ]) {
     assert.ok(verify.run.includes(binary))
   }
