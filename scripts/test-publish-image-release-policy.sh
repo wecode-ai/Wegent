@@ -30,7 +30,7 @@ if ! grep -Fq "make_latest: false" <<< "$release_step"; then
     exit 1
 fi
 
-ruby -ryaml -rjson -rpathname -rtmpdir -rfileutils - "$PROJECT_ROOT" <<'RUBY'
+ruby -ryaml -rjson -ropen3 -rpathname -rtmpdir -rfileutils - "$PROJECT_ROOT" <<'RUBY'
 root = ARGV.fetch(0)
 bundle = 'wegent-executor-runtime-linux-amd64.tar.gz'
 runtime_job = 'build-executor-connection-runtime-linux-amd64'
@@ -112,7 +112,8 @@ Dir.mktmpdir('executor-runtime-release-') do |directory|
     FileUtils.mkdir_p('connection-runtime/node')
     File.write('connection-runtime/node/node', "#!/bin/sh\n[ \"$1\" = --version ] && echo v22.23.4\n")
     FileUtils.chmod(0755, 'connection-runtime/node/node')
-    File.write('connection-runtime/connection-runtime.json', '{"schemaVersion":1}')
+    manifest = '{"schemaVersion":1}'
+    File.write('connection-runtime/connection-runtime.json', manifest)
     raise 'Could not stage connection runtime' unless system('tar', '-czf', 'runtime.tar.gz', 'connection-runtime')
     pack = File.join(root, '.github/scripts/package-executor-runtime-linux-amd64.sh')
     revision = 'a' * 40
@@ -122,7 +123,33 @@ Dir.mktmpdir('executor-runtime-release-') do |directory|
     raise 'Archive replaced the standalone binary' unless IO.popen(['tar', '-xOf', bundle, 'wegent-executor'], &:read) == binary
     release = JSON.parse(IO.popen(['tar', '-xOf', bundle, 'release.json'], &:read))
     raise 'Archive release identity mismatch' unless release == {'version' => '1.2.3', 'revision' => revision, 'platform' => 'linux/amd64'}
-    raise 'Archive accepted a mismatched binary version' if system(*args, '1.2.4', revision, 'invalid', out: File::NULL, err: File::NULL)
+    FileUtils.mkdir('extracted')
+    raise 'Could not extract the Linux amd64 archive' unless system('tar', '-xzf', bundle, '-C', 'extracted')
+    raise 'Archive runtime manifest mismatch' unless File.read('extracted/connection-runtime/connection-runtime.json') == manifest
+    output, status = Open3.capture2('extracted/connection-runtime/node/node', '--version')
+    raise 'Archive Node is not runnable' unless status.success? && output.strip == 'v22.23.4'
+
+    _, error, status = Open3.capture3(*args, '1.2.4', revision, 'invalid')
+    raise 'Archive did not reject the binary version mismatch' unless
+      !status.success? && error.include?('Executor version mismatch: expected 1.2.4, got 1.2.3')
+    raise 'The rejected input produced an archive' if File.exist?("invalid/#{bundle}")
+  end
+end
+
+Dir.mktmpdir('executor-release-tags-') do |directory|
+  Dir.chdir(directory) do
+    raise 'Could not initialize release fixture' unless system('git', 'init', '-q')
+    commit = %w[git -c user.name=Fixture -c user.email=fixture@example.com -c commit.gpgsign=false commit --allow-empty -qm]
+    raise 'Could not create release fixture' unless system(*commit, 'first')
+    guard = ['bash', File.join(root, '.github/scripts/check-release-tag-revision.sh'), 'v1.2.3']
+    raise 'A new version must be allowed' unless system(*guard)
+    raise 'Could not create release tag fixture' unless
+      system('git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.com', 'tag', '-a', 'v1.2.3', '-m', 'release')
+    raise 'A retry at the tagged revision must be allowed' unless system(*guard)
+    raise 'Could not move release fixture to another revision' unless system(*commit, 'second')
+    _, error, status = Open3.capture3(*guard)
+    raise 'Reusing a release tag from another revision must fail' unless
+      !status.success? && error.include?('Release tag v1.2.3 points to')
   end
 end
 
