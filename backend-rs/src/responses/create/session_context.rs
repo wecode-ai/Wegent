@@ -225,7 +225,7 @@ fn row_json(row: &MysqlRow, column: &str) -> Option<Value> {
 
 /// `_normalize_executor_session`: keep the agent, the session/thread id and
 /// the bot id; drop anything else.
-fn normalize_executor_session(session: Option<&Value>) -> Option<Value> {
+pub(crate) fn normalize_executor_session(session: Option<&Value>) -> Option<Value> {
     let session = session?.as_object()?;
     let agent = session.get("agent").filter(|value| is_truthy(value))?;
     let session_id =

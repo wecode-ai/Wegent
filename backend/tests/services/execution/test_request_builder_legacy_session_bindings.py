@@ -157,19 +157,20 @@ def test_owned_unproven_continuation_starts_a_new_session(test_db, mocker):
         "shell",
         "inherited",
         "bindings",
+        "expected",
     ),
     [
-        (True, False, 7, "Codex", [], []),
-        (False, False, 7, "Codex", [], []),
-        (True, False, 8, "Codex", [], []),
-        (True, False, 7, "Chat", [], []),
-        (True, True, 7, "Codex", [], []),
-        (True, False, 7, "Codex", [_session()], []),
-        (True, False, 7, "Codex", [], [_session()]),
+        (True, False, 7, "Codex", [], [], True),
+        (False, False, 7, "Codex", [], [], False),
+        (True, False, 8, "Codex", [], [], False),
+        (True, False, 7, "Chat", [], [], False),
+        (True, True, 7, "Codex", [], [], False),
+        (True, False, 7, "Codex", [_session()], [], False),
+        (True, False, 7, "Codex", [], [_session()], False),
     ],
 )
 def test_unproven_session_fallback_is_caller_and_context_gated(
-    allow_fallback, new_session, user_id, shell, inherited, bindings
+    allow_fallback, new_session, user_id, shell, inherited, bindings, expected
 ):
     should_start = TaskRequestBuilder._should_start_new_session(
         allow_new_session_fallback=allow_fallback,
@@ -181,14 +182,6 @@ def test_unproven_session_fallback_is_caller_and_context_gated(
         legacy_session_bindings=bindings,
     )
 
-    expected = (
-        allow_fallback
-        and not new_session
-        and user_id == 7
-        and shell in {"Codex", "ClaudeCode"}
-        and not inherited
-        and not bindings
-    )
     assert should_start is expected
 
 

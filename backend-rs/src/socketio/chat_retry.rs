@@ -21,8 +21,9 @@ use brz_redis::Redis as _;
 use brz_socket_io::{ClientError, Reply};
 use serde_json::{Map, Value, json};
 
-use crate::json_compat::{python_json_value, python_str};
+use crate::json_compat::python_json_value;
 use crate::request_sql::{RouteKey, fetch_optional_as};
+use crate::responses::create::normalize_executor_session;
 use crate::socketio::chat_session::ChatSession;
 use crate::socketio::chat_trigger::ChatTurn;
 use crate::sql_support::StatementArg;
@@ -260,7 +261,7 @@ async fn prepare_retry(
         .as_ref()
         .map(|result| result.0.to_value())
         .unwrap_or_else(|| json!({}));
-    let retry_session = retry_executor_session(retry_result.get("executor_session"));
+    let retry_session = normalize_executor_session(retry_result.get("executor_session"));
     reset_subtask_for_retry(
         state,
         &tables,
@@ -288,7 +289,7 @@ async fn prepare_retry(
             team_id: team.id,
             bot_ids,
             new_session: false,
-            allow_new_session_fallback: true,
+            allow_new_session_fallback: task_owner == user_id,
             message,
             interactive_form_answer: None,
             additional_skills: Vec::new(),
@@ -390,51 +391,6 @@ async fn fetch_user_subtask(
 fn retry_image_generation(result: &Value) -> Option<Value> {
     let size = result.pointer("/image_config/size")?.as_str()?;
     Some(json!({ "size": size }))
-}
-
-/// Keep only a structurally valid executor session as retry proof.
-fn retry_executor_session(session: Option<&Value>) -> Option<Value> {
-    let session = session?.as_object()?;
-    let agent = session.get("agent").filter(|value| is_truthy(value))?;
-    let session_id =
-        truthy_value(session.get("sessionId")).or_else(|| truthy_value(session.get("session_id")));
-    let thread_id =
-        truthy_value(session.get("threadId")).or_else(|| truthy_value(session.get("thread_id")));
-    if session_id.is_none() && thread_id.is_none() {
-        return None;
-    }
-    let mut normalized = Map::new();
-    normalized.insert("agent".to_string(), Value::String(python_str(agent)));
-    if let Some(session_id) = session_id {
-        normalized.insert(
-            "sessionId".to_string(),
-            Value::String(python_str(session_id)),
-        );
-    }
-    if let Some(thread_id) = thread_id {
-        normalized.insert("threadId".to_string(), Value::String(python_str(thread_id)));
-    }
-    if let Some(bot_id) = session.get("botId").or_else(|| session.get("bot_id"))
-        && !bot_id.is_null()
-    {
-        normalized.insert("botId".to_string(), bot_id.clone());
-    }
-    Some(Value::Object(normalized))
-}
-
-fn is_truthy(value: &Value) -> bool {
-    match value {
-        Value::Null => false,
-        Value::Bool(flag) => *flag,
-        Value::Number(number) => number.as_f64().is_some_and(|value| value != 0.0),
-        Value::String(text) => !text.is_empty(),
-        Value::Array(items) => !items.is_empty(),
-        Value::Object(fields) => !fields.is_empty(),
-    }
-}
-
-fn truthy_value(value: Option<&Value>) -> Option<&Value> {
-    value.filter(|value| is_truthy(value))
 }
 
 /// `_is_code_wiki_task`.
@@ -638,17 +594,62 @@ fn local_isoformat() -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn failed_subtask_retry_read_includes_the_result_proof_column() {
-        let source = include_str!("chat_retry.rs");
-        let start = source.find("async fn fetch_failed_subtask").unwrap();
-        let end = source[start..]
-            .find("/// `task_store.get_non_deleted_task`")
-            .unwrap();
-        let function = &source[start..start + end];
-        assert!(
-            function.contains("executor_namespace, result, created_at"),
-            "retry must read the failed result before preserving its executor session: {function}"
+    #[tokio::test]
+    async fn failed_subtask_retry_read_decodes_session_proof() {
+        use crate::sql_test_support::mysql_rows::{MysqlRows, Value as SqlValue};
+
+        let result = json!({
+            "value": "failed answer",
+            "executor_session": {
+                "agent": "Claude Code",
+                "bot_id": 23,
+                "session_id": "session-1",
+                "extra": "ignored"
+            }
+        });
+        let fixture = MysqlRows::start_results(move |sql| {
+            if !sql.starts_with("SELECT id, task_id, team_id") {
+                return (vec![], vec![]);
+            }
+            let columns = sql
+                .strip_prefix("SELECT ")
+                .unwrap()
+                .split(" FROM ")
+                .next()
+                .unwrap();
+            let row = vec![
+                ("id", SqlValue::I64(20)),
+                ("task_id", SqlValue::I64(10)),
+                ("team_id", SqlValue::I64(5)),
+                ("parent_id", SqlValue::I64(19)),
+                ("status", SqlValue::Text("FAILED".into())),
+                ("message_id", SqlValue::I64(2)),
+                ("executor_name", SqlValue::Text("executor-1".into())),
+                ("executor_namespace", SqlValue::Text("default".into())),
+                ("result", SqlValue::Text(result.to_string())),
+                ("created_at", SqlValue::DateTime),
+            ]
+            .into_iter()
+            .filter(|(name, _)| columns.split(',').any(|column| column.trim() == *name))
+            .collect::<Vec<_>>();
+            (row.clone(), vec![row])
+        })
+        .await;
+        let state = crate::app_test_support::app(fixture.mysql.clone());
+        let payload = RetryPayload::parse(&json!({"task_id": 10, "subtask_id": 20})).unwrap();
+        let failed = fetch_failed_subtask(&state, "subtasks", &payload)
+            .await
+            .unwrap_or_else(|_| panic!("failed subtask must decode"))
+            .expect("failed subtask");
+        let result = failed.result.expect("persisted result").0.to_value();
+
+        assert_eq!(
+            normalize_executor_session(result.get("executor_session")),
+            Some(json!({
+                "agent": "Claude Code",
+                "sessionId": "session-1",
+                "botId": 23
+            }))
         );
     }
 
@@ -746,7 +747,7 @@ mod tests {
     #[test]
     fn retry_preserves_only_a_structurally_valid_executor_session() {
         assert_eq!(
-            retry_executor_session(Some(&json!({
+            normalize_executor_session(Some(&json!({
                 "agent": "Claude Code",
                 "bot_id": 23,
                 "session_id": "session-1",
@@ -759,9 +760,9 @@ mod tests {
             }))
         );
         assert_eq!(
-            retry_executor_session(Some(&json!({"agent": "Codex"}))),
+            normalize_executor_session(Some(&json!({"agent": "Codex"}))),
             None
         );
-        assert_eq!(retry_executor_session(None), None);
+        assert_eq!(normalize_executor_session(None), None);
     }
 }
