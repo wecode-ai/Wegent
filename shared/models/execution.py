@@ -231,6 +231,7 @@ class ExecutionRequest:
     # === Runtime Origin ===
     cloud_project_id: Optional[str] = None
     origin: Optional[dict] = None
+    additional_context: Optional[dict[str, dict[str, Any]]] = None
 
     # === Reasoning Configuration ===
     reasoning_config: Optional[dict] = (
