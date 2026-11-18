@@ -12,6 +12,7 @@ use super::*;
 #[derive(Clone, Default)]
 struct ControlledRuntime {
     entered: Arc<Notify>,
+    entered_methods: Arc<StdMutex<Vec<String>>>,
     release: Arc<Notify>,
     started: Arc<AtomicUsize>,
     dropped: Arc<AtomicUsize>,
@@ -26,11 +27,23 @@ impl Drop for DropCounter {
 }
 
 impl RuntimeWorkHandler for ControlledRuntime {
-    fn handle_runtime_rpc<'a>(&'a self, _: Value) -> BoxFuture<'a, Result<Value, AppIpcError>> {
+    fn handle_runtime_rpc<'a>(
+        &'a self,
+        request: Value,
+    ) -> BoxFuture<'a, Result<Value, AppIpcError>> {
+        let method = request
+            .get("method")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned();
         Box::pin(async move {
             let _counter = DropCounter(self.dropped.clone());
             self.started.fetch_add(1, Ordering::SeqCst);
-            self.entered.notify_one();
+            self.entered_methods
+                .lock()
+                .expect("handler entries should not be poisoned")
+                .push(method);
+            self.entered.notify_waiters();
             self.release.notified().await;
             Ok(json!({"accepted": true}))
         })
@@ -78,10 +91,27 @@ async fn wait_for_count(counter: &AtomicUsize, expected: usize) {
     .expect("history request count must settle");
 }
 
-async fn wait_for_handler_entry(runtime: &ControlledRuntime) {
-    tokio::time::timeout(Duration::from_secs(1), runtime.entered.notified())
-        .await
-        .expect("read handler must enter before the test deadline");
+async fn wait_for_handler_entry(runtime: &ControlledRuntime, method: &str) {
+    tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let entered = {
+                let mut methods = runtime
+                    .entered_methods
+                    .lock()
+                    .expect("handler entries should not be poisoned");
+                methods
+                    .iter()
+                    .position(|entered| entered == method)
+                    .map(|index| methods.remove(index))
+            };
+            if entered.is_some() {
+                return;
+            }
+            runtime.entered.notified().await;
+        }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("{method} must enter before the test deadline"));
 }
 
 async fn wait_for_available_permits(admission: &ReadAdmission, expected: usize) {
@@ -106,7 +136,7 @@ async fn start_history_reads(
         )
         .await;
         if index < MAX_CONCURRENT_HISTORY_READS {
-            runtime.entered.notified().await;
+            wait_for_handler_entry(runtime, "runtime.tasks.transcript").await;
         }
     }
 }
@@ -135,7 +165,7 @@ async fn cancelling_history_read_releases_handler_and_preserves_control_requests
     let server = AppIpcServer::new().with_runtime_work_handler(runtime.clone());
     let (mut reader, mut writer) = connect(server).await;
     write_frame(&mut writer, request("read", "runtime.tasks.transcript")).await;
-    runtime.entered.notified().await;
+    wait_for_handler_entry(&runtime, "runtime.tasks.transcript").await;
     write_frame(&mut writer, json!({"type": "cancel", "id": "read"})).await;
     write_frame(&mut writer, request("control", "executor.health")).await;
     let mut responses = [
@@ -160,7 +190,7 @@ async fn cancelling_connection_capability_reads_releases_their_native_handlers()
         let server = AppIpcServer::new().with_runtime_work_handler(runtime.clone());
         let (mut reader, mut writer) = connect(server).await;
         write_frame(&mut writer, request("collection", method)).await;
-        runtime.entered.notified().await;
+        wait_for_handler_entry(&runtime, method).await;
         write_frame(&mut writer, json!({"type":"cancel","id":"collection"})).await;
         let response = read_response(&mut reader).await;
         assert_eq!(response["error"]["code"], "request_cancelled");
@@ -175,7 +205,7 @@ async fn cancellation_is_connection_scoped_and_cannot_interrupt_sends() {
     let (mut reader, mut writer) = connect(server.clone()).await;
     let (mut other_reader, mut other_writer) = connect(server).await;
     write_frame(&mut writer, request("send", "runtime.tasks.send")).await;
-    runtime.entered.notified().await;
+    wait_for_handler_entry(&runtime, "runtime.tasks.send").await;
     write_frame(&mut writer, json!({"type": "cancel", "id": "send"})).await;
     write_frame(&mut writer, request("send-control", "executor.health")).await;
     assert_eq!(read_response(&mut reader).await["id"], "send-control");
@@ -184,7 +214,7 @@ async fn cancellation_is_connection_scoped_and_cannot_interrupt_sends() {
     assert_eq!(read_response(&mut reader).await["result"]["accepted"], true);
 
     write_frame(&mut writer, request("read", "runtime.tasks.transcript")).await;
-    runtime.entered.notified().await;
+    wait_for_handler_entry(&runtime, "runtime.tasks.transcript").await;
     write_frame(&mut other_writer, json!({"type": "cancel", "id": "read"})).await;
     write_frame(
         &mut other_writer,
@@ -251,7 +281,7 @@ async fn history_reads_wait_across_connections_without_blocking_control_requests
     let (mut other_reader, mut other_writer) = connect(server.clone()).await;
     for id in ["first", "second"] {
         write_frame(&mut writer, request(id, "runtime.tasks.transcript")).await;
-        runtime.entered.notified().await;
+        wait_for_handler_entry(&runtime, "runtime.tasks.transcript").await;
     }
     write_frame(
         &mut other_writer,
@@ -266,7 +296,7 @@ async fn history_reads_wait_across_connections_without_blocking_control_requests
     );
     runtime.release.notify_one();
     assert_eq!(read_response(&mut reader).await["result"]["accepted"], true);
-    runtime.entered.notified().await;
+    wait_for_handler_entry(&runtime, "runtime.tasks.transcript").await;
     assert_eq!(
         runtime.started.load(Ordering::SeqCst),
         MAX_CONCURRENT_HISTORY_READS + 1
@@ -344,7 +374,7 @@ async fn connection_reads_do_not_consume_transcript_admission() {
         )
         .await;
         if index < MAX_CONCURRENT_CONNECTION_READS {
-            wait_for_handler_entry(&runtime).await;
+            wait_for_handler_entry(&runtime, "runtime.connections.git.read").await;
         }
     }
     wait_for_available_permits(&server.connection_read_admission, 0).await;
@@ -366,7 +396,7 @@ async fn connection_reads_do_not_consume_transcript_admission() {
         request("transcript", "runtime.tasks.transcript"),
     )
     .await;
-    wait_for_handler_entry(&runtime).await;
+    wait_for_handler_entry(&runtime, "runtime.tasks.transcript").await;
     assert_eq!(
         runtime.started.load(Ordering::SeqCst),
         MAX_CONCURRENT_CONNECTION_READS + 1
@@ -406,8 +436,21 @@ async fn padded_connection_read_methods_are_limited_and_cancellable() {
 
     for id in ["first", "second"] {
         write_frame(&mut writer, request(id, padded_method)).await;
-        wait_for_handler_entry(&runtime).await;
+        wait_for_handler_entry(&runtime, "runtime.connections.git.read").await;
     }
+    write_frame(
+        &mut writer,
+        json!({"type":"request","id":"invalid","method":padded_method,"params":[]}),
+    )
+    .await;
+    let invalid = read_response(&mut reader).await;
+    assert_eq!(invalid["error"]["code"], "invalid_request");
+    assert_eq!(
+        runtime.started.load(Ordering::SeqCst),
+        MAX_CONCURRENT_CONNECTION_READS,
+        "an invalid request must not consume active admission"
+    );
+
     write_frame(&mut writer, request("third", padded_method)).await;
     wait_for_available_permits(
         &server.connection_read_admission,
@@ -419,6 +462,15 @@ async fn padded_connection_read_methods_are_limited_and_cancellable() {
         MAX_CONCURRENT_CONNECTION_READS,
         "a padded method must not bypass the connection admission limit"
     );
+    assert!(
+        tokio::time::timeout(
+            Duration::from_millis(50),
+            wait_for_handler_entry(&runtime, "runtime.connections.git.read"),
+        )
+        .await
+        .is_err(),
+        "the third read must wait for an active admission permit"
+    );
 
     write_frame(&mut writer, json!({"type":"cancel","id":"first"})).await;
     let cancelled = read_response(&mut reader).await;
@@ -426,7 +478,7 @@ async fn padded_connection_read_methods_are_limited_and_cancellable() {
     assert_eq!(cancelled["error"]["code"], "request_cancelled");
     assert_eq!(runtime.dropped.load(Ordering::SeqCst), 1);
 
-    wait_for_handler_entry(&runtime).await;
+    wait_for_handler_entry(&runtime, "runtime.connections.git.read").await;
     assert_eq!(
         runtime.started.load(Ordering::SeqCst),
         MAX_CONCURRENT_CONNECTION_READS + 1
@@ -515,7 +567,7 @@ async fn disconnect_cancels_active_and_queued_reads_without_starting_waiting_wor
         request("fresh", "runtime.tasks.transcript"),
     )
     .await;
-    runtime.entered.notified().await;
+    wait_for_handler_entry(&runtime, "runtime.tasks.transcript").await;
     runtime.release.notify_one();
     assert_eq!(read_response(&mut other_reader).await["id"], "fresh");
 }

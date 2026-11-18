@@ -3553,6 +3553,14 @@ pub fn app_ipc_stdio_ready_log_line(device_id: &str) -> String {
 fn app_ipc_request_metadata(line: &str) -> (Option<String>, Option<String>, Option<String>) {
     match serde_json::from_str::<Value>(line) {
         Ok(Value::Object(message)) => {
+            // Admission must only register requests that can reach a handler.
+            if message.get("type").and_then(Value::as_str) != Some("request")
+                || message
+                    .get("params")
+                    .is_some_and(|params| !params.is_object())
+            {
+                return (None, None, None);
+            }
             let request_id = message
                 .get("id")
                 .and_then(Value::as_str)
