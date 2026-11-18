@@ -2798,6 +2798,9 @@ async fn run_codex_app_server_turn_with_runtime(
     options: CodexAppServerTurnOptions,
     runtime_notifications: Option<CodexNotificationHub>,
 ) -> Result<CodexAppServerTurn, String> {
+    let mut capability_lease =
+        Some(crate::services::capability_activation::begin_execution().await);
+    let _home_lease = super::instance_home::acquire(&request)?;
     let admission_client = CodexAppServerClient::new(binary).for_request(&request)?;
     let mut thread_admission = match options
         .resume_thread_id
@@ -2807,9 +2810,6 @@ async fn run_codex_app_server_turn_with_runtime(
         Some(thread_id) => Some(admission_client.admit_isolated_thread(thread_id).await?),
         None => None,
     };
-    let mut capability_lease =
-        Some(crate::services::capability_activation::begin_execution().await);
-    let _home_lease = super::instance_home::acquire(&request)?;
     super::environment_setup::prepare_execution_environment(&request).await?;
     super::runtime_capabilities::prepare_codex_runtime_locked(&request).await?;
     let CodexAppServerTurnOptions {
