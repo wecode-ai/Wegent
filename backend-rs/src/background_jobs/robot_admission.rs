@@ -113,7 +113,19 @@ async fn plan(app: &AppState, row: &Execution) -> Result<Option<Plan>> {
         }));
     }
     let mut context = row.context();
-    let continuation = if request["continuation"].is_null() {
+    let managed_source = super::managed::continuation(app, row, &request["continuation"]).await?;
+    let managed_continuation = match managed_source {
+        super::managed::Continuation::Waiting => return Ok(None),
+        super::managed::Continuation::Native => false,
+        super::managed::Continuation::Ready(task, owner) => {
+            if let Some(task) = task {
+                context["comment_continue_backend_task_id"] = json!(task);
+            }
+            context["runtime_subject_user_id"] = json!(owner);
+            true
+        }
+    };
+    let continuation = if managed_continuation || request["continuation"].is_null() {
         None
     } else {
         let Some(source) =

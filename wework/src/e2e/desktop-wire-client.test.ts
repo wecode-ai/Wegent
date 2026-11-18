@@ -37,6 +37,7 @@ test('prebuilt desktop wire client runs without workspace dependencies', async (
     })
     // CI reads these runtime files from its checkout without installing workspace packages.
     for (const runtimePath of [
+      '.github/scripts/node-async-resource-diagnostics.mjs',
       'wework/electron/src/runtime/release-preparation-progress.mjs',
       'wework/scripts/ai-verify-devtools.mjs',
       'wework/scripts/lib/extract-runtime-archive.mjs',

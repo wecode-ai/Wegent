@@ -172,6 +172,13 @@ export async function createDesktopScenario({
       await pluginApi(cloud, `/plugins/marketplace/${fixture.pluginId}/install`, 'POST')
       fixture.installedId = Number((await accountPlugin(cloud, fixture.slug)).metadata.labels.id)
       await update(fixture, null, { releaseId: fixture.releaseId })
+      fixture.installState = {
+        updatePolicy: 'manual',
+        ...(role === 'disabled'
+          ? { enabled: false, componentStates: { [`skill:${fixture.skillName}`]: false } }
+          : {}),
+      }
+      await update(fixture, null, fixture.installState)
       const desired = await accountPlugin(cloud, fixture.slug)
       assert.equal(desired.spec.releaseId, fixture.releaseId)
       assert.equal(desired.spec.version, fixture.version)
@@ -186,14 +193,8 @@ export async function createDesktopScenario({
       token: releaseAssetToken,
     })
     try {
-      for (const [role, fixture] of Object.entries(fixtures)) {
-        await update(fixture, installer.deviceId, { releaseId: fixture.releaseId })
-        await update(fixture, installer.deviceId, {
-          updatePolicy: 'manual',
-          ...(role === 'disabled'
-            ? { enabled: false, componentStates: { [`skill:${fixture.skillName}`]: false } }
-            : {}),
-        })
+      for (const fixture of Object.values(fixtures)) {
+        await update(fixture, installer.deviceId, fixture.installState)
       }
       let observedState
       const original = await until(

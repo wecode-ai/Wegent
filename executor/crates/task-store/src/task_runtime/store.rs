@@ -18,6 +18,8 @@ use uuid::Uuid;
 mod assignment_receipts;
 pub mod board_receipts;
 mod code_projects;
+#[cfg(test)]
+mod empty_write_tests;
 pub mod execution_workspace;
 mod human_requests;
 mod stand_in_dispatches;

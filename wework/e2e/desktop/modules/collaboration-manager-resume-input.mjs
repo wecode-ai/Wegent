@@ -144,7 +144,7 @@ export async function answerResumedManagerFromIssue({
   await control.command('waitFor', `${scope} [data-testid="${event}"]`, { text: leader.name })
   await control.command('scrollIntoView', `${scope} [data-testid="${event}"]`)
   await control.command(
-    'click',
+    'clickWhenEnabled',
     `${scope} [data-testid="cloud-task-manager-execution-${messageId}"]`
   )
   const panel = `${scope} [data-testid="work-item-task-chat-panel"]`
