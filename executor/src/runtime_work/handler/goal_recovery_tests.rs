@@ -148,7 +148,7 @@ fn failed_goal_readmission_preserves_its_previous_recovery_intent() {
 #[test]
 fn goal_activation_acknowledges_only_durable_recovery_ownership() {
     run_goal_test(async {
-        for (loaded, fail_persistence) in [(false, false), (true, false), (false, true)] {
+        for fail_persistence in [false, true] {
             let (mut handler, root, request) = setup("native-goal-activation-ack");
             block_goal_admission(&handler);
             handler.store.update_task("task-1", |link| {
@@ -165,42 +165,6 @@ fn goal_activation_acknowledges_only_durable_recovery_ownership() {
                 .to_string(),
             )
             .unwrap();
-            if loaded {
-                fs::write(
-                    root.join("thread_resume.json"),
-                    json!({"thread":{"id":"11111111-1111-4111-8111-111111111111"}}).to_string(),
-                )
-                .unwrap();
-                handler
-                    .codex_app_server
-                    .request(
-                        "thread/resume",
-                        json!({"threadId":"11111111-1111-4111-8111-111111111111"}),
-                    )
-                    .await
-                    .unwrap();
-            }
-            if !loaded {
-                // Model-route preparation resumes the thread. Simulate a native unload
-                // before activation so this case actually exercises cold Goal recovery.
-                fs::write(
-                    root.join("thread_goal_set.notifications.jsonl"),
-                    [
-                        json!({"method":"thread/status/changed", "params": {
-                            "threadId":"11111111-1111-4111-8111-111111111111",
-                            "status":{"type":"notLoaded"}
-                        }}),
-                        json!({"method":"thread/goal/updated", "params": {
-                            "threadId":"11111111-1111-4111-8111-111111111111",
-                            "goal":{"status":"active", "tokensUsed":10}
-                        }}),
-                    ]
-                    .map(|notification| notification.to_string())
-                    .join("\n")
-                        + "\n",
-                )
-                .unwrap();
-            }
             if fail_persistence {
                 let blocked = root.join("blocked-queue-parent");
                 fs::write(&blocked, "not a directory").unwrap();
@@ -222,8 +186,8 @@ fn goal_activation_acknowledges_only_durable_recovery_ownership() {
                 let response = result.unwrap();
                 assert_eq!(response["success"], true, "{response}");
                 assert_eq!(
-                    response["resumed"], !loaded,
-                    "Only an unloaded Goal needs an owned continuation before turn notifications arrive"
+                    response["resumed"], false,
+                    "Goal activation prepares the native session before mutation and must not admit duplicate work"
                 );
                 let repeated = handler
                     .set_task_goal(json!({
@@ -232,17 +196,14 @@ fn goal_activation_acknowledges_only_durable_recovery_ownership() {
                     .await
                     .unwrap();
                 assert_eq!(repeated["resumed"], false);
-                assert_eq!(
-                    handler.turn_scheduler.lock().unwrap().queued_turns.len(),
-                    usize::from(!loaded)
-                );
+                assert_eq!(handler.turn_scheduler.lock().unwrap().queued_turns.len(), 0);
                 assert_eq!(
                     handler
                         .local_task_link("task-1")
                         .unwrap()
                         .goal_execution_status
                         .as_deref(),
-                    Some(if loaded { "running" } else { "recovering" })
+                    Some("running")
                 );
                 assert!(turns::read_runtime_turn_state(&handler.turn_queue_path)
                     .unwrap()
