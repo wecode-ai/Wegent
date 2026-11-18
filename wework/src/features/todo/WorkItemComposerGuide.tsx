@@ -15,6 +15,7 @@ interface WorkItemComposerGuideProps {
   item?: CloudLoopItem | null
   api?: ProjectSpaceApi
   currentTask?: RuntimeTaskAddress | null
+  taskOwnerKey?: string | null
   goalPresent?: boolean
   integrated?: boolean
   toolbar?: boolean
@@ -43,6 +44,7 @@ function WorkItemComposerGuideContent({
   item,
   api,
   currentTask,
+  taskOwnerKey,
   goalPresent = false,
   integrated = false,
   toolbar = false,
@@ -57,9 +59,9 @@ function WorkItemComposerGuideContent({
   const containerRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const canChangeProject = Boolean(onSelectProject)
-  const pickerStoreKey = currentTask
-    ? `task:${currentTask.deviceId}:${currentTask.taskId}`
-    : (item?.id ?? null)
+  const pickerStoreKey =
+    taskOwnerKey ??
+    (currentTask ? `task:${currentTask.deviceId}:${currentTask.taskId}` : (item?.id ?? null))
   // Open state outlives this component: a pane remount during restore must
   // re-render an open picker instead of silently closing it (issue #4637).
   // Persisted only for identity-stable guides; project-only guides keep
