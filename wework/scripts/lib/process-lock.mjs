@@ -65,6 +65,7 @@ export async function acquireProcessLock(lockPath, options = {}) {
       await handle?.close()
       if (error?.code !== 'EEXIST') throw error
       if (!(await removeStaleLock(lockPath))) {
+        if (options.wait === false) return null
         await delay(pollIntervalMs)
       }
     }

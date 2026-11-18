@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { Bell, CircleAlert } from 'lucide-react'
+import { CircleAlert, Radio } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { connectionEventCondition } from '@/lib/connection-event-condition'
 import { connectionEventSubscriptions } from '@/lib/runtime-connection-events'
@@ -116,7 +116,7 @@ export function ConnectionEventStatus({
         const executionFailed = ['error', 'needs_attention'].includes(item.status)
         const observing = item.status === 'armed'
         const failed = setupFailed || executionFailed || (observing && Boolean(observation.error))
-        const Icon = failed ? CircleAlert : Bell
+        const Icon = failed ? CircleAlert : Radio
         const label = setupFailed
           ? observation.state === 'auth_required'
             ? t('workbench.observation_auth_required', '连接需要重新授权')

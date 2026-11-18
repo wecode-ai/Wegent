@@ -57,7 +57,17 @@ export function requestSkillCatalogDiagnostics(body) {
 }
 
 export function requestContainsSkillLocator(body, skillPath) {
-  return requestSkillCatalogDiagnostics(body).advertisedSkillPaths.includes(
-    normalizeLocator(skillPath)
-  )
+  const advertisedSkillLocators = requestSkillCatalogDiagnostics(body).advertisedSkillPaths
+  const expectedPath = normalizeLocator(skillPath)
+  const matched = advertisedSkillLocators.includes(expectedPath)
+  if (!matched) {
+    // A miss without the advertised paths cannot be attributed after the run.
+    console.error(
+      '[skill-locator] expected',
+      expectedPath,
+      'advertised',
+      JSON.stringify(advertisedSkillLocators.slice(0, 40))
+    )
+  }
+  return matched
 }
