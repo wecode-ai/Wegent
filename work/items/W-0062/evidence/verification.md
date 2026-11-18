@@ -202,6 +202,14 @@ EnvironmentInfoPopover、ChangeRequestMonitor 与 observer 共 3 文件、33 项
 
 文档自动合并保留普通任务页创建入口和主线跨设备问题说明。共享成员创建实现与其断言未改；未运行本地 E2E 或 ai:verify。包含本次主线整合的新 head 必须取得自身完整 CI 与无冲突结果后再交接。
 
+## 2026-11-18 后台认证基线与 Issue 关闭诊断
+
+`d091ff4e12` 的最终 CI 为 62 项成功、11 项按规则跳过、3 项失败、0 等待，七个工作流中六个成功。实际 [shared-core](https://github.com/wecode-ai/Wegent/actions/runs/44230333813/job/134556621785)、[change-request-status](https://github.com/wecode-ai/Wegent/actions/runs/44230333813/job/134556621780)、运行时队列、模型删除和 Plugins 五个目标全部 PASS。Backend API 为 12,911 passed，MySQL 22 项及宿主模型请求 17 项通过。余下实际失败是插件账号认证并发场景、通知已读场景，另一个失败为汇总。
+
+[Cloud3 日志](https://github.com/wecode-ai/Wegent/actions/runs/44230333813/job/134556621743) 与 artifact `14396535079` 确认 competing lease 属于 renderer 的设备批量同步：它同时持有目标认证插件与独立插件的租约，再等待目标行；独立安装约 2.9 秒后返回 `503 plugin_write_busy`。原行锁 fixture 接受任意 blocked writer，误把该批量同步视为后台认证写入。现在在独立插件准备完成后复用既有 reconciliation 完成协议，离开 Plugins 并确认设备同步结束，再锁认证行；阻塞出现后也确认没有 renderer 同步混入。没有修改服务端 busy 或租约语义，独立 CRUD、锁身份、目标快照和认证恢复断言全部保留。真实 workflow 协议先红后绿，新增编排与既有认证证据两文件 25 项通过，语法、ESLint、Prettier 和差异检查通过。
+
+[Core5 日志](https://github.com/wecode-ai/Wegent/actions/runs/44230333813/job/134556621707) 与 artifact `14395896619` 显示通知已读、未读角标更新均成功；点击 Issue 关闭后，等待 `visible:false` 超时，原 Issue URL 仍保留。旧证据缺少 dismissal 与动画状态，尚未稳定复现，不能认定动画或导航为根因，也不能记为已修复。现只补关闭意图、连接状态和失败 frame 诊断；click 前仅读属性，不读取样式、尺寸或动画，避免提前 flush 改变时序。诊断及既有关闭回归 21 项通过，随后属性预读不 flush 的新增检查与相关套件 10 项通过，目标 ESLint、Prettier、Wework typecheck 和差异检查通过。产品关闭逻辑与 E2E 断言、预算均保持；后续必须依新证据继续调查，不能靠诊断后的偶然通过掩盖间歇问题。
+
 # Verification and rollback
 
 The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The CI-covered `collaboration-shared-core` scenario includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run under the repository-level local execution policy; the recorded GitHub CI runs provide the actual desktop E2E results. Earlier test results are tied to their stated revisions, and the latest PR head requires its own green checks. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.

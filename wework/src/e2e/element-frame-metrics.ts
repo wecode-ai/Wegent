@@ -1,3 +1,13 @@
+/** Read dismissal intent without flushing styles or starting pending transitions. */
+export function readDrawerTrackState(track: Element | null) {
+  return {
+    trackConnected: track?.isConnected ?? null,
+    trackDismissing: track?.getAttribute('data-dismissing') ?? null,
+    trackHasConversation: track?.getAttribute('data-has-conversation') ?? null,
+    trackInert: track?.hasAttribute('inert') ?? null,
+  }
+}
+
 /** Track actual mounted surfaces and their geometry on each animation frame. */
 export function createElementFrameSampler(root: HTMLElement, selector: string) {
   const identities = new WeakMap<Element, number>()
@@ -24,12 +34,16 @@ export function createElementFrameSampler(root: HTMLElement, selector: string) {
         animationName: style.animationName,
         transform: style.transform,
         reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+        ...readDrawerTrackState(track),
         trackTransform: trackStyle?.transform ?? null,
         trackTransition: trackStyle?.transition ?? null,
         trackAnimations:
           track?.getAnimations().map(animation => ({
             time: animation.currentTime,
             state: animation.playState,
+            pending: animation.pending,
+            playbackRate: animation.playbackRate,
+            timelineActive: animation.timeline?.currentTime != null,
           })) ?? [],
         border: [
           style.borderTopWidth,
