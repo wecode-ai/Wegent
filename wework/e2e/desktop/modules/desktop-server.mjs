@@ -1451,6 +1451,7 @@ class DesktopE2EServer {
         requestDiagnostic.finishedAtUnixMs - requestDiagnostic.startedAtUnixMs
     })
     if (await this.handleControlRoute(request, response, url)) return
+    let scenarioModelRequest
     try {
       if (
         this.desktopScenario &&
@@ -1458,6 +1459,7 @@ class DesktopE2EServer {
         ['/responses', '/v1/responses'].includes(url.pathname)
       ) {
         const body = await readRequestBody(request)
+        scenarioModelRequest = { body, scenario: this.scenario, failed: true }
         if (await this.writeNativeApprovalReview(response, body, 'responses')) return
         // Prediction history carries the task's ordinary markers. Route its
         // model request before scenario counters and held task responses.
@@ -1468,6 +1470,7 @@ class DesktopE2EServer {
       }
       if (await this.desktopScenario?.handleHttp?.(request, response, url)) return
     } catch (error) {
+      if (scenarioModelRequest) this.modelRequests.push(scenarioModelRequest)
       console.error(
         `[desktop-e2e] scenario HTTP handler failed for ${request.method} ${url.pathname}`,
         error

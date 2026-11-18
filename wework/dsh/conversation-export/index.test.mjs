@@ -6,6 +6,8 @@ import test from 'node:test'
 import { pathToFileURL } from 'node:url'
 import JSZip from 'jszip'
 
+import { waitForTerminalStatus } from '../test-support/export-status.mjs'
+
 import { apply } from './index.js'
 
 test('loads after packaging without workspace dependencies', async () => {
@@ -182,11 +184,3 @@ test('rejects destinations outside the supported export formats', async () => {
     /must end with .md, .html, or .zip/
   )
 })
-
-async function waitForTerminalStatus(methods, exportTaskId) {
-  for (;;) {
-    const status = await methods.status({ exportTaskId })
-    if (!['writing', 'finalizing'].includes(status.state)) return status
-    await new Promise(resolve => setImmediate(resolve))
-  }
-}

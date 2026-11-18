@@ -27,6 +27,8 @@ role = 'python' if Path(__file__).name.startswith('python') else 'rust'
 args = sys.argv[1:]
 port = int(args[args.index('--port') + 1] if role == 'python'
            else os.environ['WEGENT_RS_LISTEN_PORT'])
+signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+signal.signal(signal.SIGUSR1, lambda *_: sys.exit(int(os.environ['FIXTURE_EXIT_CODE'])))
 Path(os.environ['FIXTURE_RECORDS'], role + '.json').write_text(json.dumps({
     'pid': os.getpid(), 'cwd': os.getcwd(), 'args': args,
     'upstream': os.environ.get('WEGENT_PYTHON_UPSTREAM_URL'),
@@ -34,8 +36,6 @@ Path(os.environ['FIXTURE_RECORDS'], role + '.json').write_text(json.dumps({
     'dotenv': os.environ.get('WEGENT_BACKEND_RS_ENV_FILE'),
     'db_owner': os.environ.get('DB_INITIALIZATION_OWNER'),
 }))
-signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
-signal.signal(signal.SIGUSR1, lambda *_: sys.exit(int(os.environ['FIXTURE_EXIT_CODE'])))
 if os.environ.get('FIXTURE_HOLD_ROLE') == role:
     while not Path(os.environ['FIXTURE_RECORDS'], role + '.start').exists():
         time.sleep(0.01)
