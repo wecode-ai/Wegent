@@ -10,7 +10,10 @@ test('keeps synthetic subscription refresh local while configuration bundles fai
   const root = await mkdtemp(join(tmpdir(), 'wework-cloud-config-service-'))
   const service = createCloudConfigModelService()
   const codexHome = join(root, 'managed-codex')
-  const appEnvironment: Record<string, string> = { HOME: join(root, 'native-home') }
+  const appEnvironment: Record<string, string> = {
+    HOME: join(root, 'native-home'),
+    CODEX_BINARY_PATH: join(root, 'codex-binary'),
+  }
   try {
     await mkdir(codexHome, { recursive: true })
     await writeFile(join(codexHome, 'config.toml'), '')
@@ -24,7 +27,7 @@ test('keeps synthetic subscription refresh local while configuration bundles fai
     expect(refreshUrl.pathname).toBe('/oauth/token')
     await service.failBundle()
     const bundleUrl = new URL('/backend-api/config/bundle', refreshUrl)
-    expect((await fetch(bundleUrl)).status).toBe(200)
+    expect((await fetch(bundleUrl)).status).toBe(503)
     expect((await fetch(bundleUrl)).status).toBe(503)
 
     const refresh = await fetch(refreshUrl, {
@@ -42,7 +45,7 @@ test('keeps synthetic subscription refresh local while configuration bundles fai
     })
     expect(service.diagnostics().tokenRefreshes).toBe(1)
     expect((await fetch(bundleUrl)).status).toBe(503)
-    expect(service.diagnostics().bundleFailures).toBe(2)
+    expect(service.diagnostics().bundleFailures).toBe(3)
   } finally {
     await service.close()
     await rm(root, { recursive: true, force: true })
