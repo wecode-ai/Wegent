@@ -122,7 +122,6 @@ import {
   declineInitialTelemetryConsent,
   ensureExperimentalFeaturesEnabled,
   verifyInitialTelemetryConsent,
-  verifySitesPluginAutoInstall,
 } from './preferences-automation-flows.mjs'
 
 import {
@@ -2261,10 +2260,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           control,
           fixture: await ensureOfficialPluginFixture(),
         })
-      }
-      if (shouldRunPluginSegment('sites-plugin-auto-install')) {
-        phase = 'sites-plugin-auto-install'
-        await verifySitesPluginAutoInstall(control, executorHome)
       }
       if (officialPluginFixture) {
         phase = 'plugin-uninstall'

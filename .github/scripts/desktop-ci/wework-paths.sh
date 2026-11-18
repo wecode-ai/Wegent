@@ -322,7 +322,7 @@ classify_wework_path() {
       ;;
     wework/src/components/sites/* | \
       wework/src/pages/SitesPage.tsx)
-      select_target "plugins:sites-plugin-auto-install"
+      select_target "plugins:core-dsh-ui-plugin-composition"
       return
       ;;
     wework/src/features/workbench/useWorkbenchSkills.ts | \
