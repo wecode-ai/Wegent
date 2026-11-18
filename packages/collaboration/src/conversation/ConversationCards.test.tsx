@@ -31,12 +31,12 @@ function element(id: string) {
   if (!target) throw new Error(`Missing control ${id}`);
   return target;
 }
-function render(children: ReactNode) {
+function render(children: ReactNode, locale: "en" | "zh-CN" = "en") {
   act(() =>
     root.render(
       <CollaborationTheme mode="dark">
         <ConversationTranslationProvider
-          translate={createCollaborationTranslator("en")}
+          translate={createCollaborationTranslator(locale)}
         >
           {children}
         </ConversationTranslationProvider>
@@ -177,6 +177,43 @@ describe("shared conversation cards without Electron", () => {
         );
       act(() => element("assistant-error-details-toggle").click());
       expect(element("assistant-error-details").textContent).toBe(error);
+    },
+  );
+
+  it.each([
+    ["en", "Timed out waiting for a response", "within 180 seconds"],
+    ["zh-CN", "等待响应超时", "180 秒内未收到模型或工具进展"],
+  ] as const)(
+    "keeps watchdog diagnostics behind details in %s",
+    (locale, title, description) => {
+      const error =
+        "codex app-server turn made no model or tool progress for 180s; the shared app-server was restarted";
+      render(
+        <AssistantErrorCard
+          error={error}
+          message={{
+            id: "watchdog",
+            role: "assistant",
+            content: "",
+            status: "failed",
+          }}
+        />,
+        locale,
+      );
+      expect(element("assistant-error-title").textContent).toBe(title);
+      expect(element("assistant-error-description").textContent).toContain(
+        description,
+      );
+      expect(container.textContent).not.toContain("app-server");
+      expect(
+        element("assistant-error-details-toggle").getAttribute("aria-expanded"),
+      ).toBe("false");
+      act(() => element("assistant-error-details-toggle").click());
+      expect(element("assistant-error-details").textContent).toBe(error);
+      act(() => element("assistant-error-details-toggle").click());
+      expect(
+        container.querySelector('[data-testid="assistant-error-details"]'),
+      ).toBeNull();
     },
   );
 
