@@ -7,6 +7,9 @@ inputs:
   publish:
     description: Publish the application under the caller's existing package permissions.
     default: "false"
+  oci-validation:
+    description: Select default, native-only, or complete-app cache behavior for a CI measurement.
+    default: "default"
   targets:
     description: Rust targets needed by this job.
     default: aarch64-apple-darwin
@@ -61,8 +64,25 @@ runs:
       env:
         EXECUTOR_SOURCE_DIGEST: ${{ steps.macos-source.outputs.executor }}
         BACKEND_RS_SOURCE_DIGEST: ${{ steps.macos-source.outputs.backend-rs }}
+        OCI_VALIDATION: ${{ inputs.oci-validation }}
       run: |
-        node .github/scripts/macos-e2e-build.mjs restore .ci-artifacts/macos-complete
+        case "$OCI_VALIDATION" in
+          native-only)
+            echo "Complete App OCI restore bypassed for the native OCI baseline"
+            echo "cache-hit=false" >> "$GITHUB_OUTPUT"
+            ;;
+          default|complete-app)
+            node .github/scripts/macos-e2e-build.mjs restore .ci-artifacts/macos-complete
+            if [[ "$OCI_VALIDATION" == complete-app ]] && ! grep -qx 'cache-hit=true' "$GITHUB_OUTPUT"; then
+              echo "Expected a complete macOS App OCI hit" >&2
+              exit 1
+            fi
+            ;;
+          *)
+            echo "Invalid macOS OCI validation mode" >&2
+            exit 1
+            ;;
+        esac
 
     - name: Set up shared Rust toolchain and cache
       if: steps.macos-build.outputs.cache-hit != 'true'
@@ -148,7 +168,7 @@ runs:
 
     - name: Restore macOS arm64 executor runtime
       id: macos-executor-runtime-cache
-      if: steps.macos-build.outputs.cache-hit != 'true'
+      if: steps.macos-build.outputs.cache-hit != 'true' && inputs.oci-validation != 'native-only'
       uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
       with:
         path: ~/.cache/wegent/wework-macos-e2e-runtimes/wegent-executor
@@ -156,7 +176,7 @@ runs:
 
     - name: Restore macOS arm64 Rust backend runtime
       id: macos-backend-rs-runtime-cache
-      if: steps.macos-build.outputs.cache-hit != 'true'
+      if: steps.macos-build.outputs.cache-hit != 'true' && inputs.oci-validation != 'native-only'
       uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
       with:
         path: ~/.cache/wegent/wework-macos-e2e-runtimes/wegent-backend-rs
@@ -170,18 +190,24 @@ runs:
         EXECUTOR_HEAD_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:executor-head-${{ github.event.pull_request.head.sha || github.sha }}
         BACKEND_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:backend-rs-v1-${{ steps.macos-source.outputs.backend-rs }}
         BACKEND_HEAD_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:backend-rs-head-${{ github.event.pull_request.head.sha || github.sha }}
+        OCI_VALIDATION: ${{ inputs.oci-validation }}
       run: |
         runtime_root="$HOME/.cache/wegent/wework-macos-e2e-runtimes"
+        executor_refs=("$EXECUTOR_SOURCE_REF")
+        backend_refs=("$BACKEND_SOURCE_REF")
+        if [[ "$OCI_VALIDATION" != native-only ]]; then
+          executor_refs+=("$EXECUTOR_HEAD_REF")
+          backend_refs+=("$BACKEND_HEAD_REF")
+        fi
         .github/scripts/restore-macos-e2e-runtime-oci.sh \
-          "$runtime_root/wegent-executor" \
-          wegent-executor \
-          "$EXECUTOR_SOURCE_REF" \
-          "$EXECUTOR_HEAD_REF"
+          "$runtime_root/wegent-executor" wegent-executor "${executor_refs[@]}"
         .github/scripts/restore-macos-e2e-runtime-oci.sh \
-          "$runtime_root/wegent-backend-rs" \
-          wegent-backend-rs \
-          "$BACKEND_SOURCE_REF" \
-          "$BACKEND_HEAD_REF"
+          "$runtime_root/wegent-backend-rs" wegent-backend-rs "${backend_refs[@]}"
+        if [[ "$OCI_VALIDATION" == native-only ]] &&
+           [[ ! -x "$runtime_root/wegent-executor" || ! -x "$runtime_root/wegent-backend-rs" ]]; then
+          echo "Expected both native macOS OCI runtime hits" >&2
+          exit 1
+        fi
 
     - name: Build Wework Electron E2E application
       shell: bash
