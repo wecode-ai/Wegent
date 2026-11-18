@@ -147,6 +147,8 @@ Native discovery still runs after returning a cached task list. It sends a work-
 
 Identity descriptions share only not-yet-dispatched requests within the same synchronous batch; post-operation identity checks still fetch fresh descriptions. Confirmed local Runtime telemetry policy is not rewritten on idle polls. Runtime, account, API, or policy changes resynchronize it, and failed writes retry. Work-list changes refresh task data only; device events and explicit refresh retain device discovery. Work events preserve an in-flight full cloud sync and coalesce into one fresh work read afterward. Bootstrap device and team synchronization is not discarded when the task-read revision changes.
 
+Telemetry configuration, listing, and acknowledgment run synchronous SQLite work on the existing blocking pool rather than occupying asynchronous RPC dispatch while waiting for a writer. The focused regression holds a real second-connection write transaction, verifies that configuration yields on its first poll and a concurrent read completes, then releases the writer and verifies successful saving. Consent policy, transactions, database waiting, and E2E deadlines remain unchanged.
+
 Last-project restoration waits until the initial local work-list load settles; an earlier cloud-composed list must not consume that restoration attempt. Device and cloud catalogs may publish independently, without implying that local projects are ready.
 
 ```bash
