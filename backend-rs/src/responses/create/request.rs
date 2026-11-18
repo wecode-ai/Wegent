@@ -22,8 +22,7 @@ use crate::llm_proxy::CredentialRequest;
 use crate::state::AppState;
 
 use super::bot_config::{
-    BotConfigInput, build_bot_config, build_user_metadata, build_workspace, execution_backend_url,
-    git_fields,
+    BotConfigInput, backend_url, build_bot_config, build_user_metadata, build_workspace, git_fields,
 };
 use super::contexts;
 use super::dispatch::ExecutionRequest;
@@ -468,7 +467,6 @@ async fn build_request_with_runtime(
     generation: Option<&Value>,
     overrides: ExecutionOverrides<'_>,
 ) -> Result<ExecutionRequest, FastApiError> {
-    let backend_url = execution_backend_url()?;
     let ExecutionOverrides {
         runtime_model,
         created_git_repository,
@@ -1086,7 +1084,7 @@ async fn build_request_with_runtime(
         preload_skill_refs: super::skills::preload_skill_refs(&skills),
         auth_token,
         skill_identity_token,
-        backend_url,
+        backend_url: backend_url(),
         workspace,
         request_id: input.request_id.to_string(),
         message_id: Some(input.message_id),

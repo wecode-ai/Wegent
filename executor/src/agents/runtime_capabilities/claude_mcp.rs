@@ -81,12 +81,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn user_mcp_is_removed_when_unconfigured_and_can_be_enabled_again() {
+    fn optional_mcps_are_removed_when_unconfigured_and_can_be_enabled_again() {
         let home = tempfile::tempdir().unwrap();
+        let connector = json!({"name": "connector", "type": "http",
+            "url": "${{backend_api_url}}/mcp/connectors/sse",
+            "headers": {"Authorization": "Bearer ${{task_token}}"}});
         let mut request = ExecutionRequest {
+            auth_token: Some("synthetic-task-token".to_owned()),
             mcp_servers: vec![
                 json!({"name": "custom-example", "type": "http", "url": "${{task_data.user_mcps.example.services.storage.credentials.url}}"}),
                 json!({"name": "web", "type": "http", "url": "https://example.test/web"}),
+                connector.clone(),
             ],
             ..Default::default()
         };
@@ -104,8 +109,10 @@ mod tests {
         let path = home.path().join("mcp.json");
         let config: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         assert!(config["mcpServers"].get("custom-example").is_none());
+        assert!(config["mcpServers"].get("connector").is_none());
         assert!(config["mcpServers"].get("web").is_some());
 
+        request.backend_url = Some("https://first.example/api/".to_owned());
         request
             .extra
             .insert("task_data".to_owned(), configured.clone());
@@ -122,12 +129,15 @@ mod tests {
             spec.envs()[&variable],
             "https://example.test/table?token=synthetic-secret"
         );
+        let backend_variable = context_variable("backend_api_url");
+        assert_eq!(spec.envs()[&backend_variable], "https://first.example/api");
         assert!(!fs::read_to_string(&path)
             .unwrap()
             .contains("synthetic-secret"));
 
         // Disabling the service must remove its persisted reference on later turns.
         request.extra.clear();
+        request.backend_url = None;
         request.mcp_servers.clear();
         let spec = prepare(
             home.path(),
@@ -138,12 +148,20 @@ mod tests {
         .unwrap();
         let config: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         assert!(config["mcpServers"].get("custom-example").is_none());
+        assert!(config["mcpServers"].get("connector").is_none());
         assert!(config["mcpServers"].get("web").is_some());
         assert!(!spec.envs().contains_key(&variable));
+        assert!(!spec.envs().contains_key(&backend_variable));
+        assert!(!spec.envs().contains_key(&context_variable("task_token")));
 
+        request.backend_url = Some("https://second.example/deployment/api/".to_owned());
+        request.auth_token = Some("synthetic-next-token".to_owned());
         request.extra.insert("task_data".to_owned(), configured);
-        request.mcp_servers = vec![json!({"name": "custom-example", "type": "http",
-            "url": "${{task_data.user_mcps.example.services.storage.credentials.url}}"})];
+        request.mcp_servers = vec![
+            json!({"name": "custom-example", "type": "http",
+                "url": "${{task_data.user_mcps.example.services.storage.credentials.url}}"}),
+            connector,
+        ];
         let spec = prepare(
             home.path(),
             &request,
@@ -152,8 +170,17 @@ mod tests {
         )
         .unwrap();
         assert!(spec.envs().contains_key(&variable));
+        assert_eq!(
+            spec.envs()[&backend_variable],
+            "https://second.example/deployment/api"
+        );
+        assert_eq!(
+            spec.envs()[&context_variable("task_token")],
+            "synthetic-next-token"
+        );
         let config: Value = serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
         assert!(config["mcpServers"].get("custom-example").is_some());
+        assert!(config["mcpServers"].get("connector").is_some());
     }
 
     #[test]

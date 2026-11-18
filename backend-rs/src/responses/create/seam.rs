@@ -924,7 +924,6 @@ pub(crate) async fn dispatch_chat_turn(
     created_task: Option<crate::internal_callback::emitter::CreatedTask>,
     device_id: Option<&str>,
 ) -> Result<(), FastApiError> {
-    super::bot_config::ensure_execution_backend_url(Some(&request.backend_url))?;
     // `dispatcher.py:121-127`: resolve the device route before routing and
     // before the subtask turns RUNNING.
     let resolved_device = resolve_device_route_id(state, request, device_id).await?;

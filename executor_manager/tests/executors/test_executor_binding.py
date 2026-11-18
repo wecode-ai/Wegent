@@ -95,42 +95,25 @@ async def test_enqueue_accepts_binding_credential_only_from_dispatch_header(
     assert queued["metadata"]["backend_url"] == "https://backend.example/api"
 
 
+@pytest.mark.parametrize("request_id", ["new-turn", "pipeline-42-43"])
 @pytest.mark.parametrize(
-    "metadata",
+    "backend_context",
     [
-        None,
         {},
         {"backend_url": None},
         {"backend_url": ""},
         {"backend_url": " \t\n"},
-        {"backend_url": 42},
-        {"backend_url": False},
+        {"backend_url": "https://backend.example/deployment/api/"},
     ],
 )
-async def test_responses_reject_missing_backend_url_before_enqueue(metadata):
-    with patch(
-        "executor_manager.services.task_queue_service.TaskQueueService"
-    ) as queue:
-        async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=app), base_url="http://manager.example"
-        ) as client:
-            response = await client.post(
-                "/executor-manager/v1/responses",
-                json={"model": "test-model", "input": "hello", "metadata": metadata},
-            )
-
-    assert response.status_code == 422
-    assert response.json()["detail"] == "Execution request is missing backend_url"
-    queue.assert_not_called()
-
-
-@pytest.mark.parametrize("request_id", ["new-turn", "pipeline-42-43"])
-async def test_responses_preserve_backend_url_for_each_queue(request_id):
+async def test_responses_preserve_optional_backend_context_for_each_queue(
+    request_id, backend_context
+):
     metadata = {
         "task_id": 42,
         "subtask_id": 43,
         "request_id": request_id,
-        "backend_url": "https://backend.example/deployment/api/",
+        **backend_context,
     }
     with patch(
         "executor_manager.services.task_queue_service.TaskQueueService"

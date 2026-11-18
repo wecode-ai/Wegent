@@ -17,7 +17,7 @@ use crate::auth::UserRow;
 use crate::background_jobs::project::runtime_rpc;
 use crate::device_identity::resolve_runtime_route_identity;
 use crate::http_compat::FastApiError;
-use crate::responses::create::bot_config::execution_backend_url;
+use crate::responses::create::bot_config::backend_url;
 use crate::responses::create::tokens;
 use crate::state::AppState;
 
@@ -96,7 +96,7 @@ pub(super) async fn execution_request(
         FastApiError::internal()
     })?;
     let model_config = cloud_model_config(state, user_id, selection).await?;
-    assemble_execution_request(RuntimeExecutionInput {
+    Ok(assemble_execution_request(RuntimeExecutionInput {
         user: &user,
         user_id,
         task_id,
@@ -107,7 +107,7 @@ pub(super) async fn execution_request(
         model_config,
         auth_token,
         skill_identity_token,
-    })
+    }))
 }
 
 pub(super) struct RuntimeExecutionInput<'a> {
@@ -124,10 +124,7 @@ pub(super) struct RuntimeExecutionInput<'a> {
 }
 
 /// Assemble the execution context shared by new conversations and follow-up turns.
-pub(super) fn assemble_execution_request(
-    input: RuntimeExecutionInput<'_>,
-) -> Result<Value, FastApiError> {
-    let backend_url = execution_backend_url()?;
+pub(super) fn assemble_execution_request(input: RuntimeExecutionInput<'_>) -> Value {
     let RuntimeExecutionInput {
         user,
         user_id,
@@ -236,7 +233,7 @@ pub(super) fn assemble_execution_request(
         "interactive_form_answer" => json!(null),
         "auth_token" => json!(auth_token),
         "skill_identity_token" => json!(skill_identity_token),
-        "backend_url" => json!(backend_url),
+        "backend_url" => json!(backend_url()),
         "attachments" => json!([]),
         "is_subscription" => json!(false),
         "system_mcp_config" => json!(null),
@@ -265,7 +262,7 @@ pub(super) fn assemble_execution_request(
         "updated_at" => json!(null),
         "trace_context" => json!(null),
     }
-    Ok(Value::Object(object))
+    Value::Object(object)
 }
 
 /// `_runtime_task_create_payload` for the direct Wework path.

@@ -197,8 +197,7 @@ fn assembles_the_runtime_create_payload_top_level() {
         model_config: json!({}),
         auth_token: "test-task-token".into(),
         skill_identity_token: "test-skill-token".into(),
-    })
-    .expect("execution request");
+    });
     assert_eq!(
         execution["backend_url"],
         crate::responses::create::bot_config::backend_url()
@@ -232,30 +231,6 @@ fn assembles_the_runtime_create_payload_top_level() {
             .as_str()
             .is_some_and(|url| !url.trim().is_empty())
     );
-}
-
-#[test]
-fn rejects_runtime_execution_requests_without_backend_url() {
-    for execution in [
-        json!({}),
-        json!({"backend_url": null}),
-        json!({"backend_url": ""}),
-        json!({"backend_url": " \t\n"}),
-        json!({"backend_url": 42}),
-    ] {
-        let error = crate::responses::create::bot_config::ensure_execution_backend_url(
-            execution.get("backend_url").and_then(Value::as_str),
-        )
-        .expect_err("missing backend_url must be rejected");
-        assert_eq!(
-            error.status(),
-            brz_http_server::StatusCode::INTERNAL_SERVER_ERROR
-        );
-        assert_eq!(
-            error.detail_message(),
-            Some("Execution request is missing backend_url")
-        );
-    }
 }
 
 #[test]

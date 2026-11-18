@@ -55,10 +55,10 @@ pub fn bind_context(
     let mut unconfigured = Vec::new();
     for (name, server) in servers.iter_mut() {
         normalize_context_references(server, request.auth_token.as_deref())?;
-        if let Some(path) = missing_user_mcp_context(server, &context)? {
+        if let Some(path) = missing_optional_mcp_context(server, &context)? {
             let mut fields = crate::logging::task_fields(&request.task_id, &request.subtask_id);
             fields.extend([("server_name", name.clone()), ("context_path", path)]);
-            crate::logging::log_executor_event("unconfigured user MCP skipped", &fields);
+            crate::logging::log_executor_event("unconfigured MCP skipped", &fields);
             unconfigured.push(name.clone());
             continue;
         }
@@ -112,14 +112,18 @@ fn decode_context_path(encoded: &str) -> Result<String, String> {
     String::from_utf8(bytes).map_err(|_| "Invalid MCP context reference".to_owned())
 }
 
-// User-managed integrations are optional. Apply this to both incoming templates
-// and persisted references so removing credentials also removes stale services.
-fn missing_user_mcp_context(server: &mut Value, context: &Value) -> Result<Option<String>, String> {
+// User integrations and backend-dependent MCPs are optional for execution.
+// Check incoming and persisted references before binding any credentials.
+fn missing_optional_mcp_context(
+    server: &mut Value,
+    context: &Value,
+) -> Result<Option<String>, String> {
     let mut missing = None;
     visit_strings(server, &mut |text| {
         for captures in env_reference().captures_iter(text) {
             let path = decode_context_path(&captures[1])?;
-            if path.starts_with("task_data.user_mcps.")
+            if (path.starts_with("task_data.user_mcps.")
+                || matches!(path.as_str(), "backend_url" | "backend_api_url"))
                 && get_nested_value(Some(context), &path)
                     .filter(|value| !value.is_null())
                     .filter(|value| !value.as_str().is_some_and(|text| text.trim().is_empty()))
@@ -280,10 +284,44 @@ mod tests {
     }
 
     #[test]
+    fn missing_backend_context_only_skips_dependent_mcps() {
+        for backend_url in [None, Some(""), Some(" \t\n")] {
+            for path in ["backend_url", "backend_api_url"] {
+                for reference in [
+                    format!("${{{{{path}}}}}"),
+                    format!("${{{}}}", context_variable(path)),
+                ] {
+                    let request = ExecutionRequest {
+                        backend_url: backend_url.map(str::to_owned),
+                        auth_token: Some("synthetic-token".to_owned()),
+                        ..Default::default()
+                    };
+                    let mut servers = BTreeMap::from([
+                        (
+                            "connector".to_owned(),
+                            json!({
+                                "url": format!("{reference}/mcp/connectors/sse"),
+                                "headers": {"Authorization": "Bearer ${{task_token}}"},
+                            }),
+                        ),
+                        ("web".to_owned(), json!({"url": "https://example.test/mcp"})),
+                    ]);
+                    let mut environment = BTreeMap::new();
+                    bind_context(&mut servers, &request, &mut environment).unwrap();
+                    assert_eq!(servers.len(), 1);
+                    assert!(servers.contains_key("web"));
+                    assert!(environment.is_empty());
+                    resolve_context(servers.get_mut("web").unwrap(), &environment).unwrap();
+                }
+            }
+        }
+    }
+
+    #[test]
     fn missing_required_context_still_fails() {
         let mut servers = BTreeMap::from([(
             "required".to_owned(),
-            json!({"url": "${{backend_url}}/mcp"}),
+            json!({"url": "https://example.test/mcp", "headers": {"Authorization": "Bearer ${{task_token}}"}}),
         )]);
         assert_eq!(
             bind_context(
@@ -292,7 +330,7 @@ mod tests {
                 &mut BTreeMap::new()
             )
             .unwrap_err(),
-            "Missing MCP execution context: backend_url"
+            "Missing MCP execution context: task_token"
         );
     }
 

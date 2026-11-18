@@ -212,27 +212,6 @@ pub fn backend_url() -> String {
         .unwrap_or_else(|| "http://localhost:8000/api".to_string())
 }
 
-/// Backend-managed turns require the API origin before they can be dispatched.
-pub(crate) fn execution_backend_url() -> Result<String, crate::http_compat::FastApiError> {
-    let url = backend_url();
-    ensure_execution_backend_url(Some(&url))?;
-    Ok(url)
-}
-
-pub(crate) const MISSING_EXECUTION_BACKEND_URL: &str = "Execution request is missing backend_url";
-
-pub(crate) fn ensure_execution_backend_url(
-    url: Option<&str>,
-) -> Result<(), crate::http_compat::FastApiError> {
-    if url.is_some_and(|url| !url.trim().is_empty()) {
-        return Ok(());
-    }
-    Err(crate::http_compat::FastApiError::detail(
-        brz_http_server::StatusCode::INTERNAL_SERVER_ERROR,
-        MISSING_EXECUTION_BACKEND_URL,
-    ))
-}
-
 /// The `metadata` knowledge fields the recorded dispatch carries. The concrete
 /// ids / prompt come from the KB resolution
 /// (`app/services/chat/preprocessing/contexts.py` + `selected_knowledge`),

@@ -4,12 +4,17 @@
 use super::*;
 
 #[test]
-fn unconfigured_user_mcp_is_removed_from_runtime_and_persisted_config() {
+fn unconfigured_mcps_are_removed_from_runtime_and_persisted_config() {
     let home = tempfile::tempdir().unwrap();
+    let connector = json!({"name": "connector", "type": "http",
+        "url": "${{backend_api_url}}/mcp/connectors/sse",
+        "headers": {"Authorization": "Bearer ${{task_token}}"}});
     let mut request = ExecutionRequest {
+        auth_token: Some("synthetic-task-token".to_owned()),
         mcp_servers: vec![
             json!({"name": "custom-example", "type": "http", "url": "${{task_data.user_mcps.example.services.docs.credentials.url}}"}),
             json!({"name": "web", "type": "http", "url": "https://example.test/web"}),
+            connector.clone(),
         ],
         ..Default::default()
     };
@@ -17,7 +22,9 @@ fn unconfigured_user_mcp_is_removed_from_runtime_and_persisted_config() {
     prepare(home.path(), &request, &mut runtime).unwrap();
     assert!(runtime.contains_key("mcp_servers.web"));
     assert!(!runtime.contains_key("mcp_servers.custom-example"));
+    assert!(!runtime.contains_key("mcp_servers.connector"));
 
+    request.backend_url = Some("https://first.example/api/".to_owned());
     request.extra.insert("task_data".to_owned(), json!({
         "user_mcps": {"example": {"services": {"docs": {
             "enabled": true, "credentials": {"url": "https://example.test/docs?token=synthetic-secret"}
@@ -29,19 +36,44 @@ fn unconfigured_user_mcp_is_removed_from_runtime_and_persisted_config() {
         runtime["mcp_servers.custom-example"]["url"],
         "https://example.test/docs?token=synthetic-secret"
     );
+    assert_eq!(
+        runtime["mcp_servers.connector"]["url"],
+        "https://first.example/api/mcp/connectors/sse"
+    );
     let path = home.path().join("config.toml");
     assert!(!fs::read_to_string(&path)
         .unwrap()
         .contains("synthetic-secret"));
 
     request.extra.clear();
+    request.backend_url = None;
     request.mcp_servers.clear();
     let mut runtime = Map::new();
     prepare(home.path(), &request, &mut runtime).unwrap();
     assert!(!runtime.contains_key("mcp_servers.custom-example"));
+    assert!(!runtime.contains_key("mcp_servers.connector"));
     assert!(runtime.contains_key("mcp_servers.web"));
-    let persisted: Value = toml_edit::de::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+    let persisted: Value = toml_edit::de::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
     assert!(persisted["mcp_servers"].get("custom-example").is_none());
+    assert!(persisted["mcp_servers"].get("connector").is_none());
+
+    request.backend_url = Some("https://second.example/deployment/api/".to_owned());
+    request.auth_token = Some("synthetic-next-token".to_owned());
+    request.mcp_servers = vec![connector];
+    let mut runtime = Map::new();
+    prepare(home.path(), &request, &mut runtime).unwrap();
+    assert_eq!(
+        runtime["mcp_servers.connector"]["url"],
+        "https://second.example/deployment/api/mcp/connectors/sse"
+    );
+    assert_eq!(
+        runtime["mcp_servers.connector"]["http_headers"]["Authorization"],
+        "Bearer synthetic-next-token"
+    );
+    assert!(runtime.contains_key("mcp_servers.web"));
+    let persisted = fs::read_to_string(path).unwrap();
+    assert!(!persisted.contains("second.example"));
+    assert!(!persisted.contains("synthetic-next-token"));
 }
 
 #[test]

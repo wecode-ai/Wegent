@@ -1475,11 +1475,6 @@ async def openai_responses(http_request: Request):
 
     # Extract task identification from metadata
     metadata = request_data.get("metadata", {})
-    backend_url = metadata.get("backend_url") if isinstance(metadata, dict) else None
-    if not isinstance(backend_url, str) or not backend_url.strip():
-        raise HTTPException(
-            status_code=422, detail="Execution request is missing backend_url"
-        )
     # Only the backend-to-manager authorization header carries this grant.
     metadata.pop(BINDING_TOKEN, None)
     scheme, _, credential = http_request.headers.get("Authorization", "").partition(" ")
