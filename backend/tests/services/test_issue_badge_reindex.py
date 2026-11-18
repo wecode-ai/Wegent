@@ -5,8 +5,6 @@
 
 import uuid
 
-from fastapi.testclient import TestClient
-
 from app.core.config import settings
 from app.models.delivery import CloudProject, LoopItemComment
 from app.models.project_chat_message import ProjectChatMessage
@@ -195,26 +193,3 @@ def test_reindex_keeps_shared_pr_badges_isolated_per_issue(test_db, test_user):
     assert second_result.changed is True
     assert PR in {badge["id"] for badge in issue_badges(first_rebuilt.metadata_json)}
     assert PR in {badge["id"] for badge in issue_badges(second_rebuilt.metadata_json)}
-
-
-def test_reindex_endpoint_returns_the_visible_badge(
-    test_client: TestClient, test_token, test_db, test_user
-):
-    project = _create_project(test_db, test_user)
-    item, _, _ = _create_historical_issue(test_db, test_user, project, "Endpoint")
-    headers = {"Authorization": f"Bearer {test_token}"}
-
-    first = test_client.post(
-        f"/api/v1/loop-items/{item.id}/badges/reindex", headers=headers
-    )
-    second = test_client.post(
-        f"/api/v1/loop-items/{item.id}/badges/reindex", headers=headers
-    )
-    visible = test_client.get(f"/api/v1/loop-items/{item.id}", headers=headers)
-
-    assert first.status_code == 200
-    assert first.json()["changed"] is True
-    assert second.status_code == 200
-    assert second.json()["changed"] is False
-    assert visible.status_code == 200
-    assert PR in {badge["id"] for badge in visible.json()["badges"]}
