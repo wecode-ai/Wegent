@@ -302,7 +302,11 @@ pub(super) async fn handle_for_token(
             status: StatusCode::NOT_FOUND,
             detail: "unknown or expired local model proxy token".to_owned(),
         })?;
-        authorize_task_thread(registered, &body)?;
+        if let Err(error) = authorize_task_thread(registered, &body) {
+            let bound_threads = registered.thread_ids.len();
+            request_identity::log_task_thread_rejection(&registry, &token, &body, bound_threads);
+            return Err(error);
+        }
         registered.last_used = Instant::now();
         (
             registered.upstream.clone(),

@@ -159,6 +159,53 @@ pub(super) fn authorize_task_thread(
     })
 }
 
+pub(super) fn log_task_thread_rejection(
+    registry: &LocalModelProxyRegistry,
+    token: &str,
+    body: &[u8],
+    bound_threads: usize,
+) {
+    let identity = request_thread_identity(body);
+    let route_scope = registry
+        .tokens_by_scope
+        .iter()
+        .find_map(|(scope, registered)| (registered.as_str() == token).then_some(scope.as_str()))
+        .unwrap_or("unknown");
+    let matching_routes = identity.as_ref().map(|identity| {
+        registry
+            .routes
+            .values()
+            .filter(|route| route.thread_ids.contains(&identity.thread_id))
+            .count()
+    });
+    log_executor_event(
+        "local model proxy task thread rejected",
+        &[
+            ("route_scope", route_scope.to_owned()),
+            (
+                "thread_id",
+                identity
+                    .as_ref()
+                    .map(|value| value.thread_id.clone())
+                    .unwrap_or_else(|| "unknown".to_owned()),
+            ),
+            (
+                "parent_thread_id",
+                identity
+                    .and_then(|value| value.parent_thread_id)
+                    .unwrap_or_else(|| "unknown".to_owned()),
+            ),
+            ("bound_threads", bound_threads.to_string()),
+            (
+                "matching_thread_routes",
+                matching_routes
+                    .map(|count| count.to_string())
+                    .unwrap_or_else(|| "unknown".to_owned()),
+            ),
+        ],
+    );
+}
+
 pub(super) fn request_thread_identity(body: &[u8]) -> Option<RequestThreadIdentity> {
     let request = serde_json::from_slice::<Value>(body).ok()?;
     let metadata = request.get("client_metadata")?.as_object()?;

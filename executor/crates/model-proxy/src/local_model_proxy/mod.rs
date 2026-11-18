@@ -692,13 +692,30 @@ pub fn bind_prediction_thread(
     if parents.next().is_some() {
         return Err("prediction parent has multiple local model proxy routes".to_owned());
     }
+    let route_scope = registry
+        .tokens_by_scope
+        .iter()
+        .find_map(|(scope, registered)| (registered == &token).then_some(scope.clone()))
+        .unwrap_or_else(|| "unknown".to_owned());
     let route = registry
         .routes
         .get_mut(&token)
         .ok_or("prediction model proxy route is not registered")?;
+    let source_registered = route.thread_ids.contains(source_thread_id);
     route.thread_ids.insert(thread_id.to_owned());
     route.active_references += 1;
     route.last_used = Instant::now();
+    log_executor_event(
+        "local model proxy bound prediction thread",
+        &[
+            ("route_scope", route_scope),
+            ("source_thread_id", source_thread_id.to_owned()),
+            ("prediction_thread_id", thread_id.to_owned()),
+            ("prepared_route", (token == prepared_token).to_string()),
+            ("source_registered", source_registered.to_string()),
+            ("bound_threads", route.thread_ids.len().to_string()),
+        ],
+    );
     Ok(token)
 }
 
