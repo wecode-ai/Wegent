@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { Buffer } from 'node:buffer'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
+import { readPreparedQuestionAttachmentPath } from './model-tool-output.mjs'
 import {
   ACTIVE_WORKBENCH_SELECTOR,
   CLOUD_DEVICE_ID,
@@ -55,9 +56,7 @@ export function createCloudQuestionAttachments({ modelResponseTimeoutMs }) {
         )
       if (!requestContainsToolOutput(body, 'cloud-question-read')) {
         const answer = JSON.parse(toolOutputText(body, 'cloud-question-files'))
-        const context = answer.answers.brief.answers.join('\n')
-        const path = context.match(/Local File Path: ([^\n]+)/)?.[1]
-        assert.ok(path, 'The cloud blocking answer must contain a prepared file path')
+        const path = readPreparedQuestionAttachmentPath(answer.answers.brief.answers, FILE)
         const quoted = `'${path.replaceAll("'", "'\\''")}'`
         return selectedToolCall(
           'cloud-question-read',
@@ -67,7 +66,10 @@ export function createCloudQuestionAttachments({ modelResponseTimeoutMs }) {
           })
         )
       }
-      assert.ok(text.includes(CONTENT), 'The real cloud Executor must read the uploaded bytes')
+      assert.ok(
+        toolOutputText(body, 'cloud-question-read').includes(CONTENT),
+        'The real cloud Executor must read the uploaded bytes'
+      )
       verified = true
       return [assistantMessage(DONE)]
     },

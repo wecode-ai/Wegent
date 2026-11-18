@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { Buffer } from 'node:buffer'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
+import { modelRequestTexts, readPreparedQuestionAttachmentPath } from './model-tool-output.mjs'
 import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
@@ -13,6 +14,7 @@ import {
   requestContainsToolOutput,
   selectedToolCall,
   selectTool,
+  toolOutputText,
 } from './response-protocol.mjs'
 
 export const ANSWER_EDITOR_PROMPT = 'WEWORK_QUESTION_ANSWER_EDITOR'
@@ -81,10 +83,13 @@ export function createQuestionAnswerEditorRegression({ workspacePath }) {
             questions: [{ title: 'Provide a multiline answer and the brief file.' }],
           })
         )
-      if (!text.includes(ANSWER)) return [assistantMessage('Waiting for the answer and file.')]
+      const groupedReply = modelRequestTexts(body, 'user').match(
+        /^Question answers:\n(\{[\s\S]*?\n\})/m
+      )?.[1]
+      const answers = groupedReply ? (JSON.parse(groupedReply).question_1?.answers ?? []) : []
+      if (!answers.includes(ANSWER)) return [assistantMessage('Waiting for the answer and file.')]
       if (!requestContainsToolOutput(body, 'answer-editor-read')) {
-        const path = text.match(/## question-editor-brief\.txt\nLocal File Path: ([^\n]+)/)?.[1]
-        assert.ok(path, 'The real question reply must materialize an attachment path')
+        const path = readPreparedQuestionAttachmentPath(answers, FILE)
         const quoted =
           process.platform === 'win32'
             ? `'${path.replaceAll("'", "''")}'`
@@ -97,7 +102,10 @@ export function createQuestionAnswerEditorRegression({ workspacePath }) {
           })
         )
       }
-      assert.ok(text.includes(CONTENT), 'The executor must read the pasted file bytes successfully')
+      assert.ok(
+        toolOutputText(body, 'answer-editor-read')?.includes(CONTENT),
+        'The executor must read the pasted file bytes successfully'
+      )
       readFile = true
       if (!requestContainsToolOutput(body, 'answer-editor-skip'))
         return selectedToolCall(

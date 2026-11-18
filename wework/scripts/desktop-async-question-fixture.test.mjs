@@ -99,3 +99,59 @@ for (const fixture of [
     assert.equal(message.item.content[0].text, expected)
   })
 }
+
+test('answer editor model decodes grouped multiline answers before requesting the real file read', async () => {
+  const { createQuestionAnswerEditorRegression, ANSWER_EDITOR_PROMPT } =
+    await import('../e2e/desktop/modules/question-answer-editor.mjs')
+  const fixture = createQuestionAnswerEditorRegression({ workspacePath: '/unused' })
+  const path = '/workspace/attachments/question-editor-brief.txt'
+  const user = text => ({ role: 'user', content: [{ type: 'input_text', text }] })
+  const answers = {
+    question_1: {
+      answers: [
+        'First line\nSecond line',
+        `\n\n<attachment>\nAvailable attachments:\n- question-editor-brief.txt (text/plain, 26 bytes): ${path}\n</attachment>`,
+      ],
+    },
+  }
+  const body = {
+    tools: ['exec_command', 'request_user_input_async'].map(name => ({
+      type: 'function',
+      name,
+      parameters: { type: 'object' },
+    })),
+    input: [
+      user(ANSWER_EDITOR_PROMPT),
+      {
+        type: 'function_call_output',
+        call_id: 'answer-editor-question',
+        output: JSON.stringify({ accepted: true }),
+      },
+      user(
+        `Question answers:\n${JSON.stringify(answers, null, 2)}\n\n# User-provided text attachments\n\n## question-editor-brief.txt\nLocal File Path: ${path}\nMIME Type: text/plain\nSize: 26 bytes\n\nContent:\nWEWORK_QUESTION_FILE_BYTES`
+      ),
+    ],
+  }
+  const events = fixture.respond(body)
+  const read = events.find(
+    event =>
+      event.type === 'response.output_item.done' && event.item?.call_id === 'answer-editor-read'
+  )?.item
+  assert.ok(read, 'The decoded multiline answer must advance to an actual file read')
+  assert.equal(read.name, 'exec_command')
+  assert.ok(JSON.parse(read.arguments).cmd.endsWith(`'${path}'`))
+  const readResult = output => ({
+    ...body,
+    input: [...body.input, { type: 'function_call_output', call_id: 'answer-editor-read', output }],
+  })
+  assert.throws(
+    () => fixture.respond(readResult('File read failed')),
+    /The executor must read the pasted file bytes successfully/
+  )
+  assert.ok(
+    fixture
+      .respond(readResult('WEWORK_QUESTION_FILE_BYTES'))
+      .some(event => event.item?.call_id === 'answer-editor-skip'),
+    'Only the actual file read must advance to the optional question'
+  )
+})

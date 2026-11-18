@@ -3,6 +3,7 @@ import { expect, test } from 'vitest'
 import {
   modelRequestTexts,
   modelToolOutputText,
+  readPreparedQuestionAttachmentPath,
 } from '../e2e/desktop/modules/model-tool-output.mjs'
 import { selectedToolCall } from '../e2e/desktop/modules/model-tool-calls.mjs'
 import {
@@ -340,4 +341,19 @@ test('keeps actual structured results and native permission-denial text', async 
       }),
     })
   ).toEqual([denied])
+})
+
+test('reads the named question file from prepared attachment lists without crossing files', () => {
+  const path = "/tmp/question's files/cloud-question-brief.txt"
+  const answers = [
+    'Review the brief\nPreserve both lines',
+    `\n\n<attachment>\nAvailable attachments:\n- other.txt (text/plain, 4 bytes): /tmp/other.txt\n- cloud-question-brief.txt (text/plain, 39 bytes): ${path}\n</attachment>`,
+  ]
+  expect(readPreparedQuestionAttachmentPath(answers, 'cloud-question-brief.txt')).toBe(path)
+  expect(() => readPreparedQuestionAttachmentPath(answers, 'missing.txt')).toThrow(
+    'Expected one prepared question attachment'
+  )
+  expect(() =>
+    readPreparedQuestionAttachmentPath([...answers, answers[1]], 'cloud-question-brief.txt')
+  ).toThrow('Expected one prepared question attachment')
 })
