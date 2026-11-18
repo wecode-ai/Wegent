@@ -440,3 +440,5 @@ Playwright 用例使用 `e2e/fixtures/collected-test` 的自动采集 fixture，
 浏览器采集绑定整个 BrowserContext 的请求、响应、异常和控制台事件；新建页面及弹窗注册崩溃、关闭和 WebSocket 观察。WebSocket 使用独立连接 ID 记录打开、socketerror 和关闭，不记录帧载荷。测试收尾先关闭本轮 context，再确认日志 checkpoint，覆盖页面与连接的关闭阶段。
 
 首次目录发布也是明确的目录需求：Backend 在尚未保存有效 `runnerCatalog` 时通过探测要求读取一次，避免任务准入依赖目录、目录读取又依赖任务入队的循环。已发布的有效空目录不会触发重复空闲读取；后续候选探测仍沿用设备授权和领取前复核。
+
+模型代理请求日志用本地 `request_id` 关联请求开始与上游响应头。响应头记录区分 `client_build_ms`（HTTP 客户端构建）与 `upstream_wait_ms`（发送、等待及既有重试的合计），总 `elapsed_ms` 另含请求转换等前置阶段；这些时间不能等同于上游服务处理时间。未取得响应头时保留阶段未知，不补零。
