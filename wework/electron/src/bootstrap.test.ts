@@ -152,6 +152,7 @@ beforeEach(() => {
   vi.stubEnv('HOME', startup.home)
   vi.stubEnv('WEGENT_WORKBENCH_HOME', '')
   vi.stubEnv('WEWORK_USER_DATA_DIR', '')
+  vi.stubEnv('WEWORK_APP_HOT_RELOAD', '')
   vi.stubEnv('WEWORK_RELEASE_ROOT', '')
   vi.stubEnv('WEWORK_RELEASE_SUPERVISED', '')
   vi.stubEnv('WEWORK_RELEASE_RECOVERY', '')
@@ -169,6 +170,22 @@ afterEach(() => {
   if (resourcesPathDescriptor)
     Object.defineProperty(process, 'resourcesPath', resourcesPathDescriptor)
   else Reflect.deleteProperty(process, 'resourcesPath')
+})
+
+test('renamed development bundles start main without a release launcher or release records', async () => {
+  vi.stubEnv('WEWORK_APP_HOT_RELOAD', '1')
+  startup.acquireStartup.mockRejectedValue(
+    new Error('Development bundles have no release launcher')
+  )
+
+  await import('./bootstrap.js')
+
+  expect(startup.main).toHaveBeenCalledOnce()
+  expect(startup.acquireStartup).not.toHaveBeenCalled()
+  expect(startup.roots).toEqual([])
+  expect(startup.afterStopPrepare).not.toHaveBeenCalled()
+  expect(startup.restoreData).not.toHaveBeenCalled()
+  expect(startup.showRecovery).not.toHaveBeenCalled()
 })
 
 test('a concurrent recovery entry waits before reading or restoring the shared transaction', async () => {
