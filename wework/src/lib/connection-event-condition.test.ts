@@ -24,6 +24,7 @@ describe('event conditions', () => {
   })
   test('distinguishes missing metadata from an unfiltered wait', () => {
     expect(connectionEventCondition(undefined, t)).toBe('未提供等待条件')
+    expect(connectionEventCondition(null, t)).toBe('来源中的任意新事件')
     expect(connectionEventCondition({}, t)).toBe('来源中的任意新事件')
   })
 })

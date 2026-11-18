@@ -1,3 +1,4 @@
+import { preferredEventSubscription } from '@/lib/sidebar-event-state'
 import { isRuntimeTaskExecutionRunning } from '@/features/workbench/runtimeTaskLifecycle/projection'
 import { SidebarConnectionEventStatus } from './SidebarConnectionEventStatus'
 import { connectionEventSubscriptions } from '@/lib/runtime-connection-events'
@@ -1358,11 +1359,7 @@ function RuntimeTaskRow({
   const eventSubscription = useMemo(() => {
     if (eventRunning) return undefined
     const subscriptions = connectionEventSubscriptions(eventSubscriptions)
-    return (
-      subscriptions.find(
-        item => item.error_code || ['error', 'needs_attention'].includes(item.status)
-      ) ?? subscriptions[0]
-    )
+    return preferredEventSubscription(subscriptions)
   }, [eventRunning, eventSubscriptions])
   const rateLimitWaiting = useRuntimeTaskRateLimitWait(taskAddress)
   const hasActiveGoal = taskLifecycle?.goalStatus === 'active'

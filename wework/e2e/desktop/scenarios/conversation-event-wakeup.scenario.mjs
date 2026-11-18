@@ -379,6 +379,21 @@ export function createDesktopScenario(options) {
             }
           }
           await saveEvents()
+          if (phase === 'workflow') {
+            const savedAt = Date.now()
+            await waitForValue(
+              getTask,
+              result =>
+                result.task.runtimeHandle?.connectionEventSubscriptions?.some(
+                  item =>
+                    item.subscription_key === `${MARKER}_${phase}` &&
+                    !item.error_code &&
+                    item.last_collected_at >= savedAt
+                ),
+              'The host must collect this saved workflow batch before the negative observation',
+              30000
+            )
+          }
           if (phase !== 'pause') {
             await waitForValue(
               getTask,

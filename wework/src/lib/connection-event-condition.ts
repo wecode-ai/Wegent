@@ -2,6 +2,7 @@ type Translate = (key: string, fallback: string) => string
 
 /** Describe the actual predicate, rather than a separate model-authored promise. */
 export function connectionEventCondition(match: unknown, t: Translate): string {
+  if (match === null) return t('workbench.event_condition_any', '来源中的任意新事件')
   if (!match || typeof match !== 'object' || Array.isArray(match))
     return t('workbench.event_condition_unknown', '未提供等待条件')
   const labels: Record<string, string> = {

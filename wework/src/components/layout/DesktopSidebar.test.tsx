@@ -208,7 +208,7 @@ describe('DesktopSidebar', () => {
   test.each([
     ['armed', false, '等待事件'],
     ['pending', false, '事件已到达，等待继续'],
-    ['error', false, '事件监听异常'],
+    ['error', false, '事件继续执行遇到问题，请查看会话'],
     ['cancelled', false, null],
     ['armed', true, null],
   ] as const)('event subscription sidebar status %s running=%s', async (status, running, label) => {
