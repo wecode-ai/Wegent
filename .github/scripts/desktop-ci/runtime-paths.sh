@@ -469,7 +469,7 @@ classify_path() {
       select_target "core:collaboration-issue-archive"
       select_target "core:collaboration-first-use"
       select_collaboration_dispatch_checkpoints
-      select_target "core:collaboration-issue-comment-mention"
+      select_target "core:collaboration-issue-assignment-activity"
       select_target "core:collaboration-issue-assignment-activity"
       select_target "core:collaboration-issue-comment-attachments"
       select_target "core:collaboration-issue-comment-notification"

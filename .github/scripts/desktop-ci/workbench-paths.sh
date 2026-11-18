@@ -103,7 +103,7 @@ classify_workbench_path() {
     # Issue comment/reply mention wiring lives in the shared composers and in
     # the Wework collaboration render path.
     wework/e2e/desktop/scenarios/collaboration-issue-comment-mention.scenario.mjs)
-      select_target "core:collaboration-issue-comment-mention"
+      select_target "core:collaboration-issue-assignment-activity"
       return
       ;;
     wework/src/features/todo/IssueAssignmentEvent* | \

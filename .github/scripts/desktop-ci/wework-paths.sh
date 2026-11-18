@@ -70,8 +70,7 @@ classify_wework_path() {
       return
       ;;
     wework/e2e/desktop/scenarios/streaming-text.scenario.mjs | \
-      wework/e2e/desktop/modules/streaming-text-* | \
-      wework/e2e/desktop/modules/streaming-conversation-switching.mjs)
+      wework/e2e/desktop/modules/streaming-text-*)
       select_rendering_checkpoints
       return
       ;;

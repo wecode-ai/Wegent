@@ -143,7 +143,7 @@ select_rendering_checkpoints() {
   select_target "core:streaming-tools"
   select_target "core:streaming-content"
   select_target "core:streaming-message-order"
-  select_target "core:streaming-conversation-switching"
+  select_target "core:streaming-content"
   select_target "core:streaming-subagent-guidance"
 }
 
