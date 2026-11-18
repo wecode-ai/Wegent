@@ -213,6 +213,10 @@ export function createDesktopScenario({
         })
         assert.equal(failedReceipt.state, 'failed')
         await openStandInDetails(control)
+        await control.command('waitFor', '[data-testid="stand-in-status-open"]', {
+          visible: true,
+          timeoutMs: PROCESSING_NOTICE_TIMEOUT_MS,
+        })
         await control.command('clickWhenEnabled', '[data-testid="stand-in-status-open"]')
         await control.command('waitFor', '[data-testid="stand-in-status-dialog"]')
         await control.command('waitFor', '[data-testid="stand-in-processing-check"]', {
