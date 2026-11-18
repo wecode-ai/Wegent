@@ -740,3 +740,9 @@ Wework runtime task 与项目空间任务绑定后，状态同步只保留一条
 - 不要在布局、pane hook 或组件中重新计算任务运行、turn 活跃、busy 或未读状态。
 - 不要新增独立的 `isSending`、`isRunning`、`isStreaming` React state；新的外部事实必须通过 Store 事件路由进入状态机。
 - runtime work 与消息状态冲突时，不允许在 UI 组件里临时覆盖显示，也不允许新增 fallback 结算；必须修主路径。
+
+## 流式文本的位置与完成渲染
+
+过程文本和计划块的 `content_delta` 使用 `content_offset` 标记块内的 Unicode 码点位置，不使用 UTF-8 字节数或 JavaScript UTF-16 长度。Executor 合并相邻增量时保留第一段的位置；非连续增量不能拼接成一个事件。界面复用现有的位置合并逻辑，跳过历史快照已包含的前缀，只追加尚未显示的后缀，不能根据文字相同与否去重合法的重复内容。
+
+普通回答和过程文本完成时继续使用同一分块 Markdown 渲染树。正文未变时，完成状态不应重建普通文本的解析插件或重新解析已有块；未闭合 Markdown、图表和引用标记仍按各自语义收尾。`e2e:desktop --segment streaming-content` 覆盖真实历史先恢复、增量后送达的顺序，并检查过程文本完成时保留已渲染段落。
