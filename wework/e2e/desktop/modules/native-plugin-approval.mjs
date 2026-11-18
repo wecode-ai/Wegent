@@ -279,6 +279,10 @@ async function recordNativeDecisionDiagnostics(pid, window, allow, directory, op
   )
 }
 
+function isVanishedX11Window(error) {
+  return error.code === 1 && /BadWindow \(invalid Window parameter\)/.test(error.stderr ?? '')
+}
+
 async function findLinuxModal(pid, options) {
   const deadline = Date.now() + options.timeout
   const remaining = () => {
@@ -288,12 +292,18 @@ async function findLinuxModal(pid, options) {
     return { ...options, timeout }
   }
   while (Date.now() < deadline) {
-    const { stdout } = await execute(
-      'xdotool',
-      ['search', '--all', '--sync', '--onlyvisible', '--pid', String(pid)],
-      remaining()
-    )
-    const windows = stdout.trim().split(/\s+/).filter(Boolean)
+    let windows = []
+    try {
+      const { stdout } = await execute(
+        'xdotool',
+        ['search', '--all', '--sync', '--onlyvisible', '--pid', String(pid)],
+        remaining()
+      )
+      windows = stdout.trim().split(/\s+/).filter(Boolean)
+    } catch (error) {
+      // X_QueryTree can encounter a disappearing window during PID enumeration.
+      if (!isVanishedX11Window(error)) throw error
+    }
     // search --name reads only WM_NAME in Ubuntu's xdotool; GTK uses _NET_WM_NAME.
     // getwindowname resolves that EWMH UTF-8 property while preserving PID ownership.
     const titles = await Promise.all(
@@ -303,8 +313,7 @@ async function findLinuxModal(pid, options) {
           return { window, title: stdout.trim() }
         } catch (error) {
           // X11 windows can disappear between PID enumeration and property reads.
-          if (error.code === 1 && /BadWindow \(invalid Window parameter\)/.test(error.stderr ?? ''))
-            return null
+          if (isVanishedX11Window(error)) return null
           throw error
         }
       })

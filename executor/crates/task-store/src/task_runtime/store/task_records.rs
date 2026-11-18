@@ -123,6 +123,36 @@ impl LocalTaskStore {
         input: TaskCreate,
         options: super::super::TaskCreateOptions,
     ) -> Result<LoopItem, TaskRuntimeError> {
+        self.create_task_transaction(project_id, input, options, None)
+    }
+
+    pub fn create_task_with_receipt(
+        &self,
+        project_id: &str,
+        input: TaskCreate,
+        start_at: Option<String>,
+        due_at: Option<String>,
+        receipt: Option<&board_receipts::BoardWriteReceipt>,
+    ) -> Result<LoopItem, TaskRuntimeError> {
+        self.create_task_transaction(
+            project_id,
+            input,
+            super::super::TaskCreateOptions {
+                start_at,
+                due_at,
+                ..Default::default()
+            },
+            receipt,
+        )
+    }
+
+    fn create_task_transaction(
+        &self,
+        project_id: &str,
+        input: TaskCreate,
+        options: super::super::TaskCreateOptions,
+        receipt: Option<&board_receipts::BoardWriteReceipt>,
+    ) -> Result<LoopItem, TaskRuntimeError> {
         let super::super::TaskCreateOptions {
             start_at,
             due_at,
@@ -135,6 +165,11 @@ impl LocalTaskStore {
         validate_schedule_range(start_at.as_deref(), due_at.as_deref())?;
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(receipt) = receipt {
+            if let Some(result) = receipt.replay(&transaction)? {
+                return Ok(result);
+            }
+        }
         let project = get_item_from(&transaction, project_id, "project")?
             .ok_or(TaskRuntimeError::ProjectNotFound)?;
         project_status::validate(&project.metadata, &input.status)?;
@@ -320,9 +355,13 @@ impl LocalTaskStore {
             &id,
             local_automation::AutomationEvent::Created,
         )?;
+        let item =
+            get_item_from(&transaction, &id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
+        if let Some(receipt) = receipt {
+            receipt.record(&transaction, &item)?;
+        }
         transaction.commit()?;
-        drop(connection);
-        self.get_item(&id, "task")
+        Ok(item)
     }
 
     pub fn update_task(
@@ -342,8 +381,25 @@ impl LocalTaskStore {
         start_at: Option<Option<String>>,
         due_at: Option<Option<String>>,
     ) -> Result<LoopItem, TaskRuntimeError> {
+        self.update_task_with_receipt(project_id, task_id, input, start_at, due_at, None)
+    }
+
+    pub fn update_task_with_receipt(
+        &self,
+        project_id: &str,
+        task_id: &str,
+        input: TaskUpdate,
+        start_at: Option<Option<String>>,
+        due_at: Option<Option<String>>,
+        receipt: Option<&board_receipts::BoardWriteReceipt>,
+    ) -> Result<LoopItem, TaskRuntimeError> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        if let Some(receipt) = receipt {
+            if let Some(result) = receipt.replay(&transaction)? {
+                return Ok(result);
+            }
+        }
         let current =
             get_item_from(&transaction, task_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
         if current.cloud_project_id.as_deref() != Some(project_id) {
@@ -668,14 +724,14 @@ impl LocalTaskStore {
                 local_automation::AutomationEvent::TagsAdded(&added_tags),
             )?;
         }
+        let item =
+            get_item_from(&transaction, task_id, "task")?.ok_or(TaskRuntimeError::TaskNotFound)?;
+        let item = attach_execution(item, latest_execution(&transaction, task_id)?);
+        if let Some(receipt) = receipt {
+            receipt.record(&transaction, &item)?;
+        }
         transaction.commit()?;
-        drop(connection);
-        let item = self.get_item(task_id, "task")?;
-        let connection = self.connection()?;
-        Ok(attach_execution(
-            item,
-            latest_execution(&connection, task_id)?,
-        ))
+        Ok(item)
     }
 
     // ------------------------------------------------------------------

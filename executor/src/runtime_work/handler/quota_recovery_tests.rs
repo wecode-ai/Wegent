@@ -4,6 +4,14 @@
 use super::super::tests::ScalarEnv;
 use super::*;
 
+struct ProviderHold(PathBuf);
+
+impl Drop for ProviderHold {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
 fn queued_wait(task: &str, deadline: i64) -> SpawnTurnRequest {
     let mut turn = SpawnTurnRequest {
         task_kind: None,
@@ -528,6 +536,7 @@ done
             assert!(changed.message.contains("account changed"));
             fs::write(home.path().join("account.json"), account.to_string()).unwrap();
             fs::write(home.path().join("hold-account"), "").unwrap();
+            let _hold_cleanup = ProviderHold(home.path().join("hold-account"));
             let mut link =
                 RuntimeTaskLink::new_pending("waiting".into(), "/work".into(), "Wait".into());
             link.thread_id = Some("thread".into());
