@@ -510,12 +510,12 @@ async function emitWithAck<T>(
 ): Promise<T> {
   await client.ensureConnected()
   return new Promise<T>((resolve, reject) => {
-    const timeout = window.setTimeout(
+    const timeout = globalThis.setTimeout(
       () => reject(new Error(`${event} timed out`)),
       timeoutMs,
     )
     client.socket.emit(event, payload, (ack: SocketAck<T> | undefined) => {
-      window.clearTimeout(timeout)
+      globalThis.clearTimeout(timeout)
       if (!ack || ack.ok === false || ack.error) {
         reject(
           Object.assign(
