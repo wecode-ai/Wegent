@@ -18,6 +18,7 @@ import json
 import os
 import time
 import uuid
+from io import BytesIO
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
@@ -630,7 +631,7 @@ async def _read_bounded_artifact_response(
             except ValueError:
                 pass
 
-    chunks: list[bytes] = []
+    body = BytesIO()
     total = 0
     async for chunk in response.aiter_bytes():
         total += len(chunk)
@@ -639,8 +640,8 @@ async def _read_bounded_artifact_response(
                 status_code=413,
                 detail="Artifact exceeds 50 MiB limit",
             )
-        chunks.append(chunk)
-    return b"".join(chunks)
+        body.write(chunk)
+    return body.getvalue()
 
 
 async def _read_artifact_error_preview(
@@ -849,10 +850,20 @@ async def get_executor_workspace_artifact(
                             "content-type", "application/octet-stream"
                         ),
                     )
-                raw_error = await _read_artifact_error_preview(
-                    response, MAX_WORKSPACE_ARTIFACT_ERROR_PREVIEW_BYTES
-                )
                 status_code = response.status_code
+                try:
+                    raw_error = await _read_artifact_error_preview(
+                        response, MAX_WORKSPACE_ARTIFACT_ERROR_PREVIEW_BYTES
+                    )
+                except httpx.RequestError as exc:
+                    logger.warning(
+                        "[workspace_proxy] artifact error preview read failed "
+                        "task_id=%s status_code=%s error=%s",
+                        task_id,
+                        status_code,
+                        exc,
+                    )
+                    raw_error = None
     except HTTPException:
         raise
     except httpx.TimeoutException as exc:
@@ -876,7 +887,11 @@ async def get_executor_workspace_artifact(
             status_code=503, detail="Executor artifact endpoint is unavailable"
         ) from exc
 
-    detail = _extract_error_detail(raw_error)
+    detail = (
+        _extract_error_detail(raw_error)
+        if raw_error is not None
+        else "Artifact request failed"
+    )
     if status_code in {400, 403, 404, 413}:
         logger.info(
             "[workspace_proxy] artifact rejected task_id=%s status_code=%s detail=%s",

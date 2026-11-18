@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import httpx
 import pytest
+from pytest_mock import MockerFixture
 
 with patch(
     "executor_manager.executors.docker.executor.DockerExecutor._check_docker_availability"
@@ -169,12 +170,28 @@ async def test_workspace_artifact_prefers_sandbox_only_when_container_name_match
         (404, 404, b'{"detail":"Artifact missing"}', "Artifact missing"),
         (413, 413, b'{"detail":"Artifact too large"}', "Artifact too large"),
         (500, 502, b"internal failure", "Remote artifact request failed"),
+        (
+            404,
+            404,
+            httpx.ReadTimeout("error body timed out"),
+            "Artifact request failed",
+        ),
+        (
+            500,
+            502,
+            httpx.RemoteProtocolError("error body disconnected"),
+            "Remote artifact request failed",
+        ),
     ],
 )
 @pytest.mark.asyncio
 async def test_workspace_artifact_preserves_client_status_and_maps_5xx_to_502(
-    mocker, upstream_status, expected_status, raw_body, expected_detail
-):
+    mocker: MockerFixture,
+    upstream_status: int,
+    expected_status: int,
+    raw_body: bytes | httpx.RequestError,
+    expected_detail: str,
+) -> None:
     mocker.patch.object(
         routers,
         "_resolve_workspace_runtime_base_url",
@@ -205,8 +222,12 @@ async def test_workspace_artifact_preserves_client_status_and_maps_5xx_to_502(
 )
 @pytest.mark.asyncio
 async def test_workspace_artifact_oversized_error_body_preserves_upstream_status(
-    mocker, upstream_status, expected_status, first_chunk, expected_detail
-):
+    mocker: MockerFixture,
+    upstream_status: int,
+    expected_status: int,
+    first_chunk: bytes,
+    expected_detail: str,
+) -> None:
     mocker.patch.object(
         routers,
         "_resolve_workspace_runtime_base_url",
