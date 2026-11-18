@@ -24,7 +24,14 @@ test('serves a synthetic token refresh for the isolated official account', async
 
     const refreshUrl = appEnvironment.CODEX_REFRESH_TOKEN_URL_OVERRIDE
     assert.match(refreshUrl, /^http:\/\/127\.0\.0\.1:\d+\/oauth\/token$/)
-    const response = await fetch(refreshUrl, { method: 'POST', body: '{}' })
+    const response = await fetch(refreshUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        grant_type: 'refresh_token',
+        refresh_token: 'synthetic-cloud-config-recovery-refresh',
+      }),
+    })
     assert.equal(response.status, 200)
     const refresh = await response.json()
     assert.equal(refresh.access_token, 'synthetic-cloud-config-recovery-access')

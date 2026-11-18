@@ -242,6 +242,8 @@ hongyu9 的最新评审要求把“部分成员添加失败后可恢复”从组
 
 同步更新主线新增的 `cloud-config-model-service.test.ts`，除 access/refresh 外验证非空 `id_token` 及其 enterprise account 声明。该协议测试 1 项、桌面模型选择协议 8 项、Prettier、ESLint、`cargo fmt --check` 和差异检查通过。Rust 聚焦测试因仓库默认 Cargo target 位于沙箱外而未能启动，未记为通过；合并后的完整编译与测试必须由新 head CI 给出。
 
+`5931d754ea` 的 Test Wework (1/4) 复现了本分支旧的 `scripts/cloud-config-model-service.test.mjs` 仍以空 `{}` 调用刷新端点；主线新加的严格校验正确拒绝该请求，测试因未定义 `grant_type` 而超时。该测试现按真实 Codex 契约发送 `grant_type=refresh_token` 与同一 refresh token，同时继续验证三字段响应；新旧两个 cloud-config 协议测试共 2 项通过，Prettier 与 ESLint 通过。
+
 # Verification and rollback
 
 The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The CI-covered `collaboration-shared-core` scenario includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run under the repository-level local execution policy; the recorded GitHub CI runs provide the actual desktop E2E results. Earlier test results are tied to their stated revisions, and the latest PR head requires its own green checks. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.
