@@ -120,7 +120,7 @@ export function createDesktopScenario(options) {
         await control.command(
           'waitFor',
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-          { text: RECOVERED }
+          { text: RECOVERED, timeoutMs: options.modelResponseTimeoutMs }
         )
         const settled = await waitForWorkbenchDebugState(
           control,
