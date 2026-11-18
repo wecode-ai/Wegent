@@ -1,6 +1,6 @@
 // @vitest-environment node
 
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test, vi } from 'vitest'
@@ -53,6 +53,9 @@ test('the CI plugin flow initiates and holds app/list before opening the local-o
       if (action === 'previewPluginImport') return JSON.stringify({ valid: true })
       if (action === 'getWorkbenchDebugSnapshot')
         return JSON.stringify({ workbench: { currentProject: { id: 'project' } } })
+      if (action === 'getLocalExecutorStatus') return JSON.stringify({ deviceId: 'test-device' })
+      if (action === 'getLocalStorageItem')
+        return JSON.stringify({ apiBaseUrl: 'https://wework.example.test/api', user: { id: 1 } })
       if (action === 'getComposerPluginInventoryDiagnostics')
         return JSON.stringify({
           composerApps: [{ id: `plugin:${pluginName}` }],
@@ -62,13 +65,21 @@ test('the CI plugin flow initiates and holds app/list before opening the local-o
     }),
   }
   try {
+    const storagePath = join(root, 'renderer-local-storage.json')
+    await writeFile(storagePath, JSON.stringify({ version: 1, entries: {} }))
     await verifyComposerPluginNetworkIsolation({
       blockingNetworkProxy: proxy,
       codexHome: root,
       control,
+      electronUserDataDirectory: root,
       marketplacePath: root,
-      restartDesktopApp: vi.fn(),
+      restartDesktopApp: async (afterStop: () => Promise<void>) => afterStop(),
       workspacePath: root,
+    })
+    const storage = JSON.parse(await readFile(storagePath, 'utf8'))
+    expect(JSON.parse(storage.entries['wework.plugins.openAiCatalog.v1'])).toMatchObject({
+      version: 1,
+      items: [{ id: 'cached-documents@openai-curated-remote' }],
     })
     expect(openComposerPluginPicker).toHaveBeenCalledTimes(2)
     expect(control.command).toHaveBeenCalledWith('navigate', 'body', { value: '/' })
