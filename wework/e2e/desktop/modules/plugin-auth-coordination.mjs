@@ -11,6 +11,13 @@ import {
   verifyIndependentPluginMutations,
 } from './plugin-write-coordination.mjs'
 import { pluginApi, until } from './plugin-regression-fixture.mjs'
+import {
+  assertBackgroundPluginAuthPaused,
+  describePluginAuthRecovery,
+  hasFreshPluginAuthSuccess,
+  isFreshPluginAuthRecovery,
+  readPluginAuthTarget,
+} from './plugin-auth-coordination-evidence.mjs'
 
 // Exercise the desktop IPC, real Executor broker and account adapter. Only the
 // synthetic credential provider is gated; backend responses are never replaced.
@@ -20,6 +27,8 @@ export async function verifyPluginAuthCoordination({
   slug,
   homePath,
   installedId,
+  expectedDeviceId,
+  expectedDeviceBinding,
   connectionFor,
   signalAutomaticRetry,
   reconcileMarker,
@@ -157,9 +166,10 @@ export async function verifyPluginAuthCoordination({
     await otherLease.release()
   }
   const backgroundRow = await holdInstalledPluginRow(cloud, installedId)
-  let pendingWait
-  let enrollmentLogOffset
   const executorLog = join(resultDir, 'executor.log')
+  let recoveryBefore
+  let recoveryOffset
+  let pendingWait
   // Independent inserts can split an InnoDB page and replace physical lock
   // IDs while the same transactions still wait. Track transaction identity.
   const readPendingWait = async () => {
@@ -171,6 +181,10 @@ export async function verifyPluginAuthCoordination({
     return row.pending
   }
   try {
+    const before = {
+      target: await readPluginAuthTarget(cloud, installedId),
+    }
+    await backgroundRow.assertHeld()
     await signalAutomaticRetry()
     pendingWait = await backgroundRow.waitFor('blocked')
     assert.ok(pendingWait.requestingTransactionId && pendingWait.blockingTransactionId)
@@ -180,8 +194,16 @@ export async function verifyPluginAuthCoordination({
       1,
       'The target database request stopped waiting before its row was released'
     )
+    const after = { target: await readPluginAuthTarget(cloud, installedId) }
+    assertBackgroundPluginAuthPaused({
+      before,
+      after,
+      fence: await backgroundRow.assertHeld(),
+    })
+    recoveryBefore = after.target
+    recoveryOffset = (await readFile(executorLog, 'utf8')).length
+    await backgroundRow.assertHeld()
     evidence.push({ case: 'background-authentication-does-not-block-other-plugin', installedId })
-    enrollmentLogOffset = (await readFile(executorLog, 'utf8')).length
   } finally {
     await backgroundRow.release()
   }
@@ -190,16 +212,65 @@ export async function verifyPluginAuthCoordination({
     value => value === 0,
     'The target database request remained blocked after its row was released'
   )
-  await until(
-    () => readFile(executorLog, 'utf8'),
-    value =>
-      value
-        .slice(enrollmentLogOffset)
-        .includes(
-          `plugin auth automatic enrollment finished installed_plugin_id=${installedId} connector_slug=mail ok=true`
-        ),
-    'Background authentication did not recover after its row was released'
-  )
+  await signalAutomaticRetry()
+  let latestRecovery
+  let recoveryLogCharacters
+  try {
+    await until(
+      async () => {
+        const after = await readPluginAuthTarget(cloud, installedId)
+        const log = await readFile(executorLog, 'utf8')
+        recoveryLogCharacters = log.length
+        latestRecovery = {
+          before: recoveryBefore,
+          after,
+          freshTargetSuccess: hasFreshPluginAuthSuccess(log, recoveryOffset, installedId),
+          installedId,
+          expectedDeviceId,
+          expectedDeviceBinding,
+        }
+        return latestRecovery
+      },
+      isFreshPluginAuthRecovery,
+      'Background authentication did not freshly enroll its target after the row was released'
+    )
+  } catch (error) {
+    let diagnosticHint = 'could not save recovery diagnostics'
+    try {
+      const description = describePluginAuthRecovery(
+        latestRecovery ?? {
+          before: recoveryBefore,
+          after: [],
+          freshTargetSuccess: false,
+          installedId,
+          expectedDeviceId,
+          expectedDeviceBinding,
+        }
+      )
+      const diagnosticName = 'plugin-auth-recovery-failure.json'
+      await writeFile(
+        join(resultDir, diagnosticName),
+        JSON.stringify(
+          {
+            observationAvailable: Boolean(latestRecovery),
+            recoveryOffset,
+            logCharacters: recoveryLogCharacters ?? null,
+            ...description,
+          },
+          null,
+          2
+        )
+      )
+      const failed = Object.entries(description.checks)
+        .filter(([, passed]) => !passed)
+        .map(([name]) => name)
+      diagnosticHint = `${diagnosticName}; failed=${failed.join(',')}`
+    } catch {
+      // Diagnostics must not replace the original recovery failure.
+    }
+    if (error instanceof Error) error.message += `\nRecovery diagnostics: ${diagnosticHint}`
+    throw error
+  }
   await until(
     () => connectionFor('mail'),
     value => value?.status === 'connected' && value.device_ids.length > 0,
