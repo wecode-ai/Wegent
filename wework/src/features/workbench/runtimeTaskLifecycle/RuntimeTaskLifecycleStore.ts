@@ -753,22 +753,22 @@ export class RuntimeTaskLifecycleStore {
 
   private restoreMachineUnread(key: string, machine: RuntimeTaskMachine): void {
     const snapshot = machine.getSnapshot()
-    const isCurrent = key === this.currentTaskKey
+    const currentTaskVisible = key === this.currentTaskKey && this.windowFocused
     if (snapshot.execution.known && !snapshot.derived.isRunning) {
       const wasRunning = this.previousRunningTaskKeys.delete(key)
       if (
         wasRunning &&
         !snapshot.derived.isQueued &&
-        !isCurrent &&
+        !currentTaskVisible &&
         !this.unreadStateByTask.has(key)
       ) {
         if (snapshot.goalStatus === 'active') this.deferredGoalUnreadTaskKeys.add(key)
         else this.recordUnreadState(key, true)
       }
     }
-    if (snapshot.derived.isRunning || isCurrent) {
+    if (snapshot.derived.isRunning || currentTaskVisible) {
       machine.dispatch({ type: 'marked_read' })
-      if (isCurrent) this.recordUnreadState(key, false)
+      if (currentTaskVisible) this.recordUnreadState(key, false)
       else this.unreadStateByTask.delete(key)
       this.deferredGoalUnreadTaskKeys.delete(key)
     } else {
