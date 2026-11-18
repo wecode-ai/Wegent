@@ -113,6 +113,9 @@ impl OpenAIResponsesRequest {
             auth_token: get_string(&metadata, "auth_token"),
             runtime_auth_token: get_string(&metadata, "runtime_auth_token"),
             skill_identity_token: get_string(&metadata, "skill_identity_token"),
+            // Keep the explicit Backend fallback marker out of opaque extras
+            // so consumers read the same typed semantic field.
+            legacy_session_fallback: legacy_session_fallback(&metadata),
             extra: extra_metadata(&metadata),
         }
     }
@@ -264,6 +267,7 @@ const KNOWN_METADATA_KEYS: &[&str] = &[
     "kb_tool_access_mode",
     "skip_git_clone",
     "new_session",
+    LEGACY_SESSION_FALLBACK,
     "ephemeral",
     "fork_runtime",
     "inherited_sessions",
@@ -288,6 +292,15 @@ const KNOWN_METADATA_KEYS: &[&str] = &[
     "runtime_auth_token",
     "skill_identity_token",
 ];
+
+pub const LEGACY_SESSION_FALLBACK: &str = "legacy_session_fallback";
+
+fn legacy_session_fallback(metadata: &Map<String, Value>) -> bool {
+    metadata
+        .get(LEGACY_SESSION_FALLBACK)
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
 
 fn get_i64_optional(object: &Map<String, Value>, key: &str) -> Option<i64> {
     object.get(key).and_then(read_i64_value)

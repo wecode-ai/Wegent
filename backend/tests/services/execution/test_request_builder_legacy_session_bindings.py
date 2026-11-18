@@ -86,6 +86,7 @@ def test_owned_unproven_continuation_starts_a_new_session(test_db, mocker):
         "app.services.execution.request_builder.ExecutionRequest",
         side_effect=lambda **kwargs: SimpleNamespace(
             new_session=kwargs["new_session"],
+            legacy_session_fallback=kwargs["legacy_session_fallback"],
             bot=kwargs["bot"],
             skill_configs=[],
             preload_skills=[],
@@ -145,6 +146,7 @@ def test_owned_unproven_continuation_starts_a_new_session(test_db, mocker):
     )
 
     assert request.new_session is True
+    assert request.legacy_session_fallback is True
 
 
 @pytest.mark.parametrize(

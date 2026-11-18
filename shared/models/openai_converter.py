@@ -249,6 +249,7 @@ class OpenAIRequestConverter:
             "callback_url": request.callback_url,
             # Pipeline mode session control
             "new_session": request.new_session,
+            "legacy_session_fallback": request.legacy_session_fallback,
             "collaboration_model": request.collaboration_model,
         }
         openai_request["metadata"] = metadata
@@ -423,6 +424,7 @@ class OpenAIRequestConverter:
             callback_url=metadata.get("callback_url"),
             # Pipeline mode session control
             new_session=metadata.get("new_session", False),
+            legacy_session_fallback=metadata.get("legacy_session_fallback", False),
             collaboration_model=metadata.get("collaboration_model", "single"),
         )
 

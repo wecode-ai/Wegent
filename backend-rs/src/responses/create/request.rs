@@ -1016,12 +1016,13 @@ async fn build_request_with_runtime(
         super::session_context::build(&state.mysql, &session_input)
             .await
             .map_err(dependency)?;
-    let new_session = input.new_session
-        || super::session_context::should_start_new_session(
+    let legacy_session_fallback = !input.new_session
+        && super::session_context::should_start_new_session(
             &session_input,
             &inherited_sessions,
             &legacy_session_bindings,
         );
+    let new_session = input.new_session || legacy_session_fallback;
 
     // `_process_contexts` (`unified.py:464`): the executor attachment payload
     // is built from the user subtask's attachment contexts at this position,
@@ -1117,6 +1118,7 @@ async fn build_request_with_runtime(
         inherited_sessions,
         legacy_session_bindings,
         new_session,
+        legacy_session_fallback,
         is_subscription,
         history_limit,
         ..ExecutionRequest::default()

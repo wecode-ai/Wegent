@@ -236,6 +236,28 @@ async fn chat_preserves_configured_skills_with_legacy_shell_metadata() {
 }
 
 #[tokio::test]
+async fn unproven_chat_continuation_carries_the_explicit_fallback_marker() {
+    let (team, bot) = chat_agent();
+    let mut input = chat_input(&team, &bot);
+    let bot_json = json!({
+        "ghostRef": {"name": "analysis-ghost", "namespace": "default"},
+        "modelRef": {"name": "test-model", "namespace": "default"},
+        "shellRef": {"name": "ClaudeCode", "namespace": "default"},
+    });
+    bot.json = Json(json!({"spec": bot_json}));
+    input.allow_new_session_fallback = true;
+    let fixture =
+        MysqlRows::start_results(move |sql| skill_fixture(sql, false, false)).await;
+    let state = crate::app_test_support::app(fixture.mysql.clone());
+    let request = build_chat_execution_request(&state, &input, false, &[], None, None, None)
+        .await
+        .expect("unproven continuation request");
+
+    assert!(request.new_session);
+    assert!(request.legacy_session_fallback);
+}
+
+#[tokio::test]
 async fn web_chat_dispatches_coordinate_workers_and_keeps_pipeline_on_its_current_bot() {
     let leader = stored_kind(
         2,

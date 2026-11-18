@@ -616,7 +616,7 @@ class TaskRequestBuilder:
             new_session=new_session,
             is_subscription=is_subscription,
         )
-        if self._should_start_new_session(
+        legacy_session_fallback = self._should_start_new_session(
             allow_new_session_fallback=allow_new_session_fallback,
             new_session=new_session,
             task=task,
@@ -624,7 +624,8 @@ class TaskRequestBuilder:
             bot_configs=bot_config,
             inherited_sessions=inherited_sessions,
             legacy_session_bindings=legacy_session_bindings,
-        ):
+        )
+        if legacy_session_fallback:
             # The caller authorized a safe fresh-session fallback for this
             # continuation, which has no authenticated prior-session evidence.
             new_session = True
@@ -681,6 +682,7 @@ class TaskRequestBuilder:
             is_group_chat=is_group_chat,
             history_limit=history_limit,
             new_session=new_session,
+            legacy_session_fallback=legacy_session_fallback,
             fork_runtime=fork_runtime,
             inherited_sessions=inherited_sessions,
             legacy_session_bindings=legacy_session_bindings,
