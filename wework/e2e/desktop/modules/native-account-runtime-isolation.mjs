@@ -91,8 +91,9 @@ export async function verifyNativeAccountRuntimeIsolation({
   try {
     await waitForPythonRuntimeEvent(appLog, 'python-runtime-install-failed', logOffset)
     await signalAutomaticRetry()
+    // Download configuration can fail before the installation phase starts.
     assert.equal(
-      (await readFile(appLog, 'utf8')).slice(logOffset).split('python-runtime-install-started')
+      (await readFile(appLog, 'utf8')).slice(logOffset).split('python-runtime-ensure-started')
         .length - 1,
       1,
       'Startup preparation must make one attempt before explicit use'
