@@ -204,7 +204,7 @@ test('additional unmeasured checkpoints cannot raise known peaks or receive new 
   ).seconds
   for (const missing of [
     ['window-lifecycle'],
-    ['model-settings', 'browser-toolbar-actions'],
+    ['model-routing', 'computer-use'],
     ['stand-in', 'application-menu', 'streaming-content'],
   ]) {
     const seconds = { ...measured }

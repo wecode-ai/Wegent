@@ -41,7 +41,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "turn lifecycle changes select supervisor, resilience and sidebar coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"resilience"},{"id":"core-6","name":"Core / shard 6","segments":"running-sidebar-state"},{"id":"core-7","name":"Core / shard 7","segments":"supervisor-lifecycle"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"resilience"},{"id":"core-6","name":"Core / shard 6","segments":"runtime-task-queue"},{"id":"core-7","name":"Core / shard 7","segments":"supervisor-lifecycle"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/features/workbench/runtimeTaskLifecycle/reducer.ts"
@@ -145,7 +145,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "commit generation uses its real Git regression checkpoint" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"git-commit-generation"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/api/commitMessage.ts"
@@ -162,13 +162,6 @@ wework_desktop_macos_inspector_e2e=false' \
   "wework/src/features/change-requests/IssueChangeRequestBadges.tsx" \
   "wework/src/features/todo/IssueBadges.tsx"
 
-assert_desktop_case "Harness app changes run every harness app checkpoint" \
-  'wework_desktop_e2e=true
-wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-4","name":"Core / shard 4","segments":"harness-app-lifecycle,harness-app-models"},{"id":"core-7","name":"Core / shard 7","segments":"harness-app-development"}]}
-wework_desktop_other_e2e=false
-wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/e2e/desktop/scenarios/harness-apps.scenario.mjs" \
   "wework/e2e/desktop/modules/harness-app-models.mjs"
 
 assert_desktop_case "Smart app deep-link fixtures run the lifecycle checkpoint" \
@@ -206,13 +199,6 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' "$path"
 done
 
-assert_desktop_case "latest conversation history runs its desktop regression" \
-  'wework_desktop_e2e=true
-wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"latest-conversation-history"}]}
-wework_desktop_other_e2e=false
-wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/e2e/desktop/scenarios/latest-conversation-history.scenario.mjs"
 
 assert_desktop_case "drawing implementation retains attachment coverage" \
   'wework_desktop_e2e=true
@@ -275,7 +261,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "model settings changes select model management and routing coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"model-settings"},{"id":"core-5","name":"Core / shard 5","segments":"model-routing"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"model-routing"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/components/settings/ProviderEditor.tsx" \
@@ -318,7 +304,7 @@ wework_desktop_other_e2e_matrix={"include":[{"id":"plugins","name":"Plugins","co
 assert_desktop_case "embedded browser files select browser coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"embedded-browser"},{"id":"core-5","name":"Core / shard 5","segments":"browser-annotation-core"},{"id":"core-6","name":"Core / shard 6","segments":"browser-toolbar-actions"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"embedded-browser"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}
 wework_desktop_macos_inspector_e2e=true' \
@@ -333,14 +319,6 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/electron/src/host/embedded-browser-manager.ts" \
   "wework/e2e/desktop/scenarios/embedded-browser-agent.scenario.mjs"
 
-assert_desktop_case "browser toolbar scenario is invoked by Core and macOS CI" \
-  'wework_desktop_e2e=true
-wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"embedded-browser"},{"id":"core-5","name":"Core / shard 5","segments":"browser-annotation-core"},{"id":"core-6","name":"Core / shard 6","segments":"browser-toolbar-actions"}]}
-wework_desktop_other_e2e=false
-wework_desktop_other_e2e_matrix={"include":[]}
-wework_desktop_macos_inspector_e2e=true' \
-  "wework/e2e/desktop/scenarios/embedded-browser-toolbar-actions.scenario.mjs"
 
 assert_desktop_case "native tray files select Core and macOS restart coverage" \
   'wework_desktop_e2e=true
@@ -450,7 +428,7 @@ assert_desktop_case "automation files select lifecycle and statutory workday cov
 wework_desktop_core_e2e=true
 wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"automation-lifecycle"}]}
 wework_desktop_cloud_e2e=true
-wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-5","name":"Cloud / shard 5","segments":"workday-schedules"}]}
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-5","name":"Cloud / shard 5","segments":"project-automation"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/features/automations/AutomationDetailWorkspace.tsx"

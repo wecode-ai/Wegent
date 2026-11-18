@@ -174,7 +174,6 @@ select_collaboration_dispatch_checkpoints() {
   select_target "core:stand-in-telemetry"
   select_target "core:stand-in-workspace"
   select_target "core:stand-in-controls"
-  select_target "core:stand-in-project-enable"
   select_target "core:stand-in-cloud"
   select_target "core:stand-in-assignment-notifications"
   select_target "core:stand-in-personal-task"
@@ -182,7 +181,6 @@ select_collaboration_dispatch_checkpoints() {
   select_target "core:collaboration-remote-agent-dispatch"
   select_target "core:collaboration-local-group-coordinate"
   select_target "core:collaboration-remote-group-coordinate"
-  select_target "core:collaboration-remote-group-planning-details"
   select_target "core:collaboration-human-round-resume"
   select_target "core:collaboration-local-group-cancellation"
 }

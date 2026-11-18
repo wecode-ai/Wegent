@@ -57,7 +57,6 @@ classify_wework_path() {
       return
       ;;
     wework/e2e/desktop/modules/github-release-asset.mjs)
-      select_target "core:harness-app-development"
       select_target "core:harness-app-lifecycle"
       select_target "core:harness-app-models"
       select_target "cloud:plugin-legacy-upgrade"
@@ -67,7 +66,6 @@ classify_wework_path() {
       wework/e2e/desktop/modules/dsh-runtime-cache.mjs | \
       wework/electron/src/host/e2e-dsh-release-redirect.ts | \
       wework/e2e/desktop/modules/harness-app-*)
-      select_target "core:harness-app-development"
       select_target "core:harness-app-lifecycle"
       select_target "core:harness-app-models"
       return
@@ -438,10 +436,6 @@ classify_wework_path() {
       return
       ;;
 
-    wework/e2e/desktop/scenarios/notification-tab-navigation.scenario.mjs)
-      select_target "core:notification-tab-navigation"
-      return
-      ;;
 
     wework/e2e/desktop/scenarios/human-interactions.scenario.mjs | \
       wework/e2e/desktop/modules/human-interaction-*.mjs | \
@@ -451,7 +445,7 @@ classify_wework_path() {
       select_target "core:stand-in-notifications"
       select_target "core:stand-in-cloud"
       select_target "core:project-assignment-notification"
-      select_target "core:notification-tab-navigation"
+      select_target "core:core-task-flow"
       select_target "core:human-interactions"
       select_target "core:human-interactions-browser"
       select_target "core:human-interactions-hidden"
@@ -503,10 +497,6 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/project-member-overrides.scenario.mjs)
       select_target "core:project-member-overrides"
-      return
-      ;;
-    wework/e2e/desktop/scenarios/cloud-space-mention.scenario.mjs)
-      select_target "core:cloud-space-mention"
       return
       ;;
     wework/e2e/desktop/scenarios/collaboration-shared-core.scenario.mjs | \

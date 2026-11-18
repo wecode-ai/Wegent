@@ -56,7 +56,7 @@ classify_workbench_path() {
       select_target "core:stand-in-telemetry"
       select_target "core:stand-in-workspace"
       select_target "core:stand-in-controls"
-      select_target "core:stand-in-project-enable"
+      select_target "core:stand-in"
       select_target "core:stand-in-cloud"
       select_target "core:stand-in-assignment-notifications"
       select_target "core:stand-in-personal-task"
@@ -86,11 +86,6 @@ classify_workbench_path() {
       ;;
     wework/e2e/desktop/scenarios/collaboration-remote-group-coordinate.scenario.mjs)
       select_target "core:collaboration-remote-group-coordinate"
-      select_target "core:collaboration-remote-group-planning-details"
-      return
-      ;;
-    wework/e2e/desktop/scenarios/collaboration-remote-group-planning-details.scenario.mjs)
-      select_target "core:collaboration-remote-group-planning-details"
       return
       ;;
     wework/e2e/desktop/scenarios/collaboration-human-round-resume.scenario.mjs)
@@ -128,7 +123,7 @@ classify_workbench_path() {
       wework/src/components/chat/composer/desktopComposerServices* | \
       wework/electron/src/host/clipboard-image-conversion* | \
       wework/e2e/desktop/scenarios/clipboard-history-image.scenario.mjs)
-      select_target "core:clipboard-history-image"
+      select_target "core:collaboration-issue-comment-attachments"
       macos_inspector_e2e=true
       return
       ;;
@@ -139,11 +134,7 @@ classify_workbench_path() {
       ;;
     wework/src/features/todo/TaskBoardView* | \
       wework/src/features/workbench/runtimeTaskArchive* | \
-      wework/e2e/desktop/scenarios/task-board-bulk-actions.scenario.mjs)
-      select_target "core:task-board-bulk-actions"
-      return
-      ;;
-    wework/src/features/todo/ProjectAutomation* | \
+      wework/src/features/todo/ProjectAutomation* | \
       wework/src/features/todo/projectAutomationForm* | \
       wework/src/api/projectAutomations*)
       select_target "core:automation-lifecycle"
@@ -194,7 +185,7 @@ classify_workbench_path() {
         select_target "core:collaboration-issue-assignment-activity"
         select_target "core:collaboration-human-round-resume"
         select_target "core:collaboration-local-group-coordinate"
-        select_target "core:task-board-bulk-actions"
+        select_target "core:core-task-flow"
       fi
       if [[ "$path" == wework/src/features/todo/CloudTodoWorkspace* || \
         "$path" == wework/src/features/todo/WorkItemComposerGuide* ]]; then
@@ -212,7 +203,7 @@ classify_workbench_path() {
       wework/src/features/workbench/workbenchContextTypes*)
       select_target "core:task-status-sync"
       if [[ "$path" == wework/src/features/workbench/workbenchContextTypes* ]]; then
-        select_target "core:send-key-preference"
+        select_target "core:core-task-flow"
       fi
       return
       ;;
@@ -257,12 +248,12 @@ classify_workbench_path() {
         select_target "core:stand-in-assignment-notifications"
       fi
       if [[ "$path" == wework/src/features/workbench/WorkbenchProvider* ]]; then
-        select_target "core:send-key-preference"
+        select_target "core:core-task-flow"
       fi
       if [[ "$path" == wework/src/features/workbench/useWorkbenchRuntimeTasks* ]]; then
         select_target "core:runtime-task-queue"
         select_target "core:task-status-sync"
-        select_target "core:task-board-bulk-actions"
+        select_target "core:core-task-flow"
       fi
       return
       ;;
@@ -277,7 +268,7 @@ classify_workbench_path() {
     wework/src/features/workbench/runtimeTaskLifecycle/*)
       select_target "core:supervisor-lifecycle"
       select_target "core:resilience"
-      select_target "core:running-sidebar-state"
+      select_target "core:runtime-task-queue"
       return
       ;;
 
@@ -377,11 +368,8 @@ classify_workbench_path() {
       wework/src/components/layout/workspace-panels/browser-annotation/* | \
       wework/src/pages/BrowserAnnotationOverlayPage* | \
       wework/src/components/layout/workspace-panels/browser-find/* | \
-      wework/e2e/desktop/scenarios/embedded-browser-annotation.scenario.mjs | \
       wework/e2e/desktop/scenarios/embedded-browser-toolbar-actions.scenario.mjs)
       select_target "core:embedded-browser"
-      select_target "core:browser-toolbar-actions"
-      select_target "core:browser-annotation-core"
       macos_inspector_e2e=true
       return
       ;;
@@ -503,10 +491,6 @@ classify_workbench_path() {
       select_target "core:model-overload-recovery"
       return
       ;;
-    wework/e2e/desktop/scenarios/send-key-preference.scenario.mjs)
-      select_target "core:send-key-preference"
-      return
-      ;;
     wework/dsh/transcript-sync/* | \
       wework/dsh/executor-runtime/session-projector* | \
       wework/electron/src/host/wework-sync-request* | \
@@ -515,9 +499,8 @@ classify_workbench_path() {
       return
       ;;
 
-    wework/src/api/commitMessage* | \
-      wework/e2e/desktop/scenarios/git-commit-generation.scenario.mjs)
-      select_target "core:git-commit-generation"
+    wework/src/api/commitMessage*)
+      select_target "core:core-task-flow"
       return
       ;;
 
@@ -549,15 +532,10 @@ classify_workbench_path() {
       wework/src/components/settings/ProviderModelFields* | \
       wework/src/components/settings/ModelSettingsPage* | \
       wework/src/features/model-settings/provider*)
-      select_target "core:model-settings"
       select_target "core:model-routing"
       return
       ;;
 
-    wework/e2e/desktop/scenarios/latest-conversation-history.scenario.mjs)
-      select_target "core:latest-conversation-history"
-      return
-      ;;
 
     # Assistant/tool rendering and desktop extension surfaces.
     wework/src/components/chat/blocks/* | \

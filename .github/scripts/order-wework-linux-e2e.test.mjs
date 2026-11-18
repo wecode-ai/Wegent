@@ -189,7 +189,7 @@ test('reuses the existing history runner after its isolated checkpoint', async (
     'workspace-attachments',
     'conversation-state',
     'native-window-startup',
-    'harness-app-development',
+    'plugin-development',
     'harness-app-lifecycle',
     'harness-app-models',
     'tray-lifecycle',
@@ -311,7 +311,7 @@ test('balancing distributes the four-worker tail across existing Core runners', 
       {
         id: 'core-1',
         segments:
-          'harness-app-development,harness-app-lifecycle,harness-app-models,temporary-chat,core-task-flow',
+          'plugin-development,harness-app-lifecycle,harness-app-models,temporary-chat,core-task-flow',
       },
       { id: 'core-2', segments: 'application-menu' },
       { id: 'core-6', segments: 'running-conversation-history' },
@@ -431,23 +431,23 @@ test('successful Linux timing replay prioritizes measured tails after new covera
 
 test('unmeasured and equal-duration checkpoints retain stable priority without dropping new coverage', () => {
   const selected = [
-    'running-sidebar-state',
+    'runtime-task-queue',
     'running-conversation-history',
     'task-board-association',
-    'send-key-preference',
+    'cloud-model-recovery',
   ]
   assert.deepEqual(orderLinuxCheckpoints(selected, 'core', {}), selected)
   assert.deepEqual(
     orderLinuxCheckpoints(selected, 'core', {
-      'running-sidebar-state': 20,
+      'runtime-task-queue': 20,
       'running-conversation-history': 480,
-      'send-key-preference': 20,
+      'cloud-model-recovery': 20,
     }),
     [
       'task-board-association',
       'running-conversation-history',
-      'running-sidebar-state',
-      'send-key-preference',
+      'runtime-task-queue',
+      'cloud-model-recovery',
     ],
   )
   assert.deepEqual(orderLinuxCheckpoints([], 'core'), [])
@@ -460,7 +460,7 @@ test('unmeasured and equal-duration checkpoints retain stable priority without d
     /Unknown desktop E2E checkpoint/,
   )
   assert.throws(
-    () => orderLinuxCheckpoints(selected, 'core', { 'send-key-preference': 0 }),
+    () => orderLinuxCheckpoints(selected, 'core', { 'cloud-model-recovery': 0 }),
     /Invalid Linux E2E duration/,
   )
 })

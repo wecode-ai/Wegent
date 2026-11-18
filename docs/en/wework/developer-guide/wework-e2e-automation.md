@@ -177,7 +177,7 @@ The `runtime-input-answer-persistence` Core checkpoint answers real MCP elicitat
 The main desktop runner also supports execution through ordered checkpoints.
 The checkpoints are `mcp-apps`, `remote-device-onboarding`, `workspace-tabs`,
 `cloud-project-creation`, `cloud-space-mention`, `priority-filter`,
-`telemetry-consent`, `automation-lifecycle`, `project-automation`,
+`stand-in-telemetry`, `automation-lifecycle`, `project-automation`,
 `project-assignment-notification`, `offline-local-project-space`,
 `core-dsh-plugin-management`, `plugin-auto-update`, `plugin-workspace-publication`,
 `project-ai-settings`, `model-routing`, `permission-modes`,
@@ -209,7 +209,7 @@ scenario does not edit shared registration lists or comma-joined shard lines.
 `order` controls default execution order; `ci.core` / `ci.cloud` declare `shard`
 and `position`, while each CI lane's `order` retains catalog order. Insert values
 between existing ones; equal values sort by checkpoint ID without renumbering
-other files. Core retains ten shards and Cloud retains eight. `scenario` names
+other files. The classifier retains ten logical Core shards and eight logical Cloud shards; balancing can expand the actual runner matrix. `scenario` names
 the module and `scenarioOnly` runs that module alone. Composite checkpoints use
 `members`; `ciHost` shares an existing checkpoint's CI lifecycle. Package upgrade
 checkpoints remain owned by `upgrade-suite.mjs`.
@@ -234,15 +234,36 @@ dedicated Linux shard so competing full-stack instances do not change the benchm
 CPU allocation. It retains all functional assertions and logs pointer movement,
 pointer-up dispatch, and split readiness timings. Other functional shards still
 allow up to four instances.
-Core and Cloud matrix jobs also provide suite-level parallelism across runners.
-The classifier provides 10 logical Core shards. Windows retains 10 runners;
-Linux sets `CORE_RUNNER_SCALE=1.5` and redistributes a full selection across
-15 runners using historical durations. Partial selections scale with their selected
-matrix, bounded by assignable checkpoints; selections without the history checkpoint
-retain their original matrix. The two Core benchmarks keep dedicated runners.
-Cloud uses 8 shards.
+Core and Cloud matrix jobs provide suite-level parallelism across runners.
+Linux Core, Windows Core and Linux Cloud balancing set `CORE_RUNNER_SCALE=1.5`.
+Full selections expand from 10, 10 and 8 runners to 15, 15 and 12 respectively.
+Partial selections scale their selected matrix, bounded by assignable checkpoints;
+a small change does not allocate the full suite's runner count. The per-runner
+checkpoint concurrency limit remains four. The two Core benchmarks and exclusive
+Cloud shards remain isolated, and shared preparation groups stay together.
+Shared runner capacity can still introduce external queues, and expansion adds
+setup costs. Historical timing replay predicts only the test stage, not a measured
+speedup from a new CI run.
 
-Windows balancing uses measured durations from successful checkpoints only. Unknown checkpoints keep their original runner without receiving new measured work. Original measured siblings move only when neither the known checkpoint peak nor the preparation-inclusive peak increases; otherwise they stay on their original runner. Partial selections without another measured destination retain their matrix. An unknown shared-preparation member keeps its whole original shard to avoid duplicating expensive setup. Runner counts, benchmark isolation and the 40-minute test-step budget remain unchanged; failed scenario durations are not successful samples.
+### Test-only polling and retry timing
+
+- `stand-in` and `stand-in-cloud` default to
+  `WEWORK_E2E_STAND_IN_POLL_INTERVAL_MS=500`. Only stand-in scheduler polling
+  changes; negative assertions still observe a full cycle plus 500ms. Ordinary
+  execution retains its 5000ms default.
+- `model-overload-recovery` defaults to
+  `WEWORK_E2E_OVERLOAD_RETRY_BASE_MS=2000`. The native Executor retains the
+  retry ratios, yielding 2, 6, 24 and 60 seconds. Cancellation checks still
+  observe the complete first retry interval plus 500ms and assert the native
+  `retry=1 delay_ms=2000` log, rejecting an old Executor that does not honor
+  the configuration. Missing or invalid values retain production defaults of
+  10, 30, 120 and 300 seconds. Valid base values are 1–10000ms.
+
+`checkpointScenarioEnv` supplies these defaults only to the named checkpoints
+and preserves explicit values. They cannot skip failures, shorten business
+operation timeouts or replace positive completion conditions.
+
+Windows balancing uses measured durations from successful checkpoints only. Unknown checkpoints keep their original runner without receiving new measured work. Original measured siblings move only when neither the known checkpoint peak nor the preparation-inclusive peak increases; otherwise they stay on their original runner. Partial selections without another measured destination or added capacity retain their matrix. An unknown shared-preparation member keeps its whole original shard to avoid duplicating expensive setup. Capacity expansion retains benchmark isolation and the 40-minute test-step budget; failed scenario durations are not successful samples.
 Refresh existing weights as scenarios evolve, not only unknown entries. In run
 42411289396, Core 2 and 6 reached the step deadline after all completed checkpoints
 passed; profile-settings and plugin-bridge had been underestimated for three runs.
@@ -383,7 +404,7 @@ worker stacks with exit code `0xC00000FD`. Regressions enforce Clippy's
 for manual, assignment, and scheduler entry points; existing
 real desktop scenarios cover the complete execution flow.
 
-The plugin Python runtime checkpoints `python-runtime,plugin-development` reuse the existing Core 10 shard without adding a runner. Linux and Windows each retain ten Core shards, with every checkpoint and assertion preserved; `.github/scripts/classify-wework-desktop-e2e.sh --all` defines the actual grouping.
+The plugin Python runtime checkpoints `python-runtime,plugin-development` reuse the existing logical Core shard and preparation group. `.github/scripts/classify-wework-desktop-e2e.sh --all` defines logical grouping; the capacity expansion and timing-balancing steps above assign actual runners.
 
 The Python descriptor's 200ms deadline covers HTTP headers and body. Credential resolution and the
 final persisted Backend identity check run outside that HTTP deadline, so queued storage reads do not
@@ -394,8 +415,8 @@ Long history hydration polls use `performanceSnapshot` with `collectMemory: fals
 to avoid forced GC on every poll; final memory assertions retain full sampling.
 Timeout diagnostics include the last snapshot. After upstream #4146 bounded isolated
 E2E fixture timers, permission modes measured about three minutes and fit alongside
-the measured 25-minute Core 4. Remove the redundant shard, retaining the original ten
-Core runners, real expiry assertions, and the 40-minute step limit.
+the measured 25-minute Core 4. That earlier consolidation removed the redundant logical shard while retaining
+real expiry assertions and the 40-minute step limit; capacity now scales as described above.
 Source project configuration no longer forces the Windows unelevated sandbox,
 which rejects split writable roots; other permission and approval settings remain.
 Windows source-project coverage therefore verifies outside writes can execute;
