@@ -21,6 +21,7 @@ use tokio::{net::TcpListener, sync::oneshot, time::timeout};
 use wegent_backend_rs::{build_app_state_with_clients, migrations, socketio};
 
 const USER_ID: i32 = 7;
+const RUNTIME_INSTANCE_ID: &str = "heartbeat-runtime";
 const NAMESPACE: &str = "/local-executor";
 const SHORT_TTL_SECONDS: u64 = 30;
 
@@ -158,7 +159,7 @@ async fn assert_heartbeats(
             &client,
             1,
             "device:register",
-            json!({"device_id": device_id, "name": "Heartbeat E2E", "device_type": "local", "runtime_instance_id": "heartbeat-runtime"}),
+            json!({"device_id": device_id, "name": "Heartbeat E2E", "device_type": "local", "runtime_instance_id": RUNTIME_INSTANCE_ID}),
         )
         .await,
         json!({"success": true, "device_id": device_id, "device_route_id": device_id, "runtime_work_catalog_probe": true})
@@ -183,7 +184,7 @@ async fn assert_heartbeats(
             &client,
             2,
             "device:heartbeat",
-            json!({"device_id": device_id, "running_task_ids": ["9007199254740993"]}),
+            json!({"device_id": device_id, "runtime_instance_id": RUNTIME_INSTANCE_ID, "running_task_ids": ["9007199254740993"]}),
         )
         .await,
         json!({"success": true})
@@ -204,7 +205,7 @@ async fn assert_heartbeats(
                 &client,
                 id,
                 "device:heartbeat",
-                json!({"device_id": device_id, "running_task_ids": ["123", invalid]}),
+                json!({"device_id": device_id, "runtime_instance_id": RUNTIME_INSTANCE_ID, "running_task_ids": ["123", invalid]}),
             )
             .await,
             json!({"error": "Invalid payload: running_task_ids must be integers"})

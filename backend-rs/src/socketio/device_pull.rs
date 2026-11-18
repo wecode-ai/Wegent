@@ -152,15 +152,25 @@ async fn pull_execution(app: &AppState, command: &PullCommand<'_>) -> anyhow::Re
 async fn probe_catalog(app: &AppState, command: &PullCommand<'_>) -> anyhow::Result<Value> {
     let identities =
         owned_execution_device_ids(app, command.owner_user_id, command.execution_target_id).await?;
-    let required = unconfirmed_claim(app, command).await?.is_some()
-        || !claim::queue_rows_for_catalog_probe(
+    let required = if unconfirmed_claim(app, command).await?.is_some() {
+        true
+    } else {
+        let rows = claim::queue_rows_for_catalog_probe(
             app,
             command.owner_user_id,
             &identities,
             command.environment,
         )
+        .await?;
+        claim::select_catalog_candidate(
+            app,
+            command.owner_user_id,
+            command.execution_target_id,
+            rows,
+        )
         .await?
-        .is_empty();
+        .is_some()
+    };
     Ok(json!({
         "success": true, "task": null, "catalog_required": required,
         "workspace_cleanup_intents": pull_due(app, command.owner_user_id, command.runtime_device_id).await?
