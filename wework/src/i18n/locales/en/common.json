@@ -3468,6 +3468,8 @@
     "appshots_shortcut": "Shortcut",
     "appshots_shortcut_description": "Capture the frontmost window from any app",
     "appshots_shortcut_unavailable": "Another app is using this shortcut. Quit the conflicting app and restart Wework.",
+    "appshots_shortcut_edit": "Record shortcut",
+    "appshots_shortcut_unassigned_description": "Record a shortcut to capture the frontmost window from any app.",
     "appshots_macos_only": "Appshots is currently available on macOS only.",
     "appshots_target": "Appshot destination",
     "appshots_target_description": "Snapshots are added to the active Wework composer automatically",

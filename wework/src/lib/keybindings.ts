@@ -136,9 +136,14 @@ export function normalizeKeybinding(value: string): string {
   return [...modifiers, key].join('+')
 }
 
-export function keybindingFromKeyboardEvent(event: KeyboardEvent): string {
+export function keybindingFromKeyboardEvent(
+  event: KeyboardEvent,
+  preferPhysicalKey = false
+): string {
   const key = normalizeKeyPart(
-    event.altKey ? keybindingKeyFromPhysicalCode(event.code) || event.key : event.key
+    event.altKey || preferPhysicalKey
+      ? keybindingKeyFromPhysicalCode(event.code) || event.key
+      : event.key
   )
   const mainKey = key && !['Command', 'Control', 'Alt', 'Shift'].includes(key) ? key : null
   if (!mainKey) return ''

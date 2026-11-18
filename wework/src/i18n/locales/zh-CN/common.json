@@ -3464,6 +3464,8 @@
     "appshots_shortcut": "快捷键",
     "appshots_shortcut_description": "在任意应用中截取最前面的窗口",
     "appshots_shortcut_unavailable": "快捷键已被其他应用占用，请退出冲突的应用后重启 Wework。",
+    "appshots_shortcut_edit": "录制快捷键",
+    "appshots_shortcut_unassigned_description": "录制一个快捷键，在任意应用中截取最前面的窗口。",
     "appshots_macos_only": "应用快照目前仅支持 macOS。",
     "appshots_target": "Appshot 目标位置",
     "appshots_target_description": "快照会自动添加到当前 Wework 输入框",
