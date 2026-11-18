@@ -55,6 +55,18 @@ test('startup rollback records the actual failed attempt and healthy confirmatio
   expect(await store.rollbackHistory()).toEqual([])
 })
 
+test('a healthy retry without an activation journal clears the failed record', async () => {
+  const { store, root, target, activation } = await fixture()
+  await atomicReleaseWrite(join(root, 'attempted'), activation.token)
+  await atomicReleaseWrite(join(root, 'failed'), activation.token)
+  await store.rollback()
+  await atomicReleaseWrite(join(root, 'active'), target.id)
+
+  await store.confirm(target.id)
+
+  expect(await store.rollbackHistory()).toEqual([])
+})
+
 test('manual rollback is distinguishable from a startup failure', async () => {
   const { store, target } = await fixture()
   await store.confirm(target.id)
