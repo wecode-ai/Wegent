@@ -173,6 +173,12 @@ export function createDesktopScenario({
       await rm(join(executorHome, 'codex', 'models_cache.json'), { force: true })
     },
     async verify(control) {
+      if (process.platform === 'linux') {
+        // Capture restorable normal bounds before cycling through smaller viewports.
+        await control.command('setMainWindowSize', 'body', {
+          value: JSON.stringify({ width: 1200, height: 820 }),
+        })
+      }
       await verifyPendingInteractionsTab(control, 0, { openFromMenu: true })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
       await createSingleRootLocalProject(control, workspacePath, 'human-interactions')

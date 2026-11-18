@@ -2,6 +2,17 @@
 use super::*;
 
 impl RuntimeWorkRpcHandler {
+    fn require_runtime_connection(&self) -> Result<ConnectionConfig, AppIpcError> {
+        self.backend_connection_snapshot()?
+            .filter(|value| !value.backend_url.is_empty() && !value.auth_token.is_empty())
+            .ok_or_else(|| {
+                AppIpcError::new(
+                    "cloud_unavailable",
+                    "Connect this Executor to your cloud account",
+                )
+            })
+    }
+
     /// Desktop identity routes local IPC; cloud writes use the registered Runtime.
     pub(super) fn cloud_device_id(&self) -> Result<String, AppIpcError> {
         let Some(slot) = &self.backend_device_route else {
@@ -26,15 +37,7 @@ impl RuntimeWorkRpcHandler {
         path: &str,
         body: Option<&Value>,
     ) -> Result<reqwest::Response, AppIpcError> {
-        let connection = self
-            .backend_connection_snapshot()?
-            .filter(|value| !value.backend_url.is_empty() && !value.auth_token.is_empty())
-            .ok_or_else(|| {
-                AppIpcError::new(
-                    "cloud_unavailable",
-                    "Connect this Executor to your cloud account",
-                )
-            })?;
+        let connection = self.require_runtime_connection()?;
         Self::runtime_request_on(&connection, method, path, body).await
     }
 
@@ -68,7 +71,17 @@ impl RuntimeWorkRpcHandler {
         path: &str,
         body: Option<&Value>,
     ) -> Result<Value, AppIpcError> {
-        let response = self.runtime_request(method.clone(), path, body).await?;
+        let connection = self.require_runtime_connection()?;
+        Self::runtime_http_on(&connection, method, path, body).await
+    }
+
+    async fn runtime_http_on(
+        connection: &ConnectionConfig,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<&Value>,
+    ) -> Result<Value, AppIpcError> {
+        let response = Self::runtime_request_on(connection, method.clone(), path, body).await?;
         if !response.status().is_success() {
             let status = response.status();
             let reason = response.json::<Value>().await.ok();
@@ -125,10 +138,14 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn verify_runtime_user(&self, config: &Value) -> Result<(), AppIpcError> {
-        let user = self
-            .runtime_http(reqwest::Method::GET, "/users/me", None)
-            .await?;
-        if user["id"] != config["userId"] {
+        let connection = self.require_runtime_connection()?;
+        let path = if connection.auth_token.starts_with("wg-") {
+            "/devices/runtime-owner"
+        } else {
+            "/users/me"
+        };
+        let user = Self::runtime_http_on(&connection, reqwest::Method::GET, path, None).await?;
+        if user["id"].as_i64().is_none() || user["id"] != config["userId"] {
             return Err(AppIpcError::new(
                 "permission_denied",
                 "The requested owner must match the connected account",

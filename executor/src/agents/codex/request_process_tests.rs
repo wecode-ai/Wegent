@@ -1038,3 +1038,6 @@ async fn native_rpc_responses_protect_the_gap_before_turn_and_goal_notifications
     assert_ne!(pid(client).await, original_pid);
     client.restart().await;
 }
+
+#[path = "connection_mcp_process_tests.rs"]
+mod connection_mcp;
