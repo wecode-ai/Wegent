@@ -359,6 +359,7 @@ const ELECTRON_OBSERVATION_ACTIONS = new Set([
   'getTerminalText',
   'getText',
   'getValueWhenReady',
+  'getWorkbenchDebugSnapshot',
   'metrics',
   'snapshot',
   'text',

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
-  RESOURCE_EXCLUSIVE_CHECKPOINTS,
+  isResourceExclusiveCheckpoint,
   linuxCoreCheckpointResources,
   runWithCheckpointResources,
 } from './checkpoint-scheduler.mjs'
@@ -135,7 +135,7 @@ test('keeps the real system-idle uninstall checkpoint isolated in the shared pol
     checkpoints: ['independent-a', checkpoint, 'independent-b'],
     workerCount: 4,
     resourceFor: () => null,
-    exclusiveFor: id => RESOURCE_EXCLUSIVE_CHECKPOINTS.has(id),
+    exclusiveFor: isResourceExclusiveCheckpoint,
     run: async id => {
       started.push(id)
       active.add(id)
@@ -159,7 +159,7 @@ test('keeps the strict runtime load budget isolated from other Electron workload
     checkpoints: ['independent-a', checkpoint, 'independent-b'],
     workerCount: 4,
     resourceFor: () => null,
-    exclusiveFor: id => RESOURCE_EXCLUSIVE_CHECKPOINTS.has(id),
+    exclusiveFor: isResourceExclusiveCheckpoint,
     run: async id => {
       started.push(id)
       active.add(id)

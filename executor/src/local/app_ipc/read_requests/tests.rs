@@ -327,8 +327,14 @@ async fn queued_history_admission_is_fifo_across_connections() {
         .admit(Some("runtime.tasks.transcript"), "second")
         .unwrap()
         .unwrap();
-    first.wait_for_admission().await.unwrap();
-    second.wait_for_admission().await.unwrap();
+    tokio::time::timeout(Duration::from_secs(1), first.wait_for_admission())
+        .await
+        .expect("the first connection read must acquire an active permit")
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), second.wait_for_admission())
+        .await
+        .expect("the second connection read must acquire an active permit")
+        .unwrap();
     let (mut queued_first, _) = second_connection
         .admit(Some("runtime.tasks.transcript"), "queued-first")
         .unwrap()
@@ -516,7 +522,10 @@ async fn connection_read_waits_for_active_capacity() {
         );
 
         drop(first);
-        third_wait.await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), third_wait.as_mut())
+            .await
+            .expect("the third connection read must acquire the released permit")
+            .unwrap();
     }
     assert_eq!(admission.active.available_permits(), 0);
     drop(second);
