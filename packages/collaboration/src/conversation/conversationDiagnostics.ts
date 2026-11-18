@@ -1,8 +1,6 @@
+import { sanitizeScriptDetail } from '@wegent/chat-core/browser-performance'
 import { getScrollViewportElement } from './scrollViewportElement'
-import {
-  createConversationSearchPerformanceCapture,
-  sanitizeSearchScriptDetail,
-} from './conversationSearchPerformance'
+import { createConversationSearchPerformanceCapture } from './conversationSearchPerformance'
 export { setConversationFrameProbeEnabled } from './conversationFrameProbe'
 
 // Reader input opens a short layout window; verification clients hold scoped capture leases.
@@ -252,7 +250,7 @@ export function recordConversationDiagnostic(
   const sanitized: ConversationDiagnosticEvent['details'] = {}
   for (const [key, value] of Object.entries(details)) {
     if (name === 'search-slow-script' && typeof value === 'string') {
-      const safeValue = sanitizeSearchScriptDetail(key, value)
+      const safeValue = sanitizeScriptDetail(key, value)
       if (safeValue !== undefined) sanitized[key] = safeValue
       continue
     }

@@ -59,6 +59,31 @@ export function flattenPerformance(snapshot) {
   }
   if (snapshot.reactCommits !== null)
     metrics.set('react.commitCount', counter(snapshot.reactCommits.count, 'react.commitCount'))
+  const responsiveness = snapshot.responsiveness
+  if (responsiveness) {
+    assert.ok(
+      Array.isArray(responsiveness.supportedEntryTypes) &&
+        responsiveness.supportedEntryTypes.every(type =>
+          ['longtask', 'long-animation-frame'].includes(type)
+        ),
+      'Invalid responsiveness availability'
+    )
+    for (const [type, fields] of [
+      ['longtask', ['longTaskCount', 'longTaskTotalMs', 'longTaskMaxMs']],
+      [
+        'long-animation-frame',
+        ['frameCount', 'frameTotalMs', 'frameMaxMs', 'slowScriptCount', 'slowScriptMaxMs'],
+      ],
+    ]) {
+      if (!responsiveness.supportedEntryTypes.includes(type)) continue
+      for (const field of fields)
+        metrics.set(`renderer.${field}`, counter(responsiveness[field], field))
+    }
+    metrics.set(
+      'renderer.droppedDetailEvents',
+      counter(responsiveness.droppedEvents, 'droppedEvents')
+    )
+  }
   assert.equal(
     snapshot.executor?.available,
     true,
@@ -211,7 +236,9 @@ export class DesktopPerformanceJournal {
       for (const [name, value] of Object.entries(metrics)) {
         const previous = totals.get(name) ?? 0
         const maximum =
-          name.endsWith('.maxAddedSubtreeElements') || name.endsWith('.maxRemovedSubtreeElements')
+          name.endsWith('.maxAddedSubtreeElements') ||
+          name.endsWith('.maxRemovedSubtreeElements') ||
+          (name.startsWith('renderer.') && name.endsWith('MaxMs'))
         totals.set(name, maximum ? Math.max(previous, value) : previous + value)
       }
     }

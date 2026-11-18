@@ -31,7 +31,7 @@ export function assertUiRefreshBudgets(snapshot, budgets) {
   assert.equal(snapshot.version, 1, 'Unsupported UI refresh measurement version')
   for (const key of Object.keys(budgets)) {
     assert.ok(
-      ['regions', 'renders', 'reactCommits'].includes(key),
+      ['regions', 'renders', 'reactCommits', 'responsiveness'].includes(key),
       `Unknown UI refresh budget: ${key}`
     )
   }
@@ -57,6 +57,23 @@ export function assertUiRefreshBudgets(snapshot, budgets) {
   if (budgets.reactCommits !== undefined) {
     assertMaximum(snapshot.reactCommits?.count, budgets.reactCommits, 'React commit count')
     checked += 1
+  }
+  for (const [metric, maximum] of Object.entries(budgets.responsiveness ?? {})) {
+    const type = ['longTaskCount', 'longTaskTotalMs', 'longTaskMaxMs'].includes(metric)
+      ? 'longtask'
+      : ['frameCount', 'frameTotalMs', 'frameMaxMs', 'slowScriptCount', 'slowScriptMaxMs'].includes(
+            metric
+          )
+        ? 'long-animation-frame'
+        : null
+    assert.ok(type, `Unknown responsiveness metric: ${metric}`)
+    assert.ok(
+      Array.isArray(snapshot.responsiveness?.supportedEntryTypes) &&
+        snapshot.responsiveness.supportedEntryTypes.includes(type),
+      `Responsiveness measurement unavailable: ${type}`
+    )
+    assertMaximum(snapshot.responsiveness[metric], maximum, metric)
+    checked++
   }
   assert.ok(checked > 0, 'At least one UI refresh budget is required')
 }

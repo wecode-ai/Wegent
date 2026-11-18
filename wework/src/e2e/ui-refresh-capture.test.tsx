@@ -21,6 +21,7 @@ afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
   vi.unstubAllEnvs()
+  vi.unstubAllGlobals()
 })
 
 function start(options: Parameters<typeof capture.startUiRefreshCapture>[0]) {
@@ -240,5 +241,67 @@ test('sums disjoint selected roots inside a replaced ancestor without double-cou
     removedSubtreeElements: 7,
     maxAddedSubtreeElements: 4,
     maxRemovedSubtreeElements: 4,
+  })
+})
+
+test('records queued browser stalls and only safe script attribution', () => {
+  let pending: PerformanceEntry[] = []
+  vi.stubGlobal(
+    'PerformanceObserver',
+    class {
+      static supportedEntryTypes = ['longtask', 'long-animation-frame']
+      observe() {}
+      takeRecords() {
+        const entries = pending
+        pending = []
+        return entries
+      }
+      disconnect() {}
+    }
+  )
+  const token = start({ regions: [], renderIds: [] })
+  const at = performance.now()
+  pending = [
+    { entryType: 'longtask', startTime: at, duration: 7577 } as PerformanceEntry,
+    {
+      entryType: 'long-animation-frame',
+      startTime: at,
+      duration: 7600,
+      scripts: [
+        {
+          startTime: at,
+          duration: 7500,
+          forcedStyleAndLayoutDuration: 7000,
+          sourceURL: 'https://private.example/assets/app-abcdefgh.js?token=PRIVATE_MARKER',
+          sourceFunctionName: 'renderMessage',
+          invokerType: 'event-listener',
+        },
+      ],
+    } as unknown as PerformanceEntry,
+  ]
+  const snapshot = capture.readUiRefreshCapture(token)
+  expect(snapshot.responsiveness).toMatchObject({
+    longTaskCount: 1,
+    longTaskMaxMs: 7577,
+    frameCount: 1,
+    slowScriptMaxMs: 7500,
+  })
+  expect(snapshot.responsiveness).not.toHaveProperty('events')
+  const detail = capture.getUiResponsivenessDiagnostics()
+  expect(detail.captures[0].events).toHaveLength(3)
+  expect(JSON.stringify(detail)).toContain('app-abcdefgh.js')
+  expect(JSON.stringify(detail)).not.toContain('PRIVATE_MARKER')
+  expect(JSON.stringify(detail)).not.toContain('private.example')
+  expect(stop(token).responsiveness.longTaskCount).toBe(1)
+})
+
+test('unsupported browser timings remain unavailable rather than zero', () => {
+  vi.stubGlobal('PerformanceObserver', undefined)
+  const snapshot = stop(start({ regions: [], renderIds: [] }))
+  expect(snapshot.responsiveness).toMatchObject({
+    supportedEntryTypes: [],
+    unavailableReason: 'not-supported',
+    longTaskCount: null,
+    frameCount: null,
   })
 })

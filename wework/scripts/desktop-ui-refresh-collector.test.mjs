@@ -204,3 +204,19 @@ test('subtree element budgets reject excessive replacement and unavailable count
     /measurement is unavailable/
   )
 })
+
+test('responsiveness budgets reject a measured stall and unsupported zero counters', t => {
+  const { snapshot } = fixture(t)
+  snapshot.complete = true
+  snapshot.actionSucceeded = true
+  snapshot.responsiveness = { supportedEntryTypes: ['longtask'], longTaskMaxMs: 7577 }
+  assert.throws(
+    () => assertUiRefreshBudgets(snapshot, { responsiveness: { longTaskMaxMs: 1000 } }),
+    /observed 7577, budget 1000/
+  )
+  snapshot.responsiveness = { supportedEntryTypes: [], longTaskMaxMs: 0 }
+  assert.throws(
+    () => assertUiRefreshBudgets(snapshot, { responsiveness: { longTaskMaxMs: 1000 } }),
+    /measurement unavailable/
+  )
+})

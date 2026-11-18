@@ -1,3 +1,8 @@
+import { reportE2EDiagnostic } from './error-capture'
+import {
+  observeBrowserPerformance,
+  type BrowserPerformanceEventName,
+} from '@wegent/chat-core/browser-performance'
 import { getDesktopE2ERuntimeConfig } from './runtime-config'
 import { startExecutorActivity } from './executor-activity'
 
@@ -47,6 +52,24 @@ interface Capture {
   commits: number
   actualDurationMs: number
   executor: ReturnType<typeof startExecutorActivity>
+  responsiveness: {
+    longTaskCount: number
+    longTaskTotalMs: number
+    longTaskMaxMs: number
+    frameCount: number
+    frameTotalMs: number
+    frameMaxMs: number
+    slowScriptCount: number
+    slowScriptMaxMs: number
+    lastSequence: number
+    droppedEvents: number
+    events: Array<{
+      sequence: number
+      atMs: number
+      kind: BrowserPerformanceEventName
+      details: Record<string, number | string>
+    }>
+  }
   removals: Array<{ atMs: number; parent: string | null; testIds: string[] }>
 }
 
@@ -56,6 +79,52 @@ let observer: MutationObserver | undefined
 let observedRoot: Element | undefined
 let rendererInstanceId: string | undefined
 let profilerObserved = false
+let performanceObserver: ReturnType<typeof observeBrowserPerformance> | undefined
+
+function recordResponsiveness(
+  kind: BrowserPerformanceEventName,
+  details: Record<string, number | string>
+) {
+  const start = kind === 'slow-script' ? details.frameStartTime : details.startTime
+  if (typeof start !== 'number') return
+  const elapsed = Math.ceil(details.elapsedMs as number)
+  const captureIds: string[] = []
+  for (const capture of captures.values()) {
+    if (start < capture.startedMs) continue
+    captureIds.push(capture.id)
+    const target = capture.responsiveness
+    if (kind === 'long-task') {
+      target.longTaskCount++
+      target.longTaskTotalMs += elapsed
+      target.longTaskMaxMs = Math.max(target.longTaskMaxMs, elapsed)
+    } else if (kind === 'long-frame') {
+      target.frameCount++
+      target.frameTotalMs += elapsed
+      target.frameMaxMs = Math.max(target.frameMaxMs, elapsed)
+    } else {
+      target.slowScriptCount++
+      target.slowScriptMaxMs = Math.max(target.slowScriptMaxMs, elapsed)
+    }
+    target.events.push({
+      sequence: ++target.lastSequence,
+      atMs: start - capture.startedMs,
+      kind,
+      details,
+    })
+    if (target.events.length > 32) {
+      target.events.shift()
+      target.droppedEvents++
+    }
+  }
+  if (captureIds.length) {
+    reportE2EDiagnostic('renderer-responsiveness', {
+      kind,
+      captureIds,
+      timeOrigin: performance.timeOrigin,
+      ...details,
+    })
+  }
+}
 
 export function isUiRefreshCaptureEnabled(): boolean {
   if (typeof window === 'undefined') return false
@@ -263,7 +332,10 @@ export function startUiRefreshCapture(options: UiRefreshOptions = {}) {
   }
   const renders = new Map<string, number>(renderIds.map(id => [id, 0]))
   flush()
-  if (captures.size === 0) observedRoot = document.documentElement
+  if (captures.size === 0) {
+    observedRoot = document.documentElement
+    performanceObserver = observeBrowserPerformance(recordResponsiveness)
+  }
   if (regions.size > 0 && !hasDomCapture()) {
     observer ??= new MutationObserver(recordMutations)
     observer.observe(document.documentElement, {
@@ -284,6 +356,19 @@ export function startUiRefreshCapture(options: UiRefreshOptions = {}) {
     commits: 0,
     actualDurationMs: 0,
     executor: startExecutorActivity(),
+    responsiveness: {
+      longTaskCount: 0,
+      longTaskTotalMs: 0,
+      longTaskMaxMs: 0,
+      frameCount: 0,
+      frameTotalMs: 0,
+      frameMaxMs: 0,
+      slowScriptCount: 0,
+      slowScriptMaxMs: 0,
+      lastSequence: 0,
+      droppedEvents: 0,
+      events: [],
+    },
     removals: [],
   })
   return {
@@ -299,6 +384,7 @@ export function readUiRefreshCapture(token: { captureId: string; rendererInstanc
     throw new Error('UI refresh capture belongs to another renderer or was lost on reload')
   const capture = captures.get(token.captureId)
   if (!capture) throw new Error('UI refresh capture is unavailable or already stopped')
+  performanceObserver?.flush()
   const documentChanged = observedRoot !== document.documentElement
   flush()
   if (documentChanged) throw new Error('The document changed during UI refresh capture')
@@ -322,7 +408,43 @@ export function readUiRefreshCapture(token: { captureId: string; rendererInstanc
       ? { count: capture.commits, actualDurationMs: capture.actualDurationMs }
       : null,
     executor: capture.executor.snapshot(),
+    responsiveness: responsivenessSnapshot(capture),
     removals: [...capture.removals],
+  }
+}
+
+function responsivenessSnapshot(capture: Capture) {
+  const counts = capture.responsiveness
+  const supportedEntryTypes = [...(performanceObserver?.entryTypes ?? [])]
+  const longTasks = supportedEntryTypes.includes('longtask')
+  const frames = supportedEntryTypes.includes('long-animation-frame')
+  return {
+    lastSequence: counts.lastSequence,
+    droppedEvents: counts.droppedEvents,
+    supportedEntryTypes,
+    unavailableReason: performanceObserver?.unavailableReason ?? null,
+    longTaskCount: longTasks ? counts.longTaskCount : null,
+    longTaskTotalMs: longTasks ? counts.longTaskTotalMs : null,
+    longTaskMaxMs: longTasks ? counts.longTaskMaxMs : null,
+    frameCount: frames ? counts.frameCount : null,
+    frameTotalMs: frames ? counts.frameTotalMs : null,
+    frameMaxMs: frames ? counts.frameMaxMs : null,
+    slowScriptCount: frames ? counts.slowScriptCount : null,
+    slowScriptMaxMs: frames ? counts.slowScriptMaxMs : null,
+  }
+}
+
+export function getUiResponsivenessDiagnostics() {
+  performanceObserver?.flush()
+  return {
+    timeOrigin: performance.timeOrigin,
+    rendererInstanceId,
+    captures: [...captures.values()].map(capture => ({
+      captureId: capture.id,
+      startedAt: capture.startedAt,
+      ...responsivenessSnapshot(capture),
+      events: [...capture.responsiveness.events],
+    })),
   }
 }
 
@@ -335,6 +457,10 @@ export function stopUiRefreshCapture(token: { captureId: string; rendererInstanc
       capture.executor.stop()
       captures.delete(capture.id)
       if (!hasDomCapture()) observer?.disconnect()
+      if (captures.size === 0) {
+        performanceObserver?.stop()
+        performanceObserver = undefined
+      }
     }
   }
 }

@@ -307,9 +307,16 @@ test('sorting late results does not hide a real counter regression or reused cap
   }
 })
 
-test('subtree element totals retain later operation deltas without adding maximum gauges', () => {
+test('operation totals retain later deltas without adding maximum gauges', () => {
   const journal = new DesktopPerformanceJournal(metadata)
   const initial = snapshot()
+  initial.responsiveness = {
+    supportedEntryTypes: ['longtask'],
+    longTaskCount: 1,
+    longTaskTotalMs: 80,
+    longTaskMaxMs: 80,
+    droppedEvents: 0,
+  }
   initial.regions.document.addedSubtreeElements = 100
   initial.regions.document.removedSubtreeElements = 100
   initial.regions.document.maxAddedSubtreeElements = 100
@@ -323,6 +330,8 @@ test('subtree element totals retain later operation deltas without adding maximu
   journal.record('client', next, 'click', 'result', 'smaller-update')
   const another = structuredClone(initial)
   another.captureId = 'another-renderer'
+  another.responsiveness.longTaskTotalMs = 20
+  another.responsiveness.longTaskMaxMs = 20
   another.regions.document.addedSubtreeElements = 7
   another.regions.document.removedSubtreeElements = 7
   another.regions.document.maxAddedSubtreeElements = 7
@@ -330,6 +339,9 @@ test('subtree element totals retain later operation deltas without adding maximu
   journal.record('another-client', another)
   const report = journal.report(true)
   assert.equal(report.complete, true)
+  assert.equal(report.metrics['renderer.longTaskCount'], 2)
+  assert.equal(report.metrics['renderer.longTaskTotalMs'], 100)
+  assert.equal(report.metrics['renderer.longTaskMaxMs'], 80)
   assert.equal(report.observations[2].changes['ui.document.addedSubtreeElements'], 25)
   assert.equal(report.observations[2].changes['ui.document.removedSubtreeElements'], 25)
   assert.equal(report.metrics['ui.document.addedSubtreeElements'], 132)

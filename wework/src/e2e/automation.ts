@@ -108,6 +108,7 @@ import {
   isUiRefreshCaptureEnabled,
   startUiRefreshCapture,
   readUiRefreshCapture,
+  getUiResponsivenessDiagnostics,
   stopUiRefreshCapture,
 } from './ui-refresh-capture'
 import { verifyConnectorAuthorizationIsolation } from './connector-authorization-isolation'
@@ -3700,6 +3701,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         desktopControlTransport: getDesktopControlDiagnostics(),
         nativeTerminalKeys: getNativeTerminalDiagnostics(),
         modelLoading: getModelLoadingDiagnostics(),
+        rendererResponsiveness: getUiResponsivenessDiagnostics(),
         timeOrigin: performance.timeOrigin,
         network: performance.getEntriesByType('resource').map(entry => {
           const timing = entry as PerformanceResourceTiming
