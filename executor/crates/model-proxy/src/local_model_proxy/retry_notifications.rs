@@ -55,6 +55,7 @@ impl Drop for RetryNotificationSubscription {
 /// A request owns its wait lifetime, including errors and cancellation.
 pub(super) struct RetryWait {
     thread_id: String,
+    turn_id: Option<String>,
     wait_id: String,
     sender: RetrySender,
     waiting: bool,
@@ -77,6 +78,7 @@ impl RetryWait {
             .clone();
         Some(Self {
             thread_id: identity.thread_id,
+            turn_id: identity.turn_id,
             wait_id: uuid::Uuid::new_v4().to_string(),
             sender,
             waiting: false,
@@ -100,6 +102,7 @@ impl RetryWait {
                 "method": METHOD,
                 "params": {
                     "threadId": self.thread_id,
+                    "turnId": self.turn_id,
                     "waitId": self.wait_id,
                     "waiting": waiting,
                     "error": { "codexErrorInfo": "rateLimitExceeded" },
@@ -122,6 +125,36 @@ impl Drop for RetryWait {
 mod tests {
     use super::*;
     use tokio::sync::mpsc;
+
+    #[test]
+    fn overlapping_turns_keep_their_native_identity_when_a_request_finishes_late() {
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let thread = "overlapping-native-turn-identities";
+        let _subscription = subscribe(thread, Some(&sender)).unwrap();
+        let request = |turn: &str| {
+            serde_json::to_vec(&json!({
+                "client_metadata": {"thread_id": thread, "turn_id": turn}
+            }))
+            .unwrap()
+        };
+        let mut first = RetryWait::for_request(&request("turn-1")).unwrap();
+        let mut second = RetryWait::for_request(&request("turn-2")).unwrap();
+        first.waiting();
+        second.waiting();
+        drop(first);
+        drop(second);
+        for (turn, waiting) in [
+            ("turn-1", true),
+            ("turn-2", true),
+            ("turn-1", false),
+            ("turn-2", false),
+        ] {
+            let event = receiver.try_recv().unwrap();
+            assert_eq!(event["params"]["turnId"], turn);
+            assert_eq!(event["params"]["waiting"], waiting);
+        }
+        assert!(receiver.try_recv().is_err());
+    }
 
     #[test]
     fn overlapping_requests_have_distinct_stable_wait_ids() {

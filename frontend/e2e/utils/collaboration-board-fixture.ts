@@ -5,7 +5,7 @@ import { expect, test, type BrowserContext, type Page, type Request } from '@pla
 import { REGULAR_USER } from '../config/test-users'
 import { createApiClient } from './api-client'
 import { buildStorageState, getJwtExpiryMs } from './auth-state'
-import { webApi } from './collaboration-test-support'
+import { enableLegacyBoardGrouping, webApi } from './collaboration-test-support'
 
 export interface Resource {
   id: string
@@ -95,6 +95,7 @@ export const boardTest = test.extend<{
         getJwtExpiryMs(token)
       ),
     })
+    await enableLegacyBoardGrouping(context)
     const updates: string[] = []
     const recordUpdate = (request: Request) => {
       if (

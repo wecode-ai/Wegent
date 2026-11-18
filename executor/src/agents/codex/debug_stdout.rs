@@ -5,18 +5,16 @@
 use std::{fs, io::Write, path::PathBuf};
 
 use serde_json::Value;
-use tokio::{
-    io::{AsyncBufReadExt, BufReader},
-    process::ChildStdout,
-};
+use tokio::{io::BufReader, process::ChildStdout};
 
 use crate::logging::log_executor_event;
 use wegent_runtime_logging::native_stdout as debug_stdout;
+use wegent_subprocess::line_reader::LineReader;
 
 use super::diagnostics::{debug_stdout_value, redact_diagnostic_text};
 
 pub(super) struct CodexStdout {
-    reader: BufReader<ChildStdout>,
+    reader: LineReader<BufReader<ChildStdout>>,
     debug_file: Option<fs::File>,
 }
 
@@ -26,7 +24,7 @@ impl CodexStdout {
             .then(|| open_debug_file(debug_path(task)))
             .flatten();
         Self {
-            reader: BufReader::new(stdout),
+            reader: LineReader::new(BufReader::new(stdout)),
             debug_file,
         }
     }

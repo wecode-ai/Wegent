@@ -1,0 +1,27 @@
+{
+  "order": 146200,
+  "scenario": "./scenarios/conversation-event-wakeup.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": { "core": { "order": 107200, "shard": 3, "position": 16200 } },
+  "paths": [
+    "executor/src/runtime_work/handler/control/connection_events/**",
+    "executor/src/runtime_work/handler/control/connection_events.rs",
+    "executor/src/workbench_control/**",
+    "executor/src/runtime_work/handler/archives.rs",
+    "executor/src/runtime_work/handler/claude_turns.rs",
+    "executor/src/runtime_work/handler/collection.rs",
+    "executor/src/runtime_work/handler/queries.rs",
+    "executor/src/runtime_work/handler/stand_in_ingress.rs",
+    "wework/src/lib/runtime-connection-events.ts",
+    "wework/src/api/connectionEventSubscriptions*",
+    "wework/src/components/chat/ChatInput*",
+    "wework/src/components/chat/RequestUserInputComposer*",
+    "wework/src/components/chat/composer/ConversationEventContext*",
+    "wework/src/components/chat/composer/GoalStatusBar*",
+    "wework/src/components/chat/composer/ConnectionEventStatus*",
+    "wework/e2e/desktop/scenarios/conversation-event-wakeup.scenario.mjs",
+    "wework/e2e/desktop/modules/conversation-event-human-wait.mjs",
+    "wework/e2e/desktop/modules/conversation-event-model.mjs",
+    "wework/e2e/desktop/fixtures/conversation-events-provider.mjs"
+  ]
+}

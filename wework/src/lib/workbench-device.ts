@@ -196,6 +196,7 @@ function extractNetworkHost(value?: string | null): string | null {
 }
 
 export function getWorkbenchDeviceUnavailableDisplayName(device: DeviceInfo | null): string {
+  if (device?.device_type === 'remote' && device.name?.trim()) return device.name.trim()
   return (
     extractNetworkHost(device?.client_ip) ?? extractNetworkHost(device?.runtime_transfer_host) ?? ''
   )

@@ -463,6 +463,31 @@ test('archive cleanup preserves a baseline left behind by an interrupted produce
   assert.match(await readFile(patchPath(f, found[1]), 'utf8'), /-original\n\+next captured/)
 })
 
+test('long snapshot refs use per-call long-path support without changing repository configuration', async t => {
+  const f = await fixture(t)
+  git(f.workspace, 'config', 'core.longpaths', 'false')
+  assert.equal(await runGit(f.workspace, ['config', '--get', 'core.longpaths']), 'true')
+  const start = await f.invoke(f.event(0, 'TurnStarted'))
+  await writeFile(join(f.workspace, 'source.txt'), 'long-path change\n')
+  const event = f.event(1)
+  await f.invoke(event)
+  const pending = await readJson(
+    join(start.queue_path, 'pending', digest(event.event_id) + '.json')
+  )
+  assert.ok(
+    pending.references.every(
+      reference => join(f.workspace, '.git', reference + '.lock').length > 260
+    )
+  )
+  await f.invoke(f.event(2, 'ExecutionCompleted'))
+  await processQueue(start.queue_path)
+  const found = await records(f.logs)
+  assert.equal(found.length, 1)
+  assert.match(await readFile(patchPath(f, found[0]), 'utf8'), /\+long-path change/)
+  assert.equal(git(f.workspace, 'config', '--get', 'core.longpaths'), 'false')
+  assert.equal(git(f.workspace, 'for-each-ref', '--format=%(refname)', 'refs/wegent/turn-diff'), '')
+})
+
 test('normal callbacks launch detached workers and release accepted snapshot refs', async t => {
   const f = await fixture(t)
   const invoke = input => handleEvent(input, f.config)
@@ -479,6 +504,19 @@ test('normal callbacks launch detached workers and release accepted snapshot ref
     ) {
       assert.match(await readFile(patchPath(f, found[0]), 'utf8'), /\+detached/)
       break
+    }
+    if (Date.now() >= deadline) {
+      try {
+        for (const queue of await readdir(join(f.logs, 'queues'))) {
+          const path = join(f.logs, 'queues', queue)
+          console.error('[turn-diff-worker]', {
+            log: await readFile(join(path, 'worker.log'), 'utf8'),
+            pending: await readdir(join(path, 'pending')),
+          })
+        }
+      } catch (error) {
+        console.error('[turn-diff-worker] diagnostics failed:', error)
+      }
     }
     assert.ok(Date.now() < deadline, 'Detached workers did not drain the queue')
     await delay(25)

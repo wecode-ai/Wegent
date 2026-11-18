@@ -1,4 +1,6 @@
+import { useE2ELifecycleTrace } from '@/e2e/useE2ELifecycleTrace'
 import { useWorkbenchServiceConnections } from './workbenchServiceConnections'
+import { getChangeRequestMonitor } from './changeRequestMonitor'
 import { createHttpClient } from '@/api/http'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createPluginApi } from '@/api/plugins'
@@ -242,6 +244,11 @@ function OwnedWorkbenchProvider({
 }: WorkbenchProviderProps & { workbenchIdentity: User; ownershipKey: string }) {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
+  useE2ELifecycleTrace('WorkbenchOwner', {
+    workspaceTabId,
+    userId: workbenchIdentity.id,
+    cloud: cloudConnection?.isConnected ?? false,
+  })
   const isWorkspaceTabActive = useOptionalWorkspaceTabActivity()
   const canNavigateWorkspaceTab = useStableEvent(
     () => !workspaceTabId || !isWorkspaceTabActive || isWorkspaceTabActive(workspaceTabId)
@@ -385,6 +392,13 @@ function OwnedWorkbenchProvider({
     standInApi: resolvedServices.standInApi,
     runtimeApi: resolvedServices.runtimeWorkApi,
   })
+  useEffect(() => {
+    if (resolvedServices.deviceApi)
+      getChangeRequestMonitor(resolvedServices.deviceApi).syncConnectionObservations(
+        state.runtimeWork,
+        state.devices
+      )
+  }, [resolvedServices.deviceApi, state.runtimeWork, state.devices])
   const currentContextUsage = state.currentRuntimeTask
     ? contextUsageByRuntimeTask[runtimeConversationKey(state.currentRuntimeTask)]
     : undefined
@@ -690,6 +704,7 @@ function OwnedWorkbenchProvider({
     dispatch,
     executorClient,
     services: resolvedServices,
+    canNavigate: canNavigateWorkspaceTab,
   })
 
   const markRuntimeTasksArchived = useMarkRuntimeTasksArchived({
@@ -762,7 +777,7 @@ function OwnedWorkbenchProvider({
         activationRevision: remoteProjectSyncActivationRevisionRef.current,
       }
       remoteProjectSyncAttemptRef.current = attempt
-      await enqueueRemoteProjectStateMutation(async () => {
+      const synced = await enqueueRemoteProjectStateMutation(async () => {
         const isCurrentAttempt = () =>
           remoteProjectSyncAttemptRef.current === attempt &&
           revision === remoteProjectSyncRevisionRef.current &&
@@ -786,8 +801,9 @@ function OwnedWorkbenchProvider({
         if (!response.accepted) {
           throw new Error(response.error || 'Failed to sync remote projects')
         }
-        await refreshWorkLists()
+        return true
       })
+      if (synced) await refreshWorkLists()
     })().catch(error => {
       if (
         attempt &&

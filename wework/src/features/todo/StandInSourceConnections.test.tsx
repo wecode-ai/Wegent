@@ -238,6 +238,36 @@ it.each([
   }
 )
 
+it('names the provider when its connection CLI request fails', async () => {
+  const user = userEvent.setup()
+  render(
+    <StandInSourceConnections
+      provider={{
+        id: 'dingtalk',
+        displayName: 'DingTalk',
+        resourceKinds: ['group'],
+        dependencies: [],
+        availability: { status: 'ready' },
+      }}
+      role={newStandInRole('device')}
+      api={
+        {
+          searchConnectionResources: vi
+            .fn()
+            .mockRejectedValue({ code: 'connection_cli_request_unavailable' }),
+        } as unknown as StandInExecutorApi
+      }
+      deviceId="device"
+      localDeviceId="device"
+      disabled={false}
+      onChange={vi.fn()}
+    />
+  )
+  await user.type(screen.getByTestId('stand-in-connection-dingtalk-query'), 'qindi')
+  await user.click(screen.getByTestId('stand-in-connection-dingtalk-search'))
+  expect(await screen.findByRole('alert')).toHaveTextContent('DingTalk')
+})
+
 it('batches selected resources across searches and only updates the role when adding', async () => {
   const { useState } = await import('react')
   const onChange = vi.fn()

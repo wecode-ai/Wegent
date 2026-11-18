@@ -2,6 +2,7 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 #[cfg(target_os = "macos")]
 mod macos_installation;
+mod startup_lock;
 use std::{
     env,
     ffi::{OsStr, OsString},
@@ -159,6 +160,12 @@ fn run() -> io::Result<()> {
     let first = args
         .next()
         .ok_or_else(|| io::Error::other("Missing release root"))?;
+    if first == "--startup-lock" {
+        let path = args
+            .next()
+            .ok_or_else(|| io::Error::other("Missing startup lock path"))?;
+        return startup_lock::serve(Path::new(&path));
+    }
     #[cfg(target_os = "macos")]
     if first == "--macos-applications" {
         return macos_installation::applications(

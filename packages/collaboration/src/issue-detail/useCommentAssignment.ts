@@ -15,8 +15,8 @@ export interface CommentSubmissionOptions {
 export interface CommentAssignment {
   options: IssueDetailSearchableSelectOption[]
   canAssignCurrent?: boolean
-  assign(target: string): Promise<void>
-  createChild?(input: CommentChildInput): Promise<import('../types').CollaborationIssue>
+  assign(target: string): Promise<void | boolean>
+  createChild?(input: CommentChildInput): Promise<import('../types').CollaborationIssue | false>
 }
 
 function firstAssignableMention(
@@ -50,6 +50,7 @@ export function useCommentAssignment(
   )
   const effectiveMode = assignment?.createChild ? mode : 'current'
   const [pendingChild, setPendingChild] = useState<CommentChildInput | null>(null)
+  const [childCancelled, setChildCancelled] = useState(false)
   const [sentSuggestion, setSentSuggestion] = useState('')
   const [dismissedSuggestion, setDismissedSuggestion] = useState('')
   const [focusedSuggestion, setFocusedSuggestion] = useState('')
@@ -74,6 +75,7 @@ export function useCommentAssignment(
   function setTarget(next: string) {
     setError(null)
     setSelectedTarget(next)
+    if (childCancelled) setPendingChild(current => (current ? { ...current, target: next } : null))
     if (next && actions?.assigneeMoves?.includes(moveTarget)) setMoveTarget('')
     if (!next && !moveTarget && pendingToggle === null) clearCommittedComment()
   }
@@ -139,7 +141,11 @@ export function useCommentAssignment(
           operation = { body, target, requestId: crypto.randomUUID() }
           setPendingChild(operation)
         }
-        await assignment.createChild(operation)
+        setChildCancelled(false)
+        if ((await assignment.createChild(operation)) === false) {
+          setChildCancelled(true)
+          return
+        }
         setPendingChild(null)
         setSelectedTarget('')
         setSentSuggestion('')
@@ -161,12 +167,12 @@ export function useCommentAssignment(
       }
       if (currentTarget && assignment) {
         // Only an explicitly selected target participates in submission.
-        await assignment.assign(currentTarget)
+        if ((await assignment.assign(currentTarget)) === false) return
         setSelectedTarget('')
         setSentSuggestion('')
       }
       if (moveTarget && actions) {
-        await actions.move(moveTarget)
+        if ((await actions.move(moveTarget)) === false) return
         setMoveTarget('')
       }
       if (toggle !== null && actions) {
@@ -186,6 +192,7 @@ export function useCommentAssignment(
     mode: effectiveMode,
     setMode,
     pendingChild,
+    childTargetLocked: pendingChild !== null && !childCancelled,
     options,
     target,
     moveTarget,

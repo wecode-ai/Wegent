@@ -1188,6 +1188,12 @@ impl RuntimeWorkRpcHandler {
         }
         self.bind_stand_in_owner_command(&mut payload, activity);
         normalize_user_message_presentation(&mut payload)?;
+        if payload.get("resourceEventKeys").is_some() && payload.get("commandId").is_none() {
+            payload["commandId"] = payload
+                .get("clientUserMessageId")
+                .cloned()
+                .unwrap_or_else(|| json!(uuid::Uuid::new_v4().to_string()));
+        }
         let existing_link = self.local_task_link(&local_task_id);
         let mut payload = if let Some(link) = &existing_link {
             self.refresh_project_coordinator_payload(payload, link)
@@ -1197,6 +1203,16 @@ impl RuntimeWorkRpcHandler {
         };
         if let Some(receipt) = self.existing_payload_command(&payload).await? {
             return Ok(receipt);
+        }
+        if payload.get("resourceEventKeys").is_some()
+            && existing_link
+                .as_ref()
+                .is_some_and(|link| link.interaction_status.is_some())
+        {
+            return Err(AppIpcError::new(
+                "user_input_pending",
+                "Resource events cannot bypass the conversation's pending human input",
+            ));
         }
         let start_new_session = self.validate_session_start(existing_link.as_ref(), &payload)?;
         if payload["automaticStandIn"] == true
@@ -1292,6 +1308,7 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
         self.resolve_local_model_reference(&mut request, &local_task_id)?;
+        self.prepare_resource_event_request(&local_task_id, &mut request)?;
         if let Some(link) = existing_link.as_ref() {
             super::mcp_apps::append_model_context(&mut request, link);
             // A failed preparation has no session yet. Retry its saved snapshot;
@@ -1527,7 +1544,7 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let local_task_id = self.canonical_local_task_id(&requested_task_id);
         let gate = self.task_send_gate(&local_task_id);
-        let _guard = gate.lock().await;
+        let guard = gate.lock().await;
         let check_provider_turn = self.local_task_link(&local_task_id).map_or_else(
             || !bool_field(&payload, "ephemeral").unwrap_or(false),
             |link| !runtime_task_uses_ephemeral_codex_thread(&link),
@@ -1541,52 +1558,54 @@ impl RuntimeWorkRpcHandler {
         } else {
             None
         };
-        let had_active_local_execution = self.is_active_local_task(&local_task_id);
         self.resolve_pending_request_user_input_for_stop(&local_task_id);
-        if had_active_local_execution {
+        if let Some(execution_id) = self.active_local_execution_id(&local_task_id) {
             self.request_active_turn_stop(&local_task_id);
-        }
-        if !had_active_local_execution {
-            if let Some(thread_id) = thread_id.as_deref() {
-                if self
-                    .settle_local_execution_from_terminal_codex_turn(
-                        &local_task_id,
-                        thread_id,
-                        "interrupt_and_send_provider_terminal",
-                        PROVIDER_STATE_RECONCILIATION_TIMEOUT,
-                    )
-                    .await
-                {
-                    return self.send_message_after_local_checks(payload).await;
-                }
-            }
-        }
-        let local_stop = self.abort_active_turn(&local_task_id);
-        let provider_stop = async {
-            match (had_active_local_execution, thread_id.as_deref()) {
-                (false, Some(thread_id)) => tokio::time::timeout(
+            // The stopped worker may need this gate to release its preparation.
+            drop(guard);
+            let stopped = self
+                .abort_local_task_execution_with_timeout(
+                    &local_task_id,
+                    execution_id,
                     Duration::from_secs(10),
-                    self.interrupt_provider_active_turn(thread_id),
+                )
+                .await;
+            let _guard = gate.lock().await;
+            if !stopped {
+                // Timeout is not confirmation that the provider stopped. Keep
+                // ownership so ordinary admission defers the replacement.
+                log_executor_event(
+                    "runtime work interrupt stop acknowledgement pending",
+                    &[("local_task_id", local_task_id.clone())],
+                );
+            }
+            // Ordinary admission rechecks a newer owner under the reacquired gate.
+            return self.send_message_after_local_checks(payload).await;
+        }
+        if let Some(thread_id) = thread_id.as_deref() {
+            if self
+                .settle_local_execution_from_terminal_codex_turn(
+                    &local_task_id,
+                    thread_id,
+                    "interrupt_and_send_provider_terminal",
+                    PROVIDER_STATE_RECONCILIATION_TIMEOUT,
                 )
                 .await
-                .unwrap_or(false),
-                _ => true,
+            {
+                return self.send_message_after_local_checks(payload).await;
             }
-        };
-        let (local_stopped, provider_stopped) = tokio::join!(local_stop, provider_stop);
-        if !local_stopped {
-            self.force_settle_local_task_execution(
-                &local_task_id,
-                thread_id,
-                "cancelled",
-                "interrupt_and_send_timeout",
-            );
-        }
-        if !provider_stopped {
-            log_executor_event(
-                "runtime work provider interrupt cleanup pending",
-                &[("local_task_id", local_task_id.clone())],
-            );
+            let provider_stopped = tokio::time::timeout(
+                Duration::from_secs(10),
+                self.interrupt_provider_active_turn(thread_id),
+            )
+            .await
+            .unwrap_or(false);
+            if !provider_stopped {
+                log_executor_event(
+                    "runtime work provider interrupt cleanup pending",
+                    &[("local_task_id", local_task_id.clone())],
+                );
+            }
         }
         self.send_message_after_local_checks(payload).await
     }
@@ -2769,7 +2788,9 @@ impl RuntimeWorkRpcHandler {
             link.updated_at = now_ms();
             set_runtime_handle_model_selection(&mut link.runtime_handle, payload);
             apply_runtime_profile_handle(&mut link.runtime_handle, payload);
-            link.interaction_status = None;
+            if !super::automatic_turns::is_automatic_input(request) {
+                link.interaction_status = None;
+            }
         });
         if updated.is_some() {
             return;

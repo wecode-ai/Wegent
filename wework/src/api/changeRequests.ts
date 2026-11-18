@@ -1,4 +1,7 @@
 import type { DeviceCommandResponse } from '@/types/api'
+import changeRequestStatusQuery from '../../../shared/protocol/git-change-request-status-query.json'
+import type { ResourceObservation } from '@/features/workbench/resourceObservation'
+import type { ResourceEventFact } from '@/lib/runtime-connection-events'
 import type {
   ChangeRequest,
   ChangeRequestLookupState,
@@ -31,6 +34,8 @@ export interface TaskChangeRequestSnapshot {
   lookupState?: ChangeRequestLookupState
   stale?: boolean
   error?: string | null
+  observation?: ResourceObservation
+  resourceEvents?: ResourceEventFact[]
 }
 
 interface RepositoryTargetGroup {
@@ -221,6 +226,7 @@ function applyGithubDetails(changeRequest: ChangeRequest, value: unknown): Chang
           checks: parsed.checks,
           mergeability: parsed.mergeability,
           updatedAt: parsed.updatedAt ?? changeRequest.updatedAt,
+          headSha: parsed.headSha ?? changeRequest.headSha,
         }
       : changeRequest,
     details
@@ -235,27 +241,7 @@ function githubMergeQueueQuery(
     .map(
       (pullRequest, index) => `
         pr${index}: pullRequest(number: ${pullRequest.number}) {
-          state
-          isDraft
-          mergedAt
-          updatedAt
-          mergeable
-          mergeStateStatus
-          statusCheckRollup { state }
-          commits(last: 1) {
-            nodes { commit { committedDate } }
-          }
-          mergeQueueEntry { state }
-          timelineItems(
-            last: 10
-            itemTypes: [ADDED_TO_MERGE_QUEUE_EVENT, REMOVED_FROM_MERGE_QUEUE_EVENT]
-          ) {
-            nodes {
-              __typename
-              ... on AddedToMergeQueueEvent { createdAt }
-              ... on RemovedFromMergeQueueEvent { createdAt reason }
-            }
-          }
+          ${changeRequestStatusQuery.fields}
         }`
     )
     .join('\n')
@@ -264,6 +250,16 @@ function githubMergeQueueQuery(
       ${fields}
     }
   }`
+}
+
+export function observedChangeRequest(
+  provider: ChangeRequestProvider,
+  data: unknown,
+  url: string
+): ChangeRequest | null {
+  const request = parseChangeRequest(provider, data)
+  if (!request || request.url !== url) return null
+  return provider === 'github' ? applyGithubDetails(request, data) : request
 }
 
 async function loadGithubMergeQueue(
@@ -388,15 +384,17 @@ async function loadLinkedChangeRequests(
   api: DeviceCommandApi,
   targets: TaskChangeRequestTarget[]
 ): Promise<TaskChangeRequestSnapshot[]> {
-  const results: TaskChangeRequestSnapshot[] = []
-  for (let offset = 0; offset < targets.length; offset += 4) {
-    results.push(
-      ...(await Promise.all(
-        targets.slice(offset, offset + 4).map(target => loadLinkedChangeRequest(api, target))
-      ))
+  const keyFor = (target: TaskChangeRequestTarget) =>
+    JSON.stringify([target.deviceId, target.changeRequestUrl])
+  const unique = [...new Map(targets.map(target => [keyFor(target), target])).values()]
+  const results = new Map<string, TaskChangeRequestSnapshot>()
+  for (let offset = 0; offset < unique.length; offset += 4) {
+    const batch = await Promise.all(
+      unique.slice(offset, offset + 4).map(target => loadLinkedChangeRequest(api, target))
     )
+    for (const result of batch) results.set(keyFor(result.target), result)
   }
-  return results
+  return targets.map(target => ({ ...results.get(keyFor(target))!, target }))
 }
 
 export function linkedChangeRequestTarget(

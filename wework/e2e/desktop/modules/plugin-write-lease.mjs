@@ -34,7 +34,32 @@ export async function holdPluginWriteLease(cloud, item, userId = 1) {
 }
 
 export async function holdInstalledPluginRow(cloud, installedId, userId = 1) {
-  return holdPluginCoordinationFault(cloud, 'plugin-row', userId, installedId)
+  const fixture = await holdPluginCoordinationFault(cloud, 'plugin-row', userId, installedId)
+  const readOwner = () =>
+    cloud.queryDatabase(
+      `SELECT CAST(ENGINE_TRANSACTION_ID AS CHAR) AS transaction_id,
+     CAST(THREAD_ID AS CHAR) AS thread_id FROM performance_schema.data_locks
+     WHERE OBJECT_SCHEMA=%s AND OBJECT_NAME='kinds' AND INDEX_NAME='PRIMARY'
+     AND LOCK_TYPE='RECORD' AND LOCK_STATUS='GRANTED' AND LEFT(LOCK_MODE, 1)='X'
+     AND LOCK_DATA=%s ORDER BY ENGINE_TRANSACTION_ID, THREAD_ID`,
+      [cloud.databaseName, String(installedId)]
+    )
+  let owner
+  try {
+    owner = await readOwner()
+    assert.equal(owner.length, 1, 'The fixture did not acquire its target record lock')
+  } catch (error) {
+    await fixture.release()
+    throw error
+  }
+  return {
+    ...fixture,
+    async assertHeld() {
+      assert.ok(!fixture.events.includes('released'), 'The target row fixture was released')
+      assert.deepEqual(await readOwner(), owner, 'The target record lock owner changed')
+      return { held: true, blocked: fixture.events.includes('blocked') }
+    },
+  }
 }
 
 export async function holdDeviceRegistrationRow(cloud, userId, recordId) {
@@ -88,6 +113,7 @@ export async function holdPluginCoordinationFault(cloud, mode, userId = 1, recor
     }
   )
   const events = []
+  const eventDetails = new Map()
   let failure
   let stderr = ''
   child.once('error', error => {
@@ -103,13 +129,15 @@ export async function holdPluginCoordinationFault(cloud, mode, userId = 1, recor
   const lines = createInterface({ input: child.stdout })
   lines.on('line', line => {
     try {
-      events.push(JSON.parse(line).event)
+      const details = JSON.parse(line)
+      events.push(details.event)
+      eventDetails.set(details.event, details)
     } catch {
       failure = new Error('The Redis lease helper returned invalid diagnostics')
     }
   })
-  const waitFor = event =>
-    until(
+  const waitFor = async event => {
+    await until(
       () => {
         if (failure) throw failure
         if (child.exitCode !== null && child.exitCode !== 0) {
@@ -120,6 +148,8 @@ export async function holdPluginCoordinationFault(cloud, mode, userId = 1, recor
       values => values.includes(event),
       `Redis lease helper never reported ${event}`
     )
+    return eventDetails.get(event)
+  }
   let closed = false
   const release = async () => {
     if (closed) return

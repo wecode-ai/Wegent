@@ -38,8 +38,38 @@ impl Drop for TerminalRoomBinding {
     }
 }
 
+/// A finite recipient snapshot; later room joins cannot receive this frame.
+struct MessageRoomBinding {
+    room: String,
+    sockets: Vec<SocketRef>,
+}
+
+impl MessageRoomBinding {
+    fn new(sockets: Vec<SocketRef>) -> Self {
+        static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let sequence = SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let room = format!(
+            "wework-project-chat:delivery:{}:{sequence}",
+            std::process::id()
+        );
+        for socket in &sockets {
+            socket.join(room.clone());
+        }
+        Self { room, sockets }
+    }
+}
+
+impl Drop for MessageRoomBinding {
+    fn drop(&mut self) {
+        for socket in &self.sockets {
+            socket.leave(self.room.clone());
+        }
+    }
+}
+
 /// The startup-built outgoing events used by device handlers.
 pub struct SocketEmitters {
+    state: std::sync::Weak<crate::state::AppState>,
     /// The native handle ordinary inbound adapter broadcasts are delivered
     /// through: one room per frame, never re-published.
     io: SocketIo,
@@ -124,8 +154,12 @@ impl SocketEmitters {
         })
     }
 
-    pub(super) fn new(server: &Server) -> Result<Self, EmitterError> {
+    pub(super) fn new(
+        server: &Server,
+        state: std::sync::Weak<crate::state::AppState>,
+    ) -> Result<Self, EmitterError> {
         Ok(Self {
+            state,
             io: server.io().clone(),
             online: server.emitter(CHAT_NAMESPACE, "device:online")?,
             offline: server.emitter(CHAT_NAMESPACE, "device:offline")?,
@@ -213,6 +247,11 @@ impl SocketEmitters {
         // per-socket room for it, so the broadcast is delivered per recipient
         // and the excluded session is filtered by its socket id.
         let sockets = operators.to(room.to_owned()).sockets();
+        let sockets = if namespace == crate::socketio::device_runtime_event::RUNTIME_NAMESPACE {
+            self.authorize_issue_recipients(room, sockets).await
+        } else {
+            sockets
+        };
         fanout(&sockets, |socket| {
             if skip_sid.is_some_and(|sid| socket.id.to_string() == sid) {
                 return None;
@@ -418,12 +457,79 @@ impl SocketEmitters {
         delta: bool,
         data: &Value,
     ) -> Result<(), EmitterError> {
+        let namespace = crate::socketio::device_runtime_event::RUNTIME_NAMESPACE;
+        let recipients = self
+            .io
+            .of(namespace)
+            .ok_or(EmitterError::Namespace(namespace))?
+            .to(room.to_owned())
+            .sockets();
+        let recipients = self.authorize_issue_recipients(room, recipients).await;
+        let binding = MessageRoomBinding::new(recipients);
         let emitter = if delta {
             &self.project_chat_chunk
         } else {
             &self.project_chat_created
         };
-        emitter.clone().to(room.to_owned()).emit(data).await
+        emitter.clone().to(binding.room.clone()).emit(data).await
+    }
+
+    /// Revalidate the captured recipients using their namespace-owned identity.
+    async fn authorize_issue_recipients(
+        &self,
+        room: &str,
+        sockets: Vec<SocketRef>,
+    ) -> Vec<SocketRef> {
+        let Some(scope) = room.strip_prefix("wework-project-chat:task:") else {
+            return sockets;
+        };
+        let Some((project_id, issue_id)) = scope.split_once(':') else {
+            return Vec::new();
+        };
+        let Some(state) = self.state.upgrade() else {
+            return Vec::new();
+        };
+        let external =
+            match crate::loop_tasks::loop_repository::LoopItemRepository::new(&state.mysql)
+                .find_external_project(issue_id)
+                .await
+            {
+                Ok(external) => external,
+                Err(error) => {
+                    tracing::warn!(%error, room, "Issue delivery scope is unavailable");
+                    return Vec::new();
+                }
+            };
+        // External providers retain their existing subscription admission policy.
+        // Native invitations do not extend provider authority or add per-chunk HTTP calls.
+        if external.is_some() {
+            return sockets;
+        }
+        let mut decisions = std::collections::HashMap::new();
+        let mut recipients = Vec::new();
+        for socket in sockets {
+            let user_id = socket.rooms().iter().find_map(|room| {
+                room.strip_prefix("wework-runtime:user:")
+                    .and_then(|id| id.parse::<i64>().ok())
+            });
+            let Some(user_id) = user_id else { continue };
+            let permitted = if let Some(permitted) = decisions.get(&user_id) {
+                *permitted
+            } else {
+                let permitted = crate::socketio::project_chat_events::permits_comment(
+                    &state, user_id, project_id, issue_id,
+                )
+                .await;
+                decisions.insert(user_id, permitted);
+                permitted
+            };
+            if permitted {
+                recipients.push(socket);
+            } else {
+                socket.leave(room.to_owned());
+            }
+        }
+        recipients
     }
 
     /// `wework:loop_item:changed` to one Wework Runtime user room.
@@ -514,6 +620,6 @@ impl SocketEmitters {
     /// Test-only constructor: the wire tests need the production emitter
     /// handles without widening the production constructor's visibility.
     pub(crate) fn for_test(server: &Server) -> Result<Self, EmitterError> {
-        Self::new(server)
+        Self::new(server, std::sync::Weak::new())
     }
 }

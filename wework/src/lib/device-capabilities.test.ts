@@ -3,6 +3,7 @@
 import { describe, expect, test } from 'vitest'
 import {
   WEWORK_MIN_EXECUTOR_VERSION,
+  supportsConnectionEvents,
   canUseForProjectCreation,
   isRemoteTaskDevice,
   supportsLocalTerminalLaunch,
@@ -12,6 +13,20 @@ import {
 } from './device-capabilities'
 
 describe('device-capabilities', () => {
+  test('event commands require an explicit supported protocol instead of a version guess', () => {
+    expect(supportsConnectionEvents(undefined)).toBe(false)
+    expect(supportsConnectionEvents({ runtime_features: { schemaVersion: 4 } })).toBe(false)
+    expect(
+      supportsConnectionEvents({
+        runtime_features: { schemaVersion: 4, connectionEvents: { protocolVersion: 2 } },
+      })
+    ).toBe(false)
+    expect(
+      supportsConnectionEvents({
+        runtime_features: { schemaVersion: 4, connectionEvents: { protocolVersion: 1 } },
+      })
+    ).toBe(true)
+  })
   test('opted-in computers support existing tasks without exposing terminal or project creation', () => {
     const device = {
       id: 22,
