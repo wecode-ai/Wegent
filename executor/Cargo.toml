@@ -7,7 +7,10 @@ description = "Wegent task executor service"
 license = "Apache-2.0"
 
 [package.metadata.wegent]
-source-inputs = ["../shared/protocol/runtime_task_create_request_v2.schema.json"]
+source-inputs = [
+    "../shared/protocol/runtime_task_create_request_v2.schema.json",
+    "../shared/protocol/wework_space_tools_v2.json",
+]
 
 [lib]
 doctest = false
