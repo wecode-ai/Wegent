@@ -234,15 +234,17 @@ dedicated Linux shard so competing full-stack instances do not change the benchm
 CPU allocation. It retains all functional assertions and logs pointer movement,
 pointer-up dispatch, and split readiness timings. Other functional shards still
 allow up to four instances.
-Core and Cloud matrix jobs also provide suite-level parallelism across runners.
-The classifier provides 10 logical Core shards. Windows retains 10 runners;
-Linux sets `CORE_RUNNER_SCALE=1.5` and redistributes a full selection across
-15 runners using historical durations. Partial selections scale with their selected
-matrix, bounded by assignable checkpoints; selections without the history checkpoint
-retain their original matrix. The two Core benchmarks keep dedicated runners.
-Cloud uses 8 shards.
+Core and Cloud matrix jobs provide suite-level parallelism across runners.
+Linux Core, Windows Core and Linux Cloud balancing set `CORE_RUNNER_SCALE=1.5`.
+Full selections expand from 10, 10 and 8 runners to 15, 15 and 12 respectively.
+Partial selections scale their selected matrix, bounded by assignable checkpoints;
+a small change does not allocate the full suite's runner count. Per-runner checkpoint
+concurrency limits remain unchanged. The two Core benchmarks and exclusive Cloud
+shards stay isolated, and shared preparation groups stay together. Expansion adds
+setup costs. Historical timing replay predicts the test stage, not a measured
+speedup from a new CI run. Shared runner capacity can still introduce external queues.
 
-Windows balancing uses measured durations from successful checkpoints only. Unknown checkpoints keep their original runner without receiving new measured work. Original measured siblings move only when neither the known checkpoint peak nor the preparation-inclusive peak increases; otherwise they stay on their original runner. Partial selections without another measured destination retain their matrix. An unknown shared-preparation member keeps its whole original shard to avoid duplicating expensive setup. Runner counts, benchmark isolation and the 40-minute test-step budget remain unchanged; failed scenario durations are not successful samples.
+Windows balancing uses measured durations from successful checkpoints only. Unknown checkpoints keep their original runner without receiving new measured work. Original measured siblings move only when neither the known checkpoint peak nor the preparation-inclusive peak increases; otherwise they stay on their original runner. Partial selections without another measured destination retain their matrix. An unknown shared-preparation member keeps its whole original shard to avoid duplicating expensive setup. Capacity expansion retains benchmark isolation and the 40-minute test-step budget; failed scenario durations are not successful samples.
 Refresh existing weights as scenarios evolve, not only unknown entries. In run
 42411289396, Core 2 and 6 reached the step deadline after all completed checkpoints
 passed; profile-settings and plugin-bridge had been underestimated for three runs.
@@ -383,7 +385,7 @@ worker stacks with exit code `0xC00000FD`. Regressions enforce Clippy's
 for manual, assignment, and scheduler entry points; existing
 real desktop scenarios cover the complete execution flow.
 
-The plugin Python runtime checkpoints `python-runtime,plugin-development` reuse the existing Core 10 shard without adding a runner. Linux and Windows each retain ten Core shards, with every checkpoint and assertion preserved; `.github/scripts/classify-wework-desktop-e2e.sh --all` defines the actual grouping.
+The plugin Python runtime checkpoints `python-runtime,plugin-development` reuse the existing Core 10 shard without adding a runner. Logical Core groups preserve their checkpoints and assertions; capacity expansion determines the actual runner count, while `.github/scripts/classify-wework-desktop-e2e.sh --all` defines the actual grouping.
 
 The Python descriptor's 200ms deadline covers HTTP headers and body. Credential resolution and the
 final persisted Backend identity check run outside that HTTP deadline, so queued storage reads do not
