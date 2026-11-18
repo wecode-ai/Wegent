@@ -94,7 +94,7 @@ export function createGoalAdmissionRecovery({ workspacePath, uiTimeoutMs }) {
         assert.equal(created.accepted, true, created.error)
         address = { deviceId: created.deviceId, taskId, workspacePath }
         const original = await waitDone()
-        // Start from an unloaded thread; activation must durably own its native resume.
+        // Start cold; route preparation loads the native session before activation.
         await waitForValue(
           () => rpc('runtime.codex.app_server.restart', { ifIdle: true }),
           value => value.restarted === true,
@@ -112,7 +112,7 @@ export function createGoalAdmissionRecovery({ workspacePath, uiTimeoutMs }) {
         assert.equal(
           set.resumed,
           false,
-          'Activation prepares the native session without admitting duplicate work'
+          'The prepared native Goal must not queue duplicate recovery'
         )
         await waitForValue(
           task,
