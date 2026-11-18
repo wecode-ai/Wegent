@@ -70,6 +70,8 @@ UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple/ uv tool run isort --che
 
 ## 切片 2：executor 终态事件
 
+状态：已实现。
+
 ### 行为
 
 - Executor 启动任务时记录 `agentStartedAt`。
@@ -89,6 +91,18 @@ UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple/ uv tool run isort --che
 - 终态事件保留完整 timing
 - 缺 timing 的老 payload 正常执行
 - timing 不进入 prompt/tool payload
+
+### 验证记录
+
+```bash
+cd executor
+RUSTUP_TOOLCHAIN=1.88.0 cargo fmt --check
+RUSTUP_TOOLCHAIN=1.88.0 cargo test --test runner_contract --test callback_contract
+```
+
+- cargo fmt：通过
+- runner_contract：5 passed
+- callback_contract：6 passed
 
 ## 切片 3：Backend callback 汇聚
 

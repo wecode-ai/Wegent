@@ -7,6 +7,7 @@ use std::{
     future::Future,
     pin::Pin,
     sync::{Arc, Mutex},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use serde_json::Value;
@@ -213,6 +214,8 @@ where
         Box::pin(async move {
             let task_id = request.task_id.clone();
             let builder = local_event_builder(&request);
+            let agent_started_at = current_epoch_ms();
+            let builder = builder.with_timing_boundary("agentStartedAt", agent_started_at);
             if let Err(message) = sink
                 .send(builder.response_created(request.resolved_shell_type().as_deref()))
                 .await
@@ -274,6 +277,8 @@ async fn run_managed_task<E, S>(
     S: EventSink,
 {
     let task_id = request.task_id.clone();
+    let agent_finished_at = current_epoch_ms();
+    let builder = builder.with_timing_boundary("agentFinishedAt", agent_finished_at);
     let session_request = request.clone();
     let outcome = engine
         .run_with_events(request, sink.clone(), builder.clone())
@@ -313,6 +318,7 @@ fn local_event_builder(request: &ExecutionRequest) -> ResponsesEventBuilder {
         .validation_params
         .get("validation_id")
         .and_then(Value::as_str);
+    let timing = request.extra.get("timing").cloned();
     ResponsesEventBuilder::new(&request.task_id, &request.subtask_id, model)
         .with_message_id(request.message_id)
         .with_executor_info(
@@ -320,6 +326,14 @@ fn local_event_builder(request: &ExecutionRequest) -> ResponsesEventBuilder {
             request.executor_namespace.as_deref(),
         )
         .with_validation_id(validation_id)
+        .with_timing(timing)
+}
+
+fn current_epoch_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| i64::try_from(duration.as_millis()).unwrap_or(i64::MAX))
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
