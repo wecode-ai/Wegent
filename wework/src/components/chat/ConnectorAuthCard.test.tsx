@@ -34,8 +34,8 @@ vi.mock('@/api/cloud/connectorApps', async importOriginal => {
   }
 })
 
-vi.mock('@/lib/cloud-authorization-window', () => ({
-  openCloudAuthorizationWindow: cloudMocks.open,
+vi.mock('@/lib/connector-authorization-window', () => ({
+  openConnectorAuthorizationWindow: cloudMocks.open,
 }))
 
 const syncMocks = vi.hoisted(() => ({ waitForSync: vi.fn(), localFirst: { value: true } }))
@@ -78,6 +78,8 @@ describe('ConnectorAuthCard browser oauth', () => {
     authMocks.poll.mockReset()
     authMocks.cancel.mockReset().mockResolvedValue({ status: 'cancelled' })
     authMocks.open.mockReset().mockResolvedValue(true)
+    cloudMocks.open.mockReset()
+    cloudMocks.authorize.mockReset()
   })
 
   test('polls browser sessions with sessionId until authorization succeeds', async () => {
@@ -99,6 +101,8 @@ describe('ConnectorAuthCard browser oauth', () => {
     await waitFor(() =>
       expect(onSuccess).toHaveBeenCalledWith({ status: 'ok', sessionId: 'card-session-1' })
     )
+    expect(cloudMocks.open).not.toHaveBeenCalled()
+    expect(cloudMocks.authorize).not.toHaveBeenCalled()
   })
 
   test('starts one browser session under React StrictMode', async () => {
@@ -183,6 +187,8 @@ describe('ConnectorAuthCard browser oauth', () => {
         target: 'system',
       })
     )
+    expect(cloudMocks.open).not.toHaveBeenCalled()
+    expect(cloudMocks.authorize).not.toHaveBeenCalled()
   })
 
   test('GitHub CLI waits for consent, displays a device code, and opens GitHub in the system browser', async () => {
