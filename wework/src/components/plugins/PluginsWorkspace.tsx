@@ -92,7 +92,7 @@ import { openExternalUrl } from '@/lib/external-links'
 import { getErrorMessage } from '@/lib/error-message'
 import { isDesktopRuntime } from '@/lib/runtime-environment'
 import { navigateTo } from '@/lib/navigation'
-import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
+import { openConnectorAuthorizationWindow } from '@/lib/connector-authorization-window'
 import {
   ensureLocalExecutorAvailable,
   getKnownLocalExecutorDeviceId,
@@ -3135,7 +3135,7 @@ export function PluginsWorkspace({
           cloudApiBaseUrl,
           cloudToken,
           requirement.slug,
-          openCloudAuthorizationWindow,
+          openConnectorAuthorizationWindow,
           { isCurrent }
         )
         if (!isCurrent()) return
@@ -3454,7 +3454,7 @@ export function PluginsWorkspace({
         cloudApiBaseUrl,
         cloudToken,
         app.slug,
-        openCloudAuthorizationWindow,
+        openConnectorAuthorizationWindow,
         { isCurrent: detailIsCurrent }
       )
     } catch (error) {

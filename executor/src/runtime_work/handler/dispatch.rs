@@ -38,7 +38,7 @@ impl RuntimeWorkRpcHandler {
             "runtime.stand_in.telemetry.configure"
             | "runtime.stand_in.telemetry.list"
             | "runtime.stand_in.telemetry.ack" => {
-                boxed_rpc(move || async move { self.stand_in_telemetry_rpc(method, payload) })
+                boxed_rpc(move || async move { self.stand_in_telemetry_rpc(method, payload).await })
             }
             "runtime.stand_in.list" => {
                 boxed_rpc(move || async move { self.list_stand_in_settings(payload).await })
