@@ -50,31 +50,39 @@ export function createRuntimeComposerPluginSource(
   translate: (key: string) => string,
   resolveAsset: (path: string) => Promise<string>
 ) {
-  type Catalog = { apps: LocalDeviceApp[]; skills: RuntimeComposerCatalogSnapshot['skills'] }
-  let pending: Promise<Catalog> | null = null
+  let pending: Promise<RuntimeComposerCatalogSnapshot> | null = null
+  let pendingApps: Promise<LocalDeviceApp[]> | null = null
   const load = () => {
     if (pending) return pending
-    const request = read(address, true)
-      .then(async snapshot => ({
-        apps: await Promise.all(
-          composerAppsFromRuntimeSnapshot(snapshot, address.deviceId, translate).map(async app => {
-            const [logoUrl, logoUrlDark] = await Promise.all([
-              app.logoUrl ? resolveAsset(app.logoUrl) : app.logoUrl,
-              app.logoUrlDark ? resolveAsset(app.logoUrlDark) : app.logoUrlDark,
-            ])
-            return { ...app, logoUrl, logoUrlDark }
-          })
-        ),
-        skills: snapshot.skills,
-      }))
-      .finally(() => {
-        if (pending === request) pending = null
-      })
+    const request = read(address, true).finally(() => {
+      if (pending === request) pending = null
+    })
     pending = request
     return request
   }
   return {
-    listApps: async () => (await load()).apps,
+    listApps: () => {
+      if (pendingApps) return pendingApps
+      const request = load()
+        .then(snapshot =>
+          Promise.all(
+            composerAppsFromRuntimeSnapshot(snapshot, address.deviceId, translate).map(
+              async app => {
+                const [logoUrl, logoUrlDark] = await Promise.all([
+                  app.logoUrl ? resolveAsset(app.logoUrl) : app.logoUrl,
+                  app.logoUrlDark ? resolveAsset(app.logoUrlDark) : app.logoUrlDark,
+                ])
+                return { ...app, logoUrl, logoUrlDark }
+              }
+            )
+          )
+        )
+        .finally(() => {
+          if (pendingApps === request) pendingApps = null
+        })
+      pendingApps = request
+      return request
+    },
     listSkills: async () => (await load()).skills,
   }
 }

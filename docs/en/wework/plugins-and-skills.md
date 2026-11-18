@@ -241,6 +241,8 @@ were created, so restarting Wework does not remove their plugin capabilities.
 
 Type `/` in the composer to choose a Skill, or name the Skill in your request. Wework supplies its instructions to AI for that task.
 
+The collaboration home uses the same slash picker when creating an Issue task. Skills become selectable once their catalog is available, without waiting for plugin icons to load.
+
 ### Inspect and toggle individual Skills
 
 Open **left sidebar → Plugins → plugin details → included capabilities** and select a Skill to read its instructions and invocation. When installed and manageable, toggle individual components on their capability rows or use Disable/Restore at the bottom of Skill details. Disabling a component differs from disabling its whole plugin.
