@@ -69,7 +69,6 @@ import {
 } from '@/features/workbench/runtimePaneStatus'
 import {
   appendAcceptedRuntimeConversationMessage,
-  appendOptimisticRuntimeConversationGuidance,
   applyRuntimeConversationAction,
   getRuntimeConversationMessages,
   getRuntimeConversationTurns,
@@ -252,6 +251,7 @@ export function TemporaryChatPanel({
     deleteAttachment: services.attachmentApi?.deleteAttachment,
     scopeKey: instanceId,
   })
+  const { captureAttachmentsForScope } = attachmentSelection
   const [localAddress, setAddress] = useState<RuntimeTaskAddress | null>(initialAddress)
   const address = controlledAddress === undefined ? localAddress : controlledAddress
   const requestUserInputHost = useRuntimeInteractionInputHost(address, coordinateUserInput)
@@ -779,25 +779,46 @@ export function TemporaryChatPanel({
       let error: string | null = null
       let queued = false
       const sendMessage = interrupt ? interruptAndSendRuntimePaneMessage : sendRuntimePaneMessage
-      const sent = await sendMessage(
-        runtimeQueuedMessageRequest(
-          {
-            address,
-            ...(nativeConversation && !interrupt ? { queueIfBusy: true } : {}),
-            ...(sendEphemeral ? { ephemeral: true } : {}),
-          },
-          message
-        ),
+      const request = runtimeQueuedMessageRequest(
         {
-          silentBusyRetry: nativeConversation,
-          onError: value => {
-            error = value
-          },
-          onQueued: () => {
-            queued = true
-          },
-        }
+          address,
+          ...(nativeConversation && !interrupt ? { queueIfBusy: true } : {}),
+          ...(sendEphemeral ? { ephemeral: true } : {}),
+        },
+        message
       )
+      const result: { sent: boolean; error?: string | null; queued?: boolean } = assistantSend
+        ? await assistantSend({
+            message: request.message,
+            clientUserMessageId: message.id,
+            attachmentIds: request.attachmentIds,
+            interruptWhenBusy: interrupt,
+            runtimeOptions: {
+              modelId: request.modelId,
+              modelType: request.modelType,
+              modelOptions: request.modelOptions,
+              modelSelection: request.modelSelection,
+              startNewSession: request.startNewSession,
+              expectedThreadId: request.expectedThreadId,
+              attachments: request.attachments,
+            },
+          })
+        : {
+            sent: await sendMessage(request, {
+              silentBusyRetry: nativeConversation,
+              onError: value => {
+                error = value
+              },
+              onQueued: () => {
+                queued = true
+              },
+            }),
+          }
+      const sent = result.sent
+      if (assistantSend) {
+        error = result.error ?? null
+        queued = result.queued === true
+      }
       if (sent && !queued)
         setMessages(
           appendAcceptedRuntimeConversationMessage(
@@ -814,6 +835,7 @@ export function TemporaryChatPanel({
     [
       address,
       active,
+      assistantSend,
       readOnly,
       interruptAndSendRuntimePaneMessage,
       lifecycleStore,
@@ -891,7 +913,8 @@ export function TemporaryChatPanel({
       if (!transactionalDraft) setInput('')
       setTrialGuide(null)
 
-      const currentAttachments = sideChatProjectChat.attachments
+      const currentAttachments = captureAttachmentsForScope(instanceId)
+      sideChatProjectChat.resetAttachments()
       const initialGoal = goalDraftActive
         ? runtimeGoalCreateInput({
             objective: message,
@@ -920,81 +943,29 @@ export function TemporaryChatPanel({
           }
           const guideCurrentTurn =
             !queuedMessage.startNewSession && paneStatus.isBusy && options.guideWhenBusy
-          const guidanceResult = guideCurrentTurn
-            ? await sendRuntimePaneGuidance({
-                address,
-                message,
-                ...(queuedMessage.conversationContext
-                  ? { conversationContext: queuedMessage.conversationContext }
-                  : {}),
-                clientGuidanceId: queuedMessage.id,
-                attachments: localRuntimeAttachments(currentAttachments),
-                attachmentIds: remoteAttachmentIds(currentAttachments),
+          conversationQueue.enqueue(queuedMessage)
+          const interrupt =
+            !queuedMessage.startNewSession && paneStatus.isBusy && options.interruptWhenBusy
+          const sent = guideCurrentTurn
+            ? await conversationQueue.guide(queuedMessage.id, queuePort, true)
+            : await conversationQueue.send(queuedMessage.id, {
+                ...queuePort,
+                send: pending => sendConversationMessage(pending, Boolean(interrupt)),
               })
-            : null
-          const turnIdsBeforeSend = getRuntimeConversationTurnIds(address)
-          const result =
-            guidanceResult ??
-            (assistantSend
-              ? await assistantSend({
-                  message,
-                  clientUserMessageId: queuedMessage.id,
-                  attachmentIds: remoteAttachmentIds(currentAttachments),
-                  interruptWhenBusy:
-                    !queuedMessage.startNewSession && options.interruptWhenBusy === true,
-                  runtimeOptions: {
-                    ...selectedModelFields,
-                    ...sessionStartFields,
-                    ...(localRuntimeAttachments(currentAttachments).length
-                      ? { attachments: localRuntimeAttachments(currentAttachments) }
-                      : {}),
-                  },
-                })
-              : await sendConversationMessage(
-                  queuedMessage,
-                  !queuedMessage.startNewSession && paneStatus.isBusy && options.interruptWhenBusy
-                ))
-          if (runtimeContext?.conversationContext === 'private_discussion') {
-            console.debug('[runtime-v2] private conversation send result', {
-              taskId: address.taskId,
-              sent: result.sent,
-              transport: assistantSend ? 'assistant' : 'runtime',
-            })
-          }
-          if (!result.sent) {
-            setError(result.error || t('workbench.project_chat_send_failed'))
+          const pending = conversationQueue.getSnapshot().find(item => item.id === queuedMessage.id)
+          if (!sent && pending?.status !== 'queued') {
+            setError(pending?.error || t('workbench.project_chat_send_failed'))
             if (!transactionalDraft) setInput(current => current || message)
+            currentAttachments.forEach(sideChatProjectChat.addExistingAttachment)
             return false
           }
-          if (
-            guidanceResult?.turnId &&
-            !getRuntimeConversationMessages(address).some(item => item.id === queuedMessage.id)
-          ) {
-            setMessages(
-              appendOptimisticRuntimeConversationGuidance(
-                address,
-                guidanceResult.turnId,
-                queuedMessage
-              )
-            )
-          }
-          if (assistantSend && !guidanceResult && !('queued' in result && result.queued)) {
-            setMessages(
-              appendAcceptedRuntimeConversationMessage(
-                address,
-                createRuntimeUserMessage(message, currentAttachments, { id: queuedMessage.id }),
-                lifecycleStore.getTask(address)?.turn.id ?? null,
-                turnIdsBeforeSend
-              )
-            )
-          }
           submission?.clearIfUnchanged()
-          sideChatProjectChat.resetAttachments()
           if (historySource) setAcceptedSourceMessageIds(ids => [...ids, queuedMessage.id])
           return true
         } catch (cause) {
           setError(getErrorMessage(cause, t('workbench.project_chat_send_failed')))
           if (!transactionalDraft) setInput(current => current || message)
+          currentAttachments.forEach(sideChatProjectChat.addExistingAttachment)
           return false
         } finally {
           submission?.release()
@@ -1004,7 +975,6 @@ export function TemporaryChatPanel({
       }
       if (address && busy && !options.interruptWhenBusy) {
         conversationQueue.enqueue(queuedMessage)
-        sideChatProjectChat.resetAttachments()
         if (options.guideWhenBusy) {
           return sendQueuedMessageAsGuidance(queuedMessage)
         }
@@ -1062,13 +1032,13 @@ export function TemporaryChatPanel({
         updateAddress(null)
         if (nativeConversation) setInput(current => current || message)
         setSending(false)
+        currentAttachments.forEach(sideChatProjectChat.addExistingAttachment)
         return false
       }
       if (!address) {
         setMessages(getRuntimeConversationMessages(targetAddress))
         updateAddress(targetAddress)
         setGoalDraftActive(false)
-        sideChatProjectChat.resetAttachments()
         setSending(false)
         return true
       }
@@ -1125,7 +1095,6 @@ export function TemporaryChatPanel({
             )
           )
         }
-        sideChatProjectChat.resetAttachments()
         setSending(false)
         return true
       }
@@ -1140,13 +1109,13 @@ export function TemporaryChatPanel({
         conversationQueue.enqueue(queuedMessage, {
           value: lifecycleBeforeSend,
         })
-        sideChatProjectChat.resetAttachments()
         if (options.guideWhenBusy) {
           setSending(false)
           return sendQueuedMessageAsGuidance(queuedMessage, true)
         }
       } else {
         handleError(sendError || '发送失败')
+        currentAttachments.forEach(sideChatProjectChat.addExistingAttachment)
         return false
       }
       setSending(false)
@@ -1161,10 +1130,8 @@ export function TemporaryChatPanel({
       historySource,
       scopedHistory.available,
       paneStatus.isBusy,
-      assistantSend,
       taskModelIdentityPending,
       sendConversationMessage,
-      sendRuntimePaneGuidance,
       t,
       goalDraftActive,
       createTask,
@@ -1174,7 +1141,10 @@ export function TemporaryChatPanel({
       input,
       busy,
       conversationQueue,
+      queuePort,
       sideChatProjectChat,
+      captureAttachmentsForScope,
+      instanceId,
       selectedModelFields,
       runtimeContext,
       sendQueuedMessageAsGuidance,

@@ -30,3 +30,29 @@ describe("native text item offsets", () => {
     );
   });
 });
+
+describe("positioned process text", () => {
+  it("preserves code-point positions from the native block protocol", () => {
+    const onBlockUpdated = vi.fn();
+    emitResponseApiEvent(
+      { onBlockUpdated },
+      "response.block.updated",
+      {
+        task_id: "1",
+        subtask_id: "2",
+        data: {
+          block_id: "commentary",
+          updates: { content_delta: "🙂结尾", content_offset: 7 },
+        },
+      },
+      createResponseApiStreamState(),
+    );
+    expect(onBlockUpdated).toHaveBeenCalledWith(
+      expect.objectContaining({
+        blockId: "commentary",
+        contentDelta: "🙂结尾",
+        contentOffset: 7,
+      }),
+    );
+  });
+});

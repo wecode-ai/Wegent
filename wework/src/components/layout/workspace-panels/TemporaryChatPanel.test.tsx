@@ -552,6 +552,7 @@ vi.mock('@/features/workbench/useWorkbench', async importOriginal => ({
 vi.mock('@/features/workbench/useWorkbenchAttachments', () => ({
   useWorkbenchAttachments: () => ({
     attachments: [attachment],
+    captureAttachmentsForScope: () => [attachment],
     uploadingFiles: [],
     errors: new Map(),
     isAttachmentReadyToSend: true,
@@ -947,7 +948,8 @@ describe('TemporaryChatPanel', () => {
       if (rejection) {
         await waitFor(() => expect(screen.getByTestId('send-message-button')).toBeEnabled())
         expect(screen.getByTestId('chat-message-input')).toHaveTextContent('Progress follow-up')
-        expect(screen.getByText(rejection)).toBeInTheDocument()
+        expect(screen.getByTestId('chat-input-error')).toHaveTextContent(rejection)
+        expect(screen.getByTestId('conversation-queue-panel')).toHaveTextContent(rejection)
       }
     }
   )
@@ -2303,8 +2305,23 @@ describe('TemporaryChatPanel', () => {
           )
         }
         if (busy && !assistantTransport) {
-          expect(screen.getByTestId('chat-message-input')).toHaveTextContent(
+          expect(screen.getByTestId('chat-message-input')).toHaveTextContent('')
+          expect(screen.getByTestId('conversation-queue-panel')).toHaveTextContent(
             'Keep this stand-in draft'
+          )
+          const originalRequest = mocks.sendRuntimePaneMessage.mock.calls[0][0]
+          mocks.busy = false
+          mocks.busySendError = false
+          mocks.sendRuntimePaneMessage.mockResolvedValue(true)
+          mocks.lifecycleSnapshot = {
+            turn: { id: null },
+            derived: { isRunning: false, isTurnActive: false },
+          }
+          view.rerender(<Conversation />)
+          await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(2))
+          expect(mocks.sendRuntimePaneMessage.mock.lastCall?.[0]).toEqual(originalRequest)
+          await waitFor(() =>
+            expect(screen.queryByTestId('conversation-queue-panel')).not.toBeInTheDocument()
           )
         } else if (assistantTransport) {
           expect(screen.getByTestId('chat-message-input')).toHaveTextContent('')
@@ -2494,6 +2511,11 @@ describe('TemporaryChatPanel', () => {
       expect(screen.getByTestId('mock-send')).toBeDisabled()
       expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledOnce()
       await act(async () => finishSend(true))
+      mocks.lifecycleSnapshot = {
+        turn: { id: null },
+        derived: { isRunning: false, isTurnActive: false },
+      }
+      view.rerender(pane({ ...controls, selectedModelOptions: { reasoning: 'medium' } }))
       expect(screen.getByTestId('mock-composer')).toHaveAttribute(
         'data-selected-reasoning',
         'medium'

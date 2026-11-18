@@ -316,6 +316,15 @@ jobs:
           cargo test --locked --lib plugins_installed::auto_update::auto_update_mysql_tests -- --ignored --nocapture --test-threads=1 \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/plugin-write-replica-mysql.log
 
+      - name: Verify plugin batch reads with MySQL
+        working-directory: backend-rs
+        run: |
+          set -o pipefail
+          cargo test --locked --lib plugins_installed::handler::mysql_tests -- --ignored --nocapture --test-threads=1 \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/plugin-installed-list-mysql.log
+          cargo test --locked --lib batch_mysql_tests -- --ignored --nocapture --test-threads=1 \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/plugin-batch-reads-mysql.log
+
       - name: Verify attachment API key authentication with MySQL
         working-directory: backend-rs
         run: |
@@ -460,7 +469,7 @@ jobs:
         env:
           PLUGIN_AUTH_MYSQL_TEST_URL: mysql+pymysql://root:plugin_auth_test@127.0.0.1:3306/plugin_auth_test
           PLUGIN_AUTH_REDIS_TEST_URL: redis://127.0.0.1:6379/15
-        run: uv run pytest integration_checks/test_plugin_account_auth_mysql.py integration_checks/test_plugin_write_races_mysql.py integration_checks/test_plugin_connection_requests_mysql.py integration_checks/test_plugin_policy_bootstrap_mysql.py integration_checks/test_streaming_block_index_redis.py -n 0
+        run: uv run pytest integration_checks/test_plugin_account_auth_mysql.py integration_checks/test_plugin_write_races_mysql.py integration_checks/test_plugin_connection_requests_mysql.py integration_checks/test_plugin_policy_bootstrap_mysql.py integration_checks/test_plugin_batch_reads_mysql.py integration_checks/test_streaming_block_index_redis.py -n 0
 
       - name: Verify MCP OAuth refresh and authorization races with InnoDB and Redis
         working-directory: backend
