@@ -28,7 +28,7 @@ export async function withNativePluginDecision(control, operation, { allow = tru
   }
 }
 
-async function clickNativeDecision(pid, allow, signal, evidenceDirectory) {
+export async function clickNativeDecision(pid, allow, signal, evidenceDirectory, decision = {}) {
   const options = { timeout: 12_000, signal, encoding: 'utf8' }
   if (process.platform === 'darwin') {
     await clickMacosNativeDecision(
@@ -115,14 +115,14 @@ while ([DateTime]::UtcNow -lt $deadline) {
       })
       [Console]::Error.WriteLine('Native decision window children: ' + (ConvertTo-Json -InputObject $children -Compress))
     }
-    if ($window.Current.Name -notin @(${TITLES.map(title => `'${title}'`).join(', ')})) { continue }
+    if ($window.Current.Name -notin @(${(decision.titles ?? TITLES).map(title => `'${title}'`).join(', ')})) { continue }
     [Console]::Error.WriteLine('Native decision stage: button-lookup-start')
     $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
     [Console]::Error.WriteLine('Native decision stage: button-lookup-complete ' + $buttons.Count)
     foreach ($button in $buttons) {
       [Console]::Error.WriteLine('Native decision stage: button-name-start')
       [Console]::Error.WriteLine('Native decision element: type=' + $button.Current.ControlType.ProgrammaticName + ' class=' + $button.Current.ClassName)
-      if ($button.Current.Name -in @(${allow ? "'Allow installation', 'Allow update', '允许安装', '允许更新'" : "'Cancel', '取消'"})) {
+      if ($button.Current.Name -in @(${decision.labels ? decision.labels.map(label => "'" + label.replaceAll("'", "''") + "'").join(', ') : allow ? "'Allow installation', 'Allow update', '允许安装', '允许更新'" : "'Cancel', '取消'"})) {
         [Console]::Error.WriteLine('Native decision matched label: ' + $button.Current.Name)
         $rectangle = $button.Current.BoundingRectangle
         if ($button.Current.IsOffscreen -or -not $button.Current.IsEnabled -or $rectangle.IsEmpty -or $rectangle.Width -le 0 -or $rectangle.Height -le 0) {

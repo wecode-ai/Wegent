@@ -545,11 +545,7 @@ export async function createDesktopScenario(options) {
       goalContinuity.beforeRestart()
       await control.command('click', '[data-testid="app-update-restart-confirm"]')
       await writerWait.afterRestart(root, () => goalContinuity.assertStopped())
-      if (
-        verifiesFailedActivation &&
-        process.platform === 'darwin' &&
-        !pair.from.readableDataSchemas.includes(pair.to.dataSchema)
-      )
+      if (verifiesFailedActivation && !pair.from.readableDataSchemas.includes(pair.to.dataSchema))
         await confirmUpgradeRecovery(root, workbenchReadyTimeoutMs)
       await control.awaitReadyAfter(readyCount, workbenchReadyTimeoutMs)
       await control.command('waitFor', '[data-testid="app-shell"]', {

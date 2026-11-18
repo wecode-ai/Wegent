@@ -3,13 +3,34 @@ import { execFile } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
-import { clickMacosNativeDecision } from './native-plugin-approval.mjs'
+import { clickMacosNativeDecision, clickNativeDecision } from './native-plugin-approval.mjs'
 import { waitForValue } from './workspace-agent-setup.mjs'
 
 const execute = promisify(execFile)
 
 /** Confirm snapshot recovery through the real native dialog after the failed trial. */
 export async function confirmUpgradeRecovery(root, timeoutMs) {
+  if (process.platform === 'win32') {
+    const pid = await waitForValue(
+      async () => {
+        try {
+          return Number(await readFile(join(root, 'recovery-pid'), 'utf8'))
+        } catch (error) {
+          if (error.code === 'ENOENT') return null
+          throw error
+        }
+      },
+      value => Number.isSafeInteger(value) && value > 0,
+      'The failed trial did not launch native recovery',
+      timeoutMs
+    )
+    await clickNativeDecision(pid, true, new AbortController().signal, undefined, {
+      titles: ['Wework', 'WeWork'],
+      labels: ['Restore and roll back', '恢复并回退'],
+    })
+    console.log('[upgrade-e2e] Explicitly confirmed native snapshot restoration')
+    return
+  }
   assert.equal(process.platform, 'darwin')
   const pid = await waitForValue(
     async () => {
