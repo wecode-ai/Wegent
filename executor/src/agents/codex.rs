@@ -153,6 +153,7 @@ mod startup;
 mod turn_recovery;
 use child::CodexAppServerChild;
 pub(crate) use turn_recovery::same_goal_configuration;
+mod isolated_turn;
 #[path = "codex/thread_action.rs"]
 mod thread_action;
 mod thread_resume;
@@ -317,6 +318,7 @@ pub struct CodexAppServerTurn {
     pub quota_recovery: Option<CodexQuotaRecovery>,
     pub thread_id: String,
     pub outcome: ExecutionOutcome,
+    pub error_type: Option<String>,
     pub response_item_id: Option<String>,
     pub response_value_origin: CodexResponseValueOrigin,
     pub goal_status: Option<String>,
@@ -328,6 +330,9 @@ pub struct CodexAppServerTurn {
 
 #[path = "codex/interaction.rs"]
 mod interaction;
+
+mod error_type;
+pub(crate) use error_type::codex_error_type;
 
 #[path = "codex/mcp_apps.rs"]
 mod mcp_apps;
@@ -1536,6 +1541,8 @@ pub(crate) async fn terminate_shared_codex_app_servers() -> usize {
 
 fn is_codex_cloud_config_error(error: &str) -> bool {
     error.contains("cloud config bundle")
+        || (error.contains("failed to read configuration layers")
+            && error.contains("Your authentication session could not be refreshed automatically. Please log out and sign in again."))
 }
 
 struct CodexAppServerSharedState {
@@ -2565,6 +2572,16 @@ async fn run_codex_app_server_turn_on_shared_client(
                 )
                 .await
             {
+                if resume_goal_only {
+                    log_executor_event(
+                        "codex resumed Goal snapshot",
+                        &[
+                            ("thread_id", thread_id.clone()),
+                            ("goal_present", goal_response.get("goal").is_some_and(Value::is_object).to_string()),
+                            ("goal_status", goal_response["goal"]["status"].as_str().unwrap_or("none").to_owned()),
+                        ],
+                    );
+                }
                 sync_goal_status_from_response(&mut state, &goal_response);
             }
         }
@@ -2700,6 +2717,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             quota_recovery: state.quota_recovery.take(),
             thread_id,
             outcome,
+            error_type: state.error_type.clone(),
             response_item_id,
             response_value_origin,
             goal_status,
@@ -2800,6 +2818,15 @@ async fn run_codex_app_server_turn_with_runtime(
     let mut capability_lease =
         Some(crate::services::capability_activation::begin_execution().await);
     let _home_lease = super::instance_home::acquire(&request)?;
+    let admission_client = CodexAppServerClient::new(binary).for_request(&request)?;
+    let mut thread_admission = match options
+        .resume_thread_id
+        .as_deref()
+        .or(options.direct_thread_id.as_deref())
+    {
+        Some(thread_id) => Some(admission_client.admit_isolated_thread(thread_id).await?),
+        None => None,
+    };
     super::environment_setup::prepare_execution_environment(&request).await?;
     super::runtime_capabilities::prepare_codex_runtime_locked(&request).await?;
     let CodexAppServerTurnOptions {
@@ -2926,6 +2953,11 @@ async fn run_codex_app_server_turn_with_runtime(
                 thread_id
             }
         };
+        if thread_admission.is_none() {
+            // New and forked identities become visible to prediction below.
+            let gate = admission_client.thread_lifecycle_gate(&thread_id).await;
+            thread_admission = Some(gate.lock_owned().await);
+        }
         state.set_root_thread_id(thread_id.clone());
         bind_local_proxy_thread(&launch_config, &thread_id)?;
         let local_notifications = local_notifications::LocalNotificationSource::new(
@@ -3105,6 +3137,7 @@ async fn run_codex_app_server_turn_with_runtime(
             quota_recovery: state.quota_recovery.take(),
             thread_id,
             outcome,
+            error_type: state.error_type.clone(),
             response_item_id,
             response_value_origin,
             goal_status,
@@ -3120,6 +3153,7 @@ async fn run_codex_app_server_turn_with_runtime(
         callback();
     }
     terminate_codex_app_server_child(&mut process.child).await;
+    drop(thread_admission);
     if let Some(runtime) = runtime_notifications.as_ref() {
         notify_shared_process_closed(runtime, "isolated Codex app-server stopped").await;
     }

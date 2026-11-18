@@ -3,6 +3,60 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import { selectE2EModel } from '../../e2e/desktop/modules/shared.mjs'
+import { openExplicitModelMenu } from '../../e2e/desktop/scenarios/stand-in-model-execution.scenario.mjs'
+
+test('waits for selection resolution before opening the explicit model panel', async () => {
+  let panel = 'advanced'
+  let selected = false
+  let toggles = 0
+  await openExplicitModelMenu(
+    {
+      async command(action: string, selector: string, options?: { visible?: boolean }) {
+        if (action === 'getAttribute') return panel
+        if (action === 'getElementCount') {
+          assert.equal(options?.visible, true)
+          assert.ok(selector.includes('[aria-checked="true"]'))
+          if (!selected) {
+            // The initial catalog resolves its model and enables the simple reasoning panel.
+            selected = true
+            panel = 'simple'
+            return '0'
+          }
+          assert.equal(panel, 'advanced')
+          return '1'
+        }
+        if (action === 'clickWhenEnabled' && selector.includes('model-advanced-toggle')) {
+          assert.ok(selected, 'A transient empty advanced view is not a resolved model selection')
+          assert.equal(panel, 'simple')
+          toggles++
+          panel = 'advanced'
+        }
+        return ''
+      },
+    },
+    '[data-testid="model-selector-button"]',
+    { requireSelection: true }
+  )
+  assert.equal(toggles, 1)
+})
+
+test('opens an advanced-only picker with no selection without toggling it', async () => {
+  const trigger = '[data-testid="model-selector-button"]'
+  await openExplicitModelMenu(
+    {
+      async command(action: string, selector: string) {
+        if (action === 'clickWhenEnabled') assert.equal(selector, trigger)
+        if (action === 'getAttribute') return 'advanced'
+        if (action === 'getElementCount') {
+          assert.equal(selector, '[data-testid="model-selector-menu"][data-panel="advanced"]')
+          return '1'
+        }
+        return ''
+      },
+    },
+    trigger
+  )
+})
 
 for (const initiallyOpen of [true, false]) {
   for (const initiallySelected of [true, false]) {
