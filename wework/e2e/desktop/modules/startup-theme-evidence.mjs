@@ -90,6 +90,9 @@ export async function captureStartupThemeEvidence({
     timeOrigin >= createdAt && timeOrigin <= closedAt,
     'The main document does not belong to the completed native startup'
   )
+  // Native presentation can finish before the Wework theme consumers mount.
+  await control.command('waitFor', BACKGROUND_SELECTOR)
+  await control.command('waitFor', TEXT_SELECTOR)
   const rendered = {
     owner: 'wework',
     theme: await control.command('getAttribute', 'html', { value: 'data-theme' }),

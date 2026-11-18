@@ -16,6 +16,28 @@ afterEach(async () => {
 })
 
 describe('bundled plugin resources', () => {
+  test('keeps the Wework Space release identity consistent across harnesses', async () => {
+    const marketplaceRoot = fileURLToPath(
+      new URL('../resources/bundled-plugins/wework-personal/', import.meta.url)
+    )
+    const [codexMarketplace, claudeMarketplace] = await Promise.all(
+      ['.agents/plugins', '.claude-plugin'].map(async directory =>
+        JSON.parse(await readFile(join(marketplaceRoot, directory, 'marketplace.json'), 'utf8'))
+      )
+    )
+    const codexEntry = codexMarketplace.plugins.find(plugin => plugin.name === 'wework-space')
+    const claudeEntry = claudeMarketplace.plugins.find(plugin => plugin.name === 'wework-space')
+    expect(codexEntry.source).toEqual({ source: 'local', path: claudeEntry.source })
+    expect(claudeEntry.version).toEqual(expect.any(String))
+    for (const directory of ['.codex-plugin', '.claude-plugin']) {
+      const manifest = JSON.parse(
+        await readFile(join(marketplaceRoot, claudeEntry.source, directory, 'plugin.json'), 'utf8')
+      )
+      expect(manifest.name).toBe(claudeEntry.name)
+      expect(manifest.version).toBe(claudeEntry.version)
+    }
+  })
+
   test('ships specialized runtime skills without a replacement for native coding guidance', async () => {
     const repositoryRoot = fileURLToPath(new URL('../../', import.meta.url))
     const runtimeRoot = join(

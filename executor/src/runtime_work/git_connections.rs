@@ -13,6 +13,30 @@ mod status;
 
 pub(crate) const PACKAGE: &str = "@wegent/dsh-connection-git/";
 
+fn git_cli_command(platform: &str, environment: HashMap<String, String>) -> Command {
+    let name = if platform == "github" { "gh" } else { "glab" };
+    let environment = wegent_subprocess::environment::merge_process_environment(environment);
+    #[cfg(windows)]
+    let (program, prefix) = {
+        let executable = crate::local::git_commands::resolve_cli_executable(name, &environment)
+            .unwrap_or_else(|| name.into());
+        crate::process::spawn_program_parts(&executable.to_string_lossy())
+    };
+    #[cfg(not(windows))]
+    let (program, prefix) = (name.to_owned(), Vec::<String>::new());
+    let mut command = Command::new(program);
+    crate::process::hide_windows_console(&mut command);
+    command
+        .args(prefix)
+        .env_clear()
+        .envs(environment)
+        .env("GH_PROMPT_DISABLED", "1")
+        .env("GLAB_PROMPT_DISABLED", "1")
+        .env("NO_COLOR", "1")
+        .kill_on_drop(true);
+    command
+}
+
 pub(super) fn uses_webhook(source: &Value) -> bool {
     source["kind"] == "repository" && source["transport"] != "cli"
 }
@@ -413,7 +437,7 @@ async fn api_request(
     {
         return Err(GitRequestError::not_sent(rate_limit_failure(instance)));
     }
-    let mut command = Command::new(if platform == "github" { "gh" } else { "glab" });
+    let mut command = git_cli_command(platform, std::env::vars().collect());
     command.args([
         "api",
         "--include",
@@ -427,15 +451,6 @@ async fn api_request(
     }
     command
         .arg(endpoint)
-        .env("GH_PROMPT_DISABLED", "1")
-        .env("GLAB_PROMPT_DISABLED", "1")
-        .env("NO_COLOR", "1")
-        .env(
-            "PATH",
-            crate::process_environment::normalized_process_path(
-                &std::env::var("PATH").unwrap_or_default(),
-            ),
-        )
         .stdin(if body.is_some() {
             Stdio::piped()
         } else {
@@ -551,7 +566,7 @@ pub(crate) async fn read(input: Value) -> Result<Value, AppIpcError> {
             instance,
             input["repository"].as_str().unwrap_or("")
         );
-        let mut command = Command::new(if platform == "github" { "gh" } else { "glab" });
+        let mut command = git_cli_command(platform, std::env::vars().collect());
         if platform == "github" {
             command.args([
                 "run",
@@ -566,15 +581,6 @@ pub(crate) async fn read(input: Value) -> Result<Value, AppIpcError> {
             command.args(["ci", "trace", &job, "--repo", &repository]);
         }
         command
-            .env("GH_PROMPT_DISABLED", "1")
-            .env("GLAB_PROMPT_DISABLED", "1")
-            .env("NO_COLOR", "1")
-            .env(
-                "PATH",
-                crate::process_environment::normalized_process_path(
-                    &std::env::var("PATH").unwrap_or_default(),
-                ),
-            )
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -706,6 +712,88 @@ fn comment_event_id(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn hosting_cli_uses_path_shims_without_shell_interpolation() {
+        let root = tempfile::tempdir().unwrap();
+        let script = root.path().join("gh.mjs");
+        std::fs::write(
+            &script,
+            "console.log(JSON.stringify(process.argv.slice(2)))",
+        )
+        .unwrap();
+        #[cfg(windows)]
+        std::fs::write(
+            root.path().join("gh.cmd"),
+            "@echo off\r\nnode \"%~dp0gh.mjs\" %*\r\n",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let shim = root.path().join("gh");
+            std::fs::write(
+                &shim,
+                "#!/bin/sh\nexec node \"$(dirname \"$0\")/gh.mjs\" \"$@\"\n",
+            )
+            .unwrap();
+            std::fs::set_permissions(shim, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        let environment: HashMap<String, String> = std::env::vars()
+            .filter(|(key, _)| !key.eq_ignore_ascii_case("PATH"))
+            .collect();
+        #[cfg(unix)]
+        let directories = {
+            use std::os::unix::fs::PermissionsExt;
+            let shadow = root.path().join("non-executable");
+            std::fs::create_dir(&shadow).unwrap();
+            let candidate = shadow.join("gh");
+            std::fs::write(&candidate, "This file cannot be executed").unwrap();
+            std::fs::set_permissions(candidate, std::fs::Permissions::from_mode(0o644)).unwrap();
+            vec![shadow, root.path().to_owned()]
+        };
+        #[cfg(not(unix))]
+        let directories = vec![root.path().to_owned()];
+        let paths = directories
+            .into_iter()
+            .chain(std::env::split_paths(
+                &std::env::var_os("PATH").unwrap_or_default(),
+            ))
+            .collect::<Vec<_>>();
+        let path = std::env::join_paths(paths)
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        let arguments = [
+            "api",
+            "repos/owner/repo/issues?state=open&per_page=10",
+            "quoted \"value\"",
+            "line one\nline two",
+        ];
+        let path_keys = if cfg!(windows) {
+            vec!["PATH", "Path"]
+        } else {
+            vec!["PATH"]
+        };
+        for key in path_keys {
+            let mut environment = environment.clone();
+            environment.insert(key.into(), path.clone());
+            let output = git_cli_command("github", environment)
+                .args(arguments)
+                .output()
+                .await
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert_eq!(
+                serde_json::from_slice::<Value>(&output.stdout).unwrap(),
+                json!(arguments)
+            );
+        }
+    }
+
     #[test]
     fn cli_failure_diagnostics_preserve_auth_permission_and_missing_tool_causes() {
         for (http, exit, stderr, code) in [

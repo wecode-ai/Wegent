@@ -8,6 +8,7 @@ import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import {
   dragCollaborationIssueToColumn,
+  enableLegacyBoardGrouping,
   openBlankProjectCreation,
   selectCollaborationProjectView,
   webApi,
@@ -616,6 +617,7 @@ test.describe('Collaboration cloud capabilities', () => {
     page,
   }) => {
     test.setTimeout(120_000)
+    await enableLegacyBoardGrouping(page.context())
     const suffix = Date.now()
     let projectId = ''
     let workspaceId = ''

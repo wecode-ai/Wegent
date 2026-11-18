@@ -7,6 +7,7 @@ import {
   openCollaborationIssueCreation,
 } from '../modules/collaboration-personal-home.mjs'
 import { verifyCollaborationDeviceCleanup } from '../modules/collaboration-device-cleanup.mjs'
+import { withLegacyBoardGrouping } from '../modules/base-board-status-grouping.mjs'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { createBoardReplyModelRegression } from '../modules/board-reply-model.mjs'
@@ -294,7 +295,7 @@ export function createDesktopScenario({
       projectOnlyNavigation.setRestartDesktopApp(restart)
     },
 
-    async verify(control) {
+    verify: withLegacyBoardGrouping(async control => {
       assert.ok(owner?.id, 'The collaboration owner fixture is missing')
       assert.ok(cloudEnvironment, 'The real cloud environment was not attached to the scenario')
       const remoteDevice = await cloudEnvironment.waitForDeviceType(
@@ -1069,7 +1070,7 @@ export function createDesktopScenario({
           }
         }
       }
-    },
+    }),
 
     async cleanup() {
       linkedIssueTaskModel?.release()
