@@ -1077,6 +1077,11 @@ impl RuntimeWorkRpcHandler {
             .insert(
                 turn.local_task_id.clone(),
                 PreparingTurn {
+                    owner_request: turn
+                        .request
+                        .extra
+                        .get(stand_in_proposal_continuations::OWNER)
+                        .cloned(),
                     cancellation_requested: false,
                 },
             );

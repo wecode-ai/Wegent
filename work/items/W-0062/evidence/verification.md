@@ -212,7 +212,7 @@ EnvironmentInfoPopover、ChangeRequestMonitor 与 observer 共 3 文件、33 项
 
 ## 2026-11-18 Goal 恢复主线整合与同步身份复核
 
-最新 head `6ba0c601d7` 的 Core / shard 4 失败为 `coordination-runtime` 等待 `stand-in-status-open` 超时。作业日志显示点击在 `04:58:38` 发出、默认 10 秒后超时；该场景已注明状态面板按 15 秒轮询，后续处理和恢复入口也使用同一 20 秒轮询窗口。现让首次状态入口等待使用该既有窗口，产品状态、错误恢复和所有断言保持不变。场景语法、目标 ESLint 与 Prettier 通过；真实结果以新 head CI 为准。
+最新 head `6ba0c601d7` 的 Core / shard 4 失败为 `coordination-runtime` 等待 `stand-in-status-open` 超时。作业日志显示点击在 `04:58:38` 发出、默认 10 秒后超时；该场景已注明状态面板按 15 秒轮询，后续处理和恢复入口也使用同一 20 秒轮询窗口。失败后自动观察记录显示选择器在超时后 `432ms` 已出现，确认是测试等待预算早于既有轮询更新，而非缺少错误入口。现让首次状态入口等待使用同一 20 秒窗口，产品状态、错误恢复和所有断言保持不变。场景语法、目标 ESLint 与 Prettier 通过；真实结果以新 head CI 为准。
 
 主线 `b503a1f985b654df97cd17e05d1bc283942da03b` 与 `changeRequestMonitor.test.ts` 发生单文件冲突。整合同时保留本分支“observer 激活期间手动刷新获取新状态”和主线“收集中注册第二个任务仍能获取状态”的完整回归，运行时保留两种并发处理语义。monitor 三文件 21 项、环境面板与工作区身份/模型目录五文件 55 项、自动化/原生插件协议六文件 46 项全部通过；Rust 队列 17 项、Goal 路由恢复 10 项及双语文档 8 项通过。Wework typecheck、完整 lint（0 错误、5 项既有警告）、目标格式与差异检查通过。没有执行本地 E2E 或 ai:verify。
 
