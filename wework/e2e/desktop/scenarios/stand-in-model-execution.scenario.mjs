@@ -865,7 +865,9 @@ async function verifyCloudModelRecovery({
     )
     assert.equal(held.status, 200)
     await control.command('waitFor', `${submit}:disabled`)
-    await control.command('waitFor', trigger, { enabled: true })
+    // The open modal picker makes the background trigger inert; its disabled
+    // attribute still proves that holding the catalog did not lock model choice.
+    await control.command('waitFor', `${trigger}:not(:disabled)`)
     assert.equal(
       held.released,
       undefined,
