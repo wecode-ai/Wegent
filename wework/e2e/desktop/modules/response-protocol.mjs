@@ -953,6 +953,7 @@ export {
   codexRequestKind,
   handleModelMaintenanceRequest,
   latestModelInputText,
+  modelMessageText,
   isReplyPredictionRequest,
   isReplyPredictionVisionRequest,
   REPLY_PREDICTION_PROMPT,

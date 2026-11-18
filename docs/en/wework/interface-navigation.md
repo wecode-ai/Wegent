@@ -4,7 +4,7 @@ sidebar_position: 2
 
 # Interface navigation and feature locations
 
-To continue a task when a connected resource changes, describe the condition in the **task composer**. AI subscribes through tools; the source and wait state appear above the composer. Goals can wait too. See [Ask AI to wait for connection events](./tasks.md#connection-event-waits).
+To continue a task when a connected resource changes, describe the condition in the **task composer**. AI subscribes through tools; the source, effective wait condition and wait state appear above the composer, with event status also visible in the left task sidebar. Goals can wait too. See [Ask AI to wait for connection events](./tasks.md#connection-event-waits).
 
 Use this page to find an entry point, then follow the linked usage guide. It describes the desktop main window; popup, narrow-window and operating-system layouts may differ. Paths below are click sequences, not commands to enter.
 
