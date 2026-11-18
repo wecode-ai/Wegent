@@ -168,6 +168,14 @@ MAN-08 的前提现在明确为两个模型均已真实就绪：C 在项目创�
 
 自动合并的运行时对主线仅保留原阶段诊断，observer 仍只等待一次，不改变历史清理、执行容量或异步问题顺序。Rust turns 17、异步问题 8、handler hooks 1、hooks lifecycle 2、主线新增 native capacity 4，共 32 项通过；初次容量模块过滤器未匹配的 0 项结果不计为通过。Rustfmt、Wework typecheck、完整 lint（0 错误、5 项既有警告）、双语文档 8 项和差异检查通过。新 head 仍须取得自己的完整 CI 与可合并状态，不能以 `38641d0640` 的部分成功提前交接；本地未运行 E2E 或 ai:verify。
 
+## 2026-11-18 固定状态分组主线整合
+
+主线 `a9198477b9daf6965998c0722e6bcc6626c00e88` 引入基础看板按状态分组，与共享桌面场景产生单文件冲突。整合保留主线 `withLegacyBoardGrouping` 包装及结束恢复，完整保留普通 Tasks 入口、两人成员选择、Developer/direct_role 回读、立即显示、重载持久化和清理；相对前一 head 的场景内部流程未改。
+
+整合后共享创建、模板、完整 Platform 与状态分组 34 文件、451 项，以及 CloudTodo、状态迁移和普通创建 Action 3 文件、87 项，共 538 项全部通过。导航协议 12 项通过，场景语法、目标 ESLint、Prettier、共享构建、Wework typecheck、完整 lint（0 错误、5 项既有警告）、双语文档契约 8 项和差异检查通过；本地未执行 E2E 或 ai:verify。最终新 head 仍须取得自身完整 CI，不能用前一提交的通过结果替代。
+
+前一提交 `308dcbca2b` 已实际通过 [task-model-deletion](https://github.com/wecode-ai/Wegent/actions/runs/44224766180/job/134539053088)（02:55:58 UTC）与 [Plugins](https://github.com/wecode-ai/Wegent/actions/runs/44224766180/job/134539053029)（02:58:04 UTC），均为 `assertion-errors=none`；此记录仅对应该提交，不表示其他仍在运行的检查已通过。
+
 # Verification and rollback
 
 The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The CI-covered `collaboration-shared-core` scenario includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run under the repository-level local execution policy; the recorded GitHub CI runs provide the actual desktop E2E results. Earlier test results are tied to their stated revisions, and the latest PR head requires its own green checks. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.

@@ -20,6 +20,7 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import '@/i18n'
 import type { RuntimeTaskCreateRequest, RuntimeTranscriptResponse, User } from '@/types/api'
 import type { DndContextProps, DragCancelEvent, DragEndEvent, DragStartEvent } from '@dnd-kit/core'
+import { baseBoardStatusGroupingFlag } from '@wegent/collaboration/project-board'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -2499,6 +2500,7 @@ describe('CloudTodoWorkspace', () => {
   })
 
   it('keeps robot-assigned tasks out of the unassigned assignee group', async () => {
+    localStorage.setItem(baseBoardStatusGroupingFlag, 'false')
     const workbenchServices = services()
     workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({
       items: [
@@ -3836,7 +3838,221 @@ describe('CloudTodoWorkspace', () => {
     expect((await screen.findAllByText('Updated TODO')).length).toBeGreaterThan(0)
   })
 
+  it.each(['move', 'runner'] as const)(
+    'keeps migration and %s operation errors visible while retrying migration',
+    async failure => {
+      const legacyProject = {
+        ...project,
+        board_config: { group_by: 'tag' as const },
+      }
+      const workbenchServices = services()
+      const deliveryApi = workbenchServices.deliveryApi!
+      vi.mocked(deliveryApi.listCloudProjects).mockResolvedValue({ items: [legacyProject] })
+      vi.spyOn(workbenchServices.sharedWorkspaceApi!.projects, 'get').mockResolvedValue(
+        legacyProject
+      )
+      const savedProject = {
+        ...legacyProject,
+        board_config: { group_by: 'status' as const },
+        version: 2,
+      }
+      let finishRetry!: (value: typeof savedProject) => void
+      const retry = new Promise<typeof savedProject>(resolve => {
+        finishRetry = resolve
+      })
+      vi.mocked(deliveryApi.updateCloudProject)
+        .mockRejectedValueOnce(new Error('Migration save failed'))
+        .mockReturnValueOnce(retry)
+      const operationMessage =
+        failure === 'runner' ? '请到项目设置 → 执行环境添加或授权设备' : 'Card move failed'
+      vi.mocked(deliveryApi.updateLoopItem).mockRejectedValueOnce(
+        Object.assign(new Error(operationMessage), {
+          errorCode: failure === 'runner' ? 'RUNNER_ENVIRONMENT_UNAVAILABLE' : undefined,
+        })
+      )
+      render(
+        <CloudTodoWorkspace
+          user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+          localProjects={[]}
+          services={workbenchServices}
+          embedded
+          activeProjectRef={{ projectStore: 'backend', projectId: String(project.id) }}
+        />
+      )
+
+      const migrationMessage = '基础看板设置保存失败，仍可继续查看看板。'
+      await screen.findByText(migrationMessage)
+      await screen.findByTestId(`cloud-todo-card-${item.id}`)
+      fireEvent.click(screen.getByTestId('mock-dnd-drag-to-pending'))
+      expect(await screen.findByText(operationMessage, { exact: false })).toBeVisible()
+      expect(screen.getByText(migrationMessage)).toBeVisible()
+      expect(screen.getAllByRole('alert')).toHaveLength(2)
+
+      fireEvent.click(screen.getByTestId('board-base-migration-retry'))
+      await waitFor(() => expect(deliveryApi.updateCloudProject).toHaveBeenCalledTimes(2))
+      expect(screen.queryByText(migrationMessage)).not.toBeInTheDocument()
+      expect(screen.getByText(operationMessage, { exact: false })).toBeVisible()
+      await act(async () => finishRetry(savedProject))
+      expect(screen.queryByTestId('board-base-migration-retry')).not.toBeInTheDocument()
+      expect(screen.getByText(operationMessage, { exact: false })).toBeVisible()
+      expect(screen.getAllByRole('alert')).toHaveLength(1)
+      expect(deliveryApi.updateLoopItem).toHaveBeenCalledTimes(1)
+      expect(screen.getByTestId('cloud-todo-column-in_progress')).toContainElement(
+        screen.getByTestId(`cloud-todo-card-${item.id}`)
+      )
+    }
+  )
+
+  it('waits for the first cloud snapshot before migrating a legacy base board', async () => {
+    const legacyProject = {
+      ...project,
+      tags: ['质量验收'],
+      board_config: {
+        group_by: 'tag' as const,
+        processing_start_status_id: 'in_progress',
+        statuses: [
+          { id: 'inbox', name: '收集箱', color: 'gray' as const },
+          { id: 'in_progress', name: '进行中', color: 'orange' as const },
+        ],
+      },
+    }
+    const snapshot = {
+      items: [{ ...item, tags: ['质量验收'] }],
+      members: [],
+      agents: [],
+      task_bindings: [],
+    }
+    let releaseSnapshot!: () => void
+    const pendingSnapshot = new Promise<typeof snapshot>(resolve => {
+      releaseSnapshot = () => resolve(snapshot)
+    })
+    const workbenchServices = services()
+    const deliveryApi = workbenchServices.deliveryApi!
+    vi.mocked(deliveryApi.listCloudProjects).mockResolvedValue({ items: [legacyProject] })
+    vi.spyOn(workbenchServices.sharedWorkspaceApi!.projects, 'get').mockResolvedValue(legacyProject)
+    vi.mocked(deliveryApi.getBoardSnapshot).mockReturnValue(pendingSnapshot)
+    vi.mocked(deliveryApi.updateCloudProject).mockImplementation(async (_id, values) => ({
+      ...legacyProject,
+      ...values,
+      version: legacyProject.version + 1,
+    }))
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+        embedded
+        activeProjectRef={{ projectStore: 'backend', projectId: String(legacyProject.id) }}
+      />
+    )
+
+    await waitFor(() => expect(deliveryApi.getBoardSnapshot).toHaveBeenCalled())
+    await act(async () => undefined)
+    expect(deliveryApi.updateCloudProject).not.toHaveBeenCalled()
+
+    await act(async () => releaseSnapshot())
+    await waitFor(() => expect(deliveryApi.updateCloudProject).toHaveBeenCalledOnce())
+    expect(deliveryApi.updateCloudProject).toHaveBeenCalledWith(String(legacyProject.id), {
+      version: legacyProject.version,
+      board_config: { ...legacyProject.board_config, group_by: 'status' },
+    })
+    expect(screen.getByTestId('cloud-todo-column-in_progress')).toContainElement(
+      screen.getByTestId(`cloud-todo-card-${item.id}`)
+    )
+    expect(deliveryApi.updateLoopItem).not.toHaveBeenCalled()
+  })
+
+  it('keeps the base board in status order while switching a legacy project to its default workflow', async () => {
+    const stages = ['需求提出', '共同评审', '开发准备', '开发实现', '质量验收', '发布上线']
+    const statuses = [
+      { id: 'inbox', name: '收集箱', color: 'gray' as const },
+      { id: 'pending', name: '待开始', color: 'blue' as const },
+      { id: 'in_progress', name: '进行中', color: 'orange' as const },
+      { id: 'in_review', name: '待确认', color: 'purple' as const },
+      { id: 'completed', name: '已完成', color: 'green' as const },
+    ]
+    const legacyProject = {
+      ...project,
+      access_role: 'Viewer' as const,
+      tags: stages,
+      board_config: {
+        group_by: 'tag' as const,
+        processing_start_status_id: 'in_progress',
+        statuses,
+      },
+      board_views: {
+        schema_version: 1,
+        default_view_id: 'workflow-v1',
+        views: [
+          {
+            id: 'workflow-v1',
+            name: '协作流程',
+            columns: [
+              { id: 'workflow-inbox', type: 'status' as const, value: 'inbox' },
+              ...stages.map((value, index) => ({
+                id: `workflow-stage-${index}`,
+                type: 'tag' as const,
+                value,
+              })),
+            ],
+          },
+        ],
+      },
+    }
+    const qaItem = { ...item, tags: ['质量验收'], can_edit: false }
+    const original = structuredClone({ project: legacyProject, item: qaItem })
+    const workbenchServices = services()
+    vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+      items: [legacyProject],
+    })
+    vi.mocked(workbenchServices.deliveryApi!.listLoopItems).mockResolvedValue({ items: [qaItem] })
+    localStorage.setItem('wework-board-group:1:11', 'tag')
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+      />
+    )
+
+    await userEvent.click((await screen.findAllByText('Wegent V4'))[0])
+    const workflowLane = await screen.findByTestId('cloud-todo-column-workflow-stage-4')
+    expect(workflowLane).toContainElement(await screen.findByTestId('cloud-todo-card-WEG-1'))
+    expect(screen.getByTestId('board-view-picker')).toHaveTextContent('协作流程')
+    const columnKeys = () =>
+      Array.from(document.querySelectorAll('section[data-testid^="cloud-todo-column-"]')).map(
+        column => column.getAttribute('data-testid')!.slice('cloud-todo-column-'.length)
+      )
+    expect(columnKeys()).toEqual([
+      'workflow-inbox',
+      ...stages.map((_, index) => `workflow-stage-${index}`),
+    ])
+
+    await userEvent.click(screen.getByTestId('board-view-picker'))
+    expect(screen.getByTestId('board-view-workflow-v1')).toHaveTextContent('默认')
+    await userEvent.click(screen.getByTestId('board-view-default'))
+    expect(screen.getByTestId('board-view-picker')).toHaveTextContent('基础看板')
+    expect(columnKeys()).toEqual(statuses.map(status => status.id))
+    expect(screen.getByTestId('cloud-todo-column-in_progress')).toContainElement(
+      screen.getByTestId('cloud-todo-card-WEG-1')
+    )
+    expect(screen.queryByTestId('cloud-board-group-by')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-board-save-global')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByTestId('board-view-picker'))
+    await userEvent.click(screen.getByTestId('board-view-workflow-v1'))
+    expect(screen.getByTestId('cloud-todo-column-workflow-stage-4')).toContainElement(
+      screen.getByTestId('cloud-todo-card-WEG-1')
+    )
+    expect(screen.queryByTestId('cloud-todo-column-in_progress')).not.toBeInTheDocument()
+    expect(workbenchServices.deliveryApi!.updateCloudProject).not.toHaveBeenCalled()
+    expect(workbenchServices.deliveryApi!.updateLoopItem).not.toHaveBeenCalled()
+    expect({ project: legacyProject, item: qaItem }).toEqual(original)
+    expect(localStorage.getItem('wework-board-group:1:11')).toBe('tag')
+  })
+
   it('uses the DingTalk-style grouping, filtering, and search toolbar', async () => {
+    localStorage.setItem(baseBoardStatusGroupingFlag, 'false')
     const workbenchServices = services()
     workbenchServices.deliveryApi!.updateCloudProject = vi.fn(async (_projectId, values) => ({
       ...project,
@@ -3913,6 +4129,7 @@ describe('CloudTodoWorkspace', () => {
   })
 
   it('groups native board tasks by tag and keeps the tag filter beside grouping', async () => {
+    localStorage.setItem(baseBoardStatusGroupingFlag, 'false')
     const workbenchServices = services()
     workbenchServices.deliveryApi!.listLoopItems = vi.fn(async () => ({
       items: [{ ...item, tags: ['发布'] }],

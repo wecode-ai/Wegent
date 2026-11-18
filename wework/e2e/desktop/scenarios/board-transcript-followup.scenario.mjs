@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { withLegacyBoardGrouping } from '../modules/base-board-status-grouping.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { runtimeTransportGates } from '../modules/runtime-transport-gates.mjs'
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
@@ -99,7 +100,7 @@ export function createDesktopScenario({
       response.end(createSse(events.finish))
       return true
     },
-    async verify(control) {
+    verify: withLegacyBoardGrouping(async control => {
       const gates = runtimeTransportGates(control)
       const rpc = (method, params) => requestExecutor(control, method, params, uiTimeoutMs)
       await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
@@ -216,7 +217,7 @@ export function createDesktopScenario({
         releaseModel()
         await gates.reset()
       }
-    },
+    }),
     cleanup: () => releaseModel(),
   }
 }
