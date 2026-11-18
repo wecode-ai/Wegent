@@ -2,7 +2,7 @@
 use super::*;
 use wegent_protocol::connection_events::{canonical_json, event_identity, observation_identity};
 
-fn capture_consumers(state: &mut Value, id: &str, observation: &Value) -> bool {
+pub(super) fn capture_consumers(state: &mut Value, id: &str, observation: &Value) -> bool {
     let mut wakeup = false;
     let retained = observation["events"].as_array().unwrap();
     for record in state["operations"]
@@ -79,9 +79,23 @@ impl RuntimeWorkRpcHandler {
                 Ok(state["observations"][&id].clone())
             })?;
         if existing.is_object() {
+            if !existing["events"].is_array() || existing["sequence"].as_u64().is_none() {
+                return Err(AppIpcError::new(
+                    "control_storage_failed",
+                    "Invalid observation source journal",
+                ));
+            }
             return Ok((
                 id,
-                existing["sequence"].as_u64().unwrap_or_default(),
+                wegent_protocol::connection_events::activation_sequence(
+                    source,
+                    &existing,
+                    |value| {
+                        chrono::DateTime::parse_from_rfc3339(value.as_str()?)
+                            .ok()
+                            .map(|time| time.timestamp_millis())
+                    },
+                ),
                 checkpoint.clone(),
             ));
         }
@@ -203,6 +217,29 @@ mod tests {
     use super::*;
 
     mod merge_readiness;
+
+    #[test]
+    fn retained_completion_inside_activation_window_is_captured_once() {
+        let source = json!({"providerId":"github","enabledAfter":"2026-11-15T00:00:00Z"});
+        let observation = json!({"sequence":2,"events":[{"sequence":1,"key":"old","event":{"id":"old","at":"2026-11-14T00:00:00Z","state":"completed"}},{"sequence":2,"key":"completion","event":{"id":"completion","at":"2026-11-15T00:00:01Z","state":"completed"}}]});
+        let baseline =
+            wegent_protocol::connection_events::activation_sequence(&source, &observation, |v| {
+                chrono::DateTime::parse_from_rfc3339(v.as_str()?)
+                    .ok()
+                    .map(|v| v.timestamp_millis())
+            });
+        let record = json!({"observation_id":"shared","source":source,"status":"armed","initial_sequence":baseline,"after_sequence":baseline,"match":{"/state":"completed"}});
+        let mut state = json!({"operations":{"waiting":record}});
+        assert!(capture_consumers(&mut state, "shared", &observation));
+        assert_eq!(
+            state["operations"]["waiting"]["resource_event_keys"],
+            json!(["completion"])
+        );
+        assert_eq!(state["operations"]["waiting"]["status"], "pending");
+        let captured = state.clone();
+        assert!(!capture_consumers(&mut state, "shared", &observation));
+        assert_eq!(state, captured);
+    }
 
     #[test]
     fn every_consumer_captures_before_shared_history_is_compacted() {
