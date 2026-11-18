@@ -427,7 +427,7 @@ classify_path() {
       select_target "core:collaboration-template-agents"
       select_target "core:collaboration-template-app-device-routing"
       if [[ "$path" == packages/collaboration/src/templates/* ]]; then
-        select_target "core:collaboration-group-onboarding"
+        select_target "core:collaboration-first-use"
       fi
       ;;
     packages/collaboration/src/platform/WorkspaceResourceConfiguration* | \
@@ -440,7 +440,7 @@ classify_path() {
       select_target "core:collaboration-shared-core"
       select_target "core:collaboration-issue-archive"
       select_target "core:collaboration-first-use"
-      select_target "core:collaboration-group-onboarding"
+      select_target "core:collaboration-first-use"
       select_collaboration_dispatch_checkpoints
       if [[ "$path" == packages/collaboration/src/project-agent-config/* || \
         "$path" == packages/collaboration/src/agent-form/runnerRouting* ]]; then
@@ -469,7 +469,7 @@ classify_path() {
       select_target "core:collaboration-shared-core"
       select_target "core:collaboration-issue-archive"
       select_target "core:collaboration-first-use"
-      select_target "core:collaboration-group-onboarding"
+      select_target "core:collaboration-first-use"
       select_collaboration_dispatch_checkpoints
       select_target "core:collaboration-issue-comment-mention"
       select_target "core:collaboration-issue-assignment-activity"

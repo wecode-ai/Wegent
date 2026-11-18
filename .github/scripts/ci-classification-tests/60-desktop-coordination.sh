@@ -16,18 +16,11 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/collaboration-first-use.scenario.mjs"
 
-assert_desktop_case "collaboration group onboarding scenario selects its core shard" \
-  'wework_desktop_e2e=true
-wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"collaboration-group-onboarding"}]}
-wework_desktop_other_e2e=false
-wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/e2e/desktop/scenarios/collaboration-group-onboarding.scenario.mjs"
 
 assert_desktop_case "template components retain group onboarding coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"collaboration-group-onboarding"},{"id":"core-10","name":"Core / shard 10","segments":"collaboration-templates,collaboration-template-lifecycle,collaboration-template-agents,collaboration-template-app-device-routing"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-8","name":"Core / shard 8","segments":"collaboration-first-use"},{"id":"core-10","name":"Core / shard 10","segments":"collaboration-templates,collaboration-template-lifecycle,collaboration-template-agents,collaboration-template-app-device-routing"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "packages/collaboration/src/templates/TemplateCreateSection.tsx"

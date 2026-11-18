@@ -564,10 +564,6 @@ classify_wework_path() {
       select_target "core:collaboration-first-use"
       return
       ;;
-    wework/e2e/desktop/scenarios/collaboration-group-onboarding.scenario.mjs)
-      select_target "core:collaboration-group-onboarding"
-      return
-      ;;
   esac
   classify_workbench_path "$path"
 }
