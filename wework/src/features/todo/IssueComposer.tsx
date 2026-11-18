@@ -42,6 +42,7 @@ import { ConnectedIssueProjectWork } from './ConnectedIssueProjectWork'
 import { collaborationExecutionMode } from './collaborationWorkspacePolicy'
 import { WorkItemComposerGuide } from './WorkItemComposerGuide'
 import { TaskDescriptionEditor } from './TaskDescriptionEditor'
+import { usesAgenticStrategy } from './agenticStrategy'
 
 interface IssueComposerProps {
   projects: CloudProject[]
@@ -188,7 +189,7 @@ export function IssueComposer({
   const [tags, setTags] = useState<string[]>(draft?.tags ?? [])
   const [tagDraft, setTagDraft] = useState('')
   const [assigneeUserId, setAssigneeUserId] = useState<number | null>(draft?.assigneeUserId ?? null)
-  const [creationMode, setCreationMode] = useState<'issue' | 'task'>(
+  const [selectedCreationMode, setCreationMode] = useState<'issue' | 'task'>(
     draft?.creationMode ?? initialMode
   )
   const projectRuntimeWork = workbench?.state?.runtimeWork ?? {
@@ -237,6 +238,9 @@ export function IssueComposer({
     projects.find(project => `${project.project_store}:${String(project.id)}` === boardKey) ??
     projects[0] ??
     null
+  const requiresAdmission = usesAgenticStrategy(selectedWorkItemProject)
+  const creationMode = requiresAdmission ? 'issue' : selectedCreationMode
+  const creationStatus = requiresAdmission ? 'inbox' : status
   const isPersonalTaskBoard = isDefaultWorkItemProject(selectedWorkItemProject)
   const newLightweightItemLabel = isPersonalTaskBoard
     ? t('todo.new_task', '新建任务')
@@ -247,11 +251,13 @@ export function IssueComposer({
   const selectedProjectMembers = projectMembers[boardKey] ?? []
   const selectedAssigneeName =
     selectedProjectMembers.find(member => member.user_id === assigneeUserId)?.user_name ?? null
-  const statusOptions = selectedWorkItemProject?.board_config?.statuses ?? [
-    { id: 'inbox', name: t('todo.status_inbox', '收集箱') },
-    { id: 'pending', name: t('todo.status_pending', '待处理') },
-    { id: 'in_progress', name: t('todo.status_in_progress', '进行中') },
-  ]
+  const statusOptions = requiresAdmission
+    ? [{ id: 'inbox', name: t('todo.status_inbox', '收集箱') }]
+    : (selectedWorkItemProject?.board_config?.statuses ?? [
+        { id: 'inbox', name: t('todo.status_inbox', '收集箱') },
+        { id: 'pending', name: t('todo.status_pending', '待处理') },
+        { id: 'in_progress', name: t('todo.status_in_progress', '进行中') },
+      ])
   const [stagedAttachments, setStagedAttachments] = useState<StagedIssueAttachment[]>(() =>
     restoredFiles.map((file, index) => ({
       attachment: attachmentFromFile(file, -(index + 1)),
@@ -463,7 +469,7 @@ export function IssueComposer({
           }
         : {}),
       ...(keepOpen ? { continueCreating: true } : {}),
-      ...(status !== 'inbox' ? { status } : {}),
+      ...(creationStatus !== 'inbox' ? { status: creationStatus } : {}),
       ...(priority !== 'none' ? { priority } : {}),
       ...(submittedTags.length ? { tags: submittedTags } : {}),
       ...(assigneeUserId ? { assigneeUserId } : {}),
@@ -887,14 +893,15 @@ export function IssueComposer({
                     <label className="relative inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border border-border px-3 text-sm font-normal text-text-secondary transition hover:bg-muted hover:text-text-primary">
                       <span className="h-2 w-2 rounded-full bg-text-muted wework:bg-zinc-400" />
                       <span className="font-medium text-text-primary">
-                        {statusOptions.find(option => option.id === status)?.name ?? status}
+                        {statusOptions.find(option => option.id === creationStatus)?.name ??
+                          creationStatus}
                       </span>
                       <ChevronDown className="h-3 w-3 text-text-muted" />
                       <select
                         data-testid="workspace-issue-status"
                         aria-label={t('todo.status', '状态')}
-                        value={status}
-                        disabled={busy}
+                        value={creationStatus}
+                        disabled={busy || requiresAdmission}
                         onChange={event => setStatus(event.target.value as CloudLoopItem['status'])}
                         className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
                       >
@@ -1202,24 +1209,34 @@ export function IssueComposer({
                     ? t('todo.add_task_tab', '添加任务')
                     : t('todo.create_issue_tab', '创建 Issue')}
                 </button>
-                <button
-                  type="button"
-                  role="tab"
-                  data-testid="workspace-create-task-tab"
-                  aria-selected={creationMode === 'task'}
-                  onClick={() => setCreationMode('task')}
-                  className={cn(
-                    'h-7 rounded-lg px-3 text-sm font-medium transition',
-                    creationMode === 'task'
-                      ? 'bg-background text-text-primary shadow-sm'
-                      : 'text-text-secondary hover:text-text-primary'
-                  )}
-                >
-                  {isPersonalTaskBoard
-                    ? t('todo.create_and_run_task_tab', '创建并执行')
-                    : t('todo.create_task_tab', '创建任务')}
-                </button>
+                {!requiresAdmission && (
+                  <button
+                    type="button"
+                    role="tab"
+                    data-testid="workspace-create-task-tab"
+                    aria-selected={creationMode === 'task'}
+                    onClick={() => setCreationMode('task')}
+                    className={cn(
+                      'h-7 rounded-lg px-3 text-sm font-medium transition',
+                      creationMode === 'task'
+                        ? 'bg-background text-text-primary shadow-sm'
+                        : 'text-text-secondary hover:text-text-primary'
+                    )}
+                  >
+                    {isPersonalTaskBoard
+                      ? t('todo.create_and_run_task_tab', '创建并执行')
+                      : t('todo.create_task_tab', '创建任务')}
+                  </button>
+                )}
               </div>
+              {requiresAdmission && (
+                <p
+                  data-testid="workspace-issue-strategy-inbox-hint"
+                  className="mt-2 text-xs text-text-muted"
+                >
+                  {t('todo.strategy_admission_before_execution')}
+                </p>
+              )}
               <p
                 data-testid="workspace-issue-creation-mode-description"
                 className="mt-2 text-xs text-text-muted"

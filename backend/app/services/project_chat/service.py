@@ -1147,6 +1147,13 @@ class ProjectChatService:
                     item.metadata_json, actor_user_id=user_id
                 )
                 item.version += 1
+                from app.services.loop_items.strategy import (
+                    refresh_strategy_coordinator,
+                )
+
+                refresh_strategy_coordinator(
+                    db, item, "comment.created", f"comment:{row.message_id}"
+                )
                 self._queue_loop_item_change(db, item)
         self._commit(db)
         db.refresh(row)

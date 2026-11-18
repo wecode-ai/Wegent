@@ -863,6 +863,41 @@ describe('TodoEditor external item sync', () => {
     vi.unstubAllGlobals()
   })
 
+  it('requires strategy admission before offering a private execution task', () => {
+    const inboxItem = {
+      ...baseItem,
+      status: 'inbox',
+      assignee_user_id: 1,
+      assignee_agent_id: null,
+      workflow: {
+        version: 1,
+        instance_id: 'strategy-inbox',
+        definition_version: 1,
+        stage_mode: 'none' as const,
+        nodes: [],
+        strategy_state: 'inbox' as const,
+      },
+    }
+    const onCreateTask = vi.fn()
+    render(
+      <TodoEditor
+        mode="edit"
+        presentation="workspace-panel"
+        item={inboxItem}
+        project={project}
+        allItems={[inboxItem]}
+        currentUserId={1}
+        api={api}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        onCreateTask={onCreateTask}
+      />
+    )
+    expect(screen.queryByTestId('cloud-todo-personal-task-action')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-create-task')).not.toBeInTheDocument()
+    expect(onCreateTask).not.toHaveBeenCalled()
+  })
+
   it.each([
     { binding_type: 'system', task_user_id: 1, continuation: false },
     { binding_type: 'user', task_user_id: null, continuation: false },

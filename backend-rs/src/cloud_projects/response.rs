@@ -472,6 +472,19 @@ pub(crate) fn project_response(
         workflow_definition: workflow_definition_value(
             metadata.and_then(|metadata| metadata.workflow_definition.as_ref()),
         ),
+        collaboration_strategy: metadata
+            .and_then(|metadata| metadata.collaboration_strategy.as_ref())
+            .filter(|value| !value.is_null())
+            .map(OpaqueJson::to_raw_value),
+        collaboration_strategy_versions: metadata
+            .and_then(|metadata| metadata.collaboration_strategy_versions.as_ref())
+            .map(OpaqueJson::to_value)
+            .and_then(|value| value.as_array().cloned())
+            .unwrap_or_default()
+            .iter()
+            .map(raw_json)
+            .collect(),
+        agentic_strategy_enabled: super::workflow_definition::agentic_strategy_enabled(),
         workflow_automation_id: metadata
             .and_then(|metadata| metadata.workflow_automation_id.as_ref())
             .filter(|value| !value.is_null())
@@ -516,6 +529,9 @@ pub(crate) struct CloudProjectBody {
     ai_automation: AiAutomation,
     pull_request_automation: PullRequestAutomation,
     workflow_definition: WorkflowDefinition,
+    collaboration_strategy: Option<RawJson>,
+    collaboration_strategy_versions: Vec<RawJson>,
+    agentic_strategy_enabled: bool,
     workflow_automation_id: Option<RawJson>,
     execution_environment: ExecutionEnvironment,
     visibility: &'static str,
@@ -621,6 +637,35 @@ mod tests {
             json!({"workflow_definition":{"version":2,"nodes":[{"x":null}],"edges":[{}]},"pull_request_automation":{"trigger_events":["a","a",null]}})
         ].into_iter().map(|metadata| project_response(&row(metadata), 1, "user", "Owner")).collect();
         crate::json_contract_tests::assert_fixture("cloud_project", output);
+    }
+
+    #[test]
+    fn project_strategy_keeps_immutable_revisions_and_text_intact() {
+        let first = json!({
+            "version": 1,
+            "text": "# 协作策略\n需求提出 → 共同评审",
+            "diff": "+ requirement",
+            "published_at": "2026-11-16T10:22:16Z",
+            "published_by": 8,
+            "role_mapping": {"pmo": ["zhongwei9"]},
+            "source_path": "docs/35-agentic-collaboration-strategy.md"
+        });
+        let second = json!({"version": 2, "text": "Changed policy", "diff": "- old\n+ new"});
+        let value = project_response(
+            &row(json!({
+                "collaboration_strategy": second,
+                "collaboration_strategy_versions": [first, second]
+            })),
+            101,
+            "member",
+            "Developer",
+        );
+        assert_eq!(value["collaboration_strategy"], second);
+        assert_eq!(
+            value["collaboration_strategy_versions"],
+            json!([first, second])
+        );
+        assert_eq!(value["workflow_definition"]["stage_mode"], "none");
     }
 
     fn project_response(

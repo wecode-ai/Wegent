@@ -119,6 +119,7 @@ import {
   IssueDeliveries,
 } from "./issue-detail/IssueExecutionLists";
 import { taskDeviceLabel } from "./issue-detail/taskBindingPresentation";
+import { IssueWorkflowPanel } from './issue-detail/IssueWorkflowPanel'
 
 function cn(...values: Array<string | false | null | undefined>): string {
   return values.filter(Boolean).join(" ");
@@ -695,6 +696,7 @@ export type TodoEditorProps = {
   onOpenChildTask?: (task: CloudLoopItem) => void;
   onOpenRelatedIssue?: (issue: CloudLoopItem) => void;
   onWorkflowPlanChanged?: () => void | Promise<void>;
+  onConfigureWorkflow?: () => void;
 } & (TodoEditorCreateProps | TodoEditorEditProps);
 
 // Single panel for creating, viewing, and editing a todo. Create mode keeps a
@@ -712,7 +714,10 @@ export function TodoEditor(props: TodoEditorProps) {
   const editProps = props.mode === "edit" ? props : null;
   const isCreate = createProps !== null;
   const canStartWork =
-    !isCreate && props.canStartWork !== false && Boolean(props.onCreateTask);
+    !isCreate &&
+    editProps?.item.workflow?.strategy_state !== 'inbox' &&
+    props.canStartWork !== false &&
+    Boolean(props.onCreateTask);
   const editable = isCreate || editProps?.editable === true;
   const workspacePanel = props.presentation === "workspace-panel";
   const readFirst = workspacePanel && props.readFirst === true && !isCreate;
@@ -747,6 +752,7 @@ export function TodoEditor(props: TodoEditorProps) {
         child,
       ]),
   });
+  const strategyCreation = isCreate && project?.agentic_strategy_enabled === true && Boolean(project.collaboration_strategy)
   const statusOptions = project?.board_config?.statuses
     ? localizeStandardStatuses(project.board_config.statuses, t)
     : columns.map((column) => ({
@@ -794,7 +800,7 @@ export function TodoEditor(props: TodoEditorProps) {
     initial: {
       title: createProps?.initialTitle ?? draft?.title ?? "",
       description: draft?.markdown ?? "",
-      status: createProps?.initialStatus ?? "inbox",
+      status: strategyCreation ? 'inbox' : createProps?.initialStatus ?? 'inbox',
       priority: draft?.priority ?? "none",
       parentId: draft?.parentId ?? createProps?.initialParent?.id ?? "",
       startDate: draft?.startDate ?? "",
@@ -842,7 +848,7 @@ export function TodoEditor(props: TodoEditorProps) {
             ) => IssueDetailDraftValue[K]
           )(draftRef.current[field])
         : value;
-    setIssueDraftField(field, next);
+    setIssueDraftField(field, next as never);
     if (
       !item ||
       (!editable && field !== "assigneeTarget") ||
@@ -1780,7 +1786,7 @@ export function TodoEditor(props: TodoEditorProps) {
       title: createTitle,
       description,
       priority,
-      status,
+      status: strategyCreation ? 'inbox' : status,
       tags,
     };
     const startAt = startDate
@@ -2482,7 +2488,7 @@ export function TodoEditor(props: TodoEditorProps) {
       accessibleLabel={t("todo.issue_status", "状态")}
       value={status}
       onChange={setStatus}
-      disabled={!editable}
+      disabled={!editable || strategyCreation || Boolean(item?.workflow?.strategy_snapshot)}
       className={overlayControlClass}
       statuses={statusOptions}
       includeUnset={status === ""}
@@ -3959,11 +3965,46 @@ export function TodoEditor(props: TodoEditorProps) {
                     </section>
                   ) : null}
 
+
                   <ExecutionConfigurationNotice
                     key={item.id}
                     issue={item}
                     translate={t}
                   />
+                  {editProps?.project ? (
+                    <IssueWorkflowPanel
+                      key={`workflow-${item.id}`}
+                      issue={item}
+                      project={editProps.project}
+                      members={projectMembers}
+                      editable={editable}
+                      translate={t}
+                      onConfigureWorkflow={props.onConfigureWorkflow}
+                      deliveries={editorPort.deliveries}
+                      onEvidenceSubmitted={async () => {
+                        const updated = await editorPort.issues.get(item.id)
+                        editProps.onUpdated(updated)
+                        await refreshExecutionArtifacts()
+                      }}
+                      onSaveIntake={async (definition, intakePriority) => {
+                        const updated = await editorPort.issues.update(item.id, {
+                          version: item.version,
+                          intake_definition: definition,
+                          priority: intakePriority,
+                        })
+                        editProps.onUpdated(updated)
+                        return updated
+                      }}
+                      onAction={async (action, version) => {
+                        const updated = await editorPort.issues.update(item.id, {
+                          version: version ?? item.version,
+                          workflow_action: action,
+                        })
+                        editProps.onUpdated(updated)
+                        await props.onWorkflowPlanChanged?.()
+                      }}
+                    />
+                  ) : null}
                   {!isCreate ? (
                     <>
                       <IssueLinkedTasks

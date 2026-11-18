@@ -93,7 +93,7 @@ import {
   type SharedWorkspaceApi,
   type CollaborationProjectView,
 } from '@wegent/collaboration'
-import { ProjectSettingsShell } from '@wegent/collaboration/project-manage'
+import { ProjectSettingsShell, ProjectStrategySettings } from '@wegent/collaboration/project-manage'
 import { DesktopProjectSettingsPages } from './DesktopProjectSettingsPages'
 import {
   createStandardCloudBoardColumns,
@@ -221,6 +221,7 @@ import { toWorkspaceRuntimeTaskAddress } from '@/features/workbench/projectTaskT
 import { TaskSearchPanel } from './TaskSearchPanel'
 import { TodoEditor } from './TodoEditor'
 import { IssueComposer } from './IssueComposer'
+import { usesAgenticStrategy } from './agenticStrategy'
 import { associateLoopItemTags, loopItemLocalProject } from '@/api/localProjectAssociation'
 import { emptyTaskSearchFilters, type TaskSearchFilters } from './taskSearch'
 import { boardStatusColorClasses, columnDotClasses, columns } from './todoShared'
@@ -2484,6 +2485,10 @@ export function CloudTodoWorkspace({
     project: LocatedCloudProject,
     taskRequest?: RuntimeTaskCreateRequest
   ) {
+    if (item.workflow?.strategy_state === 'inbox') {
+      setBoardError(t('todo.strategy_admission_before_execution'))
+      return
+    }
     const resolvedTaskRequest =
       taskRequest ?? projectExecutionEnvironmentTaskRequest(project as CollaborationProject)
     setSelectedTaskBinding(null)
@@ -2516,6 +2521,10 @@ export function CloudTodoWorkspace({
     assignment: IssueTaskDispatchInput,
     backgroundAfterSend: boolean
   ) {
+    if (issue.workflow?.strategy_state === 'inbox') {
+      setBoardError(t('todo.strategy_admission_before_execution'))
+      return
+    }
     const initialInput = issueDispatchPersonalTaskInput(assignment)
     selectProject(project)
     setProjectView('board')
@@ -2561,6 +2570,7 @@ export function CloudTodoWorkspace({
       throw new Error(t('todo.select_local_project_before_create', '请先选择要修改的本地项目'))
     }
     const draft = issueDraftFromText(content)
+    const initialStatus = usesAgenticStrategy(selectedProject) ? 'inbox' : status
     try {
       const localProject =
         isMyTasksBoard && status !== 'inbox' && selectedLocalProject ? selectedLocalProject : null
@@ -2573,7 +2583,7 @@ export function CloudTodoWorkspace({
                   title: draft.title,
                   description: draft.description,
                   priority: 'none',
-                  status,
+                  status: initialStatus,
                   tags: [],
                   localProjectId: localProject?.id,
                   localProjectName: localProject?.name,
@@ -2589,7 +2599,7 @@ export function CloudTodoWorkspace({
               title: draft.title,
               description: draft.description,
               priority: 'none',
-              status,
+              status: initialStatus,
               tags: [],
               ...(localProject
                 ? {
@@ -3626,11 +3636,13 @@ export function CloudTodoWorkspace({
       return false
     }
     try {
+      const requiresAdmission = usesAgenticStrategy(targetProject)
+      const createTask = input.createTask && !requiresAdmission
       const taskRuntimeProjectId = runtimeTaskProjectUiId(runtimeWork, input.taskRequest)
       const issueLocalProject =
         localProjectOptions.find(project => project.id === taskRuntimeProjectId) ?? null
       const issueLocalProjectInput =
-        input.createTask && isDefaultWorkItemProject(targetProject) && issueLocalProject
+        createTask && isDefaultWorkItemProject(targetProject) && issueLocalProject
           ? issueLocalProject
           : null
       let created =
@@ -3641,7 +3653,9 @@ export function CloudTodoWorkspace({
                 {
                   title: input.title,
                   description: input.description,
-                  status: input.status ?? (input.createTask ? 'pending' : 'inbox'),
+                  status: requiresAdmission
+                    ? 'inbox'
+                    : (input.status ?? (createTask ? 'pending' : 'inbox')),
                   ...(input.priority ? { priority: input.priority } : {}),
                   ...(input.tags ? { tags: input.tags } : {}),
                   ...(input.automationRuleId ? { automationRuleId: input.automationRuleId } : {}),
@@ -3668,7 +3682,9 @@ export function CloudTodoWorkspace({
           : await targetApi!.createLoopItem(targetProject.id, {
               title: input.title,
               description: input.description,
-              status: input.status ?? (input.createTask ? 'pending' : 'inbox'),
+              status: requiresAdmission
+                ? 'inbox'
+                : (input.status ?? (createTask ? 'pending' : 'inbox')),
               ...(input.priority ? { priority: input.priority } : {}),
               ...(input.tags ? { tags: input.tags } : {}),
               ...(input.automationRuleId ? { automation_rule_id: input.automationRuleId } : {}),
@@ -3761,7 +3777,7 @@ export function CloudTodoWorkspace({
         setIssueComposerOpen(false)
         setSelectedItem(locatedItem)
       }
-      if (input.createTask) {
+      if (createTask) {
         openCreatedItemRuntimeTask(locatedItem, targetProject, input.taskRequest)
       }
       track('board_item_created', {
@@ -4566,6 +4582,41 @@ export function CloudTodoWorkspace({
                               />
                             ),
                         },
+                        ...(selectedProject.location === 'cloud' &&
+                        selectedProject.agentic_strategy_enabled === true
+                          ? [
+                              {
+                                id: 'strategy',
+                                label: t('todo.strategy_settings'),
+                                testId: 'cloud-project-settings-strategy',
+                                content: (
+                                  <ProjectStrategySettings
+                                    api={cloudWorkspaceApi!}
+                                    project={selectedProject}
+                                    members={
+                                      collaborationProjectMembers[selectedProjectKey ?? ''] ?? []
+                                    }
+                                    agents={selectedProjectAgents.map(agent => ({
+                                      ...agent,
+                                      id: String(agent.id),
+                                      ...(agent.wegentTeamId == null
+                                        ? {}
+                                        : { team_id: agent.wegentTeamId }),
+                                    }))}
+                                    locale={i18n.language.startsWith('zh') ? 'zh-CN' : 'en'}
+                                    translate={(key, fallback, options) =>
+                                      fallback === undefined
+                                        ? t(key, options)
+                                        : t(key, fallback, options)
+                                    }
+                                    onChange={updated =>
+                                      replaceProject(selectedProject, updated as CloudProject)
+                                    }
+                                  />
+                                ),
+                              },
+                            ]
+                          : []),
                         ...createProjectParticipantSections({
                           translate: (key, fallback, options) =>
                             fallback === undefined ? t(key, options) : t(key, fallback, options),
@@ -5508,6 +5559,18 @@ export function CloudTodoWorkspace({
                   }
                   item={selectedItem}
                   project={selectedItemProject}
+                  onConfigureWorkflow={
+                    selectedItemProject?.location === 'cloud' &&
+                    selectedItemProject.agentic_strategy_enabled === true &&
+                    ['Owner', 'Maintainer'].includes(selectedItemProject.access_role ?? '')
+                      ? () => {
+                          selectProject(selectedItemProject)
+                          closeIssuePanelStack()
+                          setProjectSettingsSectionId('strategy')
+                          setProjectView('manage')
+                        }
+                      : undefined
+                  }
                   allItems={detailAllItems}
                   showChildren={false}
                   onAddChild={
@@ -5542,7 +5605,10 @@ export function CloudTodoWorkspace({
                         }
                       : undefined
                   }
-                  onCreateTask={async () => {
+                  onCreateTask={
+                    selectedItem.workflow?.strategy_state === 'inbox'
+                      ? undefined
+                      : async () => {
                     if (!selectedItemProject) return
                     setTaskDispatchError(null)
                     let dispatch: Awaited<ReturnType<typeof resolveHumanTaskDispatch>>
@@ -5572,7 +5638,8 @@ export function CloudTodoWorkspace({
                       initialInput: workItemComposerReference(selectedItemProject, selectedItem),
                       backgroundAfterSend: false,
                     })
-                  }}
+                      }
+                  }
                   onClose={closeIssuePanelStack}
                   onStartHumanTaskFromReply={({ issueId, dispatch }) => {
                     if (
@@ -5864,7 +5931,7 @@ export function CloudTodoWorkspace({
                   : undefined
               }
               initialParent={createTodoParent}
-              initialStatus={createTodoStatus}
+              initialStatus={usesAgenticStrategy(createTodoProject) ? 'inbox' : createTodoStatus}
               initialTitle={createTodoInitialTitle}
               allItems={createTodoParent ? detailAllItems : items}
               createOptions={
@@ -5874,7 +5941,8 @@ export function CloudTodoWorkspace({
                       <input
                         type="checkbox"
                         data-testid="cloud-todo-create-runtime-option"
-                        checked={createTodoStartRuntime}
+                        checked={createTodoStartRuntime && !usesAgenticStrategy(createTodoProject)}
+                        disabled={usesAgenticStrategy(createTodoProject)}
                         onChange={event => setCreateTodoStartRuntime(event.target.checked)}
                       />
                       {t('todo.create_runtime_task_after_issue', '创建后启动 Runtime 任务')}
@@ -5901,7 +5969,7 @@ export function CloudTodoWorkspace({
                 if (createTodoProject.location === 'cloud') {
                   cloudWorkspace.commands.appendIssue(item as CollaborationIssue)
                 }
-                if (createTodoStartRuntime) {
+                if (createTodoStartRuntime && !usesAgenticStrategy(createTodoProject)) {
                   openCreatedItemRuntimeTask(locatedItem, createTodoProject)
                 } else if (!createTodoContinueCreating) {
                   setSelectedItem(locatedItem)

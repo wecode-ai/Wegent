@@ -41,6 +41,12 @@ struct WorkflowNodeInput {
     id: String,
     name: String,
     #[serde(default)]
+    functional_role: String,
+    #[serde(default)]
+    rework_to: Option<String>,
+    #[serde(default)]
+    human_approval_required: bool,
+    #[serde(default)]
     prompt: String,
     #[serde(default)]
     kind: Option<OpaqueJson>,
@@ -89,6 +95,9 @@ struct WorkflowNodeInput {
 struct WorkflowNode {
     id: String,
     name: String,
+    functional_role: String,
+    rework_to: Option<String>,
+    human_approval_required: bool,
     prompt: String,
     kind: Option<OpaqueJson>,
     node_type: String,
@@ -153,6 +162,9 @@ fn workflow_node_value(node: OpaqueJson) -> RawJson {
     let output = WorkflowNode {
         id: input.id,
         name: input.name,
+        functional_role: input.functional_role,
+        rework_to: input.rework_to,
+        human_approval_required: input.human_approval_required,
         prompt: input.prompt,
         kind: input.kind,
         node_type: input.node_type,
@@ -216,6 +228,18 @@ pub(crate) fn workflow_definition_value(config: Option<&OpaqueJson>) -> Workflow
     }
 }
 
+/// Server rollout capability for `collab.agenticStrategy.v1`.
+pub(super) fn agentic_strategy_enabled() -> bool {
+    crate::config::env_or_dotenv("COLLAB_AGENTIC_STRATEGY_V1")
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "true" | "1" | "yes" | "on" | "y" | "t"
+            )
+        })
+        .unwrap_or(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -268,5 +292,30 @@ mod tests {
     fn echoes_nodes_without_required_identity() {
         let value = render(json!({"nodes": [{"x": null}, {"id": "only-id"}]}));
         assert_eq!(value["nodes"], json!([{"x": null}, {"id": "only-id"}]));
+    }
+
+    #[test]
+    fn preserves_stage_gates_and_real_assignee() {
+        let value = render(json!({
+            "stage_mode": "dag",
+            "nodes": [{
+                "id": "quality_acceptance",
+                "name": "QA",
+                "functional_role": "QA",
+                "depends_on": ["development_implementation"],
+                "rework_to": "development_implementation",
+                "human_approval_required": true,
+                "required_assignee_type": "user",
+                "required_assignee_id": "6177",
+                "required_deliverables": [{"id": "test_evidence", "value_type": "file"}]
+            }]
+        }));
+        let node = &value["nodes"][0];
+        assert_eq!(node["functional_role"], "QA");
+        assert_eq!(node["rework_to"], "development_implementation");
+        assert_eq!(node["human_approval_required"], true);
+        assert_eq!(node["required_assignee_type"], "user");
+        assert_eq!(node["required_assignee_id"], "6177");
+        assert_eq!(node["required_deliverables"][0]["id"], "test_evidence");
     }
 }

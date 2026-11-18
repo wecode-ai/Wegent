@@ -93,6 +93,8 @@ pub struct CloudMetadataInput {
     pub ai_automation: Option<OpaqueJson>,
     pub pull_request_automation: Option<OpaqueJson>,
     pub workflow_definition: Option<OpaqueJson>,
+    pub collaboration_strategy: Option<OpaqueJson>,
+    pub collaboration_strategy_versions: Option<OpaqueJson>,
     pub workflow_automation_id: Option<OpaqueJson>,
     pub execution_environment: Option<OpaqueJson>,
     pub tags: Option<OpaqueJson>,

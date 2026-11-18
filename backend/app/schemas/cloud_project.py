@@ -18,6 +18,10 @@ from pydantic import (
 from app.core.provider_credentials import mask_provider_config
 from app.schemas.base_role import BaseRole
 from app.schemas.board_views import BoardViews
+from app.schemas.collaboration_strategy import (
+    CollaborationStrategyPublish,
+    CollaborationStrategyRevision,
+)
 from app.schemas.issue_workflow import ProjectWorkflowDefinition
 from app.schemas.tagging import (
     MAX_TAG_LENGTH,
@@ -242,6 +246,7 @@ class ProjectTagChange(BaseModel):
 
 class CloudProjectUpdate(BaseModel):
     tag_change: ProjectTagChange | None = None
+    collaboration_strategy: CollaborationStrategyPublish | None = None
     membership_mode: Literal["inherit", "restricted"] | None = None
     name: str | None = Field(default=None, min_length=1, max_length=100)
     description: str | None = None
@@ -323,6 +328,11 @@ class CloudProjectResponse(BaseModel):
     workflow_definition: ProjectWorkflowDefinition = Field(
         default_factory=ProjectWorkflowDefinition
     )
+    agentic_strategy_enabled: bool = True
+    collaboration_strategy: CollaborationStrategyRevision | None = None
+    collaboration_strategy_versions: list[CollaborationStrategyRevision] = Field(
+        default_factory=list
+    )
     workflow_automation_id: str | None = None
     execution_environment: ExecutionEnvironmentConfig = Field(
         default_factory=ExecutionEnvironmentConfig
@@ -345,6 +355,8 @@ class CloudProjectResponse(BaseModel):
     def populate_tags(cls, value: object) -> object:
         """Fill project routing fields from the metadata JSON."""
         if isinstance(value, dict):
+            from app.core.config import settings
+
             metadata = value.get("metadata_json")
             metadata = metadata if isinstance(metadata, dict) else {}
             return {
@@ -360,6 +372,11 @@ class CloudProjectResponse(BaseModel):
                 "ai_automation": metadata.get("ai_automation", {}),
                 "pull_request_automation": metadata.get("pull_request_automation", {}),
                 "workflow_definition": metadata.get("workflow_definition", {}),
+                "agentic_strategy_enabled": settings.COLLAB_AGENTIC_STRATEGY_V1,
+                "collaboration_strategy": metadata.get("collaboration_strategy"),
+                "collaboration_strategy_versions": metadata.get(
+                    "collaboration_strategy_versions", []
+                ),
                 "workflow_automation_id": metadata.get("workflow_automation_id"),
                 "execution_environment": metadata.get("execution_environment", {}),
                 "visibility": value.get("visibility", "private"),

@@ -1738,7 +1738,9 @@ class LoopItemExecutionService:
             if run is not None and isinstance(run.metadata_json, dict)
             else {}
         )
-        snapshot = metadata.get("workflow_stage_input")
+        snapshot = metadata.get(
+            "workflow_stage_input"
+        ) or execution.runtime_origin_context.get("workflow_stage_input")
         stage_snapshot = snapshot if isinstance(snapshot, dict) else None
         workflow_node_id: str | None = None
         if stage_snapshot is not None:

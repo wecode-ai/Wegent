@@ -260,6 +260,7 @@ class CloudProjectService(CloudProjectMemberService):
             or "ai_automation" in values.model_fields_set
             or "pull_request_automation" in values.model_fields_set
             or "workflow_definition" in values.model_fields_set
+            or "collaboration_strategy" in values.model_fields_set
             or "execution_environment" in values.model_fields_set
             or "visibility" in values.model_fields_set
             or "public_access" in values.model_fields_set
@@ -278,6 +279,43 @@ class CloudProjectService(CloudProjectMemberService):
                     )
                 metadata["board_views"] = values.board_views.model_dump()
                 updates.pop("board_views", None)
+            if (
+                metadata.get("collaboration_strategy")
+                and values.board_config is not None
+            ):
+                current_statuses = (metadata.get("board_config") or {}).get(
+                    "statuses", []
+                )
+                if {entry["id"] for entry in current_statuses} != {
+                    entry.id for entry in values.board_config.statuses
+                }:
+                    raise HTTPException(
+                        422,
+                        "Strategy stage lanes are maintained by the readable strategy",
+                    )
+            if (
+                metadata.get("collaboration_strategy")
+                and values.workflow_definition is not None
+            ):
+                raise HTTPException(
+                    422,
+                    "Edit the readable strategy text; compiled execution plans are server owned",
+                )
+            if values.collaboration_strategy is not None:
+                from app.services.loop_items.strategy import publish_strategy
+
+                if (
+                    values.workflow_definition is not None
+                    or values.board_config is not None
+                ):
+                    raise HTTPException(
+                        422,
+                        "Publish strategy text separately from internal workflow or board updates",
+                    )
+                publish_strategy(
+                    db, project, user_id, values.collaboration_strategy, metadata
+                )
+                updates.pop("collaboration_strategy", None)
             if values.membership_mode is not None:
                 metadata["membership_mode"] = updates.pop("membership_mode")
             if "tags" in values.model_fields_set and values.tags is not None:

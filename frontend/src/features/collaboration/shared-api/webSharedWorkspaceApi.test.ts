@@ -43,6 +43,101 @@ describe('workspace resource configuration adapter', () => {
       board_views: boardViews,
     })
   })
+  it('serializes policy publishing, admission and explicit snapshot upgrades', async () => {
+    const client = createClient()
+    client.patch.mockResolvedValue({ id: 'issue-1' })
+    const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
+    const collaborationStrategy = {
+      text: '# 协作策略\n\n收集箱 → 需求提出 → 共同评审 → 开发准备 → 开发实现 → 质量验收 → 发布上线',
+      expected_version: 1,
+    }
+    await api.projects.update('project-1', { version: 3, collaborationStrategy })
+    expect(client.patch).toHaveBeenLastCalledWith('/v1/cloud-projects/project-1', {
+      version: 3,
+      collaboration_strategy: collaborationStrategy,
+    })
+    const intakeDefinition = {
+      objective: 'Require evidence before advancement',
+      scope: 'Shared collaboration',
+      non_goals: 'Automatic deployment',
+      acceptance_criteria: 'Incomplete definitions stay in inbox',
+      dependencies: 'none',
+      proposed_owner: 'product-owner',
+    }
+    await api.issues.update('issue-1', { version: 4, intakeDefinition, priority: 'high' })
+    expect(client.patch).toHaveBeenLastCalledWith('/v1/loop-items/issue-1', {
+      version: 4,
+      intake_definition: intakeDefinition,
+      priority: 'high',
+    })
+    for (const workflowAction of [
+      { type: 'admit', idempotency_key: 'admission-1' },
+      { type: 'evaluate', idempotency_key: 'evaluate-1' },
+      { type: 'upgrade_strategy', reason: 'Use the reviewed policy', idempotency_key: 'upgrade-1' },
+      {
+        type: 'decide_node',
+        node_id: 'quality_acceptance',
+        action: 'reject',
+        rework_to: 'development_preparation',
+        reason: 'Visual acceptance failed',
+        idempotency_key: 'visual-rework-1',
+      },
+    ] as const) {
+      await api.issues.update('issue-1', { version: 5, workflowAction })
+      expect(client.patch).toHaveBeenLastCalledWith('/v1/loop-items/issue-1', {
+        version: 5,
+        workflow_action: workflowAction,
+      })
+    }
+  })
+
+  it('preserves existing workflow snapshots, versioned decisions and stage evidence', async () => {
+    const client = createClient()
+    client.patch.mockResolvedValue({ id: 'issue-1' })
+    client.post.mockResolvedValue({ id: 'delivery-1', fulfillments: [] })
+    const api = createWebSharedWorkspaceApi(client, { getBlob: jest.fn() })
+    const definition = {
+      version: 2,
+      stage_mode: 'dag' as const,
+      nodes: [
+        {
+          id: 'legacy_stage',
+          name: 'Existing stage',
+          depends_on: [],
+          required: true,
+          workspace_policy: 'composer' as const,
+        },
+      ],
+    }
+    await api.projects.update('project-1', { version: 3, workflowDefinition: definition })
+    const action = {
+      type: 'decide_node' as const,
+      node_id: 'legacy_stage',
+      action: 'approve' as const,
+      idempotency_key: 'decision-1',
+    }
+    await api.issues.update('issue-1', { version: 4, workflowAction: action })
+    const fulfillments = [
+      { requirement_id: 'acceptance_criteria', kind: 'text', text: 'Can save and reload' },
+    ]
+    await api.deliveries.finalize('delivery-1', {
+      workflowNodeId: 'legacy_stage',
+      fulfillments,
+    })
+    expect(client.patch).toHaveBeenNthCalledWith(1, '/v1/cloud-projects/project-1', {
+      version: 3,
+      workflow_definition: definition,
+    })
+    expect(client.patch).toHaveBeenNthCalledWith(2, '/v1/loop-items/issue-1', {
+      version: 4,
+      workflow_action: action,
+    })
+    expect(client.post).toHaveBeenCalledWith('/v1/deliveries/delivery-1/finalize', {
+      workflow_node_id: 'legacy_stage',
+      fulfillments,
+    })
+  })
+
   it('uses canonical member, agent, and execution environment endpoints', async () => {
     const client = createClient()
     client.post

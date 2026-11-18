@@ -96,6 +96,74 @@ async function replaceIssueDescription(value: string) {
 }
 
 describe('IssueComposer', () => {
+  it('keeps new strategy Issues in the inbox without an execution task', async () => {
+    const user = userEvent.setup()
+    const onCreate = vi.fn()
+    const strategyProject = {
+      ...productProject,
+      id: '22',
+      agentic_strategy_enabled: true,
+      collaboration_strategy: {
+        version: 1,
+        text: 'Reviewed collaboration strategy',
+        diff: '',
+        published_at: '2026-11-17T00:00:00Z',
+        published_by: 1,
+        role_mapping: {
+          product: ['local'],
+          development: ['local'],
+          design: ['local'],
+          qa: ['local'],
+          pmo: ['local'],
+        },
+        source_path: 'docs/35-agentic-collaboration-strategy.md',
+      },
+    }
+    renderWithProjectChat(
+      <IssueComposer
+        projects={[strategyProject]}
+        initialBoardKey="backend:22"
+        initialStartExecution
+        onCancel={vi.fn()}
+        onCreate={onCreate}
+      />
+    )
+    expect(screen.queryByTestId('workspace-create-task-tab')).not.toBeInTheDocument()
+    expect(screen.getByTestId('workspace-create-issue-tab')).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
+    await user.click(screen.getByTestId('workspace-issue-input'))
+    await user.paste('Clarify the acceptance criteria')
+    await user.click(screen.getByTestId('workspace-issue-expand'))
+    expect(screen.getByTestId('workspace-issue-status')).toBeDisabled()
+    expect(screen.getByTestId('workspace-issue-status')).toHaveValue('inbox')
+    await user.click(screen.getByTestId('workspace-issue-fullscreen-submit'))
+    expect(onCreate).toHaveBeenCalledWith(expect.objectContaining({ createTask: false }))
+    expect(onCreate.mock.calls[0][0]).not.toHaveProperty('taskRequest')
+    expect(onCreate.mock.calls[0][0]).not.toHaveProperty('status')
+  })
+
+  it('keeps execution available when the feature is enabled without a published strategy', () => {
+    renderWithProjectChat(
+      <IssueComposer
+        projects={[{ ...productProject, id: '22', agentic_strategy_enabled: true }]}
+        initialBoardKey="backend:22"
+        onCancel={vi.fn()}
+        onCreate={vi.fn()}
+      />
+    )
+    expect(screen.getByTestId('workspace-create-task-tab')).toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-issue-strategy-inbox-hint')).not.toBeInTheDocument()
+  })
+
+  it('derives a compact task-style title and preserves the complete content', () => {
+    expect(issueDraftFromText('完成发布验证\n覆盖创建和完成链路\n补充截图')).toEqual({
+      title: '完成发布验证 覆盖创建和完成链路 补充截图',
+      description: '完成发布验证\n覆盖创建和完成链路\n补充截图',
+    })
+  })
+
   it('preserves a long issue title without truncation', () => {
     const description = '需要处理的任务'.repeat(20)
 

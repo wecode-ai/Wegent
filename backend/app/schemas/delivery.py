@@ -17,7 +17,12 @@ from pydantic import (
 )
 
 from app.schemas.cloud_project import SnowflakeId
-from app.schemas.issue_workflow import IssueWorkflowInstance, WorkflowExecutionConfig
+from app.schemas.collaboration_strategy import IntakeDefinition
+from app.schemas.issue_workflow import (
+    IssueWorkflowInstance,
+    WorkflowAction,
+    WorkflowExecutionConfig,
+)
 from app.schemas.loop_item_position import LoopItemPosition
 from app.schemas.runner_routing import RunnerSelection
 from app.schemas.runtime_work import RuntimeModelSelection
@@ -29,6 +34,7 @@ from app.utils.schedule_time import normalize_schedule_datetime
 class LoopItemCreate(BaseModel):
     request_id: str | None = Field(default=None, min_length=1, max_length=64)
     personal_task: bool = False
+    intake_definition: IntakeDefinition | None = None
     runner_selection: RunnerSelection | None = None
     notify_assignee: bool = True
     title: str = Field(min_length=1, max_length=255)
@@ -74,6 +80,7 @@ class LoopItemCreate(BaseModel):
 
 
 class LoopItemUpdate(BaseModel):
+    intake_definition: IntakeDefinition | None = None
     position: LoopItemPosition | None = None
     runner_selection: RunnerSelection | None = None
     notify_assignee: bool = True
@@ -93,6 +100,7 @@ class LoopItemUpdate(BaseModel):
     parent_id: str | None = Field(default=None, max_length=64)
     tags: list[TagName] | None = Field(default=None, max_length=MAX_TAGS_PER_ITEM)
     workflow: IssueWorkflowInstance | None = None
+    workflow_action: WorkflowAction | None = None
     execution_config: WorkflowExecutionConfig | None = None
     automation_rule_id: str | None = Field(default=None, max_length=64)
 
@@ -102,6 +110,12 @@ class LoopItemUpdate(BaseModel):
 
     @model_validator(mode="after")
     def validate_assignee(self) -> "LoopItemUpdate":
+        if self.workflow_action is not None and self.model_fields_set - {
+            "version",
+            "workflow_action",
+            "notify_assignee",
+        }:
+            raise ValueError("workflow actions cannot be combined with other changes")
         if "security_level" in self.model_fields_set and self.security_level is None:
             raise ValueError("security_level cannot be null")
         values = [
@@ -155,6 +169,7 @@ class IssueResourceParticipant(BaseModel):
 
 
 class LoopItemResponse(BaseModel):
+    intake_definition: IntakeDefinition | None = None
     model_config = ConfigDict(from_attributes=True)
 
     id: str
@@ -325,6 +340,7 @@ class LoopItemResponse(BaseModel):
                 "status_history": status_history,
                 "approval": approval,
                 "workflow": workflow,
+                "intake_definition": metadata.get("intake_definition"),
                 "execution_config": execution_config,
                 "queued_at": queued_at,
                 "execution_note": (
@@ -636,6 +652,13 @@ class DeliveryTextFulfillment(BaseModel):
     kind: Literal["text"]
     text: str = Field(min_length=1, max_length=100_000)
 
+    @field_validator("text")
+    @classmethod
+    def validate_text(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Text fulfillment cannot be blank")
+        return value
+
 
 class DeliveryFileFulfillment(BaseModel):
     requirement_id: str = Field(min_length=1, max_length=64)
@@ -678,7 +701,7 @@ class DeliveryPullRequestFulfillment(BaseModel):
     provider: Literal["github", "gitlab"]
     url: str = Field(min_length=1, max_length=2000)
     number: int = Field(ge=1)
-    state: Literal["draft"] = "draft"
+    state: Literal["draft", "open", "merged"] = "draft"
     head_branch: str = Field(min_length=1, max_length=255)
     base_branch: str = Field(min_length=1, max_length=255)
     head_commit: str = Field(min_length=7, max_length=64)
@@ -719,6 +742,7 @@ DeliveryFulfillment = Annotated[
 
 
 class DeliveryFinalize(BaseModel):
+    workflow_node_id: str | None = Field(default=None, min_length=1, max_length=64)
     fulfillments: list[DeliveryFulfillment] = Field(
         default_factory=list, max_length=100
     )

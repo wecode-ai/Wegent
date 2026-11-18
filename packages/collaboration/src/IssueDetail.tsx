@@ -88,6 +88,7 @@ interface IssueDetailProps {
   onCommentsChange(comments: CollaborationComment[]): void;
   onAssignmentsChange?(assignments: CollaborationAssignment[]): void;
   onCreateTask?(): void;
+  onConfigureWorkflow?(): void;
   onConflict(): Promise<void>;
   onError(): void;
 }
@@ -220,6 +221,7 @@ function BrowserIssueDetail({
   onRead,
   onCommentsChange,
   onCreateTask,
+  onConfigureWorkflow,
   onConflict,
   onError,
 }: IssueDetailProps) {
@@ -318,6 +320,7 @@ function BrowserIssueDetail({
             canStartWork={permissions.canStartWork}
             defaultAssistant={defaultAssistant}
             onCreateTask={onCreateTask}
+            onConfigureWorkflow={onConfigureWorkflow}
             translate={editorTranslate}
             extensions={{
               ...browserDueDateExtensions,

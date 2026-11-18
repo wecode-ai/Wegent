@@ -279,6 +279,57 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
     }
   )
 
+  it('preserves strategy revisions, intake and versioned coordinator actions', async () => {
+    const deliveryApi = createMockDeliveryApi()
+    const api = createWeworkDeliverySharedWorkspaceApi(deliveryApi)
+    const collaborationStrategy = {
+      text: '# Strategy v2\n\nUse evidence before moving.',
+      expected_version: 1,
+    }
+    await api.projects.update('project-1', { version: 3, collaborationStrategy })
+    expect(deliveryApi.updateCloudProject).toHaveBeenLastCalledWith('project-1', {
+      version: 3,
+      collaboration_strategy: collaborationStrategy,
+    })
+    const intakeDefinition = {
+      objective: 'Publish a reliable release',
+      scope: 'Project collaboration',
+      non_goals: 'Parallel child workspaces',
+      acceptance_criteria: 'Missing evidence blocks progress',
+      dependencies: 'none',
+      proposed_owner: 'local',
+    }
+    await api.issues.update('issue-1', { version: 4, intakeDefinition, priority: 'high' })
+    expect(deliveryApi.updateLoopItem).toHaveBeenLastCalledWith('issue-1', {
+      version: 4,
+      intake_definition: intakeDefinition,
+      priority: 'high',
+    })
+    for (const workflowAction of [
+      { type: 'admit', idempotency_key: 'admit-1' },
+      { type: 'evaluate', idempotency_key: 'evaluate-1' },
+      {
+        type: 'upgrade_strategy',
+        reason: 'Adopt reviewed version 2',
+        idempotency_key: 'upgrade-1',
+      },
+      {
+        type: 'decide_node',
+        node_id: 'quality_acceptance',
+        action: 'reject',
+        rework_to: 'development_preparation',
+        reason: 'Visual criteria need revision',
+        idempotency_key: 'visual-rework-1',
+      },
+    ] as const) {
+      await api.issues.update('issue-1', { version: 5, workflowAction })
+      expect(deliveryApi.updateLoopItem).toHaveBeenLastCalledWith('issue-1', {
+        version: 5,
+        workflow_action: workflowAction,
+      })
+    }
+  })
+
   it('preserves current project authority and member override provenance', async () => {
     const deliveryApi = createMockDeliveryApi()
     const authoritative: CloudProject = {
@@ -491,6 +542,33 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       item_ids: ['issue-1'],
     })
     await api.issues.markRead('issue-1')
+  })
+
+  it('preserves workflow decisions and associates finalized evidence with its stage', async () => {
+    const deliveryApi = createMockDeliveryApi()
+    const api = createWeworkDeliverySharedWorkspaceApi(deliveryApi)
+    const workflowAction = {
+      type: 'decide_node' as const,
+      node_id: 'qa_test',
+      action: 'reject' as const,
+      reason: 'Regression in the acceptance path',
+      idempotency_key: 'qa-rework-1',
+    }
+
+    await api.issues.update('issue-1', { version: 4, workflowAction })
+    expect(deliveryApi.updateLoopItem).toHaveBeenLastCalledWith('issue-1', {
+      version: 4,
+      workflow_action: workflowAction,
+    })
+
+    await api.deliveries.finalize('delivery-1', {
+      workflowNodeId: 'qa_test',
+      fulfillments: [{ requirement_id: 'qa_decision', kind: 'text', text: 'Needs rework' }],
+    })
+    expect(deliveryApi.finalizeDelivery).toHaveBeenLastCalledWith('delivery-1', {
+      workflow_node_id: 'qa_test',
+      fulfillments: [{ requirement_id: 'qa_decision', kind: 'text', text: 'Needs rework' }],
+    })
   })
 
   it('omits absent project and issue fields while preserving explicit null values', async () => {

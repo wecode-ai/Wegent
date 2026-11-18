@@ -294,19 +294,60 @@ class DeliveryService:
         item = (
             db.query(LoopItem)
             .filter(LoopItem.id == authorized_item.id)
+            .populate_existing()
             .with_for_update()
             .first()
         )
         if item is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Issue not found")
+        workflow = None
+        workflow_node = None
         source_binding = None
         if delivery.source_task_binding_id:
             source_binding = self._require_active_task_binding(
                 db, item.id, delivery.source_task_binding_id
             )
+        source_metadata = (source_binding.metadata_json or {}) if source_binding else {}
+        source_node_id = source_metadata.get("workflow_node_id")
+        node_id = values.workflow_node_id or source_node_id
+        if (
+            source_node_id
+            and values.workflow_node_id
+            and source_node_id != values.workflow_node_id
+        ):
+            raise HTTPException(
+                409, "Delivery source belongs to another workflow stage"
+            )
+        if node_id:
+            from app.services.loop_items.workflow import (
+                require_ready_node,
+                workflow_snapshot,
+            )
+
+            workflow = workflow_snapshot(item)
+            if workflow is None:
+                raise HTTPException(409, "This Issue has no workflow")
+            workflow_node = require_ready_node(workflow, node_id)
+            if workflow.strategy_snapshot is not None:
+                from app.services.loop_items.strategy import (
+                    require_deliverable_actor,
+                    require_stage_actor,
+                )
+
+                require_stage_actor(db, item, user_id, workflow, node_id)
+                require_deliverable_actor(
+                    db, item, user_id, workflow, values.fulfillments
+                )
+            if (
+                source_node_id
+                and source_metadata.get("workflow_attempt") != workflow_node.attempts
+            ):
+                raise HTTPException(
+                    409, "Delivery source belongs to an earlier workflow attempt"
+                )
         assets = self.list_assets(db, delivery.id)
         fulfillments = self._validate_fulfillments(
-            None,
+            workflow_node.model_dump(mode="json") if workflow_node else None,
             assets,
             values.fulfillments,
         )
@@ -335,6 +376,14 @@ class DeliveryService:
                 else {}
             ),
             "fulfillments": fulfillments,
+            **(
+                {
+                    "workflow_node_id": workflow_node.id,
+                    "workflow_attempt": workflow_node.attempts,
+                }
+                if workflow_node
+                else {}
+            ),
         }
         manifest = {
             "version": 2,
@@ -364,10 +413,29 @@ class DeliveryService:
             delivery.status = "delivered"
             delivery.delivered_at = now
             item.current_delivery_id = delivery.id
+            if workflow is not None and workflow_node is not None:
+                workflow_node.delivery_ids.append(delivery.id)
+                from app.services.loop_items.workflow import missing_deliverables
+
+                db.flush()
+                if not missing_deliverables(db, item, workflow_node):
+                    workflow_node.deliverables_completed_at = (
+                        workflow_node.deliverables_completed_at
+                        or now.replace(tzinfo=timezone.utc)
+                    )
+                item.metadata_json = {
+                    **(item.metadata_json or {}),
+                    "workflow": workflow.model_dump(mode="json"),
+                }
             item.metadata_json = advance_content_revision(
                 item.metadata_json, actor_user_id=user_id
             )
             item.version += 1
+            from app.services.loop_items.strategy import refresh_strategy_coordinator
+
+            refresh_strategy_coordinator(
+                db, item, "delivery.finalized", f"delivery:{delivery.id}"
+            )
             db.commit()
             db.refresh(delivery)
             publish_loop_item_changed(
@@ -418,14 +486,23 @@ class DeliveryService:
                     f"Unknown workflow deliverable requirement: "
                     f"{fulfillment.requirement_id}",
                 )
-            if requirement.get("value_type") != fulfillment.kind:
+            if fulfillment.kind not in {
+                requirement.get("value_type"),
+                *(requirement.get("accepted_value_types") or []),
+            }:
                 raise HTTPException(
                     status.HTTP_422_UNPROCESSABLE_CONTENT,
                     f"Workflow deliverable type mismatch: "
                     f"{fulfillment.requirement_id}",
                 )
+            if requirement.get("pull_request_state") and (
+                getattr(fulfillment, "state", None) != requirement["pull_request_state"]
+            ):
+                raise HTTPException(
+                    422, "Workflow deliverable requires a merged pull request"
+                )
             DeliveryService._validate_fulfillment_assets(
-                requirement,
+                {**requirement, "value_type": fulfillment.kind},
                 fulfillment,
                 assets_by_id,
             )

@@ -8,6 +8,11 @@ from typing import Any, Literal, Mapping
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.schemas.collaboration_strategy import (
+    CollaborationStrategyRevision,
+    CoordinatorDecision,
+    StrategyStage,
+)
 from app.schemas.plugin_config import validate_non_secret_plugin_configs
 from app.schemas.project_chat import BotRuntime, ProjectChatWorkspaceBinding
 from app.schemas.runtime_work import (
@@ -236,6 +241,10 @@ class DeliverableRequirement(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: str = Field(default="", max_length=2000)
     value_type: DeliverableValueType
+    accepted_value_types: list[DeliverableValueType] = Field(
+        default_factory=list, max_length=6
+    )
+    pull_request_state: Literal["merged"] | None = None
     file_constraints: DeliverableFileConstraints | None = None
 
     @model_validator(mode="after")
@@ -379,6 +388,9 @@ class WorkflowNodeDefinition(BaseModel):
     required_assignee_id: str | None = Field(default=None, min_length=1, max_length=128)
     execution_config: WorkflowExecutionConfig | None = None
     execution_config_override: bool = False
+    functional_role: str = Field(default="", max_length=100)
+    rework_to: str | None = Field(default=None, max_length=64)
+    human_approval_required: bool = False
 
     @model_validator(mode="before")
     @classmethod
@@ -393,6 +405,15 @@ class WorkflowNodeDefinition(BaseModel):
 
     @model_validator(mode="after")
     def validate_execution_configuration(self) -> "WorkflowNodeDefinition":
+        if self.id == "merge_release":
+            self.human_approval_required = True
+        if self.human_approval_required and (
+            self.execution_mode != "human"
+            or self.required_assignee_type not in {None, "user"}
+        ):
+            raise ValueError(
+                "human approval stages require human execution and assignee"
+            )
         if self.node_type == "event" and self.role != "start":
             raise ValueError("event nodes must use role=start")
         if self.role == "start" and self.node_type != "event":
@@ -507,6 +528,18 @@ class ProjectWorkflowDefinition(BaseModel):
 
         for node_id in node_ids:
             visit(node_id)
+        for node in self.nodes:
+            if node.rework_to is None:
+                continue
+            ancestors: set[str] = set()
+            pending = list(node.depends_on)
+            while pending:
+                ancestor = pending.pop()
+                if ancestor not in ancestors:
+                    ancestors.add(ancestor)
+                    pending.extend(dependencies[ancestor])
+            if node.rework_to not in ancestors:
+                raise ValueError("workflow rework target must be an ancestor")
         return self
 
     def _validate_node_roles_and_loops(self) -> None:
@@ -622,6 +655,7 @@ def _validate_branch_conditions(
 
 
 class WorkflowNodeInstance(WorkflowNodeDefinition):
+    state_history: list[dict[str, Any]] = Field(default_factory=list)
     status: WorkflowNodeStatus = "blocked"
     loop_state: Literal["idle", "active", "completed"] = "idle"
     attempts: int = 0
@@ -631,6 +665,7 @@ class WorkflowNodeInstance(WorkflowNodeDefinition):
     exit_reason: WorkflowLoopExitReason | None = None
     last_event: dict[str, Any] | None = None
     activated_at: datetime | None = None
+    deliverables_completed_at: datetime | None = None
     catch_up_done: bool = False
     task_binding_id: str | None = Field(default=None, max_length=64)
     task_ids: list[str] = Field(default_factory=list, max_length=100)
@@ -654,6 +689,52 @@ class WorkflowNodeDecision(BaseModel):
     actor_user_id: int = Field(ge=1)
     reason: str = Field(default="", max_length=2000)
     decided_at: datetime
+    skipped_node_ids: list[str] = Field(default_factory=list)
+    source: Literal["human", "assistant"] = "human"
+    stage_durations_seconds: dict[str, float] = Field(default_factory=dict)
+
+
+class WorkflowAction(BaseModel):
+    type: Literal[
+        "apply_project",
+        "decide_node",
+        "admit",
+        "upgrade_strategy",
+        "evaluate",
+        "record_coordinator_decision",
+        "set_stage_state",
+    ]
+    node_id: str | None = Field(default=None, min_length=1, max_length=64)
+    action: Literal["approve", "reject", "force_advance"] | None = None
+    reason: str = Field(default="", max_length=2000)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
+    rework_to: StrategyStage | None = None
+    state: Literal["waiting", "blocked", "ready"] | None = None
+    decision: CoordinatorDecision | None = None
+
+    @model_validator(mode="after")
+    def validate_action(self) -> "WorkflowAction":
+        self.reason = self.reason.strip()
+        if self.type == "decide_node":
+            if self.node_id is None or self.action is None:
+                raise ValueError("workflow decision requires node_id and action")
+            if self.action in {"reject", "force_advance"} and not self.reason:
+                raise ValueError(f"{self.action} requires a reason")
+        elif self.type == "set_stage_state":
+            if not self.node_id or self.state is None or not self.reason:
+                raise ValueError("stage state changes require node, state and reason")
+        elif self.node_id is not None or self.action is not None:
+            raise ValueError("this workflow action cannot contain a node decision")
+        if self.type == "upgrade_strategy" and not self.reason:
+            raise ValueError("strategy upgrades require a reason")
+        if self.type == "record_coordinator_decision" and self.decision is None:
+            raise ValueError("coordinator result is required")
+        if (
+            self.type not in {"apply_project", "decide_node"}
+            and not self.idempotency_key
+        ):
+            raise ValueError("strategy actions require an idempotency key")
+        return self
 
 
 class WorkflowNodeDecisionRequest(BaseModel):
@@ -669,6 +750,13 @@ class WorkflowNodeDecisionRequest(BaseModel):
 
 
 class IssueWorkflowInstance(BaseModel):
+    instance_id: str | None = None
+    strategy_snapshot: CollaborationStrategyRevision | None = None
+    strategy_state: Literal["inbox", "active"] | None = None
+    coordinator_decision: CoordinatorDecision | None = None
+    coordinator_trigger: dict[str, Any] | None = None
+    strategy_upgrade_history: list[dict[str, Any]] = Field(default_factory=list)
+    notification_state: dict[str, Any] | None = None
     version: int = Field(default=1, ge=1)
     definition_version: int = Field(default=1, ge=1)
     stage_mode: Literal["none", "dag"] = "none"
@@ -715,6 +803,11 @@ class IssueWorkflowInstance(BaseModel):
                     automation_rule_id=node.automation_rule_id,
                     execution_config=node.execution_config,
                     execution_config_override=node.execution_config_override,
+                    required_assignee_type=node.required_assignee_type,
+                    required_assignee_id=node.required_assignee_id,
+                    functional_role=node.functional_role,
+                    rework_to=node.rework_to,
+                    human_approval_required=node.human_approval_required,
                 )
                 for node in self.nodes
             ],
@@ -778,6 +871,9 @@ def instantiate_workflow(
             )
             for node in (definition.nodes if definition.stage_mode == "dag" else [])
         ],
+    )
+    instance.current_stage_id = next(
+        (node.id for node in instance.nodes if node.status == "ready"), None
     )
     return instance
 

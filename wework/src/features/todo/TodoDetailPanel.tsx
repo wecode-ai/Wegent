@@ -592,6 +592,7 @@ export function TodoDetailPanel({
                   type="button"
                   data-testid="todo-apply-workflow"
                   onClick={onApplyWorkflow}
+                  disabled={!onApplyWorkflow}
                   className="mt-3 h-8 rounded-md bg-primary px-3 text-xs font-medium text-primary-contrast hover:bg-primary/90"
                 >
                   {t('todo.apply_project_workflow', '应用项目流程')}
@@ -612,6 +613,7 @@ export function TodoDetailPanel({
                   type="button"
                   data-testid="todo-configure-workflow"
                   onClick={onConfigureWorkflow}
+                  disabled={!onConfigureWorkflow}
                   className="mt-3 h-8 rounded-md border border-border bg-surface px-3 text-xs font-medium text-text-primary hover:bg-muted"
                 >
                   {t('todo.configure_project_workflow', '设置项目流程')}

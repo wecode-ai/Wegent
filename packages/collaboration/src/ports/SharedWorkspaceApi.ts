@@ -64,7 +64,8 @@ export interface WorkspaceProjectUpdateInput {
   boardViews?: CollaborationProject["board_views"];
   cardDisplay?: CollaborationProject["card_display"];
   pullRequestAutomation?: Record<string, unknown>;
-  workflowDefinition?: Record<string, unknown>;
+  workflowDefinition?: import('../automation/types').ProjectWorkflowDefinition;
+  collaborationStrategy?: import('../automation/types').CollaborationStrategyUpdate
   collaborationGroups?: import("../types").CollaborationGroup[];
   automaticProcessingRules?: WorkspaceAutomationRule[];
   executionEnvironment?: {
@@ -196,6 +197,8 @@ export interface WorkspaceIssueCreateInput {
 
 export interface WorkspaceIssueUpdateInput {
   milestoneId?: string | null;
+  intakeDefinition?: import("../automation/types").IssueIntakeDefinition;
+  workflowAction?: import('../automation/types').IssueWorkflowAction;
   position?: { beforeItemId: string | null };
   version: number;
   securityLevel?: "open" | "related";
@@ -950,7 +953,7 @@ export interface SharedWorkspaceDeliveriesApi {
   ): Promise<WorkspaceDeliveryAsset>;
   finalize(
     deliveryId: string,
-    input: { fulfillments: Array<Record<string, unknown>> },
+    input: { fulfillments: Array<Record<string, unknown>>; workflowNodeId?: string },
   ): Promise<WorkspaceDelivery>;
   discardDraft(deliveryId: string): Promise<void>;
   update?(

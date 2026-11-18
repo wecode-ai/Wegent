@@ -15,6 +15,7 @@ from fastapi import (
     Form,
     HTTPException,
     Query,
+    Request,
     UploadFile,
     status,
 )
@@ -26,6 +27,7 @@ from app.api.dependencies import get_db
 from app.api.endpoints.adapter.attachments import _build_content_disposition
 from app.core.config import settings
 from app.core.security import (
+    extract_authorization_token,
     get_current_user,
     get_current_user_jwt_apikey_tasktoken,
 )
@@ -375,6 +377,7 @@ def list_loop_item_page(
 async def create_loop_item(
     project_id: int,
     values: LoopItemCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> LoopItemResponse:
@@ -401,16 +404,24 @@ async def create_loop_item(
     explicit_workflow = values.workflow
     has_explicit_human_assignee = values.assignee_user_id is not None
     has_bound_workflow = (
-        explicit_workflow is not None
-        and (
-            explicit_workflow.stage_mode == "dag"
-            or explicit_workflow.advancement_policy == "ai"
+        bool(
+            settings.COLLAB_AGENTIC_STRATEGY_V1
+            and project_metadata.get("collaboration_strategy")
         )
-    ) or (
-        isinstance(project_workflow, dict)
-        and (
-            project_workflow.get("stage_mode") == "dag"
-            or project_workflow.get("advancement_policy") == "ai"
+        or (
+            explicit_workflow is not None
+            and (
+                explicit_workflow.stage_mode == "dag"
+                or explicit_workflow.advancement_policy == "ai"
+            )
+        )
+        or (
+            isinstance(project_workflow, dict)
+            and not project_metadata.get("collaboration_strategy")
+            and (
+                project_workflow.get("stage_mode") == "dag"
+                or project_workflow.get("advancement_policy") == "ai"
+            )
         )
     )
     if has_explicit_human_assignee:
@@ -434,6 +445,17 @@ async def create_loop_item(
         loop_item_provider_router.create, db, project, current_user, values
     )
     response = LoopItemResponse.model_validate(created.values)
+    if (
+        created.internal_item is not None
+        and (created.internal_item.metadata_json or {}).get("workflow")
+        and (
+            created.internal_item.assignee_agent_id
+            or created.internal_item.assignee_team_id
+        )
+    ):
+        from app.tasks.robot_queue_tasks import consume_queues_background
+
+        background_tasks.add_task(consume_queues_background)
 
     try:
         if not has_bound_workflow and selected_automation_id:
@@ -537,10 +559,30 @@ def mark_loop_item_read(
 async def update_loop_item(
     item_id: str,
     values: LoopItemUpdate,
+    request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> LoopItemResponse:
+    if values.workflow_action is not None:
+        if external_loop_item_provider.is_external_item(db, item_id):
+            raise HTTPException(409, "Project workflows require a Wework Issue")
+        from app.core.auth_utils import verify_jwt_token_with_db
+
+        authorization = request.headers.get("authorization", "")
+        token = extract_authorization_token(authorization)
+        human = verify_jwt_token_with_db(db, token) if token else None
+        item = loop_item_service.update(
+            db,
+            item_id,
+            current_user.id,
+            values,
+            actor_is_human=human is not None and human.id == current_user.id,
+        )
+        from app.tasks.robot_queue_tasks import consume_queues_background
+
+        background_tasks.add_task(consume_queues_background)
+        return _loop_item_response(db, item, current_user)
     if external_loop_item_provider.is_external_item(db, item_id):
         response = external_loop_item_provider.update(
             db, item_id, current_user.id, values

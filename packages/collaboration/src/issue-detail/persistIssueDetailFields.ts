@@ -5,7 +5,7 @@ import type {
   SharedIssueDetailUpdateInput,
 } from "./createSharedIssueDetailPort";
 
-type IssueFields = Omit<SharedIssueDetailUpdateInput, "version">;
+type IssueFields = Omit<SharedIssueDetailUpdateInput, "version" | "workflow_action">;
 
 function equal(left: unknown, right: unknown): boolean {
   return JSON.stringify(left ?? null) === JSON.stringify(right ?? null);

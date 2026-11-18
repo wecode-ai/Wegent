@@ -13,6 +13,8 @@ import { composerMessages } from "./controls/messages";
 import { modelMessages } from "./controls/modelMessages";
 import { markdownMessages } from "./markdown/MarkdownServices";
 import { activityMessages } from "./issue-detail/activityMessages";
+import { workflowMessages } from './issue-detail/workflowMessages'
+import { strategyMessages } from './issue-detail/strategyMessages'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -1611,6 +1613,8 @@ export function createCollaborationTranslator(
       projectWorkMessages[locale][key] ??
       composerShellMessages[locale][key] ??
       activityMessages[locale][key] ??
+      workflowMessages[locale][key] ??
+      strategyMessages[locale][key] ??
       conversationMessages[locale][conversationKey] ??
       conversationMessages[locale][key] ??
       composerMessages[locale][key] ??

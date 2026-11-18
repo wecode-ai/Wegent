@@ -113,6 +113,7 @@ export type TodoEditorProps = TodoEditorApiProps & {
   headerActions?: ReactNode
   onAddAssigneeMember?: () => void
   onAddAssigneeAgent?: () => void
+  onConfigureWorkflow?: () => void
   selectedTaskId?: string | null
   /** Delete this Issue; rendered in the header overflow menu in edit mode. */
   onDelete?: () => void
@@ -128,7 +129,12 @@ export type TodoEditorProps = TodoEditorApiProps & {
 } & (TodoEditorCreateProps | TodoEditorEditProps)
 
 function canCreatePersonalTask(props: TodoEditorProps): boolean {
-  if (props.mode !== 'edit' || !props.onCreateTask || props.currentUserId === undefined) {
+  if (
+    props.mode !== 'edit' ||
+    !props.onCreateTask ||
+    props.currentUserId === undefined ||
+    props.item.workflow?.strategy_state === 'inbox'
+  ) {
     return false
   }
 
@@ -441,9 +447,13 @@ export function TodoEditor(props: TodoEditorProps) {
           onLinked={() => setTaskLinkRevision(value => value + 1)}
         />
       ) : undefined,
-    onCreateTask: props.onCreateTask,
+    onCreateTask:
+      props.mode === 'edit' && props.item.workflow?.strategy_state === 'inbox'
+        ? undefined
+        : props.onCreateTask,
     onAddAssigneeMember: props.onAddAssigneeMember,
     onAddAssigneeAgent: props.onAddAssigneeAgent,
+    onConfigureWorkflow: props.onConfigureWorkflow,
     onOpenTaskConversation: props.onOpenTaskConversation
       ? (task: SharedIssueDetailTaskBinding) =>
           props.onOpenTaskConversation?.(task as unknown as LoopItemTaskBinding)

@@ -7,7 +7,16 @@ import { createIssueTaskBindingApi } from '@wegent/chat-core/issue-task-binding-
 import { ApiError, type HttpClient } from './http'
 import type { ProjectChatAgent } from './projectChatAgents'
 import type { ProjectChatWorkspaceBindingInput } from './projectChatAgents'
-import type { CollaborationIssue } from '@wegent/collaboration'
+import type {
+  CollaborationIssue,
+  CollaborationProject,
+  SharedWorkspaceApi,
+} from '@wegent/collaboration'
+import type { ProjectWorkflowDefinition } from '@wegent/collaboration/automation'
+export type {
+  ProjectWorkflowDefinition,
+  WorkflowNodeDefinition,
+} from '@wegent/collaboration/automation'
 import type {
   Attachment,
   ModelSelectionConfig,
@@ -77,6 +86,8 @@ export interface DeliverableRequirement {
   name: string
   description: string
   value_type: DeliverableValueType
+  accepted_value_types?: DeliverableValueType[]
+  pull_request_state?: 'draft' | 'open' | 'merged' | 'closed' | null
   file_constraints?: {
     accepted_types: string[]
     min_files: number
@@ -109,7 +120,7 @@ export type DeliveryFulfillment =
       provider: 'github' | 'gitlab'
       url: string
       number: number
-      state: 'draft'
+      state: 'draft' | 'open' | 'merged' | 'closed'
       head_branch: string
       base_branch: string
       head_commit: string
@@ -118,12 +129,15 @@ export type DeliveryFulfillment =
 
 export interface DeliveryFinalizeInput {
   fulfillments: DeliveryFulfillment[]
+  workflow_node_id?: string
 }
 
 export interface CloudLoopItem {
   resource_participants?: CollaborationIssue['resource_participants']
   human_requests?: CollaborationIssue['human_requests']
   milestone_id?: string | null
+  workflow?: CollaborationIssue['workflow']
+  intake_definition?: CollaborationIssue['intake_definition']
   runner_binding?: { environment_id: string } | null
   human_task_binding?: CollaborationIssue['human_task_binding']
   assignee_group_id?: string | null
@@ -386,6 +400,9 @@ export interface CloudProject {
     prompt: string
   }
   workflow_definition?: ProjectWorkflowDefinition
+  agentic_strategy_enabled?: boolean
+  collaboration_strategy?: CollaborationProject['collaboration_strategy']
+  collaboration_strategy_versions?: CollaborationProject['collaboration_strategy_versions']
   collaboration_groups?: import('@wegent/collaboration').CollaborationGroup[]
   automatic_processing_rules?: import('@wegent/collaboration').WorkspaceAutomationRule[]
   execution_environment?: import('@wegent/collaboration').CollaborationExecutionEnvironmentConfig
@@ -467,60 +484,6 @@ export interface WorkflowExecutionConfig {
   project_plugins?: RuntimeProjectPluginRef[] | null
   additional_context?: RuntimeAdditionalContext | null
   ephemeral?: boolean | null
-}
-
-export interface WorkflowNodeDefinition {
-  id: string
-  name: string
-  prompt?: string
-  kind?: 'my_task' | 'automation' | 'ai' | null
-  node_type?: 'task' | 'event' | 'loop' | 'loop_start' | 'branch' | 'loop_end'
-  role?: 'start' | null
-  start_config?: {
-    trigger_type?: 'schedule' | 'event' | 'workflow'
-    event_type?: string | null
-    cron_expression?: string | null
-    source_type?: string | null
-  } | null
-  loop_id?: string | null
-  body_node_ids?: string[]
-  loop_config?: {
-    max_attempts?: number
-    timeout_seconds?: number | null
-  } | null
-  branch_conditions?: Array<{
-    source_type: 'github' | 'gitlab'
-    event_type: string
-    handler_node_ids: string[]
-    subscription_id?: string | null
-    collection_mode?: string | null
-  }>
-  event_wait?: {
-    subject_source: 'upstream_pull_request'
-    collection_mode: 'webhook' | 'poll'
-    subscription_id?: string | null
-    poll_interval_seconds?: number | null
-  } | null
-  execution_mode?: 'human' | 'robot'
-  depends_on: string[]
-  dependency_context?: Record<string, WorkflowContextSource[]>
-  required: boolean
-  required_deliverables?: DeliverableRequirement[]
-  workspace_policy: WorkflowWorkspacePolicy
-  automation_rule_id?: string | null
-  execution_config?: WorkflowExecutionConfig | null
-  execution_config_override?: boolean
-}
-
-export interface ProjectWorkflowDefinition {
-  version: number
-  stage_mode?: IssueStageMode
-  advancement_policy?: IssueAdvancementPolicy
-  coordinator_prompt?: string
-  approval_policy?: 'required' | 'automatic'
-  ai_automation_rule_id?: string | null
-  execution_config?: WorkflowExecutionConfig | null
-  nodes: WorkflowNodeDefinition[]
 }
 
 export interface CloudProjectFile {
@@ -751,6 +714,9 @@ export function createDeliveryApi(client: HttpClient) {
         board_views?: CloudProject['board_views']
         pull_request_automation?: CloudProject['pull_request_automation']
         workflow_definition?: CloudProject['workflow_definition']
+        collaboration_strategy?: NonNullable<
+          Parameters<SharedWorkspaceApi['projects']['update']>[1]['collaborationStrategy']
+        >
         collaboration_groups?: CloudProject['collaboration_groups']
         automatic_processing_rules?: CloudProject['automatic_processing_rules']
         execution_environment?: {
@@ -1041,6 +1007,8 @@ export function createDeliveryApi(client: HttpClient) {
       > & {
         version: number
         automation_rule_id?: string | null
+        intake_definition?: CloudLoopItem['intake_definition']
+        workflow_action?: Parameters<SharedWorkspaceApi['issues']['update']>[1]['workflowAction']
         position?: { beforeItemId: string | null }
       }
     ): Promise<CloudLoopItem> {

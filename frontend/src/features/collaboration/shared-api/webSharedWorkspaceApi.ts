@@ -877,6 +877,7 @@ export function createWebSharedWorkspaceApi(
         return mapWorkspaceDeliveryDto(
           await client.post(`/v1/deliveries/${encoded(deliveryId)}/finalize`, {
             fulfillments: input.fulfillments.map(keysToSnakeCase),
+            ...(input.workflowNodeId ? { workflow_node_id: input.workflowNodeId } : {}),
           })
         )
       },

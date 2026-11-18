@@ -680,6 +680,7 @@ class LoopItemService:
         payload.pop("workflow", None)
         payload.pop("execution_config", None)
         payload.pop("automation_rule_id", None)
+        payload.pop("intake_definition", None)
         agent_id = payload.get("assignee_agent_id")
         team_id = payload.get("assignee_team_id")
         group_id = payload.pop("assignee_group_id", None)
@@ -695,14 +696,49 @@ class LoopItemService:
             if parent is not None and item_security(parent, project) == "related"
             else default_issue_security(project)
         )
-        if explicit_workflow is not None:
+        if values.intake_definition is not None:
+            task_metadata["intake_definition"] = values.intake_definition.model_dump()
+        from app.services.loop_items.strategy import (
+            STAGE_LABELS,
+            inbox_snapshot,
+            strategy_enabled,
+        )
+
+        has_strategy = strategy_enabled(project) and values.parent_id is None
+        if has_strategy:
+            if (
+                explicit_workflow is not None
+                or agent_id
+                or team_id
+                or group_id
+                or values.automation_rule_id
+            ):
+                raise HTTPException(
+                    422,
+                    "Inbox Issues cannot create stage tasks or assistant assignments",
+                )
+            if values.status not in {None, "inbox"}:
+                raise HTTPException(
+                    409, "New strategy Issues must enter the inbox before admission"
+                )
+            payload["status"] = "inbox"
+            tags = [tag for tag in tags if tag not in STAGE_LABELS.values()]
+            task_metadata["workflow"] = inbox_snapshot(
+                project.metadata_json["collaboration_strategy"]
+            ).model_dump(mode="json")
+        elif explicit_workflow is not None:
+            from app.services.loop_items.workflow import require_pristine_workflow
+
+            require_pristine_workflow(explicit_workflow)
             task_metadata["workflow"] = explicit_workflow.model_dump()
         elif values.parent_id is None and apply_project_workflow:
             project_metadata = (
                 project.metadata_json if isinstance(project.metadata_json, dict) else {}
             )
             raw_definition = project_metadata.get("workflow_definition")
-            if isinstance(raw_definition, dict):
+            if isinstance(raw_definition, dict) and not project_metadata.get(
+                "collaboration_strategy"
+            ):
                 definition = ProjectWorkflowDefinition.model_validate(raw_definition)
                 if (
                     definition.stage_mode == "dag"
@@ -732,6 +768,24 @@ class LoopItemService:
                     task_metadata["workflow"] = workflow.model_dump()
         if "workflow" in task_metadata:
             workflow = IssueWorkflowInstance.model_validate(task_metadata["workflow"])
+            project_definition = ProjectWorkflowDefinition.model_validate(
+                (project.metadata_json or {}).get("workflow_definition") or {}
+            )
+            if (
+                explicit_workflow is not None
+                and not project.metadata_json.get("collaboration_strategy")
+                and project_definition.stage_mode == "dag"
+                and explicit_workflow.model_dump()
+                != instantiate_workflow(project_definition).model_dump()
+            ):
+                raise HTTPException(
+                    422, "New Issues must use the project default workflow"
+                )
+            if workflow.stage_mode == "dag" and (agent_id or team_id or group_id):
+                raise HTTPException(
+                    422,
+                    "Configure workflow stage assignees instead of a separate Issue robot",
+                )
             if workflow.advancement_policy == "ai" and workflow.ai_automation_rule_id:
                 from app.services.issue_execution_configuration import (
                     require_coordinator_execution_config,
@@ -907,6 +961,9 @@ class LoopItemService:
             item.completed_at = self._now()
         db.add(item)
         db.flush()
+        from app.services.loop_items.workflow import require_workflow_complete
+
+        require_workflow_complete(item, item.status)
         if collaboration_group is not None:
             from app.services.collaboration_group_execution import (
                 dispatch_collaboration_group_assignment,
@@ -998,17 +1055,51 @@ class LoopItemService:
                     automation_context=automation_context,
                     cancel_existing=False,
                 )
+        if "workflow" in task_metadata:
+            from app.services.loop_items.workflow import route_workflow_stages
+
+            workflow = IssueWorkflowInstance.model_validate(
+                item.metadata_json["workflow"]
+            )
+            route_workflow_stages(
+                db,
+                item,
+                user_id,
+                [node for node in workflow.nodes if node.status == "ready"],
+            )
+            item.metadata_json = {
+                **item.metadata_json,
+                "workflow": workflow.model_dump(mode="json"),
+            }
         self._notify_updated_assignee(
             db,
             item=item,
             actor_user_id=user_id,
-            target_user_id=item.assignee_user_id,
+            target_user_id=(
+                None if "workflow" in task_metadata else item.assignee_user_id
+            ),
             previous_user_id=None,
             notify=values.notify_assignee,
         )
         if commit:
             db.commit()
             db.refresh(item)
+            if "workflow" in task_metadata:
+                from app.services.loop_items.workflow_observability import (
+                    record_workflow_event,
+                )
+
+                for node in workflow.nodes:
+                    if node.status == "ready":
+                        record_workflow_event(
+                            "stage_activated",
+                            node_id=node.id,
+                            strategy_id=(
+                                "agentic_strategy"
+                                if workflow.strategy_snapshot
+                                else None
+                            ),
+                        )
         else:
             db.flush()
         return item
@@ -1218,14 +1309,23 @@ class LoopItemService:
         )
         badges_changed = metadata != item.metadata_json
         item.metadata_json = metadata
-        if badges_changed:
+        from app.services.loop_items.strategy import refresh_strategy_coordinator
+
+        strategy_changed = bool(
+            (metadata.get("workflow") or {}).get("strategy_snapshot")
+        )
+        if badges_changed or strategy_changed:
             item.version += 1
+        if strategy_changed:
+            refresh_strategy_coordinator(
+                db, item, "comment.created", f"comment:{comment.id}"
+            )
         if commit:
             db.commit()
         else:
             db.flush()
         db.refresh(comment)
-        if commit and badges_changed:
+        if commit and (badges_changed or strategy_changed):
             from app.services.loop_item_events import publish_loop_item_changed
 
             publish_loop_item_changed(
@@ -1625,6 +1725,7 @@ class LoopItemService:
         commit: bool = True,
         emit_status_event: bool = True,
         automation_context: dict[str, Any] | None = None,
+        actor_is_human: bool = False,
     ) -> LoopItem:
         item = self._get_item_row(db, item_id, for_update=True)
         position_order = None
@@ -1665,6 +1766,18 @@ class LoopItemService:
                 issue_creator_user_id=item.created_by_user_id,
                 user_id=user_id,
             )
+        if values.workflow_action is not None:
+            from app.services.loop_items.workflow import apply_workflow_action
+
+            return apply_workflow_action(
+                db,
+                item,
+                user_id,
+                values.workflow_action,
+                values.version,
+                actor_is_human=actor_is_human,
+                commit=commit,
+            )
         if (
             {"execution_config", "workflow"} & values.model_fields_set
             or values.assignee_agent_id
@@ -1676,6 +1789,17 @@ class LoopItemService:
                 action=IssueAction.EXECUTE,
                 issue_creator_user_id=item.created_by_user_id,
                 user_id=user_id,
+            )
+        from app.services.loop_items.workflow import require_workflow_complete
+
+        require_workflow_complete(item, values.status)
+        from app.services.loop_items.strategy import require_strategy_update
+
+        require_strategy_update(db, item, values)
+        if "workflow" in values.model_fields_set:
+            raise HTTPException(
+                422,
+                "Use workflow_action to apply or decide a workflow; snapshots cannot be replaced",
             )
         if item.version != values.version:
             raise HTTPException(
@@ -1691,6 +1815,8 @@ class LoopItemService:
                 "assignee_group_id",
                 "security_level",
                 "position",
+                "workflow_action",
+                "intake_definition",
             },
             exclude_unset=True,
         )
@@ -1698,7 +1824,7 @@ class LoopItemService:
         meaningful_change = group_changed or any(
             field in values.model_fields_set
             and (
-                field in {"tags", "workflow"}
+                field in {"tags", "workflow", "intake_definition"}
                 or getattr(item, field, None) != getattr(values, field)
             )
             for field in (
@@ -1709,6 +1835,7 @@ class LoopItemService:
                 "assignee_agent_id",
                 "assignee_team_id",
                 "priority",
+                "intake_definition",
                 "start_at",
                 "due_at",
                 "parent_id",
@@ -1775,6 +1902,7 @@ class LoopItemService:
             "tags" in values.model_fields_set
             or "milestone_id" in values.model_fields_set
             or "workflow" in values.model_fields_set
+            or "intake_definition" in values.model_fields_set
             or "execution_config" in values.model_fields_set
             or "security_level" in values.model_fields_set
         ):
@@ -1788,16 +1916,12 @@ class LoopItemService:
                     metadata.pop("milestone_id", None)
                 else:
                     metadata["milestone_id"] = values.milestone_id
+            if values.intake_definition is not None:
+                metadata["intake_definition"] = values.intake_definition.model_dump()
             if "tags" in values.model_fields_set:
                 metadata["tags"] = updates.pop("tags") or []
             if "security_level" in values.model_fields_set:
                 metadata["security_level"] = values.security_level
-            if "workflow" in values.model_fields_set:
-                workflow = values.workflow
-                metadata["workflow"] = (
-                    workflow.model_dump(mode="json") if workflow is not None else None
-                )
-                updates.pop("workflow", None)
             if "execution_config" in values.model_fields_set:
                 execution_config = values.execution_config
                 metadata["execution_config"] = (
@@ -2253,6 +2377,30 @@ class LoopItemService:
         self._require_local_task_provider(project)
         if item.cloud_project_id != str(project_id):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "TODO not found")
+        workflow_data = (item.metadata_json or {}).get("workflow") or {}
+        if workflow_data.get("strategy_snapshot"):
+            current_stage = workflow_data.get("current_stage_id")
+            if (
+                workflow_data.get("strategy_state") != "active"
+                or not current_stage
+                or values.workflow_step != current_stage
+            ):
+                raise HTTPException(409, "This strategy stage is not active")
+            node = next(
+                (
+                    entry
+                    for entry in workflow_data.get("nodes") or []
+                    if entry.get("id") == current_stage
+                ),
+                None,
+            )
+            if node is not None and (
+                node.get("required_assignee_type") != values.assignee_type
+                or node.get("required_assignee_id") != values.assignee_id
+            ):
+                raise HTTPException(
+                    409, "Use the assignee configured for this strategy stage"
+                )
         position_order = None
         if values.position is not None:
             self._require_internal_task_project(
@@ -2946,6 +3094,23 @@ class LoopItemService:
                 db, item=item, values=values, user_id=user_id
             )
         self._require_item_access(db, item, user_id, action=IssueAction.EXECUTE)
+        workflow_binding_metadata = {}
+        if values.workflow_node_id:
+            from app.services.loop_items.workflow import (
+                require_ready_node,
+                workflow_snapshot,
+            )
+
+            workflow = workflow_snapshot(item)
+            if workflow is None:
+                raise HTTPException(409, "This Issue has no workflow")
+            node = require_ready_node(workflow, values.workflow_node_id)
+            target = (stage_snapshot or {}).get("target_stage")
+            if isinstance(target, dict) and target.get("attempts") != node.attempts:
+                raise HTTPException(
+                    409, "Workflow execution belongs to an earlier attempt"
+                )
+            workflow_binding_metadata = {"workflow_attempt": node.attempts}
         self._validate_backend_task(db, values.backend_task_id, user_id)
         logger.info(
             "[LoopItem] Bind runtime session: item=%s runtime_task=%s team=%s model_selected=%s",
@@ -2969,6 +3134,7 @@ class LoopItemService:
                 if values.task_title and active.task_title != values.task_title:
                     active.task_title = values.task_title
                 metadata_updates = _task_binding_metadata(values)
+                metadata_updates.update(workflow_binding_metadata)
                 if metadata_updates:
                     active.metadata_json = {
                         **(
@@ -2998,7 +3164,11 @@ class LoopItemService:
             backend_task_id=values.backend_task_id,
             linked_by_user_id=user_id,
             linked_at=self._now(),
-            metadata_json=_task_binding_metadata(values) or None,
+            metadata_json={
+                **_task_binding_metadata(values),
+                **workflow_binding_metadata,
+            }
+            or None,
         )
         db.add(binding)
         self.ensure_collaborator(db, item, user_id, user_id, "task", commit=False)

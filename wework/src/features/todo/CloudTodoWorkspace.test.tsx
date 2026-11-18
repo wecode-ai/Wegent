@@ -359,6 +359,22 @@ const project = {
   updated_at: '2026-07-22T00:00:00Z',
 }
 
+const strategyRevision = {
+  version: 1,
+  text: '# 协作策略\n\n完善定义后从收集箱进入六阶段协作。',
+  diff: '+ # 协作策略',
+  published_at: '2026-11-17T00:00:00Z',
+  published_by: 1,
+  role_mapping: {
+    product: ['local'],
+    development: ['local'],
+    design: ['local'],
+    qa: ['local'],
+    pmo: ['local'],
+  },
+  source_path: 'docs/35-agentic-collaboration-strategy.md',
+}
+
 const item = {
   id: 'WEG-1',
   cloud_project_id: '11',
@@ -803,6 +819,193 @@ describe('CloudTodoWorkspace', () => {
     expect(staleHandled).not.toHaveBeenCalled()
     expect(handled).toHaveBeenCalledTimes(1)
     expect(await screen.findByTestId('cloud-todo-detail-title')).toHaveValue(item.title)
+  })
+
+  it('renders only the board content shell when embedded in the workbench', async () => {
+    const workbenchServices = services()
+    vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+      items: [{ ...project, id: String(project.id) }],
+    })
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+        embedded
+        activeProjectRef={{
+          projectStore: 'backend',
+          projectId: String(project.id),
+        }}
+      />
+    )
+
+    await screen.findByTestId('cloud-project-header', undefined, { timeout: 10_000 })
+    expect(screen.getByTestId('cloud-project-header')).toHaveTextContent('协作')
+    const workspace = screen.getByTestId('cloud-todo-workspace')
+    expect(workspace).toHaveAttribute('data-embedded', 'true')
+    expect(workspace.querySelector('aside')).not.toBeInTheDocument()
+    expect(screen.getByTestId('cloud-todo-main')).toHaveClass('min-h-0', 'overflow-hidden')
+    expect(screen.queryByTestId('cloud-todo-collapsed-chrome-controls')).not.toBeInTheDocument()
+  })
+
+  it('uses the selected project title for an embedded project view', async () => {
+    const workbenchServices = services()
+    vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+      items: [{ ...project, id: String(project.id), name: '我的任务' }],
+    })
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+        embedded
+        embeddedTitle="project"
+        activeProjectRef={{
+          projectStore: 'backend',
+          projectId: String(project.id),
+        }}
+      />
+    )
+
+    expect(await screen.findByTestId('cloud-project-header')).toHaveTextContent('我的任务')
+  })
+
+  it('publishes the readable project strategy through the shared settings editor', async () => {
+    const workbenchServices = services()
+    vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+      items: [{ ...project, agentic_strategy_enabled: true }],
+    })
+    vi.mocked(workbenchServices.deliveryApi!.updateCloudProject).mockImplementation(
+      async (_id, input) => ({
+        ...project,
+        agentic_strategy_enabled: true,
+        version: 2,
+        collaboration_strategy: { ...strategyRevision, text: input.collaboration_strategy!.text },
+        collaboration_strategy_versions: [
+          { ...strategyRevision, text: input.collaboration_strategy!.text },
+        ],
+      })
+    )
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+        activeProjectRef={{ projectStore: 'backend', projectId: project.id }}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('cloud-project-manage-view'))
+    await userEvent.click(await screen.findByTestId('cloud-project-settings-strategy'))
+    expect(await screen.findByTestId('project-strategy-editor')).toBeInTheDocument()
+    const strategyText =
+      '# 协作策略\n\n收集箱准入后，依次进入需求提出、共同评审、开发准备、开发实现、质量验收、发布上线。'
+    fireEvent.change(screen.getByTestId('project-strategy-text'), {
+      target: { value: strategyText },
+    })
+    await userEvent.click(screen.getByTestId('project-strategy-save'))
+
+    await waitFor(() => {
+      expect(workbenchServices.deliveryApi!.updateCloudProject).toHaveBeenCalledWith(
+        project.id,
+        expect.objectContaining({
+          version: project.version,
+          collaboration_strategy: { text: strategyText, expected_version: 0 },
+        })
+      )
+    })
+    expect(screen.queryByTestId('project-workflow-editor')).not.toBeInTheDocument()
+    expect(screen.queryByText(/DAG/)).not.toBeInTheDocument()
+  })
+
+  it('does not offer strategy configuration when the backend disables the feature', async () => {
+    const workbenchServices = services()
+    vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+      items: [{ ...project, agentic_strategy_enabled: false }],
+    })
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+        activeProjectRef={{ projectStore: 'backend', projectId: project.id }}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('cloud-project-manage-view'))
+    expect(await screen.findByTestId('project-settings-shell')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-project-settings-strategy')).not.toBeInTheDocument()
+  })
+
+  it('opens the same strategy settings from an Issue without a strategy', async () => {
+    const workbenchServices = services()
+    vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+      items: [{ ...project, agentic_strategy_enabled: true }],
+    })
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+        activeProjectRef={{ projectStore: 'backend', projectId: project.id }}
+        focusedItemId={item.id}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('todo-configure-workflow'))
+    expect(await screen.findByTestId('cloud-project-settings-strategy')).toHaveAttribute(
+      'aria-current',
+      'page'
+    )
+    expect(await screen.findByTestId('project-strategy-editor')).toBeInTheDocument()
+    expect(screen.queryByTestId('cloud-todo-detail-title')).not.toBeInTheDocument()
+  })
+
+  it('creates a policy Issue in the inbox without starting Runtime work', async () => {
+    const user = userEvent.setup()
+    const workbenchServices = services()
+    vi.mocked(workbenchServices.deliveryApi!.listCloudProjects).mockResolvedValue({
+      items: [
+        { ...project, agentic_strategy_enabled: true, collaboration_strategy: strategyRevision },
+      ],
+    })
+    workbenchServices.deliveryApi!.createLoopItem = vi.fn(async (_projectId, values) => ({
+      ...item,
+      ...values,
+      id: 'WEG-STRATEGY-INBOX',
+      status: 'inbox' as const,
+      workflow: {
+        version: 1,
+        instance_id: 'policy-inbox',
+        definition_version: 1,
+        stage_mode: 'none' as const,
+        nodes: [],
+        strategy_snapshot: strategyRevision,
+        strategy_state: 'inbox' as const,
+      },
+    }))
+    render(
+      <CloudTodoWorkspace
+        user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+        localProjects={[]}
+        services={workbenchServices}
+        activeProjectRef={{ projectStore: 'backend', projectId: project.id }}
+      />
+    )
+
+    await user.click(await screen.findByTestId('cloud-todo-add'))
+    expect(screen.queryByTestId('workspace-create-task-tab')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('workspace-issue-input'))
+    await user.paste('Define the release scope')
+    await user.click(screen.getByTestId('workspace-issue-submit'))
+    await waitFor(() =>
+      expect(workbenchServices.deliveryApi!.createLoopItem).toHaveBeenCalledWith(
+        project.id,
+        expect.objectContaining({ status: 'inbox', title: 'Define the release scope' })
+      )
+    )
+    expect(screen.queryByTestId('mock-start-background-task')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('ai-chat-modal')).not.toBeInTheDocument()
   })
 
   it.each([

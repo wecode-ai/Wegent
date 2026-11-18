@@ -453,6 +453,7 @@ export function createWeworkDeliverySharedWorkspaceApi(
               workflow_definition: input.workflowDefinition as Parameters<
                 DeliveryApi['updateCloudProject']
               >[1]['workflow_definition'],
+              collaboration_strategy: input.collaborationStrategy,
               collaboration_groups: input.collaborationGroups as Parameters<
                 DeliveryApi['updateCloudProject']
               >[1]['collaboration_groups'],
@@ -576,6 +577,8 @@ export function createWeworkDeliverySharedWorkspaceApi(
               due_at: input.dueAt,
               tags: input.tags,
               security_level: input.securityLevel,
+              workflow_action: input.workflowAction,
+              intake_definition: input.intakeDefinition,
               position: input.position,
             }) as Parameters<DeliveryApi['updateLoopItem']>[1]
           )
@@ -760,10 +763,10 @@ export function createWeworkDeliverySharedWorkspaceApi(
       },
       async finalize(deliveryId, input) {
         return mapWorkspaceDeliveryDto(
-          await deliveryApi.finalizeDelivery(
-            deliveryId,
-            input as Parameters<DeliveryApi['finalizeDelivery']>[1]
-          )
+          await deliveryApi.finalizeDelivery(deliveryId, {
+            fulfillments: input.fulfillments,
+            ...(input.workflowNodeId ? { workflow_node_id: input.workflowNodeId } : {}),
+          } as Parameters<DeliveryApi['finalizeDelivery']>[1])
         )
       },
       discardDraft(deliveryId) {

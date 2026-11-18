@@ -5137,6 +5137,8 @@
     "work_type_backend": "后端",
     "work_type_test": "测试",
     "workflow_settings": "项目事项流程",
+    "strategy_settings": "协作策略",
+    "strategy_admission_before_execution": "新 Issue 先进入收集箱。完善定义并通过准入后，再开始阶段工作。",
     "item_statuses": "事项状态",
     "statuses_fixed_hint": "单机第一版使用五个稳定状态，专业工作类型可按项目配置。",
     "work_types": "专业工作类型",

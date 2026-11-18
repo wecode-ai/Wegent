@@ -25,6 +25,7 @@ import {
   selectProjectBoardGrouping,
   verifyPersonalBoardGrouping,
 } from '../modules/collaboration-board-personal-view.mjs'
+import { verifyProjectAgenticStrategy } from '../modules/project-agentic-strategy.mjs'
 import {
   assertFullscreenIssueComposerColumn,
   assertFullscreenIssueComposerColumnAtWindowSize,
@@ -538,6 +539,15 @@ export function createDesktopScenario({
         await verifyPrivateProjectCreation({ control, scoped, request, workspace, project })
         await verifyCollaborationMemberSettings(control, { scoped, owner, request, project })
         await verifyCollaborationSettingsUx(control, { scoped, request, project })
+        await verifyCollaborationSettingsUx(control, { scoped, request, project })
+        await verifyProjectAgenticStrategy(control, {
+          scoped,
+          owner,
+          request,
+          project,
+          backendUrl,
+          authToken,
+        })
 
         // Creation authorizes the current runner; this recovery case needs an unassigned project.
         const initialEnvironments = await request(

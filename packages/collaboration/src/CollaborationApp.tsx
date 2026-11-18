@@ -79,6 +79,7 @@ import {
   ProjectAutomaticProcessing,
   ProjectExecutionEnvironments,
   ProjectSettingsShell,
+  ProjectStrategySettings,
 } from "./project-manage";
 
 export interface CollaborationIssueDetailRenderContext {
@@ -96,7 +97,8 @@ export interface CollaborationIssueDetailRenderContext {
   onOpenRelatedIssue(issue: CollaborationIssue): void;
   onAddChild?(): void;
   onCreateTask?(): void;
-  /** Present for editable Issues when archiving is enabled. */
+  onConfigureWorkflow?(): void;
+  /** Present when archiving is enabled for the current Issue state. */
   onDelete?(): void;
 }
 
@@ -220,6 +222,20 @@ export function CollaborationApp({
     loading,
     error,
   } = state;
+  const configureProjectWorkflow = project &&
+    project.agentic_strategy_enabled === true &&
+    (project.access_role === 'Owner' || project.access_role === 'Maintainer')
+    ? () => {
+        commands.clearSelectedIssue()
+        setSettingsSectionId('strategy')
+        host.navigate({
+          projectId: project.id,
+          issueId: null,
+          view: 'manage',
+          projectSettingsSection: 'strategy',
+        })
+      }
+    : undefined
   const { assignmentsByIssueId, replaceIssueAssignments } =
     useIssueAssignmentsByIssueId({
       assignmentsApi: api.assignments,
@@ -1322,6 +1338,29 @@ export function CollaborationApp({
                           />
                         ),
                       },
+                      ...(project.agentic_strategy_enabled === true || project.collaboration_strategy
+                        ? [
+                            {
+                              id: 'strategy',
+                              label: locale === 'zh-CN' ? '协作策略' : 'Collaboration strategy',
+                              testId: 'collaboration-project-settings-strategy',
+                              content: (
+                                <ProjectStrategySettings
+                                  api={api}
+                                  project={project}
+                                  members={members}
+                                  agents={agents}
+                                  locale={locale}
+                                  translate={translate}
+                                  onChange={updated => {
+                                    commands.replaceProject(updated)
+                                    onProjectChange?.(updated)
+                                  }}
+                                />
+                              ),
+                            },
+                          ]
+                        : []),
                       ...(host.capabilities.automation && api.automations
                         ? [
                             {
@@ -1420,6 +1459,7 @@ export function CollaborationApp({
                   (binding) => binding.issueId === selectedIssue.id,
                 ),
                 defaultAssistant: host.defaultAssistant,
+                onConfigureWorkflow: configureProjectWorkflow,
                 onClose: () => {
                   commands.clearSelectedIssue();
                   host.navigate({
@@ -1482,6 +1522,7 @@ export function CollaborationApp({
                 members={members}
                 agents={agents}
                 defaultAssistant={host.defaultAssistant}
+                onConfigureWorkflow={configureProjectWorkflow}
                 messages={messages}
                 translate={translate}
                 normalizePastedFiles={normalizePastedFiles}

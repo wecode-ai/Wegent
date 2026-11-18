@@ -66,6 +66,10 @@ export interface CollaborationScheduleViewConfig {
 }
 
 export interface CollaborationProject {
+  workflow_definition?: import('./automation/types').ProjectWorkflowDefinition;
+  collaboration_strategy?: import('./automation/types').CollaborationStrategyRevision | null
+  collaboration_strategy_versions?: import('./automation/types').CollaborationStrategyRevision[]
+  agentic_strategy_enabled?: boolean
   id: CollaborationProjectId;
   workspace_access_role?: CollaborationWorkspaceRole | null;
   membership_mode?: "inherit" | "restricted";
@@ -132,6 +136,8 @@ export interface CollaborationIssue {
   }>;
   human_requests?: import("./issueParticipation").IssueHumanRequest[];
   milestone_id?: string | null;
+  intake_definition?: import("./automation/types").IssueIntakeDefinition | null;
+  workflow?: import("./automation/types").IssueWorkflowInstance | null;
   id: string;
   cloud_project_id: CollaborationProjectId;
   sequence_number: number;
@@ -572,7 +578,8 @@ export type ProjectSettingsSectionId =
   | "members"
   | "groups"
   | "environments"
-  | "automatic-processing";
+  | "automatic-processing"
+  | "strategy";
 
 export interface CollaborationLocation {
   projectId: string | null;

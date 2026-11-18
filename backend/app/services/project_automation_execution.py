@@ -1033,6 +1033,26 @@ class ProjectAutomationProcessor:
                 "[ProjectAutomation] Ignoring unsupported event=%s", event.event_type
             )
             return []
+        issue = (
+            db.query(LoopItem)
+            .filter(
+                LoopItem.id == event.subject_id,
+                LoopItem.cloud_project_id == event.project_id,
+                loop_datetime_is_unset(LoopItem.deleted_at),
+            )
+            .one_or_none()
+        )
+        if issue is not None:
+            from app.services.loop_items.strategy import refresh_strategy_coordinator
+
+            if refresh_strategy_coordinator(
+                db,
+                issue,
+                event.event_type,
+                f"event:{event.event_type}:{issue.id}:{issue.version}",
+            ):
+                db.commit()
+                return []
         matching_rules = self.matching_rules(db, event, automation_id=automation_id)
         logger.info(
             "[ProjectAutomation] Event matched project=%s subject=%s event=%s "

@@ -16,6 +16,8 @@ import type {
   CollaborationOwnedAgent,
 } from "../types";
 import type { ExecutionDisplayStatus } from "./executionStatus";
+import { submitWorkflowEvidence } from './submitWorkflowEvidence'
+import type { WorkflowEvidenceFile } from './WorkflowDeliverablesForm'
 import {
   createIssueAssigneeResources,
   type IssueAssigneeResourceProject,
@@ -119,6 +121,8 @@ export interface SharedIssueDetailCreateInput {
 
 export interface SharedIssueDetailUpdateInput {
   milestone_id?: string | null;
+  intake_definition?: import("../automation/types").IssueIntakeDefinition;
+  workflow_action?: import("../automation/types").IssueWorkflowAction;
   version: number;
   security_level?: "open" | "related";
   title?: string;
@@ -211,6 +215,12 @@ export interface SharedIssueDetailPort {
     loadSourceMessages?(
       delivery: SharedIssueDetailDeliveryDetail,
     ): Promise<unknown[]>;
+    submitWorkflowEvidence?(
+      issueId: string,
+      nodeId: string,
+      fulfillments: Array<Record<string, unknown>>,
+      files: WorkflowEvidenceFile[],
+    ): Promise<void>;
   };
 }
 
@@ -374,6 +384,8 @@ export function createSharedIssueDetailPort(
         api.issues.update(issueId, {
           version: input.version,
           milestoneId: input.milestone_id,
+          ...(input.workflow_action ? { workflowAction: input.workflow_action } : {}),
+          ...(input.intake_definition ? { intakeDefinition: input.intake_definition } : {}),
           ...(input.security_level !== undefined
             ? { securityLevel: input.security_level }
             : {}),
@@ -518,6 +530,14 @@ export function createSharedIssueDetailPort(
         api.deliveries.list(issueId).then((items) => items.map(toDelivery)),
       get: (deliveryId) =>
         api.deliveries.get(deliveryId).then(toDeliveryDetail),
+      ...(typeof api.deliveries.create === 'function' &&
+      typeof api.deliveries.addAsset === 'function' &&
+      typeof api.deliveries.finalize === 'function'
+        ? {
+            submitWorkflowEvidence: (issueId, nodeId, fulfillments, files) =>
+              submitWorkflowEvidence(api.deliveries, issueId, nodeId, fulfillments, files),
+          }
+        : {}),
     },
   };
 }

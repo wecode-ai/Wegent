@@ -76,6 +76,8 @@ def _parse_json_object_setting(value: Any, setting_name: str) -> dict[str, Any]:
 
 
 class Settings(BaseSettings):
+    # collab.agenticStrategy.v1: existing snapshots remain enforceable on rollback.
+    COLLAB_AGENTIC_STRATEGY_V1: bool = True
     # Project configuration
     PROJECT_NAME: str = "Task Manager Backend"
     VERSION: str = "1.0.0"

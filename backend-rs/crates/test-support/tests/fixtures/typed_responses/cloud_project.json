@@ -81,6 +81,9 @@
       "execution_config": null,
       "nodes": []
     },
+    "collaboration_strategy": null,
+    "collaboration_strategy_versions": [],
+    "agentic_strategy_enabled": true,
     "workflow_automation_id": null,
     "execution_environment": {
       "workspace_policy": "git_worktree",
@@ -184,6 +187,9 @@
       "execution_config": null,
       "nodes": []
     },
+    "collaboration_strategy": null,
+    "collaboration_strategy_versions": [],
+    "agentic_strategy_enabled": true,
     "workflow_automation_id": null,
     "execution_environment": {
       "workspace_policy": "git_worktree",
@@ -287,6 +293,9 @@
       "execution_config": null,
       "nodes": []
     },
+    "collaboration_strategy": null,
+    "collaboration_strategy_versions": [],
+    "agentic_strategy_enabled": true,
     "workflow_automation_id": null,
     "execution_environment": {
       "workspace_policy": "git_worktree",
@@ -391,6 +400,9 @@
       "execution_config": null,
       "nodes": []
     },
+    "collaboration_strategy": null,
+    "collaboration_strategy_versions": [],
+    "agentic_strategy_enabled": true,
     "workflow_automation_id": null,
     "execution_environment": {
       "workspace_policy": "git_worktree",
@@ -475,6 +487,9 @@
       "execution_config": null,
       "nodes": []
     },
+    "collaboration_strategy": null,
+    "collaboration_strategy_versions": [],
+    "agentic_strategy_enabled": true,
     "workflow_automation_id": null,
     "execution_environment": {
       "workspace_policy": "git_worktree",
@@ -582,6 +597,9 @@
         }
       ]
     },
+    "collaboration_strategy": null,
+    "collaboration_strategy_versions": [],
+    "agentic_strategy_enabled": true,
     "workflow_automation_id": null,
     "execution_environment": {
       "workspace_policy": "git_worktree",

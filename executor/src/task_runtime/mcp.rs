@@ -2374,19 +2374,16 @@ async fn call_backend_tool(
                 .ok_or_else(|| {
                     "The current Runtime task is not bound to a workflow stage".to_owned()
                 })?;
-            return backend_json(
+            let item = backend_json(
                 client
-                    .get(format!(
-                        "{base}/loop-items/{}/workflow-nodes/{}/input-context",
-                        encode_segment(item_id),
-                        encode_segment(node_id)
-                    ))
+                    .get(format!("{base}/loop-items/{}", encode_segment(item_id)))
                     .bearer_auth(auth_token)
                     .send()
                     .await
                     .map_err(|error| error.to_string())?,
             )
-            .await;
+            .await?;
+            return Ok(local_workflow_stage_context(&item, Some(node_id)));
         }
         "create_delivery" => {
             let address = delivery_address(grant).map_err(|error| error.to_string())?;
@@ -4222,6 +4219,165 @@ mod tests {
             for requirement in requirements {
                 assert!(description.contains(requirement), "{name}: {requirement}");
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn backend_workflow_stage_context_uses_the_bound_issue_snapshot() {
+        use axum::{http::HeaderMap, routing::get, Json, Router};
+
+        let item = json!({
+            "id": "ISSUE-1",
+            "title": "Implement the approved design",
+            "description": "Use the UX evidence",
+            "status": "in_progress",
+            "workflow": {"nodes": [
+                {
+                    "id": "ux_spec",
+                    "name": "UX specification",
+                    "status": "completed",
+                    "delivery_ids": ["delivery-ux"]
+                },
+                {
+                    "id": "dev_implementation",
+                    "name": "Implementation",
+                    "status": "ready",
+                    "attempts": 2,
+                    "depends_on": ["ux_spec"],
+                    "dependency_context": {"ux_spec": ["deliveries"]},
+                    "delivery_ids": ["delivery-previous-attempt"]
+                }
+            ]}
+        });
+        let snapshot = item.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = Router::new()
+            .route(
+                "/api/v1/loop-items/ISSUE-1",
+                get(move |headers: HeaderMap| {
+                    let snapshot = snapshot.clone();
+                    async move {
+                        assert_eq!(headers.get("authorization").unwrap(), "Bearer task-token");
+                        Json(snapshot)
+                    }
+                }),
+            )
+            .route(
+                "/api/v1/loop-items/ISSUE-1/tasks",
+                get(|headers: HeaderMap| async move {
+                    assert_eq!(headers.get("authorization").unwrap(), "Bearer task-token");
+                    Json(json!([
+                        {
+                            "device_id": "other-device",
+                            "task_id": "runtime-task",
+                            "workflow_node_id": "ux_spec"
+                        },
+                        {
+                            "device_id": "device-1",
+                            "task_id": "runtime-task",
+                            "workflow_node_id": "dev_implementation"
+                        }
+                    ]))
+                }),
+            );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let backend_url = format!("http://{address}");
+        let grant = SpaceContextGrant {
+            task_id: "runtime-task".to_owned(),
+            device_id: Some("device-1".to_owned()),
+            space_id: Some("12".to_owned()),
+            item_id: Some("ISSUE-1".to_owned()),
+            ..role_grant(SpaceContextRole::Executor)
+        };
+        let context = BackendToolContext {
+            backend_url: &backend_url,
+            auth_token: "task-token",
+            project_id: "12",
+            grant: Some(&grant),
+            collaboration_dispatcher: None,
+        };
+        let arguments = json!({"item_id": "ISSUE-1"});
+        let unsupported = reqwest::Client::new()
+            .get(format!(
+                "{backend_url}/api/v1/loop-items/ISSUE-1/workflow-nodes/dev_implementation/input-context"
+            ))
+            .bearer_auth("task-token")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(unsupported.status(), reqwest::StatusCode::NOT_FOUND);
+        assert_eq!(
+            call_backend_tool(&context, "get_board_item", &arguments)
+                .await
+                .unwrap(),
+            item
+        );
+
+        let result = call_backend_tool(&context, "get_workflow_stage_context", &arguments).await;
+        server.abort();
+        let result = result.expect("stage context must use the supported Issue snapshot API");
+        assert_eq!(result["issue"]["id"], "ISSUE-1");
+        assert_eq!(result["target_stage"], item["workflow"]["nodes"][1]);
+        assert_eq!(result["target_stage"]["attempts"], 2);
+        assert_eq!(
+            result["dependencies"],
+            json!([{
+                "stage_id": "ux_spec",
+                "stage_name": "UX specification",
+                "status": "completed",
+                "delivery_ids": ["delivery-ux"],
+                "selected_sources": ["deliveries"]
+            }])
+        );
+    }
+
+    #[tokio::test]
+    async fn backend_workflow_stage_context_rejects_unbound_runtime_tasks() {
+        use axum::{http::HeaderMap, routing::get, Json, Router};
+
+        for binding in [
+            json!({"device_id": "other-device", "task_id": "runtime-task", "workflow_node_id": "dev"}),
+            json!({"device_id": "device-1", "task_id": "other-task", "workflow_node_id": "dev"}),
+            json!({"device_id": "device-1", "task_id": "runtime-task", "workflow_node_id": null}),
+        ] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let app = Router::new().route(
+                "/api/v1/loop-items/ISSUE-1/tasks",
+                get(move |headers: HeaderMap| {
+                    let binding = binding.clone();
+                    async move {
+                        assert_eq!(headers.get("authorization").unwrap(), "Bearer task-token");
+                        Json(json!([binding]))
+                    }
+                }),
+            );
+            let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            let backend_url = format!("http://{address}");
+            let grant = SpaceContextGrant {
+                task_id: "runtime-task".to_owned(),
+                device_id: Some("device-1".to_owned()),
+                ..role_grant(SpaceContextRole::Executor)
+            };
+            let context = BackendToolContext {
+                backend_url: &backend_url,
+                auth_token: "task-token",
+                project_id: "12",
+                grant: Some(&grant),
+                collaboration_dispatcher: None,
+            };
+            let result = call_backend_tool(
+                &context,
+                "get_workflow_stage_context",
+                &json!({"item_id": "ISSUE-1"}),
+            )
+            .await;
+            server.abort();
+            assert_eq!(
+                result.unwrap_err(),
+                "The current Runtime task is not bound to a workflow stage"
+            );
         }
     }
 

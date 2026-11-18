@@ -151,6 +151,8 @@ export interface WorkflowDeliverableRequirement {
     | "git_branch"
     | "pull_request"
     | "url";
+  accepted_value_types?: WorkflowDeliverableRequirement['value_type'][]
+  pull_request_state?: 'merged' | null
   file_constraints?: {
     accepted_types: string[];
     min_files: number;
@@ -201,6 +203,9 @@ export interface WorkflowNodeDefinition {
   required_assignee_id?: string | null;
   execution_config?: WorkflowExecutionConfig | null;
   execution_config_override?: boolean;
+  rework_to?: string | null
+  human_approval_required?: boolean
+  functional_role?: string
 }
 
 export interface ProjectWorkflowDefinition {
@@ -213,6 +218,100 @@ export interface ProjectWorkflowDefinition {
   execution_config?: WorkflowExecutionConfig | null;
   nodes: WorkflowNodeDefinition[];
 }
+
+export interface WorkflowNodeDecision {
+  action: 'approve' | 'reject' | 'force_advance'
+  actor_user_id: number
+  reason: string
+  decided_at: string
+  source?: 'human' | 'assistant'
+  stage_durations_seconds?: Record<string, number>
+}
+
+export interface WorkflowNodeInstance extends WorkflowNodeDefinition {
+  status: string
+  attempts: number
+  delivery_ids: string[]
+  decision_history: WorkflowNodeDecision[]
+  activated_at?: string | null
+  deliverables_completed_at?: string | null
+  execution_error?: string | null
+}
+
+export interface IssueWorkflowInstance extends Omit<ProjectWorkflowDefinition, 'nodes'> {
+  instance_id?: string | null
+  definition_version: number
+  nodes: WorkflowNodeInstance[]
+  current_stage_id?: string | null
+  strategy_snapshot?: CollaborationStrategyRevision | null
+  strategy_state?: 'inbox' | 'active' | null
+  coordinator_decision?: StrategyCoordinatorDecision | null
+  strategy_upgrade_history?: Array<{
+    from_version: number
+    to_version: number
+    reason: string
+    migration_impact: { preserved_stage_ids: string[]; preserved_evidence: boolean; role_mapping_changed: boolean }
+    actor_user_id: number
+    upgraded_at: string
+  }>
+}
+
+export type StrategyFunctionalRole = 'product' | 'development' | 'design' | 'qa' | 'pmo'
+export type StrategyRoleMapping = Record<StrategyFunctionalRole, string[]>
+
+export interface CollaborationStrategyUpdate {
+  text: string
+  expected_version: number
+}
+
+export interface CollaborationStrategyRevision extends Omit<CollaborationStrategyUpdate, 'expected_version'> {
+  role_mapping: StrategyRoleMapping
+  version: number
+  diff: string
+  published_at: string
+  published_by: number
+  source_path: string
+}
+
+export interface IssueIntakeDefinition {
+  objective: string
+  scope: string
+  non_goals: string
+  acceptance_criteria: string
+  dependencies: string
+  proposed_owner: string
+}
+
+export interface StrategyCoordinatorDecision {
+  confidence?: number | null
+  evidence_conflict?: boolean
+  strategy_version: number
+  issue_version: number
+  stage: string
+  next_owner: string | null
+  next_action: string
+  satisfied_conditions: string[]
+  missing_conditions: string[]
+  evidence_refs: string[]
+  clarification: string | null
+  idempotency_key: string
+  integration_status?: 'pending_w0056' | 'recorded'
+}
+
+export type IssueWorkflowAction =
+  | { type: 'apply_project'; reason?: string; idempotency_key?: string }
+  | { type: 'admit' | 'evaluate'; idempotency_key: string }
+  | { type: 'upgrade_strategy'; reason: string; idempotency_key: string }
+  | { type: 'record_coordinator_decision'; decision: StrategyCoordinatorDecision; idempotency_key: string }
+  | { type: 'set_stage_state'; node_id: string; state: 'waiting' | 'blocked' | 'ready'; reason: string; idempotency_key: string }
+  | {
+      type: 'decide_node'
+      node_id: string
+      action: 'approve' | 'reject' | 'force_advance'
+      reason?: string
+      idempotency_key: string
+      rework_to?: 'development_preparation' | 'development_implementation'
+    }
 
 export interface AutomationProject {
   id: string | number;

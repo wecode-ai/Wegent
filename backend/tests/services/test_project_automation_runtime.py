@@ -251,7 +251,7 @@ async def test_unbound_issue_does_not_dispatch_multiple_matching_automations(
     item_query.filter.return_value = item_query
     item_query.one_or_none.return_value = SimpleNamespace(metadata_json={})
     db = MagicMock()
-    db.query.side_effect = [rule_query, item_query]
+    db.query.side_effect = [rule_query, item_query, rule_query]
     dispatch = AsyncMock()
     monkeypatch.setattr(project_automation_execution, "dispatch", dispatch)
     processor = ProjectAutomationProcessor(run_factory=MagicMock())
@@ -301,10 +301,12 @@ async def test_bound_issue_dispatches_only_its_matching_automation(monkeypatch):
     item_query = MagicMock()
     item_query.filter.return_value = item_query
     item_query.one_or_none.return_value = SimpleNamespace(
-        metadata_json={"workflow_automation": {"rule_id": "rule-1"}}
+        id="task-1",
+        version=1,
+        metadata_json={"workflow_automation": {"rule_id": "rule-1"}},
     )
     db = MagicMock()
-    db.query.side_effect = [rule_query, item_query]
+    db.query.side_effect = [item_query, rule_query, item_query]
     run = SimpleNamespace(
         id="run-1",
         task_id="",

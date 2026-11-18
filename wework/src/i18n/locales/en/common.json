@@ -5142,6 +5142,8 @@
     "work_type_backend": "Backend",
     "work_type_test": "Test",
     "workflow_settings": "Project item workflow",
+    "strategy_settings": "Collaboration strategy",
+    "strategy_admission_before_execution": "New Issues enter the inbox. Complete the definition and admit the Issue before starting stage work.",
     "item_statuses": "Item statuses",
     "statuses_fixed_hint": "The standalone first release uses five stable statuses. Work types are configurable per project.",
     "work_types": "Work types",
