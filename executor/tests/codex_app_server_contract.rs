@@ -1210,6 +1210,7 @@ async fn codex_app_server_engine_injects_request_mcp_config_overrides() {
     let messages = read_json_lines(&log_path);
     let args = messages[0]["args"].as_array().unwrap();
     assert!(!args.iter().filter_map(Value::as_str).any(|argument| argument.contains("Bearer task-token")));
+    assert!(args.iter().any(|argument| argument == "mcp_servers={}"));
     assert!(!args.iter().filter_map(Value::as_str).any(|argument|
         ["request-docs", "request-sensitive", "bot-shell", "sensitive-shell", "connector"]
             .iter().any(|name| argument.starts_with(&format!("mcp_servers.{name}.")))

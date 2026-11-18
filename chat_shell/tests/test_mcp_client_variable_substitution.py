@@ -13,12 +13,18 @@ StdioConnection, StreamableHttpConnection) which are plain dicts,
 so we use dict-style access (conn["key"]) not attribute access.
 """
 
+import asyncio
+import threading
 from unittest.mock import patch
 
 import pytest
-from chat_shell.tools.mcp.client import MCPClient, build_connections
 from langchain_core.tools import StructuredTool
 
+from chat_shell.tools.mcp.client import (
+    MCPClient,
+    build_connections,
+    wrap_tool_with_protection,
+)
 from shared.models.execution import ExecutionRequest
 
 
@@ -172,11 +178,39 @@ class TestMCPClientToolNamePrefix:
     """Tests that MCPClient uses the adapter's official server-name prefix."""
 
     @pytest.mark.asyncio
-    async def test_connect_enables_official_tool_name_prefix(self) -> None:
+    async def test_sync_timeout_returns_while_call_is_still_blocked(self) -> None:
+        release = threading.Event()
+        started = threading.Event()
+
+        def blocked_call() -> str:
+            """Simulate a synchronous server that never answers."""
+            started.set()
+            release.wait()
+            return "late response"
+
+        tool = wrap_tool_with_protection(
+            StructuredTool.from_function(func=blocked_call, name="blocked"),
+            timeout=0.01,
+        )
+        invocation = asyncio.create_task(asyncio.to_thread(tool.invoke, {}))
+        try:
+            result = await asyncio.wait_for(invocation, timeout=2.0)
+            assert started.is_set()
+            assert "timed out" in result
+            assert not release.is_set()
+        finally:
+            release.set()
+
+    @pytest.mark.asyncio
+    async def test_connect_enables_official_tool_name_prefix(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """MCP tools should be named with the official server_tool format."""
 
-        def list_files() -> str:
+        def list_files(fail: bool = False) -> str:
             """List files from the fake MCP server."""
+            if fail:
+                raise ConnectionError("private-credential-and-response-body")
             return "[]"
 
         class FakeMultiServerMCPClient:
@@ -189,8 +223,12 @@ class TestMCPClientToolNamePrefix:
             ) -> None:
                 self.connections = connections
                 self.tool_name_prefix = tool_name_prefix
+                if "startup-fails" in connections:
+                    raise ValueError("private-credential-and-response-body")
 
             async def get_tools(self, *, server_name: str | None = None):
+                if server_name == "denied":
+                    raise PermissionError("private-credential-and-response-body")
                 tool_name = (
                     f"{server_name}_list_files"
                     if self.tool_name_prefix
@@ -204,6 +242,9 @@ class TestMCPClientToolNamePrefix:
                 ]
 
         config = {
+            "malformed": {"type": "stdio"},
+            "startup-fails": {"url": "https://example.test/mcp"},
+            "denied": {"url": "https://example.test/mcp"},
             "connector": {
                 "type": "sse",
                 "url": "${{backend_api_url}}/mcp/connectors/sse",
@@ -222,3 +263,8 @@ class TestMCPClientToolNamePrefix:
             await client.connect()
 
         assert [tool.name for tool in client.get_tools()] == ["filesystem_list_files"]
+        tool = client.get_tools()[0]
+        assert "unavailable" in await tool.ainvoke({"fail": True})
+        assert "unavailable" in tool.invoke({"fail": True})
+        assert await tool.ainvoke({"fail": False}) == "[]"
+        assert "private-credential-and-response-body" not in caplog.text

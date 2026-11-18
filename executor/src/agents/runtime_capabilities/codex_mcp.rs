@@ -8,7 +8,9 @@ use toml_edit::{DocumentMut, Item, Table};
 
 use crate::{agents::claude_options::extract_claude_mcp_templates, protocol::ExecutionRequest};
 
-use super::mcp_environment::{append_stdio_environment, bind_context, resolve_context};
+use super::mcp_environment::{
+    append_stdio_environment, bind_available_context, resolve_context, retain_available_servers,
+};
 
 /// Called while holding the named Home execution lease. Store definitions once;
 /// bind task values through native thread RPC, never through disk or argv.
@@ -31,16 +33,21 @@ pub(super) fn prepare(
         .map_err(|_| "Invalid Codex config TOML")?;
     let config: Value =
         toml_edit::de::from_str(&content).map_err(|_| "Invalid Codex config TOML")?;
-    let mut servers: BTreeMap<String, Value> = serde_json::from_value(
+    let saved: Result<BTreeMap<String, Value>, _> = serde_json::from_value(
         config
             .get("mcp_servers")
             .cloned()
             .unwrap_or_else(|| json!({})),
-    )
-    .map_err(|_| "Invalid Codex mcp_servers table")?;
-    if servers.values().any(|server| !server.is_object()) {
-        return Err("Invalid Codex MCP server definition".to_owned());
-    }
+    );
+    let valid_table = saved.is_ok();
+    let mut servers = saved.unwrap_or_else(|_| {
+        super::mcp_environment::log_server_unavailable(
+            request,
+            "codex_mcps",
+            "configuration_table",
+        );
+        BTreeMap::new()
+    });
     let previous = servers.clone();
     let mut incoming = extract_claude_mcp_templates(request, &BTreeMap::new());
     super::preserve_explicit_mcp_approval_modes(request, &mut incoming);
@@ -53,15 +60,25 @@ pub(super) fn prepare(
         servers.insert(name, server);
     }
     prepare_runtime(&mut servers, request, thread_config)?;
-    if servers != previous {
-        update_servers(&mut document, &previous, &servers)?;
-        crate::agents::codex::replace_config(&path, document.to_string())?;
-    }
+    let config_changed = if valid_table && servers != previous {
+        let result = update_servers(&mut document, &previous, &servers)
+            .and_then(|_| crate::agents::codex::replace_config(&path, document.to_string()));
+        if result.is_err() {
+            super::mcp_environment::log_server_unavailable(
+                request,
+                "codex_mcps",
+                "configuration_write",
+            );
+        }
+        result.is_ok()
+    } else {
+        false
+    };
     let mut fields = crate::logging::task_fields(&request.task_id, &request.subtask_id);
     fields.extend([
         ("config_path", path.display().to_string()),
         ("server_count", servers.len().to_string()),
-        ("config_changed", (servers != previous).to_string()),
+        ("config_changed", config_changed.to_string()),
     ]);
     crate::logging::log_executor_event("codex MCP config merged", &fields);
     Ok(())
@@ -82,10 +99,16 @@ fn normalize_templates(
     request: &ExecutionRequest,
 ) -> Result<(), String> {
     remove_managed_servers(servers);
-    super::mcp_environment::prepare_context(servers, request)?;
-    for server in servers.values_mut() {
-        *server = native_definition(server.clone())?;
-    }
+    retain_available_servers(servers, request, "native_configuration", |name, server| {
+        let mut candidate = BTreeMap::from([(name.to_owned(), server.clone())]);
+        super::mcp_environment::prepare_context(&mut candidate, request)?;
+        let Some(available) = candidate.remove(name) else {
+            return Ok(false);
+        };
+        *server = native_definition(available)?;
+        toml_edit::ser::to_document(server).map_err(|_| "Cannot encode Codex MCP definition")?;
+        Ok(true)
+    });
     Ok(())
 }
 
@@ -109,14 +132,26 @@ fn prepare_runtime(
 ) -> Result<(), String> {
     remove_managed_servers(servers);
     let mut environment = BTreeMap::new();
-    bind_context(servers, request, &mut environment)?;
+    bind_available_context(servers, request, &mut environment);
     let mut runtime = Map::new();
-    for (name, definition) in servers.iter() {
-        let mut resolved = definition.clone();
-        resolve_context(&mut resolved, &environment)?;
-        append_stdio_environment(name, &resolved, &mut runtime)?;
-        runtime.insert(super::toml_key_path(&["mcp_servers", name]), resolved);
-    }
+    retain_available_servers(
+        servers,
+        request,
+        "runtime_configuration",
+        |name, definition| {
+            let mut resolved = definition.clone();
+            resolve_context(&mut resolved, &environment)?;
+            native_definition(resolved.clone())?;
+            crate::mcp_utils::validate_mcp_server_definition(&resolved)?;
+            // A connector is a capability, never a prerequisite for the whole turn.
+            resolved["required"] = json!(false);
+            let mut staged = Map::new();
+            append_stdio_environment(name, &resolved, &mut staged)?;
+            staged.insert(super::toml_key_path(&["mcp_servers", name]), resolved);
+            runtime.extend(staged);
+            Ok(true)
+        },
+    );
     thread_config.extend(runtime);
     Ok(())
 }

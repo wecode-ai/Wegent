@@ -2126,17 +2126,6 @@ fn log_codex_mcp_startup_status(message: &Value, process_generation: u64) {
                     .is_some_and(|value| !value.is_null())
                     .to_string(),
             ),
-            (
-                "failure_reason",
-                params["failureReason"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_owned(),
-            ),
-            (
-                "error",
-                diagnostics::redact_diagnostic_text(params["error"].as_str().unwrap_or_default()),
-            ),
         ],
     );
 }
@@ -3415,12 +3404,6 @@ async fn read_shared_turn_notifications(
         if !notification_belongs_to_thread(client, &message, thread_id).await {
             continue;
         }
-        if let Some(error) = required_mcp_startup_failure(&message) {
-            if let Some(sender) = &options.notifications {
-                let _ = sender.send(message);
-            }
-            return Err(error);
-        }
 
         let notification_turn_id = root_turn_notification_id(&message, state);
         let active_turn_update = observed_active_turn_id(
@@ -3740,35 +3723,6 @@ fn latest_in_progress_turn_id(response: &Value) -> Option<String> {
         .and_then(|turn| turn.get("id"))
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
-}
-
-fn required_mcp_startup_failure(message: &Value) -> Option<String> {
-    if message.get("method").and_then(Value::as_str) != Some("mcpServer/startupStatus/updated") {
-        return None;
-    }
-    let params = message_params(message);
-    if params.get("name").and_then(Value::as_str)
-        != Some(crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME)
-    {
-        return None;
-    }
-    let status = params
-        .get("status")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    if !matches!(status, "failed" | "error") {
-        return None;
-    }
-    let reason = params
-        .get("failureReason")
-        .or_else(|| params.get("error"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty());
-    Some(match reason {
-        Some(reason) => format!("required project-space capability failed to connect: {reason}"),
-        None => format!("required project-space capability failed to connect ({status})"),
-    })
 }
 
 fn should_wait_for_goal_continuation(
@@ -5827,7 +5781,14 @@ fn configure_global_mcps(
     request: &ExecutionRequest,
     thread_config: &mut Map<String, Value>,
 ) -> Result<(), String> {
-    let mcps = runtime_capabilities::load_global_mcp_records()?;
+    let mcps = runtime_capabilities::load_global_mcp_records().unwrap_or_else(|_| {
+        runtime_capabilities::mcp_environment::log_server_unavailable(
+            request,
+            "global_mcps",
+            "registry",
+        );
+        BTreeMap::new()
+    });
     let requested = runtime_capabilities::collect_request_mcp_servers(request);
     let mut servers = mcps
         .into_iter()
@@ -5867,8 +5828,15 @@ fn cdp_browser_mcp_config_overrides(
     if !crate::browser_mcp::bridge_is_available() {
         return Ok((overrides, BTreeMap::new()));
     }
-    let endpoint = crate::browser_mcp::http::browser_mcp_http_endpoint()
-        .ok_or_else(|| "browser MCP endpoint is not ready".to_owned())?;
+    let Some(endpoint) = crate::browser_mcp::http::browser_mcp_http_endpoint() else {
+        runtime_capabilities::mcp_environment::log_server_unavailable(
+            request,
+            server_name,
+            "endpoint",
+        );
+        overrides.push(format!("{key}.enabled=false"));
+        return Ok((overrides, BTreeMap::new()));
+    };
     let auth_env_name = "WEGENT_CODEX_BROWSER_MCP_AUTHORIZATION";
     let env = BTreeMap::from([(
         auth_env_name.to_owned(),
@@ -5876,6 +5844,7 @@ fn cdp_browser_mcp_config_overrides(
     )]);
     overrides.extend([
         format!("{key}.enabled=true"),
+        format!("{key}.required=false"),
         format!("{key}.url={}", toml_value(&endpoint.url)),
         format!(
             "{}={}",
@@ -5949,6 +5918,14 @@ fn computer_use_mcp_config_overrides() -> Vec<String> {
         env::current_exe().unwrap_or_else(|_| executor_home().join("bin/wegent-executor"));
     vec![
         format!(
+            "{}=false",
+            toml_key_path(&[
+                "mcp_servers",
+                WEWORK_COMPUTER_USE_MCP_SERVER_NAME,
+                "required"
+            ])
+        ),
+        format!(
             "{}={}",
             toml_key_path(&[
                 "mcp_servers",
@@ -5994,38 +5971,47 @@ fn managed_wework_mcp_config_overrides(
     request: &ExecutionRequest,
 ) -> Result<(Vec<String>, BTreeMap<String, String>), String> {
     let mut overrides = Vec::new();
-    let endpoint = crate::task_runtime::mcp_http::space_mcp_http_endpoint()
-        .ok_or_else(|| "Wework MCP endpoint is not ready".to_owned())?;
+    crate::task_runtime::mcp::has_bound_issue_context(request)?;
+    let Some(endpoint) = crate::task_runtime::mcp_http::space_mcp_http_endpoint() else {
+        runtime_capabilities::mcp_environment::log_server_unavailable(
+            request,
+            "wework_space",
+            "endpoint",
+        );
+        for name in [
+            crate::workbench_control::SERVER_NAME,
+            crate::task_runtime::mcp::NOTIFICATIONS_MCP_SERVER_NAME,
+            crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME,
+            crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME,
+        ] {
+            overrides.push(format!(
+                "{}.enabled=false",
+                toml_key_path(&["mcp_servers", name])
+            ));
+        }
+        return Ok((overrides, BTreeMap::new()));
+    };
     let env = BTreeMap::from([(
         "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION".to_owned(),
         format!("Bearer {}", endpoint.token),
     )]);
-    if let Some(config) = crate::task_runtime::mcp::control_mcp_client_config(request)? {
-        append_managed_mcp_config(
-            crate::workbench_control::SERVER_NAME,
-            config,
-            &mut overrides,
-        );
-    }
-    if let Some(config) = crate::task_runtime::mcp::notifications_mcp_client_config(request)? {
-        append_managed_mcp_config(
-            crate::task_runtime::mcp::NOTIFICATIONS_MCP_SERVER_NAME,
-            config,
-            &mut overrides,
-        );
-    }
-    if let Some(config) = crate::task_runtime::mcp::stand_in_mcp_client_config(request)? {
-        append_managed_mcp_config(
-            crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME,
-            config,
-            &mut overrides,
-        );
-    }
-    append_managed_mcp_config(
+    let configs = runtime_capabilities::managed_mcp_configs(request)?;
+    for name in [
+        crate::workbench_control::SERVER_NAME,
+        crate::task_runtime::mcp::NOTIFICATIONS_MCP_SERVER_NAME,
+        crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME,
         crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME,
-        crate::task_runtime::mcp::space_mcp_client_config(request)?,
-        &mut overrides,
-    );
+    ] {
+        if !configs.contains_key(name) {
+            overrides.push(format!(
+                "{}.enabled=false",
+                toml_key_path(&["mcp_servers", name])
+            ));
+        }
+    }
+    for (name, config) in configs {
+        append_managed_mcp_config(name, config, &mut overrides);
+    }
     Ok((overrides, env))
 }
 
@@ -6037,6 +6023,7 @@ fn append_managed_mcp_config(
     let key = toml_key_path(&["mcp_servers", server_name]);
     overrides.extend([
         format!("{key}.enabled=true"),
+        format!("{key}.required=false"),
         format!("{key}.url={}", toml_value(&config.url)),
         format!(
             "{key}.tool_timeout_sec={}",
@@ -6234,9 +6221,19 @@ async fn prepare_codex_execution_request(
 
 async fn ensure_codex_mcp_endpoints() -> Result<(), String> {
     if crate::browser_mcp::bridge_is_available() {
-        crate::browser_mcp::http::ensure_browser_mcp_http_endpoint().await?;
+        if crate::browser_mcp::http::ensure_browser_mcp_http_endpoint()
+            .await
+            .is_err()
+        {
+            log_executor_event("browser MCP endpoint unavailable; execution continues", &[]);
+        }
     }
-    crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
+    if crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint()
+        .await
+        .is_err()
+    {
+        log_executor_event("Wework MCP endpoint unavailable; execution continues", &[]);
+    }
     Ok(())
 }
 

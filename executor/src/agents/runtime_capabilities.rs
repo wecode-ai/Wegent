@@ -413,7 +413,10 @@ pub async fn prepare_claude_runtime(
     let global_mcps = if super::instance_home::request_home(request).is_some() {
         BTreeMap::new()
     } else {
-        load_global_mcp_records()?
+        load_global_mcp_records().unwrap_or_else(|_| {
+            mcp_environment::log_server_unavailable(request, "global_mcps", "registry");
+            BTreeMap::new()
+        })
     };
     log_runtime_event(
         request,
@@ -430,7 +433,12 @@ pub async fn prepare_claude_runtime(
             ),
         ],
     );
-    crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint().await?;
+    if crate::task_runtime::mcp_http::ensure_space_mcp_http_endpoint()
+        .await
+        .is_err()
+    {
+        mcp_environment::log_server_unavailable(request, "wework_space", "endpoint");
+    }
     spec = claude_mcp::prepare(&config_dir, request, &global_mcps, spec)?;
     log_runtime_event(
         request,
@@ -444,60 +452,66 @@ pub async fn prepare_claude_runtime(
     Ok(spec)
 }
 
+pub(super) fn managed_mcp_configs(
+    request: &ExecutionRequest,
+) -> Result<BTreeMap<&'static str, crate::task_runtime::mcp::SpaceMcpClientConfig>, String> {
+    crate::task_runtime::mcp::has_bound_issue_context(request)?;
+    let mut configs = BTreeMap::new();
+    for (name, result) in [
+        (
+            crate::workbench_control::SERVER_NAME,
+            crate::task_runtime::mcp::control_mcp_client_config(request),
+        ),
+        (
+            crate::task_runtime::mcp::NOTIFICATIONS_MCP_SERVER_NAME,
+            crate::task_runtime::mcp::notifications_mcp_client_config(request),
+        ),
+        (
+            crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME,
+            crate::task_runtime::mcp::stand_in_mcp_client_config(request),
+        ),
+        (
+            crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME,
+            crate::task_runtime::mcp::space_mcp_client_config(request).map(Some),
+        ),
+    ] {
+        match result {
+            Ok(Some(config)) => {
+                configs.insert(name, config);
+            }
+            Ok(None) => {}
+            Err(_) => mcp_environment::log_server_unavailable(request, name, "registration"),
+        }
+    }
+    Ok(configs)
+}
+
 fn inject_managed_wework_mcps(
     request: &ExecutionRequest,
     mcp_servers: &mut BTreeMap<String, Value>,
 ) -> Result<(), String> {
-    mcp_servers.remove(crate::workbench_control::SERVER_NAME);
-    if let Some(config) = crate::task_runtime::mcp::control_mcp_client_config(request)? {
+    for name in [
+        crate::workbench_control::SERVER_NAME,
+        crate::task_runtime::mcp::NOTIFICATIONS_MCP_SERVER_NAME,
+        crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME,
+        crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME,
+    ] {
+        mcp_servers.remove(name);
+    }
+    for (name, config) in managed_mcp_configs(request)? {
+        let timeout = if name == crate::workbench_control::SERVER_NAME {
+            crate::workbench_control::read_budget::TOOL_TIMEOUT_SECONDS
+        } else {
+            crate::task_runtime::mcp::SPACE_MCP_TOOL_TIMEOUT_SECONDS
+        };
         mcp_servers.insert(
-            crate::workbench_control::SERVER_NAME.to_owned(),
+            name.to_owned(),
             json!({
                 "type": "http", "url": config.url, "headers": config.headers,
-                "timeout": crate::workbench_control::read_budget::TOOL_TIMEOUT_SECONDS * 1000,
+                "timeout": timeout * 1000,
             }),
         );
     }
-    if let Some(config) = crate::task_runtime::mcp::stand_in_mcp_client_config(request)? {
-        mcp_servers.insert(
-            crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME.into(),
-            json!({
-                "type":"http","url":config.url,"headers":config.headers,
-                "timeout":crate::task_runtime::mcp::SPACE_MCP_TOOL_TIMEOUT_SECONDS * 1000
-            }),
-        );
-    }
-    if let Some(config) = crate::task_runtime::mcp::notifications_mcp_client_config(request)? {
-        let headers = config
-            .headers
-            .into_iter()
-            .map(|(name, value)| (name, Value::String(value)))
-            .collect::<Map<String, Value>>();
-        mcp_servers.insert(
-            crate::task_runtime::mcp::NOTIFICATIONS_MCP_SERVER_NAME.to_owned(),
-            json!({
-                "type": "http",
-                "url": config.url,
-                "headers": headers,
-                "timeout": crate::task_runtime::mcp::SPACE_MCP_TOOL_TIMEOUT_SECONDS * 1000,
-            }),
-        );
-    }
-    let config = crate::task_runtime::mcp::space_mcp_client_config(request)?;
-    let headers = config
-        .headers
-        .into_iter()
-        .map(|(name, value)| (name, Value::String(value)))
-        .collect::<Map<String, Value>>();
-    mcp_servers.insert(
-        crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME.to_owned(),
-        json!({
-            "type": "http",
-            "url": config.url,
-            "headers": headers,
-            "timeout": crate::task_runtime::mcp::SPACE_MCP_TOOL_TIMEOUT_SECONDS * 1000,
-        }),
-    );
     Ok(())
 }
 

@@ -98,7 +98,9 @@ fn remote_mcp_with_empty_command_connects_by_url() {
                 "url": "https://example.test/mcp", "http_headers": {"X-Test": "remote"},
                 "default_tools_approval_mode": "approve"
             });
-            assert_eq!(runtime["mcp_servers.remote"], expected);
+            let mut runtime_expected = expected.clone();
+            runtime_expected["required"] = json!(false);
+            assert_eq!(runtime["mcp_servers.remote"], runtime_expected);
             assert!(!runtime.contains_key("mcp_servers.remote.env"));
             let content = fs::read_to_string(home.path().join("config.toml")).unwrap();
             let persisted: Value = toml_edit::de::from_str(&content).unwrap();
@@ -179,8 +181,13 @@ fn stable_config_retains_omitted_services_and_refreshes_context() {
         assert_eq!(before.ino(), after.ino());
     }
     request.auth_token = None;
-    assert!(prepare(home.path(), &request, &mut Map::new()).is_err());
-    assert_eq!(fs::read_to_string(&path).unwrap(), content);
+    let mut runtime = Map::new();
+    prepare(home.path(), &request, &mut runtime).unwrap();
+    assert!(runtime.is_empty());
+    let persisted: Value = toml_edit::de::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(persisted["model"], "my-model");
+    assert!(persisted["mcp_servers"].get("skill-shell").is_none());
+    assert!(persisted["mcp_servers"].get("skill-http").is_none());
     assert!(!home.path().join("mcp.json").exists());
 }
 
@@ -221,17 +228,45 @@ fn same_name_replaces_transport_and_keeps_other_settings_including_inline_tables
 fn invalid_config_or_request_is_not_overwritten() {
     let home = tempfile::tempdir().unwrap();
     let path = home.path().join("config.toml");
-    for content in ["[broken", "mcp_servers = 42", "[mcp_servers]\nbad = 42"] {
+    for content in ["[broken"] {
         fs::write(&path, content).unwrap();
         assert!(prepare(home.path(), &ExecutionRequest::default(), &mut Map::new()).is_err());
         assert_eq!(fs::read_to_string(&path).unwrap(), content);
     }
+    fs::write(&path, "model = 'keep'\nmcp_servers = 42").unwrap();
+    let mut runtime = Map::new();
+    let request = ExecutionRequest {
+        mcp_servers: vec![json!({"name":"healthy", "command":"node"})],
+        ..Default::default()
+    };
+    prepare(home.path(), &request, &mut runtime).unwrap();
+    assert_eq!(runtime["mcp_servers.healthy"]["command"], "node");
+    assert_eq!(runtime["mcp_servers.healthy"]["required"], false);
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "model = 'keep'\nmcp_servers = 42"
+    );
+    fs::write(
+        &path,
+        "model = 'keep'\n[mcp_servers]\nbad = 42\nkeep = {command='keep', env_vars=['PATH', {name='CONFIG', source='local'}]}",
+    )
+    .unwrap();
+    let mut runtime = Map::new();
+    prepare(home.path(), &ExecutionRequest::default(), &mut runtime).unwrap();
+    assert!(!runtime.contains_key("mcp_servers.bad"));
+    assert_eq!(runtime["mcp_servers.keep"]["command"], "keep");
+    assert_eq!(
+        runtime["mcp_servers.keep"]["env_vars"],
+        json!(["PATH", {"name":"CONFIG", "source":"local"}])
+    );
     fs::write(&path, "model = 'keep'").unwrap();
     let request = ExecutionRequest {
         mcp_servers: vec![json!({"name":"bad", "command":"node", "env":{"TOKEN":false}})],
         ..Default::default()
     };
-    assert!(prepare(home.path(), &request, &mut Map::new()).is_err());
+    let mut runtime = Map::new();
+    prepare(home.path(), &request, &mut runtime).unwrap();
+    assert!(!runtime.contains_key("mcp_servers.bad"));
     assert_eq!(fs::read_to_string(&path).unwrap(), "model = 'keep'");
 }
 

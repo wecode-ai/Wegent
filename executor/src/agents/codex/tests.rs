@@ -96,10 +96,9 @@ fn global_mcp_backend_context_rebinds_without_argv_credentials() {
         backend_url: Some("https://backend.example/api".into()),
         ..Default::default()
     };
-    assert_eq!(
-        configure_global_mcps(&request, &mut Map::new()).unwrap_err(),
-        "Missing MCP execution context: task_token"
-    );
+    let mut runtime = Map::new();
+    configure_global_mcps(&request, &mut runtime).unwrap();
+    assert!(!runtime.contains_key("mcp_servers.connector"));
 }
 
 #[test]
@@ -4102,48 +4101,6 @@ fn codex_rejects_incomplete_dispatch_instead_of_exposing_personal_tools() {
         }),
     );
     assert!(build_codex_launch_config(&request).is_err());
-}
-
-#[test]
-fn required_project_space_startup_failure_terminates_the_turn() {
-    let message = json!({
-        "method": "mcpServer/startupStatus/updated",
-        "params": {
-            "threadId": "thread-1",
-            "name": "wework_space",
-            "status": "failed",
-            "failureReason": "HTTP 401"
-        }
-    });
-
-    assert_eq!(
-        required_mcp_startup_failure(&message).as_deref(),
-        Some("required project-space capability failed to connect: HTTP 401")
-    );
-    assert!(required_mcp_startup_failure(&json!({
-        "method": "mcpServer/startupStatus/updated",
-        "params": {
-            "name": "wework_space",
-            "status": "ready"
-        }
-    }))
-    .is_none());
-    assert!(required_mcp_startup_failure(&json!({
-        "method": "mcpServer/startupStatus/updated",
-        "params": {
-            "name": "wework_space",
-            "status": "cancelled"
-        }
-    }))
-    .is_none());
-    assert!(required_mcp_startup_failure(&json!({
-        "method": "mcpServer/startupStatus/updated",
-        "params": {
-            "name": "another_server",
-            "status": "failed"
-        }
-    }))
-    .is_none());
 }
 
 #[test]

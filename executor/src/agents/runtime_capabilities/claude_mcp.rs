@@ -12,10 +12,33 @@ use crate::{
 };
 
 #[cfg(test)]
+use super::mcp_environment::bind_context;
+#[cfg(test)]
 use super::mcp_environment::context_variable;
-use super::mcp_environment::{bind_context, visit_strings};
+use super::mcp_environment::{bind_available_context, retain_available_servers, visit_strings};
 
 pub(super) fn prepare(
+    home: &Path,
+    request: &ExecutionRequest,
+    global_mcps: &BTreeMap<String, Value>,
+    spec: CommandSpec,
+) -> Result<CommandSpec, String> {
+    crate::task_runtime::mcp::has_bound_issue_context(request)?;
+    match prepare_configuration(home, request, global_mcps, spec.clone()) {
+        Ok(prepared) => Ok(prepared),
+        Err(_) => {
+            super::mcp_environment::log_server_unavailable(
+                request,
+                "claude_mcps",
+                "configuration_file",
+            );
+            // Do not pass an unreadable or unsafe MCP file to the native child.
+            Ok(spec.arg("--mcp-config").arg(r#"{"mcpServers":{}}"#))
+        }
+    }
+}
+
+fn prepare_configuration(
     home: &Path,
     request: &ExecutionRequest,
     global_mcps: &BTreeMap<String, Value>,
@@ -37,7 +60,11 @@ pub(super) fn prepare(
         servers.remove(name);
     }
     let mut environment = BTreeMap::new();
-    bind_context(&mut servers, request, &mut environment)?;
+    retain_available_servers(&mut servers, request, "configuration", |_, server| {
+        crate::mcp_utils::validate_mcp_server_definition(server)?;
+        Ok(true)
+    });
+    bind_available_context(&mut servers, request, &mut environment);
     let mut managed = BTreeMap::new();
     super::inject_managed_wework_mcps(request, &mut managed)?;
     for (name, server) in &mut managed {
@@ -232,14 +259,17 @@ mod tests {
         assert!(!second.args().join(" ").contains("synthetic-second-secret"));
 
         request.auth_token = None;
-        assert!(prepare(
+        let spec = prepare(
             home.path(),
             &request,
             &BTreeMap::new(),
-            CommandSpec::new("claude")
+            CommandSpec::new("claude"),
         )
-        .is_err());
-        assert_eq!(fs::read_to_string(path).unwrap(), content);
+        .unwrap();
+        assert!(!spec.envs().contains_key(&context_variable("auth_token")));
+        assert!(!spec.envs().contains_key(&context_variable("task_id")));
+        let config: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+        assert!(config["mcpServers"].get("skill-tool").is_none());
     }
 
     #[test]
@@ -270,14 +300,38 @@ mod tests {
             json!({"type": "stdio", "command": "new"})
         );
         fs::write(&path, "{broken").unwrap();
-        assert!(prepare(
+        let spec = prepare(
             home.path(),
             &request,
             &BTreeMap::new(),
-            CommandSpec::new("claude")
+            CommandSpec::new("claude"),
         )
-        .is_err());
-        assert_eq!(fs::read_to_string(path).unwrap(), "{broken");
+        .unwrap();
+        assert!(spec
+            .args()
+            .windows(2)
+            .any(|args| args[0] == "--mcp-config" && args[1] == r#"{"mcpServers":{}}"#));
+        assert!(spec.envs().is_empty());
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{broken");
+        #[cfg(unix)]
+        {
+            let external = home.path().join("external-mcp.json");
+            fs::write(&external, "protected configuration").unwrap();
+            fs::remove_file(&path).unwrap();
+            std::os::unix::fs::symlink(&external, &path).unwrap();
+            let spec = prepare(
+                home.path(),
+                &request,
+                &BTreeMap::new(),
+                CommandSpec::new("claude"),
+            )
+            .unwrap();
+            assert!(spec.args().iter().any(|arg| arg == r#"{"mcpServers":{}}"#));
+            assert_eq!(
+                fs::read_to_string(external).unwrap(),
+                "protected configuration"
+            );
+        }
     }
 
     #[test]

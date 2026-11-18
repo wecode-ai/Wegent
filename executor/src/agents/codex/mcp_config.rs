@@ -7,6 +7,9 @@ pub(super) fn configure_task_mcp(
     request: &ExecutionRequest,
     launch: &mut CodexLaunchConfig,
 ) -> Result<(), String> {
+    // Saved MCP definitions are validated and rebound through thread RPC.
+    // Prevent their unbound or malformed table from being loaded at child startup.
+    launch.config_overrides.push("mcp_servers={}".to_owned());
     if super::super::instance_home::request_home(request).is_none() {
         configure_global_mcps(request, &mut launch.thread_config)?;
     }

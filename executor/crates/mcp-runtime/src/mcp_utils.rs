@@ -17,6 +17,91 @@ pub fn is_stdio_mcp_server(server: &Value) -> bool {
     }
 }
 
+pub fn validate_mcp_server_definition(server: &Value) -> Result<(), String> {
+    let object = server.as_object().ok_or("Invalid MCP definition")?;
+    let transport = if is_stdio_mcp_server(server) {
+        "command"
+    } else {
+        "url"
+    };
+    if !object
+        .get(transport)
+        .and_then(Value::as_str)
+        .is_some_and(|text| !text.trim().is_empty())
+    {
+        return Err(format!("MCP definition requires {transport}"));
+    }
+    validate_mcp_fields(
+        object,
+        &["args", "enabled_tools", "disabled_tools", "scopes"],
+        |value| {
+            value
+                .as_array()
+                .is_some_and(|items| items.iter().all(Value::is_string))
+        },
+    )?;
+    validate_mcp_fields(object, &["env_vars"], |value| {
+        value
+            .as_array()
+            .is_some_and(|items| items.iter().all(valid_mcp_env_variable))
+    })?;
+    validate_mcp_fields(
+        object,
+        &["headers", "http_headers", "env_http_headers", "env"],
+        |value| {
+            value
+                .as_object()
+                .is_some_and(|items| items.values().all(Value::is_string))
+        },
+    )?;
+    validate_mcp_fields(
+        object,
+        &[
+            "enabled",
+            "required",
+            "alwaysLoad",
+            "supports_parallel_tool_calls",
+        ],
+        Value::is_boolean,
+    )?;
+    validate_mcp_fields(
+        object,
+        &["startup_timeout_sec", "tool_timeout_sec", "timeout"],
+        |value| {
+            value
+                .as_f64()
+                .is_some_and(|seconds| std::time::Duration::try_from_secs_f64(seconds).is_ok())
+        },
+    )
+}
+
+fn validate_mcp_fields(
+    object: &serde_json::Map<String, Value>,
+    fields: &[&str],
+    valid: fn(&Value) -> bool,
+) -> Result<(), String> {
+    for field in fields {
+        if object
+            .get(*field)
+            .filter(|value| !value.is_null())
+            .is_some_and(|value| !valid(value))
+        {
+            return Err(format!("Invalid MCP {field}"));
+        }
+    }
+    Ok(())
+}
+
+fn valid_mcp_env_variable(item: &Value) -> bool {
+    item.is_string()
+        || item.as_object().is_some_and(|object| {
+            object.get("name").is_some_and(Value::is_string)
+                && object
+                    .get("source")
+                    .map_or(true, |value| value.is_null() || value.is_string())
+        })
+}
+
 pub fn extract_mcp_servers_config(config: &Value) -> Option<&Value> {
     let object = config.as_object()?;
     let mut candidates = Vec::new();

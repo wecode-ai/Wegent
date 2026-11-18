@@ -35,12 +35,6 @@ pub fn merge_claude_mcp_servers(
                 .unwrap_or_else(|| Value::Object(Map::new()));
             let servers: BTreeMap<String, Value> = serde_json::from_value(servers)
                 .map_err(|_| format!("invalid mcpServers map: {}", config_path.display()))?;
-            if servers.values().any(|server| !server.is_object()) {
-                return Err(format!(
-                    "invalid MCP server config: {}",
-                    config_path.display()
-                ));
-            }
             servers
         }
         Err(error) if error.kind() == ErrorKind::NotFound => BTreeMap::new(),
@@ -493,12 +487,7 @@ mod mcp_config_tests {
     fn invalid_existing_config_is_reported_without_discarding_it() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("mcp.json");
-        for content in [
-            "{broken",
-            "[]",
-            "{\"mcpServers\":[]}",
-            "{\"mcpServers\":{\"docs\":null}}",
-        ] {
+        for content in ["{broken", "[]", "{\"mcpServers\":[]}"] {
             fs::write(&path, content).unwrap();
 
             let result = merge_claude_mcp_servers(&path, BTreeMap::new());
@@ -506,5 +495,12 @@ mod mcp_config_tests {
             assert!(result.is_err());
             assert_eq!(fs::read_to_string(&path).unwrap(), content);
         }
+        // Individual definitions are validated by runtime preparation so one
+        // invalid service does not prevent loading the rest of the table.
+        let content = "{\"mcpServers\":{\"docs\":null}}";
+        fs::write(&path, content).unwrap();
+        let merged = merge_claude_mcp_servers(&path, BTreeMap::new()).unwrap();
+        assert_eq!(merged["docs"], Value::Null);
+        assert_eq!(fs::read_to_string(&path).unwrap(), content);
     }
 }

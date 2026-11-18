@@ -88,9 +88,9 @@ impl CodexAppServerClient {
         &self,
         connections: &[(String, String)],
         launch_config: Option<&CodexLaunchConfig>,
-    ) -> Result<Vec<Value>, String> {
+    ) -> Vec<Result<Value, String>> {
         // Exact snapshots inspect existing clients without separate discovery.
-        futures_util::future::try_join_all(connections.iter().map(|(thread, server)| {
+        futures_util::future::join_all(connections.iter().map(|(thread, server)| {
             self.request_with_thread_admission(
                 "mcpServerStatus/list",
                 json!({"threadId":thread,"serverName":server,"detail":"toolsAndAuthOnly"}),
@@ -135,9 +135,22 @@ impl CodexAppServerClient {
         }
         let statuses = self
             .mcp_connection_snapshots(&connections, launch_config)
-            .await?;
+            .await;
         let mut unavailable = Vec::new();
         for ((thread, server), status) in connections.iter().zip(statuses) {
+            let status = match status {
+                Ok(status) => status,
+                Err(_) => {
+                    log_executor_event(
+                        "codex MCP status unavailable; execution continues",
+                        &[
+                            ("thread_id", thread.clone()),
+                            ("server_name", server.clone()),
+                        ],
+                    );
+                    continue;
+                }
+            };
             let state = status["data"]
                 .as_array()
                 .into_iter()
@@ -163,8 +176,20 @@ impl CodexAppServerClient {
                 ("servers", unavailable.join(",")),
             ],
         );
-        self.request_with_thread_admission("config/mcpServer/reload", Value::Null, launch_config)
-            .await?;
+        if self
+            .request_with_thread_admission("config/mcpServer/reload", Value::Null, launch_config)
+            .await
+            .is_err()
+        {
+            log_executor_event(
+                "codex MCP reload unavailable; execution continues",
+                &[
+                    ("thread_id", thread_id.to_owned()),
+                    ("servers", unavailable.join(",")),
+                ],
+            );
+            return Ok(());
+        }
         // Optional MCPs may be omitted while startup is pending. Wait for native
         // startup results before assembling the next turn's tool catalog.
         let refreshed: Vec<_> = unavailable
@@ -172,7 +197,7 @@ impl CodexAppServerClient {
             .map(|server| (thread_id.to_owned(), server))
             .collect();
         self.mcp_connection_snapshots(&refreshed, launch_config)
-            .await?;
+            .await;
         Ok(())
     }
 }
