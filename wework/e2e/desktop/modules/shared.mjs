@@ -1612,20 +1612,23 @@ async function selectE2EModel(
     const selectedProviderId = await control.command('getAttribute', modelSelectorButton, {
       value: 'data-model-provider-id',
     })
-    console.info('[desktop-e2e-model-selection]', {
-      selector: modelSelectorButton,
-      targetModelIds: modelIds,
-      targetLabels: labels,
-      expectedProviderId,
-      selectedModelLabel,
-      selectedProviderId,
-      triggers: await control.command('getElementMetrics', modelSelectorButton, {
-        value: JSON.stringify({
-          includeText: true,
-          attributeNames: ['data-model-provider-id'],
+    console.info(
+      '[desktop-e2e-model-selection]',
+      JSON.stringify({
+        selector: modelSelectorButton,
+        targetModelIds: modelIds,
+        targetLabels: labels,
+        expectedProviderId,
+        selectedModelLabel,
+        selectedProviderId,
+        triggers: await control.command('getElementMetrics', modelSelectorButton, {
+          value: JSON.stringify({
+            includeText: true,
+            attributeNames: ['data-model-provider-id'],
+          }),
         }),
-      }),
-    })
+      })
+    )
     if (
       labels.some(label => selectedModelLabel.includes(label)) &&
       (!expectedProviderId || selectedProviderId === expectedProviderId)

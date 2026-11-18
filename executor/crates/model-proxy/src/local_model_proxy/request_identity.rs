@@ -182,6 +182,10 @@ pub(super) fn request_thread_identity(body: &[u8]) -> Option<RequestThreadIdenti
         });
     Some(RequestThreadIdentity {
         thread_id,
+        turn_id: metadata
+            .get("turn_id")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
         parent_thread_id,
     })
 }

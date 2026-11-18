@@ -988,6 +988,7 @@ class ProjectChatService:
         user_id: int,
         user_name: str,
         request: ProjectChatSend,
+        commit: bool = True,
     ) -> ProjectChatWriteResult:
         project = self._require_scope(
             db,
@@ -1120,7 +1121,10 @@ class ProjectChatService:
                 )
                 item.version += 1
                 self._queue_loop_item_change(db, item)
-        self._commit(db)
+        if commit:
+            self._commit(db)
+        else:
+            db.flush()
         db.refresh(row)
         return ProjectChatWriteResult(self.to_view(row, db=db), created=True)
 

@@ -73,7 +73,7 @@ async function waitForProcessExit(child, timeoutMs, { requireExitEvent = false }
   }
 }
 
-function processExitDiagnostics(child) {
+export function processExitDiagnostics(child) {
   const diagnostics = { pid: child.pid, exitCode: child.exitCode, signalCode: child.signalCode }
   if (process.platform !== 'linux' || !Number.isInteger(child.pid)) return diagnostics
   try {
@@ -87,6 +87,29 @@ function processExitDiagnostics(child) {
       parentProcessId: fields[1],
       processGroupId: fields[2],
       sessionId: fields[3],
+    }
+    try {
+      const directory = `/proc/${child.pid}/task`
+      const threadIds = readdirSync(directory)
+        .filter(id => /^\d+$/.test(id))
+        .sort((a, b) => Number(a) - Number(b))
+      const read = path => {
+        try {
+          return readFileSync(path, 'utf8').trim()
+        } catch (error) {
+          return `unavailable:${error.code ?? error.name}`
+        }
+      }
+      diagnostics.linux.threadCount = threadIds.length
+      diagnostics.linux.threads = threadIds.slice(0, 64).map(id => ({
+        id: Number(id),
+        name: read(`${directory}/${id}/comm`),
+        state: linuxProcessStateFromStat(read(`${directory}/${id}/stat`)),
+        waitChannel: read(`${directory}/${id}/wchan`),
+        kernelStack: read(`${directory}/${id}/stack`),
+      }))
+    } catch (error) {
+      diagnostics.linux.threadReadError = error.code ?? error.name
     }
   } catch (error) {
     diagnostics.linux = { readError: error.code ?? String(error) }
