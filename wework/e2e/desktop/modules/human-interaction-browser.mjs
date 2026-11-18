@@ -75,7 +75,9 @@ export async function verifyHumanInteractionOverBrowser({
     text: '已回复',
     timeoutMs: modelResponseTimeoutMs,
   })
-  const restoredDeadline = Date.now() + uiTimeoutMs
+  // The reply acknowledgement can precede the model turn that releases the
+  // overlay, so allow the full model-response budget for interaction recovery.
+  const restoredDeadline = Date.now() + Math.max(uiTimeoutMs, modelResponseTimeoutMs)
   do {
     pointerEvents = await control.command('getComputedStyleValue', HOST, {
       value: 'pointer-events',
