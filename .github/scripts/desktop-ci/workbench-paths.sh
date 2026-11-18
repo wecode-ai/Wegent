@@ -205,8 +205,6 @@ classify_workbench_path() {
         select_target "core:collaboration-first-use"
       fi
       if [[ "$path" == wework/src/features/todo/CloudTodoWorkspace* ]]; then
-        select_target "core:collaboration-parent-board"
-        select_target "core:collaboration-board-move-recovery"
         select_target "core:collaboration-board-move-recovery"
       fi
       if [[ "$path" == wework/src/components/layout/useWorkbenchCloudProjectContext* ]]; then

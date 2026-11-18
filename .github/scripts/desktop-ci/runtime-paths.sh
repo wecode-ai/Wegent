@@ -440,7 +440,6 @@ classify_path() {
       select_target "core:collaboration-shared-core"
       select_target "core:collaboration-issue-archive"
       select_target "core:collaboration-first-use"
-      select_target "core:collaboration-first-use"
       select_collaboration_dispatch_checkpoints
       if [[ "$path" == packages/collaboration/src/project-agent-config/* || \
         "$path" == packages/collaboration/src/agent-form/runnerRouting* ]]; then
@@ -462,13 +461,12 @@ classify_path() {
       if [[ "$path" == packages/collaboration/src/conversation/useConversationScrollController* ]]; then
         select_target "core:follow-up-task-switch"
       fi
-      select_target "core:collaboration-parent-board"
+      select_target "core:collaboration-board-move-recovery"
       if [[ "$path" == packages/collaboration/src/composer/* ]]; then
         select_target "core:task-attachments"
       fi
       select_target "core:collaboration-shared-core"
       select_target "core:collaboration-issue-archive"
-      select_target "core:collaboration-first-use"
       select_target "core:collaboration-first-use"
       select_collaboration_dispatch_checkpoints
       select_target "core:collaboration-issue-comment-mention"
@@ -476,7 +474,6 @@ classify_path() {
       select_target "core:collaboration-issue-comment-attachments"
       select_target "core:collaboration-issue-attachment-preview"
       select_target "core:collaboration-issue-comment-notification"
-      select_target "core:collaboration-board-move-recovery"
       select_target "core:collaboration-board-move-recovery"
       select_target "core:collaboration-home-preload"
       select_target "core:board-transcript-followup"

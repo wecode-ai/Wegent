@@ -225,21 +225,13 @@ done
 unknown_feature_expected="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "wework/src/features/todo/UnclassifiedFuturePanel.tsx")"
 assert_desktop_case "Unknown future coordinator features keep the conservative fallback" \
   "$unknown_feature_expected" "wework/src/features/todo/ProjectCoordinatorFutureAutomation.tsx"
-assert_desktop_case "Parent board scenario runs its independent Core checkpoint" \
-  'wework_desktop_e2e=true
-wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-10","name":"Core / shard 10","segments":"collaboration-parent-board"}]}
-wework_desktop_other_e2e=false
-wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/e2e/desktop/scenarios/collaboration-parent-board.scenario.mjs"
-
 for parent_board_path in \
   "packages/collaboration/src/project-board/ProjectBoardParentRows.tsx" \
   "packages/collaboration/src/issue-detail/IssueHierarchySummary.tsx" \
   "wework/src/features/todo/CloudTodoWorkspace.tsx"; do
   parent_board_output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$parent_board_path")"
-  if [[ "$parent_board_output" != *collaboration-parent-board* ]]; then
-    printf 'Parent board path did not select its checkpoint: %s\n' "$parent_board_path" >&2
+  if [[ "$parent_board_output" != *collaboration-board-move-recovery* ]]; then
+    printf 'Parent board path did not select the retained drag recovery checkpoint: %s\n' "$parent_board_path" >&2
     exit 1
   fi
 done

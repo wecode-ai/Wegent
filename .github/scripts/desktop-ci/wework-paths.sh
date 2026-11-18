@@ -535,16 +535,11 @@ classify_wework_path() {
       select_target "core:collaboration-runtime-reconciliation"
       return
       ;;
-    wework/e2e/desktop/scenarios/collaboration-parent-board.scenario.mjs)
-      select_target "core:collaboration-parent-board"
-      return
-      ;;
     wework/e2e/desktop/scenarios/collaboration-board-move-recovery.scenario.mjs)
       select_target "core:collaboration-board-move-recovery"
       return
       ;;
     wework/e2e/desktop/modules/collaboration-board-flows.mjs)
-      select_target "core:collaboration-board-move-recovery"
       select_target "core:collaboration-board-move-recovery"
       return
       ;;
