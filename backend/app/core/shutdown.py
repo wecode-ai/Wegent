@@ -60,9 +60,9 @@ class ShutdownManager:
         # A reloaded Python worker starts with a fresh shutdown state.
         self._set_hybrid_marker(False)
 
-    def _set_hybrid_marker(self, shutting_down: bool) -> None:
+    def _set_hybrid_marker(self, shutting_down: bool) -> bool:
         if self._hybrid_marker is None:
-            return
+            return True
         try:
             if shutting_down:
                 self._hybrid_marker.touch(mode=0o600)
@@ -72,6 +72,8 @@ class ShutdownManager:
             logger.warning(
                 "Failed to update hybrid Backend shutdown state", exc_info=True
             )
+            return False
+        return True
 
     @property
     def is_shutting_down(self) -> bool:
@@ -254,21 +256,23 @@ class ShutdownManager:
 
         return cancelled_count
 
-    def reset(self) -> None:
+    def reset(self) -> bool:
         """
-        Reset shutdown state (for testing purposes).
+        Reset shutdown state once the hybrid marker has been removed.
 
-        WARNING: This should only be used in tests.
+        Returns whether the reset completed.
         """
         from app.core.local_shutdown import reset_local_shutdown
 
+        if not self._set_hybrid_marker(False):
+            return False
         reset_local_shutdown()
         self._shutting_down = False
-        self._set_hybrid_marker(False)
         self._shutdown_event.clear()
         self._active_streams.clear()
         self._shutdown_start_time = None
         logger.debug("Shutdown manager state reset")
+        return True
 
 
 # Global shutdown manager instance

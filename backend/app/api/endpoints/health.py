@@ -10,7 +10,7 @@ During graceful shutdown:
 - /shutdown/reset (POST) resets shutdown state to restore 200
 """
 
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -217,7 +217,7 @@ async def wait_for_shutdown():
 
 
 @router.post("/shutdown/reset")
-def reset_shutdown():
+async def reset_shutdown() -> dict[str, str | bool]:
     """
     Reset shutdown state to restore normal operation.
 
@@ -231,7 +231,10 @@ def reset_shutdown():
         dict: Reset status
     """
     was_shutting_down = shutdown_manager.is_shutting_down
-    shutdown_manager.reset()
+    if not shutdown_manager.reset():
+        raise HTTPException(
+            status_code=503, detail="Could not reset hybrid Backend shutdown state."
+        )
 
     return {
         "status": "reset_complete",

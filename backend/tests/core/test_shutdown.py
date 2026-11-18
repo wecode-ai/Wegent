@@ -17,7 +17,9 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi import HTTPException
 
+from app.api.endpoints import health
 from app.core.shutdown import ShutdownManager
 
 
@@ -94,6 +96,38 @@ class TestShutdownManager:
         finally:
             manager.reset()
         assert not marker.exists()
+
+    @pytest.mark.asyncio
+    async def test_reset_retries_when_hybrid_marker_cannot_be_removed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        marker = tmp_path / "shutting-down"
+        monkeypatch.setenv("WEGENT_HYBRID_SHUTDOWN_FILE", str(marker))
+        manager = ShutdownManager()
+        monkeypatch.setattr(health, "shutdown_manager", manager)
+
+        try:
+            with patch("app.core.cache.cache_manager") as mock_cache:
+                mock_cache.set = AsyncMock(return_value=True)
+                assert await manager.initiate_shutdown()
+            marker.unlink()
+            marker.mkdir()
+
+            with pytest.raises(HTTPException) as error:
+                await health.reset_shutdown()
+            assert error.value.status_code == 503
+            assert manager.is_shutting_down
+            assert marker.exists()
+
+            marker.rmdir()
+            marker.touch()
+            assert (await health.reset_shutdown())["status"] == "reset_complete"
+            assert not manager.is_shutting_down
+            assert not marker.exists()
+        finally:
+            if marker.is_dir():
+                marker.rmdir()
+            manager.reset()
 
     @pytest.mark.asyncio
     async def test_repeated_shutdown_proceeds_while_redis_publish_is_pending(

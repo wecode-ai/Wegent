@@ -2,8 +2,9 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from contextlib import closing
+
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from starlette.routing import Match
 
@@ -13,8 +14,10 @@ from app.main import create_app
 
 
 def test_probe_routes_match_early_and_preserve_responses(
-    test_app: FastAPI, test_client: TestClient
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(settings, "API_PREFIX", "/api")
+    test_app = create_app()
     expected = {
         "/": {
             "name": settings.PROJECT_NAME,
@@ -26,25 +29,26 @@ def test_probe_routes_match_early_and_preserve_responses(
         "/health": {"status": "healthy"},
     }
 
-    for path, body in expected.items():
-        scope = {"type": "http", "path": path, "method": "GET", "root_path": ""}
-        matches = [
-            index
-            for index, route in enumerate(test_app.routes)
-            if route.matches(scope)[0] == Match.FULL
-        ]
-        assert len(matches) == 1
-        # Only FastAPI's four documentation routes may precede the probes.
-        assert matches[0] < 6
-        response = test_client.get(
-            path, headers={"Origin": "https://wework.example.com"}
-        )
-        assert response.status_code == 200
-        assert response.json() == body
-        assert response.headers["access-control-allow-origin"] == "*"
+    with closing(TestClient(test_app)) as test_client:
+        for path, body in expected.items():
+            scope = {"type": "http", "path": path, "method": "GET", "root_path": ""}
+            matches = [
+                index
+                for index, route in enumerate(test_app.routes)
+                if route.matches(scope)[0] == Match.FULL
+            ]
+            assert len(matches) == 1
+            # Only FastAPI's four documentation routes may precede the probes.
+            assert matches[0] < 6
+            response = test_client.get(
+                path, headers={"Origin": "https://wework.example.com"}
+            )
+            assert response.status_code == 200
+            assert response.json() == body
+            assert response.headers["access-control-allow-origin"] == "*"
 
-    business_health = test_client.get(f"{settings.API_PREFIX}/health")
-    assert business_health.status_code == 404
+        business_health = test_client.get("/api/health")
+        assert business_health.status_code == 404
 
 
 @pytest.mark.parametrize("prefix", ["", "/custom"])
