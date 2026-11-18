@@ -17,6 +17,7 @@
     "build:android": "pnpm build:preview && expo export --platform android --output-dir dist/android",
     "build:ios": "pnpm build:preview && expo export --platform ios --output-dir dist/ios",
     "build": "pnpm run build:android && pnpm run build:ios",
+    "build:configured": "node scripts/with-build-config.mjs",
     "build:preview": "node scripts/build-preview.mjs"
   },
   "dependencies": {

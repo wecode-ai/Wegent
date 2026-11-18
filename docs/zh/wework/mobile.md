@@ -87,3 +87,21 @@ iOS 使用系统短时后台额度，让前台发起的任务在切后台后尽�
 ## iOS 与 Android
 
 支持液态玻璃的 iOS 系统使用原生玻璃按钮和面板；开启系统的“降低透明度”后使用清晰的实色表面。Android 使用原生面板、圆角、边框与触控反馈，两端保留相同的功能入口，并适配安全区和键盘。
+
+## 构建时预置后端地址
+
+后端地址默认留空，用户可在登录 Wegent 前填写。打包时可以通过可选参数预置地址：
+
+```bash
+cd wework-mobile
+pnpm build:configured --backend-url https://backend.example.com -- pnpm build:ios
+pnpm build:configured --backend-url https://backend.example.com -- pnpm build:android
+```
+
+`--` 后也可传入实际的 `xcodebuild` 或 Gradle 构建命令，参数会通过现有的
+`EXPO_PUBLIC_BACKEND_URL` 注入应用中的 JavaScript 包，不修改源码或生成环境文件。
+未传参数时沿用显式设置的环境变量；两者都未提供时留空。需要覆盖已有环境变量并明确留空时，
+使用 `--backend-url ''`。地址只接受不含用户名和密码的 HTTP 或 HTTPS URL。
+
+设备上已保存的连接地址优先于构建默认值，用户仍可在连接设置中修改。该参数属于可读取的应用
+配置，不应包含令牌或密钥；构建不会据此预置登录凭据。
