@@ -505,6 +505,10 @@ export function createDesktopScenario({
       )
       provider.setAccessTokenTtl(3600)
       provider.rejectRefresh(true)
+      // Installation can refresh the catalog and reject the grant before Manage is clicked.
+      const refreshBefore = provider.refreshRequests
+      const authorizeBefore = provider.authorizeRequests
+      const tokenBefore = provider.tokenRequests
 
       const pluginRoot = join(resultDir, 'connector-oauth-plugin')
       await mkdir(join(pluginRoot, '.codex-plugin'), { recursive: true })
@@ -552,9 +556,6 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
 
-      const refreshBefore = provider.refreshRequests
-      const authorizeBefore = provider.authorizeRequests
-      const tokenBefore = provider.tokenRequests
       await control.command('clickWhenEnabled', manage, {
         timeoutMs: uiTimeoutMs,
       })
