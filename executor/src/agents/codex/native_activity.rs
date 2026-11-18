@@ -248,14 +248,15 @@ impl CodexNativeActivity {
                 false
             }
             CodexNativeRequest::Turn { thread_id, model } => {
-                let started = turn_start_response_id(response)
-                    .is_some_and(|turn_id| self.start_turn(thread_id.clone(), turn_id));
-                if started {
-                    if let Some(model) = model {
-                        self.models.entry(thread_id.clone()).or_default().0 = Some(model.clone());
-                    }
+                let Some(turn_id) = turn_start_response_id(response) else {
+                    return false;
+                };
+                // The accepted override applies even when turn/started arrived
+                // first and the activity set already contains this turn.
+                if let Some(model) = model {
+                    self.models.entry(thread_id.clone()).or_default().0 = Some(model.clone());
                 }
-                started
+                self.start_turn(thread_id.clone(), turn_id)
             }
             CodexNativeRequest::Goal {
                 thread_id,

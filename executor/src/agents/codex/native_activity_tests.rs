@@ -75,6 +75,30 @@ fn accepted_turn_model_overrides_survive_direct_reuse() {
 }
 
 #[test]
+fn turn_model_overrides_apply_when_the_started_notification_arrives_first() {
+    let mut activity = CodexNativeActivity::default();
+    activity.observe(&json!({"method":"thread/started","params":{"thread":{
+        "id":"thread", "model":"thread-model", "modelProvider":"openai"
+    }}}));
+    // The native notification can precede the response carrying the override.
+    activity.observe(&json!({"method":"turn/started","params":{
+        "threadId":"thread","turn":{"id":"turn-1","status":"inProgress"}
+    }}));
+    let turn = activity
+        .request_context(
+            1,
+            "turn/start",
+            &json!({"threadId":"thread","model":"turn-model"}),
+        )
+        .unwrap();
+    activity.observe_response(&turn, &json!({"turn":{"id":"turn-1"}}));
+    assert_eq!(
+        activity.model_identity("thread").0.as_deref(),
+        Some("turn-model")
+    );
+}
+
+#[test]
 fn reading_thread_models_does_not_load_or_activate_native_work() {
     let mut activity = CodexNativeActivity::default();
     let read = request(&activity, "thread/read");
