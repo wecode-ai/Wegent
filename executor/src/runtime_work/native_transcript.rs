@@ -8,6 +8,7 @@ use std::{
     io::{Cursor, Read, Seek, SeekFrom, Write},
     path::{Component, Path, PathBuf},
     process::Command,
+    sync::OnceLock,
     time::Duration,
 };
 
@@ -50,6 +51,7 @@ const WORKSPACE_GIT_TIMEOUT: Duration = Duration::from_secs(10);
 const MANIFEST_PATH: &str = "manifest.json";
 const ROLLOUT_PATH: &str = "rollout.jsonl";
 const WORKSPACE_PREFIX: &str = "workspace";
+static ROLLOUT_PATH_MIGRATION_COMPLETE: OnceLock<()> = OnceLock::new();
 const EXCLUDED_NAMES: &[&str] = &[
     ".DS_Store",
     ".git",
@@ -253,6 +255,84 @@ pub(crate) fn export_segment(request: ExportRequest) -> Result<ExportedSegment, 
         format,
         rollout_end,
     })
+}
+
+/// Keep copied Codex state usable after the executor home moves.
+pub(crate) fn migrate_codex_thread_rollout_paths() -> Result<usize, String> {
+    if ROLLOUT_PATH_MIGRATION_COMPLETE.get().is_some() {
+        return Ok(0);
+    }
+    let codex_home = wework_codex_home();
+    let state_path = codex_state_home(&codex_home).join(STATE_DB_FILENAME);
+    if !state_path.is_file() {
+        return Ok(0);
+    }
+    let migrated = migrate_thread_rollout_paths(&codex_home, &state_path)?;
+    let _ = ROLLOUT_PATH_MIGRATION_COMPLETE.set(());
+    Ok(migrated)
+}
+
+fn migrate_thread_rollout_paths(codex_home: &Path, state_path: &Path) -> Result<usize, String> {
+    if !state_path.is_file() {
+        return Ok(0);
+    }
+    let mut connection = Connection::open(state_path)
+        .map_err(|error| format!("failed to open Codex state database: {error}"))?;
+    let rows = {
+        let mut statement = connection
+            .prepare("SELECT id, rollout_path FROM threads")
+            .map_err(|error| format!("failed to read Codex thread paths: {error}"))?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|error| format!("failed to query Codex thread paths: {error}"))?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|error| format!("failed to collect Codex thread paths: {error}"))?;
+        rows
+    };
+    let sessions = codex_home.join("sessions");
+    let updates = rows
+        .into_iter()
+        .filter_map(|(thread_id, rollout_path)| {
+            let rollout_path = PathBuf::from(rollout_path);
+            if rollout_path.starts_with(&sessions) {
+                return None;
+            }
+            let components = rollout_path.components().collect::<Vec<_>>();
+            let sessions_index = components
+                .iter()
+                .position(|component| component.as_os_str() == "sessions")?;
+            let suffix = components
+                .into_iter()
+                .skip(sessions_index + 1)
+                .map(Component::as_os_str)
+                .collect::<PathBuf>();
+            if suffix.as_os_str().is_empty() {
+                return None;
+            }
+            let migrated = sessions.join(suffix);
+            migrated.is_file().then_some((thread_id, migrated))
+        })
+        .collect::<Vec<_>>();
+    if updates.is_empty() {
+        return Ok(0);
+    }
+    let transaction = connection
+        .transaction()
+        .map_err(|error| format!("failed to begin Codex path migration: {error}"))?;
+    for (thread_id, rollout_path) in &updates {
+        transaction
+            .execute(
+                "UPDATE threads SET rollout_path = ?1 WHERE id = ?2",
+                params![rollout_path.to_string_lossy(), thread_id],
+            )
+            .map_err(|error| format!("failed to update Codex thread path: {error}"))?;
+    }
+    transaction
+        .commit()
+        .map_err(|error| format!("failed to commit Codex path migration: {error}"))?;
+    Ok(updates.len())
 }
 
 pub(crate) fn restore_segments(
@@ -1294,6 +1374,49 @@ mod tests {
             path.display(),
             args.join(" "),
             String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn migrates_stale_thread_rollout_paths_to_current_home() {
+        let root = tempfile::tempdir().unwrap();
+        let old_home = root.path().join("old/executor/codex");
+        let codex_home = root.path().join("new/executor/codex");
+        let relative = Path::new("sessions/2026/11/18/rollout-a-thread-1.jsonl");
+        let migrated_path = codex_home.join(relative);
+        fs::create_dir_all(migrated_path.parent().unwrap()).unwrap();
+        fs::write(&migrated_path, "{}\n").unwrap();
+        let state_path = codex_home.join(STATE_DB_FILENAME);
+        let connection = Connection::open(&state_path).unwrap();
+        connection
+            .execute_batch(
+                "CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL);",
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO threads (id, rollout_path) VALUES (?1, ?2)",
+                params!["thread-1", old_home.join(relative).to_string_lossy()],
+            )
+            .unwrap();
+        drop(connection);
+
+        assert_eq!(
+            migrate_thread_rollout_paths(&codex_home, &state_path).unwrap(),
+            1
+        );
+        let stored = Connection::open(&state_path)
+            .unwrap()
+            .query_row(
+                "SELECT rollout_path FROM threads WHERE id = ?1",
+                params!["thread-1"],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap();
+        assert_eq!(PathBuf::from(stored), migrated_path);
+        assert_eq!(
+            migrate_thread_rollout_paths(&codex_home, &state_path).unwrap(),
+            0
         );
     }
 
