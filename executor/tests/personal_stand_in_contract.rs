@@ -147,7 +147,10 @@ fn migration_preserves_project_scopes_agent_permissions_and_assignment_cutoff() 
         connection.execute("INSERT INTO loop_items (id,resource_type,metadata,created_at,updated_at) VALUES (?1,'stand_in_settings',?2,?3,?3)",
             rusqlite::params![format!("stand_in:{project}:7:default"),old.to_string(),timestamp]).unwrap();
     }
+    let view = store.read_personal_stand_in(7, "mac").unwrap();
+    assert_eq!(store.read_personal_stand_in(7, "mac").unwrap(), view);
     let personal = store.personal_stand_in(7, "mac").unwrap();
+    assert_eq!(personal, view);
     let roles = personal["roles"].as_array().unwrap();
     assert_eq!(roles.len(), 2);
     assert_ne!(roles[0]["id"], roles[1]["id"]);
@@ -477,4 +480,39 @@ fn invalid_legacy_project_bindings_cannot_be_removed_by_a_successful_save() {
         assert!(store.save_personal_stand_in(7, "mac", draft).is_err());
         assert_eq!(store.personal_stand_in(7, "mac").unwrap(), saved);
     }
+}
+
+#[test]
+fn settings_view_stays_read_only_while_execution_rebinding_remains_atomic() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("tasks.sqlite");
+    let store = LocalTaskStore::open(&path).unwrap();
+    let settings = store.personal_stand_in(7, "mac").unwrap();
+    let saved = store.save_personal_stand_in(7, "mac", settings).unwrap();
+    let mut writer = rusqlite::Connection::open(path).unwrap();
+    let transaction = writer
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .unwrap();
+    let view = store.read_personal_stand_in(7, "new-mac").unwrap();
+    assert_eq!(view["executionDeviceId"], "new-mac");
+    let persisted = |connection: &rusqlite::Connection| -> Value {
+        let raw: String = connection
+            .query_row(
+                "SELECT metadata FROM loop_items WHERE id='personal-stand-in:7'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        serde_json::from_str(&raw).unwrap()
+    };
+    assert_eq!(persisted(&transaction), saved);
+    transaction.rollback().unwrap();
+    let reconciled = store.personal_stand_in(7, "new-mac").unwrap();
+    assert_eq!(reconciled, view);
+    assert_eq!(persisted(&writer), reconciled);
+    let transaction = writer
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .unwrap();
+    assert_eq!(store.personal_stand_in(7, "new-mac").unwrap(), reconciled);
+    transaction.rollback().unwrap();
 }
