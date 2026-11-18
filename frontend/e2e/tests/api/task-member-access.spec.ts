@@ -166,7 +166,7 @@ test.describe('Task member access through Rust routes', () => {
     const prompt = `e2e approved task member access ${taskId}`
     const created = await ownerApi.post(`/api/tasks/${taskId}`, {
       prompt,
-      team_id: teamId,
+      team_id: createdTeamId,
       type: 'offline',
       task_type: 'code',
       git_url: '',
