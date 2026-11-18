@@ -1,7 +1,7 @@
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import '@/i18n'
 import { installDshUiTestContributions } from '@/test/setup.dom'
-import { render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { EnvironmentInfoPopover } from './EnvironmentInfoPopover'
@@ -117,5 +117,117 @@ describe('EnvironmentInfoPopover', () => {
     await userEvent.click(screen.getByTestId('change-request-open-settings'))
     expect(onOpenChange).toHaveBeenCalledWith(false)
     expect(window.location.pathname).toBe('/settings/git-hosting')
+  })
+
+  describe('commit feedback', () => {
+    async function renderCommitPanel(onCommitAndPushChanges: (message: string) => Promise<void>) {
+      const popoverContainer = document.createElement('div')
+      document.body.appendChild(popoverContainer)
+      portalContainers.push(popoverContainer)
+      const view = render(
+        <EnvironmentInfoPopover
+          info={{ additions: '+1', deletions: '-0', executionTarget: 'local', branchName: 'main' }}
+          popoverContainer={popoverContainer}
+          open
+          onOpenChange={vi.fn()}
+          onCommitAndPushChanges={onCommitAndPushChanges}
+        />
+      )
+      await screen.findByTestId('environment-commit-button')
+      vi.useFakeTimers()
+      return view
+    }
+
+    async function submitCommit(message: string) {
+      fireEvent.click(screen.getByTestId('environment-commit-button'))
+      fireEvent.change(screen.getByTestId('environment-commit-message-input'), {
+        target: { value: message },
+      })
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('environment-commit-and-push-button'))
+      })
+    }
+
+    test('keeps the next commit pending beyond the previous success deadline', async () => {
+      let completeSecond!: () => void
+      const secondCommit = new Promise<void>(resolve => {
+        completeSecond = resolve
+      })
+      const commit = vi
+        .fn<(message: string) => Promise<void>>()
+        .mockResolvedValueOnce(undefined)
+        .mockReturnValueOnce(secondCommit)
+      await renderCommitPanel(commit)
+      await submitCommit('test: first')
+      expect(screen.getByTestId('environment-commit-button')).toHaveTextContent('已提交')
+      await act(async () => vi.advanceTimersByTimeAsync(1500))
+
+      await submitCommit('test: second')
+      await act(async () => vi.advanceTimersByTimeAsync(101))
+      expect(screen.getByTestId('environment-commit-progress-row')).toHaveTextContent(
+        '正在提交并推送'
+      )
+      expect(screen.queryByTestId('environment-commit-button')).not.toBeInTheDocument()
+      expect(commit).toHaveBeenCalledTimes(2)
+
+      await act(async () => completeSecond())
+      expect(screen.getByTestId('environment-commit-button')).toHaveTextContent('已提交')
+      await act(async () => vi.advanceTimersByTimeAsync(1599))
+      expect(screen.getByTestId('environment-commit-button')).toHaveTextContent('已提交')
+      await act(async () => vi.advanceTimersByTimeAsync(1))
+      expect(screen.getByTestId('environment-commit-button')).not.toHaveTextContent('已提交')
+    })
+
+    test('gives explicit recovery a full success period after generation fails', async () => {
+      const commit = vi
+        .fn<(message: string) => Promise<void>>()
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error('提交失败'))
+        .mockResolvedValueOnce(undefined)
+      await renderCommitPanel(commit)
+      await submitCommit('')
+      await act(async () => vi.advanceTimersByTimeAsync(400))
+      await submitCommit('')
+      expect(screen.getByTestId('environment-info-popover')).toHaveTextContent('提交失败')
+      await act(async () => vi.advanceTimersByTimeAsync(1100))
+
+      await submitCommit('test: recover with explicit message')
+      expect(commit.mock.calls).toEqual([[''], [''], ['test: recover with explicit message']])
+      await act(async () => vi.advanceTimersByTimeAsync(100))
+      expect(screen.getByTestId('environment-commit-button')).toHaveTextContent('已提交')
+      await act(async () => vi.advanceTimersByTimeAsync(1499))
+      expect(screen.getByTestId('environment-commit-button')).toHaveTextContent('已提交')
+      await act(async () => vi.advanceTimersByTimeAsync(1))
+      expect(screen.getByTestId('environment-commit-button')).not.toHaveTextContent('已提交')
+    })
+
+    test('leaves no feedback timer after the summary unmounts', async () => {
+      const view = await renderCommitPanel(vi.fn().mockResolvedValue(undefined))
+      await submitCommit('test: finish before closing')
+      expect(screen.getByTestId('environment-commit-button')).toHaveTextContent('已提交')
+
+      view.unmount()
+      await act(async () => vi.advanceTimersByTimeAsync(0))
+
+      expect(vi.getTimerCount()).toBe(0)
+    })
+
+    test('does not schedule feedback when a pending commit finishes after unmount', async () => {
+      let completeCommit!: () => void
+      const pendingCommit = new Promise<void>(resolve => {
+        completeCommit = resolve
+      })
+      const commit = vi.fn<(message: string) => Promise<void>>().mockReturnValue(pendingCommit)
+      const view = await renderCommitPanel(commit)
+      await submitCommit('test: finish after closing')
+      expect(screen.getByTestId('environment-commit-progress-row')).toBeInTheDocument()
+
+      view.unmount()
+      await act(async () => completeCommit())
+      await act(async () => vi.advanceTimersByTimeAsync(0))
+
+      expect(commit).toHaveBeenCalledOnce()
+      expect(vi.getTimerCount()).toBe(0)
+    })
   })
 })
