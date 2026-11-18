@@ -185,19 +185,104 @@ async def test_healthy_device_records_removal_while_other_accounts_wait_for_rpc(
     )
 
 
-def test_busy_removal_does_not_prevent_an_independent_receipt(sync_context):
-    _, record = sync_context
-    record.side_effect = [module.PluginWriteError("plugin_write_busy"), None]
-    result = DeviceCapabilitySyncResult(
-        device_id="device", success=True, acknowledged=True
-    )
+@pytest.mark.asyncio
+async def test_busy_removal_retries_the_receipt_without_redispatch(
+    sync_context, monkeypatch
+):
+    dispatch, record = sync_context
+    monkeypatch.setattr(module, "_pending_removals", lambda *_: {1: 4, 3: 6})
+    record.side_effect = [
+        module.PluginWriteError("plugin_write_busy"),
+        None,
+        module.PluginWriteError("plugin_write_conflict"),
+        None,
+    ]
 
-    module._record_sync_result(1, result, {1: 4, 3: 6})
+    await module.sync_pending_plugin_removals(1)
 
+    dispatch.assert_awaited_once()
     assert [
         (call.kwargs["installed_id"], call.kwargs["revision"])
         for call in record.call_args_list
-    ] == [(1, 4), (3, 6)]
+    ] == [(1, 4), (3, 6), (1, 4), (1, 4)]
+
+
+@pytest.mark.asyncio
+async def test_busy_receipts_leave_database_capacity_for_other_accounts(
+    sync_context, monkeypatch
+):
+    dispatch, record = sync_context
+    monkeypatch.setattr(module, "_removal_db_slots", asyncio.Semaphore(2))
+    monkeypatch.setattr(module, "pending_removal_devices", lambda _, device: {device})
+    loop = asyncio.get_running_loop()
+    started = {user_id: asyncio.Event() for user_id in (1, 2)}
+    release = threading.Event()
+
+    def write(_db, **kwargs):
+        user_id = kwargs["user_id"]
+        if user_id in started and not release.is_set():
+            loop.call_soon_threadsafe(started[user_id].set)
+            raise module.PluginWriteError("plugin_write_busy")
+
+    record.side_effect = write
+    tasks = [
+        asyncio.create_task(module.sync_pending_plugin_removals(user_id, device))
+        for user_id, device in [(1, "a"), (2, "b")]
+    ]
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(*(event.wait() for event in started.values())), 2
+        )
+        await asyncio.wait_for(module.sync_pending_plugin_removals(3, "c"), 2)
+        assert any(call.kwargs["user_id"] == 3 for call in record.call_args_list)
+        assert not any(task.done() for task in tasks)
+    finally:
+        release.set()
+        await asyncio.gather(*tasks)
+    assert dispatch.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_three_devices_keep_acknowledged_removals_after_the_same_lease(
+    sync_context, monkeypatch
+):
+    dispatch, record = sync_context
+    monkeypatch.setattr(module, "_removal_db_slots", asyncio.Semaphore(2))
+    monkeypatch.setattr(module, "pending_removal_devices", lambda *_: {"a", "b", "c"})
+    loop = asyncio.get_running_loop()
+    owner_started = asyncio.Event()
+    contended = {device: asyncio.Event() for device in ("b", "c")}
+    release = threading.Event()
+    persisted = set()
+
+    async def deliver(*, device_id, **_):
+        if device_id != "a":
+            await owner_started.wait()
+        return DeviceCapabilitySyncResult(
+            device_id=device_id, success=True, acknowledged=True
+        )
+
+    def write(_db, *, result, **_):
+        if result.device_id == "a":
+            loop.call_soon_threadsafe(owner_started.set)
+            assert release.wait(5)
+        elif not release.is_set():
+            loop.call_soon_threadsafe(contended[result.device_id].set)
+            raise module.PluginWriteError("plugin_write_busy")
+        persisted.add(result.device_id)
+
+    dispatch.side_effect = deliver
+    record.side_effect = write
+    removal = asyncio.create_task(module.sync_pending_plugin_removals(1))
+    try:
+        await asyncio.wait_for(
+            asyncio.gather(*(event.wait() for event in contended.values())), 2
+        )
+    finally:
+        release.set()
+        await removal
+    assert persisted == {"a", "b", "c"}
+    assert dispatch.await_count == 3
 
 
 @pytest.mark.parametrize(

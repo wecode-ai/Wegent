@@ -480,7 +480,8 @@ def test_pending_removal_diagnostics_explain_target_filter(
     assert "'retry_due': True" in caplog.text
 
 
-def test_removal_receipt_cannot_clear_a_newer_removal_of_the_same_plugin(
+@pytest.mark.asyncio
+async def test_removal_receipt_cannot_clear_a_newer_removal_of_the_same_plugin(
     installed_reconciliation,
 ):
     from app.services.plugin_kind_revision import replace_installed_kind
@@ -501,9 +502,9 @@ def test_removal_receipt_cannot_clear_a_newer_removal_of_the_same_plugin(
     receipt = DeviceCapabilitySyncResult(
         device_id="desktop", success=True, acknowledged=True
     )
-    plugin_removal_sync._record_sync_result(user_id, receipt, previous)
+    await plugin_removal_sync._record_sync_result(user_id, receipt, previous)
     assert plugin_removal_sync._pending_removals(user_id, "desktop") == current
-    plugin_removal_sync._record_sync_result(user_id, receipt, current)
+    await plugin_removal_sync._record_sync_result(user_id, receipt, current)
     assert plugin_removal_sync._pending_removals(user_id, "desktop") == {}
 
 

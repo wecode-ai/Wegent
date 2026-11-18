@@ -27,6 +27,7 @@ from app.services.plugin_device_installation_service import (
 )
 from app.services.plugin_kind_revision import kind_revision
 from app.services.plugin_write_coordination import (
+    OPERATION_SECONDS,
     acquire_plugin_write_lock,
 )
 from app.services.plugin_write_errors import PluginWriteError
@@ -214,10 +215,11 @@ async def _sync_device_once(user_id: int, device_id: str) -> None:
             }
         if not result.acknowledged:
             return
-        await run_plugin_sync_db(_record_sync_result, user_id, result, revisions)
+        recorded = await _record_sync_result(user_id, result, revisions)
         logger.info(
-            "Plugin removal result recorded user_id=%s device_id=%s "
+            "Plugin removal result %s user_id=%s device_id=%s "
             "success=%s acknowledged=%s",
+            "recorded" if recorded else "pending",
             user_id,
             device_id,
             result.success,
@@ -280,33 +282,56 @@ def _legacy_receipt_revisions(
     }
 
 
-def _record_sync_result(
+async def _record_sync_result(
     user_id: int, result: DeviceCapabilitySyncResult, revisions: dict[int, int]
-) -> None:
+) -> bool:
+    """Retry the acknowledged writes independently of device dispatch."""
     snapshot = result.desired_plugin_snapshot or {}
     desired = {item["installed_plugin_id"] for item in snapshot.get("plugins", [])}
-    for installed_id, revision in sorted(revisions.items()):
-        try:
-            run_plugin_transaction(
-                lambda db: plugin_device_installation_service.record_scoped_device_result(
-                    db,
-                    user_id=user_id,
-                    result=result,
-                    installed_id=installed_id,
-                    revision=revision,
-                    desired=installed_id in desired,
-                ),
-                get_db_session,
-            )
-        except PluginWriteError as error:
-            if error.code not in {"plugin_write_busy", "plugin_write_conflict"}:
-                raise
-            logger.info(
-                "Plugin removal receipt deferred user_id=%s installed_id=%s reason=%s",
-                user_id,
-                installed_id,
-                error.code,
-            )
+    pending = dict(sorted(revisions.items()))
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + OPERATION_SECONDS
+    delay = 0.05
+    while pending:
+        for installed_id, revision in tuple(pending.items()):
+            try:
+                await run_plugin_sync_db(
+                    run_plugin_transaction,
+                    partial(
+                        plugin_device_installation_service.record_scoped_device_result,
+                        user_id=user_id,
+                        result=result,
+                        installed_id=installed_id,
+                        revision=revision,
+                        desired=installed_id in desired,
+                    ),
+                    get_db_session,
+                    attempts=1,
+                )
+            except PluginWriteError as error:
+                if error.code not in {
+                    "plugin_write_busy",
+                    "plugin_write_conflict",
+                    "plugin_write_lease_lost",
+                }:
+                    raise
+            else:
+                pending.pop(installed_id)
+        if not pending:
+            return True
+        if loop.time() + delay >= deadline:
+            break
+        # Every attempt has closed its session and released the database slot.
+        await asyncio.sleep(delay)
+        delay = min(0.25, delay * 2)
+    if pending:
+        logger.warning(
+            "Plugin removal receipt retry exhausted user_id=%s device_id=%s installed_ids=%s",
+            user_id,
+            result.device_id,
+            list(pending),
+        )
+    return not pending
 
 
 @trace_async(tracer_name="backend.plugins", span_name="sync_pending_plugin_removals")
