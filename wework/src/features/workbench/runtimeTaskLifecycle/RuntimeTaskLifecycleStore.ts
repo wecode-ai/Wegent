@@ -875,6 +875,7 @@ function isRuntimeTaskRecencyOnlyChange(
   current: RuntimeTaskSummary,
   incoming: RuntimeTaskSummary
 ): boolean {
+  if (current.recencyAt === incoming.recencyAt) return false
   return dequal(withoutRuntimeTaskRecency(current), withoutRuntimeTaskRecency(incoming))
 }
 
