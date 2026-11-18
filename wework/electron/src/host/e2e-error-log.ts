@@ -78,7 +78,8 @@ export class E2EErrorLog {
 export function recordE2ERendererError(
   message: string,
   details: Record<string, unknown>,
-  level: number
+  level: number,
+  log: E2EErrorLog = e2eErrorLog
 ): void {
   const prefix = '[wework-e2e-error] '
   let type = level === 3 ? 'renderer-error' : 'renderer-warning'
@@ -105,7 +106,7 @@ export function recordE2ERendererError(
       // Keep malformed reports as console errors so they remain assertable.
     }
   }
-  e2eErrorLog.record('renderer', type, level === 3 ? 'error' : 'warning', {
+  log.record('renderer', type, level === 3 ? 'error' : 'warning', {
     ...details,
     ...errorDetails,
   })
