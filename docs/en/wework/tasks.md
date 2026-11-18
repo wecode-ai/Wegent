@@ -26,6 +26,8 @@ After creating a Goal, inspect its status bar near the composer. Hover or focus 
 
 Goals may be active, paused, blocked, budget/usage-limited or complete. Exhausted budgets, tool failures and disconnections are not completion evidence. Resolve the reported condition before continuing. Deleting a goal differs from deleting its conversation.
 
+After restarting the app, start a stopped Goal in its original conversation. Wework restores the conversation’s execution configuration before continuing the original Goal, preserving its objective, budget and recorded usage.
+
 ### Model overload and quota recovery
 
 Local Codex tasks automatically retry an overloaded model after 10 seconds, 30 seconds, 2 minutes and 5 minutes. The countdown appears in the conversation. Recovery continues the original conversation and model with completed tool history preserved.
@@ -57,6 +59,9 @@ The same capability applies to finding conversations, restoring archived items a
 The interface height follows its content, and saved interaction state is restored when you reopen the conversation. You can scroll the conversation with the pointer over a card. Scrollable controls consume wheel movement first, then pass remaining movement to the conversation at their boundary. Use **Expand** for more space and return to the message afterwards. This capability requires personal control access in a Codex conversation and does not grant extra authority to delegated executions.
 
 <a id="connection-event-waits"></a>
+
+Event waits show the effective condition in the composer, including alternatives such as checks passing or failing in one subscription. Long conditions have a full tooltip. The left task sidebar indicates waiting, received or monitoring error status and returns to the running indicator when execution resumes.
+
 
 ### Ask AI to wait for connection events
 

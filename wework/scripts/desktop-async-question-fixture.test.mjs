@@ -57,16 +57,6 @@ for (const fixture of [
     ['another option', 'Minimal', fixture.waiting],
     ['answered', fixture.answer, fixture.completed],
     ['answered with whitespace', '  ' + fixture.answer + '\n', fixture.completed],
-    [
-      'answered with application context',
-      '<application_context>Terminal state</application_context>\n' + fixture.answer,
-      fixture.completed,
-    ],
-    [
-      'another option with the answer in application context',
-      '<application_context>' + fixture.answer + '</application_context>\nMinimal',
-      fixture.waiting,
-    ],
   ])(fixture.name + ' recognizes only the user answer: %s', async (_name, answer, expected) => {
     const server = new DesktopE2EServer('/tmp/async-question-fixture')
     server.scenario = 'request_user_input_async'

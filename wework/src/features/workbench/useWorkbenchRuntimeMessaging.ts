@@ -23,7 +23,11 @@ import {
   isWeWorkCompatibleDevice,
 } from '@/lib/device-capabilities'
 import { isSameModelSelection } from '@/lib/model-ui'
-import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
+import {
+  resolvePreparingAttachments,
+  localRuntimeAttachments,
+  remoteAttachmentIds,
+} from '@/lib/runtime-attachments'
 import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
@@ -152,6 +156,27 @@ function runtimeCreateMessage(intent: PreparedRuntimeTaskIntent): string {
     : ''
 }
 
+function runtimeAttachmentsUseRemoteFilesystem(
+  deviceId: string,
+  devices: WorkbenchState['devices']
+): boolean {
+  const device = devices.find(item => item.device_id === deviceId)
+  return device?.device_type === 'cloud' || device?.device_type === 'remote'
+}
+
+async function prepareRuntimeAttachmentRecordsForDevice(
+  deviceId: string,
+  devices: WorkbenchState['devices'],
+  attachments: Attachment[],
+  uploadLocalAttachmentToCloud?: (attachment: Attachment) => Promise<Attachment>
+): Promise<Attachment[]> {
+  const prepared = await resolvePreparingAttachments(attachments, filename =>
+    i18n.t('workbench.attachment_preparation_unavailable', { filename })
+  )
+  if (!runtimeAttachmentsUseRemoteFilesystem(deviceId, devices)) return prepared
+  return (await prepareCloudAttachments(prepared, uploadLocalAttachmentToCloud)).attachments
+}
+
 export async function prepareRuntimeAttachmentsForDevice(
   deviceId: string,
   devices: WorkbenchState['devices'],
@@ -159,13 +184,18 @@ export async function prepareRuntimeAttachmentsForDevice(
   attachments: Attachment[] = [],
   uploadLocalAttachmentToCloud?: (attachment: Attachment) => Promise<Attachment>
 ): Promise<RuntimeAttachmentTransport> {
-  const device = devices.find(item => item.device_id === deviceId)
-  const usesRemoteFilesystem = device?.device_type === 'cloud' || device?.device_type === 'remote'
-  if (!usesRemoteFilesystem || attachments.length === 0) {
-    return { attachmentIds, attachments }
+  const prepared = await prepareRuntimeAttachmentRecordsForDevice(
+    deviceId,
+    devices,
+    attachments,
+    uploadLocalAttachmentToCloud
+  )
+  return {
+    attachmentIds: [...new Set([...attachmentIds, ...remoteAttachmentIds(prepared)])],
+    attachments: runtimeAttachmentsUseRemoteFilesystem(deviceId, devices)
+      ? prepared
+      : localRuntimeAttachments(prepared),
   }
-
-  return prepareCloudAttachments(attachments, uploadLocalAttachmentToCloud, attachmentIds)
 }
 
 export async function prepareRuntimeQuestionResponse(
@@ -178,14 +208,13 @@ export async function prepareRuntimeQuestionResponse(
     await Promise.all(
       Object.entries(response.answers).map(async ([id, answer]) => {
         if (!answer.attachments?.length) return [id, answer]
-        const prepared = await prepareRuntimeAttachmentsForDevice(
+        const attachments = await prepareRuntimeAttachmentRecordsForDevice(
           deviceId,
           devices,
-          [],
           answer.attachments,
           uploadLocalAttachmentToCloud
         )
-        return [id, { ...answer, attachments: prepared.attachments }]
+        return [id, { ...answer, attachments }]
       })
     )
   )
@@ -569,12 +598,12 @@ export function useWorkbenchRuntimeMessaging({
             message: optimisticUserMessage,
           })
         }
-        const outboundRequest = await prepareRuntimeSendRequest(outboundRequestWithClientId)
-        if (!isCurrent()) return false
         if (!options?.silentBusyRetry && !userInputResponse) {
-          lifecycleStore.sendRequested(outboundRequest.address)
+          lifecycleStore.sendRequested(request.address)
           sendRequested = true
         }
+        const outboundRequest = await prepareRuntimeSendRequest(outboundRequestWithClientId)
+        if (!isCurrent()) return false
         const sendAttempt = advanceRuntimeSendAttempt(
           sendAttemptsRef.current,
           outboundRequest.address
@@ -1288,24 +1317,9 @@ export function useWorkbenchRuntimeMessaging({
         return false
       }
 
-      let preparedAttachments: RuntimeAttachmentTransport
-      try {
-        preparedAttachments = await prepareRuntimeAttachmentsForDevice(
-          optimisticDeviceId,
-          state.devices,
-          intent.attachmentIds,
-          intent.attachments,
-          services.attachmentApi?.uploadLocalAttachmentToCloud
-        )
-      } catch (error) {
-        reportSendBlocked(
-          error instanceof Error
-            ? error.message
-            : i18n.t('workbench.cloud_attachment_upload_failed'),
-          undefined,
-          options
-        )
-        return false
+      const preparedAttachments: RuntimeAttachmentTransport = {
+        attachmentIds: intent.attachmentIds ?? [],
+        attachments: intent.attachments ?? [],
       }
 
       const targetDevice = findWorkbenchDevice(state.devices, optimisticDeviceId)
@@ -1449,6 +1463,15 @@ export function useWorkbenchRuntimeMessaging({
       // Start the primary request before optimistic navigation mounts task readers.
       // Presentation work must never leave a visible pending task without a runtime request.
       const createResponsePromise = (async () => {
+        const prepared = await prepareRuntimeAttachmentsForDevice(
+          optimisticDeviceId,
+          state.devices,
+          intent.attachmentIds,
+          intent.attachments,
+          services.attachmentApi?.uploadLocalAttachmentToCloud
+        )
+        createRequest.attachmentIds = prepared.attachmentIds
+        createRequest.attachments = prepared.attachments
         const worktreeCreationDelayMs = Number(
           getDesktopE2ERuntimeConfig().worktreeCreationDelayMs ??
             import.meta.env.VITE_WEWORK_E2E_WORKTREE_CREATION_DELAY_MS ??

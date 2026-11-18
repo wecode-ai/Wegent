@@ -5320,8 +5320,10 @@ def test_build_runtime_send_execution_request_uses_complete_create_request(
     assert execution_request.team_id == 0
     assert execution_request.project_workspace_path == "/repo/Wegent"
     assert execution_request.device_id == "device-1"
-    assert execution_request.prompt.endswith("continue")
-    assert "terminal output" in execution_request.prompt
+    assert execution_request.prompt == "continue"
+    assert execution_request.additional_context == {
+        "wework.terminal.current": {"kind": "application", "value": "terminal output"}
+    }
 
 
 def test_compile_runtime_task_create_materializes_attachment_ids_once(
@@ -5947,6 +5949,8 @@ def test_build_runtime_execution_request_uses_managed_project_space_tools_for_is
     )
 
     assert execution_request.mcp_servers == []
+    assert execution_request.prompt == request.message
+    assert execution_request.additional_context == request.additional_context
 
 
 @pytest.mark.parametrize("dispatch_role", ["manager", "executor", "member"])
@@ -5993,14 +5997,16 @@ def test_build_runtime_execution_request_uses_managed_space_tools_for_dispatch_r
     )
 
     assert execution_request.mcp_servers == []
+    assert execution_request.prompt == request.message
+    assert execution_request.additional_context == request.additional_context
 
 
-def test_message_with_application_context_keeps_user_message_and_ignores_untrusted() -> (
+def test_claude_message_with_application_context_keeps_user_message_and_ignores_untrusted() -> (
     None
 ):
     from app.services import runtime_work_service
 
-    message = runtime_work_service._message_with_application_context(
+    message = runtime_work_service._claude_message_with_application_context(
         "这个 TODO 里有啥？",
         {
             "cloudCollaboration": {
@@ -6017,10 +6023,12 @@ def test_message_with_application_context_keeps_user_message_and_ignores_untrust
     assert message.endswith("这个 TODO 里有啥？")
 
 
-def test_message_with_cloud_reference_activates_project_space_capability() -> None:
+def test_claude_message_with_cloud_reference_activates_project_space_capability() -> (
+    None
+):
     from app.services import runtime_work_service
 
-    message = runtime_work_service._message_with_application_context(
+    message = runtime_work_service._claude_message_with_application_context(
         "[$项目空间](cloud://projects) 帮我创建一个新项目", None
     )
 
@@ -6065,3 +6073,36 @@ async def test_task_archive_forwards_cleanup_and_preserves_accepted_cleanup_erro
     }
     assert response.accepted is True
     assert response.cleanup_error == "Snapshot unavailable"
+
+
+@pytest.mark.parametrize(
+    ("requested_runtime", "shell_type"),
+    [("claude_code", "Codex"), ("codex", "ClaudeCode")],
+)
+def test_context_transport_follows_compiled_team_runtime(
+    requested_runtime: str, shell_type: str
+) -> None:
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+    from shared.models.execution import ExecutionRequest
+
+    context = {"project": {"kind": "application", "value": "Project reference"}}
+    request = RuntimeTaskCreateRequest(
+        schemaVersion=3,
+        wegentTeamId=42,
+        runtime=requested_runtime,
+        message="User request",
+        additionalContext=context,
+    )
+    execution = ExecutionRequest(bot=[{"shell_type": shell_type}])
+
+    runtime_work_service._apply_runtime_create_request(execution, request)
+
+    assert execution.to_dict()["additional_context"] == context
+    if shell_type == "Codex":
+        assert execution.prompt == request.message
+    else:
+        assert execution.prompt == (
+            "<application_context>\n[project]\nProject reference\n"
+            "</application_context>\n\nUser request"
+        )

@@ -17,7 +17,7 @@ export interface ComposerTransferServices {
   resolveTransfer: (
     data: DataTransfer,
     source: 'clipboard' | 'drop'
-  ) => Promise<ComposerPathTransfer>
+  ) => ComposerPathTransfer | Promise<ComposerPathTransfer>
 }
 export const browserComposerTransferServices: ComposerTransferServices = {
   hasPathTransfer: () => false,
@@ -92,13 +92,13 @@ export function useComposerTransfers({
       const files = Array.from(clipboardData.files)
       if (files.length > 0 || services.hasPathTransfer(clipboardData)) {
         event.preventDefault()
-        runTransfer(async () => {
-          const { attachmentFiles, referenceEntries } = await services.resolveTransfer(
-            clipboardData,
-            'clipboard'
-          )
-          insertPathReferences(referenceEntries)
-          if (attachmentFiles.length > 0) await onPasteFiles?.(attachmentFiles)
+        runTransfer(() => {
+          const accept = ({ attachmentFiles, referenceEntries }: ComposerPathTransfer) => {
+            insertPathReferences(referenceEntries)
+            return attachmentFiles.length > 0 ? onPasteFiles?.(attachmentFiles) : undefined
+          }
+          const transfer = services.resolveTransfer(clipboardData, 'clipboard')
+          return transfer instanceof Promise ? transfer.then(accept) : accept(transfer)
         })
         return true
       }
@@ -145,13 +145,13 @@ export function useComposerTransfers({
         return false
       event.preventDefault()
       event.stopPropagation()
-      runTransfer(async () => {
-        const { attachmentFiles, referenceEntries } = await services.resolveTransfer(
-          dataTransfer,
-          'drop'
-        )
-        insertPathReferences(referenceEntries)
-        if (attachmentFiles.length > 0) await onPasteFiles?.(attachmentFiles)
+      runTransfer(() => {
+        const accept = ({ attachmentFiles, referenceEntries }: ComposerPathTransfer) => {
+          insertPathReferences(referenceEntries)
+          return attachmentFiles.length > 0 ? onPasteFiles?.(attachmentFiles) : undefined
+        }
+        const transfer = services.resolveTransfer(dataTransfer, 'drop')
+        return transfer instanceof Promise ? transfer.then(accept) : accept(transfer)
       })
       return true
     },

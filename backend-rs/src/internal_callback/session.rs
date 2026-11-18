@@ -830,6 +830,32 @@ pub(crate) async fn cleanup_streaming_state<R: Redis>(
     Ok(())
 }
 
+/// A late consumer may clean its own keys without clearing a newer turn's marker.
+pub(crate) async fn cleanup_settled_streaming_state<R: Redis>(
+    redis: &R,
+    subtask_id: i64,
+    task_id: i64,
+) -> RedisResult<()> {
+    cleanup_streaming_state(redis, subtask_id, None).await?;
+    let key = task_streaming_key(task_id);
+    let Some(raw) = redis.get::<_, String>(&key).await? else {
+        return Ok(());
+    };
+    let owner = serde_json::from_str::<Value>(&raw)
+        .ok()
+        .and_then(|value| value.get("subtask_id").and_then(Value::as_i64));
+    if owner == Some(subtask_id) {
+        let _: i64 = redis
+            .eval(
+                "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0",
+                [key],
+                [raw],
+            )
+            .await?;
+    }
+    Ok(())
+}
+
 /// Return each block's internal content key for cleanup
 /// (`_extract_block_content_keys`). The Source deletes only the recorded
 /// content keys; it has no per-key `:offset` companion.

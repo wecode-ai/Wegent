@@ -166,6 +166,60 @@ test('routes files nested in native question answers through ordinary attachment
   }
 })
 
+test.each([false, true])(
+  'preserves mixed local and cloud files in separate question answers (pending=%s)',
+  async pending => {
+    const { createPreparingAttachment } = await import('@/lib/runtime-attachments')
+    const { address, store, send, messaging } = messagingFixture()
+    const remote = attachment({ id: 42, filename: 'cloud.png', local_path: undefined })
+    const local = attachment({ id: -7, filename: 'local.txt', local_path: '/tmp/local.txt' })
+    let finish!: (value: Attachment) => void
+    const cloudFile = pending
+      ? createPreparingAttachment(
+          new File(['cloud bytes'], 'cloud.png'),
+          new Promise(resolve => {
+            finish = resolve
+          })
+        )
+      : remote
+    const response = {
+      requestId: 2,
+      answers: {
+        remote: { answers: ['Cloud'], attachments: [cloudFile] },
+        local: { answers: ['Local'], attachments: [local] },
+      },
+    }
+    try {
+      const sending = messaging.sendRuntimePaneMessage({
+        address,
+        message: 'Review both files',
+        requestUserInputResponse: response,
+      })
+      if (pending) {
+        await Promise.resolve()
+        expect(send).not.toHaveBeenCalled()
+        finish(remote)
+      }
+      await expect(sending).resolves.toBe(true)
+      expect(send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          requestUserInputResponse: {
+            ...response,
+            answers: {
+              remote: { answers: ['Cloud'], attachments: [remote] },
+              local: { answers: ['Local'], attachments: [local] },
+            },
+          },
+          attachmentIds: [42],
+          attachments: [local],
+        })
+      )
+    } finally {
+      store.remove(address)
+    }
+  }
+)
+
 test('compaction renders only its native turn and remains active after an early RPC response', async () => {
   const { address, store, compact, messaging } = messagingFixture()
   let finish!: (value: { accepted: boolean }) => void
@@ -922,6 +976,50 @@ describe('friendlyTitleForTask', () => {
 })
 
 describe('prepareRuntimeAttachmentsForDevice', () => {
+  test('reports how to recover an unfinished attachment after its in-memory preparation is lost', async () => {
+    await expect(
+      prepareRuntimeAttachmentsForDevice(
+        'local-device',
+        [],
+        [],
+        [
+          attachment({
+            id: -42,
+            status: 'uploading',
+            filename: 'unfinished.png',
+            local_path: undefined,
+          }),
+        ]
+      )
+    ).rejects.toThrow(
+      i18n.t('workbench.attachment_preparation_unavailable', { filename: 'unfinished.png' })
+    )
+  })
+
+  test('resolves a pending cloud upload into its remote ID before local-device transport', async () => {
+    const { createPreparingAttachment, localRuntimeAttachments } =
+      await import('@/lib/runtime-attachments')
+    let finish!: (value: Attachment) => void
+    const ready = new Promise<Attachment>(resolve => {
+      finish = resolve
+    })
+    const pending = createPreparingAttachment(new File(['image'], 'pending.png'), ready)
+    let delivered = false
+    const preparing = prepareRuntimeAttachmentsForDevice(
+      'local-device',
+      [],
+      [],
+      localRuntimeAttachments([pending])
+    ).then(result => {
+      delivered = true
+      return result
+    })
+    await Promise.resolve()
+    expect(delivered).toBe(false)
+    finish(attachment({ id: 42, local_path: undefined }))
+    await expect(preparing).resolves.toEqual({ attachmentIds: [42], attachments: [] })
+  })
+
   test.each(['cloud', 'remote'] as const)(
     'uploads a source file before sending to a %s device',
     async deviceType => {
