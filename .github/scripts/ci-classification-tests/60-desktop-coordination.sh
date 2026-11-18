@@ -409,7 +409,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "Codex rollout paging invokes transcript and environment regressions" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-4","name":"Core / shard 4","segments":"environment-panel-scroll"},{"id":"core-5","name":"Core / shard 5","segments":"transcript-sync"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"window-lifecycle"},{"id":"core-5","name":"Core / shard 5","segments":"transcript-sync"}]}
 wework_desktop_cloud_e2e=false
 wework_desktop_cloud_e2e_matrix={"include":[]}
 wework_desktop_other_e2e=false

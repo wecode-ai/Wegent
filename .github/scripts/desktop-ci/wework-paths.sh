@@ -164,10 +164,6 @@ classify_wework_path() {
       select_target "cloud:core-task-flow"
       return
       ;;
-    wework/e2e/desktop/scenarios/codex-account-login.scenario.mjs)
-      select_target "core:codex-account-login"
-      return
-      ;;
 
     # Desktop sign-in travels through the operating system proxy, so the main
     # process and the renderer must share one network path.

@@ -315,7 +315,7 @@ classify_workbench_path() {
     # environment panel, plus temporary-chat and project-context integration.
     wework/src/components/layout/DesktopWorkbenchMain.tsx | \
       wework/src/components/layout/DesktopWorkbenchLayout.test.tsx)
-      select_target "core:environment-panel-scroll"
+      select_target "core:window-lifecycle"
       if [[ "$path" == wework/src/components/layout/DesktopWorkbenchMain.tsx ]]; then
         select_target "core:background-terminals"
         select_target "core:temporary-chat"
@@ -556,7 +556,6 @@ classify_workbench_path() {
       wework/src/components/settings/ModelSettingsPage* | \
       wework/src/features/model-settings/provider*)
       select_target "core:model-settings"
-      select_target "core:codex-account-login"
       select_target "core:model-routing"
       return
       ;;

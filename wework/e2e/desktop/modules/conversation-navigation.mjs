@@ -1227,6 +1227,7 @@ async function reopenCurrentTurnNavigationTask(
     )
 
     await verifyEnvironmentPanelScrollStability(control)
+    await verifyTurnNavigationComposerClearance(control, expectedTurnCount)
   }
   await control.command('waitFor', '[data-testid="message-turn-navigation-preview"]', {
     text: `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN}`,
@@ -1741,8 +1742,6 @@ export {
   verifyBackgroundGuidanceNavigation,
   verifyForegroundGuidanceScroll,
   verifyTurnNavigationTracksVisibleTurnMessages,
-  verifyEnvironmentPanelScrollStability,
-  verifyTurnNavigationComposerClearance,
   reopenCurrentTurnNavigationTask,
   verifyStandaloneViewImageTask,
   verifyVisionSidecar,

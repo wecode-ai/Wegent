@@ -364,7 +364,7 @@ classify_path() {
       ;;
     executor/src/runtime_work/codex_transcript_page.rs)
       select_target "core:transcript-sync"
-      select_target "core:environment-panel-scroll"
+      select_target "core:window-lifecycle"
       ;;
     backend-rs/migrations/reference/versions/*wework_transcript* | \
       backend/app/api/endpoints/wework_transcripts.py | \

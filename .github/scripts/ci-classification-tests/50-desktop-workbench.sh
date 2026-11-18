@@ -73,7 +73,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "main workbench changes select fixed environment panel coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"temporary-chat"},{"id":"core-3","name":"Core / shard 3","segments":"dots-closed-loops"},{"id":"core-4","name":"Core / shard 4","segments":"environment-panel-scroll"},{"id":"core-6","name":"Core / shard 6","segments":"task-board-association"},{"id":"core-8","name":"Core / shard 8","segments":"background-terminals,cloud-context-resilience"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"temporary-chat"},{"id":"core-2","name":"Core / shard 2","segments":"window-lifecycle"},{"id":"core-3","name":"Core / shard 3","segments":"dots-closed-loops"},{"id":"core-6","name":"Core / shard 6","segments":"task-board-association"},{"id":"core-8","name":"Core / shard 8","segments":"background-terminals,cloud-context-resilience"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/components/layout/DesktopWorkbenchMain.tsx"
@@ -81,7 +81,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "main workbench layout test selects fixed environment panel coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-4","name":"Core / shard 4","segments":"environment-panel-scroll"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"window-lifecycle"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/components/layout/DesktopWorkbenchLayout.test.tsx"
@@ -272,18 +272,10 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/electron/src/runtime/workbench-mode.ts" \
   "wework/src/features/workbench-mode/workbenchMode.ts"
 
-assert_desktop_case "Codex account login scenario selects its desktop regression" \
+assert_desktop_case "model settings changes select model management and routing coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"codex-account-login"}]}
-wework_desktop_other_e2e=false
-wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/e2e/desktop/scenarios/codex-account-login.scenario.mjs"
-
-assert_desktop_case "model settings changes select model management and account coverage" \
-  'wework_desktop_e2e=true
-wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"codex-account-login"},{"id":"core-2","name":"Core / shard 2","segments":"model-settings"},{"id":"core-5","name":"Core / shard 5","segments":"model-routing"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"model-settings"},{"id":"core-5","name":"Core / shard 5","segments":"model-routing"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/components/settings/ProviderEditor.tsx" \
