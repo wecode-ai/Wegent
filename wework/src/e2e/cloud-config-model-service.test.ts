@@ -17,7 +17,7 @@ test('keeps synthetic subscription refresh local while configuration bundles fai
     await service.prepareApp({
       appEnvironment,
       codexHome,
-      control: { url: 'http://127.0.0.1:1' },
+      control: { url: 'http://127.0.0.1:1', httpRequests: [] },
     })
     const refreshUrl = new URL(appEnvironment.CODEX_REFRESH_TOKEN_URL_OVERRIDE)
     expect(refreshUrl.hostname).toBe('127.0.0.1')
