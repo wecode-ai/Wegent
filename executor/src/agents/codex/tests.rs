@@ -58,12 +58,15 @@ fn effective_git_credentials_are_pinned_in_app_server_and_tool_shells() {
 }
 
 #[test]
-fn cloud_config_bundle_failures_are_detected() {
+fn cloud_config_and_auth_refresh_failures_are_detected() {
     assert!(is_codex_cloud_config_error(
         "failed to load configuration: timed out refreshing cloud config bundle"
     ));
     assert!(is_codex_cloud_config_error(
         "failed to reload config: timed out waiting for cloud config bundle after 20s"
+    ));
+    assert!(is_codex_cloud_config_error(
+        "failed to load configuration: Your access token could not be refreshed. Please log out and sign in again."
     ));
     assert!(!is_codex_cloud_config_error("model not found"));
 }
