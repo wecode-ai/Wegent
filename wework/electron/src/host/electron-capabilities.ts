@@ -46,6 +46,7 @@ import type { PreferencesStore } from './preferences-store.js'
 import type { RendererStorageStore } from './renderer-storage-store.js'
 import type { BrowserBounds, EmbeddedBrowserManager } from './embedded-browser-manager.js'
 import type { ComputerUseService } from './computer-use-service.js'
+import type { AppshotsService } from './appshots-service.js'
 import { LocalAttachmentStore } from './local-attachment-store.js'
 import { readLocalFileChunk } from './local-file-reader.js'
 import { registerWorkspaceFileActions } from './workspace-file-actions.js'
@@ -157,6 +158,7 @@ export interface ElectronDesktopServices {
   executorPid?: () => number | null
   requestMcpApp?: (payload: Record<string, unknown>) => Promise<unknown>
   executorHome: string
+  appshots?: AppshotsService
   processExplorer: ProcessExplorerHostService
   appUpdates?: AppUpdateController
   browserAnnotations?: BrowserAnnotationController
@@ -696,6 +698,22 @@ export function createElectronCapabilityRouter(
     requireActiveIsolatedClipboardLease(activeIsolatedClipboardLease, params, window)
     await clipboard.writeText(rawStringParam(params, 'text'))
     return { written: true }
+  })
+  const appshots = desktopServices.appshots
+  const requireAppshots = (): AppshotsService => {
+    if (!appshots) {
+      throw new HostCapabilityError('capability_unavailable', 'Appshots are unavailable')
+    }
+    return appshots
+  }
+  router.register('appshots.getStatus', () => requireAppshots().status())
+  router.register('appshots.capture', () => requireAppshots().capture())
+  router.register('appshots.openPermissionSettings', params => {
+    const permission = enumParam(params, 'permission', ['screenCapture', 'accessibility'])
+    if (permission !== 'screenCapture' && permission !== 'accessibility') {
+      throw new HostCapabilityError('invalid_params', 'permission is required')
+    }
+    return requireAppshots().openPermissionSettings(permission)
   })
   router.register('computerUse.status', () => computerUse.status())
   router.register('computerUse.setEnabled', async params => {

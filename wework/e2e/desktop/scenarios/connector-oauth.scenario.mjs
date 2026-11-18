@@ -117,6 +117,88 @@ function toolRequestDiagnostic(body, sequence) {
   }
 }
 
+export async function installAndReconnectExpiredConnector(
+  control,
+  { provider, resultDir, publishPluginRelease, appDevice, api, uiTimeoutMs }
+) {
+  // Installation can refresh the expired grant before its detail opens.
+  // Count the complete install-to-consent flow, including that automatic attempt.
+  const refreshBefore = provider.refreshRequests
+  const authorizeBefore = provider.authorizeRequests
+  const tokenBefore = provider.tokenRequests
+  const pluginRoot = join(resultDir, 'connector-oauth-plugin')
+  await mkdir(join(pluginRoot, '.codex-plugin'), { recursive: true })
+  await writeFile(
+    join(pluginRoot, '.codex-plugin/plugin.json'),
+    `${JSON.stringify(
+      {
+        name: CONNECTOR_PLUGIN_SLUG,
+        version: '1.0.0',
+        description: 'Desktop connector authorization recovery fixture',
+        connectors: [
+          {
+            slug: CONNECTOR_OAUTH_SLUG,
+            displayName: 'Desktop connector OAuth',
+            authPolicy: 'on_use',
+          },
+        ],
+      },
+      null,
+      2
+    )}\n`
+  )
+  const connectorPlugin = await publishPluginRelease({
+    slug: CONNECTOR_PLUGIN_SLUG,
+    version: '1.0.0',
+    packageRoot: pluginRoot,
+  })
+  await api(
+    `/api/plugins/marketplace/${connectorPlugin.pluginId}/install?device_id=${encodeURIComponent(
+      appDevice.device_id
+    )}`,
+    { method: 'POST' }
+  )
+  await openPlugin(control, { slug: CONNECTOR_PLUGIN_SLUG })
+  await control.command('clickWhenEnabled', testId('plugins-refresh-button'))
+  const pluginRow = testId(`plugin-marketplace-row-${connectorPlugin.pluginId}`)
+  await control.command('waitFor', pluginRow, {
+    enabled: true,
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('click', pluginRow)
+  const manage = `[data-testid="plugin-connection-manage-connector:${CONNECTOR_OAUTH_SLUG}"]`
+  await control.command('waitFor', manage, {
+    enabled: true,
+    timeoutMs: uiTimeoutMs,
+  })
+
+  await control.command('clickWhenEnabled', manage, {
+    timeoutMs: uiTimeoutMs,
+  })
+  await until(
+    () => api('/api/connector-apps'),
+    apps => apps.find(app => app.slug === CONNECTOR_OAUTH_SLUG)?.connection.status === 'connected',
+    'Provider consent did not restore the rejected connector grant',
+    uiTimeoutMs
+  )
+  assert.equal(
+    provider.refreshRequests,
+    refreshBefore + 1,
+    'The expired plugin connection must exercise exactly one rejected refresh'
+  )
+  assert.equal(
+    provider.authorizeRequests,
+    authorizeBefore + 1,
+    'A rejected refresh must fall back to exactly one provider consent'
+  )
+  assert.equal(
+    provider.tokenRequests,
+    tokenBefore + 2,
+    'The refresh and consent fallback must each reach the token endpoint once'
+  )
+  return { plugin: connectorPlugin, manage }
+}
+
 export function createDesktopScenario({
   checkpoint,
   captureScreenshot,
@@ -487,10 +569,6 @@ export function createDesktopScenario({
       // An expired grant whose refresh is rejected must still recover through
       // provider consent from the installed plugin detail. Recreate the grant
       // through the real OAuth provider so it carries a renewable token.
-      // Background discovery can refresh it before the plugin detail opens.
-      // Count the entire expired-grant phase and reject its first refresh.
-      const refreshBefore = provider.refreshRequests
-      provider.rejectRefresh(true)
       provider.setAccessTokenTtl(1)
       const expiredSession = await api(
         `/api/connector-apps/${CONNECTOR_OAUTH_SLUG}/oauth/sessions`,
@@ -508,80 +586,20 @@ export function createDesktopScenario({
         uiTimeoutMs
       )
       provider.setAccessTokenTtl(3600)
+      provider.rejectRefresh(true)
 
-      const pluginRoot = join(resultDir, 'connector-oauth-plugin')
-      await mkdir(join(pluginRoot, '.codex-plugin'), { recursive: true })
-      await writeFile(
-        join(pluginRoot, '.codex-plugin/plugin.json'),
-        `${JSON.stringify(
-          {
-            name: CONNECTOR_PLUGIN_SLUG,
-            version: '1.0.0',
-            description: 'Desktop connector authorization recovery fixture',
-            connectors: [
-              {
-                slug: CONNECTOR_OAUTH_SLUG,
-                displayName: 'Desktop connector OAuth',
-                authPolicy: 'on_use',
-              },
-            ],
-          },
-          null,
-          2
-        )}\n`
-      )
-      connectorPlugin = await cloudEnvironment.publishPluginRelease({
-        slug: CONNECTOR_PLUGIN_SLUG,
-        version: '1.0.0',
-        packageRoot: pluginRoot,
+      const recovery = await installAndReconnectExpiredConnector(control, {
+        provider,
+        resultDir,
+        publishPluginRelease: async options => {
+          connectorPlugin = await cloudEnvironment.publishPluginRelease(options)
+          return connectorPlugin
+        },
+        appDevice,
+        api,
+        uiTimeoutMs,
       })
-      await api(
-        `/api/plugins/marketplace/${connectorPlugin.pluginId}/install?device_id=${encodeURIComponent(
-          appDevice.device_id
-        )}`,
-        { method: 'POST' }
-      )
-      await openPlugin(control, { slug: CONNECTOR_PLUGIN_SLUG })
-      await control.command('clickWhenEnabled', testId('plugins-refresh-button'))
-      const pluginRow = testId(`plugin-marketplace-row-${connectorPlugin.pluginId}`)
-      await control.command('waitFor', pluginRow, {
-        enabled: true,
-        timeoutMs: uiTimeoutMs,
-      })
-      await control.command('click', pluginRow)
-      const manage = `[data-testid="plugin-connection-manage-connector:${CONNECTOR_OAUTH_SLUG}"]`
-      await control.command('waitFor', manage, {
-        enabled: true,
-        timeoutMs: uiTimeoutMs,
-      })
-
-      const authorizeBefore = provider.authorizeRequests
-      const tokenBefore = provider.tokenRequests
-      await control.command('clickWhenEnabled', manage, {
-        timeoutMs: uiTimeoutMs,
-      })
-      await until(
-        () => api('/api/connector-apps'),
-        apps =>
-          apps.find(app => app.slug === CONNECTOR_OAUTH_SLUG)?.connection.status === 'connected',
-        'Provider consent did not restore the rejected connector grant',
-        uiTimeoutMs
-      )
-      assert.equal(
-        provider.refreshRequests,
-        refreshBefore + 1,
-        'The expired plugin connection must exercise exactly one rejected refresh'
-      )
-      assert.equal(
-        provider.authorizeRequests,
-        authorizeBefore + 1,
-        'A rejected refresh must fall back to exactly one provider consent'
-      )
-      assert.equal(
-        provider.tokenRequests,
-        tokenBefore + 2,
-        'The refresh and consent fallback must each reach the token endpoint once'
-      )
+      const { manage } = recovery
       await control.command('waitFor', `${manage}:not([disabled])`, {
         enabled: true,
         timeoutMs: uiTimeoutMs,
@@ -709,7 +727,6 @@ export function createDesktopScenario({
         authorizeRequests: provider?.authorizeRequests ?? 0,
         tokenRequests: provider?.tokenRequests ?? 0,
         refreshRequests: provider?.refreshRequests ?? 0,
-        refreshEvents: provider?.refreshEvents ?? [],
         toolCalls: provider?.toolCalls ?? [],
         catalogAtResume,
         localSyncHold,

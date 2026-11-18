@@ -53,7 +53,6 @@ export async function startConnectorOAuthProvider() {
     authorizeRequests: 0,
     tokenRequests: 0,
     refreshRequests: 0,
-    refreshEvents: [],
     rejectRefresh: false,
     accessTokenTtlSeconds: 3600,
     accessTokens: new Set(),
@@ -212,9 +211,7 @@ export async function startConnectorOAuthProvider() {
       if (form.get('grant_type') === 'refresh_token') {
         state.refreshRequests += 1
         const refresh = form.get('refresh_token') ?? ''
-        const rejected = state.rejectRefresh || !state.refreshTokens.has(refresh)
-        state.refreshEvents.push({ atUnixMs: Date.now(), rejected })
-        if (rejected) {
+        if (state.rejectRefresh || !state.refreshTokens.has(refresh)) {
           sendJson(response, 400, { error: 'invalid_grant' })
           return
         }
@@ -279,9 +276,6 @@ export async function startConnectorOAuthProvider() {
     },
     get refreshRequests() {
       return state.refreshRequests
-    },
-    get refreshEvents() {
-      return state.refreshEvents
     },
     get toolCalls() {
       return state.toolCalls
