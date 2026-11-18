@@ -20,6 +20,8 @@ export type ProjectAutomationEventType =
   | 'task.status_changed'
   | 'change_request.checks_failed'
   | 'change_request.merge_conflict'
+  | 'change_request.quality_ready'
+  | 'change_request.merged'
   | 'change_request.review_submitted'
   | 'change_request.comment_created'
   | 'document.changed'

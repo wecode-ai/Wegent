@@ -442,6 +442,8 @@ def apply_workflow_action(
         "evaluate",
         "record_coordinator_decision",
         "set_stage_state",
+        "record_stage_review",
+        "record_release",
     }:
         from app.services.loop_items.strategy import apply_strategy_action
 
@@ -554,10 +556,37 @@ def apply_workflow_action(
                     entry.status = "forced_completed"
             cancelled_runs = _retire_assignments(db, item, user_id, set(skipped))
         elif action.action == "approve":
+            if workflow.strategy_snapshot is not None:
+                from app.services.loop_items.strategy_reviews import (
+                    require_stage_review_gate,
+                )
+
+                require_stage_review_gate(db, item, workflow, node)
             require_ready_node(workflow, node.id)
             require_deliverables(db, item, node)
             node.status = "completed"
             cancelled_runs = _retire_assignments(db, item, user_id, {node.id})
+        elif (
+            action.action == "reject"
+            and node.id == "quality_acceptance"
+            and workflow.strategy_snapshot is not None
+        ):
+            require_ready_node(workflow, node.id)
+            node.attempts += 1
+            node.status = "ready"
+            node.deliverables_completed_at = None
+            workflow.quality_blocked = True
+            cancelled_runs = _retire_assignments(db, item, user_id, {node.id})
+            from app.services.loop_items.strategy_reviews import _assign_stage_owner
+
+            _assign_stage_owner(
+                db,
+                item,
+                user_id,
+                workflow,
+                node,
+                "development",
+            )
         else:
             require_ready_node(workflow, node.id)
             target_id = action.rework_to or node.rework_to or node.id
@@ -600,7 +629,11 @@ def apply_workflow_action(
                 workflow,
                 {
                     "approve": "stage_completed",
-                    "reject": "stage_reworked",
+                    "reject": (
+                        "quality_rework"
+                        if node is not None and node.id == "quality_acceptance"
+                        else "stage_reworked"
+                    ),
                     "force_advance": "stage_forced",
                 }[action.action],
                 action.reason,
@@ -653,8 +686,11 @@ def apply_workflow_action(
     if action.idempotency_key:
         receipts[action.idempotency_key] = fingerprint
         metadata["workflow_decision_receipts"] = receipts
-    item.metadata_json = advance_content_revision(metadata, actor_user_id=user_id)
-    item.version += 1
+    if action.type == "record_stage_review":
+        item.metadata_json = metadata
+    else:
+        item.metadata_json = advance_content_revision(metadata, actor_user_id=user_id)
+        item.version += 1
     if workflow.strategy_snapshot is not None and action.type not in {
         "record_coordinator_decision",
         "evaluate",

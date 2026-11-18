@@ -1143,10 +1143,18 @@ class ProjectChatService:
                 item.metadata_json = update_change_request_source(
                     item.metadata_json, f"activity:{row.message_id}", row.content
                 )
-                item.metadata_json = advance_content_revision(
-                    item.metadata_json, actor_user_id=user_id
+                from app.services.loop_items.strategy_pipeline import (
+                    apply_indexed_change_requests,
                 )
-                item.version += 1
+
+                lower_bound_changed = apply_indexed_change_requests(
+                    db, item, actor_user_id=user_id
+                )
+                if not lower_bound_changed:
+                    item.metadata_json = advance_content_revision(
+                        item.metadata_json, actor_user_id=user_id
+                    )
+                    item.version += 1
                 from app.services.loop_items.strategy import (
                     refresh_strategy_coordinator,
                 )
@@ -1944,6 +1952,17 @@ class ProjectChatService:
         )
         if metadata != item.metadata_json:
             item.metadata_json = metadata
+            from app.services.loop_items.strategy_pipeline import (
+                apply_indexed_change_requests,
+            )
+
+            actor_user_id = row.created_by_user_id or item.created_by_user_id
+            if actor_user_id:
+                apply_indexed_change_requests(
+                    db,
+                    item,
+                    actor_user_id=actor_user_id,
+                )
             self._queue_loop_item_change(db, item)
 
     @staticmethod

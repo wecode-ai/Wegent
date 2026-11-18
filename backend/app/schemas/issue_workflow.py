@@ -11,6 +11,9 @@ from pydantic import BaseModel, Field, model_validator
 from app.schemas.collaboration_strategy import (
     CollaborationStrategyRevision,
     CoordinatorDecision,
+    ReleaseRecordInput,
+    StageReviewDecision,
+    StageReviewInput,
     StrategyStage,
 )
 from app.schemas.plugin_config import validate_non_secret_plugin_configs
@@ -703,6 +706,8 @@ class WorkflowAction(BaseModel):
         "evaluate",
         "record_coordinator_decision",
         "set_stage_state",
+        "record_stage_review",
+        "record_release",
     ]
     node_id: str | None = Field(default=None, min_length=1, max_length=64)
     action: Literal["approve", "reject", "force_advance"] | None = None
@@ -711,6 +716,8 @@ class WorkflowAction(BaseModel):
     rework_to: StrategyStage | None = None
     state: Literal["waiting", "blocked", "ready"] | None = None
     decision: CoordinatorDecision | None = None
+    review: StageReviewInput | None = None
+    release: ReleaseRecordInput | None = None
 
     @model_validator(mode="after")
     def validate_action(self) -> "WorkflowAction":
@@ -723,6 +730,12 @@ class WorkflowAction(BaseModel):
         elif self.type == "set_stage_state":
             if not self.node_id or self.state is None or not self.reason:
                 raise ValueError("stage state changes require node, state and reason")
+        elif self.type == "record_stage_review":
+            if self.node_id is None or self.review is None:
+                raise ValueError("stage review requires a node and review result")
+        elif self.type == "record_release":
+            if self.release is None:
+                raise ValueError("release evidence is required")
         elif self.node_id is not None or self.action is not None:
             raise ValueError("this workflow action cannot contain a node decision")
         if self.type == "upgrade_strategy" and not self.reason:
@@ -756,6 +769,16 @@ class IssueWorkflowInstance(BaseModel):
     coordinator_decision: CoordinatorDecision | None = None
     coordinator_trigger: dict[str, Any] | None = None
     strategy_upgrade_history: list[dict[str, Any]] = Field(default_factory=list)
+    stage_reviews: list[StageReviewDecision] = Field(
+        default_factory=list, max_length=500
+    )
+    release_records: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
+    change_request_state: dict[str, Any] = Field(default_factory=dict)
+    provider_event_receipts: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    status_stage_repairs: list[dict[str, Any]] = Field(
+        default_factory=list, max_length=100
+    )
+    quality_blocked: bool = False
     notification_state: dict[str, Any] | None = None
     version: int = Field(default=1, ge=1)
     definition_version: int = Field(default=1, ge=1)

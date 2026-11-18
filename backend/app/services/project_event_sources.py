@@ -50,6 +50,7 @@ _SOURCES = {
         event_types=(
             "change_request.checks_failed",
             "change_request.merge_conflict",
+            "change_request.quality_ready",
             "change_request.review_submitted",
             "change_request.comment_created",
             "change_request.merged",
@@ -284,6 +285,21 @@ def _github_events(
     resource = _github_resource(repository)
     if not resource:
         return []
+
+    if event_name == "wework_quality_ready":
+        change_request = _mapping(payload.get("pull_request"))
+        subject = _github_change_request(resource, change_request)
+        return _change_request_event(
+            "change_request.quality_ready",
+            "github",
+            resource,
+            subject,
+            {
+                "raw_event": "pull_request",
+                "action": "quality_ready",
+                "checks_summary": dict(_mapping(payload.get("checks_summary"))),
+            },
+        )
 
     if event_name in {"check_run", "check_suite", "workflow_run"}:
         check = _mapping(payload.get(event_name))
@@ -617,6 +633,18 @@ def _github_change_request(
         return {}
     head = _mapping(value.get("head"))
     base = _mapping(value.get("base"))
+    mergeable_state = _text(value.get("mergeable_state")).lower()
+    mergeable = (
+        "CONFLICTING"
+        if value.get("mergeable") is False
+        or mergeable_state in {"dirty", "conflicting"}
+        else (
+            "MERGEABLE"
+            if value.get("mergeable") is True
+            and mergeable_state in {"clean", "has_hooks"}
+            else "UNKNOWN"
+        )
+    )
     return {
         "type": "change_request",
         "id": f"{resource.get('external_id')}#{number}",
@@ -628,6 +656,10 @@ def _github_change_request(
         "head_branch": _text(head.get("ref")) or _text(value.get("head_ref")) or None,
         "base_branch": _text(base.get("ref")) or _text(value.get("base_ref")) or None,
         "head_commit": _text(head.get("sha")) or _text(value.get("head_sha")) or None,
+        "mergeable": mergeable,
+        "is_draft": value.get("draft") is True,
+        "state": _text(value.get("state")).lower() or None,
+        "merge_commit": _text(value.get("merge_commit_sha")) or None,
     }
 
 

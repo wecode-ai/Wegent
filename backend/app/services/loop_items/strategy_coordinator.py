@@ -10,7 +10,12 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models.delivery import Delivery, LoopItem, LoopItemComment, loop_datetime_is_unset
+from app.models.delivery import (
+    Delivery,
+    LoopItem,
+    LoopItemComment,
+    loop_datetime_is_unset,
+)
 from app.models.project_chat_message import ProjectChatMessage
 from app.schemas.collaboration_strategy import (
     COORDINATOR_EVIDENCE_LIMIT,
@@ -55,6 +60,7 @@ def coordinator_check(
         _workflow_owner_label,
         intake_missing,
     )
+    from app.services.loop_items.strategy_reviews import missing_stage_conditions
     from app.services.loop_items.workflow import missing_deliverables
 
     if workflow.strategy_state == "active" and workflow.current_stage_id is None:
@@ -66,6 +72,8 @@ def coordinator_check(
         if current
         else [INTAKE_LABELS[key] for key in intake_missing(item)]
     )
+    if current is not None:
+        missing.extend(missing_stage_conditions(workflow, current, item.version))
     delivery_budget = (COORDINATOR_EVIDENCE_LIMIT - 2) // 2
     deliveries = (
         db.query(Delivery)

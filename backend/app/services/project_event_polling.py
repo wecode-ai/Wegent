@@ -407,6 +407,14 @@ class GitHubEventPoller(_HttpPoller):
                         params={"filter": "latest"},
                         list_key="check_runs",
                     )
+                    quality_ready = _pull_request_quality_input(
+                        number=number,
+                        pull=detail,
+                        checks=checks,
+                        repository_payload=repository_payload,
+                    )
+                    if quality_ready is not None:
+                        changes.append(quality_ready)
                     changes.extend(
                         _failed_check_run_inputs(
                             number=number,
@@ -889,6 +897,53 @@ def _pull_request_conflict_input(
             "repository": repository_payload,
         },
         headers={"x-github-event": "pull_request"},
+        occurred_at=_text(pull.get("updated_at")) or None,
+    )
+
+
+def _pull_request_quality_input(
+    *,
+    number: int,
+    pull: Mapping[str, Any],
+    checks: list[dict[str, Any]],
+    repository_payload: dict[str, Any],
+) -> PolledInput | None:
+    head_sha = _text(_mapping(pull.get("head")).get("sha"))
+    mergeable_state = _text(pull.get("mergeable_state")).lower()
+    if (
+        not head_sha
+        or pull.get("draft") is True
+        or pull.get("mergeable") is not True
+        or mergeable_state not in {"clean", "has_hooks"}
+        or not checks
+        or any(
+            _text(check.get("status")).lower() != "completed"
+            or _text(check.get("conclusion")).lower()
+            not in {"success", "neutral", "skipped"}
+            for check in checks
+        )
+    ):
+        return None
+    return PolledInput(
+        identity=f"pull_request:{number}:quality_ready:{head_sha}",
+        title=f"github: pull_request #{number} quality ready",
+        payload={
+            "action": "quality_ready",
+            "pull_request": dict(pull),
+            "checks_summary": {
+                "total": len(checks),
+                "success": sum(
+                    _text(check.get("conclusion")).lower() == "success"
+                    for check in checks
+                ),
+                "skipped": sum(
+                    _text(check.get("conclusion")).lower() == "skipped"
+                    for check in checks
+                ),
+            },
+            "repository": repository_payload,
+        },
+        headers={"x-github-event": "wework_quality_ready"},
         occurred_at=_text(pull.get("updated_at")) or None,
     )
 

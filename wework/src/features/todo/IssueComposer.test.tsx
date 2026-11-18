@@ -100,7 +100,7 @@ describe('IssueComposer', () => {
     const user = userEvent.setup()
     const onCreate = vi.fn()
     const strategyProject = {
-      ...productProject,
+      ...workItemProject,
       id: '22',
       agentic_strategy_enabled: true,
       collaboration_strategy: {
@@ -147,7 +147,7 @@ describe('IssueComposer', () => {
   it('keeps execution available when the feature is enabled without a published strategy', () => {
     renderWithProjectChat(
       <IssueComposer
-        projects={[{ ...productProject, id: '22', agentic_strategy_enabled: true }]}
+        projects={[{ ...workItemProject, id: '22', agentic_strategy_enabled: true }]}
         initialBoardKey="backend:22"
         onCancel={vi.fn()}
         onCreate={vi.fn()}

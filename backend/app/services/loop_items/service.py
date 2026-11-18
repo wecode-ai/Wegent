@@ -1071,6 +1071,11 @@ class LoopItemService:
                 **item.metadata_json,
                 "workflow": workflow.model_dump(mode="json"),
             }
+        from app.services.loop_items.strategy_pipeline import (
+            apply_indexed_change_requests,
+        )
+
+        apply_indexed_change_requests(db, item, actor_user_id=user_id)
         self._notify_updated_assignee(
             db,
             item=item,
@@ -1309,12 +1314,19 @@ class LoopItemService:
         )
         badges_changed = metadata != item.metadata_json
         item.metadata_json = metadata
+        from app.services.loop_items.strategy_pipeline import (
+            apply_indexed_change_requests,
+        )
+
+        lower_bound_changed = apply_indexed_change_requests(
+            db, item, actor_user_id=user_id
+        )
         from app.services.loop_items.strategy import refresh_strategy_coordinator
 
         strategy_changed = bool(
             (metadata.get("workflow") or {}).get("strategy_snapshot")
         )
-        if badges_changed or strategy_changed:
+        if (badges_changed or strategy_changed) and not lower_bound_changed:
             item.version += 1
         if strategy_changed:
             refresh_strategy_coordinator(
@@ -2257,6 +2269,17 @@ class LoopItemService:
                 actor_user_id=user_id,
                 automation_run_id=(automation_context or {}).get("run_id"),
             )
+        db.flush()
+        db.refresh(item)
+        if (
+            "title" in values.model_fields_set
+            or "description" in values.model_fields_set
+        ):
+            from app.services.loop_items.strategy_pipeline import (
+                apply_indexed_change_requests,
+            )
+
+            apply_indexed_change_requests(db, item, actor_user_id=user_id)
         if commit:
             db.commit()
         else:

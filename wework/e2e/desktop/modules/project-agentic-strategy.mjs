@@ -75,9 +75,10 @@ export async function verifyProjectAgenticStrategy(
     assert.equal(revision.text, strategyText.trim())
     assert.equal(published.collaboration_strategy_versions.length, 1)
     assert.deepEqual(
-      published.board_config.statuses.slice(1, 7).map(column => column.name),
-      LABELS
+      published.board_config.statuses.map(column => column.id),
+      ['inbox', 'pending', 'in_progress', 'in_review', 'completed']
     )
+    assert.ok(published.tags.includes(LABELS[0]))
     assert.deepEqual(revision.role_mapping.pmo, [owner.user_name])
 
     issue = await request(`/api/v1/cloud-projects/${policyProject.id}/loop-items`, {
@@ -202,7 +203,7 @@ export async function verifyProjectAgenticStrategy(
     await control.command('waitFor', scoped('[data-testid="issue-strategy-coordination-summary"]'))
     const evaluated = await request(`/api/v1/loop-items/${issue.id}`)
     assert.equal(evaluated.workflow.coordinator_decision.strategy_version, 1)
-    assert.equal(evaluated.workflow.coordinator_decision.integration_status, 'pending_w0056')
+    assert.equal(evaluated.workflow.coordinator_decision.integration_status, 'recorded')
     assert.ok(evaluated.workflow.coordinator_decision.evidence_refs.length > 0)
     await control.command('click', scoped('[data-testid="issue-strategy-upgrade"]'))
     await control.command('fill', scoped('[data-testid="todo-workflow-reason"]'), {

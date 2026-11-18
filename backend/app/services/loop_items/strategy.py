@@ -185,6 +185,17 @@ EVENT_LABELS = {
     "stage_ready": "恢复处理",
     "strategy_upgraded": "策略已升级",
     "clarification_requested": "需要人工澄清",
+    "stage_review_recorded": "阶段评审已记录",
+    "quality_handoff": "质量验收已交接",
+    "quality_blocked": "质量验收有阻塞",
+    "release_recorded": "发布记录已保存",
+    "release_failed": "发布记录为失败",
+    "change_request_lower_bound": "PR 已建立开发实现下限",
+    "change_request_checks_failed": "PR 检查失败",
+    "change_request_conflict": "PR 发生冲突",
+    "change_request_quality_ready": "PR 已满足质量准入",
+    "change_request_merged": "必要 PR 已全部合并",
+    "quality_rework": "质量验收退回修复",
 }
 
 
@@ -387,11 +398,7 @@ def publish_strategy(
     old_statuses = board.get("statuses") or [
         status.model_dump() for status in default_board_statuses()
     ]
-    statuses = [
-        {"id": "inbox", "name": "收集箱", "color": "gray"},
-        *[{"id": key, "name": label, "color": "blue"} for key, label, _, _ in STAGES],
-        {"id": "completed", "name": "已完成", "color": "green"},
-    ]
+    statuses = [status.model_dump() for status in default_board_statuses()]
     # Historical lanes stay available when an existing Issue still uses them.
     active_statuses = {
         row[0]
@@ -404,7 +411,7 @@ def publish_strategy(
         entry for entry in old_statuses if entry.get("id") in active_statuses - known
     )
     board["statuses"] = statuses
-    board["processing_start_status_id"] = "requirement_intake"
+    board["processing_start_status_id"] = "pending"
     metadata["board_config"] = board
     metadata["tags"] = list(
         dict.fromkeys([*metadata.get("tags", []), *STAGE_LABELS.values()])
@@ -611,6 +618,7 @@ def notify_strategy_event(
         "changed_stage": changed_stage,
         "skipped_stages": skipped_stages or [],
         "strategy_version": workflow.strategy_snapshot.version,
+        "status": item.status,
         "stage": (
             current.name
             if current
@@ -647,7 +655,7 @@ def notify_strategy_event(
         [
             f"协作策略 v{workflow.strategy_snapshot.version} · {EVENT_LABELS[event]}"
             + (f"：{changed_stage}" if changed_stage else ""),
-            f"阶段：{summary['stage']}；负责人：{summary['owner'] or '—'}",
+            f"状态：{summary['status']}；阶段：{summary['stage']}；负责人：{summary['owner'] or '—'}",
             *([f"跳过阶段：{'、'.join(skipped_stages)}"] if skipped_stages else []),
             f"阻塞：{'、'.join(summary['blockers']) or '无'}",
             f"下一动作：{summary['next_action']}",
@@ -732,11 +740,17 @@ def discard_strategy_summary_pushes(db: Session) -> None:
 def synchronize_strategy_stage(item: LoopItem, workflow: IssueWorkflowInstance) -> None:
     if workflow.strategy_state not in {"inbox", "active"}:
         return
-    item.status = (
-        "inbox"
-        if workflow.strategy_state == "inbox"
-        else STATUS_BY_STAGE.get(workflow.current_stage_id or "", "completed")
-    )
+    if workflow.strategy_state == "inbox":
+        item.status = "inbox"
+    else:
+        successful_release = any(
+            isinstance(record, dict) and record.get("successful") is True
+            for record in workflow.release_records
+        )
+        item.status = STATUS_BY_STAGE.get(
+            workflow.current_stage_id or "",
+            "completed" if successful_release else "in_review",
+        )
     metadata = dict(item.metadata_json or {})
     metadata["tags"] = [
         tag for tag in metadata.get("tags", []) if tag not in STAGE_LABELS.values()
@@ -773,7 +787,29 @@ def apply_strategy_action(
     ):
         raise HTTPException(409, "Agentic collaboration strategy is disabled")
     activated = []
-    if action.type == "admit":
+    if action.type == "record_stage_review":
+        from app.services.loop_items.strategy_reviews import record_stage_review
+
+        record_stage_review(
+            db,
+            item,
+            user_id,
+            workflow,
+            action,
+            actor_is_human=actor_is_human,
+        )
+    elif action.type == "record_release":
+        from app.services.loop_items.strategy_reviews import record_release
+
+        record_release(
+            db,
+            item,
+            user_id,
+            workflow,
+            action,
+            actor_is_human=actor_is_human,
+        )
+    elif action.type == "admit":
         if not actor_is_human:
             raise HTTPException(403, "Admission requires authorized human confirmation")
         if workflow.strategy_state != "inbox" or item.status != "inbox":

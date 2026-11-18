@@ -502,7 +502,7 @@ async def test_unresolved_change_request_event_resumes_after_binding(
     send_runtime_message.assert_awaited_once()
 
 
-def test_change_request_cannot_bind_to_two_active_tasks(
+def test_shared_change_request_can_bind_to_multiple_scoped_active_tasks(
     test_db,
     test_user,
 ) -> None:
@@ -564,14 +564,18 @@ def test_change_request_cannot_bind_to_two_active_tasks(
         binding=first,
         values=values,
     )
-    with pytest.raises(HTTPException) as exc_info:
-        project_change_request_binding_service.upsert(
-            test_db,
-            binding=second,
-            values=values,
-        )
+    project_change_request_binding_service.upsert(
+        test_db,
+        binding=second,
+        values=values,
+    )
 
-    assert exc_info.value.status_code == 409
+    assert project_change_request_binding_service.change_requests(first)[0]["url"] == (
+        values.url
+    )
+    assert project_change_request_binding_service.change_requests(second)[0]["url"] == (
+        values.url
+    )
 
 
 def test_ambiguous_change_request_resolution_does_not_guess(

@@ -18,6 +18,8 @@ StrategyStage = Literal[
     "quality_acceptance",
     "release_launch",
 ]
+StageReviewRole = Literal["product", "development", "design", "qa"]
+StageReviewOutcome = Literal["no_objection", "objection", "conditional"]
 
 
 class CollaborationStrategyPublish(BaseModel):
@@ -51,6 +53,52 @@ class IntakeDefinition(BaseModel):
     proposed_owner: str = Field(default="", max_length=100)
 
 
+class StageReviewInput(BaseModel):
+    decision: StageReviewOutcome
+    function_role: StageReviewRole | None = None
+    comment: str = Field(default="", max_length=4000)
+    evidence_refs: list[str] = Field(default_factory=list, max_length=100)
+
+    @model_validator(mode="after")
+    def require_feedback(self) -> "StageReviewInput":
+        self.comment = self.comment.strip()
+        if self.decision != "no_objection" and not self.comment:
+            raise ValueError("Objections and conditional reviews require a comment")
+        return self
+
+
+class StageReviewDecision(StageReviewInput):
+    stage_id: StrategyStage
+    function_role: StageReviewRole
+    reviewer_id: int = Field(ge=1)
+    attempt: int = Field(default=1, ge=1)
+    issue_version: int = Field(ge=1)
+    strategy_version: int = Field(ge=1)
+    created_at: datetime
+    idempotency_key: str = Field(min_length=1, max_length=128)
+
+
+class ReleaseRecordInput(BaseModel):
+    version: str = Field(min_length=1, max_length=255)
+    url: str = Field(min_length=1, max_length=2000)
+    released_at: datetime
+    environment: str = Field(min_length=1, max_length=100)
+    merge_commits: list[str] = Field(default_factory=list, max_length=100)
+    online_verification: str = Field(default="", max_length=4000)
+    rollback_summary: str = Field(default="", max_length=4000)
+    retrospective: str = Field(default="", max_length=4000)
+    successful: bool = True
+
+    @model_validator(mode="after")
+    def require_success_evidence(self) -> "ReleaseRecordInput":
+        self.merge_commits = [
+            value.strip().lower() for value in self.merge_commits if value.strip()
+        ]
+        if self.successful and not self.merge_commits:
+            raise ValueError("Successful releases require merge commit mappings")
+        return self
+
+
 class CoordinatorDecision(BaseModel):
     confidence: float | None = Field(default=None, ge=0, le=1)
     evidence_conflict: bool = False
@@ -64,7 +112,7 @@ class CoordinatorDecision(BaseModel):
     evidence_refs: list[str] = Field(max_length=COORDINATOR_EVIDENCE_LIMIT)
     clarification: str | None = Field(max_length=2000)
     idempotency_key: str = Field(min_length=1, max_length=128)
-    integration_status: Literal["pending_w0056", "recorded"] = "recorded"
+    integration_status: Literal["recorded"] = "recorded"
 
     @model_validator(mode="after")
     def require_evidence(self) -> "CoordinatorDecision":

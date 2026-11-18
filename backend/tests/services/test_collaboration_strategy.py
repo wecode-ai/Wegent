@@ -31,7 +31,12 @@ from app.services.cloud_projects.service import cloud_project_service
 from app.services.delivery.service import DeliveryService
 from app.services.loop_items.service import loop_item_service
 from app.services.loop_items.strategy import STAGES
+from app.services.loop_items.strategy_pipeline import (
+    apply_indexed_change_requests,
+    process_strategy_change_request_event,
+)
 from app.services.loop_items.workflow import workflow_snapshot
+from app.services.project_automation_domain import ProjectAutomationEvent
 from tests.services.test_project_workflow_gates import _project
 
 
@@ -174,6 +179,141 @@ def _submit(db, item, user):
         DeliveryFinalize(workflow_node_id=node.id, fulfillments=values),
     )
     return delivery
+
+
+def _role_policy(product, development, design, qa, pmo):
+    return (
+        "收集箱\n"
+        + "\n".join(stage[1] for stage in STAGES)
+        + "\n| 职能 | 成员 | 职责 |\n| --- | --- | --- |\n"
+        + f"| 产品 | {product.user_name} | 需求 |\n"
+        + f"| 研发 | {development.user_name} | 实现 |\n"
+        + f"| UI | {design.user_name} | 设计 |\n"
+        + f"| 测试 | {qa.user_name} | 测试 |\n"
+        + f"| PMO | {pmo.user_name} | 跟踪 |\n"
+    )
+
+
+def _fulfillment(requirement):
+    if requirement.id == "code_or_pr":
+        return {
+            "requirement_id": requirement.id,
+            "kind": "pull_request",
+            "url": "https://github.com/weibo/wegent/pull/1",
+            "state": "open",
+            "provider": "github",
+            "number": 1,
+            "head_branch": "feature/strategy",
+            "base_branch": "main",
+            "head_commit": "a" * 40,
+        }
+    return {
+        "requirement_id": requirement.id,
+        "kind": "text",
+        "text": f"Evidence for {requirement.name}",
+    }
+
+
+def _submit_requirements(db, item, actors):
+    node = next(
+        node
+        for node in workflow_snapshot(item).nodes
+        if node.id == workflow_snapshot(item).current_stage_id
+    )
+    role_by_requirement = {
+        "design": "design",
+        "technical_spec": "development",
+        "test_cases": "qa",
+        "questions_closed": "product",
+        "code_or_pr": "development",
+        "testable_version": "development",
+        "self_tests": "development",
+        "qa_report": "qa",
+        "business_acceptance": "product",
+        "visual_acceptance": "design",
+        "problem_closure_or_accepted_risk": "product",
+        "release_authorization": "product",
+        "release_record": "product",
+        "online_verification": "product",
+        "rollback": "product",
+        "retrospective": "product",
+    }
+    deliveries = []
+    for requirement in node.required_deliverables:
+        actor = actors[role_by_requirement.get(requirement.id, "product")]
+        delivery = Delivery(
+            id=str(uuid4()),
+            loop_item_id=item.id,
+            created_by_user_id=actor.id,
+            status="draft",
+            markdown_object_key=f"{requirement.id}.md",
+        )
+        db.add(delivery)
+        db.commit()
+        DeliveryService(storage=MagicMock()).finalize(
+            db,
+            delivery.id,
+            actor.id,
+            DeliveryFinalize(
+                workflow_node_id=node.id,
+                fulfillments=[_fulfillment(requirement)],
+            ),
+        )
+        deliveries.append(delivery)
+    return deliveries
+
+
+def _review(
+    db,
+    item,
+    user,
+    stage,
+    decision="no_objection",
+    key=None,
+    comment="",
+    function_role=None,
+):
+    return _action(
+        db,
+        item,
+        user,
+        "record_stage_review",
+        node_id=stage,
+        idempotency_key=key or str(uuid4()),
+        review={
+            "decision": decision,
+            **({"function_role": function_role} if function_role else {}),
+            "comment": comment,
+            "evidence_refs": [f"issue:{item.id}:{item.version}"],
+        },
+    )
+
+
+def _set_merged_pr(db, item, number=1, merge_commit="b" * 40):
+    workflow = workflow_snapshot(item)
+    pr_id = f"github:weibo/wegent#{number}"
+    workflow.change_request_state = {
+        "required_pr_ids": [pr_id],
+        "pull_requests": {
+            pr_id: {
+                "provider": "github",
+                "repository": "weibo/wegent",
+                "number": number,
+                "url": f"https://github.com/weibo/wegent/pull/{number}",
+                "state": "merged",
+                "head_sha": "a" * 40,
+                "merge_commit": merge_commit,
+                "checks_summary": "success",
+                "mergeable": "MERGED",
+            }
+        },
+    }
+    item.metadata_json = {
+        **(item.metadata_json or {}),
+        "workflow": workflow.model_dump(mode="json"),
+    }
+    db.commit()
+    return pr_id, merge_commit
 
 
 def test_revision_publish_is_immutable_and_inbox_has_no_stage_or_execution(
@@ -385,53 +525,89 @@ def test_six_stages_require_evidence_and_qa_rework_preserves_prior_attempts(
 ):
     project = _project(test_db, test_user)
     pmo = _member(test_db, project)
-    _publish(test_db, project, test_user, pmo)
+    developer = _member(test_db, project, "developer")
+    designer = _member(test_db, project, "designer")
+    qa = _member(test_db, project, "tester")
+    _publish(
+        test_db,
+        project,
+        test_user,
+        pmo,
+        _role_policy(test_user, developer, designer, qa, pmo),
+    )
     item = _inbox(test_db, project, test_user)
     _action(test_db, item, test_user, "admit")
+    actors = {
+        "product": test_user,
+        "development": developer,
+        "design": designer,
+        "qa": qa,
+    }
     for stage, *_ in STAGES[:4]:
         with pytest.raises(HTTPException) as error:
             _action(
                 test_db, item, test_user, "decide_node", node_id=stage, action="approve"
             )
-        assert error.value.detail["code"] == "workflow_deliverables_missing"
-        _submit(test_db, item, test_user)
+        assert error.value.detail["code"] in {
+            "workflow_deliverables_missing",
+            "strategy_stage_review_incomplete",
+        }
+        _submit_requirements(test_db, item, actors)
+        if stage == "joint_review":
+            for reviewer in (developer, designer, qa):
+                _review(test_db, item, reviewer, stage)
         _action(
             test_db, item, test_user, "decide_node", node_id=stage, action="approve"
         )
-    failed = _submit(test_db, item, test_user)
+    deliveries = _submit_requirements(test_db, item, actors)
+    with pytest.raises(HTTPException) as review_order:
+        _review(test_db, item, test_user, "quality_acceptance")
+    assert review_order.value.detail["code"] == "strategy_review_order_required"
+    assert review_order.value.detail["expected_role"] == "qa"
+    _review(
+        test_db,
+        item,
+        qa,
+        "quality_acceptance",
+        decision="objection",
+        comment="Regression failure preserved for engineering rework",
+    )
+    workflow = workflow_snapshot(item)
+    assert workflow.current_stage_id == "quality_acceptance"
+    assert workflow.quality_blocked is True
+    assert workflow.nodes[4].attempts == 2
+    assert item.assignee_user_id == developer.id
+    assert all(delivery.id in workflow.nodes[4].delivery_ids for delivery in deliveries)
+    _submit_requirements(test_db, item, actors)
+    for reviewer in (qa, test_user, designer):
+        _review(test_db, item, reviewer, "quality_acceptance")
+    assert item.assignee_user_id == designer.id
     _action(
         test_db,
         item,
         test_user,
         "decide_node",
         node_id="quality_acceptance",
-        action="reject",
-        reason="Visual design needs preparation",
-        rework_to="development_preparation",
+        action="approve",
     )
-    workflow = workflow_snapshot(item)
-    assert workflow.current_stage_id == "development_preparation"
-    assert workflow.nodes[2].attempts == 2
-    assert failed.id in workflow.nodes[4].delivery_ids
-    assert (
-        workflow.nodes[4].decision_history[-1].reason
-        == "Visual design needs preparation"
+    _, merge_commit = _set_merged_pr(test_db, item)
+    _action(
+        test_db,
+        item,
+        test_user,
+        "record_release",
+        release={
+            "version": "v2.0.0",
+            "url": "https://example.com/releases/v2.0.0",
+            "released_at": "2026-11-18T08:00:00Z",
+            "environment": "production",
+            "merge_commits": [merge_commit],
+            "online_verification": "Release verification passed",
+            "rollback_summary": "Previous artifact remains available",
+            "retrospective": "No remaining release blockers",
+            "successful": True,
+        },
     )
-    for stage, *_ in STAGES[2:]:
-        if stage == "quality_acceptance":
-            with pytest.raises(HTTPException):
-                _action(
-                    test_db,
-                    item,
-                    test_user,
-                    "decide_node",
-                    node_id=stage,
-                    action="approve",
-                )
-        _submit(test_db, item, test_user)
-        _action(
-            test_db, item, test_user, "decide_node", node_id=stage, action="approve"
-        )
     assert item.status == "completed"
     assert all(node.status == "completed" for node in workflow_snapshot(item).nodes)
     completions = [
@@ -447,6 +623,146 @@ def test_six_stages_require_evidence_and_qa_rework_preserves_prior_attempts(
     assert first.metadata_json["workflow_summary"]["stage"] == "共同评审"
     assert "阶段完成：需求提出" in first.content
     assert "stage_completed" not in first.content
+
+
+def test_joint_review_requires_current_role_consensus_and_is_idempotent(
+    test_db, test_user
+):
+    project = _project(test_db, test_user)
+    pmo = _member(test_db, project)
+    developer = _member(test_db, project, "developer")
+    designer = _member(test_db, project, "designer")
+    qa = _member(test_db, project, "tester")
+    _publish(
+        test_db,
+        project,
+        test_user,
+        pmo,
+        _role_policy(test_user, developer, designer, qa, pmo),
+    )
+    item = _inbox(test_db, project, test_user)
+    _action(test_db, item, test_user, "admit")
+    actors = {
+        "product": test_user,
+        "development": developer,
+        "design": designer,
+        "qa": qa,
+    }
+    _submit_requirements(test_db, item, actors)
+    _action(
+        test_db,
+        item,
+        test_user,
+        "decide_node",
+        node_id="requirement_intake",
+        action="approve",
+    )
+    _submit_requirements(test_db, item, actors)
+    with pytest.raises(HTTPException) as missing:
+        _action(
+            test_db,
+            item,
+            test_user,
+            "decide_node",
+            node_id="joint_review",
+            action="approve",
+        )
+    assert missing.value.detail["missing_roles"] == ["development", "design", "qa"]
+    key = str(uuid4())
+    version = item.version
+    _review(test_db, item, developer, "joint_review", key=key)
+    _review(test_db, item, developer, "joint_review", key=key)
+    assert item.version == version
+    assert len(workflow_snapshot(item).stage_reviews) == 1
+    _review(test_db, item, designer, "joint_review")
+    with pytest.raises(HTTPException) as incomplete:
+        _action(
+            test_db,
+            item,
+            test_user,
+            "decide_node",
+            node_id="joint_review",
+            action="approve",
+        )
+    assert incomplete.value.detail["missing_roles"] == ["qa"]
+    _review(
+        test_db,
+        item,
+        qa,
+        "joint_review",
+        decision="conditional",
+        comment="Performance depends on a pending benchmark",
+    )
+    with pytest.raises(HTTPException) as conditional:
+        _action(
+            test_db,
+            item,
+            test_user,
+            "decide_node",
+            node_id="joint_review",
+            action="approve",
+        )
+    assert conditional.value.detail["blocking_reviews"] == ["qa:conditional"]
+    _review(test_db, item, qa, "joint_review")
+    _action(
+        test_db,
+        item,
+        test_user,
+        "decide_node",
+        node_id="joint_review",
+        action="approve",
+    )
+    assert workflow_snapshot(item).current_stage_id == "development_preparation"
+
+
+def test_multi_role_reviewer_must_select_function_role(test_db, test_user):
+    project = _project(test_db, test_user)
+    pmo = _member(test_db, project, "pmo")
+    _publish(
+        test_db,
+        project,
+        test_user,
+        pmo,
+        _role_policy(test_user, test_user, test_user, test_user, pmo),
+    )
+    item = _inbox(test_db, project, test_user)
+    _action(test_db, item, test_user, "admit")
+    actors = {
+        "product": test_user,
+        "development": test_user,
+        "design": test_user,
+        "qa": test_user,
+    }
+    _submit_requirements(test_db, item, actors)
+    _action(
+        test_db,
+        item,
+        test_user,
+        "decide_node",
+        node_id="requirement_intake",
+        action="approve",
+    )
+    _submit_requirements(test_db, item, actors)
+    with pytest.raises(HTTPException) as ambiguous:
+        _review(test_db, item, test_user, "joint_review")
+    assert ambiguous.value.detail["code"] == "strategy_review_role_required"
+    for role in ("development", "design", "qa"):
+        _review(
+            test_db,
+            item,
+            test_user,
+            "joint_review",
+            function_role=role,
+        )
+    _action(
+        test_db,
+        item,
+        test_user,
+        "decide_node",
+        node_id="joint_review",
+        action="approve",
+    )
+    assert workflow_snapshot(item).current_stage_id == "development_preparation"
 
 
 def test_wait_block_resume_and_upgrade_preserve_instance_and_evidence(
@@ -598,7 +914,7 @@ def test_text_roles_bullets_and_historical_default_lane_survive_publish(
         CloudProjectResponse.model_validate(
             project.__dict__
         ).board_config.processing_start_status_id
-        == "requirement_intake"
+        == "pending"
     )
 
 
@@ -798,3 +1114,166 @@ def test_quality_evidence_requires_its_function_and_development_approval_is_scop
     test_db.commit()
     service.finalize(test_db, visual.id, designer.id, evidence)
     assert visual.id in workflow_snapshot(item).nodes[4].delivery_ids
+
+
+def test_change_request_lower_bounds_and_provider_pipeline_are_atomic_and_idempotent(
+    test_db, test_user
+):
+    project = _project(test_db, test_user)
+    pmo = _member(test_db, project)
+    developer = _member(test_db, project, "developer")
+    designer = _member(test_db, project, "designer")
+    qa = _member(test_db, project, "tester")
+    _publish(
+        test_db,
+        project,
+        test_user,
+        pmo,
+        _role_policy(test_user, developer, designer, qa, pmo),
+    )
+    item = _inbox(test_db, project, test_user)
+    url = "https://github.com/weibo/wegent/pull/7"
+    item.metadata_json = {
+        **(item.metadata_json or {}),
+        "badges": [{"id": url, "label": "#7", "url": url}],
+    }
+    test_db.commit()
+
+    assert apply_indexed_change_requests(test_db, item, actor_user_id=test_user.id)
+    workflow = workflow_snapshot(item)
+    assert item.status == "in_progress"
+    assert workflow.current_stage_id == "development_implementation"
+    assert item.assignee_user_id == developer.id
+    assert workflow.status_stage_repairs[-1]["source"] == "change_request.indexed"
+
+    workflow.nodes[3].status = "completed"
+    workflow.nodes[4].status = "ready"
+    workflow.nodes[4].attempts = 1
+    workflow.current_stage_id = "quality_acceptance"
+    item.status = "in_review"
+    item.metadata_json = {
+        **(item.metadata_json or {}),
+        "workflow": workflow.model_dump(mode="json"),
+    }
+    test_db.commit()
+    subject = {
+        "type": "change_request",
+        "provider": "github",
+        "repository": "weibo/wegent",
+        "number": 7,
+        "url": url,
+        "head_commit": "a" * 40,
+        "state": "open",
+        "is_draft": False,
+        "mergeable": "MERGEABLE",
+    }
+    event = ProjectAutomationEvent(
+        event_type="change_request.checks_failed",
+        project_id=str(project.id),
+        subject_id="1#7",
+        subject_type="change_request",
+        source="github",
+        actor_user_id=test_user.id,
+        payload={"subject": subject, "check": {"name": "Backend tests"}},
+        event_id="event-checks-7",
+    )
+    assert process_strategy_change_request_event(test_db, event) == 1
+    blocked = workflow_snapshot(item)
+    assert blocked.current_stage_id == "quality_acceptance"
+    assert blocked.quality_blocked is True
+    assert item.assignee_user_id == developer.id
+    assert len(blocked.provider_event_receipts) == 1
+    assert process_strategy_change_request_event(test_db, event) == 0
+    assert len(workflow_snapshot(item).provider_event_receipts) == 1
+
+    ready_subject = {**subject, "head_commit": "b" * 40}
+    ready = ProjectAutomationEvent(
+        event_type="change_request.quality_ready",
+        project_id=str(project.id),
+        subject_id="1#7",
+        subject_type="change_request",
+        source="github",
+        actor_user_id=test_user.id,
+        payload={"subject": ready_subject},
+        event_id="event-quality-7",
+    )
+    assert process_strategy_change_request_event(test_db, ready) == 1
+    quality = workflow_snapshot(item)
+    assert quality.current_stage_id == "quality_acceptance"
+    assert quality.quality_blocked is False
+    assert item.assignee_user_id == qa.id
+
+    merge_commit = "c" * 40
+    merged = ProjectAutomationEvent(
+        event_type="change_request.merged",
+        project_id=str(project.id),
+        subject_id="1#7",
+        subject_type="change_request",
+        source="github",
+        actor_user_id=test_user.id,
+        payload={
+            "subject": {**ready_subject, "merge_commit": merge_commit},
+            "merge_commit": merge_commit,
+        },
+        event_id="event-merged-7",
+    )
+    assert process_strategy_change_request_event(test_db, merged) == 1
+    release = workflow_snapshot(item)
+    assert release.current_stage_id == "release_launch"
+    assert item.status == "in_review"
+    assert release.nodes[3].status == "completed"
+    assert release.nodes[4].status == "completed"
+
+
+def test_shared_pull_request_updates_each_scoped_strategy_issue(test_db, test_user):
+    project = _project(test_db, test_user)
+    pmo = _member(test_db, project)
+    developer = _member(test_db, project, "developer")
+    designer = _member(test_db, project, "designer")
+    qa = _member(test_db, project, "tester")
+    _publish(
+        test_db,
+        project,
+        test_user,
+        pmo,
+        _role_policy(test_user, developer, designer, qa, pmo),
+    )
+    url = "https://github.com/weibo/wegent/pull/8"
+    items = [_inbox(test_db, project, test_user) for _ in range(2)]
+    for item in items:
+        item.metadata_json = {
+            **(item.metadata_json or {}),
+            "badges": [{"id": url, "label": "#8", "url": url}],
+        }
+        apply_indexed_change_requests(test_db, item, actor_user_id=test_user.id)
+    test_db.commit()
+
+    event = ProjectAutomationEvent(
+        event_type="change_request.quality_ready",
+        project_id=str(project.id),
+        subject_id="1#8",
+        subject_type="change_request",
+        source="github",
+        actor_user_id=test_user.id,
+        payload={
+            "subject": {
+                "provider": "github",
+                "repository": "weibo/wegent",
+                "number": 8,
+                "url": url,
+                "head_commit": "d" * 40,
+                "state": "open",
+                "is_draft": False,
+                "mergeable": "MERGEABLE",
+            }
+        },
+        event_id="event-quality-8",
+    )
+    assert process_strategy_change_request_event(test_db, event) == 2
+    test_db.commit()
+    for item in items:
+        current = test_db.get(LoopItem, item.id)
+        workflow = workflow_snapshot(current)
+        assert workflow.current_stage_id == "quality_acceptance"
+        assert current.status == "in_review"
+        assert current.assignee_user_id == qa.id

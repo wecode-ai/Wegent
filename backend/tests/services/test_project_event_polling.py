@@ -16,10 +16,12 @@ from app.services.project_event_polling import (
     GitLabEventPoller,
     PolledInput,
     PollPage,
+    _pull_request_quality_input,
 )
 from app.services.project_event_polling_service import (
     project_event_polling_service,
 )
+from app.services.project_event_sources import normalize_webhook_events
 from tests.utils.collaboration import authorize_project
 
 
@@ -35,6 +37,69 @@ def _project(test_db, test_user) -> CloudProject:
     test_db.add(project)
     test_db.flush()
     return project
+
+
+def test_quality_ready_poll_requires_complete_success_and_mergeability():
+    pull = {
+        "number": 7,
+        "state": "open",
+        "draft": False,
+        "mergeable": True,
+        "mergeable_state": "clean",
+        "html_url": "https://github.com/weibo/wegent/pull/7",
+        "updated_at": "2026-11-18T08:00:00Z",
+        "head": {"sha": "a" * 40, "ref": "feature/strategy"},
+        "base": {"ref": "main"},
+    }
+    repository = {
+        "id": 1,
+        "full_name": "weibo/wegent",
+        "html_url": "https://github.com/weibo/wegent",
+    }
+    checks = [
+        {"status": "completed", "conclusion": "success"},
+        {"status": "completed", "conclusion": "skipped"},
+    ]
+    ready = _pull_request_quality_input(
+        number=7,
+        pull=pull,
+        checks=checks,
+        repository_payload=repository,
+    )
+    assert ready is not None
+    normalized = normalize_webhook_events("github", ready.payload, ready.headers)
+    assert [event.event_type for event in normalized] == [
+        "change_request.quality_ready"
+    ]
+    assert normalized[0].subject["head_commit"] == "a" * 40
+    assert normalized[0].subject["mergeable"] == "MERGEABLE"
+    assert (
+        _pull_request_quality_input(
+            number=7,
+            pull={**pull, "draft": True},
+            checks=checks,
+            repository_payload=repository,
+        )
+        is None
+    )
+    assert (
+        _pull_request_quality_input(
+            number=7,
+            pull=pull,
+            checks=[{"status": "completed", "conclusion": "failure"}],
+            repository_payload=repository,
+        )
+        is None
+    )
+    assert (
+        _pull_request_quality_input(
+            number=7,
+            pull={**pull, "mergeable": False, "mergeable_state": "dirty"},
+            checks=checks,
+            repository_payload=repository,
+        )
+        is None
+    )
 
 
 def _subscription(test_db, test_user, project: CloudProject) -> ProjectIncomingHook:

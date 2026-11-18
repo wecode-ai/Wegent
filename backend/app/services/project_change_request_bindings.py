@@ -63,10 +63,9 @@ class ProjectChangeRequestBindingService:
                 self.identity(item) == identity
                 for item in self.change_requests(candidate)
             ):
-                raise HTTPException(
-                    status.HTTP_409_CONFLICT,
-                    "Change request is already bound to another active task",
-                )
+                # A shared PR/MR may explicitly cover more than one Issue. Each
+                # binding remains an independent scope and evidence mapping.
+                continue
 
         now = utcnow().isoformat()
         current = self.change_requests(binding)

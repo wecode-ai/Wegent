@@ -1033,6 +1033,13 @@ class ProjectAutomationProcessor:
                 "[ProjectAutomation] Ignoring unsupported event=%s", event.event_type
             )
             return []
+        from app.services.loop_items.strategy_pipeline import (
+            process_strategy_change_request_event,
+        )
+
+        strategy_processed = process_strategy_change_request_event(db, event)
+        if strategy_processed:
+            db.flush()
         issue = (
             db.query(LoopItem)
             .filter(
@@ -1045,14 +1052,12 @@ class ProjectAutomationProcessor:
         if issue is not None:
             from app.services.loop_items.strategy import refresh_strategy_coordinator
 
-            if refresh_strategy_coordinator(
+            refresh_strategy_coordinator(
                 db,
                 issue,
                 event.event_type,
                 f"event:{event.event_type}:{issue.id}:{issue.version}",
-            ):
-                db.commit()
-                return []
+            )
         matching_rules = self.matching_rules(db, event, automation_id=automation_id)
         logger.info(
             "[ProjectAutomation] Event matched project=%s subject=%s event=%s "
