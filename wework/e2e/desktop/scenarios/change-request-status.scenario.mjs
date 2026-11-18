@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { DatabaseSync } from 'node:sqlite'
 import { execFile } from 'node:child_process'
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { delimiter, join } from 'node:path'
@@ -272,12 +273,19 @@ async function refreshEnvironment(control) {
 
 async function readNativeUiObservers(journalPath) {
   try {
-    const { observers } = JSON.parse(await readFile(journalPath, 'utf8'))
-    assert.ok(observers && typeof observers === 'object' && !Array.isArray(observers))
-    return Object.entries(observers).map(([id, observer]) => {
-      assert.ok(observer && typeof observer === 'object' && observer.id === id)
-      return observer
-    })
+    const database = new DatabaseSync(journalPath, { readOnly: true })
+    try {
+      return database
+        .prepare("SELECT id,value FROM records WHERE section='observers'")
+        .all()
+        .map(({ id, value }) => {
+          const observer = JSON.parse(value)
+          assert.ok(observer && typeof observer === 'object' && observer.id === id)
+          return observer
+        })
+    } finally {
+      database.close()
+    }
   } catch {
     throw new Error('The native change-request observer journal could not be read')
   }
@@ -318,7 +326,7 @@ export async function recoverChangeRequestStatus(
   control,
   { statePath, executorHome, uiTimeoutMs }
 ) {
-  const journalPath = join(executorHome, 'runtime-work', 'conversation-event-subscriptions.json')
+  const journalPath = join(executorHome, 'runtime-work', 'conversation-event-subscriptions.sqlite')
   const activationCompleted = newChangeRequestObserverPredicate(
     await readNativeUiObservers(journalPath)
   )

@@ -113,7 +113,14 @@ export function createDesktopScenario(options) {
       await control.command('ensureLocalModelCatalogReady', 'body', {
         timeoutMs: workbenchReadyTimeoutMs,
       })
-      const renewed = await rpc(control, 'runtime.connections.observers.renew', input)
+      // Model readiness does not establish connection-host readiness after restart.
+      // Observe the scheduler's successful collection before checking restored facts.
+      const renewed = await waitForValue(
+        () => rpc(control, 'runtime.connections.observers.renew', input),
+        result => result.observation.errorCode === null,
+        'The restored observer did not recover after the connection host restarted',
+        workbenchReadyTimeoutMs
+      )
       assert.equal(renewed.observation.id, sourceId)
       assert.equal(renewed.observation.errorCode, null)
       const restored = JSON.parse(
