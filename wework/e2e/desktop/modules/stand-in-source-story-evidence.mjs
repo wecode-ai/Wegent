@@ -17,10 +17,11 @@ export async function storyUntil(load, ready, timeoutMs, label) {
   assert.fail(`${label}: ${JSON.stringify(latest)}`)
 }
 
-export async function openStoryPrimary(control) {
-  await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
-  await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]')
-  await control.command('waitFor', STORY_CHAT)
+export async function openStoryPrimary(control, timeoutMs) {
+  const timing = timeoutMs === undefined ? {} : { timeoutMs }
+  await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]', timing)
+  await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-open"]', timing)
+  await control.command('waitFor', STORY_CHAT, timing)
 }
 
 export async function startSourceStory(
