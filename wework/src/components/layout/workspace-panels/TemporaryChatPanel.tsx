@@ -875,6 +875,7 @@ export function TemporaryChatPanel({
       setTrialGuide(null)
 
       const currentAttachments = captureAttachmentsForScope(instanceId)
+      sideChatProjectChat.resetAttachments()
       const initialGoal = goalDraftActive
         ? runtimeGoalCreateInput({
             objective: message,
@@ -924,6 +925,7 @@ export function TemporaryChatPanel({
           if (!result.sent) {
             setError(result.error || t('workbench.project_chat_send_failed'))
             if (!transactionalDraft) setInput(current => current || message)
+            currentAttachments.forEach(sideChatProjectChat.addExistingAttachment)
             return false
           }
           if (
@@ -939,12 +941,12 @@ export function TemporaryChatPanel({
             )
           }
           submission?.clearIfUnchanged()
-          sideChatProjectChat.resetAttachments()
           if (historySource) setAcceptedSourceMessageIds(ids => [...ids, queuedMessage.id])
           return true
         } catch (cause) {
           setError(getErrorMessage(cause, t('workbench.project_chat_send_failed')))
           if (!transactionalDraft) setInput(current => current || message)
+          currentAttachments.forEach(sideChatProjectChat.addExistingAttachment)
           return false
         } finally {
           submission?.release()
@@ -954,7 +956,6 @@ export function TemporaryChatPanel({
       }
       if (address && busy && !options.interruptWhenBusy) {
         conversationQueue.enqueue(queuedMessage)
-        sideChatProjectChat.resetAttachments()
         if (options.guideWhenBusy) {
           return sendQueuedMessageAsGuidance(queuedMessage)
         }
@@ -1012,13 +1013,13 @@ export function TemporaryChatPanel({
         updateAddress(null)
         if (nativeConversation) setInput(current => current || message)
         setSending(false)
+        currentAttachments.forEach(sideChatProjectChat.addExistingAttachment)
         return false
       }
       if (!address) {
         setMessages(getRuntimeConversationMessages(targetAddress))
         updateAddress(targetAddress)
         setGoalDraftActive(false)
-        sideChatProjectChat.resetAttachments()
         setSending(false)
         return true
       }
@@ -1075,7 +1076,6 @@ export function TemporaryChatPanel({
             )
           )
         }
-        sideChatProjectChat.resetAttachments()
         setSending(false)
         return true
       }
@@ -1090,13 +1090,13 @@ export function TemporaryChatPanel({
         conversationQueue.enqueue(queuedMessage, {
           value: lifecycleBeforeSend,
         })
-        sideChatProjectChat.resetAttachments()
         if (options.guideWhenBusy) {
           setSending(false)
           return sendQueuedMessageAsGuidance(queuedMessage, true)
         }
       } else {
         handleError(sendError || '发送失败')
+        currentAttachments.forEach(sideChatProjectChat.addExistingAttachment)
         return false
       }
       setSending(false)

@@ -19,14 +19,13 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs }) {
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRawRequestBody(request)
-      const marker = ['png', 'tiff']
-        .map(type => `PASTE_AND_SEND_${type}`)
-        .find(x => body.includes(x))
-      if (!marker) return false
       const parsed = JSON.parse(body)
-      const images = parsed.input
-        .flatMap(item => item.content ?? [])
-        .filter(item => item.type === 'input_image')
+      const turn = parsed.input
+        .filter(item => item.role === 'user')
+        .findLast(item => JSON.stringify(item.content).includes('PASTE_AND_SEND_'))
+      const marker = JSON.stringify(turn?.content ?? []).match(/PASTE_AND_SEND_(?:png|tiff)/)?.[0]
+      if (!marker) return false
+      const images = (turn.content ?? []).filter(item => item.type === 'input_image')
       assert.ok(images.length > 0, `${marker} reached the model without its pasted image`)
       received.add(marker)
       const id = `paste-send-${received.size}`

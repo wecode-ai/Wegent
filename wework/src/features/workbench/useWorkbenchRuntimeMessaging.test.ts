@@ -865,6 +865,26 @@ describe('friendlyTitleForTask', () => {
 })
 
 describe('prepareRuntimeAttachmentsForDevice', () => {
+  test('reports how to recover an unfinished attachment after its in-memory preparation is lost', async () => {
+    await expect(
+      prepareRuntimeAttachmentsForDevice(
+        'local-device',
+        [],
+        [],
+        [
+          attachment({
+            id: -42,
+            status: 'uploading',
+            filename: 'unfinished.png',
+            local_path: undefined,
+          }),
+        ]
+      )
+    ).rejects.toThrow(
+      i18n.t('workbench.attachment_preparation_unavailable', { filename: 'unfinished.png' })
+    )
+  })
+
   test('resolves a pending cloud upload into its remote ID before local-device transport', async () => {
     const { createPreparingAttachment, localRuntimeAttachments } =
       await import('@/lib/runtime-attachments')

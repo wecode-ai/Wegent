@@ -161,7 +161,9 @@ export async function prepareRuntimeAttachmentsForDevice(
   attachments: Attachment[] = [],
   uploadLocalAttachmentToCloud?: (attachment: Attachment) => Promise<Attachment>
 ): Promise<RuntimeAttachmentTransport> {
-  attachments = await resolvePreparingAttachments(attachments)
+  attachments = await resolvePreparingAttachments(attachments, filename =>
+    i18n.t('workbench.attachment_preparation_unavailable', { filename })
+  )
   attachmentIds = [...new Set([...attachmentIds, ...remoteAttachmentIds(attachments)])]
   const device = devices.find(item => item.device_id === deviceId)
   const usesRemoteFilesystem = device?.device_type === 'cloud' || device?.device_type === 'remote'
@@ -529,12 +531,12 @@ export function useWorkbenchRuntimeMessaging({
             message: optimisticUserMessage,
           })
         }
-        const outboundRequest = await prepareRuntimeSendRequest(outboundRequestWithClientId)
-        if (!isCurrent()) return false
         if (!options?.silentBusyRetry && !userInputResponse) {
-          lifecycleStore.sendRequested(outboundRequest.address)
+          lifecycleStore.sendRequested(request.address)
           sendRequested = true
         }
+        const outboundRequest = await prepareRuntimeSendRequest(outboundRequestWithClientId)
+        if (!isCurrent()) return false
         const sendAttempt = advanceRuntimeSendAttempt(
           sendAttemptsRef.current,
           outboundRequest.address
@@ -1246,24 +1248,9 @@ export function useWorkbenchRuntimeMessaging({
         return false
       }
 
-      let preparedAttachments: RuntimeAttachmentTransport
-      try {
-        preparedAttachments = await prepareRuntimeAttachmentsForDevice(
-          optimisticDeviceId,
-          state.devices,
-          intent.attachmentIds,
-          intent.attachments,
-          services.attachmentApi?.uploadLocalAttachmentToCloud
-        )
-      } catch (error) {
-        reportSendBlocked(
-          error instanceof Error
-            ? error.message
-            : i18n.t('workbench.cloud_attachment_upload_failed'),
-          undefined,
-          options
-        )
-        return false
+      const preparedAttachments: RuntimeAttachmentTransport = {
+        attachmentIds: intent.attachmentIds ?? [],
+        attachments: intent.attachments ?? [],
       }
 
       const targetDevice = findWorkbenchDevice(state.devices, optimisticDeviceId)
@@ -1407,6 +1394,15 @@ export function useWorkbenchRuntimeMessaging({
       // Start the primary request before optimistic navigation mounts task readers.
       // Presentation work must never leave a visible pending task without a runtime request.
       const createResponsePromise = (async () => {
+        const prepared = await prepareRuntimeAttachmentsForDevice(
+          optimisticDeviceId,
+          state.devices,
+          intent.attachmentIds,
+          intent.attachments,
+          services.attachmentApi?.uploadLocalAttachmentToCloud
+        )
+        createRequest.attachmentIds = prepared.attachmentIds
+        createRequest.attachments = prepared.attachments
         const worktreeCreationDelayMs = Number(
           getDesktopE2ERuntimeConfig().worktreeCreationDelayMs ??
             import.meta.env.VITE_WEWORK_E2E_WORKTREE_CREATION_DELAY_MS ??

@@ -59,14 +59,16 @@ export function createPreparingAttachment(file: File, ready: Promise<Attachment>
 }
 
 export async function resolvePreparingAttachments(
-  attachments: Attachment[]
+  attachments: Attachment[],
+  unavailable: (filename: string) => string = filename =>
+    `Attachment preparation is unavailable: ${filename}`
 ): Promise<Attachment[]> {
   return Promise.all(
     attachments.map(attachment => {
       const ready = (attachment as PreparingAttachment)[attachmentPreparation]
       if (ready) return ready
       if (attachment.status !== 'ready') {
-        throw new Error(`Attachment preparation is unavailable: ${attachment.filename}`)
+        throw new Error(unavailable(attachment.filename))
       }
       return attachment
     })
