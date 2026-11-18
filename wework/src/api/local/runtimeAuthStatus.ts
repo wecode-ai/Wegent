@@ -30,8 +30,10 @@ function normalizeStatus(value: unknown): LocalRuntimeAuthStatus {
   }
 }
 
-export async function getLocalCodexAuthStatus(): Promise<LocalRuntimeAuthStatus> {
-  await ensureLocalExecutorStarted()
+export async function getLocalCodexAuthStatus(
+  options: { startCodex?: boolean } = {}
+): Promise<LocalRuntimeAuthStatus> {
+  if (options.startCodex !== false) await ensureLocalExecutorStarted()
   const response = await requestLocalExecutor<DeviceCommandResponse>('device.execute_command', {
     command_key: 'runtime_auth_status',
     timeout_seconds: 10,

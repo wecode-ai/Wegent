@@ -16,6 +16,7 @@ import {
   type LocalCodexAccounts,
 } from '@/api/local/codexAuth'
 import { getLocalCodexAuthStatus, type LocalRuntimeAuthStatus } from '@/api/local/runtimeAuthStatus'
+import { invalidateOpenAiRemoteCatalogAccount } from '@/features/plugins/pluginMarketplaceCache'
 import { createModelApi } from '@/api/models'
 import { createUserApi } from '@/api/users'
 import type { UserRuntime, UserRuntimeConfig } from '@/api/users'
@@ -427,6 +428,7 @@ export function ModelSettingsPage({
         const nextStatus = await getLocalCodexAuthStatus()
         if (localLoginGenerationRef.current !== generation) return
         if (nextStatus.exists && nextStatus.sha256 !== initialAuthSha256) {
+          invalidateOpenAiRemoteCatalogAccount()
           localLoginIdRef.current = null
           setLocalLoginState('idle')
           await loadLocalAuthStatus()

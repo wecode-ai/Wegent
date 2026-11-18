@@ -1,4 +1,5 @@
 import { realpath } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import { withNativePluginDecision } from './native-plugin-approval.mjs'
 
 import {
@@ -443,6 +444,54 @@ function syntheticChatGptAuth() {
   }
 }
 
+const officialCatalogStorageKey = 'wework.plugins.openAiCatalog.v1'
+const cachedOfficialMarketplaceId = 'openai-curated-remote'
+const cachedOfficialPluginId = `cached-documents@${cachedOfficialMarketplaceId}`
+const cachedOfficialCard = `[data-testid="plugin-marketplace-row-${cachedOfficialPluginId}"]`
+
+async function seedOfficialCatalog({ accountScope, authJson, deviceId, userDataDirectory }) {
+  const authFingerprint = createHash('sha256').update(authJson).digest('hex')
+  const scope = createHash('sha256')
+    .update(JSON.stringify([deviceId, authFingerprint, accountScope]))
+    .digest('hex')
+  const storagePath = join(userDataDirectory, 'renderer-local-storage.json')
+  const storage = JSON.parse(await readFile(storagePath, 'utf8'))
+  storage.entries[officialCatalogStorageKey] = JSON.stringify({
+    version: 1,
+    scope,
+    fetchedAt: Date.now() - 31 * 60_000,
+    items: [
+      {
+        id: cachedOfficialPluginId,
+        name: 'cached-documents',
+        displayName: 'Cached Documents',
+        description: 'Official catalog restored after restart',
+        remotePluginId: '',
+        sourceType: 'marketplace',
+        sourceProvider: 'codex',
+        visibility: 'public',
+        featured: false,
+        ownerUserId: 0,
+        installed: false,
+        enabled: false,
+        manifest: { marketplaceId: cachedOfficialMarketplaceId },
+        components: {
+          skills: [],
+          commands: [],
+          apps: [],
+          agents: [],
+          mcps: [],
+          hooks: [],
+          lsps: [],
+          monitors: [],
+          bins: [],
+        },
+      },
+    ],
+  })
+  await writeFile(storagePath, `${JSON.stringify(storage)}\n`, 'utf8')
+}
+
 async function assertPrimaryComposerPlugin(control, pluginName) {
   const diagnostics = JSON.parse(
     await control.command('getComposerPluginInventoryDiagnostics', 'body')
@@ -463,6 +512,7 @@ async function verifyComposerPluginNetworkIsolation({
   blockingNetworkProxy,
   codexHome,
   control,
+  electronUserDataDirectory,
   marketplacePath,
   restartDesktopApp,
   workspacePath,
@@ -497,19 +547,28 @@ async function verifyComposerPluginNetworkIsolation({
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
 
-  blockingNetworkProxy.block()
-  await writeFile(
-    join(codexHome, 'auth.json'),
-    `${JSON.stringify(syntheticChatGptAuth(), null, 2)}\n`,
-    'utf8'
+  const { deviceId } = JSON.parse(await control.command('getLocalExecutorStatus', 'body'))
+  const cloudConnection = JSON.parse(
+    await control.command('getLocalStorageItem', 'body', { value: 'wework.cloudConnection' })
   )
+  assert.ok(deviceId && cloudConnection?.apiBaseUrl && cloudConnection?.user?.id != null)
+  const authJson = `${JSON.stringify(syntheticChatGptAuth(), null, 2)}\n`
+  blockingNetworkProxy.block()
+  await writeFile(join(codexHome, 'auth.json'), authJson, 'utf8')
   await control.command('storeLocalProxyUrl', 'body', { value: blockingNetworkProxy.url })
 
   try {
     // Restart to clear the renderer's in-memory plugin inventory. The installed
     // package remains in the isolated real Codex home, while every external
     // Codex request is held open by the proxy instead of returning an error.
-    await restartDesktopApp()
+    await restartDesktopApp(() =>
+      seedOfficialCatalog({
+        accountScope: JSON.stringify([cloudConnection.apiBaseUrl, cloudConnection.user.id]),
+        authJson,
+        deviceId,
+        userDataDirectory: electronUserDataDirectory,
+      })
+    )
     await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
       stableMs: COMPOSER_READY_STABILITY_MS,
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
@@ -558,7 +617,12 @@ async function verifyComposerPluginNetworkIsolation({
     await closeComposerPluginPicker(control)
     await control.command('click', '[data-testid="plugins-button"]')
     await control.command('waitFor', '[data-testid="plugins-workspace"]')
+    const catalogOpenedAt = performance.now()
     await control.command('click', '[data-testid="plugins-distribution-tab-official"]')
+    await control.command('waitFor', cachedOfficialCard)
+    console.log(
+      `[desktop-e2e-openai-catalog] cached card visible after ${Math.round(performance.now() - catalogOpenedAt)} ms`
+    )
     await control.command('waitFor', '[data-testid="plugins-openai-catalog-error"]', {
       // The remote request is deliberately held until its 30-second UI deadline.
       timeoutMs: PLUGIN_REMOTE_CATALOG_TIMEOUT_MS,
@@ -568,6 +632,7 @@ async function verifyComposerPluginNetworkIsolation({
       /timed out|超时/i,
       'Expected the held remote catalog to time out, not fail local protocol validation'
     )
+    await control.command('waitFor', cachedOfficialCard)
     await control.command('waitFor', '[data-testid="plugins-openai-catalog-retry"]:not(:disabled)')
     await control.command('click', '[data-testid="plugins-openai-catalog-retry"]')
     await control.command('waitFor', '[data-testid="plugins-refresh-button"]:disabled')
@@ -611,6 +676,7 @@ async function verifyComposerPluginNetworkIsolation({
     await closeComposerPluginPicker(control)
   } finally {
     blockingNetworkProxy.release()
+    await control.command('removeLocalStorageItem', 'body', { value: officialCatalogStorageKey })
     await control.command('setLocalProxyUrl', 'body', { value: '' })
     await rm(join(codexHome, 'auth.json'), { force: true })
     await control.command('deleteLocalPluginPackage', 'body', {

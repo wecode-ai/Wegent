@@ -1,99 +1,106 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import type { PluginMarketplaceItem } from '@/types/api'
-import { applyInstalledPluginsToMarketplaceItems } from '@/api/local/codexPlugins'
-import { isOpenAiOfficialRemoteMarketplaceId } from './marketplaceIdentity'
-import { getPluginMarketplaceCache, setPluginMarketplaceCache } from './pluginMarketplaceCache'
-import { raceWithTimeout } from '@/lib/promise-timeout'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import type { LocalCodexPluginApi } from '@/api/local/codexPlugins'
+import {
+  hasPersistedRemotePluginCatalog,
+  type RemotePluginCatalogSnapshot,
+} from '@/api/local/codexRemoteCatalog'
+import {
+  detachOpenAiRemoteCatalog,
+  getPluginMarketplaceAccountEpoch,
+  projectOpenAiRemoteCatalog,
+  subscribePluginMarketplaceCache,
+} from './pluginMarketplaceCache'
 import { remoteCatalogErrorKind } from './remotePluginError'
-
-const REQUEST_TIMEOUT_MS = 30_000
 
 export function useOpenAiPluginCatalog({
   cacheKey,
+  accountScope,
+  deviceId,
   enabled,
+  restoreForAll,
   readCatalog,
 }: {
   cacheKey: string
+  accountScope: string
+  deviceId: string
   enabled: boolean
-  readCatalog: (options: {
-    forceRefetch: boolean
-    accountScope: string
-  }) => Promise<{ items: PluginMarketplaceItem[]; deviceId: string }>
+  restoreForAll: boolean
+  readCatalog: LocalCodexPluginApi['readRemoteCatalog']
 }) {
   const [refreshRequest, setRefreshRequest] = useState({ cacheKey, revision: 0 })
   const revision = refreshRequest.cacheKey === cacheKey ? refreshRequest.revision : 0
   const forcedRevision = useRef<string | null>(null)
+  const authRevision = useSyncExternalStore(
+    subscribePluginMarketplaceCache,
+    getPluginMarketplaceAccountEpoch,
+    getPluginMarketplaceAccountEpoch
+  )
   const [state, setState] = useState<{
     cacheKey: string
     loading: boolean
     error: ReturnType<typeof remoteCatalogErrorKind> | null
-  }>({ cacheKey, loading: false, error: null })
+  } | null>(null)
   const refresh = useCallback(() => {
     if (enabled) setRefreshRequest(value => ({ cacheKey, revision: value.revision + 1 }))
   }, [cacheKey, enabled])
-  const requested = enabled
 
   useEffect(() => {
-    if (!requested) return
+    return () => {
+      // A later mount must verify its current identity before displaying the directory.
+      // The persisted snapshot and any background refresh outlive this view.
+      detachOpenAiRemoteCatalog(cacheKey)
+    }
+  }, [cacheKey])
+
+  useEffect(() => {
+    if (!enabled && !(restoreForAll && hasPersistedRemotePluginCatalog())) return
     let cancelled = false
+    const isCurrent = () => !cancelled && getPluginMarketplaceAccountEpoch() === authRevision
     void Promise.resolve().then(async () => {
-      if (cancelled) return
-      const initial = getPluginMarketplaceCache(cacheKey)
+      if (!isCurrent()) return
       const requestKey = JSON.stringify([cacheKey, revision])
-      const force = revision > 0 && requestKey !== forcedRevision.current
-      // The API owns freshness after validating the current device and auth fingerprint.
-      forcedRevision.current = requestKey
-      setState({ cacheKey, loading: true, error: null })
+      const force = enabled && revision > 0 && requestKey !== forcedRevision.current
+      if (enabled) {
+        forcedRevision.current = requestKey
+        setState({ cacheKey, loading: true, error: null })
+      }
+      let cached: RemotePluginCatalogSnapshot | undefined
       try {
-        const result = await raceWithTimeout(
-          readCatalog({ forceRefetch: force, accountScope: cacheKey }),
-          REQUEST_TIMEOUT_MS,
-          () => new Error('Remote plugin catalog timed out')
-        )
-        if (cancelled) return
-        const current = getPluginMarketplaceCache(cacheKey)
-        if (current?.deviceId && current.deviceId !== result.deviceId) return
-        // Another mounted consumer may already have published a newer catalog.
-        if ((current?.openAiCatalogFetchedAt ?? 0) > (initial?.openAiCatalogFetchedAt ?? 0)) return
-        const isRemote = (item: PluginMarketplaceItem) =>
-          isOpenAiOfficialRemoteMarketplaceId(
-            typeof item.manifest?.marketplaceId === 'string' ? item.manifest.marketplaceId : null
-          )
-        // Catalog responses never carry installation authority. Project the newest
-        // shared membership, including mutations accepted during this request.
-        setPluginMarketplaceCache(
-          {
-            cacheKey,
-            deviceId: result.deviceId,
-            marketplaceItems: [
-              ...(current?.marketplaceItems ?? []).filter(item => !isRemote(item)),
-              ...applyInstalledPluginsToMarketplaceItems(
-                result.items,
-                current?.installedPlugins ?? []
-              ),
-            ],
-            installedPlugins: current?.installedPlugins ?? [],
-            marketplaces: current?.marketplaces ?? [],
-            selectedMarketplaceKey: current?.selectedMarketplaceKey ?? '',
-            fetchedAt: Date.now(),
-            openAiCatalogFetchedAt: Date.now(),
+        const result = await readCatalog({
+          forceRefetch: force,
+          cacheOnly: !enabled,
+          accountScope,
+          onCached: (snapshot, resolvedDeviceId) => {
+            cached = snapshot
+            if (isCurrent()) projectOpenAiRemoteCatalog(cacheKey, resolvedDeviceId, snapshot)
           },
-          { remoteCatalog: true }
-        )
+        })
+        if (!isCurrent()) return
+        if (result.deviceId && result.snapshot && result.snapshot !== cached)
+          projectOpenAiRemoteCatalog(cacheKey, result.deviceId, result.snapshot)
+        if (enabled) setState({ cacheKey, loading: false, error: null })
       } catch (error) {
-        if (!cancelled) setState({ cacheKey, loading: false, error: remoteCatalogErrorKind(error) })
-      } finally {
-        if (!cancelled) setState(value => ({ ...value, loading: false }))
+        if (isCurrent() && enabled)
+          setState({ cacheKey, loading: false, error: remoteCatalogErrorKind(error) })
       }
     })
     return () => {
       cancelled = true
     }
-  }, [cacheKey, requested, readCatalog, revision])
+  }, [
+    cacheKey,
+    accountScope,
+    deviceId,
+    enabled,
+    restoreForAll,
+    readCatalog,
+    revision,
+    authRevision,
+  ])
 
   return {
-    loading: state.cacheKey === cacheKey && state.loading,
-    error: state.cacheKey === cacheKey ? state.error : null,
+    loading: enabled && (state?.cacheKey !== cacheKey || state.loading),
+    error: enabled && state?.cacheKey === cacheKey ? state.error : null,
     refresh,
   }
 }
