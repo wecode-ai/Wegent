@@ -57,11 +57,14 @@ async function assertNotificationCount(
   durationMs = NOTIFICATION_SETTLE_MS
 ) {
   const deadline = Date.now() + durationMs
+  let notifications
   do {
-    const notifications = await systemNotifications(control)
+    notifications = await systemNotifications(control)
     assert.equal(notifications.length, count, `${message}: ${JSON.stringify(notifications)}`)
     await new Promise(resolve => setTimeout(resolve, 100))
   } while (Date.now() < deadline)
+  notifications = await systemNotifications(control)
+  assert.equal(notifications.length, count, `${message}: ${JSON.stringify(notifications)}`)
 }
 
 async function setTaskSystemNotifications(control, enabled) {
@@ -146,6 +149,7 @@ function waitForModelRequest(streams, prompt, timeoutMs) {
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
   let active = false
   const streams = new Map()
+  const released = new Set()
 
   const release = prompt => {
     const stream = streams.get(prompt)
@@ -153,6 +157,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     stream.response.end(
       createSse([assistantMessage(stream.completion), responseCompleted(stream.id)])
     )
+    released.add(prompt)
   }
 
   return {
@@ -200,8 +205,11 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       await control.command('clearSystemNotifications', 'body')
       await waitForUnreadBadge(control, 0, uiTimeoutMs)
 
+      await control.command('focusMainWindow', 'body')
+      await waitForRendererFocus(control, true, uiTimeoutMs)
       await sendTask(control, newConversationSelector, PROMPTS.foreground, uiTimeoutMs)
       await waitForModelRequest(streams, PROMPTS.foreground, uiTimeoutMs)
+      await waitForRendererFocus(control, true, uiTimeoutMs)
       release(PROMPTS.foreground)
       await waitForTaskSettled(control, PROMPTS.foreground, COMPLETIONS.foreground, uiTimeoutMs)
       await assertNotificationCount(control, 0, 'A focused task completion must stay quiet')
@@ -226,20 +234,26 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
       )
       assert.equal(notifications[0].address?.taskId, backgroundTask.taskId)
       await assertNotificationCount(control, 1, 'The background completion must notify once')
-      await waitForUnreadBadge(control, 1, uiTimeoutMs)
+      await waitForUnreadBadge(control, 1, uiTimeoutMs, 1, backgroundTask.taskId)
       await control.command('focusMainWindow', 'body')
       await waitForRendererFocus(control, true, uiTimeoutMs)
       await waitForUnreadBadge(control, 0, uiTimeoutMs)
+      await assertNotificationCount(control, 1, 'Refocusing must not notify again')
 
       await setTaskSystemNotifications(control, false)
       await control.command('clearSystemNotifications', 'body')
-      await sendTask(control, newConversationSelector, PROMPTS.disabled, uiTimeoutMs)
+      const disabledTask = await sendTask(
+        control,
+        newConversationSelector,
+        PROMPTS.disabled,
+        uiTimeoutMs
+      )
       await waitForModelRequest(streams, PROMPTS.disabled, uiTimeoutMs)
       await control.command('blurMainWindow', 'body')
       await waitForRendererFocus(control, false, uiTimeoutMs)
       release(PROMPTS.disabled)
       await waitForTaskSettled(control, PROMPTS.disabled, COMPLETIONS.disabled, uiTimeoutMs)
-      await waitForUnreadBadge(control, 1, uiTimeoutMs)
+      await waitForUnreadBadge(control, 1, uiTimeoutMs, 1, disabledTask.taskId)
       await assertNotificationCount(control, 0, 'Disabled system notifications must stay quiet')
       await control.command('focusMainWindow', 'body')
       await waitForUnreadBadge(control, 0, uiTimeoutMs)
@@ -250,7 +264,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspac
     },
 
     diagnostics() {
-      return { active, released: [...streams.keys()] }
+      return { active, received: [...streams.keys()], released: [...released] }
     },
   }
 }

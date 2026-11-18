@@ -1,9 +1,16 @@
 import assert from 'node:assert/strict'
 
-export async function waitForUnreadBadge(control, count, timeoutMs, trayCount = count) {
+export async function waitForUnreadBadge(
+  control,
+  count,
+  timeoutMs,
+  trayCount = count,
+  expectedTaskId = null
+) {
   const { platform } = JSON.parse(await control.command('getNativeWindowState', 'body'))
   const deadline = Date.now() + timeoutMs
   let latest
+  const expectedTrayId = expectedTaskId ? `task:${expectedTaskId}` : null
   while (Date.now() < deadline) {
     latest = JSON.parse(await control.command('getTraySnapshot', 'body'))
     const unreadHeading = latest.menu.findIndex(item => item.id === 'heading:unread')
@@ -15,7 +22,11 @@ export async function waitForUnreadBadge(control, count, timeoutMs, trayCount = 
       }
     }
     const expectedBadge = platform === 'darwin' ? (count > 0 ? String(count) : '') : null
-    if (unreadItems.length === trayCount && latest.dockBadge === expectedBadge) {
+    if (
+      unreadItems.length === trayCount &&
+      (!expectedTrayId || unreadItems.some(item => item.id === expectedTrayId)) &&
+      latest.dockBadge === expectedBadge
+    ) {
       const snapshot = JSON.parse(await control.command('snapshot', 'body'))
       const hasBellBadge = snapshot.testIds.includes('wework-notifications-unread')
       if (count === 0 && !hasBellBadge) return

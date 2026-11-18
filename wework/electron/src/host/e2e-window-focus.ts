@@ -49,7 +49,13 @@ export function blurE2EWindow(target: BlurTarget, deactivate: () => void): Promi
       target.removeListener('blur', blurred)
     }
     const blurred = () => {
-      if (target.isFocused()) return false
+      try {
+        if (target.isFocused()) return false
+      } catch (error) {
+        cleanup()
+        reject(error)
+        return true
+      }
       cleanup()
       resolve()
       return true
