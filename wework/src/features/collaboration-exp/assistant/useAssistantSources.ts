@@ -1,7 +1,7 @@
 import { useCallback, useContext, useEffect, useState } from 'react'
 import { LOCAL_USER } from '@/api/local/localSession'
 import { subscribePersonalStandIn, type PersonalStandInSettings } from '@/api/personalStandIn'
-import type { StandInExecutorApi, StandInProposal } from '@/api/standIn'
+import { isStandInBindingOwner, type StandInExecutorApi, type StandInProposal } from '@/api/standIn'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useStandInInbox } from '@/features/todo/useStandInInbox'
@@ -29,8 +29,7 @@ export function useAssistantSources(active: boolean, includeProposals = true) {
   const { services, state } = useWorkbench()
   const cloud = useContext(CloudConnectionContext)
   const userId = Number(state.user?.id ?? LOCAL_USER.id)
-  const backendUrl = cloud?.apiBaseUrl ?? ''
-  const scope = JSON.stringify([userId, backendUrl])
+  const scope = JSON.stringify([userId, cloud?.apiBaseUrl ?? ''])
   const [data, setData] = useState<AssistantSourceData>()
   const [failure, setFailure] = useState<AssistantSourceFailure>()
   const [proposalFailure, setProposalFailure] = useState<AssistantSourceFailure>()
@@ -57,11 +56,7 @@ export function useAssistantSources(active: boolean, includeProposals = true) {
       const binding = await api.binding(identity.deviceId)
       if (!current) return
       const target = binding.target
-      if (
-        target &&
-        target.userId !== LOCAL_USER.id &&
-        (target.userId !== userId || (target.backendUrl ?? '') !== backendUrl)
-      ) {
+      if (target && !isStandInBindingOwner(target.userId, userId)) {
         throw Object.assign(new Error(), { code: 'permission_denied' })
       }
       const ownerId = target?.userId ?? userId
@@ -105,7 +100,7 @@ export function useAssistantSources(active: boolean, includeProposals = true) {
     return () => {
       current = false
     }
-  }, [active, api, services, userId, backendUrl, scope, revision])
+  }, [active, api, services, userId, scope, revision])
 
   const source = data?.scope === scope && data.api === api ? data : undefined
   const ownerId = source?.ownerId ?? userId

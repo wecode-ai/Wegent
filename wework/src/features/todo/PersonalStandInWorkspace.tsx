@@ -16,6 +16,7 @@ import { StandInOverviewPage } from './StandInOverviewPage'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 import { LOCAL_USER } from '@/api/local/localSession'
+import { isStandInBindingOwner } from '@/api/standIn'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 import { availableStandInDevices } from './standInDevices'
@@ -110,9 +111,7 @@ function AccountStandInWorkspace({
         }
       : undefined
   )
-  const bindingScope = target
-    ? JSON.stringify([target.userId, target.deviceId, target.backendUrl ?? ''])
-    : undefined
+  const bindingScope = target ? JSON.stringify([target.userId, target.deviceId]) : undefined
   const [locationBinding, setLocationBinding] = useState(bindingScope)
   if (locationBinding !== bindingScope) {
     setLocationBinding(bindingScope)
@@ -122,9 +121,7 @@ function AccountStandInWorkspace({
     roleLocation?.roleId && roleLocation.roleId !== '@primary' ? roleLocation.deviceId : deviceId
   const ownerAvailable =
     notificationOwnerMatches &&
-    (binding?.status === 'stopped' ||
-      ownerId === LOCAL_USER.id ||
-      (ownerId === Number(user.id) && (target?.backendUrl ?? '') === (cloud?.apiBaseUrl ?? '')))
+    (binding?.status === 'stopped' || isStandInBindingOwner(ownerId, Number(user.id)))
   const routeMatches = !query.get('deviceId') || query.get('deviceId') === deviceId
   const directory = useStandInRoleDirectory(
     services.standInApi,

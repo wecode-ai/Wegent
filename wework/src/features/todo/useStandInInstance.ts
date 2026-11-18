@@ -1,5 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { StandInBindingTarget, StandInInstanceBinding } from '@/api/standIn'
+import {
+  isStandInBindingOwner,
+  type StandInBindingTarget,
+  type StandInInstanceBinding,
+} from '@/api/standIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo } from '@/types/api'
 import { LOCAL_USER } from '@/api/local/localSession'
@@ -58,8 +62,7 @@ export function useStandInInstance(
       if (
         value.status === 'stopped' &&
         value.target &&
-        (value.target.userId === LOCAL_USER.id ||
-          (value.target.userId === userId && (value.target.backendUrl ?? '') === backendUrl))
+        isStandInBindingOwner(value.target.userId, userId)
       ) {
         // Binding choices do not depend on reading an already stopped device.
         setBinding(value)

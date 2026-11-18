@@ -412,6 +412,30 @@ export function createDesktopScenario({
       await cloud.restartCloudExecutor()
       await observeDevice(control, CLOUD_DEVICE_ID, '在线')
       await stop(control)
+
+      // Reopen a binding saved under a previous address through the current relay.
+      const stopped = await binding(control)
+      const original = await rpc(control, 'runtime.stand_in.binding', {
+        operation: 'bind',
+        version: stopped.version,
+        target: {
+          userId: USER,
+          deviceId: CLOUD_DEVICE_ID,
+          backendUrl: 'https://previous-stand-in.example.invalid/api',
+        },
+      })
+      await remoteRpc('runtime.stand_in.personal.lifecycle', { userId: USER, operation: 'start' })
+      await reloadMainWindow(control)
+      await control.command('waitFor', testId('stand-in-overview'))
+      await control.command('clickWhenEnabled', testId(`stand-in-overview-role-${role.id}`))
+      await control.command('waitFor', remoteChat, { text: COMPLETE })
+      assert.deepEqual(
+        await binding(control),
+        original,
+        'Reopening must preserve the saved binding'
+      )
+      await stop(control)
+
       await bind(control, 0, localDevice)
       await writeFile(
         join(resultDir, 'stand-in-cloud-device-evidence.json'),
