@@ -27,6 +27,10 @@ function evidenceRecords(records, fields) {
   )
 }
 
+export function modelRequestEvidence(requests) {
+  return evidenceRecords(requests, MODEL_EVIDENCE_FIELDS)
+}
+
 /** Persist the final outcome only after all lifecycle steps have settled. */
 export async function finishDesktopTeardown({
   control,
@@ -38,7 +42,7 @@ export async function finishDesktopTeardown({
   if (control.fatalError && !teardownFailures.some(step => step.error === control.fatalError))
     teardownFailures.push({ error: control.fatalError, label: 'desktop controller' })
   for (const [name, value] of [
-    ['model-requests.json', evidenceRecords(control.modelRequests, MODEL_EVIDENCE_FIELDS)],
+    ['model-requests.json', modelRequestEvidence(control.modelRequests)],
     ['http-requests.json', control.httpRequests],
     ['command-history.json', evidenceRecords(control.commandHistory, COMMAND_EVIDENCE_FIELDS)],
   ]) {

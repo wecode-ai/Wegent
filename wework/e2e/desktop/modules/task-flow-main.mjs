@@ -1,4 +1,4 @@
-import { finishDesktopTeardown } from './finish-desktop-teardown.mjs'
+import { finishDesktopTeardown, modelRequestEvidence } from './finish-desktop-teardown.mjs'
 import { publishSitesCreatorPlugins } from './sites-creator-plugins.mjs'
 import { SitesProtocolFixture } from './sites-protocol-fixture.mjs'
 import { BackendFaultGate } from './backend-fault-gate.mjs'
@@ -4976,7 +4976,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     )
     await writeFile(
       join(resultDir, 'model-requests.json'),
-      `${JSON.stringify(control.modelRequests, null, 2)}\n`,
+      `${JSON.stringify(modelRequestEvidence(control.modelRequests), null, 2)}\n`,
       'utf8'
     )
     try {
