@@ -6,10 +6,16 @@ import {
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
   type ReactNode,
 } from 'react'
 import { createPortal } from 'react-dom'
-import { getWorkbenchPaneKey, type WorkbenchPaneIdentity } from './workbenchPaneIdentity'
+import type { DeviceInfo } from '@/types/api'
+import {
+  getWorkbenchPaneKey,
+  workbenchPanesShareTask,
+  type WorkbenchPaneIdentity,
+} from './workbenchPaneIdentity'
 
 export interface WorkbenchPanePresentation {
   visible: boolean
@@ -61,14 +67,24 @@ export function useWorkbenchPaneId() {
 
 export function SingleWorkbenchPane({
   pane,
+  devices = [],
   visible,
   renderPane,
 }: {
   pane: WorkbenchPaneIdentity
+  devices?: DeviceInfo[]
   visible: boolean
   renderPane: (pane: WorkbenchPaneIdentity) => ReactNode
 }) {
   const paneKey = getWorkbenchPaneKey(pane)
+  const [mounted, setMounted] = useState({ paneKey, mountKey: 0, pane })
+  let mountKey = mounted.mountKey
+  if (mounted.paneKey !== paneKey) {
+    const sameTask = workbenchPanesShareTask(mounted.pane, pane, devices)
+    // Discovery can replace an alias without changing the owning executor or task.
+    mountKey = sameTask ? mounted.mountKey : mounted.mountKey + 1
+    setMounted({ paneKey, mountKey, pane })
+  }
   return (
     <div
       data-testid={visible ? 'desktop-workbench-main' : undefined}
@@ -81,7 +97,7 @@ export function SingleWorkbenchPane({
         focused={visible}
         headerActionsPortalId={null}
       >
-        <CachedWorkbenchPane key={paneKey} pane={pane} renderPane={renderPane} />
+        <CachedWorkbenchPane key={mountKey} pane={pane} renderPane={renderPane} />
       </WorkbenchPanePresentationProvider>
     </div>
   )

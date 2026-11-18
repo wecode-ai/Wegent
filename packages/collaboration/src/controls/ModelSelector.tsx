@@ -967,7 +967,10 @@ export function ModelSelector({
             return;
           }
           setCloseReason("dismiss");
-          setDesktopMenuView("simple");
+          // Preserve the panel opened before asynchronous reasoning controls arrive.
+          setDesktopMenuView(
+            advancedReasoningAvailable ? "simple" : "advanced",
+          );
           setPowerSliderInteracting(false);
           setOpen(true);
         }}

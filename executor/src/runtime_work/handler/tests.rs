@@ -7,6 +7,9 @@ use super::tasks::{
 };
 use super::turns::{read_runtime_turn_queue, write_runtime_turn_queue};
 use super::*;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static RUNTIME_WORK_TEST_PATH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[path = "tests/im_callback_routing.rs"]
 mod im_callback_routing;
@@ -343,6 +346,7 @@ fn deferred_worktree_preparation_can_be_cancelled_before_runtime_start() {
             .expect("preparing turn map lock should not be poisoned")
             .get("task-1"),
         Some(&PreparingTurn {
+            owner_request: None,
             cancellation_requested: true
         })
     );
@@ -5596,8 +5600,9 @@ fn archived_cleanup_targets_do_not_delete_regular_project_root() {
 }
 
 fn temp_runtime_work_index_path(label: &str) -> PathBuf {
+    let sequence = RUNTIME_WORK_TEST_PATH_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!(
-        "wegent-runtime-work-{label}-{}-{}.json",
+        "wegent-runtime-work-{label}-{}-{}-{sequence}.json",
         std::process::id(),
         now_ms()
     ))

@@ -32,7 +32,14 @@ export async function git(cwd, args, { index, output, input, hooks } = {}) {
   )
   const child = spawn(
     'git',
-    ['-c', 'core.fsmonitor=false', ...(hooks ? ['-c', `core.hooksPath=${hooks}`] : []), ...args],
+    [
+      '-c',
+      'core.fsmonitor=false',
+      '-c',
+      'core.longpaths=true',
+      ...(hooks ? ['-c', `core.hooksPath=${hooks}`] : []),
+      ...args,
+    ],
     {
       cwd,
       env: { ...environment, ...(index ? { GIT_INDEX_FILE: index } : {}) },
