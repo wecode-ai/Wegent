@@ -140,7 +140,11 @@ available.
 CUA is not a separate sidecar and is never installed dynamically from the user
 environment or network. The Electron package pins `@trycua/cua-driver`, and
 pnpm selects the platform-native package, such as
-`@trycua/cua-driver-darwin-arm64`.
+`@trycua/cua-driver-darwin-arm64`. Declare all six platform-native packages as
+direct `optionalDependencies` of the Electron package at the same version as
+the Driver. Relying only on transitive optional dependencies can cause
+electron-builder to omit native libraries. The staging `package.json` generated
+by local packaging must retain these declarations as well.
 
 JavaScript files enter `app.asar`, while native `.node`, `.dylib`, `.so`, and
 `.dll` files are unpacked into `app.asar.unpacked` by the Electron packaging
