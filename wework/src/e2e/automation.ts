@@ -1778,9 +1778,18 @@ async function waitForDesktopControlElement(
   const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
   const startedAt = Date.now()
   let matchedAt: number | null = null
+  let polls = 0
+  let lastPollAtMs: number | null = null
+  let maxPollGapMs = 0
+  let lastMatchCount: number | null = null
 
   while (Date.now() - startedAt < timeoutMs) {
+    const pollAtMs = Date.now() - startedAt
+    maxPollGapMs = Math.max(maxPollGapMs, pollAtMs - (lastPollAtMs ?? 0))
+    lastPollAtMs = pollAtMs
+    polls += 1
     const elements = findDesktopControlElementsWithin(command.selector, command.target)
+    lastMatchCount = elements.length
     if (command.visible === false) {
       const visibleElements = elements.filter(desktopControlElementVisible)
       if (visibleElements.length === 0) {
@@ -1812,6 +1821,15 @@ async function waitForDesktopControlElement(
     await waitForDomChange(document)
   }
 
+  const elapsedMs = Date.now() - startedAt
+  const waitDiagnostics = {
+    timeoutMs,
+    elapsedMs,
+    polls,
+    lastPollAtMs,
+    lastMatchCount,
+    maxPollGapMs: lastPollAtMs === null ? null : Math.max(maxPollGapMs, elapsedMs - lastPollAtMs),
+  }
   const diagnostics = findDesktopControlElementsWithin(command.selector, command.target).map(
     element => ({
       className: element.className,
@@ -1829,7 +1847,7 @@ async function waitForDesktopControlElement(
   throw new Error(
     `Timed out waiting for selector "${command.selector}"${
       command.target ? ` within "${command.target}"` : ''
-    }${command.text ? ` containing "${command.text}"` : ''}; matches=${JSON.stringify(diagnostics)}`
+    }${command.text ? ` containing "${command.text}"` : ''}; wait=${JSON.stringify(waitDiagnostics)}; matches=${JSON.stringify(diagnostics)}`
   )
 }
 
