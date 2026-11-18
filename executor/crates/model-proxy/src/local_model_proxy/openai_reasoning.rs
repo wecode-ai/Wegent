@@ -97,11 +97,6 @@ pub(super) fn normalize_official_reasoning_history(
                 retained.push(item);
             }
         }
-        // Host event IDs remain unchanged in native receipts. The official API
-        // accepts at most 64 bytes per input ID, including on passthrough routes.
-        for item in &mut retained {
-            changed += super::request_preparation::normalize_responses_item_ids(item, true);
-        }
         *items = retained;
     }
     if changed == 0 {
