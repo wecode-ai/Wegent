@@ -238,6 +238,10 @@ hongyu9 的最新评审要求把“部分成员添加失败后可恢复”从组
 
 `e4bae53c1d` 的 Core10 与 Cloud1 均通过，随后 Core1 的 `model-overload-recovery` 在 `set.resumed` 处失败。当前主线 `78df73b26e` 已把 Goal 激活契约改为先在 `prepare_goal_model_route` 中加载并绑定原生会话，再由 `thread/goal/set` 直接启动模型工作；对应执行器测试明确要求此时 `resumed=false`，以避免重复 admission。旧 E2E 仍断言冷会话激活必须返回 `resumed=true`，与新契约冲突。场景现改为断言 `false`，同时保留 active Goal、第二次真实模型请求、运行中任务保护、重复发送拒绝、原线程与 Goal 身份保持以及最终完成等断言，没有降低重复工作防护。
 
+`08e6ea023f` 的 CI 进行期间，主线又新增 `ef8ace2c45`（#4727，模型失败分类与自动重试状态）。该提交与本分支在 `codex.rs`、`lifecycle.rs`、`turns.rs` 和 `cloud-config-model-service.mjs` 重叠；前三者自动合并并同时保留本分支阶段诊断与主线 `error_type` 输出。Cloud 配置 fixture 按用户确认的方案手工整合：保留主线对 `grant_type/refresh_token` 的严格校验和 `REFRESH` 常量，同时保留本分支三字段刷新响应、`id_token` 身份声明与刷新 URL 覆盖。
+
+同步更新主线新增的 `cloud-config-model-service.test.ts`，除 access/refresh 外验证非空 `id_token` 及其 enterprise account 声明。该协议测试 1 项、桌面模型选择协议 8 项、Prettier、ESLint、`cargo fmt --check` 和差异检查通过。Rust 聚焦测试因仓库默认 Cargo target 位于沙箱外而未能启动，未记为通过；合并后的完整编译与测试必须由新 head CI 给出。
+
 # Verification and rollback
 
 The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The CI-covered `collaboration-shared-core` scenario includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run under the repository-level local execution policy; the recorded GitHub CI runs provide the actual desktop E2E results. Earlier test results are tied to their stated revisions, and the latest PR head requires its own green checks. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.

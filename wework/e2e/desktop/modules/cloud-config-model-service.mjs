@@ -17,6 +17,7 @@ import {
 
 const ACCOUNT = 'cloud-config-recovery-enterprise'
 const ACCESS = 'synthetic-cloud-config-recovery-access'
+const REFRESH = 'synthetic-cloud-config-recovery-refresh'
 
 async function authFileMetadata(path) {
   try {
@@ -84,14 +85,13 @@ export function createCloudConfigModelService({ readUsage } = {}) {
       const idToken = `header.${claims}.signature`
       server = createServer(async (request, response) => {
         if (request.method === 'POST' && request.url === '/oauth/token') {
+          const body = await readRequestBody(request)
+          assert.equal(body.grant_type, 'refresh_token')
+          assert.equal(body.refresh_token, REFRESH)
           tokenRefreshes += 1
           response.writeHead(200, { 'content-type': 'application/json' })
           response.end(
-            JSON.stringify({
-              access_token: ACCESS,
-              refresh_token: 'synthetic-cloud-config-recovery-refresh',
-              id_token: idToken,
-            })
+            JSON.stringify({ access_token: ACCESS, refresh_token: REFRESH, id_token: idToken })
           )
           return
         }
@@ -154,7 +154,7 @@ export function createCloudConfigModelService({ readUsage } = {}) {
           tokens: {
             account_id: ACCOUNT,
             access_token: ACCESS,
-            refresh_token: 'synthetic-cloud-config-recovery-refresh',
+            refresh_token: REFRESH,
             id_token: idToken,
           },
           last_refresh: new Date().toISOString(),
