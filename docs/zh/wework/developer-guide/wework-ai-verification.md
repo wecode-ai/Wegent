@@ -230,6 +230,8 @@ Windows 共享确认客户端按 [微软 UI Automation 线程指南](https://lea
 
 Windows 原生确认框的共享客户端按 PID、`#32770` 对话框类及既有标题唯一匹配目标。CI 已观察到同一确认框的 UIA 后代树没有按钮，而 Win32 实际存在两个 Button 控件；因此统一改为枚举该对话框内同进程、可见且启用的 Button 句柄，再通过 UIA `FromHandle` 解析并使用原有 `InvokePattern` 完成真实点击。仍要求唯一匹配既有允许／取消名称；调用前重新验证 PID、父子关系、类、可见／启用状态、UIA 控件类型及名称，不使用鼠标坐标、按键或消息注入。Windows CI 另外用独立进程拥有的真实 OS 对话框验证允许和取消两种返回值，不替代 Wework 场景。原有 10 秒查找／12 秒输入期限不变。零按钮时保留一次只读 UIA 数量快照；匹配对话框后的输入失败另外启动最多 4 秒的只读 Win32 观察进程，按同一 PID、类及标题重新查找，只有唯一匹配才记录句柄、PID／类及子窗口／按钮数量。缺失、歧义、失效或未执行的数据保持未知，诊断失败不会覆盖原始输入失败。不记录控件正文或任意类名；诊断计数不能代替真实确认，也不能证明修复已通过真实 Wework E2E。
 
+Windows 客户端在第一次 UIA 查询前，用 `ClientSettings.RegisterClientSideProviderAssembly` 显式注册与已加载 UIAutomationClient 相同版本和签名标识的官方 `UIAutomationClientsideProviders`。真实 CI 已确认默认查询返回 Pane 时，官方 Button factory 仍可为同一 HWND 创建 provider，因此初始化不能依赖该运行环境的默认代理绑定。注册异常保留为失败，注册开始／完成分别记录；不引入自定义 provider，不降低 Button 类型或 InvokePattern 要求，真实 Allow／Cancel 门禁仍必须通过。
+
 真实 Windows 原生验证也可能在 `FromHandle` 后因 UIA 身份不匹配而失败。失败分支仅追加 PID 匹配、Button 类型匹配、句柄匹配三个 0／1 标志和数值控件类型 ID；不记录控件名称或任意输出。未读到的数据保持未知，诊断异常另记固定阶段并保留原身份失败。日志必须先区分所有权与 provider 类型问题，不能据此跳过校验或宣称原生点击已修复。
 
 MCP App 目录失败保留任务与线程标识、来源读取状态、是否执行恢复及来源读取后的耗时，不记录工具参数或凭据。原生 JSON-RPC 失败事件同时记录接收响应的进程类型（`shared`／`dedicated`）及 generation；请求编号只在其进程内有意义。初始化阶段或没有通知 Hub 的独立调用尚无 generation 时，明确记录 `unknown`，不能用相邻进程的编号补齐。仍使用既有错误脱敏与长度限制，不新增请求参数或响应正文日志。Windows 原生插件确认失败保留固定 UI Automation 阶段、退出信号和终止状态，不输出任意子进程内容。这些诊断用于后续定位，不能作为故障修复或官方 runtime 已兼容的证明。Windows 原生确认按隔离进程的顶层窗口逐个搜索子树，只接受同一进程、窗口类型、系统对话框类 `#32770` 和已知确认标题；仅调用匹配原生按钮的 InvokePattern。出现多个匹配对话框即失败，不按顺序随意选择。保留 10 秒搜索与 12 秒子进程时限，真实 Windows 结果仍需 CI 验证。

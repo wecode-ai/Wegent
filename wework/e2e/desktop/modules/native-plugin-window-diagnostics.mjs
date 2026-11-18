@@ -19,8 +19,6 @@ export const WINDOWS_UIA_PROVIDER_DIAGNOSTICS = `
 function Read-ButtonProvider([IntPtr]$handle) {
   try {
     Write-DecisionStage 'provider-load-started'
-    $proxyName = [System.Windows.Automation.AutomationElement].Assembly.GetName()
-    $proxyName.Name = 'UIAutomationClientsideProviders'
     $proxyAssembly = [System.Reflection.Assembly]::Load($proxyName)
     Write-DecisionStage 'provider-loaded'
     $proxyType = $proxyAssembly.GetType($proxyName.Name + '.UIAutomationClientSideProviders', $true)

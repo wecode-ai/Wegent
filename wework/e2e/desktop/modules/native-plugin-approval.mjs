@@ -94,6 +94,15 @@ Add-Type -AssemblyName UIAutomationClient
 Write-DecisionStage 'client-loaded'
 Add-Type -AssemblyName UIAutomationTypes
 Write-DecisionStage 'types-loaded'
+$proxyName = [System.Windows.Automation.AutomationElement].Assembly.GetName()
+$proxyName.Name = 'UIAutomationClientsideProviders'
+Write-DecisionStage 'provider-register-started'
+try {
+  [System.Windows.Automation.ClientSettings]::RegisterClientSideProviderAssembly($proxyName)
+} catch {
+  throw
+}
+Write-DecisionStage 'provider-registered'
 Add-Type -ErrorAction Stop -TypeDefinition @'
 ${WINDOWS_NATIVE_DIALOG_BUTTON_SOURCE}
 '@
@@ -223,6 +232,8 @@ throw 'The isolated app did not display its native Core plugin decision'
         'started',
         'client-loaded',
         'types-loaded',
+        'provider-register-started',
+        'provider-registered',
         'native-reader-loaded',
         'search-started',
         'search-completed',
