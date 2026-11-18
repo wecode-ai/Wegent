@@ -18,7 +18,10 @@ pub(super) fn response_result(
     origin: CodexRpcOrigin,
 ) -> Result<Value, String> {
     if let Some(fields) = error_fields(&message, method, origin) {
-        crate::logging::log_executor_event("codex JSON-RPC request failed", &fields);
+        crate::logging::write_executor_error_line(&crate::logging::format_executor_log(
+            "codex JSON-RPC request failed",
+            &fields,
+        ));
     }
     if let Some(error) = message.get("error") {
         return Err(error
@@ -62,6 +65,43 @@ fn error_fields(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_rpc_failure_reaches_the_error_stream() {
+        const CHILD: &str = "WEGENT_TEST_RPC_ERROR_STREAM_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let error = response_result(
+                json!({"id": 57, "error": {
+                    "code": -32600,
+                    "message": "invalid config read parameters",
+                    "data": {"apiKey": "rpc-stream-private-key"}
+                }}),
+                "config/read",
+                CodexRpcOrigin::Shared(Some(9)),
+            )
+            .unwrap_err();
+            assert_eq!(error, "invalid config read parameters");
+            return;
+        }
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "agents::codex::rpc_response::tests::native_rpc_failure_reaches_the_error_stream",
+                "--nocapture",
+            ])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stderr.contains("codex JSON-RPC request failed"), "{stderr}");
+        assert!(stderr.contains("method=config/read"));
+        assert!(stderr.contains("process_scope=shared process_generation=9"));
+        assert!(stderr.contains("-32600"));
+        assert!(!stderr.contains("rpc-stream-private-key"));
+        assert!(!stdout.contains("codex JSON-RPC request failed"));
+    }
 
     #[test]
     fn retains_structured_error_identity_and_redacts_sensitive_data() {
