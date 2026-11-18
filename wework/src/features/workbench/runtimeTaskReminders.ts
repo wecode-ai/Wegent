@@ -68,6 +68,11 @@ function debugReminderKey(key: string): string {
   return key.replace(/\0/g, '::')
 }
 
+function notificationIdentity(item: RuntimeTaskReminderItem): string {
+  const workspacePath = item.address.workspacePath ?? item.workspace.workspacePath ?? ''
+  return `${item.task.taskId}\0${workspacePath}`
+}
+
 function logRuntimeTaskReminderState(event: string, payload: Record<string, unknown>) {
   if (globalThis.localStorage?.getItem('wework:debug-runtime') !== '1') return
 
@@ -265,7 +270,8 @@ export function useRuntimeTaskReminders({
     previousUnreadTaskKeysRef.current = new Set(nextUnreadTaskKeys)
 
     for (const key of lifecycleSnapshot.runningTaskKeys) {
-      notifiedTaskKeysRef.current.delete(key)
+      const item = itemsByKey.get(key)
+      if (item) notifiedTaskKeysRef.current.delete(notificationIdentity(item))
     }
     if (windowFocusedRef.current) return
     for (const item of newlyUnreadItems) {
@@ -273,8 +279,9 @@ export function useRuntimeTaskReminders({
       if (standInOrigin(item)) continue
       if (!notificationPreferences[runtimeTaskNotificationCategory(item)].system) continue
       if (item.lifecycle?.interactionStatus || item.task.interactionStatus) continue
-      if (notifiedTaskKeysRef.current.has(item.key)) continue
-      notifiedTaskKeysRef.current.add(item.key)
+      const identity = notificationIdentity(item)
+      if (notifiedTaskKeysRef.current.has(identity)) continue
+      notifiedTaskKeysRef.current.add(identity)
       logRuntimeTaskReminderState('system-notification-send', {
         key: debugReminderKey(item.key),
         taskId: item.task.taskId,
