@@ -290,6 +290,7 @@ async function readNativeUiObservers(journalPath) {
   try {
     const database = new DatabaseSync(journalPath, { readOnly: true })
     try {
+      database.exec('PRAGMA busy_timeout = 10000')
       return database
         .prepare("SELECT id,value FROM records WHERE section='observers'")
         .all()

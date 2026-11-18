@@ -50,6 +50,8 @@ vi.mock('node:fs/promises', async importOriginal => ({
 }))
 vi.mock('node:sqlite', () => ({
   DatabaseSync: class {
+    exec() {}
+
     prepare() {
       return {
         all: () =>
