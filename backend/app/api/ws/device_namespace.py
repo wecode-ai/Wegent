@@ -167,6 +167,7 @@ DEVICE_CONNECT_RATE_LIMIT_WINDOW_SECONDS = 30
 DEVICE_CONNECT_RATE_LIMIT_MAX_ATTEMPTS = 30
 DEVICE_REGISTER_UPSERT_DEBOUNCE_SECONDS = 10
 REGISTER_CAPABILITY_SYNC_TIMEOUT_SECONDS = 120
+PLUGIN_REGISTRATION_RECOVERY_DELAYS_SECONDS = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0)
 DEVICE_DISCONNECT_FAILURE_GRACE_SECONDS = 2
 TERMINAL_END_DISPATCH_TIMEOUT_SECONDS = 5
 RUNTIME_TASK_TERMINAL_STATUSES = {
@@ -1921,6 +1922,10 @@ class DeviceNamespace(socketio.AsyncNamespace):
                         result=result,
                     )
                 )
+            elif await self._retry_registered_device_plugins(
+                user_id=user_id, device_id=device_id
+            ):
+                return
             if not result.success:
                 logger.warning(
                     "[Device WS] Capability sync after register failed: user=%s, device=%s, error=%s",
@@ -1932,6 +1937,47 @@ class DeviceNamespace(socketio.AsyncNamespace):
             logger.exception(
                 "[Device WS] Error syncing global capabilities after registration"
             )
+
+    async def _retry_registered_device_plugins(
+        self, *, user_id: int, device_id: str
+    ) -> bool:
+        """Recover a plugin snapshot deferred by a concurrent registration write."""
+        for delay in PLUGIN_REGISTRATION_RECOVERY_DELAYS_SECONDS:
+            await asyncio.sleep(delay)
+            include_plugins = await run_sync_in_executor(
+                partial(
+                    self._prepare_plugins_for_registered_device,
+                    user_id=user_id,
+                    device_id=device_id,
+                )
+            )
+            if not include_plugins:
+                continue
+            result = (
+                await device_capability_sync_service.sync_current_device_capabilities(
+                    user_id=user_id,
+                    device_id=device_id,
+                    timeout_seconds=REGISTER_CAPABILITY_SYNC_TIMEOUT_SECONDS,
+                    include_plugins=True,
+                )
+            )
+            if result.success:
+                await run_sync_in_executor(
+                    partial(
+                        self._record_registration_sync_result,
+                        user_id=user_id,
+                        result=result,
+                    )
+                )
+                return True
+            logger.warning(
+                "[Device WS] Plugin recovery after register failed: "
+                "user=%s, device=%s, error=%s",
+                user_id,
+                device_id,
+                result.error,
+            )
+        return False
 
     def _prepare_plugins_for_registered_device(
         self, *, user_id: int, device_id: str
