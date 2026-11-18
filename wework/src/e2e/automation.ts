@@ -1,3 +1,4 @@
+import { readAppWorkerMemory } from './app-worker-memory'
 import { getModelLoadingDiagnostics } from '@/lib/model-loading-diagnostics'
 import { collectIssueDrawerDiagnostics } from './issue-drawer-diagnostics'
 import { waitForDomChange } from './waitForDomChange'
@@ -2920,6 +2921,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           .filter(message => message.role === 'assistant')
           .reduce((count, message) => count + (message.runtimeDisplayItems?.length ?? 0), 0),
         runtimeConversationCache: getRuntimeConversationCacheStats(),
+        appWorkerMemory: processMemory
+          ? await readAppWorkerMemory(
+              new URL(
+                joinAppPath(getRuntimeConfig().appBasePath, '/__e2e/process-memory'),
+                window.location.href
+              ),
+              processMemory
+            )
+          : null,
         processMemory,
         rendererHeap,
       })

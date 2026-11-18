@@ -30,6 +30,7 @@ export async function captureTotalMemorySample(control, phase) {
     totalJSHeapSize: snapshot.rendererHeap?.totalSize ?? null,
     runtimeConversationCache: snapshot.runtimeConversationCache ?? null,
     mainProcessMemoryBytes: snapshot.processMemory.main_process_memory_bytes ?? null,
+    appWorkerMemory: snapshot.appWorkerMemory ?? null,
     rssKiB: snapshot.processMemory.groups.reduce((total, group) => total + group.rss_kib, 0),
     physicalFootprintKiB: snapshot.processMemory.groups.reduce(
       (total, group) => total + group.physical_footprint_kib,

@@ -71,6 +71,15 @@ function register(ctx, kind, path, handler) {
   )
 }
 
+function sendUncachedBody(req, res, contentType, body) {
+  res.writeHead(200, {
+    'content-type': contentType,
+    'cache-control': 'no-store',
+    'content-length': Buffer.byteLength(body),
+  })
+  res.end(req.method === 'HEAD' ? undefined : body)
+}
+
 export async function serveWeworkApp(req, res) {
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     res.writeHead(405, { allow: 'GET, HEAD' })
@@ -80,17 +89,26 @@ export async function serveWeworkApp(req, res) {
   const requestUrl = new URL(req.url ?? APP_BASE_PATH, 'http://localhost')
   const pathname = decodeURIComponent(requestUrl.pathname)
   const relativePath = pathname.slice(APP_BASE_PATH.length).replace(/^\/+/, '')
+  if (relativePath === '__e2e/process-memory') {
+    if (process.env.VITE_WEWORK_E2E !== 'true') {
+      res.writeHead(404, { 'cache-control': 'no-store' })
+      res.end()
+      return
+    }
+    sendUncachedBody(
+      req,
+      res,
+      'application/json; charset=utf-8',
+      JSON.stringify({ pid: process.pid, memoryBytes: process.memoryUsage() })
+    )
+    return
+  }
   if (relativePath === 'runtime-config.js') {
     const body = runtimeConfigScript(
       process.env,
       desktopWindowLabel(req.headers['x-wework-window-label'])
     )
-    res.writeHead(200, {
-      'content-type': MIME_TYPES['.js'],
-      'cache-control': 'no-store',
-      'content-length': Buffer.byteLength(body),
-    })
-    res.end(req.method === 'HEAD' ? undefined : body)
+    sendUncachedBody(req, res, MIME_TYPES['.js'], body)
     return
   }
   const target = resolve(normalize(join(webRoot, relativePath)))
