@@ -26,6 +26,8 @@ After creating a Goal, inspect its status bar near the composer. Hover or focus 
 
 Goals may be active, paused, blocked, budget/usage-limited or complete. Exhausted budgets, tool failures and disconnections are not completion evidence. Resolve the reported condition before continuing. Deleting a goal differs from deleting its conversation.
 
+After restarting the app, start a stopped Goal in its original conversation. Wework restores the conversation’s execution configuration before continuing the original Goal, preserving its objective, budget and recorded usage.
+
 ### Model overload and quota recovery
 
 Local Codex tasks automatically retry an overloaded model after 10 seconds, 30 seconds, 2 minutes and 5 minutes. The countdown appears in the conversation. Recovery continues the original conversation and model with completed tool history preserved.
@@ -255,6 +257,10 @@ Open the composer's **+** menu in a new Codex conversation or an existing Codex 
 Supervision settings belong to the current task. Select an independent review model and a review frequency of 10 seconds, 30 seconds, 1 minute, or 5 minutes. Wework remembers the most recently saved review model and frequency on the current device and restores them when supervision is configured for a new task. Set default supervisor principles under **Settings → Context**; they are prefilled when supervision is first enabled and can then be customized for that task.
 
 After supervision starts, the right-side **Environment** panel shows its status and the next scheduled review time. Select **Review now** to inspect the current progress immediately. The action is temporarily disabled while a review is already running so the task cannot start concurrent supervisor checks.
+
+## Inspect failures and retry status
+
+While a reply is retrying, the processing area distinguishes server overload, rate limiting, and reconnection, and shows attempt counts when supplied by the runtime. The status disappears when progress resumes. A terminal failure shows the relevant timeout, connection, or overload message below the reply, with **Retry** and **Switch model and retry** when available. Select **Error details** to expand the original diagnostics, or select it again to collapse them. Internal recovery information such as an app-server restart appears only in these details. A response timeout means no progress arrived within the stated interval; it does not establish that the model provider was slow.
 
 ## Review the processing timeline
 

@@ -239,7 +239,7 @@ fn cancellation_while_native_waits_for_the_send_gate_prevents_continuation() {
             });
             seed(&handler, "task");
             let id = handler.subscription_id("task", "wait");
-            workbench_control::journal::transact(&handler.event_subscription_path(), |state| {
+            event_store::transact(&handler.event_subscription_path(), |state| {
                 state["operations"][&id] = record;
                 Ok(())
             })
@@ -253,11 +253,11 @@ fn cancellation_while_native_waits_for_the_send_gate_prevents_continuation() {
                 );
             tokio::time::timeout(Duration::from_secs(10), async {
                 loop {
-                    let status = workbench_control::journal::transact(
-                        &handler.event_subscription_path(),
-                        |state| Ok(state["operations"][&id]["status"].clone()),
-                    )
-                    .unwrap();
+                    let status =
+                        event_store::transact(&handler.event_subscription_path(), |state| {
+                            Ok(state["operations"][&id]["status"].clone())
+                        })
+                        .unwrap();
                     if status == "pending" {
                         break;
                     }
@@ -283,11 +283,10 @@ fn cancellation_while_native_waits_for_the_send_gate_prevents_continuation() {
                     .collect::<Vec<_>>(),
                 vec!["get_subscription", "admit_delivery"]
             );
-            let persisted =
-                workbench_control::journal::transact(&handler.event_subscription_path(), |state| {
-                    Ok(state["operations"][&id].clone())
-                })
-                .unwrap();
+            let persisted = event_store::transact(&handler.event_subscription_path(), |state| {
+                Ok(state["operations"][&id].clone())
+            })
+            .unwrap();
             assert!(
                 persisted["operation_id"].is_null(),
                 "Rejected cloud admission cannot create a local continuation"
@@ -334,7 +333,7 @@ fn backend_cancellation_removes_the_wait_before_ack_and_recovers_a_lost_ack() {
                                 (axum::http::StatusCode::OK, axum::Json(snapshot))
                             }
                             "ack_projection" => {
-                                let status = workbench_control::journal::transact(&path, |state| {
+                                let status = event_store::transact(&path, |state| {
                                     Ok(state["operations"][&id]["status"].clone())
                                 })
                                 .unwrap();
@@ -460,7 +459,7 @@ fn remote_model_subscription_recovers_lost_registration_without_reinitializing_o
         let args = json!({"subscription_key":"wait","source":{"providerId":"documents","profile":"account","kind":"document","id":"doc","name":"Document"},"match":{"/eventType":"document.updated"},"continuation":"Continue editing"});
         assert!(model_service.control_operation(&context("task"), "subscribe_connection_events", args.clone()).await.is_err());
         let id = handler.subscription_id("task", "wait");
-        let read = || workbench_control::journal::transact(&handler.event_subscription_path(), |state| Ok(state["operations"][&id].clone())).unwrap();
+        let read = || event_store::transact(&handler.event_subscription_path(), |state| Ok(state["operations"][&id].clone())).unwrap();
         assert_eq!(read()["status"], "preparing");
         handler.poll_conversation_connection_events(true).await.unwrap();
         assert_eq!(read()["status"], "armed");
@@ -547,7 +546,7 @@ fn goal_pause_recovers_cloud_cancellation_after_a_lost_attach_response_and_resta
         assert!(handler.register_cloud_connection_subscription(&id, &mut record).await.is_err());
         assert_eq!(*remote_status.lock().unwrap(), "armed");
         handler.cancel_connection_goal_waits("task", Some("paused"));
-        let read = || workbench_control::journal::transact(&handler.event_subscription_path(), |state| Ok(state["operations"][&id].clone())).unwrap();
+        let read = || event_store::transact(&handler.event_subscription_path(), |state| Ok(state["operations"][&id].clone())).unwrap();
         assert_eq!(read()["status"], "cancelled");
         assert_eq!(read()["cloud_cancel_pending"], true);
         assert!(read()["cloud_subscription"].is_null());

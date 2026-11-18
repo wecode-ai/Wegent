@@ -651,6 +651,7 @@ end
 archive_common = {
   'Types' => 'deb',
   'Components' => 'main universe restricted multiverse',
+  'By-Hash' => 'force',
   'Signed-By' => '/usr/share/keyrings/ubuntu-archive-keyring.gpg'
 }
 expected_archives = [

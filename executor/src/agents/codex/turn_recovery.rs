@@ -154,6 +154,7 @@ impl TurnRecovery {
                 notification["params"]["retryAt"] =
                     json!(super::current_epoch_millis().saturating_add(delay.as_millis() as i64));
                 notification["params"]["retryAttempt"] = json!(self.retries);
+                notification["params"]["retryMaxAttempts"] = json!(RETRY_DELAYS.len());
                 self.recovery_exit = Some(
                     json!({"method": "runtime/overloadRecoverySettled", "params": {
                         "threadId": notification["params"]["threadId"],

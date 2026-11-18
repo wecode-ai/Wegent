@@ -102,7 +102,8 @@ select_path_targets() {
   local record target pattern
   local matched=false
   for record in "$@"; do
-    IFS=$'\t' read -r target pattern < <(printf '%s\n' "$record")
+    target="${record%%$'\t'*}"
+    pattern="${record#*$'\t'}"
     if [[ "$path" == $pattern ]]; then
       select_target "$target"
       matched=true

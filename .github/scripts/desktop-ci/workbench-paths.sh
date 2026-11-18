@@ -122,8 +122,10 @@ classify_workbench_path() {
       wework/src/features/todo/TaskDescriptionEditor* | \
       wework/src/components/chat/composer/desktopComposerServices* | \
       wework/electron/src/host/clipboard-image-conversion* | \
-      wework/e2e/desktop/scenarios/clipboard-history-image.scenario.mjs)
-      select_target "core:collaboration-issue-comment-attachments"
+      wework/e2e/desktop/scenarios/clipboard-history-image.scenario.mjs | \
+      wework/e2e/desktop/scenarios/clipboard-images-with-send.scenario.mjs | \
+      wework/e2e/desktop/scenarios/paste-image-send.scenario.mjs)
+      select_target "core:clipboard-history-image"
       macos_inspector_e2e=true
       return
       ;;

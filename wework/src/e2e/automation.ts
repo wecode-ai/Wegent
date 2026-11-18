@@ -1,3 +1,4 @@
+import { collectIssueDrawerDiagnostics } from './issue-drawer-diagnostics'
 import { waitForDomChange } from './waitForDomChange'
 import { readNativeModelFixtures, writeNativeModelFixtures } from './native-model-fixtures'
 import { collectConversationRenderingDiagnostics } from './conversation-rendering-diagnostics'
@@ -3652,11 +3653,13 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       stopRuntimeStreamDiagnostics()
       return JSON.stringify(getRuntimeStreamDiagnostics())
     case 'getWorkbenchDebugSnapshot':
+      if (command.value === 'state-only') return JSON.stringify(getWorkbenchDebugSnapshot())
       return JSON.stringify({
         ...getWorkbenchDebugSnapshot(),
         conversationRendering: await collectConversationRenderingDiagnostics(capability =>
           invokeDesktopHost(capability)
         ),
+        issueDrawers: collectIssueDrawerDiagnostics(),
         runtimeStream: getRuntimeStreamDiagnostics(),
         desktopControlTransport: getDesktopControlDiagnostics(),
         nativeTerminalKeys: getNativeTerminalDiagnostics(),

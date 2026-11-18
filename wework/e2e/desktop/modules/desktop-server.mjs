@@ -10,6 +10,7 @@ import {
   writeMatrixReport,
 } from './model-matrix-audit.mjs'
 import { writeFileSync } from 'node:fs'
+import { performance } from 'node:perf_hooks'
 import {
   assertProgressiveHi,
   captureMatrixRequest,
@@ -335,6 +336,7 @@ const ELECTRON_OBSERVATION_ACTIONS = new Set([
   'getTerminalText',
   'getText',
   'getValueWhenReady',
+  'getWorkbenchDebugSnapshot',
   'metrics',
   'snapshot',
   'text',
@@ -2117,14 +2119,15 @@ class DesktopE2EServer {
           else pending.reject(replacementError)
         }
       }
-      this.ready = ready
+      const admittedReady = { ...ready, receivedAtMs: performance.now() }
+      this.ready = admittedReady
       this.readyCount += 1
-      this.readyResolver?.(ready)
+      this.readyResolver?.(admittedReady)
       this.readyResolver = null
       const remainingWaiters = []
       for (const waiter of this.readyWaiters) {
         if (this.readyCount > waiter.readyCount) {
-          waiter.resolve(ready)
+          waiter.resolve(admittedReady)
         } else {
           remainingWaiters.push(waiter)
         }

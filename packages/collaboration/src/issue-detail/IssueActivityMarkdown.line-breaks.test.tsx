@@ -1,13 +1,29 @@
 // @vitest-environment jsdom
 import { act } from 'react'
+import type { Processor } from 'unified'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { AssistantMarkdown, MarkdownServicesProvider, browserMarkdownServices } from '../markdown'
 import { IssueActivityMarkdown } from './IssueActivityMarkdown'
 
+const parses = vi.hoisted(() => [] as string[])
+vi.mock('../markdown/remarkMathDelimiters', async importOriginal => {
+  const actual = await importOriginal<typeof import('../markdown/remarkMathDelimiters')>()
+  return {
+    ...actual,
+    remarkMathDelimiters: function (this: Processor) {
+      actual.remarkMathDelimiters.call(this)
+      return (_tree: unknown, file: { value: unknown }) => {
+        parses.push(String(file.value))
+      }
+    },
+  }
+})
+
 let root: Root
 let container: HTMLDivElement
 beforeEach(() => {
+  parses.length = 0
   vi.stubGlobal(
     'ResizeObserver',
     class {
@@ -115,4 +131,60 @@ it('anchors document Markdown blocks to source lines only when requested', async
   expect(container.querySelector('[data-source-line="7"]')?.textContent).toBe(
     'Closing paragraph.'
   )
+})
+
+it.each(['default', 'process'] as const)(
+  'does not reparse unchanged %s Markdown at completion',
+  async variant => {
+    const content = '# Heading\n\nParagraph **bold**.\n\n- First\n- Second'
+    await act(async () =>
+      root.render(<AssistantMarkdown content={content} variant={variant} isStreaming />)
+    )
+    const parsed = parses.length
+    expect(parsed).toBeGreaterThan(0)
+    const paragraph = container.querySelector('p')
+    await act(async () => root.render(<AssistantMarkdown content={content} variant={variant} />))
+    expect(parses).toHaveLength(parsed)
+    expect(container.querySelector('p')).toBe(paragraph)
+    expect(container.querySelector('strong')?.textContent).toBe('bold')
+    await act(async () =>
+      root.render(
+        <AssistantMarkdown content={content + '\n\nActual new content.'} variant={variant} />
+      )
+    )
+    expect(parses.length).toBeGreaterThan(parsed)
+    expect(container.textContent).toContain('Actual new content.')
+  }
+)
+
+it('finalizes an unfinished citation when streaming ends', async () => {
+  const content = 'Visible text :codex-followup{prompt='
+  await act(async () => root.render(<AssistantMarkdown content={content} isStreaming />))
+  expect(container.textContent).not.toContain('codex-followup')
+  await act(async () => root.render(<AssistantMarkdown content={content} />))
+  expect(container.textContent).toContain('codex-followup')
+})
+
+it('finalizes incomplete process Markdown without keeping synthetic delimiters', async () => {
+  const content = 'Prefix **unfinished'
+  await act(async () =>
+    root.render(<AssistantMarkdown content={content} variant="process" isStreaming />)
+  )
+  expect(container.querySelector('strong')?.textContent).toBe('unfinished')
+  await act(async () => root.render(<AssistantMarkdown content={content} variant="process" />))
+  expect(container.querySelector('strong')).toBeNull()
+  expect(container.textContent).toContain('**unfinished')
+})
+
+it.each([
+  ':codex-file-citation{path="report.md"}',
+  ':codex-followup[Continue]{prompt="Next"}',
+])('does not reparse completed annotations at completion: %s', async content => {
+  await act(async () => root.render(<AssistantMarkdown content={content} isStreaming />))
+  const parsed = parses.length
+  expect(parsed).toBeGreaterThan(0)
+  const rendered = container.innerHTML
+  await act(async () => root.render(<AssistantMarkdown content={content} />))
+  expect(parses).toHaveLength(parsed)
+  expect(container.innerHTML).toBe(rendered)
 })
