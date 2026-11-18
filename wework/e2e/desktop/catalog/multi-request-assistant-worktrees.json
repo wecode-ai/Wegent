@@ -2,7 +2,7 @@
   "order": 48001,
   "scenario": "./scenarios/multi-request-assistant-worktrees.scenario.mjs",
   "scenarioOnly": true,
-  "ciHost": "stand-in-assignment-notifications",
+  "ciHost": "project-assignment-notification",
   "paths": [
     "wework/e2e/desktop/modules/async-request-model.mjs",
     "wework/src/features/collaboration-exp/requests/*",

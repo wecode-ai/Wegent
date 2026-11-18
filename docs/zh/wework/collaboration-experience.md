@@ -61,7 +61,7 @@ sidebar_position: 18
 
 此列表仅当前负责人可见，请求正文和执行细节不会复制到共享时间线。普通私人讨论不自动创建独立请求。关闭独立请求能力后，已有记录、补充、取消、重试及合并确认入口继续保留，新建和替换入口隐藏。本地项目不显示此入口。
 
-部署配置中，`collab.asyncAssistantRequests.v1` 由服务端环境变量 `ASYNC_ASSISTANT_REQUESTS_ENABLED` 控制，默认关闭。关闭后不会删除已接受请求的会话、工作树或合并证据。
+部署配置中，`collab.asyncAssistantRequests.v1` 由服务端环境变量 `ASYNC_ASSISTANT_REQUESTS_ENABLED` 控制，默认关闭。启用前也需要开启 `HUMAN_ASSIGNMENT_RECEIPTS_ENABLED`，让分配生成持久化派发记录；多请求沿用该记录的权限和归属校验。关闭多请求开关后不会删除已接受请求的会话、工作树或合并证据。
 
 ## 通知、深链与重试
 

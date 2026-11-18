@@ -61,7 +61,7 @@ After execution, expand **Worktree and merge evidence** to inspect the retained 
 
 Only the current owner can see this list. Private request bodies and execution details are not copied to the shared timeline. Ordinary private discussion does not automatically create an independent request. Turning off independent requests retains existing history, continuation, cancellation, retry and merge confirmation controls while hiding new and replacement controls. Local projects do not show this entry.
 
-In deployment configuration, the server environment variable `ASYNC_ASSISTANT_REQUESTS_ENABLED` controls `collab.asyncAssistantRequests.v1` and defaults to off. Disabling it does not remove accepted conversations, worktrees or merge evidence.
+In deployment configuration, the server environment variable `ASYNC_ASSISTANT_REQUESTS_ENABLED` controls `collab.asyncAssistantRequests.v1` and defaults to off. Also enable `HUMAN_ASSIGNMENT_RECEIPTS_ENABLED` so assignments create durable dispatch records; independent requests retain the authority and ownership checks on those records. Disabling the async request flag does not remove accepted conversations, worktrees or merge evidence.
 
 ## Notifications, deep links and retry
 

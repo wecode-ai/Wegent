@@ -63,7 +63,10 @@ export function createDesktopScenario(options) {
     )
   return {
     requiresCloudEnvironment: true,
-    backendEnv: { ASYNC_ASSISTANT_REQUESTS_ENABLED: 'true' },
+    backendEnv: {
+      HUMAN_ASSIGNMENT_RECEIPTS_ENABLED: 'true',
+      ASYNC_ASSISTANT_REQUESTS_ENABLED: 'true',
+    },
     async prepareCloud(value) {
       cloud = value
       await request('/admin/setup-complete', {})
@@ -165,13 +168,22 @@ export function createDesktopScenario(options) {
           tags: [MARKER],
           assignee_user_id: user.id,
         })
-        await until(
+        const dispatch = issue.direct_human_assignment_receipt
+        assert.ok(dispatch?.dispatchId, 'The assignment must create its durable dispatch')
+        assert.equal(dispatch.ownerUserId, user.id)
+        assert.equal(dispatch.issueId, issue.id)
+        const initial = await until(
           async () => {
             const bindings = await request(`/v1/loop-items/${issue.id}/tasks`)
             return bindings[0] ? rpc('runtime.tasks.get', { taskId: bindings[0].task_id }) : null
           },
           result => result?.task?.status === 'done' && !result.task.running,
           'Initial authorized assistant must settle before explicit requests'
+        )
+        assert.equal(
+          initial.task.runtimeHandle.origin.humanAssistantDispatchId,
+          dispatch.dispatchId,
+          'The completed task must belong to the assignment dispatch'
         )
         await writeFile(join(source, 'tracked.txt'), `${MARKER}_PRIVATE_DIRTY_SOURCE\n`)
         await writeFile(
@@ -428,6 +440,7 @@ export function createDesktopScenario(options) {
       return {
         projectId: project?.id,
         issueId: issue?.id,
+        assignmentReceipt: issue?.direct_human_assignment_receipt,
         source,
         requestA: a?.requestId,
         requestB: b?.requestId,
