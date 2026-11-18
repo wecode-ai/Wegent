@@ -70,6 +70,7 @@ export class RuntimeTaskLifecycleStore {
   private readonly unreadStorageKey: string
   private readonly runningStorageKey: string
   private currentTaskKey: string | null = null
+  private windowFocused = true
   private persistedUnreadSerialized: string | null = null
   private persistedRunningSerialized: string | null = null
   private unreadRevision = 0
@@ -279,6 +280,14 @@ export class RuntimeTaskLifecycleStore {
       return
     }
     this.publish()
+  }
+
+  setWindowFocused(focused: boolean): void {
+    if (focused === this.windowFocused) return
+    this.windowFocused = focused
+    if (!focused || !this.currentTaskKey) return
+    const currentMachine = this.machines.get(this.currentTaskKey)
+    if (currentMachine) this.dispatch(currentMachine.getState().address, { type: 'marked_read' })
   }
 
   sendRequested(
@@ -587,11 +596,11 @@ export class RuntimeTaskLifecycleStore {
         executorSnapshotRunning: previous.task.running,
       })
     }
+    // A task is read only while its pane is open and the window is focused.
+    // Background completion of the open task still needs an unread reminder.
+    const currentTaskVisible = next.key === this.currentTaskKey && this.windowFocused
     const becameBackgroundIdle =
-      wasRunning &&
-      !next.derived.isRunning &&
-      !next.derived.isQueued &&
-      next.key !== this.currentTaskKey
+      wasRunning && !next.derived.isRunning && !next.derived.isQueued && !currentTaskVisible
     if (becameBackgroundIdle && next.goalStatus === 'active') {
       this.deferredGoalUnreadTaskKeys.add(key)
     }
@@ -600,18 +609,18 @@ export class RuntimeTaskLifecycleStore {
       !next.derived.isRunning &&
       !next.derived.isQueued &&
       next.goalStatus !== 'active' &&
-      next.key !== this.currentTaskKey
+      !currentTaskVisible
     ) {
       changed = machine.dispatch({ type: 'marked_unread' }) || changed
       this.deferredGoalUnreadTaskKeys.delete(key)
     }
     if (next.derived.isRunning) this.previousRunningTaskKeys.add(key)
     else this.previousRunningTaskKeys.delete(key)
-    if (next.derived.isRunning || next.key === this.currentTaskKey) {
+    if (next.derived.isRunning || currentTaskVisible) {
       this.deferredGoalUnreadTaskKeys.delete(key)
       changed = machine.dispatch({ type: 'marked_read' }) || changed
     }
-    if (canonicalEvent.type === 'marked_read' || next.key === this.currentTaskKey) {
+    if (canonicalEvent.type === 'marked_read' || currentTaskVisible) {
       this.recordUnreadState(key, false)
     } else if (next.derived.isRunning) {
       // An old running projection must not acknowledge a newer completion on another alias.

@@ -2422,6 +2422,19 @@ describe('RuntimeTaskLifecycleStore', () => {
     expect(store.getTask(address)?.derived.shouldShowUnread).toBe(false)
   })
 
+  test('marks the open task unread when it settles while the window is unfocused', () => {
+    const store = new RuntimeTaskLifecycleStore('test')
+    store.syncRuntimeWork(runtimeWork(task({ running: true })))
+    store.setCurrentTask(address)
+    store.setWindowFocused(false)
+    store.executorSettled(address)
+
+    expect(store.getTask(address)?.derived.shouldShowUnread).toBe(true)
+
+    store.setWindowFocused(true)
+    expect(store.getTask(address)?.derived.shouldShowUnread).toBe(false)
+  })
+
   test('never marks an active Goal turn gap unread', () => {
     const store = new RuntimeTaskLifecycleStore('test')
     store.syncRuntimeWork(runtimeWork(task({ running: true, goalStatus: 'active' })))
