@@ -133,6 +133,7 @@ mod device_online_state;
 mod device_presence;
 mod device_records;
 mod device_running_tasks;
+mod device_runtime_owner;
 mod device_upgrade;
 pub mod devices;
 mod dingtalk_wikispace;

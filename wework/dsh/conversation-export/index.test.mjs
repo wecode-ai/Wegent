@@ -6,8 +6,9 @@ import test from 'node:test'
 import { pathToFileURL } from 'node:url'
 import JSZip from 'jszip'
 
+import { waitForTerminalStatus } from '../test-support/export-status.mjs'
+
 import { apply } from './index.js'
-import { waitForTerminalStatus } from './test-support.mjs'
 
 test('loads after packaging without workspace dependencies', async () => {
   const root = await mkdtemp(join(tmpdir(), 'wework-conversation-export-isolated-'))
