@@ -467,6 +467,7 @@ export function TemporaryChatPanel({
   const historyRequest = useRef({ loadingMore: false })
   const [sending, setSending] = useState(false)
   const [submissionStartTurnKey, setSubmissionStartTurnKey] = useState<string | null>(null)
+  const [submissionStartFailureCount, setSubmissionStartFailureCount] = useState(0)
   const nativeSubmission = useRef(false)
   const terminalTurnSettled = Boolean(taskLifecycle?.turn?.outcome) && !taskLifecycle?.turn?.active
   const lifecycleTurnKey = taskLifecycle
@@ -474,11 +475,19 @@ export function TemporaryChatPanel({
         taskLifecycle.turn?.outcome ?? ''
       }|${taskLifecycle.turn?.active ?? false}`
     : null
-  const submissionTurnSettled = terminalTurnSettled && lifecycleTurnKey !== submissionStartTurnKey
+  const failedAssistantCount = messages.filter(
+    message =>
+      message.role === 'assistant' &&
+      (message.status === 'failed' || message.runtimeStatus === 'failed')
+  ).length
+  const submissionTurnSettled =
+    (terminalTurnSettled && lifecycleTurnKey !== submissionStartTurnKey) ||
+    failedAssistantCount > submissionStartFailureCount
   const startSending = useCallback(() => {
     setSubmissionStartTurnKey(lifecycleTurnKey)
+    setSubmissionStartFailureCount(failedAssistantCount)
     setSending(true)
-  }, [lifecycleTurnKey])
+  }, [failedAssistantCount, lifecycleTurnKey])
   const messageViewId = useId()
   const [goalDraftActive, setGoalDraftActive] = useState(false)
   const lifecycleStore = useRuntimeTaskLifecycleStore()
