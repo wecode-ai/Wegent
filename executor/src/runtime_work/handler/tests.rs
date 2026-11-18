@@ -8,9 +8,6 @@ use super::tasks::{
 use super::turns::{read_runtime_turn_queue, write_runtime_turn_queue};
 use super::*;
 
-#[path = "tests/test_paths.rs"]
-mod test_paths;
-
 #[path = "tests/im_callback_routing.rs"]
 mod im_callback_routing;
 
@@ -5600,7 +5597,36 @@ fn archived_cleanup_targets_do_not_delete_regular_project_root() {
 }
 
 fn temp_runtime_work_index_path(label: &str) -> PathBuf {
-    test_paths::runtime_work_index_path_at(label, now_ms())
+    std::env::temp_dir().join(format!(
+        "wegent-runtime-work-{label}-{}-{}.json",
+        std::process::id(),
+        uuid::Uuid::new_v4()
+    ))
+}
+
+#[test]
+fn same_label_fixture_paths_are_unique_under_parallel_creation() {
+    let paths = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..4)
+            .map(|_| {
+                scope.spawn(|| {
+                    (0..32)
+                        .map(|_| temp_runtime_work_index_path("preparation-terminal-state"))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|worker| worker.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+    let unique: std::collections::HashSet<_> = paths.iter().collect();
+    assert_eq!(
+        unique.len(),
+        paths.len(),
+        "Parallel fixtures must never share a runtime store"
+    );
 }
 
 fn initialize_test_repository(path: &Path) {
