@@ -49,7 +49,7 @@ def test_enqueue_task_records_pending(mocker):
 
 
 def test_dequeue_task_marks_pending_dequeued(mocker):
-    """A consumer records when it picked the task up."""
+    """A consumer records and inherits when it picked the task up."""
     service, redis_client = _service(mocker)
     redis_client.brpop.return_value = (
         b"wegent:task_queue:online:online",
@@ -74,6 +74,32 @@ def test_dequeue_task_marks_pending_dequeued(mocker):
         "wegent:task_queue:pending_index",
         {"13869": payload["dequeued_at"]},
     )
+
+
+def test_dequeue_task_attaches_queue_timing_in_milliseconds(mocker):
+    """A dispatched task inherits queue boundaries in the UI timing contract."""
+    service, redis_client = _service(mocker)
+    redis_client.brpop.return_value = (
+        b"wegent:task_queue:online:online",
+        json.dumps(_task()).encode(),
+    )
+    pipe = redis_client.pipeline.return_value.__enter__.return_value
+    pipe.get.return_value = json.dumps(
+        {
+            "task_id": "13869",
+            "subtask_id": "13890",
+            "queue_key": "wegent:task_queue:online:online",
+            "enqueued_at": 1.0,
+            "dequeued_at": None,
+        }
+    )
+
+    task = service.dequeue_task(timeout=1)
+
+    timing = task["metadata"]["timing"]
+    assert timing["enqueuedAt"] == 1000
+    assert isinstance(timing["dequeuedAt"], int)
+    assert timing["dequeuedAt"] >= 1000
 
 
 def test_clear_pending_deletes_record(mocker):

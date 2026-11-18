@@ -478,6 +478,13 @@ class TestDockerExecutor:
 
             mock_wait_ready.assert_called_once_with("new-executor")
             mock_dispatch.assert_called_once_with(sample_task, "new-executor", 8080)
+            timing = sample_task["metadata"]["timing"]
+            assert set(timing) == {
+                "instanceCreateStartedAt",
+                "instanceCreateFinishedAt",
+                "instanceReadyAt",
+                "taskDispatchedAt",
+            }
 
     def test_create_new_container_does_not_dispatch_for_sandbox(
         self, executor, mock_subprocess
@@ -540,6 +547,33 @@ class TestDockerExecutor:
         mock_create.assert_called_once_with(prepare_task, task_info, "prepare-executor")
         mock_wait_ready.assert_called_once_with("prepare-executor")
         mock_dispatch_task_to_instance.assert_not_called()
+        timing = prepare_task["metadata"]["timing"]
+        assert "taskDispatchedAt" not in timing
+        assert "instanceReadyAt" in timing
+
+    def test_existing_container_timing_omits_instance_creation(self, executor):
+        """Reusing an executor records readiness and dispatch, not creation."""
+        task = {
+            "task_id": 123,
+            "subtask_id": 456,
+            "executor_image": "test/executor:latest",
+            "executor_name": "existing-executor",
+        }
+        status = {"executor_name": "existing-executor"}
+
+        with (
+            patch.object(executor, "wait_instance_ready", return_value={"port": 8080}),
+            patch.object(
+                executor,
+                "dispatch_task_to_instance",
+                return_value={"status": "success", "error_msg": ""},
+            ),
+            patch.object(executor, "register_task_for_heartbeat"),
+        ):
+            executor._execute_in_existing_container(task, status)
+
+        timing = task["metadata"]["timing"]
+        assert set(timing) == {"instanceReadyAt", "taskDispatchedAt"}
 
     @patch.dict(
         os.environ,
@@ -575,6 +609,11 @@ class TestDockerExecutor:
             with pytest.raises(RuntimeError, match="container not ready"):
                 executor._create_new_container(validation_task, task_info, status)
 
+        timing = validation_task["metadata"]["timing"]
+        assert set(timing) == {
+            "instanceCreateStartedAt",
+            "instanceCreateFinishedAt",
+        }
         mock_delete_container.assert_not_called()
 
     @patch.dict(

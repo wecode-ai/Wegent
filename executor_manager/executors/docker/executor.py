@@ -60,6 +60,11 @@ from shared.utils.task_identity import build_task_identity_env
 logger = setup_logger(__name__)
 
 
+def _current_epoch_ms() -> int:
+    """Return the current epoch time in milliseconds."""
+    return int(time.time() * 1000)
+
+
 class DockerExecutor(Executor):
     """Docker executor for running tasks in Docker containers"""
 
@@ -311,9 +316,11 @@ class DockerExecutor(Executor):
         """Execute task in existing container"""
         executor_name = status["executor_name"]
         ready_info = self.wait_instance_ready(executor_name)
+        self._record_timing(task, instanceReadyAt=_current_epoch_ms())
         dispatch_result = self.dispatch_task_to_instance(
             task, executor_name, ready_info
         )
+        self._record_timing(task, taskDispatchedAt=_current_epoch_ms())
 
         # Existing container path keeps the historical callback progress behavior.
         status["progress"] = DEFAULT_PROGRESS_COMPLETE
@@ -418,13 +425,17 @@ class DockerExecutor(Executor):
         is_sandbox_task = get_metadata_field(task, "type") == "sandbox"
         prepare_only = bool(get_metadata_field(task, "prepare_only", False))
         executor_name = status["executor_name"]
+        self._record_timing(task, instanceCreateStartedAt=_current_epoch_ms())
         self.create_instance(task, task_info, executor_name)
+        self._record_timing(task, instanceCreateFinishedAt=_current_epoch_ms())
 
         if not is_sandbox_task:
             try:
                 ready_info = self.wait_instance_ready(executor_name)
+                self._record_timing(task, instanceReadyAt=_current_epoch_ms())
                 if not prepare_only:
                     self.dispatch_task_to_instance(task, executor_name, ready_info)
+                    self._record_timing(task, taskDispatchedAt=_current_epoch_ms())
             except Exception:
                 # Avoid leaking an idle container when initial dispatch fails.
                 if self._should_keep_failed_validation_container(task):
@@ -524,6 +535,22 @@ class DockerExecutor(Executor):
                     valid=False,
                 )
             raise
+
+    @staticmethod
+    def _record_timing(task: Dict[str, Any], **boundaries: int) -> None:
+        """Record executor wall-time boundaries in the task payload."""
+        if not boundaries:
+            return
+        metadata = task.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
+            task["metadata"] = metadata
+        timing = metadata.get("timing")
+        if not isinstance(timing, dict):
+            timing = {}
+            metadata["timing"] = timing
+        for key, value in boundaries.items():
+            timing.setdefault(key, value)
 
     def wait_instance_ready(self, executor_name: str) -> Dict[str, Any]:
         """Wait for a Docker container instance to become ready."""
