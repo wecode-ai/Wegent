@@ -98,6 +98,11 @@ export function upgradeTransportScript(origin, pauseArgument, inspectorPort = nu
       }
       // Startup failures can occur before product logging is initialized. Keep
       // the native error dialog and retain its exact message in CI diagnostics.
+      const showMessageBox = dialog.showMessageBox.bind(dialog)
+      dialog.showMessageBox = (...args) => {
+        console.log('[desktop-e2e-native-dialog]', JSON.stringify(args))
+        return showMessageBox(...args)
+      }
       const showErrorBox = dialog.showErrorBox.bind(dialog)
       dialog.showErrorBox = (title, content) => {
         console.error('[desktop-e2e-startup-error]', JSON.stringify({title, content}))

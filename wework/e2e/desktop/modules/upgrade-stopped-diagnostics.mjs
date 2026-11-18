@@ -89,6 +89,8 @@ export async function retainUpgradeReleaseDiagnostics({
     'macos-rollback',
     'trial',
     'attempted',
+    'data-opened',
+    'recovery-pid',
     'healthy',
     'failed',
     'activation.json',

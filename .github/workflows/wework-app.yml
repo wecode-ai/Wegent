@@ -772,6 +772,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           WEWORK_UPGRADE_DIAGNOSTICS_DIR: ${{ runner.temp }}/wework-upgrade-diagnostics
+          RUNNER_PROCESS_DIAGNOSTICS: '1'
           RUNNER_RESOURCE_LOG_PATH: ${{ runner.temp }}/wework-upgrade-diagnostics/runner-resources.jsonl
           WEWORK_E2E_SOCKET_IO_CLIENT: ${{ runner.temp }}/upgrade-input/wework-upgrade-client/socket.io-client.cjs
           WEWORK_E2E_YAML_PARSER: ${{ runner.temp }}/upgrade-input/wework-upgrade-client/yaml.cjs
