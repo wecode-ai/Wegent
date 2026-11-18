@@ -425,6 +425,28 @@ test.each([
   }
 })
 
+test.each([
+  ['MTA', 'MTA'],
+  ['STA', 'STA'],
+  ['private-apartment', null],
+])('records only fixed Windows apartment states: %s', async (observed, expected) => {
+  Object.defineProperty(process, 'platform', { value: 'win32' })
+  const original = Object.assign(new Error('Native decision terminated'), {
+    stdout: `native-decision-apartment:${observed}\nprivate-child-output`,
+  })
+  native.execute.mockRejectedValue(original)
+  const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+  try {
+    await expect(
+      withNativePluginDecision({ applicationProcessId: 123, command: vi.fn() }, async () => null)
+    ).rejects.toBe(original)
+    expect(JSON.parse(log.mock.calls[0][1]).apartmentState).toBe(expected)
+    expect(log.mock.calls.flat().join(' ')).not.toContain('private')
+  } finally {
+    log.mockRestore()
+  }
+})
+
 test('retains Windows native failure stages and the unchanged deadline without exposing child output', async () => {
   Object.defineProperty(process, 'platform', { value: 'win32' })
   const original = Object.assign(new Error('Native decision terminated'), {
@@ -444,6 +466,7 @@ test('retains Windows native failure stages and the unchanged deadline without e
     expect(native.execute).toHaveBeenCalledOnce()
     const [command, args, options] = native.execute.mock.calls[0]
     expect(command).toBe('powershell.exe')
+    expect(args).toContain('-Mta')
     expect(options.timeout).toBe(12_000)
     const script = Buffer.from(args.at(-1), 'base64').toString('utf16le')
     expect(script).toContain('::ProcessIdProperty, 123')
@@ -476,6 +499,7 @@ test('retains Windows native failure stages and the unchanged deadline without e
         ],
         stageElapsedMs: {},
         buttonCount: null,
+        apartmentState: null,
       })
     )
     expect(log.mock.calls.flat().join(' ')).not.toContain('private')

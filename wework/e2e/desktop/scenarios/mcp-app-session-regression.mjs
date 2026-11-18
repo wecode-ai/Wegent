@@ -1,5 +1,32 @@
 import assert from 'node:assert/strict'
+import { randomUUID } from 'node:crypto'
+import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { isReplyPredictionRequest } from '../modules/response-protocol.mjs'
 import { runtimeTransportGates } from '../modules/runtime-transport-gates.mjs'
+
+/** Prediction must not retire a live App's native MCP connection after cold restoration. */
+export async function verifyMcpPredictionSourceRetention(control, address, frameAction, timeoutMs) {
+  const instance = await frameAction('attribute', 'body', 'data-server-instance')
+  assert.ok(instance, 'The real MCP service instance must be observed before prediction')
+  const predictions = () =>
+    control.modelRequests.filter(request => isReplyPredictionRequest(request.body)).length
+  const before = predictions()
+  const result = await requestExecutor(
+    control,
+    'runtime.text.predict_reply',
+    { address, requestId: randomUUID() },
+    timeoutMs
+  )
+  assert.equal(result.suggestion, null)
+  assert.equal(predictions(), before + 1, 'The real prediction fork must reach the model once')
+  await frameAction('click', '#heartbeat')
+  await waitForMcpAppText(frameAction, 'Heartbeats 3', Date.now() + timeoutMs)
+  assert.equal(
+    await frameAction('attribute', 'body', 'data-server-instance'),
+    instance,
+    'Prediction replaced the live MCP service; automatic restoration must not hide its closure'
+  )
+}
 
 /** Verify the exact app result within the caller's UI or executor-recovery deadline. */
 export async function waitForMcpAppText(frameAction, text, deadline) {

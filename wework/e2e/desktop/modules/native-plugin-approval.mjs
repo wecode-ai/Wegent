@@ -83,6 +83,11 @@ function Write-DecisionStage([string]$decisionStage) {
   }
 }
 Write-DecisionStage 'started'
+$decisionApartment = [System.Threading.Thread]::CurrentThread.GetApartmentState()
+Write-Output ("native-decision-apartment:{0}" -f $decisionApartment)
+if ($decisionApartment -ne [System.Threading.ApartmentState]::MTA) {
+  throw 'The native decision client requires an MTA thread'
+}
 Add-Type -AssemblyName UIAutomationClient
 Write-DecisionStage 'client-loaded'
 Add-Type -AssemblyName UIAutomationTypes
@@ -154,6 +159,7 @@ throw 'The isolated app did not display its native Core plugin decision'
       [
         '-NoProfile',
         '-NonInteractive',
+        '-Mta',
         '-EncodedCommand',
         Buffer.from(script, 'utf16le').toString('base64'),
       ],
@@ -230,12 +236,15 @@ function windowsDecisionEvidence(output, allowedStages) {
   const lines = String(output ?? '').split(/\r?\n/)
   const stageElapsedMs = {}
   let buttonCount = null
+  let apartmentState = null
   for (const line of lines) {
     const timing = /^native-decision-timing:([a-z-]+):(\d+)$/.exec(line)
     if (timing && allowedStages.has(timing[1]) && Number.isSafeInteger(Number(timing[2])))
       stageElapsedMs[timing[1]] = Number(timing[2])
     const count = /^native-decision-button-count:(\d+)$/.exec(line)
     if (count && Number.isSafeInteger(Number(count[1]))) buttonCount = Number(count[1])
+    const apartment = /^native-decision-apartment:(MTA|STA|Unknown)$/.exec(line)
+    if (apartment) apartmentState = apartment[1]
   }
   return {
     stages: lines
@@ -244,6 +253,7 @@ function windowsDecisionEvidence(output, allowedStages) {
       .filter(stage => allowedStages.has(stage)),
     stageElapsedMs,
     buttonCount,
+    apartmentState,
   }
 }
 

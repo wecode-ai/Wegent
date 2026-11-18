@@ -1,7 +1,11 @@
 import { readNativeMcpCallId } from '../modules/native-tool-call-id.mjs'
 import { createOrdinaryMcpRegression } from './ordinary-mcp-regression.mjs'
 import { verifyMcpDiscoveryNetworkFailure } from './mcp-discovery-network-regression.mjs'
-import { verifyMcpReplacementSession, waitForMcpAppText } from './mcp-app-session-regression.mjs'
+import {
+  verifyMcpPredictionSourceRetention,
+  verifyMcpReplacementSession,
+  waitForMcpAppText,
+} from './mcp-app-session-regression.mjs'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -368,6 +372,12 @@ export function createDesktopScenario({
       // complete within the same recovery budget as the executor restart.
       await waitText('Counter 5', reconnectDeadline)
       assert.equal(await frameAction('attribute', 'body', 'data-integrity'), 'verified')
+      await verifyMcpPredictionSourceRetention(
+        control,
+        address,
+        frameAction,
+        modelResponseTimeoutMs
+      )
       frameUrl = await verifyMcpReplacementSession(
         control,
         callId,
