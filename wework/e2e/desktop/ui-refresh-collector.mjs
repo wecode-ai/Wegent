@@ -10,6 +10,8 @@ const REGION_METRICS = new Set([
   'addedNodes',
   'removedNodes',
   'rootRemovals',
+  'addedSubtreeElements',
+  'removedSubtreeElements',
   'maxAddedSubtreeElements',
   'maxRemovedSubtreeElements',
 ])

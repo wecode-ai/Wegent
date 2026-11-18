@@ -196,3 +196,24 @@ test('keeps fast commits even when legacy performance diagnostics are disabled',
   recordReactCommit('wework-root', 'update', 1, 1, 0, 1)
   expect(stop(token).reactCommits).toEqual({ count: 1, actualDurationMs: 1 })
 })
+
+test('counts smaller subtree replacements after an earlier maximum in the same capture', () => {
+  const token = start({ regions: [{ name: 'sidebar', selector: '#sidebar' }] })
+  const sidebar = document.querySelector('#sidebar')!
+  const replace = (children: number) => {
+    const subtree = document.createElement('div')
+    subtree.innerHTML = '<span></span>'.repeat(children)
+    sidebar.append(subtree)
+    subtree.remove()
+  }
+  replace(5)
+  // Control transport serializes the snapshot before the next operation.
+  const before = structuredClone(capture.readUiRefreshCapture(token).regions.sidebar)
+  replace(2)
+  const after = stop(token).regions.sidebar
+  expect(before.maxRemovedSubtreeElements).toBe(6)
+  expect(after.maxRemovedSubtreeElements).toBe(6)
+  expect(after.addedSubtreeElements - before.addedSubtreeElements).toBe(3)
+  expect(after.removedSubtreeElements - before.removedSubtreeElements).toBe(3)
+  expect(after.removedNodes - before.removedNodes).toBe(1)
+})

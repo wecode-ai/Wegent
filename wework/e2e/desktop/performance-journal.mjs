@@ -8,6 +8,8 @@ const REGION_COUNTERS = [
   'addedNodes',
   'removedNodes',
   'rootRemovals',
+  'addedSubtreeElements',
+  'removedSubtreeElements',
   'maxAddedSubtreeElements',
   'maxRemovedSubtreeElements',
 ]

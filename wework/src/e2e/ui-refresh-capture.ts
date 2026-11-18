@@ -27,6 +27,8 @@ interface RegionCounts {
   addedNodes: number
   removedNodes: number
   rootRemovals: number
+  addedSubtreeElements: number
+  removedSubtreeElements: number
   maxAddedSubtreeElements: number
   maxRemovedSubtreeElements: number
 }
@@ -151,16 +153,16 @@ function recordRegion(region: Region, records: MutationRecord[]): void {
     counts.addedNodes += added.length
     counts.removedNodes += removed.length
     counts.rootRemovals += roots.filter(root => removed.some(node => contains(node, root))).length
-    for (const node of added)
-      counts.maxAddedSubtreeElements = Math.max(
-        counts.maxAddedSubtreeElements,
-        targetInside ? elements(node) : subtreeSize(node, roots)
-      )
-    for (const node of removed)
-      counts.maxRemovedSubtreeElements = Math.max(
-        counts.maxRemovedSubtreeElements,
-        targetInside ? elements(node) : subtreeSize(node, roots)
-      )
+    for (const node of added) {
+      const size = targetInside ? elements(node) : subtreeSize(node, roots)
+      counts.addedSubtreeElements += size
+      counts.maxAddedSubtreeElements = Math.max(counts.maxAddedSubtreeElements, size)
+    }
+    for (const node of removed) {
+      const size = targetInside ? elements(node) : subtreeSize(node, roots)
+      counts.removedSubtreeElements += size
+      counts.maxRemovedSubtreeElements = Math.max(counts.maxRemovedSubtreeElements, size)
+    }
   }
   counts.mutationBatches += Number(affected)
   counts.finalMatches = current.length
@@ -225,6 +227,8 @@ function createRegion(selector: string): Region {
       addedNodes: 0,
       removedNodes: 0,
       rootRemovals: 0,
+      addedSubtreeElements: 0,
+      removedSubtreeElements: 0,
       maxAddedSubtreeElements: 0,
       maxRemovedSubtreeElements: 0,
     },

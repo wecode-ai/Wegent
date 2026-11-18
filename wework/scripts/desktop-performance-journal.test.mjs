@@ -60,6 +60,8 @@ function snapshot() {
         addedNodes: 0,
         removedNodes: 0,
         rootRemovals: 0,
+        addedSubtreeElements: 0,
+        removedSubtreeElements: 0,
         maxAddedSubtreeElements: 0,
         maxRemovedSubtreeElements: 0,
       },
@@ -303,4 +305,40 @@ test('sorting late results does not hide a real counter regression or reused cap
     assert.equal(report.complete, false)
     assert.equal(report.rejectedSnapshots.length, 1)
   }
+})
+
+test('subtree element totals retain later operation deltas without adding maximum gauges', () => {
+  const journal = new DesktopPerformanceJournal(metadata)
+  const initial = snapshot()
+  initial.regions.document.addedSubtreeElements = 100
+  initial.regions.document.removedSubtreeElements = 100
+  initial.regions.document.maxAddedSubtreeElements = 100
+  initial.regions.document.maxRemovedSubtreeElements = 100
+  journal.record('client', initial)
+  journal.record('client', { ...initial, durationMs: 11 }, 'click', 'started', 'smaller-update')
+  const next = structuredClone(initial)
+  next.durationMs = 12
+  next.regions.document.addedSubtreeElements = 125
+  next.regions.document.removedSubtreeElements = 125
+  journal.record('client', next, 'click', 'result', 'smaller-update')
+  const another = structuredClone(initial)
+  another.captureId = 'another-renderer'
+  another.regions.document.addedSubtreeElements = 7
+  another.regions.document.removedSubtreeElements = 7
+  another.regions.document.maxAddedSubtreeElements = 7
+  another.regions.document.maxRemovedSubtreeElements = 7
+  journal.record('another-client', another)
+  const report = journal.report(true)
+  assert.equal(report.complete, true)
+  assert.equal(report.observations[2].changes['ui.document.addedSubtreeElements'], 25)
+  assert.equal(report.observations[2].changes['ui.document.removedSubtreeElements'], 25)
+  assert.equal(report.metrics['ui.document.addedSubtreeElements'], 132)
+  assert.equal(report.metrics['ui.document.removedSubtreeElements'], 132)
+  assert.equal(report.metrics['ui.document.maxAddedSubtreeElements'], 100)
+  assert.equal(report.metrics['ui.document.maxRemovedSubtreeElements'], 100)
+  const missing = structuredClone(next)
+  delete missing.regions.document.removedSubtreeElements
+  const incomplete = new DesktopPerformanceJournal(metadata)
+  incomplete.record('client', missing)
+  assert.equal(incomplete.report(true).complete, false)
 })

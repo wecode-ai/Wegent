@@ -37,6 +37,8 @@ function fixture(t) {
         addedNodes: 1,
         removedNodes: 1,
         rootRemovals: 1,
+        addedSubtreeElements: 0,
+        removedSubtreeElements: 0,
         maxAddedSubtreeElements: 200,
         maxRemovedSubtreeElements: 200,
       },
@@ -171,5 +173,34 @@ test('preserves both operation and collection failures', async t => {
       assert.deepEqual(error.errors, [operationFailure, collectionFailure])
       return true
     }
+  )
+})
+
+test('subtree element budgets reject excessive replacement and unavailable counters', () => {
+  const snapshot = {
+    complete: true,
+    actionSucceeded: true,
+    version: 1,
+    regions: { sidebar: { observed: true, addedSubtreeElements: 3, removedSubtreeElements: 4 } },
+  }
+  assert.doesNotThrow(() =>
+    assertUiRefreshBudgets(snapshot, {
+      regions: { sidebar: { addedSubtreeElements: 3, removedSubtreeElements: 4 } },
+    })
+  )
+  assert.throws(
+    () =>
+      assertUiRefreshBudgets(snapshot, {
+        regions: { sidebar: { removedSubtreeElements: 3 } },
+      }),
+    /observed 4, budget 3/
+  )
+  delete snapshot.regions.sidebar.removedSubtreeElements
+  assert.throws(
+    () =>
+      assertUiRefreshBudgets(snapshot, {
+        regions: { sidebar: { removedSubtreeElements: 4 } },
+      }),
+    /measurement is unavailable/
   )
 })
