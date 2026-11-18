@@ -176,6 +176,7 @@ import { resolveSystemProxy } from './host/system-proxy.js'
 import { SystemResumeBridge } from './host/system-resume-bridge.js'
 import {
   prepareDesktopComponents,
+  bundledComponentDirectory,
   type DesktopComponentUpdateController,
   type PreparedDesktopComponents,
 } from './runtime/desktop-components.js'
@@ -2373,6 +2374,7 @@ async function configureDesktopRuntime(): Promise<void> {
   logStartupStep('desktop-environment', 'completed')
   if (!pluginDevelopmentInstance && !pluginDevelopment) {
     pluginDevelopment = new PluginDevelopmentManager({
+      bundledComponentDirectory: bundledComponentDirectory(process.env, app.getPath('userData')),
       ...currentElectronLaunch(),
       environment,
       userDataDirectory: app.getPath('userData'),
@@ -3212,6 +3214,7 @@ function runningDesktopComponents(): Promise<PreparedDesktopComponents> {
   desktopComponentsPromise ??= prepareDesktopComponents({
     isPackaged: packagedApplication,
     managerOptions: {
+      bundledComponentDirectory: bundledComponentDirectory(process.env, app.getPath('userData')),
       validateExecutor: path =>
         assertExecutorWorkbenchCompatibility({
           ...process.env,

@@ -616,3 +616,85 @@ async fn disconnect_cancels_active_and_queued_reads_without_starting_waiting_wor
     runtime.release.notify_one();
     assert_eq!(read_response(&mut other_reader).await["id"], "fresh");
 }
+
+#[cfg(unix)]
+#[test]
+fn slow_project_git_discovery_does_not_block_ipc_health() {
+    use std::os::unix::fs::PermissionsExt;
+    const CHILD: &str = "WEWORK_SLOW_GIT_TEST_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let test_name = format!(
+            "{}::slow_project_git_discovery_does_not_block_ipc_health",
+            module_path!().split_once("::").unwrap().1
+        );
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", &test_name, "--nocapture"])
+            .env(CHILD, "1")
+            .env("WEWORK_PROJECT_INDEX_DIAGNOSTICS", "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
+        return;
+    }
+    let _lock = crate::test_env::lock();
+    let root = tempfile::tempdir().unwrap();
+    let git = root.path().join("git");
+    std::fs::write(&git, "#!/bin/sh\ndir=$(/usr/bin/dirname \"$0\")\n: > \"$dir/entered\"\nwhile [ ! -e \"$dir/release\" ]; do /bin/sleep 0.01; done\nexit 1\n").unwrap();
+    std::fs::set_permissions(&git, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(
+        root.path().join(".codex-global-state.json"),
+        json!({"electron-saved-workspace-roots":[root.path()]}).to_string(),
+    )
+    .unwrap();
+    for key in ["PATH", "CODEX_HOME", "WEGENT_EXECUTOR_HOME"] {
+        std::env::set_var(key, root.path());
+    }
+    let (release, released) = std::sync::mpsc::channel();
+    let release_file = root.path().join("release");
+    let watchdog = std::thread::spawn(move || {
+        let signaled = released
+            .recv_timeout(std::time::Duration::from_secs(3))
+            .is_ok();
+        std::fs::write(release_file, "release").unwrap();
+        signaled
+    });
+    let outcome = std::panic::catch_unwind(|| {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let (mut reader, mut writer) = connect(AppIpcServer::new()).await;
+                write_frame(&mut writer, request("projects", "projects.list")).await;
+                tokio::time::timeout(Duration::from_secs(2), async {
+                    while !root.path().join("entered").exists() {
+                        tokio::time::sleep(Duration::from_millis(5)).await;
+                    }
+                })
+                .await
+                .expect("project discovery must reach Git");
+                write_frame(&mut writer, request("health", "executor.health")).await;
+                let health = read_response(&mut reader).await;
+                assert_eq!(
+                    health["id"], "health",
+                    "Git discovery must not occupy the IPC reactor"
+                );
+                assert_eq!(health["ok"], true);
+                release.send(()).unwrap();
+                let projects = read_response(&mut reader).await;
+                assert_eq!(projects["id"], "projects");
+                assert_eq!(projects["ok"], true, "{projects}");
+            });
+    });
+    let signaled = watchdog.join().unwrap();
+    if let Err(error) = outcome {
+        std::panic::resume_unwind(error);
+    }
+    assert!(signaled, "Git must stay blocked until health responds");
+}

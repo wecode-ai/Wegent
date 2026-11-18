@@ -46,7 +46,8 @@ while true; do
   if ((SECONDS >= deadline)); then
     cat "$copy_log" >&2
     echo "OCI runtime image was not available after ${wait_seconds}s: $image" >&2
-    exit 1
+    # Distinguish transport unavailability from corrupt payload or extraction failures.
+    exit 75
   fi
   sleep 2
 done

@@ -16,7 +16,11 @@ export function checkpointScenarioEnv(env, checkpoint) {
   if (['stand-in', 'stand-in-cloud', 'stand-in-assignment-notifications'].includes(checkpoint)) {
     nextEnv.WEWORK_E2E_STAND_IN_POLL_INTERVAL_MS ??= '500'
   }
-  if (checkpoint === 'workspace-attachments') {
+  if (
+    ['workspace-attachments', 'clipboard-history-image', 'browser-toolbar-actions'].includes(
+      checkpoint
+    )
+  ) {
     nextEnv.WEWORK_E2E_HOST_PIPE_DIAGNOSTICS = '1'
   }
   if (
