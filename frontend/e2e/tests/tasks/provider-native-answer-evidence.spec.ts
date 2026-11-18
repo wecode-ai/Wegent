@@ -427,8 +427,16 @@ test('native RAG answer keeps its committed snapshot across refresh and opens cu
       await expect(viewer.getByTestId('answer-evidence-unavailable')).toHaveCount(0)
       await expect(viewer.getByTestId('answer-evidence-summary')).toHaveCount(0)
       expect(sourceReads).toEqual([])
-      const citationUrl = (await denied).url()
-      expect((await request.get(citationUrl, { headers: restrictedHeaders })).status()).toBe(403)
+      const { search } = new URL((await denied).url())
+      const citationId = id!.replace('answer-citation-', '')
+      const restrictedCitation = await request.get(
+        `${API}/api/knowledge-bases/citations/${citationId}${search}`,
+        { headers: restrictedHeaders }
+      )
+      expect(restrictedCitation.status()).toBe(403)
+      expect(await restrictedCitation.json()).toMatchObject({
+        detail: { code: 'CITATION_ACCESS_DENIED', denied_scope: 'source' },
+      })
       const content = await request.get(`${API}/api/knowledge/documents/${doc.id}/content`, {
         headers: restrictedHeaders,
       })
