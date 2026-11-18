@@ -452,3 +452,5 @@ Playwright 用例使用 `e2e/fixtures/collected-test` 的自动采集 fixture，
 共享原生 RPC 在请求帧完成写入后记录 `codex native request sent`，仅包含方法、请求 ID、进程代际、Executor PID 与写入耗时，不记录参数。结合上层请求开始、原生 turn 事件及结构化失败身份，区分宿主写入前等待和写入后的运行时等待；已写入不表示已执行或业务成功。
 
 已有会话的历史读取和搜索沿用 `requestLocalExecutor` 的底层代理配置门禁，不等待模型目录准备，也不为读取历史改写目录或重启 Codex。模型准备仍由发送／模型操作路径负责；代理配置失败仍会阻止原生读取并完整报错。
+
+macOS 原生物理内存采样对缺值 PID 核对系统进程状态：已消失及明确的 `Z` 僵尸后代不属于活动内存，记录在 `exited_processes`／样本的 `exitedProcesses`，不伪造零内存。`kill(pid, 0)` 成功不能单独证明进程仍在运行。主进程缺值、活动后代缺值以及状态不可用仍失败，并只记录 PID、父 PID、分组、可执行文件名及状态；不记录命令参数、不用 RSS 替代，也不重采样求通过。

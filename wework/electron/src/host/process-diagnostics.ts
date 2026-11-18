@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
@@ -30,6 +30,7 @@ export interface ProcessDiagnosticsSnapshot {
   timestamp_ms: number
   main_pid: number
   main_process_memory_bytes: NodeJS.MemoryUsage | null
+  exited_processes: Array<{ pid: number; reason: 'exited' | 'zombie' }>
   groups: ProcessDiagnosticsGroup[]
   processes: ProcessDiagnosticsProcess[]
 }
@@ -143,12 +144,39 @@ async function readPhysicalFootprints(pids: number[]): Promise<Map<number, numbe
   }
 }
 
-function hasExited(pid: number): boolean {
+interface MissingProcessState {
+  status: 'exited' | 'zombie' | 'live' | 'unavailable'
+  state?: string
+  ppid?: number
+  executable?: string
+  errorCode?: string | number
+}
+
+async function readMissingProcessState(pid: number): Promise<MissingProcessState> {
   try {
     process.kill(pid, 0)
-    return false
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'ESRCH'
+    const code = (error as NodeJS.ErrnoException).code
+    return code === 'ESRCH' ? { status: 'exited' } : { status: 'unavailable', errorCode: code }
+  }
+  try {
+    const { stdout } = await execFileAsync(
+      'ps',
+      ['-p', String(pid), '-o', 'pid=,ppid=,state=,comm='],
+      {
+        timeout: 1000,
+      }
+    )
+    const match = stdout.trim().match(/^(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/)
+    if (!match || Number(match[1]) !== pid) return { status: 'unavailable' }
+    return {
+      status: match[3].startsWith('Z') ? 'zombie' : 'live',
+      state: match[3],
+      ppid: Number(match[2]),
+      executable: basename(match[4]),
+    }
+  } catch (error) {
+    return { status: 'unavailable', errorCode: (error as NodeJS.ErrnoException).code }
   }
 }
 
@@ -175,12 +203,25 @@ export async function getElectronProcessSnapshot(
     .map(parseProcessSnapshotLine)
     .filter((value): value is RawProcessInfo => value !== null)
   const footprints = await readPhysicalFootprints([...relatedProcessIds])
+  const exitedProcesses: ProcessDiagnosticsSnapshot['exited_processes'] = []
   for (const pid of relatedProcessIds) {
     if (footprints.has(pid)) continue
-    if (pid !== mainPid && hasExited(pid)) {
+    const observed = await readMissingProcessState(pid)
+    if (pid !== mainPid && (observed.status === 'exited' || observed.status === 'zombie')) {
       relatedProcessIds.delete(pid)
+      exitedProcesses.push({ pid, reason: observed.status })
       continue
     }
+    const original = allProcesses.find(processInfo => processInfo.pid === pid)
+    console.error('[process-diagnostics] native footprint unavailable', {
+      pid,
+      group: original ? classifyElectronProcess(original, mainPid) : null,
+      originalParentPid: original?.ppid ?? null,
+      originalRssKiB: original?.rss_kib ?? null,
+      observed,
+      expectedProcessCount: relatedProcessIds.size,
+      measuredProcessCount: footprints.size,
+    })
     throw new Error(`Missing native physical footprint for process ${pid}`)
   }
   const { stdout: executableOutput } = await execFileAsync('ps', [
@@ -221,6 +262,7 @@ export async function getElectronProcessSnapshot(
   return {
     timestamp_ms: Date.now(),
     main_pid: mainPid,
+    exited_processes: exitedProcesses,
     main_process_memory_bytes: mainPid === process.pid ? process.memoryUsage() : null,
     groups: [...groupsByName.values()].sort(
       (left, right) => right.physical_footprint_kib - left.physical_footprint_kib

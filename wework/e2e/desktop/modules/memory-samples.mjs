@@ -8,6 +8,7 @@ export async function captureMemorySample(control, phase) {
   assert.ok(webContent, 'The Wework WebContent process was missing from the memory snapshot')
   return {
     phase,
+    exitedProcesses: snapshot.processMemory.exited_processes,
     timestamp: snapshot.timestamp,
     domNodeCount: snapshot.domNodeCount,
     assistantDom: snapshot.assistantDom,
@@ -24,6 +25,7 @@ export async function captureTotalMemorySample(control, phase) {
   const snapshot = JSON.parse(await control.command('performanceSnapshot', 'body'))
   return {
     phase,
+    exitedProcesses: snapshot.processMemory.exited_processes,
     timestamp: snapshot.timestamp,
     domNodeCount: snapshot.domNodeCount,
     usedJSHeapSize: snapshot.rendererHeap?.usedSize ?? null,
