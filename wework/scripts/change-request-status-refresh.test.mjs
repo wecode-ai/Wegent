@@ -48,6 +48,21 @@ vi.mock('node:fs/promises', async importOriginal => ({
     }
   }),
 }))
+vi.mock('node:sqlite', () => ({
+  DatabaseSync: class {
+    prepare() {
+      return {
+        all: () =>
+          Object.entries(fixture.observers).map(([id, observer]) => ({
+            id,
+            value: JSON.stringify(observer),
+          })),
+      }
+    }
+
+    close() {}
+  },
+}))
 vi.mock('../e2e/desktop/modules/shared.mjs', async importOriginal => ({
   ...(await importOriginal()),
   selectE2EModel: vi.fn().mockResolvedValue(undefined),
@@ -67,6 +82,15 @@ vi.mock('../e2e/desktop/modules/executor-rpc.mjs', () => ({
 const ENVIRONMENT = '[data-testid="environment-info-button"]'
 const CHECKS = '[data-testid="change-request-checks"]'
 const CHANGE_REQUEST = '[data-testid="change-request-button"]'
+const CHANGE_REQUEST_SOURCE = {
+  providerId: '@wegent/dsh-connection-git/github',
+  kind: 'repository',
+  transport: 'cli',
+  profile: JSON.stringify(['https://github.com', '1']),
+  id: '2630',
+  name: 'wecode-ai/Wegent',
+  monitoredObjects: [{ entityKind: 'change_request', number: 2631 }],
+}
 
 beforeEach(() => {
   vi.useFakeTimers()
@@ -281,15 +305,7 @@ function nativeObservationLease() {
         consumer_key: input.consumerKey,
         generation: input.generation,
         device_id: target.deviceId,
-        source: {
-          providerId: '@wegent/dsh-connection-git/github',
-          kind: 'repository',
-          transport: 'cli',
-          profile: JSON.stringify(['https://github.com', '1']),
-          id: '2630',
-          name: 'wecode-ai/Wegent',
-          monitoredObjects: [{ entityKind: 'change_request', number: 2631 }],
-        },
+        source: CHANGE_REQUEST_SOURCE,
         status: 'preparing',
         expires_at: Date.now() + 90_000,
       }
@@ -368,12 +384,22 @@ function baseControl(
         options.value === 'Inspect the pull request status for this branch'
       ) {
         if (runtime.initialize) await runtime.initialize()
-        else
+        else {
+          fixture.observers['observer-queued'] = {
+            id: 'observer-queued',
+            consumer_key: 'change-request-ui:queued',
+            generation: 'queued',
+            device_id: 'fixture-device',
+            source: CHANGE_REQUEST_SOURCE,
+            status: 'observing',
+            expires_at: Date.now() + 90_000,
+          }
           fixture.log +=
             'app IPC request started command_key=connection_observer_start\n' +
             'app IPC request finished command_key=connection_observer_start ok=true\n' +
             ipcLog('started', 'old') +
             ipcLog('finished', 'old')
+        }
       }
       if (action === 'click' && selector === ENVIRONMENT) {
         open = !open
