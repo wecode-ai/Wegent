@@ -363,17 +363,30 @@ export function createDesktopScenario({
         enabled: true,
       })
       await control.command('press', COMPOSER, { key: 'Enter' })
-      await control.command('waitFor', `${WORKBENCH} [data-testid="assistant-error-card"]`)
-      await control.command('click', `${WORKBENCH} [data-testid="assistant-error-details-toggle"]`)
-      await control.command('waitFor', `${WORKBENCH} [data-testid="assistant-error-details"]`, {
-        text: TERMINAL_ERROR,
-      })
+      // This idle send starts a new turn. Wait for its canonical history view,
+      // not the transient guidance view replaced by the terminal transcript read.
+      const terminalMessage = `${WORKBENCH} [data-message-id^="runtime-view:"][data-message-id$=":assistant"]`
+      await control.command('waitFor', `${terminalMessage} [data-testid="assistant-error-card"]`)
       await waitUntil(
         async () =>
           JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).pane?.status
             ?.isBusy === false,
         uiTimeoutMs,
         'A real terminal error remained in recovery'
+      )
+      const detailsToggle = `${terminalMessage} [data-testid="assistant-error-details-toggle"]`
+      assert.equal(
+        await control.command('getAttribute', detailsToggle, { value: 'aria-expanded' }),
+        'false',
+        'Terminal error details must start collapsed'
+      )
+      await control.command('click', detailsToggle)
+      await control.command(
+        'waitFor',
+        `${terminalMessage} [data-testid="assistant-error-details"]`,
+        {
+          text: TERMINAL_ERROR,
+        }
       )
       assert.equal(terminalRequests, 1, 'A real terminal error was retried as recoverable overload')
       assert.equal(
