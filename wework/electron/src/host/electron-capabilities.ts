@@ -10,7 +10,7 @@ import { registerNotificationReplyE2E } from './notification-reply-e2e.js'
 import { McpAppSessions } from './mcp-app-sessions.js'
 import { MCP_APP_SCHEME, McpAppDocuments } from './mcp-app-documents.js'
 import { setReducedMotion } from './e2e-media-preferences.js'
-import { focusE2EWindow } from './e2e-window-focus.js'
+import { blurE2EWindow, focusE2EWindow } from './e2e-window-focus.js'
 import { setE2EWindowSize } from './e2e-window-size.js'
 import { withDebuggerSession } from './debugger-session.js'
 import { McpDiscoveryNetworkFault } from './e2e-mcp-discovery-fault.js'
@@ -830,6 +830,23 @@ export function createElectronCapabilityRouter(
   })
   router.register('e2e.focusWindow', params => {
     e2eHost.focusWindow(optionalStringParam(params, 'windowLabel') ?? 'main')
+  })
+  router.register('e2e.blurMainWindow', async () => {
+    const target = requiredWindow(window)
+    try {
+      await blurE2EWindow(target, () => target.blur())
+    } catch (error) {
+      const destroyed = target.isDestroyed()
+      console.error('[desktop-e2e-window-blur-failed]', {
+        windowLabel: 'main',
+        pid: process.pid,
+        windowId: destroyed ? null : target.id,
+        destroyed,
+        visible: !destroyed && target.isVisible(),
+        focused: !destroyed && target.isFocused(),
+      })
+      throw error
+    }
   })
   router.register('e2e.insertText', params => {
     const label = optionalStringParam(params, 'windowLabel') ?? 'main'

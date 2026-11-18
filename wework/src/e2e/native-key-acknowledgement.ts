@@ -2,7 +2,8 @@ export async function sendNativeKeyAndWait(
   target: HTMLElement,
   phase: 'press' | 'down' | 'up',
   send: () => Promise<unknown>,
-  expectedCount = 1
+  expectedCount = 1,
+  observe?: (stage: 'native-event' | 'host-acknowledged') => void
 ): Promise<void> {
   const type = phase === 'up' ? 'keyup' : 'keydown'
   let acknowledge: () => void
@@ -27,6 +28,7 @@ export async function sendNativeKeyAndWait(
   }
   const record = (event: KeyboardEvent) => {
     if (event.isTrusted && event.composedPath()[0] === target) {
+      observe?.('native-event')
       delivered += 1
       if (delivered === expectedCount) acknowledge()
       else waitForNextKey()
@@ -35,7 +37,12 @@ export async function sendNativeKeyAndWait(
   window.addEventListener(type, record, true)
   waitForNextKey()
   try {
-    await Promise.all([Promise.resolve().then(send), received])
+    await Promise.all([
+      Promise.resolve()
+        .then(send)
+        .then(() => observe?.('host-acknowledged')),
+      received,
+    ])
   } finally {
     window.clearTimeout(timeout)
     window.removeEventListener(type, record, true)

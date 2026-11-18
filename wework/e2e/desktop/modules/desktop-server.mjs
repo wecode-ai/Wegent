@@ -390,7 +390,8 @@ function requestContainsSkillLocator(body, skillPath) {
     return `${path.startsWith('//') ? '/' : ''}${posix.normalize(path)}`
   }
   const expectedPath = normalize(skillPath)
-  return Boolean(
+  const advertisedSkillLocators = []
+  const matched = Boolean(
     findNestedString(body, catalog => {
       const roots = new Map()
       let section = null
@@ -415,11 +416,22 @@ function requestContainsSkillLocator(body, skillPath) {
         const separator = locator.indexOf('/')
         const root = roots.get(locator.slice(0, separator))
         const expandedPath = root ? `${root}/${locator.slice(separator + 1)}` : locator
+        advertisedSkillLocators.push(normalize(expandedPath))
         if (normalize(expandedPath) === expectedPath) return true
       }
       return false
     })
   )
+  if (!matched) {
+    // A miss without the advertised paths cannot be attributed after the run.
+    console.error(
+      '[skill-locator] expected',
+      expectedPath,
+      'advertised',
+      JSON.stringify(advertisedSkillLocators.slice(0, 40))
+    )
+  }
+  return matched
 }
 
 /** Text of top-level user messages, excluding quoted messages inside tool output. */

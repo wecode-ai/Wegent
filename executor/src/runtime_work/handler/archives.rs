@@ -456,7 +456,7 @@ impl RuntimeWorkRpcHandler {
                     string_field(&goal, "status"),
                 );
                 self.cancel_connection_waits_for_goal_identity(&link.local_task_id, &goal)?;
-                let resumed = if string_field(&goal, "status").as_deref() == Some("active") {
+                if string_field(&goal, "status").as_deref() == Some("active") {
                     self.journal_active_goal_turn(
                         &link.local_task_id,
                         self.active_codex_turn(&link.local_task_id).as_ref(),
@@ -464,18 +464,11 @@ impl RuntimeWorkRpcHandler {
                     // A successful activation must survive shutdown even when
                     // no local send still owns the native continuation.
                     self.persist_current_turn_state().await?;
-                    // A loaded Goal already owns native inference, even before its first turn notification.
-                    if self.codex_app_server.goal_requires_resume(&thread_id).await {
-                        self.resume_active_goal(&link.local_task_id).await?
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
+                    // Route preparation loaded the session before activation; native Goal owns continuation.
+                }
                 let mut response = task_action_success(&link);
                 response["goal"] = goal;
-                response["resumed"] = Value::Bool(resumed);
+                response["resumed"] = Value::Bool(false);
                 Ok(response)
             }
             // A timed-out mutation can still activate the native Goal. Only an

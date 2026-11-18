@@ -46,7 +46,6 @@ import { desktopControlExtension } from '@extensions/desktop-control'
 import { composeDesktopInput } from './input-composition'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import { parseDesktopControlKey } from './desktop-control-keyboard'
-import { getPlatform } from '@/lib/platform'
 import { decodeDesktopControlImage } from './desktop-control-image'
 import {
   getNativeTerminalDiagnostics,
@@ -54,6 +53,7 @@ import {
 } from './native-terminal-diagnostics'
 import { sendNativeKeyAndWait } from './native-key-acknowledgement'
 import { reportE2EDiagnostic } from './error-capture'
+import { fillNativeEditor } from './native-editor-fill'
 import {
   createNativeKeyObservation,
   readNativeTerminalViewport,
@@ -1853,7 +1853,11 @@ async function waitForDesktopControlElement(
   )
 }
 
-export async function fillDesktopControlElement(element: HTMLElement, value: string) {
+export async function fillDesktopControlElement(
+  element: HTMLElement,
+  value: string,
+  commandId?: string
+) {
   element.focus()
 
   const ownValueSetter = Object.getOwnPropertyDescriptor(element, 'value')?.set
@@ -1871,27 +1875,7 @@ export async function fillDesktopControlElement(element: HTMLElement, value: str
     ownValueSetter.call(element, value)
     return
   } else if (element.isContentEditable) {
-    const windowLabel = getDesktopWindowLabel()
-    await invokeDesktopHost(windowLabel === 'main' ? 'e2e.focusMainWindow' : 'e2e.focusWindow', {
-      windowLabel,
-    })
-    element.focus()
-    const pressKey = (key: string) =>
-      sendNativeKeyAndWait(element, 'press', () =>
-        invokeDesktopHost('e2e.pressKey', { windowLabel, key, phase: 'press', focus: false })
-      )
-    // Native editors own their selection state as well as the rendered DOM.
-    await pressKey(`${getPlatform() === 'mac' ? 'Meta' : 'Control'}+A`)
-    if (!value) {
-      await pressKey('Backspace')
-      return
-    }
-    const text = value.replace(/\r\n?/g, '\n')
-    const insert = () => invokeDesktopHost('e2e.insertText', { windowLabel, text })
-    const lineBreaks = text.split('\n').length - 1
-    if (lineBreaks) await sendNativeKeyAndWait(element, 'press', insert, lineBreaks)
-    else await insert()
-    await waitForDesktopControlTick()
+    await fillNativeEditor(element, value, waitForDesktopControlTick, commandId)
     return
   } else {
     const selection = window.getSelection()
@@ -2943,6 +2927,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'focusMainWindow':
       await invokeDesktopHost('e2e.focusMainWindow')
       return ''
+    case 'blurMainWindow':
+      await invokeDesktopHost('e2e.blurMainWindow')
+      return ''
     case 'pressWindowKey':
       await invokeDesktopHost('e2e.pressKey', {
         windowLabel: getDesktopWindowLabel(),
@@ -3660,7 +3647,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'fill': {
       return waitForDesktopControlElement(command, async element => {
-        await fillDesktopControlElement(element, command.value ?? '')
+        await fillDesktopControlElement(element, command.value ?? '', command.id)
         return element.textContent?.trim() ?? ''
       })
     }
@@ -4050,7 +4037,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       const form = element instanceof HTMLFormElement ? element : element.closest('form')
       if (!form) throw new Error(`Selector "${command.selector}" is not associated with a form`)
       if (command.value !== undefined) {
-        await fillDesktopControlElement(element, command.value)
+        await fillDesktopControlElement(element, command.value, command.id)
       }
       form.requestSubmit()
       return ''

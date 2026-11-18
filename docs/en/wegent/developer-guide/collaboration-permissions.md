@@ -8,6 +8,43 @@ MCP App message capability changes update current admission without remounting t
 
 # Collaboration permission architecture and invariants
 
+Tool-generated comments verify their source against the caller's active task binding and use `requires_confirmation=true` to remain pending. `source_verified` proves generation identity; publication authority still depends on the separate `verified` flag and existing automatic-publication policy. Idempotent replay cannot upgrade a pending comment to human confirmation.
+
+Assistant conclusion publication locks the Issue and validates current membership and an active task binding on the caller's owned device before writing content and server-derived provenance in one transaction. Notifications and shared pushes observe only the complete committed message. Publication requires a nonempty idempotency key; retries require the same source and content; ordinary comments cannot impersonate confirmed AI conclusions. An old conversation may still publish public replies, but completing the current assignment requires both its current humanAssignmentId and matching task binding. Completion receipts additionally match the current Runtime turn, thread and generation. Room broadcasts and cross-process pushes remove execution text, sub-agent process content and private parameters; owner request acknowledgements retain the full view. Native runtime ownership is recorded from the verified binding separately from the publisher and trigger author, including valid local owner 0. Canonical project executions and current public project Agents retain their Issue-authorized source entries. Private Agents, member assistants and resources from other projects cannot gain that access by claiming shared metadata. Focused provenance, push, stale-assignment and native publication tests, plus existing CI desktop scenarios, protect this chain. CP01–CP20 remain unchanged.
+
+```mermaid
+flowchart TD
+    Source[Current user and Issue permission] --> Lock[Lock Issue and owned active task binding]
+    Lock --> Commit[Atomically persist content and verified provenance]
+    Commit --> Owner[Full view in owner acknowledgement only]
+    Commit --> Projection[Canonical message projection and opaque source reference]
+    Live[Live execution and background completion] --> Projection
+    Projection --> Filter[Room projection removes private process and parameters]
+    Filter --> Public[Public conclusion and summary]
+    Public --> Receipt{Current assignment and Runtime turn match}
+    Receipt -->|Yes| Complete[Update current assignment receipt]
+    Receipt -->|No| History[Retain public reply and assignment state]
+    Public --> Read[Client reads exact viewer message by ID with authorization]
+    Read --> Trace{Source read permission}
+    Trace -->|Owner or canonical project execution or public project Agent| Scoped[Authorized source entry]
+    Trace -->|Another owner's private assistant| Restricted[Summary and restricted state only]
+```
+
+A restricted source notification from a shared room is not the current viewer's message view. The client reads that exact message by ID through the existing subscription history endpoint, which revalidates project, Issue and source access. Only a response matching the message and subscription scope can update the source entry. Responses after unsubscribe and older responses superseded by a newer notification are discarded. A failed authorized read retains the received public projection and logs the error; bindings never imply private access.
+
+Rust live execution, background completion and history reads share one message projection. When a durable source exists, an unauthenticated projection carries only an opaque reference and restricted state. Shared pushes contain no Runtime address, private process text or parameters. The client uses the existing subscription endpoint to obtain the current viewer's authorized source, preserving the read entry across running and completion notifications. Missing sources remain history-unavailable. Projection and shared-push contracts cover live deltas, final results, background completion and missing sources. CP01–CP20 remain unchanged.
+
+Private discussion sends retain the original Runtime owner within the validated participation scope, including local owner 0. Public conclusions retain the current profile as publisher. This identity composition applies only within the local project's participation scope for the current account; 0 is never a global account alias and grants no cloud private-history access. `PrivateDiscussionPane` regressions verify actual sends for local owner 0 and the profile owner, plus rejection of account changes, cloud and out-of-scope owners.
+
+```mermaid
+flowchart LR
+    Account[Current account and project] --> Scope[Validate local participation and durable binding]
+    Scope --> Discussion[Continue as the original Runtime owner]
+    Scope --> Conclusion[Publish as the current profile]
+    Discussion --> Native[Native owner 0 or profile owner]
+    Conclusion --> Publish[Server validates permission and publication provenance]
+```
+
 Rust Socket.IO cancellation validates current task access before recording intent
 or delivering cancellation on Chat, executor and device routes. Task owners and
 approved task members retain the shared task-access policy; shell selection and
@@ -54,6 +91,8 @@ Explicit manual delegation and persistent conversations are independent of autom
 Stand-in Issue reservations use a persistent identity independent of assignment grants. Existing binding writes lock the Issue and reread the owner, active owned device and live bindings, preventing another device or native task from occupying the same identity. Mentions and assignments share routing checks. The identity grants no execution, source or private-transcript authority. Real two-device MySQL concurrency coverage and `test_issue_conversation_reservation_is_device_independent_and_idempotent` protect this transaction; all CP invariants remain unchanged.
 
 Persistent stand-in Issue conversations preserve all CP invariants. Conversation identity is independent of its triggering assignment or mention: reassignment, unassignment or deletion of the original mention retains conversation history, continuation and public replies. Publication revalidates the current member, project, role and exact owned Issue task binding on an active owned device; foreign devices/tasks and revoked devices are rejected. Public messages expose no private Runtime address; replies select only the original role without granting private transcript access. Durable wakeup inboxes are recipient-only and sources are revalidated before dispatch. Self mentions create no human reminder. `test_stand_in_issue_replies.py`, Executor public-message filtering tests and the existing desktop conversation checkpoint cover these boundaries.
+
+Project-chat room broadcasts and member snapshots derive Runtime sharing from the persisted message and its same-project Agent. Shared Agent activities retain their canonical execution address and task title through terminal updates; private Agent and stand-in sources retain only an opaque trace and public metadata. Sender views and client metadata cannot grant sharing or replace the persisted Runtime identity. Opening an activity still validates current Issue access and canonical execution authority, independently of manual task bindings. `test_project_chat_provenance.py`, `test_project_chat_push.py` and Rust authorship projection tests cover these boundaries. CP01–CP20 remain unchanged.
 
 Memory-review completion must not automatically start an ordinary primary conversation, which would restore capabilities outside the memory/progress allowlist. Host-identified scheduled memory reviews retain their original task results and arrangement status but do not enter generic generative result delivery, including success, failure, cancellation and restart recovery. Ordinary scheduled and delegated reporting is unchanged. `memory_review_completion_never_starts_an_unrestricted_parent_turn` protects this boundary; CP invariants are unchanged.
 
@@ -127,6 +166,8 @@ The new project, parent-space grant and creator's administrator grant are writte
 Space owners and administrators always administer child projects. For other users, a valid direct project role takes precedence over inherited space membership, allowing promotion or demotion within that project. Removing the direct grant restores current inheritance. Updating only a member's project responsibilities neither creates a role override nor approves pending or rejected grants. Public reading does not make visitors eligible project participants.
 
 ## Protected contracts
+
+Project permission queries compare project identities as bytes across direct, inherited and public grants. This prevents valid requests from failing when historical tables and connections use different utf8mb4 collations. Role precedence, the unique parent, current membership and CP01–CP20 are unchanged. The metric receipt regression uses the migrated schema and covers first writes, concurrent replay from existing snapshots and one persisted receipt. Receipt reads under the Issue lock use a current locking read so an older consistent snapshot cannot duplicate a receipt.
 
 Local participation discovery uses a composition-verified scope: native owner `0` and the current verified account principal. This is not a global user alias and grants no cloud authority. Quick filters, pending work, the read-only native pending hint and the local inbox share this scope. Empty idle workbenches add no inbox polling; failed hints remain unknown. New comments use the composition's actual current author without rewriting historical senders. Reply claims still require exact `recipient == persisted comment.sender`: recipient `0` with author `7` requires an explicit transfer, not an alias-based claim. Existing group, read and task-start permissions retain their authorization identity rather than being overwritten by storage owner `0`; CP01–CP20 remain unchanged.
 

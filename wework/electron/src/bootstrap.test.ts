@@ -180,6 +180,8 @@ test('a renamed development bundle opens the application without a release launc
 
   expect(startup.main).toHaveBeenCalledOnce()
   expect(startup.roots).toEqual([])
+  expect(startup.afterStopPrepare).not.toHaveBeenCalled()
+  expect(startup.restoreData).not.toHaveBeenCalled()
   expect(startup.showRecovery).not.toHaveBeenCalled()
   expect(startup.acquireStartup).not.toHaveBeenCalled()
 })

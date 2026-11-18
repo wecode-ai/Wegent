@@ -77,6 +77,35 @@ function classifiedMatrices(
 
 const matrices = classifiedMatrices();
 
+test("the Cloud workflow command accepts populated and empty classifier matrices", () => {
+  for (const original of [
+    JSON.parse(matrices.wework_desktop_cloud_e2e_matrix),
+    { include: [] },
+  ]) {
+    const output = execFileSync(
+      process.execPath,
+      [".github/scripts/order-wework-linux-e2e.mjs", "--balance-cloud"],
+      {
+        cwd: root,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          CORE_MATRIX: JSON.stringify(original),
+          CORE_RUNNER_SCALE: "1.5",
+        },
+      },
+    ).trim();
+    assert.equal(output.startsWith("matrix="), true);
+    const balanced = JSON.parse(output.slice("matrix=".length));
+    const selected = (matrix) =>
+      matrix.include
+        .flatMap((entry) => expandDesktopCheckpoints(entry.segments.split(",")))
+        .sort();
+    assert.deepEqual(selected(balanced), selected(original));
+    assert(balanced.include.every((entry) => entry.segments.length > 0));
+  }
+});
+
 test("Linux balancing reuses the history runner without changing coverage, runners or exclusive benchmarks", () => {
   const original = JSON.parse(matrices.wework_desktop_core_e2e_matrix);
   const snapshot = JSON.stringify(original);
@@ -579,9 +608,8 @@ test("all real Backend desktop runners consume platform-native MinIO without GHC
     undefined,
   );
   assert.equal(
-    windows.find(
-      (step) => step.name === "Download Windows real object storage",
-    ).if,
+    windows.find((step) => step.name === "Download Windows real object storage")
+      .if,
     undefined,
   );
   const windowsProducer =

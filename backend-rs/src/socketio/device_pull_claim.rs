@@ -530,6 +530,8 @@ fn queue_sql(placeholders: &str, include_assignments: bool) -> String {
               AND loop_item_executions.execution_environment = ? \
               OR loop_item_executions.execution_device_id = '') \
          AND loop_item_executions.status = 'queued' \
+         AND loop_item_executions.execution_environment IN ('local','cloud') \
+         AND loop_item_executions.team_id = 0 \
          {assignment_filter} \
          ORDER BY loop_item_executions.priority_weight DESC, \
                   loop_item_executions.queued_at ASC, loop_item_executions.id ASC"
@@ -594,7 +596,10 @@ async fn claimable_by_device(
     catalog_probe: bool,
 ) -> anyhow::Result<bool> {
     let execution = row.execution();
-    if execution.assignment_pending() && !catalog_probe {
+    if (execution.assignment_pending() && !catalog_probe)
+        || execution.team_id != 0
+        || !matches!(execution.execution_environment.as_str(), "local" | "cloud")
+    {
         return Ok(false);
     }
     let runner = resolve_owned_device_alias(&app.mysql, owner_user_id, execution_target_id).await?;

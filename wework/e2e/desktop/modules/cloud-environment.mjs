@@ -589,6 +589,15 @@ class RealCloudEnvironment {
     })
   }
 
+  async executeDatabaseTransaction(statements) {
+    return mysqlRequest({
+      ...this.mysqlConnectionOptions,
+      database: this.databaseName,
+      operation: 'transaction',
+      statements,
+    })
+  }
+
   async restartBackendWithTerminalProtocolV2(enabled) {
     assert.equal(typeof enabled, 'boolean')
     assert.ok(this.backendEnv, 'The cloud backend environment is not initialized')

@@ -177,3 +177,17 @@ fn the_queue_filter_uses_the_source_properties() {
     assert!(queue.contains("= 'object', 0) = 0"));
     assert!(!queue.contains("= 1 = 0"));
 }
+
+#[tokio::test]
+#[ignore = "requires disposable loopback MySQL; invoked by Backend Rust CI"]
+async fn device_queue_never_consumes_managed_teams() -> anyhow::Result<()> {
+    crate::migrations::mysql_tests::isolated(async |mysql| {
+        crate::migrations::mysql_tests::seed_collaboration(mysql).await?;
+        for (id, environment, team) in [(1,"local",0), (2,"wegent",42), (3,"cloud",42)] {
+            mysql.execute("INSERT INTO loop_item_executions(id,loop_item_id,cloud_project_id,executor_owner_user_id,status,execution_environment,execution_device_id,team_id,execution_payload,error_message) VALUES (?,'root','1001',7,'queued',?,'',?,'{}','')",(id,environment,team)).await?;
+        }
+        let rows: Vec<QueueExecutionRow> = mysql.fetch_all(queue_sql("?", false),(7,"device","local")).await?;
+        assert_eq!(rows.iter().map(|row|row.execution().id).collect::<Vec<_>>(),vec![1]);
+        Ok(())
+    }).await
+}
