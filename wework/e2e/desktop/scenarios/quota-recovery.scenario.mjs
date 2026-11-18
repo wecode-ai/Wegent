@@ -211,9 +211,12 @@ export function createDesktopScenario({ workspacePath }) {
       await control.command('click', `[data-testid="runtime-local-task-row-${taskId}"]`)
       await control.command('waitFor', '[data-testid="runtime-quota-wait-status"]')
       await restartDesktopApp()
+      // Startup projects the saved wait before the due usage preflight parks it again.
+      // Observe the released runner as well as the durable wait metadata.
       const restored = await waitForValue(
         () => task(taskId),
-        value => value?.runtimeHandle?.quotaWait && value,
+        value =>
+          value?.runtimeHandle?.quotaWait && value.status === 'queued' && !value.running && value,
         'The durable quota wait was not restored after desktop restart',
         RECOVERY_TIMEOUT_MS
       )
@@ -223,7 +226,8 @@ export function createDesktopScenario({ workspacePath }) {
       assert.equal(plan.count, 1, 'Recovery ran before the restored wait was observed')
       const restoredGoal = await waitForValue(
         () => task(continuingGoal.taskId),
-        value => value?.runtimeHandle?.quotaWait && value,
+        value =>
+          value?.runtimeHandle?.quotaWait && value.status === 'queued' && !value.running && value,
         'The ongoing Goal quota wait was not restored after desktop restart',
         RECOVERY_TIMEOUT_MS
       )
