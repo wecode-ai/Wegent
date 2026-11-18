@@ -11,7 +11,7 @@ mod poll_schedule;
 mod refresh;
 mod resource_delivery;
 mod session;
-mod store;
+pub(in crate::runtime_work::handler) mod store;
 use self::store as event_store;
 
 #[cfg(test)]
@@ -279,13 +279,16 @@ impl RuntimeWorkRpcHandler {
         if record["status"] == "armed" && record["cloud_subscription"].is_null() {
             record = event_store::update(
                 &self.event_subscription_path(),
-                event_store::Scope::Source(&observation_id),
+                event_store::Scope::Activation(&observation_id, &id),
                 |state| {
                     let stored = &state["observations"][&observation_id];
                     let observation =
                         json!({"sequence":stored["sequence"],"events":stored["events"]});
                     observations::capture_consumers(state, &observation_id, &observation);
-                    Ok(state["operations"][&id].clone())
+                    state["operations"]
+                        .get(&id)
+                        .cloned()
+                        .ok_or_else(|| invalid("Subscription no longer exists"))
                 },
             )?;
             self.save_event_subscription(&id, &record)?;

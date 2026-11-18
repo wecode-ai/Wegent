@@ -2,53 +2,29 @@ use super::*;
 use rusqlite::StatementStatus;
 
 #[test]
-fn import_is_atomic_idempotent_and_keeps_the_original_for_recovery() {
+fn legacy_data_is_ignored_and_cannot_block_the_new_store() {
     let root = tempfile::tempdir().unwrap();
-    let path = root.path().join("events.sqlite");
-    let legacy = path.with_extension("json");
-    let original = json!({"version":1,"operations":{"wait":{"task_id":"任务","status":"armed","observation_id":"source","waiting_goal":{"objective":"wait"}}},"observations":{"source":{"checkpoint":{"cursor":42},"events":[{"text":"original"}]}},"observers":{}});
-    std::fs::write(&legacy, original.to_string()).unwrap();
-    assert_eq!(
-        transact(&path, |state| Ok(state.clone())).unwrap(),
-        original
-    );
-    update(&path, Scope::Row("operations", "wait"), |state| {
-        state["operations"]["wait"]["status"] = json!("cancelled");
-        Ok(())
-    })
-    .unwrap();
-    assert_eq!(
-        std::fs::read_to_string(&legacy).unwrap(),
-        original.to_string()
-    );
-    assert_eq!(
-        read(&path, Scope::Row("operations", "wait"), |state| Ok(state
-            ["operations"]["wait"]["status"]
-            .clone()))
-        .unwrap(),
-        "cancelled"
-    );
-    assert_eq!(unreferenced(&path).unwrap(), vec!["source"]);
-    std::fs::write(&legacy, "corrupt old snapshot").unwrap();
-    assert!(read(&path, Scope::Waiting("任务"), |state| Ok(state
-        ["operations"]
-        .as_object()
-        .unwrap()
-        .is_empty()))
-    .unwrap());
-
-    let failed = root.path().join("failed.sqlite");
-    std::fs::write(failed.with_extension("json"), "{broken").unwrap();
-    assert!(open(&failed).is_err());
-    let connection = Connection::open(&failed).unwrap();
-    assert_eq!(
-        connection
-            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
-            .unwrap(),
-        0
-    );
-    std::fs::write(failed.with_extension("json"), original.to_string()).unwrap();
-    assert!(open(&failed).is_ok());
+    for (index, legacy) in [
+        "{broken",
+        "{\"version\":1,\"operations\":{\"old\":{}},\"observers\":[]}",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let path = root.path().join(format!("events-{index}.sqlite"));
+        std::fs::write(path.with_extension("json"), legacy).unwrap();
+        assert!(
+            read(&path, Scope::Task("old"), |state| Ok(state["operations"]
+                .as_object()
+                .unwrap()
+                .is_empty()))
+            .unwrap()
+        );
+        assert_eq!(
+            std::fs::read_to_string(path.with_extension("json")).unwrap(),
+            legacy
+        );
+    }
 }
 
 #[test]
@@ -162,5 +138,32 @@ fn source_refcounts_follow_activation_cancellation_and_bounded_cleanup() {
             )
             .unwrap(),
         0
+    );
+}
+
+#[test]
+fn activation_preserves_a_batch_already_captured_by_another_collector() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("events.sqlite");
+    let pending = json!({"task_id":"task","observation_id":"source","status":"pending","events":[{"id":"captured"}]});
+    transact(&path, |state| {
+        state["observations"]["source"] = json!({"events":[],"checkpoint":{}});
+        state["operations"]["wait"] = pending.clone();
+        Ok(())
+    })
+    .unwrap();
+    assert_eq!(
+        update(&path, Scope::Activation("source", "wait"), |state| Ok(
+            state["operations"]["wait"].clone()
+        ))
+        .unwrap(),
+        pending
+    );
+    assert_eq!(
+        read(&path, Scope::Row("operations", "wait"), |state| Ok(state
+            ["operations"]["wait"]
+            .clone()))
+        .unwrap(),
+        pending
     );
 }

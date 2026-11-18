@@ -10,9 +10,11 @@ pub(super) enum Scope<'a> {
     TaskProjection(&'a str),
     TaskEvents(&'a str),
     Source(&'a str),
+    Activation(&'a str, &'a str),
     Cloud(&'a str),
     Active,
     Observers,
+    PendingStops,
     #[cfg(test)]
     All,
 }
@@ -54,7 +56,7 @@ fn open(path: &Path) -> Result<Connection, AppIpcError> {
         .execute_batch(
             "CREATE TABLE IF NOT EXISTS records (
         section TEXT NOT NULL, id TEXT NOT NULL, value TEXT NOT NULL,
-        task TEXT, source TEXT, status TEXT, expires INTEGER, cloud TEXT, active INTEGER NOT NULL, metadata TEXT NOT NULL, waiting INTEGER NOT NULL, consuming INTEGER NOT NULL, consumers INTEGER NOT NULL DEFAULT 0,
+        task TEXT, source TEXT, status TEXT, expires INTEGER, cloud TEXT, active INTEGER NOT NULL, metadata TEXT NOT NULL, waiting INTEGER NOT NULL, consuming INTEGER NOT NULL, consumers INTEGER NOT NULL DEFAULT 0, stop_pending INTEGER NOT NULL, stop_attempt INTEGER NOT NULL,
         PRIMARY KEY(section,id));
         CREATE INDEX IF NOT EXISTS records_task ON records(section,task,status);
         CREATE INDEX IF NOT EXISTS records_waiting ON records(section,task,waiting);
@@ -63,6 +65,7 @@ fn open(path: &Path) -> Result<Connection, AppIpcError> {
         CREATE INDEX IF NOT EXISTS records_source ON records(section,source);
         CREATE INDEX IF NOT EXISTS records_status ON records(section,status);
         CREATE INDEX IF NOT EXISTS records_expiry ON records(section,expires);
+        CREATE INDEX IF NOT EXISTS records_stops ON records(section,stop_pending,stop_attempt);
         CREATE INDEX IF NOT EXISTS records_cloud ON records(section,cloud);
         CREATE INDEX IF NOT EXISTS records_consumers ON records(section,consumers);
         CREATE INDEX IF NOT EXISTS records_consuming ON records(source,consuming);
@@ -82,29 +85,6 @@ fn open(path: &Path) -> Result<Connection, AppIpcError> {
         END;",
         )
         .map_err(storage)?;
-    // Import once in the same transaction as the format marker. A failed import leaves
-    // the original document intact and never publishes a partially initialized store.
-    let legacy = path.with_extension("json");
-    match std::fs::read(&legacy) {
-        Ok(bytes) => {
-            let state: Value = serde_json::from_slice(&bytes).map_err(storage)?;
-            if state["version"] != 1 || !state["operations"].is_object() {
-                return Err(storage("Invalid connection event journal"));
-            }
-            for section in ["operations", "observations", "observers"] {
-                if let Some(rows) = state.get(section) {
-                    let rows = rows
-                        .as_object()
-                        .ok_or_else(|| storage("Invalid connection event journal section"))?;
-                    for (id, record) in rows {
-                        save(&transaction, section, id, record)?;
-                    }
-                }
-            }
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(storage(error)),
-    }
     transaction
         .pragma_update(None, "user_version", 1)
         .map_err(storage)?;
@@ -141,7 +121,7 @@ fn save(
             ) || record["cloud_cancel_pending"] == true
                 || record["cloud_refresh_pending"] == true
         }
-        "observers" => record["status"] != "stopped" || record["cloud_stop_pending"] == true,
+        "observers" => record["status"] != "stopped",
         _ => false,
     };
     let metadata = if section == "observations" {
@@ -161,15 +141,16 @@ fn save(
     let cloud = record["cloud_subscription"]["id"]
         .as_str()
         .or_else(|| record["cloud_registration"]["subscription_id"].as_str());
-    transaction.execute("INSERT INTO records(section,id,value,task,source,status,expires,cloud,active,metadata,waiting,consuming,consumers)
-        VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,0) ON CONFLICT(section,id) DO UPDATE SET
-        value=excluded.value,task=excluded.task,source=excluded.source,status=excluded.status,expires=excluded.expires,cloud=excluded.cloud,active=excluded.active,metadata=excluded.metadata,waiting=excluded.waiting,consuming=excluded.consuming",
-        params![section,id,value,record["task_id"].as_str(),record["observation_id"].as_str(),record["status"].as_str(),record["expires_at"].as_i64(),cloud,active,metadata,waiting,consuming]).map_err(storage)?;
+    transaction.execute("INSERT INTO records(section,id,value,task,source,status,expires,cloud,active,metadata,waiting,consuming,consumers,stop_pending,stop_attempt)
+        VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,0,?13,?14) ON CONFLICT(section,id) DO UPDATE SET
+        value=excluded.value,task=excluded.task,source=excluded.source,status=excluded.status,expires=excluded.expires,cloud=excluded.cloud,active=excluded.active,metadata=excluded.metadata,waiting=excluded.waiting,consuming=excluded.consuming,stop_pending=excluded.stop_pending,stop_attempt=excluded.stop_attempt",
+        params![section,id,value,record["task_id"].as_str(),record["observation_id"].as_str(),record["status"].as_str(),record["expires_at"].as_i64(),cloud,active,metadata,waiting,consuming,record["cloud_stop_pending"] == true,record["last_stop_attempt"].as_i64().unwrap_or(0)]).map_err(storage)?;
     Ok(())
 }
 
 fn load(connection: &Connection, scope: Scope<'_>) -> Result<Value, AppIpcError> {
     let mut state = json!({"version":1,"operations":{},"observations":{},"observers":{}});
+    let now = now_ms();
     let (sql, args): (&str, Vec<&dyn rusqlite::ToSql>) = match &scope {
         Scope::Row(section, id) => ("SELECT section,id,value FROM records WHERE section=?1 AND id=?2", vec![section,id]),
         Scope::Task(task) => ("SELECT section,id,value FROM records WHERE section='operations' AND task=?1", vec![task]),
@@ -177,9 +158,11 @@ fn load(connection: &Connection, scope: Scope<'_>) -> Result<Value, AppIpcError>
         Scope::Waiting(task) => ("SELECT section,id,value FROM records WHERE section='operations' AND task=?1 AND waiting=1", vec![task]),
         Scope::TaskEvents(task) => ("SELECT section,id,value FROM records WHERE section='operations' AND task=?1 UNION ALL SELECT section,id,value FROM records WHERE section='observations' AND id IN (SELECT source FROM records WHERE section='operations' AND task=?1)", vec![task]),
         Scope::Source(id) => ("SELECT section,id,value FROM records WHERE section='observations' AND id=?1 UNION ALL SELECT section,id,value FROM records WHERE section='operations' AND source=?1 AND status='armed'", vec![id]),
+        Scope::Activation(source, id) => ("SELECT section,id,value FROM records WHERE section='observations' AND id=?1 UNION ALL SELECT section,id,value FROM records WHERE section='operations' AND source=?1 AND status='armed' UNION ALL SELECT section,id,value FROM records WHERE section='operations' AND id=?2 AND status IS NOT 'armed'", vec![source,id]),
         Scope::Cloud(id) => ("SELECT section,id,value FROM records WHERE section='operations' AND cloud=?1", vec![id]),
         Scope::Active => ("SELECT section,id,value FROM records WHERE section='operations' AND active=1 UNION ALL SELECT section,id,value FROM records WHERE section='observers' AND active=1 UNION ALL SELECT section,id,metadata FROM records WHERE section='observations' AND id IN (SELECT source FROM records WHERE section IN ('operations','observers') AND active=1)", vec![]),
-        Scope::Observers => ("SELECT section,id,value FROM records WHERE section='observers' AND active=1 ORDER BY expires LIMIT 100", vec![]),
+        Scope::Observers => ("SELECT section,id,value FROM records WHERE section='observers' AND active=1 AND expires<=?1 ORDER BY expires LIMIT 100", vec![&now]),
+        Scope::PendingStops => ("SELECT section,id,value FROM records WHERE section='observers' AND stop_pending=1 ORDER BY stop_attempt LIMIT 1", vec![]),
         #[cfg(test)]
         Scope::All => ("SELECT section,id,value FROM records", vec![]),
     };
@@ -249,7 +232,7 @@ pub(super) fn update<T>(
 }
 
 #[cfg(test)]
-pub(super) fn transact<T>(
+pub(in crate::runtime_work::handler) fn transact<T>(
     path: &Path,
     update: impl FnOnce(&mut Value) -> Result<T, AppIpcError>,
 ) -> Result<T, AppIpcError> {
@@ -275,9 +258,11 @@ pub(super) fn remove_unreferenced(path: &Path, id: &str) -> Result<(), AppIpcErr
             [id],
         )
         .map_err(storage)?;
-    connection
-        .execute_batch("PRAGMA incremental_vacuum(64)")
+    let mut statement = connection
+        .prepare("PRAGMA incremental_vacuum(64)")
         .map_err(storage)?;
+    let mut rows = statement.query([]).map_err(storage)?;
+    while rows.next().map_err(storage)?.is_some() {}
     Ok(())
 }
 

@@ -705,8 +705,8 @@ const appUpdates = new AppUpdateService({
   },
   runtimeRoot:
     process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim() || packagedHarnessRuntimePaths().cache,
-  dataSchema: packageMetadata.weworkDataSchema ?? 1,
-  readableDataSchemas: packageMetadata.weworkReadableDataSchemas ?? [1],
+  dataSchema: packageMetadata.weworkDataSchema ?? 2,
+  readableDataSchemas: packageMetadata.weworkReadableDataSchemas ?? [1, 2],
   isPackaged: packagedApplication,
   log: event => appUpdateLogger.info(event),
   shutdown: async () => {

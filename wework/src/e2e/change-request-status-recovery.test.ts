@@ -1,7 +1,8 @@
 // @vitest-environment node
 
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { DatabaseSync } from 'node:sqlite'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
@@ -14,7 +15,6 @@ import { recoverChangeRequestStatus } from '../../e2e/desktop/scenarios/change-r
 
 const fileIo = vi.hoisted(() => ({
   pending: new Set<Promise<unknown>>(),
-  afterRead: undefined as ((path: string) => Promise<void>) | undefined,
 }))
 
 vi.mock('node:fs/promises', async importOriginal => {
@@ -28,15 +28,9 @@ vi.mock('node:fs/promises', async importOriginal => {
   return {
     ...filesystem,
     readFile: (...args: Parameters<typeof filesystem.readFile>) =>
-      track(
-        filesystem.readFile(...args).then(async content => {
-          await fileIo.afterRead?.(String(args[0]))
-          return content
-        })
-      ),
+      track(filesystem.readFile(...args)),
     writeFile: (...args: Parameters<typeof filesystem.writeFile>) =>
       track(filesystem.writeFile(...args)),
-    rename: (...args: Parameters<typeof filesystem.rename>) => track(filesystem.rename(...args)),
   }
 })
 
@@ -79,7 +73,6 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
-  fileIo.afterRead = undefined
   vi.clearAllTimers()
   vi.useRealTimers()
   await rm(directory, { recursive: true, force: true })
@@ -88,7 +81,7 @@ afterEach(async () => {
 async function recoveryFixture(options: FixtureOptions = {}) {
   const statePath = join(directory, 'provider-state')
   const executorHome = join(directory, 'executor-home')
-  const journalPath = join(executorHome, 'runtime-work', 'conversation-event-subscriptions.json')
+  const journalPath = join(executorHome, 'runtime-work', 'conversation-event-subscriptions.sqlite')
   await mkdir(join(executorHome, 'runtime-work'), { recursive: true })
   await writeFile(statePath, 'unavailable\n')
   const discovered = await createProvider('github').listResources(
@@ -143,8 +136,18 @@ async function recoveryFixture(options: FixtureOptions = {}) {
       }
       observers[other.id] = other
     }
-    await writeFile(`${journalPath}.next`, JSON.stringify({ observers }))
-    await rename(`${journalPath}.next`, journalPath)
+    const database = new DatabaseSync(journalPath)
+    try {
+      database.exec(
+        'CREATE TABLE IF NOT EXISTS records(section TEXT, id TEXT, value TEXT, PRIMARY KEY(section,id))'
+      )
+      const save = database.prepare("INSERT OR REPLACE INTO records VALUES('observers',?,?)")
+      database.exec('BEGIN')
+      for (const [id, value] of Object.entries(observers)) save.run(id, JSON.stringify(value))
+      database.exec('COMMIT')
+    } finally {
+      database.close()
+    }
   }
   await saveJournal()
   const reply = createConnectionObserverFixture()
@@ -417,33 +420,6 @@ test('keeps the ten-second native activation deadline', async () => {
   const result = await finishRecovery(fixture)
   expect((result.error as Error).message).toBe(activationFailure)
   expect(result.elapsedMs).toBe(10_000)
-  expect(fixture.timeline.some(entry => entry.event === 'summary-opened')).toBe(false)
-})
-
-test('does not advance the virtual deadline while a real journal read is pending', async () => {
-  const fixture = await recoveryFixture({ startDelayMs: 20_001 })
-  const startedAt = Date.now()
-  let readStartedAt: number | undefined
-  let readFinishedAt: number | undefined
-  fileIo.afterRead = async path => {
-    if (
-      path !== fixture.journalPath ||
-      Date.now() - startedAt < 9900 ||
-      readStartedAt !== undefined
-    )
-      return
-    readStartedAt = Date.now() - startedAt
-    // Delay real I/O completion independently of the simulated clock.
-    for (let turn = 0; turn < 100; turn++) await new Promise(resolve => setImmediate(resolve))
-    readFinishedAt = Date.now() - startedAt
-  }
-  const result = await finishRecovery(fixture)
-  expect((result.error as Error).message).toBe(activationFailure)
-  expect({ readStartedAt, readFinishedAt, elapsedMs: result.elapsedMs }).toEqual({
-    readStartedAt: 9900,
-    readFinishedAt: 9900,
-    elapsedMs: 10_000,
-  })
   expect(fixture.timeline.some(entry => entry.event === 'summary-opened')).toBe(false)
 })
 

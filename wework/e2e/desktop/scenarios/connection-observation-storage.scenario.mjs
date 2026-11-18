@@ -20,13 +20,6 @@ export function createDesktopScenario(options) {
   let codexHome
   let legacyBytes
   const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
-  const captured = {
-    task_id: 'migration-receipt-task',
-    status: 'cancelled',
-    observation_id: 'old-0',
-    resource_event_keys: ['captured'],
-    events: [{ id: 'accepted-before-upgrade' }],
-  }
   const snapshot = () => {
     const database = new DatabaseSync(databasePath, { readOnly: true })
     try {
@@ -39,29 +32,7 @@ export function createDesktopScenario(options) {
     async prepareApp(context) {
       await base.prepareApp(context)
       codexHome = context.codexHome
-      const observations = Object.fromEntries(
-        Array.from({ length: 40 }, (_, index) => [
-          `old-${index}`,
-          {
-            source: { providerId: PROVIDER, id: `old-${index}` },
-            checkpoint: { cursor: 1 },
-            sequence: 1,
-            events: [
-              {
-                sequence: 1,
-                key: `old-event-${index}`,
-                event: { id: `old-event-${index}`, text: 'x'.repeat(900_000) },
-              },
-            ],
-          },
-        ])
-      )
-      legacyBytes = JSON.stringify({
-        version: 1,
-        operations: { receipt: captured },
-        observations,
-        observers: {},
-      })
+      legacyBytes = '{obsolete JSON is not part of the new store'
       await mkdir(runtime, { recursive: true })
       await writeFile(legacyPath, legacyBytes)
     },
@@ -85,6 +56,7 @@ export function createDesktopScenario(options) {
       const input = { consumerKey: 'storage-regression', generation: 'restart', source }
       const initial = await rpc(control, 'runtime.connections.observers.start', input)
       const sourceId = initial.observation.id
+      assert.equal(snapshot().filter(row => row.section === 'operations').length, 0)
       await writeFile(
         join(resultDir, 'records.json'),
         JSON.stringify([
@@ -108,7 +80,6 @@ export function createDesktopScenario(options) {
       )
       assert.equal(before.checkpoint.cursor, 1)
       assert.equal(before.events.length, 1)
-      assert.deepEqual(JSON.parse(snapshot().find(row => row.id === 'receipt').value), captured)
       await restartDesktopApp()
       await control.command('ensureLocalModelCatalogReady', 'body', {
         timeoutMs: workbenchReadyTimeoutMs,
@@ -149,7 +120,6 @@ export function createDesktopScenario(options) {
         60_000
       )
       const rows = snapshot()
-      assert.deepEqual(JSON.parse(rows.find(row => row.id === 'receipt').value), captured)
       for (const row of rows.filter(row => row.section === 'observers')) {
         const observer = JSON.parse(row.value)
         assert.equal(observer.status, 'stopped')
@@ -159,16 +129,14 @@ export function createDesktopScenario(options) {
       assert.equal(
         await readFile(legacyPath, 'utf8'),
         legacyBytes,
-        'The import must preserve the original recovery snapshot'
+        'Legacy data must remain outside the new store'
       )
       await writeFile(
         join(resultDir, 'connection-observation-storage.json'),
         JSON.stringify({
-          importedBytes: legacyBytes.length,
-          retiredCollectors: 40,
+          legacyIgnored: true,
           repeatedActivations: 12,
           remainingCollectors: 0,
-          receiptPreserved: true,
           restartPreservedCheckpoint: true,
         })
       )

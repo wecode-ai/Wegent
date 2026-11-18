@@ -153,7 +153,10 @@ fn desktop_cancellation_is_exact_durable_and_does_not_resume_goals_or_models() {
         assert!(handler.command_journal.lock().unwrap().is_empty());
         let restarted = RuntimeWorkRpcHandler::new("control-test-device", "/bin/false");
         event_store::transact(&restarted.event_subscription_path(), |state| {
-            assert!(state["operations"].as_object().unwrap().values().all(|record| record["status"] == "cancelled"));
+            for status in ["preparing", "armed", "pending", "resuming_goal", "error", "needs_attention"] {
+                let id = restarted.subscription_id("task", status);
+                assert_eq!(state["operations"][&id]["status"], "cancelled");
+            }
             Ok(())
         }).unwrap();
     });

@@ -50,13 +50,13 @@ impl RuntimeWorkRpcHandler {
     pub(in crate::runtime_work::handler) async fn poll_ui_observers(
         &self,
     ) -> Result<(), AppIpcError> {
-        let candidate = event_store::update(
+        event_store::update(
             &self.event_subscription_path(),
             event_store::Scope::Observers,
             |state| {
                 validate_observer_map(state)?;
                 let Some(rows) = state.get_mut("observers").and_then(Value::as_object_mut) else {
-                    return Ok(None);
+                    return Ok(());
                 };
                 for record in rows.values_mut().filter(|row| {
                     row["status"] != "stopped"
@@ -65,16 +65,24 @@ impl RuntimeWorkRpcHandler {
                     record["status"] = json!("stopped");
                     record["cloud_stop_pending"] = json!(record["cloud_registration"].is_object());
                 }
-                Ok(rows
-                    .iter()
-                    .filter(|(_, record)| record["cloud_stop_pending"] == true)
-                    .min_by_key(|(_, record)| {
-                        record["last_stop_attempt"].as_i64().unwrap_or_default()
-                    })
-                    .map(|(id, _)| id.clone()))
+                Ok(())
             },
         )?;
-        self.reclaim_event_observations()?;
+        if let Err(error) = self.reclaim_event_observations() {
+            log_executor_event("Observation reclamation deferred", &[("code", error.code)]);
+        }
+        let candidate = event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::PendingStops,
+            |state| {
+                Ok(state["observers"]
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .next()
+                    .cloned())
+            },
+        )?;
         let Some(id) = candidate else {
             return Ok(());
         };
