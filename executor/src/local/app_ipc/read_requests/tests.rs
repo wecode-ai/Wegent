@@ -101,7 +101,7 @@ fn request(id: &str, method: &str) -> Value {
 
 #[test]
 fn cancellation_only_covers_cooperative_reads() {
-    for method in CANCELLABLE_READ_METHODS {
+    for method in cancellable_read_methods() {
         assert!(admission_kind(Some(method)).is_some());
     }
     for method in [

@@ -80,41 +80,54 @@ export function createDesktopScenario({ workspacePath, resultDir, uiTimeoutMs })
       await control.command('reloadMainWindow', 'body')
       await control.awaitReadyAfter(readyCount, WORKBENCH_READY_TIMEOUT_MS)
 
-      // Control readiness marks the renderer entry point. Splash and process
-      // bootstrap stay outside this budget; fetching and painting the first
-      // task row stay inside it.
-      const sidebarStartedAt = performance.now()
-      const rowVisibleAtReady = Number(await control.command('getElementCount', row)) > 0
-      await control.command('waitFor', row, { visible: true, timeoutMs: uiTimeoutMs })
-      const sidebarLoadMs = Math.round(performance.now() - sidebarStartedAt)
-      assert.ok(
-        sidebarLoadMs < LOAD_BUDGET_MS,
-        `Sidebar load exceeded ${LOAD_BUDGET_MS}ms: ${sidebarLoadMs}ms`
-      )
+      let sidebarLoadMs = null
+      let conversationOpenMs = null
+      let rowVisibleAtReady = null
+      let measurementError = null
+      try {
+        // Control readiness marks the renderer entry point. Splash and process
+        // bootstrap stay outside this budget; fetching and painting the first
+        // task row stay inside it.
+        const sidebarStartedAt = performance.now()
+        rowVisibleAtReady = Number(await control.command('getElementCount', row)) > 0
+        await control.command('waitFor', row, { visible: true, timeoutMs: uiTimeoutMs })
+        sidebarLoadMs = Math.round(performance.now() - sidebarStartedAt)
+        assert.equal(
+          rowVisibleAtReady,
+          false,
+          'The task row was visible before sidebar load timing started'
+        )
+        assert.ok(
+          sidebarLoadMs < LOAD_BUDGET_MS,
+          `Sidebar load exceeded ${LOAD_BUDGET_MS}ms: ${sidebarLoadMs}ms`
+        )
 
-      await control.command('click', '[data-testid="new-chat-button"]')
-      await waitForWorkbenchDebugState(
-        control,
-        snapshot => snapshot.workbench?.currentRuntimeTask == null,
-        'The speed fixture did not clear the restored conversation',
-        uiTimeoutMs
-      )
-      const conversationStartedAt = performance.now()
-      await control.command('click', row)
-      await control.command(
-        'waitFor',
-        `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-        {
-          text: COMPLETION,
-          visible: true,
-          timeoutMs: uiTimeoutMs,
-        }
-      )
-      const conversationOpenMs = Math.round(performance.now() - conversationStartedAt)
-      assert.ok(
-        conversationOpenMs < LOAD_BUDGET_MS,
-        `Conversation open exceeded ${LOAD_BUDGET_MS}ms: ${conversationOpenMs}ms`
-      )
+        await control.command('click', '[data-testid="new-chat-button"]')
+        await waitForWorkbenchDebugState(
+          control,
+          snapshot => snapshot.workbench?.currentRuntimeTask == null,
+          'The speed fixture did not clear the restored conversation',
+          uiTimeoutMs
+        )
+        const conversationStartedAt = performance.now()
+        await control.command('click', row)
+        await control.command(
+          'waitFor',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+          {
+            text: COMPLETION,
+            visible: true,
+            timeoutMs: uiTimeoutMs,
+          }
+        )
+        conversationOpenMs = Math.round(performance.now() - conversationStartedAt)
+        assert.ok(
+          conversationOpenMs < LOAD_BUDGET_MS,
+          `Conversation open exceeded ${LOAD_BUDGET_MS}ms: ${conversationOpenMs}ms`
+        )
+      } catch (error) {
+        measurementError = error
+      }
 
       await writeFile(
         join(resultDir, 'runtime-load-performance.json'),
@@ -125,11 +138,18 @@ export function createDesktopScenario({ workspacePath, resultDir, uiTimeoutMs })
             rowVisibleAtReady,
             conversationOpenMs,
             taskId: task.taskId,
+            error:
+              measurementError instanceof Error
+                ? measurementError.message
+                : measurementError
+                  ? String(measurementError)
+                  : null,
           },
           null,
           2
         )
       )
+      if (measurementError) throw measurementError
     },
   }
 }

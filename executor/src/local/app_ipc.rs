@@ -1067,7 +1067,8 @@ impl AppIpcServer {
                 "compressed_responses": true,
                 "event_resume": true,
                 "request_cancellation": true,
-                "request_cancellation_methods": read_requests::CANCELLABLE_READ_METHODS,
+                "request_cancellation_methods": read_requests::cancellable_read_methods()
+                    .collect::<Vec<_>>(),
             },
         });
         if self.connection_read_only {
@@ -1077,8 +1078,7 @@ impl AppIpcServer {
             description["features"]["events"] = json!(false);
             description["features"]["event_resume"] = json!(false);
             description["features"]["request_cancellation_methods"] =
-                json!(read_requests::CANCELLABLE_READ_METHODS
-                    .iter()
+                json!(read_requests::cancellable_read_methods()
                     .filter(|method| connection_read_scope::METHODS.contains(method))
                     .collect::<Vec<_>>());
         }

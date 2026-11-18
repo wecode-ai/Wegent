@@ -43,12 +43,16 @@ pub(super) fn new_connection_read_admission() -> Arc<ReadAdmission> {
     ))
 }
 
-pub(super) const CANCELLABLE_READ_METHODS: &[&str] = &[
-    "runtime.tasks.transcript",
+const HISTORY_READ_METHOD: &str = "runtime.tasks.transcript";
+const CONNECTION_READ_METHODS: &[&str] = &[
     "runtime.connections.git.read",
     "runtime.connections.mcp",
     "runtime.connections.cli",
 ];
+
+pub(super) fn cancellable_read_methods() -> impl Iterator<Item = &'static str> {
+    std::iter::once(HISTORY_READ_METHOD).chain(CONNECTION_READ_METHODS.iter().copied())
+}
 
 #[derive(Clone, Copy)]
 enum ReadAdmissionKind {
@@ -57,12 +61,13 @@ enum ReadAdmissionKind {
 }
 
 fn admission_kind(method: Option<&str>) -> Option<ReadAdmissionKind> {
-    match method {
-        Some("runtime.tasks.transcript") => Some(ReadAdmissionKind::History),
-        Some(
-            "runtime.connections.git.read" | "runtime.connections.mcp" | "runtime.connections.cli",
-        ) => Some(ReadAdmissionKind::Connection),
-        _ => None,
+    let method = method?;
+    if method == HISTORY_READ_METHOD {
+        Some(ReadAdmissionKind::History)
+    } else if CONNECTION_READ_METHODS.contains(&method) {
+        Some(ReadAdmissionKind::Connection)
+    } else {
+        None
     }
 }
 
