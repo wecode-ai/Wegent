@@ -459,7 +459,11 @@ async function verifyAnthropicEmptyResponseRecovery({ composerSelector, control 
     anthropicModel.labels,
     ACTIVE_WORKBENCH_SELECTOR,
     undefined,
-    'anthropic-empty-response'
+    {
+      diagnosticContext: 'anthropic-empty-response',
+      // A matching fallback is not a persisted choice and can change as the catalog loads.
+      requireExplicitSelection: true,
+    }
   )
   await sendPromptUntilScenarioRequest(
     control,

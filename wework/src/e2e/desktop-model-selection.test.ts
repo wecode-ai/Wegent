@@ -58,7 +58,7 @@ for (const initiallyOpen of [true, false]) {
   }
 }
 
-test('waits for the new conversation before reading its Anthropic model selection', async () => {
+test('explicitly selects a matching fallback before its configured model becomes available', async () => {
   const { verifyAnthropicEmptyResponseRecovery } =
     await import('../../e2e/desktop/modules/resilience-flows.mjs')
   const { ACTIVE_WORKBENCH_SELECTOR, CLOUD_MODEL_CASES } =
@@ -67,6 +67,8 @@ test('waits for the new conversation before reading its Anthropic model selectio
   const composerSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="chat-message-input"]`
   const submitted = new Error('Reached model submission')
   let snapshots = 0
+  let catalogRestored = false
+  let open = false
   let selected = false
   await assert.rejects(
     verifyAnthropicEmptyResponseRecovery({
@@ -74,30 +76,46 @@ test('waits for the new conversation before reading its Anthropic model selectio
       control: {
         setScenario() {},
         async awaitNextScenarioRequest() {},
-        async command(action: string, selector: string) {
+        async command(action: string, selector: string, options?: { value?: string }) {
           if (action === 'getWorkbenchDebugSnapshot') {
             snapshots++
             const task = snapshots === 1 ? { taskId: 'previous-conversation' } : null
+            // A ready fallback can precede the catalog entry for the persisted model.
+            if (snapshots >= 3) catalogRestored = true
             return JSON.stringify({
               workbench: { currentRuntimeTask: task },
               pane: { currentRuntimeTask: task },
             })
           }
-          if (action === 'snapshot') return JSON.stringify({ testIds: [] })
+          if (action === 'snapshot') {
+            return JSON.stringify({
+              testIds: open ? ['model-selector-menu', `model-option-${model.optionIds[0]}`] : [],
+            })
+          }
           if (action === 'getElementMetrics') return '[]'
           if (action === 'getText') {
-            assert.equal(snapshots, 2, 'The old composer must not satisfy new-chat readiness')
+            assert.ok(snapshots >= 2, 'The old composer must not satisfy new-chat readiness')
             assert.equal(
               selector,
               `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
             )
-            selected = true
-            return model.labels[0]
+            return !catalogRestored || selected ? model.labels[0] : 'GPT 5.6 Luna'
           }
-          if (action === 'getAttribute') return ''
-          if (action === 'getElementCount') return '0'
+          if (action === 'getAttribute') {
+            return options?.value === 'aria-checked' ? String(selected) : ''
+          }
+          if (action === 'getElementCount') return open ? '1' : '0'
+          if (action === 'hover') open = true
+          if (action === 'click') {
+            if (selector === '[data-testid="new-chat-button"]') return ''
+            assert.ok(selector.includes(`model-option-${model.optionIds[0]}`))
+            selected = true
+          }
+          if (action === 'press' && selector === 'body') open = false
           if (action === 'fill') {
-            assert.ok(selected, 'The active conversation must select its model before sending')
+            assert.ok(catalogRestored, 'The configured model must arrive before submission')
+            assert.ok(selected, 'A matching temporary fallback must be explicitly selected')
+            assert.equal(open, false, 'Selection must settle before submission')
             throw submitted
           }
           return ''

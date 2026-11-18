@@ -1586,7 +1586,7 @@ async function selectE2EModel(
   modelLabels = DEFAULT_MODEL_LABEL,
   composerSelector = '',
   expectedProviderId = expectedModelProviderId(modelIds),
-  diagnosticContext = null
+  { diagnosticContext = null, requireExplicitSelection = false } = {}
 ) {
   const labels = (Array.isArray(modelLabels) ? modelLabels : [modelLabels]).flatMap(label =>
     label === DEFAULT_MODEL_LABEL ? [label, 'GPT-5.6 Luna'] : [label]
@@ -1639,6 +1639,7 @@ async function selectE2EModel(
       })
     }
     if (
+      !requireExplicitSelection &&
       labels.some(label => selectedModelLabel.includes(label)) &&
       (!expectedProviderId || selectedProviderId === expectedProviderId)
     ) {
