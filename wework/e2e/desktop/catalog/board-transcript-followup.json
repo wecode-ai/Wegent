@@ -8,5 +8,6 @@
       "shard": 3,
       "position": 23000
     }
-  }
+  },
+  "paths": ["wework/e2e/desktop/modules/base-board-status-grouping.mjs"]
 }

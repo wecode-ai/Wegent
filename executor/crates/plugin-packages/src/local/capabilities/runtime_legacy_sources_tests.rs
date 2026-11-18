@@ -32,6 +32,172 @@ fn legacy_install(root: &Path) -> (GlobalCapabilityStore, PathBuf, Value) {
     (store, market, entry)
 }
 
+fn legacy_reinstall_handler(
+    store: &GlobalCapabilityStore,
+    old: &Value,
+    bytes: Vec<u8>,
+) -> CapabilitySyncHandler<Packages> {
+    let mut manifest = store.manifest.load().unwrap();
+    shared_packages::remember_plugin_runtime_owner(&mut manifest, "demo@wegent", old);
+    manifest["plugins"] = json!({});
+    manifest["plugin_legacy_sources"] = json!({"demo@wegent":old});
+    store.manifest.save(manifest).unwrap();
+    CapabilitySyncHandler::with_package_provider(
+        "",
+        store.clone(),
+        Packages(bytes),
+        std::sync::Arc::new(crate::NoRunningSessions),
+    )
+}
+
+async fn assert_legacy_runtime_bytecode_upgrade(relocated: bool, retained: bool) {
+    let temp = tempfile::tempdir().unwrap();
+    let original_root = temp.path().join("old");
+    let (mut store, market, mut old) = legacy_install(&original_root);
+    let old_checksum = sha256_digest(&archive("demo"));
+    old["checksum"] = json!(old_checksum);
+    let legacy_path = store.manifest.path.with_file_name("manifest.json");
+    let mut legacy: Value = serde_json::from_slice(&fs::read(&legacy_path).unwrap()).unwrap();
+    legacy["plugins"]["demo@wegent"] = old.clone();
+    write_json(&legacy_path, &legacy).unwrap();
+    let runtime = Path::new(old["runtime"]["codex_link"].as_str().unwrap());
+    fs::create_dir_all(runtime.join("scripts/__pycache__")).unwrap();
+    fs::write(
+        runtime.join("scripts/__pycache__/generated.cpython-312.pyc"),
+        "normal generated Python bytecode",
+    )
+    .unwrap();
+    if relocated {
+        let current_root = temp.path().join("new");
+        fs::rename(&original_root, &current_root).unwrap();
+        std::os::unix::fs::symlink(&current_root, &original_root).unwrap();
+        store = super::super::tests::store(&current_root, true);
+    }
+    let bytes = legacy_upgrade_archive();
+    let checksum = sha256_digest(&bytes);
+    assert_ne!(checksum, old_checksum);
+    assert!(!store
+        .current_shared_plugin_path(&old_checksum)
+        .unwrap()
+        .exists());
+    let source = Path::new(old["store_path"].as_str().unwrap());
+    let original_source = tree_fingerprint(source).unwrap();
+    let handler = if retained {
+        legacy_reinstall_handler(&store, &old, bytes)
+    } else {
+        // Replay startup recovery before the first modern upgrade, as in the desktop case.
+        store.reconcile_managed_plugin_runtimes().unwrap();
+        assert!(runtime
+            .join("scripts/__pycache__/generated.cpython-312.pyc")
+            .is_file());
+        CapabilitySyncHandler::with_package_provider(
+            "",
+            store.clone(),
+            Packages(bytes),
+            std::sync::Arc::new(crate::NoRunningSessions),
+        )
+    };
+    let mut request = payload("demo");
+    request["plugins"][0]["version"] = json!("2.0");
+    request["plugins"][0]["checksum"] = json!(checksum);
+    request["plugin_sync"] = json!({"version":2,"generation":1,"complete":true});
+
+    let result = handler.apply_sync(request).await.unwrap();
+
+    assert_eq!(result["success"], true, "{result}");
+    assert_eq!(result["plugins"][0]["status"], "synced", "{result}");
+    let entry = store.manifest.load().unwrap()["plugins"]["demo@wegent"].clone();
+    assert_eq!(entry["version"], "2.0");
+    assert_eq!(entry["installed_plugin_id"], old["installed_plugin_id"]);
+    assert_eq!(tree_fingerprint(source).unwrap(), original_source);
+    // A receipt for the new archive cannot authorize the old private package.
+    assert!(!store
+        .current_shared_plugin_path(&old_checksum)
+        .unwrap()
+        .exists());
+    assert!(store
+        .current_shared_plugin_path(&checksum)
+        .unwrap()
+        .is_dir());
+    assert_eq!(
+        fs::read_link(&market).unwrap(),
+        Path::new(entry["runtime"]["codex_link"].as_str().unwrap())
+    );
+}
+
+fn legacy_upgrade_archive() -> Vec<u8> {
+    use std::io::{Cursor, Write};
+    let mut package = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    for (path, contents) in [
+        (
+            ".codex-plugin/plugin.json",
+            r#"{"name":"demo","version":"2.0"}"#,
+        ),
+        ("skills/demo/SKILL.md", "new version capability"),
+    ] {
+        package
+            .start_file(path, zip::write::FileOptions::default())
+            .unwrap();
+        package.write_all(contents.as_bytes()).unwrap();
+    }
+    package.finish().unwrap().into_inner()
+}
+
+#[tokio::test]
+async fn legacy_runtime_bytecode_does_not_block_reinstall() {
+    assert_legacy_runtime_bytecode_upgrade(false, true).await;
+}
+
+#[tokio::test]
+async fn legacy_runtime_bytecode_survives_migrated_home_aliases() {
+    assert_legacy_runtime_bytecode_upgrade(true, true).await;
+}
+
+#[tokio::test]
+async fn legacy_runtime_bytecode_upgrade_from_active_manifest() {
+    assert_legacy_runtime_bytecode_upgrade(true, false).await;
+}
+
+#[tokio::test]
+async fn legacy_bytecode_does_not_authorize_modified_or_unexpected_files() {
+    for change in ["published-bytecode", "business-file", "unexpected-file"] {
+        let temp = tempfile::tempdir().unwrap();
+        let (store, market, old) = legacy_install(temp.path());
+        let source = Path::new(old["store_path"].as_str().unwrap());
+        let runtime = Path::new(old["runtime"]["codex_link"].as_str().unwrap());
+        fs::create_dir_all(runtime.join("scripts/__pycache__")).unwrap();
+        fs::write(
+            runtime.join("scripts/__pycache__/generated.pyc"),
+            "generated",
+        )
+        .unwrap();
+        match change {
+            "published-bytecode" => {
+                fs::create_dir_all(source.join("scripts/__pycache__")).unwrap();
+                fs::write(source.join("scripts/__pycache__/published.pyc"), "original").unwrap();
+                fs::write(runtime.join("scripts/__pycache__/published.pyc"), "changed").unwrap();
+            }
+            "business-file" => fs::write(runtime.join("skills/demo/SKILL.md"), "changed").unwrap(),
+            "unexpected-file" => fs::write(runtime.join("unexpected.py"), "foreign").unwrap(),
+            _ => unreachable!(),
+        }
+        let source_before = tree_fingerprint(source).unwrap();
+        let runtime_before = tree_fingerprint(runtime).unwrap();
+        let link_before = fs::read_link(&market).unwrap();
+        let handler = legacy_reinstall_handler(&store, &old, archive("demo"));
+        let mut request = payload("demo");
+        request["plugin_sync"] = json!({"version":2,"generation":1,"complete":true});
+
+        let result = handler.apply_sync(request).await.unwrap();
+
+        assert_eq!(result["success"], false, "{change}: {result}");
+        assert_eq!(result["plugins"][0]["status"], "failed", "{result}");
+        assert_eq!(tree_fingerprint(source).unwrap(), source_before);
+        assert_eq!(tree_fingerprint(runtime).unwrap(), runtime_before);
+        assert_eq!(fs::read_link(&market).unwrap(), link_before);
+    }
+}
+
 #[tokio::test]
 async fn legacy_sources_survive_uninstall_and_allow_explicit_reinstall() {
     for frozen_record in [false, true] {

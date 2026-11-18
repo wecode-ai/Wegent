@@ -3,6 +3,10 @@ use super::stand_in::settings_error;
 use super::*;
 use crate::task_runtime::stand_in_telemetry::origin_properties;
 
+#[cfg(test)]
+#[path = "stand_in_telemetry_tests.rs"]
+mod tests;
+
 impl RuntimeWorkRpcHandler {
     pub(super) async fn stand_in_telemetry_rpc(
         &self,
@@ -11,12 +15,15 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let handler = self.clone();
         let method = method.to_owned();
-        tokio::task::spawn_blocking(move || handler.stand_in_telemetry_operation(&method, payload))
-            .await
-            .map_err(|error| AppIpcError::new("stand_in_telemetry_failed", error.to_string()))?
+        // SQLite writer contention must not stall unrelated startup and control RPCs.
+        tokio::task::spawn_blocking(move || {
+            handler.stand_in_telemetry_rpc_blocking(&method, payload)
+        })
+        .await
+        .map_err(|error| AppIpcError::new("stand_in_settings", error.to_string()))?
     }
 
-    fn stand_in_telemetry_operation(
+    fn stand_in_telemetry_rpc_blocking(
         &self,
         method: &str,
         payload: Value,
@@ -195,54 +202,5 @@ impl RuntimeWorkRpcHandler {
         let mut properties = origin_properties(&origin);
         properties["action"] = json!(action);
         Some((user, operation, properties))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::runtime_work::handler::tests::isolated_runtime_work_handler;
-
-    #[tokio::test(flavor = "current_thread")]
-    async fn telemetry_configuration_does_not_block_runtime_reads_on_a_sqlite_writer() {
-        let (handler, root) = isolated_runtime_work_handler("telemetry-writer-responsiveness");
-        LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
-        let path = handler.task_store_path.clone();
-        let (ready, locked) = std::sync::mpsc::channel();
-        let (release, released) = std::sync::mpsc::channel();
-        let writer = std::thread::spawn(move || {
-            let connection = rusqlite::Connection::open(path.as_ref()).unwrap();
-            connection.execute_batch("BEGIN IMMEDIATE").unwrap();
-            ready.send(()).unwrap();
-            let _ = released.recv_timeout(Duration::from_secs(2));
-            connection.execute_batch("ROLLBACK").unwrap();
-        });
-        locked.recv().unwrap();
-        let configuring = handler.clone();
-        let started = Instant::now();
-        let pending = tokio::spawn(async move {
-            configuring
-                .dispatch_method(
-                    "runtime.stand_in.telemetry.configure",
-                    json!({"userId": 7, "enabled": false}),
-                )
-                .await
-        });
-        tokio::task::yield_now().await;
-        let listed = handler
-            .dispatch_method("runtime.stand_in.telemetry.list", json!({"userId": 7}))
-            .await;
-        let responsive = started.elapsed() < Duration::from_secs(1);
-        let write_pending = !pending.is_finished();
-        let _ = release.send(());
-        writer.join().unwrap();
-        pending.await.unwrap().unwrap();
-        assert!(listed.is_ok());
-        assert!(responsive, "SQLite writer blocked the runtime worker");
-        assert!(
-            write_pending,
-            "The read did not finish while the writer was held"
-        );
-        fs::remove_dir_all(root).unwrap();
     }
 }
