@@ -4,6 +4,7 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createAsyncRequestModel } from '../modules/async-request-model.mjs'
 import {
+  assistantRequestIdentity,
   cleanupAssistantRequestFixture,
   restorePersonalStandInProfile,
   waitForAssistantRequestGrant,
@@ -28,7 +29,7 @@ export function createDesktopScenario(options) {
     )
   })
   let cloud, environment, user, project, issue, source, a, b, otherToken
-  let authorization, verificationError
+  let authorization, verificationError, failureRequests
   const git = args => {
     const env = { ...process.env }
     for (const key of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_INDEX_FILE'])
@@ -399,6 +400,14 @@ export function createDesktopScenario(options) {
         assert.equal((await list()).requests.length, 2)
       } catch (error) {
         verificationError = error
+        if (issue) {
+          try {
+            const current = await list()
+            failureRequests = current.requests.map(assistantRequestIdentity)
+          } catch (diagnosticError) {
+            failureRequests = { error: diagnosticError.name }
+          }
+        }
         throw error
       } finally {
         await cleanupAssistantRequestFixture(
@@ -444,6 +453,9 @@ export function createDesktopScenario(options) {
         source,
         requestA: a?.requestId,
         requestB: b?.requestId,
+        requestAIdentity: assistantRequestIdentity(a),
+        requestBIdentity: assistantRequestIdentity(b),
+        failureRequests,
         authorization,
         verificationError: verificationError ? String(verificationError.stack) : null,
         ...model.state,

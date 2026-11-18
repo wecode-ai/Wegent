@@ -1,5 +1,25 @@
 import { isDeepStrictEqual } from 'node:util'
 
+export function assistantRequestIdentity(request) {
+  if (!request) return null
+  const identifier = value =>
+    typeof value === 'string' && /^[\w.:@-]{1,128}$/.test(value) ? value : null
+  return {
+    ...Object.fromEntries(
+      [
+        'requestId',
+        'deviceId',
+        'runtimeTaskId',
+        'conversationId',
+        'executionId',
+        'state',
+        'reasonCode',
+      ].map(field => [field, identifier(request[field])])
+    ),
+    ownerUserId: Number.isSafeInteger(request.ownerUserId) ? request.ownerUserId : null,
+  }
+}
+
 export function matchesAssistantRequestGrant(declaration, saved) {
   const role = declaration?.version === 1 && declaration.roles?.find(row => row.id === '@primary')
   const scope = saved.primary.collaboration

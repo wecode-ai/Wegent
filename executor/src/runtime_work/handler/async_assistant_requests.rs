@@ -33,6 +33,34 @@ fn request_identity(request: &Value, user: i64, device: &str, local: &str) -> bo
             .is_some_and(|id| !id.is_empty())
 }
 
+fn identity_diagnostic(request: &Value, user: i64, device: &str, local: &str) -> Value {
+    let identifier = |value: &Value| {
+        value
+            .as_str()
+            .filter(|value| {
+                value.len() <= 128
+                    && value
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || b"-_.:@".contains(&byte))
+            })
+            .map_or(Value::Null, |value| json!(value))
+    };
+    let mut fields = serde_json::Map::new();
+    for field in [
+        "requestId",
+        "deviceId",
+        "runtimeTaskId",
+        "conversationId",
+        "executionId",
+        "state",
+    ] {
+        fields.insert(field.into(), identifier(&request[field]));
+    }
+    fields.insert("ownerUserId".into(), json!(request["ownerUserId"].as_i64()));
+    json!({"request":fields,"expectedOwnerUserId":user,
+        "backendDeviceId":identifier(&json!(device)),"localDeviceId":identifier(&json!(local))})
+}
+
 impl RuntimeWorkRpcHandler {
     pub(super) async fn recover_issue_assistant_requests(
         &self,
@@ -74,7 +102,15 @@ impl RuntimeWorkRpcHandler {
         let user = config["userId"].as_i64().ok_or_else(|| {
             AppIpcError::new("permission_denied", "Missing assistant request owner")
         })?;
-        if !request_identity(request, user, &self.cloud_device_id()?, &self.device_id) {
+        let device = self.cloud_device_id()?;
+        if !request_identity(request, user, &device, &self.device_id) {
+            log_executor_event(
+                "Assistant child request identity did not match this Runtime",
+                &[(
+                    "identity",
+                    identity_diagnostic(request, user, &device, &self.device_id).to_string(),
+                )],
+            );
             return Ok(());
         }
         let task = request["runtimeTaskId"].as_str().unwrap();
@@ -666,5 +702,37 @@ mod tests {
         for state in ["accepted", "queued", "running", "waiting_device"] {
             assert!(executable(&json!({"state":state})));
         }
+    }
+
+    #[test]
+    fn identity_diagnostics_exclude_private_payloads_and_bound_identifier_fields() {
+        let request = json!({"requestId":"a","ownerUserId":7,"deviceId":"device-mac",
+            "runtimeTaskId":"assistant-request-a","conversationId":"assistant-request-a",
+            "executionId":"42","state":"queued","message":"private request body",
+            "token":"secret credential","worktree":{"path":"/private/worktree"}});
+        let diagnostic = identity_diagnostic(&request, 7, "app-record-78", "mac");
+        assert_eq!(diagnostic["request"]["deviceId"], "device-mac");
+        assert_eq!(diagnostic["backendDeviceId"], "app-record-78");
+        assert_eq!(diagnostic["request"].as_object().unwrap().len(), 7);
+        let serialized = diagnostic.to_string();
+        for private in [
+            "private request body",
+            "secret credential",
+            "/private/worktree",
+        ] {
+            assert!(!serialized.contains(private));
+        }
+        for value in [
+            "/private/path".into(),
+            "x".repeat(129),
+            "line\nbreak".into(),
+        ] {
+            let mut malformed = request.clone();
+            malformed["deviceId"] = json!(value);
+            assert!(
+                identity_diagnostic(&malformed, 7, "route", "mac")["request"]["deviceId"].is_null()
+            );
+        }
+        assert!(!request_identity(&request, 7, "app-record-78", "mac"));
     }
 }

@@ -2,11 +2,41 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
+  assistantRequestIdentity,
   cleanupAssistantRequestFixture,
   matchesAssistantRequestGrant,
   restorePersonalStandInProfile,
   waitForAssistantRequestGrant,
 } from './async-assistant-request-fixture.mjs'
+
+test('request identity evidence retains routing fields without private payloads or paths', () => {
+  const request = {
+    requestId: 'request-1',
+    ownerUserId: 7,
+    deviceId: 'device-mac',
+    runtimeTaskId: 'assistant-request-1',
+    conversationId: 'assistant-request-1',
+    executionId: '42',
+    state: 'queued',
+    message: 'private request body',
+    token: 'secret credential',
+    worktree: { path: '/private/worktree' },
+  }
+  assert.deepEqual(assistantRequestIdentity(request), {
+    requestId: 'request-1',
+    ownerUserId: 7,
+    deviceId: 'device-mac',
+    runtimeTaskId: 'assistant-request-1',
+    conversationId: 'assistant-request-1',
+    executionId: '42',
+    state: 'queued',
+    reasonCode: null,
+  })
+  for (const value of ['/private/path', 'x'.repeat(129), 'line\nbreak']) {
+    assert.equal(assistantRequestIdentity({ ...request, deviceId: value }).deviceId, null)
+  }
+  assert.equal(assistantRequestIdentity(null), null)
+})
 
 const saved = {
   userId: 7,

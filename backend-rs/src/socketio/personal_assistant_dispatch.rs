@@ -13,7 +13,9 @@ use serde_json::{Value, json};
 
 use crate::background_jobs::project::{authority, queue, store};
 use crate::background_jobs::robot::{self, model::Execution};
-use crate::device_identity::{DeviceKindRow, KINDS_DEVICE_QUERY, resolve_owned_device_alias_on};
+use crate::device_identity::{
+    DeviceKindRow, KINDS_DEVICE_QUERY, device_connection_route_id, resolve_owned_device_alias_on,
+};
 use crate::loop_tasks::{
     assignments::active_events,
     loop_repository::{CommentRow, item_comments_query},
@@ -449,7 +451,7 @@ pub(crate) async fn request_endpoint_on(
     Ok(endpoint_on(tx, issue, owner)
         .await?
         .endpoint
-        .map(|(device, _)| device.name))
+        .map(|(device, _)| device_connection_route_id(&device)))
 }
 
 async fn endpoint_on(

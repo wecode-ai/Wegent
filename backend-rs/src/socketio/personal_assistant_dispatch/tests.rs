@@ -454,6 +454,48 @@ async fn an_unowned_or_unregistered_device_cannot_persist_consent() {
 }
 
 #[tokio::test]
+async fn explicit_requests_use_the_registered_route_of_the_authorized_device() {
+    use crate::sql_test_support::mysql_rows::{MysqlRows, Value as SqlValue};
+
+    for (device_type, expected) in [
+        ("app", "app-record-78"),
+        ("local", "device-electron-desktop"),
+    ] {
+        let fixture = MysqlRows::start(move |sql| {
+            assert!(sql.contains("FROM kinds"), "{sql}");
+            let document = json!({"spec":{"deviceType":device_type,
+                "personalAssistantDispatch":{"version":1,"roles":[advertised_role(7)]}}});
+            vec![
+                ("kinds_id", SqlValue::I64(78)),
+                (
+                    "kinds_name",
+                    SqlValue::Text("device-electron-desktop".into()),
+                ),
+                ("kinds_json", SqlValue::Text(document.to_string())),
+            ]
+        })
+        .await;
+        let route = fixture
+            .mysql
+            .with_transaction(async |tx| request_endpoint_on(tx, &issue(), 7).await)
+            .await
+            .unwrap();
+
+        assert_eq!(route.as_deref(), Some(expected));
+        let queries = fixture.queries();
+        assert_eq!(queries.len(), 1);
+        for filter in [
+            "kinds.user_id = ?",
+            "kinds.kind = 'Device'",
+            "kinds.namespace = 'default'",
+            "kinds.is_active = true",
+        ] {
+            assert!(queries[0].contains(filter), "{}", queries[0]);
+        }
+    }
+}
+
+#[tokio::test]
 async fn endpoint_authority_uses_current_locked_consent_instead_of_snapshot_grants() {
     use crate::sql_test_support::mysql_rows::{MysqlRows, Value as SqlValue};
 
