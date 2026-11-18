@@ -309,6 +309,12 @@ beforeEach(() => {
       models: [],
       setInputForScope: mocks.setInput,
       getInputRevisionForScope: (scope: string) => sharedRevisions.get(scope) ?? 0,
+      captureAttachmentsForScope: (scope: string) => {
+        const projectChat = mocks.context.projectChat as {
+          attachmentStateByScope: Record<string, { attachments: Array<typeof attachment> }>
+        }
+        return [...(projectChat.attachmentStateByScope[scope]?.attachments ?? [])]
+      },
       resetAttachmentsForScope: mocks.resetAttachments,
       setComposerErrorForScope: mocks.setError,
     },

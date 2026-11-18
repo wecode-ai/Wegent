@@ -243,8 +243,9 @@ vi.mock('@/features/workbench/useWorkbench', async importOriginal => ({
 }))
 
 vi.mock('@/features/workbench/useWorkbenchAttachments', () => ({
-  useWorkbenchAttachments: () => ({
+  useWorkbenchAttachments: ({ scopeKey }: { scopeKey: string }) => ({
     attachments: [attachment],
+    captureAttachmentsForScope: (scope: string) => (scope === scopeKey ? [attachment] : []),
     uploadingFiles: [],
     errors: new Map(),
     isAttachmentReadyToSend: true,
