@@ -94,7 +94,7 @@ export function createGoalAdmissionRecovery({ workspacePath, uiTimeoutMs }) {
         assert.equal(created.accepted, true, created.error)
         address = { deviceId: created.deviceId, taskId, workspacePath }
         const original = await waitDone()
-        // Start cold; route preparation loads the native session before activation.
+        // Start cold so activation exercises recovery for an unloaded session.
         await waitForValue(
           () => rpc('runtime.codex.app_server.restart', { ifIdle: true }),
           value => value.restarted === true,
@@ -109,11 +109,7 @@ export function createGoalAdmissionRecovery({ workspacePath, uiTimeoutMs }) {
         assert.equal(set.accepted, true, set.error)
         const before = set.goal
         assert.equal(before.status, 'active')
-        assert.equal(
-          set.resumed,
-          false,
-          'The prepared native Goal must not queue duplicate recovery'
-        )
+        assert.equal(set.resumed, true, 'Cold activation must admit the owned Goal recovery')
         await waitForValue(
           task,
           value => requests === 2 && value.running === true,
