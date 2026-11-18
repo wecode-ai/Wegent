@@ -4,6 +4,8 @@ sidebar_position: 36
 
 # 协作权限架构与不可破坏的规则
 
+Rust Socket.IO 取消请求在记录取消意图或投递取消事件之前，对 Chat、执行器和设备路由统一验证当前任务访问权限。任务所有者和已批准成员继续使用共享任务访问策略；客户端选择的 Shell 和执行器位置不授予访问权限。现有隔离 MySQL 取消契约覆盖三类路由，并验证被拒绝请求不会改变任务、子任务或 Redis 取消状态。现有 Chromium CI 自动发现 `chat-cancel-access.spec.ts`，覆盖无权限调用者被拒绝后，任务所有者仍能取消真实 Chat 执行。CP01–CP20 保持不变。
+
 智能体成员抽屉的技能选择与保存使用同一组目标发布组。正常编辑和同命名空间克隆保留这些组；只有真实的跨命名空间克隆清除来源组上下文，命名空间缺省值统一为 `default`。绑定加载和重试属于当前编辑会话，未知或失败的绑定阻止成员保存并提供重试；关闭、新建、切换智能体和卸载使旧请求失效，不能覆盖后续会话的组、错误或加载状态。后端仍验证当前资源与目标组权限，客户端上下文不授予新权限，CP01–CP20 不变。父组件与 BotEdit 契约测试覆盖判定、空绑定和过期响应；现有 Chromium CI 套件发现 `settings-team-member-skills.spec.ts`，覆盖真实成员编辑、同命名空间克隆、持久化及绑定网络故障恢复，已有技能作用域套件保留跨命名空间克隆覆盖。
 
 阶段派发在 Issue 与协作轮次锁内复验 `required_assignee_type/id` 或当前职能映射，再创建 assignment、执行与通知。人类负责人身份和其默认助理的执行身份保持独立。直接 PATCH 不能通过修改流程指针绕过约束；修改负责人约束配置要求维护者权限。质量评审复用现有 Issue PATCH，只接受当前有效负责人对已记录 PR head 的版本化结论，下一负责人由服务端策略解析；成员设备离线不阻止异步验收。通知复用事务 outbox，失败回滚不发送，重放不重复改派。`test_stage_assignees.py`、`test_stage_assignee_mutations.py`、`test_collaboration_stage_assignees.py` 和 `test_quality_handoffs.py` 覆盖这些事务；CP01–CP20 不变。

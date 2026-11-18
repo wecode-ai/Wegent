@@ -917,3 +917,9 @@ The summary header owns the thinking-only duration and updates once per displaye
 - Do not recompute task running, turn activity, busy, or unread state in layouts, pane hooks, or components.
 - Do not add independent `isSending`, `isRunning`, or `isStreaming` React state. New external facts must enter through Store event routing.
 - When runtime work and message state disagree, do not override display inside UI components and do not add fallback settlement; fix the primary path.
+
+## Streaming text positions and completion rendering
+
+Process text and plan blocks attach a block-local `content_offset` to `content_delta`, measured in Unicode code points rather than UTF-8 bytes or JavaScript UTF-16 units. Executor coalescing retains the first delta's position and never joins noncontiguous deltas. The renderer reuses positioned merging to skip prefixes already included in native history and append only unseen suffixes. Equal text at different positions remains legitimate repeated content.
+
+Ordinary replies and process text retain the same block-based Markdown tree at completion. When the text is unchanged, completion must not rebuild plain-text parser plugins or reparse existing blocks. Incomplete Markdown, diagrams, and annotation markers still receive their required finalization. `e2e:desktop --segment streaming-content` covers native history arriving before a delayed delta and verifies that completing process text retains its rendered paragraph.

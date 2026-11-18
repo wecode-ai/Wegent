@@ -12,6 +12,7 @@ function trackSnapshot(track: HTMLElement) {
     inert: track.inert,
     transform: getComputedStyle(track).transform,
     rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+    bounds: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
     animations: track
       .getAnimations()
       .slice(0, 4)
@@ -28,11 +29,13 @@ function trackSnapshot(track: HTMLElement) {
             ? animation.currentTime
             : null,
         pending: animation.pending,
+        startTime: animation.startTime,
+        timing: animation.effect?.getComputedTiming(),
       })),
   }
 }
 
-export function collectIssueDrawerDiagnostics(logs: DebugLogEntry[]) {
+export function collectIssueDrawerDiagnostics(logs: DebugLogEntry[] = []) {
   try {
     const route = new URL(location.href)
     return {
@@ -45,7 +48,11 @@ export function collectIssueDrawerDiagnostics(logs: DebugLogEntry[]) {
         hasFocusRequest: route.searchParams.has('focusRequest'),
         hasCommentId: route.searchParams.has('commentId'),
       },
-      tracks: Array.from(document.querySelectorAll<HTMLElement>('.issue-conversation-drawers'))
+      tracks: Array.from(
+        document.querySelectorAll<HTMLElement>(
+          '.issue-conversation-drawers, [data-testid="issue-conversation-drawers"]'
+        )
+      )
         .slice(0, 4)
         .map(trackSnapshot),
       // The existing journal retains completed instances after their DOM is gone.

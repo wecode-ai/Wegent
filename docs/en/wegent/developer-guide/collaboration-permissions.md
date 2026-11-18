@@ -4,6 +4,15 @@ sidebar_position: 36
 
 # Collaboration permission architecture and invariants
 
+Rust Socket.IO cancellation validates current task access before recording intent
+or delivering cancellation on Chat, executor and device routes. Task owners and
+approved task members retain the shared task-access policy; shell selection and
+executor placement grant no access. The existing isolated MySQL cancellation
+contract covers all three routes and verifies that denied requests leave task,
+subtask and Redis cancellation state unchanged. The existing Chromium CI shards
+discover `chat-cancel-access.spec.ts`, covering a rejected foreign caller followed
+by owner cancellation of a real Chat execution. CP01–CP20 remain unchanged.
+
 Member drawer Skill discovery and saving use the same target publication groups. Ordinary edits and same-namespace clones retain those groups; only an actual cross-namespace clone clears the source group context, with omitted namespaces normalized to `default`. Binding loads and retries belong to the current editing session. Unknown or failed bindings block member saving and expose retry; closing, creating, switching Agents and unmounting invalidate old requests so they cannot overwrite later groups, errors or loading state. The server still validates current resource and target-group authority; client context grants no new permission. CP01–CP20 remain unchanged. Parent-component and BotEdit contract tests cover classification, empty bindings and stale responses. The existing Chromium CI suite discovers `settings-team-member-skills.spec.ts` for real member edits, same-namespace clones, persistence and binding transport-fault recovery; the existing Skill scope suite retains cross-namespace clone coverage.
 
 Stage dispatch revalidates `required_assignee_type/id` or the current functional-role mapping under the Issue and collaboration-round locks before creating assignments, executions or notifications. A human owner remains distinct from the default assistant executing their work. Direct PATCH cannot bypass constraints by changing the stage pointer; changing constraint configuration requires Maintainer access. Quality reviews reuse Issue PATCH and require the current active owner, the recorded PR head and Issue version; the server selects the next owner from policy. A member's offline device does not block asynchronous acceptance. Notifications use the transaction outbox, so rollback sends nothing and replay does not reassign. `test_stage_assignees.py`, `test_stage_assignee_mutations.py`, `test_collaboration_stage_assignees.py` and `test_quality_handoffs.py` cover these transactions; CP01–CP20 remain unchanged.

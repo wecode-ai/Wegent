@@ -1,7 +1,7 @@
+import { collectIssueDrawerDiagnostics } from './issue-drawer-diagnostics'
 import { waitForDomChange } from './waitForDomChange'
 import { readNativeModelFixtures, writeNativeModelFixtures } from './native-model-fixtures'
 import { collectConversationRenderingDiagnostics } from './conversation-rendering-diagnostics'
-import { collectIssueDrawerDiagnostics } from './issue-drawer-diagnostics'
 import {
   getProviderConfigurationState,
   reloadProviderConfiguration,
