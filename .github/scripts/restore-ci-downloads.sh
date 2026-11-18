@@ -8,14 +8,19 @@ cache_root="${WEWORK_CI_DOWNLOAD_CACHE_DIR:-${HOME:?}/.cache/wegent}"
 marker="$cache_root/ci-downloads-image"
 if [[ -f "$marker" && "$(cat "$marker")" == "$image" ]]; then exit 0; fi
 source "$(dirname "${BASH_SOURCE[0]}")/lib/apt-packages.sh"
-if ! command -v skopeo >/dev/null; then install_missing_apt_packages skopeo; fi
+apt_source_list="${WEWORK_APT_SOURCE_LIST:-/etc/apt/sources.list.d/ubuntu.sources}"
+if ! command -v skopeo >/dev/null; then
+  WEWORK_APT_SOURCE_LIST="$apt_source_list" install_missing_apt_packages skopeo
+fi
 command -v skopeo >/dev/null
 # Published download bundles are public. Fork tokens do not grant package access.
 if ! skopeo inspect --no-creds "docker://$image" >/dev/null 2>&1; then
   echo "No published CI downloads for this input digest: $image"
   exit 0
 fi
-if ! command -v umoci >/dev/null; then install_missing_apt_packages umoci; fi
+if ! command -v umoci >/dev/null; then
+  WEWORK_APT_SOURCE_LIST="$apt_source_list" install_missing_apt_packages umoci
+fi
 command -v umoci >/dev/null
 temporary="$(mktemp -d)"
 trap 'rm -rf "$temporary"' EXIT
