@@ -151,7 +151,12 @@ test('keeps the real system-idle uninstall checkpoint isolated in the shared pol
 
 for (const checkpoint of ['python-runtime', 'plugin-development']) {
   test(`separates Linux Core ${checkpoint} from the competing cloud fixtures`, async () => {
-    const cloudCheckpoints = ['collaboration-shared-core', 'collaboration-templates']
+    const cloudCheckpoints = [
+      'collaboration-shared-core',
+      'collaboration-templates',
+      'collaboration-template-agents',
+      'collaboration-template-app-device-routing',
+    ]
     const independent = 'stand-in-memory-timer'
     const active = new Set()
     let independentRanWithPython = false

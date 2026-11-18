@@ -567,6 +567,9 @@ export function createDesktopScenario({
           contentScope: ACTIVE,
           question: surface,
           originalDescription: MARKER,
+          readDescription: async () =>
+            (await rpc(control, 'todos.get', { project_id: project.id, task_id: issue.id }))
+              .description,
           captureScreenshot,
         })
         const previousSize = await control.command('setMainWindowSize', 'body', {
