@@ -125,6 +125,14 @@ function sendEmpty(
   res.end()
 }
 
+function sendControlJson(res: http.ServerResponse, status: number, payload: unknown): void {
+  // The browser exercises the provider while the test keeps this control
+  // connection idle. Do not let Playwright reuse a socket after the server's
+  // keep-alive timeout.
+  res.setHeader('Connection', 'close')
+  sendJson(res, status, payload)
+}
+
 function issueTokens(): Record<string, unknown> {
   state.issued += 1
   const access = `connector-access-${state.issued}`
@@ -292,6 +300,7 @@ function mcpCall(res: http.ServerResponse, message: Record<string, unknown>): vo
 }
 
 function control(res: http.ServerResponse, body: string): void {
+  res.setHeader('Connection', 'close')
   let payload: Record<string, unknown> = {}
   try {
     payload = body ? (JSON.parse(body) as Record<string, unknown>) : {}
@@ -415,7 +424,7 @@ export function handleConnectorOAuthRequest(
   }
 
   if (path === `${CONNECTOR_OAUTH_PREFIX}/_state` && method === 'GET') {
-    sendJson(res, 200, snapshot())
+    sendControlJson(res, 200, snapshot())
     return true
   }
 

@@ -110,6 +110,19 @@ describe('Connector OAuth HTTP protocol fixture', () => {
     expect(reset.httpCalls).toEqual([])
   })
 
+  it('closes control connections after each response to avoid idle socket reuse', async () => {
+    const control = await fetch(`${url}/_control`, {
+      method: 'POST',
+      body: JSON.stringify({ rejectRefresh: false }),
+    })
+    expect(control.status).toBe(200)
+    expect(control.headers.get('connection')).toBe('close')
+
+    const state = await fetch(`${url}/_state`)
+    expect(state.status).toBe(200)
+    expect(state.headers.get('connection')).toBe('close')
+  })
+
   it('routes legacy SSE replies to the advertised session, without accepting a POST handshake', async () => {
     const controller = new AbortController()
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
