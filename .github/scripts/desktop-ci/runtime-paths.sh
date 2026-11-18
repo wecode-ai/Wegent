@@ -196,7 +196,7 @@ classify_path() {
       packages/collaboration/src/controls/model-reasoning* | \
       packages/collaboration/src/controls/model-ui* | \
       packages/collaboration/src/controls/model-selector-utils*)
-      select_target "cloud:cloud-model-presets"
+      select_target "cloud:model-routing"
       select_target "core:codex-native-catalog"
       ;;
   esac

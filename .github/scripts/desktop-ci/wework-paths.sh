@@ -357,10 +357,6 @@ classify_wework_path() {
       return
       ;;
 
-    wework/e2e/desktop/scenarios/cloud-model-presets.scenario.mjs)
-      select_target "cloud:cloud-model-presets"
-      return
-      ;;
 
     wework/src/api/hybrid/cloudModelCatalog* | \
       wework/e2e/desktop/modules/cloud-model-recovery.mjs | \

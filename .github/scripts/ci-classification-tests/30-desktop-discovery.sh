@@ -190,15 +190,6 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/task-model-deletion.scenario.mjs"
 
-assert_desktop_case "cloud model preset regression runs in the cloud shard" \
-  'wework_desktop_e2e=true
-wework_desktop_core_e2e=false
-wework_desktop_core_e2e_matrix={"include":[]}
-wework_desktop_cloud_e2e=true
-wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-2","name":"Cloud / shard 2","segments":"cloud-model-presets"}]}
-wework_desktop_other_e2e=false
-wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/e2e/desktop/scenarios/cloud-model-presets.scenario.mjs"
 
 assert_desktop_case "cloud history search selects its real cloud conversation checkpoint" \
   'wework_desktop_e2e=true

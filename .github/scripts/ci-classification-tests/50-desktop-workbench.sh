@@ -251,8 +251,8 @@ for reasoning_control_path in \
   packages/collaboration/src/controls/model-selector-utils.ts; do
   reasoning_targets="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$reasoning_control_path")"
   if [[ "$reasoning_targets" != *"codex-native-catalog"* || \
-    "$reasoning_targets" != *"cloud-model-presets"* ]]; then
-    printf 'Reasoning control must select native Catalog and cloud preset regressions: %s\n' \
+    "$reasoning_targets" != *"model-routing"* ]]; then
+    printf 'Reasoning control must select native Catalog and cloud model routing regressions: %s\n' \
       "$reasoning_control_path" >&2
     exit 1
   fi
