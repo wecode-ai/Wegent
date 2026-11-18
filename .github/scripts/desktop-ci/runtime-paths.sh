@@ -53,7 +53,7 @@ classify_path() {
       case "$path" in
         wework/dsh/coordination-runtime/index.js|wework/dsh/coordination-runtime/package.json|wework/dsh/coordination-runtime/cordis.patch.yml)
           select_target "core:release-package-startup"
-          select_target "core:core-dsh-plugin-management"
+          select_target "core:plugin-development"
           ;;
       esac
       return

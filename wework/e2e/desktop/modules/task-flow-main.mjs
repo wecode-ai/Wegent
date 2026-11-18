@@ -108,13 +108,11 @@ import {
 } from './path-attachment-flows.mjs'
 
 import {
-  createCoreDshPluginFixture,
   initializeBlankCodexHome,
   installOfficialPluginFixture,
   uninstallOfficialPlugin,
   verifyCloudWorkPage,
   verifyComposerPluginNetworkIsolation,
-  verifyCoreDshPluginManagement,
   verifyMarketplacePluginLifecycle,
   verifyPluginLifecycle,
   verifyStartupIgnoresBlockedCodexNetwork,
@@ -1194,9 +1192,6 @@ async function main() {
       })
     }
     await createPluginMarketplaceFixture(marketplacePluginPath)
-    if (shouldRunPluginSegment('core-dsh-plugin-management')) {
-      await createCoreDshPluginFixture(resultDir)
-    }
     await mkdir(nativeCodexHome, { recursive: true })
     await mkdir(join(staleBundledMarketplacePath, '.agents', 'plugins'), { recursive: true })
     await writeFile(
@@ -2250,16 +2245,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           workspacePath,
         })
         return officialPluginFixture
-      }
-
-      if (shouldRunPluginSegment('core-dsh-plugin-management')) {
-        phase = 'core-dsh-plugin-management'
-        await verifyCoreDshPluginManagement({
-          control,
-          pluginRoot: join(resultDir, 'core-dsh-e2e-plugin'),
-          restartDesktopApp,
-          userDataDirectory: electronUserDataDirectory,
-        })
       }
       if (shouldRunPluginSegment('plugin-composer-network-isolation')) {
         phase = 'plugin-composer-network-isolation'

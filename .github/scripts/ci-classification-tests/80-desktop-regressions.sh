@@ -196,7 +196,7 @@ const values = Object.fromEntries(output.trim().split('\n').map(line => {
   return [line.slice(0, offset), line.slice(offset + 1)]
 }))
 const checkpoints = JSON.parse(values.wework_desktop_core_e2e_matrix).include.flatMap(entry => entry.segments.split(','))
-for (const checkpoint of ['stand-in-profile', 'stand-in-permissions', 'collaboration-local-agent-dispatch', 'collaboration-remote-agent-dispatch', 'release-package-startup', 'core-dsh-plugin-management']) {
+for (const checkpoint of ['stand-in-profile', 'stand-in-permissions', 'collaboration-local-agent-dispatch', 'collaboration-remote-agent-dispatch', 'release-package-startup']) {
   assert(checkpoints.includes(checkpoint), `${path} must select ${checkpoint}`)
 }
 assert.equal(values.wework_desktop_cloud_e2e, 'false')

@@ -279,12 +279,12 @@ classify_wework_path() {
     wework/src/components/plugins/CoreDshPluginManagementSection* | \
       wework/src/features/dsh-plugins/* | \
       wework/electron/src/runtime/core-dsh-plugin-manager*)
-      select_target "core:core-dsh-plugin-management"
+      select_target "core:plugin-development"
       select_target "core:plugin-development"
       return
       ;;
     wework/src/components/plugins/PluginManagementWorkspace*)
-      select_target "core:core-dsh-plugin-management"
+      select_target "core:plugin-development"
       select_target "core:plugin-development"
       select_target "core:project-ai-settings"
       select_target "plugins:plugin-lifecycle"
