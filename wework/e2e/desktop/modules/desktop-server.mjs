@@ -1,3 +1,4 @@
+import { modelRequestRoute } from './model-request-route.mjs'
 import { recordHttpRequest } from './http-request-diagnostics.mjs'
 import { modelTextStream } from './model-text-stream.mjs'
 import { handleModelSubscriptionUsage } from './model-subscription-usage.mjs'
@@ -1367,29 +1368,28 @@ class DesktopE2EServer {
     recordHttpRequest(request, response, url, this.httpRequests)
     if (await this.handleControlRoute(request, response, url)) return
     const officialCodexResponses = url.pathname === '/backend-api/codex/responses'
-    const modelProtocol =
-      url.pathname === '/v1/responses' || url.pathname === '/responses' || officialCodexResponses
-        ? 'responses'
-        : url.pathname === '/v1/chat/completions' || url.pathname === '/chat/completions'
-          ? 'chat'
-          : url.pathname === '/v1/messages' || url.pathname === '/messages'
-            ? 'anthropic'
-            : null
+    const modelRoute = modelRequestRoute(url.pathname)
+    const modelProtocol = modelRoute?.defaultHandler ? modelRoute.protocol : null
     let routedModelRequest
     try {
-      if (this.desktopScenario && request.method === 'POST' && modelProtocol) {
+      if (this.desktopScenario && request.method === 'POST' && modelRoute) {
         const body = await readRequestBody(request)
         routedModelRequest = {
           body,
           scenario: this.scenario,
-          protocol: modelProtocol,
+          protocol: modelRoute.protocol,
           httpRequestIndex,
         }
         this.modelRequests.push(routedModelRequest)
-        if (await this.writeNativeApprovalReview(response, body, modelProtocol)) return
+        if (modelProtocol && (await this.writeNativeApprovalReview(response, body, modelProtocol)))
+          return
         // Prediction history carries the task's ordinary markers. Route its
         // model request before scenario counters and held task responses.
-        if (isReplyPredictionRequest(body) && !this.desktopScenario.handlesReplyPredictions) {
+        if (
+          modelProtocol &&
+          isReplyPredictionRequest(body) &&
+          !this.desktopScenario.handlesReplyPredictions
+        ) {
           await this.handleModelResponse(request, response, modelProtocol, {
             acceptAnyBearer: officialCodexResponses,
             httpRequestIndex,

@@ -92,28 +92,37 @@ test.each([
   )
 })
 
-test('retains successfully handled scenario requests once and links transport evidence without credentials', async () => {
-  const body = { input: [{ role: 'user', content: 'Synthetic handled request' }] }
-  const server = new DesktopE2EServer('/tmp/scenario-model-evidence', undefined, {
-    async handleHttp() {
-      assert.equal(server.modelRequests.length, 1, 'Record arrival before awaiting the handler')
-      return true
-    },
-  })
-  server.url = 'http://fixture'
-  const request = Readable.from([JSON.stringify(body)])
-  Object.assign(request, {
-    method: 'POST',
-    url: '/v1/responses',
-    headers: { authorization: 'private-authorization' },
-  })
-  const response = Object.assign(new EventEmitter(), memoryResponse(), { setHeader() {} })
-  await server.handle(request, response)
-  assert.deepEqual(server.modelRequests, [
-    { body, scenario: 'initial', protocol: 'responses', httpRequestIndex: 0 },
-  ])
-  assert.equal(server.httpRequests[0].pathname, '/v1/responses')
-})
+test.each([
+  ['/v1/responses', 'responses'],
+  ['/catalog-auto/provider/v1/responses', 'responses'],
+  ['/catalog-auto/provider/v1/chat/completions', 'chat'],
+  ['/catalog-auto/provider/v1/messages', 'anthropic'],
+  ['/catalog-auto/provider/v1/responses/compact', 'responses-compact'],
+])(
+  'retains successfully handled %s once and links transport evidence without credentials',
+  async (path, protocol) => {
+    const body = { input: [{ role: 'user', content: 'Synthetic handled request' }] }
+    const server = new DesktopE2EServer('/tmp/scenario-model-evidence', undefined, {
+      async handleHttp() {
+        assert.equal(server.modelRequests.length, 1, 'Record arrival before awaiting the handler')
+        return true
+      },
+    })
+    server.url = 'http://fixture'
+    const request = Readable.from([JSON.stringify(body)])
+    Object.assign(request, {
+      method: 'POST',
+      url: path,
+      headers: { authorization: 'private-authorization' },
+    })
+    const response = Object.assign(new EventEmitter(), memoryResponse(), { setHeader() {} })
+    await server.handle(request, response)
+    assert.deepEqual(server.modelRequests, [
+      { body, scenario: 'initial', protocol, httpRequestIndex: 0 },
+    ])
+    assert.equal(server.httpRequests[0].pathname, path)
+  }
+)
 
 test.each([undefined, 'Bearer desktop-e2e'])(
   'rejects unauthenticated predictions before foreground handlers: %s',
