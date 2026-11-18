@@ -44,16 +44,16 @@ interface ChangeRequestStatusSnapshot {
 
 const statusGlyphs: Record<ChangeRequestVisualStatus, ChangeRequestStatusGlyphConfig> = {
   draft: { mainClassName: 'text-text-muted' },
-  open: { mainClassName: 'text-info wework:text-blue-500' },
+  open: { mainClassName: 'text-info' },
   checks_pending: {
-    mainClassName: 'text-warning wework:text-amber-500',
+    mainClassName: 'text-warning-foreground',
     badgeIcon: Clock3,
-    badgeClassName: 'text-warning wework:text-amber-500',
+    badgeClassName: 'text-warning-foreground',
   },
   checks_passed: {
-    mainClassName: 'text-success wework:text-green-500',
+    mainClassName: 'text-success-foreground',
     badgeIcon: CircleCheck,
-    badgeClassName: 'text-success wework:text-green-500',
+    badgeClassName: 'text-success-foreground',
   },
   checks_failed: {
     mainClassName: 'text-destructive wework:text-red-500',
@@ -71,29 +71,29 @@ const statusGlyphs: Record<ChangeRequestVisualStatus, ChangeRequestStatusGlyphCo
     badgeClassName: 'text-destructive wework:text-red-500',
   },
   behind: {
-    mainClassName: 'text-warning wework:text-amber-500',
+    mainClassName: 'text-warning-foreground',
     badgeIcon: RefreshCw,
-    badgeClassName: 'text-warning wework:text-amber-500',
+    badgeClassName: 'text-warning-foreground',
   },
   unstable: {
-    mainClassName: 'text-warning wework:text-amber-500',
+    mainClassName: 'text-warning-foreground',
     badgeIcon: TriangleAlert,
-    badgeClassName: 'text-warning wework:text-amber-500',
+    badgeClassName: 'text-warning-foreground',
   },
   has_hooks: {
-    mainClassName: 'text-warning wework:text-amber-500',
+    mainClassName: 'text-warning-foreground',
     badgeIcon: ListChecks,
-    badgeClassName: 'text-warning wework:text-amber-500',
+    badgeClassName: 'text-warning-foreground',
   },
   merge_queue_queued: {
-    mainClassName: 'text-warning wework:text-amber-500',
+    mainClassName: 'text-warning-foreground',
     badgeIcon: Clock3,
-    badgeClassName: 'text-warning wework:text-amber-500',
+    badgeClassName: 'text-warning-foreground',
   },
   merge_queue_checking: {
-    mainClassName: 'text-warning wework:text-amber-500',
+    mainClassName: 'text-warning-foreground',
     badgeIcon: Loader2,
-    badgeClassName: 'text-warning wework:text-amber-500',
+    badgeClassName: 'text-warning-foreground',
     badgeIconClassName: 'animate-spin',
   },
   merge_queue_failed: {
@@ -112,9 +112,9 @@ const statusGlyphs: Record<ChangeRequestVisualStatus, ChangeRequestStatusGlyphCo
     badgeClassName: 'text-destructive wework:text-red-500',
   },
   merge_queue_locked: {
-    mainClassName: 'text-warning wework:text-amber-500',
+    mainClassName: 'text-warning-foreground',
     badgeIcon: LockKeyhole,
-    badgeClassName: 'text-warning wework:text-amber-500',
+    badgeClassName: 'text-warning-foreground',
   },
   merge_queue_removed: {
     mainClassName: 'text-text-muted',
@@ -326,7 +326,7 @@ export function ChangeRequestStatusIcon({
                 </span>
               ) : null}
               {snapshot?.stale ? (
-                <span className="mt-1 block text-xs text-warning wework:text-amber-600">
+                <span className="mt-1 block text-xs text-warning-foreground">
                   {t('workbench.change_request_status_stale', '状态可能已过期')}
                 </span>
               ) : null}

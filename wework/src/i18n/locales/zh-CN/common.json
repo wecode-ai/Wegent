@@ -1729,6 +1729,7 @@
     "change_request_status_merge_queue_checking": "Merge Queue 检查中",
     "change_request_status_merge_queue_failed": "Merge Queue 失败",
     "change_request_status_merge_queue_timed_out": "Merge Queue 超时",
+    "change_request_status_merge_queue_conflicting": "Merge Queue 无法合并",
     "change_request_status_merge_queue_unmergeable": "Merge Queue 无法合并",
     "change_request_status_merge_queue_locked": "Merge Queue 已锁定",
     "change_request_status_merge_queue_removed": "已移出 Merge Queue",

@@ -24,6 +24,22 @@ export type ChangeRequestVisualStatus =
   | 'merged'
   | 'unknown'
 
+export type LegacyChangeRequestVisualStatus =
+  | 'draft'
+  | 'open'
+  | 'checks_pending'
+  | 'checks_passed'
+  | 'checks_failed'
+  | 'merge_conflict'
+  | 'merge_queue_queued'
+  | 'merge_queue_checking'
+  | 'merge_queue_failed'
+  | 'merge_queue_timed_out'
+  | 'merge_queue_conflicting'
+  | 'merge_queue_removed'
+  | 'closed'
+  | 'merged'
+
 const AUTO_REPAIR_STATUS_BY_VISUAL_STATUS: Partial<
   Record<ChangeRequestVisualStatus, PullRequestAutoRepairStatus>
 > = {
@@ -73,6 +89,29 @@ export function changeRequestVisualStatus(changeRequest: ChangeRequest): ChangeR
   return 'open'
 }
 
+export function legacyChangeRequestVisualStatus(
+  changeRequest: ChangeRequest
+): LegacyChangeRequestVisualStatus {
+  if (changeRequest.state === 'merged') return 'merged'
+  if (changeRequest.state === 'closed') return 'closed'
+  if (changeRequest.mergeQueue === 'failed') return 'merge_queue_failed'
+  if (changeRequest.mergeQueue === 'timed_out') return 'merge_queue_timed_out'
+  if (changeRequest.mergeQueue === 'unmergeable') return 'merge_queue_conflicting'
+  if (changeRequest.mergeability === 'conflicting') return 'merge_conflict'
+  if (changeRequest.checks === 'failure') return 'checks_failed'
+  if (changeRequest.draft) return 'draft'
+  if (changeRequest.mergeQueue === 'awaiting_checks' || changeRequest.mergeQueue === 'checking') {
+    return 'merge_queue_checking'
+  }
+  if (changeRequest.mergeQueue === 'queued' || changeRequest.mergeQueue === 'locked') {
+    return 'merge_queue_queued'
+  }
+  if (changeRequest.mergeQueue === 'removed') return 'merge_queue_removed'
+  if (changeRequest.checks === 'pending') return 'checks_pending'
+  if (changeRequest.checks === 'success') return 'checks_passed'
+  return 'open'
+}
+
 export function autoRepairStatus(changeRequest: ChangeRequest): PullRequestAutoRepairStatus | null {
   const status = changeRequestVisualStatus(changeRequest)
   return AUTO_REPAIR_STATUS_BY_VISUAL_STATUS[status] ?? null
@@ -112,7 +151,6 @@ export function changeRequestRepairEventKey(changeRequest: ChangeRequest): strin
     changeRequest.provider,
     changeRequest.url,
     changeRequest.headBranch ?? '',
-    changeRequest.headSha ?? '',
     changeRequestVisualStatus(changeRequest),
     changeRequest.updatedAt ?? '',
     changeRequest.mergeQueueReason ?? '',

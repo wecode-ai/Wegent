@@ -66,11 +66,11 @@ const badgeIcons = {
 }
 const badgeTones = {
   neutral: 'text-text-secondary',
-  info: 'text-info wework:text-blue-600',
-  success: 'text-success wework:text-green-600',
-  warning: 'text-warning wework:text-amber-600',
-  danger: 'text-destructive wework:text-red-600',
-  merged: 'text-merged wework:text-violet-600',
+  info: 'text-info',
+  success: 'text-success-foreground',
+  warning: 'text-warning-foreground',
+  danger: 'text-destructive',
+  merged: 'text-merged',
 }
 
 function IssueBadgeView({ badge }: { badge: CollaborationIssueBadge }) {

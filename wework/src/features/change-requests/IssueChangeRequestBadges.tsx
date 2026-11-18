@@ -12,6 +12,8 @@ import {
 import {
   changeRequestVisualStatus,
   type ChangeRequestVisualStatus,
+  legacyChangeRequestVisualStatus,
+  type LegacyChangeRequestVisualStatus,
 } from '@/features/workbench/changeRequestStatus'
 import { useTranslation } from '@/hooks/useTranslation'
 import { LOCAL_WORKBENCH_DEVICE_ALIAS } from '@/lib/workbench-device'
@@ -43,16 +45,21 @@ const visuals: Record<ChangeRequestVisualStatus, Pick<CollaborationIssueBadge, '
 }
 
 const legacyVisuals: Record<
-  ChangeRequestVisualStatus,
+  LegacyChangeRequestVisualStatus,
   Pick<CollaborationIssueBadge, 'icon' | 'tone'>
 > = {
-  ...visuals,
+  draft: { icon: 'git-pull-request', tone: 'neutral' },
   open: { icon: 'git-pull-request', tone: 'success' },
-  blocked: { icon: 'warning', tone: 'danger' },
-  behind: { icon: 'clock', tone: 'warning' },
-  unstable: { icon: 'clock', tone: 'warning' },
-  has_hooks: { icon: 'clock', tone: 'warning' },
-  merge_queue_locked: { icon: 'clock', tone: 'warning' },
+  checks_pending: { icon: 'clock', tone: 'warning' },
+  checks_passed: { icon: 'circle-check', tone: 'success' },
+  checks_failed: { icon: 'circle-x', tone: 'danger' },
+  merge_conflict: { icon: 'warning', tone: 'danger' },
+  merge_queue_queued: { icon: 'clock', tone: 'warning' },
+  merge_queue_checking: { icon: 'loader', tone: 'warning' },
+  merge_queue_failed: { icon: 'circle-x', tone: 'danger' },
+  merge_queue_timed_out: { icon: 'clock', tone: 'danger' },
+  merge_queue_conflicting: { icon: 'warning', tone: 'danger' },
+  merge_queue_removed: { icon: 'git-pull-request', tone: 'neutral' },
   closed: { icon: 'git-pull-request-closed', tone: 'neutral' },
   merged: { icon: 'git-merge', tone: 'success' },
 }
@@ -139,7 +146,10 @@ export function IssueChangeRequestBadges({
         tooltip,
       }
     }
-    const status = changeRequestVisualStatus(request)
+    const lifecycleStatus = changeRequestVisualStatus(request)
+    const legacyStatus = legacyChangeRequestVisualStatus(request)
+    const status = lifecycleBadgeEnabled ? lifecycleStatus : legacyStatus
+    const visual = lifecycleBadgeEnabled ? visuals[lifecycleStatus] : legacyVisuals[legacyStatus]
     const statusLabel = t(`workbench.change_request_status_${status}`)
     const reviewDecision = request.reviewDecision ?? 'none'
     const mergeStateStatus = request.mergeStateStatus ?? 'unknown'
@@ -175,7 +185,7 @@ export function IssueChangeRequestBadges({
         : ''
     return {
       ...badge,
-      ...(lifecycleBadgeEnabled ? visuals[status] : legacyVisuals[status]),
+      ...visual,
       label: shortStatus ? `${badge.label} · ${shortStatus}${staleLabel}` : badge.label,
       tooltip: tooltip.filter(Boolean).join(' · '),
     }

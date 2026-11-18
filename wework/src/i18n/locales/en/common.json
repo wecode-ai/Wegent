@@ -1730,6 +1730,7 @@
     "change_request_status_merge_queue_checking": "Merge queue checks running",
     "change_request_status_merge_queue_failed": "Merge queue failed",
     "change_request_status_merge_queue_timed_out": "Merge queue timed out",
+    "change_request_status_merge_queue_conflicting": "Merge queue cannot merge",
     "change_request_status_merge_queue_unmergeable": "Merge queue cannot merge",
     "change_request_status_merge_queue_locked": "Merge queue is locked",
     "change_request_status_merge_queue_removed": "Removed from merge queue",

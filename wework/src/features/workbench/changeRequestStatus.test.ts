@@ -8,6 +8,7 @@ import type { ChangeRequest } from '@/types/environment'
 import {
   autoRepairStatus,
   buildChangeRequestRepairPrompt,
+  changeRequestRepairEventKey,
   changeRequestVisualStatus,
   stoppedTaskNeedsAttention,
 } from './changeRequestStatus'
@@ -72,6 +73,12 @@ describe('changeRequestStatus', () => {
 
     expect(changeRequestVisualStatus(unmergeable)).toBe('merge_queue_unmergeable')
     expect(autoRepairStatus(unmergeable)).toBe('merge_queue_conflicting')
+  })
+
+  it('keeps the repair event key stable when a delayed head SHA arrives', () => {
+    expect(changeRequestRepairEventKey({ ...pullRequest, headSha: 'abc123' })).toBe(
+      changeRequestRepairEventKey(pullRequest)
+    )
   })
 
   it('only keeps a stopped task visible while its PR remains open', () => {

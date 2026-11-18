@@ -178,8 +178,8 @@ describe('Issue change request lifecycle badges', () => {
       expect(screen.getByTestId(`issue-badge-${id}`)).toHaveClass('text-destructive')
     }
     expect(screen.getByTestId('issue-badge-pr-45')).toHaveClass('text-text-secondary')
-    expect(screen.getByTestId('issue-badge-pr-46')).toHaveClass('text-warning')
-    expect(screen.getByTestId('issue-badge-pr-47')).toHaveClass('text-success')
+    expect(screen.getByTestId('issue-badge-pr-46')).toHaveClass('text-warning-foreground')
+    expect(screen.getByTestId('issue-badge-pr-47')).toHaveClass('text-success-foreground')
     expect(screen.getByTestId('issue-badge-pr-49')).toHaveClass('text-merged')
   })
 
@@ -258,8 +258,35 @@ describe('Issue change request lifecycle badges', () => {
     render(<IssueChangeRequestBadges badges={[badge]} monitor={monitor} compact />)
 
     await setVisible(true)
-    await waitFor(() => expect(screen.getByTestId('issue-badge-pr-42')).toHaveClass('text-success'))
+    await waitFor(() =>
+      expect(screen.getByTestId('issue-badge-pr-42')).toHaveClass('text-success-foreground')
+    )
     expect(screen.getByTestId('issue-badge-pr-42')).toHaveTextContent('#42')
     expect(screen.getByTestId('issue-badge-pr-42')).not.toHaveTextContent(/已合并|Merged/)
+  })
+
+  it('uses the previous classification when the lifecycle flag is disabled', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      ...window.__WEWORK_RUNTIME_CONFIG__,
+      featureFlags: { [CHANGE_REQUEST_LIFECYCLE_BADGE_FLAG]: false },
+    }
+    const setVisible = observeIntersections()
+    const monitor = new ChangeRequestMonitor({
+      executeCommand: commandApi({
+        42: view(42, {
+          mergeStateStatus: 'BLOCKED',
+          reviewDecision: 'REVIEW_REQUIRED',
+          statusCheckRollup: { state: 'SUCCESS' },
+        }),
+      }),
+    })
+    render(<IssueChangeRequestBadges badges={[badge]} monitor={monitor} compact />)
+
+    await setVisible(true)
+    await waitFor(() =>
+      expect(screen.getByTestId('issue-badge-pr-42')).toHaveClass('text-success-foreground')
+    )
+    expect(screen.getByTestId('issue-badge-pr-42')).toHaveAccessibleName(/检查通过|Checks passed/)
+    expect(screen.getByTestId('issue-badge-pr-42')).not.toHaveTextContent(/阻塞|Blocked/)
   })
 })
