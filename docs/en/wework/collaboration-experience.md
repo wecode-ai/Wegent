@@ -41,6 +41,8 @@ The timeline header's paperclip toggles the **Files** filter, and its folder but
 
 When the system requests reduced motion, team entrance, pulse and activity-trail animations stop. Status text, icons and accessible names remain available; state changes do not rely on animation.
 
+Opening your managed Wegent Chat source from **Assistant sources** opens its original web task; a Runtime source opens its original device conversation. Other members receive no private conversation identifiers or task entry points. Project history backfill excludes deleted tasks, and previews and repeated backfills preserve source identity.
+
 ## Private discussion
 
 Select **Private discussion** in a task timeline to open the current user's existing conversation. A node's entry shows its verified source turn in read-only mode, without an input or publication form. An unverified source displays an unavailable message. Select **Continue the current discussion** to return to the same conversation and its unsent draft without creating a conversation or task. Ordinary private discussion does not automatically publish content or change the shared task's status. Send, queue, stop and **Interrupt and send now** use the existing conversation capabilities. While a shared execution is active, queue a private message or interrupt to start private discussion; it cannot directly guide that shared turn. Failed sends retain the draft. Unsent input is saved per conversation and restored after refresh or restart.

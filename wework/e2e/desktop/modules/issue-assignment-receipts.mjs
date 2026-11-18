@@ -185,8 +185,13 @@ async function verifyIndexedReceipts(issueId, expected, request, database) {
     [issueId]
   )
   const path = `/v1/loop-items/${issueId}/assignments`
+  // Execution dispatch may advance during reads; reception receipts remain immutable.
+  const receipts = result => ({
+    ...result,
+    items: result.items.map(({ dispatch: _dispatch, ...receipt }) => receipt),
+  })
   const results = await Promise.all([request(path), request(path)])
-  for (const result of results) assert.deepEqual(result, expected)
+  for (const result of results) assert.deepEqual(receipts(result), receipts(expected))
   const plan = await database.queryDatabase(
     `EXPLAIN SELECT event.id,event.metadata FROM loop_items active
      JOIN loop_items event ON event.id=active.loop_item_id
@@ -198,8 +203,8 @@ async function verifyIndexedReceipts(issueId, expected, request, database) {
   assert.ok(active?.key?.includes('parent') && active.type !== 'ALL', JSON.stringify(plan))
   assert.equal(event?.key, 'PRIMARY', JSON.stringify(plan))
   assert.deepEqual(
-    await request(path),
-    expected,
+    receipts(await request(path)),
+    receipts(expected),
     'Warm receipt reads preserve the first timestamps'
   )
 }

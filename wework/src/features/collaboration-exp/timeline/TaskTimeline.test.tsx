@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { SharedWorkspaceApi } from '@wegent/collaboration'
+import { browserMarkdownServices, MarkdownServicesProvider } from '@wegent/collaboration/markdown'
 import '@/i18n'
 import type { ExperienceIssueData } from '../data/useExperienceIssue'
 import { selectPrivateConversations, selectTaskTimeline } from '../model'
@@ -244,59 +245,75 @@ it('keeps exact attachment sources and marks an unattested file without guessing
   })
 })
 
-it('opens only an authorized participation source from the historical source index', async () => {
-  const props = fixture()
-  const participation = {
-    id: 'participation-1',
-    projectId: props.data.project.id,
-    issueId: props.data.issue.id,
-    ownerUserId: 7,
-    ownerDisplayName: 'jiangyang7',
-    roleId: 'review',
-    endpointRef: 'runtime:7:review',
-    conversationId: 'stand-in-chat-7-role-review',
-    source: { kind: 'binding', id: 'binding-1' },
-    workroomRef: { kind: 'endpoint', id: 'runtime:7:review' },
-    traceRef: 'trace-1',
-    historyState: 'unverified' as const,
-    auditSource: 'recorded',
-  }
-  const readAssistantParticipation = vi.fn().mockResolvedValue({
-    participation,
-    runtimeAddress: { deviceId: 'device-1', taskId: 'task-1' },
-  })
-  props.api.issues = {
-    listAssistantParticipations: vi.fn().mockResolvedValue([participation]),
-    readAssistantParticipation,
-  } as unknown as SharedWorkspaceApi['issues']
-  const onExecution = vi.fn()
-  const view = render(
-    <TaskTimeline
-      {...props}
-      active
-      revision={0}
-      onDiscuss={vi.fn()}
-      onAttachment={vi.fn()}
-      onExecution={onExecution}
-      onRetry={vi.fn()}
-    />
-  )
-  await waitFor(() =>
-    expect(
-      view.getByTestId('collaboration-exp-open-assistant-participation-participation-1')
-    ).toBeVisible()
-  )
-  fireEvent.click(
-    view.getByTestId('collaboration-exp-open-assistant-participation-participation-1')
-  )
-  await waitFor(() =>
-    expect(readAssistantParticipation).toHaveBeenCalledExactlyOnceWith(
-      props.data.issue.id,
-      participation.id
+it.each(['runtime', 'backend'] as const)(
+  'opens the authorized %s participation source',
+  async kind => {
+    const props = fixture()
+    const participation = {
+      id: 'participation-1',
+      projectId: props.data.project.id,
+      issueId: props.data.issue.id,
+      ownerUserId: 7,
+      ownerDisplayName: 'jiangyang7',
+      roleId: 'review',
+      endpointRef: 'runtime:7:review',
+      conversationId: 'stand-in-chat-7-role-review',
+      source: { kind: 'binding', id: 'binding-1' },
+      workroomRef: { kind: 'endpoint', id: 'runtime:7:review' },
+      traceRef: 'trace-1',
+      historyState: 'unverified' as const,
+      auditSource: 'recorded',
+    }
+    const readAssistantParticipation = vi.fn().mockResolvedValue({
+      participation,
+      runtimeAddress: kind === 'runtime' ? { deviceId: 'device-1', taskId: 'task-1' } : null,
+      backendTask:
+        kind === 'backend'
+          ? { taskId: 42, executionUrl: 'https://wegent.example/chat?taskId=42' }
+          : null,
+    })
+    props.api.issues = {
+      listAssistantParticipations: vi.fn().mockResolvedValue([participation]),
+      readAssistantParticipation,
+    } as unknown as SharedWorkspaceApi['issues']
+    const onExecution = vi.fn()
+    const openExternalUrl = vi.fn()
+    const view = render(
+      <MarkdownServicesProvider value={{ ...browserMarkdownServices, openExternalUrl }}>
+        <TaskTimeline
+          {...props}
+          active
+          revision={0}
+          onDiscuss={vi.fn()}
+          onAttachment={vi.fn()}
+          onExecution={onExecution}
+          onRetry={vi.fn()}
+        />
+      </MarkdownServicesProvider>
     )
-  )
-  expect(onExecution).toHaveBeenCalledWith({ deviceId: 'device-1', taskId: 'task-1' })
-})
+    await waitFor(() =>
+      expect(
+        view.getByTestId('collaboration-exp-open-assistant-participation-participation-1')
+      ).toBeVisible()
+    )
+    fireEvent.click(
+      view.getByTestId('collaboration-exp-open-assistant-participation-participation-1')
+    )
+    await waitFor(() =>
+      expect(readAssistantParticipation).toHaveBeenCalledExactlyOnceWith(
+        props.data.issue.id,
+        participation.id
+      )
+    )
+    if (kind === 'runtime') {
+      expect(onExecution).toHaveBeenCalledWith({ deviceId: 'device-1', taskId: 'task-1' })
+      expect(openExternalUrl).not.toHaveBeenCalled()
+    } else {
+      expect(openExternalUrl).toHaveBeenCalledWith('https://wegent.example/chat?taskId=42')
+      expect(onExecution).not.toHaveBeenCalled()
+    }
+  }
+)
 
 it('ignores a participation source that resolves after the timeline is left', async () => {
   const props = fixture()

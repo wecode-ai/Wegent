@@ -13,6 +13,9 @@ flowchart LR
   Binding --> Access[项目所属空间的有效资源授权]
   Access --> Compile[按 Team 所有者解析 Bot、Ghost 和 Shell]
   Compile --> Queue[持久化执行队列]
+  Queue --> Managed[原生托管作业与授权校验]
+  Managed --> Task[真实 Backend Task]
+  Task --> Status
   Queue --> Routing[重新检查环境授权、模型能力和 Issue 设备绑定]
   Routing --> Wake[向实际设备所有者发送唤醒]
   Wake --> Pull[设备领取任务]
@@ -30,6 +33,8 @@ flowchart LR
 - 本地资源目录负责确保“当前设备智能体”存在；项目添加入口同时提供已有智能体选择和新建操作。
 
 ## 任务领取
+
+Wegent 托管 Issue 执行使用默认启用的原生作业 `wegent.managed_issue.scan` 和 `wegent.managed_issue.execute`。扫描按队列轮询周期运行，通过独立分布式锁创建真实 Task；执行前及状态投影继续校验当前授权。该链路不依赖可选的 Python 作业迁移开关。显式设置 `WEGENT_RS_JOB_ALLOWLIST` 时，需包含这两个作业；调度和嵌入式 worker 的现有开关仍然有效。
 
 设备领取仍由持久化队列、原子认领和 Runtime 接收确认控制。唤醒通知只提示有工作，不携带任务，也不证明任务已经启动。
 路由任务向满足当前授权、模型和 Issue 绑定的设备发送通知，并使用设备所有者的连接身份。

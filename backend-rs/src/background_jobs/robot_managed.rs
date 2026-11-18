@@ -18,7 +18,7 @@ use crate::{
 #[path = "robot_managed_session.rs"]
 mod sessions;
 
-const JOB: &str = "app.tasks.project_automation_tasks.execute_managed_project_automation";
+const JOB: &str = super::managed_jobs::EXECUTE;
 
 pub(super) async fn prepare(app: &AppState) -> Result<()> {
     let rows: Vec<Execution> = app.mysql.fetch_all(format!(

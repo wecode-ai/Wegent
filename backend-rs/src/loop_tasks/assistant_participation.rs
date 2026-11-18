@@ -22,6 +22,7 @@ struct ParticipationSource {
     role_id: Option<String>,
     device_id: Option<String>,
     task_id: Option<String>,
+    backend_task_id: Option<i64>,
     available: i32,
     source_created_at: NaiveDateTime,
 }
@@ -67,7 +68,22 @@ async fn list_assistant_participations(
 #[serde(rename_all = "camelCase")]
 struct ParticipationWorkroom {
     participation: AssistantParticipation,
+    #[serde(flatten)]
+    target: ParticipationTarget,
+}
+
+#[derive(Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ParticipationTarget {
     runtime_address: Option<Value>,
+    backend_task: Option<BackendTaskSource>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct BackendTaskSource {
+    task_id: i64,
+    execution_url: String,
 }
 
 #[brz_http_server::get("/api/v1/loop-items/:item_id/assistant-participations/:participation_id")]
@@ -83,13 +99,14 @@ async fn read_assistant_participation(
         .into_iter()
         .find(|record| record.id == participation_id)
     {
-        let runtime_address = addresses
+        let target = addresses
             .get(participation_id)
             .filter(|(owner, _)| *owner == user.id)
-            .and_then(|(_, address)| address.clone());
+            .map(|(_, target)| target.clone())
+            .unwrap_or_default();
         return Ok(ParticipationWorkroom {
             participation,
-            runtime_address,
+            target,
         });
     }
     Err(HttpError::todo_not_found().into())
@@ -163,6 +180,7 @@ async fn backfill_item(
     let names = owner_names(&state.mysql, &owners.into_iter().collect::<BTreeSet<_>>())
         .await
         .map_err(HttpError::internal)?;
+    verify_managed_sources(state, &mut sources).await?;
     let pairs = project_source_pairs(
         &item.cloud_project_id,
         item_id,
@@ -191,6 +209,8 @@ async fn backfill_item(
             let mut created = 0;
             let mut existing = 0;
             for (source, participation) in &pairs {
+                // Persist canonical references, independently of the backfill caller.
+                let canonical = participation_from_source(&item.cloud_project_id, item_id, source, &names, source.owner_user_id);
                 let metadata = json!({
                     "project_id": participation.project_id,
                     "issue_id": participation.issue_id,
@@ -198,7 +218,7 @@ async fn backfill_item(
                     "owner_display_name": participation.owner_display_name,
                     "role_id": participation.role_id,
                     "endpoint_ref": participation.endpoint_ref,
-                    "conversation_id": participation.conversation_id,
+                    "conversation_id": canonical.conversation_id,
                     "source": participation.source,
                     "workroom_ref": participation.workroom_ref,
                     "trace_ref": participation.trace_ref,
@@ -295,6 +315,7 @@ async fn backfill_project_assistant_participations(
         .mysql
         .fetch_all(
             "SELECT id FROM loop_items WHERE resource_type='task' AND cloud_project_id=? \
+             AND (deleted_at IS NULL OR deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01')) \
              ORDER BY sequence_number,id",
             (project_id,),
         )
@@ -435,7 +456,7 @@ async fn participation_sources<M: Mysql>(
                CAST(NULL AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci AS role_id, \
                CONVERT(device_id USING utf8mb4) COLLATE utf8mb4_unicode_ci AS device_id, \
                CONVERT(task_id USING utf8mb4) COLLATE utf8mb4_unicode_ci AS task_id, \
-               CASE WHEN device_id<>'' AND task_id<>'' THEN 1 ELSE 0 END AS available, created_at AS source_created_at \
+               CASE WHEN device_id<>'' AND task_id<>'' THEN 1 ELSE 0 END AS available, created_at AS source_created_at, NULLIF(backend_task_id,0) AS backend_task_id \
              FROM loop_items WHERE resource_type='execution' AND cloud_project_id=? \
                AND loop_item_id=? AND task_user_id=? \
                AND (deleted_at IS NULL OR deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01')) \
@@ -444,14 +465,15 @@ async fn participation_sources<M: Mysql>(
                COALESCE(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(execution_payload,'$.origin_context.standInId')),'null'), \
                  NULLIF(JSON_UNQUOTE(JSON_EXTRACT(execution_payload,'$.dispatch_request.standInId')),'null')) AS role_id, \
                runtime_device_id, runtime_task_id, \
-               CASE WHEN runtime_device_id<>'' AND runtime_task_id<>'' THEN 1 ELSE 0 END AS available, created_at \
+               CASE WHEN runtime_device_id<>'' AND runtime_task_id<>'' THEN 1 ELSE 0 END AS available, created_at, NULLIF(backend_task_id,0) \
              FROM loop_item_executions WHERE cloud_project_id=? AND loop_item_id=? \
                AND executor_owner_user_id=? \
              UNION ALL \
              SELECT 'message', m.message_id, ?, NULLIF(m.runtime_task_id,'') AS conversation_id, \
                NULLIF(JSON_UNQUOTE(JSON_EXTRACT(m.metadata,'$.stand_in.role_id')),'null') AS role_id, \
                m.runtime_device_id, m.runtime_task_id, \
-               CASE WHEN m.runtime_device_id<>'' AND m.runtime_task_id<>'' THEN 1 ELSE 0 END AS available, m.created_at \
+               CASE WHEN m.runtime_device_id<>'' AND m.runtime_task_id<>'' THEN 1 ELSE 0 END AS available, m.created_at, \
+               CAST(NULLIF(JSON_UNQUOTE(JSON_EXTRACT(m.metadata,'$.backend_task_id')),'null') AS SIGNED) \
              FROM project_chat_messages m \
                LEFT JOIN project_chat_messages t ON t.message_id=m.trigger_message_id \
                  AND t.project_id=m.project_id AND t.task_id=m.task_id AND t.sender_type='user' \
@@ -515,7 +537,7 @@ async fn participation_snapshot(
 ) -> Result<
     (
         Vec<AssistantParticipation>,
-        BTreeMap<String, (i32, Option<Value>)>,
+        BTreeMap<String, (i32, ParticipationTarget)>,
     ),
     FastApiError,
 > {
@@ -540,6 +562,7 @@ async fn participation_snapshot(
     let names = owner_names(&state.mysql, &owner_ids)
         .await
         .map_err(HttpError::internal)?;
+    verify_managed_sources(state, &mut sources).await?;
     let dynamic = project_source_pairs(
         &item.cloud_project_id,
         &item.id,
@@ -555,7 +578,7 @@ async fn participation_snapshot(
     for (source, participation) in dynamic {
         addresses.insert(
             participation.id.clone(),
-            (source.owner_user_id, runtime_address(&source)),
+            (source.owner_user_id, participation_target(&source)),
         );
         records.insert(participation.id.clone(), participation);
     }
@@ -565,10 +588,18 @@ async fn participation_snapshot(
         }
         record.history_state = match addresses.get(&record.id) {
             None => "history-unavailable".into(),
-            Some((owner, Some(_))) if *owner == viewer_user_id => "unverified".into(),
-            Some((_, Some(_))) => "restricted".into(),
-            Some((_, None)) => "history-unavailable".into(),
+            Some((owner, target))
+                if target.runtime_address.is_some() || target.backend_task.is_some() =>
+            {
+                if *owner == viewer_user_id {
+                    "unverified".into()
+                } else {
+                    "restricted".into()
+                }
+            }
+            Some(_) => "history-unavailable".into(),
         };
+        hide_private_conversation(record, viewer_user_id);
     }
     Ok((records.into_values().collect(), addresses))
 }
@@ -633,6 +664,12 @@ fn stored_participation(
     })
 }
 
+fn hide_private_conversation(record: &mut AssistantParticipation, viewer: i32) {
+    if record.owner_user_id != viewer {
+        record.conversation_id = None;
+    }
+}
+
 fn project_source_pairs(
     project: &str,
     issue: &str,
@@ -689,7 +726,9 @@ fn participation_from_source(
         owner_display_name: names.get(&source.owner_user_id).cloned(),
         role_id,
         endpoint_ref: endpoint_ref.clone(),
-        conversation_id: source.conversation_id.clone(),
+        conversation_id: (source.owner_user_id == viewer_user_id)
+            .then(|| source.conversation_id.clone())
+            .flatten(),
         source: ParticipationReference {
             kind: source.source_kind.clone(),
             id: source.source_id.clone(),
@@ -751,6 +790,9 @@ fn source_trace_ref(project: &str, issue: &str, source: &ParticipationSource) ->
 }
 
 fn runtime_address(source: &ParticipationSource) -> Option<Value> {
+    if source.available != 1 {
+        return None;
+    }
     match (&source.device_id, &source.task_id) {
         (Some(device), Some(task)) if !device.is_empty() && !task.is_empty() => {
             Some(json!({"deviceId":device,"taskId":task}))
@@ -759,134 +801,52 @@ fn runtime_address(source: &ParticipationSource) -> Option<Value> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use chrono::DateTime;
+fn managed_task_id(source: &ParticipationSource) -> Option<i64> {
+    source
+        .backend_task_id
+        .filter(|id| *id > 0 && source.device_id.as_deref().unwrap_or_default().is_empty())
+}
 
-    fn project_sources(
-        project: &str,
-        issue: &str,
-        sources: Vec<ParticipationSource>,
-        names: &BTreeMap<i32, String>,
-        viewer_user_id: i32,
-    ) -> Vec<AssistantParticipation> {
-        project_source_pairs(project, issue, sources, names, viewer_user_id)
-            .into_iter()
-            .map(|(_, participation)| participation)
-            .collect()
-    }
-
-    fn source(id: &str) -> ParticipationSource {
-        ParticipationSource {
-            source_kind: "binding".into(),
-            source_id: id.into(),
-            owner_user_id: 7,
-            conversation_id: Some("stand-in-chat-7-role-review".into()),
-            role_id: None,
-            available: 1,
-            device_id: Some("device".into()),
-            task_id: Some("task".into()),
-            source_created_at: DateTime::from_timestamp(0, 0).unwrap().naive_utc(),
+async fn verify_managed_sources(
+    state: &AppState,
+    sources: &mut [ParticipationSource],
+) -> Result<(), FastApiError> {
+    for source in sources {
+        if let Some(task_id) = managed_task_id(source) {
+            let task = crate::task_detail_api::repository::get_active_non_deleted_task(
+                state.task_store.as_ref(),
+                task_id,
+                None,
+            )
+            .await
+            .map_err(HttpError::internal)?;
+            source.available =
+                i32::from(task.is_some_and(|task| task.user_id == i64::from(source.owner_user_id)));
         }
     }
+    Ok(())
+}
 
-    #[test]
-    fn repeated_sources_and_reruns_have_identical_identity_without_copied_content() {
-        let names = BTreeMap::from([(7, "jiangyang7".to_string())]);
-        let once = project_sources("p", "i", vec![source("one")], &names, 7);
-        let twice = project_sources("p", "i", vec![source("one"), source("one")], &names, 7);
-        assert_eq!(once, twice);
-        let value = serde_json::to_value(&once).unwrap();
-        assert!(value[0].get("transcript").is_none());
-        assert!(value[0].get("runtimeAddress").is_none());
-        assert_eq!(value[0]["roleId"], "review");
-        assert_eq!(value[0]["ownerDisplayName"], "jiangyang7");
-    }
-
-    #[test]
-    fn missing_history_is_explicit_and_never_uses_another_available_source() {
-        let mut missing = source("old-missing");
-        missing.available = 0;
-        let records = project_sources(
-            "p",
-            "i",
-            vec![missing, source("new-available")],
-            &BTreeMap::new(),
-            7,
-        );
-        let old = records
-            .iter()
-            .find(|item| item.source.id == "old-missing")
-            .unwrap();
-        assert_eq!(old.history_state, "history-unavailable");
-        assert_eq!(old.source.id, "old-missing");
-    }
-
-    #[test]
-    fn identity_includes_role_endpoint_and_exact_source() {
-        let names = BTreeMap::new();
-        let review = project_sources("p", "i", vec![source("one")], &names, 7);
-        let mut general = source("one");
-        general.conversation_id = Some("stand-in-chat-7-primary".into());
-        let general = project_sources("p", "i", vec![general], &names, 7);
-        assert_ne!(review[0].id, general[0].id);
-    }
-
-    #[test]
-    fn another_member_sees_a_restricted_source_without_a_runtime_address() {
-        let names = BTreeMap::from([(7, "jiangyang7".to_string())]);
-        let records = project_sources("p", "i", vec![source("one")], &names, 8);
-        assert_eq!(records[0].history_state, "restricted");
-        assert!(records[0].trace_ref.is_some());
-        assert!(records[0].workroom_ref.is_some());
-    }
-
-    #[test]
-    fn persisted_participation_is_scoped_to_its_exact_project_and_issue() {
-        let metadata = json!({
-            "project_id":"p",
-            "issue_id":"i",
-            "owner_user_id":7,
-            "owner_display_name":"jiangyang7",
-            "role_id":"review",
-            "endpoint_ref":"runtime:7:review",
-            "conversation_id":"stand-in-chat-7-role-review",
-            "source":{"kind":"binding","id":"binding-1"},
-            "workroom_ref":{"kind":"endpoint","id":"runtime:7:review"},
-            "trace_ref":"trace",
-            "history_state":"unverified",
-            "audit_source":"recorded"
+fn participation_target(source: &ParticipationSource) -> ParticipationTarget {
+    let backend_task = managed_task_id(source)
+        .filter(|_| source.available == 1)
+        .map(|task_id| {
+            let origin = crate::config::env_or_dotenv("FRONTEND_URL")
+                .unwrap_or_else(|| "http://localhost:3000".into());
+            BackendTaskSource {
+                task_id,
+                execution_url: format!("{}/chat?taskId={task_id}", origin.trim_end_matches('/')),
+            }
         });
-        let stored = stored_participation("participation", &metadata, "p", "i").unwrap();
-        assert_eq!(stored.owner_user_id, 7);
-        assert_eq!(stored.source.id, "binding-1");
-        assert!(stored_participation("participation", &metadata, "other", "i").is_none());
-    }
-
-    #[tokio::test]
-    async fn every_source_is_scoped_to_the_exact_project_issue_and_owner() {
-        let mysql = crate::sql_test_support::KindQueryCapture::default();
-        participation_sources(&mysql, "project", "issue", 7)
-            .await
-            .unwrap();
-        let queries = mysql.queries();
-        assert_eq!(queries.len(), 1);
-        let sql = &queries[0].sql;
-        assert!(sql.contains("cloud_project_id=?"));
-        assert!(sql.contains("loop_item_id=? AND task_user_id=?"));
-        assert!(sql.contains("executor_owner_user_id=?"));
-        assert!(sql.contains("m.project_id=? AND m.task_id=?"));
-        assert!(sql.contains("a.resource_type='chat_agent'"));
-        assert!(sql.contains(
-            "'message', m.message_id, ?, NULLIF(m.runtime_task_id,'') AS conversation_id,"
-        ));
-        assert!(!sql.contains("SELECT content"));
-        assert!(!sql.contains("wework_transcripts"));
-        assert!(!sql.contains("m.sender_id=CAST(? AS CHAR)"));
-        assert_eq!(sql.matches("COLLATE utf8mb4_unicode_ci AS").count(), 6);
+    ParticipationTarget {
+        runtime_address: runtime_address(source),
+        backend_task,
     }
 }
+
+#[cfg(test)]
+#[path = "assistant_participation_tests.rs"]
+mod tests;
 
 #[cfg(test)]
 mod mysql_tests {

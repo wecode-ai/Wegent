@@ -56,6 +56,17 @@ projectTest(
       body: { title: 'Deleted root', status: 'completed' },
     })
     await webApi(page, `/api/v1/loop-items/${removed.id}`, { method: 'DELETE' })
+    const backfillPath = `/api/v1/cloud-projects/${projectId}/assistant-participations/backfill`
+    for (const dryRun of [true, false, false]) {
+      const result = await webApi<{
+        dryRun: boolean
+        created: number
+        items: Array<{ issueId: string }>
+      }>(page, backfillPath, { method: 'POST', body: { dryRun } })
+      expect(result.dryRun).toBe(dryRun)
+      expect(result.created).toBe(0)
+      expect(result.items.some(item => item.issueId === removed.id)).toBe(false)
+    }
     const issue = await webApi<Resource>(page, `/api/v1/loop-items/${issueId}`)
     await webApi(page, `/api/v1/loop-items/${issueId}`, {
       method: 'PATCH',

@@ -8,6 +8,8 @@ mod admission;
 pub(crate) mod authority;
 #[path = "robot_managed.rs"]
 pub(crate) mod managed;
+#[path = "robot_managed_jobs.rs"]
+pub(crate) mod managed_jobs;
 #[path = "robot_model.rs"]
 pub(crate) mod model;
 #[path = "robot_projection.rs"]
@@ -93,6 +95,7 @@ pub(super) fn register(registry: &mut BackgroundJobRegistry, app: Arc<AppState>)
     if !interval.is_finite() || interval <= 0.0 {
         anyhow::bail!("ROBOT_QUEUE_SCAN_INTERVAL_SECONDS must be finite and positive");
     }
+    managed_jobs::register(registry, app.clone(), Duration::from_secs_f64(interval))?;
     registry.register(JOB, move |context, _| {
         let app = app.clone();
         async move {
@@ -132,7 +135,6 @@ async fn scan(app: &AppState, context: &JobContext) -> Result<Value> {
     let stalled = state::stalled(app).await?;
     wake::cancels(app, &stalled).await;
     admission::prepare(app).await?;
-    managed::prepare(app).await?;
     #[derive(FromMysqlRow)]
     struct Count {
         queued: u64,

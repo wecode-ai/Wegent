@@ -13,6 +13,9 @@ flowchart LR
   Binding --> Access[Personal sharing or active parent-workspace Team grant]
   Access --> Compile[Resolve Bot, Ghost and Shell in the Team owner's scope]
   Compile --> Queue[Durable execution queue]
+  Queue --> Managed[Native managed jobs and authorization]
+  Managed --> Task[Real Backend Task]
+  Task --> Status
   Queue --> Routing[Recheck environment grants, models and Issue runner affinity]
   Routing --> Wake[Notify the actual runner owner]
   Wake --> Pull[Runner claims work]
@@ -30,6 +33,8 @@ flowchart LR
 - The local resource catalog ensures the current-device Agent exists. Project configuration offers both existing-Agent selection and Agent creation.
 
 ## Delivery
+
+Managed Wegent Issue execution uses the default-enabled native jobs `wegent.managed_issue.scan` and `wegent.managed_issue.execute`. The scan follows the queue polling interval and creates real Tasks under a separate distributed lock; execution and state projection retain current authorization checks. This flow is independent of optional Python job migration switches. An explicit `WEGENT_RS_JOB_ALLOWLIST` must include both jobs; existing scheduler and embedded-worker controls still apply.
 
 The durable queue, atomic claim, and Runtime acceptance control task delivery. A wake notification only announces work; it carries no task and does not establish execution success.
 Routed work notifies eligible devices using their owners' connection identities, after checking current grants, models, and Issue runner affinity.

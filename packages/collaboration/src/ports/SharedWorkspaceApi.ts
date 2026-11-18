@@ -135,6 +135,7 @@ export interface AssistantParticipation {
 export interface AssistantParticipationWorkroom {
   participation: AssistantParticipation;
   runtimeAddress: RuntimeTaskAddress | null;
+  backendTask?: { taskId: number; executionUrl: string } | null;
 }
 
 export interface WorkspaceIssuePageInput {

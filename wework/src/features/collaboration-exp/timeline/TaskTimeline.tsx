@@ -8,6 +8,7 @@ import {
 import type { CollaborationAttachment, SharedWorkspaceApi } from '@wegent/collaboration'
 import type { AssistantParticipation } from '@wegent/collaboration'
 import { Button } from '@/components/ui/button'
+import { useMarkdownServices } from '@wegent/collaboration/markdown'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimeTaskAddress } from '@/types/api'
 import type { ExperienceIssueData } from '../data/useExperienceIssue'
@@ -48,6 +49,7 @@ interface Props {
 
 /** Canonical shared messages and explicit persisted history share a read-only presentation. */
 export function TaskTimeline(props: Props) {
+  const { openExternalUrl } = useMarkdownServices()
   const { t } = useTranslation('collaborationExp')
   const { issue } = props.data
   const { timeline, conversations, loading, error } = props.stream
@@ -148,6 +150,7 @@ export function TaskTimeline(props: Props) {
       const workroom = await read(issue.id, participation.id)
       if (request !== participationReadRequest.current) return
       if (workroom.runtimeAddress) props.onExecution(workroom.runtimeAddress)
+      else if (workroom.backendTask) await openExternalUrl(workroom.backendTask.executionUrl)
     } catch {
       // The source access state remains authoritative and unchanged on a failed read.
     }
