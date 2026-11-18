@@ -128,6 +128,7 @@ while ([DateTime]::UtcNow -lt $deadline) {
         if ($button.Current.IsOffscreen -or -not $button.Current.IsEnabled -or $rectangle.IsEmpty -or $rectangle.Width -le 0 -or $rectangle.Height -le 0) {
           throw 'The owned native decision control is not clickable'
         }
+        ${decision.focus ? '$button.SetFocus()' : ''}
         [Console]::Error.WriteLine('Native decision stage: pointer-start')
         [NativePluginPointer]::Click($window.Current.NativeWindowHandle, [int][Math]::Round($rectangle.X + $rectangle.Width / 2), [int][Math]::Round($rectangle.Y + $rectangle.Height / 2))
         [Console]::Error.WriteLine('Native decision stage: pointer-complete')

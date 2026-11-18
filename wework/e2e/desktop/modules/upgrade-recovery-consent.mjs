@@ -25,6 +25,7 @@ export async function confirmUpgradeRecovery(root, timeoutMs) {
       timeoutMs
     )
     await clickNativeDecision(pid, true, new AbortController().signal, undefined, {
+      focus: true,
       titles: ['Wework', 'WeWork'],
       labels: ['Restore and roll back', '恢复并回退'],
     })
