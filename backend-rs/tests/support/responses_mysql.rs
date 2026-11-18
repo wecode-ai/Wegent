@@ -5,40 +5,12 @@
 //! Disposable MySQL fixture shared by the base-table and routed-store regressions.
 
 use brz_mysql::{Json, MysqlResult, MysqlRow, MysqlService, MysqlServiceOptions};
-use std::{
-    sync::atomic::{AtomicU64, Ordering},
-    time::{Duration, SystemTime, UNIX_EPOCH},
-};
+use std::time::Duration;
 use wegent_backend_rs::task_store::TaskStore;
+use wegent_backend_test_support::unique_database_name;
 
 pub const LARGE_RESULT_BYTES: usize = 20 * 1024 * 1024;
 pub const LONG_CONVERSATION_ROWS: usize = 65_536;
-
-static NEXT_DATABASE: AtomicU64 = AtomicU64::new(0);
-
-fn database_name(timestamp: u128) -> String {
-    let sequence = NEXT_DATABASE.fetch_add(1, Ordering::Relaxed);
-    format!(
-        "responses_json_{}_{timestamp}_{sequence}",
-        std::process::id()
-    )
-}
-
-#[test]
-fn concurrent_fixtures_do_not_share_a_schema_when_the_clock_has_not_advanced() {
-    let names = std::thread::scope(|scope| {
-        let mut threads = Vec::with_capacity(8);
-        for _ in 0..8 {
-            threads.push(scope.spawn(|| database_name(1_794_940_570_490_771_831)));
-        }
-        threads
-            .into_iter()
-            .map(|thread| thread.join().unwrap())
-            .collect::<std::collections::HashSet<_>>()
-    });
-    assert_eq!(names.len(), 8);
-    assert!(names.iter().all(|name| name.len() <= 64));
-}
 
 pub struct Fixture {
     admin: MysqlService,
@@ -59,11 +31,7 @@ impl Fixture {
             MysqlService::connect(&format!("mysql://root@{address}/mysql?ssl-mode=disabled"))
                 .await
                 .unwrap();
-        let unique = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let database = database_name(unique);
+        let database = unique_database_name("responses_json");
         admin
             .execute(format!("CREATE DATABASE {database}"), ())
             .await

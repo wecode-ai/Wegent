@@ -1,3 +1,4 @@
+import { createStreamingCompletionChecks } from '../modules/streaming-text-completion.mjs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import { createConversationSwitchingChecks } from '../modules/streaming-conversation-switching.mjs'
 import { createComposerLayoutChecks } from '../modules/streaming-text-composer-layout.mjs'
@@ -117,6 +118,7 @@ export function createDesktopScenario({
 }) {
   const markdownLinks = createMarkdownLinkChecks({ captureScreenshot, workspacePath, uiTimeoutMs })
   const fileCitations = createFileCitationChecks({ workspacePath, uiTimeoutMs })
+  const completion = createStreamingCompletionChecks({ resultDir, uiTimeoutMs })
   const transcriptIdentity = createStreamingTranscriptIdentityChecks({ uiTimeoutMs })
   const guidanceOrder = createStreamingGuidanceOrderChecks({ resultDir, uiTimeoutMs })
   const conversationSwitching = createConversationSwitchingChecks({ uiTimeoutMs, resultDir })
@@ -283,6 +285,7 @@ export function createDesktopScenario({
   })
   return {
     cleanup() {
+      completion.cleanup()
       guidanceOrder.cleanup()
     },
     codexConfigToml: '\n[features.multi_agent_v2]\nenabled = true\n',
@@ -347,6 +350,7 @@ export function createDesktopScenario({
       const body = await readJson(request)
       if (handleEmptyReplyPrediction(body, response)) return true
       const responseId = `wework-streaming-text-${Date.now()}`
+      if (await completion.handleModelRequest(body, response, responseId)) return true
       if (await transcriptIdentity.handleModelRequest(body, response, responseId)) return true
       if (await guidanceOrder.handleModelRequest(body, response, responseId)) return true
       if (await conversationSwitching.handleModelRequest(body, response, responseId)) return true
@@ -874,6 +878,7 @@ export function createDesktopScenario({
         [
           'streaming-content',
           async control => {
+            await completion.verify(control)
             await verifyContent(control)
             await interactiveVisualization.verify(control)
             await visualizationScroll.verify(control)

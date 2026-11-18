@@ -95,7 +95,7 @@ def _app_device_id(device: Kind) -> str | None:
     return value or None
 
 
-def _identity_from_device(device: Kind) -> RuntimeRouteIdentity | None:
+def identity_from_device(device: Kind) -> RuntimeRouteIdentity | None:
     runtime_device_id = runtime_device_route_id(device)
     if not runtime_device_id:
         return None
@@ -124,7 +124,7 @@ def resolve_runtime_route_identity(
         user_id=user_id,
         device_id=submitted_device_id,
     )
-    return _identity_from_device(device) if device is not None else None
+    return identity_from_device(device) if device is not None else None
 
 
 def normalize_execution_device_id(
