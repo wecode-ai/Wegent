@@ -364,7 +364,9 @@ test('native RAG answer keeps its committed snapshot across refresh and opens cu
       await viewerCitation.click()
       expect((await denied).status()).toBe(403)
       await expect(viewer.getByTestId('answer-evidence-content')).toHaveCount(0)
-      await expect(viewer.getByTestId('answer-evidence-panel').getByRole('alert')).toBeVisible()
+      await expect(viewer.getByTestId('answer-evidence-panel')).toHaveCount(0)
+      await expect(viewerCitation).toHaveCount(0)
+      await expect(viewer.getByTestId('answer-source-access')).toBeVisible()
     } finally {
       await context.close()
     }
