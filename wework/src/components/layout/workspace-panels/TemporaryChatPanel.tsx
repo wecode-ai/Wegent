@@ -488,6 +488,44 @@ export function TemporaryChatPanel({
     setSubmissionStartFailureCount(failedAssistantCount)
     setSending(true)
   }, [failedAssistantCount, lifecycleTurnKey])
+  const hasModelControls = Boolean(modelControls)
+  const modelGateDiagnostics = useMemo(
+    () =>
+      JSON.stringify({
+        failedAssistantCount,
+        failedAssistantIds: presentation.messages
+          .filter(
+            message =>
+              message.role === 'assistant' &&
+              (message.status === 'failed' || message.runtimeStatus === 'failed')
+          )
+          .map(message => message.id),
+        lifecycleTurnKey,
+        messageCount: presentation.messages.length,
+        modelControls: hasModelControls,
+        sending,
+        submissionStartFailureCount,
+        submissionStartTurnKey,
+        submissionTurnSettled,
+        taskModelIdentityPending,
+      }),
+    [
+      failedAssistantCount,
+      hasModelControls,
+      lifecycleTurnKey,
+      presentation.messages,
+      sending,
+      submissionStartFailureCount,
+      submissionStartTurnKey,
+      submissionTurnSettled,
+      taskModelIdentityPending,
+    ]
+  )
+  useEffect(() => {
+    if (nativeConversation) {
+      console.info('[temporary-chat-model-gate]', modelGateDiagnostics)
+    }
+  }, [modelGateDiagnostics, nativeConversation])
   const messageViewId = useId()
   const [goalDraftActive, setGoalDraftActive] = useState(false)
   const lifecycleStore = useRuntimeTaskLifecycleStore()
