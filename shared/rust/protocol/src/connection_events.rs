@@ -159,6 +159,24 @@ pub fn matches_activation(
         .is_some_and(|(enabled, received)| received >= enabled)
 }
 
+/// Retain events collected during activation, even when a shared cursor advanced.
+/// Earlier source events remain excluded by the original activation contract.
+pub fn activation_sequence(
+    source: &Value,
+    observation: &Value,
+    parse_time: impl Fn(&Value) -> Option<i64>,
+) -> u64 {
+    observation["events"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|entry| matches_activation(source, &entry["event"], &parse_time))
+        .filter_map(|entry| entry["sequence"].as_u64())
+        .min()
+        .map(|sequence| sequence.saturating_sub(1))
+        .unwrap_or_else(|| observation["sequence"].as_u64().unwrap_or_default())
+}
+
 pub fn validate_filter(filter: &Value) -> Result<(), &'static str> {
     if filter.is_null() {
         return Ok(());
@@ -207,6 +225,28 @@ pub fn validate_filter(filter: &Value) -> Result<(), &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn activation_replays_retained_events_without_replaying_older_source_history() {
+        let observation = json!({"sequence":3,"events":[{"sequence":1,"event":{"at":90}},{"sequence":2,"event":{"at":100}},{"sequence":3,"event":{"at":101}}]});
+        assert_eq!(
+            activation_sequence(&json!({"enabledAfter":100}), &observation, Value::as_i64),
+            1
+        );
+        assert_eq!(
+            activation_sequence(&json!({"enabledAfter":102}), &observation, Value::as_i64),
+            3
+        );
+        let positioned = json!({"sequence":4,"events":[{"sequence":3,"event":{"position":{"partition":"other","sequence":8}}},{"sequence":4,"event":{"position":{"partition":"chosen","sequence":8}}}]});
+        assert_eq!(
+            activation_sequence(
+                &json!({"boundary":{"partition":"chosen","sequence":7}}),
+                &positioned,
+                Value::as_i64
+            ),
+            3
+        );
+    }
+
     #[test]
     fn alternatives_keep_common_scope_and_exact_json_types() {
         let filter = json!({"/topicId":"pr-4749", "/sha":"head", "$any":[{"/state":"SUCCESS"},{"/state":"FAILURE"}]});
