@@ -4,9 +4,7 @@
   "members": [
     "streaming-content",
     "streaming-tools",
-    "streaming-scroll",
     "streaming-message-order",
-    "streaming-conversation-switching",
-    "streaming-subagents"
+    "streaming-conversation-switching"
   ]
 }

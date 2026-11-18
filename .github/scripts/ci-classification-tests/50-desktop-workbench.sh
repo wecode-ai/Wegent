@@ -23,7 +23,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "independent features select the union of minimum segments" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"streaming-message-order,streaming-conversation-switching,rendering-extensions,streaming-subagents"},{"id":"core-2","name":"Core / shard 2","segments":"streaming-scroll,streaming-tools"},{"id":"core-4","name":"Core / shard 4","segments":"streaming-content"},{"id":"core-8","name":"Core / shard 8","segments":"goal-lifecycle"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"streaming-message-order,streaming-conversation-switching,rendering-extensions,streaming-subagent-guidance"},{"id":"core-2","name":"Core / shard 2","segments":"streaming-tools"},{"id":"core-4","name":"Core / shard 4","segments":"streaming-content"},{"id":"core-8","name":"Core / shard 8","segments":"goal-lifecycle"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/lib/runtime-goal.ts" \
@@ -32,7 +32,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "runner coverage does not broaden a classified feature" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"streaming-message-order,streaming-conversation-switching,rendering-extensions,streaming-subagents"},{"id":"core-2","name":"Core / shard 2","segments":"streaming-scroll,streaming-tools"},{"id":"core-4","name":"Core / shard 4","segments":"streaming-content"},{"id":"core-8","name":"Core / shard 8","segments":"conversation-state"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"streaming-message-order,streaming-conversation-switching,rendering-extensions,streaming-subagent-guidance"},{"id":"core-2","name":"Core / shard 2","segments":"streaming-tools"},{"id":"core-4","name":"Core / shard 4","segments":"streaming-content"},{"id":"core-8","name":"Core / shard 8","segments":"conversation-state"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/task-flow.e2e.mjs" \

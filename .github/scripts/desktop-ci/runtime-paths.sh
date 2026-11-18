@@ -17,7 +17,7 @@ classify_path() {
       wework-mobile/src/domain/mobileSubagents* | \
       wework-mobile/src/domain/mobileProcessingBlocks* | \
       wework-mobile/src/services/mobileTranscriptTransfer*)
-      select_target "core:streaming-subagents"
+      select_target "core:streaming-subagent-guidance"
       return
       ;;
     # The existing cloud fixture verifies Mobile's file transport, not native UI.

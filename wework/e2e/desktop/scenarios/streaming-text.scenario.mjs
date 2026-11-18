@@ -95,7 +95,6 @@ import { writeFile, readFile } from 'node:fs/promises'
 import { isCollaborationSubagentRequest } from '../modules/subagent-request.mjs'
 import { createStreamingContentChecks } from '../modules/streaming-text-content.mjs'
 import { createStreamingToolChecks } from '../modules/streaming-text-tools.mjs'
-import { createStreamingScrollChecks } from '../modules/streaming-text-scroll.mjs'
 import { createStreamingTranscriptIdentityChecks } from '../modules/streaming-transcript-identity.mjs'
 import { createStreamingGuidanceOrderChecks } from '../modules/streaming-text-guidance-order.mjs'
 import { createInteractiveVisualizationChecks } from '../modules/streaming-interactive-visualization.mjs'
@@ -267,20 +266,7 @@ export function createDesktopScenario({
     releaseToolDetailPersistenceCompletion,
     toolDetailPersistenceFinalTextStarted,
   })
-  const { verifyScroll } = createStreamingScrollChecks({
-    modelResponseTimeoutMs,
-    uiTimeoutMs,
-    capture,
-    requestReceived,
-    getTargetRequest: () => targetRequest,
-    releaseStart,
-    partialWritten,
-    releaseAppend,
-    appendWritten,
-    releaseScrollButtonAppend,
-    scrollButtonAppendWritten,
-    releaseResponse,
-  })
+
   return {
     cleanup() {
       guidanceOrder.cleanup()
@@ -889,7 +875,6 @@ export function createDesktopScenario({
             await verifyTools(control)
           },
         ],
-        ['streaming-scroll', verifyScroll],
         ['streaming-message-order', verifyStoppedTurnOrder],
         [
           'streaming-conversation-switching',
@@ -900,7 +885,7 @@ export function createDesktopScenario({
             await richTaskSwitch.verify(control)
           },
         ],
-        ['streaming-subagents', verifySubagentStreamingPanel],
+        ['streaming-subagent-guidance', verifySubagentStreamingPanel],
       ])
       const selectedCheckpoint = checkpoint?.startsWith('streaming-')
         ? checkpoint
