@@ -371,8 +371,23 @@ function assertDeadlineReplay(replay) {
   assert.equal(Object.keys(observed).length, replay.checkpointCount)
   assert.ok(Object.keys(replay.unobservedSeconds).every(key => !Object.hasOwn(replay.seconds, key)))
   for (const seconds of Object.values(observed)) assert.ok(Number.isFinite(seconds) && seconds > 0)
+  // Replay the original workload even when today's group has fewer members.
+  const historicalGroups = {
+    'collaboration-issue-comment-notification': [
+      'collaboration-issue-comment-notification-navigation',
+      'issue-notification-read',
+    ],
+  }
+  const historicalMatrix = {
+    ...replay.matrix,
+    include: replay.matrix.include.map(shard => ({
+      ...shard,
+      segments: shard.segments.split(',')
+        .flatMap(segment => historicalGroups[segment] ?? [segment]).join(','),
+    })),
+  }
   const covered = []
-  for (const shard of balanceWindowsMatrix(replay.matrix).include) {
+  for (const shard of balanceWindowsMatrix(historicalMatrix).include) {
     if (['core-9', 'core-10'].includes(shard.id)) continue
     covered.push(...expandDesktopCheckpoints(shard.segments.split(',')))
     const seconds = replayedShardSeconds(shard, observed, replay.runnerOverheadSeconds)

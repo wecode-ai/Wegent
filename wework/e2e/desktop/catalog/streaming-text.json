@@ -3,7 +3,6 @@
   "groupOrder": 7000,
   "members": [
     "streaming-content",
-    "streaming-tools",
-    "streaming-message-order"
+    "streaming-tools"
   ]
 }

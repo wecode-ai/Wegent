@@ -89,11 +89,6 @@ export const SUBAGENT_CHILD_PARTIAL = 'WEWORK_DESKTOP_E2E_SUBAGENT_PARTIAL'
 export const SUBAGENT_CHILD_FINAL = 'WEWORK_DESKTOP_E2E_SUBAGENT_COMPLETE'
 export const SUBAGENT_CHILD_COMPLETION = `${SUBAGENT_CHILD_PARTIAL}\n\n${SUBAGENT_CHILD_FINAL}`
 export const SUBAGENT_PARENT_COMPLETION = 'WEWORK_DESKTOP_E2E_SUBAGENT_PARENT_COMPLETE'
-export const ORDER_STOP_PROMPT = 'WEWORK_DESKTOP_E2E_ORDER_STOPPED_TURN'
-export const ORDER_STOP_PARTIAL = 'WEWORK_DESKTOP_E2E_ORDER_STOP_PARTIAL'
-export const ORDER_FOLLOW_UP_PREFIX = 'WEWORK_DESKTOP_E2E_ORDER_FOLLOW_UP'
-export const ORDER_COMPLETION_PREFIX = 'WEWORK_DESKTOP_E2E_ORDER_COMPLETION'
-export const ORDER_FOLLOW_UP_COUNT = 26
 export const HIDDEN_REASONING = 'WEWORK_DESKTOP_E2E_HIDDEN_REASONING_CONTENT'
 export const REASONING_SUMMARY = 'WEWORK_DESKTOP_E2E_REASONING_SUMMARY'
 export const REASONING_PREVIEW = REASONING_SUMMARY.replaceAll('_', ' ')
@@ -535,11 +530,6 @@ export function latestModelInputText(body) {
   return JSON.stringify(input ?? message ?? '')
 }
 
-export function orderFollowUpNumber(body) {
-  const match = latestModelInputText(body).match(new RegExp(`${ORDER_FOLLOW_UP_PREFIX}_(\\d+)`))
-  return match ? Number(match[1]) : null
-}
-
 export function requestContainsToolOutput(body) {
   return (body.input ?? []).some(item =>
     ['function_call_output', 'custom_tool_call_output'].includes(item.type)
@@ -694,12 +684,6 @@ export async function assertComposerDocked(control, scrollerMetrics, description
     bottomGap >= 0 && bottomGap <= 32,
     `${description} drifted ${bottomGap}px above the conversation viewport bottom`
   )
-}
-
-export function processingDurationSeconds(text) {
-  const minutes = Number(text.match(/(\d+)\s*分钟/)?.[1] ?? 0)
-  const seconds = Number(text.match(/(\d+)\s*秒/)?.[1] ?? 0)
-  return minutes * 60 + seconds
 }
 
 export async function expandCompletedProcessing(control, timeoutMs) {
@@ -918,30 +902,6 @@ export async function retainSecondTaskWorkspace(control, timeoutMs) {
     ) >= 2,
     'The inactive task workspace provider was not retained for the streaming regression'
   )
-}
-
-export async function sendOrderFollowUp(control, index, uiTimeoutMs, modelResponseTimeoutMs) {
-  const prompt = `${ORDER_FOLLOW_UP_PREFIX}_${index}`
-  assert.equal(
-    await control.command('fill', COMPOSER_SELECTOR, { value: prompt }),
-    prompt,
-    `Follow-up ${index} was not filled into the active composer`
-  )
-  await control.command(
-    'clickWhenEnabled',
-    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]`,
-    { timeoutMs: uiTimeoutMs, visible: true }
-  )
-  const response = await control.awaitScenarioRequestCount(
-    'message_order_follow_up',
-    index,
-    modelResponseTimeoutMs
-  )
-  assert.equal(response.followUpNumber, index, 'The model answered a different follow-up turn')
-  await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
-    text: `${ORDER_COMPLETION_PREFIX}_${index}`,
-    timeoutMs: uiTimeoutMs,
-  })
 }
 
 export { readJson }

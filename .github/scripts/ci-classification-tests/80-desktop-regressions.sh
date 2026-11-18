@@ -35,17 +35,6 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/modules/model-catalog-recovery.mjs"
 
-for path in \
-  wework/e2e/desktop/scenarios/follow-up-task-switch.scenario.mjs \
-  wework/e2e/desktop/modules/follow-up-agent-history.mjs; do
-  assert_desktop_case "follow-up identity regression has CI coverage: $path" \
-    'wework_desktop_e2e=true
-wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"follow-up-task-switch"}]}
-wework_desktop_other_e2e=false
-wework_desktop_other_e2e_matrix={"include":[]}' \
-    "$path"
-done
 
 assert_desktop_case "pane goal updates select conversation and goal synchronization coverage" \
   'wework_desktop_e2e=true

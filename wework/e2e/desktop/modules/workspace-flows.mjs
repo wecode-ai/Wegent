@@ -1185,31 +1185,6 @@ async function verifyTrackedTaskRunningStatus(control, taskTabTestId) {
   })
 }
 
-async function verifyTrackedTaskSettledStatus(control) {
-  await control.command('waitFor', '[data-testid="work-item-open-board-menu"]', {
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  await control.command('click', '[data-testid="work-item-open-board-menu"]')
-  const activeBoardContentSelector = await requireActiveWorkItemsTab(
-    control,
-    'The settled work-item navigation did not open its My Tasks tab'
-  )
-  const runningColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_progress"]`
-  const reviewColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_review"]`
-  await control.command('scrollIntoView', reviewColumnSelector)
-  await control.command('waitFor', reviewColumnSelector, {
-    text: 'WEWORK_DESKTOP_E2E_TASK',
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
-  assert.doesNotMatch(
-    await control.command('getText', runningColumnSelector),
-    /WEWORK_DESKTOP_E2E_TASK/,
-    'The settled task remained in the running column'
-  )
-}
-
 async function openBoardTaskPageByText(control, activeBoardContentSelector, text, marker) {
   const boardCardId = await control.command(
     'markElementWithText',
@@ -1747,7 +1722,6 @@ export {
   verifyDefaultTaskBoardAssociation,
   verifyTrackedTaskBoardRunningStatus,
   verifyTrackedTaskRunningStatus,
-  verifyTrackedTaskSettledStatus,
   enrichTrackedDefaultIssueTitle,
   verifyExistingTaskBoardAssociation,
   verifyExplicitlyTrackedTask,

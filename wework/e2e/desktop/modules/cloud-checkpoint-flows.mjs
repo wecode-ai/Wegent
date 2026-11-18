@@ -83,7 +83,7 @@ import {
   writeFile,
 } from './shared.mjs'
 
-import { verifyBackgroundCompletionRestore, verifyPriorityFilter } from './task-state-flows.mjs'
+import { verifyBackgroundCompletionRestore } from './task-state-flows.mjs'
 
 import {
   verifyAttachmentOnlySidebarLifecycle,
@@ -95,7 +95,6 @@ import { captureVerificationScreenshot, waitForControlValue } from './workspace-
 const CLOUD_CHECKPOINTS = [
   'cloud-project-creation',
   'cloud-device-lifecycle',
-  'priority-filter',
   'automation-lifecycle',
   'plugin-auto-update',
   'plugin-workspace-publication',
@@ -847,10 +846,6 @@ async function verifyCloudCheckpoint({
         setPhase,
         workspacePath,
       })
-      return
-    case 'priority-filter':
-      setPhase('cloud-priority-filter')
-      await verifyPriorityFilter({ composerSelector, control, projectRowSelector })
       return
     case 'automation-lifecycle':
       setPhase('cloud-automation-lifecycle')

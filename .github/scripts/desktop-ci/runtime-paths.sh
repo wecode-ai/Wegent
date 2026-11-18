@@ -387,7 +387,7 @@ classify_path() {
     executor/src/local/app_ipc.rs | \
       executor/src/local/codex_home.rs | \
       executor/tests/local_app_ipc_contract.rs)
-      select_target "core:external-content-import"
+      select_target "core:workbench-mode"
       ;;
     backend/app/api/endpoints/runtime_work.py | \
       backend/app/api/ws/device_namespace.py | \
@@ -423,8 +423,8 @@ classify_path() {
       backend-rs/init_data/04-collaboration-templates.yaml | \
       shared/data/collaboration-templates.json)
       select_target "core:collaboration-templates"
-      select_target "core:collaboration-template-lifecycle"
-      select_target "core:collaboration-template-agents"
+      select_target "core:collaboration-shared-core"
+      select_target "core:collaboration-templates"
       select_target "core:collaboration-template-app-device-routing"
       if [[ "$path" == packages/collaboration/src/templates/* ]]; then
         select_target "core:collaboration-first-use"
@@ -443,7 +443,7 @@ classify_path() {
       select_collaboration_dispatch_checkpoints
       if [[ "$path" == packages/collaboration/src/project-agent-config/* || \
         "$path" == packages/collaboration/src/agent-form/runnerRouting* ]]; then
-        select_target "core:collaboration-template-agents"
+        select_target "core:collaboration-templates"
         select_target "core:collaboration-template-app-device-routing"
       fi
       select_target "cloud:cloud-device-lifecycle"
@@ -454,12 +454,12 @@ classify_path() {
       ;;
     wework/src/api/agentRoutingCatalog* | \
       wework/src/features/collaboration/WeworkProjectAgentConfigurationHost*)
-      select_target "core:collaboration-template-agents"
+      select_target "core:collaboration-templates"
       select_target "core:collaboration-template-app-device-routing"
       ;;
     packages/collaboration/*)
       if [[ "$path" == packages/collaboration/src/conversation/useConversationScrollController* ]]; then
-        select_target "core:follow-up-task-switch"
+        select_target "core:follow-up-message-visibility"
       fi
       select_target "core:collaboration-board-move-recovery"
       if [[ "$path" == packages/collaboration/src/composer/* ]]; then

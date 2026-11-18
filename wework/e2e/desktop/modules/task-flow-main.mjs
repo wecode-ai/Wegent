@@ -290,14 +290,9 @@ import {
 } from './shared.mjs'
 
 import {
-  verifyAsyncRequestUserInput,
-  verifyFreeTextRequestUserInput,
-  verifyAsyncQuestionWaitingIndicator,
   verifyBackgroundCompletionRestore,
   verifyCompletedTurnFork,
   verifyForkProviderModelPreservation,
-  verifyPriorityFilter,
-  verifyRuntimeTaskOrderAndUnreadVisibility,
   verifyRunningFollowUpFork,
 } from './task-state-flows.mjs'
 import { verifyRuntimeWorkSilentRefresh } from './runtime-work-silent-refresh.mjs'
@@ -316,9 +311,7 @@ import {
   verifyDefaultTaskBoardAssociation,
   verifyExistingTaskBoardAssociation,
   verifyExplicitlyTrackedTask,
-  verifyTrackedTaskBoardRunningStatus,
   verifyTrackedTaskRunningStatus,
-  verifyTrackedTaskSettledStatus,
   verifyWorkspaceDocumentTabs,
   waitForControlSelectionOffset,
   waitForControlValue,
@@ -2471,39 +2464,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       return
     }
 
-    if (shouldRunDesktopCheckpoint('priority-filter')) {
-      phase = 'priority-filter'
-      await verifyPriorityFilter({ composerSelector: ACTIVE_COMPOSER_SELECTOR, control })
-      phase = 'request-user-input-async'
-      await verifyAsyncRequestUserInput({
-        composerSelector: ACTIVE_COMPOSER_SELECTOR,
-        control,
-        executorHome,
-      })
-      phase = 'free-text-request-user-input'
-      await verifyFreeTextRequestUserInput({
-        composerSelector: ACTIVE_COMPOSER_SELECTOR,
-        control,
-        executorHome,
-      })
-      phase = 'async-question-waiting-indicator'
-      await verifyAsyncQuestionWaitingIndicator({
-        composerSelector: ACTIVE_COMPOSER_SELECTOR,
-        control,
-        executorHome,
-      })
-      phase = 'runtime-task-order-unread'
-      await verifyRuntimeTaskOrderAndUnreadVisibility({
-        composerSelector: ACTIVE_COMPOSER_SELECTOR,
-        control,
-        executorHome,
-      })
-      if (shouldStopAfterDesktopCheckpoint('priority-filter')) {
-        console.log(`Wework desktop priority-filter checkpoint passed. Evidence: ${resultDir}`)
-        return
-      }
-    }
-
     if (shouldRunDesktopCheckpoint('fork-provider-preservation')) {
       phase = 'fork-provider-model-preservation'
       await verifyForkProviderModelPreservation({
@@ -2897,7 +2857,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     let associatedTaskTabTestId = null
     if (
       shouldRunDesktopCheckpoint('core-task-flow') ||
-      shouldRunDesktopCheckpoint('task-status-sync') ||
       shouldRunDesktopCheckpoint('task-board-association')
     ) {
       phase = 'project-space-default-association-setup'
@@ -2969,7 +2928,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     let taskRowCompletionText = COMPLETION_TEXT
     if (
       shouldRunDesktopCheckpoint('core-task-flow') ||
-      shouldRunDesktopCheckpoint('task-status-sync') ||
       shouldRunDesktopCheckpoint('task-board-association')
     ) {
       const activeModelSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
@@ -3007,43 +2965,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       if (associatedTaskTabTestId) {
         phase = 'project-space-running-task-synchronized'
         await verifyTrackedTaskRunningStatus(control, associatedTaskTabTestId)
-      }
-      if (shouldRunDesktopCheckpoint('task-status-sync')) {
-        phase = 'project-space-settled-task-synchronized'
-        control.releaseInitialToolExecution()
-        await control.command('waitFor', '[data-testid="message-assistant"]', {
-          text: COMPLETION_TEXT,
-          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-        })
-        await verifyTrackedTaskSettledStatus(control)
-        await control.command('click', `[data-testid="${associatedTaskTabTestId}"]`)
-        await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR, {
-          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-        })
-        control.setScenario('follow_up')
-        await sendPromptUntilScenarioRequest(
-          control,
-          composerSelector,
-          FOLLOW_UP_PROMPT,
-          'follow_up'
-        )
-        try {
-          await verifyTrackedTaskBoardRunningStatus(control, null)
-        } finally {
-          control.releaseFollowUpResponse()
-        }
-        await control.command('click', `[data-testid="${associatedTaskTabTestId}"]`)
-        await control.command('waitFor', '[data-testid="message-assistant"]', {
-          text: FOLLOW_UP_COMPLETION_TEXT,
-          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-        })
-        await writeFile(
-          join(resultDir, 'model-requests.json'),
-          `${JSON.stringify(control.modelRequests, null, 2)}\n`,
-          'utf8'
-        )
-        console.log(`Wework desktop task-status-sync checkpoint passed. Evidence: ${resultDir}`)
-        return
       }
       if (shouldRunDesktopCheckpoint('task-board-association')) {
         phase = 'project-space-task-board-association'

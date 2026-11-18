@@ -231,7 +231,7 @@ classify_wework_path() {
       wework/src/api/local/codexPluginInstallation.ts | \
       wework/src/components/settings/ExternalContentImportDialog.tsx | \
       wework/e2e/desktop/scenarios/external-content-import.scenario.mjs)
-      select_target "core:external-content-import"
+      select_target "core:workbench-mode"
       if [[ "$path" == wework/src/api/local/codexPlugin* ]]; then
         select_target "plugins:plugin-lifecycle"
         select_target "core:project-ai-settings"
@@ -266,7 +266,7 @@ classify_wework_path() {
 
     wework/dsh/voice-input/* | \
       wework/e2e/desktop/scenarios/voice-input.scenario.mjs)
-      select_target "core:voice-input"
+      select_target "core:core-task-flow"
       return
       ;;
 
@@ -345,7 +345,7 @@ classify_wework_path() {
       ;;
 
     wework/e2e/desktop/scenarios/task-model-deletion.scenario.mjs)
-      select_target "cloud:task-model-deletion"
+      select_target "cloud:cloud-model-recovery"
       return
       ;;
 
@@ -424,11 +424,7 @@ classify_wework_path() {
       return
       ;;
 
-    wework/e2e/desktop/scenarios/follow-up-task-switch.scenario.mjs | \
-      wework/e2e/desktop/modules/follow-up-agent-history.mjs)
-      select_target "core:follow-up-task-switch"
-      return
-      ;;
+
 
 
     wework/e2e/desktop/scenarios/human-interactions.scenario.mjs | \
@@ -476,7 +472,7 @@ classify_wework_path() {
 
     # The extracted priority section has its own runtime-task fixture.
     wework/src/components/layout/DesktopSidebarPrioritySection.tsx)
-      select_target "core:priority-filter"
+      select_target "core:core-task-flow"
       return
       ;;
     wework/e2e/desktop/scenarios/project-automation.scenario.mjs)

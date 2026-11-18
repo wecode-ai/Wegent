@@ -176,7 +176,7 @@ classify_workbench_path() {
       wework/src/features/todo/CloudTodoWorkspace* | \
       wework/src/features/todo/TaskBoardAssociationDialog* | \
       wework/src/features/todo/WorkItemComposerGuide*)
-      select_target "core:task-status-sync"
+      select_target "core:core-task-flow"
       select_target "core:task-board-association"
       if [[ "$path" == wework/src/api/deliveries* ]]; then
         select_target "core:collaboration-issue-comment-notification"
@@ -201,7 +201,7 @@ classify_workbench_path() {
       ;;
     wework/src/features/workbench/projectTaskTracking* | \
       wework/src/features/workbench/workbenchContextTypes*)
-      select_target "core:task-status-sync"
+      select_target "core:core-task-flow"
       if [[ "$path" == wework/src/features/workbench/workbenchContextTypes* ]]; then
         select_target "core:core-task-flow"
       fi
@@ -209,7 +209,7 @@ classify_workbench_path() {
       ;;
     # The main sidebar also owns project creation, chats, and attachments.
     wework/src/components/layout/DesktopSidebar.tsx)
-      select_target "core:priority-filter"
+      select_target "core:core-task-flow"
       select_target "core:core-task-flow"
       select_target "core:project-ai-settings"
       select_target "core:workspace-attachments"
@@ -252,7 +252,7 @@ classify_workbench_path() {
       fi
       if [[ "$path" == wework/src/features/workbench/useWorkbenchRuntimeTasks* ]]; then
         select_target "core:runtime-task-queue"
-        select_target "core:task-status-sync"
+        select_target "core:core-task-flow"
         select_target "core:core-task-flow"
       fi
       return

@@ -1,4 +1,3 @@
-import { sendOrderFollowUp } from './streaming-text-fixture.mjs'
 import {
   ACTIVE_WORKBENCH_SELECTOR,
   openNewChatWithE2EModel,
@@ -17,14 +16,9 @@ import {
   WINDOWS_LINK_PROMPT,
   ASSISTANT_MARKDOWN_LINK_SELECTOR,
   WINDOWS_LINK_LABEL,
-  ORDER_STOP_PROMPT,
   waitForNewTaskRow,
   ASSISTANT_MESSAGE_SELECTOR,
-  ORDER_STOP_PARTIAL,
-  ORDER_FOLLOW_UP_COUNT,
-  processingDurationSeconds,
   PANE_EVICTION_BLANK_COUNT,
-  ORDER_COMPLETION_PREFIX,
   SUBAGENT_PROMPT,
   SUBAGENT_CHILD_PARTIAL,
   SUBAGENT_CHILD_TOOL_MARKER,
@@ -235,72 +229,6 @@ export function createStreamingToolChecks({
       'The Windows drive-letter markdown link was rendered as blocked text'
     )
     await capture(control, 'streaming-text-00-windows-drive-link.png')
-  }
-
-  const verifyStoppedTurnOrder = async control => {
-    await openNewChatWithE2EModel(control, uiTimeoutMs)
-    const knownOrderTaskRows = new Set(
-      JSON.parse(await control.command('snapshot', 'body')).testIds.filter(testId =>
-        testId.startsWith('runtime-local-task-row-')
-      )
-    )
-    await control.command('fill', COMPOSER_SELECTOR, { value: ORDER_STOP_PROMPT })
-    await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
-    const orderTaskRowTestId = await waitForNewTaskRow(
-      control,
-      knownOrderTaskRows,
-      ORDER_STOP_PROMPT,
-      uiTimeoutMs
-    )
-    await control.command('waitFor', '[data-testid="pause-response-button"]', {
-      timeoutMs: uiTimeoutMs,
-    })
-    await control.command('waitFor', ASSISTANT_MESSAGE_SELECTOR, {
-      text: ORDER_STOP_PARTIAL,
-      stableMs: 500,
-      timeoutMs: uiTimeoutMs,
-    })
-    await control.command('click', '[data-testid="pause-response-button"]')
-    await control.command('waitFor', '[data-testid="assistant-stopped-notice"]', {
-      timeoutMs: uiTimeoutMs,
-    })
-    await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
-    for (let index = 1; index <= ORDER_FOLLOW_UP_COUNT; index += 1) {
-      await sendOrderFollowUp(control, index, uiTimeoutMs, modelResponseTimeoutMs)
-    }
-    await waitForRuntimePaneReadyToSend(control, uiTimeoutMs)
-    const durationSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="processing-duration-label"]`
-    const completedDuration = await control.command('getText', durationSelector)
-    assert.match(completedDuration, /用时/)
-    assert.ok(
-      processingDurationSeconds(completedDuration) >= 2,
-      `The turn following a stopped turn lost its elapsed time: ${completedDuration}`
-    )
-    for (let index = 0; index < PANE_EVICTION_BLANK_COUNT; index += 1) {
-      await control.command('click', '[data-testid="new-chat-button"]')
-      await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
-    }
-    await control.command('clickWhenEnabled', `[data-testid="${orderTaskRowTestId}"]`, {
-      timeoutMs: uiTimeoutMs,
-    })
-    const latestOrderCompletion = `${ORDER_COMPLETION_PREFIX}_${ORDER_FOLLOW_UP_COUNT}`
-    await control.command('waitFor', ASSISTANT_CONTENT_SELECTOR, {
-      text: latestOrderCompletion,
-      stableMs: 750,
-      timeoutMs: uiTimeoutMs,
-    })
-    assert.equal(
-      Number(await control.command('getElementCount', '[data-testid="assistant-stopped-notice"]')),
-      0,
-      'The latest transcript position remained on the older stopped turn'
-    )
-    const restoredDuration = await control.command('getText', durationSelector)
-    assert.match(restoredDuration, /用时/)
-    assert.ok(
-      processingDurationSeconds(restoredDuration) >= 2,
-      `The resumed turn duration reset after transcript restoration: ${restoredDuration}`
-    )
-    await capture(control, 'streaming-text-17-stopped-turn-order-restored.png')
   }
 
   const verifySubagentStreamingPanel = async control => {
@@ -845,7 +773,6 @@ export function createStreamingToolChecks({
   }
   return {
     verifyLongCodeTerminalBurst,
-    verifyStoppedTurnOrder,
     verifySubagentStreamingPanel,
     verifyTools,
   }

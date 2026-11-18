@@ -14,7 +14,6 @@ import {
   GENERATED_IMAGE_REVISED_PROMPT,
   ATTACHMENT_BASE64,
   latestModelInputText,
-  orderFollowUpNumber,
   streamingEvents,
   longCodeStreamingEvents,
   SUBAGENT_CHILD_COMMENTARY,
@@ -47,10 +46,6 @@ import {
   LONG_CODE_PROMPT,
   LONG_CODE_COMPLETION,
   LONG_CODE_STREAM_MARKER,
-  ORDER_FOLLOW_UP_COUNT,
-  ORDER_COMPLETION_PREFIX,
-  ORDER_STOP_PROMPT,
-  ORDER_STOP_PARTIAL,
   TOOL_DETAIL_PERSISTENCE_CALL_ID,
   TOOL_DETAIL_PERSISTENCE_COMPLETION,
   requestContainsToolOutput,
@@ -231,32 +226,28 @@ export function createDesktopScenario({
     reclassifiedCommentaryFollowUpReceived,
     releaseReclassifiedCommentaryFinal,
   })
-  const {
-    verifyTools,
-    verifyLongCodeTerminalBurst,
-    verifyStoppedTurnOrder,
-    verifySubagentStreamingPanel,
-  } = createStreamingToolChecks({
-    uiTimeoutMs,
-    releaseLongCodeStream,
-    resultDir,
-    capture,
-    modelResponseTimeoutMs,
-    captureSubagent,
-    subagentToolRenderTimeoutMs,
-    subagentPartialWritten,
-    releaseSubagentCompletion,
-    beforeSubagentOutput,
-    releasePhaseFlipCompletion,
-    toolFollowUpReceived,
-    releaseToolCompletion,
-    releaseToolFinalCompletion,
-    toolFinalTextStarted,
-    toolDetailPersistenceFollowUpReceived,
-    releaseToolDetailPersistenceFinalText,
-    releaseToolDetailPersistenceCompletion,
-    toolDetailPersistenceFinalTextStarted,
-  })
+  const { verifyTools, verifyLongCodeTerminalBurst, verifySubagentStreamingPanel } =
+    createStreamingToolChecks({
+      uiTimeoutMs,
+      releaseLongCodeStream,
+      resultDir,
+      capture,
+      modelResponseTimeoutMs,
+      captureSubagent,
+      subagentToolRenderTimeoutMs,
+      subagentPartialWritten,
+      releaseSubagentCompletion,
+      beforeSubagentOutput,
+      releasePhaseFlipCompletion,
+      toolFollowUpReceived,
+      releaseToolCompletion,
+      releaseToolFinalCompletion,
+      toolFinalTextStarted,
+      toolDetailPersistenceFollowUpReceived,
+      releaseToolDetailPersistenceFinalText,
+      releaseToolDetailPersistenceCompletion,
+      toolDetailPersistenceFinalTextStarted,
+    })
 
   return {
     cleanup() {
@@ -342,7 +333,6 @@ export function createDesktopScenario({
         )
         return true
       }
-      const followUpNumber = orderFollowUpNumber(body)
       if (isCollaborationSubagentRequest(request.headers)) {
         resolveSubagentChildRequestStarted()
         if (subagentChildStage === 'initial') {
@@ -543,34 +533,6 @@ export function createDesktopScenario({
           sse(textDeltaEvents(stream.itemId, windowedTail, offset, stream.outputIndex))
         )
         response.end(sse(stream.finish))
-        return true
-      }
-      if (followUpNumber !== null) {
-        response.once('finish', () => {
-          recordScenarioRequest('message_order_follow_up', { followUpNumber })
-        })
-        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
-        response.write(sse([responseCreated(responseId)]))
-        if (followUpNumber === ORDER_FOLLOW_UP_COUNT) {
-          response.write(sse([assistantMessage('继续检查耗时。', 'commentary')]))
-          await new Promise(resolve => setTimeout(resolve, 2100))
-        }
-        response.end(
-          sse([
-            assistantMessage(`${ORDER_COMPLETION_PREFIX}_${followUpNumber}`),
-            responseCompleted(responseId),
-          ])
-        )
-        return true
-      }
-      if (latestInput.includes(ORDER_STOP_PROMPT)) {
-        response.writeHead(200, {
-          'Cache-Control': 'no-cache',
-          Connection: 'keep-alive',
-          'Content-Type': 'text/event-stream; charset=utf-8',
-        })
-        response.flushHeaders()
-        response.write(sse([responseCreated(responseId), assistantMessage(ORDER_STOP_PARTIAL)]))
         return true
       }
       if (
@@ -827,11 +789,6 @@ export function createDesktopScenario({
         DEFAULT_MODEL_LABEL,
         ACTIVE_WORKBENCH_SELECTOR
       )
-      if (process.env.WEWORK_E2E_MESSAGE_ORDER_ONLY === 'true') {
-        await verifyStoppedTurnOrder(control)
-        active = false
-        return
-      }
       if (process.env.WEWORK_E2E_LONG_CODE_ONLY === 'true') {
         await verifyLongCodeTerminalBurst(control)
         active = false
@@ -862,7 +819,6 @@ export function createDesktopScenario({
             await verifyTools(control)
           },
         ],
-        ['streaming-message-order', verifyStoppedTurnOrder],
         ['streaming-subagent-guidance', verifySubagentStreamingPanel],
       ])
       const selectedCheckpoint = checkpoint?.startsWith('streaming-')
