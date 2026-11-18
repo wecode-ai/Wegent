@@ -236,6 +236,8 @@ hongyu9 的最新评审要求把“部分成员添加失败后可恢复”从组
 
 提交该修正前主线又推进至 `78df73b26e`，本次两个 E2E 文件仍无同文件冲突并已干净整合。后续 head 必须重新取得完整 CI；前一失败的检查不能用于交接。
 
+`e4bae53c1d` 的 Core10 与 Cloud1 均通过，随后 Core1 的 `model-overload-recovery` 在 `set.resumed` 处失败。当前主线 `78df73b26e` 已把 Goal 激活契约改为先在 `prepare_goal_model_route` 中加载并绑定原生会话，再由 `thread/goal/set` 直接启动模型工作；对应执行器测试明确要求此时 `resumed=false`，以避免重复 admission。旧 E2E 仍断言冷会话激活必须返回 `resumed=true`，与新契约冲突。场景现改为断言 `false`，同时保留 active Goal、第二次真实模型请求、运行中任务保护、重复发送拒绝、原线程与 Goal 身份保持以及最终完成等断言，没有降低重复工作防护。
+
 # Verification and rollback
 
 The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The CI-covered `collaboration-shared-core` scenario includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run under the repository-level local execution policy; the recorded GitHub CI runs provide the actual desktop E2E results. Earlier test results are tied to their stated revisions, and the latest PR head requires its own green checks. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.
