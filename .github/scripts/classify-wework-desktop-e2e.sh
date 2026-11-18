@@ -32,7 +32,7 @@ while IFS=$'\t' read -r name value pattern; do
     additional_path_target) additional_catalog_path_targets+=("$value"$'\t'"$pattern") ;;
     *) printf 'Unknown desktop catalog record: %s\n' "$name" >&2; exit 1 ;;
   esac
-done <<< "$catalog_records"
+done < <(printf '%s\n' "$catalog_records")
 
 validate_registered_checkpoint_coverage() {
   local script_dir
@@ -102,7 +102,8 @@ select_path_targets() {
   local record target pattern
   local matched=false
   for record in "$@"; do
-    IFS=$'\t' read -r target pattern <<< "$record"
+    target="${record%%$'\t'*}"
+    pattern="${record#*$'\t'}"
     if [[ "$path" == $pattern ]]; then
       select_target "$target"
       matched=true
@@ -225,7 +226,7 @@ build_matrix() {
   for shard_index in "${!core_shards[@]}"; do
     local selected_segments=()
     local shard_segments
-    IFS=',' read -ra shard_segments <<< "${core_shards[$shard_index]}"
+    IFS=',' read -ra shard_segments < <(printf '%s\n' "${core_shards[$shard_index]}")
     local segment
     for segment in "${shard_segments[@]}"; do
       if [[ "${selected[core:all]:-false}" == "true" || \
@@ -265,7 +266,7 @@ build_matrix() {
   for cloud_shard_index in "${!cloud_shards[@]}"; do
     local selected_cloud_segments=()
     local cloud_shard_segments
-    IFS=',' read -ra cloud_shard_segments <<< "${cloud_shards[$cloud_shard_index]}"
+    IFS=',' read -ra cloud_shard_segments < <(printf '%s\n' "${cloud_shards[$cloud_shard_index]}")
     local cloud_segment
     for cloud_segment in "${cloud_shard_segments[@]}"; do
       if [[ "${selected[cloud:all]:-false}" == "true" || \

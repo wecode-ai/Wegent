@@ -255,8 +255,8 @@ export function createDesktopScenario({
       }
       await control.command('click', failedMarker)
       try {
-        await control.command('waitFor', `${WORKBENCH} [data-testid="message-assistant"]`, {
-          text: 'Historical request failed before producing items',
+        const failedMessage = `${WORKBENCH} [data-message-id="runtime-view:latest-history-turn-2:assistant"]`
+        await control.command('waitFor', `${failedMessage} [data-testid="assistant-error-card"]`, {
           visible: true,
         })
         await control.command('waitFor', `${failedMarker}[data-active="true"]`)
@@ -269,6 +269,18 @@ export function createDesktopScenario({
           ),
           0,
           'An itemless failed turn must navigate to its error without waiting for a user item'
+        )
+        await control.command(
+          'click',
+          `${failedMessage} [data-testid="assistant-error-details-toggle"]`
+        )
+        await control.command(
+          'waitFor',
+          `${failedMessage} [data-testid="assistant-error-details"]`,
+          {
+            text: 'Historical request failed before producing items',
+            visible: true,
+          }
         )
       } catch (error) {
         const loadingIndicators = await control.command(

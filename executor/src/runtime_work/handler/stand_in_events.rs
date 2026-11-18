@@ -94,6 +94,7 @@ impl RuntimeWorkRpcHandler {
                 )
             })
         {
+            self.log_stand_in_decision(&context, &issue, "assignment_already_handled", json!({}));
             return Ok(());
         }
 
