@@ -200,9 +200,15 @@ fn goal_activation_acknowledges_only_durable_recovery_ownership() {
             } else {
                 let response = result.unwrap();
                 assert_eq!(response["success"], true, "{response}");
+                assert!(
+                    handler
+                        .codex_app_server
+                        .thread_is_loaded("11111111-1111-4111-8111-111111111111")
+                        .await
+                );
                 assert_eq!(
-                    response["resumed"], !loaded,
-                    "Only an unloaded Goal needs an owned continuation before turn notifications arrive"
+                    response["resumed"], false,
+                    "The prepared native session owns continuation before turn notifications arrive"
                 );
                 let repeated = handler
                     .set_task_goal(json!({
@@ -211,17 +217,14 @@ fn goal_activation_acknowledges_only_durable_recovery_ownership() {
                     .await
                     .unwrap();
                 assert_eq!(repeated["resumed"], false);
-                assert_eq!(
-                    handler.turn_scheduler.lock().unwrap().queued_turns.len(),
-                    usize::from(!loaded)
-                );
+                assert_eq!(handler.turn_scheduler.lock().unwrap().queued_turns.len(), 0);
                 assert_eq!(
                     handler
                         .local_task_link("task-1")
                         .unwrap()
                         .goal_execution_status
                         .as_deref(),
-                    Some(if loaded { "running" } else { "recovering" })
+                    Some("running")
                 );
                 assert!(turns::read_runtime_turn_state(&handler.turn_queue_path)
                     .unwrap()

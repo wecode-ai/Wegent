@@ -399,15 +399,15 @@ impl RuntimeWorkRpcHandler {
             return Ok(task_goal_missing_session(&link));
         };
 
-        // Capture ownership before the route preparation below resumes the
-        // session to apply the execution profile.
-        let session_loaded = self.codex_app_server.thread_is_loaded(&thread_id).await;
         if let Err(error) = self
             .prepare_goal_model_route(&link, &thread_id, &payload)
             .await
         {
             return Ok(task_action_failure(&link, error.message));
         }
+        // Route preparation can load a cold session. Activation then owns its
+        // native continuation, so recovery must use this prepared residency.
+        let session_loaded = self.codex_app_server.thread_is_loaded(&thread_id).await;
         let mut params = Map::new();
         params.insert("threadId".to_owned(), Value::String(thread_id.clone()));
         if let Some(objective) = payload.get("objective").cloned() {
@@ -467,8 +467,8 @@ impl RuntimeWorkRpcHandler {
                     // A successful activation must survive shutdown even when
                     // no local send still owns the native continuation.
                     self.persist_current_turn_state().await?;
-                    // A session that was already resident owns its native
-                    // continuation, even before its first turn notification.
+                    // The prepared session owns its native continuation,
+                    // even before its first turn notification.
                     if session_loaded {
                         false
                     } else {

@@ -411,9 +411,8 @@ pub(super) enum CodexNativeRequest {
 }
 
 impl CodexAppServerClient {
-    /// Reports whether the session was already resident before the caller's
-    /// mutation. Loading a thread only to apply an execution profile is not
-    /// native work and must stay distinguishable from a session the caller owns.
+    /// Reports whether the current native process has a resident session.
+    /// Callers that prepare a route must inspect residency after preparation.
     pub(crate) async fn thread_is_loaded(&self, thread_id: &str) -> bool {
         let state = self.state.lock().await;
         state.process.as_ref().is_some_and(|process| {
