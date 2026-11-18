@@ -15,6 +15,7 @@ def seed(engine: Engine) -> None:
     from app.db.base import Base
     from app.models.delivery import CloudProject, LoopItem, LoopNode
     from app.models.kind import Kind
+    from app.models.loop_item_execution import LoopItemExecution
     from app.models.project import Project
     from app.models.task import TaskResource
     from app.models.user import User
@@ -27,6 +28,7 @@ def seed(engine: Engine) -> None:
             Project.__table__,
             TaskResource.__table__,
             LoopNode.__table__,
+            LoopItemExecution.__table__,
         ],
     )
     with Session(engine) as db:
