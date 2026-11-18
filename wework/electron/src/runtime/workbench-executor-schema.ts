@@ -54,10 +54,13 @@ function queryExecutorSchema(command: string, environment: NodeJS.ProcessEnv): P
   return new Promise((resolve, reject) => {
     const traceEnabled = environment.WEWORK_PROCESS_TRACE === '1'
     const probeId = traceEnabled ? ++nextSchemaProbeId : null
-    let pid: number | undefined
     // A process can exit before its inherited pipes close. Log those boundaries
     // independently and record only timing and process metadata.
-    const trace = (stage: string, details?: { code: number | null; signal: string | null }) =>
+    const trace = (
+      stage: string,
+      pid?: number,
+      details?: { code: number | null; signal: string | null }
+    ) =>
       console.info('[executor-schema] trace', {
         probeId,
         stage,
@@ -88,14 +91,14 @@ function queryExecutorSchema(command: string, environment: NodeJS.ProcessEnv): P
       }
     )
     if (!traceEnabled) return
-    pid = child.pid
+    const pid = child.pid
 
-    child.once('spawn', () => trace('spawned'))
-    child.stdout?.once('data', () => trace('stdout'))
-    child.stderr?.once('data', () => trace('stderr'))
-    child.once('error', () => trace('error'))
-    child.once('exit', (code, signal) => trace('exit', { code, signal }))
-    child.once('close', (code, signal) => trace('close', { code, signal }))
+    child.once('spawn', () => trace('spawned', pid))
+    child.stdout?.once('data', () => trace('stdout', pid))
+    child.stderr?.once('data', () => trace('stderr', pid))
+    child.once('error', () => trace('error', pid))
+    child.once('exit', (code, signal) => trace('exit', pid, { code, signal }))
+    child.once('close', (code, signal) => trace('close', pid, { code, signal }))
   })
 }
 
