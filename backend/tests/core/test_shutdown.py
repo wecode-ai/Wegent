@@ -96,6 +96,32 @@ class TestShutdownManager:
         assert not marker.exists()
 
     @pytest.mark.asyncio
+    async def test_repeated_shutdown_proceeds_while_redis_publish_is_pending(
+        self, shutdown_manager: ShutdownManager
+    ) -> None:
+        publishing = asyncio.Event()
+        finish_publish = asyncio.Event()
+
+        async def publish(*args, **kwargs) -> bool:
+            publishing.set()
+            await finish_publish.wait()
+            return True
+
+        with patch("app.core.cache.cache_manager") as mock_cache:
+            mock_cache.set = AsyncMock(side_effect=publish)
+            first = asyncio.create_task(shutdown_manager.initiate_shutdown())
+            try:
+                await asyncio.wait_for(publishing.wait(), timeout=5)
+                repeated = await asyncio.wait_for(
+                    shutdown_manager.initiate_shutdown(), timeout=5
+                )
+                assert repeated is False
+                mock_cache.set.assert_awaited_once()
+            finally:
+                finish_publish.set()
+                await first
+
+    @pytest.mark.asyncio
     async def test_register_stream_success(self, shutdown_manager):
         """Test registering a stream when not shutting down."""
         result = await shutdown_manager.register_stream(123)

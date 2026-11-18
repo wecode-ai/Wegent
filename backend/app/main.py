@@ -967,8 +967,15 @@ def create_app():
     # Include API routes
     app.include_router(oauth_metadata_router)
     app.include_router(api_router, prefix=settings.API_PREFIX)
+    # The Rust health handler serves the canonical public API prefix.
+    if settings.API_PREFIX != "/api":
+        app.add_api_route(
+            f"{settings.API_PREFIX}/health",
+            health_check,
+            methods=["GET"],
+            tags=["health"],
+        )
     if not settings.API_PREFIX:
-        app.add_api_route("/health", health_check, methods=["GET"], tags=["health"])
         app.include_router(probe_router)
 
     # Mount MCP Server endpoints

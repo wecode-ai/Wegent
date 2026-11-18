@@ -43,7 +43,7 @@ async def health() -> dict[str, str]:
 
 def health_check(db: Session = Depends(get_db)):
     """
-    Report database health for the Python root probe when the API prefix is empty.
+    Report database health for API prefixes served by Python.
     It should return 200 even during graceful shutdown (app is still alive,
     just not accepting new traffic).
     Returns:

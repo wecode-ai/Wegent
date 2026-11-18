@@ -47,12 +47,19 @@ def test_probe_routes_match_early_and_preserve_responses(
     assert business_health.status_code == 404
 
 
-def test_empty_api_prefix_keeps_database_health_route_precedence(
+@pytest.mark.parametrize("prefix", ["", "/custom"])
+def test_nondefault_api_prefix_keeps_python_database_health(
     monkeypatch: pytest.MonkeyPatch,
+    prefix: str,
 ) -> None:
-    monkeypatch.setattr(settings, "API_PREFIX", "")
+    monkeypatch.setattr(settings, "API_PREFIX", prefix)
     app = create_app()
-    scope = {"type": "http", "path": "/health", "method": "GET", "root_path": ""}
+    scope = {
+        "type": "http",
+        "path": f"{prefix}/health",
+        "method": "GET",
+        "root_path": "",
+    }
 
     route = next(route for route in app.routes if route.matches(scope)[0] == Match.FULL)
 

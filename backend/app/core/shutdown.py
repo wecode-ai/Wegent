@@ -120,9 +120,9 @@ class ShutdownManager:
                 len(self._active_streams),
             )
 
-            # Try to notify other workers via Redis
-            await self._notify_shutdown_via_redis()
-            return True
+        # The drain can proceed while the first caller publishes to Redis.
+        await self._notify_shutdown_via_redis()
+        return True
 
     async def _notify_shutdown_via_redis(self) -> None:
         """Notify other workers about shutdown via Redis."""

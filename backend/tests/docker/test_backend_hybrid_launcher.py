@@ -138,7 +138,7 @@ def _running_launcher(
 ) -> Iterator[subprocess.Popen]:
     with (tmp_path / "launcher.log").open("w") as log:
         process = subprocess.Popen(
-            ["bash", str(LAUNCHER)], env=env, stdout=log, stderr=log
+            ["bash", str(LAUNCHER)], cwd=tmp_path, env=env, stdout=log, stderr=log
         )
         try:
             yield process
@@ -222,7 +222,8 @@ def test_launcher_preserves_layout_modes_and_stops_both_children(
     """Container startup uses a prebuilt gateway and no development reloader."""
     scratch = tmp_path / "tmp"
     scratch.mkdir()
-    monkeypatch.setenv("TMPDIR", os.path.relpath(scratch))
+    monkeypatch.setenv("TMPDIR", "tmp")
+    monkeypatch.setenv("CDPATH", ".")
     with _launch(tmp_path, production=production) as (process, env, state):
         python = json.loads((tmp_path / "python.json").read_text())
         rust = json.loads((tmp_path / "rust.json").read_text())
