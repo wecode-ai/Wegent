@@ -67,7 +67,6 @@ export function createDesktopScenario({
       return true
     },
     async verify(control) {
-      await writeFile(cleanupFile, '')
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await control.command('click', '[data-testid="workspace-tab-select-fixed-task"]')
@@ -90,6 +89,7 @@ export function createDesktopScenario({
         deviceId: settings.executionDeviceId,
         askBeforeAct: true,
       }
+      await writeFile(cleanupFile, '')
       await requestExecutor(
         control,
         'runtime.tasks.create',
