@@ -1,3 +1,4 @@
+import { writeFailureHeap } from './failure-heap-diagnostics.mjs'
 import { finishDesktopTeardown, modelRequestEvidence } from './finish-desktop-teardown.mjs'
 import { publishSitesCreatorPlugins } from './sites-creator-plugins.mjs'
 import { SitesProtocolFixture } from './sites-protocol-fixture.mjs'
@@ -5032,6 +5033,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         }
       )}\n`,
       'utf8'
+    )
+    await writeFailureHeap(
+      control,
+      electronUserDataDirectory,
+      join(resultDir, 'failure-main-heap.json')
     )
     try {
       // Observe the failed condition itself: record the measured convergence
