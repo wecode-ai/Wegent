@@ -78,7 +78,7 @@ for delivery_render_path in \
   "packages/collaboration/src/issue-detail/createSharedIssueDetailPort.ts" \
   "packages/collaboration/src/dto-mappers/workspaceDtoMappers.ts"; do
   delivery_render_output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$delivery_render_path")"
-  if [[ "$delivery_render_output" != *collaboration-deliveries* ]]; then
+  if [[ "$delivery_render_output" != *collaboration-delivery-editing* ]]; then
     printf 'Delivery rendering must select its regression checkpoint: %s\n%s\n' \
       "$delivery_render_path" "$delivery_render_output" >&2
     exit 1

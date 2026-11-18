@@ -29,9 +29,11 @@ assert_desktop_case "Windows background policy runs its native checkpoint" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
 wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"window-lifecycle"}]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-5","name":"Cloud / shard 5","segments":"window-lifecycle"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/electron/src/host/window-background-policy.ts" \
+  "wework/electron/src/host/window-background-policy.ts"
 
 assert_desktop_case "Issue navigation source changes retain existing coverage and select notification reads" \
   'wework_desktop_e2e=true
@@ -82,8 +84,8 @@ for terminal_wiring_path in \
   wework/src/api/local/localServices.ts \
   wework/src/api/local/localServices.test.ts; do
   terminal_wiring_output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$terminal_wiring_path")"
-  if [[ "$terminal_wiring_output" != *"background-terminals"* ]]; then
-    printf 'Terminal wiring changes must select background-terminal coverage: %s\n%s\n' \
+  if [[ "$terminal_wiring_output" != *"local-harness"* ]]; then
+    printf 'Terminal wiring changes must select retained terminal coverage: %s\n%s\n' \
       "$terminal_wiring_path" "$terminal_wiring_output" >&2
     exit 1
   fi

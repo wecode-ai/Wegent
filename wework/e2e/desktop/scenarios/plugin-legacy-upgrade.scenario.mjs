@@ -153,14 +153,6 @@ export async function createDesktopScenario({
       configPath,
       `${await readFile(configPath, 'utf8')}\n[skills]\nconfig = [{ path = ${JSON.stringify(userSkill)}, enabled = false }]\n[mcp_servers.legacy-user-disabled]\ncommand = "node"\nargs = ["--version"]\nenabled = false\n`
     )
-    const installer = await startHistoricalPluginExecutor({
-      release,
-      cloud,
-      root,
-      userHome: userHomeFor(release),
-      directory: join(resultDir, 'historical-executors', release.version),
-      token: releaseAssetToken,
-    })
     const delivered = await historicalPluginPackages(
       HISTORICAL_PLUGIN_SOURCE,
       join(resultDir, 'historical-plugins', HISTORICAL_PLUGIN_SOURCE.version),
@@ -170,6 +162,24 @@ export async function createDesktopScenario({
       phase: 'delivered-plugin-package',
       executorVersion: release.version,
       ...delivered.evidence,
+    })
+    // Reset shared account intent before the old device can synchronize a previous baseline.
+    for (const original of Object.values(delivered.packages)) {
+      const fixture = await publish(original)
+      const installed = await accountPlugin(cloud, fixture.slug)
+      if (installed) {
+        await update({ ...fixture, installedId: Number(installed.metadata.labels.id) }, null, {
+          releaseId: fixture.releaseId,
+        })
+      }
+    }
+    const installer = await startHistoricalPluginExecutor({
+      release,
+      cloud,
+      root,
+      userHome: userHomeFor(release),
+      directory: join(resultDir, 'historical-executors', release.version),
+      token: releaseAssetToken,
     })
     const fixtures = {}
     try {
