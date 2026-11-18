@@ -1875,6 +1875,10 @@ async fn start_persistent_codex_app_server(
             rpc.request_ignoring_notifications("initialize", initialize_params()),
         )
         .await?;
+        log_executor_event(
+            "codex shared app-server initialization acknowledged",
+            &[("process_id", process_id.clone())],
+        );
         configure_codex_log_db_filter(home.clone()).await;
         with_rpc_timeout(
             "initialized",

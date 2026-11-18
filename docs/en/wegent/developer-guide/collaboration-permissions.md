@@ -4,7 +4,7 @@ sidebar_position: 36
 
 # Collaboration permission architecture and invariants
 
-Named Codex processes configure the log database in their actual launch Home, leaving the default account database untouched. Test processes remove inherited Codex Home variables so native protocol fixtures cannot consult the host account configuration or modify its log database.
+Named Codex processes configure the log database in their actual launch Home, leaving the default account database untouched. Test processes remove inherited Codex Home variables so native protocol fixtures cannot consult the host account configuration or modify its log database. Docker protocol fixtures also isolate their Home, Claude configuration and workspaces in temporary directories and assert the actual generated paths; they cannot depend on the caller to isolate the environment.
 
 A cloud resource validation failure defers only its event, retaining its pending state and logging its event ID and error code. It must neither abort the batch and block other authorized local messages nor treat failed validation as successful authorization.
 

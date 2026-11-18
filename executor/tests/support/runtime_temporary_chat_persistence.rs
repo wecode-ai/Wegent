@@ -5,6 +5,22 @@
 use super::*;
 use wegent_executor::services::capability_activation;
 
+struct RpcFailureEvidence(PathBuf);
+
+impl Drop for RpcFailureEvidence {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            let contents = fs::read_to_string(&self.0).unwrap_or_default();
+            let methods: Vec<_> = contents
+                .lines()
+                .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                .map(|call| json!({"id":call["id"], "method":call["method"]}))
+                .collect();
+            eprintln!("Temporary chat fixture received RPC calls: {methods:?}");
+        }
+    }
+}
+
 #[tokio::test]
 async fn auxiliary_text_generation_discards_temporary_chat_persistence() {
     let _lock = env_lock().await;
@@ -80,6 +96,7 @@ async fn temporary_chat_restores_history_and_continues_after_capability_reload()
         binary.display().to_string(),
         event_tx,
     );
+    let _rpc_evidence = RpcFailureEvidence(log_path.clone());
     let mut request =
         codex_execution_request("side question", workspace.to_str().unwrap(), "gpt-5.5");
     request["task_id"] = json!("side-chat");
