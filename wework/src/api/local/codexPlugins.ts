@@ -39,6 +39,7 @@ import {
 } from './codexRemoteCatalog'
 import { getLocalCodexAuthStatus } from './runtimeAuthStatus'
 import { raceWithTimeout } from '@/lib/promise-timeout'
+import { readStoredCloudConnection } from '@/features/cloud-connection/cloudConnectionStorage'
 import { createRequestCache } from '@wegent/chat-core/request-cache'
 import { createPluginDetailCache, type PluginDetailReadOptions } from './codexPluginDetails'
 import {
@@ -2931,9 +2932,18 @@ async function fetchRemoteCatalogItems(
   )
 }
 
+function readStoredRemoteCatalogCloudScope(): string | null {
+  const connection = readStoredCloudConnection()
+  return connection ? JSON.stringify([connection.apiBaseUrl, connection.user.id]) : null
+}
+
 const readRemoteCatalog: LocalCodexPluginApi['readRemoteCatalog'] = async options => {
   if (!isDesktopRuntime()) return { deviceId: '' }
   const accountEpoch = getPluginMarketplaceAccountEpoch()
+  const cloudScope = readStoredRemoteCatalogCloudScope()
+  const requestAccountIsCurrent = () =>
+    getPluginMarketplaceAccountEpoch() === accountEpoch &&
+    readStoredRemoteCatalogCloudScope() === cloudScope
   const identity = await raceWithTimeout(
     readRemoteCatalogScope(),
     30_000,
@@ -2945,7 +2955,7 @@ const readRemoteCatalog: LocalCodexPluginApi['readRemoteCatalog'] = async option
   const scope = await sha256Hex(
     new Blob([JSON.stringify([deviceId, authFingerprint, options.accountScope])])
   )
-  if (getPluginMarketplaceAccountEpoch() !== accountEpoch || options.canStart?.() === false)
+  if (!requestAccountIsCurrent() || options.canStart?.() === false)
     throw new Error('Plugin catalog scope changed')
   const snapshot = await openAiRemoteCatalog.read({
     scope,
@@ -2960,7 +2970,7 @@ const readRemoteCatalog: LocalCodexPluginApi['readRemoteCatalog'] = async option
         current.deviceId !== deviceId ||
         current.runtimeInstanceId !== runtimeInstanceId ||
         current.authFingerprint !== authFingerprint ||
-        getPluginMarketplaceAccountEpoch() !== accountEpoch
+        !requestAccountIsCurrent()
       )
         throw new RemotePluginCatalogIdentityChanged()
       return items

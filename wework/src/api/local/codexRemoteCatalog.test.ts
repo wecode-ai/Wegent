@@ -11,6 +11,10 @@ import {
 } from '@/features/plugins/pluginMarketplaceCache'
 import { item, installedItem } from '@/features/plugins/pluginMarketplaceCache.test-fixtures'
 import { useOpenAiPluginCatalog } from '@/features/plugins/useOpenAiPluginCatalog'
+import {
+  clearStoredCloudConnection,
+  saveStoredCloudConnection,
+} from '@/features/cloud-connection/cloudConnectionStorage'
 import { switchLocalCodexAccount } from './codexAuth'
 import { createLocalCodexPluginApi } from './codexPlugins'
 import {
@@ -105,6 +109,7 @@ describe('OpenAI official catalog persistence', () => {
 
   afterEach(() => {
     clearPluginMarketplaceCache()
+    clearStoredCloudConnection()
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
@@ -310,6 +315,31 @@ describe('OpenAI official catalog persistence', () => {
     complete()
     await expect(latest).resolves.toMatchObject({ snapshot: { items: [{ id: listing.id }] } })
     expect(mocks.request).toHaveBeenCalledTimes(1)
+  })
+
+  test('does not write a late refresh after the WeWork cloud account disconnects', async () => {
+    saveStoredCloudConnection({
+      backendUrl: 'https://wework.example.test',
+      apiBaseUrl: 'https://wework.example.test/api',
+      socketBaseUrl: 'https://wework.example.test',
+      socketPath: '/socket.io',
+      user: { id: 1, user_name: 'test', email: 'test@example.test' },
+      connectedAt: new Date(now).toISOString(),
+    })
+    seed(now - 31 * 60_000)
+    const previous = localStorage.getItem(REMOTE_PLUGIN_CATALOG_STORAGE_KEY)
+    const complete = holdCatalogRequest()
+    const refreshing = createLocalCodexPluginApi().readRemoteCatalog({
+      accountScope: cacheKey,
+      forceRefetch: false,
+      onCached: vi.fn(),
+    })
+    const rejected = expect(refreshing).rejects.toThrow('Plugin catalog scope changed')
+    await vi.waitFor(() => expect(mocks.request).toHaveBeenCalledTimes(1))
+    clearStoredCloudConnection()
+    complete()
+    await rejected
+    expect(localStorage.getItem(REMOTE_PLUGIN_CATALOG_STORAGE_KEY)).toBe(previous)
   })
 
   test('times out a hung local auth probe and never admits its late result', async () => {
