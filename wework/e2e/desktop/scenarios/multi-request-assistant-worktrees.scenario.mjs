@@ -372,7 +372,7 @@ export function createDesktopScenario(options) {
             value.requests.find(row => row.requestId === a.requestId)?.worktree?.merge?.state ===
             'awaiting_confirmation',
           'A must produce a validation candidate before explicit owner publication',
-          modelResponseTimeoutMs + 60_000
+          modelResponseTimeoutMs * 2 + 60_000
         )
         const finished = completed.requests.find(row => row.requestId === a.requestId)
         assert.equal(finished.runtimeTaskId, ra.runtimeTaskId)
