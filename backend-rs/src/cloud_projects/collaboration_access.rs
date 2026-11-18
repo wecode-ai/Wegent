@@ -82,12 +82,21 @@ impl AuthorizedProject {
 }
 
 pub(super) async fn authorized_projects<M: Mysql>(
-    mysql: &M,
+    mut mysql: &M,
     user_id: i32,
     project_id: Option<i64>,
     workspace_id: Option<i64>,
 ) -> Result<Vec<AuthorizedProject>, brz_mysql::MysqlError> {
-    let rows: Vec<MysqlRow> = mysql
+    authorized_projects_on(&mut mysql, user_id, project_id, workspace_id).await
+}
+
+pub(super) async fn authorized_projects_on(
+    query: &mut impl crate::plugins_marketplace::query::PluginQuery,
+    user_id: i32,
+    project_id: Option<i64>,
+    workspace_id: Option<i64>,
+) -> Result<Vec<AuthorizedProject>, brz_mysql::MysqlError> {
+    let rows: Vec<MysqlRow> = query
         .fetch_all(access_sql(user_id, project_id, workspace_id), ())
         .await?;
     rows.into_iter()

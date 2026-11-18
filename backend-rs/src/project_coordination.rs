@@ -503,4 +503,4 @@ mod tests {
 
 #[cfg(test)]
 #[path = "project_coordination_mysql_tests.rs"]
-mod mysql_tests;
+pub(crate) mod mysql_tests;

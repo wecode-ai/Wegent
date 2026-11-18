@@ -195,6 +195,16 @@ export async function createDesktopScenario({
             ? { enabled: false, componentStates: { [`skill:${fixture.skillName}`]: false } }
             : {}),
         })
+        // The modern app registers a different device. Reset account intent too:
+        // a prior release case must not update this case's migrated runtime.
+        await update(fixture, null, {
+          releaseId: fixture.releaseId,
+          updatePolicy: 'manual',
+          ...(role === 'disabled'
+            ? { enabled: false, componentStates: { [`skill:${fixture.skillName}`]: false } }
+            : {}),
+        })
+        assert.equal((await accountPlugin(cloud, fixture.slug)).spec.version, fixture.version)
         fixtures[role] = fixture
       }
       let observedState
