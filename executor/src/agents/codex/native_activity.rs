@@ -364,10 +364,8 @@ impl CodexNativeActivity {
         }
     }
 
-    fn goal_requires_resume(&self, thread_id: &str) -> bool {
-        self.goals
-            .get(thread_id)
-            .is_some_and(|goal| goal.active && !goal.native_work)
+    fn thread_is_loaded(&self, thread_id: &str) -> bool {
+        self.loaded_threads.contains(thread_id)
     }
 
     pub(super) fn active_threads(&self) -> HashMap<String, usize> {
@@ -412,7 +410,10 @@ pub(super) enum CodexNativeRequest {
 }
 
 impl CodexAppServerClient {
-    pub(crate) async fn goal_requires_resume(&self, thread_id: &str) -> bool {
+    /// Reports whether the session was already resident before the caller's
+    /// mutation. Loading a thread only to apply an execution profile is not
+    /// native work and must stay distinguishable from a session the caller owns.
+    pub(crate) async fn thread_is_loaded(&self, thread_id: &str) -> bool {
         let state = self.state.lock().await;
         state.process.as_ref().is_some_and(|process| {
             process
@@ -420,7 +421,7 @@ impl CodexAppServerClient {
                 .native_activity
                 .lock()
                 .expect("Codex native activity registry should not be poisoned")
-                .goal_requires_resume(thread_id)
+                .thread_is_loaded(thread_id)
         })
     }
 }
