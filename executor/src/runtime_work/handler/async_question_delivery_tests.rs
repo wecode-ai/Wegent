@@ -1,5 +1,360 @@
 use super::*;
 
+#[cfg(unix)]
+#[test]
+fn queued_async_answer_drains_after_native_worker_cleanup() {
+    let _lock = crate::test_env::lock();
+    let home = tempfile::tempdir().unwrap();
+    let _environment: Vec<_> = [
+        "HOME",
+        "CODEX_HOME",
+        "WEGENT_CODEX_HOME",
+        "WEGENT_EXECUTOR_HOME",
+        "WEGENT_WORKBENCH_HOME",
+        "WEGENT_CAPABILITIES_HOME",
+        "CODEX_SQLITE_HOME",
+    ]
+    .into_iter()
+    .map(|key| {
+        let directory = home.path().join(key);
+        fs::create_dir_all(&directory).unwrap();
+        ScalarEnv::set(key, directory.to_str().unwrap())
+    })
+    .collect();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(assert_native_worker_drains_async_answer());
+}
+
+#[cfg(unix)]
+async fn assert_native_worker_drains_async_answer() {
+    use std::io::Write;
+
+    let (handler, root, mut events) = native_async_question_handler();
+    let payload = |subtask: &str, message: &str| {
+        json!({"taskId":"task", "message":message, "executionRequest": {
+            "task_id":"task", "subtask_id":subtask, "prompt":message,
+            "project_workspace_path":root, "bot":[{"shell_type":"Codex"}],
+            "model_config":{"model_id":"gpt-test", "base_url":"http://127.0.0.1:9/v1",
+                "api_key":"synthetic-key", "protocol":"openai-responses"}
+        }})
+    };
+    let started = handler
+        .send_message(payload("question", "Ask a question"))
+        .await
+        .unwrap();
+    assert_eq!(started["accepted"], true);
+    let mut gate = open_native_response_gate(root.join("turn_start.json")).await;
+    let first = wait_for_native_answer_turn(&handler, &mut events, "question-native").await;
+    assert!(first.process_generation.is_some());
+    assert!(handler.is_active_local_task("task"));
+    assert!(!handler.native_task_holds_capacity("task"));
+    assert_eq!(handler.local_task_link("task").unwrap().goal_status, None);
+    assert_eq!(
+        handler
+            .local_task_link("task")
+            .unwrap()
+            .interaction_status
+            .as_deref(),
+        Some(INTERACTION_AWAITING_USER_REPLY),
+        "The native question must remain pending before its queued answer"
+    );
+    let queued = handler
+        .send_message(payload("answer", "Complete"))
+        .await
+        .unwrap();
+    assert_eq!(queued["accepted"], true);
+    assert_eq!(queued["status"], "queued");
+    assert_eq!(handler.queued_local_task_position("task"), Some(0));
+    assert!(handler.is_active_local_task("task"));
+    assert!(handler
+        .turn_scheduler
+        .lock()
+        .unwrap()
+        .active_task_ids
+        .contains_key("task"));
+
+    // The first native reader owns this FIFO. Replace only its path for the
+    // next turn, then let the original RPC return and production cleanup run.
+    write_native_answer_turn(&root, "answer-native", false);
+    gate.write_all(br#"{"turn":{"id":"question-native"}}"#)
+        .unwrap();
+    drop(gate);
+    let second = wait_for_native_answer_turn(&handler, &mut events, "answer-native").await;
+    assert_eq!(second.process_generation, first.process_generation);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while handler.is_active_local_task("task")
+            || handler
+                .turn_scheduler
+                .lock()
+                .unwrap()
+                .active_task_ids
+                .contains_key("task")
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("Native cleanup must release the local execution and reservation");
+    assert_eq!(handler.queued_local_task_position("task"), None);
+    assert!(handler
+        .local_task_link("task")
+        .unwrap()
+        .interaction_status
+        .is_none());
+    let calls: Vec<Value> = fs::read_to_string(root.join("requests.jsonl"))
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let starts: Vec<_> = calls
+        .iter()
+        .filter(|call| call["method"] == "turn/start")
+        .collect();
+    assert_eq!(
+        starts.len(),
+        2,
+        "Each question and answer must run exactly once"
+    );
+    assert!(starts[1]["params"]["input"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["text"] == "Complete"));
+    handler
+        .codex_app_server
+        .request("test/stop", json!({}))
+        .await
+        .unwrap();
+    let _ = fs::remove_dir_all(root);
+}
+
+#[cfg(unix)]
+fn native_async_question_handler() -> (RuntimeWorkRpcHandler, PathBuf, broadcast::Receiver<Value>) {
+    let (mut handler, root) = isolated_runtime_work_handler("native-async-answer-cleanup");
+    install_native_history(&mut handler, &root, vec![], None);
+    for (method, response) in [
+        ("thread_resume", json!({"thread":{"id":"thread-1"}})),
+        ("thread_unsubscribe", json!({"status":"notLoaded"})),
+        ("thread_goal_get", json!({"goal":null})),
+    ] {
+        fs::write(root.join(format!("{method}.json")), response.to_string()).unwrap();
+    }
+    write_native_answer_turn(&root, "question-native", true);
+    fs::remove_file(root.join("turn_start.json")).unwrap();
+    assert!(std::process::Command::new("mkfifo")
+        .arg(root.join("turn_start.json"))
+        .status()
+        .unwrap()
+        .success());
+    let (sender, receiver) = broadcast::channel(256);
+    handler.event_tx = Some(sender);
+    let mut link = RuntimeTaskLink::new_pending(
+        "task".into(),
+        root.to_string_lossy().into_owned(),
+        "Async question".into(),
+    );
+    link.thread_id = Some("thread-1".into());
+    handler.upsert_local_task(link);
+    (handler, root, receiver)
+}
+
+#[cfg(unix)]
+fn write_native_answer_turn(root: &Path, turn: &str, question: bool) {
+    let mut notifications = vec![json!({"method":"turn/started", "params": {
+        "threadId":"thread-1", "turn":{"id":turn, "status":"inProgress"}
+    }})];
+    if question {
+        notifications.push(json!({"method":"item/completed", "params": {
+            "threadId":"thread-1", "turnId":turn, "item": {
+                "id":"question", "type":"agentMessage", "questions":[{
+                    "title":"Which async implementation direction should be used?",
+                    "options":["Complete", "Investigate"]
+                }]
+            }
+        }}));
+    }
+    notifications.push(json!({"method":"turn/completed", "params": {
+        "threadId":"thread-1", "turn":{"id":turn, "status":"completed"}
+    }}));
+    fs::write(
+        root.join("turn_start.notifications.jsonl"),
+        notifications
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n",
+    )
+    .unwrap();
+    let response = root.join("turn-start-response.json");
+    fs::write(&response, json!({"turn":{"id":turn}}).to_string()).unwrap();
+    fs::rename(response, root.join("turn_start.json")).unwrap();
+}
+
+#[cfg(unix)]
+async fn open_native_response_gate(path: PathBuf) -> fs::File {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match fs::OpenOptions::new()
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(&path)
+            {
+                Ok(writer) => return writer,
+                Err(error) if error.raw_os_error() == Some(libc::ENXIO) => {
+                    tokio::task::yield_now().await;
+                }
+                Err(error) => panic!("Cannot open native response gate: {error}"),
+            }
+        }
+    })
+    .await
+    .expect("Native fixture must reach the first turn response gate")
+}
+
+#[cfg(unix)]
+async fn wait_for_native_answer_turn(
+    handler: &RuntimeWorkRpcHandler,
+    events: &mut broadcast::Receiver<Value>,
+    turn: &str,
+) -> crate::runtime_work::lifecycle::NativeExecutionState {
+    use crate::runtime_work::lifecycle::{native_execution_state, NativeExecutionPhase};
+
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(state) = handler
+                .local_task_link("task")
+                .and_then(|link| native_execution_state(&link))
+                .filter(|state| {
+                    state.phase == NativeExecutionPhase::Idle
+                        && state.latest_turn_id.as_deref() == Some(turn)
+                        && state.execution_outcome.as_deref() == Some("succeeded")
+                })
+            {
+                return state;
+            }
+            events
+                .recv()
+                .await
+                .expect("Native lifecycle event stream must stay open");
+        }
+    })
+    .await
+    .expect("The real native notification must settle the expected turn")
+}
+
+#[tokio::test]
+async fn settled_async_answer_is_admitted_after_local_cleanup() {
+    for (cleanup_before_answer, queue_if_busy) in
+        [(false, false), (true, false), (false, true), (true, true)]
+    {
+        let (handler, root, execution) = completed_async_question();
+        if cleanup_before_answer {
+            assert!(handler.finish_local_task("task", execution, None, "done"));
+            assert!(!handler.is_active_local_task("task"));
+            handler
+                .finish_command_execution("task", execution, None, None)
+                .await;
+        }
+
+        let answer = handler
+            .send_message(json!({
+                "taskId": "task", "message": "Complete", "queueIfBusy": queue_if_busy,
+                "executionRequest": {
+                    "task_id": "task", "subtask_id": "answer", "prompt": "Complete"
+                }
+            }))
+            .await
+            .unwrap();
+        assert_eq!(answer["accepted"], true);
+        if !cleanup_before_answer {
+            assert_eq!(answer["status"], "queued");
+            assert_eq!(handler.queued_local_task_position("task"), Some(0));
+            assert!(handler.finish_local_task("task", execution, None, "done"));
+            assert!(!handler.is_active_local_task("task"));
+            handler
+                .finish_command_execution("task", execution, None, None)
+                .await;
+        }
+
+        assert_eq!(handler.queued_local_task_position("task"), None);
+        assert!(handler.is_active_local_task("task"));
+        assert!(!handler.is_current_local_task_execution("task", execution));
+        assert!(handler
+            .local_task_link("task")
+            .unwrap()
+            .interaction_status
+            .is_none());
+        let _ = fs::remove_dir_all(root);
+    }
+}
+
+fn completed_async_question() -> (RuntimeWorkRpcHandler, PathBuf, u64) {
+    let (handler, root) = isolated_runtime_work_handler("async-answer-cleanup");
+    let mut link = RuntimeTaskLink::new_pending(
+        "task".into(),
+        root.to_string_lossy().into_owned(),
+        "Async question".into(),
+    );
+    link.thread_id = Some("thread".into());
+    handler.upsert_local_task(link);
+    handler.register_thread_event_route("thread", "task".into(), ExecutionRequest::default(), true);
+    handler
+        .turn_scheduler
+        .lock()
+        .unwrap()
+        .active_task_ids
+        .insert("task".into(), RuntimeTaskKind::Personal);
+    let execution = start_test_execution(&handler, "task");
+    handler.route_codex_notification(
+        CodexNotification::from(json!({"method":"turn/started", "params": {
+            "threadId":"thread", "turn":{"id":"turn", "status":"inProgress"}
+        }}))
+        .with_process_generation(5),
+    );
+    handler.route_codex_notification(
+        CodexNotification::from(json!({"method":"item/completed", "params": {
+            "threadId":"thread", "turnId":"turn", "item": {
+                "id":"question", "type":"agentMessage", "questions":[{
+                    "title":"Which async implementation direction should be used?",
+                    "options":["Complete", "Investigate"]
+                }]
+            }
+        }}))
+        .with_process_generation(5),
+    );
+    handler.route_codex_notification(
+        CodexNotification::from(json!({"method":"turn/completed", "params": {
+            "threadId":"thread", "turn":{"id":"turn", "status":"completed"}
+        }}))
+        .with_process_generation(5),
+    );
+    assert_eq!(
+        handler
+            .local_task_link("task")
+            .unwrap()
+            .interaction_status
+            .as_deref(),
+        Some(INTERACTION_AWAITING_USER_REPLY)
+    );
+    let link = handler.local_task_link("task").unwrap();
+    let state = crate::runtime_work::lifecycle::native_execution_state(&link).unwrap();
+    assert!(!link.running);
+    assert_eq!(
+        state.phase,
+        crate::runtime_work::lifecycle::NativeExecutionPhase::Idle
+    );
+    assert_eq!(state.process_generation, Some(5));
+    assert_eq!(state.execution_outcome.as_deref(), Some("succeeded"));
+    assert!(handler.is_current_local_task_execution("task", execution));
+    (handler, root, execution)
+}
+
 #[tokio::test]
 async fn global_router_persists_async_question_after_execution_settles() {
     let root = tempfile::tempdir().unwrap();

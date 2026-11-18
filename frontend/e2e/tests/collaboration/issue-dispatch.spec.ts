@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { expect, test, type APIRequestContext, type Page, type TestInfo } from '@playwright/test'
-import { REGULAR_USER } from '../../config/test-users'
+import { REGULAR_USER, type TestUser } from '../../config/test-users'
 import { createApiClient } from '../../utils/api-client'
 import { webApi } from '../../utils/collaboration-test-support'
 import { addProjectMember, createProjectFixture } from '../../utils/issue-dispatch-test-support'
@@ -48,9 +48,10 @@ async function selectAssigneeSilently(page: Page, userId: string | number): Prom
 
 async function expectNoAssignmentNotification(
   request: APIRequestContext,
-  issueId: string
+  issueId: string,
+  recipient: Pick<TestUser, 'username' | 'password'> = REGULAR_USER
 ): Promise<void> {
-  const login = await createApiClient(request).login(REGULAR_USER.username, REGULAR_USER.password)
+  const login = await createApiClient(request).login(recipient.username, recipient.password)
   expect(login.data?.access_token).toBeTruthy()
   const response = await request.get(
     `${API_BASE_URL}/api/v1/wework-notifications?category=collaboration`,
@@ -147,110 +148,118 @@ test.describe('Issue Dispatch human assignment', () => {
     test.setTimeout(120_000)
     const suffix = `${Date.now()}`
     const fixture = await createProjectFixture(page, suffix, `Silent save fixture ${suffix}`)
-    const memberId = await addProjectMember(page, REGULAR_USER.username)
-    const memberPath = `/api/v1/cloud-projects/${fixture.projectId}/members/${memberId}`
-    const setRole = (role: 'Developer' | 'Viewer') =>
-      webApi(page, memberPath, { method: 'PATCH', body: { role } })
-    const owner = await webApi<{ id: number }>(page, '/api/users/me')
-    const title = `Silent save ${suffix}`
-    const description = 'Preserve this draft across a rejected silent save.'
-    const error = page.getByTestId('cloud-todo-save-error')
-    await page.goto(fixture.projectPath)
-    await page.getByTestId('collaboration-issue-create').click()
-    await page.getByTestId('cloud-todo-title').fill(title)
-    await page.getByTestId('cloud-todo-detail-description').fill(description)
-    await page.getByTestId('cloud-todo-create-assignee').click()
-    await page.getByTestId(`cloud-todo-create-assignee-option-user:${memberId}`).click()
+    const recipient = { username: `silent-save-${suffix}`, password: REGULAR_USER.password }
+    const account = await webApi<{ id: number }>(page, '/api/admin/users', {
+      method: 'POST',
+      body: { user_name: recipient.username, password: recipient.password, role: 'user' },
+    })
+    try {
+      const memberId = await addProjectMember(page, recipient.username)
+      const setRecipientActive = (is_active: boolean) =>
+        webApi(page, `/api/admin/users/${account.id}`, { method: 'PUT', body: { is_active } })
+      const owner = await webApi<{ id: number }>(page, '/api/users/me')
+      const title = `Silent save ${suffix}`
+      const description = 'Preserve this draft across a rejected silent save.'
+      const error = page.getByTestId('cloud-todo-save-error')
+      await page.goto(fixture.projectPath)
+      await page.getByTestId('collaboration-issue-create').click()
+      await page.getByTestId('cloud-todo-title').fill(title)
+      await page.getByTestId('cloud-todo-detail-description').fill(description)
+      await page.getByTestId('cloud-todo-create-assignee').click()
+      await page.getByTestId(`cloud-todo-create-assignee-option-user:${memberId}`).click()
 
-    // A real membership change invalidates the selected assignee after the form loaded.
-    await setRole('Viewer')
-    const rejectedCreate = page.waitForResponse(
-      response =>
-        response.request().method() === 'POST' &&
-        response.url().endsWith(`/cloud-projects/${fixture.projectId}/loop-items`)
-    )
-    await saveSilently(page, 'cloud-todo-create-confirm')
-    expect((await rejectedCreate).status()).toBe(422)
-    await expect(error).toContainText('Assignee is not a member')
-    await expect(page.getByTestId('cloud-todo-title')).toHaveValue(title)
-    await expect(page.getByTestId('cloud-todo-detail-description')).toHaveValue(description)
-    await expect(page.getByTestId('cloud-todo-create-assignee')).toHaveAttribute(
-      'data-value',
-      `user:${memberId}`
-    )
-    const afterFailure = await webApi<{ items: SavedIssue[] }>(
-      page,
-      `/api/v1/cloud-projects/${fixture.projectId}/loop-items`
-    )
-    expect(afterFailure.items.some(item => item.title === title)).toBe(false)
-    await captureEvidence(page, testInfo, '03-silent-create-rejected-draft-preserved')
-    await setRole('Developer')
-    await saveSilently(page, 'cloud-todo-create-confirm')
-    await expect(page).toHaveURL(new RegExp(`${fixture.projectPath}/issues/[^/?]+$`))
-    const issueId = decodeURIComponent(new URL(page.url()).pathname.split('/').at(-1) ?? '')
-    expect(issueId).not.toBe('')
-    const issuePath = `/api/v1/loop-items/${issueId}`
-    const created = await webApi<SavedIssue>(page, issuePath)
-    expect(created).toMatchObject({
-      title,
-      description,
-      status: 'inbox',
-      assignee_user_id: Number(memberId),
-    })
-    await expect(error).toHaveCount(0)
-    await expectNoAssignmentNotification(request, issueId)
-    await captureEvidence(page, testInfo, '04-silent-create-persisted')
+      // Deactivation invalidates the selected assignee after the form loaded.
+      await setRecipientActive(false)
+      const rejectedCreate = page.waitForResponse(
+        response =>
+          response.request().method() === 'POST' &&
+          response.url().endsWith(`/cloud-projects/${fixture.projectId}/loop-items`)
+      )
+      await saveSilently(page, 'cloud-todo-create-confirm')
+      expect((await rejectedCreate).status()).toBe(422)
+      await expect(error).toContainText('Issue recipient must be an active user')
+      await expect(page.getByTestId('cloud-todo-title')).toHaveValue(title)
+      await expect(page.getByTestId('cloud-todo-detail-description')).toHaveValue(description)
+      await expect(page.getByTestId('cloud-todo-create-assignee')).toHaveAttribute(
+        'data-value',
+        `user:${memberId}`
+      )
+      const afterFailure = await webApi<{ items: SavedIssue[] }>(
+        page,
+        `/api/v1/cloud-projects/${fixture.projectId}/loop-items`
+      )
+      expect(afterFailure.items.some(item => item.title === title)).toBe(false)
+      await captureEvidence(page, testInfo, '03-silent-create-rejected-draft-preserved')
+      await setRecipientActive(true)
+      await saveSilently(page, 'cloud-todo-create-confirm')
+      await expect(page).toHaveURL(new RegExp(`${fixture.projectPath}/issues/[^/?]+$`))
+      const issueId = decodeURIComponent(new URL(page.url()).pathname.split('/').at(-1) ?? '')
+      expect(issueId).not.toBe('')
+      const issuePath = `/api/v1/loop-items/${issueId}`
+      const created = await webApi<SavedIssue>(page, issuePath)
+      expect(created).toMatchObject({
+        title,
+        description,
+        status: 'inbox',
+        assignee_user_id: Number(memberId),
+      })
+      await expect(error).toHaveCount(0)
+      await expectNoAssignmentNotification(request, issueId, recipient)
+      await captureEvidence(page, testInfo, '04-silent-create-persisted')
 
-    // Change the owner through the UI, then exercise a real reassignment to another person.
-    const ownerAssigned = page.waitForResponse(
-      response =>
-        response.request().method() === 'POST' && response.url().endsWith(`/${issueId}/assign`)
-    )
-    await selectAssigneeSilently(page, owner.id)
-    expect((await ownerAssigned).ok()).toBe(true)
-    await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
-    expect((await webApi<SavedIssue>(page, issuePath)).assignee_user_id).toBe(owner.id)
-    await setRole('Viewer')
-    const rejectedAssignment = page.waitForResponse(
-      response =>
-        response.request().method() === 'POST' && response.url().endsWith(`/${issueId}/assign`)
-    )
-    await selectAssigneeSilently(page, memberId)
-    expect((await rejectedAssignment).status()).toBe(422)
-    await expect(error).toContainText('Assignee is not a member')
-    await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
-      'data-value',
-      `user:${memberId}`
-    )
-    expect(await webApi<SavedIssue>(page, issuePath)).toMatchObject({
-      title,
-      description,
-      status: created.status,
-      assignee_user_id: owner.id,
-    })
-    await expectNoAssignmentNotification(request, issueId)
-    await captureEvidence(page, testInfo, '05-silent-reassignment-rejected')
-    await setRole('Developer')
-    const retryAssigned = page.waitForResponse(
-      response =>
-        response.request().method() === 'POST' && response.url().endsWith(`/${issueId}/assign`)
-    )
-    await page.getByTestId('cloud-todo-field-retry').click()
-    expect((await retryAssigned).ok()).toBe(true)
-    await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
-    await page.reload()
-    await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
-      'data-value',
-      `user:${memberId}`
-    )
-    expect(await webApi<SavedIssue>(page, issuePath)).toMatchObject({
-      title,
-      description,
-      status: created.status,
-      assignee_user_id: Number(memberId),
-    })
-    await expect(error).toHaveCount(0)
-    await expectNoAssignmentNotification(request, issueId)
-    await captureEvidence(page, testInfo, '06-silent-reassignment-persisted')
+      // Change the owner through the UI, then exercise a real reassignment to another person.
+      const ownerAssigned = page.waitForResponse(
+        response =>
+          response.request().method() === 'POST' && response.url().endsWith(`/${issueId}/assign`)
+      )
+      await selectAssigneeSilently(page, owner.id)
+      expect((await ownerAssigned).ok()).toBe(true)
+      await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
+      expect((await webApi<SavedIssue>(page, issuePath)).assignee_user_id).toBe(owner.id)
+      await setRecipientActive(false)
+      const rejectedAssignment = page.waitForResponse(
+        response =>
+          response.request().method() === 'POST' && response.url().endsWith(`/${issueId}/assign`)
+      )
+      await selectAssigneeSilently(page, memberId)
+      expect((await rejectedAssignment).status()).toBe(422)
+      await expect(error).toContainText('Issue recipient must be an active user')
+      await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
+        'data-value',
+        `user:${memberId}`
+      )
+      expect(await webApi<SavedIssue>(page, issuePath)).toMatchObject({
+        title,
+        description,
+        status: created.status,
+        assignee_user_id: owner.id,
+      })
+      await setRecipientActive(true)
+      await expectNoAssignmentNotification(request, issueId, recipient)
+      await captureEvidence(page, testInfo, '05-silent-reassignment-rejected')
+      const retryAssigned = page.waitForResponse(
+        response =>
+          response.request().method() === 'POST' && response.url().endsWith(`/${issueId}/assign`)
+      )
+      await page.getByTestId('cloud-todo-field-retry').click()
+      expect((await retryAssigned).ok()).toBe(true)
+      await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
+      await page.reload()
+      await expect(page.getByTestId('cloud-todo-detail-assignee')).toHaveAttribute(
+        'data-value',
+        `user:${memberId}`
+      )
+      expect(await webApi<SavedIssue>(page, issuePath)).toMatchObject({
+        title,
+        description,
+        status: created.status,
+        assignee_user_id: Number(memberId),
+      })
+      await expect(error).toHaveCount(0)
+      await expectNoAssignmentNotification(request, issueId, recipient)
+      await captureEvidence(page, testInfo, '06-silent-reassignment-persisted')
+    } finally {
+      await webApi(page, `/api/admin/users/${account.id}`, { method: 'DELETE' })
+    }
   })
 })

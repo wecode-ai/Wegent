@@ -27,7 +27,6 @@ from app.services.connector_apps import (
     CONNECTOR_APP_KIND,
     CONNECTOR_APP_NAMESPACE,
     CONNECTOR_APP_USER_ID,
-    ConnectorApp,
     ConnectorAppService,
 )
 
@@ -120,8 +119,7 @@ def _set_builtin_loading_mode(row: Kind, *, keywords: tuple[str, ...]) -> bool:
 
 def _seed_builtin_connector_apps(db: Session) -> tuple[list[str], list[str]]:
     """Stage the catalog changes in the bootstrap transaction."""
-    # Keep the inserted ORM instances alive so rollback can detach them.
-    created: list[ConnectorApp] = []
+    created: list[str] = []
     updated: list[str] = []
     for definition in BUILTIN_CONNECTOR_APPS:
         existing = _active_builtin_row(db, definition.slug)
@@ -153,8 +151,8 @@ def _seed_builtin_connector_apps(db: Session) -> tuple[list[str], list[str]]:
             commit=False,
         )
         _set_builtin_loading_mode(app.row, keywords=definition.keywords)
-        created.append(app)
-    return [app.slug for app in created], updated
+        created.append(definition.slug)
+    return created, updated
 
 
 def ensure_builtin_connector_apps(db: Session) -> list[str]:

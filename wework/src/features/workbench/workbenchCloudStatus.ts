@@ -222,6 +222,19 @@ export function startCloudRuntimeSync(
   }
 }
 
+export function updateCloudRuntimeDevices(
+  state: CloudRuntimeState,
+  revision: number,
+  devices: DeviceInfo[]
+): CloudRuntimeState {
+  if (state.inFlightRevision !== revision) return state
+  return {
+    ...state,
+    current: state.current ? { ...state.current, devices } : null,
+    lastGood: state.lastGood ? { ...state.lastGood, devices } : null,
+  }
+}
+
 export function finishCloudRuntimeSync(
   state: CloudRuntimeState,
   revision: number,

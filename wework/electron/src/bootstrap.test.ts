@@ -3,10 +3,12 @@ import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import type { DesktopRelease, ReleaseActivation } from './runtime/release-store.js'
 
+const resourcesPathDescriptor = Object.getOwnPropertyDescriptor(process, 'resourcesPath')
+
 const startup = vi.hoisted(() => ({
   roots: [] as string[],
   metadata: {} as { weworkExecutorNamespace?: string; version?: string },
-  activeRelease: { id: 'pending-target' } as Partial<DesktopRelease>,
+  activeRelease: { id: 'pending-target' } as Partial<DesktopRelease> | null,
   activation: null as Partial<ReleaseActivation> | null,
   bridgeHandoff: vi.fn(),
   showRecovery: vi.fn(),
@@ -21,11 +23,17 @@ const startup = vi.hoisted(() => ({
   enterInstalled: vi.fn(),
   rollback: vi.fn(),
   restoreData: vi.fn(),
+  acquireStartup: vi.fn(),
+  releaseStartup: vi.fn(),
   afterStopReady: vi.fn(),
   afterStopPrepare: vi.fn(),
   markers: {} as Record<string, string>,
   restoreConsent: vi.fn(),
   exit: vi.fn(),
+}))
+
+vi.mock('./runtime/release-startup-owner.js', () => ({
+  acquireReleaseStartup: startup.acquireStartup,
 }))
 
 vi.mock('./runtime/release-after-stop.js', () => ({
@@ -108,6 +116,10 @@ vi.mock('./runtime/release-store.js', async importOriginal => {
 })
 
 beforeEach(() => {
+  Object.defineProperty(process, 'resourcesPath', {
+    value: join(tmpdir(), 'wework-bootstrap-resources'),
+    configurable: true,
+  })
   vi.resetModules()
   vi.doMock('./main.js', () => {
     startup.main()
@@ -122,6 +134,8 @@ beforeEach(() => {
   startup.enterInstalled.mockReset()
   startup.rollback.mockReset()
   startup.restoreData.mockReset()
+  startup.releaseStartup.mockReset().mockResolvedValue(undefined)
+  startup.acquireStartup.mockReset().mockResolvedValue(startup.releaseStartup)
   startup.afterStopReady.mockReset().mockResolvedValue(undefined)
   startup.afterStopPrepare.mockReset().mockResolvedValue(undefined)
   startup.markers = {}
@@ -141,6 +155,7 @@ beforeEach(() => {
   vi.stubEnv('WEWORK_RELEASE_ROOT', '')
   vi.stubEnv('WEWORK_RELEASE_SUPERVISED', '')
   vi.stubEnv('WEWORK_RELEASE_RECOVERY', '')
+  vi.stubEnv('WEWORK_STARTUP_RECOVERY', '')
   for (const name of [
     'WEWORK_HARNESS_RUNTIME_ROOT',
     'WEWORK_ACTIVE_RELEASE_ID',
@@ -149,7 +164,86 @@ beforeEach(() => {
     vi.stubEnv(name, '')
 })
 
-afterEach(() => vi.unstubAllEnvs())
+afterEach(() => {
+  vi.unstubAllEnvs()
+  if (resourcesPathDescriptor)
+    Object.defineProperty(process, 'resourcesPath', resourcesPathDescriptor)
+  else Reflect.deleteProperty(process, 'resourcesPath')
+})
+
+test('a concurrent recovery entry waits before reading or restoring the shared transaction', async () => {
+  let grant!: (release: () => Promise<void>) => void
+  startup.acquireStartup.mockImplementation(
+    () =>
+      new Promise(resolve => {
+        grant = resolve
+      })
+  )
+  startup.activation = { token: 'rollback', rollbackRequested: true }
+  const loading = import('./bootstrap.js')
+  await vi.waitFor(() => expect(startup.acquireStartup).toHaveBeenCalledOnce())
+  expect(startup.roots).toHaveLength(0)
+  expect(startup.rollback).not.toHaveBeenCalled()
+  expect(startup.restoreData).not.toHaveBeenCalled()
+  expect(startup.relaunch).not.toHaveBeenCalled()
+  expect(startup.main).not.toHaveBeenCalled()
+  expect(startup.releaseStartup).not.toHaveBeenCalled()
+  expect(startup.showRecovery).not.toHaveBeenCalled()
+  grant(startup.releaseStartup)
+  await loading
+  expect(startup.roots).toHaveLength(1)
+})
+
+test('startup ownership failure cannot open application data', async () => {
+  startup.acquireStartup.mockRejectedValue(new Error('Native startup lock failed'))
+  await import('./bootstrap.js')
+  expect(startup.main).not.toHaveBeenCalled()
+  expect(startup.rollback).not.toHaveBeenCalled()
+  expect(startup.showRecovery).toHaveBeenCalledWith(new Error('Native startup lock failed'))
+})
+
+test('lost startup ownership terminates data routing and relaunches isolated recovery', async () => {
+  await import('./bootstrap.js')
+  const lost = startup.acquireStartup.mock.calls[0]?.[2] as (error: Error) => void
+  lost(new Error('Native release startup lock was lost'))
+  expect(process.env.WEWORK_STARTUP_RECOVERY).toBe('Native release startup lock was lost')
+  expect(startup.relaunch).toHaveBeenCalledWith({ args: expect.any(Array) })
+  expect(startup.exit).toHaveBeenCalledWith(1)
+  expect(startup.main).not.toHaveBeenCalled()
+  expect(startup.restoreData).not.toHaveBeenCalled()
+})
+
+test('ordinary startup releases transaction ownership before entering the main application', async () => {
+  startup.activation = null
+  startup.activeRelease = null
+  startup.main.mockImplementationOnce(() => {
+    expect(startup.releaseStartup).toHaveBeenCalledOnce()
+  })
+  await import('./bootstrap.js')
+  expect(startup.main).toHaveBeenCalledOnce()
+  expect(startup.releaseStartup).toHaveBeenCalledOnce()
+})
+
+test('routing errors release transaction ownership before opening recovery', async () => {
+  startup.bridge = join(startup.home, 'missing-bridge')
+  startup.bridgeHandoff.mockRejectedValue(new Error('Cannot resolve healthy bridge'))
+  startup.showRecovery.mockImplementationOnce(async () => {
+    expect(startup.releaseStartup).toHaveBeenCalledOnce()
+  })
+  await import('./bootstrap.js')
+  expect(startup.showRecovery).toHaveBeenCalledWith(new Error('Cannot resolve healthy bridge'))
+  expect(startup.main).not.toHaveBeenCalled()
+})
+
+test('failed ownership release cannot enter the main application', async () => {
+  startup.activation = null
+  startup.activeRelease = null
+  startup.releaseStartup.mockRejectedValue(new Error('Native startup lock was lost'))
+  await import('./bootstrap.js')
+  expect(startup.main).not.toHaveBeenCalled()
+  expect(startup.releaseStartup).toHaveBeenCalledOnce()
+  expect(startup.showRecovery).toHaveBeenCalledWith(new Error('Native startup lock was lost'))
+})
 
 test('a native launcher failure opens recovery without loading release records or main', async () => {
   vi.stubEnv('WEWORK_STARTUP_RECOVERY', 'Selected program is unavailable')

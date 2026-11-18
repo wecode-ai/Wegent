@@ -358,7 +358,7 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn start_quota_turn(&self, mut turn: SpawnTurnRequest) {
         let gate = self.task_send_gate(&turn.local_task_id);
-        let send = gate.lock().await;
+        let _send = gate.lock().await;
         if !self
             .local_task_link(&turn.local_task_id)
             .is_some_and(|link| {
@@ -368,7 +368,7 @@ impl RuntimeWorkRpcHandler {
             self.finish_quota_command(&turn).await;
             return;
         }
-        let (cancel, cancelled) = oneshot::channel();
+        let (cancel, mut cancelled) = oneshot::channel();
         let (stopped, stopped_rx) = oneshot::channel();
         let _stopped = StoppedTurnGuard::new(stopped);
         let execution = {
@@ -399,21 +399,23 @@ impl RuntimeWorkRpcHandler {
                 .await;
             return;
         };
-        // Let cancellation reach the active execution while the provider read
-        // is pending. Reacquire the gate before deciding whether to resume.
-        drop(send);
-        let (_send, checked) = tokio::select! {
+        // Cancellation must acquire the send gate while native account reads are pending.
+        drop(_send);
+        let checked = tokio::select! {
             biased;
-            _ = cancelled => {
-                self.finish_local_task_execution(&turn.local_task_id, execution);
-                self.store.update_task(&turn.local_task_id, |link| settle_native_execution(link, "cancelled"));
-                self.finish_quota_command(&turn).await;
+            _ = &mut cancelled => {
+                self.finish_cancelled_quota_check(&turn, execution).await;
                 return;
             }
-            checked = async {
-                let checked = self.check_quota_turn(&turn, &wait).await;
-                (gate.lock().await, checked)
-            } => checked,
+            checked = self.check_quota_turn(&turn, &wait) => checked,
+        };
+        let _send = tokio::select! {
+            biased;
+            _ = cancelled => {
+                self.finish_cancelled_quota_check(&turn, execution).await;
+                return;
+            }
+            send = gate.lock() => send,
         };
         if !self.is_local_task_execution_accepting_notifications(&turn.local_task_id, execution) {
             self.finish_local_task_execution(&turn.local_task_id, execution);
@@ -578,6 +580,14 @@ impl RuntimeWorkRpcHandler {
             );
         }
         self.finish_quota_command(turn).await;
+    }
+
+    async fn finish_cancelled_quota_check(&self, turn: &SpawnTurnRequest, execution: u64) {
+        // Interrupts may own the send gate while waiting for stop acknowledgement.
+        // Reuse the execution-fenced completion path without acquiring that gate.
+        if self.finish_local_task(&turn.local_task_id, execution, None, "cancelled") {
+            self.finish_quota_command(turn).await;
+        }
     }
 
     pub(super) async fn finish_quota_command(&self, turn: &SpawnTurnRequest) {

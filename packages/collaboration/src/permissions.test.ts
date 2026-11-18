@@ -96,6 +96,37 @@ describe("collaboration permissions", () => {
     });
   });
 
+  it("allows server-confirmed invited Issue management without project execution", () => {
+    const project = {
+      access_role: "Viewer" as const,
+      project_store: "backend" as const,
+      current_user_id: 7,
+    };
+    const invited = {
+      invited_only: true,
+      can_edit: true,
+      can_view_detail: true,
+      created_by_user_id: 99,
+    };
+    expect(getCollaborationIssueActionPermissions(project, invited)).toEqual({
+      canEdit: true,
+      canComment: true,
+      canAssign: true,
+      canStartWork: false,
+    });
+    expect(
+      getCollaborationIssueActionPermissions(project, {
+        ...invited,
+        can_view_detail: false,
+      }),
+    ).toEqual({
+      canEdit: false,
+      canComment: false,
+      canAssign: false,
+      canStartWork: false,
+    });
+  });
+
   it("lets members assign and denies read-only creators", () => {
     expect(
       canAssignCollaborationIssue({

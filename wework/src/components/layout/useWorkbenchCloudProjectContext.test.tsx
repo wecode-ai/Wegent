@@ -28,6 +28,50 @@ import {
 } from './workbenchCloudProjectContextTestFixtures'
 
 describe('useWorkbenchCloudProjectContext', () => {
+  test('keeps a late association in its owning task while another task is loading', async () => {
+    const targetProject = project('late-association-space', 'local')
+    const item = loopItem(targetProject.id)
+    let finishBinding!: () => void
+    const api = {
+      listCloudProjects: vi.fn().mockResolvedValue({ items: [targetProject] }),
+      listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
+      listLoopItems: vi.fn().mockResolvedValue({ items: [item] }),
+      listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
+      findCloudContextForTask: vi.fn(() => new Promise(() => {})),
+      bindTask: vi.fn(() => new Promise<void>(resolve => (finishBinding = resolve))),
+    }
+    const { result, rerender } = renderHook(
+      ({ taskId }) =>
+        useWorkbenchCloudProjectContext({
+          active: true,
+          currentRuntimeTask: { deviceId: 'device-retained', taskId },
+          defaultProjectSpace: null,
+          paneKey: 'late-association-pane',
+          runtimeTaskTitle: 'Task A',
+          services: { projectSpaceApis: { local: api } } as unknown as WorkbenchServices,
+        }),
+      { initialProps: { taskId: 'retained-task' } }
+    )
+    await waitFor(() => expect(result.current.cloudProjects).toEqual([targetProject]))
+    act(() => result.current.handleSelectCloudProject(targetProject))
+    await waitFor(() => expect(result.current.taskBoardAssociation?.loading).toBe(false))
+    act(() => result.current.associateRuntimeTaskWithExistingItem(item))
+    expect(api.bindTask).toHaveBeenCalledOnce()
+    rerender({ taskId: 'different-task' })
+    await act(async () => finishBinding())
+
+    expect(result.current.boundCloudProject).toBeNull()
+    expect(result.current.boundCloudItem).toBeNull()
+    expect(result.current.taskBoardAssociation).toBeNull()
+    expect(result.current.prepareSubmission('Continue task B')).toMatchObject({
+      additionalContext: undefined,
+      origin: undefined,
+      cloudProjectId: undefined,
+    })
+    rerender({ taskId: 'retained-task' })
+    expect(result.current.taskBoardAssociation).toBeNull()
+  })
+
   test('retains the same task binding across hidden tabs and failed refreshes', async () => {
     const targetProject = project('retained-space', 'local')
     const item = loopItem(targetProject.id)
@@ -65,10 +109,18 @@ describe('useWorkbenchCloudProjectContext', () => {
     expect(findCloudContextForTask).toHaveBeenCalledTimes(2)
     expect(result.current.boundCloudItem).toEqual(item)
     expect(result.current.boundCloudProject).toEqual(targetProject)
+    expect(
+      result.current.prepareSubmission('Continue after a failed refresh').origin
+    ).toMatchObject({
+      cloudProjectId: targetProject.id,
+      loopItemId: item.id,
+    })
+    expect(findCloudContextForTask).toHaveBeenCalledTimes(2)
 
     await act(async () => rerender({ active: false, taskId: 'different-task' }))
     expect(result.current.boundCloudItem).toBeNull()
     expect(result.current.boundCloudProject).toBeNull()
+    expect(result.current.prepareSubmission('A different conversation').origin).toBeUndefined()
     expect(findCloudContextForTask).toHaveBeenCalledTimes(2)
   })
 
@@ -143,9 +195,14 @@ describe('useWorkbenchCloudProjectContext', () => {
       cloudProjectId: cloudProject.id,
       loopItemId: item.id,
     })
-    expect(submission?.additionalContext?.cloudCollaboration.value).toContain(
-      `Current task: ${item.id} — ${item.title}.`
+    const reference = submission?.additionalContext?.cloudCollaboration.value
+    expect(reference).toContain(
+      JSON.stringify({ project_store: 'backend', space_id: cloudProject.id, item_id: item.id })
     )
+    expect(reference).toContain('get_board_item')
+    expect(reference).not.toContain(item.title)
+    expect(reference).not.toContain(item.description)
+    expect(reference).not.toContain(cloudProject.name)
     expect(result.current.pendingCloudProject).toEqual(cloudProject)
     expect(result.current.pendingTodoItem).toEqual(item)
 
@@ -306,79 +363,107 @@ describe('useWorkbenchCloudProjectContext', () => {
     firstHook.unmount()
   })
 
-  test('refreshes task context before send while the rendered binding is still loading', async () => {
-    const targetProject = project('space-target', 'local')
-    const enrichedItem = {
-      ...loopItem(targetProject.id),
-      title: 'Updated acceptance criteria',
-      has_additional_context: true,
-    }
-    const runtimeTask = {
-      deviceId: 'device-1',
-      taskId: 'runtime-1',
-    }
-    let resolveInitialLookup:
-      | ((value: { project: CloudProject; loop_item: CloudLoopItem | null }) => void)
-      | undefined
-    const findCloudContextForTask = vi
-      .fn()
-      .mockImplementationOnce(
-        () =>
-          new Promise<{ project: CloudProject; loop_item: CloudLoopItem | null }>(resolve => {
-            resolveInitialLookup = resolve
-          })
+  test.each([
+    { store: 'local' as const, defaultProject: false },
+    { store: 'backend' as const, defaultProject: false },
+    { store: 'local' as const, defaultProject: true },
+  ])(
+    'prepares follow-ups without querying pending or loaded context ($store, default=$defaultProject)',
+    async ({ store, defaultProject }) => {
+      const targetProject = defaultProject
+        ? {
+            ...project(DEFAULT_WORK_ITEM_PROJECT_ID, store),
+            project_key: DEFAULT_WORK_ITEM_PROJECT_KEY,
+          }
+        : project(`space-target-${store}`, store)
+      const enrichedItem = {
+        ...loopItem(targetProject.id),
+        title: 'Updated acceptance criteria',
+        has_additional_context: !defaultProject,
+      }
+      const runtimeTask = {
+        deviceId: 'device-1',
+        taskId: 'runtime-1',
+      }
+      let resolveInitialLookup:
+        | ((value: { project: CloudProject; loop_item: CloudLoopItem | null }) => void)
+        | undefined
+      const findCloudContextForTask = vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise<{ project: CloudProject; loop_item: CloudLoopItem | null }>(resolve => {
+              resolveInitialLookup = resolve
+            })
+        )
+        .mockResolvedValue({
+          project: targetProject,
+          loop_item: enrichedItem,
+        })
+      const api = {
+        listCloudProjects: vi.fn().mockResolvedValue({ items: [targetProject] }),
+        listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
+        listLoopItems: vi.fn().mockResolvedValue({ items: [] }),
+        listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
+        findCloudContextForTask,
+      }
+      const services = {
+        projectSpaceApis: {
+          ...(store === 'local' ? { local: api } : { cloud: api }),
+        },
+        ...(store === 'backend' ? { workspaceRuntimePort: cloudRuntimePort(api) } : {}),
+      } as unknown as WorkbenchServices
+      const { result } = renderHook(() =>
+        useWorkbenchCloudProjectContext({
+          active: true,
+          currentRuntimeTask: runtimeTask,
+          currentProjectId: 42,
+          defaultProjectSpace: null,
+          paneKey: 'project:42',
+          runtimeTaskTitle: 'Runtime task',
+          services,
+          userId: 1,
+        })
       )
-      .mockResolvedValue({
-        project: targetProject,
-        loop_item: enrichedItem,
+
+      await waitFor(() => expect(findCloudContextForTask).toHaveBeenCalledOnce())
+      expect(result.current.boundCloudProject).toBeNull()
+
+      const pendingSubmission = result.current.prepareSubmission('Continue while context loads')
+      expect(pendingSubmission).not.toBeInstanceOf(Promise)
+      expect(pendingSubmission.additionalContext).toBeUndefined()
+      expect(findCloudContextForTask).toHaveBeenCalledOnce()
+
+      await act(async () => {
+        resolveInitialLookup?.({ project: targetProject, loop_item: enrichedItem })
       })
-    const localApi = {
-      listCloudProjects: vi.fn().mockResolvedValue({ items: [targetProject] }),
-      listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
-      listLoopItems: vi.fn().mockResolvedValue({ items: [] }),
-      listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
-      findCloudContextForTask,
+      await waitFor(() => expect(result.current.boundCloudItem).toEqual(enrichedItem))
+      const submission = result.current.prepareSubmission('Apply the updated criteria')
+      expect(submission).not.toBeInstanceOf(Promise)
+      expect(findCloudContextForTask).toHaveBeenCalledOnce()
+      const reference = submission.additionalContext?.cloudCollaboration.value
+      expect(reference).toContain(
+        JSON.stringify({
+          project_store: store,
+          space_id: targetProject.id,
+          item_id: enrichedItem.id,
+        })
+      )
+      expect(reference).not.toContain(enrichedItem.title)
+      expect(reference).not.toContain(enrichedItem.description)
+      expect(reference).toContain('current details before relying on them')
+      expect(submission.origin).toEqual(
+        defaultProject
+          ? undefined
+          : {
+              type: 'board_task',
+              projectStore: targetProject.project_store,
+              cloudProjectId: targetProject.id,
+              loopItemId: enrichedItem.id,
+            }
+      )
     }
-    const services = {
-      projectSpaceApis: {
-        local: localApi,
-        defaultLocation: 'local',
-      },
-    } as unknown as WorkbenchServices
-    const { result } = renderHook(() =>
-      useWorkbenchCloudProjectContext({
-        active: true,
-        currentRuntimeTask: runtimeTask,
-        currentProjectId: 42,
-        defaultProjectSpace: null,
-        paneKey: 'project:42',
-        runtimeTaskTitle: 'Runtime task',
-        services,
-        userId: 1,
-      })
-    )
-
-    await waitFor(() => expect(findCloudContextForTask).toHaveBeenCalledOnce())
-    expect(result.current.boundCloudProject).toBeNull()
-
-    let submission: Awaited<ReturnType<typeof result.current.prepareSubmission>> | undefined
-    await act(async () => {
-      submission = await result.current.prepareSubmission('Apply the updated criteria')
-    })
-
-    expect(findCloudContextForTask).toHaveBeenCalledTimes(2)
-    expect(submission?.additionalContext?.cloudCollaboration.value).toContain(enrichedItem.title)
-    expect(submission?.origin).toEqual({
-      type: 'board_task',
-      projectStore: targetProject.project_store,
-      cloudProjectId: targetProject.id,
-      loopItemId: enrichedItem.id,
-    })
-    resolveInitialLookup?.({
-      project: targetProject,
-      loop_item: enrichedItem,
-    })
-  })
+  )
 
   test('submits immediately and delegates a late default-project association to executor', async () => {
     const defaultBoard = {
@@ -675,7 +760,7 @@ describe('current project binding context ownership', () => {
     await act(async () => {
       await result.current.prepareSubmission('Continue current work')
     })
-    expect(apis[store].findCloudContextForTask).toHaveBeenCalledTimes(2)
+    expect(apis[store].findCloudContextForTask).toHaveBeenCalledOnce()
     expect(apis[other].findCloudContextForTask).not.toHaveBeenCalled()
   })
 
@@ -705,10 +790,13 @@ describe('current project binding context ownership', () => {
     const { result } = renderContext(address, services)
     await waitFor(() => expect(result.current.boundCloudProject).toEqual(projects.backend))
     expect(apis.local.findCloudContextForTask).not.toHaveBeenCalled()
-    await act(async () => {
-      await result.current.prepareSubmission('Continue authorized work')
+    const submission = result.current.prepareSubmission('Continue authorized work')
+    expect(submission.origin).toMatchObject({
+      projectStore: 'backend',
+      cloudProjectId: 'authorized-project',
+      loopItemId: 'authorized-issue',
     })
-    expect(apis.backend.findCloudContextForTask).toHaveBeenCalledTimes(2)
+    expect(apis.backend.findCloudContextForTask).toHaveBeenCalledOnce()
     expect(apis.local.findCloudContextForTask).not.toHaveBeenCalled()
   })
 
@@ -783,11 +871,15 @@ describe('current project binding context ownership', () => {
     await waitFor(() => expect(result.current.boundCloudProject).toEqual(projects.backend))
 
     rememberProjectSpaceTaskBinding(address, projectSpaceRef(projects.local))
-    await act(async () => {
-      await result.current.prepareSubmission('Read the current binding')
-    })
-    expect(result.current.boundCloudProject).toEqual(projects.local)
-    expect(apis.local.findCloudContextForTask).toHaveBeenCalledTimes(2)
+    const submission = result.current.prepareSubmission('Read the current binding')
+    expect(submission).not.toBeInstanceOf(Promise)
+    expect(submission.additionalContext?.cloudCollaboration.value).toContain(projects.local.id)
+    expect(submission.additionalContext?.cloudCollaboration.value).not.toContain(
+      projects.backend.id
+    )
+    expect(submission.origin).toBeUndefined()
+    expect(result.current.boundCloudProject).toEqual(projects.backend)
+    expect(apis.local.findCloudContextForTask).toHaveBeenCalledOnce()
     expect(apis.backend.findCloudContextForTask).toHaveBeenCalledOnce()
   })
 
@@ -852,9 +944,14 @@ describe('current project binding context ownership', () => {
       await waitFor(() => expect(result.current.todoBindingError).not.toBeNull())
       expect(result.current.boundCloudProject).toBeNull()
       expect(apis.local.findCloudContextForTask).not.toHaveBeenCalled()
-      await act(async () => {
-        await expect(result.current.prepareSubmission('Continue')).rejects.toThrow()
-      })
+      const submission = result.current.prepareSubmission('Continue')
+      expect(submission).not.toBeInstanceOf(Promise)
+      expect(submission.cloudProjectId).toBe(projects.backend.id)
+      expect(submission.additionalContext?.cloudCollaboration.value).toContain(projects.backend.id)
+      expect(submission.additionalContext?.cloudCollaboration.value).not.toContain(
+        projects.local.id
+      )
+      expect(result.current.todoBindingError).not.toBeNull()
       expect(apis.local.findCloudContextForTask).not.toHaveBeenCalled()
       rerender({ currentServices: services })
       await waitFor(() => expect(result.current.boundCloudProject).toEqual(projects.backend))

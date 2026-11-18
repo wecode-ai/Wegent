@@ -107,6 +107,8 @@ export async function verifyStartupFaultIsolation({ appBinary, environment, resu
       assert.equal(result.visible, true)
       assert.equal(result.retryEnabled, true)
       assert.equal(result.reopened, true)
+      assert.equal(result.nativeProfileIsolated, true)
+      assert.equal(result.sessionProfileIsolated, true)
       assert.equal(result.state.ready, false, 'Recovery must not certify a healthy release')
       assert.ok(result.state.error)
       assert.equal(await readFile(credentials, 'utf8'), saved)
@@ -124,6 +126,11 @@ function recoveryWindowAssertion(evidencePath) {
     const { app, BrowserWindow } = require('electron')
     const fs = require('node:fs')
     const output = ${JSON.stringify(evidencePath)}
+    // Bootstrap failures precede main's path setup; isolate native stores before ready.
+    const profile = process.env.WEWORK_USER_DATA_DIR
+    if (!profile) throw new Error('Recovery probe requires an isolated native profile')
+    app.setPath('userData', profile)
+    app.setPath('sessionData', profile)
     const deadline = Date.now() + 10_000
     let checking = false
     let reopenRequested = false
@@ -156,7 +163,7 @@ function recoveryWindowAssertion(evidencePath) {
           return
         }
         clearInterval(timer)
-        fs.writeFileSync(output, JSON.stringify({visible:window.isVisible(),retryEnabled,reopened:true,state}))
+        fs.writeFileSync(output, JSON.stringify({visible:window.isVisible(),retryEnabled,reopened:true,state,nativeProfileIsolated:app.getPath('userData')===profile,sessionProfileIsolated:app.getPath('sessionData')===profile}))
         // Let Chromium close both windows before shutting down the in-process compositor.
         app.quit()
       } catch (error) {

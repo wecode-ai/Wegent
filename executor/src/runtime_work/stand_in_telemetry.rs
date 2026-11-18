@@ -7,17 +7,26 @@ use crate::task_runtime::{
 use serde_json::Value;
 use std::path::Path;
 
-pub(super) fn observe(path: &Path, link: &RuntimeTaskLink) {
+pub(super) struct Observation {
+    pub(super) occurred_at: i64,
+    user: i64,
+    task: String,
+    turn: String,
+    running: bool,
+    waiting: bool,
+    result: Option<&'static str>,
+    properties: Value,
+}
+
+pub(super) fn snapshot(link: &RuntimeTaskLink) -> Option<Observation> {
     let origin = &link.runtime_handle["origin"];
     if !matches!(
         origin["initiatedBy"].as_str(),
         Some("stand_in" | "stand_in_identity")
     ) {
-        return;
+        return None;
     }
-    let Some(user) = origin["userId"].as_i64() else {
-        return;
-    };
+    let user = origin["userId"].as_i64()?;
     let result = match (link.status.as_str(), link.turn_status.as_deref()) {
         ("cancelled", _) | (_, Some("interrupted")) => Some("cancelled"),
         ("failed", _) | (_, Some("failed")) => Some("failure"),
@@ -33,15 +42,29 @@ pub(super) fn observe(path: &Path, link: &RuntimeTaskLink) {
         link.interaction_status.as_deref(),
         Some("waitingForUserInput" | "awaitingUserReply")
     );
+    Some(Observation {
+        occurred_at: chrono::Utc::now().timestamp_millis(),
+        user,
+        task: link.local_task_id.clone(),
+        turn: turn.to_owned(),
+        running: link.running,
+        waiting,
+        result,
+        properties: origin_properties(origin),
+    })
+}
+
+pub(super) fn observe(path: &Path, observation: Observation) {
     let outcome = LocalTaskStore::open(path).and_then(|store| {
         store.observe_stand_in_run(StandInRunObservation {
-            user,
-            task: &link.local_task_id,
-            turn,
-            running: link.running,
-            waiting,
-            result,
-            properties: &origin_properties(origin),
+            occurred_at: observation.occurred_at,
+            user: observation.user,
+            task: &observation.task,
+            turn: &observation.turn,
+            running: observation.running,
+            waiting: observation.waiting,
+            result: observation.result,
+            properties: &observation.properties,
         })
     });
     diagnose(outcome);

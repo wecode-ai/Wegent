@@ -400,6 +400,17 @@ fn quota_wait_goal_pause_cancels_the_exact_durable_wait() {
 #[cfg(unix)]
 #[test]
 fn quota_wait_protocol_checks_windows_and_rejects_changed_native_owners() {
+    verify_quota_wait_protocol(false);
+}
+
+#[cfg(unix)]
+#[test]
+fn quota_interrupt_during_account_read_does_not_wait_for_the_send_gate() {
+    verify_quota_wait_protocol(true);
+}
+
+#[cfg(unix)]
+fn verify_quota_wait_protocol(interrupt: bool) {
     use std::os::unix::fs::PermissionsExt;
     let _lock = crate::test_env::lock();
     let home = tempfile::tempdir().unwrap();
@@ -535,16 +546,28 @@ done
             })
             .await
             .unwrap();
-            assert_eq!(
-                tokio::time::timeout(
-                    Duration::from_secs(10),
-                    handler.cancel_task(json!({"taskId":"waiting"})),
+            if interrupt {
+                // A malformed replacement isolates stop acknowledgement from starting another turn.
+                let error = tokio::time::timeout(
+                    Duration::from_secs(2),
+                    handler.interrupt_and_send(json!({"taskId":"waiting"})),
                 )
                 .await
-                .expect("Cancellation must interrupt a pending account read")
-                .unwrap()["accepted"],
-                true
-            );
+                .expect("interrupt must acknowledge the stopped quota check before sending")
+                .unwrap_err();
+                assert_eq!(error.code, "bad_request");
+            } else {
+                assert_eq!(
+                    tokio::time::timeout(
+                        Duration::from_secs(2),
+                        handler.cancel_task(json!({"taskId":"waiting"})),
+                    )
+                    .await
+                    .expect("cancellation must not wait for the blocked account read")
+                    .unwrap()["accepted"],
+                    true
+                );
+            }
             tokio::time::timeout(Duration::from_secs(2), async {
                 while handler.is_busy_local_task("waiting")
                     || handler
