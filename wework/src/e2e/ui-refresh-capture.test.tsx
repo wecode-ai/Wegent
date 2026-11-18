@@ -299,6 +299,9 @@ test('records queued browser stalls and only safe script attribution', () => {
   const detail = capture.getUiResponsivenessDiagnostics()
   expect(detail.captures[0].events).toHaveLength(5)
   expect(
+    detail.captures[0].events.find(event => event.kind === 'slow-script')?.details.elapsedMs
+  ).toBe(7500)
+  expect(
     detail.captures[0].events.find(event => event.kind === 'long-frame')?.details
   ).toMatchObject({
     slowScriptCount: 4,

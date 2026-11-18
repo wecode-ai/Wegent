@@ -107,8 +107,8 @@ function recordSlowScripts(
   const scripts = slowScripts
     .sort(
       (left, right) =>
-        (right.forcedStyleAndLayoutDuration ?? 0) - (left.forcedStyleAndLayoutDuration ?? 0) ||
-        (right.duration ?? 0) - (left.duration ?? 0)
+        (right.duration ?? 0) - (left.duration ?? 0) ||
+        (right.forcedStyleAndLayoutDuration ?? 0) - (left.forcedStyleAndLayoutDuration ?? 0)
     )
     .slice(0, MAX_SCRIPT_ATTRIBUTIONS)
   for (const script of scripts) {
