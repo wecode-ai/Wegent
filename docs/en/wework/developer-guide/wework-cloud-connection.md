@@ -8,6 +8,10 @@ Wework remains a complete local app by default. Local Codex, local model configs
 
 Set `VITE_WEGENT_BACKEND_URL` at build time to provide the default Backend URL in Connect cloud. This value only prefills the field and remains editable; an existing local connection address takes precedence over the build default. When configured, the desktop account area shows "Wegent account / Not signed in" while disconnected and continues to open the full account menu. Users start cloud authorization through "Sign in to Wegent" at the top of that menu. After connection, the account area shows the cloud username and email; Log out in the account menu only disconnects the cloud connection.
 
+Cloud connections support HTTP and HTTPS services, including private IP addresses and internal hostnames. The authorization page may use a different host or port from Backend; configure its reachable Web address through the server's WEWORK_AUTHORIZE_BASE_URL or FRONTEND_URL. HTTP traffic is unencrypted, so deployments should select a protocol appropriate for their network.
+
+Cloud login retains its original system-browser authorization flow. Connector authorization continues to use the in-app throwaway window and accepts only HTTPS or loopback HTTP; its window and URL policy do not apply to cloud login.
+
 ## State Ownership
 
 Cloud connection state is owned by the frontend `cloud-connection` layer and is stored separately from the global `auth_token` used by the web login flow. It persists:
@@ -34,9 +38,7 @@ stored in `renderer-local-storage-origins.json`, and renderer recreation on the
 same origin does not clear storage again. Browser storage remains untouched before
 the first durable snapshot exists so migration data is not lost.
 
-Users may enter either the Backend root URL or an `/api` URL. The frontend normalizes that input into HTTP API and Socket.IO connection settings. Connecting first checks `/health`, then calls `/auth/wework/sessions` to create a short-lived authorization session. Backend returns a complete `authorize_url`; local Wework opens that cloud authorization page in the embedded authorization browser and polls the session result with the client-only `poll_token`.
-
-The desktop authorization window defaults to `1000 × 640` with a minimum size of `960 × 620`, which accommodates enterprise login pages that do not provide responsive layouts. It stays hidden until positioning completes, remains above ordinary windows after it is shown, and repositions when the Wework main window moves or its display scale changes. Placement is clamped to the usable area of Wework's current display. On macOS, positioning uses AppKit's unified logical desktop coordinates directly so moving between Retina and non-Retina displays cannot send the window off-screen through physical-to-logical pixel conversion.
+Users may enter either the Backend root URL or an `/api` URL. The frontend normalizes that input into HTTP API and Socket.IO connection settings. Connecting first checks `/health`, then calls `/auth/wework/sessions` to create a short-lived authorization session. Backend returns a complete `authorize_url`; local Wework opens that cloud authorization page in the system browser and polls the session result with the client-only `poll_token`.
 
 Wework resolves the Socket.IO address in this order: the URL explicitly entered by the user, the packaged Socket URL when it belongs to the current Backend, the `socket_url` returned by Backend `/auth/wework/config`, and finally the Backend same-origin default. Backend declares its public Socket.IO origin through `WEGENT_SOCKET_URL`; HTTPS deployments should configure a `wss://` URL. When the desktop connects to a loopback Backend and the returned Socket URL only replaces its host while keeping the same port and path, the desktop keeps using loopback. Explicit Socket URLs and deployments with a separate Socket port are unaffected. Saved connections are refreshed and migrated with the same priority order on startup. Wework passes the resolved address to its local executor through Electron IPC. The executor uses that address for its Backend Socket.IO connection while HTTP APIs continue to use the Backend URL, so split-origin deployments do not require users to configure the WSS URL again.
 

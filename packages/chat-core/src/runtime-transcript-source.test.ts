@@ -16,7 +16,7 @@ function snapshot(source?: NormalizedRuntimeMessage['source']): NormalizedRuntim
   }
 }
 
-it.each(['im', 'stand_in_activity'])(
+it.each(['im', 'stand_in_activity', 'connection_event'])(
   'preserves explicit %s origin through both message and turn snapshot projection',
   source => {
     const original = snapshot({ source, taskId: 'internal-task-42' })

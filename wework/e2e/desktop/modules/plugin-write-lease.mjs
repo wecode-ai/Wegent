@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import { spawn } from 'node:child_process'
 import { dirname, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
@@ -8,8 +9,57 @@ import { until } from './plugin-regression-fixture.mjs'
 const repoDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../../..')
 
 /** A separate process owns a real token-checked lease, never a fake response. */
-export async function holdPluginWriteLease(cloud, userId = 1) {
-  return holdPluginCoordinationFault(cloud, 'lease', userId)
+export async function holdPluginWriteLease(cloud, item, userId = 1) {
+  const installedId = typeof item === 'number' ? item : item?.installedId
+  let name
+  if (installedId) {
+    const rows = await cloud.queryDatabase(
+      "SELECT name FROM kinds WHERE id=%s AND user_id=%s AND kind='InstalledPlugin' AND namespace='default'",
+      [installedId, userId]
+    )
+    assert.equal(rows.length, 1)
+    name = rows[0].name
+  } else {
+    assert.ok(item?.pluginId, 'A lease fixture needs its target plugin')
+    const rows = await cloud.queryDatabase(
+      'SELECT catalog_namespace,slug FROM plugins WHERE id=%s',
+      [item.pluginId]
+    )
+    assert.equal(rows.length, 1)
+    const { catalog_namespace: namespace, slug } = rows[0]
+    const digest = createHash('sha256').update(`${namespace}:${slug}`).digest('hex').slice(0, 10)
+    name = `${slug.slice(0, 89)}-${digest}`
+  }
+  return holdPluginCoordinationFault(cloud, 'lease', userId, name)
+}
+
+export async function holdInstalledPluginRow(cloud, installedId, userId = 1) {
+  const fixture = await holdPluginCoordinationFault(cloud, 'plugin-row', userId, installedId)
+  const readOwner = () =>
+    cloud.queryDatabase(
+      `SELECT CAST(ENGINE_TRANSACTION_ID AS CHAR) AS transaction_id,
+     CAST(THREAD_ID AS CHAR) AS thread_id FROM performance_schema.data_locks
+     WHERE OBJECT_SCHEMA=%s AND OBJECT_NAME='kinds' AND INDEX_NAME='PRIMARY'
+     AND LOCK_TYPE='RECORD' AND LOCK_STATUS='GRANTED' AND LEFT(LOCK_MODE, 1)='X'
+     AND LOCK_DATA=%s ORDER BY ENGINE_TRANSACTION_ID, THREAD_ID`,
+      [cloud.databaseName, String(installedId)]
+    )
+  let owner
+  try {
+    owner = await readOwner()
+    assert.equal(owner.length, 1, 'The fixture did not acquire its target record lock')
+  } catch (error) {
+    await fixture.release()
+    throw error
+  }
+  return {
+    ...fixture,
+    async assertHeld() {
+      assert.ok(!fixture.events.includes('released'), 'The target row fixture was released')
+      assert.deepEqual(await readOwner(), owner, 'The target record lock owner changed')
+      return { held: true, blocked: fixture.events.includes('blocked') }
+    },
+  }
 }
 
 export async function holdDeviceRegistrationRow(cloud, userId, recordId) {
@@ -17,8 +67,16 @@ export async function holdDeviceRegistrationRow(cloud, userId, recordId) {
   return holdPluginCoordinationFault(cloud, 'device-row', userId, recordId)
 }
 
-export async function holdPluginCoordinationFault(cloud, mode, userId = 1, recordId) {
-  assert.ok(['lease', 'user-row', 'device-row', 'redis-unavailable'].includes(mode))
+export async function holdPluginScanLock(cloud, path, executorHome) {
+  return holdPluginCoordinationFault(cloud, 'scan-lock', 1, undefined, { path, executorHome })
+}
+
+export async function holdPluginCoordinationFault(cloud, mode, userId = 1, recordId, scan) {
+  assert.ok(
+    ['lease', 'user-row', 'device-row', 'plugin-row', 'redis-unavailable', 'scan-lock'].includes(
+      mode
+    )
+  )
   const redisUrl = `redis://127.0.0.1:${cloud.redisPort}/0`
   assert.equal(cloud.backendEnv.REDIS_URL, redisUrl)
   const child = spawn(
@@ -38,7 +96,14 @@ export async function holdPluginCoordinationFault(cloud, mode, userId = 1, recor
         WEWORK_E2E_PLUGIN_REDIS_PORT: String(cloud.redisPort),
         WEWORK_E2E_PLUGIN_USER_ID: String(userId),
         ...(recordId ? { WEWORK_E2E_DEVICE_RECORD_ID: String(recordId) } : {}),
+        ...(mode === 'lease' ? { WEWORK_E2E_PLUGIN_NAME: String(recordId) } : {}),
         WEWORK_E2E_PLUGIN_FAULT: mode,
+        ...(scan
+          ? {
+              WEWORK_E2E_PLUGIN_SCAN_LOCK: scan.path,
+              WEWORK_E2E_EXECUTOR_HOME: scan.executorHome,
+            }
+          : {}),
         WEWORK_E2E_PLUGIN_MYSQL: JSON.stringify({
           ...cloud.mysqlConnectionOptions,
           database: cloud.databaseName,
@@ -48,6 +113,7 @@ export async function holdPluginCoordinationFault(cloud, mode, userId = 1, recor
     }
   )
   const events = []
+  const eventDetails = new Map()
   let failure
   let stderr = ''
   child.once('error', error => {
@@ -63,13 +129,15 @@ export async function holdPluginCoordinationFault(cloud, mode, userId = 1, recor
   const lines = createInterface({ input: child.stdout })
   lines.on('line', line => {
     try {
-      events.push(JSON.parse(line).event)
+      const details = JSON.parse(line)
+      events.push(details.event)
+      eventDetails.set(details.event, details)
     } catch {
       failure = new Error('The Redis lease helper returned invalid diagnostics')
     }
   })
-  const waitFor = event =>
-    until(
+  const waitFor = async event => {
+    await until(
       () => {
         if (failure) throw failure
         if (child.exitCode !== null && child.exitCode !== 0) {
@@ -80,6 +148,8 @@ export async function holdPluginCoordinationFault(cloud, mode, userId = 1, recor
       values => values.includes(event),
       `Redis lease helper never reported ${event}`
     )
+    return eventDetails.get(event)
+  }
   let closed = false
   const release = async () => {
     if (closed) return

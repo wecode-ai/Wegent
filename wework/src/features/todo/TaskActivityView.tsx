@@ -1,5 +1,9 @@
+import { useE2ELifecycleTrace } from '@/e2e/useE2ELifecycleTrace'
+import { IssueTimelineActions } from './IssueTimelineActions'
 import { IssueCommentChildAction } from '@wegent/collaboration'
 import { IssueManagerEvent } from './IssueManagerEvent'
+import { IssueReplyContext } from './IssueReplyContext'
+import { issueReplyCopy, type IssueReplyContextKind } from './issueReplyCopy'
 import { IssueHumanRequests } from './IssueHumanRequests'
 import { IssueAssignmentEvent } from './IssueAssignmentEvent'
 import {
@@ -207,37 +211,6 @@ function boundCardSessionAddress(
   }
 }
 
-function TimelineReply({
-  rootId,
-  createdAt,
-  replyLabel,
-  active,
-  onReply,
-}: {
-  rootId: string
-  createdAt: string
-  replyLabel: string
-  active: boolean
-  onReply: () => void
-}) {
-  return (
-    <div className="task-detail-thread-actions">
-      <time dateTime={createdAt} className="text-xs text-text-secondary">
-        {formatIssueTimestamp(createdAt)}
-      </time>
-      <button
-        type="button"
-        data-testid={`cloud-task-activity-reply-toggle-${rootId}`}
-        aria-expanded={active}
-        aria-controls="issue-reply-composer"
-        onClick={onReply}
-      >
-        {replyLabel}
-      </button>
-    </div>
-  )
-}
-
 function isVersionConflict(cause: unknown): boolean {
   if (!cause || typeof cause !== 'object') return false
   if ('status' in cause && cause.status === 409) return true
@@ -293,6 +266,14 @@ export function TaskActivityView({
   // Local project spaces keep their board, comments and runs in the local
   // executor; every delivery/approval call must route to the project's space
   // API instead of always hitting the cloud backend.
+  useE2ELifecycleTrace('TaskActivityView', {
+    taskId: task.id,
+    projectId: project.id,
+    issueTimeline,
+    linear,
+    clientReady: Boolean(client),
+    executionSupport: Boolean(client?.executeTaskComment),
+  })
   const projectLocation = project.project_store === 'local' ? 'local' : 'cloud'
   const commentDraftScope = JSON.stringify([
     'issue-comment',
@@ -460,7 +441,6 @@ export function TaskActivityView({
     () => messages.filter(message => message.taskId === task.id),
     [messages, task]
   )
-  const requestedTaskBindingAddresses = useRef(new Set<string>())
   const commentCards = useMemo<IssueActivityThreadModel<ProjectChatMessage>[]>(
     () =>
       issueTimeline
@@ -468,6 +448,7 @@ export function TaskActivityView({
         : groupIssueActivityThreads(threadMessages),
     [issueTimeline, threadMessages]
   )
+  const requestedTaskBindingAddresses = useRef(new Set<string>())
   const [chatCurrentUserId, setChatCurrentUserId] = useState<string | null>(null)
   const {
     text: newCommentDraft,
@@ -529,6 +510,15 @@ export function TaskActivityView({
   }
   const replyHumanDispatch =
     replyTarget && onStartHumanTaskFromReply ? humanDispatchForCard(replyTarget) : null
+  const replySessionAddress =
+    replyTarget && !replyHumanDispatch ? boundCardSessionAddress(replyTarget, taskBindings) : null
+  const replyContextKind: IssueReplyContextKind = replyHumanDispatch
+    ? 'human'
+    : replyTarget && isPublicStandInMessage(replyTarget.root)
+      ? 'stand-in'
+      : replySessionAddress
+        ? 'execution'
+        : 'discussion'
   // The code workspace the assigned robot is bound to. Only a rebound backend
   // project can be selected here; a legacy record that still needs rebinding
   // and a device-owned workspace carry no selectable project.
@@ -1228,8 +1218,7 @@ export function TaskActivityView({
 
   const renderActivityMessage = (
     message: ProjectChatMessage,
-    eventOnly = false,
-    hideTime = false
+    { eventOnly = false, isRoot = false }: { eventOnly?: boolean; isRoot?: boolean } = {}
   ) => {
     const role = issueActivityRole(message)
     const agentRole = role
@@ -1260,7 +1249,7 @@ export function TaskActivityView({
           taskAiState={task.ai_state}
           executionDeviceName={deviceNameForMessage(message)}
           taskSummary={taskSummaryForMessage(message)}
-          hideTime={hideTime}
+          hideTime={issueTimeline && isRoot}
           onOpenExecution={
             address && onOpenRuntimeTask
               ? () => onOpenRuntimeTask(address)
@@ -1289,7 +1278,7 @@ export function TaskActivityView({
           onStopExecution={address ? () => void stopRuntimeTask(message) : undefined}
           stopping={cancellingMessageId === message.messageId}
         />
-        {!eventOnly && renderCommentChildAction(message)}
+        {!eventOnly && !isRoot && renderCommentChildAction(message)}
       </div>
     )
   }
@@ -1350,53 +1339,18 @@ export function TaskActivityView({
                 : {})}
             >
               {replyTarget ? (
-                <div className="task-detail-comment-reply-context mx-3 border-b border-border/60 px-1 text-xs text-text-secondary">
-                  <div className="task-detail-comment-reply-context-row flex min-h-8 items-center gap-2">
-                    <span className="min-w-0 flex-1 truncate">
-                      {t(
-                        replyHumanDispatch
-                          ? 'workbench.task_activity_replying_to_human'
-                          : isPublicStandInMessage(replyTarget.root)
-                            ? 'workbench.task_activity_replying_to_stand_in'
-                            : cardHasExecution(replyTarget)
-                              ? 'workbench.task_activity_replying_to'
-                              : 'workbench.task_activity_replying_to_discussion',
-                        {
-                          name: replyTarget.root.sender.name,
-                        }
-                      )}
-                      {replyTarget.root.content ? ` · ${replyTarget.root.content}` : ''}
-                    </span>
-                    <button
-                      type="button"
-                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-muted hover:bg-surface-hover hover:text-text-primary"
-                      data-testid="issue-reply-cancel"
-                      aria-label={t('workbench.task_activity_cancel_reply')}
-                      onClick={() => setReplyTarget(null)}
-                    >
-                      ×
-                    </button>
-                  </div>
-                  {replyHumanDispatch ? (
-                    <p
-                      className="min-h-6 pb-1.5 leading-5"
-                      data-testid="issue-reply-starts-task-hint"
-                    >
-                      {t('workbench.task_activity_reply_starts_task', {
-                        title: replyHumanDispatch.taskTitle,
-                      })}
-                    </p>
-                  ) : null}
-                </div>
+                <IssueReplyContext
+                  kind={replyContextKind}
+                  name={replyTarget.root.sender.name}
+                  content={replyTarget.root.content}
+                  taskTitle={replyHumanDispatch?.taskTitle}
+                  onCancel={() => setReplyTarget(null)}
+                />
               ) : null}
               <TaskCommentComposer
                 issueActions={!replyTarget ? commentActions : undefined}
                 assignment={!replyTarget ? commentAssignment : undefined}
-                predictionAddress={
-                  replyTarget && !replyHumanDispatch
-                    ? boundCardSessionAddress(replyTarget, taskBindings)
-                    : null
-                }
+                predictionAddress={replySessionAddress}
                 key={task.id}
                 value={notificationComposer?.draft ?? newCommentDraft}
                 onChange={value => {
@@ -1417,15 +1371,7 @@ export function TaskActivityView({
                 projectWork={commentProjectWork}
                 serverExecution={Boolean(client?.executeTaskComment)}
                 placeholder={
-                  replyTarget
-                    ? t(
-                        isPublicStandInMessage(replyTarget.root)
-                          ? 'workbench.task_activity_stand_in_reply_placeholder'
-                          : cardHasExecution(replyTarget) && !replyHumanDispatch
-                            ? 'workbench.task_activity_inline_placeholder'
-                            : 'workbench.task_activity_discussion_reply_placeholder'
-                      )
-                    : undefined
+                  replyTarget ? t(issueReplyCopy[replyContextKind].placeholder) : undefined
                 }
               />
             </div>
@@ -1595,20 +1541,23 @@ export function TaskActivityView({
                               : undefined
                         }
                       />
-                      {renderCommentChildAction(card.root)}
                     </div>
                     <div data-testid={`cloud-task-activity-replies-${rootId}`}>
                       {card.replies.map(reply => renderActivityMessage(reply))}
                     </div>
-                    {humanDispatchForCard(card) && onStartHumanTaskFromReply ? (
-                      <TimelineReply
-                        rootId={rootId}
-                        createdAt={issueThreadActivityTimestamp(card)}
-                        replyLabel={cardReplyLabel(card)}
-                        active={replyTarget?.root.messageId === rootId}
-                        onReply={() => beginReply(card)}
-                      />
-                    ) : null}
+                    <IssueTimelineActions
+                      rootId={rootId}
+                      createdAt={issueThreadActivityTimestamp(card)}
+                      replyLabel={cardReplyLabel(card)}
+                      active={replyTarget?.root.messageId === rootId}
+                      onReply={
+                        humanDispatchForCard(card) && onStartHumanTaskFromReply
+                          ? () => beginReply(card)
+                          : undefined
+                      }
+                    >
+                      {renderCommentChildAction(card.root)}
+                    </IssueTimelineActions>
                   </div>
                 )
               }
@@ -1622,7 +1571,7 @@ export function TaskActivityView({
                   cardAttributes={{
                     'data-testid': `cloud-task-activity-card-${rootId}`,
                   }}
-                  message={renderActivityMessage(card.root, false, issueTimeline)}
+                  message={renderActivityMessage(card.root, { isRoot: true })}
                   replies={
                     displayReplies.length
                       ? displayReplies.map(reply => renderActivityMessage(reply))
@@ -1639,20 +1588,28 @@ export function TaskActivityView({
                         />
                       </div>
                       {issueTimeline ? (
-                        <TimelineReply
+                        <IssueTimelineActions
                           rootId={rootId}
                           createdAt={issueThreadActivityTimestamp(card)}
                           replyLabel={cardReplyLabel(card)}
                           active={replyTarget?.root.messageId === rootId}
                           onReply={() => beginReply(card)}
-                        />
+                        >
+                          {renderCommentChildAction(card.root)}
+                        </IssueTimelineActions>
                       ) : (
                         <CardCommentComposer
                           predictionAddress={boundCardSessionAddress(card, taskBindings)}
                           rootId={rootId}
                           projectId={project.id}
                           disabled={!client}
-                          placeholder={t('workbench.task_activity_inline_placeholder')}
+                          placeholder={t(
+                            issueReplyCopy[
+                              boundCardSessionAddress(card, taskBindings)
+                                ? 'execution'
+                                : 'discussion'
+                            ].placeholder
+                          )}
                           aiError={replyQueue.error(rootId)}
                           mentionCandidates={mentionCandidates}
                           translate={activityTranslate}
@@ -1665,7 +1622,9 @@ export function TaskActivityView({
                   }
                   events={
                     !issueTimeline && executions.length
-                      ? executions.map(message => renderActivityMessage(message, true))
+                      ? executions.map(message =>
+                          renderActivityMessage(message, { eventOnly: true })
+                        )
                       : null
                   }
                   eventLabel={t('workbench.task_activity_execution_count', {

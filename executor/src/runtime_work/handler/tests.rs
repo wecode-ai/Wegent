@@ -26,6 +26,7 @@ fn connection_mcp_transport_and_discovery_never_resume_persisted_model_turns() {
         "runtime.connections.host",
         "runtime.connections.catalog",
         "runtime.connections.resources",
+        "runtime.connections.observations.collect",
         "runtime.connections.dependencies.inventory",
         "runtime.python.has_demand",
     ] {
@@ -342,6 +343,7 @@ fn deferred_worktree_preparation_can_be_cancelled_before_runtime_start() {
             .expect("preparing turn map lock should not be poisoned")
             .get("task-1"),
         Some(&PreparingTurn {
+            owner_request: None,
             cancellation_requested: true
         })
     );
@@ -1188,6 +1190,8 @@ pub(super) fn isolated_runtime_work_handler(label: &str) -> (RuntimeWorkRpcHandl
     let root = temp_runtime_work_index_path(label).with_extension("directory");
     let runtime_work_dir = root.join("runtime-work");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.codex_app_server =
+        CodexAppServerClient::isolated_for_test("/bin/false", root.join("codex"));
     handler.transcript_test_workers = Some(Arc::new(tokio::sync::Semaphore::new(2)));
     handler.store = RuntimeWorkStore::new(runtime_work_dir.join("index.json"));
     handler.worktrees = WorktreeManager::new(runtime_work_dir.join("worktrees.json"));
@@ -5596,8 +5600,33 @@ fn temp_runtime_work_index_path(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "wegent-runtime-work-{label}-{}-{}.json",
         std::process::id(),
-        now_ms()
+        uuid::Uuid::new_v4()
     ))
+}
+
+#[test]
+fn same_label_fixture_paths_are_unique_under_parallel_creation() {
+    let paths = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..4)
+            .map(|_| {
+                scope.spawn(|| {
+                    (0..32)
+                        .map(|_| temp_runtime_work_index_path("preparation-terminal-state"))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|worker| worker.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+    let unique: std::collections::HashSet<_> = paths.iter().collect();
+    assert_eq!(
+        unique.len(),
+        paths.len(),
+        "Parallel fixtures must never share a runtime store"
+    );
 }
 
 fn initialize_test_repository(path: &Path) {
@@ -5849,4 +5878,102 @@ async fn decision_proxy_unregister_is_idempotent() {
         assert_eq!(result["unregistered"], true);
     }
     assert!(crate::server::local_decision_proxy::lookup_route(&token).is_none());
+}
+
+#[tokio::test]
+async fn task_bound_archive_snapshots_only_its_managed_worktree() {
+    let root = temp_runtime_work_index_path("task-bound-archive").with_extension("directory");
+    let source = root.join("source");
+    initialize_test_repository(&source);
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
+    handler.worktrees = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    handler
+        .worktrees
+        .update_settings(WorktreeSettingsPatch {
+            worktree_root: Some(root.join("managed").display().to_string()),
+            ..WorktreeSettingsPatch::default()
+        })
+        .unwrap();
+    let prepared = handler
+        .worktrees
+        .prepare(&source, "archive-owned", None, false)
+        .unwrap();
+    let path = PathBuf::from(&prepared.path);
+    fs::write(path.join("uncommitted.txt"), "preserve me").unwrap();
+    let task = RuntimeTaskLink::new_pending(
+        "archive-owned".to_owned(),
+        prepared.path.clone(),
+        "Archive owned".to_owned(),
+    );
+    handler.upsert_local_task(task);
+    let result = handler
+        .archive_task(json!({"taskId":"archive-owned", "cleanupWorktree":true, "path":source}))
+        .await
+        .unwrap();
+    assert_eq!(result["accepted"], true, "{result}");
+    assert!(result["cleanupError"].is_null(), "{result}");
+    assert!(!path.exists());
+    assert!(source.join("tracked.txt").exists());
+    handler.worktrees.restore(&path).unwrap();
+    assert_eq!(
+        fs::read_to_string(path.join("uncommitted.txt")).unwrap(),
+        "preserve me"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn task_bound_archive_keeps_regular_project_files_and_live_shared_worktrees() {
+    let root =
+        temp_runtime_work_index_path("task-bound-archive-shared").with_extension("directory");
+    let source = root.join("source");
+    initialize_test_repository(&source);
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
+    handler.worktrees = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    handler
+        .worktrees
+        .update_settings(WorktreeSettingsPatch {
+            worktree_root: Some(root.join("managed").display().to_string()),
+            ..WorktreeSettingsPatch::default()
+        })
+        .unwrap();
+    let prepared = handler
+        .worktrees
+        .prepare(&source, "shared-a", None, false)
+        .unwrap();
+    let unrelated = handler
+        .worktrees
+        .prepare(&source, "regular", None, false)
+        .unwrap();
+    for (id, path) in [
+        ("regular", source.display().to_string()),
+        ("shared-a", prepared.path.clone()),
+        ("shared-b", prepared.path.clone()),
+    ] {
+        handler.upsert_local_task(RuntimeTaskLink::new_pending(
+            id.to_owned(),
+            path,
+            id.to_owned(),
+        ));
+    }
+    for id in ["regular", "shared-a"] {
+        let result = handler
+            .archive_task(json!({"taskId":id, "cleanupWorktree":true}))
+            .await
+            .unwrap();
+        assert_eq!(result["accepted"], true, "{result}");
+        assert!(result["cleanupError"].is_null(), "{result}");
+    }
+    assert!(source.join("tracked.txt").exists());
+    assert!(Path::new(&unrelated.path).exists());
+    assert!(Path::new(&prepared.path).exists());
+    let result = handler
+        .archive_task(json!({"taskId":"shared-b", "cleanupWorktree":true}))
+        .await
+        .unwrap();
+    assert_eq!(result["accepted"], true, "{result}");
+    assert!(!Path::new(&prepared.path).exists());
+    let _ = fs::remove_dir_all(root);
 }

@@ -1,8 +1,11 @@
+import { useE2ELifecycleTrace } from '@/e2e/useE2ELifecycleTrace'
 import { useWorkbenchServiceConnections } from './workbenchServiceConnections'
+import { getChangeRequestMonitor } from './changeRequestMonitor'
 import { createHttpClient } from '@/api/http'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createPluginApi } from '@/api/plugins'
 import { AttachmentDownloadProvider } from '@/components/chat/AttachmentDownloadProvider'
+import { createPersonalHomeTaskDraftStore } from '../todo/personalHomeTaskDrafts'
 import {
   bindComposerAppsSource,
   notifyComposerAppsListeners,
@@ -18,7 +21,6 @@ import {
   notifyMainRuntimeWorkChanged,
 } from '@/desktop/runtimeWorkSync'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import { RunnerSelectionHost } from '@/features/collaboration/RunnerSelectionHost'
 import { CoreDshModelSync } from '@/features/dsh-models/CoreDshModelSyncBridge'
 import { CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME } from '@/features/model-settings/codexOfficialModels'
 import { QuestionDiscussionScope } from '@/features/notifications/QuestionDiscussionScope'
@@ -242,6 +244,11 @@ function OwnedWorkbenchProvider({
 }: WorkbenchProviderProps & { workbenchIdentity: User; ownershipKey: string }) {
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
+  useE2ELifecycleTrace('WorkbenchOwner', {
+    workspaceTabId,
+    userId: workbenchIdentity.id,
+    cloud: cloudConnection?.isConnected ?? false,
+  })
   const isWorkspaceTabActive = useOptionalWorkspaceTabActivity()
   const canNavigateWorkspaceTab = useStableEvent(
     () => !workspaceTabId || !isWorkspaceTabActive || isWorkspaceTabActive(workspaceTabId)
@@ -385,6 +392,13 @@ function OwnedWorkbenchProvider({
     standInApi: resolvedServices.standInApi,
     runtimeApi: resolvedServices.runtimeWorkApi,
   })
+  useEffect(() => {
+    if (resolvedServices.deviceApi)
+      getChangeRequestMonitor(resolvedServices.deviceApi).syncConnectionObservations(
+        state.runtimeWork,
+        state.devices
+      )
+  }, [resolvedServices.deviceApi, state.runtimeWork, state.devices])
   const currentContextUsage = state.currentRuntimeTask
     ? contextUsageByRuntimeTask[runtimeConversationKey(state.currentRuntimeTask)]
     : undefined
@@ -444,6 +458,7 @@ function OwnedWorkbenchProvider({
     goalDraftActiveByScope,
     setGoalDraftActiveForScope,
   } = useWorkspaceTabDraftInput(workspaceTabId)
+  const [personalHomeTaskDraftStore] = useState(createPersonalHomeTaskDraftStore)
   const [composerErrorByScope, setComposerErrorByScope] = useState<Record<string, string>>({})
   const [trialTemplatesByScope, setTrialTemplatesByScope] = useState<
     Record<string, PluginPathComponent[]>
@@ -689,6 +704,7 @@ function OwnedWorkbenchProvider({
     dispatch,
     executorClient,
     services: resolvedServices,
+    canNavigate: canNavigateWorkspaceTab,
   })
 
   const markRuntimeTasksArchived = useMarkRuntimeTasksArchived({
@@ -761,7 +777,7 @@ function OwnedWorkbenchProvider({
         activationRevision: remoteProjectSyncActivationRevisionRef.current,
       }
       remoteProjectSyncAttemptRef.current = attempt
-      await enqueueRemoteProjectStateMutation(async () => {
+      const synced = await enqueueRemoteProjectStateMutation(async () => {
         const isCurrentAttempt = () =>
           remoteProjectSyncAttemptRef.current === attempt &&
           revision === remoteProjectSyncRevisionRef.current &&
@@ -785,8 +801,9 @@ function OwnedWorkbenchProvider({
         if (!response.accepted) {
           throw new Error(response.error || 'Failed to sync remote projects')
         }
-        await refreshWorkLists()
+        return true
       })
+      if (synced) await refreshWorkLists()
     })().catch(error => {
       if (
         attempt &&
@@ -1698,6 +1715,7 @@ function OwnedWorkbenchProvider({
       scopeKey: projectChatScopeKey,
       inputByScope: draftInputByScope,
       goalDraftActiveByScope,
+      personalHomeTaskDraftStore,
       setGoalDraftActiveForScope,
       getInputRevisionForScope,
       models: conversationModels,
@@ -1780,6 +1798,7 @@ function OwnedWorkbenchProvider({
       draftInput,
       draftInputByScope,
       goalDraftActiveByScope,
+      personalHomeTaskDraftStore,
       setGoalDraftActiveForScope,
       getInputRevisionForScope,
       composerError,
@@ -2038,7 +2057,6 @@ function OwnedWorkbenchProvider({
                 models={conversationModels}
                 services={resolvedServices}
               />
-              <RunnerSelectionHost />
               <DesktopGitAccountConfigurationProvider>
                 <WorkbenchCloudDeviceRestarts
                   devices={state.devices}

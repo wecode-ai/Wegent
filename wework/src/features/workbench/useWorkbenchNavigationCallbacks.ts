@@ -1,6 +1,6 @@
 import type { ExecutorClient } from '@/api/executorAccess'
 import type { DeviceInfo } from '@/types/api'
-import type { RefreshWorkLists } from './workbenchContextTypes'
+import type { RefreshWorkLists, WorkbenchSelectionOptions } from './workbenchContextTypes'
 import { findFirstSelectableProject } from './workbenchProviderHelpers'
 // Keep memoized callbacks in independent scopes so they cannot retain prior provider renders.
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
@@ -158,7 +158,7 @@ export function useSelectProject({
   state: WorkbenchState
 }) {
   return useCallback(
-    (projectId: number | null) => {
+    (projectId: number | null, options?: WorkbenchSelectionOptions) => {
       projectSelectionStartedRef.current = true
       if (projectId === null) {
         writeLastProjectId(ownershipKey, null)
@@ -171,14 +171,14 @@ export function useSelectProject({
           ),
           standaloneWorkspacePath: null,
         })
-        navigateTo('/')
+        if (options?.navigate !== false) navigateTo('/')
         return
       }
       const project = findSelectableProject(state.projects, state.runtimeWork, projectId)
       if (project) {
         writeLastProjectId(ownershipKey, project.id)
         dispatch({ type: 'project_selected', project })
-        navigateTo('/')
+        if (options?.navigate !== false) navigateTo('/')
       }
     },
     [
@@ -206,7 +206,7 @@ export function useSelectProjectWorkspace({
   dispatch: ActionDispatch<[action: WorkbenchAction]>
 }) {
   return useCallback(
-    (projectId: number, deviceWorkspaceId: number | null) => {
+    (projectId: number, deviceWorkspaceId: number | null, options?: WorkbenchSelectionOptions) => {
       projectSelectionStartedRef.current = true
       const project = findSelectableProject(state.projects, state.runtimeWork, projectId)
       if (!project) return
@@ -216,7 +216,7 @@ export function useSelectProjectWorkspace({
         project,
         deviceWorkspaceId,
       })
-      navigateTo('/')
+      if (options?.navigate !== false) navigateTo('/')
     },
     [projectSelectionStartedRef, state.projects, state.runtimeWork, ownershipKey, dispatch]
   )
@@ -236,7 +236,7 @@ export function useSelectStandaloneDevice({
   dispatch: ActionDispatch<[action: WorkbenchAction]>
 }) {
   return useCallback(
-    (deviceId: string | null) => {
+    (deviceId: string | null, options?: WorkbenchSelectionOptions) => {
       projectSelectionStartedRef.current = true
       writeLastProjectId(ownershipKey, null)
       const standaloneDeviceId = getPreferredStandaloneDeviceId(
@@ -249,7 +249,7 @@ export function useSelectStandaloneDevice({
         standaloneWorkspacePath: null,
         startFreshChat: true,
       })
-      navigateTo('/')
+      if (options?.navigate !== false) navigateTo('/')
     },
     [
       projectSelectionStartedRef,

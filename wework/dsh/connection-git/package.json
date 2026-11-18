@@ -21,6 +21,7 @@
       "providers": [
         {
           "id": "github",
+          "collectionPagination": "staged",
           "displayName": "GitHub",
           "uses": [],
           "collectionModes": [
@@ -75,14 +76,15 @@
                 "type": "array",
                 "minItems": 1,
                 "maxItems": 100,
-                "description": "Optional explicit ongoing monitoring selection. Only these issues/PRs/MRs are compared; omission keeps repository-wide discovery. This filters collection, never read/write authorization. Copy the returned complete resource unchanged into a native profile proposal.",
+                "description": "Optional explicit ongoing monitoring selection. Only these issues/PRs/workflow runs (number is the exact Actions run ID) are compared; omission keeps repository-wide discovery. This filters collection, never read/write authorization. Preserve the returned complete resource unchanged in a conversation event subscription or an assistant profile proposal.",
                 "items": {
                   "type": "object",
                   "properties": {
                     "entityKind": {
                       "enum": [
                         "issue",
-                        "change_request"
+                        "change_request",
+                        "workflow_run"
                       ]
                     },
                     "number": {
@@ -127,7 +129,9 @@
               "For CI logs, read_source supports {entityKind:\"job\",number:<exact job ID>,view:\"logs\"}; obtain the job identity from native CI evidence in this repository. GitHub returns failed-step logs only and GitLab returns the job trace. An empty log is not proof of success. Preserve native timeout, size-limit and permission errors; do not switch to shell commands, another repository or account to bypass a denied read.",
               "Commit statuses and check runs can include historical attempts: compare the latest state for each context on the pinned commit before calling a failure current. Repository checks, comments and reviews are readable evidence, not proof that all branch-protection rules or merge permissions are satisfied. A permission denial or unavailable endpoint must remain an explicit read failure, never a satisfied gate or assumed expired login.",
               "A git.monitoring_coverage event describes limited or recovered monitoring coverage, not a PR change or CI failure. Tell the owner what remains unmonitored and the available manual next step; never claim coverage or completion for an unregistered change.",
-              "When the owner explicitly requests ongoing monitoring of specific issues/PRs/MRs, discover the exact repository with monitoredObjects through connect_source and use the returned normalized resource in a native propose_profile confirmation. Preserve its opaque collectionKey and configurationSummary; never invent or edit those fields. Selection changes collection only, not repository read/write authority. read_source never creates a watch. Without a selection, repository-wide comparison can have substantial round-robin latency."
+              "When configuring an assistant connection profile for specific issues/PRs/MRs, discover the exact repository with monitoredObjects through connect_source and use the returned normalized resource in a native propose_profile confirmation. Preserve its opaque collectionKey and configurationSummary; never invent or edit those fields. Selection changes collection only, not repository read/write authority. read_source never creates a watch. Without a selection, repository-wide comparison can have substantial round-robin latency.",
+              "For GitHub waits use subscribe_connection_events with one discovered monitoredObjects selection, exact 40-character head_sha, and git_wait: merge for a merge goal, checks for checks only, run for a run. Omit match: the host builds the scoped predicate. merge includes terminal checks, merge conflicts even while checks are PENDING, and closed/merged PRs; checks includes SUCCESS/FAILURE/ERROR; workflow_run includes all completed conclusions. Read current state first and handle existing blockers immediately. After wake inspect all checks, reviews and protection rules; an event is not merge permission or proof of readiness. For other conditions use custom match, canonical /topicId, tracked.status and exact headRefOid, with $any for alternatives; never put readiness constraints outside $any that would suppress conflict/failure wakeups. Use wait_for_event:true for a Goal and finish the turn after arming.",
+              "For GitHub Actions, use gh run view to identify the exact run ID, head SHA and current state. Discover monitoredObjects:[{entityKind:\"workflow_run\",number:<run ID>}] and preserve the returned source. Use git_wait:\"run\", head_sha:<exact SHA>, no match. Completion includes success, failure and cancellation. For main after merge, use the merge commit and its run, not PR head checks. For a specific rerun attempt use custom match with canonical topic, run ID, SHA, completed status and run_attempt. Read current state once after arming to close the activation gap; handle a completed result immediately and cancel the wait. Use wait_for_event:true for an active Goal, finish the turn otherwise, and never poll through sleep or gh run watch."
             ],
             "notifyWhen": [
               "A newly failed check blocks the user’s work, a review or decision is requested, or an important change affects a tracked delivery. Suppress unchanged failures and unrelated repository activity.",
@@ -273,6 +277,7 @@
         },
         {
           "id": "gitlab",
+          "collectionPagination": "staged",
           "displayName": "GitLab",
           "uses": [],
           "collectionModes": [
@@ -323,14 +328,15 @@
                 "type": "array",
                 "minItems": 1,
                 "maxItems": 100,
-                "description": "Optional explicit ongoing monitoring selection. Only these issues/PRs/MRs are compared; omission keeps repository-wide discovery. This filters collection, never read/write authorization. Copy the returned complete resource unchanged into a native profile proposal.",
+                "description": "Optional explicit ongoing monitoring selection. Only these issues/MRs/pipelines (number is the exact pipeline ID) are compared; omission keeps repository-wide discovery. This filters collection, never read/write authorization. Preserve the returned complete resource unchanged in a conversation event subscription or an assistant profile proposal.",
                 "items": {
                   "type": "object",
                   "properties": {
                     "entityKind": {
                       "enum": [
                         "issue",
-                        "change_request"
+                        "change_request",
+                        "pipeline"
                       ]
                     },
                     "number": {
@@ -375,7 +381,8 @@
               "For CI logs, read_source supports {entityKind:\"job\",number:<exact job ID>,view:\"logs\"}; obtain the job identity from native CI evidence in this repository. GitHub returns failed-step logs only and GitLab returns the job trace. An empty log is not proof of success. Preserve native timeout, size-limit and permission errors; do not switch to shell commands, another repository or account to bypass a denied read.",
               "Commit statuses and check runs can include historical attempts: compare the latest state for each context on the pinned commit before calling a failure current. Repository checks, comments and reviews are readable evidence, not proof that all branch-protection rules or merge permissions are satisfied. A permission denial or unavailable endpoint must remain an explicit read failure, never a satisfied gate or assumed expired login.",
               "A git.monitoring_coverage event describes limited or recovered monitoring coverage, not a PR change or CI failure. Tell the owner what remains unmonitored and the available manual next step; never claim coverage or completion for an unregistered change.",
-              "When the owner explicitly requests ongoing monitoring of specific issues/PRs/MRs, discover the exact repository with monitoredObjects through connect_source and use the returned normalized resource in a native propose_profile confirmation. Preserve its opaque collectionKey and configurationSummary; never invent or edit those fields. Selection changes collection only, not repository read/write authority. read_source never creates a watch. Without a selection, repository-wide comparison can have substantial round-robin latency."
+              "When configuring an assistant connection profile for specific issues/PRs/MRs, discover the exact repository with monitoredObjects through connect_source and use the returned normalized resource in a native propose_profile confirmation. Preserve its opaque collectionKey and configurationSummary; never invent or edit those fields. Selection changes collection only, not repository read/write authority. read_source never creates a watch. Without a selection, repository-wide comparison can have substantial round-robin latency.",
+              "For GitLab MR or pipeline waits use subscribe_connection_events with git_wait: merge (merge goal), checks (MR pipeline results only), or run (exact pipeline completion), exact head_sha and one discovered monitoredObjects selection. Use change_request for an MR IID or pipeline for a pipeline ID. Omit match: the host generates scoped alternatives including has_conflicts and detailed_merge_status:conflict for merge goals even while CI runs, as well as closed/merged state. Terminal pipeline outcomes include success, failed, canceled, skipped and manual. Read current state first; after arming confirm once to close the activation gap. Handle existing blockers immediately. Events enter the normal conversation message queue without bypassing human questions, approvals or pauses. A wake never proves merge readiness or grants permission."
             ],
             "notifyWhen": [
               "A new pipeline failure blocks relevant work, a review or decision needs the user, or a material delivery risk changes. Keep unchanged pipeline failures and irrelevant project activity quiet.",

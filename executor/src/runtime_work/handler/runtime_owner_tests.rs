@@ -1,9 +1,59 @@
 use super::*;
 use axum::{
+    http::HeaderMap,
     http::StatusCode,
     routing::{get, post},
     Json, Router,
 };
+
+#[tokio::test]
+async fn runtime_owner_uses_the_credential_route_and_rejects_a_different_owner() {
+    let router = Router::new()
+        .route(
+            "/api/devices/runtime-owner",
+            get(|headers: HeaderMap| async move {
+                if headers["authorization"] == "Bearer wg-remote-key" {
+                    (StatusCode::OK, Json(json!({"id": 7})))
+                } else {
+                    (StatusCode::UNAUTHORIZED, Json(json!({})))
+                }
+            }),
+        )
+        .route(
+            "/api/users/me",
+            get(|headers: HeaderMap| async move {
+                assert_eq!(headers["authorization"], "Bearer desktop-session");
+                Json(json!({"id": 7}))
+            }),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let backend_url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
+    let connection = Arc::new(Mutex::new(Some(ConnectionConfig {
+        backend_url,
+        auth_token: "wg-remote-key".into(),
+        ..Default::default()
+    })));
+    let handler = RuntimeWorkRpcHandler {
+        backend_connection: connection.clone(),
+        ..RuntimeWorkRpcHandler::new("remote-device", "unused")
+    };
+    let owner = json!({"userId": 7});
+
+    handler.verify_runtime_user(&owner).await.unwrap();
+    for payload in [json!({"userId": 8}), json!({})] {
+        let error = handler.verify_runtime_user(&payload).await.unwrap_err();
+        assert_eq!(error.code, "permission_denied");
+    }
+    connection.lock().unwrap().as_mut().unwrap().auth_token = "wg-revoked".into();
+    let error = handler.verify_runtime_user(&owner).await.unwrap_err();
+    assert_eq!(error.code, "cloud_request_failed");
+    assert!(error.message.contains("401"));
+
+    connection.lock().unwrap().as_mut().unwrap().auth_token = "desktop-session".into();
+    handler.verify_runtime_user(&owner).await.unwrap();
+    server.abort();
+}
 
 #[tokio::test]
 async fn stand_in_device_identity_rpc_distinguishes_local_alias_and_owned_route() {

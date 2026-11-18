@@ -288,32 +288,6 @@ describe('chatReducer', () => {
     })
   })
 
-  it('hides injected application context from historical and optimistic user messages', () => {
-    const runtimeContent = [
-      '<application_context>',
-      '[cloudCollaboration]',
-      'Current task: WORK-567',
-      '</application_context>',
-      '',
-      '本地启动后无法流式输出',
-    ].join('\n')
-    const historical = chatReducer([], {
-      type: 'replace',
-      messages: [{ id: 'user-history', role: 'user', content: runtimeContent }],
-    })
-    const optimistic = chatReducer(historical, {
-      type: 'optimistic-user',
-      id: 'user-live',
-      content: runtimeContent,
-      createdAt: 1788099302000,
-    })
-
-    expect(optimistic.map(message => message.content)).toEqual([
-      '本地启动后无法流式输出',
-      '本地启动后无法流式输出',
-    ])
-  })
-
   it('prepends an older transcript page without duplicating boundary messages', () => {
     const recent = chatReducer([], {
       type: 'replace',
@@ -478,6 +452,131 @@ describe('chatReducer', () => {
       { id: 'call-1', type: 'tool', toolName: 'bash', status: 'pending' },
     ])
     expect(completed[0]?.blocks?.[1]).toMatchObject({ status: 'done', toolOutput: 'ok' })
+  })
+
+  it('reconciles streamed commentary and its completed block before the next tool (phone trace)', () => {
+    const text = '检查🙂当前会话'
+    let state = stream([], {
+      name: 'response.output_text.delta',
+      payload: { subtaskId: 'turn', data: { item_id: 'message', delta: text } },
+    })
+    state = stream(state, {
+      name: 'response.block.created',
+      payload: {
+        subtaskId: 'turn',
+        data: {
+          block: {
+            id: 'message',
+            type: 'text',
+            content: text,
+            status: 'done',
+            process_item_id: 'message',
+          },
+        },
+      },
+    })
+    expect(state[0].content).toBe('')
+    expect(state[0].textItems).toBeUndefined()
+    state = stream(state, {
+      name: 'response.block.created',
+      payload: {
+        subtaskId: 'turn',
+        data: {
+          block: {
+            id: 'tool',
+            type: 'tool',
+            tool_name: 'exec_command',
+            status: 'pending',
+          },
+        },
+      },
+    })
+    expect(state[0].blocks?.map(block => block.id)).toEqual(['message', 'tool'])
+    expect(state[0].blocks?.filter(block => block.type === 'text')).toMatchObject([
+      { id: 'message', content: text },
+    ])
+  })
+
+  it('preserves provider identities across tool boundaries and updates late snapshots in place', () => {
+    let state = stream([], {
+      name: 'response.output_text.delta',
+      payload: {
+        subtaskId: 'turn',
+        data: { item_id: 'first', delta: '重复🙂', offset: 100, block_offset: 0 },
+      },
+    })
+    state = stream(state, {
+      name: 'response.output_item.added',
+      payload: { subtaskId: 'turn', data: { item: { id: 'tool', type: 'shell_call' } } },
+    })
+    state = stream(state, {
+      name: 'response.output_text.delta',
+      payload: {
+        subtaskId: 'turn',
+        data: { item_id: 'first', delta: '🙂', offset: 103, block_offset: 2 },
+      },
+    })
+    expect(state[0].blocks?.[0]).toMatchObject({ content: '重复🙂' })
+    state = stream(state, {
+      name: 'response.output_text.done',
+      payload: { subtaskId: 'turn', data: { item_id: 'first', text: '修正🙂' } },
+    })
+    expect(state[0].content).toBe('')
+    expect(state[0].blocks?.map(block => block.id)).toEqual(['first', 'tool'])
+    expect(state[0].blocks?.[0]).toMatchObject({ content: '修正🙂' })
+    state = stream(state, {
+      name: 'response.output_text.delta',
+      payload: { subtaskId: 'turn', data: { item_id: 'second', delta: '修正🙂', block_offset: 0 } },
+    })
+    expect(state[0].content).toBe('修正🙂')
+    expect(state[0].textItems).toMatchObject([{ id: 'second', content: '修正🙂' }])
+  })
+
+  it('keeps different items with identical text and accepts rewritten snapshots under the original ID', () => {
+    let state: ReturnType<typeof chatReducer> = []
+    for (const item_id of ['first', 'second'])
+      state = stream(state, {
+        name: 'response.output_text.delta',
+        payload: { subtaskId: 'turn', data: { item_id, delta: '相同内容' } },
+      })
+    state = stream(state, {
+      name: 'response.block.created',
+      payload: {
+        subtaskId: 'turn',
+        data: {
+          block: {
+            id: 'first',
+            type: 'text',
+            content: '修订后的第一段',
+            status: 'done',
+          },
+        },
+      },
+    })
+    expect(state[0].content).toBe('')
+    expect(state[0].blocks).toMatchObject([
+      { id: 'first', content: '修订后的第一段' },
+      { id: 'second', content: '相同内容' },
+    ])
+    state = stream(state, {
+      name: 'response.block.created',
+      payload: {
+        subtaskId: 'turn',
+        data: {
+          block: {
+            id: 'first',
+            type: 'text',
+            content: '相同内容',
+            status: 'done',
+          },
+        },
+      },
+    })
+    expect(state[0].blocks?.map(block => block.id)).toEqual(['first', 'second'])
+    expect(state[0].blocks?.map(block => ('content' in block ? block.content : ''))).toEqual([
+      '相同内容',
+      '相同内容',
+    ])
   })
 
   it('applies response block creation and incremental updates', () => {

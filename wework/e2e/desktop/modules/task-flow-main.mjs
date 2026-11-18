@@ -8,6 +8,7 @@ import { simulatedDeviceApplicationId } from './simulated-device-identity.mjs'
 import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from '../upgrade-suite.mjs'
 import { waitForColdPackageStartup } from './cold-package-startup.mjs'
 import { nativeCloudAuthorizationFixture } from './native-cloud-authorization-client.mjs'
+import { readInspectorEndpoint } from './inspect-before-start.mjs'
 
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
 import { createCloudHistorySearchVerification } from './cloud-history-search.mjs'
@@ -58,6 +59,7 @@ import {
   buildExecutor,
   mcpElicitationConfigToml,
   prepareHarnessRuntimeRoots,
+  prepareRemoteDeviceConversationModel,
   resolveDesktopCodexBinary,
   toolDetailsMcpConfigToml,
   setMatrixUpstreamProtocol,
@@ -75,6 +77,7 @@ import { verifyCoreDshUiPluginComposition } from './core-dsh-ui-plugin-flows.mjs
 
 import { DesktopE2EServer } from './desktop-server.mjs'
 import { upgradeUserEnvironment } from './upgrade-user-environment.mjs'
+import { prepareNativeKeychainPreferences } from './native-keychain-preferences.mjs'
 import { desktopApplicationDataDirectory, resolveUpgradeUserHome } from './upgrade-user-home.mjs'
 
 import { resolveElectronLaunchArguments } from './electron-launch-arguments.mjs'
@@ -162,6 +165,7 @@ import {
   BlockingNetworkProxy,
   CANCELLATION_COMPLETION_TEXT,
   CANCELLATION_PROMPT,
+  CANCELLATION_RUNNING_PROMPT,
   CHECKPOINT_TASK_COMPLETION_TEXT,
   CHECKPOINT_TASK_PROMPT,
   CLOUD_FEATURES_ONLY,
@@ -351,6 +355,17 @@ const PROJECT_QUICK_PHRASE_CONTENT = 'Review the project constraints before impl
 const DEFAULT_ISSUE_ADDITIONAL_CONTEXT =
   'WEWORK_DESKTOP_E2E_DEFAULT_ISSUE_CONTEXT: preserve this acceptance criterion.'
 
+async function waitForLocalExecutorRequestCompletion(control, completedCount, message) {
+  const deadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
+  let last
+  while (Date.now() < deadline) {
+    last = JSON.parse(await control.command('getLocalExecutorRequestHoldSnapshot', 'body'))
+    if ((last?.completedCount ?? 0) >= completedCount) return last
+    await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
+  }
+  assert.fail(`${message}: ${JSON.stringify(last)}`)
+}
+
 function assertDefaultIssueContextAbsent(request) {
   const serializedRequest = JSON.stringify(request.body)
   assert.ok(
@@ -367,15 +382,20 @@ function assertDefaultIssueContextAbsent(request) {
   )
 }
 
-function assertDefaultIssueContextInjected(request) {
+function assertDefaultIssueReferenceIncluded(request) {
   const serializedRequest = JSON.stringify(request.body)
   assert.ok(
-    serializedRequest.includes(DEFAULT_ISSUE_ADDITIONAL_CONTEXT),
-    'The follow-up request did not include the enriched default Issue title'
+    !serializedRequest.includes(DEFAULT_ISSUE_ADDITIONAL_CONTEXT),
+    'The follow-up request eagerly included the default Issue title'
   )
   assert.match(
     serializedRequest,
-    /cloud:\/\/projects\/default-work-items\/todos\/WORK-\d+/,
+    /space_id\\?":\\?"default-work-items\\?"/,
+    'The follow-up request did not identify the default Issue project'
+  )
+  assert.match(
+    serializedRequest,
+    /item_id\\?":\\?"WORK-\d+\\?"/,
     'The follow-up request did not include the bound default Issue reference'
   )
 }
@@ -1144,6 +1164,7 @@ async function main() {
     mkdir(codexSqliteHome, { recursive: true }),
     mkdir(electronUserDataDirectory, { recursive: true, mode: 0o700 }),
   ])
+  await prepareNativeKeychainPreferences(homePath)
   // Desktop scenarios own their viewport instead of inheriting first-launch defaults.
   // The host clamps these bounds to each runner's available display, as before.
   // Exercise consent explicitly; the product default already marks it as asked.
@@ -1308,6 +1329,8 @@ async function main() {
             : undefined,
         managedCloudIdentity: CLOUD_ONLY,
         modelServerUrl: control.url,
+        modelCatalogOverrides: desktopScenario?.cloudModelCatalogOverrides ?? [],
+        remoteExecutorType: desktopScenario?.remoteExecutorType,
         scenarioConfigToml: shouldConfigureToolDetailsMcp() ? toolDetailsMcpConfigToml() : '',
         workspacePath: desktopScenario?.remoteWorkspacePath ?? workspacePath,
       })
@@ -1541,19 +1564,16 @@ async function main() {
       for (const key of Object.keys(appEnvironment)) delete appEnvironment[key]
       Object.assign(appEnvironment, cleanEnvironment)
     }
-    await desktopScenario?.prepareApp?.({ appBinary, appEnvironment, codexHome, control })
-    if (desktopScenario?.requiresNativeCloudAuthorization) {
-      assert.ok(cloudEnvironment, 'Native desktop login requires the real Backend environment')
-      nativeCloudLogin = nativeCloudAuthorizationFixture(
-        cloudEnvironment,
-        electronUserDataDirectory,
-        appBinary
-      )
-      await nativeCloudLogin.authorize()
+    if (DESKTOP_SEGMENT === 'remote-device-onboarding') {
+      await prepareRemoteDeviceConversationModel(electronUserDataDirectory, control.url)
     }
+    await desktopScenario?.prepareApp?.({ appBinary, appEnvironment, codexHome, control })
     await desktopScenario?.prepareUserDataLaunch?.()
+    const usesNativeCloudInspector =
+      cloudEnvironment && (!desktopScenario || desktopScenario.requiresNativeCloudAuthorization)
     const electronLaunchArguments = resolveElectronLaunchArguments({
       extraArguments: [
+        ...(usesNativeCloudInspector ? ['--inspect=127.0.0.1:0'] : []),
         ...(process.platform === 'win32'
           ? ['--enable-logging=file', `--log-file=${join(resultDir, 'electron.log')}`]
           : []),
@@ -1572,6 +1592,8 @@ async function main() {
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
       })
+      const nativeInspector = usesNativeCloudInspector ? readInspectorEndpoint(child) : null
+      nativeInspector?.catch(() => undefined)
       const scenarioStartup = desktopScenario?.appProcessStarted?.(child)
       // Observe early failure now; the await below still propagates it after log setup.
       scenarioStartup?.catch(() => undefined)
@@ -1613,10 +1635,14 @@ async function main() {
       }
       try {
         await scenarioStartup
+        if (nativeInspector) {
+          control.nativeInspectorPort = Number(new URL(await nativeInspector).port)
+        }
       } catch (error) {
         await stopDesktopAppProcess(child)
         throw error
       }
+      control.applicationProcessId = child.pid
       return child
     }
     app = await startDesktopAppProcess()
@@ -1716,6 +1742,15 @@ async function main() {
       /^https?:/,
       'The Electron desktop controller did not connect from its local renderer origin'
     )
+    if (usesNativeCloudInspector) {
+      assert.ok(cloudEnvironment, 'Native desktop login requires the real Backend environment')
+      nativeCloudLogin = nativeCloudAuthorizationFixture(
+        cloudEnvironment,
+        electronUserDataDirectory,
+        control
+      )
+      await nativeCloudLogin.authorize()
+    }
     if (VERIFIES_INITIAL_TELEMETRY_CONSENT) {
       await verifyInitialTelemetryConsent(control, [
         workspacePath,
@@ -2652,11 +2687,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     )
     await control.command('waitFor', secondaryProjectRowSelector, {
       text: 'secondary-project',
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
     await control.command('waitFor', '[data-testid="project-work-button"]', {
       text: 'secondary-project',
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
 
     phase = 'composer-project-folder-select'
@@ -3071,7 +3106,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         )
         control.setScenario('checkpoint_task')
         const enrichedIssueRequest = await sendProjectAiCheckpointPrompt(control, composerSelector)
-        assertDefaultIssueContextInjected(enrichedIssueRequest)
+        assertDefaultIssueReferenceIncluded(enrichedIssueRequest)
         phase = 'cloud-issue-task-sidebar-restored'
         await reloadMainWindow(
           control,
@@ -3736,39 +3771,91 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       phase = 'queue-management'
       await verifyPausedQueueLifecycle({ composerSelector, control })
 
-      phase = 'cancellation'
+      phase = 'early-cancellation'
       control.setScenario('cancellation')
-      await sendPrompt(control, composerSelector, CANCELLATION_PROMPT)
-      await withTimeout(
-        control.awaitScenarioRequest('cancellation'),
-        DEFAULT_STEP_TIMEOUT_MS,
-        'The model service did not receive the cancellation request'
-      )
-      await control.command('waitFor', '[data-testid="pause-response-button"]', {
-        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      await control.command('holdLocalExecutorRequests', 'body', {
+        value: JSON.stringify({ method: 'runtime.tasks.send', phase: 'before-dispatch' }),
       })
-      const cancellationTaskSnapshot = JSON.parse(
-        await control.command('getWorkbenchDebugSnapshot', 'body')
-      )
-      const cancelledTaskId = cancellationTaskSnapshot.workbench?.currentRuntimeTask?.taskId
-      assert.ok(cancelledTaskId, 'The running cancellation task did not expose its runtime task ID')
-      const cancellationExecutorLogOffset = (
-        await readFile(executorLogPath, 'utf8').catch(() => '')
-      ).length
-      await control.command('click', '[data-testid="pause-response-button"]')
-      await waitForLogPattern(
-        executorLogPath,
-        /app IPC request finished .* method=runtime\.tasks\.cancel .* ok=true/,
-        { fromOffset: cancellationExecutorLogOffset }
-      )
-      await waitForWorkbenchDebugState(
-        control,
-        snapshot =>
-          snapshot.workbench?.currentRuntimeTask?.taskId === cancelledTaskId &&
-          snapshot.workbench?.lifecycleCurrentTaskRunning === false &&
-          snapshot.pane?.status?.taskExecution?.status === 'cancelled',
-        'The current cancellation did not settle before releasing the upstream response'
-      )
+      let cancelledTaskId
+      let cancellationRequestCountBeforeStop
+      let earlyPromptVisibleBeforeCancel = false
+      let unboundCancellationTurn
+      try {
+        await sendPrompt(control, composerSelector, CANCELLATION_PROMPT)
+        const heldSend = JSON.parse(
+          await withTimeout(
+            control.command('awaitLocalExecutorRequestHold', 'body'),
+            DEFAULT_STEP_TIMEOUT_MS,
+            'The cancellation fixture did not reach the pre-dispatch send gate'
+          )
+        )
+        assert.equal(
+          heldSend?.method,
+          'runtime.tasks.send',
+          'The cancellation fixture held an unexpected local executor request'
+        )
+        await control.command('waitFor', '[data-testid="pause-response-button"]', {
+          timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+        })
+        const cancellationTaskSnapshot = await waitForWorkbenchDebugState(
+          control,
+          snapshot =>
+            Boolean(snapshot.workbench?.currentRuntimeTask?.taskId) &&
+            snapshot.workbench?.activeLifecycle?.turn?.active === true &&
+            snapshot.workbench.activeLifecycle.turn.id === null,
+          'The early cancellation did not run against an unbound turn'
+        )
+        cancelledTaskId = cancellationTaskSnapshot.workbench.currentRuntimeTask.taskId
+        unboundCancellationTurn = cancellationTaskSnapshot.workbench.activeLifecycle.turn
+        assert.equal(
+          cancellationTaskSnapshot.pane?.messageSummary?.activeAssistantMessage,
+          null,
+          'Cancellation was delayed until an assistant turn was already streaming'
+        )
+        cancellationRequestCountBeforeStop =
+          control.scenarioRequests.get('cancellation')?.length ?? 0
+        assert.equal(
+          cancellationRequestCountBeforeStop,
+          0,
+          'The pre-bind cancellation fixture reached the model before stopping'
+        )
+        const cancellationTextBeforeStop = await control.command('getText', 'body')
+        earlyPromptVisibleBeforeCancel = cancellationTextBeforeStop.includes(CANCELLATION_PROMPT)
+        assert.equal(
+          earlyPromptVisibleBeforeCancel,
+          true,
+          'The unbound cancellation fixture did not render its optimistic prompt'
+        )
+        const cancellationExecutorLogOffset = (
+          await readFile(executorLogPath, 'utf8').catch(() => '')
+        ).length
+        await control.command('click', '[data-testid="pause-response-button"]')
+        await waitForLogPattern(
+          executorLogPath,
+          /app IPC request finished .* method=runtime\.tasks\.cancel .* ok=true/,
+          { fromOffset: cancellationExecutorLogOffset }
+        )
+        assert.equal(
+          await control.command('releaseLocalExecutorRequestHold', 'body'),
+          'true',
+          'The held send was not released after the cancellation acknowledgement'
+        )
+        await waitForLocalExecutorRequestCompletion(
+          control,
+          1,
+          'The cancelled pre-dispatch send did not settle'
+        )
+        await waitForWorkbenchDebugState(
+          control,
+          snapshot =>
+            snapshot.workbench?.currentRuntimeTask?.taskId === cancelledTaskId &&
+            snapshot.workbench?.lifecycleCurrentTaskRunning === false &&
+            snapshot.pane?.status?.taskExecution?.status === 'cancelled',
+          'The current cancellation did not settle after releasing the held send'
+        )
+      } finally {
+        await control.command('releaseLocalExecutorRequestHold', 'body').catch(() => undefined)
+      }
       const cancelledTaskUnreadTestId = `runtime-local-task-unread-dot-${cancelledTaskId}`
       await waitForSnapshot(
         control,
@@ -3781,8 +3868,77 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         false,
         'The cancelled task unexpectedly rendered a completion response'
       )
+      assert.equal(
+        cancellationText.includes(CANCELLATION_PROMPT),
+        false,
+        'The unbound cancelled prompt remained visible after cancellation'
+      )
+
+      phase = 'running-cancellation'
+      control.setScenario('cancellation')
+      await sendPrompt(control, composerSelector, CANCELLATION_RUNNING_PROMPT)
+      await withTimeout(
+        control.awaitNextScenarioRequest('cancellation_running'),
+        DEFAULT_STEP_TIMEOUT_MS,
+        'The model service did not receive the running cancellation request'
+      )
+      await control.command('waitFor', '[data-testid="pause-response-button"]', {
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+      const runningCancellationSnapshot = JSON.parse(
+        await control.command('getWorkbenchDebugSnapshot', 'body')
+      )
+      assert.equal(
+        runningCancellationSnapshot.workbench?.currentRuntimeTask?.taskId,
+        cancelledTaskId,
+        'The running cancellation unexpectedly switched runtime tasks'
+      )
+      const runningCancellationLogOffset = (await readFile(executorLogPath, 'utf8').catch(() => ''))
+        .length
+      await control.command('click', '[data-testid="pause-response-button"]')
+      await waitForLogPattern(
+        executorLogPath,
+        /app IPC request finished .* method=runtime\.tasks\.cancel .* ok=true/,
+        { fromOffset: runningCancellationLogOffset }
+      )
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot =>
+          snapshot.workbench?.currentRuntimeTask?.taskId === cancelledTaskId &&
+          snapshot.workbench?.lifecycleCurrentTaskRunning === false &&
+          snapshot.pane?.status?.taskExecution?.status === 'cancelled',
+        'The running cancellation did not settle before releasing the stale response'
+      )
+      const runningCancellationText = await control.command('getText', 'body')
+      assert.equal(
+        runningCancellationText.includes(CANCELLATION_COMPLETION_TEXT),
+        false,
+        'The running task rendered its completion after cancellation'
+      )
+
+      phase = 'cancellation-replacement'
+      const replacementRequestCountBefore =
+        control.scenarioRequests.get('cancellation_replacement')?.length ?? 0
+      await sendPrompt(control, composerSelector, CHECKPOINT_TASK_PROMPT)
+      await control.awaitScenarioRequestCount(
+        'cancellation_replacement',
+        replacementRequestCountBefore + 1
+      )
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: CHECKPOINT_TASK_COMPLETION_TEXT,
+        visible: true,
+        timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      })
+
+      phase = 'cancellation-late-old-response'
+      const cancellationRequestCountBeforeRelease =
+        control.scenarioRequests.get('cancellation')?.length ?? 0
       control.releaseCancellationResponse()
+      // Keep a bounded negative observation window after releasing the stale stream;
+      // a passing absence check must span the event-delivery turn.
       await new Promise(resolvePromise => setTimeout(resolvePromise, 1_000))
+      const cancellationRequestCountAfterRelease =
+        control.scenarioRequests.get('cancellation')?.length ?? 0
       const cancellationTextAfterUpstreamCompletion = await control.command('getText', 'body')
       assert.equal(
         cancellationTextAfterUpstreamCompletion.includes(CANCELLATION_COMPLETION_TEXT),
@@ -3802,6 +3958,16 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         false,
         'The cancelled task made the composer busy after the upstream completion response'
       )
+      assert.equal(
+        cancellationTextAfterUpstreamCompletion.includes(CHECKPOINT_TASK_COMPLETION_TEXT),
+        true,
+        'The replacement response disappeared after releasing the cancelled stream'
+      )
+      assert.equal(
+        cancellationTextAfterUpstreamCompletion.includes(CANCELLATION_PROMPT),
+        false,
+        'The unbound cancelled prompt reappeared after the replacement response'
+      )
       const cancellationUiAfterUpstreamCompletion = JSON.parse(
         await control.command('snapshot', ACTIVE_WORKBENCH_SELECTOR)
       )
@@ -3809,6 +3975,69 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         cancellationUiAfterUpstreamCompletion.testIds.includes('pause-response-button'),
         false,
         'The cancelled task restored the stop control after the upstream completion response'
+      )
+
+      phase = 'cancellation-reopen'
+      await reloadMainWindow(
+        control,
+        'The cancelled conversation did not reconnect for stale-response verification'
+      )
+      const cancelledTaskRowTestId = `runtime-local-task-row-${cancelledTaskId}`
+      await ensureTaskRowVisible(control, cancelledTaskRowTestId)
+      const cancelledTaskRowSelector = `[data-testid="${cancelledTaskRowTestId}"]`
+      await control.command('clickWhenEnabled', cancelledTaskRowSelector, {
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      await waitForWorkbenchTask(
+        control,
+        cancelledTaskId,
+        'The cancelled conversation did not reopen after the stale response was released'
+      )
+      await control.command('waitFor', '[data-testid="message-assistant"]', {
+        text: CHECKPOINT_TASK_COMPLETION_TEXT,
+        visible: true,
+        timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+      })
+      const reopenedCancellationText = await control.command('getText', 'body')
+      assert.equal(
+        reopenedCancellationText.includes(CANCELLATION_COMPLETION_TEXT),
+        false,
+        'Reopening the conversation restored the cancelled completion at the end'
+      )
+      assert.equal(
+        reopenedCancellationText.includes(CANCELLATION_PROMPT),
+        false,
+        'Reopening the conversation restored the unbound cancelled prompt'
+      )
+      await writeFile(
+        join(resultDir, 'cancellation-race-evidence.json'),
+        JSON.stringify(
+          {
+            cancellationRequestCountAfterRelease,
+            cancellationRequestCountBeforeRelease,
+            cancellationRequestCountBeforeStop,
+            cancelledTaskId,
+            earlyPromptVisibleBeforeCancel,
+            earlyPromptVisibleAfterCancel: cancellationText.includes(CANCELLATION_PROMPT),
+            earlyPromptVisibleAfterReopen: reopenedCancellationText.includes(CANCELLATION_PROMPT),
+            earlyPromptVisibleAfterReplacement:
+              cancellationTextAfterUpstreamCompletion.includes(CANCELLATION_PROMPT),
+            runningCancellationRequestObserved: true,
+            unboundTurnAtStop: unboundCancellationTurn,
+            replacementVisibleAfterRelease: cancellationTextAfterUpstreamCompletion.includes(
+              CHECKPOINT_TASK_COMPLETION_TEXT
+            ),
+            staleCompletionVisibleAfterRelease: cancellationTextAfterUpstreamCompletion.includes(
+              CANCELLATION_COMPLETION_TEXT
+            ),
+            staleCompletionVisibleAfterReopen: reopenedCancellationText.includes(
+              CANCELLATION_COMPLETION_TEXT
+            ),
+          },
+          null,
+          2
+        ) + '\n',
+        'utf8'
       )
 
       phase = 'retry'
@@ -3981,9 +4210,21 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await captureVerificationScreenshot(control, 'file-panel-anchor-01-before-open.png')
 
       await control.command('click', filePanelLinkSelector)
-      await control.command('waitFor', '[data-testid="right-workspace-file-tab"]', {
+      const linkedFileWorkspaceSelector = '[data-workspace-tab-content][aria-hidden="false"]'
+      const activeLinkedFileTabSelector = `${linkedFileWorkspaceSelector} [data-testid^="right-workspace-file-tab-"][role="tab"][aria-selected="true"]`
+      await control.command('waitFor', activeLinkedFileTabSelector, {
+        text: FILE_PANEL_LINK_NAME,
+        visible: true,
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
+      const linkedFileTabId = await control.command('getAttribute', activeLinkedFileTabSelector, {
+        value: 'data-testid',
+        text: FILE_PANEL_LINK_NAME,
+        visible: true,
+      })
+      assert.ok(linkedFileTabId, 'The linked file did not activate its workspace tab')
+      const linkedFileTabSelector = `${linkedFileWorkspaceSelector} [data-testid=${JSON.stringify(linkedFileTabId)}]`
+      const linkedFileTabCloseSelector = `${linkedFileWorkspaceSelector} [data-testid=${JSON.stringify(`${linkedFileTabId}-close-button`)}]`
       assert.equal(
         await control.command('getText', '[data-testid="workspace-file-path"]'),
         join(workspacePath, FILE_PANEL_LINK_NAME).replaceAll('\\', '/'),
@@ -4043,13 +4284,13 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           }
         )}`
       )
-      await control.command('click', '[data-testid="right-workspace-file-tab-close-button"]')
+      await control.command('click', linkedFileTabCloseSelector)
       await waitForSnapshot(
         control,
-        snapshot => !snapshot.testIds.includes('right-workspace-file-tab'),
+        snapshot => !snapshot.testIds.includes(linkedFileTabId),
         'The file panel remained open after the anchor regression check',
         DEFAULT_STEP_TIMEOUT_MS,
-        ACTIVE_WORKBENCH_SELECTOR
+        linkedFileWorkspaceSelector
       )
       await control.command('finishAnimations', 'body')
       const filePanelScrollerAfterClose = await waitForElementWidth(
@@ -4075,7 +4316,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         `Closing the file panel moved the linked paragraph from ${filePanelAnchorBeforeOpen.top}px to ${filePanelAnchorAfterClose.top}px`
       )
       await control.command('click', filePanelLinkSelector)
-      await control.command('waitFor', '[data-testid="right-workspace-file-tab"]', {
+      await control.command('waitFor', linkedFileTabSelector, {
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       })
       await control.command('finishAnimations', 'body')
@@ -4120,7 +4361,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await waitForSnapshot(
         control,
         snapshot =>
-          snapshot.testIds.includes('right-workspace-file-tab') &&
+          snapshot.testIds.includes(linkedFileTabId) &&
           !snapshot.testIds.includes('assistant-markdown-link-tooltip'),
         'The assistant file-link tooltip did not dismiss above the open file panel',
         DEFAULT_STEP_TIMEOUT_MS
@@ -4334,7 +4575,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'true',
         'The review tab was not active after switching back to the first task'
       )
-      await control.command('click', '[data-testid="right-workspace-file-tab"]')
+      await control.command('click', linkedFileTabSelector)
       await control.command('waitFor', '[data-testid="workspace-markdown-preview"]', {
         target: activeTaskWorkbenchSelector,
         text: FILE_PREVIEW_RESTORE_MARKER,
@@ -4363,7 +4604,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         'The browser tab was not restored after switching conversations'
       )
       assert.ok(
-        restoredWorkspaceSnapshot.testIds.includes('right-workspace-file-tab'),
+        restoredWorkspaceSnapshot.testIds.includes(linkedFileTabId),
         'The file tab was not restored after switching conversations'
       )
       assert.ok(
@@ -4478,7 +4719,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       await control.command('click', bottomWorkspaceTabCloseSelector)
       await control.command('hover', rightBrowserTabSelector)
       await control.command('click', rightBrowserTabCloseSelector)
-      await control.command('click', '[data-testid="right-workspace-file-tab-close-button"]')
+      await control.command('click', linkedFileTabCloseSelector)
       await control.command('click', '[data-testid="right-workspace-review-tab-close-button"]')
 
       await control.command('fill', composerSelector, { value: '' })

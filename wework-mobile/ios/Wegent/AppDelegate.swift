@@ -1,6 +1,19 @@
 internal import Expo
 import React
 import ReactAppDependencyProvider
+import OSLog
+internal import WeworkLocalRuntime
+
+private enum AppStartupDiagnostics {
+  static let startedAt = ProcessInfo.processInfo.systemUptime
+  static let logger = Logger(subsystem: "io.wecode.wework", category: "Startup")
+
+  static func record(_ stage: String) {
+    guard RuntimeDiagnostics.shared.isEnabled else { return }
+    let elapsed = Int((ProcessInfo.processInfo.systemUptime - startedAt) * 1000)
+    logger.notice("App startup stage=\(stage, privacy: .public) elapsedMs=\(elapsed, privacy: .public)")
+  }
+}
 
 @main
 class AppDelegate: ExpoAppDelegate {
@@ -14,6 +27,7 @@ class AppDelegate: ExpoAppDelegate {
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
   ) -> Bool {
+    AppStartupDiagnostics.record("native-launch")
     initialLaunchOptions = launchOptions
 
     let delegate = ReactNativeDelegate()
@@ -22,6 +36,7 @@ class AppDelegate: ExpoAppDelegate {
 
     reactNativeDelegate = delegate
     reactNativeFactory = factory
+    AppStartupDiagnostics.record("react-factory-created")
 
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
@@ -83,6 +98,7 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     willConnectTo session: UISceneSession,
     options connectionOptions: UIScene.ConnectionOptions
   ) {
+    AppStartupDiagnostics.record("scene-connect")
     guard
       let windowScene = scene as? UIWindowScene,
       let appDelegate = UIApplication.shared.delegate as? AppDelegate,
@@ -92,10 +108,12 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     let window = UIWindow(windowScene: windowScene)
     self.window = window
     appDelegate.window = window
+    AppStartupDiagnostics.record("react-start-requested")
     factory.startReactNative(
       withModuleName: "main",
       in: window,
       launchOptions: appDelegate.launchOptions(for: connectionOptions))
+    AppStartupDiagnostics.record("react-start-returned")
   }
 
   func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
@@ -131,6 +149,7 @@ class ReactNativeDelegate: ExpoReactNativeFactoryDelegate {
   }
 
   override func bundleURL() -> URL? {
+    AppStartupDiagnostics.record("javascript-bundle-requested")
 #if DEBUG
     return RCTBundleURLProvider.sharedSettings().jsBundleURL(forBundleRoot: ".expo/.virtual-metro-entry")
 #else

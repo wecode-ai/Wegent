@@ -73,7 +73,8 @@ import { canEditCollaborationIssue } from "./permissions";
 import { ProjectCreateDialog, projectCreateLabels } from "./project-create";
 import { ProjectIssueTable, useIssueAssignmentsByIssueId } from "./platform";
 import {
-  createProjectAiTeamSections,
+  createProjectParticipantSections,
+  projectAiSettingsGroup,
   ProjectCollaborationGroups,
   ProjectAutomaticProcessing,
   ProjectExecutionEnvironments,
@@ -348,7 +349,9 @@ export function CollaborationApp({
         translate(
           "todo.archive_issue_failed_count",
           "{{count}} 个任务归档失败，请重试。",
-          { count: failed.length },
+          {
+            count: failed.length,
+          },
         ),
       );
     }
@@ -602,6 +605,38 @@ export function CollaborationApp({
     );
   };
 
+  if (selectedIssue?.invited_only) {
+    return (
+      <section
+        className="collaboration-app collaboration-app-project issue-drawer-workspace"
+        data-testid={collaborationTestIds.root}
+      >
+        <IssueDetail
+          api={api}
+          issue={selectedIssue}
+          allIssues={[selectedIssue]}
+          comments={comments}
+          assignments={assignments}
+          messages={messages}
+          translate={translate}
+          onClose={() => {
+            commands.clearSelectedIssue();
+            host.navigate({ ...host.location, projectId: null, issueId: null });
+          }}
+          onChange={commands.replaceIssue}
+          onRead={commands.confirmIssueRead}
+          onCommentsChange={(next) =>
+            commands.replaceComments(selectedIssue.id, next)
+          }
+          onConflict={async () => {
+            await commands.loadSelectedIssue(selectedIssue.id);
+          }}
+          onError={() => commands.reportError(messages.loadFailed)}
+        />
+      </section>
+    );
+  }
+
   if (loading) {
     return (
       <ProjectLoadingSkeleton
@@ -737,7 +772,10 @@ export function CollaborationApp({
                             linkedIssues,
                             "milestones",
                             linkedAssignments,
-                            { emptyLabel, milestoneId },
+                            {
+                              emptyLabel,
+                              milestoneId,
+                            },
                           )
                         }
                       />
@@ -844,6 +882,7 @@ export function CollaborationApp({
               embedded
               hasCreateAction={hasHeaderCreateAction}
               sidebarCollapsed={false}
+              compactTitle={project.name}
               title={
                 <span className="collaboration-project-heading">
                   <strong>{project.name}</strong>
@@ -896,6 +935,8 @@ export function CollaborationApp({
                 board: (
                   <div className="relative flex min-h-0 min-w-0 flex-1">
                     <ProjectBoardAdapter
+                      projectApi={api.projects}
+                      onProjectMigrated={commands.replaceProject}
                       participationUserId={participationUserId}
                       isIssueRunning={isIssueRunning}
                       parentGroupingEnabled={parentGroupingEnabled}
@@ -1046,7 +1087,10 @@ export function CollaborationApp({
                             refreshOrder: async (target) => {
                               await commands.loadProjectSnapshot(
                                 target.cloud_project_id,
-                                { invalidate: true, throwOnError: true },
+                                {
+                                  invalidate: true,
+                                  throwOnError: true,
+                                },
                               );
                             },
                           },
@@ -1113,6 +1157,8 @@ export function CollaborationApp({
                 ),
                 manage: (
                   <ProjectSettingsShell
+                    pageRenderer={host.settingsPages}
+                    scopeKey={`${project.project_store}:${project.id}`}
                     ariaLabel={messages.settings}
                     onSectionChange={(sectionId) => {
                       const nextSectionId =
@@ -1171,7 +1217,7 @@ export function CollaborationApp({
                             },
                           ]
                         : []),
-                      ...createProjectAiTeamSections({
+                      ...createProjectParticipantSections({
                         translate: translate,
                         membersContent: (
                           <CollaborationSettings
@@ -1247,6 +1293,7 @@ export function CollaborationApp({
                       }),
                       {
                         id: "environments",
+                        group: projectAiSettingsGroup(translate),
                         label: messages.projectEnvironments,
                         testId: "collaboration-project-settings-environments",
                         content: (
@@ -1275,6 +1322,7 @@ export function CollaborationApp({
                                 "collaboration-project-settings-automatic-processing",
                               content: (
                                 <ProjectAutomaticProcessing
+                                  onProjectChange={commands.replaceProject}
                                   api={api}
                                   project={project}
                                   members={members}

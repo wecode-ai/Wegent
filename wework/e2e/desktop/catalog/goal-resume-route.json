@@ -1,0 +1,6 @@
+{
+  "order": 176001,
+  "ciHost": "goal-state-sync",
+  "scenario": "./scenarios/goal-resume-route.scenario.mjs",
+  "scenarioOnly": true
+}

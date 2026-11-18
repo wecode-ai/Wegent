@@ -17,6 +17,7 @@ import {
   isRuntimeTaskAuthoritativeCompletion,
   isRuntimeTaskConfirmedActive,
   normalizeRuntimeTaskSummary,
+  mergeRuntimeTaskSnapshotMetadata,
   shouldReplaceRuntimeTaskProjection,
   summarizeRuntimeTaskExecution,
 } from './projection'
@@ -481,7 +482,7 @@ export class RuntimeTaskLifecycleStore {
 
   private reduceMachine(address: RuntimeTaskAddress, event: RuntimeTaskLifecycleEvent): boolean {
     const canonicalAddress = this.canonicalizeAddress(address)
-    const canonicalEvent =
+    let canonicalEvent =
       event.type === 'executor_snapshot_received' ? { ...event, address: canonicalAddress } : event
     const machine = this.ensureMachine(canonicalAddress)
     const previous = machine.getSnapshot()
@@ -542,7 +543,9 @@ export class RuntimeTaskLifecycleStore {
       previous.task &&
       !shouldReplaceRuntimeTaskProjection(previous.task, canonicalEvent.task, hasPendingSend)
     ) {
-      return false
+      const metadata = mergeRuntimeTaskSnapshotMetadata(previous.task, canonicalEvent.task)
+      if (metadata === previous.task) return false
+      canonicalEvent = { ...canonicalEvent, task: metadata }
     }
     const eventChanged = machine.dispatch(canonicalEvent)
     let changed = eventChanged

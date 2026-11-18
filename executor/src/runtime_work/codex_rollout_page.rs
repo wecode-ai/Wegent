@@ -34,11 +34,18 @@ struct ItemOffset {
     turn: usize,
 }
 
+struct IndexedTurn {
+    metadata: Value,
+    first_item_position: Option<u64>,
+    started: bool,
+    has_user_message: bool,
+}
+
 #[derive(Default)]
 struct Index {
     length: u64,
     items: Vec<ItemOffset>,
-    turns: Vec<Value>,
+    turns: Vec<IndexedTurn>,
     turn_ids: HashMap<String, usize>,
     context_usage: Option<Value>,
     item_ids: HashMap<(usize, String), usize>,
@@ -252,10 +259,15 @@ fn read_page(
     let mut positions = HashMap::new();
     for (turn_index, item) in entries {
         let at = *positions.entry(turn_index).or_insert_with(|| {
-            let mut turn = index.turns[turn_index].clone();
+            let indexed = &index.turns[turn_index];
+            let mut turn = indexed.metadata.clone();
             turn["items"] = json!([]);
             turn["itemsView"] = json!("summary");
-            turn["ownsUserPresentation"] = json!(false);
+            turn["ownsUserPresentation"] = json!(
+                indexed.started
+                    && !indexed.has_user_message
+                    && indexed.first_item_position == item["position"].as_u64()
+            );
             turn["position"] = item["position"].clone();
             turns.push(turn);
             turns.len() - 1
@@ -334,14 +346,20 @@ fn update_index(
                 string_field(payload, "turn_id").or_else(|| string_field(payload, "turnId"))
             {
                 let turn_index = *index.turn_ids.entry(turn_id.clone()).or_insert_with(|| {
-                    index
-                        .turns
-                        .push(json!({"id":turn_id,"status":"inProgress"}));
+                    index.turns.push(IndexedTurn {
+                        metadata: json!({"id":turn_id,"status":"inProgress"}),
+                        first_item_position: None,
+                        started: false,
+                        has_user_message: false,
+                    });
                     index.turns.len() - 1
                 });
-                let turn = &mut index.turns[turn_index];
+                let indexed = &mut index.turns[turn_index];
+                let turn = &mut indexed.metadata;
                 match payload["type"].as_str() {
                     Some("item_completed") if payload["item"].is_object() => {
+                        indexed.first_item_position.get_or_insert(offset);
+                        indexed.has_user_message |= item_type(&payload["item"]) == "usermessage";
                         if let Some(id) = string_field(&payload["item"], "id") {
                             let key = (turn_index, id);
                             if let Some(existing) = index.item_ids.get(&key) {
@@ -363,6 +381,7 @@ fn update_index(
                         }
                     }
                     Some("task_started" | "turn_started") => {
+                        indexed.started = true;
                         if let Some(started) = payload["started_at"].as_i64() {
                             turn["startedAt"] = json!(started.saturating_mul(1000));
                         }
@@ -460,6 +479,133 @@ mod tests {
             }})
         )
         .unwrap();
+    }
+
+    #[test]
+    fn goal_turn_without_a_user_item_owns_its_presentation_only_on_the_opening_page() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("goal.jsonl");
+        let mut file = File::create(&path).unwrap();
+        writeln!(
+            file,
+            "{}",
+            json!({"type":"event_msg","payload":{
+                "type":"task_started","turn_id":"long-turn"
+            }})
+        )
+        .unwrap();
+        // Goal activation follows an injected input, so its turn has no UserMessage item.
+        for id in 0..101 {
+            write_item(&mut file, id, "Goal response");
+        }
+        write_item(&mut file, 0, "Updated opening response");
+        file.flush().unwrap();
+        let thread = json!({"id":"thread-goal","path":path});
+        for direction in [
+            CodexTranscriptDirection::Ascending,
+            CodexTranscriptDirection::Descending,
+        ] {
+            let first = read_fixture_page(thread.clone(), None, direction)
+                .unwrap()
+                .unwrap();
+            let ascending = direction == CodexTranscriptDirection::Ascending;
+            assert_eq!(first.thread["turns"][0]["ownsUserPresentation"], ascending);
+            let cursor = if ascending {
+                first.after_cursor
+            } else {
+                first.before_cursor
+            };
+            let second = read_fixture_page(thread.clone(), cursor, direction)
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                second.thread["turns"][0]["ownsUserPresentation"],
+                !ascending
+            );
+            let opening = if ascending {
+                &first.thread
+            } else {
+                &second.thread
+            };
+            assert_eq!(opening["turns"][0]["items"][0]["id"], "item-0");
+            assert_eq!(
+                opening["turns"][0]["items"][0]["text"],
+                "Updated opening response"
+            );
+        }
+    }
+
+    #[test]
+    fn a_later_native_user_item_keeps_presentation_ownership_on_its_own_page() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("user.jsonl");
+        let mut file = File::create(&path).unwrap();
+        writeln!(
+            file,
+            "{}",
+            json!({"type":"event_msg","payload":{
+                "type":"task_started","turn_id":"long-turn"
+            }})
+        )
+        .unwrap();
+        for id in 0..100 {
+            write_item(&mut file, id, "Response");
+        }
+        writeln!(file, "{}", json!({"type":"event_msg","payload":{
+            "type":"item_completed","turn_id":"long-turn","item":{"id":"user","type":"UserMessage","content":[]}
+        }})).unwrap();
+        write_item(&mut file, 100, "Last response");
+        file.flush().unwrap();
+        let thread = json!({"id":"thread-user","path":path});
+        let newest = read_fixture_page(thread.clone(), None, CodexTranscriptDirection::Descending)
+            .unwrap()
+            .unwrap();
+        assert_eq!(newest.thread["turns"][0]["ownsUserPresentation"], true);
+        let opening = read_fixture_page(
+            thread,
+            newest.before_cursor,
+            CodexTranscriptDirection::Descending,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(opening.thread["turns"][0]["ownsUserPresentation"], false);
+    }
+
+    #[test]
+    fn each_started_turn_owns_its_opening_but_an_unstarted_fragment_does_not() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("turns.jsonl");
+        let mut file = File::create(&path).unwrap();
+        for turn in ["first", "second", "fragment"] {
+            if turn != "fragment" {
+                writeln!(
+                    file,
+                    "{}",
+                    json!({"type":"event_msg","payload":{
+                        "type":"task_started","turn_id":turn
+                    }})
+                )
+                .unwrap();
+            }
+            writeln!(file, "{}", json!({"type":"event_msg","payload":{
+                "type":"item_completed","turn_id":turn,"item":{"id":turn,"type":"AgentMessage","text":"Response"}
+            }})).unwrap();
+        }
+        file.flush().unwrap();
+        for direction in [
+            CodexTranscriptDirection::Ascending,
+            CodexTranscriptDirection::Descending,
+        ] {
+            let page =
+                read_fixture_page(json!({"id":"thread-multiple","path":path}), None, direction)
+                    .unwrap()
+                    .unwrap();
+            let turns = page.thread["turns"].as_array().unwrap();
+            assert_eq!(turns.len(), 3);
+            for turn in turns {
+                assert_eq!(turn["ownsUserPresentation"], turn["id"] != "fragment");
+            }
+        }
     }
 
     #[test]

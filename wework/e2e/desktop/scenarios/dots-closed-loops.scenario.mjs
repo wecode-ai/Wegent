@@ -463,7 +463,7 @@ export function createDesktopScenario(options) {
     const ready = control.readyCount
     await control.command('reloadMainWindow', 'body')
     await control.awaitReadyAfter(ready)
-    await openStoryPrimary(control)
+    await openStoryPrimary(control, options.workbenchReadyTimeoutMs)
     await control.command('waitFor', STORY_CHAT + ' [data-testid="message-assistant"]', {
       text: marker,
     })

@@ -1,3 +1,4 @@
+import { issueRuntimePort } from './issueRuntimePort'
 import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
 import { requireIssueTaskAvailable } from './issueTaskAvailability'
 import { issueDraftFromText, RuntimeConfigurationProvider } from '@wegent/collaboration'
@@ -11,6 +12,9 @@ import {
   createCollaborationTranslator,
   boardDropHint,
   saveProjectBoardViews,
+  isBaseBoardStatusGroupingEnabled,
+  useBaseBoardStatusMigration,
+  BaseBoardStatusMigrationNotice,
 } from '@wegent/collaboration'
 import { useAssignmentNotificationChoice } from '@/features/notifications/useAssignmentNotificationChoice'
 import { runtimeTaskBindingAddress } from './runtimeTaskBindingAddress'
@@ -63,6 +67,7 @@ import type {
   PullRequestAutoRepairStatus,
 } from '@/api/deliveries'
 import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
+import { changeRequestResourceEventKeys } from '@/features/workbench/changeRequestObservations'
 import { isDefaultWorkItemProject } from '@/api/deliveries'
 import type { AITableField } from '@/api/aitable'
 import { ApiError } from '@/api/http'
@@ -70,7 +75,8 @@ import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import {
   CollaborationSettings,
   CollaborationProjectViewShell,
-  createProjectAiTeamSections,
+  createProjectParticipantSections,
+  projectAiSettingsGroup,
   mergeIssueReadConfirmation,
   runnerEnvironmentError,
   ProjectAutomaticProcessing,
@@ -91,6 +97,7 @@ import {
   type CollaborationProjectView,
 } from '@wegent/collaboration'
 import { ProjectSettingsShell } from '@wegent/collaboration/project-manage'
+import { DesktopProjectSettingsPages } from './DesktopProjectSettingsPages'
 import {
   createStandardCloudBoardColumns,
   createProjectBoardSortLabels,
@@ -231,7 +238,7 @@ import {
   shouldPrepareWorkItemTask,
   workItemComposerReference,
   workItemAssociationUpdate,
-  updateIssueWhenPersonalTaskStarts,
+  prepareIssueStartStatus,
   workItemTaskInput,
 } from './workItemTaskInput'
 import {
@@ -381,7 +388,8 @@ function ProjectChangeRequestAutoRepairObserver({
   statuses: PullRequestAutoRepairStatus[]
   onRepair: (
     binding: CloudTodoBoardTaskBinding,
-    snapshot: TaskChangeRequestSnapshot
+    snapshot: TaskChangeRequestSnapshot,
+    automatic?: boolean
   ) => Promise<void>
 }) {
   const snapshot = useTaskChangeRequest(monitor, binding.changeRequestTarget ?? null)
@@ -389,11 +397,24 @@ function ProjectChangeRequestAutoRepairObserver({
   useEffect(() => {
     const changeRequest = snapshot?.changeRequest
     const status = changeRequest ? autoRepairStatus(changeRequest) : null
-    if (!snapshot || !changeRequest || !status || !statuses.includes(status)) return
+    if (
+      !snapshot ||
+      snapshot.stale ||
+      snapshot.error ||
+      !changeRequest ||
+      !status ||
+      !statuses.includes(status)
+    )
+      return
+    if (
+      binding.changeRequestTarget &&
+      monitor.hasHandledChange(binding.changeRequestTarget, changeRequest)
+    )
+      return
     const eventKey = `${itemId}\0${binding.task_id}\0${changeRequestRepairEventKey(changeRequest)}`
     if (!claimChangeRequestAutoRepair(eventKey)) return
     queueMicrotask(() => {
-      void onRepair(binding, snapshot)
+      void onRepair(binding, snapshot, true)
         .then(() => completeChangeRequestAutoRepair(eventKey, true))
         .catch(error => {
           completeChangeRequestAutoRepair(eventKey, false)
@@ -404,7 +425,7 @@ function ProjectChangeRequestAutoRepairObserver({
           })
         })
     })
-  }, [binding, itemId, onRepair, snapshot, statuses])
+  }, [binding, itemId, monitor, onRepair, snapshot, statuses])
 
   return null
 }
@@ -1386,7 +1407,8 @@ export function CloudTodoWorkspace({
     : null
   async function continueChangeRequestRepair(
     binding: CloudTodoBoardTaskBinding,
-    snapshot: TaskChangeRequestSnapshot
+    snapshot: TaskChangeRequestSnapshot,
+    automatic = false
   ): Promise<void> {
     const changeRequest = snapshot.changeRequest
     if (!changeRequest || !workbench || !selectedProject) return
@@ -1406,14 +1428,17 @@ export function CloudTodoWorkspace({
     const prompt = buildChangeRequestRepairPrompt(
       changeRequest,
       binding.task_title || binding.task_id,
+      t,
       selectedProject.pull_request_automation?.prompt
     )
-    const optimisticUserMessage = createRuntimeUserMessage(prompt)
+    const resourceEventKeys = automatic ? changeRequestResourceEventKeys(snapshot) : []
+    const optimisticUserMessage = automatic ? undefined : createRuntimeUserMessage(prompt)
     const accepted = await workbench.sendRuntimePaneMessage(
       {
         address,
         message: prompt,
-        source: { source: 'manual' },
+        source: { source: automatic ? 'connection_event' : 'manual' },
+        ...(resourceEventKeys.length ? { resourceEventKeys, queueIfBusy: true } : {}),
         cloudProjectId: String(selectedProject.id),
       },
       { optimisticUserMessage }
@@ -1984,12 +2009,41 @@ export function CloudTodoWorkspace({
   const canManageViews =
     selectedProject?.location === 'local' ||
     ['Owner', 'Maintainer'].includes(selectedProject?.access_role ?? '')
+  const baseBoardStatusGrouping =
+    !isMyTasksBoard &&
+    !isAITableProject &&
+    !isExternalGitBoard &&
+    isBaseBoardStatusGroupingEnabled()
+  const baseBoardMigrationReady =
+    selectedProject?.location !== 'cloud' ||
+    (cloudWorkspace.state.project?.project_store === 'backend' &&
+      cloudWorkspace.state.project.id === String(selectedProject.id) &&
+      !cloudWorkspace.state.loading)
+  const baseBoardMigration = useBaseBoardStatusMigration({
+    api:
+      selectedProject?.location === 'cloud'
+        ? (cloudWorkspaceApi?.projects ?? null)
+        : (localProjectManageApi?.projects ?? null),
+    project: selectedProject
+      ? {
+          id: String(selectedProject.id),
+          project_store: selectedProject.project_store ?? 'backend',
+          board_config: selectedProject.board_config,
+        }
+      : null,
+    enabled: baseBoardStatusGrouping && baseBoardMigrationReady && projectView === 'board',
+    canManage: canManageViews,
+    onMigrated: project => {
+      if (selectedProject) replaceProject(selectedProject, toWeworkCloudProject(project))
+    },
+  })
   const tagFilter = useBoardTagFilter({
     scope: `${selectedProjectKey}:${savedViews.view?.id ?? 'default'}`,
     tags: availableTags,
     translate: boardTranslate,
   })
   const standardBoardController = useStandardCloudBoardController({
+    baseBoardStatusGrouping,
     currentUserId: taskOwnerUserId,
     tagFilter: tagFilter.tags,
     tagLimitError: boardTranslate('todo.tag_limit_exceeded', '最多添加 20 个不同标签'),
@@ -2683,8 +2737,8 @@ export function CloudTodoWorkspace({
   useEffect(() => {
     if (
       !usesSharedCloudBoard ||
-      !selectedProject ||
-      cloudWorkspace.state.project?.id !== String(selectedProject.id)
+      !selectedProjectKey ||
+      cloudWorkspace.state.project?.id !== selectedProjectId
     ) {
       return
     }
@@ -2700,7 +2754,8 @@ export function CloudTodoWorkspace({
   }, [
     cloudWorkspace.state.boardLoadRevision,
     cloudWorkspace.state.project?.id,
-    selectedProject,
+    selectedProjectId,
+    selectedProjectKey,
     usesSharedCloudBoard,
   ])
   useEffect(() => {
@@ -3484,6 +3539,7 @@ export function CloudTodoWorkspace({
   }
 
   async function saveGlobalGroupBy() {
+    if (baseBoardStatusGrouping) return
     if (!selectedProject || groupScopeBusy) return
     const projectApi = projectSpaceApis[selectedProject.location]
     if (selectedProject.location === 'cloud' ? !cloudWorkspaceApi : !projectApi) return
@@ -3911,23 +3967,25 @@ export function CloudTodoWorkspace({
       }
       const project = projectSpaceRef(selectedItemProject)
       publishProjectSpaceTaskBindingChanged({ task: address, project, type: 'bound' })
+      let rollbackStatus: (() => Promise<void>) | undefined
       if (selectedItemProject.location === 'cloud') {
-        const statusError = await updateIssueWhenPersonalTaskStarts(
-          cloudWorkspaceApi!.issues,
-          latest.id,
-          {
-            projectStore: 'backend',
-            dispatchRoundId: dispatch?.roundId ?? latest.human_task_binding?.dispatchRoundId,
-          }
-        )
-        if (statusError !== null) setBoardError(statusError || cloudWorkspaceMessages.saveFailed)
+        const status = await prepareIssueStartStatus(cloudWorkspaceApi!.issues, latest.id, {
+          projectStore: 'backend',
+          dispatchRoundId: dispatch?.roundId ?? latest.human_task_binding?.dispatchRoundId,
+        })
+        rollbackStatus = status.rollback
+        if (status.error !== null) setBoardError(status.error || cloudWorkspaceMessages.saveFailed)
       }
       await associateSelectedItemWithProject(localProject)
       setBoardRefreshNonce(value => value + 1)
       return async () => {
-        await runtimeBindingApi.unbindTask(latest.id, address)
-        publishProjectSpaceTaskBindingChanged({ task: address, project, type: 'unbound' })
-        setBoardRefreshNonce(value => value + 1)
+        try {
+          await rollbackStatus?.()
+        } finally {
+          await runtimeBindingApi.unbindTask(latest.id, address)
+          publishProjectSpaceTaskBindingChanged({ task: address, project, type: 'unbound' })
+          setBoardRefreshNonce(value => value + 1)
+        }
       }
     } catch (cause) {
       setBoardError(cause instanceof Error ? cause.message : '关联任务与 Issue 失败，请重试')
@@ -4447,6 +4505,7 @@ export function CloudTodoWorkspace({
                   ) : null
                 }
                 sidebarCollapsed={sidebarCollapsed}
+                compactTitle={selectedProject.name}
                 title={
                   embedded && embeddedTitle === 'workspace'
                     ? t('workbench.workspace_tab_board', '协作')
@@ -4504,6 +4563,8 @@ export function CloudTodoWorkspace({
                     selectedProject.location === 'cloud' ? cloudWorkspaceApi : selectedProjectApi
                   ) ? (
                     <ProjectSettingsShell
+                      pageRenderer={DesktopProjectSettingsPages}
+                      scopeKey={`${selectedProject.location}:${selectedProject.id}`}
                       ariaLabel={t('todo.project_settings', '项目设置')}
                       selectedSectionId={projectSettingsSectionId}
                       onSectionChange={setProjectSettingsSectionId}
@@ -4539,7 +4600,7 @@ export function CloudTodoWorkspace({
                               />
                             ),
                         },
-                        ...createProjectAiTeamSections({
+                        ...createProjectParticipantSections({
                           translate: (key, fallback, options) =>
                             fallback === undefined ? t(key, options) : t(key, fallback, options),
                           membersContent: (
@@ -4656,6 +4717,7 @@ export function CloudTodoWorkspace({
                         }),
                         {
                           id: 'environments',
+                          group: projectAiSettingsGroup((key, fallback) => t(key, fallback ?? key)),
                           label: t('todo.project_execution_environments', '执行环境'),
                           testId: 'cloud-project-settings-environments',
                           content: (
@@ -5074,15 +5136,17 @@ export function CloudTodoWorkspace({
                           }}
                         />
                       )}
-                      renderGroupPicker={(value, onChange) => (
-                        <AITableGroupFieldPicker
-                          fields={nativeBoardGroupFields}
-                          value={value}
-                          testIdPrefix="cloud-board-group"
-                          searchPlaceholder="搜索分组字段"
-                          onChange={id => onChange(id as NativeBoardGroupBy)}
-                        />
-                      )}
+                      renderGroupPicker={(value, onChange) =>
+                        baseBoardStatusGrouping ? null : (
+                          <AITableGroupFieldPicker
+                            fields={nativeBoardGroupFields}
+                            value={value}
+                            testIdPrefix="cloud-board-group"
+                            searchPlaceholder="搜索分组字段"
+                            onChange={id => onChange(id as NativeBoardGroupBy)}
+                          />
+                        )
+                      }
                       renderBoardSettingsAction={
                         !isMyTasksBoard && (isAITableProject || isExternalGitBoard)
                           ? () => (
@@ -5220,10 +5284,12 @@ export function CloudTodoWorkspace({
                                 : t('todo.dingtalk_board_connect')}
                             </button>
                           </div>
-                        ) : boardError ? (
-                          <p className="mx-6 mb-2 text-xs text-destructive" role="alert">
-                            {boardError}
-                          </p>
+                        ) : baseBoardMigration.error ? (
+                          <BaseBoardStatusMigrationNotice
+                            error={baseBoardMigration.error}
+                            retry={baseBoardMigration.retry}
+                            translate={boardTranslate}
+                          />
                         ) : null
                       }
                       rootLabel={isMyTasksBoard ? '任务' : isAITableProject ? '父任务' : 'Issue'}
@@ -5250,7 +5316,9 @@ export function CloudTodoWorkspace({
                         !nativeBoardQuery.trim()
                       )}
                       showSaveGlobal={Boolean(
-                        personalGroupKey && localStorage.getItem(personalGroupKey)
+                        !baseBoardStatusGrouping &&
+                        personalGroupKey &&
+                        localStorage.getItem(personalGroupKey)
                       )}
                     />
                   ),
@@ -5504,6 +5572,16 @@ export function CloudTodoWorkspace({
                     closeTaskPanel()
                     setSelectedItem(locatedChild)
                   }}
+                  existingTaskSource={
+                    selectedItemProject &&
+                    issueRuntimePort(selectedItemProject.project_store, services)
+                      ? {
+                          work: runtimeWork,
+                          port: issueRuntimePort(selectedItemProject.project_store, services)!,
+                          onLinked: () => setBoardRefreshNonce(value => value + 1),
+                        }
+                      : undefined
+                  }
                   onCreateTask={async () => {
                     if (!selectedItemProject) return
                     setTaskDispatchError(null)
@@ -5758,8 +5836,8 @@ export function CloudTodoWorkspace({
             allowDingTalkAITable
             labels={projectCreateLabels[i18n.language.startsWith('zh') ? 'zh-CN' : 'en']}
             host={{
-              renderModal: ({ title, children, onClose }) => (
-                <Modal title={title} width="wide" onClose={onClose}>
+              renderModal: ({ title, children, onClose, closeLabel }) => (
+                <Modal title={title} width="wide" onClose={onClose} closeLabel={closeLabel}>
                   {children}
                 </Modal>
               ),

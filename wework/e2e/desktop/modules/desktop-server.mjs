@@ -114,6 +114,7 @@ import {
   BACKGROUND_GUIDANCE_CONTINUATION,
   CANCELLATION_COMPLETION_TEXT,
   CANCELLATION_PROMPT,
+  CANCELLATION_RUNNING_PROMPT,
   CHECKPOINT_TASK_COMPLETION_TEXT,
   CHECKPOINT_TASK_PROMPT,
   CLOUD_COMPLETION_TEXT,
@@ -1450,6 +1451,7 @@ class DesktopE2EServer {
         requestDiagnostic.finishedAtUnixMs - requestDiagnostic.startedAtUnixMs
     })
     if (await this.handleControlRoute(request, response, url)) return
+    let scenarioModelRequest
     try {
       if (
         this.desktopScenario &&
@@ -1457,6 +1459,7 @@ class DesktopE2EServer {
         ['/responses', '/v1/responses'].includes(url.pathname)
       ) {
         const body = await readRequestBody(request)
+        scenarioModelRequest = { body, scenario: this.scenario, failed: true }
         if (await this.writeNativeApprovalReview(response, body, 'responses')) return
         // Prediction history carries the task's ordinary markers. Route its
         // model request before scenario counters and held task responses.
@@ -1467,6 +1470,7 @@ class DesktopE2EServer {
       }
       if (await this.desktopScenario?.handleHttp?.(request, response, url)) return
     } catch (error) {
+      if (scenarioModelRequest) this.modelRequests.push(scenarioModelRequest)
       console.error(
         `[desktop-e2e] scenario HTTP handler failed for ${request.method} ${url.pathname}`,
         error
@@ -4935,11 +4939,26 @@ class DesktopE2EServer {
     }
 
     if (this.scenario === 'cancellation') {
-      this.recordScenarioRequest('cancellation', modelRequest)
-      assert.ok(
-        JSON.stringify(body).includes(CANCELLATION_PROMPT),
-        'The real Codex request did not contain the cancellation prompt'
-      )
+      const requestText = JSON.stringify(body)
+      const latestUserText = inputUserMessageTexts(body).at(-1) ?? ''
+      if (latestUserText.includes(CHECKPOINT_TASK_PROMPT)) {
+        this.recordScenarioRequest('cancellation_replacement', modelRequest)
+        this.writeSse(response, [
+          responseCreated(responseId),
+          assistantMessage(CHECKPOINT_TASK_COMPLETION_TEXT),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      if (latestUserText.includes(CANCELLATION_RUNNING_PROMPT)) {
+        this.recordScenarioRequest('cancellation_running', modelRequest)
+      } else {
+        this.recordScenarioRequest('cancellation', modelRequest)
+        assert.ok(
+          requestText.includes(CANCELLATION_PROMPT),
+          'The real Codex request did not contain the cancellation prompt'
+        )
+      }
       response.writeHead(200, {
         'Access-Control-Allow-Origin': '*',
         'Cache-Control': 'no-cache',

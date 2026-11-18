@@ -1,3 +1,4 @@
+import { modelApplicationContextText } from '../modules/application-context-model.mjs'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
@@ -20,6 +21,9 @@ const FOLLOW_UP = 'WEWORK_MOBILE_LOCAL_FOLLOW_UP'
 const INITIAL_DONE = 'WEWORK_MOBILE_LOCAL_INITIAL_DONE'
 const FOLLOW_UP_DONE = 'WEWORK_MOBILE_LOCAL_FOLLOW_UP_DONE'
 
+const APP_CONTEXT = 'WEWORK_TYPED_APP_CONTEXT'
+const SOURCE_CONTEXT = 'WEWORK_TYPED_SOURCE_CONTEXT'
+
 // Exercise the phone's shared payload through the existing real executor and Codex.
 // Native iOS scheduling and OAuth are outside this desktop checkpoint's coverage.
 export function createDesktopScenario(options) {
@@ -36,6 +40,37 @@ export function createDesktopScenario(options) {
       if (handleEmptyReplyPrediction(body, response)) return true
       const text = JSON.stringify(body.input)
       assert.ok(text.includes(INITIAL), 'The mobile task lost its initial native history')
+      const currentInput = (body.input ?? []).filter(
+        item =>
+          item.role === 'user' &&
+          [INITIAL, FOLLOW_UP].some(prompt => JSON.stringify(item.content).includes(prompt))
+      )
+      assert.ok(currentInput.length > 0, 'The typed-context run lost its user input')
+      for (const item of currentInput) {
+        assert.ok(
+          !JSON.stringify(item).includes(APP_CONTEXT),
+          'Application context entered user input'
+        )
+        assert.ok(
+          !JSON.stringify(item).includes(SOURCE_CONTEXT),
+          'Source context entered user input'
+        )
+      }
+      assert.equal(
+        modelApplicationContextText(body, 'cloudCollaboration'),
+        APP_CONTEXT,
+        'Codex did not receive the application context independently'
+      )
+      assert.ok(
+        (body.input ?? []).some(
+          item =>
+            item.type === 'function_call_output' &&
+            item.namespace === 'agent' &&
+            item.name === 'source' &&
+            item.output === SOURCE_CONTEXT
+        ),
+        'Codex did not retain the untrusted source context'
+      )
       const followUp = text.includes(FOLLOW_UP)
       assert.equal(requests.length, followUp ? 1 : 0, 'The mobile request was duplicated')
       requests.push(followUp ? 'follow-up' : 'initial')
@@ -79,6 +114,8 @@ export function createDesktopScenario(options) {
             local_model_id: modelName,
             label: 'Mobile Responses',
             is_default: false,
+            default_reasoning_effort: 'high',
+            supported_reasoning_efforts: ['low', 'high', 'xhigh'],
             modelConfig: configured,
           },
         ],
@@ -109,6 +146,10 @@ export function createDesktopScenario(options) {
           runtime: 'codex',
           title: 'Mobile local payload',
           message,
+          additionalContext: {
+            cloudCollaboration: { kind: 'application', value: APP_CONTEXT },
+            source: { kind: 'untrusted', value: SOURCE_CONTEXT },
+          },
           clientUserMessageId,
           turnSeed: newSession ? 1 : 2,
           modelConfig,
@@ -153,12 +194,61 @@ export function createDesktopScenario(options) {
       assert.equal(created.taskId, taskId)
       assert.equal(created.deviceId, deviceId)
       const first = await waitForReply(INITIAL_DONE)
+      const mobileTranscript = builders.projectMobileRuntimeTranscript(first.transcript)
+      // A viewer can receive the reply before the history read exposes its user message.
+      const replyFirst = builders.chatReducer([], {
+        type: 'replace',
+        messages: mobileTranscript.messages.filter(message => message.role === 'assistant'),
+      })
+      const hydrated = builders.chatReducer(replyFirst, {
+        type: 'merge-latest',
+        messages: mobileTranscript.messages,
+      })
+      const userIndex = hydrated.findIndex(message => message.id === `${taskId}-initial`)
+      const replyIndex = hydrated.findIndex(message => message.role === 'assistant')
+      assert.ok(
+        userIndex >= 0 && replyIndex > userIndex,
+        'Mobile placed the streamed reply before its user'
+      )
+      const mobileWork = builders.adaptRuntimeWorkListResponse(
+        await rpc('runtime.tasks.list', {}),
+        deviceId
+      )
+      const conversation = builders
+        .flattenConversations(mobileWork)
+        .find(item => item.address.taskId === taskId)
+      assert.ok(conversation, 'The created task was absent from the Mobile work list')
+      const restoredSelection = builders.modelSelectionFromRuntimeHandle(
+        conversation.address.runtimeHandle
+      )
+      assert.equal(restoredSelection?.modelName, modelName, 'Mobile lost the task model')
+      assert.equal(restoredSelection.modelType, 'runtime')
+      assert.equal(restoredSelection.options.runnerModelProvider, provider)
+      const mobileCatalog = builders.runnerModelCatalog(
+        catalog.models,
+        [{ name: 'different-cloud-default', type: 'public', provider: 'cloud' }],
+        'codex'
+      )
+      assert.equal(
+        builders.findModelForSelection(
+          mobileCatalog.map(item => item.model),
+          restoredSelection
+        )?.runtime?.provider,
+        provider,
+        'Mobile replaced the task provider with a catalog default'
+      )
+      const restoredModel = builders.findModelForSelection(
+        mobileCatalog.map(item => item.model),
+        restoredSelection
+      )
+      assert.deepEqual(builders.reasoningEfforts(restoredModel), ['low', 'high', 'xhigh'])
+      assert.equal(builders.resolvedReasoningEffort(restoredModel, undefined), 'high')
       const sent = await rpc('runtime.tasks.send', {
-        address,
+        address: conversation.address,
         taskId,
         message: FOLLOW_UP,
         clientUserMessageId: `${taskId}-follow-up`,
-        modelSelection: { modelName, modelType: 'runtime', options: modelOptions },
+        modelSelection: restoredSelection,
         executionRequest: executionRequest(FOLLOW_UP, false, `${taskId}-follow-up`),
       })
       assert.equal(sent.accepted, true, sent.error)
@@ -182,6 +272,13 @@ export function createDesktopScenario(options) {
           `Mobile ${suffix} lost or duplicated its user-message identity`
         )
       }
+      assert.deepEqual(
+        second.transcript.messages
+          .filter(message => message.role === 'user')
+          .map(message => message.content),
+        [INITIAL, FOLLOW_UP],
+        'Typed context leaked into the persisted user transcript'
+      )
       assert.deepEqual(requests, ['initial', 'follow-up'])
       await writeFile(
         join(options.resultDir, 'mobile-local-payload.json'),

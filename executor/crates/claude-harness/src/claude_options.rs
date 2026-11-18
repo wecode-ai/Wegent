@@ -268,6 +268,7 @@ fn normalize_mcp_server_for_claude(server: &Value) -> Value {
                 normalized.insert("timeout".to_owned(), timeout.clone());
             }
             for key in [
+                "alwaysLoad",
                 "bearer_token_env_var",
                 "bearerTokenEnvVar",
                 "oauth_client_id",
@@ -284,7 +285,7 @@ fn normalize_mcp_server_for_claude(server: &Value) -> Value {
         Some("stdio") => {
             let mut normalized = Map::new();
             normalized.insert("type".to_owned(), Value::String("stdio".to_owned()));
-            for key in ["command", "args", "env"] {
+            for key in ["command", "args", "env", "alwaysLoad"] {
                 if let Some(value) = config.get(key) {
                     normalized.insert(key.to_owned(), value.clone());
                 }
@@ -372,6 +373,72 @@ fn request_mode(request: &ExecutionRequest) -> Option<String> {
 mod mcp_config_tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn required_connector_entry_points_survive_runtime_config_and_followup() {
+        let name = "wegent-connector-lazy-app";
+        let request = ExecutionRequest {
+            auth_token: Some("test-token".into()),
+            backend_url: Some("https://example.test".into()),
+            bot: json!([{
+                "mcp_servers": [{
+                    "name": name,
+                    "type": "streamable-http",
+                    "url": "${{backend_api_url}}/mcp/connectors/sse",
+                    "headers": {
+                        "Authorization": "Bearer ${{task_token}}",
+                        "X-Connector-App": "lazy-app",
+                        "X-Connector-Loading": "lazy"
+                    },
+                    "alwaysLoad": true
+                }]
+            }]),
+            ..Default::default()
+        };
+        let templates = extract_claude_mcp_templates(&request, &BTreeMap::new());
+        assert_eq!(templates[name]["alwaysLoad"], true);
+        let options = extract_claude_options(&request, &BTreeMap::new());
+        assert_eq!(options.mcp_servers[name]["alwaysLoad"], true);
+        assert_eq!(options.mcp_servers[name]["type"], "http");
+        assert_eq!(
+            options.mcp_servers[name]["headers"]["X-Connector-Loading"],
+            "lazy"
+        );
+        assert_eq!(
+            options.mcp_servers[name]["headers"]["Authorization"],
+            "Bearer test-token"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        fs::write(
+            &path,
+            serde_json::to_vec(&json!({"mcpServers": options.mcp_servers})).unwrap(),
+        )
+        .unwrap();
+        let followup = merge_claude_mcp_servers(&path, BTreeMap::new()).unwrap();
+        assert_eq!(followup[name]["alwaysLoad"], true);
+    }
+
+    #[test]
+    fn explicit_loading_policy_is_preserved_for_all_native_transports() {
+        for server in [
+            json!({"type": "http", "url": "https://example.test/mcp"}),
+            json!({"type": "sse", "url": "https://example.test/sse"}),
+            json!({"type": "stdio", "command": "example-mcp"}),
+        ] {
+            assert!(normalize_mcp_server_for_claude(&server)
+                .get("alwaysLoad")
+                .is_none());
+            for policy in [false, true] {
+                let mut configured = server.clone();
+                configured["alwaysLoad"] = json!(policy);
+                assert_eq!(
+                    normalize_mcp_server_for_claude(&configured)["alwaysLoad"],
+                    policy
+                );
+            }
+        }
+    }
 
     #[test]
     fn remote_mcp_empty_command_is_removed_and_url_alias_is_normalized() {

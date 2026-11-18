@@ -99,8 +99,9 @@ export function resolveAppearanceThemeVariables(
   const sidebar = palette.sidebar.split('/')[0].trim()
   const translucentSidebar = palette.sidebar.includes('/') ? palette.sidebar : `${sidebar} / 0.92`
   palette.sidebar = appearance.sidebarTranslucent ? translucentSidebar : sidebar
+  const baseVariables = resolveThemeVariables(mode, { ...appearance, accentColor, [mode]: palette })
   const variables: Record<`--${string}`, string> = {
-    ...resolveThemeVariables(mode, { ...appearance, accentColor, [mode]: palette }),
+    ...baseVariables,
     ...resolveUiThemeVariables(mode, themeId),
     '--color-titlebar': palette.bgSurface,
   }
@@ -111,7 +112,7 @@ export function resolveAppearanceThemeVariables(
   if (themeId === DEFAULT_UI_THEME_ID) {
     if (overrides.accentColor === undefined) {
       for (const name of ['focus', 'focus-ring', 'link'] as const) {
-        variables[`--color-${name}`] = '51 156 255'
+        variables[`--color-${name}`] = baseVariables[`--color-${name}`]
       }
     }
     variables['--color-scrollbar-thumb'] = mode === 'light' ? '0 0 0 / 0.08' : '255 255 255 / 0.36'

@@ -18,6 +18,7 @@ export function StandInWorkList({
   items,
   onOpenTask,
   onRestoreTask,
+  onNavigate,
   inbox = [],
   api,
   userId,
@@ -28,6 +29,7 @@ export function StandInWorkList({
   items: RuntimeTaskReminderItem[]
   onOpenTask?(address: RuntimeTaskAddress): Promise<void> | void
   onRestoreTask?(address: RuntimeTaskAddress): Promise<void>
+  onNavigate?(action: () => void): void
   inbox?: StandInInboxWork[]
   api?: StandInExecutorApi
   userId?: number
@@ -392,11 +394,14 @@ export function StandInWorkList({
               type="button"
               data-testid="stand-in-work-open-pending"
               className="mt-5 inline-flex min-h-11 items-center justify-center rounded-lg bg-text-primary px-3 py-2 text-sm text-background md:min-h-9"
-              onClick={() =>
-                interactions.open(
-                  interactions.pending.find(item => item.task.key === selected.key)?.id
-                )
-              }
+              onClick={() => {
+                const navigate = () =>
+                  interactions.open(
+                    interactions.pending.find(item => item.task.key === selected.key)?.id
+                  )
+                if (onNavigate) onNavigate(navigate)
+                else navigate()
+              }}
             >
               {t('interactions.title')}
             </button>
