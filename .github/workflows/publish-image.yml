@@ -977,6 +977,46 @@ jobs:
           path: executor/dist/wegent-executor-linux-amd64
           retention-days: 1
 
+  build-executor-connection-runtime-linux-amd64:
+    needs: prepare-release
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.GIT_REF }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Export the connection runtime (Linux amd64)
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/device/Dockerfile
+          target: connection-runtime-export
+          platforms: linux/amd64
+          build-args: DEVICE_BASE_IMAGE=ubuntu:22.04
+          outputs: type=local,dest=${{ runner.temp }}/executor-connection-runtime
+          cache-from: type=gha,scope=executor-connection-runtime-linux-amd64
+          cache-to: type=gha,scope=executor-connection-runtime-linux-amd64,mode=max
+
+      - name: Archive the connection runtime
+        run: |
+          tar -C "$RUNNER_TEMP/executor-connection-runtime" \
+            -czf "$RUNNER_TEMP/connection-runtime-linux-amd64.tar.gz" connection-runtime
+
+      - name: Upload the connection runtime
+        uses: actions/upload-artifact@v4
+        with:
+          name: connection-runtime-linux-amd64
+          path: ${{ runner.temp }}/connection-runtime-linux-amd64.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
   build-executor-local-linux-arm64:
     needs: prepare-release
     runs-on: ubuntu-22.04-arm
@@ -1146,6 +1186,7 @@ jobs:
       - build-executor-local-macos-arm64
       - build-executor-local-macos-amd64
       - build-executor-local-linux-amd64
+      - build-executor-connection-runtime-linux-amd64
       - build-executor-local-linux-arm64
       - build-executor-local-windows-amd64
     runs-on: ubuntu-latest
@@ -1165,6 +1206,21 @@ jobs:
           pattern: wegent-executor-*
           path: ./executor-binaries
           merge-multiple: true
+
+      - name: Download the connection runtime
+        uses: actions/download-artifact@v4
+        with:
+          name: connection-runtime-linux-amd64
+          path: ${{ runner.temp }}/executor-connection-runtime
+
+      - name: Package the Linux amd64 Executor runtime
+        env:
+          VERSION: ${{ needs.prepare-release.outputs.new_version }}
+        run: |
+          bash .github/scripts/package-executor-runtime-linux-amd64.sh \
+            executor-binaries/wegent-executor-linux-amd64 \
+            "$RUNNER_TEMP/executor-connection-runtime/connection-runtime-linux-amd64.tar.gz" \
+            "$VERSION" "$(git rev-parse HEAD)" executor-binaries
 
       - name: Create and push tag
         shell: bash
@@ -1224,6 +1280,8 @@ jobs:
             ./executor-binaries/wegent-executor-macos-arm64
             ./executor-binaries/wegent-executor-macos-amd64
             ./executor-binaries/wegent-executor-linux-amd64
+            ./executor-binaries/wegent-executor-runtime-linux-amd64.tar.gz
+            ./executor-binaries/wegent-executor-runtime-linux-amd64.tar.gz.sha256
             ./executor-binaries/wegent-executor-linux-arm64
             ./executor-binaries/wegent-executor-windows-amd64.exe
             ./executor/scripts/local_executor_install.sh

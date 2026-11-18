@@ -30,8 +30,10 @@ if ! grep -Fq "make_latest: false" <<< "$release_step"; then
     exit 1
 fi
 
-ruby -ryaml -rpathname -rtmpdir -rfileutils - "$PROJECT_ROOT" <<'RUBY'
+ruby -ryaml -rjson -rpathname -rtmpdir -rfileutils - "$PROJECT_ROOT" <<'RUBY'
 root = ARGV.fetch(0)
+bundle = 'wegent-executor-runtime-linux-amd64.tar.gz'
+runtime_job = 'build-executor-connection-runtime-linux-amd64'
 %w[publish-image snapshot-image].each do |name|
   workflow = YAML.load_file(File.join(root, ".github/workflows/#{name}.yml"))
   if name == 'publish-image'
@@ -48,6 +50,18 @@ root = ARGV.fetch(0)
           raise "#{job}: embedded source must match checkout" unless arguments.include?('WEWORK_SOURCE_SHA=${{ env.GIT_REF }}')
         end
       end
+    end
+    jobs = workflow.fetch('jobs')
+    runtime_export = jobs.fetch(runtime_job).fetch('steps').find { |step| step.dig('with', 'target') == 'connection-runtime-export' }
+    raise 'Executor runtime must use the Linux amd64 release baseline' unless
+      runtime_export&.dig('with', 'platforms') == 'linux/amd64' &&
+      runtime_export.dig('with', 'build-args') == 'DEVICE_BASE_IMAGE=ubuntu:22.04'
+    release = jobs.fetch('create-release-tag')
+    raise 'Release must wait for both Executor and its connection runtime' unless
+      %w[build-executor-local-linux-amd64 build-executor-connection-runtime-linux-amd64].all? { |job| release.fetch('needs').include?(job) }
+    assets = release.fetch('steps').find { |step| step['name'] == 'Create GitHub Release' }.fetch('with').fetch('files').lines.map(&:strip)
+    %W[wegent-executor-linux-amd64 #{bundle} #{bundle}.sha256].each do |asset|
+      raise "Missing Linux amd64 release asset #{asset}" unless assets.include?("./executor-binaries/#{asset}")
     end
   end
   workflow.fetch('jobs').each do |job, definition|
@@ -88,6 +102,27 @@ root = ARGV.fetch(0)
         raise "#{name}/#{job}: binary was not packaged" unless File.file?(File.join(directory, 'dist/wegent-executor'))
       end
     end
+  end
+end
+
+Dir.mktmpdir('executor-runtime-release-') do |directory|
+  Dir.chdir(directory) do
+    binary = "#!/bin/sh\n[ \"$1\" = --version ] && [ -z \"$WEGENT_EXECUTOR_VERSION\" ] && echo 1.2.3\n"
+    File.write('wegent-executor-linux-amd64', binary)
+    FileUtils.mkdir_p('connection-runtime/node')
+    File.write('connection-runtime/node/node', "#!/bin/sh\n[ \"$1\" = --version ] && echo v22.23.4\n")
+    FileUtils.chmod(0755, 'connection-runtime/node/node')
+    File.write('connection-runtime/connection-runtime.json', '{"schemaVersion":1}')
+    raise 'Could not stage connection runtime' unless system('tar', '-czf', 'runtime.tar.gz', 'connection-runtime')
+    pack = File.join(root, '.github/scripts/package-executor-runtime-linux-amd64.sh')
+    revision = 'a' * 40
+    args = ['bash', pack, 'wegent-executor-linux-amd64', 'runtime.tar.gz']
+    raise 'Could not assemble the Linux amd64 archive' unless system({'WEGENT_EXECUTOR_VERSION' => 'test-override'}, *args, '1.2.3', revision, '.')
+    raise 'Archive checksum mismatch' unless system('sha256sum', '-c', "#{bundle}.sha256")
+    raise 'Archive replaced the standalone binary' unless IO.popen(['tar', '-xOf', bundle, 'wegent-executor'], &:read) == binary
+    release = JSON.parse(IO.popen(['tar', '-xOf', bundle, 'release.json'], &:read))
+    raise 'Archive release identity mismatch' unless release == {'version' => '1.2.3', 'revision' => revision, 'platform' => 'linux/amd64'}
+    raise 'Archive accepted a mismatched binary version' if system(*args, '1.2.4', revision, 'invalid', out: File::NULL, err: File::NULL)
   end
 end
 
