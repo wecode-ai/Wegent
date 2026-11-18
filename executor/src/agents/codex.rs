@@ -153,6 +153,7 @@ mod startup;
 mod turn_recovery;
 use child::CodexAppServerChild;
 pub(crate) use turn_recovery::same_goal_configuration;
+mod isolated_turn;
 #[path = "codex/thread_action.rs"]
 mod thread_action;
 mod thread_resume;
@@ -2797,6 +2798,15 @@ async fn run_codex_app_server_turn_with_runtime(
     options: CodexAppServerTurnOptions,
     runtime_notifications: Option<CodexNotificationHub>,
 ) -> Result<CodexAppServerTurn, String> {
+    let admission_client = CodexAppServerClient::new(binary).for_request(&request)?;
+    let _thread_admission = match options
+        .resume_thread_id
+        .as_deref()
+        .or(options.direct_thread_id.as_deref())
+    {
+        Some(thread_id) => Some(admission_client.admit_isolated_thread(thread_id).await?),
+        None => None,
+    };
     let mut capability_lease =
         Some(crate::services::capability_activation::begin_execution().await);
     let _home_lease = super::instance_home::acquire(&request)?;
