@@ -315,10 +315,12 @@ export function createGithubAuthBoundaries({
         await waitManage(control, '退出登录')
         protocol.state.apiFailure = true
         await focus(control, '[data-testid="plugin-detail-action-error"]')
-        assert.match(
-          await control.command('getText', '[data-testid="plugin-detail-action-error"]'),
-          /无法验证 GitHub CLI 登录状态/
+        const statusError = await wait(
+          () => control.command('getText', '[data-testid="plugin-detail-action-error"]'),
+          text => /无法验证 GitHub CLI 登录状态/.test(text),
+          'GitHub CLI status failure did not reach the detail action error'
         )
+        assert.match(statusError, /无法验证 GitHub CLI 登录状态/)
         assert.equal((await control.command('getText', manage)).trim(), '退出登录')
         protocol.state.apiFailure = false
         await focus(control, '[data-testid="plugin-detail-action-error"]', {

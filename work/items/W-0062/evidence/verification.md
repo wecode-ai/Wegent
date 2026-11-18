@@ -248,6 +248,8 @@ hongyu9 的最新评审要求把“部分成员添加失败后可恢复”从组
 
 `89985b36c6` 的主线容量提升后，Cloud4 的 `plugin-account-auth-password` 在真实 executor RPC 上出现 `e2e:runtime-request` 10 秒超时。该检查的原生命令和账号断言已通过，失败发生在 `verifyPluginNativeAuth` 的 backend status/configure/local sync RPC；高并行运行下固定 10 秒默认预算不足。现在只将该流程的这些真实跨边界请求改用场景已有的 `workbenchReadyTimeoutMs`，状态、授权、同步、拒绝注册和卸载断言不变，也不改动其他插件的默认超时。场景语法、Prettier、ESLint 与差异检查通过，完整结果仍以新 head CI 为准。
 
+同一容量提升后的 Cloud extra shard 3 又在 `plugin-account-auth-github` 读到尚未填充的详情错误。原步骤只等错误元素可见便立即做正则断言；真实状态请求仍在进行时元素可先挂载为空。现在复用场景既有轮询预算等待错误文案出现后再断言，退出登录、凭证目录不变量和错误消失断言均保持。
+
 # Verification and rollback
 
 The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The CI-covered `collaboration-shared-core` scenario includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run under the repository-level local execution policy; the recorded GitHub CI runs provide the actual desktop E2E results. Earlier test results are tied to their stated revisions, and the latest PR head requires its own green checks. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.
