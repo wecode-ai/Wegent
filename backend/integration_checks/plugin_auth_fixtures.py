@@ -24,6 +24,7 @@ from app.schemas.plugin_account_auth import (
     PluginNativeEnrollment,
 )
 from app.services import plugin_write_coordination as coordination
+from app.services import plugin_write_resources as resources
 from app.services.plugin_account_connections import (
     PluginAccountAuthError,
     PluginAccountConnectionService,
@@ -127,6 +128,7 @@ def sessions():
     try:
         with pytest.MonkeyPatch.context() as patch:
             patch.setattr(coordination, "_redis_client", lambda: client)
+            patch.setattr(resources, "redis_client", lambda: client)
             yield sessionmaker(engine, class_=PluginAuthSession, expire_on_commit=False)
     finally:
         try:
@@ -204,7 +206,9 @@ def created_context(sessions):
     try:
         yield value
     finally:
-        coordination._redis_client().delete(f"wegent:plugin-write:{value.user_id}")
+        client = coordination._redis_client()
+        for key in client.scan_iter(match=f"wegent:plugin-write:{value.user_id}:*"):
+            client.delete(key)
         with sessions.begin() as db:
             db.query(Kind).filter(Kind.user_id == value.user_id).delete()
             db.query(User).filter(User.id == value.user_id).delete()

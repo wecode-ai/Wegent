@@ -56,6 +56,8 @@ Model CRD 的 `modelConfig.env.thinking_config.reasoning`（也接受 `thinkingC
 
 透传模式保留思考、历史、原始调用 ID、加密内容、`previous_response_id`、`include`、`store` 和扩展字段。它也跳过图片预算裁剪、视觉副模型替换、历史增强、fork/模型切换清理及输出上限注入；配置的 `max_output_tokens` 不会由代理添加到请求中。上游需要直接支持这些 Codex 请求内容。
 
+官方 ChatGPT 的内部路由是一条独立的透传路径。它保留相同的原生字段和响应流行为，但兼容层仍会规范化不可移植的推理历史，并在模型切换后的首个请求执行清理。这样普通对话和助理共用一条路由，同时不会把第三方 `reasoning_text` 或过期密封状态发送给官方 endpoint。
+
 例如，Kimi Responses 可配置为：
 
 ```json
@@ -87,7 +89,7 @@ Model CRD 的 `modelConfig.env.thinking_config.reasoning`（也接受 `thinkingC
 
 `model-sse-parsing` 桌面 E2E 复用真实 Electron、executor 和 Codex，仅模拟模型服务，覆盖 Responses function 桥接、原生 Responses、Chat Completions 和 Anthropic Messages。场景发送多行 JSON、混合换行、跨块中文和误导性事件头，要求真实 Code Mode 工具写入文件、读取文件，并将成功结果传入下一轮模型历史。Responses 工具响应在收到真实工具结果前保持 HTTP 流开启，验证完整 CR 终止帧无需等待 EOF 就能触发工具执行。这是模型协议回归测试，不代表真实厂商服务兼容性已经验证。
 
-本机模型接口、云端模型、分身和配置的 Codex provider 使用相同默认策略：`tool_profile: "function"`，原生 `tool_search` 和 namespace 默认关闭。没有 profile 或工具能力字段的已有配置同样生效，无需重建模型。显式 `tool_profile: "custom"` 保留原生 custom 工具；本机 `codex_tool_compatibility: "native"` 或云端单项能力开关开启原生 namespace 和工具搜索。云端 `codex_request_mode: "passthrough"` 保留完整原生请求，`standard` 始终转换为 function 工具。
+本机模型接口、云端模型、助理和配置的 Codex provider 使用相同默认策略：`tool_profile: "function"`，原生 `tool_search` 和 namespace 默认关闭。没有 profile 或工具能力字段的已有配置同样生效，无需重建模型。显式 `tool_profile: "custom"` 保留原生 custom 工具；本机 `codex_tool_compatibility: "native"` 或云端单项能力开关开启原生 namespace 和工具搜索。云端 `codex_request_mode: "passthrough"` 保留完整原生请求，`standard` 始终转换为 function 工具。
 
 `tool_profile: "function"` 同样适用于原生 namespace 内的 custom 工具。开启 `native_namespace_tools` 时，代理保留 namespace 及其描述，将内部的 `exec` 等 custom 工具转换为带字符串 `input` 参数的 function 工具；历史调用、工具结果和强制工具选择使用同一协议。关闭原生 namespace 时，代理展开 namespace，并为其中的 custom 工具保留相同的输入包装。返回给 Codex 的 SSE 恢复原始工具名、namespace 和原始输入，避免同名工具串线。
 
@@ -137,7 +139,7 @@ WebSocket 重试，暂时无法由界面识别。
 
 ### Codex 直连模型过载恢复
 
-使用原生 Codex provider 直连模型时，请求不经过 compat proxy。Codex
+用户配置的原生 Codex provider 在未选择 Wework 兼容路由时仍可直连模型，请求不经过 compat proxy。Codex
 app-server 报告结构化 `serverOverloaded` 错误后，executor 会等待该轮
 `turn/completed` 确认失败轮次已经结束，再在同一 thread、同一模型下恢复。
 最多恢复 5 次，等待时间依次为 5、10、20、40 和 60 秒。

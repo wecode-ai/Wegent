@@ -1,6 +1,7 @@
 import { projectRuntimeConversationTurns } from '@/features/workbench/runtimeConversationTurns'
 import '@/i18n'
 import { setPreferredWorkspaceOpener } from '@/lib/workspace-opener-preferences'
+import { installExternalLinkHandler } from '@/lib/external-links'
 import type { Attachment } from '@/types/api'
 import type { ProcessingBlock, RuntimeConversationTurn } from '@/types/workbench'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
@@ -1318,7 +1319,7 @@ describe('MessageList', () => {
       />
     )
 
-    expect(screen.queryByTestId('final-processing-toggle')).not.toBeInTheDocument()
+    expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'true')
     expect(screen.getByRole('button', { name: '收起工具详情' })).toHaveAttribute(
       'aria-expanded',
       'true'
@@ -1349,6 +1350,54 @@ describe('MessageList', () => {
     fireEvent.click(screen.getByRole('button', { name: '收起工具详情' }))
 
     expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'false')
+  })
+
+  test('collapses a completed response while waiting for the next assistant', () => {
+    const blocks: ProcessingBlock[] = [
+      {
+        id: 'process-text',
+        subtaskId: 11,
+        type: 'text',
+        content: '正在检查运行中的过程文本。',
+        status: 'done',
+        createdAt: 1770000000000,
+      },
+      {
+        id: 'tool-1',
+        subtaskId: 11,
+        type: 'tool',
+        toolName: 'Bash',
+        toolInput: { command: 'pwd' },
+        toolOutput: '/tmp/project',
+        status: 'done',
+        createdAt: 1770000000100,
+      },
+    ]
+
+    render(
+      <MessageList
+        isWaitingForAssistant
+        messages={[
+          {
+            id: 'completed-before-next',
+            role: 'assistant',
+            content: '上一轮已经完成。',
+            status: 'done',
+            blocks,
+            createdAt: '2026-11-16T08:00:00.000Z',
+          },
+        ]}
+      />
+    )
+
+    const toggle = screen.getByTestId('final-processing-toggle')
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('正在检查运行中的过程文本。')).not.toBeInTheDocument()
+
+    fireEvent.click(toggle)
+
+    expect(screen.getByTestId('final-processing-toggle')).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText('正在检查运行中的过程文本。')).toBeInTheDocument()
   })
 
   test('isolates tool detail expansion by conversation, turn and call across guidance segments', () => {
@@ -1663,11 +1712,16 @@ describe('MessageList', () => {
     const conversationLink = screen.getByTestId(/^sent-conversation-token-/)
     expect(conversationLink).toHaveAttribute('href', href)
     expect(conversationLink).toHaveAttribute('aria-disabled', 'false')
-    fireEvent.click(conversationLink)
-    expect(`${window.location.pathname}${window.location.search}`).toBe(
-      '/runtime-tasks?deviceId=local-device&taskId=runtime-42'
-    )
-    window.history.replaceState({}, '', '/')
+    const removeHandler = installExternalLinkHandler()
+    try {
+      fireEvent.click(conversationLink)
+      expect(`${window.location.pathname}${window.location.search}`).toBe(
+        '/runtime-tasks?deviceId=local-device&taskId=runtime-42'
+      )
+    } finally {
+      removeHandler()
+      window.history.replaceState({}, '', '/')
+    }
   })
 
   test('opens referenced issues from user messages', () => {
@@ -1689,11 +1743,16 @@ describe('MessageList', () => {
     const issueLink = screen.getByTestId(/^sent-issue-token-/)
     expect(issueLink).toHaveAttribute('href', href)
     expect(issueLink).toHaveAttribute('aria-disabled', 'false')
-    fireEvent.click(issueLink)
-    expect(`${window.location.pathname}${window.location.search}`).toBe(
-      '/todo?projectStore=backend&projectId=2753648597973755964&itemId=WEWORK2D8526-113'
-    )
-    window.history.replaceState({}, '', '/')
+    const removeHandler = installExternalLinkHandler()
+    try {
+      fireEvent.click(issueLink)
+      expect(`${window.location.pathname}${window.location.search}`).toBe(
+        '/todo?projectStore=backend&projectId=2753648597973755964&itemId=WEWORK2D8526-113'
+      )
+    } finally {
+      removeHandler()
+      window.history.replaceState({}, '', '/')
+    }
   })
 })
 

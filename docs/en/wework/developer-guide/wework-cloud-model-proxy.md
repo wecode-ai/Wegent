@@ -58,6 +58,8 @@ The provider `base_url` may be a service root, a versioned API base, or a comple
 
 Passthrough retains reasoning, history, original call IDs, encrypted content, `previous_response_id`, `include`, `store` and extension fields. It also bypasses image budget trimming, vision sidecar replacement, history enhancement, fork/model-switch cleanup and output-limit injection. The proxy does not add the configured `max_output_tokens` to the request. The upstream must support the original Codex request contents directly.
 
+The internal official ChatGPT route is a separate passthrough path. It preserves the same native fields and stream behavior, but the compatibility layer still normalizes non-portable reasoning history and performs the first-request cleanup after a model switch. This keeps ordinary conversations and stand-in chats on one route without sending third-party `reasoning_text` or stale sealed state to the official endpoint.
+
 For example, configure Kimi Responses with:
 
 ```json
@@ -143,7 +145,8 @@ the UI.
 
 ### Codex Direct-Provider Overload Recovery
 
-Native Codex providers can bypass the compatibility proxy. When the app-server
+User-configured native Codex providers can remain direct when they do not select
+the Wework compatibility route. When the app-server
 reports a structured `serverOverloaded` error, the executor waits for the failed
 turn's `turn/completed` event before continuing in the same thread with the same
 model. Recovery is bounded to five attempts, delayed by 5, 10, 20, 40, and 60

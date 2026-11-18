@@ -211,6 +211,61 @@ describe('GitHostingSettingsPage', () => {
     expect(openExternalUrl).toHaveBeenCalledWith('https://docs.gitlab.com/cli/')
   })
 
+  test('shows each CLI result and its recovery action while another CLI is still detecting', async () => {
+    let finishGitlab!: (value: object) => void
+    const pendingGitlab = new Promise(resolve => {
+      finishGitlab = resolve
+    })
+    getGitHostingCliStatus.mockImplementation(provider =>
+      provider === 'gitlab'
+        ? pendingGitlab
+        : Promise.resolve({ installed: true, authenticated: false, detectionError: null })
+    )
+    render(<GitHostingSettingsPage />)
+
+    await waitFor(() =>
+      expect(screen.getByTestId('git-hosting-cli-github-status')).toHaveTextContent('未登录')
+    )
+    expect(screen.getByTestId('git-hosting-cli-gitlab-status')).toHaveTextContent('检测中')
+    await userEvent.click(screen.getByTestId('git-hosting-cli-github-copy-login'))
+    expect(copyTextToClipboard).toHaveBeenCalledWith('gh auth login')
+
+    await act(async () => {
+      finishGitlab({ installed: false, authenticated: false, detectionError: null })
+    })
+    expect(screen.getByTestId('git-hosting-cli-gitlab-status')).toHaveTextContent('未安装')
+    expect(screen.getByTestId('git-hosting-cli-refresh')).toBeEnabled()
+  })
+
+  test('a superseded detection cannot overwrite a newer provider result or loading state', async () => {
+    let finishOldGithub!: (value: object) => void
+    const oldGithub = new Promise(resolve => {
+      finishOldGithub = resolve
+    })
+    getGitHostingCliStatus.mockImplementation(provider =>
+      provider === 'github'
+        ? oldGithub
+        : Promise.resolve({ installed: false, authenticated: false, detectionError: null })
+    )
+    render(<GitHostingSettingsPage />)
+    await waitFor(() => expect(getGitHostingCliStatus).toHaveBeenCalledTimes(2))
+    getGitHostingCliStatus.mockResolvedValue({
+      installed: true,
+      authenticated: true,
+      detectionError: null,
+    })
+    act(() => window.dispatchEvent(new Event('focus')))
+    await waitFor(() =>
+      expect(screen.getByTestId('git-hosting-cli-github-status')).toHaveTextContent('已就绪')
+    )
+    await act(async () => {
+      finishOldGithub({ installed: false, authenticated: false, detectionError: null })
+    })
+    expect(screen.getByTestId('git-hosting-cli-github-status')).toHaveTextContent('已就绪')
+    expect(screen.getByTestId('git-hosting-cli-gitlab-status')).toHaveTextContent('已就绪')
+    expect(screen.getByTestId('git-hosting-cli-refresh')).toBeEnabled()
+  })
+
   test('does not offer remediation when CLI detection fails', async () => {
     getGitHostingCliStatus.mockImplementation(async provider => {
       if (provider === 'github') {
@@ -235,6 +290,25 @@ describe('GitHostingSettingsPage', () => {
     })
     expect(screen.queryByTestId('git-hosting-cli-github-install')).not.toBeInTheDocument()
     expect(screen.queryByTestId('git-hosting-cli-gitlab-copy-login')).not.toBeInTheDocument()
+    expect(screen.getByTestId('git-hosting-cli-gitlab-error-help')).toHaveTextContent(
+      'CLI 响应超时'
+    )
+  })
+
+  test('explains a failed CLI probe and makes the complete executable path available', async () => {
+    const executablePath = '/device/tools/a-long-installation-path/gh'
+    getGitHostingCliStatus.mockResolvedValue({
+      installed: true,
+      authenticated: false,
+      detectionError: 'gh_health_failed',
+      executablePath,
+    })
+    render(<GitHostingSettingsPage />)
+    expect(await screen.findByTestId('git-hosting-cli-github-error-help')).toHaveTextContent(
+      '确认 gh 命令可运行，并检查网络或代理后重新检测'
+    )
+    expect(screen.getAllByTitle(executablePath)).toHaveLength(2)
+    expect(screen.queryByTestId('git-hosting-cli-github-copy-login')).not.toBeInTheDocument()
   })
 
   test('syncs cloud Git accounts only to an explicitly selected eligible device', async () => {

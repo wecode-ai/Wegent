@@ -39,6 +39,7 @@ from tests.e2e.terminal_handoff_frames import (
     assert_recovered_terminal_frames,
     publish_callback_probe,
 )
+from tests.e2e.terminal_response_attachments import assert_response_attachments
 
 T = TypeVar("T")
 
@@ -98,6 +99,9 @@ class TerminalHandoffGateway(unittest.TestCase):
             and capture["url"] in {"/v1/chat/completions", "/v1/responses"}
         ]
 
+    def test_response_attachments_reach_the_vision_model(self) -> None:
+        assert_response_attachments(self)
+
     def _create_team(self, *, pipeline: bool, stages: int = 2) -> tuple[int, list[int]]:
         self._json(
             self.api.post(
@@ -106,6 +110,7 @@ class TerminalHandoffGateway(unittest.TestCase):
                     "kind": "Model",
                     "metadata": {"name": self.marker, "namespace": "default"},
                     "spec": {
+                        "modelCapabilities": {"supportsImage": True},
                         "modelConfig": {
                             "env": {
                                 "model": "openai",
@@ -113,7 +118,7 @@ class TerminalHandoffGateway(unittest.TestCase):
                                 "api_key": "mock-api-key",
                                 "base_url": f"{self.model.base_url}v1",
                             }
-                        }
+                        },
                     },
                 },
             ),
@@ -322,8 +327,8 @@ class TerminalHandoffGateway(unittest.TestCase):
         self.assertEqual(result["status"], "partial" if fail else "ok", result)
         return result
 
-    def _wait_for(self, check: Callable[[], T | None]) -> T:
-        deadline = time.monotonic() + 15
+    def _wait_for(self, check: Callable[[], T | None], timeout: float = 15) -> T:
+        deadline = time.monotonic() + timeout
         while True:
             if value := check():
                 return value
@@ -512,7 +517,9 @@ class TerminalHandoffGateway(unittest.TestCase):
             self.assertEqual(release["released"], 1)
             # The original worker saw the terminal frame but its write failed.
             # Recovery must take ownership after the acknowledged worker exits.
-            self._wait_for(lambda: not self.redis.exists(lease_key))
+            # The execution lease is a 30s Redis lock, so allow more than its TTL
+            # before calling a slow handoff a failure.
+            self._wait_for(lambda: not self.redis.exists(lease_key), timeout=40)
             interrupted, rows = self._snapshot(task_id)
             self.assertIn(intent, interrupted["metadata"]["labels"])
             self.assertEqual(rows[-1]["status"], "RUNNING")
@@ -526,7 +533,7 @@ class TerminalHandoffGateway(unittest.TestCase):
             )
 
         after, rows = self._wait_for(completed)
-        self._wait_for(lambda: not self.redis.exists(lease_key))
+        self._wait_for(lambda: not self.redis.exists(lease_key), timeout=40)
         duplicate = self._callback(
             task_id, subtask_id, "duplicate callback payload", rust=rust
         )

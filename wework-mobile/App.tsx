@@ -1,3 +1,6 @@
+import { isPhoneLocalDeviceId } from '@/services/localRuntime'
+import { ArchivedConversationsScreen } from '@/components/ArchivedConversationsScreen'
+import { taskAddress } from '@/domain/work'
 import { StatusBar } from 'expo-status-bar'
 import { NavigationContainer } from '@react-navigation/native'
 import { createNativeStackNavigator } from '@react-navigation/native-stack'
@@ -26,32 +29,40 @@ import {
   PhoneModelEditorScreen,
   CodexAccountScreen,
 } from '@/components/PhoneModelsScreen'
+import { PhoneStandaloneModelEditorScreen } from '@/components/PhoneStandaloneModelEditorScreen'
+import { PhoneProviderScreen } from '@/components/PhoneProviderScreen'
+import { PhoneProviderEditorScreen } from '@/components/PhoneProviderEditorScreen'
 import { phoneLocalModels } from '@/services/phoneLocalModels'
-import { recordChatLayoutDiagnostic } from '@/services/chatLayoutDiagnostics'
+import { useMobileDiagnostics } from '@/hooks/useMobileDiagnostics'
 import { darkTheme, lightTheme } from '@/theme'
 import { conversationPinTarget } from '@/domain/conversationActions'
 import { NativeErrorAlert } from '@/components/errors/NativeErrorAlert'
 import { PrivacyPolicyScreen } from '@/components/PrivacyPolicyScreen'
+import { beginMobileDiagnostic } from '@/services/mobileDiagnostics'
 
 type RuntimeStackParamList = {
   conversationList: undefined
+  archives: undefined
   conversation: undefined
   modelPicker: undefined
   settings: undefined
   localExecution: undefined
   localModels: undefined
-  modelEditor: { modelId?: string } | undefined
+  provider: { providerId: string }
+  providerEditor: { providerId?: string } | undefined
+  modelEditor: { providerId: string; modelId?: string }
+  standaloneModelEditor: { modelId?: string } | undefined
   codexAccount: undefined
   backendLogin: undefined
   privacyPolicy: undefined
 }
 
 const RuntimeStack = createNativeStackNavigator<RuntimeStackParamList>()
+const mountDiagnostic = beginMobileDiagnostic('app-mount')
 
 export default function App() {
-  useEffect(() => {
-    recordChatLayoutDiagnostic(JSON.stringify({ event: 'appStart', timestamp: Date.now() }))
-  }, [])
+  useMobileDiagnostics()
+  useEffect(() => mountDiagnostic.complete(), [])
   const auth = useWegentAuth()
   const colorScheme = useColorScheme()
   const theme = colorScheme === 'dark' ? darkTheme : lightTheme
@@ -111,6 +122,7 @@ function RuntimeApplication({ auth }: { auth: WegentAuthState }) {
       runtime.work.projects.flatMap(project =>
         project.deviceWorkspaces.map(workspace => ({
           projectName: project.project.name,
+          projectWork: project,
           workspace,
         }))
       ),
@@ -144,14 +156,39 @@ function RuntimeApplication({ auth }: { auth: WegentAuthState }) {
             <RuntimeStack.Screen name="conversationList" options={{ animation: 'none' }}>
               {({ navigation }) => (
                 <ConversationListScreen
+                  onArchives={() => navigation.navigate('archives')}
+                  projectActions={{
+                    onPin: runtime.setProjectPinned,
+                    onRename: runtime.renameProject,
+                    onRemove: runtime.removeProject,
+                    onArchive: async project => {
+                      for (const workspace of project.deviceWorkspaces)
+                        for (const task of workspace.tasks)
+                          await runtime.archiveConversation(taskAddress(workspace, task))
+                    },
+                  }}
+                  conversationActions={item => {
+                    const target = conversationPinTarget(runtime.work, item.address)
+                    return {
+                      threadId: target?.threadId ?? item.address.threadId ?? null,
+                      canPin: Boolean(target),
+                      pinned: target?.pinned ?? false,
+                      onPin: () => runtime.setConversationPinned(item.address, !target?.pinned),
+                      onRename: title => runtime.renameConversation(item.address, title),
+                      onArchive: () => runtime.archiveConversation(item.address),
+                      onSettings: () => openSettings(navigation),
+                    }
+                  }}
                   userLabel={userLabel}
-                  connectionError={runtime.connectionError}
-                  showDeviceFilters={Boolean(config && auth.user)}
+                  failures={runtime.failures}
+                  onRetryFailure={runtime.retryFailure}
+                  showDeviceFilters={runtime.cloudConnected}
                   allDevicesSelected={runtime.allDevicesSelected}
                   conversations={runtime.conversations}
                   currentAddress={runtime.currentAddress}
                   devices={runtime.devices}
                   loading={runtime.loading}
+                  snapshotReady={runtime.listSnapshotReady}
                   onNewConversation={workspace => {
                     pendingComposerFocus.current = enterConversation()
                     runtime.startNewConversation(workspace)
@@ -163,6 +200,7 @@ function RuntimeApplication({ auth }: { auth: WegentAuthState }) {
                   }}
                   onSearch={setSearch}
                   onRefresh={runtime.refresh}
+                  onRefreshDevices={runtime.refreshDevices}
                   onSelectAllDevices={runtime.selectAllDevices}
                   onSelectConversation={item => {
                     enterConversation()
@@ -177,6 +215,24 @@ function RuntimeApplication({ auth }: { auth: WegentAuthState }) {
                   refreshing={runtime.refreshing}
                   selectedDeviceId={runtime.selectedDeviceId}
                   workspaces={workspaces}
+                />
+              )}
+            </RuntimeStack.Screen>
+            <RuntimeStack.Screen name="archives">
+              {({ navigation }) => (
+                <ArchivedConversationsScreen
+                  key={
+                    isPhoneLocalDeviceId(runtime.selectedDeviceId) && !runtime.allDevicesSelected
+                      ? runtime.selectedDeviceId!
+                      : config
+                        ? `${config.apiBaseUrl}\0${userId}`
+                        : 'phone'
+                  }
+                  api={runtime.api}
+                  devices={runtime.devices}
+                  selectedDeviceId={runtime.allDevicesSelected ? null : runtime.selectedDeviceId}
+                  refreshWork={runtime.refreshWork}
+                  onBack={() => navigation.goBack()}
                 />
               )}
             </RuntimeStack.Screen>
@@ -220,10 +276,10 @@ function RuntimeApplication({ auth }: { auth: WegentAuthState }) {
                     currentTitle={runtime.currentTitle}
                     devices={runtime.devices}
                     entryRevision={conversationEntryRevision}
-                    gitRef={runtime.gitRef}
                     isNew={isNewConversation}
                     hasMoreMessagesBefore={runtime.hasMoreMessagesBefore}
                     loading={runtime.conversationLoading}
+                    historyLoaded={runtime.historyLoaded}
                     loadingMoreMessagesBefore={runtime.loadingMoreMessagesBefore}
                     messages={runtime.messages}
                     model={runtime.selectedModel}
@@ -328,17 +384,72 @@ function RuntimeApplication({ auth }: { auth: WegentAuthState }) {
                   runtime={local.runtime}
                   status={local.status}
                   onBack={navigation.goBack}
-                  onAdd={() => navigation.navigate('modelEditor')}
-                  onEdit={id => navigation.navigate('modelEditor', { modelId: id })}
+                  onAdd={() => navigation.navigate('providerEditor')}
+                  onEdit={id => navigation.navigate('provider', { providerId: id })}
+                  onAddStandalone={() => navigation.navigate('standaloneModelEditor')}
+                  onEditStandalone={modelId =>
+                    navigation.navigate('standaloneModelEditor', { modelId })
+                  }
                   onAccount={() => navigation.navigate('codexAccount')}
                   onPrivacy={() => navigation.navigate('privacyPolicy')}
+                />
+              )}
+            </RuntimeStack.Screen>
+            <RuntimeStack.Screen name="standaloneModelEditor">
+              {({ navigation, route }) => (
+                <PhoneStandaloneModelEditorScreen
+                  modelId={route.params?.modelId}
+                  runtime={local.runtime}
+                  onBack={navigation.goBack}
+                  onChanged={refreshLocal}
+                  onPrivacy={() => navigation.navigate('privacyPolicy')}
+                />
+              )}
+            </RuntimeStack.Screen>
+            <RuntimeStack.Screen name="provider">
+              {({ navigation, route }) => (
+                <PhoneProviderScreen
+                  providerId={route.params.providerId}
+                  runtime={local.runtime}
+                  onBack={navigation.goBack}
+                  onChanged={refreshLocal}
+                  onEditConnection={() =>
+                    navigation.navigate('providerEditor', { providerId: route.params.providerId })
+                  }
+                  onAddModel={() =>
+                    navigation.navigate('modelEditor', { providerId: route.params.providerId })
+                  }
+                  onEditModel={modelId =>
+                    navigation.navigate('modelEditor', {
+                      providerId: route.params.providerId,
+                      modelId,
+                    })
+                  }
+                  onPrivacy={() => navigation.navigate('privacyPolicy')}
+                />
+              )}
+            </RuntimeStack.Screen>
+            <RuntimeStack.Screen name="providerEditor">
+              {({ navigation, route }) => (
+                <PhoneProviderEditorScreen
+                  providerId={route.params?.providerId}
+                  runtime={local.runtime}
+                  onBack={navigation.goBack}
+                  onChanged={refreshLocal}
+                  onPrivacy={() => navigation.navigate('privacyPolicy')}
+                  onSaved={providerId =>
+                    route.params?.providerId
+                      ? navigation.goBack()
+                      : navigation.replace('provider', { providerId })
+                  }
                 />
               )}
             </RuntimeStack.Screen>
             <RuntimeStack.Screen name="modelEditor">
               {({ navigation, route }) => (
                 <PhoneModelEditorScreen
-                  modelId={route?.params?.modelId}
+                  providerId={route.params.providerId}
+                  modelId={route.params.modelId}
                   runtime={local.runtime}
                   onBack={navigation.goBack}
                   onChanged={refreshLocal}

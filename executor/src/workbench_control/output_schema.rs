@@ -25,7 +25,8 @@ fn conversation() -> Value {
             "source":string(),"workspacePath":nullable(string()),"project_key":nullable(string()),
             "created_at":{"type":"integer"},"updated_at":{"type":"integer"},
             "model_selection":{"type":["object","null"]},"origin":{"type":["object","null"]},
-            "change_requests":nullable(array(string())),"goal":{"type":["object","null"]}}),
+            "change_requests":nullable(array(string())),"goal":{"type":["object","null"]},
+            "startup_failure":nullable(object(json!({"code":string(),"message":string(),"failedAt":{"type":"integer"}}), &["code","message","failedAt"]))}),
         &["conversation_id", "taskId"],
     )
 }
@@ -137,7 +138,7 @@ fn automation() -> Value {
         json!({"id":string(),"version":{"type":"integer","minimum":1},"name":string(),
             "description":string(),"prompt":string(),"schedule":{"type":"object","properties":{
                 "type":{"enum":["interval","cron","one_time"]},"value":{"type":"integer"},
-                "unit":{"enum":["minutes","hours","days"]},"expression":string(),"execute_at":string()},"required":["type"]},
+                "unit":{"enum":["minutes","hours","days"]},"expression":string(),"workdayOnly":{"type":"boolean"},"execute_at":string()},"required":["type"]},
             "timezone":string(),"enabled":{"type":"boolean"},
             "conversationMode":{"enum":["independent","continue_thread"]},
             "notificationPolicy":{"enum":["all_runs","attention_only","never"]},
@@ -158,6 +159,19 @@ fn run() -> Value {
 
 pub(super) fn capability(name: &str) -> Value {
     match name {
+        "list_connection_event_providers" => {
+            object(json!({"items":array(json!({"type":"object"}))}), &["items"])
+        }
+        "list_connection_event_resources" => object(
+            json!({"items":array(json!({"type":"object"})),"hasMore":{"type":"boolean"},"nextCursor":nullable(string()),"availability":{"type":"object"}}),
+            &["items"],
+        ),
+        "list_connection_event_subscriptions" => {
+            object(json!({"items":array(json!({"type":"object"}))}), &["items"])
+        }
+        "subscribe_connection_events" | "cancel_connection_event_subscription" => {
+            object(json!({"subscription":{"type":"object"}}), &["subscription"])
+        }
         "get_current_context" => object(
             json!({"conversation_id":string(),"device_id":string(),
             "scope":string(),"continuation_scope":string(),"other_tools":array(string())}),

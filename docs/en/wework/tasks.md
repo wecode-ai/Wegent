@@ -38,6 +38,8 @@ Click **Cancel automatic recovery** beside the composer countdown to stop recove
 
 ### Sidebar task management
 
+During the initial task load, the desktop sidebar shows **Loading tasks…** below the **Tasks** heading. A failed load shows an error and **Retry** in the same position. In priority view, the status appears above the priority list. Background refreshes do not show a loading indicator.
+
 | Feature                          | Steps and limits                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Search                           | Click the magnifying glass, enter keywords, select with arrow keys and Enter or click a result; close with X                                                                                                                                                                                                                                                                                                                                                              |
@@ -54,6 +56,22 @@ The same capability applies to finding conversations, restoring archived items a
 
 The interface height follows its content, and saved interaction state is restored when you reopen the conversation. You can scroll the conversation with the pointer over a card. Scrollable controls consume wheel movement first, then pass remaining movement to the conversation at their boundary. Use **Expand** for more space and return to the message afterwards. This capability requires personal control access in a Codex conversation and does not grant extra authority to delegated executions.
 
+<a id="connection-event-waits"></a>
+
+### Ask AI to wait for connection events
+
+In the **task conversation composer**, ask AI to continue here when a document or another connected resource changes. AI discovers installed connection providers, selects the resource and saves a subscription through tools. No manual schedule setup is required. Ordinary conversations and Goals both support this; available events depend on the provider and account permissions. The device executor must advertise event protocol support. Older devices retain ordinary chat and existing PR status queries; unavailable event actions show an upgrade hint.
+
+Above the composer, **Waiting for events; resumes automatically** identifies the source. Triggered events appear as short attributed receipts rather than full model continuation instructions. A Goal also shows **Waiting for events**. The host collects events without repeated model turns. Matching new events continue the original conversation with its model, permissions and workspace. Each subscription delivers one batch; AI can subscribe again when more input is needed. Local tasks require Wework to remain running; remote tasks require their device to be online. Recreating a Remote Docker device requires preserving its executor data volumes and native session directory to recover the original conversation's wait and Goal. No model calls run while the device is offline; the source determines which missed historical events remain available.
+
+After an event arrives and before execution starts, **Event received; waiting for this conversation to continue** explains the pending delivery. An unresolved question or approval takes priority and shows **Event received; waiting for your answer or approval**. The Goal shows **Waiting to continue**, without asking you to start it again. Events never answer human requests or authorize external actions. Click **Cancel watch** on the source status row to cancel that subscription directly without a model call, or ask AI to cancel it. Cancellation does not interrupt work already started or automatically resume a Goal. If the device is offline, reconnect before cancelling; a failed cancellation retains the watch and offers retry. For a waiting Goal, **Pause goal** also stops automatic recovery; paused, cleared or replaced Goals are never resumed by an old wait.
+
+**Preparing event wait** means setup is still in progress. A setup failure shows **Event wait is not ready; ask AI to check and retry**. If **Connection needs authorization** appears, authorize that connection again. If **Status synchronization failed; check the connection** appears, ask AI in the same conversation to inspect the subscription and connection. **Event continuation needs attention; check this conversation** points to an execution problem; inspect the failure in the conversation. Cancelling a subscription does not resume its waiting Goal; explicitly request continuation when wanted.
+
+AI sets the wake condition, and the connection filters events before starting a model turn. For example, “notify me when the PR can merge” should wait for the aggregate merge state; individual E2E completions should update the connection without waking the model. If all checks must pass, use the aggregate check result as well. Ordinary messages and Goals share this filtering. Instructions for what to do after waking are not event conditions. Unsupported conditions must be explained rather than silently replaced with every-change wakeups.
+
+PR status in the interface shares connector collection with conversation subscriptions. A visible PR continues to update when no conversation subscription exists or its batch has already been delivered. Closing the related views or hiding the window releases that UI observation. Manual refresh uses the same collection path without waking the model. Views on the same device share PR state, while event handling records remain specific to each conversation.
+
 <a id="personal-schedules"></a>
 
 ### Personal scheduled tasks
@@ -65,8 +83,8 @@ In the **Codex conversation composer**, describe an operation such as “Create 
 1. Open **left sidebar → Scheduled**, search existing schedules or create one.
 2. Enter a name and instructions. Choose a new task per run or an existing pinned task; enable a persistent goal only when intended and specify it.
 3. Choose local/cloud location, device, project, model and available reasoning effort. Directory, accounts and plugins belong to that device.
-4. Choose weekdays, daily, weekly, custom or once; set execution time and custom intervals. Notifications support every run, attention-only or none.
-5. Save and inspect schedule status; save again after editing. Open work from run history to inspect results: a saved schedule does not prove a successful run.
+4. Choose Monday–Friday, daily, weekly, custom or once; set execution time and custom intervals. Recurring Cron schedules offer **Run only on mainland China statutory workdays**. It uses Beijing dates to exclude statutory days off and include make-up working weekends. Choose Daily to cover every make-up workday; Monday–Friday, weekly and custom Cron schedules retain their existing date constraints. Interval and once-only schedules do not offer this option. Notifications support every run, attention-only or none.
+5. The workday filter defaults to off, preserving existing Monday–Friday schedules. It works on local and cloud devices without changing execution location. Save and inspect schedule status; save again after editing. Open work from run history to inspect results: a saved schedule does not prove a successful run.
 6. Disable to suspend future scheduling or delete after confirmation. Personal schedules, project-board automation and stand-in calendars are separate flows.
 
 Personal schedules using a cloud model revalidate model access and read the current cloud connection credentials on each trigger, including manual runs. Renewing your login token does not require recreating a schedule; both new tasks and existing-task continuations use current credentials. If login has expired, the model was removed or access was revoked, the run fails. Check your cloud connection and model access before retrying.
@@ -85,7 +103,7 @@ After you send a local image, Wework keeps its preview in the message. The image
 
 ### Voice input
 
-Select the microphone at the bottom of the task composer to start voice input. On first use, follow the prompts to prepare the speech model and grant system microphone permission. You can also prepare the model under **Settings → General → Voice input**.
+Select the microphone at the bottom of the task composer to start voice input. On first use, follow the prompts to prepare the speech model and grant system microphone permission. You can also open **bottom-left account menu → Settings → Personal → General** and prepare the model in **Voice input**, below the basic preferences. This section appears when the official voice plugin has loaded and does not require Experimental features. Opening the page does not download a model or start recording.
 
 Start with **INT8 (lightweight)** for everyday dictation to reduce download size and memory use. If it makes frequent recognition errors, try **FP32 (full precision)**, which retains full 32-bit floating-point precision with a larger download and higher memory use. Both the settings page and the first-use setup dialog explain these choices.
 
@@ -105,6 +123,8 @@ Hover over a message table to copy its Markdown or expand it; press `Esc` to clo
 
 Click the PR/MR status beside a task and choose **Continue fixing with AI** when an abnormal status is shown. For a running task, the repair request guides the current response. For an idle task, it starts the next turn in the same conversation. If the current response finishes just after you click, the request is sent as the next turn. Delivery failures show an error so you can try sending again.
 
+<a id="task-board-association"></a>
+
 ## Add a conversation to a project-space board
 
 Runtime task and private conversation titles are independent of the bound Issue title. Runs started from tasks, Issue details, or Collaboration never overwrite an existing Issue title when the conversation title changes. Edit the title in Issue details to rename the Issue.
@@ -120,6 +140,8 @@ When creating an issue in Collaboration, enter at least a title or content. If y
 After selecting **Let AI handle it** in an issue detail, use the task composer to choose a local project, workspace or worktree, and branch before creating a local run linked to the issue. Project spaces and local code projects are separate resources. After a task is created successfully, Wework remembers the most recently used local project and workspace for that project space on the current device. The next task created from the same project space preselects that location, and a successful task created after a temporary selection change updates the mapping. The mapping does not sync to other devices.
 
 When an issue already has linked tasks, the **Linked tasks** section directly shows every running task and the two most recent tasks. If more history is available, use **Expand** and **Collapse** instead of opening a separate task-list view. The action for creating another task appears beside the section heading.
+
+If the task count cannot be read, the task summary above the composer shows **Task count failed. Retry**. Select it to read the current Issue's linked-task count again. A failed refresh preserves the last successful count and does not prevent sending messages.
 
 After a task is linked to a board, select **Change board link** from the task summary above the composer, then choose the destination project space. When changing the link is supported, the entry remains available while project options refresh or are temporarily empty; you can select a destination once the options load. Wework offers two choices:
 
@@ -197,7 +219,7 @@ Wework remembers the model, selection mode, and reasoning effort separately for 
 
 After a conversation starts, you can still switch between official GPT/Codex models and third-party models. Wework asks for confirmation when the selected model changes, and the new model applies to the next message.
 
-If the existing context contains encrypted reasoning or compaction state produced by the previous provider, the executor removes those non-portable fields from the switch request so the target model does not return `invalid_encrypted_content`. Portable messages, tool results, and other context remain available.
+In Codex tasks using official OAuth, official GPT and third-party models share the same compatibility layer. On a switch, the executor clears encrypted reasoning or compaction state owned by the previous provider. If third-party history stores readable reasoning in `reasoning.content`, the request sent to official GPT promotes it to `summary_text` and clears the restricted `content` array. These changes apply only to the outgoing copy; the original thread history stays intact. Portable messages, tool results, and other context remain available, so switching models does not require a new conversation or a reference to the old one.
 
 ## Control a running task
 

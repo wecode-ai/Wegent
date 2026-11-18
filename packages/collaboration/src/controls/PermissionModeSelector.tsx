@@ -48,11 +48,11 @@ export function PermissionModeSelector({
     [],
   );
   const labels: Record<RuntimePermissionMode, string> = {
-    "read-only": t("composer.permission_mode_read_only", "只读"),
-    "workspace-write": t("composer.permission_mode_workspace", "工作区"),
-    "full-access": t("composer.permission_mode_full_access", "完整访问"),
+    "read-only": t("workbench.permission_mode_read_only", "只读"),
+    "workspace-write": t("workbench.permission_mode_workspace", "工作区"),
+    "full-access": t("workbench.permission_mode_full_access", "完整访问"),
   };
-  const ariaLabel = `${t("composer.permission_mode", "权限模式")}: ${labels[value]}`;
+  const ariaLabel = `${t("workbench.permission_mode", "权限模式")}: ${labels[value]}`;
 
   const choose = (mode: RuntimePermissionMode) => {
     if (mode === "full-access" && value !== "full-access") {
@@ -80,8 +80,8 @@ export function PermissionModeSelector({
           placement="bottom-end"
           triggerClassName={
             iconOnly
-              ? "flex h-8 w-8 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
-              : "flex h-8 max-w-32 items-center gap-1.5 rounded-lg px-2 text-xs text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
+              ? "flex h-8 w-8 min-h-11 min-w-11 items-center justify-center rounded-full md:min-h-8 md:min-w-8 text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
+              : "flex h-8 min-h-11 max-w-32 items-center md:min-h-8 gap-1.5 rounded-lg px-2 text-xs text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
           }
           items={(["read-only", "workspace-write", "full-access"] as const).map(
             (mode) => ({
@@ -187,49 +187,49 @@ function FullAccessConfirmDialog({
           <ShieldAlert className="h-5 w-5 text-red-500" aria-hidden="true" />
           <h2 id="full-access-confirm-title" className="heading-small">
             {t(
-              "composer.permission_full_access_confirm_title",
+              "workbench.permission_full_access_confirm_title",
               "启用完整访问？",
             )}
           </h2>
         </div>
         <p className="mt-3 text-sm leading-5 text-text-secondary">
           {t(
-            "composer.permission_full_access_confirm_description",
+            "workbench.permission_full_access_confirm_description",
             "Codex 将无需询问即可运行命令、访问网络，并读取、创建、修改或删除这台电脑任意位置的文件。",
           )}
         </p>
         <div className="mt-4 space-y-3 rounded-xl bg-muted/60 p-3">
           <Capability
             icon={FolderPen}
-            title={t("composer.permission_full_access_files", "文件和文件夹")}
+            title={t("workbench.permission_full_access_files", "文件和文件夹")}
             description={t(
-              "composer.permission_full_access_files_description",
+              "workbench.permission_full_access_files_description",
               "访问工作区之外的文件，并可创建、修改或删除它们",
             )}
           />
           <Capability
             icon={TerminalSquare}
-            title={t("composer.permission_full_access_terminal", "终端命令")}
+            title={t("workbench.permission_full_access_terminal", "终端命令")}
             description={t(
-              "composer.permission_full_access_terminal_description",
+              "workbench.permission_full_access_terminal_description",
               "运行命令、安装软件和更改系统设置",
             )}
           />
           <Capability
             icon={Globe2}
             title={t(
-              "composer.permission_full_access_network",
+              "workbench.permission_full_access_network",
               "互联网和连接的应用",
             )}
             description={t(
-              "composer.permission_full_access_network_description",
+              "workbench.permission_full_access_network_description",
               "访问网站、发送数据并使用已启用的连接器",
             )}
           />
         </div>
-        <p className="mt-4 text-xs leading-5 text-text-muted">
+        <p className="mt-4 text-xs leading-5 text-text-secondary">
           {t(
-            "composer.permission_full_access_risk",
+            "workbench.permission_full_access_risk",
             "这会显著增加数据丢失、敏感信息泄露、提示词注入和意外操作的风险。",
           )}
         </p>
@@ -239,7 +239,7 @@ function FullAccessConfirmDialog({
             type="button"
             data-testid="full-access-confirm-cancel"
             onClick={onCancel}
-            className="h-9 rounded-lg border border-border px-4 text-sm font-medium hover:bg-muted"
+            className="min-h-11 md:min-h-9 rounded-lg border border-border px-4 text-sm font-medium hover:bg-muted"
           >
             {t("common.cancel", "取消")}
           </button>
@@ -247,9 +247,9 @@ function FullAccessConfirmDialog({
             type="button"
             data-testid="full-access-confirm-submit"
             onClick={onConfirm}
-            className="h-9 rounded-lg bg-red-600 px-4 text-sm font-medium text-white hover:bg-red-700"
+            className="min-h-11 md:min-h-9 rounded-lg bg-red-600 px-4 text-sm font-medium text-white hover:bg-red-700"
           >
-            {t("composer.permission_full_access_confirm", "确认启用")}
+            {t("workbench.permission_full_access_confirm", "确认启用")}
           </button>
         </div>
       </div>
@@ -275,7 +275,9 @@ function Capability({
       />
       <div>
         <div className="text-sm font-medium">{title}</div>
-        <div className="text-xs leading-5 text-text-muted">{description}</div>
+        <div className="text-xs leading-5 text-text-secondary">
+          {description}
+        </div>
       </div>
     </div>
   );

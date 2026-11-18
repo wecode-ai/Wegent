@@ -65,6 +65,11 @@ impl Execution {
         !self.automation_run_id.is_empty()
             || super::super::project::authority::truthy(&self.context()["run_id"])
     }
+    pub fn owns_automation_run(&self) -> bool {
+        !self.automation_run_id.is_empty()
+            && (self.context()["dispatch_kind"] != "collaboration_group"
+                || self.selection()["executor_kind"] == "collaboration_group_dispatch")
+    }
     pub fn permits_personal_device(&self, owner: i64, device: i64) -> bool {
         super::super::project::device_access::DeviceAccess {
             actor: self.assigner_user_id,

@@ -321,6 +321,16 @@ impl LocalTaskStore {
             source_manager.task_priority.as_deref().unwrap_or("none"),
             payload,
         )?;
+        apply_round_assignee(
+            &transaction,
+            item_id,
+            &[json!({
+                "assignee_type": "agent",
+                "agent_id": leader_id,
+                "agent_name": leader.name,
+            })],
+            source_manager.assigner_user_id,
+        )?;
         transaction.commit()?;
         Ok(())
     }

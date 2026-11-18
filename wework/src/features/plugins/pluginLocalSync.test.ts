@@ -85,6 +85,19 @@ describe('HTTP local plugin execution', () => {
     expect(fetch).not.toHaveBeenCalled()
     expect(request).toHaveBeenCalledTimes(2)
   })
+  test('localizes native busy failures without repeating an account mutation', async () => {
+    const busy = Object.assign(new Error('plugin_local_sync_busy'), {
+      code: 'plugin_local_sync_busy',
+    })
+    request.mockResolvedValueOnce({ enabled: true, protocolVersion: 1 }).mockRejectedValueOnce(busy)
+    const { api, route } = setup()
+    const failure = await api.installMarketplacePlugin(5).catch((error: unknown) => error)
+    expect(failure).toMatchObject({ code: 'plugin_local_sync_busy', cause: busy })
+    expect((failure as Error).message).not.toContain('plugin_local_sync_busy')
+    expect(route).not.toHaveBeenCalled()
+    expect(fetch).not.toHaveBeenCalled()
+    expect(request).toHaveBeenCalledTimes(2)
+  })
   test.each([false, 'old-runtime'])(
     'retains legacy behavior before mutation when unsupported: %s',
     async mode => {

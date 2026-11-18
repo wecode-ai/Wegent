@@ -10,6 +10,10 @@ mod http_e2e;
 mod llm_proxy_deadlines;
 #[path = "support/llm_proxy_timeouts.rs"]
 mod llm_proxy_timeouts;
+#[path = "support/streaming_block_index_http.rs"]
+mod streaming_block_index;
+#[path = "support/responses_terminal_storage.rs"]
+mod terminal_storage;
 
 use brz_mysql::{Json, MysqlResult, MysqlRow};
 use std::{path::Path, sync::Arc};
@@ -17,6 +21,14 @@ use wegent_backend_rs::task_store::{
     DefaultTaskStore, TaskStore, TaskStoreCreate, assistant_subtasks_by_task_statement,
     order_assistant_subtasks, subtask_column_index,
 };
+
+#[tokio::test]
+#[ignore = "requires disposable MySQL 8 and Redis; CI runs the Responses HTTP E2E suite"]
+async fn long_streaming_turn_preserves_indexed_blocks_through_http_completion() {
+    let fixture = fixture::Fixture::new().await;
+    streaming_block_index::verify(&fixture).await;
+    fixture.close().await;
+}
 
 #[tokio::test]
 #[ignore = "requires disposable MySQL 8; run explicitly in the Backend Rust CI job"]
@@ -100,6 +112,141 @@ async fn assistant_subtasks_preserve_large_results_and_nullable_message_order() 
     fixture.close().await;
 }
 
+#[tokio::test]
+#[ignore = "requires disposable MySQL 8; run explicitly in the Backend Rust CI job"]
+async fn history_candidates_materialize_keys_before_sorting_large_json() {
+    use wegent_backend_rs::task_store::SubtaskHistoryWindow;
+    use wegent_backend_rs::task_store_history::HistorySelection;
+
+    let fixture = fixture::Fixture::new().await;
+    http_e2e::seed_task(&fixture.mysql, "tasks", 42, 7).await;
+    let store = DefaultTaskStore::new(fixture.mysql.clone());
+    for table in ["subtasks", "subtasks_0007"] {
+        fixture.seed(table, 42, 7).await;
+        fixture
+            .mysql
+            .execute(
+                format!(
+                    "ALTER TABLE {table} DROP INDEX idx_task_id, \
+             ADD INDEX idx_task_message (task_id, message_id)"
+                ),
+                (),
+            )
+            .await
+            .unwrap();
+        let tables = wegent_backend_rs::task_store_tables::TableTemplates {
+            tasks: "tasks",
+            subtasks: table,
+        };
+        for selection in [
+            HistorySelection::Ready,
+            HistorySelection::All,
+            HistorySelection::Cache,
+        ] {
+            let window = SubtaskHistoryWindow {
+                limit: 2,
+                before_message_id: Some(3),
+                summary_checkpoint_only: false,
+                selection,
+            };
+            let start = history_candidate_bytes_sent(&fixture.mysql).await;
+            let mut sql = &fixture.mysql;
+            let candidates = wegent_backend_rs::task_store_history::history_candidates_on(
+                &mut sql,
+                tables,
+                42,
+                Some(7),
+                window,
+                wegent_backend_rs::request_sql::RouteKey::Task(42),
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                candidates.iter().map(|row| row.id).collect::<Vec<_>>(),
+                [10, 20]
+            );
+            let bytes = history_candidate_bytes_sent(&fixture.mysql).await - start;
+            assert!(
+                bytes < 32 * 1024,
+                "candidate query transferred {bytes} bytes"
+            );
+        }
+    }
+    // The production store must retain its task ownership guard.
+    let mut sql = &fixture.mysql;
+    let rows = store
+        .list_subtasks_history_window_on(
+            &mut sql,
+            42,
+            8,
+            SubtaskHistoryWindow {
+                limit: 2,
+                before_message_id: Some(3),
+                summary_checkpoint_only: false,
+                selection: HistorySelection::Cache,
+            },
+        )
+        .await
+        .unwrap();
+    assert!(rows.is_empty());
+    fixture.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires disposable MySQL 8; run explicitly in the Backend Rust CI job"]
+async fn executor_sessions_rank_metadata_without_sorting_large_results() {
+    let fixture = fixture::Fixture::new().await;
+    for table in ["subtasks", "subtasks_0007"] {
+        fixture.seed(table, 42, 7).await;
+        for message in 3..=11_i64 {
+            fixture
+                .mysql
+                .execute(
+                    format!(
+                        "INSERT INTO {table} (id,user_id,task_id,message_id) VALUES (?,7,42,?)"
+                    ),
+                    (2000 + message, message),
+                )
+                .await
+                .unwrap();
+        }
+        // An older duplicate must be excluded after ranking even when its
+        // conversation result is larger than MySQL's session sort buffer.
+        fixture
+            .mysql
+            .execute(
+                format!("UPDATE {table} SET result=? WHERE task_id=42 AND message_id=0"),
+                (Json(serde_json::json!({
+                    "value": "x".repeat(fixture::LARGE_RESULT_BYTES),
+                    "executor_session": {
+                        "agent": "Codex", "botId": 23, "thread_id": "legacy-2",
+                    },
+                })),),
+            )
+            .await
+            .unwrap();
+        http_e2e::subscription_history_window::assert_session_identifiers(
+            &fixture.mysql,
+            42,
+            table,
+        )
+        .await;
+    }
+    fixture.close().await;
+}
+
+async fn history_candidate_bytes_sent(mysql: &brz_mysql::MysqlService) -> u64 {
+    let rows: Vec<MysqlRow> = mysql
+        .fetch_all("SHOW SESSION STATUS LIKE 'Bytes_sent'", ())
+        .await
+        .unwrap();
+    rows[0]
+        .get_required::<String>("Value")
+        .unwrap()
+        .parse()
+        .unwrap()
+}
+
 fn assert_task_detail_message_order(rows: &[MysqlRow]) {
     let ids: Vec<i64> = rows
         .iter()
@@ -132,6 +279,7 @@ async fn responses_mysql_large_json_preserves_message_order_and_owner_filter() {
             &[42],
             7,
             false,
+            &["subtasks"],
         )
         .await;
     }
@@ -157,6 +305,7 @@ async fn responses_mysql_long_conversation_exceeds_prepared_statement_limit() {
             &[42],
             7,
             true,
+            &["subtasks"],
         )
         .await;
     }
@@ -182,6 +331,14 @@ async fn terminal_callback_rolls_back_retries_and_ignores_a_late_error() {
         .await
         .unwrap();
     http_e2e::assert_terminal_callback_atomic(&fixture.mysql, task_id, subtask_id).await;
+    fixture.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires disposable MySQL 8 and Redis; run explicitly in the Backend Rust CI job"]
+async fn terminal_callbacks_and_recovery_use_the_migrated_tables() {
+    let fixture = fixture::Fixture::new().await;
+    terminal_storage::verify(&fixture).await;
     fixture.close().await;
 }
 

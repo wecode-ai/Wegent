@@ -4,7 +4,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { act } from "react";
+import { Activity, act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -15,7 +15,16 @@ import type {
   CollaborationWorkspace,
   CollaborationWorkspaceMember,
 } from "../types";
-import { WorkspaceMembersConfiguration } from './WorkspaceMembersConfiguration'
+import { WorkspaceMembersConfiguration } from "./WorkspaceMembersConfiguration";
+import { ProjectSettingsShell } from "../project-manage/ProjectSettingsShell";
+import {
+  RetainedProjectSettingsPages,
+  type ProjectSettingsPagesProps,
+} from "../project-manage/ProjectSettingsPages";
+
+const RetainedPages = (props: ProjectSettingsPagesProps) => (
+  <RetainedProjectSettingsPages {...props} boundary={Activity} />
+);
 import {
   WorkspaceCollaborationGroupsConfiguration,
   type WorkspaceResourceCommands,
@@ -113,6 +122,135 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
   }
+
+  it("keeps independent sections and rule drafts when returning from another settings page", async () => {
+    const renderSettings = (selectedSectionId: string) =>
+      act(async () =>
+        root.render(
+          <ProjectSettingsShell
+            pageRenderer={RetainedPages}
+            ariaLabel="Settings"
+            selectedSectionId={selectedSectionId}
+            sections={[
+              {
+                id: "groups",
+                label: "Groups",
+                testId: "nav-groups",
+                content: (
+                  <WorkspaceCollaborationGroupsConfiguration
+                    groups={[{ ...group }]}
+                    members={[humanMember]}
+                    agents={[codexAgent, claudeAgent]}
+                    locale="en"
+                    commands={commands}
+                    canManage
+                    initialSelectedGroupId={group.id}
+                  />
+                ),
+              },
+              {
+                id: "environment",
+                label: "Environment",
+                testId: "nav-environment",
+                content: <p>Environment settings</p>,
+              },
+            ]}
+          />,
+        ),
+      );
+    await renderSettings("groups");
+    await click(byTestId("collaboration-group-detail-tab-rules"));
+    expect(
+      byTestId("collaboration-group-detail-tab-members").getAttribute(
+        "aria-expanded",
+      ),
+    ).toBe("true");
+    await change(
+      byTestId("collaboration-group-detail-instructions"),
+      "Keep my unfinished rules",
+    );
+    await renderSettings("environment");
+    await renderSettings("groups");
+    expect(
+      byTestId<HTMLTextAreaElement>("collaboration-group-detail-instructions")
+        .value,
+    ).toBe("Keep my unfinished rules");
+    expect(
+      byTestId("collaboration-group-detail-tab-rules").getAttribute(
+        "aria-expanded",
+      ),
+    ).toBe("true");
+    expect(byTestId("collaboration-group-save-status").textContent).toBe(
+      "Unsaved changes",
+    );
+    await click(byTestId("collaboration-group-detail-discard"));
+    expect(
+      byTestId<HTMLTextAreaElement>("collaboration-group-detail-instructions")
+        .value,
+    ).toBe(group.instructions);
+    expect(byTestId("collaboration-group-save-status").textContent).toBe(
+      "Configuration saved",
+    );
+    expect(commands.updateCollaborationGroup).not.toHaveBeenCalled();
+  });
+
+  it("requires an explicit choice before discarding a group draft on return", async () => {
+    await act(async () =>
+      root.render(
+        <WorkspaceCollaborationGroupsConfiguration
+          groups={[group]}
+          members={[humanMember]}
+          agents={[codexAgent, claudeAgent]}
+          locale="en"
+          commands={commands}
+          canManage
+          initialSelectedGroupId={group.id}
+        />,
+      ),
+    );
+    await change(
+      byTestId("collaboration-group-detail-name"),
+      "Unfinished name",
+    );
+    await click(byTestId("collaboration-group-detail-back"));
+    expect(byTestId("collaboration-group-unsaved-dialog")).not.toBeNull();
+    await click(byTestId("collaboration-group-unsaved-cancel"));
+    expect(
+      byTestId<HTMLInputElement>("collaboration-group-detail-name").value,
+    ).toBe("Unfinished name");
+    await click(byTestId("collaboration-group-detail-back"));
+    await click(byTestId("collaboration-group-unsaved-confirm"));
+    await click(byTestId("collaboration-group-manage-" + group.id));
+    expect(
+      byTestId<HTMLInputElement>("collaboration-group-detail-name").value,
+    ).toBe(group.name);
+    expect(commands.updateCollaborationGroup).not.toHaveBeenCalled();
+  });
+
+  it("keeps collaboration group membership read-only without management access", async () => {
+    await act(async () =>
+      root.render(
+        <WorkspaceCollaborationGroupsConfiguration
+          groups={[group]}
+          members={[humanMember]}
+          agents={[codexAgent, claudeAgent]}
+          locale="en"
+          commands={commands}
+          canManage={false}
+          initialSelectedGroupId={group.id}
+        />,
+      ),
+    );
+    expect(byTestId("collaboration-group-detail-save")).toBeNull();
+    expect(byTestId("collaboration-group-create-add-members")).toBeNull();
+    expect(
+      byTestId<HTMLInputElement>(
+        "collaboration-group-create-responsibility-agent-2",
+      ).disabled,
+    ).toBe(true);
+    expect(byTestId("collaboration-group-remove-member-agent-2")).toBeNull();
+    expect(commands.updateCollaborationGroup).not.toHaveBeenCalled();
+  });
 
   async function change(
     element: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
@@ -234,15 +372,22 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     );
     expect(byTestId("collaboration-group-leader-human-7")).toBeNull();
     await click(byTestId("collaboration-group-create-add-members"));
-    expect(byTestId("collaboration-group-create-member-human-7")).not.toBeNull();
+    expect(
+      byTestId("collaboration-group-create-member-human-7"),
+    ).not.toBeNull();
     expect(container.textContent).toContain("我");
     await click(byTestId("collaboration-group-create-member-agent-1"));
-    await change(byTestId<HTMLInputElement>("collaboration-group-name"), "Agent team");
+    await change(
+      byTestId<HTMLInputElement>("collaboration-group-name"),
+      "Agent team",
+    );
     await click(byTestId("collaboration-group-create"));
     expect(commands.createCollaborationGroup).toHaveBeenCalledWith(
       expect.objectContaining({
         leader: { kind: "agent", id: "1", name: "Codex", responsibility: "" },
-        members: [{ kind: "agent", id: "1", name: "Codex", responsibility: "" }],
+        members: [
+          { kind: "agent", id: "1", name: "Codex", responsibility: "" },
+        ],
       }),
     );
   });
@@ -353,6 +498,19 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     expect(document.activeElement).toBe(
       byTestId("collaboration-group-create-member-human-7"),
     );
+    await act(async () => {
+      document.activeElement!.dispatchEvent(
+        new KeyboardEvent("keydown", {
+          key: "Escape",
+          isComposing: true,
+          keyCode: 229,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    });
+    expect(byTestId("collaboration-group-members-search")).not.toBeNull();
+    expect(byTestId("collaboration-group-form")).not.toBeNull();
     await act(async () => {
       document.activeElement!.dispatchEvent(
         new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
@@ -575,7 +733,7 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
     await click(byTestId("collaboration-group-manage-group-1"));
     expect(
       byTestId("collaboration-group-detail-tab-members").getAttribute(
-        "aria-selected",
+        "aria-expanded",
       ),
     ).toBe("true");
     await click(byTestId("collaboration-group-detail-tab-rules"));
@@ -612,7 +770,11 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
       "gpu",
     );
     await click(byTestId("collaboration-group-environment-tag-add"));
-    await click(byTestId("collaboration-group-detail-tab-members"));
+    expect(
+      byTestId("collaboration-group-detail-tab-members").getAttribute(
+        "aria-expanded",
+      ),
+    ).toBe("true");
     await click(byTestId("collaboration-group-remove-member-agent-2"));
     await click(byTestId("collaboration-group-detail-save"));
 
@@ -635,6 +797,77 @@ describe("WorkspaceCollaborationGroupsConfiguration", () => {
         },
       }),
     );
+  });
+
+  it("describes workspace source deletion truthfully and keeps cancel non-destructive", async () => {
+    const sourceGroup = {
+      ...group,
+      owner_type: "workspace" as const,
+      owner_id: "workspace-1",
+    };
+    await act(async () =>
+      root.render(
+        <WorkspaceCollaborationGroupsConfiguration
+          workspace={
+            {
+              id: "workspace-1",
+              access_role: "Owner",
+            } as CollaborationWorkspace
+          }
+          groups={[sourceGroup]}
+          members={[]}
+          agents={[codexAgent, claudeAgent]}
+          locale="zh-CN"
+          commands={commands}
+          canManage
+        />,
+      ),
+    );
+    await click(byTestId("collaboration-group-remove-group-1"));
+    const dialog = container.querySelector('[role="dialog"]')!;
+    expect(dialog.textContent).toContain("删除后无法恢复");
+    expect(dialog.textContent).not.toContain("源资源会保留");
+    await click(byTestId("collaboration-group-delete-cancel"));
+    expect(commands.removeCollaborationGroup).not.toHaveBeenCalled();
+  });
+
+  it("keeps the next group confirmation open when an earlier removal finishes", async () => {
+    let finish!: () => void;
+    commands.removeCollaborationGroup = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    const second = { ...group, id: "second", name: "Second group" };
+    const renderGroups = async (groups: CollaborationGroup[]) => {
+      await act(async () =>
+        root.render(
+          <WorkspaceCollaborationGroupsConfiguration
+            groups={groups}
+            members={[]}
+            agents={[codexAgent, claudeAgent]}
+            locale="zh-CN"
+            commands={commands}
+            canManage
+          />,
+        ),
+      );
+    };
+    await renderGroups([group, second]);
+    await click(byTestId("collaboration-group-remove-group-1"));
+    await click(byTestId("collaboration-group-delete-confirm"));
+    await renderGroups([second]);
+    await click(byTestId("collaboration-group-remove-second"));
+    await act(async () => finish());
+    expect(byTestId("collaboration-group-delete-dialog").textContent).toContain(
+      "Second group",
+    );
+    expect(
+      byTestId<HTMLButtonElement>("collaboration-group-delete-confirm")
+        .disabled,
+    ).toBe(false);
+    expect(commands.removeCollaborationGroup).toHaveBeenCalledTimes(1);
   });
 
   it("deletes a collaboration group from its detail page after confirmation", async () => {

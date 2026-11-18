@@ -4,6 +4,7 @@
 
 import { ArrowRightLeft, CalendarClock, Sparkles, Tag, Webhook } from 'lucide-react'
 import type { AutomationEventType } from '../automation/types'
+import type { CollaborationTranslate } from '../i18n'
 import type {
   WorkspaceAutomationInput,
   WorkspaceAutomationRule,
@@ -12,6 +13,23 @@ import type {
 
 export type TriggerKind = 'created' | 'tag_added' | 'status_changed' | 'external' | 'schedule'
 export type TargetKind = 'human' | 'agent' | 'collaboration_group'
+
+export function automaticProcessingSaveError(error: unknown, translate: CollaborationTranslate) {
+  const message = error instanceof Error ? error.message : ''
+  // These messages are emitted by the executor's Cron validation contract.
+  const cronInvalid = /(?:^|:\s)(?:invalid cron expression\b|cron expression must contain\b)/i.test(
+    message
+  )
+  return {
+    cronInvalid,
+    message: cronInvalid
+      ? translate(
+          'todo.invalid_cron_expression',
+          'Cron 表达式无效。请检查字段、取值范围和格式后重试。'
+        )
+      : message || translate('todo.automatic_processing_save_failed', '保存自动处理失败'),
+  }
+}
 export type ScheduleFrequency = 'daily' | 'weekdays' | 'weekly' | 'custom'
 
 interface ScheduleValue {
@@ -40,8 +58,8 @@ export const TRIGGER_OPTIONS = [
   {
     kind: 'tag_added',
     icon: Tag,
-    title: ['添加 Tag 后', 'Tag added'],
-    description: ['Issue 添加指定 Tag 时', 'When a matching tag is added'],
+    title: ['添加标签后', 'Tag added'],
+    description: ['Issue 添加指定标签时', 'When a matching tag is added'],
   },
   {
     kind: 'status_changed',
@@ -78,6 +96,8 @@ export interface AutomaticProcessingDraft {
   statuses: string[]
   statusTransition: 'any' | 'entered_processing'
   cronExpression: string
+  timezone: string
+  workdayOnly: boolean
   hookId: string
   eventType: AutomationEventType | ''
   targetKind: TargetKind
@@ -96,6 +116,8 @@ export const EMPTY_DRAFT: AutomaticProcessingDraft = {
   statuses: [],
   statusTransition: 'any',
   cronExpression: '0 9 * * 1-5',
+  timezone: 'Asia/Shanghai',
+  workdayOnly: false,
   hookId: '',
   eventType: '',
   targetKind: 'agent',
@@ -186,7 +208,18 @@ export function buildScheduleCron({ frequency, time, weekday }: ScheduleValue): 
   return `${Number(minute)} ${Number(hour)} * * ${dayOfWeek}`
 }
 
-export function scheduleLabel(cronExpression: string, locale: 'zh-CN' | 'en'): string {
+export function scheduleLabel(
+  cronExpression: string,
+  locale: 'zh-CN' | 'en',
+  workdayOnly = false
+): string {
+  const label = baseScheduleLabel(cronExpression, locale)
+  return workdayOnly
+    ? `${label} · ${locale === 'zh-CN' ? '仅中国大陆法定工作日' : 'Mainland China statutory workdays only'}`
+    : label
+}
+
+function baseScheduleLabel(cronExpression: string, locale: 'zh-CN' | 'en'): string {
   const schedule = parseSchedule(cronExpression)
   if (schedule.frequency === 'custom') {
     return locale === 'zh-CN'
@@ -198,7 +231,7 @@ export function scheduleLabel(cronExpression: string, locale: 'zh-CN' | 'en'): s
     return locale === 'zh-CN' ? `每天 ${time}` : `Every day at ${time}`
   }
   if (schedule.frequency === 'weekdays') {
-    return locale === 'zh-CN' ? `工作日 ${time}` : `Weekdays at ${time}`
+    return locale === 'zh-CN' ? `周一至周五 ${time}` : `Monday–Friday at ${time}`
   }
   const weekday =
     WEEKDAY_OPTIONS.find(([value]) => value === schedule.weekday) ?? WEEKDAY_OPTIONS[0]
@@ -230,6 +263,8 @@ export function draftFromRule(rule: WorkspaceAutomationRule): AutomaticProcessin
     statusTransition:
       eventConfig.transition === 'entered_processing' ? 'entered_processing' : 'any',
     cronExpression: rule.cronExpression ?? '',
+    timezone: rule.timezone,
+    workdayOnly: rule.workdayOnly ?? false,
     hookId: String(eventConfig.subscriptionId ?? eventConfig.subscription_id ?? ''),
     eventType: trigger === 'external' ? (rule.eventType ?? '') : '',
     targetKind: rule.targetKind,

@@ -1,3 +1,4 @@
+import { verifyLinkExistingTask } from '../modules/issue-link-existing-task.mjs'
 import { revealCollaborationSidebarElement } from '../modules/collaboration-sidebar-navigation.mjs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import assert from 'node:assert/strict'
@@ -328,16 +329,13 @@ async function verifyIssueTags(control, request, issue, uiTimeoutMs) {
   const tag = `验收标签-${process.pid}`
   const temporaryTag = `临时标签-${process.pid}`
   const trigger = scoped('[data-testid="cloud-todo-more-properties"]')
-  const popover = '[data-testid="cloud-todo-more-properties-popover"]'
-  const input = `${popover} [data-testid="cloud-todo-detail-tag-input"]`
-  const chip = `${popover} [data-testid="cloud-todo-detail-tag-tag-${tag}"]`
-  const assertDismissed = async () => {
-    await waitForValue(
-      () => control.command('getElementCount', popover),
-      value => Number(value) === 0,
-      'More properties did not dismiss',
-      uiTimeoutMs
-    )
+  const metadata = scoped('[data-testid="issue-primary-metadata"]')
+  const properties = scoped('[data-testid="cloud-todo-more-properties-popover"]')
+  const input = `${metadata} [data-testid="cloud-todo-detail-tag-input"]`
+  const chip = `${metadata} [data-testid="cloud-todo-detail-tag-tag-${tag}"]`
+  const assertCollapsed = async () => {
+    await control.command('waitFor', properties, { visible: false, timeoutMs: uiTimeoutMs })
+    await control.command('waitFor', input, { visible: true, timeoutMs: uiTimeoutMs })
     assert.equal(
       await control.command('getAttribute', trigger, { value: 'aria-expanded' }),
       'false'
@@ -350,8 +348,8 @@ async function verifyIssueTags(control, request, issue, uiTimeoutMs) {
     )
   }
   // The list API can observe the new row before the create request finishes.
-  await control.command('waitFor', trigger, { visible: true, timeoutMs: uiTimeoutMs })
-  await control.command('click', trigger)
+  await control.command('waitFor', input, { visible: true, timeoutMs: uiTimeoutMs })
+  await assertCollapsed()
   assert.equal(
     await control.command('getComputedStyleValue', input, { value: 'opacity' }),
     '1',
@@ -360,8 +358,12 @@ async function verifyIssueTags(control, request, issue, uiTimeoutMs) {
   await control.command('fill', input, { value: tag })
   assert.equal(await control.command('getValue', input), tag)
   await control.command('pointerClick', scoped('[data-testid="cloud-todo-detail-title"]'))
-  await assertDismissed()
+  await assertCollapsed()
   await control.command('click', trigger)
+  await control.command('waitFor', properties, { visible: true, timeoutMs: uiTimeoutMs })
+  await control.command('waitFor', input, { visible: true, timeoutMs: uiTimeoutMs })
+  await control.command('click', trigger)
+  await assertCollapsed()
   await control.command('waitFor', chip, { visible: true, timeoutMs: uiTimeoutMs })
   await control.command('fill', input, { value: tag })
   await control.command('press', input, { key: 'Enter' })
@@ -370,14 +372,13 @@ async function verifyIssueTags(control, request, issue, uiTimeoutMs) {
   await control.command('press', input, { key: 'Enter' })
   await control.command(
     'click',
-    `${popover} [data-testid="cloud-todo-detail-tag-tag-remove-${temporaryTag}"]`
+    `${metadata} [data-testid="cloud-todo-detail-tag-tag-remove-${temporaryTag}"]`
   )
-  await control.command('press', input, { key: 'Escape' })
-  await assertDismissed()
-  await control.command('click', trigger)
+  await control.command('pointerClick', scoped('[data-testid="cloud-todo-detail-title"]'))
+  await assertCollapsed()
   await control.command('waitFor', chip, { visible: true, timeoutMs: uiTimeoutMs })
   await control.command('pointerClick', scoped('[data-testid="cloud-todo-detail-title"]'))
-  await assertDismissed()
+  await assertCollapsed()
   const updated = await waitForValue(
     () => request(`/api/v1/loop-items/${issue.id}`),
     value => value.tags?.length === 1 && value.tags[0] === tag,
@@ -385,9 +386,10 @@ async function verifyIssueTags(control, request, issue, uiTimeoutMs) {
     uiTimeoutMs
   )
   await control.command('click', trigger)
+  await control.command('waitFor', properties, { visible: true, timeoutMs: uiTimeoutMs })
   await control.command('waitFor', chip, { visible: true, timeoutMs: uiTimeoutMs })
-  await control.command('pointerClick', scoped('[data-testid="cloud-todo-detail-title"]'))
-  await assertDismissed()
+  await control.command('click', trigger)
+  await assertCollapsed()
   return updated
 }
 
@@ -895,6 +897,22 @@ export function createDesktopScenario({
         projectId: project.id,
         issueId: issue.id,
       })
+      const modelRequestsBeforeLink = modelRequestCount
+      await verifyLinkExistingTask({
+        control,
+        request: ownerRequest,
+        createIssue,
+        owner,
+        projectId: project.id,
+        taskId: runtimeTaskId,
+        originalIssueId: issue.id,
+        uiTimeoutMs,
+      })
+      assert.equal(
+        modelRequestCount,
+        modelRequestsBeforeLink,
+        'Linking an existing task must not start a model turn'
+      )
       await verifyIssuePersonalTaskPrivacy({
         control,
         request: ownerRequest,

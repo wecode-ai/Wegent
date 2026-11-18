@@ -4,7 +4,7 @@
 
 import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import type { ReactNode } from 'react'
+import { cloneElement, type ReactNode } from 'react'
 
 import BotEdit from '@/features/settings/components/BotEdit'
 import { botApis } from '@/apis/bots'
@@ -227,6 +227,12 @@ async function renderBotEdit(
   props: {
     scope?: 'personal' | 'group' | 'all' | 'public'
     groupName?: string
+    teamId?: number
+    targetGroupNames?: string[]
+    crossNamespaceClone?: boolean
+    targetGroupsLoading?: boolean
+    targetGroupsError?: boolean
+    onRetryTargetGroups?: () => void
     modelCategoryType?: 'llm' | 'image' | 'video'
     allowGenerationPrimaryModel?: boolean
     mode?: 'edit' | 'clone' | 'new'
@@ -256,24 +262,39 @@ async function renderBotEdit(
   const onClose = jest.fn()
   const toast = jest.fn()
 
+  const form = (
+    <BotEdit
+      bots={[bot]}
+      setBots={setBots}
+      editingBotId={!props.mode || props.mode === 'edit' ? 7 : 0}
+      cloningBot={props.mode === 'clone' ? bot : null}
+      onClose={onClose}
+      toast={toast}
+      scope={props.scope || 'personal'}
+      groupName={props.groupName}
+      teamId={props.teamId}
+      targetGroupNames={props.targetGroupNames}
+      crossNamespaceClone={props.crossNamespaceClone}
+      targetGroupsLoading={props.targetGroupsLoading}
+      targetGroupsError={props.targetGroupsError}
+      onRetryTargetGroups={props.onRetryTargetGroups}
+      modelCategoryType={props.modelCategoryType}
+      allowGenerationPrimaryModel={props.allowGenerationPrimaryModel}
+    />
+  )
+  let view: ReturnType<typeof render>
   await act(async () => {
-    render(
-      <BotEdit
-        bots={[bot]}
-        setBots={setBots}
-        editingBotId={!props.mode || props.mode === 'edit' ? 7 : 0}
-        cloningBot={props.mode === 'clone' ? bot : null}
-        onClose={onClose}
-        toast={toast}
-        scope={props.scope || 'personal'}
-        groupName={props.groupName}
-        modelCategoryType={props.modelCategoryType}
-        allowGenerationPrimaryModel={props.allowGenerationPrimaryModel}
-      />
-    )
+    view = render(form)
   })
 
-  return { setBots, onClose, toast }
+  return {
+    setBots,
+    onClose,
+    toast,
+    changeGroupName: async (groupName: string) => {
+      await act(async () => view.rerender(cloneElement(form, { groupName })))
+    },
+  }
 }
 
 describe('BotEdit default knowledge bases', () => {
@@ -299,7 +320,15 @@ describe('BotEdit default knowledge bases', () => {
       { name: 'Dify', type: 'public', shellType: 'Dify' },
     ])
     mockedGetUnifiedModels.mockResolvedValue({
-      data: [{ name: 'gpt-4.1', type: 'public', namespace: 'default' }],
+      data: [
+        {
+          id: 77,
+          name: 'gpt-4.1',
+          type: 'public',
+          namespace: 'default',
+          modelCategoryType: 'llm',
+        },
+      ],
     })
     mockedGetPublicModels.mockResolvedValue([{ name: 'gpt-4.1', type: 'public' }])
     mockedFetchUnifiedSkillsList.mockResolvedValue([])
@@ -923,6 +952,238 @@ describe('BotEdit default knowledge bases', () => {
       )
     })
   })
+
+  test('includes the existing Agent context when saving from its Bot drawer', async () => {
+    await renderBotEdit(
+      {},
+      {
+        scope: 'group',
+        groupName: 'engineering',
+        teamId: 77,
+        targetGroupNames: ['engineering'],
+        modelCategoryType: 'llm',
+      }
+    )
+
+    fireEvent.click(screen.getByTestId('save-button'))
+
+    await waitFor(() => {
+      expect(mockedUpdateBot).toHaveBeenCalledWith(
+        7,
+        expect.objectContaining({
+          team_id: 77,
+          target_group_names: ['engineering'],
+        })
+      )
+    })
+  })
+
+  test('includes skills shared with every selected team group', async () => {
+    mockedFetchUnifiedSkillsList.mockImplementation(async (params: { binding?: unknown }) => {
+      const binding = params?.binding as { targetGroupNames?: string[] } | undefined
+      if (binding?.targetGroupNames?.length) {
+        return [
+          { id: 30, name: 'personal-skill', namespace: 'default', is_public: false },
+          { id: 31, name: 'shared-skill', namespace: 'default', is_public: false },
+        ]
+      }
+      return [{ id: 30, name: 'personal-skill', namespace: 'default', is_public: false }]
+    })
+
+    await renderBotEdit(
+      {},
+      {
+        scope: 'personal',
+        targetGroupNames: ['engineering', 'research'],
+      }
+    )
+
+    expect(await screen.findByText('shared-skill')).toBeInTheDocument()
+    expect(screen.getByText('personal-skill')).toBeInTheDocument()
+  })
+
+  test('does not expose source team skills when cloning across namespaces', async () => {
+    mockedFetchUnifiedSkillsList.mockImplementation(async (params: { binding?: unknown }) => {
+      const binding = params?.binding as { targetGroupNames?: string[] } | undefined
+      if (binding?.targetGroupNames?.length) {
+        return [
+          { id: 30, name: 'personal-skill', namespace: 'default', is_public: false },
+          { id: 31, name: 'team-skill', namespace: 'default', is_public: false },
+        ]
+      }
+      return [{ id: 30, name: 'personal-skill', namespace: 'default', is_public: false }]
+    })
+
+    await renderBotEdit(
+      {},
+      {
+        scope: 'personal',
+        targetGroupNames: ['engineering'],
+        crossNamespaceClone: true,
+      }
+    )
+
+    expect(await screen.findByText('personal-skill')).toBeInTheDocument()
+    expect(screen.queryByText('team-skill')).not.toBeInTheDocument()
+    expect(mockedFetchUnifiedSkillsList).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        binding: expect.objectContaining({ targetGroupNames: ['engineering'] }),
+      })
+    )
+  })
+
+  test.each([{ targetGroupNames: [] }, { targetGroupNames: ['engineering'] }])(
+    'blocks saving while groups %j are loading',
+    async ({ targetGroupNames }) => {
+      await renderBotEdit(
+        {},
+        {
+          scope: 'group',
+          groupName: 'engineering',
+          targetGroupNames,
+          targetGroupsLoading: true,
+        }
+      )
+
+      expect(await screen.findByTestId('save-button')).toBeDisabled()
+    }
+  )
+
+  test.each([{ targetGroupNames: [] }, { targetGroupNames: ['engineering'] }])(
+    'offers retry and blocks saving when groups %j fail to load',
+    async ({ targetGroupNames }) => {
+      const onRetryTargetGroups = jest.fn()
+
+      await renderBotEdit(
+        {},
+        {
+          scope: 'group',
+          groupName: 'engineering',
+          targetGroupNames,
+          targetGroupsError: true,
+          onRetryTargetGroups,
+        }
+      )
+
+      expect(await screen.findByTestId('save-button')).toBeDisabled()
+      fireEvent.click(screen.getByTestId('retry-target-groups-button'))
+      expect(onRetryTargetGroups).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  test.each([false, true])(
+    'distinguishes restored private secondary bindings from explicit same-name selections (%s)',
+    async selectPublicModel => {
+      mockedGetUnifiedModels.mockResolvedValue({
+        data: [
+          {
+            id: 78,
+            name: 'seedance-video',
+            type: 'public',
+            namespace: 'default',
+            modelCategoryType: 'video',
+          },
+          {
+            id: 79,
+            name: 'owner-private-llm',
+            type: 'public',
+            namespace: 'default',
+            modelCategoryType: 'llm',
+          },
+        ],
+      })
+      const editor = await renderBotEdit(
+        {
+          shell_name: 'Chat',
+          shell_type: 'Chat',
+          agent_config: {
+            bind_model: 'seedance-video',
+            bind_model_type: 'public',
+            bind_model_namespace: 'default',
+          },
+          secondary_model_name: 'owner-private-llm',
+          secondary_model_namespace: 'default',
+        },
+        {
+          scope: 'group',
+          groupName: 'engineering',
+          teamId: 77,
+          targetGroupNames: ['engineering'],
+          modelCategoryType: 'video',
+        }
+      )
+      const secondarySelect = await screen.findByTestId('bot-secondary-model-select')
+      await waitFor(() => expect(secondarySelect).toBeEnabled())
+      if (selectPublicModel) {
+        fireEvent.click(secondarySelect)
+        fireEvent.click(await screen.findByTestId('model-option-owner-private-llm'))
+        await editor.changeGroupName('engineering-refresh')
+        await waitFor(() => expect(secondarySelect).toBeEnabled())
+      }
+      fireEvent.change(screen.getByPlaceholderText('common:bot.prompt_placeholder'), {
+        target: { value: 'Updated prompt without changing the saved binding.' },
+      })
+      fireEvent.click(screen.getByTestId('save-button'))
+      await waitFor(() => {
+        expect(mockedUpdateBot).toHaveBeenCalledWith(
+          7,
+          expect.objectContaining({
+            model_id: null,
+            secondary_model_name: 'owner-private-llm',
+            secondary_model_namespace: 'default',
+            secondary_model_id: selectPublicModel ? 79 : null,
+            system_prompt: 'Updated prompt without changing the saved binding.',
+          })
+        )
+      })
+    }
+  )
+
+  test.each([false, true])(
+    'distinguishes restored private primary bindings from explicit same-name selections (%s)',
+    async selectPublicModel => {
+      mockedGetUnifiedModels.mockResolvedValue({
+        data: [
+          {
+            id: 79,
+            name: 'same-name',
+            type: 'public',
+            namespace: 'default',
+            modelCategoryType: 'llm',
+          },
+        ],
+      })
+      await renderBotEdit(
+        {
+          agent_config: {
+            bind_model: 'same-name',
+            bind_model_type: 'user',
+            bind_model_namespace: 'default',
+          },
+        },
+        { scope: 'group', groupName: 'engineering', teamId: 77 }
+      )
+      const modelSelect = await screen.findByTestId('bot-default-model-select')
+      await waitFor(() => expect(modelSelect).toBeEnabled())
+      if (selectPublicModel) {
+        fireEvent.click(modelSelect)
+        fireEvent.click(await screen.findByTestId('model-option-same-name'))
+      }
+      fireEvent.click(screen.getByTestId('save-button'))
+      await waitFor(() => {
+        expect(mockedUpdateBot).toHaveBeenCalledWith(
+          7,
+          expect.objectContaining({
+            model_id: selectPublicModel ? 79 : null,
+            agent_config: expect.objectContaining({
+              bind_model: 'same-name',
+              bind_model_type: selectPublicModel ? 'public' : 'user',
+            }),
+          })
+        )
+      })
+    }
+  )
 
   test('preserves an existing model binding when the model is hidden from selection', async () => {
     mockedGetUnifiedModels.mockResolvedValue({

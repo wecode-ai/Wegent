@@ -401,6 +401,7 @@ test.describe('Collaboration cloud capabilities', () => {
       await openBlankProjectCreation(page)
       await page.getByTestId('collaboration-project-name-input').fill(projectName)
       await page.getByTestId('collaboration-project-create-add-collaborator').click()
+      await page.getByTestId('collaboration-project-create-collaborator-tab-groups').click()
       await page
         .getByTestId('collaboration-project-create-collaborator-menu')
         .getByRole('button', { name: new RegExp(workspaceGroupName) })
@@ -580,10 +581,11 @@ test.describe('Collaboration cloud capabilities', () => {
       })
       await expect(page.getByText(`issue-${suffix}.txt`, { exact: true })).toBeVisible()
 
-      await page.getByTestId('cloud-todo-more-properties').click()
+      await expect(page.getByTestId('issue-primary-metadata')).toBeVisible()
       await expect(page.getByTestId('cloud-todo-add-collaborator')).toBeVisible()
       await page.getByTestId('cloud-todo-add-collaborator').click()
-      await page.getByTestId('cloud-todo-collaborator-select').selectOption(String(member.id))
+      await page.getByTestId('cloud-todo-collaborator-select').fill(member.user_name)
+      await page.getByTestId(`cloud-todo-collaborator-option-${member.id}`).click()
       await page.getByTestId('cloud-todo-confirm-collaborator').click()
       await expect(
         page.getByTestId('cloud-todo-collaborators').getByRole('button', {
@@ -596,7 +598,7 @@ test.describe('Collaboration cloud capabilities', () => {
         'Cloud E2E persistent comment'
       )
       await expect(page.getByText(`issue-${suffix}.txt`, { exact: true })).toBeVisible()
-      await page.getByTestId('cloud-todo-more-properties').click()
+      await expect(page.getByTestId('issue-primary-metadata')).toBeVisible()
       await expect(
         page.getByTestId('cloud-todo-collaborators').getByRole('button', {
           name: new RegExp(member.user_name),

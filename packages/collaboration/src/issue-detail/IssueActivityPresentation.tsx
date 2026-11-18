@@ -94,6 +94,9 @@ export function IssueCommentComposer({
   sendLabel,
   sendTestId,
   showSendLabel,
+  pendingActions,
+  sendActions,
+  workflow = false,
   ...attributes
 }: Omit<HTMLAttributes<HTMLFormElement>, "onSubmit"> & {
   input: ReactNode;
@@ -105,31 +108,58 @@ export function IssueCommentComposer({
   sendLabel: string;
   sendTestId: string;
   showSendLabel?: boolean;
+  pendingActions?: ReactNode;
+  sendActions?: ReactNode;
+  workflow?: boolean;
 }) {
+  const sendButton = (
+    <button
+      type="submit"
+      data-testid={sendTestId}
+      aria-label={sendLabel}
+      title={sendLabel}
+      className={`task-detail-comment-send${showSendLabel ? " has-label" : ""}`}
+      disabled={!canSend}
+    >
+      {showSendLabel ? (
+        <span className="task-detail-comment-send-label">{sendLabel}</span>
+      ) : null}
+      <ArrowUp
+        aria-hidden="true"
+        className={
+          workflow ? "h-4 w-4 task-detail-comment-send-icon" : "h-4 w-4"
+        }
+      />
+    </button>
+  );
   return (
     <form
       {...attributes}
       className="task-detail-new-comment"
+      data-workflow={workflow || undefined}
       onSubmit={(event) => {
         event.preventDefault();
         if (canSend) onSubmit();
       }}
     >
-      {before}
-      {input}
-      <div className="task-detail-new-comment-actions">
-        {actions}
-        <button
-          type="submit"
-          data-testid={sendTestId}
-          aria-label={sendLabel}
-          title={sendLabel}
-          className={`task-detail-comment-send${showSendLabel ? " has-label" : ""}`}
-          disabled={!canSend}
-        >
-          {showSendLabel ? sendLabel : null}
-          <ArrowUp className="h-4 w-4" />
-        </button>
+      <div className="task-detail-comment-body">
+        {before}
+        {input}
+        <div className="task-detail-new-comment-actions">
+          {actions}
+          {pendingActions}
+          {workflow ? (
+            <div
+              className="task-detail-comment-submit-group"
+              data-send-enabled={canSend}
+            >
+              {sendButton}
+              {sendActions}
+            </div>
+          ) : (
+            sendButton
+          )}
+        </div>
       </div>
       {after}
     </form>

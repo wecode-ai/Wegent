@@ -145,6 +145,12 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Require existing E2E images for Fork pull requests
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && (steps.browser-image-check.outputs.exists == 'false' || steps.desktop-image-check.outputs.exists == 'false')
+        run: |
+          echo '::error::A required E2E image is unavailable. Fork pull requests cannot publish organization images.'
+          exit 1
+
       - name: Set up Docker Buildx
         if: steps.browser-image-check.outputs.exists == 'false' || steps.desktop-image-check.outputs.exists == 'false'
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
@@ -154,7 +160,7 @@ jobs:
         id: runtime
         env:
           EXECUTOR_SOURCE_DIGEST: ${{ hashFiles('frontend/e2e/fixtures/claudecode-executor/Dockerfile', 'executor/Cargo.toml', 'executor/Cargo.lock', 'executor/src/**', 'executor/crates/**', 'shared/rust/**', 'executor/vendor/**', 'sdk/plugin-auth/**', 'sdk/plugin-creator/**', 'shared/assets/**', 'shared/protocol/**', '.github/ci/rust-toolchain') }}
-          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/crates/**', 'shared/rust/**', 'shared/assets/codex-models/**', 'backend-rs/examples/**', 'backend-rs/migrations/**', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
+          BACKEND_RS_SOURCE_DIGEST: ${{ hashFiles('backend-rs/Cargo.toml', 'backend-rs/Cargo.lock', 'backend-rs/src/**', 'backend-rs/crates/**', 'shared/rust/**', 'shared/assets/codex-models/**', 'shared/assets/calendars/**', 'backend-rs/examples/**', 'backend-rs/migrations/**', 'shared/data/builtin-connector-apps.json', '.github/runtime-images/backend-rs-e2e.Dockerfile', '.github/runtime-images/backend-rs-builder.Dockerfile', '.github/ci/rust-toolchain', '.github/actions/setup-rust-cache/action.yml') }}
         run: |
           runtime_output="$(mktemp)"
           GITHUB_OUTPUT="$runtime_output" \
@@ -172,7 +178,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Build and publish Wework browser E2E image
-        if: steps.browser-image-check.outputs.exists == 'false'
+        if: steps.browser-image-check.outputs.exists == 'false' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25
         with:
           context: .
@@ -183,7 +189,7 @@ jobs:
           cache-to: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-wework-e2e:buildcache-browser,mode=max
 
       - name: Build and publish Wework desktop E2E image
-        if: steps.desktop-image-check.outputs.exists == 'false'
+        if: steps.desktop-image-check.outputs.exists == 'false' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25
         with:
           context: .
@@ -264,6 +270,9 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+
+      - name: Prepare native test dependencies
+        uses: ./.github/actions/setup-wework-native-test-dependencies
 
       - name: Build shared real object storage for desktop E2E
         if: contains(needs.changes.outputs.wework_desktop_core_e2e_matrix, 'collaboration-issue-mcp-comments') || contains(needs.changes.outputs.wework_desktop_core_e2e_matrix, 'collaboration-delivery-editing') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-write-coordination') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-runtime-route-refresh') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-background-sync-isolation') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-periodic-reconcile') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-package-integrity-recovery')
@@ -387,6 +396,9 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+
+      - name: Prepare native test dependencies
+        uses: ./.github/actions/setup-wework-native-test-dependencies
 
       - name: Verify native sandbox namespaces
         run: bash .github/scripts/verify-native-sandbox-namespaces.sh
@@ -1350,6 +1362,10 @@ jobs:
       # Codex creates its own user/mount namespaces inside this disposable runner.
       options: --cap-add=SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined
       image: ${{ needs.changes.outputs.desktop_image }}
+      # Reuse the hosted runner's browsers for HTTP cloud authorization.
+      volumes:
+        - /opt/google/chrome:/opt/google/chrome:ro
+        - /usr/local/share/chromedriver-linux64:/opt/wegent-e2e/chromedriver:ro
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -1365,8 +1381,17 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
+      - name: Prepare native test dependencies
+        uses: ./.github/actions/setup-wework-native-test-dependencies
+
       - name: Verify native sandbox namespaces
         run: bash .github/scripts/verify-native-sandbox-namespaces.sh
+
+      - name: Verify the existing external browser runtime
+        if: contains(matrix.segments, 'cloud-http-authorization')
+        run: |
+          /opt/google/chrome/chrome --version
+          /opt/wegent-e2e/chromedriver/chromedriver --version
 
       - name: Download shared Wework desktop E2E build
         uses: actions/download-artifact@v6
@@ -1405,9 +1430,27 @@ jobs:
           go-version: "1.25.9"
           cache: false
 
+      - name: Prepare Remote Docker event recovery from the shared native build
+        if: contains(matrix.segments, 'conversation-event-remote-docker')
+        env:
+          EVENT_DEVICE_BASE_IMAGE: ${{ needs.changes.outputs.desktop_image }}
+        run: |
+          source .github/scripts/lib/apt-packages.sh
+          mapfile -t missing < <(find_missing_apt_packages docker.io)
+          if ((${#missing[@]} > 0)); then
+            bash .github/scripts/install-e2e-apt-packages.sh "${missing[@]}"
+          fi
+          docker info >/dev/null
+          image="wework-event-remote:ci-${GITHUB_RUN_ID}"
+          node .github/scripts/prepare-event-remote-device.mjs \
+            "$EVENT_DEVICE_BASE_IMAGE" \
+            "$GITHUB_WORKSPACE/.ci-artifacts/wework-core-e2e-build" "$image"
+          echo "WEWORK_E2E_REMOTE_IMAGE=$image" >> "$GITHUB_ENV"
+
       - name: Run Wework desktop Cloud E2E checkpoints
         env:
           CI: true
+          WEWORK_E2E_EXTERNAL_BROWSER_PREREAD: ${{ contains(matrix.segments, 'cloud-http-authorization') && '1' || '0' }}
           RUNNER_PROCESS_SAMPLE_AFTER_MS: ${{ contains(matrix.segments, 'plugin-write-coordination') && '390000' || '' }}
           WEWORK_E2E_SOCKET_IO_CLIENT: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/socket.io-client.cjs
           WEWORK_E2E_YAML_PARSER: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/e2e-client/yaml.cjs
@@ -1513,6 +1556,9 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
+
+      - name: Prepare native test dependencies
+        uses: ./.github/actions/setup-wework-native-test-dependencies
 
       - name: Verify native sandbox namespaces
         run: bash .github/scripts/verify-native-sandbox-namespaces.sh
@@ -1748,7 +1794,7 @@ jobs:
           test -x "$WEWORK_E2E_APP_BIN"
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
           test -x "$WEWORK_E2E_BACKEND_RS_BIN"
-          segments=browser-toolbar-actions,tray-lifecycle,browser-annotation-design,clipboard-history-image
+          segments=browser-toolbar-actions,tray-lifecycle,clipboard-history-image
           if [[ "$COMPONENT_UPDATE_E2E" == "true" ]]; then
             segments+=,component-update
           fi

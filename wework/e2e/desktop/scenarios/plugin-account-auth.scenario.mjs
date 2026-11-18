@@ -42,6 +42,7 @@ import {
   CLOUD_DEVICE_ID,
   REMOTE_DOCKER_DEVICE_ID,
   processIsAlive,
+  selectE2EModel,
 } from '../modules/shared.mjs'
 import {
   assistantMessage,
@@ -131,6 +132,10 @@ export async function createDesktopScenario({
       oauthSecret,
       transferSecret,
       recordPythonRuntime: checkpoint === 'plugin-account-auth-password',
+      // The row-lock probe observes an installation, not a connector. Keep its
+      // sole account adapter identical to the mail recovery assertion.
+      accountConnectorSlugs:
+        checkpoint === 'plugin-account-auth-coordination' ? ['mail'] : undefined,
     })
 
   async function api(path, method = 'GET', body) {
@@ -636,6 +641,7 @@ export async function createDesktopScenario({
               sourcePids.every(pid => Number.isSafeInteger(pid) && pid > 0 && processIsAlive(pid))
             )
             command = `python3 ${quote(join(cloudRoot, 'scripts/oauth-cli.py'))} read`
+            let reconciledBeforeRestart
             await restartDesktopApp({
               afterStop: async () => {
                 await waitForValue(
@@ -656,9 +662,17 @@ export async function createDesktopScenario({
                   ),
                   cloud.remoteExecutor.pid
                 )
+                reconciledBeforeRestart = await readFile(reconcileMarker, 'utf8')
               },
             })
             await cloud.waitForConnectedAppDevice()
+            // Online registration precedes account synchronization for the new runtime binding.
+            await waitForValue(
+              () => readFile(reconcileMarker, 'utf8'),
+              value => value.length > reconciledBeforeRestart.length,
+              workbenchReadyTimeoutMs,
+              'The restarted executor did not finish account synchronization'
+            )
             const oauth = await connectionFor('oauth')
             await api(`/plugin-connections/${oauth.id}`, 'DELETE', {
               expected_revision: oauth.revision,
@@ -785,6 +799,7 @@ export async function createDesktopScenario({
             for (const action of ['cancel', 'ordinary', 'resume']) {
               await control.command('click', '[data-testid="new-chat-button"]')
               await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR)
+              await selectE2EModel(control)
               const reference =
                 action === 'resume'
                   ? ''
@@ -870,6 +885,8 @@ export async function createDesktopScenario({
             businessWorkspace = join(homePath, 'native-plugin-chat')
             await mkdir(businessWorkspace, { recursive: true })
             await control.command('click', '[data-testid="new-chat-button"]')
+            await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR)
+            await selectE2EModel(control)
             await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: prompt })
             await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
             await waitForValue(

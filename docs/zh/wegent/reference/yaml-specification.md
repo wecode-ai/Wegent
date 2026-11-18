@@ -211,7 +211,7 @@ spec:
 | ------------------------------------- | ------- | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `metadata.name`                       | string  | 是   | Model 的唯一标识符                                                                                                                             |
 | `metadata.namespace`                  | string  | 是   | 命名空间，通常为 `default`                                                                                                                     |
-| `spec.isVisible`                      | boolean | 否   | 公共模型是否出现在普通用户的模型选择列表中，默认 `true`；设为 `false` 不影响已有引用和运行时解析                                               |
+| `spec.isVisible`                      | boolean | 否   | 公共模型是否出现在普通用户的模型选择列表中，默认 `true`；设为 `false` 不影响已有引用和运行时解析（订阅器、已有任务、自动化等持久化配置仍可使用）                                               |
 | `spec.allowedUsers`                   | array   | 否   | 公共模型的用户名白名单；仅在 `allowedUsersEnabled` 为 `true` 时生效。开关关闭时列表保留但不限制访问                                            |
 | `spec.allowedUsersEnabled`            | boolean | 否   | 白名单模式显式开关；设为 `true` 时严格按 `allowedUsers` 控制，名单为空则所有用户不可用；为 `false`/缺省时是普通公共模型，`allowedUsers` 被忽略 |
 | `spec.modelGroup`                     | string  | 否   | 模型选择器使用的一级展示分组                                                                                                                   |
@@ -821,6 +821,8 @@ spec:
   authType: none
   transport: http
   mcpUrl: https://tickets.example.com/api
+  toolLoadingMode: static
+  keywords: []
   providerHeadersEncrypted: "base64-encrypted-json"
   toolAllowlist:
     - get_ticket
@@ -853,14 +855,18 @@ spec:
 | `spec.enabled`                  | boolean | 是   | 是否启用，停用后不会出现在用户目录和 Runtime 中                   |
 | `spec.visibility`               | string  | 是   | `all` 或 `roles`                                                  |
 | `spec.allowedRoles`             | array   | 否   | `visibility: roles` 时允许访问的用户角色                          |
-| `spec.authType`                 | string  | 是   | 当前仅支持 `none`                                                 |
+| `spec.authType`                 | string  | 是   | `none` 使用固定凭据；`oauth2` 支持用户级 OAuth 2.0 发现、DCR 和 PKCE |
 | `spec.transport`                | string  | 是   | `streamable-http`、`sse` 或 `http`                                |
 | `spec.mcpUrl`                   | string  | 是   | MCP endpoint 或 HTTP API 基础地址                                 |
+| `spec.toolLoadingMode`          | string  | 否   | `static`（默认，静态全局加载）或 `lazy`（按需加载） |
+| `spec.keywords`                 | array   | 否   | `lazy` 模式下用于消息命中的关键词；命中后把 scoped MCP 写入 `mcp_servers` |
 | `spec.providerHeadersEncrypted` | string  | 否   | 使用项目敏感数据加密工具加密后的固定请求头 JSON                   |
 | `spec.toolAllowlist`            | array   | 否   | 允许暴露和调用的上游工具名                                        |
 | `spec.httpTools`                | array   | 条件 | `transport: http` 时必填，定义普通 HTTP API 暴露成 MCP 工具的方式 |
 
 `providerHeadersEncrypted` 必须是加密后的 JSON 字符串。管理 API 接收明文 `provider_headers` 后会负责加密；手写 YAML 时不要提交明文 API Key、服务令牌或请求头。
+
+`toolLoadingMode: static` 会把该应用的工具加入共享 `wegent-connectors` MCP。`lazy` 在 Chat 中通过 Skill 选择、关键词命中或 `load_skill` 挂载完整工具；云端编码类 Shell 和桌面即使没有命中关键词，也保留轻量 discover/call 入口，按需读取上游 schema。显式选择文档 Provider 会挂载其可用 App。`keywords` 按子串匹配，含空格的词组要求所有词同时出现。旧资源缺少该字段时按 `static` 处理；旧值 `direct`/`skill` 会分别兼容为 `static`/`lazy`。
 
 ---
 

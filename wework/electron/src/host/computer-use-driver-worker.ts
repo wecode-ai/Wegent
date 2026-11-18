@@ -41,7 +41,9 @@ function respond(response: DriverResponse): void {
 /** Keep cancellation controllers in the process that owns their native calls. */
 async function handleRequest(request: Exclude<DriverRequest, { method: 'abort' }>) {
   if (request.method === 'start') {
-    driver = CuaDriver.create(undefined)
+    // Keep native work and TCC attribution in Wework's isolated helper; never
+    // discover or launch an independently installed CuaDriver.app daemon.
+    driver = CuaDriver.create({ embedded: true, claudeCodeCompatibility: false })
     const catalog = JSON.parse(await driver.listToolsJson()) as {
       tools?: Array<{ name: string; annotations?: { readOnlyHint?: boolean } }>
     }

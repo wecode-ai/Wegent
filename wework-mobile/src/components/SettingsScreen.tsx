@@ -8,9 +8,11 @@ import type { WegentAuthState } from '@/auth/useWegentAuth'
 import type { LocalRuntime, LocalRuntimeProfile, LocalRuntimeStatus } from '@/services/localRuntime'
 import { confirmNativeAction, showErrorAlert } from '@/services/errorAlerts'
 import { phoneLocalModels, type PhoneLocalModel } from '@/services/phoneLocalModels'
+import { usePhoneModelProviders } from '@/hooks/usePhoneModelProviders'
 import { AuthorizationScreen } from './AuthorizationScreen'
 import { LocalRuntimeSettings } from './LocalRuntimeSettings'
 import { ErrorNotice } from './errors/ErrorNotice'
+import { DiagnosticsSettings } from './DiagnosticsSettings'
 
 export function SettingsPage({
   title,
@@ -122,6 +124,7 @@ export function SettingsRow({
   onPress,
   testID,
   separator = false,
+  disabled = false,
 }: {
   label: string
   detail?: string
@@ -129,6 +132,7 @@ export function SettingsRow({
   onPress: () => void
   testID: string
   separator?: boolean
+  disabled?: boolean
 }) {
   const theme = useTheme()
   return (
@@ -136,7 +140,14 @@ export function SettingsRow({
       {separator && (
         <View style={[styles.separator, { backgroundColor: theme.colors.outlineVariant }]} />
       )}
-      <Pressable accessibilityRole="button" onPress={onPress} testID={testID} style={styles.row}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ disabled }}
+        disabled={disabled}
+        onPress={onPress}
+        testID={testID}
+        style={[styles.row, disabled && { opacity: 0.45 }]}
+      >
         <Ionicons name={icon} size={23} color={theme.colors.onSurface} />
         <Text variant="bodyLarge" style={styles.rowLabel}>
           {label}
@@ -239,6 +250,11 @@ export function SettingsScreen({
 }) {
   const theme = useTheme()
   const { models, error } = usePhoneModels()
+  const providers = usePhoneModelProviders()
+  const modelCount =
+    models.length +
+    (providers.snapshot?.providers.reduce((total, provider) => total + provider.models.length, 0) ??
+      0)
   return (
     <SettingsPage title="设置" onBack={onClose} close>
       <View style={styles.profile}>
@@ -266,7 +282,7 @@ export function SettingsScreen({
         <SettingsRow
           icon="options-outline"
           label="模型与账号"
-          detail={models.length ? `${models.length} 个模型` : undefined}
+          detail={modelCount ? `${modelCount} 个模型` : undefined}
           onPress={onModels}
           testID="settings-models"
         />
@@ -304,6 +320,16 @@ export function SettingsScreen({
           testID="settings-privacy-policy"
         />
       </SettingsGroup>
+      <SettingsGroup title="诊断">
+        <DiagnosticsSettings />
+      </SettingsGroup>
+      {providers.error != null && (
+        <ErrorNotice
+          error={providers.error}
+          onRetry={providers.retry}
+          testID="settings-providers-error"
+        />
+      )}
       {(error != null || localError != null) && (
         <ErrorNotice error={error ?? localError} title="本机设置需要处理" testID="settings-error" />
       )}
@@ -455,6 +481,8 @@ export function BackendLoginScreen({
 }
 
 export const settingsStyles = StyleSheet.create({
+  groupContent: { paddingHorizontal: 20, paddingBottom: 16, gap: 8 },
+  groupText: { paddingHorizontal: 20, paddingVertical: 16 },
   field: { gap: 8 },
   form: { gap: 20 },
   hint: { opacity: 0.65 },

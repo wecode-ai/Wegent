@@ -7,6 +7,7 @@ import { createPluginPythonChat } from '../modules/plugin-python-chat.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { disconnectDesktopCloud, signInDesktopCloud } from '../modules/desktop-cloud-login.mjs'
 import { createPythonDownloadGate } from '../modules/python-download-gate.mjs'
+import { createProjectPythonNoticeRegression } from '../modules/project-create-python-notice.mjs'
 
 import {
   assertManagedPythonSettings,
@@ -42,6 +43,7 @@ export async function createDesktopScenario({
   let cloudEnvironment
   let restartDesktopApp
   const observations = []
+  const projectNotice = createProjectPythonNoticeRegression({ captureScreenshot })
   await mkdir(launchDirectory, { recursive: true })
   for (const name of ['ssl', 'ensurepip', 'venv']) {
     await writeFile(
@@ -69,6 +71,7 @@ export async function createDesktopScenario({
     async prepareCloud(cloud) {
       appEnvironment.WEWORK_BACKEND_URL = cloud.backendUrl
       await verifyPythonDownloadAccess(cloud, uiTimeoutMs)
+      await projectNotice.prepare(cloud)
     },
     launchWorkingDirectory: launchDirectory,
     appEnvironment,
@@ -233,19 +236,24 @@ export async function createDesktopScenario({
           text: '准备失败',
         })
         await captureScreenshot(control, 'python-runtime-publication-failed.png', 'body')
+        await projectNotice.verify(control)
+        // Resolving the download descriptor is bounded to 200ms, so a loaded
+        // machine can fail the automatic attempt there, before uv reports a
+        // publication failure. Count failed attempts so the no-loop invariant
+        // holds whichever step failed.
         assert.equal(
-          (await readFile(appLog, 'utf8')).slice(logOffset).split('python-runtime-install-started')
+          (await readFile(appLog, 'utf8')).slice(logOffset).split('python-runtime-install-failed')
             .length - 1,
           1,
           'A failed startup preparation must not loop'
         )
-        const failedAttempts = (await readFile(appLog, 'utf8')).split(
-          'python-runtime-install-started'
+        const attemptedPreparations = (await readFile(appLog, 'utf8')).split(
+          'python-runtime-ensure-started'
         ).length
         await signInDesktopCloud(control, cloudEnvironment, { timeoutMs: uiTimeoutMs })
         assert.equal(
-          (await readFile(appLog, 'utf8')).split('python-runtime-install-started').length,
-          failedAttempts,
+          (await readFile(appLog, 'utf8')).split('python-runtime-ensure-started').length,
+          attemptedPreparations,
           'Signing in again retried a failed automatic preparation'
         )
         await control.command('navigate', 'body', { value: '/settings/execution-environments' })
@@ -288,7 +296,11 @@ export async function createDesktopScenario({
       )
     },
     async cleanup() {
-      await downloadGate.stop()
+      try {
+        await projectNotice.cleanup()
+      } finally {
+        await downloadGate.stop()
+      }
     },
     diagnostics() {
       return { observations, launchDirectory, pythonPath }

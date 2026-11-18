@@ -13,6 +13,7 @@ import {
   matrixSkillPath,
 } from './model-progressive-contract.mjs'
 import { verifyNativeMcpCloudRouting } from './mcp-app-cloud-routing.mjs'
+import { verifyProjectRemovalCompletion } from './project-removal-completion.mjs'
 import { packagedComponentRoots } from './packaged-component-resources.mjs'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
@@ -1519,6 +1520,7 @@ async function verifyCloudProjectFlow(
     'clickWhenEnabled',
     `[data-testid="remove-project-dialog-${currentProjectId}-confirm-button"]`
   )
+  await verifyProjectRemovalCompletion(control, currentProjectId, workspacePath)
   await cloudEnvironment.waitForWorkspaceRemoved(workspacePath)
   await waitForSnapshot(
     control,

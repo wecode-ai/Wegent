@@ -1,8 +1,10 @@
 import { useWorkbenchServiceConnections } from './workbenchServiceConnections'
+import { getChangeRequestMonitor } from './changeRequestMonitor'
 import { createHttpClient } from '@/api/http'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createPluginApi } from '@/api/plugins'
 import { AttachmentDownloadProvider } from '@/components/chat/AttachmentDownloadProvider'
+import { createPersonalHomeTaskDraftStore } from '../todo/personalHomeTaskDrafts'
 import {
   bindComposerAppsSource,
   notifyComposerAppsListeners,
@@ -18,7 +20,6 @@ import {
   notifyMainRuntimeWorkChanged,
 } from '@/desktop/runtimeWorkSync'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import { RunnerSelectionHost } from '@/features/collaboration/RunnerSelectionHost'
 import { CoreDshModelSync } from '@/features/dsh-models/CoreDshModelSyncBridge'
 import { CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME } from '@/features/model-settings/codexOfficialModels'
 import { QuestionDiscussionScope } from '@/features/notifications/QuestionDiscussionScope'
@@ -126,6 +127,7 @@ import {
 } from './useWorkbenchContextCallbacks'
 import { useWorkbenchDataRefresh } from './useWorkbenchDataRefresh'
 import { useWorkbenchDeviceUpgrades } from './useWorkbenchDeviceUpgrades'
+import { WorkbenchCloudDeviceRestarts } from '@/features/cloud-devices/WorkbenchCloudDeviceRestarts'
 import {
   useHandleBlockedModelSelect,
   useHandleBlockedModelSelection,
@@ -189,6 +191,7 @@ import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import {
   findProjectDeviceWorkspace,
   findProjectMetadataDeviceWorkspace,
+  isSameRuntimeTaskIdentity,
   readLastProjectId,
   resolveComposerProjectPluginNames,
 } from './workbenchRuntimeHelpers'
@@ -383,6 +386,13 @@ function OwnedWorkbenchProvider({
     standInApi: resolvedServices.standInApi,
     runtimeApi: resolvedServices.runtimeWorkApi,
   })
+  useEffect(() => {
+    if (resolvedServices.deviceApi)
+      getChangeRequestMonitor(resolvedServices.deviceApi).syncConnectionObservations(
+        state.runtimeWork,
+        state.devices
+      )
+  }, [resolvedServices.deviceApi, state.runtimeWork, state.devices])
   const currentContextUsage = state.currentRuntimeTask
     ? contextUsageByRuntimeTask[runtimeConversationKey(state.currentRuntimeTask)]
     : undefined
@@ -442,6 +452,7 @@ function OwnedWorkbenchProvider({
     goalDraftActiveByScope,
     setGoalDraftActiveForScope,
   } = useWorkspaceTabDraftInput(workspaceTabId)
+  const [personalHomeTaskDraftStore] = useState(createPersonalHomeTaskDraftStore)
   const [composerErrorByScope, setComposerErrorByScope] = useState<Record<string, string>>({})
   const [trialTemplatesByScope, setTrialTemplatesByScope] = useState<
     Record<string, PluginPathComponent[]>
@@ -632,6 +643,12 @@ function OwnedWorkbenchProvider({
     userId: user.id,
     resolveTask: resolveRuntimeTaskSummary,
     modelStore: modelSelection,
+    // The model store restores the focused task's saved selection, including a
+    // persisted cloud reference that the discovery catalog does not list.
+    resolveActiveTaskSelectionReady: address =>
+      state.currentRuntimeTask && isSameRuntimeTaskIdentity(state.currentRuntimeTask, address)
+        ? modelSelection.isSelectionReady
+        : null,
   })
   const conversationModels = modelSelection.models
   const skillSelection = useWorkbenchSkills({
@@ -681,6 +698,7 @@ function OwnedWorkbenchProvider({
     dispatch,
     executorClient,
     services: resolvedServices,
+    canNavigate: canNavigateWorkspaceTab,
   })
 
   const markRuntimeTasksArchived = useMarkRuntimeTasksArchived({
@@ -753,7 +771,7 @@ function OwnedWorkbenchProvider({
         activationRevision: remoteProjectSyncActivationRevisionRef.current,
       }
       remoteProjectSyncAttemptRef.current = attempt
-      await enqueueRemoteProjectStateMutation(async () => {
+      const synced = await enqueueRemoteProjectStateMutation(async () => {
         const isCurrentAttempt = () =>
           remoteProjectSyncAttemptRef.current === attempt &&
           revision === remoteProjectSyncRevisionRef.current &&
@@ -777,8 +795,9 @@ function OwnedWorkbenchProvider({
         if (!response.accepted) {
           throw new Error(response.error || 'Failed to sync remote projects')
         }
-        await refreshWorkLists()
+        return true
       })
+      if (synced) await refreshWorkLists()
     })().catch(error => {
       if (
         attempt &&
@@ -925,6 +944,9 @@ function OwnedWorkbenchProvider({
     services: resolvedServices,
     refreshDevices,
   })
+  const refreshDevicesAfterRestart = useStableEvent(() =>
+    refreshDevices({ useCacheFallback: false })
+  )
 
   const selectProject = useSelectProject({
     projectSelectionStartedRef,
@@ -1076,6 +1098,7 @@ function OwnedWorkbenchProvider({
     isOptionsLocked,
     attachmentSelection,
     modelSelection,
+    resolveRuntimeTaskModelSelection,
     skillSelection,
     refreshWorkLists,
   })
@@ -1686,6 +1709,7 @@ function OwnedWorkbenchProvider({
       scopeKey: projectChatScopeKey,
       inputByScope: draftInputByScope,
       goalDraftActiveByScope,
+      personalHomeTaskDraftStore,
       setGoalDraftActiveForScope,
       getInputRevisionForScope,
       models: conversationModels,
@@ -1694,6 +1718,7 @@ function OwnedWorkbenchProvider({
       activeModel,
       supportsModelProviderSwitch,
       selectedModelOptions: modelSelection.selectedModelOptions,
+      selectionRevision: modelSelection.selectionRevision,
       modelSelectionDiagnostics: modelSelection.modelSelectionDiagnostics,
       isModelCatalogReady: modelSelection.isCatalogReady,
       isModelSelectionReady:
@@ -1767,6 +1792,7 @@ function OwnedWorkbenchProvider({
       draftInput,
       draftInputByScope,
       goalDraftActiveByScope,
+      personalHomeTaskDraftStore,
       setGoalDraftActiveForScope,
       getInputRevisionForScope,
       composerError,
@@ -1791,6 +1817,7 @@ function OwnedWorkbenchProvider({
       supportsModelProviderSwitch,
       modelSelection.selectedModel,
       modelSelection.selectedModelOptions,
+      modelSelection.selectionRevision,
       modelSelection.modelSelectionDiagnostics,
       modelSelection.setSelectedModel,
       modelSelection.setSelectedModelAndOptions,
@@ -2024,9 +2051,13 @@ function OwnedWorkbenchProvider({
                 models={conversationModels}
                 services={resolvedServices}
               />
-              <RunnerSelectionHost />
               <DesktopGitAccountConfigurationProvider>
-                <QuestionDiscussionScope>{children}</QuestionDiscussionScope>
+                <WorkbenchCloudDeviceRestarts
+                  devices={state.devices}
+                  refreshDevices={refreshDevicesAfterRestart}
+                >
+                  <QuestionDiscussionScope>{children}</QuestionDiscussionScope>
+                </WorkbenchCloudDeviceRestarts>
               </DesktopGitAccountConfigurationProvider>
             </WorkbenchPaneContext.Provider>
           </WorkbenchContext.Provider>

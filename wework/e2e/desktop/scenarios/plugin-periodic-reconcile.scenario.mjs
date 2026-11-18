@@ -12,7 +12,9 @@ import {
 } from '../modules/plugin-regression-fixture.mjs'
 import {
   acknowledgedPluginGeneration,
+  assertRetainedPluginUnchanged,
   latestPluginSyncRequest,
+  observedRetainedPluginSync,
   observePluginSyncTransport,
 } from '../modules/plugin-sync-observer.mjs'
 import { startRealObjectStorage } from '../modules/real-object-storage.mjs'
@@ -71,6 +73,80 @@ function pluginRuntime(plugin) {
       'runtime',
       'previous',
     ].map(key => [key, plugin[key]])
+  )
+}
+
+function baselineSyncComplete(target, request) {
+  const reconciliation = target.observation.reconciliations?.at(-1)
+  return (
+    !reconciliation ||
+    (reconciliation.completedAt !== undefined && request?.at >= reconciliation.at)
+  )
+}
+
+// Waiting for another Runtime's safe window can cross this Runtime's timer.
+// Refresh ordering metadata only after its observed generation is acknowledged.
+export async function settleRetainedPluginBaseline(target, retained, timeoutMs) {
+  return until(
+    async () => {
+      const plugin = await materializedPlugin(target.home, retained.installedId)
+      assert.deepEqual(
+        pluginRuntime(plugin),
+        pluginRuntime(target.retainedBefore),
+        'Reconcile window alignment altered the retained plugin runtime'
+      )
+      const request = latestPluginSyncRequest(
+        target.observation.capabilities.filter(value =>
+          value.pluginIds.includes(String(retained.installedId))
+        )
+      )
+      return {
+        plugin,
+        request,
+        acknowledgement: request
+          ? acknowledgedPluginGeneration(target.observation, plugin, retained.installedId, request)
+          : null,
+      }
+    },
+    value =>
+      // A timer request may already be in flight before its capability arrives.
+      baselineSyncComplete(target, value.request) &&
+      value.acknowledgement?.success === true &&
+      value.plugin.plugin_sync_generation === value.request.pluginSync.generation,
+    `${target.kind} retained plugin baseline did not settle after window alignment`,
+    timeoutMs
+  )
+}
+
+export async function settleReconcileBaselines(targets, retained, timeoutMs) {
+  return until(
+    async () => {
+      await Promise.all(targets.map(waitForSafeReconcileWindow))
+      const settled = await Promise.all(
+        targets.map(target => settleRetainedPluginBaseline(target, retained, timeoutMs))
+      )
+      // Filesystem reads and ACK settlement can outlive an earlier safe window.
+      // All targets must still be safe at the same fault-injection boundary.
+      const now = Date.now()
+      const scheduled = targets.map(
+        target => latestReconcileAt(target.observation, now) ?? target.baseline.registeredAt
+      )
+      if (
+        scheduled.some(
+          (at, index) =>
+            at + MIN_RECONCILE_DELAY_MS - now <= SETUP_RECONCILE_MARGIN_MS ||
+            !baselineSyncComplete(targets[index], settled[index].request)
+        )
+      )
+        return null
+      for (const [index, target] of targets.entries()) {
+        target.baseline.scheduledAt = scheduled[index]
+      }
+      return settled
+    },
+    Boolean,
+    'Runtime baselines did not settle inside a shared safe reconcile window',
+    MAX_RECONCILE_DELAY_MS + timeoutMs
   )
 }
 
@@ -252,11 +328,23 @@ export async function createDesktopScenario({
         return { current, request, elapsedMs }
       }
       const unchanged = await materializedPlugin(home, retained.installedId)
-      assert.deepEqual(
-        requests.length === 0 ? unchanged : pluginRuntime(unchanged),
-        requests.length === 0 ? baseline.retained : pluginRuntime(baseline.retained),
-        'The lost change or reconciliation altered an unrelated plugin runtime'
+      const sync = observedRetainedPluginSync(
+        observation,
+        unchanged,
+        baseline.retained,
+        deviceRouteId
       )
+      if (sync && !sync.acknowledgement) {
+        // Manifest publication precedes the real transport ACK. Wait for that
+        // exact ACK instead of rejecting an otherwise valid in-flight snapshot.
+        await until(
+          () =>
+            observedRetainedPluginSync(observation, unchanged, baseline.retained, deviceRouteId),
+          value => Boolean(value?.acknowledgement),
+          'The retained plugin ordering change had no successful complete-sync ACK'
+        )
+      }
+      assertRetainedPluginUnchanged(unchanged, baseline.retained, observation, deviceRouteId)
       if (Date.now() - lastProgressAt >= 30_000) {
         lastProgressAt = Date.now()
         console.log(
@@ -437,7 +525,21 @@ export async function createDesktopScenario({
         retained: target.retainedBefore,
         capturedAt: Date.now(),
       }
-      target.baseline.scheduledAt = await waitForSafeReconcileWindow(target)
+    }
+    const settledBaselines = await settleReconcileBaselines(
+      targets,
+      retained,
+      workbenchReadyTimeoutMs
+    )
+    for (const [index, target] of targets.entries()) {
+      const settled = settledBaselines[index]
+      target.baseline.retained = settled.plugin
+      evidence.push({
+        case: 'retained-plugin-baseline-acknowledged-after-window-alignment',
+        target: target.kind,
+        generation: settled.plugin.plugin_sync_generation,
+        acknowledgement: settled.acknowledgement,
+      })
     }
     missedInstalledId = item.installedId
     const componentStates = { [`skill:${item.slug}`]: false }
@@ -542,6 +644,12 @@ export async function createDesktopScenario({
     assert.deepEqual(
       pluginRuntime(await materializedPlugin(target.home, retained.installedId)),
       pluginRuntime(retainedBefore)
+    )
+    assertRetainedPluginUnchanged(
+      await materializedPlugin(target.home, retained.installedId),
+      retainedBefore,
+      observation,
+      deviceRouteId
     )
     assert.deepEqual(await readFile(target.retainedSkillPath), target.retainedSkill)
     assert.deepEqual(after.skills, target.before.skills)

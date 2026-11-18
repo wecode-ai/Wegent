@@ -33,6 +33,8 @@ import { DocumentUpload } from './DocumentUpload'
 import { KnowledgeBaseIcon } from './KnowledgeBaseIcon'
 
 import { DeleteDocumentDialog } from './DeleteDocumentDialog'
+import { BatchDeletionDialog } from './BatchDeletionDialog'
+import { useBatchDeletion } from '../hooks/useBatchDeletion'
 import { EditDocumentDialog } from './EditDocumentDialog'
 import { RetrievalTestDialog } from './RetrievalTestDialog'
 import { ReanalyzeMultimodalDialog } from '@/features/knowledge/multimodal/components/ReanalyzeMultimodalDialog'
@@ -497,7 +499,6 @@ export function DocumentList({
     resetSelectionForNavigation()
     setIsExpandAllView(prev => !prev)
   }, [isExpandAllView, resetSelectionForNavigation])
-  const [batchLoading, setBatchLoading] = useState(false)
   const [showSearchPopover, setShowSearchPopover] = useState(false)
   // Track if initialDocPath has been handled
   const [initialDocPathHandled, setInitialDocPathHandled] = useState(false)
@@ -826,15 +827,12 @@ export function DocumentList({
     }
   }
 
-  const handleDelete = async () => {
+  const handleDelete = async (continueOnExternalFailure = false) => {
     if (!deletingDoc) return
-    try {
-      await remove(deletingDoc.id)
-      setDeletingDoc(null)
-      onDocumentsChanged?.()
-    } catch {
-      // Error handled by hook
-    }
+    const targetId = deletingDoc.id
+    if (!(await remove(targetId, continueOnExternalFailure))) return
+    setDeletingDoc(current => (current?.id === targetId ? null : current))
+    onDocumentsChanged?.()
   }
   // Batch selection handlers
   const handleSelectDoc = (doc: KnowledgeDocument, selected: boolean) => {
@@ -881,19 +879,33 @@ export function DocumentList({
   const usesAllAvailableDocuments = selectionIsControlled && selectedDocumentIds.size === 0
 
   // Batch operations using batch API
+  const batchDeletion = useBatchDeletion({
+    scope: JSON.stringify([knowledgeBase.id, currentFolderId, isExpandAllView]),
+    run: batchDelete,
+    onResult: (result, aggregate) => {
+      const deletedIds = new Set(
+        result.items.filter(item => item.content_deleted).map(item => item.document_id)
+      )
+      const selection = new Set([...selectedDocumentIds].filter(id => !deletedIds.has(id)))
+      if (selectionIsControlled) onSelectionChange?.([...selection])
+      else setDocumentSelection(selection)
+      if (!aggregate.failed_count && !aggregate.unconfirmed_count) {
+        toast({
+          title: t('document.deletion.batchSummary', {
+            deleted: aggregate.success_count,
+            unconfirmed: 0,
+            failed: 0,
+          }),
+        })
+      }
+      if (result.success_count > 0) onDocumentsChanged?.()
+    },
+  })
+  const batchLoading = batchDeletion.loading
   const handleBatchDelete = async () => {
     const payload = getSelectionPayload()
-    if (payload.documentIds.length === 0 || payload.folderIds.length > 0) return
-    setBatchLoading(true)
-    try {
-      await batchDelete(payload.documentIds)
-      resetSelection()
-      onDocumentsChanged?.()
-    } catch {
-      // Error handled by hook
-    } finally {
-      setBatchLoading(false)
-    }
+    if (!payload.documentIds.length || payload.folderIds.length) return
+    await batchDeletion.start(payload.documentIds)
   }
 
   // Handle web document re-fetch
@@ -1529,6 +1541,7 @@ export function DocumentList({
                       <Button
                         variant="destructive"
                         size="sm"
+                        data-testid="batch-delete-documents"
                         onClick={handleBatchDelete}
                         disabled={documentBatchActionsDisabled || batchLoading}
                       >
@@ -1784,6 +1797,14 @@ export function DocumentList({
           setEditingDoc(null)
           refresh()
         }}
+      />
+
+      <BatchDeletionDialog
+        result={batchDeletion.result}
+        loading={batchDeletion.loading}
+        error={batchDeletion.error}
+        onContinue={batchDeletion.continueDeletion}
+        onClose={batchDeletion.close}
       />
 
       <DeleteDocumentDialog

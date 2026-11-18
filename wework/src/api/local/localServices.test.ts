@@ -24,10 +24,12 @@ import type { TurnFileChangesSummary, User } from '@/types/api'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import * as codexPlugins from './codexPlugins'
 import {
+  assignmentCloudExecutionFields,
   createAutomationApiFromIpc,
   createLocalAppServices,
   createRuntimeWorkApiFromIpc,
   resetLocalRuntimeChatStreamsForTests,
+  resolveAssignmentCloudModel,
 } from './localServices'
 import { getLocalUser, LOCAL_USER } from './localSession'
 
@@ -120,10 +122,27 @@ describe('createLocalAppServices', () => {
   })
 
   test.each([
-    { prepared: true, source: undefined },
-    { prepared: false, source: 'native' },
-    { prepared: false, source: undefined },
-  ])('snapshots local assignment runtimes with %j', async ({ prepared, source }) => {
+    { prepared: true, source: undefined, pendingModel: false },
+    { prepared: false, source: 'native', pendingModel: false },
+    { prepared: false, source: undefined, pendingModel: false },
+    { prepared: true, source: undefined, pendingModel: true },
+  ])('snapshots local assignment runtimes with %j', async ({ prepared, source, pendingModel }) => {
+    const assignmentModelName = pendingModel ? 'local-model:assignment-pending' : 'gpt-5.6-sol'
+    if (pendingModel) {
+      saveLocalModelConfig({
+        id: 'assignment-pending',
+        displayName: 'Assignment pending',
+        modelId: 'upstream-model',
+        baseUrl: 'https://models.example.com/v1',
+        apiKey: 'fixture-key',
+        catalogEntry: createDefaultLocalModelCatalogEntry({
+          id: 'assignment-pending',
+          displayName: 'Assignment pending',
+          toolProfile: 'custom',
+        }),
+        catalogReady: false,
+      })
+    }
     const group = {
       id: 'group-1',
       workspace_id: 'local',
@@ -218,7 +237,7 @@ describe('createLocalAppServices', () => {
       name,
       display_name: name,
       runtime: 'codex',
-      model: 'gpt-5.6-sol',
+      model: assignmentModelName,
       model_type: 'runtime',
       model_namespace: 'default',
       allowed_models: prepared ? allowedModels : allowedModels?.slice(0, 1),
@@ -240,7 +259,7 @@ describe('createLocalAppServices', () => {
               model: {
                 runtime: 'codex',
                 provider: 'openai',
-                model_id: 'gpt-5.6-sol',
+                model_id: assignmentModelName,
                 ...(source ? { source } : {}),
               },
             },
@@ -250,6 +269,8 @@ describe('createLocalAppServices', () => {
     })
     const updates: Array<Record<string, unknown>> = []
     const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'runtime.codex.catalog.custom.write') return {}
+      if (method === 'runtime.codex.app_server.restart') return { restarted: true }
       if (method === 'projects.list') return [project]
       if (method === 'todos.get') return task
       if (method === 'runtime.runner.catalog') {
@@ -259,8 +280,8 @@ describe('createLocalAppServices', () => {
             {
               runtime: 'codex',
               provider: 'openai',
-              model_id: 'gpt-5.6-sol',
-              local_model_id: 'gpt-5.6-sol',
+              model_id: assignmentModelName,
+              local_model_id: assignmentModelName,
               account_label: 'Local account',
             },
           ],
@@ -270,7 +291,7 @@ describe('createLocalAppServices', () => {
         return params?.project_id === 'project-1'
           ? [
               agent('worker', 'Worker', 'worker-mcp', 'project-1', [
-                { name: 'gpt-5.6-sol', type: 'runtime', namespace: 'default' },
+                { name: assignmentModelName, type: 'runtime', namespace: 'default' },
                 { name: 'gpt-5.6-luna', type: 'runtime', namespace: 'default' },
               ]),
             ]
@@ -344,13 +365,20 @@ describe('createLocalAppServices', () => {
       },
     })
     expect(listCloudModels).not.toHaveBeenCalled()
+    if (pendingModel) {
+      expect(findLocalModelConfigByModelName(assignmentModelName)?.catalogReady).toBe(true)
+      const methods = request.mock.calls.map(([method]) => method)
+      expect(methods.indexOf('runtime.codex.catalog.custom.write')).toBeLessThan(
+        methods.indexOf('todos.update')
+      )
+    }
     if (!prepared) {
       expect(updates[0]).toMatchObject({
         execution_payload: {
           standaloneChatWorkspace: true,
           runnerRouting: {
             environment_id: 'local-device',
-            model: { ...(source ? { source } : {}), model_id: 'gpt-5.6-sol' },
+            model: { ...(source ? { source } : {}), model_id: assignmentModelName },
           },
         },
       })
@@ -414,9 +442,11 @@ describe('createLocalAppServices', () => {
       },
       modelRuntimeProfiles: [
         {
-          modelId: 'gpt-5.6-sol',
+          modelId: assignmentModelName,
           runtimePayload: {
-            executionRequest: { model_config: { model_id: 'gpt-5.6-sol' } },
+            executionRequest: {
+              model_config: { model_id: pendingModel ? 'upstream-model' : assignmentModelName },
+            },
           },
         },
         ...(prepared
@@ -447,6 +477,143 @@ describe('createLocalAppServices', () => {
     expect(
       (updates[2].execution_payload as Record<string, unknown>).managerRuntimeRequest
     ).toBeUndefined()
+  })
+
+  test('resolves a hidden cloud assignment model for its execution fields', async () => {
+    const project = {
+      id: 'project-1',
+      resource_type: 'project',
+      cloud_project_id: null,
+      parent_id: null,
+      public_id: 'project-1',
+      project_key: 'LOCAL',
+      name: 'Local diagnostics',
+      title: null,
+      description: '',
+      created_by_user_id: 0,
+      sequence_number: null,
+      status: 'active',
+      priority: null,
+      sort_order: 0,
+      current_delivery_id: null,
+      metadata: {
+        task_provider: 'local',
+        tags: [],
+        collaboration_groups: [],
+        execution_environment: { devices: {} },
+      },
+      version: 1,
+      created_at: '2026-09-26T00:00:00Z',
+      updated_at: '2026-09-26T00:00:00Z',
+      completed_at: null,
+    }
+    const task = {
+      ...project,
+      id: 'LOCAL-1',
+      resource_type: 'task',
+      cloud_project_id: 'project-1',
+      public_id: null,
+      project_key: null,
+      name: null,
+      title: 'Inspect CPU',
+      description: 'Continue with the saved model.',
+      sequence_number: 1,
+      status: 'inbox',
+      priority: 'none',
+      metadata: { tags: [] },
+    }
+    const agent = {
+      id: 'worker',
+      project_id: 'project-1',
+      name: 'Worker',
+      display_name: 'Worker',
+      runtime: 'codex',
+      model: 'hidden-cloud-model',
+      model_type: 'public',
+      model_namespace: 'default',
+      allowed_models: [{ name: 'hidden-cloud-model', type: 'public', namespace: 'default' }],
+      system_prompt: 'Worker instructions',
+      additional_skills: [],
+      mcp_servers: {},
+      status: 'active',
+      execution_environment: 'local',
+      execution_mode: 'auto',
+      workspace_policy: 'project',
+      plugins: [],
+      execution_policy: { mode: 'fixed', environment_id: 'local-device' },
+      model_policy: {
+        mode: 'fixed',
+        model: {
+          runtime: 'codex',
+          provider: 'openai-responses',
+          model_id: 'hidden-cloud-model',
+          source: 'cloud',
+          cloud_model: {
+            name: 'hidden-cloud-model',
+            type: 'public',
+            namespace: 'default',
+            resource_user_id: 0,
+          },
+        },
+      },
+      version: 1,
+    }
+    const updates: Array<Record<string, unknown>> = []
+    const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'projects.list') return [project]
+      if (method === 'todos.get') return task
+      if (method === 'runtime.runner.catalog') {
+        return { runtimes: ['codex'], models: [] }
+      }
+      if (method === 'chat_agents.list') {
+        return params?.project_id === 'project-1' ? [agent] : []
+      }
+      if (method === 'todos.update') {
+        updates.push(params?.todo as Record<string, unknown>)
+        return task
+      }
+      throw new Error(`Unexpected method: ${method}`)
+    })
+    const services = createLocalAppServices({
+      ensure: vi.fn().mockResolvedValue({
+        running: true,
+        ready: true,
+        deviceId: 'local-device',
+      }),
+      request,
+      subscribe: vi.fn().mockResolvedValue(vi.fn()),
+      user: AUTHENTICATED_CLOUD_USER,
+      listCloudModels: vi.fn().mockResolvedValue([]),
+      resolveCloudModel: vi.fn().mockResolvedValue({
+        name: 'hidden-cloud-model',
+        type: 'public',
+        namespace: 'default',
+        resourceUserId: 0,
+        config: { protocol: 'openai', apiFormat: 'chat/completions' },
+      }),
+      cloudModelGateway: {
+        baseUrl: 'https://cloud.example/api/runtime-work/llm-responses-proxy',
+        apiKey: 'test-token',
+      },
+    })
+
+    await services.deliveryApi!.assignLoopItem('project-1', 'LOCAL-1', {
+      version: 1,
+      assigneeType: 'agent',
+      assigneeId: 'worker',
+    })
+
+    expect(updates[0]).toMatchObject({
+      execution_payload: {
+        executionRequest: {
+          model_config: expect.objectContaining({
+            model_id: 'hidden-cloud-model',
+            wework_model_kind: 'cloud',
+            upstream_api_format: 'openai-chat-completions',
+          }),
+        },
+      },
+    })
   })
 
   test('reads the composer catalog from the exact local task and includes scoped cloud membership', async () => {
@@ -1143,6 +1310,9 @@ describe('createLocalAppServices', () => {
       expect.objectContaining({
         scope: expect.stringMatching(/^harness:opencode:/),
         upstream: {
+          wework_model_kind: 'model-interface',
+          wework_local_model_id: 'local-model:harness-model',
+          model_provider: 'local-harness-model',
           base_url: 'https://models.example.com/v1',
           request_url: 'https://models.example.com/v1/chat/completions',
           api_format: 'openai-chat-completions',
@@ -1813,6 +1983,7 @@ describe('createLocalAppServices', () => {
       subscribe: vi.fn(),
     })
 
+    await services.runtimeWorkApi!.prepareRuntimeModel({ deviceId: 'local-device' })
     const models = await services.modelApi.listModels()
 
     expect(restartCount).toBe(2)
@@ -2034,9 +2205,7 @@ describe('createLocalAppServices', () => {
 
     const models = await services.modelApi.listModels()
 
-    expect(request.mock.calls).toEqual([
-      ['runtime.models.sync_creation_profiles', { deviceId: 'local-device', profiles: [] }],
-    ])
+    expect(request).not.toHaveBeenCalled()
     expect(
       models.data.some(
         model =>
@@ -4589,6 +4758,76 @@ describe('createLocalAppServices', () => {
       })
     )
     expect(sendPayload.executionRequest.runtime_permission_profile).toBe(':danger-full-access')
+  })
+
+  test('builds execution fields from a saved cloud reference outside the catalog', () => {
+    expect(
+      assignmentCloudExecutionFields(null, {
+        runtime: 'codex',
+        source: 'cloud',
+        provider: 'openai-responses',
+        model_id: 'hidden-cloud-model',
+        cloud_model: {
+          name: 'hidden-cloud-model',
+          type: 'group',
+          namespace: 'team-a',
+          resource_user_id: 7,
+        },
+      })
+    ).toEqual({
+      modelId: 'hidden-cloud-model',
+      modelType: 'group',
+      modelOptions: {
+        weworkCloudModelNamespace: 'team-a',
+        weworkCloudModelResourceUserId: '7',
+      },
+    })
+    expect(
+      assignmentCloudExecutionFields(null, {
+        runtime: 'codex',
+        source: 'native',
+        provider: 'openai',
+        model_id: 'native-model',
+      })
+    ).toBeNull()
+  })
+
+  test('validates the identity of a resolved hidden cloud model', async () => {
+    const reference = {
+      name: 'hidden-cloud-model',
+      type: 'group' as const,
+      namespace: 'team-a',
+      resource_user_id: 7,
+    }
+    const resolved = {
+      name: 'hidden-cloud-model',
+      type: 'group' as const,
+      namespace: 'team-a',
+      resourceUserId: 7,
+      config: { protocol: 'openai', apiFormat: 'chat/completions' },
+    }
+    await expect(
+      resolveAssignmentCloudModel(null, reference, vi.fn().mockResolvedValue(resolved))
+    ).resolves.toEqual(resolved)
+    await expect(
+      resolveAssignmentCloudModel(
+        null,
+        reference,
+        vi.fn().mockResolvedValue({ ...resolved, namespace: 'team-b' })
+      )
+    ).rejects.toThrow('RUNNER_MODEL_UNAVAILABLE')
+    await expect(
+      resolveAssignmentCloudModel(null, reference, vi.fn().mockRejectedValue(new Error('offline')))
+    ).rejects.toThrow('RUNNER_MODEL_UNAVAILABLE')
+    await expect(resolveAssignmentCloudModel(null, null)).resolves.toBeNull()
+    const catalogModel = { ...resolved, type: 'public' as const }
+    await expect(
+      resolveAssignmentCloudModel(
+        catalogModel,
+        null,
+        vi.fn().mockRejectedValue(new Error('unused'))
+      )
+    ).resolves.toEqual(catalogModel)
   })
 
   test('prepares model identity before fencing and keeps transport failures after the fence', async () => {

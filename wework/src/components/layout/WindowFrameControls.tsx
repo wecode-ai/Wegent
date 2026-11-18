@@ -5,7 +5,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 
 const FRAME_CONTROL_BUTTON_CLASS =
-  'flex h-[30px] w-[46px] shrink-0 items-center justify-center rounded-none border-0 bg-transparent p-0 text-text-secondary transition-colors hover:bg-muted hover:text-text-primary active:bg-text-primary/10 [&_svg]:h-4 [&_svg]:w-4 [&_svg]:stroke-[2]'
+  'flex h-11 w-[46px] shrink-0 items-center justify-center rounded-none border-0 bg-transparent p-0 text-text-secondary transition-colors hover:bg-muted hover:text-text-primary active:bg-text-primary/10 md:h-[30px] [&_svg]:h-4 [&_svg]:w-4 [&_svg]:stroke-[2]'
 
 const WEWORK_NEUTRAL_FRAME_COLORS = 'wework:hover:bg-black/[0.08] wework:active:bg-black/[0.12]'
 

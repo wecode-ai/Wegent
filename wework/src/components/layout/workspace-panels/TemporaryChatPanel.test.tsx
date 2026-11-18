@@ -32,6 +32,7 @@ import type { RuntimeConversationTurn, WorkbenchMessage } from '@/types/workbenc
 import { WorkbenchContext, type WorkbenchContextValue } from '@/features/workbench/useWorkbench'
 import { projectRuntimeConversationTurns } from '@wegent/chat-core/runtime-conversation-turns'
 import { TemporaryChatPanel } from './TemporaryChatPanel'
+import { registerProjectSpaceChatDraftTests } from './projectSpaceChatDraftTests'
 import type { ConversationModelControls } from './conversationModelControls'
 import * as runtimeModelSelection from '@/features/workbench/runtimeModelSelection'
 import {
@@ -152,6 +153,7 @@ const mocks = vi.hoisted(() => ({
     }
   } | null,
   activeModelSelection: null as ModelSelectionConfig | null,
+  taskSelectionResolved: null as boolean | null,
   isBootstrapping: false,
   runtimeWork: null as {
     projects: unknown[]
@@ -498,7 +500,7 @@ vi.mock('@/features/workbench/useWorkbench', async importOriginal => ({
       setSelectedModelAndOptions: mocks.setGlobalModel,
       setSelectedModelOption: mocks.setGlobalModel,
       isModelSelectionReady: mocks.globalModelReady,
-      selectedModelOptions: undefined,
+      selectedModelOptions: {},
       resolveRuntimeTaskModelSelection: (taskAddress: RuntimeTaskAddress) => {
         const selection =
           mocks.activeModelSelection ?? modelSelectionFromRuntimeHandle(taskAddress.runtimeHandle)
@@ -510,6 +512,12 @@ vi.mock('@/features/workbench/useWorkbench', async importOriginal => ({
             })
           : null
         return {
+          selectionResolved:
+            mocks.taskSelectionResolved ??
+            Boolean(selection || taskAddress.runtimeHandle || mocks.runtimeWork !== null),
+          selectionReady:
+            mocks.taskSelectionResolved ??
+            Boolean(selection || taskAddress.runtimeHandle || mocks.runtimeWork !== null),
           taskSelection: selection,
           selectedModel: model,
           activeModel: model,
@@ -522,6 +530,7 @@ vi.mock('@/features/workbench/useWorkbench', async importOriginal => ({
       setRuntimeTaskSelectedModelOption: vi.fn(),
     },
     createTemporaryRuntimeTask: vi.fn(),
+    createProjectRuntimeTask: mocks.createTask,
     sendRuntimePaneMessage: mocks.sendRuntimePaneMessage,
     interruptAndSendRuntimePaneMessage: mocks.interruptAndSendRuntimePaneMessage,
     sendRuntimePaneGuidance: mocks.sendRuntimePaneGuidance,
@@ -631,6 +640,7 @@ vi.mock('@/features/workbench/runtimeTaskLifecycle', () => {
 })
 
 describe('TemporaryChatPanel', () => {
+  registerProjectSpaceChatDraftTests(mocks)
   it.each(['accepted', 'newer-edit', 'edited-back', 'failed', 'rejected'] as const)(
     'submits an immediate buffered native edit transactionally: %s',
     async outcome => {
@@ -1431,6 +1441,42 @@ describe('TemporaryChatPanel', () => {
       true
     )
     expect(bound.deviceId).toBe('app-record-42')
+  })
+
+  it('opens files in the host workspace without navigating away from the temporary chat', async () => {
+    mocks.conversationMessages = [
+      {
+        id: 'delivery',
+        role: 'assistant',
+        content: 'cart-review.md',
+        status: 'done',
+        createdAt: '',
+      },
+    ]
+    const onOpenWorkspaceFile = vi.fn()
+    const onOpenRuntimeTask = vi.fn()
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        instanceId="temporary-file-preview"
+        initialAddress={address}
+        onOpenWorkspaceFile={onOpenWorkspaceFile}
+        onOpenRuntimeTask={onOpenRuntimeTask}
+      />
+    )
+
+    await userEvent.click(await screen.findByTestId('mock-open-file'))
+
+    expect(onOpenWorkspaceFile).toHaveBeenCalledExactlyOnceWith('cart-fixture/cart-review.md', {
+      lineStart: 3,
+      lineEnd: 7,
+    })
+    expect(onOpenRuntimeTask).not.toHaveBeenCalled()
+    expect(mocks.readTask).not.toHaveBeenCalled()
+    expect(
+      consumeWorkbenchWorkspaceLaunch(address.deviceId, address.workspacePath!, address.taskId)
+    ).toBeNull()
   })
 
   it('preserves the first file action and line range while navigating to its owning task', async () => {
@@ -3061,6 +3107,47 @@ describe('TemporaryChatPanel', () => {
 
     await userEvent.click(screen.getByTestId('mock-ignore-input'))
     expect(mocks.cancelRuntimePaneTask).toHaveBeenCalledWith(address)
+  })
+
+  it('prioritizes the exact request message over its earlier user-turn alias', async () => {
+    const question = {
+      kind: 'request_user_input' as const,
+      itemId: 'context-question',
+      questions: [{ id: 'context', question: 'Choose the compatibility policy', is_other: true }],
+    }
+    mocks.conversationMessages = [
+      { id: 'original-user', role: 'user', content: 'Review the order rules', status: 'done' },
+      {
+        id: 'request-context',
+        role: 'assistant',
+        content: 'The existing rules need a decision',
+        status: 'done',
+        blocks: [
+          {
+            id: 'question',
+            type: 'tool',
+            toolName: 'request_user_input_async',
+            status: 'done',
+            renderPayload: question,
+          },
+        ],
+      },
+    ] as typeof mocks.conversationMessages
+    render(
+      <TemporaryChatPanel
+        currentProject={null}
+        source={address}
+        initialAddress={address}
+        instanceId="exact-request"
+        focusedRequest={question}
+        sourceMessageIds={['request-context', 'original-user']}
+        focusRequestKey="exact-request"
+      />
+    )
+    expect(screen.getByTestId('mock-message-list')).toHaveAttribute(
+      'data-target-message',
+      'request-context'
+    )
   })
 
   it('shows the selected older question and targets its original turn instead of the latest request', async () => {

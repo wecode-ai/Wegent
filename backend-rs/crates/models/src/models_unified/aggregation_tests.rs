@@ -162,3 +162,40 @@ fn public_model_whitelist_admits_only_listed_users() {
         Some("zhuchen3")
     ));
 }
+
+#[test]
+fn public_catalog_projection_keeps_the_source_resource_id_without_credentials() {
+    use chrono::NaiveDateTime;
+    use serde_json::json;
+
+    let timestamp =
+        NaiveDateTime::parse_from_str("2026-11-16 00:00:00", "%Y-%m-%d %H:%M:%S").unwrap();
+    let resource = KindRow {
+        id: 79,
+        user_id: 0,
+        kind: "Model".into(),
+        name: "same-name".into(),
+        namespace: "default".into(),
+        json: brz_mysql::Json(json!({
+            "spec": {"modelConfig": {
+                "env": {"model_id": "provider-model", "api_key": "hidden"}
+            }}
+        })),
+        is_active: true,
+        created_at: timestamp,
+        updated_at: timestamp,
+    };
+    for include_config in [false, true] {
+        let model = public_unified_model(&resource, public_model_info(&resource));
+        assert_eq!(model.resource_id, Some(79));
+        let response =
+            crate::json_contract_tests::serialized(model.into_response(include_config)).unwrap();
+        assert_eq!(response["id"], 79);
+        assert_eq!(response["type"], "public");
+        assert_eq!(response["resourceUserId"], 0);
+        assert_eq!(response["modelId"], "provider-model");
+        assert_eq!(response["listingId"], Json::Null);
+        assert!(!response["config"].as_object().unwrap().contains_key("env"));
+        assert!(!response.to_string().contains("hidden"));
+    }
+}

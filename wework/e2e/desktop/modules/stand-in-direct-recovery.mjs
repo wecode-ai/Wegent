@@ -8,6 +8,7 @@ import { promisify } from 'node:util'
 import { requestExecutor } from './executor-rpc.mjs'
 import { storyUntil } from './stand-in-source-story-evidence.mjs'
 import { seedCollectionTimeout } from './stand-in-collection-timeout.mjs'
+import { verifyCollectionLockRecovery } from './stand-in-collection-lock.mjs'
 import {
   openStandInActivity,
   verifyStandInProfileNavigation,
@@ -39,6 +40,7 @@ export function createDirectRecoveryVerification(options) {
   let active = false
   let coordinatorCalls = 0
   let workCalls = 0
+  let collectionLockCalls = 0
   const resultDeliveries = []
   let round = 0
   let dispatchBatch = false
@@ -125,7 +127,7 @@ export function createDirectRecoveryVerification(options) {
               local_task_id: COORDINATOR,
               thread_id: null,
               workspace_path: options.workspacePath,
-              title: '分身后台统筹',
+              title: '助理后台统筹',
               runtime: 'codex',
               continuable: true,
               ephemeral: false,
@@ -189,6 +191,9 @@ export function createDirectRecoveryVerification(options) {
             toolCallId: ready ? ignore : read,
           }).events
         }
+      } else if (!events && input.includes(`${MARKER}-collection-lock`)) {
+        collectionLockCalls++
+        events = [assistantMessage(`${MARKER}_COLLECTION_LOCK_RECOVERED`)]
       } else if (!events && input.includes(MARKER)) {
         if (dispatchBatch) {
           const fresh = JSON.stringify(
@@ -400,6 +405,14 @@ export function createDirectRecoveryVerification(options) {
             'The native model request must preserve the stand-in catalog default none during result delivery'
           )
         }
+        await verifyCollectionLockRecovery({
+          database,
+          rpc: (method, params) => rpc(control, method, params),
+          root,
+          userId: USER,
+          timeoutMs: options.modelResponseTimeoutMs,
+        })
+        assert.equal(collectionLockCalls, 1, 'The recovered all-contact message executes once')
         await rpc(control, 'runtime.tasks.archive', { taskId: direct.taskId })
         await control.command('clickWhenEnabled', '[data-testid="personal-stand-in-button"]')
         await openStandInActivity(control)
@@ -426,6 +439,7 @@ export function createDirectRecoveryVerification(options) {
           '[stand-in-direct-recovery]',
           JSON.stringify({
             directWorks: workCalls,
+            collectionLockCalls,
             coordinatorRequests: coordinatorCalls,
             nativeSessionRecovered: true,
             nativeSessionReused: true,
@@ -444,7 +458,7 @@ export function createDirectRecoveryVerification(options) {
       }
     },
     diagnostics() {
-      return { coordinatorCalls, workCalls, round }
+      return { coordinatorCalls, workCalls, collectionLockCalls, round }
     },
   }
 }

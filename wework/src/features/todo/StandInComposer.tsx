@@ -1,4 +1,3 @@
-import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useEffect, type ReactNode, type Dispatch, type SetStateAction } from 'react'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
 import { useStandInModels } from './useStandInModels'
@@ -15,6 +14,7 @@ import { listProjectBranches } from '@/api/environment'
 import { useTranslation } from '@/hooks/useTranslation'
 import { runtimeProjectKey, runtimeProjectToProject } from '@/lib/runtime-project'
 import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
+import { StandInSettingsError } from './StandInSettingsLayout'
 
 /** Configuration uses the ordinary composer without starting a conversation. */
 export function StandInComposer({
@@ -141,8 +141,16 @@ export function StandInComposer({
         current.workspace ? { ...current, workspace: { ...current.workspace, branch } } : current
       ),
     onListBranches:
-      services?.deviceApi && project
-        ? () => listProjectBranches(services.deviceApi!, project)
+      services?.deviceApi && services.runtimeWorkApi && project
+        ? () =>
+            listProjectBranches(
+              {
+                executeCommand: (deviceId, data) =>
+                  services.deviceApi!.executeCommand(deviceId, data),
+                preflightWorktree: data => services.runtimeWorkApi!.preflightWorktree(data),
+              },
+              project
+            )
         : undefined,
   }
   const environment = draft.workspace
@@ -155,29 +163,35 @@ export function StandInComposer({
   return (
     <div className="space-y-3">
       <div
-        className="grid grid-cols-[5rem_minmax(0,1fr)] items-center gap-x-3 gap-y-1 text-sm"
+        className="grid grid-cols-[5rem_minmax(0,1fr)] items-center gap-x-3 gap-y-1 text-sm max-md:[&_button]:min-h-11 max-md:[&_button]:min-w-11"
         data-testid="stand-in-workspace-bar"
       >
-        <span className="text-text-muted">{t('standIn.device_label')}</span>
-        <div className="min-w-0">{deviceControl}</div>
-        <span className="text-text-muted">{t('standIn.local_project')}</span>
+        {deviceControl && (
+          <>
+            <span className="text-text-secondary">{t('standIn.device_label')}</span>
+            <div className="min-w-0">{deviceControl}</div>
+          </>
+        )}
+        <span className="text-text-secondary">{t('standIn.local_project')}</span>
         <div className="min-w-0" inert={disabled || !draft.executionDeviceId}>
           <ProjectWorkBar
             {...projectWork}
-            className="min-h-8 px-0"
+            className="min-h-11 px-0 md:min-h-8"
             menuClassName="z-critical"
             showWorkSection={false}
           />
         </div>
-        <span className="text-text-muted">{t('standIn.workspace_label')}</span>
+        <span className="text-text-secondary">{t('standIn.workspace_label')}</span>
         <div className="flex min-h-8 min-w-0 flex-wrap items-center gap-1" inert={disabled}>
           {project ? (
             <ProjectWorkSection context={{ ...projectWork, project }} />
           ) : (
-            <span className="px-1.5 text-text-muted">{t('standIn.inherit_environment')}</span>
+            <span className="px-1.5 text-text-secondary">{t('standIn.inherit_environment')}</span>
           )}
         </div>
-        <span className="text-text-muted">{t('standIn.model_label')}</span>
+        <span className="self-start pt-3 text-text-secondary md:pt-1.5">
+          {t('standIn.model_label')}
+        </span>
         <div className="min-w-0">
           <ModelSelector
             models={models.models}
@@ -210,6 +224,19 @@ export function StandInComposer({
               }))
             }
           />
+          {models.loading && (
+            <p
+              role="status"
+              data-testid="stand-in-models-loading"
+              className="text-xs text-text-secondary"
+            >
+              {t('workbench.local_model_loading_models_action')}
+            </p>
+          )}
+          <StandInSettingsError
+            error={models.error}
+            retry={{ testId: 'stand-in-models-retry', disabled, onClick: models.refresh }}
+          />
         </div>
       </div>
       {showPrompt && (
@@ -240,15 +267,6 @@ export function StandInComposer({
             onSetGoal={() => onChange(current => ({ ...current, goalMode: true }))}
             goalDraftActive={Boolean(draft.goalMode)}
             onCancelGoalDraft={() => onChange(current => ({ ...current, goalMode: false }))}
-            toolbarLeadingContext={
-              <>
-                {models.error && (
-                  <span role="status" className="text-xs text-error">
-                    {getStandInErrorMessage(models.error)}
-                  </span>
-                )}
-              </>
-            }
           />
         </ComposerCatalogContext.Provider>
       )}

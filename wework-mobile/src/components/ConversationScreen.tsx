@@ -2,17 +2,12 @@ import Ionicons from '@expo/vector-icons/Ionicons'
 import { useKeyboardChatComposerInset } from '@legendapp/list/keyboard'
 import type { LegendListRef } from '@legendapp/list/react-native'
 import { useFocusEffect, useIsFocused } from '@react-navigation/native'
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react'
+import { useCallback, useEffect, useReducer, useRef, useState } from 'react'
 import {
-  AccessibilityInfo,
-  Animated,
   BackHandler,
-  Easing,
   Keyboard,
-  Modal,
   Platform,
   Pressable,
-  ScrollView,
   StyleSheet,
   View,
   type LayoutChangeEvent,
@@ -51,6 +46,12 @@ import type {
   RequestUserInputResponse,
 } from '@/types/runtime'
 import { ChatComposer, type ComposerSendOptions } from './ChatComposer'
+import { ChoiceSheet, type Choice } from './ChoiceSheet'
+import { WorktreeBranchSheet } from './WorktreeBranchSheet'
+import { ErrorNotice } from './errors/ErrorNotice'
+import { useWorkspaceWorktree } from '@/hooks/useWorkspaceWorktree'
+import { worktreeWorkspaceDeviceId } from '../../../packages/chat-core/src/worktree-availability'
+import pcMessages from '../../../wework/src/i18n/locales/zh-CN/common.json'
 import { ConversationEdgeMask } from './ConversationEdgeMask'
 import { ConversationChangesPill } from './ConversationChangesPill'
 import { ConversationAgentsPill } from './ConversationAgentsPill'
@@ -66,15 +67,21 @@ export interface ConversationWorkspaceChoice {
 }
 
 interface ConversationScreenProps {
-  api: Pick<RuntimeApi, 'getSubagentTranscript'>
+  api: Pick<
+    RuntimeApi,
+    | 'getSubagentTranscript'
+    | 'getWorktreeCapabilities'
+    | 'preflightWorkspace'
+    | 'listWorkspaceGitBranches'
+  >
   composerFocusRequest?: number
   onComposerFocusHandled: (request: number) => void
   currentAddress: RuntimeTaskAddress | null
   currentTitle: string
   devices: DeviceInfo[]
   entryRevision: number
-  gitRef: string | null
   hasMoreMessagesBefore: boolean
+  historyLoaded: boolean
   isNew: boolean
   loading: boolean
   loadingMoreMessagesBefore: boolean
@@ -118,7 +125,41 @@ export function ConversationScreen(props: ConversationScreenProps) {
   )
   const [modelControlLayer, dispatchModelControl] = useReducer(reduceModelControlLayer, 'composer')
   const [selector, setSelector] = useState<ConversationSelector>(null)
-  const [useWorktree, setUseWorktree] = useState(false)
+  const [worktreeDraft, setWorktreeDraft] = useState<{
+    key: string
+    enabled: boolean
+    branch: string | null
+  } | null>(null)
+  const draftKey = JSON.stringify([
+    props.entryRevision,
+    props.selectedDeviceId,
+    props.selectedWorkspace?.projectId,
+    props.selectedWorkspace?.deviceId,
+    props.selectedWorkspace?.workspacePath,
+    props.selectedWorkspace?.remoteHostId,
+  ])
+  const useWorktree = worktreeDraft?.key === draftKey && worktreeDraft.enabled
+  const selectedBranch = worktreeDraft?.key === draftKey ? worktreeDraft.branch : null
+  const setUseWorktree = (enabled: boolean) =>
+    setWorktreeDraft({ key: draftKey, enabled, branch: selectedBranch })
+  const worktree = useWorkspaceWorktree(
+    props.api,
+    props.isNew && isFocused,
+    props.selectedWorkspace,
+    props.devices,
+    useWorktree ? selectedBranch : null
+  )
+  const worktreeReason = worktree.availability.reason
+  const worktreeDetail =
+    worktreeReason === 'available'
+      ? undefined
+      : pcMessages.workbench[`worktree_unavailable_${worktreeReason}`]
+  const branchDeviceId = worktreeWorkspaceDeviceId(props.selectedWorkspace)
+  const branchPath = props.selectedWorkspace?.workspacePath
+  const loadBranches = useCallback(() => {
+    if (!branchDeviceId || !branchPath) throw new Error('请先选择代码工作区')
+    return props.api.listWorkspaceGitBranches(branchDeviceId, branchPath)
+  }, [props.api, branchDeviceId, branchPath])
   const [bottomControlHeight, setBottomControlHeight] = useState(0)
   const [headerHeight, setHeaderHeight] = useState(CONVERSATION_HEADER_HEIGHT)
 
@@ -127,11 +168,13 @@ export function ConversationScreen(props: ConversationScreenProps) {
     onlineDevices.find(
       device =>
         device.device_id ===
-        (props.selectedWorkspace?.deviceId ??
+        (worktreeWorkspaceDeviceId(props.selectedWorkspace) ??
           selectedOnlineDeviceId(onlineDevices, props.selectedDeviceId))
     ) ?? null
   const availableWorkspaces = props.workspaces.filter(
-    item => item.workspace.available && item.workspace.deviceId === configurationDevice?.device_id
+    item =>
+      item.workspace.available &&
+      worktreeWorkspaceDeviceId(item.workspace) === configurationDevice?.device_id
   )
   const selectedDeviceName =
     props.devices.find(
@@ -140,7 +183,7 @@ export function ConversationScreen(props: ConversationScreenProps) {
     )?.name ?? null
   const conversationProjectName =
     props.selectedProjectName ?? props.selectedWorkspace?.label ?? null
-  const branch = cleanBranch(props.gitRef)
+  const branch = cleanBranch(worktree.currentBranch)
   const selectedEffort = resolvedReasoningEffort(props.model, props.modelOptions.reasoning)
   const efforts = props.model ? reasoningEfforts(props.model) : []
   const selectedModelLabel = props.model
@@ -156,75 +199,73 @@ export function ConversationScreen(props: ConversationScreenProps) {
     ? `${props.currentAddress.deviceId}:${props.currentAddress.taskId}`
     : `new:${props.selectedWorkspace?.deviceId ?? props.selectedDeviceId ?? ''}:${props.selectedWorkspace?.workspacePath ?? ''}`
 
-  const choices = useMemo(
-    () =>
-      selector === 'device'
-        ? onlineDevices.map(device => ({
-            id: device.device_id,
-            label: device.name,
-            selected: device.device_id === configurationDevice?.device_id,
-            onPress: () => {
-              props.onSelectDevice(device.device_id)
-              props.onSelectWorkspace(null)
+  const choices: Choice[] =
+    selector === 'device'
+      ? onlineDevices.map(device => ({
+          id: device.device_id,
+          label: device.name,
+          selected: device.device_id === configurationDevice?.device_id,
+          onPress: () => {
+            props.onSelectDevice(device.device_id)
+            props.onSelectWorkspace(null)
+          },
+        }))
+      : selector === 'project'
+        ? [
+            {
+              id: 'standalone-chat',
+              label: '聊天',
+              icon: 'chatbubbles-outline' as const,
+              separatorAfter: true,
+              selected: !props.selectedWorkspace,
+              onPress: () => props.onSelectWorkspace(null),
             },
-          }))
-        : selector === 'project'
+            ...availableWorkspaces.map(item => ({
+              id: `${item.workspace.deviceId}:${item.workspace.workspacePath}`,
+              label: item.projectName,
+              detail: item.workspace.workspacePath,
+              icon: 'folder-outline' as const,
+              selected:
+                item.workspace.workspacePath === props.selectedWorkspace?.workspacePath &&
+                item.workspace.deviceId === props.selectedWorkspace.deviceId,
+              onPress: () => props.onSelectWorkspace(item.workspace),
+            })),
+          ]
+        : selector === 'workMode'
           ? [
               {
-                id: 'standalone-chat',
-                label: '聊天',
-                icon: 'chatbubbles-outline' as const,
-                separatorAfter: true,
-                selected: !props.selectedWorkspace,
-                onPress: () => props.onSelectWorkspace(null),
+                id: 'local',
+                label: '在本地工作',
+                selected: !useWorktree,
+                onPress: () => setUseWorktree(false),
               },
-              ...availableWorkspaces.map(item => ({
-                id: `${item.workspace.deviceId}:${item.workspace.workspacePath}`,
-                label: item.projectName,
-                detail: item.workspace.workspacePath,
-                icon: 'folder-outline' as const,
-                selected:
-                  item.workspace.workspacePath === props.selectedWorkspace?.workspacePath &&
-                  item.workspace.deviceId === props.selectedWorkspace.deviceId,
-                onPress: () => props.onSelectWorkspace(item.workspace),
-              })),
+              {
+                id: 'worktree',
+                label: '新建工作树',
+                icon: 'git-branch-outline' as const,
+                detail: worktreeDetail,
+                disabled: !worktree.availability.available,
+                selected: useWorktree,
+                onPress: () => setUseWorktree(true),
+              },
+              ...(worktreeReason === 'preflight_failed'
+                ? [
+                    {
+                      id: 'retry-worktree',
+                      label: '重新检查工作树',
+                      selected: false,
+                      onPress: worktree.retry,
+                    },
+                  ]
+                : []),
             ]
-          : selector === 'workMode'
-            ? [
-                {
-                  id: 'local',
-                  label: '在本地工作',
-                  selected: !useWorktree,
-                  onPress: () => setUseWorktree(false),
-                },
-                ...(branch
-                  ? [
-                      {
-                        id: 'worktree',
-                        label: '创建 Git 工作树',
-                        selected: useWorktree,
-                        onPress: () => setUseWorktree(true),
-                      },
-                    ]
-                  : []),
-              ]
-            : selector === 'permission'
-              ? permissionChoices(
-                  props.permissionMode,
-                  props.onSelectPermissionMode,
-                  configurationDevice?.device_type === 'local'
-                )
-              : [],
-    [
-      availableWorkspaces,
-      branch,
-      configurationDevice?.device_id,
-      onlineDevices,
-      props,
-      selector,
-      useWorktree,
-    ]
-  )
+          : selector === 'permission'
+            ? permissionChoices(
+                props.permissionMode,
+                props.onSelectPermissionMode,
+                configurationDevice?.device_type === 'local'
+              )
+            : []
 
   const closeModelControls = useCallback(() => {
     dispatchModelControl('close')
@@ -276,16 +317,20 @@ export function ConversationScreen(props: ConversationScreenProps) {
   const selectModelOptions = (options: ModelOptions) => {
     if (props.model) props.onSelectModel(props.model, options)
   }
-  const sendMessage = (message: string, composerOptions: ComposerSendOptions) =>
-    props.onSend(
+  const sendMessage = (message: string, composerOptions: ComposerSendOptions) => {
+    if (props.isNew && useWorktree && !worktree.availability.available)
+      return Promise.resolve(false)
+    return props.onSend(
       message,
       props.isNew
         ? {
             ...composerOptions,
-            ...(useWorktree && branch ? { worktreeBranch: branch } : {}),
+            executionMode: useWorktree ? 'git_worktree' : 'current_workspace',
+            ...(useWorktree && selectedBranch ? { worktreeBranch: selectedBranch } : {}),
           }
         : composerOptions
     )
+  }
 
   return (
     <View
@@ -307,6 +352,7 @@ export function ConversationScreen(props: ConversationScreenProps) {
           listRef={listRef}
           hasMoreBefore={props.hasMoreMessagesBefore}
           loading={props.loading}
+          historyLoaded={props.historyLoaded}
           loadingMoreBefore={props.loadingMoreMessagesBefore}
           messages={props.messages}
           onRequestUserInputSubmit={props.onRequestUserInputSubmit}
@@ -331,18 +377,26 @@ export function ConversationScreen(props: ConversationScreenProps) {
                 {props.selectedWorkspace ? (
                   <>
                     <ConfigurationRow
-                      icon="laptop-outline"
-                      label={useWorktree ? '创建 Git 工作树' : '在本地工作'}
+                      icon={useWorktree ? 'git-branch-outline' : 'laptop-outline'}
+                      label={useWorktree ? '新建工作树' : '在本地工作'}
                       onPress={() => openSelector('workMode')}
                       testID="new-chat-work-mode"
                     />
-                    {branch ? (
+                    {branch || useWorktree ? (
                       <ConfigurationRow
-                        disabled={!useWorktree}
+                        disabled={!useWorktree || !configurationDevice}
                         icon="git-branch-outline"
-                        label={branch}
-                        onPress={() => openSelector('workMode')}
+                        label={selectedBranch ?? branch ?? '选择分支'}
+                        onPress={() => openSelector('branch')}
                         testID="new-chat-branch"
+                      />
+                    ) : null}
+                    {useWorktree && worktree.error ? (
+                      <ErrorNotice
+                        error={worktree.error}
+                        title="无法检查工作树"
+                        onRetry={worktree.retry}
+                        testID="new-chat-worktree-error"
                       />
                     ) : null}
                   </>
@@ -471,7 +525,12 @@ export function ConversationScreen(props: ConversationScreenProps) {
                 />
               </Pressable>
             }
-            sendDisabled={props.isNew && (!configurationDevice || !props.model)}
+            sendDisabled={
+              props.isNew &&
+              (!configurationDevice ||
+                !props.model ||
+                (useWorktree && !worktree.availability.available))
+            }
             testIDs={
               props.isNew
                 ? {
@@ -504,13 +563,31 @@ export function ConversationScreen(props: ConversationScreenProps) {
         ) : null}
       </KeyboardStickyView>
 
+      <WorktreeBranchSheet
+        key={draftKey}
+        currentBranch={branch}
+        selectedBranch={selectedBranch}
+        onListBranches={loadBranches}
+        onDismiss={() => setSelector(null)}
+        onSelectBranch={value => setWorktreeDraft({ key: draftKey, enabled: true, branch: value })}
+        visible={props.isNew && useWorktree && selector === 'branch'}
+      />
       <ChoiceSheet
         choices={choices}
         onDismiss={() => setSelector(null)}
         testIDPrefix={props.isNew ? 'new-chat-choice' : 'conversation-choice'}
         title={selectorTitle(selector)}
         visible={conversationSelectorVisible(selector, props.isNew)}
-      />
+      >
+        {selector === 'workMode' && worktree.error ? (
+          <ErrorNotice
+            error={worktree.error}
+            title="无法检查工作树"
+            onRetry={worktree.retry}
+            testID="work-mode-worktree-error"
+          />
+        ) : null}
+      </ChoiceSheet>
     </View>
   )
 }
@@ -532,6 +609,8 @@ function ConfigurationRow({
   return (
     <Pressable
       accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled: Boolean(disabled) }}
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => [
@@ -554,189 +633,6 @@ function ConfigurationRow({
         <Ionicons color={theme.colors.onSurfaceVariant} name="chevron-down" size={15} />
       </View>
     </Pressable>
-  )
-}
-
-interface Choice {
-  id: string
-  label: string
-  detail?: string
-  icon?: keyof typeof Ionicons.glyphMap
-  separatorAfter?: boolean
-  selected: boolean
-  disabled?: boolean
-  onPress: () => void
-}
-
-function ChoiceSheet({
-  choices,
-  onDismiss,
-  testIDPrefix,
-  title,
-  visible,
-}: {
-  choices: Choice[]
-  onDismiss: () => void
-  testIDPrefix: string
-  title: string
-  visible: boolean
-}) {
-  const theme = useTheme()
-  const [presented, setPresented] = useState(visible)
-  const [reduceMotion, setReduceMotion] = useState(false)
-  const progress = useRef(new Animated.Value(visible ? 1 : 0)).current
-  const closing = useRef(false)
-
-  useEffect(() => {
-    const subscription = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion)
-    void AccessibilityInfo.isReduceMotionEnabled().then(setReduceMotion)
-    return () => subscription.remove()
-  }, [])
-
-  useEffect(() => {
-    if (!visible) {
-      setPresented(false)
-      closing.current = false
-      return
-    }
-
-    setPresented(true)
-    progress.stopAnimation()
-    progress.setValue(reduceMotion ? 1 : 0)
-    if (reduceMotion) return
-
-    Animated.timing(progress, {
-      duration: 240,
-      easing: Easing.out(Easing.cubic),
-      toValue: 1,
-      useNativeDriver: true,
-    }).start()
-  }, [progress, reduceMotion, visible])
-
-  const dismiss = useCallback(() => {
-    if (closing.current) return
-    closing.current = true
-    progress.stopAnimation()
-
-    if (reduceMotion) {
-      onDismiss()
-      return
-    }
-
-    Animated.timing(progress, {
-      duration: 180,
-      easing: Easing.in(Easing.cubic),
-      toValue: 0,
-      useNativeDriver: true,
-    }).start(({ finished }) => {
-      if (finished) onDismiss()
-      else closing.current = false
-    })
-  }, [onDismiss, progress, reduceMotion])
-
-  const backdropOpacity = progress
-  const sheetTranslateY = progress.interpolate({
-    inputRange: [0, 1],
-    outputRange: [52, 0],
-  })
-
-  return (
-    <Modal
-      animationType="none"
-      navigationBarTranslucent
-      onRequestClose={dismiss}
-      presentationStyle="overFullScreen"
-      statusBarTranslucent
-      transparent
-      visible={presented}
-    >
-      <View style={styles.sheetLayer}>
-        <Animated.View
-          pointerEvents="none"
-          style={[
-            styles.sheetBackdrop,
-            {
-              backgroundColor: theme.dark ? 'rgba(0,0,0,0.38)' : 'rgba(0,0,0,0.18)',
-              opacity: backdropOpacity,
-            },
-          ]}
-        />
-        <Pressable
-          accessibilityLabel={`关闭${title}选择`}
-          accessibilityRole="button"
-          onPress={dismiss}
-          style={styles.sheetDismissLayer}
-        />
-        <Animated.View
-          accessibilityViewIsModal
-          style={[
-            styles.sheet,
-            {
-              backgroundColor: theme.colors.surface,
-              transform: [{ translateY: reduceMotion ? 0 : sheetTranslateY }],
-            },
-          ]}
-        >
-          <View style={styles.sheetHandle} />
-          <Text style={styles.sheetTitle} variant="titleLarge">
-            {title}
-          </Text>
-          <ScrollView
-            contentContainerStyle={styles.sheetContent}
-            keyboardShouldPersistTaps="handled"
-            showsVerticalScrollIndicator={false}
-          >
-            {choices.map(choice => (
-              <View key={choice.id}>
-                <Pressable
-                  disabled={choice.disabled}
-                  accessibilityState={{ disabled: choice.disabled, selected: choice.selected }}
-                  onPress={() => {
-                    choice.onPress()
-                    dismiss()
-                  }}
-                  style={({ pressed }) => [
-                    styles.choice,
-                    choice.disabled && { opacity: 0.45 },
-                    choice.selected && { backgroundColor: theme.colors.surfaceVariant },
-                    pressed && styles.pressed,
-                  ]}
-                  testID={`${testIDPrefix}-${choice.id}`}
-                >
-                  {choice.icon ? (
-                    <Ionicons
-                      color={theme.colors.onSurfaceVariant}
-                      name={choice.icon}
-                      size={23}
-                      style={styles.choiceIcon}
-                    />
-                  ) : null}
-                  <View style={styles.choiceText}>
-                    <Text variant="bodyLarge">{choice.label}</Text>
-                    {choice.detail ? (
-                      <Text numberOfLines={1} style={styles.choiceDetail} variant="bodySmall">
-                        {choice.detail}
-                      </Text>
-                    ) : null}
-                  </View>
-                  {choice.selected ? (
-                    <Ionicons color={theme.colors.onSurface} name="checkmark" size={22} />
-                  ) : null}
-                </Pressable>
-                {choice.separatorAfter ? (
-                  <View
-                    style={[
-                      styles.choiceSeparator,
-                      { backgroundColor: theme.colors.outlineVariant },
-                    ]}
-                  />
-                ) : null}
-              </View>
-            ))}
-          </ScrollView>
-        </Animated.View>
-      </View>
-    </Modal>
   )
 }
 
@@ -814,34 +710,4 @@ const styles = StyleSheet.create({
   permissionAction: { width: 32, height: 44, alignItems: 'center', justifyContent: 'center' },
   pressed: { opacity: 0.55 },
   disabled: { opacity: 0.34 },
-  sheetLayer: { flex: 1, justifyContent: 'flex-end' },
-  sheetBackdrop: { position: 'absolute', inset: 0 },
-  sheetDismissLayer: { position: 'absolute', inset: 0 },
-  sheet: {
-    maxHeight: '66%',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    paddingBottom: Platform.OS === 'ios' ? 32 : 16,
-  },
-  sheetHandle: {
-    alignSelf: 'center',
-    width: 36,
-    height: 5,
-    borderRadius: 3,
-    marginTop: 8,
-    backgroundColor: '#858585',
-  },
-  sheetTitle: { paddingHorizontal: 22, paddingTop: 18, paddingBottom: 12 },
-  sheetContent: { paddingHorizontal: 12, paddingBottom: 12 },
-  choice: {
-    minHeight: 60,
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  choiceText: { flex: 1, gap: 3 },
-  choiceIcon: { marginRight: 14 },
-  choiceDetail: { opacity: 0.48 },
-  choiceSeparator: { height: StyleSheet.hairlineWidth, marginHorizontal: 14, marginVertical: 8 },
 })

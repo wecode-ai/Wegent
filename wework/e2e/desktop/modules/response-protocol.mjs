@@ -313,6 +313,18 @@ function encryptedReasoningItem(id, encryptedContent) {
   }
 }
 
+function reasoningTextItem(id, text) {
+  return {
+    type: 'response.output_item.done',
+    item: {
+      type: 'reasoning',
+      id,
+      summary: [],
+      content: [{ type: 'reasoning_text', text }],
+    },
+  }
+}
+
 function streamingMarkdownReport() {
   const sectionCount = readPositiveInteger(
     process.env.WEWORK_E2E_MEMORY_SECTION_COUNT,
@@ -761,8 +773,16 @@ function mcpToolRequestEvents(
     searchCallId &&
     requestContainsToolOutput(request, searchCallId)
   ) {
+    const output = toolOutputText(request, searchCallId) ?? ''
+    const signal = [
+      'Native discovery execution failed',
+      'Native discovery requires one exact capability',
+      'Discovery must select between one and eight real native capabilities',
+      'ReferenceError',
+      'SyntaxError',
+    ].find(signal => output.includes(signal))
     assert.fail(
-      `Native discovery did not expose ${directToolName ?? toolName}: ${String(toolOutputText(request, searchCallId)).slice(0, 3000)}`
+      `Native discovery did not expose ${directToolName ?? toolName}${signal ? `: ${signal}` : ''}`
     )
   }
   return {
@@ -948,6 +968,7 @@ export {
   assistantMessageSequence,
   assistantMessage,
   encryptedReasoningItem,
+  reasoningTextItem,
   streamingMarkdownReport,
   streamingTextEvents,
   localProtocolCase,

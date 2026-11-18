@@ -108,9 +108,8 @@ classify_wework_path() {
     wework/src/components/chat/composer/Drawing* | \
       wework/src/components/chat/composer/useComposerDrawing* | \
       wework/src/components/chat/composer/drawing-canvas.css | \
-      wework/vite/excalidrawAssets* | \
-      wework/e2e/desktop/scenarios/drawing-attachment.scenario.mjs)
-      select_target "core:drawing-attachment"
+      wework/vite/excalidrawAssets*)
+      select_target "core:task-attachments"
       return
       ;;
     # System proxy resolution spans Electron, local runtime request routing,
@@ -138,11 +137,12 @@ classify_wework_path() {
       select_target "cloud:conversation-state"
       return
       ;;
-    # Cloud device restart and upgrade actions require the managed Nevis fixture.
+    # Cloud device restart and upgrade actions use the sandbox process fixture.
     wework/src/components/settings/ConnectionsSettingsPage* | \
       wework/src/components/settings/DeviceVersionBadge* | \
       wework/src/features/cloud-devices/* | \
-      wework/e2e/desktop/modules/cloud-device-lifecycle-flow.mjs)
+      wework/e2e/desktop/modules/cloud-device-lifecycle-flow.mjs | \
+      wework/e2e/desktop/support/cloud-restart-backend.py)
       select_target "cloud:cloud-device-lifecycle"
       return
       ;;
@@ -405,7 +405,6 @@ classify_wework_path() {
       wework/src/components/layout/DesktopWindowsTitlebar.tsx)
       select_target "core:window-lifecycle"
       select_target "core:tray-lifecycle"
-      select_target "core:native-window-chrome"
       return
       ;;
 
@@ -552,16 +551,11 @@ classify_wework_path() {
       select_target "core:collaboration-parent-board"
       return
       ;;
-    wework/e2e/desktop/scenarios/collaboration-board-sorting.scenario.mjs)
-      select_target "core:collaboration-board-sorting"
-      return
-      ;;
     wework/e2e/desktop/scenarios/collaboration-board-move-recovery.scenario.mjs)
       select_target "core:collaboration-board-move-recovery"
       return
       ;;
     wework/e2e/desktop/modules/collaboration-board-flows.mjs)
-      select_target "core:collaboration-board-sorting"
       select_target "core:collaboration-board-backlog"
       select_target "core:collaboration-board-move-recovery"
       return

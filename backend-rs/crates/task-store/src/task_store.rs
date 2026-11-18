@@ -17,6 +17,7 @@ use crate::owned_statements::tasks_by_ids_statement;
 
 pub use crate::request_sql::{RequestSql, RouteKey, StatementArgs, fetch_optional_as};
 pub use crate::task_store_default::DefaultTaskStore;
+pub use crate::task_store_history::SubtaskHistoryWindow;
 pub use crate::task_store_listing::{
     OwnedTaskPage, SubtaskListing, SubtaskPage, count_subtasks_by_task, load_subtasks_by_ids,
     order_assistant_subtasks, order_subtasks_by_message, ordered_subtasks_for_user,
@@ -766,6 +767,14 @@ impl<M: Mysql> TaskStore for DefaultTaskStore<M> {
     }
 
     async fn message_edit_tables(&self, _task_id: i64) -> MysqlResult<MessageEditTables> {
+        #[cfg(feature = "test-support")]
+        if let Some(tables) = self.migrated_tables {
+            return Ok(MessageEditTables {
+                tasks: tables.tasks.to_owned(),
+                subtasks: tables.subtasks.to_owned(),
+                ownership: MessageEditOwnership::StatementFilter,
+            });
+        }
         // The single-table store has no model selection to run: every id reads
         // the base tables, and `_filter_owner_user_id` is part of each
         // statement.

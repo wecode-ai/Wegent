@@ -3,6 +3,7 @@ import { Buffer } from 'node:buffer'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
+import { createIssueResourceCoverage } from '../modules/issue-resource-previews.mjs'
 import {
   collaborationProjectViewSelector,
   selectCollaborationProjectView,
@@ -114,6 +115,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
     return open
   }
 
+  const resources = createIssueResourceCoverage({ requestJson, assertImageDecoded })
+
   return {
     requiresCloudEnvironment: true,
 
@@ -151,6 +154,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       })
       assert.equal(cloudFile.name, ATTACHMENT_NAME)
       await assertImageContent(`/api/v1/cloud-projects/files/${cloudFile.id}/content`)
+      await resources.prepare({ cloud, project, issue, attachment })
     },
 
     async verify(control) {
@@ -233,6 +237,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
         'collaboration-issue-attachment-preview-03-cloud-file.png',
         sidebar
       )
+      await resources.verify(control)
     },
 
     diagnostics() {

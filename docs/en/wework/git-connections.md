@@ -8,7 +8,9 @@ sidebar_position: 13
 
 ## Global Git hosting and task status
 
-Open **Settings → Coding → Git hosting**, confirm the execution device and provider, then use the page's detection or connection action. GitHub uses CLI authentication on that device, not merely a website login. **Show PR / MR status** controls status display in task lists; disabling it neither closes nor merges requests. Focus mode hides this page.
+Open **Settings → Coding → Git hosting**, confirm the execution device and provider, then use the page's detection or connection action. GitHub uses CLI authentication on that device, not merely a website login. **Show PR / MR status** controls automatic status updates in task and Issue lists. Disabling it neither closes nor merges requests and does not cancel event waits set by AI. This page's CLI availability checks are independent of the switch. GitHub and GitLab publish their results separately; a completed result and its installation or sign-in action remain available while the other check is pending. Focus mode hides this page.
+
+Open **Environment** in a task conversation to inspect the current branch's PR/MR. Its status icon opens check results and connector synchronization status. The Environment panel also shows synchronization in progress, authorization requirements or synchronization errors while retaining the last successfully retrieved PR/MR state. For authorization or synchronization errors, use **Configure code hosting tools** in that panel to check configuration on the execution device, then refresh. Interface status and AI event waits share connector collection; refreshing the interface does not call the model.
 
 For repository events, use **My Stand-in → role profile → connection sources → GitHub/GitLab**, not just the status switch. Distinguish missing CLI, sign-in, network and permission failures before choosing login or retry.
 
@@ -42,6 +44,8 @@ Select an execution device and GitHub or GitLab. A self-managed GitLab instance 
 
 - **All personal events** receives visible account activity, notifications, assignments and review requests, and tracks comments, reviews and CI state for discovered work.
 - **Follow a specific repository** receives activity from selected repositories and tracks subsequent changes to discovered work.
+
+After choosing **Read signed-in account** or **Search repositories**, the results area shows progress. A successful empty result explains whether to check sign-in or adjust the search. Changing the instance, scope or query clears the previous feedback. Loading another page keeps the repositories already found.
 
 Both scopes use the execution device's existing gh / glab account. Collection begins at activation rather than importing complete history. Bindings include the instance and stable user ID; switching the CLI account stops reads instead of silently rebinding. The current UI exposes no Webhook configuration and adding a repository creates no cloud receiver.
 

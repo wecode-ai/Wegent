@@ -5,6 +5,7 @@ import {
   modelInterfaceRuntimeConfig,
 } from '../../../wework/electron/src/host/model-interface-runtime'
 import type { LocalRuntime } from './localRuntime'
+import { phoneModelProviders } from './phoneModelProviders'
 
 const MODELS_KEY = 'wework.mobile.responses-models.v1'
 export interface PhoneLocalModel {
@@ -66,6 +67,7 @@ export class PhoneLocalModelStore {
   private mutation: Promise<unknown> = Promise.resolve()
   private listeners = new Set<() => void>()
   private synchronizations = new WeakMap<object, Promise<void>>()
+  private appliedCatalogs = new WeakMap<object, { generation?: number; key: string }>()
 
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener)
@@ -95,12 +97,21 @@ export class PhoneLocalModelStore {
     }))
   }
 
-  sync(runtime: Pick<LocalRuntime, 'request'>): Promise<void> {
+  sync(
+    runtime: Pick<LocalRuntime, 'request'> & Partial<Pick<LocalRuntime, 'status'>>,
+    selectedModelId?: string
+  ): Promise<void> {
     const previous = this.synchronizations.get(runtime) ?? Promise.resolve()
     const operation = previous
       .catch(() => undefined)
       .then(async () => {
-        const models = (await this.list()).map(phoneLocalRunnerModel)
+        const configuration = await phoneModelProviders.runtimeConfiguration()
+        // A pending provider edit must never prevent an existing standalone or official model from running.
+        if (selectedModelId === undefined || configuration.catalogByModel.has(selectedModelId))
+          await this.prepareProviderCatalog(runtime, configuration.catalogByModel)
+        const models = [...(await this.list()).map(phoneLocalRunnerModel), ...configuration.models]
+        if (new Set(models.map(model => model.model_id)).size !== models.length)
+          throw new Error('本机模型 ID 重复，请检查单模型和服务商配置')
         await runtime.request('runtime.runner.local_models.replace', { models })
         await runtime.request('runtime.models.sync_creation_profiles', {
           profiles: models.map(model => ({
@@ -113,6 +124,28 @@ export class PhoneLocalModelStore {
       })
     this.synchronizations.set(runtime, operation)
     return operation
+  }
+
+  private async prepareProviderCatalog(
+    runtime: Pick<LocalRuntime, 'request'> & Partial<Pick<LocalRuntime, 'status'>>,
+    catalogByModel: Map<string, Record<string, unknown>>
+  ): Promise<void> {
+    const models = [...catalogByModel.values()]
+    const key = JSON.stringify(models)
+    const previous = this.appliedCatalogs.get(runtime)
+    if (
+      (!models.length && !previous) ||
+      (previous?.key === key && previous.generation === runtime.status?.generation)
+    )
+      return
+    await runtime.request('runtime.codex.catalog.custom.write', { models })
+    const result = await runtime.request<{ restarted?: boolean }>(
+      'runtime.codex.app_server.restart',
+      { ifIdle: true }
+    )
+    if (!result.restarted)
+      throw new Error('模型能力已保存，执行器正忙。请等当前任务完成后重试应用配置')
+    this.appliedCatalogs.set(runtime, { generation: runtime.status?.generation, key })
   }
 
   private async read(): Promise<PhoneLocalModel[]> {

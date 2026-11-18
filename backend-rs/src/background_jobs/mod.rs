@@ -1,12 +1,15 @@
 //! Rust background jobs, assembled after deployment-specific state injection.
 
 mod cleanup;
+mod configuration;
+pub(crate) use configuration::client_from_env;
 pub(crate) use wegent_job_runtime::client;
 pub use wegent_job_runtime::config;
 mod device;
 mod download;
 pub(crate) mod execution;
 pub(crate) mod git_credentials;
+mod runtime_observations;
 
 mod maintenance;
 pub mod notifications;
@@ -36,6 +39,7 @@ pub(crate) fn register_public_jobs(
     maintenance::register(registry, state.clone())?;
     cleanup::register(registry, state.clone())?;
     device::register(registry, state.clone())?;
+    runtime_observations::register(registry, state.clone())?;
     project::register(registry, state.clone())?;
     robot::register(registry, state.clone())?;
     subscription::register(registry, state.clone())?;

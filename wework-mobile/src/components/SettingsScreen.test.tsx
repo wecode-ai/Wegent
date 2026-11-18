@@ -2,7 +2,7 @@ import React from 'react'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SettingsScreen, BackendLoginScreen, LocalExecutionScreen } from './SettingsScreen'
-import { PhoneModelEditorScreen } from './PhoneModelsScreen'
+import { PhoneStandaloneModelEditorScreen } from './PhoneStandaloneModelEditorScreen'
 import { PrivacyPolicyScreen } from './PrivacyPolicyScreen'
 import policies from '@/content/mobilePrivacyPolicy.json'
 import type { WegentAuthState } from '@/auth/useWegentAuth'
@@ -29,6 +29,13 @@ vi.mock('expo-secure-store', () => ({
     stored.raw = raw
   },
   WHEN_UNLOCKED_THIS_DEVICE_ONLY: 'device-only',
+}))
+vi.mock('@/services/phoneModelProviders', () => ({
+  phoneModelProviders: {
+    runtimeConfiguration: vi.fn(async () => ({ models: [], catalogByModel: new Map() })),
+    providers: vi.fn(async () => ({ revision: 'empty', providers: [] })),
+    subscribe: () => () => {},
+  },
 }))
 vi.mock('@expo/vector-icons/Ionicons', () => ({ default: 'Icon' }))
 vi.mock('react-native', () => ({
@@ -57,6 +64,7 @@ vi.mock('react-native-keyboard-controller', () => ({
 }))
 vi.mock('./AuthorizationScreen', () => ({ AuthorizationScreen: 'AuthorizationScreen' }))
 vi.mock('./LocalRuntimeSettings', () => ({ LocalRuntimeSettings: 'LocalRuntimeSettings' }))
+vi.mock('./DiagnosticsSettings', () => ({ DiagnosticsSettings: 'DiagnosticsSettings' }))
 vi.mock('./errors/ErrorNotice', () => ({ ErrorNotice: 'ErrorNotice' }))
 vi.mock('@/services/errorAlerts', () => ({ confirmNativeAction: vi.fn(), showErrorAlert: vi.fn() }))
 
@@ -231,7 +239,7 @@ describe('full-page local settings', () => {
       const onBack = vi.fn()
       await act(() => {
         renderer = create(
-          <PhoneModelEditorScreen
+          <PhoneStandaloneModelEditorScreen
             runtime={runtime}
             onBack={onBack}
             onChanged={vi.fn()}
@@ -262,7 +270,7 @@ describe('full-page local settings', () => {
     privacy.confirm.mockImplementationOnce(() => undefined)
     await act(() => {
       renderer = create(
-        <PhoneModelEditorScreen
+        <PhoneStandaloneModelEditorScreen
           runtime={runtime}
           onBack={onBack}
           onChanged={vi.fn()}
@@ -293,7 +301,7 @@ describe('full-page local settings', () => {
     const onBack = vi.fn()
     await act(() => {
       renderer = create(
-        <PhoneModelEditorScreen
+        <PhoneStandaloneModelEditorScreen
           runtime={runtime}
           onBack={onBack}
           onChanged={vi.fn()}

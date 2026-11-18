@@ -2,6 +2,10 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { test } from 'node:test'
 import { createProvider, normalizeWebhook, parseProfile } from './provider.js'
+import {
+  collectObservation,
+  initializeObservation,
+} from '../plugin-runtime/connection-observations.js'
 
 const profile = JSON.stringify(['https://github.com', '7'])
 const personal = {
@@ -103,6 +107,33 @@ test('instance/account identities cannot silently switch and repositories are pa
   assert.equal(calls[1].page, 2)
 })
 
+test('a new webhook consumer queries a fresh boundary when reusing a previous subscription source', async () => {
+  const provider = createProvider('github')
+  const calls = []
+  const ctx = {
+    git: {
+      inbox: async input => {
+        calls.push(input)
+        assert.equal(input.operation, 'boundary')
+        return { partition: 'current', sequence: 20 }
+      },
+    },
+  }
+  const initialized = await initializeObservation(
+    {
+      call: (_id, method, input, options) =>
+        provider[method]({ ...ctx, initializationMode: options.initializationMode }, input),
+    },
+    source.providerId,
+    { ...source, boundary: { partition: 'current', sequence: 10 }, resumePending: true }
+  )
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].resumePending, false)
+  assert.deepEqual(initialized.source.boundary, { partition: 'current', sequence: 20 })
+  assert.equal(initialized.checkpoint.sequence, 20)
+  assert.deepEqual(initialized.checkpoint.activationBoundary, initialized.source.boundary)
+})
+
 test('cloud ack uses only the previous durable checkpoint, retaining unknown event types', async () => {
   const calls = []
   const ctx = {
@@ -140,6 +171,47 @@ test('cloud ack uses only the previous durable checkpoint, retaining unknown eve
     calls.some(call => call.operation === 'ack' && call.sequence === 12),
     false
   )
+})
+
+test('multi-page observation never acknowledges an uncommitted webhook page', async () => {
+  const acknowledgements = []
+  const ctx = {
+    git: {
+      read: async () => ({ data: { id: 42 } }),
+      inbox: async input => {
+        if (input.operation === 'ack') {
+          acknowledgements.push(input.sequence)
+          return { success: true }
+        }
+        const sequence = input.after + 1
+        return {
+          items: [
+            {
+              id: `delivery-${sequence}`,
+              sequence,
+              eventType: 'future_platform_event',
+              receivedAt: '2026-02-01T00:00:00Z',
+              payload: { repository: { id: 42 } },
+            },
+          ],
+          hasMore: sequence < 12,
+          gapBefore: 0,
+        }
+      },
+    },
+  }
+  const provider = createProvider('github')
+  const registry = {
+    entries: new Map([['github', { provider: { collectionPagination: 'staged' } }]]),
+    call: (_provider, _method, input) => provider.collect(ctx, input),
+  }
+  const result = await collectObservation(registry, 'github', {
+    source,
+    checkpoint: { sequence: 10 },
+  })
+  assert.equal(result.events.length, 2)
+  assert.equal(result.nextCheckpoint.sequence, 12)
+  assert.deepEqual(acknowledgements, [10, 10])
 })
 
 test('failed reads and retention gaps cannot advance a checkpoint', async () => {

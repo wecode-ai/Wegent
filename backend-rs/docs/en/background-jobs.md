@@ -12,10 +12,10 @@ sidebar_position: 20
 | --- | --- | --- |
 | `SCHEDULED_TASKS_ENABLED` | `true` | Produce periodic and startup jobs allowed by this Rust process's allowlist |
 | `EMBEDDED_CELERY_ENABLED` | `true` | Enable this Rust process's native worker to consume allowed durable jobs |
-| `WEGENT_RS_JOB_ALLOWLIST` | Empty | Limit Rust execution to comma-separated full kinds; no `*`; unknown names fail startup |
+| `WEGENT_RS_JOB_ALLOWLIST` | Only `device_registration_retention` when unset | Limit Rust execution to comma-separated full kinds; no `*`; unknown names fail startup |
 | `WEGENT_RS_JOBS_SHUTDOWN_GRACE_SECONDS` | `30` | Cooperative drain period after claims stop |
 
-Rust reuses Python's existing switch names and defaults. In Rust, `EMBEDDED_CELERY_ENABLED` controls only the native worker in this process; it does not start Celery. An empty allowlist prevents Rust from producing or consuming jobs even though both switches default to `true`. An API-only Rust process may configure an allowlist and set both runtime switches to `false`.
+Rust reuses Python's existing switch names and defaults. In Rust, `EMBEDDED_CELERY_ENABLED` controls only the native worker in this process; it does not start Celery. When the allowlist is unset, the application enables only native `device_registration_retention`. It checks one minute after startup and hourly thereafter, deactivating registrations that have been offline and idle for more than seven days. An explicit empty allowlist disables all Rust jobs; an explicit list must include this name to enable retention. Migrated Python job families remain opt-in. An API-only Rust process may configure an allowlist and set both runtime switches to `false`.
 
 The allowlist limits Rust execution without reserving task types exclusively. Python retains all existing Celery publishing and consumption, does not read this allowlist, and does not forward tasks to Rust. Configure the same-named switches separately for each process, and avoid scheduling the same execution family concurrently in Python and Rust.
 
@@ -36,7 +36,7 @@ This table groups execution families. Exact kinds are defined by the public and 
 | External sync | Daily Wiki cursor, DingTalk scan/refresh and Xiaoxin snapshot; verify source health, non-retryable versions, permissions and cached counts |
 | Video and async cards | Provider creation, durable polling, cancellation, upload, Socket.IO and two startup recovery passes; waiting does not consume the failure budget |
 | Plugin mirrors | Six-hour sync of explicitly enabled upstreams; verify HTTPS/ZIP safety, immutable versions, review, latest version and administrator delisting |
-| Public maintenance | `repository_update`, `executor_cleanup`, `device_heartbeat_monitor`; verify cache refresh, archive before deletion, existing Redis cursors and disconnected devices |
+| Public maintenance | `repository_update`, `executor_cleanup`, `device_heartbeat_monitor`, `device_registration_retention`; verify cache refresh, archive before deletion, existing Redis cursors and disconnected devices |
 | Internal maintenance | Hourly unread, daily summary email, grading, orphan pods, cloud devices/IP sync and OpenClaw tokens; verify original flags, alert deduplication, archive, timeout and internal protocols |
 
 The Python source has no reachable server consumer for managed Team queue entries. This migration preserves that boundary. Managed execution of an existing Task continues through its original task entry point.

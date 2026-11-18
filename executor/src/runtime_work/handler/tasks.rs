@@ -7,6 +7,9 @@ use super::context_compaction::context_compaction_outcome;
 use super::context_compaction::wait_for_context_compaction;
 use super::*;
 
+#[path = "startup_recovery.rs"]
+mod startup_recovery;
+
 impl RuntimeWorkRpcHandler {
     pub(super) async fn create_collaboration_dispatch(
         &self,
@@ -506,8 +509,16 @@ impl RuntimeWorkRpcHandler {
         let local_task_id = id_field(&payload, "taskId")
             .or_else(|| id_field(&payload, "task_id"))
             .unwrap_or_else(|| format!("{runtime}-local-{}", now_ms()));
-        let mut payload_workspace_path = workspace_path(&payload);
+        let failed_start = self
+            .local_task_link(&local_task_id)
+            .filter(|link| link.status == "failed" && runtime_session_id_from_link(link).is_none());
+        let mut payload_workspace_path = workspace_path(&payload).or_else(|| {
+            failed_start
+                .as_ref()
+                .map(|link| link.workspace_path.clone())
+        });
         let title = string_field(&payload, "title")
+            .or_else(|| failed_start.as_ref().map(|link| link.title.clone()))
             .or_else(|| string_field(&payload, "message"))
             .unwrap_or_else(|| local_task_id.clone());
         let mut request = execution_request(&payload)
@@ -832,6 +843,7 @@ impl RuntimeWorkRpcHandler {
         if let Some(presentation) = user_message_presentation(&payload) {
             append_runtime_handle_user_message_presentation(&mut link.runtime_handle, presentation);
         }
+        self.preserve_failed_start_context(&mut link);
         if is_codex_runtime(&runtime) {
             if let Some(supervisor) = payload
                 .get("initialSupervisor")
@@ -960,7 +972,7 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) fn retain_failed_runtime_task(&self, local_task_id: &str, error: &AppIpcError) {
         self.store.update_task(local_task_id, |link| {
-            apply_runtime_task_start_failure(link, error);
+            apply_local_task_failure(link, error);
         });
         self.record_stand_in_completion_outbox(local_task_id, "failed");
     }
@@ -1147,10 +1159,43 @@ impl RuntimeWorkRpcHandler {
                 ],
             );
         }
+        if let Some(client_user_message_id) = string_field(&payload, "clientUserMessageId")
+            .or_else(|| string_field(&payload, "client_user_message_id"))
+        {
+            let cancelled = {
+                let mut pending = self
+                    .cancelled_pending_sends
+                    .lock()
+                    .expect("cancelled pending sends lock should not be poisoned");
+                let cancelled = pending
+                    .get_mut(&local_task_id)
+                    .is_some_and(|message_ids| message_ids.remove(&client_user_message_id));
+                if cancelled && pending.get(&local_task_id).is_some_and(HashSet::is_empty) {
+                    pending.remove(&local_task_id);
+                }
+                cancelled
+            };
+            if cancelled {
+                return Ok(json!({
+                    "success": false,
+                    "accepted": false,
+                    "taskId": local_task_id,
+                    "runtime": "codex",
+                    "code": "cancelled",
+                    "error": "send was cancelled before executor dispatch",
+                }));
+            }
+        }
         self.bind_stand_in_owner_command(&mut payload, activity);
         normalize_user_message_presentation(&mut payload)?;
+        if payload.get("resourceEventKeys").is_some() && payload.get("commandId").is_none() {
+            payload["commandId"] = payload
+                .get("clientUserMessageId")
+                .cloned()
+                .unwrap_or_else(|| json!(uuid::Uuid::new_v4().to_string()));
+        }
         let existing_link = self.local_task_link(&local_task_id);
-        let payload = if let Some(link) = &existing_link {
+        let mut payload = if let Some(link) = &existing_link {
             self.refresh_project_coordinator_payload(payload, link)
                 .await?
         } else {
@@ -1158,6 +1203,16 @@ impl RuntimeWorkRpcHandler {
         };
         if let Some(receipt) = self.existing_payload_command(&payload).await? {
             return Ok(receipt);
+        }
+        if payload.get("resourceEventKeys").is_some()
+            && existing_link
+                .as_ref()
+                .is_some_and(|link| link.interaction_status.is_some())
+        {
+            return Err(AppIpcError::new(
+                "user_input_pending",
+                "Resource events cannot bypass the conversation's pending human input",
+            ));
         }
         let start_new_session = self.validate_session_start(existing_link.as_ref(), &payload)?;
         if payload["automaticStandIn"] == true
@@ -1169,13 +1224,28 @@ impl RuntimeWorkRpcHandler {
         {
             return Ok(json!({"pending":true,"accepted":false,"code":"stand_in_waiting_for_user"}));
         }
+        if let Some(response) = request_user_input_response(&payload) {
+            if response["delivery"] == "async" {
+                self.prepare_async_question_reply(&local_task_id, &response, &mut payload)
+                    .await?;
+                if self.is_busy_local_task(&local_task_id) {
+                    let guided = self.send_guidance(payload.clone()).await?;
+                    if guided["code"] != "no_active_turn" {
+                        return Ok(guided);
+                    }
+                    // Completion can race with delivery; the ordinary send
+                    // scheduler accepts the answer after native cleanup.
+                }
+                self.refresh_persisted_model_credentials(&mut payload)
+                    .await?;
+            } else {
+                return self
+                    .send_request_user_input_response(&local_task_id, response)
+                    .await;
+            }
+        }
         let payload_execution_request = execution_request(&payload);
         let has_execution_request = payload_execution_request.is_some();
-        if let Some(response) = request_user_input_response(&payload) {
-            return self
-                .send_request_user_input_response(&local_task_id, response)
-                .await;
-        }
         let queue_if_busy = bool_field(&payload, "queueIfBusy")
             .or_else(|| bool_field(&payload, "queue_if_busy"))
             .unwrap_or(false);
@@ -1238,6 +1308,7 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
         apply_runtime_payload_metadata(&mut request, &payload);
         self.resolve_local_model_reference(&mut request, &local_task_id)?;
+        self.prepare_resource_event_request(&local_task_id, &mut request)?;
         if let Some(link) = existing_link.as_ref() {
             super::mcp_apps::append_model_context(&mut request, link);
             // A failed preparation has no session yet. Retry its saved snapshot;
@@ -1390,6 +1461,12 @@ impl RuntimeWorkRpcHandler {
                     .and_then(runtime_session_id_from_link)
             });
         if thread_id.is_none() && !retrying_preparation && !awaiting_identity_start {
+            if let Some(result) = self
+                .recover_failed_session_start(existing_link.as_ref(), payload.clone(), activity)
+                .await?
+            {
+                return Ok(result);
+            }
             return Ok(json!({
                 "success": false,
                 "error": "runtime task session is not ready",
@@ -2277,7 +2354,7 @@ impl RuntimeWorkRpcHandler {
         }) || active_turn
             .as_ref()
             .is_some_and(|turn| turn.execution_id != pending_request.execution_id);
-        let invalid_mcp_response = self
+        let invalid_interaction_response = self
             .active_codex_transcript_items
             .lock()
             .ok()
@@ -2291,6 +2368,18 @@ impl RuntimeWorkRpcHandler {
                         })
                         .map(|accepted| !accepted)
                         .unwrap_or_else(|| {
+                            if let Some(id) = super::super::mcp_elicitation::response_id(&response)
+                            {
+                                let key = id
+                                    .as_str()
+                                    .map(str::to_owned)
+                                    .unwrap_or_else(|| id.to_string());
+                                return !active
+                                    .user_input_requests
+                                    .get(&key)
+                                    .copied()
+                                    .unwrap_or(false);
+                            }
                             super::super::mcp_elicitation::response_id(&response).is_none()
                                 && active.items.iter().any(|item| {
                                     item["type"] == "mcpElicitation"
@@ -2300,7 +2389,7 @@ impl RuntimeWorkRpcHandler {
                 })
             })
             .unwrap_or(false);
-        if scoped_to_other_turn || invalid_mcp_response {
+        if scoped_to_other_turn || invalid_interaction_response {
             return Ok(json!({
                 "success": false, "code": "stale_request_user_input",
                 "error": "This interaction is expired, settled, or belongs to another turn",
@@ -2361,9 +2450,14 @@ impl RuntimeWorkRpcHandler {
         stop_timeout: Duration,
         require_stopped: bool,
     ) -> Result<Value, AppIpcError> {
-        let local_task_id = runtime_task_id(&payload)
+        let requested_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let local_task_id = self.canonical_local_task_id(&requested_task_id);
+        let send_gate = self.task_send_gate(&local_task_id);
+        let _send_guard = send_gate.lock().await;
         self.invalidate_stand_in_owner_request(&local_task_id);
+        let pending_client_user_message_id = string_field(&payload, "clientUserMessageId")
+            .or_else(|| string_field(&payload, "client_user_message_id"));
         let link = self.local_task_link(&local_task_id);
         let thread_id = link.as_ref().and_then(runtime_session_id_from_link);
         let is_codex = link
@@ -2386,7 +2480,8 @@ impl RuntimeWorkRpcHandler {
                 }),
             });
         }
-        if self.cancel_preparing_turn(&local_task_id) {
+        let cancelled_preparing_turn = self.cancel_preparing_turn(&local_task_id);
+        if cancelled_preparing_turn {
             self.request_active_turn_stop(&local_task_id);
             return Ok(match link {
                 Some(link) => task_action_success(&link),
@@ -2398,9 +2493,23 @@ impl RuntimeWorkRpcHandler {
                 }),
             });
         }
+        let cancels_pending_send = pending_client_user_message_id.is_some()
+            && !had_active_local_execution
+            && !removed_queued
+            && !cancelled_preparing_turn;
+        if let (true, Some(client_user_message_id)) =
+            (cancels_pending_send, pending_client_user_message_id)
+        {
+            self.cancelled_pending_sends
+                .lock()
+                .expect("cancelled pending sends lock should not be poisoned")
+                .entry(local_task_id.clone())
+                .or_default()
+                .insert(client_user_message_id);
+        }
         let had_active_local_execution =
             self.request_active_turn_stop(&local_task_id) || had_active_local_execution;
-        if is_codex && !had_active_local_execution {
+        if is_codex && !had_active_local_execution && !cancels_pending_send {
             if let Some(thread_id) = thread_id.as_deref() {
                 if self
                     .settle_local_execution_from_terminal_codex_turn(
@@ -2425,8 +2534,14 @@ impl RuntimeWorkRpcHandler {
         }
         let local_stop = self.abort_active_turn_with_timeout(&local_task_id, stop_timeout);
         let provider_stop = async {
-            match (is_codex, had_active_local_execution, thread_id.as_deref()) {
-                (true, false, Some(thread_id)) => tokio::time::timeout(
+            match (
+                is_codex,
+                had_active_local_execution,
+                cancels_pending_send,
+                thread_id.as_deref(),
+            ) {
+                (_, _, true, _) => true,
+                (true, false, false, Some(thread_id)) => tokio::time::timeout(
                     stop_timeout,
                     self.interrupt_provider_active_turn(thread_id),
                 )
@@ -2439,12 +2554,16 @@ impl RuntimeWorkRpcHandler {
         if !local_stopped && !require_stopped {
             self.force_settle_local_task_execution(
                 &local_task_id,
-                thread_id,
+                thread_id.clone(),
                 "cancelled",
                 "cancel_timeout",
             );
         }
         let cleanup_pending = !local_stopped || !provider_stopped;
+
+        if cancels_pending_send {
+            self.settle_cancelled_idle_task(&local_task_id, thread_id.clone());
+        }
 
         Ok(match self.local_task_link(&local_task_id).or(link) {
             Some(link) => {
@@ -2667,7 +2786,9 @@ impl RuntimeWorkRpcHandler {
             link.updated_at = now_ms();
             set_runtime_handle_model_selection(&mut link.runtime_handle, payload);
             apply_runtime_profile_handle(&mut link.runtime_handle, payload);
-            link.interaction_status = None;
+            if !super::automatic_turns::is_automatic_input(request) {
+                link.interaction_status = None;
+            }
         });
         if updated.is_some() {
             return;
@@ -2811,27 +2932,6 @@ fn project_plugin_ids(request: &ExecutionRequest) -> Vec<String> {
         .collect()
 }
 
-fn apply_runtime_task_start_failure(link: &mut RuntimeTaskLink, error: &AppIpcError) {
-    link.running = false;
-    link.status = "failed".to_owned();
-    link.thread_status = "failed".to_owned();
-    link.turn_status = Some("failed".to_owned());
-    link.updated_at = now_ms();
-    link.completed_at = Some(link.updated_at);
-    normalize_settled_task_state(link);
-    if !link.runtime_handle.is_object() {
-        link.runtime_handle = json!({});
-    }
-    if let Some(runtime_handle) = link.runtime_handle.as_object_mut() {
-        runtime_handle.remove("queuePosition");
-        runtime_handle.insert("lastError".to_owned(), Value::String(error.message.clone()));
-        runtime_handle.insert(
-            "lastErrorCode".to_owned(),
-            Value::String(error.code.clone()),
-        );
-    }
-}
-
 fn normalize_friendly_title(value: &str) -> Option<String> {
     let title = value
         .lines()
@@ -2865,6 +2965,21 @@ pub(super) fn runtime_model_selection_changed(link: &RuntimeTaskLink, payload: &
     previous.is_some() && next.is_some() && previous != next
 }
 
+pub(super) fn runtime_model_provider_changed(link: &RuntimeTaskLink, payload: &Value) -> bool {
+    let previous = model_selection_identity(
+        link.runtime_handle
+            .get("modelSelection")
+            .or_else(|| link.runtime_handle.get("model_selection")),
+    );
+    let next = model_selection_identity(
+        payload
+            .get("modelSelection")
+            .or_else(|| payload.get("model_selection")),
+    );
+    matches!((previous, next), (Some(previous), Some(next))
+        if previous.model_type != next.model_type || previous.provider != next.provider)
+}
+
 pub(super) fn mark_runtime_model_switch(
     request: &mut ExecutionRequest,
     link: &RuntimeTaskLink,
@@ -2875,9 +2990,22 @@ pub(super) fn mark_runtime_model_switch(
             .extra
             .insert("wework_model_switched".to_owned(), Value::Bool(true));
     }
+    if runtime_model_provider_changed(link, payload) {
+        request.extra.insert(
+            "wework_model_provider_switched".to_owned(),
+            Value::Bool(true),
+        );
+    }
 }
 
-fn model_selection_identity(selection: Option<&Value>) -> Option<(String, Option<String>)> {
+#[derive(Debug, PartialEq, Eq)]
+struct ModelSelectionIdentity {
+    model_name: String,
+    model_type: Option<String>,
+    provider: Option<String>,
+}
+
+fn model_selection_identity(selection: Option<&Value>) -> Option<ModelSelectionIdentity> {
     let selection = selection?.as_object()?;
     let model_name = selection
         .get("modelName")
@@ -2894,7 +3022,28 @@ fn model_selection_identity(selection: Option<&Value>) -> Option<(String, Option
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_owned);
-    Some((model_name.to_owned(), model_type))
+    let provider = selection
+        .get("provider")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            let options = selection.get("options")?;
+            [
+                "runnerModelProvider",
+                "runner_model_provider",
+                "codexProviderId",
+                "codex_provider_id",
+            ]
+            .into_iter()
+            .find_map(|key| options.get(key).and_then(Value::as_str))
+        })
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    Some(ModelSelectionIdentity {
+        model_name: model_name.to_owned(),
+        model_type,
+        provider,
+    })
 }
 
 fn runtime_guidance_failure(
@@ -3069,7 +3218,7 @@ mod tests {
     use crate::{local::app_ipc::AppIpcError, runtime_work::response::RuntimeTaskLink};
 
     use super::{
-        apply_runtime_task_start_failure, context_compaction_outcome, normalize_friendly_title,
+        apply_local_task_failure, context_compaction_outcome, normalize_friendly_title,
         prune_reverted_turn_handle,
     };
 
@@ -3305,7 +3454,7 @@ mod tests {
             "Source repository identity changed after planning",
         );
 
-        apply_runtime_task_start_failure(&mut link, &error);
+        apply_local_task_failure(&mut link, &error);
 
         assert!(!link.running);
         assert_eq!(link.status, "failed");

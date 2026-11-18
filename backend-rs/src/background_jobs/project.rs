@@ -26,6 +26,8 @@ pub(crate) mod queue;
 pub(crate) mod routing;
 #[path = "project_routing_diagnostics.rs"]
 mod routing_diagnostics;
+#[path = "project_runner_recovery.rs"]
+pub(crate) mod runner_recovery;
 #[path = "project_runtime_rpc.rs"]
 pub(crate) mod runtime_rpc;
 
@@ -37,7 +39,7 @@ pub(crate) mod assignments;
 #[path = "project_dispatch.rs"]
 mod dispatch;
 #[path = "project_due.rs"]
-mod due;
+pub(crate) mod due;
 #[path = "project_events.rs"]
 mod events;
 #[path = "project_groups.rs"]

@@ -8,22 +8,87 @@ use crate::task_runtime::personal_stand_in::{
 use chrono::TimeZone;
 
 impl RuntimeWorkRpcHandler {
-    pub(super) fn start_connection_stand_in_scheduler(&self) {
+    pub(super) fn start_connection_scheduler(&self) {
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
+        if self
+            .connection_scheduler_started
+            .swap(true, Ordering::AcqRel)
+        {
+            return;
+        }
         let handler = self.clone();
+        let observers = self.clone();
         runtime.spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_secs(15));
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut next_maintenance = 0;
             loop {
-                interval.tick().await;
-                if let Err(error) = handler.poll_connection_stand_ins().await {
+                let started_at = chrono::Utc::now().timestamp_millis();
+                let maintenance =
+                    Self::connection_maintenance_due(&mut next_maintenance, started_at);
+                let (conversation_result, stand_in_result) = tokio::join!(
+                    handler.poll_conversation_connection_events(maintenance),
+                    async {
+                        if maintenance {
+                            handler.poll_connection_stand_ins().await
+                        } else {
+                            Ok(())
+                        }
+                    }
+                );
+                if let Err(error) = conversation_result {
+                    log_executor_event(
+                        "Conversation event collection failed",
+                        &[("code", error.code)],
+                    );
+                }
+                if let Err(error) = stand_in_result {
                     log_executor_event(
                         "Connection stand-in collection failed",
                         &[("code", error.code), ("error", error.message)],
                     );
                 }
+                let source = handler.connection_observation_poll_delay(false, started_at);
+                let delay = Self::connection_maintenance_delay(
+                    next_maintenance,
+                    chrono::Utc::now().timestamp_millis(),
+                    source,
+                );
+                tokio::select! {
+                    _ = tokio::time::sleep(delay) => {},
+                    _ = handler.connection_observation_wakeup.notified() => {},
+                }
+            }
+        });
+        runtime.spawn(async move {
+            let mut next_maintenance = 0;
+            loop {
+                let started_at = chrono::Utc::now().timestamp_millis();
+                let maintenance =
+                    Self::connection_maintenance_due(&mut next_maintenance, started_at);
+                let (sources, cleanup) =
+                    tokio::join!(observers.poll_ui_observer_sources(), async {
+                        if maintenance {
+                            observers.poll_ui_observers().await
+                        } else {
+                            Ok(())
+                        }
+                    });
+                for result in [sources, cleanup] {
+                    if let Err(error) = result {
+                        log_executor_event(
+                            "UI observation maintenance deferred",
+                            &[("code", error.code)],
+                        );
+                    }
+                }
+                let source = observers.connection_observation_poll_delay(true, started_at);
+                tokio::time::sleep(Self::connection_maintenance_delay(
+                    next_maintenance,
+                    chrono::Utc::now().timestamp_millis(),
+                    source,
+                ))
+                .await;
             }
         });
     }
@@ -56,7 +121,7 @@ impl RuntimeWorkRpcHandler {
                 {
                     state = Value::Null;
                 }
-                if collection_error_latched(&state, &settings["version"]) {
+                if collection_retry_pending(&state, &settings["version"]) {
                     continue;
                 }
                 let outcome = self
@@ -133,6 +198,7 @@ impl RuntimeWorkRpcHandler {
         state: &Value,
         settings_version: &Value,
     ) -> Result<Value, AppIpcError> {
+        let _stage = super::stand_in_diagnostics::CoordinationStage::start(user, "collect_source");
         let checkpoint = state.get("checkpoint").cloned().unwrap_or_else(|| {
             if source_provider(source) == crate::task_runtime::personal_stand_in::DINGTALK_PROVIDER
                 && state["after"].is_string()
@@ -346,33 +412,12 @@ fn concrete_connection_source(source: &Value, message: &Value) -> Result<Value, 
     Ok(result)
 }
 
-fn collection_error_latched(state: &Value, version: &Value) -> bool {
-    if !state["error"].is_object() || state["version"] != *version {
-        return false;
-    }
-    if state["error"]["retryable"] == true {
-        return state["retryAt"]
+fn collection_retry_pending(state: &Value, version: &Value) -> bool {
+    state["version"] == *version
+        && state["error"]["retryable"] == true
+        && state["retryAt"]
             .as_i64()
-            .is_some_and(|at| at > chrono::Utc::now().timestamp_millis());
-    }
-    // Previously persisted runtime timeouts must recover without changing settings
-    // or discarding the original collection checkpoint.
-    if super::super::connection_host::collection_runtime_retry_after_ms(
-        state["error"]["code"].as_str().unwrap_or_default(),
-    )
-    .is_some()
-    {
-        return false;
-    }
-    // The old CLI boundary serialized this exact synthetic envelope for generic
-    // request failures. Do not infer recovery from arbitrary provider messages.
-    if state["error"]["code"] == "connection_cli_request_failed"
-        && state["error"]["providerCode"].is_null()
-        && state["error"]["message"] == "Plugin tool request failed (request_failed)"
-    {
-        return false;
-    }
-    true
+            .is_some_and(|at| at > chrono::Utc::now().timestamp_millis())
 }
 
 fn save_collection_result(
@@ -393,7 +438,7 @@ fn save_collection_result(
             } else {
                 json!({})
             };
-            next["error"] = json!({"code":error.code,"message":error.message});
+            next["error"] = json!({"code":error.code,"message":error.message,"retryable":true});
             if let Some(code) = &error.provider_code {
                 next["error"]["providerCode"] = json!(code);
             }
@@ -406,7 +451,6 @@ fn save_collection_result(
                     .saturating_add(1)
                     .min(10);
                 next["failures"] = json!(failures);
-                next["error"]["retryable"] = json!(true);
                 // Apply the base delay on the first failure, then back off repeated failures.
                 next["retryAt"] = json!(
                     chrono::Utc::now().timestamp_millis()
@@ -466,6 +510,7 @@ pub(super) fn git_message_is_echo(
     Ok(false)
 }
 
+// Keep existing intake policy separate from generic subscription initialization receipts.
 pub(super) fn source_accepts_message(source: &Value, message: &Value) -> bool {
     if source_provider(source) == crate::task_runtime::personal_stand_in::EMAIL_PROVIDER
         || (source_provider(source).starts_with(super::super::git_connections::PACKAGE)
@@ -492,6 +537,20 @@ pub(super) fn source_accepts_message(source: &Value, message: &Value) -> bool {
 #[cfg(test)]
 mod ordered_email_tests {
     use super::*;
+
+    #[test]
+    fn dingtalk_intake_keeps_its_time_gate_even_with_a_newer_position() {
+        let source = json!({"providerId":"@wegent/dsh-connection-dingtalk/dingtalk",
+            "enabledAfter":"2026-11-04T00:00:00Z",
+            "boundary":{"partition":"events","sequence":5}});
+        let mut message = json!({"at":"2000-01-01T00:00:00Z",
+            "position":{"partition":"events","sequence":6}});
+        assert!(!source_accepts_message(&source, &message));
+        message["at"] = Value::Null;
+        assert!(!source_accepts_message(&source, &message));
+        message["at"] = json!("2026-11-04T00:00:01Z");
+        assert!(source_accepts_message(&source, &message));
+    }
 
     #[test]
     fn git_cli_repository_intake_uses_activation_time_without_a_cloud_boundary() {

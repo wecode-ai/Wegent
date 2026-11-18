@@ -2,6 +2,10 @@
 
 assert_case "docs only" "$all_false" "docs/zh/index.md"
 
+assert_case "Native Goal archive harness changes run Executor contracts" \
+  "${all_false/executor=false/executor=true}" \
+  ".github/scripts/verify-native-event-goal.sh"
+
 electron_cache_expected="${all_false/wework=false/wework=true}"
 for path in .github/scripts/prime-ci-electron-installer-cache.mjs \
   .github/actions/prepare-electron-installer-cache/action.yml; do
@@ -200,6 +204,12 @@ assert_case "Wework transport retains E2E coverage" "$wework_e2e_expected" \
 
 assert_case "Wework E2E image changes run Wework E2E" "$wework_e2e_expected" \
   "docker/wework-e2e/desktop.Dockerfile"
+
+for path in .github/actions/setup-wework-native-test-dependencies/action.yml \
+  .github/ci/wework-native-test-ubuntu.sources; do
+  assert_case "Native desktop preparation selects its CI consumers: $path" \
+    "$wework_e2e_expected" "$path"
+done
 
 shared_rust_expected="${backend_rs_expected/executor=false/executor=true}"
 assert_case "shared Rust libraries run both consumers" "$shared_rust_expected" \

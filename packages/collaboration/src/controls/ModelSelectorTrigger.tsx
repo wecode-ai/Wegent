@@ -17,6 +17,7 @@ const LEADING_ICON_CHROME = 18;
 
 interface ModelSelectorTriggerProps {
   buttonRef: RefObject<HTMLButtonElement | null>;
+  popupId?: string;
   open: boolean;
   disabled: boolean;
   isMobile: boolean;
@@ -53,6 +54,7 @@ function TriggerLabel({
 
 export function ModelSelectorTrigger({
   buttonRef,
+  popupId,
   open,
   disabled,
   isMobile,
@@ -133,11 +135,13 @@ export function ModelSelectorTrigger({
         disabled={disabled}
         style={desktopStyle}
         className={cn(
-          "flex h-8 min-w-8 max-w-full items-center gap-1 overflow-hidden rounded-full px-2 text-sm font-normal leading-[18px] text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50",
+          "flex h-11 min-w-11 max-w-full items-center gap-1 overflow-hidden rounded-full px-2 text-sm font-normal leading-[18px] text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50 md:h-8 md:min-w-8",
           !isMobile &&
             "transition-[width,background-color,color,opacity] duration-200 [transition-timing-function:cubic-bezier(0.2,0,0,1)] motion-reduce:transition-none",
           buttonClassName,
         )}
+        aria-haspopup="dialog"
+        aria-controls={open ? popupId : undefined}
         aria-expanded={open}
         aria-label={ariaLabel}
         aria-describedby={showTooltip ? "model-selector-tooltip" : undefined}

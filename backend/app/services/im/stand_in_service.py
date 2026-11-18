@@ -22,7 +22,7 @@ from shared.telemetry.decorators import trace_async
 logger = logging.getLogger(__name__)
 
 BINDING_PREFIX = "channel:stand_in_binding:"
-SETUP_GUIDANCE = "请在 Wework“我的分身”中打开“分身详情”浮层，点击对应的 IM 渠道连接，并确认执行设备在线。"
+SETUP_GUIDANCE = "请在 Wework“我的助理”中打开“助理详情”浮层，点击对应的 IM 渠道连接，并确认执行设备在线。"
 
 
 def binding_key(user_id: int, session_key: str) -> str:
@@ -93,7 +93,7 @@ async def send_stand_in_message(
         target = await resolve_stand_in_target(db, user, session)
     except Exception:
         logger.exception("Could not resolve IM stand-in: user_id=%s", user.id)
-        await port.send_text_reply(context, f"无法读取分身连接。{SETUP_GUIDANCE}")
+        await port.send_text_reply(context, f"无法读取助理连接。{SETUP_GUIDANCE}")
         return False
     if target is None:
         await port.send_text_reply(context, SETUP_GUIDANCE)
@@ -130,7 +130,7 @@ async def send_stand_in_message(
         message = (
             "附件未能保存，请重新发送。"
             if getattr(error, "code", None) == "attachment_failed"
-            else f"分身暂时无法接收消息。{SETUP_GUIDANCE}"
+            else f"助理暂时无法接收消息。{SETUP_GUIDANCE}"
         )
         try:
             await port._emit_private_im_runtime_stream_error(
@@ -163,7 +163,12 @@ async def _dispatch(
     from app.services.runtime_work_service import _runtime_attachment_payloads
 
     attachment_ids = _persist_attachments(db, user.id, context, port)
+    from app.services.im.question_context import pending_question_context
+
     additional_context = await _quoted_task_context(session, context)
+    additional_context.update(
+        await pending_question_context(db, session, context, target)
+    )
     result = await runtime_rpc_service.call(
         user_id=user.id,
         device_id=target["deviceId"],

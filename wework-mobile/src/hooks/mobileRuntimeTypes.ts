@@ -1,3 +1,4 @@
+import type { RuntimeFailureAction } from './useRuntimeFailures'
 import type { RuntimePermissionMode } from '@/services/runtimePermissionPreference'
 import type { RuntimeApi } from '@/services/runtimeApi'
 import type { MobileWorkspaceFileTarget } from '@/domain/mobileFileTarget'
@@ -9,6 +10,7 @@ import type {
   RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
   RuntimeWorkListResponse,
+  RuntimeProjectWork,
   UnifiedModel,
   ModelOptions,
   RuntimeAttachment,
@@ -23,6 +25,10 @@ export interface MobileRuntimeState {
   fileTarget: MobileWorkspaceFileTarget | null
   work: RuntimeWorkListResponse
   devices: DeviceInfo[]
+  cloudConnected: boolean
+  failures: RuntimeFailureAction[]
+  retryFailure: (failure: RuntimeFailureAction) => Promise<void>
+  refreshDevices: () => Promise<string | null>
   conversations: ConversationItem[]
   messages: ChatMessage[]
   currentAddress: RuntimeTaskAddress | null
@@ -41,9 +47,10 @@ export interface MobileRuntimeState {
   selectedModel: UnifiedModel | null
   selectedModelOptions: ModelOptions
   permissionMode: RuntimePermissionMode
-  gitRef: string | null
   loading: boolean
+  listSnapshotReady: boolean
   conversationLoading: boolean
+  historyLoaded: boolean
   hasMoreMessagesBefore: boolean
   loadingMoreMessagesBefore: boolean
   refreshing: boolean
@@ -68,11 +75,16 @@ export interface MobileRuntimeState {
   uploadAttachment: (asset: RuntimeUploadAsset) => Promise<RuntimeAttachment>
   loadComposerApps: () => Promise<RuntimeComposerApp[]>
   createProject: (input: { deviceId: string; workspacePath: string; name: string }) => Promise<void>
+  setProjectPinned: (project: RuntimeProjectWork, pinned: boolean) => Promise<void>
+  renameProject: (project: RuntimeProjectWork, name: string) => Promise<void>
+  removeProject: (project: RuntimeProjectWork) => Promise<void>
+  refreshWork: (deviceId: string) => Promise<unknown>
   clearError: () => void
 }
 
 export interface NewConversationOptions {
-  worktreeBranch?: string
+  executionMode?: 'current_workspace' | 'git_worktree'
+  worktreeBranch?: string | null
   attachmentIds?: number[]
   attachments?: Attachment[]
   pursueGoal?: boolean

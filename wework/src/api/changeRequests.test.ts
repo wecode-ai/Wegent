@@ -21,6 +21,25 @@ const targets: TaskChangeRequestTarget[] = [
 ]
 
 describe('loadTaskChangeRequests', () => {
+  it('looks up a linked PR once per device and preserves every task projection', async () => {
+    const url = 'https://github.com/org/repo/pull/1'
+    const executeCommand = vi.fn(async () => ({
+      success: true,
+      stdout: { number: 1, url, state: 'OPEN' },
+      stderr: '',
+    }))
+    const linked = targets.map(target => ({ ...target, changeRequestUrl: url }))
+    const snapshots = await loadTaskChangeRequests({ executeCommand }, linked)
+    expect(executeCommand).toHaveBeenCalledTimes(1)
+    expect(snapshots.map(snapshot => snapshot.target.taskId)).toEqual(['task-a', 'task-b'])
+    expect(snapshots.every(snapshot => snapshot.changeRequest?.number === 1)).toBe(true)
+    await loadTaskChangeRequests({ executeCommand }, [
+      linked[0],
+      { ...linked[1], deviceId: 'another-device' },
+    ])
+    expect(executeCommand).toHaveBeenCalledTimes(3)
+  })
+
   it('loads one repository snapshot and maps PR and merge queue states back to tasks', async () => {
     const executeCommand = vi.fn(async (_deviceId: string, request: { command_key: string }) => {
       if (request.command_key === 'git_github_pull_requests_batch') {

@@ -49,9 +49,9 @@ export function useRuntimeConversationSnapshot(address: RuntimeTaskAddress | nul
     (listener: () => void) => {
       if (!address) return () => {}
       let cancel: (() => void) | undefined
-      const unsubscribe = subscribeRuntimeConversation(address, (_action, coalesced) => {
-        // A coalesced publication must not queue a second render frame.
-        if (coalesced) {
+      const unsubscribe = subscribeRuntimeConversation(address, (action, coalesced) => {
+        // Atomic snapshots and local input are immediate. Only incremental stream events wait.
+        if (coalesced || !action || action.type === 'user_added') {
           cancel?.()
           cancel = undefined
           listener()

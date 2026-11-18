@@ -60,8 +60,9 @@ import TeamModeEditor from './team-edit/TeamModeEditor'
 import TeamModeChangeDialog from './team-edit/TeamModeChangeDialog'
 import SimpleTeamEditForm from './team-edit/SimpleTeamEditForm'
 import { useSimpleTeamDraft } from './team-edit/useSimpleTeamDraft'
-import { toModelSelectValue } from './team-edit/model-select-utils'
+import { isRetainedPrivateModel, toModelSelectValue } from './team-edit/model-select-utils'
 import { useShellModels } from '../hooks/useShellModels'
+import { useTeamLeaderBot } from '../hooks/useTeamLeaderBot'
 import {
   bindModeRequiresCodingAgent,
   getDefaultSimpleBindMode,
@@ -236,10 +237,48 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const [marketplaceExampleConversations, setMarketplaceExampleConversations] = useState<
     MarketplaceExampleConversation[]
   >([])
+  const [agentBindingsLoading, setAgentBindingsLoading] = useState(false)
+  const [agentBindingsError, setAgentBindingsError] = useState(false)
+  const agentBindingsRequestIdRef = useRef(0)
+  const agentBindingsFetchFailedTitle = t('common:teams.bindings_fetch_failed')
 
   const publishTarget: CapabilityPublishTarget = isEditing
     ? editingPublishTarget
     : creatingPublishTarget
+  const retryAgentBindings = useCallback(async () => {
+    if (!open || !isEditing || !formTeam?.id) return
+
+    const requestId = ++agentBindingsRequestIdRef.current
+    setAgentBindingsLoading(true)
+    setAgentBindingsError(false)
+    try {
+      const bindings = await resourceLibraryApi.getAgentBindings(formTeam.id)
+      if (agentBindingsRequestIdRef.current !== requestId) return
+      setEditingGroupNames(bindings.group_names)
+      setInitialEditingGroupNames(bindings.group_names)
+      if (formTeam.publication_status !== 'published') {
+        setEditingPublishTarget(bindings.group_names.length > 0 ? 'team' : 'personal')
+      }
+    } catch {
+      if (agentBindingsRequestIdRef.current !== requestId) return
+      setAgentBindingsError(true)
+      toast({
+        variant: 'destructive',
+        title: agentBindingsFetchFailedTitle,
+      })
+    } finally {
+      if (agentBindingsRequestIdRef.current === requestId) {
+        setAgentBindingsLoading(false)
+      }
+    }
+  }, [
+    agentBindingsFetchFailedTitle,
+    formTeam?.id,
+    formTeam?.publication_status,
+    isEditing,
+    open,
+    toast,
+  ])
   const publishGroupNames = useMemo(
     () =>
       isEditing
@@ -418,6 +457,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       simpleCustomShellName,
       simpleBotName,
       simpleModelName,
+      simpleModelId,
       simpleModelType,
       simpleModelNamespace,
       simplePrompt,
@@ -496,6 +536,12 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   }, [editingTeam, unsavedPrompts])
 
   const useSimpleEditor = mode === 'solo'
+  const {
+    bot: scopedLeaderBot,
+    pending: leaderBotPending,
+    failed: leaderBotFailed,
+    reload: reloadLeaderBot,
+  } = useTeamLeaderBot(formTeam, bots, open && isEditing && useSimpleEditor)
 
   const selectedSimpleShell = useMemo(
     () =>
@@ -523,7 +569,6 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   }, [selectedSimpleShell])
 
   const modelLoadingFailedTitle = t('common:bot.errors.fetch_models_failed')
-  const agentBindingsFetchFailedTitle = t('common:teams.bindings_fetch_failed')
   const handleModelLoadError = useCallback(() => {
     toast({ variant: 'destructive', title: modelLoadingFailedTitle })
   }, [modelLoadingFailedTitle, toast])
@@ -540,15 +585,23 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     category: getModelCategoryTypeForBindMode(bindMode),
     onError: handleModelLoadError,
   })
-  const simpleModelIsCompatible = simpleModels.some(
-    model =>
-      toModelSelectValue(model.name, model.type, model.namespace || 'default') ===
-      toModelSelectValue(
-        simpleModelName,
-        simpleModelType || 'public',
-        simpleModelNamespace || 'default'
-      )
-  )
+  const simpleModelIsCompatible =
+    isRetainedPrivateModel(
+      scopedLeaderBot,
+      simpleModelName,
+      simpleModelType,
+      simpleModelNamespace,
+      selectedSimpleShell?.name
+    ) ||
+    simpleModels.some(
+      model =>
+        toModelSelectValue(model.name, model.type, model.namespace || 'default') ===
+        toModelSelectValue(
+          simpleModelName,
+          simpleModelType || 'public',
+          simpleModelNamespace || 'default'
+        )
+    )
 
   useEffect(() => {
     if (
@@ -560,6 +613,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setSimpleField('simpleModelName', '', { userEdited: false })
       setSimpleField('simpleModelType', undefined, { userEdited: false })
       setSimpleField('simpleModelNamespace', undefined, { userEdited: false })
+      setSimpleField('simpleModelId', null, { userEdited: false })
     }
   }, [
     setSimpleField,
@@ -580,7 +634,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     if (formSessionRef.current?.formTeamId === formTeamId) return
 
     const leaderBot = formTeam?.bots.find(bot => bot.role === 'leader') || formTeam?.bots[0]
-    const fullLeaderBot = bots.find(bot => bot.id === leaderBot?.bot_id)
+    const fullLeaderBot = scopedLeaderBot || bots.find(bot => bot.id === leaderBot?.bot_id)
     formSessionRef.current = {
       formTeamId,
       sourceTeam: formTeam,
@@ -676,6 +730,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     initializeNewDraft,
     open,
     publishAfterCreate,
+    scopedLeaderBot,
     scope,
   ])
 
@@ -683,7 +738,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   useEffect(() => {
     const session = formSessionRef.current
     if (!open || !session?.pendingBotId) return
-    const bot = bots.find(candidate => candidate.id === session.pendingBotId)
+    const bot = scopedLeaderBot || bots.find(candidate => candidate.id === session.pendingBotId)
     if (!bot) return
     session.pendingBotId = null
     const sourceTeam = session.sourceTeam
@@ -697,45 +752,22 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
         shellType: bot.shell_type,
       })
     initializeBotFields(bot, usesAutomaticBindMode ? [] : initialBindMode, { preserveEdited: true })
-  }, [bots, formTeam, initializeBotFields, open])
+  }, [bots, formTeam, initializeBotFields, open, scopedLeaderBot])
 
   useEffect(() => {
     if (!open || !isEditing || !formTeam?.id) {
+      setAgentBindingsLoading(false)
+      setAgentBindingsError(false)
       return
     }
 
-    let active = true
-    resourceLibraryApi
-      .getAgentBindings(formTeam.id)
-      .then(bindings => {
-        if (active) {
-          setEditingGroupNames(bindings.group_names)
-          setInitialEditingGroupNames(bindings.group_names)
-          if (formTeam.publication_status !== 'published') {
-            setEditingPublishTarget(bindings.group_names.length > 0 ? 'team' : 'personal')
-          }
-        }
-      })
-      .catch(() => {
-        if (active) {
-          toast({
-            variant: 'destructive',
-            title: agentBindingsFetchFailedTitle,
-          })
-        }
-      })
+    void retryAgentBindings()
 
     return () => {
-      active = false
+      // Invalidate initial loads and retries belonging to the closed session.
+      agentBindingsRequestIdRef.current += 1
     }
-  }, [
-    agentBindingsFetchFailedTitle,
-    formTeam?.id,
-    formTeam?.publication_status,
-    isEditing,
-    open,
-    toast,
-  ])
+  }, [formTeam?.id, isEditing, open, retryAgentBindings])
 
   useEffect(() => {
     if (!open || !isEditing || !formTeam?.id) return
@@ -865,6 +897,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       setSimpleField('simpleModelName', '')
       setSimpleField('simpleModelType', undefined)
       setSimpleField('simpleModelNamespace', undefined)
+      setSimpleField('simpleModelId', null)
     }
     setBindMode(nextBindMode)
   }
@@ -1020,6 +1053,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
           name: simpleBotName,
           shellName: selectedShell.name,
           modelName: simpleModelName,
+          modelId: simpleModelId,
           modelType: simpleModelType,
           modelNamespace: simpleModelNamespace,
           prompt: simplePrompt,
@@ -1037,6 +1071,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
       ),
       target_group_names: publishTarget === 'team' ? publishGroupNames : [],
       namespace,
+      team_id: editingTeamId ?? undefined,
     }
     const trimmedDisplayName = displayName.trim()
     const displayNamePayload = trimmedDisplayName || (formTeam?.displayName ? null : undefined)
@@ -1103,6 +1138,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     identityConfirmed?: boolean
     publicationReductionConfirmed?: boolean
   } = {}) => {
+    if (useSimpleEditor && leaderBotPending) return
     if (!name.trim()) {
       toast({
         variant: 'destructive',
@@ -1422,6 +1458,18 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                     {t('common:teams.identity_change_warning')}
                   </div>
                 )}
+                {leaderBotFailed && (
+                  <div role="alert">
+                    <p>{t('common:teams.loading')}</p>
+                    <Button
+                      variant="outline"
+                      data-testid="team-leader-load-retry"
+                      onClick={reloadLeaderBot}
+                    >
+                      {t('common:actions.retry')}
+                    </Button>
+                  </div>
+                )}
                 <SimpleTeamEditForm
                   collaborationModeSelector={collaborationModeSelector}
                   name={name}
@@ -1460,6 +1508,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
                     setSimpleField('simpleModelName', value.name)
                     setSimpleField('simpleModelType', value.type)
                     setSimpleField('simpleModelNamespace', value.namespace)
+                    setSimpleField('simpleModelId', value.id ?? null)
                   }}
                   selectedSkills={simpleSelectedSkills}
                   selectedSkillRefs={simpleSelectedSkillRefs}
@@ -1631,7 +1680,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
               onClick={() => void handleSave()}
               disabled={
                 saving ||
-                (useSimpleEditor && (loadingShells || (!!simpleModelName && simpleLoadingModels)))
+                (useSimpleEditor &&
+                  (leaderBotPending || loadingShells || (!!simpleModelName && simpleLoadingModels)))
               }
               variant="primary"
             >
@@ -1717,6 +1767,15 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
         allowedAgents={effectiveAllowedAgents}
         scope={scope}
         groupName={groupName}
+        targetGroupNames={publishTarget === 'team' ? publishGroupNames : []}
+        crossNamespaceClone={
+          cloningBot !== null &&
+          (cloningBot.namespace || 'default') !==
+            (scope === 'group' && groupName ? groupName : 'default')
+        }
+        targetGroupsLoading={agentBindingsLoading}
+        targetGroupsError={agentBindingsError}
+        onRetryTargetGroups={() => void retryAgentBindings()}
       />
 
       {/* Mode change confirmation dialog */}

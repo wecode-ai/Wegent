@@ -6,6 +6,57 @@ import { normalizeTaskDescription } from './taskDescription'
 import { TaskDescriptionEditor } from './TaskDescriptionEditor'
 
 describe('TaskDescriptionEditor', () => {
+  it('updates the accessible name without replacing the document when language changes', async () => {
+    const onChange = vi.fn()
+    const view = render(
+      <TaskDescriptionEditor value="Existing text" onChange={onChange} ariaLabel="描述" />
+    )
+    view.rerender(
+      <TaskDescriptionEditor value="Existing text" onChange={onChange} ariaLabel="Description" />
+    )
+    const editor = screen.getByRole('textbox', { name: 'Description' })
+    expect(editor).toHaveTextContent('Existing text')
+    expect(onChange).not.toHaveBeenCalled()
+    await userEvent.click(editor)
+    await userEvent.keyboard(' changed')
+    expect(screen.getByRole('textbox', { name: 'Description' })).toHaveTextContent('changed')
+  })
+
+  it('keeps loaded markdown clean when enabling editing normalizes its representation', async () => {
+    const onChange = vi.fn()
+    const value = '## 目标\n正文\n\n### 验收标准\n- 第一项\n- 第二项'
+    const view = render(<TaskDescriptionEditor value={value} onChange={onChange} disabled />)
+    view.rerender(<TaskDescriptionEditor value={value} onChange={onChange} />)
+    const editor = await screen.findByTestId('cloud-todo-detail-description')
+    await userEvent.click(editor)
+    expect(onChange).not.toHaveBeenCalled()
+    await userEvent.keyboard('实际修改')
+    await waitFor(() => expect(onChange).toHaveBeenCalled())
+    expect(onChange.mock.lastCall?.[0]).toContain('实际修改')
+  })
+
+  it('shows the empty hint without saving it and removes it when editing starts', async () => {
+    const onChange = vi.fn()
+    const placeholder = '添加描述，说明背景、目标或处理要求…'
+    const view = render(
+      <TaskDescriptionEditor
+        value="<p></p>"
+        onChange={onChange}
+        disabled
+        placeholder={placeholder}
+      />
+    )
+    expect(screen.getByTestId('cloud-todo-detail-description-empty')).toHaveTextContent(placeholder)
+    expect(onChange).not.toHaveBeenCalled()
+    view.rerender(<TaskDescriptionEditor value="" onChange={onChange} placeholder={placeholder} />)
+    expect(screen.queryByTestId('cloud-todo-detail-description-empty')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('cloud-todo-detail-description')).toHaveAttribute(
+      'contenteditable',
+      'true'
+    )
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
   it('repairs only the WebKit first-composition duplicate shape', () => {
     const original = {
       id: 'nested-empty-block',

@@ -12,6 +12,17 @@ use fs2::FileExt;
 use super::super::CodexAuthMode;
 use crate::file_lease::FileLease;
 
+/// A shared development Home can be admitted without taking writer ownership
+/// only after validating that neither rollouts nor derived indexes need work.
+pub(crate) fn provider_state_is_current(home: &Path) -> Result<bool, String> {
+    let gate = FileLease(open_lock(&home.join(".wework-auth-start.lock"))?);
+    FileExt::lock_exclusive(&gate.0).map_err(|error| lock_error(error, None))?;
+    let users = FileLease(open_lock(&home.join(".wework-auth-processes.lock"))?);
+    FileExt::try_lock_shared(&users.0).map_err(|error| lock_error(error, None))?;
+    drop(gate);
+    super::super::provider_migration::is_current(home)
+}
+
 /// Prepare durable state without launching a native process or changing auth.
 /// The same Home-wide leases exclude older Wework executors during migration.
 pub(crate) fn prepare_provider_migration(

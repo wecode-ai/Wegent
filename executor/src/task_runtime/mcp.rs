@@ -40,6 +40,7 @@ pub(crate) mod git_connections;
 mod human_requests;
 mod parent_issue;
 mod stand_in;
+mod stand_in_questions;
 pub(crate) mod stand_in_tasks;
 #[cfg(test)]
 use context::role_categories;
@@ -3039,7 +3040,7 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "get_current_context",
-            "Resolve the conversation's optional default project and Issue. Read get_board_item and list_board_item_comments before interpreting a bound Issue; comments include PR links, follow-up requirements and review feedback. Inspect attachments with list_item_attachments and read_item_attachment. Reuse the returned IDs instead of asking the user to repeat them. A personal session with no Issue binding returns bound:false; discover targets with list_spaces, list_board_items or search_board_items. Personal bindings are defaults, while dispatched agents must stay within their assigned scope.",
+            "Resolve the conversation's optional default project and Issue (事项). Read get_board_item and list_board_item_comments before interpreting a bound Issue; comments include PR links, follow-up requirements and review feedback. Inspect attachments with list_item_attachments and read_item_attachment. Reuse the returned IDs instead of asking the user to repeat them. bound:false means no complete Issue binding; when space_id is present, use that project for list_board_items or search_board_items. Only when no project is bound, discover accessible projects with list_spaces. Project Issues are distinct from standalone personal tasks and conversations queried with wework_control. Personal bindings are defaults, while dispatched agents must stay within their assigned scope.",
             json!({"type": "object", "properties": {}}),
         ),
         tool(
@@ -3078,7 +3079,7 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "list_board_items",
-            "List board items in a project space",
+            "List project Issues (事项, Issue, 看板事项) in the specified project space. In a project context, use its space_id for unqualified requests such as 查一下事项. These are board items, distinct from standalone personal tasks (个人任务) and conversations (会话) managed by wework_control. Identify the project and Issue IDs in results; if empty, state that this project has no matching Issues.",
             json!({
                 "type": "object",
                 "properties": {"space_id": {"type": "string"}},
@@ -3112,11 +3113,11 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "search_board_items",
-            "Search board items across one project or all configured projects using text and structured filters",
+            "Search project Issues (事项, Issue, 看板事项) using text and structured filters. Pass the current project's space_id for unqualified project queries; search across projects only when the user's request calls for it. Standalone personal tasks and conversations use wework_control instead. Identify each result's project and Issue ID; if empty, state that no matching Issues were found in the queried project or scope.",
             json!({
                 "type": "object",
                 "properties": {
-                    "query": {"type": "string", "description": "Matches task id, title, description, or tags"},
+                    "query": {"type": "string", "description": "Matches Issue id, title, description, or tags"},
                     "space_id": {"type": "string"},
                     "status": {"enum": ["inbox", "pending", "in_progress", "in_review", "completed"]},
                     "priority": {"enum": ["none", "low", "medium", "high", "urgent"]},
@@ -3130,7 +3131,7 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "create_board_item",
-            "Create an item on a project-space board",
+            "Create a project Issue (事项) on a project-space board. This creates a board item, not a standalone personal task or conversation.",
             json!({
                 "type": "object",
                 "properties": {
@@ -4138,6 +4139,42 @@ mod tests {
             "cloud-aitable",
             "list_space_files"
         ));
+    }
+
+    #[test]
+    fn issue_discovery_uses_project_scope_and_distinguishes_personal_tasks() {
+        let discovered = tools();
+        for name in [
+            "list_board_items",
+            "search_board_items",
+            "create_board_item",
+        ] {
+            let description = discovered
+                .iter()
+                .find(|tool| tool["name"] == name)
+                .and_then(|tool| tool["description"].as_str())
+                .unwrap();
+            assert!(description.contains("事项"), "{name}");
+            assert!(description.contains("personal task"), "{name}");
+        }
+        let context = discovered
+            .iter()
+            .find(|tool| tool["name"] == "get_current_context")
+            .unwrap()["description"]
+            .as_str()
+            .unwrap();
+        assert!(context.contains("when space_id is present, use that project"));
+        assert!(context.contains("Only when no project is bound"));
+        let skill = include_str!("../../../wework/resources/bundled-plugins/wework-personal/plugins/wework-space/skills/wework-project-space/SKILL.md");
+        for term in [
+            "查一下事项",
+            "if `space_id` is present",
+            "Explicit personal-task or conversation queries use `wework_control`",
+            "Identify the project and Issue",
+            "empty results",
+        ] {
+            assert!(skill.contains(term), "project-space skill: {term}");
+        }
     }
 
     #[test]

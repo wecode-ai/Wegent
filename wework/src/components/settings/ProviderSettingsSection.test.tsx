@@ -61,6 +61,56 @@ function savedProviders() {
 }
 
 describe('Provider settings page', () => {
+  test.each([
+    ['deepseek', 'discover'],
+    ['deepseek', 'manual'],
+    ['custom', 'discover'],
+    ['custom', 'manual'],
+  ])('configures %s and %s models in one form with one save', async (preset, method) => {
+    render(<ProviderSettingsSection />)
+    const user = userEvent.setup()
+    await user.click(await screen.findByTestId('provider-add'))
+    expect(screen.getByTestId('provider-api-key')).toBeVisible()
+    expect(screen.getByTestId('provider-discover')).toBeVisible()
+    expect(screen.getByTestId('provider-model-add')).toBeVisible()
+    expect(screen.getByTestId('provider-discover')).toBeDisabled()
+    expect(screen.getByTestId('provider-model-add')).toBeDisabled()
+    expect(screen.queryByTestId('provider-stage-connection')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('provider-editor-next')).not.toBeInTheDocument()
+
+    await user.selectOptions(screen.getByTestId('provider-preset'), preset)
+    if (preset === 'custom') {
+      await user.type(screen.getByTestId('provider-base-url'), 'https://new.example/v1')
+    }
+    await user.type(screen.getByTestId('provider-api-key'), 'draft-key')
+    const modelId =
+      preset === 'deepseek'
+        ? findLocalModelProviderProfile(preset).allowedModelIds![0]
+        : 'upstream-a'
+    if (method === 'discover') {
+      discover = async () => [modelId]
+      await user.click(screen.getByTestId('provider-discover'))
+      await user.click(await screen.findByTestId(`provider-discovered-${modelId}`))
+    } else {
+      await user.click(screen.getByTestId('provider-model-add'))
+      await user.type(screen.getByTestId(/^provider-model-id-/), modelId)
+    }
+    expect(screen.getByTestId('provider-api-key')).toBeVisible()
+    expect(screen.getByTestId(/^provider-model-editor-/)).toBeVisible()
+    expect(savedProviders()).toBeUndefined()
+
+    await user.click(screen.getByTestId('provider-editor-save'))
+    await waitFor(() => expect(screen.queryByTestId('provider-editor')).not.toBeInTheDocument())
+    expect(
+      invoke.mock.calls.filter(([method]) => method === 'modelConfiguration.save')
+    ).toHaveLength(1)
+    expect(savedProviders()[1]).toMatchObject({
+      api_key: 'draft-key',
+      models: [expect.objectContaining({ model_id: modelId })],
+    })
+    expect(screen.getByTestId('provider-settings-section')).toHaveTextContent(modelId)
+  })
+
   test.each(['success', 'failure'])(
     'waits for a superseding catalog refresh before completing a deletion: %s',
     async outcome => {
@@ -100,13 +150,78 @@ describe('Provider settings page', () => {
     }
   )
 
+  test('saves a named connection before adding any models', async () => {
+    render(<ProviderSettingsSection />)
+    const user = userEvent.setup()
+    await user.click(await screen.findByTestId('provider-add'))
+    await user.selectOptions(screen.getByTestId('provider-preset'), 'deepseek')
+    await user.clear(screen.getByTestId('provider-name'))
+    await user.type(screen.getByTestId('provider-name'), 'DeepSeek work account')
+    await user.type(screen.getByTestId('provider-api-key'), 'work-key')
+    await user.click(screen.getByTestId('provider-editor-save'))
+    await waitFor(() => expect(savedProviders()).toHaveLength(2))
+    expect(savedProviders()[1]).toMatchObject({ name: 'DeepSeek work account', models: [] })
+  })
+
+  test('search and refresh retain stable model IDs and capability overrides', async () => {
+    snapshot.providers[0].models = [
+      {
+        id: 'stable',
+        model_id: 'upstream-a',
+        display_name: 'My reasoning model',
+        enabled: false,
+        context_window: 128000,
+        catalog_entry: { default_reasoning_level: 'high' },
+      },
+    ]
+    await reloadProviderConfiguration()
+    const user = await openEditor()
+    expect(screen.getByTestId('provider-api-key')).toBeVisible()
+    expect(screen.getByTestId('provider-model-search')).toBeVisible()
+    await user.type(screen.getByTestId('provider-model-search'), 'reasoning')
+    expect(screen.getByTestId('provider-model-editor-stable')).toBeVisible()
+    await user.click(screen.getByTestId('provider-discover'))
+    await screen.findByTestId('provider-discovered-models')
+    await user.clear(screen.getByTestId('provider-model-search'))
+    expect(screen.getByTestId('provider-discovered-upstream-a')).toBeChecked()
+    await user.click(screen.getByTestId('provider-editor-save'))
+    await waitFor(() => expect(savedProviders()).toBeDefined())
+    expect(savedProviders()[0].models[0]).toEqual(snapshot.providers[0].models[0])
+    expect(savedProviders()[0].models[0]).toMatchObject({
+      id: 'stable',
+      enabled: false,
+      context_window: 128000,
+    })
+  })
+
+  test('per-model testing resolves only the selected model and does not save', async () => {
+    snapshot.providers[0].models = [
+      { id: 'first', model_id: 'upstream-a' },
+      { id: 'second', model_id: 'upstream-b' },
+    ]
+    await reloadProviderConfiguration()
+    const user = await openEditor()
+    const original = invoke.getMockImplementation()!
+    invoke.mockImplementation(async (method, params) => {
+      if (method === 'modelConfiguration.runtime' && params?.provider) {
+        expect(params.provider.models.map((model: { id: string }) => model.id)).toEqual(['second'])
+        throw new Error('Selected model probe')
+      }
+      return original(method, params)
+    })
+    await user.click(screen.getByTestId('provider-model-expand-second'))
+    await user.click(screen.getByTestId('provider-model-test-second'))
+    await screen.findByTestId('provider-model-test-second-result')
+    expect(savedProviders()).toBeUndefined()
+  })
+
   test('DeepSeek only needs a key and preserves the preset runtime settings', async () => {
     render(<ProviderSettingsSection />)
     const user = userEvent.setup()
     await user.click(await screen.findByTestId('provider-add'))
     await user.selectOptions(screen.getByTestId('provider-preset'), 'deepseek')
-    expect(screen.queryByTestId('provider-base-url')).not.toBeInTheDocument()
-    expect(screen.queryByTestId('provider-protocol')).not.toBeInTheDocument()
+    expect(screen.getByTestId('provider-base-url')).not.toBeVisible()
+    expect(screen.getByTestId('provider-protocol')).not.toBeVisible()
     expect(screen.getByTestId('provider-discover')).toBeDisabled()
     const profile = findLocalModelProviderProfile('deepseek')
     const modelId = profile.allowedModelIds![0]
@@ -302,7 +417,7 @@ describe('Provider settings page', () => {
         'modelConfiguration.discover',
         expect.objectContaining({
           provider: expect.objectContaining({
-            base_url: profile.modelsBaseUrl ?? profile.baseUrl,
+            base_url: profile.baseUrl,
             api_format: profile.apiFormat,
             models_path: profile.modelsPath,
             models_api_key_header: profile.modelsApiKeyHeader,
@@ -321,6 +436,37 @@ describe('Provider settings page', () => {
           }),
         ],
       })
+    }
+  )
+
+  test.each(['minimax', 'minimax-global'])(
+    'discovers saved %s models without replacing its credential ownership endpoint',
+    async preset => {
+      const profile = findLocalModelProviderProfile(preset)
+      snapshot.providers[0] = {
+        ...snapshot.providers[0],
+        base_url: profile.baseUrl,
+        api_format: profile.apiFormat,
+        request_path: profile.requestPath,
+        models_path: profile.modelsPath,
+        models_api_key_header: profile.modelsApiKeyHeader,
+      }
+      discover = async () => ['MiniMax-M2.7']
+      await reloadProviderConfiguration()
+      const user = await openEditor()
+      await user.click(screen.getByTestId('provider-discover'))
+      expect(await screen.findByTestId('provider-discovered-MiniMax-M2.7')).toBeEnabled()
+      expect(invoke).toHaveBeenCalledWith('modelConfiguration.discover', {
+        providerId: 'relay',
+        provider: {
+          base_url: profile.baseUrl,
+          api_key: undefined,
+          api_format: profile.apiFormat,
+          models_path: profile.modelsPath,
+          models_api_key_header: profile.modelsApiKeyHeader,
+        },
+      })
+      expect(screen.getByTestId('provider-api-key')).toHaveValue('')
     }
   )
 

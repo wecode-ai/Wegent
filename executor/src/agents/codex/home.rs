@@ -19,6 +19,7 @@ mod auth;
 pub(super) use auth::acquire_named_home;
 pub(super) use auth::acquire_shared_auth;
 pub(crate) use auth::prepare_provider_migration;
+pub(crate) use auth::provider_state_is_current;
 
 #[cfg(test)]
 #[path = "home_auth_tests.rs"]
@@ -64,6 +65,9 @@ pub(super) fn prepare_wework_codex_home_with_auth(
 fn normalize_wework_codex_config(codex_home: &Path) -> Result<(), String> {
     use toml_edit::{value, DocumentMut};
 
+    let _publication = crate::local::personal_marketplace_lock::acquire_personal_marketplace_lock(
+        &codex_home.join("plugins/cache/wework-personal"),
+    )?;
     let config_path = codex_home.join("config.toml");
     let content = crate::local::codex_home::read_optional_config(&config_path)?;
     let mut document = content.parse::<DocumentMut>().map_err(|error| {
@@ -299,3 +303,7 @@ fn remove_managed_auth_marker(codex_home: &Path) -> Result<(), String> {
 pub(crate) fn executor_home() -> PathBuf {
     crate::config::paths::executor_home()
 }
+
+#[cfg(test)]
+#[path = "home_config_tests.rs"]
+mod config_tests;

@@ -18,6 +18,7 @@ WORKDIR /workspace/backend-rs
 FROM toolchain AS dependencies
 COPY backend-rs/Cargo.toml backend-rs/Cargo.lock ./
 COPY shared/rust /workspace/shared/rust
+COPY shared/assets/calendars /workspace/shared/assets/calendars
 COPY backend-rs/crates ./crates
 RUN mkdir -p src && printf 'pub fn placeholder() {}\n' > src/lib.rs \
     && printf 'fn main() {}\n' > src/main.rs \
@@ -28,6 +29,7 @@ COPY shared/assets/codex-models /workspace/shared/assets/codex-models
 COPY backend-rs/src ./src
 COPY backend-rs/examples ./examples
 COPY backend-rs/migrations ./migrations
+COPY shared/data/builtin-connector-apps.json ../shared/data/builtin-connector-apps.json
 RUN find src examples -type f -exec touch {} + \
     && cargo build --release --locked --bin wegent-backend-rs \
       --example attachment_s3_e2e --example attachment_hosting_e2e

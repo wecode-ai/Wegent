@@ -41,6 +41,7 @@ export interface ComposerTextInputProps {
   canSend: boolean
   disabled?: boolean
   placeholder: string
+  ariaLabel?: string
   testId: string
   rows: number
   textareaRef: RefObject<HTMLElement | null>
@@ -70,6 +71,7 @@ export function ComposerTextInput({
   canSend,
   disabled,
   placeholder,
+  ariaLabel,
   testId,
   rows,
   textareaRef,
@@ -163,6 +165,7 @@ export function ComposerTextInput({
         disabled={disabled}
         nativeEmptyCaret={nativeEmptyCaret}
         placeholder={placeholder}
+        ariaLabel={ariaLabel}
         testId={testId}
         rows={rows}
         textareaRef={textareaRef}

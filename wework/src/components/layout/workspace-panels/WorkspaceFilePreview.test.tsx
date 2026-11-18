@@ -3,8 +3,10 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { WorkspaceAttachmentPreview } from './WorkspaceAttachmentPreview'
 import { WorkspaceFilePreview } from './WorkspaceFilePreview'
+import type { AssistantMarkdownProps } from '@wegent/collaboration/markdown'
 import { useImperativeHandle, useRef, type ReactNode } from 'react'
 import type { CodeViewItem } from '@pierre/diffs'
+import JSZip from 'jszip'
 
 const fileViewerMocks = vi.hoisted(() => ({
   render: vi.fn(),
@@ -20,8 +22,11 @@ const appearanceMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@/components/chat/AssistantMarkdown', () => ({
-  AssistantMarkdown: ({ content, variant }: { content: string; variant?: string }) => (
+  AssistantMarkdown: ({ content, variant, onOpenFile }: AssistantMarkdownProps) => (
     <div data-testid="assistant-markdown" data-variant={variant}>
+      {onOpenFile && (
+        <button onClick={() => onOpenFile('./截图.png', { lineStart: 3 })}>Open linked file</button>
+      )}
       {content.split('\n\n').map((block, index) => (
         <p
           key={`${index}-${block}`}
@@ -232,6 +237,98 @@ test('does not rebuild a binary image preview when its parent rerenders', () => 
   expect(fileViewerMocks.render).toHaveBeenCalledTimes(1)
 })
 
+test('withholds a DOCX from the renderer until its external relationships have been secured', async () => {
+  const zip = new JSZip()
+  zip.file(
+    'word/_rels/document.xml.rels',
+    '<Relationships><Relationship Id="rId1" Type="image" TargetMode="External" Target="javascript:alert(1)"/></Relationships>'
+  )
+  const bytes = await zip.generateAsync({ type: 'arraybuffer' })
+  const source = new File([bytes], 'unsafe.docx')
+  let release: (value: ArrayBuffer) => void = () => {}
+  source.arrayBuffer = () =>
+    new Promise(resolve => {
+      release = resolve
+    })
+  render(
+    <WorkspaceFilePreview
+      file={null}
+      binaryFile={{
+        path: '/workspace/unsafe.docx',
+        name: source.name,
+        size: source.size,
+        file: source,
+      }}
+      loading={false}
+      onRetry={vi.fn()}
+      onAddCodeComment={vi.fn()}
+    />
+  )
+  expect(screen.getByTestId('workspace-office-preview-preparing')).toBeInTheDocument()
+  expect(fileViewerMocks.render).not.toHaveBeenCalled()
+  release(bytes)
+  await waitFor(() => expect(fileViewerMocks.render).toHaveBeenCalled())
+  for (const [props] of fileViewerMocks.render.mock.calls) expect(props.file).not.toBe(source)
+})
+
+test('keeps an invalid DOCX out of the document renderer', async () => {
+  const source = new File(['invalid'], 'invalid.docx')
+  source.arrayBuffer = async () => new TextEncoder().encode('invalid').buffer
+  render(
+    <WorkspaceFilePreview
+      file={null}
+      binaryFile={{
+        path: '/workspace/invalid.docx',
+        name: source.name,
+        size: source.size,
+        file: source,
+      }}
+      loading={false}
+      onRetry={vi.fn()}
+      onAddCodeComment={vi.fn()}
+    />
+  )
+  await waitFor(() =>
+    expect(screen.getByTestId('workspace-office-preview-preparing')).toHaveTextContent(
+      '读取文件失败'
+    )
+  )
+  expect(fileViewerMocks.render).not.toHaveBeenCalled()
+})
+
+test('retries DOCX preparation on the same file without exposing unprepared bytes', async () => {
+  const zip = new JSZip()
+  zip.file(
+    'word/_rels/document.xml.rels',
+    '<Relationships><Relationship Id="rId1" Type="image" TargetMode="External" Target="javascript:alert(1)"/></Relationships>'
+  )
+  const bytes = await zip.generateAsync({ type: 'arraybuffer' })
+  const source = new File([bytes], 'retry.docx')
+  source.arrayBuffer = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('Temporary read failure'))
+    .mockResolvedValue(bytes)
+  render(
+    <WorkspaceFilePreview
+      file={null}
+      binaryFile={{
+        path: '/workspace/retry.docx',
+        name: source.name,
+        size: source.size,
+        file: source,
+      }}
+      loading={false}
+      onRetry={vi.fn()}
+    />
+  )
+  const retry = await screen.findByTestId('workspace-office-preview-retry-button')
+  expect(fileViewerMocks.render).not.toHaveBeenCalled()
+  fireEvent.click(retry)
+  await waitFor(() => expect(fileViewerMocks.render).toHaveBeenCalled())
+  expect(source.arrayBuffer).toHaveBeenCalledTimes(2)
+  for (const [props] of fileViewerMocks.render.mock.calls) expect(props.file).not.toBe(source)
+})
+
 test.each([
   ['architecture.mmd', 'mermaid'],
   ['architecture.puml', 'plantuml'],
@@ -360,4 +457,26 @@ test('warns when a truncated HTML preview hides content', () => {
   expect(screen.getByTestId('workspace-html-file-preview-truncated')).toHaveTextContent(
     '文件过大，仅显示前 256 KiB'
   )
+})
+
+test('connects Markdown file links to the owning workspace opener', () => {
+  const onOpenFile = vi.fn()
+  render(
+    <WorkspaceFilePreview
+      file={{
+        path: '/workspace/reports/report.md',
+        name: 'report.md',
+        content: '[截图](./截图.png)',
+        editable: true,
+        revision: '1',
+        truncated: false,
+        size: 30,
+      }}
+      loading={false}
+      onRetry={vi.fn()}
+      onOpenFile={onOpenFile}
+    />
+  )
+  fireEvent.click(screen.getByRole('button', { name: 'Open linked file' }))
+  expect(onOpenFile).toHaveBeenCalledWith('./截图.png', { lineStart: 3 })
 })

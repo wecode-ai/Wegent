@@ -399,7 +399,12 @@ class IMNotificationDispatcher:
                 "error": "Missing DingTalk staff ID",
             }
 
-        sender = DingTalkRobotSender(client_id, client_secret)
+        sender_options = (
+            {"api_base_url": config["api_base_url"]}
+            if config.get("api_base_url")
+            else {}
+        )
+        sender = DingTalkRobotSender(client_id, client_secret, **sender_options)
         card_template_id = _notification_card_template(config)
         if push is not None and card_template_id:
             result = await self._send_dingtalk_card(

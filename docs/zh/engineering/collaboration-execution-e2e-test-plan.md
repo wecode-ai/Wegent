@@ -166,6 +166,22 @@ Issues:
 
 ## 完整场景矩阵
 
+### 成员交付后协调者接管与人工澄清
+
+用户故事：作为 Issue 发起方，我需要看到成员交付后的协调者接管，并能在原 Issue 打开其业务问题、回答后继续同一轮协调工作。
+
+复用 CI 的 `collaboration-remote-group-coordinate` checkpoint、隔离 Electron、真实后端、MySQL、Redis、远程 Executor 与原生 Codex，只替换模型服务，不新增完整环境或 CI 作业。
+
+1. 从 UI 创建小组与 Issue，协调者并发分派两项工作。仅一项完成时，Issue 保持进行中，不提前接管。
+2. 两项均交付后，断言负责人回到协调者，且新会话已绑定 Issue、具有独立动态；不能依赖协调者先分派下一轮或更新状态才出现入口。
+3. 新协调者调用同步 `request_user_input` 等待业务回答。从新动态打开会话，看到真实问题并选择答案；断言模型接收原调用对应的准确回答。
+4. 协调者沿原会话显式提交待确认；保留原有成员数量、单次调度信封、独立会话与后续回复断言。
+5. 单元/协议测试补充未完成轮次、伪造身份、手工绑定无共享权、重复上报不抢占下一轮负责人，以及进程恢复后的动态补报。额外覆盖连续长轮次的 255 字符会话标识上限、中文标识的跨语言编码，以及整页调度信封之后普通任务仍能进入对账的情况。
+
+Web Executor 的两轮协作场景也验证最终负责人为协调者。CI 的完整日志与 trace 确认两轮交付、两次协调者接管及最终待确认均成功后，才将旧的“保留采集成员”断言改为协调者；并发、独立会话、证据汇总和状态断言均保留。
+
+清理复用该 checkpoint 的项目归档与隔离进程关闭。失败保留完整 runner 日志；截图与日志只作测试产物，不提交代码库。
+
 ### 远程协作组负责人规划详情
 
 `collaboration-remote-group-planning-details` checkpoint 使用隔离 Electron、真实后端、MySQL、Redis 和远程 Executor，仅替代模型上游。
@@ -662,22 +678,31 @@ Git 账号同步到该设备，否则克隆会因缺少凭据失败。
 
 ### `cloud-device-lifecycle`
 
-该 checkpoint 复用 CI 启动的真实云端 Executor，验证：
+该 checkpoint 将 CI 已启动的两个真实 Executor 进程配置到同一沙箱。公网 Backend 使用
+仅在测试中注册的沙箱提供方，由 runner 操作这两个进程。验证包括：
 
-1. 初始 Backend 状态为 `online`，设备具有 Executor 版本和 Runtime identity。
-2. Wework 展示版本升级入口、当前版本、目标版本和短暂离线提示。
-3. 管理型云环境中，重启操作命中 Sandbox identity；重启等待期间设备操作被禁用。
-4. 测试真实停止 Executor 进程，等待 Backend 变为 `offline`，再启动同一 Executor。
-5. Backend 恢复 `online`，Runtime identity 保持稳定，Wework 显示“重新在线”并恢复操作。
-6. 不支持管理型恢复的公共 Backend 分支必须明确显示重启失败，且不能把在线设备误标为离线。
+1. 两个 Executor 初始均在线，且各有独立的 Runtime identity。设备菜单和“有新版本”
+   徽标都能打开重启确认，徽标入口显示当前和最新版本。
+2. 目标设备空闲时，同沙箱另一台设备运行真实桌面任务，测试模型暂缓回复。所有者
+   的非强制升级请求因同沙箱忙碌被拒绝，其他已登录用户尝试强制重启也被拒绝。
+3. 从版本徽标确认后，向 Sandbox identity 发送一次强制重启。Wework 在重启等待和
+   离线期间禁用相关操作。
+4. 沙箱提供方真实停止两个 Executor。Backend 和 Wework 观测到离线后，用原先的
+   Executor 数据目录重新启动，Runtime identity 保持不变。即使仍有新版本可用，
+   Wework 也显示“重新在线”并恢复操作。
+
+公网 Backend 初始不注册重启提供方。先确认设备菜单发出的真实请求返回 501，界面
+显示失败且仍可重试、打开终端或使用设备菜单，设备仍在线。随后在同一 Backend
+进程中启用沙箱提供方，继续执行成功链路。
 
 证据截图：
 
 - `cloud-device-01-online.png`
-- `cloud-device-upgrade-confirmation.png`
+- `cloud-device-restart-unavailable.png`（仅公网未配置场景）
+- `cloud-device-restart-confirmation.png`
 - `cloud-device-restart-pending.png`
+- `cloud-device-restart-offline.png`
 - `cloud-device-restart-recovered.png`
-- `cloud-device-restart-unavailable.png`（仅公共 Backend 拒绝分支）
 
 ## CI checkpoint 映射
 

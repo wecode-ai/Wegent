@@ -24,6 +24,7 @@ export * from "./IssueActivityThread";
 
 export * from "./IssueInlineCommentComposer";
 export * from "./IssueActivityMarkdown";
+export { IssueMarkdownProvider } from './IssueMarkdownProvider';
 
 export * from "./IssueThreadReplyComposer";
 export * from "./IssueChatMessage";

@@ -8,6 +8,11 @@ import {
 } from './phoneLocalModels'
 
 const state = vi.hoisted(() => ({ raw: null as string | null, id: 0 }))
+vi.mock('./phoneModelProviders', () => ({
+  phoneModelProviders: {
+    runtimeConfiguration: vi.fn(async () => ({ models: [], catalogByModel: new Map() })),
+  },
+}))
 vi.mock('expo-crypto', () => ({ randomUUID: () => `model-${++state.id}` }))
 vi.mock('expo-secure-store', () => ({
   getItemAsync: vi.fn(async () => state.raw),

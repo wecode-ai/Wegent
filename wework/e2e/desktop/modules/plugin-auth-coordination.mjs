@@ -1,8 +1,16 @@
 import assert from 'node:assert/strict'
 import { readFile, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { holdPluginCoordinationFault } from './plugin-write-lease.mjs'
-import { until } from './plugin-regression-fixture.mjs'
+import {
+  holdInstalledPluginRow,
+  holdPluginWriteLease,
+  holdPluginCoordinationFault,
+} from './plugin-write-lease.mjs'
+import {
+  publishIndependentPluginReleases,
+  verifyIndependentPluginMutations,
+} from './plugin-write-coordination.mjs'
+import { pluginApi, until } from './plugin-regression-fixture.mjs'
 
 // Exercise the desktop IPC, real Executor broker and account adapter. Only the
 // synthetic credential provider is gated; backend responses are never replaced.
@@ -100,11 +108,16 @@ export async function verifyPluginAuthCoordination({
     await rowLock.release()
   }
 
+  const holdFault = mode =>
+    mode === 'lease'
+      ? holdPluginWriteLease(cloud, installedId)
+      : holdPluginCoordinationFault(cloud, mode)
+
   for (const [mode, code] of [
     ['lease', 'plugin_write_busy'],
     ['redis-unavailable', 'plugin_write_unavailable'],
   ]) {
-    let fault = await holdPluginCoordinationFault(cloud, mode)
+    let fault = await holdFault(mode)
     try {
       const before = await snapshot()
       await login(code)
@@ -113,7 +126,7 @@ export async function verifyPluginAuthCoordination({
       await fault.release()
     }
     await login()
-    fault = await holdPluginCoordinationFault(cloud, mode)
+    fault = await holdFault(mode)
     try {
       const before = await snapshot()
       await assert.rejects(() => auth('logout'), new RegExp(code))
@@ -125,6 +138,74 @@ export async function verifyPluginAuthCoordination({
     await assertRevoked()
     evidence.push({ case: `${mode}-rejects-auth-and-logout-with-explicit-recovery` })
   }
+
+  const independent = await publishIndependentPluginReleases(cloud, 'auth-e2e-independent')
+  await login()
+  const other = await pluginApi(
+    cloud,
+    `/plugins/marketplace/${independent.latest.pluginId}/install`,
+    'POST'
+  )
+  const otherId = Number(other.plugin.metadata.labels.id)
+  const otherLease = await holdPluginWriteLease(cloud, otherId)
+  try {
+    await logout()
+    await assertRevoked()
+    await login()
+    evidence.push({ case: 'authentication-ignores-other-installed-plugin-lease', installedId })
+  } finally {
+    await otherLease.release()
+  }
+  const backgroundRow = await holdInstalledPluginRow(cloud, installedId)
+  let pendingWait
+  let enrollmentLogOffset
+  const executorLog = join(resultDir, 'executor.log')
+  // Independent inserts can split an InnoDB page and replace physical lock
+  // IDs while the same transactions still wait. Track transaction identity.
+  const readPendingWait = async () => {
+    const [row] = await cloud.queryDatabase(
+      `SELECT EXISTS(SELECT 1 FROM performance_schema.data_lock_waits
+       WHERE REQUESTING_ENGINE_TRANSACTION_ID = %s AND BLOCKING_ENGINE_TRANSACTION_ID = %s) AS pending`,
+      [pendingWait.requestingTransactionId, pendingWait.blockingTransactionId]
+    )
+    return row.pending
+  }
+  try {
+    await signalAutomaticRetry()
+    pendingWait = await backgroundRow.waitFor('blocked')
+    assert.ok(pendingWait.requestingTransactionId && pendingWait.blockingTransactionId)
+    await verifyIndependentPluginMutations(cloud, independent, evidence)
+    assert.equal(
+      await readPendingWait(),
+      1,
+      'The target database request stopped waiting before its row was released'
+    )
+    evidence.push({ case: 'background-authentication-does-not-block-other-plugin', installedId })
+    enrollmentLogOffset = (await readFile(executorLog, 'utf8')).length
+  } finally {
+    await backgroundRow.release()
+  }
+  await until(
+    readPendingWait,
+    value => value === 0,
+    'The target database request remained blocked after its row was released'
+  )
+  await until(
+    () => readFile(executorLog, 'utf8'),
+    value =>
+      value
+        .slice(enrollmentLogOffset)
+        .includes(
+          `plugin auth automatic enrollment finished installed_plugin_id=${installedId} connector_slug=mail ok=true`
+        ),
+    'Background authentication did not recover after its row was released'
+  )
+  await until(
+    () => connectionFor('mail'),
+    value => value?.status === 'connected' && value.device_ids.length > 0,
+    'Background authentication did not retain its real credential registration'
+  )
+  await logout()
 
   const gate = join(homePath, 'account-auth-export-held')
   const inflight = join(homePath, 'account-auth-export-inflight')

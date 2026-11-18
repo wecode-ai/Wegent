@@ -2,14 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import { useInvitedIssueRoute } from "./useInvitedIssueRoute";
+
 import { templateMessages } from "../templates/messages";
-import { TemplateConfigurationError } from "../templates/apply";
 import { applyWorkspaceTemplate } from "../templates/workspaceConfiguration";
 import {
   readTemplateAgents,
   templateRoutingResolver,
   materializeTemplateAgents,
-  validateTemplateAgentRouting,
 } from "../templates/agents";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -55,6 +55,7 @@ import { useProjectExecutionEnvironmentReadiness } from "../execution-environmen
 import { ProjectArchiveDialog } from "./ProjectArchiveDialog";
 import { WorkspaceCreateDialog } from "./WorkspaceCreateDialog";
 import { truncateRuntimeTaskTitle } from "@wegent/chat-core/runtime-task-title";
+import { composerMarkdownText } from "../composer/composerMarkdownParser";
 import { IssueHomeComposer } from "./IssueHomeComposer";
 import type { IssueHomeOwner } from "./issueHomeOwners";
 import type { ComposerInputHandle } from "../composer";
@@ -167,6 +168,11 @@ function createWorkspaceAgentConfigurationApi(
   return {
     ...api,
     agents: {
+      async remove() {
+        throw new Error(
+          "Project Agent deletion is unavailable in workspace scope",
+        );
+      },
       async list() {
         return (await workspaces.listAgents(workspaceId)).map(
           workspaceAgentRecord,
@@ -656,31 +662,45 @@ function WorkItemRow({
   );
 }
 
-function FirstProjectStarter({
+function FirstWorkStarter({
   messages,
   supportsLocalImport,
   onCreate,
+  onCreateIssue,
 }: {
   messages: PlatformMessages;
   supportsLocalImport: boolean;
   onCreate(mode: "blank" | "folder" | "existing"): void;
+  onCreateIssue?(): void;
 }) {
+  const title = onCreateIssue
+    ? messages.firstIssueHomeTitle
+    : messages.firstProjectHomeTitle;
   return (
     <section
-      className="collaboration-first-project-starter"
-      data-testid="collaboration-first-project-starter"
+      className={`collaboration-first-project-starter${onCreateIssue ? " collaboration-first-issue-starter" : ""}`}
+      data-testid={
+        onCreateIssue
+          ? "collaboration-first-issue-starter"
+          : "collaboration-first-project-starter"
+      }
     >
       <span className="collaboration-first-project-icon">
-        <FolderPlus aria-hidden="true" />
+        {onCreateIssue ? (
+          <SquarePen aria-hidden="true" />
+        ) : (
+          <FolderPlus aria-hidden="true" />
+        )}
       </span>
       <div className="collaboration-first-project-copy">
-        <h2>{messages.firstProjectHomeTitle}</h2>
-        <p>{messages.firstProjectHomeHint}</p>
+        <h2>{title}</h2>
+        <p>
+          {onCreateIssue
+            ? messages.firstIssueHomeHint
+            : messages.firstProjectHomeHint}
+        </p>
       </div>
-      <div
-        className="collaboration-first-project-guide"
-        aria-label={messages.firstProjectHomeTitle}
-      >
+      <div className="collaboration-first-project-guide" aria-label={title}>
         <span>
           <SquarePen aria-hidden="true" />
           {messages.firstProjectGuideCapture}
@@ -696,18 +716,31 @@ function FirstProjectStarter({
           {messages.firstProjectGuideTrack}
         </span>
       </div>
-      <ProjectCreationAction
-        className="collaboration-primary-button collaboration-first-project-create"
-        messages={messages}
-        onSelect={onCreate}
-        supportsLocalImport={supportsLocalImport}
-        testId="collaboration-first-project-create"
-      />
+      {onCreateIssue ? (
+        <button
+          type="button"
+          data-testid="collaboration-first-issue-create"
+          className="collaboration-primary-button collaboration-first-project-create"
+          onClick={onCreateIssue}
+        >
+          <SquarePen aria-hidden="true" />
+          {messages.createIndependentIssue}
+        </button>
+      ) : (
+        <ProjectCreationAction
+          className="collaboration-primary-button collaboration-first-project-create"
+          messages={messages}
+          onSelect={onCreate}
+          supportsLocalImport={supportsLocalImport}
+          testId="collaboration-first-project-create"
+        />
+      )}
     </section>
   );
 }
 
 function IssueHomeLauncher({
+  draft,
   messages,
   projects,
   workspaces,
@@ -721,6 +754,7 @@ function IssueHomeLauncher({
   renderTaskComposer,
   currentUserId,
 }: {
+  draft?: CollaborationPlatformHostAdapter["issueHomeDraft"];
   currentUserId?: number;
   messages: PlatformMessages;
   projects: CollaborationProject[];
@@ -740,7 +774,10 @@ function IssueHomeLauncher({
   locale: CollaborationLocale;
   renderTaskComposer?: CollaborationPlatformHostAdapter["renderIssueComposer"];
 }) {
-  const [content, setContent] = useState("");
+  const [localContent, setLocalContent] = useState("");
+  const content = draft?.value ?? localContent;
+  const contentRevision = draft?.getRevision();
+  const setContent = draft?.onChange ?? setLocalContent;
   const [members, setMembers] = useState<CollaborationMember[]>([]);
   const [agents, setAgents] = useState<WorkspaceProjectAgent[]>([]);
   const [mentionIssues, setMentionIssues] = useState<CollaborationIssue[]>([]);
@@ -844,6 +881,7 @@ function IssueHomeLauncher({
       ref={composerRef}
       value={content}
       onChange={(value) => {
+        if (!value && draft && draft.getRevision() !== contentRevision) return;
         setContent(value);
         if (!value.includes("#")) setIssueReferenceError(null);
       }}
@@ -882,7 +920,7 @@ function IssueHomeLauncher({
   if (renderTaskComposer)
     return (
       <div
-        className="flex min-h-0 flex-1"
+        className="flex min-h-0 min-w-0 max-w-full flex-1"
         data-testid="collaboration-issue-home"
         data-execution-environment-readiness={environmentReadiness.kind}
       >
@@ -1390,8 +1428,13 @@ function CollaborationPlatformAppContent({
     !host.location.workspaceId &&
     Boolean(host.renderIssueList) &&
     Boolean(host.location.rootView?.startsWith("issues-"));
+  const isIssuePage = Boolean(host.location.projectId && host.location.issueId);
   const ownsPageRequests =
-    isDevicePage || isStandInPage || isTemplatePage || isPersonalIssuesPage;
+    isDevicePage ||
+    isStandInPage ||
+    isTemplatePage ||
+    isPersonalIssuesPage ||
+    isIssuePage;
   const deviceCatalog = useDeviceCatalog(
     api,
     isDevicePage,
@@ -1406,6 +1449,7 @@ function CollaborationPlatformAppContent({
     refreshKey,
   });
   const [workspaceDialogOpen, setWorkspaceDialogOpen] = useState(false);
+  const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const [archiveProject, setArchiveProject] =
     useState<CollaborationProject | null>(null);
   const [projectDialogOpen, setProjectDialogOpen] = useState(false);
@@ -1594,10 +1638,22 @@ function CollaborationPlatformAppContent({
       ),
     [domainWorkspaceIds, state.projects, host.capabilities.projectNavigation],
   );
-  const rootIssueProject =
-    domainProjects.find((project) => project.id === rootIssueProjectId) ??
-    domainProjects[0] ??
-    null;
+  const selectedRootProjectId = host.issueHomeDraft
+    ? host.issueHomeDraft.projectId
+    : rootIssueProjectId;
+  const rootIssueProject = selectedRootProjectId
+    ? (domainProjects.find((project) => project.id === selectedRootProjectId) ??
+      null)
+    : (domainProjects[0] ?? null);
+  useEffect(() => {
+    if (
+      host.issueHomeDraft &&
+      !host.issueHomeDraft.projectId &&
+      rootIssueProject
+    ) {
+      host.issueHomeDraft.onSelectProject(rootIssueProject.id);
+    }
+  }, [host.issueHomeDraft, rootIssueProject]);
   useEffect(() => {
     if (ownsPageRequests || (!state.loading && !state.error)) onReady?.();
   }, [onReady, ownsPageRequests, state.error, state.loading]);
@@ -1637,6 +1693,18 @@ function CollaborationPlatformAppContent({
       },
     };
   }, [api, host.location.projectId, host.location.workspaceId]);
+  const routeProject = state.projects.find(
+    (project) => String(project.id) === host.location.projectId,
+  );
+  const invitedIssueRoute = useInvitedIssueRoute({
+    api: scopedApi,
+    projectId: host.location.projectId,
+    issueId: host.location.issueId,
+    projectReady: Boolean(routeProject),
+    enabled: Boolean(renderProject),
+    failureLabel: messages.loadFailed,
+  });
+  const invitedRouteMatches = invitedIssueRoute.invited;
   const workspaceAgentConfigurationApi = useMemo(
     () =>
       host.location.workspaceId
@@ -1792,7 +1860,9 @@ function CollaborationPlatformAppContent({
     setRootIssueLoading(true);
     try {
       const created = await api.issues.create(rootIssueProject.id, {
-        title: truncateRuntimeTaskTitle(content.replace(/\s+/g, " "))!,
+        title: truncateRuntimeTaskTitle(
+          composerMarkdownText(content, { firstLine: true }) || content.trim(),
+        )!,
         description: content,
         ...(standInDeviceId
           ? {}
@@ -2048,7 +2118,8 @@ function CollaborationPlatformAppContent({
     );
   } else if (
     host.location.projectId &&
-    (state.workspace ||
+    (isIssuePage ||
+      state.workspace ||
       state.workspaceNavigationContext ||
       state.projects.some(
         (project) =>
@@ -2063,7 +2134,33 @@ function CollaborationPlatformAppContent({
         (project) => String(project.id) === host.location.projectId,
       ) ?? null;
     content =
-      selectedProject && renderProject ? (
+      renderProject &&
+      isIssuePage &&
+      !selectedProject &&
+      !invitedRouteMatches ? (
+        invitedIssueRoute.error ? (
+          <div className="collaboration-alert" role="alert">
+            {invitedIssueRoute.error}
+            <button
+              type="button"
+              data-testid="collaboration-issue-access-retry"
+              onClick={invitedIssueRoute.retry}
+              className="min-h-11 px-2 underline md:min-h-8"
+            >
+              {translate("common.retry", "重试")}
+            </button>
+          </div>
+        ) : state.error ? (
+          <div className="collaboration-alert" role="alert">
+            {state.error}
+          </div>
+        ) : (
+          <ProjectLoadingSkeleton
+            label={translate("common.loading", "正在加载…")}
+            layout="board"
+          />
+        )
+      ) : selectedProject && renderProject && !invitedRouteMatches ? (
         renderProject({ project: selectedProject, workspace: workspaceContext })
       ) : (
         <CollaborationApp
@@ -2076,6 +2173,7 @@ function CollaborationPlatformAppContent({
           onProjectChange={commands.registerProject}
           showProjectBack={false}
           host={{
+            settingsPages: host.settingsPages,
             capabilities: {
               automation: host.capabilities.automation,
               dingtalkAitable: host.capabilities.dingtalkAitable,
@@ -2173,6 +2271,11 @@ function CollaborationPlatformAppContent({
               : state.resources.execution_environments
           }
           deviceCatalog={rootView === "devices" ? deviceCatalog : undefined}
+          preferences={
+            rootView === "devices"
+              ? host.renderExecutionEnvironmentPreferences?.()
+              : undefined
+          }
           locale={locale}
           currentUserId={host.currentUser?.id}
           onDeleteDevice={
@@ -2280,6 +2383,7 @@ function CollaborationPlatformAppContent({
           }
         >
           {!domainWorkspaces.length &&
+          !host.createIndependentIssue &&
           host.capabilities.projectNavigation !== "projects" ? (
             <>
               <PageHeader
@@ -2306,7 +2410,8 @@ function CollaborationPlatformAppContent({
               />
             </>
           ) : !domainProjects.length ? (
-            <FirstProjectStarter
+            <FirstWorkStarter
+              onCreateIssue={host.createIndependentIssue}
               messages={messages}
               supportsLocalImport={Boolean(
                 host.renderProjectImporter &&
@@ -2318,6 +2423,7 @@ function CollaborationPlatformAppContent({
             />
           ) : (
             <IssueHomeLauncher
+              draft={host.issueHomeDraft}
               renderTaskComposer={
                 host.renderIssueComposer
                   ? (props) =>
@@ -2354,7 +2460,9 @@ function CollaborationPlatformAppContent({
               projects={domainProjects}
               selectedProjectId={rootIssueProject?.id ?? ""}
               workspaces={domainWorkspaces}
-              onSelectProject={setRootIssueProjectId}
+              onSelectProject={
+                host.issueHomeDraft?.onSelectProject ?? setRootIssueProjectId
+              }
               pending={rootIssueLoading}
               onCreateIssue={(
                 content,
@@ -2387,6 +2495,7 @@ function CollaborationPlatformAppContent({
       );
     if (rootView === "home" && host.renderPersonalHome) {
       content = host.renderPersonalHome({
+        contentVisible: !mobileNavigationOpen,
         projects: state.navigationProjects,
         createIssue: content,
         createdIssue: createdHomeIssue,
@@ -2555,6 +2664,8 @@ function CollaborationPlatformAppContent({
       ];
       content = (
         <ProjectSettingsShell
+          pageRenderer={host.settingsPages}
+          scopeKey={workspace.id}
           ariaLabel={`${messages.settings} · ${workspaceDisplayName}`}
           testId="workspace-settings-shell"
           selectedSectionId={workspaceSettingsView}
@@ -2612,17 +2723,8 @@ function CollaborationPlatformAppContent({
                 className="collaboration-workspace-starter"
                 data-testid="collaboration-workspace-starter"
               >
-                <small>{messages.firstUseProgress}</small>
-                <h2>
-                  {usesProjectImporter
-                    ? messages.firstLocalProjectTitle
-                    : messages.firstProjectTitle}
-                </h2>
-                <p>
-                  {usesProjectImporter
-                    ? messages.firstLocalProjectHint
-                    : messages.firstProjectHint}
-                </p>
+                <h2>{messages.firstProjectTitle}</h2>
+                <p>{messages.firstProjectHint}</p>
                 <div>
                   <ProjectCreationAction
                     className="collaboration-primary-button"
@@ -2707,6 +2809,8 @@ function CollaborationPlatformAppContent({
 
   const sidebar = (
     <CollaborationPlatformNavigation
+      mobileNavigationOpen={mobileNavigationOpen}
+      onMobileNavigationOpenChange={setMobileNavigationOpen}
       domain={collaborationDomain}
       host={host}
       messages={messages}
@@ -2881,39 +2985,6 @@ function CollaborationPlatformAppContent({
         : null}
       {projectDialogOpen ? (
         <ProjectCreateDialog
-          importActions={
-            host.renderProjectImporter &&
-            state.workspaces.some(
-              (workspace) => workspace.location === "local",
-            ) ? (
-              <div className="flex flex-wrap gap-2">
-                {(["folder", "existing"] as const).map((mode) => (
-                  <button
-                    type="button"
-                    key={mode}
-                    className="collaboration-secondary-button"
-                    data-testid={
-                      mode === "folder"
-                        ? "collaboration-workspace-nav-add-folder"
-                        : "collaboration-workspace-nav-import-existing-project"
-                    }
-                    onClick={() => {
-                      const local = state.workspaces.find(
-                        (workspace) => workspace.location === "local",
-                      );
-                      if (!local) return;
-                      setProjectDialogOpen(false);
-                      openWorkspaceProjectCreator(local.id, mode);
-                    }}
-                  >
-                    {mode === "folder"
-                      ? messages.addFolder
-                      : messages.importExistingProject}
-                  </button>
-                ))}
-              </div>
-            ) : undefined
-          }
           initialTemplate={projectTemplate}
           targets={[
             {
@@ -2976,6 +3047,10 @@ function CollaborationPlatformAppContent({
               name: projectCreateLabels[locale].currentUser,
             },
             members: projectWorkspaceMembers,
+            searchUsers:
+              projectCreateLocation === "cloud"
+                ? api.members.searchUsers
+                : undefined,
             agents: selectedProjectResourceAgents,
             defaultAgentResourceIds: defaultProjectAgentResourceIds,
             groups: projectWorkspaceGroups,
@@ -2987,43 +3062,10 @@ function CollaborationPlatformAppContent({
               : undefined,
             retryExecutionEnvironments: () =>
               setProjectResourceRefreshKey((value) => value + 1),
-            requiresTemplateEnvironmentSelection:
-              host.projectAgentConfiguration
-                ?.requiresTemplateEnvironmentSelection,
             loadCollaborationGroupGenerationModels:
               host.loadProjectCollaborationGroupGenerationModels,
             generateCollaborationGroupDraft:
               host.generateProjectCollaborationGroupDraft,
-            validate: async (selection) => {
-              if (!selection.template) return;
-              const routings = await validateTemplateAgentRouting(
-                selection.template,
-                selection.collaborationGroupDrafts,
-                templateRoutingResolver(
-                  host.projectAgentConfiguration,
-                  projectCreateLocation,
-                  undefined,
-                  locale,
-                ),
-              );
-              if (
-                host.projectAgentConfiguration
-                  ?.requiresTemplateEnvironmentSelection
-              ) {
-                for (const { executionPolicy } of routings.values()) {
-                  if (
-                    executionPolicy.mode === "fixed" &&
-                    !selection.executionEnvironmentDeviceIds.some(
-                      (id) => String(id) === executionPolicy.environment_id,
-                    )
-                  ) {
-                    throw new TemplateConfigurationError(
-                      templateMessages[locale].selectExecutionEnvironment,
-                    );
-                  }
-                }
-              }
-            },
             configure: async (project, selection) => {
               if (selection.template) {
                 await prepareTemplateProject(
@@ -3117,12 +3159,7 @@ function CollaborationPlatformAppContent({
                     selection.collaborationGroupDrafts,
                     templateMessages[locale].partial,
                     undefined,
-                    templateRoutingResolver(
-                      host.projectAgentConfiguration,
-                      projectCreateLocation,
-                      project.id,
-                      locale,
-                    ),
+                    templateRoutingResolver(),
                   )
                 : {
                     drafts: selection.collaborationGroupDrafts,

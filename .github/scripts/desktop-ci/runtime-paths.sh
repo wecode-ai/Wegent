@@ -239,7 +239,7 @@ classify_path() {
       wework/src/components/chat/composer/composerAppsSnapshot* | \
       wework/src/components/plugins/PluginManagementWorkspace* | \
       wework/src/features/plugins/pluginInventory*)
-      select_target "cloud:plugin-composer-long-list"
+      select_target "cloud:plugin-collaboration-composer-isolation"
       ;;
     wework/e2e/desktop/modules/plugin-catalog-boundaries.mjs | \
       wework/e2e/desktop/modules/plugin-source-continuation.mjs | \
@@ -279,10 +279,6 @@ classify_path() {
       fi
       return
       ;;
-    wework/e2e/desktop/scenarios/plugin-composer-long-list.scenario.mjs)
-      select_target "cloud:plugin-composer-long-list"
-      return
-      ;;
     wework/e2e/desktop/scenarios/plugin-collaboration-composer-isolation.scenario.mjs | \
       packages/chat-core/src/runtime-composer-api* | \
       packages/chat-core/src/runtime-composer-snapshot* | \
@@ -304,7 +300,6 @@ classify_path() {
       select_plugin_sync_checkpoints
       select_target "cloud:plugin-toggle-persistence"
       select_uninstall_checkpoints
-      select_target "cloud:plugin-composer-long-list"
       select_target "cloud:plugin-collaboration-composer-isolation"
       return
       ;;
@@ -469,7 +464,7 @@ classify_path() {
       fi
       select_target "core:collaboration-parent-board"
       if [[ "$path" == packages/collaboration/src/composer/* ]]; then
-        select_target "core:drawing-attachment"
+        select_target "core:task-attachments"
       fi
       select_target "core:collaboration-shared-core"
       select_target "core:collaboration-issue-archive"
@@ -481,7 +476,6 @@ classify_path() {
       select_target "core:collaboration-issue-comment-attachments"
       select_target "core:collaboration-issue-attachment-preview"
       select_target "core:collaboration-issue-comment-notification"
-      select_target "core:collaboration-board-sorting"
       select_target "core:collaboration-board-backlog"
       select_target "core:collaboration-board-move-recovery"
       select_target "core:collaboration-home-preload"
@@ -529,6 +523,8 @@ classify_path() {
       .github/actions/setup-sccache/* | \
       .github/actions/setup-node-workspace/* | \
       .github/actions/setup-python-uv-cache/* | \
+      .github/actions/setup-wework-native-test-dependencies/* | \
+      .github/ci/wework-native-test-ubuntu.sources | \
       .github/actions/build-wework-windows-e2e/* | \
       .github/actions/build-wework-macos-e2e/* | \
       .github/workflows/wework-e2e.yml | \

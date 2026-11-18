@@ -1,6 +1,8 @@
+import { beginMobileDiagnostic, recordMobileDiagnostic } from '@/services/mobileDiagnostics'
 import type { DeviceInfo } from '@/types/runtime'
 import { withLocalRuntimeFileReferences } from '@/domain/localRuntimeFiles'
 import { unwrapLocalRuntimeResponse } from './runtimeRpcResult'
+import { mobileAbortError, throwIfAborted } from './mobileAbort'
 
 export interface LocalRuntimeStatus {
   supported: boolean
@@ -74,6 +76,8 @@ export class LocalRuntime {
   private current: LocalRuntimeStatus
   private sequence = 0
   private startPending?: Promise<void>
+  private runningRequested = false
+  private readonly lifetime = new AbortController()
   private recoveryPending?: Promise<void>
   private recoveryBuffer?: { generation: number; events: Map<number, LocalRuntimeEvent> }
   private readonly statusListeners = new Set<() => void>()
@@ -101,42 +105,110 @@ export class LocalRuntime {
   }
 
   async initialize(): Promise<void> {
+    throwIfAborted(this.lifetime.signal)
     if (!this.native) return
     this.attach()
-    this.receiveStatus(await this.native.getStatusAsync())
+    const diagnostic = beginMobileDiagnostic('phone-initialize', 'phone')
+    try {
+      const status = await this.native.getStatusAsync()
+      throwIfAborted(this.lifetime.signal)
+      this.receiveStatus(status)
+      diagnostic.complete({ generation: status.generation })
+    } catch (cause) {
+      diagnostic.fail(cause)
+      throw cause
+    }
   }
 
   async start(): Promise<void> {
+    throwIfAborted(this.lifetime.signal)
+    this.runningRequested = true
     if (this.startPending) return this.startPending
     this.attach()
     const native = this.requireNative()
+    const diagnostic = beginMobileDiagnostic('phone-start', 'phone')
     this.startPending = (async () => {
-      const existing = await native.getStatusAsync()
+      diagnostic.step('read-native-status')
+      let existing = await native.getStatusAsync()
+      this.assertStartRequested()
+      if (existing.state === 'stopping') {
+        diagnostic.step('wait-for-stop')
+        await this.waitForStop()
+        existing = await native.getStatusAsync()
+        this.assertStartRequested()
+      }
       if (
         existing.accountScope &&
         existing.state !== 'stopped' &&
         (existing.accountScope !== this.accountScope || existing.state === 'failed')
-      )
+      ) {
+        diagnostic.step('stop-previous-runtime')
         await native.stopAsync({ accountScope: existing.accountScope })
-      this.receiveStatus(
-        await native.startAsync({
-          accountScope: this.accountScope,
-          foregroundUserInitiated: false,
-        })
-      )
+      }
+      this.assertStartRequested()
+      diagnostic.step('start-native-runtime')
+      const started = await native.startAsync({
+        accountScope: this.accountScope,
+        foregroundUserInitiated: false,
+      })
+      this.assertStartRequested()
+      this.receiveStatus(started)
       if (this.current.state !== 'running')
         throw new Error(this.current.error || '本机执行环境启动失败')
+      diagnostic.step('recover-events')
       await this.recover()
-    })().finally(() => {
-      this.startPending = undefined
-    })
+      diagnostic.complete({ generation: this.current.generation })
+    })()
+      .catch(cause => {
+        diagnostic.fail(cause)
+        throw cause
+      })
+      .finally(() => {
+        this.startPending = undefined
+      })
     return this.startPending
   }
 
   async stop(): Promise<void> {
+    this.runningRequested = false
     const native = this.requireNative()
     await native.stopAsync({ accountScope: this.accountScope })
     this.receiveStatus(await native.getStatusAsync())
+  }
+
+  async resume(): Promise<void> {
+    await this.initialize()
+    if (this.current.supported && this.runningRequested) await this.start()
+  }
+
+  private assertStartRequested(): void {
+    throwIfAborted(this.lifetime.signal)
+    if (!this.runningRequested) throw mobileAbortError()
+  }
+
+  private waitForStop(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const finish = (cause?: unknown) => {
+        unsubscribe()
+        this.lifetime.signal.removeEventListener('abort', onAbort)
+        if (cause) reject(cause)
+        else resolve()
+      }
+      const onAbort = () => finish(mobileAbortError())
+      const receive = (status: LocalRuntimeStatus) => {
+        if (status.state === 'stopped') finish()
+        else if (status.state === 'failed')
+          finish(new Error(status.error || '本机执行环境停止失败'))
+      }
+      const check = () => {
+        void this.requireNative().getStatusAsync().then(receive, finish)
+      }
+      // The visible status hides other profiles; only native state can prove they drained.
+      const unsubscribe = this.onStatus(check)
+      this.lifetime.signal.addEventListener('abort', onAbort, { once: true })
+      if (this.lifetime.signal.aborted) onAbort()
+      else check()
+    })
   }
 
   ownsDevice(deviceId: string | undefined): boolean {
@@ -229,9 +301,20 @@ export class LocalRuntime {
   recover(): Promise<void> {
     if (this.recoveryPending) return this.recoveryPending
     this.recoveryBuffer ??= { generation: this.current.generation, events: new Map() }
-    const pending = this.recoverEvents().finally(() => {
-      if (this.recoveryPending === pending) this.recoveryPending = undefined
-    })
+    recordMobileDiagnostic('[LocalRuntime] Recovery started', () => this.transportDiagnostics())
+    const pending = this.recoverEvents()
+      .then(() => {
+        recordMobileDiagnostic('[LocalRuntime] Recovery completed', () =>
+          this.transportDiagnostics()
+        )
+      })
+      .catch(cause => {
+        recordMobileDiagnostic('[LocalRuntime] Recovery failed', () => this.transportDiagnostics())
+        throw cause
+      })
+      .finally(() => {
+        if (this.recoveryPending === pending) this.recoveryPending = undefined
+      })
     this.recoveryPending = pending
     return pending
   }
@@ -275,6 +358,8 @@ export class LocalRuntime {
   }
 
   dispose(): void {
+    recordMobileDiagnostic('[LocalRuntime] Transport disposed', () => this.transportDiagnostics())
+    this.lifetime.abort()
     this.subscriptions.forEach(subscription => subscription.remove())
     this.subscriptions.length = 0
     this.statusListeners.clear()
@@ -291,8 +376,25 @@ export class LocalRuntime {
       if (this.recoveryBuffer)
         this.recoveryBuffer = { generation: status.generation, events: new Map() }
     }
+    if (status.state !== this.current.state || status.generation !== this.current.generation)
+      recordMobileDiagnostic('[LocalRuntime] Status changed', {
+        previousState: this.current.state,
+        state: status.state,
+        generation: status.generation,
+      })
     this.current = status
     this.statusListeners.forEach(listener => listener())
+  }
+
+  private transportDiagnostics() {
+    return {
+      state: this.current.state,
+      generation: this.current.generation,
+      sequence: this.sequence,
+      bufferedEvents: this.recoveryBuffer?.events.size ?? 0,
+      buffering: Boolean(this.recoveryBuffer),
+      eventListeners: this.eventListeners.size,
+    }
   }
 
   private receiveEvent(envelope: LocalRuntimeEvent): void {

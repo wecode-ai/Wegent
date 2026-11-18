@@ -7,7 +7,16 @@ import { assertRetainedSourceOwnership } from '../e2e/desktop/modules/retained-s
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'retained-source-ownership-'))
-  t.after(() => rm(root, { recursive: true, force: true }))
+  const noAsar = process.noAsar
+  // Match the release verifier's physical archive filesystem.
+  process.noAsar = true
+  t.after(async () => {
+    try {
+      await rm(root, { recursive: true, force: true })
+    } finally {
+      process.noAsar = noAsar
+    }
+  })
   const data = join(root, 'data')
   const profile = join(data, 'dsh-core/profiles/wework-core')
   const originalPrograms = join(data, 'managed-components')
@@ -43,7 +52,13 @@ async function fixture(t) {
     retainsLiveProfile: true,
   }
   const prepareLegacyCopy = async () => {
-    await cp(join(root, 'installed'), join(slot, 'host/installed'), { recursive: true })
+    const noAsar = process.noAsar
+    process.noAsar = true
+    try {
+      await cp(join(root, 'installed'), join(slot, 'host/installed'), { recursive: true })
+    } finally {
+      process.noAsar = noAsar
+    }
     baseline.executable = join(
       slot,
       'host/installed',
@@ -73,8 +88,29 @@ test('keeps every stopped-live-profile ownership assertion', async t => {
 test('validates the immutable legacy host copy and its independently prepared profile', async t => {
   const f = await fixture(t)
   await f.prepareLegacyCopy()
+  assert.equal(process.noAsar, true, 'Preparing the legacy copy changed physical archive access')
   await assertRetainedSourceOwnership(f.options)
 })
+
+for (const noAsar of [true, false]) {
+  for (const fails of [false, true]) {
+    test(`restores archive mode ${noAsar} after legacy ownership hashing ${fails ? 'fails' : 'succeeds'}`, async t => {
+      const f = await fixture(t)
+      await f.prepareLegacyCopy()
+      if (fails) await rm(join(f.baseline.resources, 'app.asar'))
+      const previousNoAsar = process.noAsar
+      process.noAsar = noAsar
+      try {
+        if (fails)
+          await assert.rejects(assertRetainedSourceOwnership(f.options), { code: 'ENOENT' })
+        else await assertRetainedSourceOwnership(f.options)
+        assert.equal(process.noAsar, noAsar, 'Ownership hashing changed caller archive access')
+      } finally {
+        process.noAsar = previousNoAsar
+      }
+    })
+  }
+}
 
 for (const changed of ['executable', 'archive', 'profile-owner', 'host-alias']) {
   test(`rejects a legacy rollback copy with changed ${changed}`, async t => {

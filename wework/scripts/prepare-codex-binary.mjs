@@ -3,7 +3,20 @@ import { createHash } from 'node:crypto'
 import { createWriteStream } from 'node:fs'
 import { get as httpGet } from 'node:http'
 import { get as httpsGet } from 'node:https'
-import { chmod, copyFile, cp, mkdir, readdir, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  copyFile,
+  cp,
+  mkdir,
+  readdir,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -456,7 +469,13 @@ async function main() {
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+const invokedScript = process.argv[1]
+  ? await realpath(process.argv[1]).catch(error => {
+      if (error.code !== 'ENOENT') throw error
+      return null
+    })
+  : null
+if (invokedScript === fileURLToPath(import.meta.url)) {
   main().catch(error => {
     console.error(error instanceof Error ? error.message : error)
     process.exit(1)

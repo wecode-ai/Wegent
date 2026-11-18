@@ -2,9 +2,8 @@ import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { createServer } from 'vite'
 import { createDesktopScenario as createNativeGuidance } from './native-guidance.scenario.mjs'
+import { loadMobileLocalPayloadBuilders } from '../modules/mobile-local-payload-builders.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import {
@@ -20,27 +19,6 @@ const INITIAL = 'WEWORK_MOBILE_LOCAL_INITIAL'
 const FOLLOW_UP = 'WEWORK_MOBILE_LOCAL_FOLLOW_UP'
 const INITIAL_DONE = 'WEWORK_MOBILE_LOCAL_INITIAL_DONE'
 const FOLLOW_UP_DONE = 'WEWORK_MOBILE_LOCAL_FOLLOW_UP_DONE'
-
-async function loadSharedBuilders() {
-  const loader = await createServer({
-    root: fileURLToPath(new URL('../../../../', import.meta.url)),
-    configFile: false,
-    envFile: false,
-    logLevel: 'error',
-    optimizeDeps: { noDiscovery: true, include: [] },
-    server: { middlewareMode: true, watch: null, hmr: false },
-    appType: 'custom',
-  })
-  try {
-    return {
-      ...(await loader.ssrLoadModule('/packages/chat-core/src/local-runtime-execution.ts')),
-      ...(await loader.ssrLoadModule('/packages/chat-core/src/local-runtime-model.ts')),
-      ...(await loader.ssrLoadModule('/wework/electron/src/host/model-interface-runtime.ts')),
-    }
-  } finally {
-    await loader.close()
-  }
-}
 
 // Exercise the phone's shared payload through the existing real executor and Codex.
 // Native iOS scheduling and OAuth are outside this desktop checkpoint's coverage.
@@ -74,7 +52,7 @@ export function createDesktopScenario(options) {
     },
     async verify(control) {
       await existing.verify(control)
-      const builders = await loadSharedBuilders()
+      const builders = await loadMobileLocalPayloadBuilders()
       const rpc = (method, params) => requestExecutor(control, method, params, options.uiTimeoutMs)
       const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
       const deviceId = snapshot.workbench?.currentRuntimeTask?.deviceId
@@ -101,6 +79,8 @@ export function createDesktopScenario(options) {
             local_model_id: modelName,
             label: 'Mobile Responses',
             is_default: false,
+            default_reasoning_effort: 'high',
+            supported_reasoning_efforts: ['low', 'high', 'xhigh'],
             modelConfig: configured,
           },
         ],
@@ -175,12 +155,61 @@ export function createDesktopScenario(options) {
       assert.equal(created.taskId, taskId)
       assert.equal(created.deviceId, deviceId)
       const first = await waitForReply(INITIAL_DONE)
+      const mobileTranscript = builders.projectMobileRuntimeTranscript(first.transcript)
+      // A viewer can receive the reply before the history read exposes its user message.
+      const replyFirst = builders.chatReducer([], {
+        type: 'replace',
+        messages: mobileTranscript.messages.filter(message => message.role === 'assistant'),
+      })
+      const hydrated = builders.chatReducer(replyFirst, {
+        type: 'merge-latest',
+        messages: mobileTranscript.messages,
+      })
+      const userIndex = hydrated.findIndex(message => message.id === `${taskId}-initial`)
+      const replyIndex = hydrated.findIndex(message => message.role === 'assistant')
+      assert.ok(
+        userIndex >= 0 && replyIndex > userIndex,
+        'Mobile placed the streamed reply before its user'
+      )
+      const mobileWork = builders.adaptRuntimeWorkListResponse(
+        await rpc('runtime.tasks.list', {}),
+        deviceId
+      )
+      const conversation = builders
+        .flattenConversations(mobileWork)
+        .find(item => item.address.taskId === taskId)
+      assert.ok(conversation, 'The created task was absent from the Mobile work list')
+      const restoredSelection = builders.modelSelectionFromRuntimeHandle(
+        conversation.address.runtimeHandle
+      )
+      assert.equal(restoredSelection?.modelName, modelName, 'Mobile lost the task model')
+      assert.equal(restoredSelection.modelType, 'runtime')
+      assert.equal(restoredSelection.options.runnerModelProvider, provider)
+      const mobileCatalog = builders.runnerModelCatalog(
+        catalog.models,
+        [{ name: 'different-cloud-default', type: 'public', provider: 'cloud' }],
+        'codex'
+      )
+      assert.equal(
+        builders.findModelForSelection(
+          mobileCatalog.map(item => item.model),
+          restoredSelection
+        )?.runtime?.provider,
+        provider,
+        'Mobile replaced the task provider with a catalog default'
+      )
+      const restoredModel = builders.findModelForSelection(
+        mobileCatalog.map(item => item.model),
+        restoredSelection
+      )
+      assert.deepEqual(builders.reasoningEfforts(restoredModel), ['low', 'high', 'xhigh'])
+      assert.equal(builders.resolvedReasoningEffort(restoredModel, undefined), 'high')
       const sent = await rpc('runtime.tasks.send', {
-        address,
+        address: conversation.address,
         taskId,
         message: FOLLOW_UP,
         clientUserMessageId: `${taskId}-follow-up`,
-        modelSelection: { modelName, modelType: 'runtime', options: modelOptions },
+        modelSelection: restoredSelection,
         executionRequest: executionRequest(FOLLOW_UP, false, `${taskId}-follow-up`),
       })
       assert.equal(sent.accepted, true, sent.error)

@@ -405,10 +405,8 @@ impl<R: Redis> StatusUpdatingEmitter<R> {
                 let block_id = event.data.get("block_id").and_then(Value::as_str);
                 let updates = event.data.get("updates").and_then(Value::as_object);
                 if let (Some(block_id), Some(updates)) = (block_id, updates) {
-                    let blocks = session::get_blocks(&self.redis, self.subtask_id).await;
-                    let existing = blocks
-                        .into_iter()
-                        .find(|block| block.get("id").and_then(Value::as_str) == Some(block_id));
+                    let existing =
+                        session::get_block(&self.redis, self.subtask_id, block_id).await?;
                     let mut block = match existing {
                         Some(mut block) => {
                             for (key, value) in updates {

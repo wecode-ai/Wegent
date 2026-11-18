@@ -478,7 +478,14 @@ def _matches_issue_device_affinity(
     """Keep every execution of one Issue on its latest claimed device."""
 
     from app.services.device.identity import resolve_owned_device_alias
+    from app.services.runner_recovery import original_session, session_matches
     from app.services.runner_routing import issue_binding
+
+    if original_session(execution):
+        runner = resolve_owned_device_alias(
+            db, user_id=owner_user_id, device_id=submitted_device_id
+        )
+        return runner is not None and session_matches(db, execution, runner.id)
 
     try:
         bound = issue_binding(db, execution.loop_item_id)
@@ -534,13 +541,19 @@ def _execution_is_claimable_by_device(
         runner = resolve_owned_device_alias(
             db, user_id=owner_user_id, device_id=submitted_device_id
         )
-        return runner is not None and eligible_runner(db, execution, runner)
-    return _matches_issue_device_affinity(
-        db,
-        execution=execution,
-        owner_user_id=owner_user_id,
-        submitted_device_id=submitted_device_id,
-    )
+        device_permitted = runner is not None and eligible_runner(db, execution, runner)
+    else:
+        device_permitted = _matches_issue_device_affinity(
+            db,
+            execution=execution,
+            owner_user_id=owner_user_id,
+            submitted_device_id=submitted_device_id,
+        )
+    if not device_permitted:
+        return False
+    from app.services.loop_item_executions.workday import permits_execution_start
+
+    return permits_execution_start(db, execution, utcnow())
 
 
 def _agent_limits(db: Session, agent_ids: set[str]) -> dict[str, int]:
@@ -1659,7 +1672,12 @@ class LoopItemExecutionService:
             .populate_existing()
         ):
             if execution_authorized(db, execution):
-                authorized_ids.append(execution.id)
+                from app.services.loop_item_executions.workday import (
+                    permits_execution_start,
+                )
+
+                if permits_execution_start(db, execution, utcnow(), commit=False):
+                    authorized_ids.append(execution.id)
             else:
                 cancelled = self.cancel(
                     db,
@@ -1965,6 +1983,9 @@ class LoopItemExecutionService:
         """Commit Runtime acceptance and its activity projection together."""
 
         try:
+            from app.services.loop_items.locking import lock_execution_issue
+
+            lock_execution_issue(db, execution_id)
             row = self.confirm_runtime_accepted(
                 db,
                 execution_id=execution_id,
@@ -2137,6 +2158,9 @@ class LoopItemExecutionService:
         key is (project, task, agent, runtime ids), making this idempotent.
         """
 
+        from app.services.loop_items.locking import lock_existing_issue
+
+        lock_existing_issue(db, execution.loop_item_id)
         current = db.get(
             LoopItemExecution,
             execution.id,
@@ -2598,6 +2622,9 @@ class LoopItemExecutionService:
 
         if terminal_status not in TERMINAL_STATUSES:
             raise ValueError(f"Unsupported terminal status: {terminal_status}")
+        from app.services.loop_items.locking import lock_execution_issue
+
+        lock_execution_issue(db, execution_id)
         now = utcnow()
         values: dict[str, Any] = {
             "status": terminal_status,
@@ -2875,8 +2902,10 @@ class LoopItemExecutionService:
         """Apply the elected execution outcome without committing or pushing."""
 
         from app.models.delivery import ProjectAutomationRun
+        from app.services.loop_items.locking import lock_existing_issue
         from app.services.project_chat.service import project_chat_service
 
+        lock_existing_issue(db, execution.loop_item_id)
         activity = self._linked_activity(db, execution)
         if activity is not None:
             project_chat_service._record_runtime_sequence(
@@ -3256,10 +3285,13 @@ class LoopItemExecutionService:
         """Serialize Runtime observations with lease and cancellation writes.
 
         Refresh the execution under its lock so an acknowledgement cannot make
-        an observed event fail a stale version check. All activity writers keep
-        the execution -> activity lock order.
+        an observed event fail a stale version check. Writers lock Issue before
+        execution and activity so replies and cancellation cannot invert this order.
         """
 
+        from app.services.loop_items.locking import lock_execution_issue
+
+        lock_execution_issue(db, execution_id)
         execution = (
             db.query(LoopItemExecution)
             .filter(LoopItemExecution.id == execution_id)
@@ -4510,6 +4542,9 @@ class LoopItemExecutionService:
     ) -> Optional[LoopItemExecution]:
         """Apply a trusted snapshot and restore its missing activity projection."""
 
+        from app.services.loop_items.locking import lock_execution_issue
+
+        lock_execution_issue(db, execution_id)
         row = db.get(LoopItemExecution, execution_id)
         if row is None or row.status not in CAPACITY_STATUSES:
             return row

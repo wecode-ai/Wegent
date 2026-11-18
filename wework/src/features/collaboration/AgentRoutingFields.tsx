@@ -32,6 +32,8 @@ export function AgentEnvironmentFields({
       <div className="block space-y-1 text-sm">
         <span>{t('workbench.runner_environment')}</span>
         <AgentEnvironmentPicker
+          open={routing.environmentPickerOpen}
+          onOpenChange={routing.setEnvironmentPickerOpen}
           testId={`${prefix}-environment`}
           disabled={disabled}
           loading={routing.environmentLoading}
@@ -52,6 +54,17 @@ export function AgentEnvironmentFields({
           }
         />
       </div>
+      {selectionOnly &&
+        !routing.environmentLoading &&
+        !routing.environments.some(item => item.project_authorized) && (
+          <p
+            role="status"
+            className="text-xs text-text-muted"
+            data-testid={`${prefix}-environment-empty`}
+          >
+            {t('workbench.runner_environment_setup_hint')}
+          </p>
+        )}
       {environment ? (
         <p className="text-xs text-text-muted">
           {t(`workbench.runner_owner_${environment.owner_type}`)} ·{' '}
@@ -162,9 +175,13 @@ export function AgentModelFields({
             <option value="user_select">{t('workbench.runner_user_select')}</option>
           )}
           {routing.model && !routing.modelAvailable && (
-            <option value={runnerModelKey(routing.model)} disabled>
+            <option
+              value={runnerModelKey(routing.model)}
+              disabled={!routing.persistedModelSupported}
+            >
               {routing.model.model_id}
-              {!routing.loading &&
+              {!routing.persistedModelSupported &&
+                !routing.loading &&
                 !routing.nativeLoading &&
                 ` · ${t('workbench.runner_model_unavailable')}`}
             </option>
@@ -200,7 +217,27 @@ export function AgentModelFields({
         !routing.nativeLoading &&
         routing.models.length === 0 &&
         !chooseAtRuntime && (
-          <p className="text-xs text-text-muted">{t('workbench.runner_no_models')}</p>
+          <div
+            className="space-y-2 text-sm text-text-secondary"
+            role="status"
+            data-testid={`${prefix}-model-empty`}
+          >
+            <p>{t('workbench.runner_no_models')}</p>
+            {!selectionOnly && routing.executionPolicy?.mode === 'project_pool' && (
+              <>
+                <p>{t('workbench.runner_automatic_native_hint')}</p>
+                <button
+                  type="button"
+                  data-testid={`${prefix}-choose-device`}
+                  disabled={disabled || routing.environmentLoading}
+                  className="rounded-md px-2 py-1 text-text-primary underline underline-offset-4 outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70 hover:bg-muted disabled:opacity-40"
+                  onClick={() => routing.setEnvironmentPickerOpen(true)}
+                >
+                  {t('workbench.runner_specify_device')}
+                </button>
+              </>
+            )}
+          </div>
         )}
       {sources.length > 0 && (
         <ul
@@ -229,6 +266,7 @@ export function AgentModelFields({
         routing.modelMode === 'fixed' &&
         routing.model &&
         !routing.modelAvailable &&
+        !routing.persistedModelSupported &&
         !(routing.nativeLoading && routing.model.source !== 'cloud') &&
         !routing.loading && (
           <p role="alert" className="text-xs text-destructive">

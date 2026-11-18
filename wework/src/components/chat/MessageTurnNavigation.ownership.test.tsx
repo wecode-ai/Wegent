@@ -42,42 +42,45 @@ describe('MessageTurnNavigation ownership', () => {
     },
   ]
 
-  test('removes only the known host activity marker from the rendered navigation', () => {
-    const scroll = document.createElement('div')
-    const content = document.createElement('div')
-    scroll.append(content)
-    document.body.append(scroll)
-    mockRect(scroll, 0, 300)
-    const props = {
-      translate: (key: string) => key,
-      turnNavigation,
-      scrollRef: { current: scroll },
-      contentRef: { current: content },
+  test.each(['stand_in_activity', 'connection_event'])(
+    'removes the explicit %s marker from user turn navigation',
+    source => {
+      const scroll = document.createElement('div')
+      const content = document.createElement('div')
+      scroll.append(content)
+      document.body.append(scroll)
+      mockRect(scroll, 0, 300)
+      const props = {
+        translate: (key: string) => key,
+        turnNavigation,
+        scrollRef: { current: scroll },
+        contentRef: { current: content },
+      }
+      const view = render(
+        <MessageTurnNavigation {...props} messages={[olderMessage, latestMessage]} />
+      )
+      expect(screen.getAllByTestId('message-turn-navigation-marker')).toHaveLength(2)
+      view.rerender(
+        <MessageTurnNavigation
+          {...props}
+          messages={[olderMessage, { ...latestMessage, source: { source } }]}
+        />
+      )
+      expect(screen.queryByTestId('message-turn-navigation')).not.toBeInTheDocument()
+      view.rerender(
+        <MessageTurnNavigation
+          {...props}
+          messages={[
+            olderMessage,
+            { ...latestMessage, source: { source: 'stand_in_activity_extra' } },
+          ]}
+        />
+      )
+      expect(screen.getAllByTestId('message-turn-navigation-marker')).toHaveLength(2)
+      view.unmount()
+      scroll.remove()
     }
-    const view = render(
-      <MessageTurnNavigation {...props} messages={[olderMessage, latestMessage]} />
-    )
-    expect(screen.getAllByTestId('message-turn-navigation-marker')).toHaveLength(2)
-    view.rerender(
-      <MessageTurnNavigation
-        {...props}
-        messages={[olderMessage, { ...latestMessage, source: { source: 'stand_in_activity' } }]}
-      />
-    )
-    expect(screen.queryByTestId('message-turn-navigation')).not.toBeInTheDocument()
-    view.rerender(
-      <MessageTurnNavigation
-        {...props}
-        messages={[
-          olderMessage,
-          { ...latestMessage, source: { source: 'stand_in_activity_extra' } },
-        ]}
-      />
-    )
-    expect(screen.getAllByTestId('message-turn-navigation-marker')).toHaveLength(2)
-    view.unmount()
-    scroll.remove()
-  })
+  )
 
   function setup() {
     const scroll = document.createElement('div')
@@ -222,6 +225,41 @@ describe('MessageTurnNavigation ownership', () => {
       expect(fixture.onTarget).toHaveBeenLastCalledWith('latest')
       fixture.scroll.scrollTop = 1404
       fireEvent(fixture.scroll, new Event('scrollend'))
+      expect(fixture.onTarget).toHaveBeenLastCalledWith(null)
+    } finally {
+      fixture.cleanup()
+    }
+  })
+
+  test('an early scrollend retargets the measured row before releasing navigation', () => {
+    const fixture = startSmoothNavigation()
+    try {
+      fixture.scroll.scrollTop = 700
+      mockScrollRelativeRect(fixture.content.firstElementChild!, fixture.scroll, 1550, 60)
+      fireEvent(fixture.scroll, new Event('scrollend'))
+      expect(fixture.onTarget).toHaveBeenLastCalledWith('latest')
+      expect(fixture.scrollTo).toHaveBeenLastCalledWith({ top: 1454, behavior: 'auto' })
+      act(() => vi.advanceTimersByTime(16))
+      expect(fixture.scroll.scrollTop).toBe(1454)
+      expect(fixture.onTarget).toHaveBeenLastCalledWith(null)
+    } finally {
+      fixture.cleanup()
+    }
+  })
+
+  test('keeps the virtual target owned while its row remounts', () => {
+    const fixture = startSmoothNavigation()
+    try {
+      const anchor = fixture.content.firstElementChild!
+      anchor.remove()
+      act(() => vi.advanceTimersByTime(16))
+      fireEvent(fixture.scroll, new Event('scrollend'))
+      expect(fixture.onTarget).toHaveBeenLastCalledWith('latest')
+      fixture.content.append(anchor)
+      mockScrollRelativeRect(anchor, fixture.scroll, 1550, 60)
+      fixture.notifyResize()
+      act(() => vi.advanceTimersByTime(16))
+      expect(fixture.scroll.scrollTop).toBe(1454)
       expect(fixture.onTarget).toHaveBeenLastCalledWith(null)
     } finally {
       fixture.cleanup()

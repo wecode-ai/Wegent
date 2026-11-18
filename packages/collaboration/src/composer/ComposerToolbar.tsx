@@ -169,7 +169,7 @@ export function ComposerToolbar({
       data-testid="composer-toolbar"
       data-compact={compact ? 'true' : 'false'}
       className={cn(
-        'mt-auto flex min-h-7 min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1 pt-1',
+        'mt-auto flex min-h-7 min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1 pt-1 max-md:min-h-11 max-md:[&_button]:min-h-11 max-md:[&_button]:min-w-11',
         className
       )}
     >

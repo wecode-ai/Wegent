@@ -16,7 +16,7 @@ static dispatch_source_t memory_timer;
 static dispatch_source_t pressure_source;
 static atomic_bool critical_pressure;
 
-static int sample_memory(void) {
+static int read_memory_status(struct ish_memory_status *status) {
     task_vm_info_data_t info;
     mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
     if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&info, &count) != KERN_SUCCESS)
@@ -34,7 +34,19 @@ static int sample_memory(void) {
     uint64_t limit = ram / 5 * 4;
     uint64_t available = limit > footprint ? limit - footprint : 0;
 #endif
-    ish_set_memory_status(limit, available, atomic_load(&critical_pressure));
+    *status = (struct ish_memory_status) {
+        .limit_bytes = limit,
+        .avail_bytes = available,
+        .pressure_critical = atomic_load(&critical_pressure),
+    };
+    return 0;
+}
+
+static int sample_memory(void) {
+    struct ish_memory_status status;
+    int result = read_memory_status(&status);
+    if (result != 0) return result;
+    ish_set_memory_status(status.limit_bytes, status.avail_bytes, status.pressure_critical);
     return 0;
 }
 
@@ -56,8 +68,8 @@ int wework_ish_memory_start(void) {
     dispatch_source_set_timer(memory_timer, DISPATCH_TIME_NOW,
             250 * NSEC_PER_MSEC, 50 * NSEC_PER_MSEC);
     dispatch_source_set_event_handler(memory_timer, ^{
-        /* A failed sample leaves the previous timestamp unchanged. Upstream
-         * admission fails closed once that sample is older than two seconds. */
+        /* Allocation admission also reads the host synchronously after a stale
+         * sample. Both paths fail closed when the actual host query fails. */
         sample_memory();
     });
     dispatch_source_set_event_handler(pressure_source, ^{
@@ -67,6 +79,7 @@ int wework_ish_memory_start(void) {
     });
     dispatch_resume(memory_timer);
     dispatch_resume(pressure_source);
+    ish_set_memory_refresh_handler(read_memory_status);
     return 0;
 }
 #endif

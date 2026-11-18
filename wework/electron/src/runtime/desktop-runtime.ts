@@ -1,5 +1,4 @@
 import { assertExecutorWorkbenchCompatibility } from './workbench-executor-schema.js'
-import { migrateCodexProviderState } from './codex-provider-upgrade.js'
 import type { HostPipeServer } from '../host/host-pipe.js'
 import {
   createCoreDshLaunch,
@@ -12,6 +11,7 @@ import {
   CoreDshPluginManager,
   type CoreDshDevelopmentPlugin,
   type CoreDshPlugin,
+  type CoreDshPluginInstallRequest,
 } from './core-dsh-plugin-manager.js'
 import { DshRuntime, type DshRuntimeOptions } from './dsh-runtime.js'
 import {
@@ -39,6 +39,7 @@ export interface DesktopRuntimeOptions {
   hostPipe: HostPipeServer
   modelConfiguration?: ModelConfigurationStore
   readWorkbenchMode?: () => Promise<WorkbenchMode>
+  confirmPluginInstall?: (request: CoreDshPluginInstallRequest) => Promise<boolean>
   createWorkbenchHostPipe?: (tabId: string) => {
     hostPipe: HostPipeServer
     principal: string
@@ -104,7 +105,6 @@ export class DesktopRuntime {
   private startOperation: { generation: number; promise: Promise<void> } | null = null
   private restartOperation: { generation: number; promise: Promise<void> } | null = null
   private localModelSync: Promise<void> = Promise.resolve()
-  private providerMigration: { controller: AbortController; promise: Promise<void> } | null = null
 
   constructor(private readonly options: DesktopRuntimeOptions) {}
 
@@ -277,44 +277,18 @@ export class DesktopRuntime {
     this.started = false
     const coreDsh = this.coreDsh
     const executor = this.executor
-    const migration = this.providerMigration
-    this.providerMigration = null
-    migration?.controller.abort()
     this.coreDsh = null
     this.coreDshPlugins = null
     this.executor = null
-    await Promise.allSettled([
-      this.workbench.stop(),
-      coreDsh?.stop(),
-      executor?.stop(),
-      migration?.promise,
-    ])
+    await Promise.allSettled([this.workbench.stop(), coreDsh?.stop(), executor?.stop()])
   }
 
   private async prepareExecutor(): Promise<ManagedExecutorHandle | null> {
     const executorPath = this.options.environment.WEWORK_EXECUTOR_PATH?.trim()
     if (!executorPath) return null
     const generation = this.lifecycleGeneration
-    // Device identity and managed auth preparation may write Homes. Gate both first.
     await assertExecutorWorkbenchCompatibility(this.options.environment)
     if (this.lifecycleGeneration !== generation) return null
-    this.startupStep('codex-session-upgrade', 'started')
-    const controller = new AbortController()
-    const migration = {
-      controller,
-      promise: migrateCodexProviderState(this.options, controller.signal),
-    }
-    this.providerMigration = migration
-    try {
-      await migration.promise
-    } catch (error) {
-      this.startupStep('codex-session-upgrade', 'failed')
-      throw error
-    } finally {
-      if (this.providerMigration === migration) this.providerMigration = null
-    }
-    if (this.lifecycleGeneration !== generation) return null
-    this.startupStep('codex-session-upgrade', 'completed')
     const deviceId = await this.resolveDesktopDeviceId()
     if (this.lifecycleGeneration !== generation) return null
     const deviceName = await resolveDesktopDeviceName({
@@ -405,6 +379,7 @@ export class DesktopRuntime {
         dshEntry: managedRuntime.entry,
         nodeCommand: managedRuntime.command,
         environment: managedRuntime.environment,
+        confirmInstall: this.options.confirmPluginInstall,
       })
       if (this.options.readWorkbenchMode) {
         recordReleaseDiagnostic('core-preparation', { phase: 'mode-read-start' }, true)

@@ -13,6 +13,7 @@ import {
   X,
 } from 'lucide-react'
 import { SettingsSwitch } from '@/components/settings/settings-ui'
+import { WorkdayOnlyField } from '@wegent/collaboration/project-manage'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isCurrentAppDevice } from '@/lib/app-device-registration'
 import {
@@ -48,6 +49,7 @@ import {
   buildAutomationProjectOptions,
   buildAutomationTaskOptions,
   automationTaskKey,
+  scheduleFromAutomationDraft,
   type AutomationDraft,
   type CronPreset,
   type CustomFrequency,
@@ -145,11 +147,40 @@ export function AutomationDetailWorkspace({
       : !isCloudDevice(device) && !isRemoteDevice(device)
   )
   const reasoning = draft.modelOptions.reasoningEffort ?? 'medium'
-  const selectedModel = models.find(
+  const catalogModel = models.find(
     model =>
       model.type === draft.modelType &&
       (model.name === draft.modelId || (model.modelId ?? model.name) === draft.modelId)
   )
+  // A saved automation keeps its model reference after the admin hides that
+  // model from new selections. Show the persisted identity instead of
+  // pretending the automation is on "automatic".
+  const selectedModel =
+    catalogModel ??
+    (draft.modelId
+      ? ({
+          name: draft.modelId,
+          modelId: draft.modelId,
+          displayName: draft.modelId,
+          type: draft.modelType as UnifiedModel['type'],
+        } as UnifiedModel)
+      : undefined)
+  const selectedModelValue = selectedModel
+    ? `${selectedModel.type}:${selectedModel.modelId ?? selectedModel.name}`
+    : ''
+  const modelSelectOptions = models.map(model => {
+    const modelId = model.modelId ?? model.name
+    return {
+      value: `${model.type}:${modelId}`,
+      label: model.displayName ?? model.name,
+    }
+  })
+  if (!catalogModel && selectedModel) {
+    modelSelectOptions.unshift({
+      value: selectedModelValue,
+      label: selectedModel.displayName ?? selectedModel.name,
+    })
+  }
   const projectOptions = buildAutomationProjectOptions(projects, draft.deviceId)
   const selectedProject =
     projectOptions.find(option => option.workspacePath === draft.workspacePath) ?? null
@@ -445,30 +476,21 @@ export function AutomationDetailWorkspace({
                   <SettingsRow label={t('workbench.model', '模型')}>
                     <InlineSelect
                       dataTestId="automation-model-select"
-                      value={
-                        selectedModel
-                          ? `${selectedModel.type}:${selectedModel.modelId ?? selectedModel.name}`
-                          : ''
-                      }
+                      value={selectedModelValue}
                       onChange={value => {
+                        if (!catalogModel && selectedModel && value === selectedModelValue) return
                         const [modelType, ...modelIdParts] = value.split(':')
                         const modelId = modelIdParts.join(':')
-                        onModelChange(
+                        const nextModel =
                           models.find(
                             model =>
                               model.type === modelType && (model.modelId ?? model.name) === modelId
-                          ) ?? null
-                        )
+                          ) ?? (value === selectedModelValue ? selectedModel : undefined)
+                        onModelChange(nextModel ?? null)
                       }}
                       options={[
                         { value: '', label: t('todo.automatic', '自动') },
-                        ...models.map(model => {
-                          const modelId = model.modelId ?? model.name
-                          return {
-                            value: `${model.type}:${modelId}`,
-                            label: model.displayName ?? model.name,
-                          }
-                        }),
+                        ...modelSelectOptions,
                       ]}
                     />
                   </SettingsRow>
@@ -586,8 +608,12 @@ function deviceOptionLabel(
   }
   if (isDeviceBelowWeWorkVersion(device)) {
     return `${name} · ${t(
-      'workbench.remote_host_upgrade_required',
-      `需升级到 v${WEWORK_MIN_EXECUTOR_VERSION}`,
+      isCloudDevice(device)
+        ? 'workbench.cloud_host_version_required'
+        : 'workbench.remote_host_upgrade_required',
+      isCloudDevice(device)
+        ? `需要 v${WEWORK_MIN_EXECUTOR_VERSION} 或以上`
+        : `需升级到 v${WEWORK_MIN_EXECUTOR_VERSION}`,
       { version: WEWORK_MIN_EXECUTOR_VERSION }
     )}`
   }
@@ -608,7 +634,7 @@ function FrequencySettings({
 }) {
   const { t } = useTranslation('common')
   const repeatOptions = [
-    { value: 'weekdays', label: t('todo.weekdays', '工作日') },
+    { value: 'weekdays', label: t('todo.weekdays', '周一至周五') },
     { value: 'daily', label: t('todo.daily', '每天') },
     { value: 'weekly', label: t('todo.weekly', '每周') },
     { value: 'custom', label: t('todo.custom', '自定义') },
@@ -729,6 +755,15 @@ function FrequencySettings({
             onChange={value => onChange('cronTime', value)}
           />
         </SettingsRow>
+      ) : null}
+      {draft.scheduleType === 'cron' && scheduleFromAutomationDraft(draft).type === 'cron' ? (
+        <WorkdayOnlyField
+          checked={draft.workdayOnly}
+          onChange={value => onChange('workdayOnly', value)}
+          label={t('todo.automation_workday_only')}
+          description={t('todo.automation_workday_only_hint')}
+          testId="automation-workday-only"
+        />
       ) : null}
       {showAdvanced && draft.scheduleType !== 'one_time' ? (
         <SettingsRow

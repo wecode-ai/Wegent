@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -11,11 +11,129 @@ import {
   loadDesktopCheckpointCatalog,
   readDesktopCheckpointDefinitions,
 } from '../e2e/desktop/checkpoint-catalog.mjs'
-import { expandDesktopCheckpoints } from '../e2e/desktop/checkpoints.mjs'
+import { desktopCheckpointArgs, expandDesktopCheckpoints } from '../e2e/desktop/checkpoints.mjs'
 import { UPGRADE_CHECKPOINTS } from '../e2e/desktop/upgrade-suite.mjs'
 
 const root = new URL('../../', import.meta.url)
 const definitions = readDesktopCheckpointDefinitions()
+
+test('sequential and parallel cloud scenarios never receive conflicting only modes', () => {
+  const catalog = loadDesktopCheckpointCatalog()
+  for (const checkpoint of ['connector-oauth', 'connector-account-switch']) {
+    assert.ok(catalog.SCENARIO_ONLY_CHECKPOINTS.has(checkpoint))
+    assert.ok(catalog.CLOUD_ONLY_CHECKPOINTS.has(checkpoint))
+    assert.deepEqual(desktopCheckpointArgs(checkpoint), ['--segment', checkpoint])
+    assert.deepEqual(desktopCheckpointArgs(checkpoint, 'cloud'), ['--segment', checkpoint])
+  }
+  const ordinaryCloud = [...catalog.CLOUD_ONLY_CHECKPOINTS].find(
+    checkpoint => !catalog.SCENARIO_ONLY_CHECKPOINTS.has(checkpoint)
+  )
+  assert.ok(ordinaryCloud)
+  assert.deepEqual(desktopCheckpointArgs(ordinaryCloud), [
+    '--cloud-only',
+    '--segment',
+    ordinaryCloud,
+  ])
+  assert.deepEqual(desktopCheckpointArgs(ordinaryCloud, 'core'), ['--segment', ordinaryCloud])
+  assert.throws(() => desktopCheckpointArgs(ordinaryCloud, 'unknown'), /scope must be/)
+})
+
+test('Connector account isolation is selectable and runs inside the existing cloud OAuth checkpoint', () => {
+  const catalog = loadDesktopCheckpointCatalog()
+  assert.deepEqual(expandDesktopCheckpoints(['connector-account-switch']), [
+    'connector-account-switch',
+  ])
+  assert.ok(catalog.DESKTOP_CHECKPOINTS.includes('connector-account-switch'))
+  assert.equal(
+    catalog.DESKTOP_CHECKPOINT_CI_HOSTS.get('connector-account-switch'),
+    'connector-oauth'
+  )
+  assert.equal(
+    catalog.CHECKPOINT_SCENARIO_MODULES['connector-account-switch'],
+    './scenarios/connector-oauth.scenario.mjs'
+  )
+  assert.ok(catalog.CLOUD_ONLY_CHECKPOINTS.has('connector-account-switch'))
+  assert.ok(catalog.ci.cloud_shards[7].split(',').includes('connector-oauth'))
+  assert.equal(catalog.ci.cloud_segments.includes('connector-account-switch'), false)
+  for (const path of [
+    'wework/e2e/desktop/catalog/connector-account-switch.json',
+    'wework/e2e/desktop/modules/connector-account-switch.mjs',
+    'wework/e2e/desktop/modules/connector-oauth-provider.mjs',
+  ]) {
+    assert.ok(catalog.PATH_TARGETS.get(path)?.includes('cloud:connector-oauth'), path)
+  }
+})
+
+test('literal CI targets and segment lists resolve to retained checkpoints or groups', () => {
+  const catalog = loadDesktopCheckpointCatalog()
+  const known = new Set([
+    'all',
+    ...catalog.DESKTOP_CHECKPOINTS,
+    ...catalog.PLUGIN_SEGMENTS,
+    ...catalog.DESKTOP_CHECKPOINT_GROUPS.keys(),
+  ])
+  const directory = new URL('.github/scripts/desktop-ci/', root)
+  const scripts = [
+    new URL('.github/scripts/classify-wework-desktop-e2e.sh', root),
+    ...readdirSync(directory)
+      .filter(name => name.endsWith('.sh'))
+      .map(name => new URL(name, directory)),
+  ]
+  for (const script of scripts) {
+    const source = readFileSync(script, 'utf8')
+    for (const match of source.matchAll(/select_target "(?:core|cloud|plugins):([a-z0-9-]+)"/g)) {
+      assert.ok(known.has(match[1]), `${script.pathname}: ${match[1]}`)
+    }
+  }
+  const workflow = readFileSync(new URL('.github/workflows/wework-e2e.yml', root), 'utf8')
+  for (const match of workflow.matchAll(/^\s*segments\+?=,?([a-z][a-z0-9,-]*)$/gm)) {
+    for (const checkpoint of match[1].split(',')) {
+      assert.ok(known.has(checkpoint), `Wework E2E workflow: ${checkpoint}`)
+    }
+  }
+})
+
+test('HTTP cloud authorization keeps Linux browser coverage outside the Windows Core matrix', () => {
+  const { ci } = loadDesktopCheckpointCatalog()
+  assert.ok(ci.cloud_segments.includes('cloud-http-authorization'))
+  assert.equal(ci.core_segments.includes('cloud-http-authorization'), false)
+  assert.equal(
+    ci.cloud_shards
+      .flatMap(shard => shard.split(','))
+      .filter(id => id === 'cloud-http-authorization').length,
+    1
+  )
+  const job = JSON.parse(
+    execFileSync(
+      'ruby',
+      [
+        '-ryaml',
+        '-rjson',
+        '-e',
+        "puts JSON.generate(YAML.load_file(ARGV[0])['jobs']['wework-desktop-cloud-e2e'])",
+        '.github/workflows/wework-e2e.yml',
+      ],
+      { cwd: root, encoding: 'utf8' }
+    )
+  )
+  assert.equal(job['runs-on'], 'ubuntu-latest')
+  assert.ok(job.container.volumes.includes('/opt/google/chrome:/opt/google/chrome:ro'))
+  assert.ok(
+    job.container.volumes.includes(
+      '/usr/local/share/chromedriver-linux64:/opt/wegent-e2e/chromedriver:ro'
+    )
+  )
+  const verify = job.steps.find(
+    step => step.name === 'Verify the existing external browser runtime'
+  )
+  assert.ok(verify.if.includes("contains(matrix.segments, 'cloud-http-authorization')"))
+  const run = job.steps.find(step => step.name === 'Run Wework desktop Cloud E2E checkpoints')
+  assert.ok(
+    run.env.WEWORK_E2E_EXTERNAL_BROWSER_PREREAD.includes(
+      "contains(matrix.segments, 'cloud-http-authorization')"
+    )
+  )
+})
 
 test('every registered checkpoint retains a real module and a CI execution owner', () => {
   const catalog = loadDesktopCheckpointCatalog()
@@ -174,6 +292,21 @@ test('a feature config selects its existing shard rather than all desktop suites
   assert.equal(result.wework_desktop_other_e2e, 'false')
 })
 
+test('Connector fixture and standalone checkpoint edits select only their existing cloud host', () => {
+  for (const path of [
+    'wework/e2e/desktop/catalog/connector-account-switch.json',
+    'wework/e2e/desktop/modules/connector-account-switch.mjs',
+    'wework/e2e/desktop/modules/connector-oauth-provider.mjs',
+  ]) {
+    const result = classified(path)
+    assert.deepEqual(JSON.parse(result.wework_desktop_cloud_e2e_matrix), {
+      include: [{ id: 'cloud-8', name: 'Cloud / shard 8', segments: 'connector-oauth' }],
+    })
+    assert.equal(result.wework_desktop_core_e2e, 'false')
+    assert.equal(result.wework_desktop_other_e2e, 'false')
+  }
+})
+
 test('plugin cache changes retain the recovery scenario in its existing cloud shard', () => {
   for (const path of [
     'executor/crates/plugin-packages/src/services/workbench.rs',
@@ -194,18 +327,15 @@ test('plugin cache changes retain the recovery scenario in its existing cloud sh
   }
 })
 
-test('theme changes select the gallery and real content and auxiliary window regressions', () => {
+test('theme changes retain real content and auxiliary window regressions', () => {
   const result = classified('wework/src/features/appearance/ThemeSelector.tsx')
   const checkpoints = JSON.parse(result.wework_desktop_core_e2e_matrix).include.flatMap(shard =>
     shard.segments.split(',')
   )
   for (const id of [
-    'appearance-themes',
     'application-menu',
     'background-terminals',
     'collaboration-first-use',
-    'local-file-preview',
-    'office-file-preview',
     'streaming-content',
   ]) {
     assert.ok(checkpoints.includes(id), `Theme changes omit the ${id} CI checkpoint`)

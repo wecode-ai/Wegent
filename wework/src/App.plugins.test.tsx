@@ -37,6 +37,7 @@ import PluginCatalogRoute from '../dsh/ui-plugin-center/src/catalog-route'
 import PluginCreateRoute from '../dsh/ui-plugin-center/src/create-route'
 import PluginManagementRoute from '../dsh/ui-plugin-center/src/management-route'
 import App from './App'
+import { requestRunnerSelection } from '@/lib/runner-selection'
 import './i18n'
 import { telemetryFeatureForLocation } from './telemetry/routes'
 
@@ -1296,6 +1297,80 @@ describe('App plugins route', () => {
     await screen.findByTestId('app-shell')
     await waitFor(() => expect(workbenchProviderMocks.mounts).toHaveBeenCalledTimes(1))
   })
+
+  test('keeps runner selection available across workspace navigation', async () => {
+    window.history.pushState({}, '', '/')
+    await renderApp()
+    await screen.findByTestId('app-shell')
+
+    const request = {
+      runtime: 'codex' as const,
+      execution_policy: { mode: 'user_select' as const },
+      model_policy: { mode: 'user_select' as const },
+      environments: [],
+      cloud_models: [],
+      cloud_only: false,
+    }
+    let selection!: ReturnType<typeof requestRunnerSelection>
+    await act(async () => {
+      selection = requestRunnerSelection(request)
+      // Observe immediately so a missing host is reported by the assertion below.
+      void selection.catch(() => undefined)
+    })
+    const dialog = screen.getByTestId('runner-selection-dialog')
+    expect(screen.getByTestId('runner-selection-confirm')).toBeDisabled()
+
+    await act(async () => {
+      window.history.pushState({}, '', '/test-app-owner')
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    await screen.findByTestId('app-owner-account')
+    expect(screen.getAllByTestId('runner-selection-dialog')).toEqual([dialog])
+    fireEvent.click(screen.getByTestId('runner-selection-cancel'))
+    await expect(selection).rejects.toThrow('已取消执行配置选择')
+
+    await act(async () => {
+      window.history.pushState({}, '', '/')
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    await act(async () => {
+      selection = requestRunnerSelection(request)
+      void selection.catch(() => undefined)
+    })
+    expect(screen.getAllByTestId('runner-selection-dialog')).toHaveLength(1)
+    fireEvent.click(screen.getByTestId('runner-selection-cancel'))
+    await expect(selection).rejects.toThrow('已取消执行配置选择')
+  })
+
+  test.each([
+    { userId: 8, apiBaseUrl: 'https://cloud-a.example.com/api' },
+    { userId: 7, apiBaseUrl: 'https://cloud-b.example.com/api' },
+  ])(
+    'cancels pending runner selection when the owner changes to $apiBaseUrl/$userId',
+    async next => {
+      appOwnerFixture.user = LOCAL_USER
+      appOwnerFixture.connection = connectedAppOwner()
+      window.history.pushState({}, '', '/test-app-owner')
+      const view = await renderApp()
+      let selection!: ReturnType<typeof requestRunnerSelection>
+      await act(async () => {
+        selection = requestRunnerSelection({
+          runtime: 'codex',
+          execution_policy: { mode: 'user_select' },
+          model_policy: { mode: 'user_select' },
+          environments: [],
+          cloud_models: [],
+          cloud_only: false,
+        })
+        void selection.catch(() => undefined)
+      })
+      expect(screen.getByTestId('runner-selection-dialog')).toBeInTheDocument()
+      appOwnerFixture.connection = connectedAppOwner(next.userId, next.apiBaseUrl)
+      await act(async () => view.rerenderApp())
+      await expect(selection).rejects.toThrow('Runner selection dialog closed')
+      expect(screen.queryByTestId('runner-selection-dialog')).not.toBeInTheDocument()
+    }
+  )
 
   test.each([
     { change: 'cloud account', userId: 8, apiBaseUrl: 'https://cloud-a.example.com/api' },

@@ -618,10 +618,13 @@ fi
 wework_workflow="$workflow_dir/wework-e2e.yml"
 wework_browser_image="$script_dir/../../docker/wework-e2e/browser.Dockerfile"
 wework_desktop_image="$script_dir/../../docker/wework-e2e/desktop.Dockerfile"
-if ! ruby -ryaml - "$wework_workflow" "$wework_desktop_image" <<'RUBY'
-core = YAML.load_file(ARGV[0]).fetch('jobs').fetch('wework-desktop-core-e2e')
+if ! ruby -ryaml - "$wework_workflow" "$wework_desktop_image" \
+  "$action_dir/setup-wework-native-test-dependencies/action.yml" \
+  "$script_dir/../ci/wework-native-test-ubuntu.sources" <<'RUBY'
+jobs = YAML.load_file(ARGV[0]).fetch('jobs')
+core = jobs.fetch('wework-desktop-core-e2e')
 commands = core.fetch('steps').map { |step| step.fetch('run', '') }.join("\n")
-abort 'Core shards must consume system dependencies from their immutable image' if commands.match?(/install-e2e-apt-packages|apt-get/)
+abort 'Core shards must keep baseline dependencies in the image and use shared native setup' if commands.match?(/install-e2e-apt-packages|apt-get/)
 image = File.read(ARGV[1])
 %w[file xdg-utils pcmanfm openjdk-21-jre-headless gdb].each do |package|
   abort "Desktop image must install #{package}" unless image.lines.any? { |line| line.strip == "#{package} \\" }
@@ -629,9 +632,62 @@ end
 %w[java keytool gdb pcmanfm].each do |binary|
   abort "Core setup must verify #{binary}" unless commands.include?(binary)
 end
+
+# The existing image supplies baseline tools; only three measured native test
+# dependencies may be added through the shared, failure-preserving installer.
+action = YAML.load_file(ARGV[2]).fetch('runs')
+abort 'Native test preparation must be a shared composite action' unless action.fetch('using') == 'composite'
+setup_commands = action.fetch('steps').map { |step| step.fetch('run', '') }.join("\n")
+abort 'Native setup must reuse the existing APT helper' unless setup_commands.include?('source .github/scripts/lib/apt-packages.sh')
+installations = setup_commands.lines.map(&:strip).grep(/^install_missing_apt_packages /)
+abort 'Native setup must install only the three missing tools' unless installations == ['install_missing_apt_packages gnome-keyring libsecret-tools xdotool']
+abort 'Native setup must preserve repository trust and installer failures' if setup_commands.match?(/apt-get|trusted=yes|allow-unauthenticated|AllowInsecureRepositories|Verify-Peer=false|\|\|\s*true/)
+source_setup = 'install -m 644 .github/ci/wework-native-test-ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources'
+abort 'Native setup must use the signed Ubuntu archives before installing missing tools' unless setup_commands.include?(source_setup) && setup_commands.index(source_setup) < setup_commands.index(installations.first)
+abort 'Native Ubuntu archive suites must match the existing image' unless image.lines.first.strip == 'FROM ubuntu:24.04'
+archives = File.read(ARGV[3]).split(/\n\s*\n/).map do |stanza|
+  stanza.lines.map { |line| line.strip.split(/:\s*/, 2) }.to_h
+end
+archive_common = {
+  'Types' => 'deb',
+  'Components' => 'main universe restricted multiverse',
+  'Signed-By' => '/usr/share/keyrings/ubuntu-archive-keyring.gpg'
+}
+expected_archives = [
+  archive_common.merge('URIs' => 'https://archive.ubuntu.com/ubuntu/', 'Suites' => 'noble noble-updates noble-backports'),
+  archive_common.merge('URIs' => 'https://security.ubuntu.com/ubuntu/', 'Suites' => 'noble-security')
+]
+abort 'Native setup must preserve Ubuntu suites, components and the distribution signing keyring' unless archives == expected_archives
+%w[dbus-run-session gnome-keyring-daemon gdbus secret-tool xdotool].each do |binary|
+  abort "Native setup must verify #{binary}" unless setup_commands.include?(binary)
+end
+abort 'Native setup must check command availability' unless setup_commands.include?('command -v "$binary"')
+consumers = %w[build-wework-desktop-core-e2e wework-desktop-core-e2e wework-desktop-cloud-e2e wework-desktop-e2e]
+consumers.each do |name|
+  steps = jobs.fetch(name).fetch('steps')
+  checkout = steps.index { |step| step.fetch('uses', '').start_with?('actions/checkout@') }
+  preparations = steps.each_index.select { |index| steps[index]['uses'] == './.github/actions/setup-wework-native-test-dependencies' }
+  abort "#{name} must prepare native tools immediately after checkout" unless checkout && preparations == [checkout + 1]
+  preparation = steps.fetch(preparations.first)
+  abort "#{name} must not skip or tolerate failed native preparation" if preparation.key?('if') || preparation.key?('continue-on-error')
+end
+
+image_steps = jobs.fetch('changes').fetch('steps')
+prerequisite = image_steps.index { |step| step['name'] == 'Require existing E2E images for Fork pull requests' }
+buildx = image_steps.index { |step| step['name'] == 'Set up Docker Buildx' }
+abort 'Fork image prerequisites must fail before any build setup' unless prerequisite && buildx && prerequisite < buildx
+failure = image_steps.fetch(prerequisite)
+expected_guard = "github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository && (steps.browser-image-check.outputs.exists == 'false' || steps.desktop-image-check.outputs.exists == 'false')"
+abort 'Fork image prerequisites must cover both missing images' unless failure['if'] == expected_guard
+abort 'Missing Fork images must fail rather than skip tests' unless failure.fetch('run').include?('exit 1') && !failure.key?('continue-on-error')
+%w[browser desktop].each do |kind|
+  publisher = image_steps.find { |step| step['name'] == "Build and publish Wework #{kind} E2E image" }
+  expected = "steps.#{kind}-image-check.outputs.exists == 'false' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)"
+  abort "#{kind} image publication must reject Fork pull requests" unless publisher && publisher['if'] == expected
+end
 RUBY
 then
-  fail "Desktop Core dependencies must be prepared in the immutable image"
+  fail "Desktop native preparation must preserve the image baseline, real tools and Fork publication boundary"
 fi
 if ! grep -Fq 'ARG UV_VERSION=0.11.17' "$wework_browser_image" ||
   ! grep -Fq '"https://astral.sh/uv/${UV_VERSION}/install.sh"' \
@@ -645,7 +701,7 @@ if ! grep -Fq 'file: docker/wework-e2e/browser.Dockerfile' "$wework_workflow" ||
   [[ "$(grep -c 'push: true' "$wework_workflow")" -ne 2 ]] ||
   grep -Eq 'playwright (install|install-deps)' \
     "$wework_workflow"; then
-  fail "Wework E2E must consume its immutable dependency image without runtime installs"
+  fail "Wework E2E must reuse its image producers and preinstalled Playwright runtime"
 fi
 
 if ! ruby -ryaml - "$wework_workflow" "$workflow_dir/plugin-auth-sdk.yml" <<'RUBY'

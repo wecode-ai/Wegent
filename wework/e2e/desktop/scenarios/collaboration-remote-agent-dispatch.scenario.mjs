@@ -1,4 +1,5 @@
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
+import { verifyExecutionEnvironmentConflict } from '../modules/execution-environment-conflict.mjs'
 import assert from 'node:assert/strict'
 import { createDispatchIssueBoundaryRegression } from '../modules/dispatch-issue-boundary.mjs'
 
@@ -169,14 +170,15 @@ export async function createAutoTaggedIssue(
     'The newly created Issue detail was not opened',
     timeoutMs
   )
-  await control.command('clickWhenEnabled', scoped('[data-testid="cloud-todo-more-properties"]'), {
+  await control.command('waitFor', scoped('[data-testid="issue-primary-metadata"]'), {
+    visible: true,
     timeoutMs,
   })
   await control.command('fill', '[data-testid="cloud-todo-detail-tag-input"]', { value: 'auto' })
   await control.command('press', '[data-testid="cloud-todo-detail-tag-input"]', { key: 'Enter' })
   await control.command('pointerClick', scoped('[data-testid="cloud-todo-detail-title"]'))
-  await control.command('waitFor', '[data-testid="cloud-todo-more-properties-popover"]', {
-    visible: false,
+  await control.command('waitFor', scoped('[data-testid="issue-primary-metadata"]'), {
+    visible: true,
     timeoutMs,
   })
   return { issue, rule }
@@ -355,6 +357,7 @@ async function verifyConfiguredExecutionEnvironment(
     scoped('[data-testid="collaboration-project-settings-environments"]')
   )
   const repositoryUrl = pathToFileURL(join(resultDir, 'workspace')).href
+  await verifyExecutionEnvironmentConflict(control, request, projectId, CONTENT)
   await control.command(
     'waitFor',
     scoped(`[data-testid="${ENVIRONMENT_PREFIX}-preparation"]:not([open])`)
@@ -404,6 +407,7 @@ async function verifyConfiguredExecutionEnvironment(
   assert.equal(failedProject.execution_environment.repositories[0].url, repositoryUrl)
   const environmentError = scoped(`[data-testid="${ENVIRONMENT_PREFIX}-environment-error"]`)
   await control.command('waitFor', environmentError, { timeoutMs })
+  await control.command('waitFor', environmentError, { text: '第 1 个初始化步骤失败' })
   await control.command('scrollIntoView', environmentError)
   await control.command('waitFor', environmentError, { visible: true, timeoutMs })
   await captureScreenshot(control, 'remote-environment-01-setup-failed.png', CONTENT)
@@ -531,6 +535,15 @@ async function verifyAutomaticProcessingControls(
   await control.command(
     'clickWhenEnabled',
     scoped(`[data-testid="automatic-processing-delete-${rule.id}"]`),
+    { timeoutMs }
+  )
+  await control.command('waitFor', scoped('[data-testid="automatic-processing-delete-dialog"]'), {
+    visible: true,
+    timeoutMs,
+  })
+  await control.command(
+    'clickWhenEnabled',
+    scoped('[data-testid="automatic-processing-delete-confirm"]'),
     { timeoutMs }
   )
   await waitForValue(

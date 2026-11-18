@@ -61,10 +61,23 @@ export async function assertRetainedSourceOwnership({
   for (const [copy, delivered] of [
     [baseline.executable, running.hostExecutable],
     [join(baseline.resources, 'app.asar'), join(resources(running.hostExecutable), 'app.asar')],
-  ])
+  ]) {
+    // Electron treats app.asar as an archive even when a test fixture uses a plain file.
+    // Keep this assertion path literal so hashing reads the delivered bytes directly.
+    const noAsar = process.noAsar
+    process.noAsar = true
+    let copyHash
+    let deliveredHash
+    try {
+      copyHash = await hashReleaseAsset(copy)
+      deliveredHash = await hashReleaseAsset(delivered)
+    } finally {
+      process.noAsar = noAsar
+    }
     assert.equal(
-      await hashReleaseAsset(copy),
-      await hashReleaseAsset(delivered),
+      copyHash,
+      deliveredHash,
       'The legacy rollback host differs from the delivered source'
     )
+  }
 }

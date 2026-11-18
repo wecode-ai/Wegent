@@ -73,8 +73,6 @@ export const RECLASSIFIED_COMMENTARY_PROMPT = 'WEWORK_DESKTOP_E2E_RECLASSIFIED_C
 export const RECLASSIFIED_COMMENTARY_TEXT = 'WEWORK_DESKTOP_E2E_RECLASSIFIED_PROCESS_TEXT'
 export const RECLASSIFIED_COMMENTARY_FINAL = 'WEWORK_DESKTOP_E2E_RECLASSIFIED_REAL_FINAL'
 export const RECLASSIFIED_COMMENTARY_CALL_ID = 'wework-reclassified-commentary-tool'
-export const TIMER_PROMPT = 'WEWORK_DESKTOP_E2E_RUNNING_TIMER_PERSISTS'
-export const TIMER_COMPLETION = 'WEWORK_DESKTOP_E2E_RUNNING_TIMER_COMPLETE'
 export const SUBAGENT_PROMPT = 'WEWORK_DESKTOP_E2E_SUBAGENT_STREAMING_PANEL'
 export const SUBAGENT_CALL_ID = 'wework-subagent-streaming-panel'
 export const SUBAGENT_WAIT_CALL_ID = 'wework-subagent-wait'
@@ -527,10 +525,6 @@ export function requestContainsWindowsLinkPrompt(body) {
   return JSON.stringify(body.input ?? []).includes(WINDOWS_LINK_PROMPT)
 }
 
-export function requestContainsTimerPrompt(body) {
-  return JSON.stringify(body.input ?? []).includes(TIMER_PROMPT)
-}
-
 export function requestContainsSubagentPrompt(body) {
   return latestModelInputText(body).includes(SUBAGENT_PROMPT)
 }
@@ -702,27 +696,6 @@ export async function assertComposerDocked(control, scrollerMetrics, description
   )
 }
 
-export async function waitForToolDuration(control, minimumSeconds, timeoutMs) {
-  const selector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="tool-block-duration"]`
-  const deadline = Date.now() + timeoutMs
-  await control.command('waitFor', selector, { timeoutMs })
-  let text = ''
-  let duration = 0
-  while (Date.now() <= deadline) {
-    text = await control.command('getText', selector)
-    duration = toolDurationSeconds(text)
-    if (duration >= minimumSeconds) return duration
-    const remainingMs = deadline - Date.now()
-    if (remainingMs <= 0) break
-    await new Promise(resolve => setTimeout(resolve, Math.min(500, remainingMs)))
-  }
-  assert.ok(
-    duration >= minimumSeconds,
-    `The running tool duration did not reach ${minimumSeconds}s; latest row: ${text}`
-  )
-  return duration
-}
-
 export function processingDurationSeconds(text) {
   const minutes = Number(text.match(/(\d+)\s*分钟/)?.[1] ?? 0)
   const seconds = Number(text.match(/(\d+)\s*秒/)?.[1] ?? 0)
@@ -738,22 +711,12 @@ export async function expandCompletedProcessing(control, timeoutMs) {
   await control.command('waitFor', `${summaryToggle}[aria-expanded="true"]`, { timeoutMs })
 }
 
-export async function completedToolDuration(control, timeoutMs) {
-  const selector = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="tool-block-duration"]`
-  await expandCompletedProcessing(control, timeoutMs)
-  await control.command('waitFor', selector, { timeoutMs })
-  const text = await control.command('getText', selector)
-  const duration = toolDurationSeconds(text)
-  assert.ok(duration > 0, `The completed tool duration was missing: ${text}`)
-  return duration
-}
-
-export async function waitForBottom(control, description, timeoutMs) {
+export async function waitForBottom(control, description, timeoutMs, maxDistanceFromBottom = 8) {
   const startedAt = Date.now()
   let metrics
   while (Date.now() - startedAt < timeoutMs) {
     metrics = await getSingleElementMetrics(control, SCROLLER_SELECTOR, description)
-    if (distanceFromBottom(metrics) <= 8) return metrics
+    if (distanceFromBottom(metrics) <= maxDistanceFromBottom) return metrics
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error(`${description} remained ${distanceFromBottom(metrics)}px from the bottom`)
