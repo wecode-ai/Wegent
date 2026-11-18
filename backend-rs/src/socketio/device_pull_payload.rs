@@ -174,7 +174,11 @@ async fn compile_wire(
         .as_str()
         .filter(|message| !message.trim().is_empty())
         .context("Execution message is unavailable")?;
-    let prompt = application_prompt(message, &request["additionalContext"]);
+    let prompt = if request["runtime"] == "claude_code" {
+        claude_application_prompt(message, &request["additionalContext"])
+    } else {
+        message.to_owned()
+    };
     let mut execution_request = runtime_rpc::direct_execution(
         app,
         &user,
@@ -214,7 +218,7 @@ async fn compile_wire(
     Ok(payload)
 }
 
-fn application_prompt(message: &str, context: &Value) -> String {
+fn claude_application_prompt(message: &str, context: &Value) -> String {
     let mut entries: Vec<String> = context
         .as_object()
         .into_iter()
@@ -437,6 +441,7 @@ pub(super) fn wire_request(
         ("runtimeWorkspaceRoots", "runtime_workspace_roots"),
         ("clientUserMessageId", "client_user_message_id"),
         ("additionalSkills", "preload_skills"),
+        ("additionalContext", "additionalContext"),
         ("cloudProjectId", "cloud_project_id"),
         ("standaloneChatWorkspace", "standalone_chat_workspace"),
         ("runtimeExecutablePath", "runtime_executable_path"),
@@ -474,4 +479,26 @@ pub(super) fn wire_request(
     }
     payload["executionRequest"] = execution;
     payload
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn queued_execution_preserves_typed_context_outside_the_user_prompt() {
+        let context = json!({
+            "cloudCollaboration": {"kind":"application", "value":"Current project reference"},
+            "source": {"kind":"untrusted", "value":"Quoted source"}
+        });
+        let prepared = ClaimPreparation::profile_template("task".into(), 1);
+        let payload = wire_request(
+            json!({"runtime":"codex", "message":"User request", "additionalContext":context}),
+            json!({"prompt":"User request"}),
+            &prepared,
+        );
+        assert_eq!(payload["executionRequest"]["prompt"], "User request");
+        assert_eq!(payload["executionRequest"]["additionalContext"], context);
+        assert_eq!(payload["additionalContext"], context);
+    }
 }

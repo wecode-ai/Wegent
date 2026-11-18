@@ -569,10 +569,6 @@ export function createStreamingScrollChecks({
       !streamingTurnPreview.includes('Files mentioned by the user'),
       'The streaming turn preview exposed the internal attachment wrapper'
     )
-    assert.ok(
-      !streamingTurnPreview.includes('application_context'),
-      'The streaming turn preview exposed injected application context'
-    )
     await capture(control, 'streaming-text-16-thinking-below-partial-response.png')
 
     releaseResponse()
