@@ -57,6 +57,11 @@ test('reveals the model list after reopening a saved fixed model with reasoning 
         return ''
       }
       if (action === 'getAttribute' && options.value === 'data-panel') return view
+      if (action === 'getElementCount' && selector.includes('model-selector-menu')) {
+        assert.equal(menuOpen, true)
+        assert.equal(options.visible, true)
+        return view === 'advanced' ? '1' : '0'
+      }
       if (action === 'clickWhenEnabled' && selector.startsWith('[data-testid="model-option-[')) {
         assert.equal(menuOpen, true)
         assert.equal(view, 'advanced', 'The mounted model list is inert in the reasoning view')
