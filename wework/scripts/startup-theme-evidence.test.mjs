@@ -12,6 +12,9 @@ const PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWQAAAABJRU5ErkJggg==',
   'base64'
 )
+const WORKBENCH = '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
+const BACKGROUND_SELECTOR = `${WORKBENCH} main`
+const TEXT_SELECTOR = `${WORKBENCH} [data-testid="chat-message-input"][contenteditable="true"]`
 
 async function directory(t) {
   const resultDir = await mkdtemp(join(tmpdir(), 'startup-theme-evidence-'))
@@ -38,6 +41,9 @@ async function directory(t) {
 
 function captureFixture(mode, options = {}) {
   const calls = []
+  const mountedConsumers = new Set(
+    options.deferConsumers ? [] : [BACKGROUND_SELECTOR, TEXT_SELECTOR]
+  )
   let timeOriginReads = 0
   const snapshot = {
     state: 'closed',
@@ -65,10 +71,19 @@ function captureFixture(mode, options = {}) {
   const control = {
     async command(action, selector, params = {}) {
       calls.push(action)
+      if (action === 'waitFor') {
+        assert.ok([BACKGROUND_SELECTOR, TEXT_SELECTOR].includes(selector))
+        await options.waitForConsumer?.(selector)
+        mountedConsumers.add(selector)
+        return ''
+      }
       if (action === 'getWorkbenchDebugSnapshot')
         return JSON.stringify({ timeOrigin: options.timeOrigins?.[timeOriginReads++] ?? 1500 })
       if (action === 'getAttribute') return options.renderedMode ?? mode
       if (action === 'getComputedStyleValue') {
+        if (selector !== 'html' && selector !== 'body' && !mountedConsumers.has(selector)) {
+          throw new Error(`Unable to find selector "${selector}"`)
+        }
         if (selector === 'body') {
           return params.value === 'color' ? 'rgb(15, 17, 21)' : 'rgb(255, 255, 255)'
         }
@@ -147,6 +162,59 @@ for (const mode of ['light', 'dark']) {
     assert.deepEqual(await readFile(join(resultDir, evidence.captures.splash)), PNG)
     const saved = JSON.parse(await readFile(join(resultDir, `startup-theme-${mode}.json`), 'utf8'))
     assert.equal(saved.generation.documentTimeOrigin, 1500)
+  })
+
+  test(`waits for ${mode} theme consumers that mount after the native handoff`, async t => {
+    const { resultDir } = await directory(t)
+    const backgroundMounted = Promise.withResolvers()
+    const composerMounted = Promise.withResolvers()
+    const backgroundRequested = Promise.withResolvers()
+    const composerRequested = Promise.withResolvers()
+    const fixture = captureFixture(mode, {
+      deferConsumers: true,
+      async waitForConsumer(selector) {
+        if (selector === BACKGROUND_SELECTOR) {
+          backgroundRequested.resolve(selector)
+          await backgroundMounted.promise
+        } else {
+          composerRequested.resolve(selector)
+          await composerMounted.promise
+        }
+      },
+    })
+    const capturing = captureStartupThemeEvidence({ ...fixture, resultDir })
+
+    assert.equal(await Promise.race([backgroundRequested.promise, capturing]), BACKGROUND_SELECTOR)
+    assert.ok(!fixture.calls.includes('capture'))
+    backgroundMounted.resolve()
+    assert.equal(await Promise.race([composerRequested.promise, capturing]), TEXT_SELECTOR)
+    assert.ok(!fixture.calls.includes('capture'))
+    composerMounted.resolve()
+
+    const evidence = await capturing
+    assert.equal(evidence.targetTheme, mode)
+    assert.equal(fixture.calls.filter(action => action === 'waitFor').length, 2)
+    assert.equal(fixture.calls.filter(action => action === 'capture').length, 1)
+  })
+}
+
+for (const unavailable of [BACKGROUND_SELECTOR, TEXT_SELECTOR]) {
+  test(`rejects theme evidence when its consumer never mounts: ${unavailable}`, async t => {
+    const { resultDir } = await directory(t)
+    const failure = new Error('The theme consumer did not mount within the shared step timeout')
+    const fixture = captureFixture('dark', {
+      deferConsumers: true,
+      async waitForConsumer(selector) {
+        if (selector === unavailable) throw failure
+      },
+    })
+
+    await assert.rejects(captureStartupThemeEvidence({ ...fixture, resultDir }), error => {
+      assert.equal(error, failure)
+      return true
+    })
+    assert.ok(!fixture.calls.includes('capture'))
+    await assert.rejects(readFile(join(resultDir, 'startup-theme-dark.json')), { code: 'ENOENT' })
   })
 }
 

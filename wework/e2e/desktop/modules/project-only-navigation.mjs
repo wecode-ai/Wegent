@@ -130,6 +130,13 @@ export function createProjectOnlyNavigationRegression({ uiTimeoutMs, executorHom
     async verify(control, scoped) {
       const spaces = await request(readerToken, '/api/v1/workspaces')
       assert.ok(!spaces.items.some(item => item.id === workspace.id))
+      const personalWorkspace = spaces.items.find(
+        item => item.is_system_default && item.access_role === 'Owner'
+      )
+      assert.ok(personalWorkspace, 'The reader-owned default workspace must be available')
+      const personalHome = scoped(
+        `button.collaboration-workspace-identity:has([data-testid="collaboration-workspace-${personalWorkspace.id}"])`
+      )
       const accessible = await request(readerToken, '/api/v1/cloud-projects')
       for (const [index, role] of ['Viewer', 'Developer'].entries()) {
         const project = accessible.items.find(item => item.id === projects[index].id)
@@ -198,16 +205,8 @@ export function createProjectOnlyNavigationRegression({ uiTimeoutMs, executorHom
       await assertParent()
       for (const project of projects.slice(0, 2)) {
         await expandCollaborationSpaces(control, scoped('').trim(), uiTimeoutMs)
-        await revealCollaborationSidebarElement(
-          control,
-          scoped('[data-testid="collaboration-workspace-home-wework-local-workspace"]'),
-          uiTimeoutMs
-        )
-        await control.command(
-          'clickWhenEnabled',
-          scoped('[data-testid="collaboration-workspace-home-wework-local-workspace"]'),
-          { timeoutMs: uiTimeoutMs }
-        )
+        await revealCollaborationSidebarElement(control, personalHome, uiTimeoutMs)
+        await control.command('clickWhenEnabled', personalHome, { timeoutMs: uiTimeoutMs })
         await control.command(
           'waitFor',
           scoped('[data-testid="collaboration-workspace-nav-projects"][aria-current="page"]'),

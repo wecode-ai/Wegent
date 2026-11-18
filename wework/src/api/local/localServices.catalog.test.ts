@@ -72,23 +72,37 @@ async function deferredProviderCatalog(
       return {}
     }
   )
+  const status = {
+    running: true,
+    ready: true,
+    deviceId: 'local-device',
+    runtimeInstanceId: 'runtime-1',
+  }
+  const available = vi.fn().mockResolvedValue(status)
+  const ensure = vi.fn().mockResolvedValue(status)
   const services = createLocalAppServices({
-    ensure: vi.fn().mockResolvedValue({
-      running: true,
-      ready: true,
-      deviceId: 'local-device',
-      runtimeInstanceId: 'runtime-1',
-    }),
+    available,
+    ensure,
     request,
     subscribe: vi.fn(),
   })
   replaceProviderModelConfigs([previous])
   const initial = await services.modelApi.listModels()
   replaceProviderModelConfigs([previous, saved])
+  const beforePreparation = await services.modelApi.listModels()
+  expect(beforePreparation.data.map(model => model.name)).toEqual([
+    'local-model:model-b',
+    'local-model:model-c',
+  ])
+  expect(available).toHaveBeenCalledTimes(2)
+  expect(ensure).not.toHaveBeenCalled()
+  expect(request).not.toHaveBeenCalled()
+  await services.runtimeWorkApi!.prepareRuntimeModel({ deviceId: 'local-device' })
   const deferred = await services.modelApi.listModels()
   const pending = getProviderModelConfigs().find(model => model.id === saved.id)
   const deferredDiagnostics = vi.mocked(diagnostics.logModelLoading).mock.calls.slice()
   recovered = true
+  await services.runtimeWorkApi!.prepareRuntimeModel({ deviceId: 'local-device' })
   const activated = await services.modelApi.listModels()
   return { initial, deferred, activated, pending, request, deferredDiagnostics }
 }
@@ -99,7 +113,7 @@ test.each([
   ['backgroundTerminal', 'idle'],
   ['backgroundTerminal', 'loaded'],
 ] as const)(
-  'a saved provider model remains pending behind the %s gate until the next %s owner request',
+  'a saved provider stays visible while preparation waits behind the %s gate for %s recovery',
   async (gate, recovery) => {
     const { initial, deferred, activated, pending, request } = await deferredProviderCatalog(
       gate,
@@ -107,7 +121,10 @@ test.each([
     )
 
     expect(initial.data.map(model => model.name)).toEqual(['local-model:model-b'])
-    expect(deferred.data.map(model => model.name)).toEqual(['local-model:model-b'])
+    expect(deferred.data.map(model => model.name)).toEqual([
+      'local-model:model-b',
+      'local-model:model-c',
+    ])
     expect(pending).toMatchObject({ id: 'model-c', catalogReady: false })
     expect(activated.data.map(model => model.name)).toEqual([
       'local-model:model-b',

@@ -30,7 +30,15 @@ pub(crate) fn sync_local_collaboration_projects(
         // An archived alias remains a tombstone, but it must not hide the next
         // active alias for the same directory.
         if trace("projects_list.ensure_code_project", || {
-            store.ensure_code_project(&project.key, &project.name, &project.roots, bound_local_id)
+            match store.code_project_visibility(&project.key, bound_local_id)? {
+                Some(visible) => Ok(visible),
+                None => store.ensure_code_project(
+                    &project.key,
+                    &project.name,
+                    &project.roots,
+                    bound_local_id,
+                ),
+            }
         })? {
             workspace_paths.insert(workspace_path);
         }

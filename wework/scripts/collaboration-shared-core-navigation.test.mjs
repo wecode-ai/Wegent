@@ -82,8 +82,15 @@ function backendFixture() {
     if (path === '/api/admin/users') value = { id: 8, user_name: 'creator' }
     else if (path === '/api/auth/login') value = { access_token: 'creator' }
     else if (path === '/api/v1/workspaces' && method === 'POST') value = workspace
-    else if (path === '/api/v1/workspaces') value = { items: [] }
-    else if (path === '/api/v1/workspaces/workspace/projects') {
+    else if (path === '/api/v1/workspaces') {
+      value = {
+        items: [
+          { id: 'other-default', is_system_default: true, access_role: 'Viewer' },
+          { id: 'owned-group', is_system_default: false, access_role: 'Owner' },
+          { id: 'personal-cloud', is_system_default: true, access_role: 'Owner' },
+        ],
+      }
+    } else if (path === '/api/v1/workspaces/workspace/projects') {
       value = {
         ...JSON.parse(input.body),
         id: `project-${projects.length}`,
@@ -237,6 +244,57 @@ test.each([false, true])(
         timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
       }
     )
+  }
+)
+
+test.each([false, true])(
+  'project-only navigation opens the real personal group regardless of its selected state, selected=%s',
+  async initiallySelected => {
+    const fetch = backendFixture()
+    vi.stubGlobal('fetch', fetch)
+    const regression = createProjectOnlyNavigationRegression({
+      uiTimeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      executorHome: '/fixture',
+    })
+    await regression.prepare({ backendUrl: 'https://backend.invalid', authToken: 'reader' }, owner)
+    const control = controlFixture(false)
+    const command = control.command.getMockImplementation()
+    const personalHome = scoped(
+      'button.collaboration-workspace-identity:has([data-testid="collaboration-workspace-personal-cloud"])'
+    )
+    let personalSelected = initiallySelected
+    control.command.mockImplementation(async (action, selector, options) => {
+      assert.ok(
+        !selector?.includes('collaboration-workspace-home-wework-local-workspace'),
+        'The real cloud personal group replaces the obsolete local workspace entry'
+      )
+      if (selector === personalHome && action === 'clickWhenEnabled') personalSelected = true
+      if (
+        action === 'waitFor' &&
+        selector ===
+          scoped('[data-testid="collaboration-workspace-nav-projects"][aria-current="page"]')
+      ) {
+        assert.equal(personalSelected, true, 'The personal group did not become active')
+      }
+      if (action === 'click' && /collaboration-workspace-project-project-[01]/.test(selector)) {
+        personalSelected = false
+      }
+      return command(action, selector, options)
+    })
+
+    await regression.verify(control, scoped)
+
+    expect(
+      control.command.mock.calls.filter(
+        ([action, selector]) => action === 'clickWhenEnabled' && selector === personalHome
+      )
+    ).toHaveLength(2)
+    expect(
+      fetch.mock.calls.filter(
+        ([url, input]) =>
+          new URL(url).pathname === '/api/v1/workspaces' && (input?.method ?? 'GET') === 'GET'
+      )
+    ).toHaveLength(1)
   }
 )
 

@@ -156,6 +156,18 @@ Rust 验证通过：`runtime_work::handler::turns::tests` 17 项、`runtime_work
 
 MAN-08 的前提现在明确为两个模型均已真实就绪：C 在项目创建和首次任务发送前通过真实设置页创建，并调用既有 native catalog 就绪检查。第五次发送后才首次改选 C，不发送即删除、禁止回退和发送、显式选 B 后第六次发送、保持同任务与 thread 的全部断言保留；没有增加 sleep、超时或重试。另在既有 model-loading 诊断中补充数量、boolean 和未知计数标记，区分目录就绪、安全重启 gate 与已加载模型数，不记录模型 ID、配置或凭证，不改变原生重启安全门或重试行为。新合同、就绪 helper 和诊断协议共 3 文件、12 项通过，既有 reconciliation 聚焦 6 项通过，目标 ESLint 与 Prettier 通过；最终真实桌面回归仍须取得包含这些修复的新 head CI。本地未运行 E2E 或 ai:verify。
 
+## 2026-11-18 个人分组导航与最新主线整合
+
+`38641d0640` 的完整 CI 已结束：七个工作流中六个成功，唯一实际失败仍在 `collaboration-shared-core`，另一个失败是汇总。模型删除（包括第六次发送）、Plugins、运行时队列、change-request-status，以及 Backend API、MySQL RR 和宿主 17 项单元用例均实际通过。普通 Tasks 成员创建已到达确认截图，失败发生在后续既有平台权限验证的个人分组导航，不是此前的入口挂载或 `display: contents` 问题。
+
+[Core10 官方日志](https://github.com/wecode-ai/Wegent/actions/runs/44128583540/job/134204445543) 与 artifact `14351515225` 显示：个人默认分组已经是读者拥有的云端 workspace `73`，普通项目成员页已打开；DOM 存在当前分组的 `collaboration-workspace-nav-projects` 和其他分组入口，没有旧硬编码的 `collaboration-workspace-home-wework-local-workspace`。平台的既有选择规则优先使用用户拥有的云端默认分组，并移除被替代的本地分组；当前选中的入口还会切换按钮 test ID。因此没有证据支持产品导航故障，旧 E2E 对本地分组及未选中按钮身份的假设已经失效。
+
+导航验证现在从既有 workspaces 响应定位 `is_system_default && access_role === Owner` 的真实个人分组，用稳定的 workspace 标签定位其所属按钮，兼容已选与未选中状态。没有增加请求、超时或重试；父分组不可打开、私有 sibling 隐藏以及 Viewer/Developer 权限断言完整保留。两种状态的新回归先 2 失败、10 通过，修复后完整导航协议 12 项通过（744 毫秒），Node 语法、目标 ESLint、Prettier 和差异检查通过。
+
+实际合并父提交为 main `8424d6ad2ffa23c1d19744f78d593ffe658167a9`。原生窗口处理冲突统一为同资源 BadWindow 的严格分支，删除重复实现；双方全部测试断言保留，主线两处简化错误夹具补齐真实 X11 错误字段，协议 23 项通过。localServices 保留主线的新职责：模型列表为只读请求，已保存且待激活的模型保持可见；目录写入与安全重启由任务准备负责。数字诊断保留在对应 owner，删除已失去调用方的读取 trace 透传。合同相应验证读取不触发写入、busy 时保留 pending、准备阶段恢复激活；3 文件 12 项及既有准备、reconciliation 聚焦 10 项通过，未削弱安全重启门禁。
+
+自动合并的运行时对主线仅保留原阶段诊断，observer 仍只等待一次，不改变历史清理、执行容量或异步问题顺序。Rust turns 17、异步问题 8、handler hooks 1、hooks lifecycle 2、主线新增 native capacity 4，共 32 项通过；初次容量模块过滤器未匹配的 0 项结果不计为通过。Rustfmt、Wework typecheck、完整 lint（0 错误、5 项既有警告）、双语文档 8 项和差异检查通过。新 head 仍须取得自己的完整 CI 与可合并状态，不能以 `38641d0640` 的部分成功提前交接；本地未运行 E2E 或 ai:verify。
+
 # Verification and rollback
 
 The unit plan covers cloud member creation, partial failures, search recovery, authoritative server-roster checks, the existing template pipeline, local-source hiding and the disabled flag. The CI-covered `collaboration-shared-core` scenario includes real-account member persistence and reload checks. Local E2E and real Electron verification were not run under the repository-level local execution policy; the recorded GitHub CI runs provide the actual desktop E2E results. Earlier test results are tied to their stated revisions, and the latest PR head requires its own green checks. Set `VITE_COLLAB_PROJECT_CREATE_MEMBERS_V1=false` in the Wework build environment and rebuild to disable ordinary-entry member creation without deleting existing memberships.

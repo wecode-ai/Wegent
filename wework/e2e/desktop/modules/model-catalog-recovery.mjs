@@ -50,6 +50,7 @@ export async function verifyModelCatalogRecovery(control, { resultDir, uiTimeout
       ),
     })
     await control.command('dispatchLocalModelSettingsChanged', 'body')
+    await control.command('startLocalModelCatalogPreparation', 'body')
     const held = JSON.parse(await control.command('awaitLocalExecutorRequestHold', 'body'))
     assert.ok(held.heldCount > 0, 'Catalog writing must reach the real app-server restart')
     process.kill(originalPid, 'SIGSTOP')
