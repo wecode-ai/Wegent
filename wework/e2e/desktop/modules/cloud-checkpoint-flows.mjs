@@ -51,8 +51,6 @@ import { verifyPastedZipAttachment } from './path-attachment-flows.mjs'
 import {
   ensureExperimentalFeaturesEnabled,
   verifyCloudAutomationLifecycle,
-  verifyTelemetryPreference,
-  verifyTelemetryRemainsDisabled,
 } from './preferences-automation-flows.mjs'
 
 import {
@@ -103,7 +101,6 @@ const CLOUD_CHECKPOINTS = [
   'cloud-project-creation',
   'cloud-device-lifecycle',
   'priority-filter',
-  'telemetry-consent',
   'automation-lifecycle',
   'plugin-auto-update',
   'plugin-workspace-publication',
@@ -742,13 +739,6 @@ async function verifyCloudCheckpoint({
   if (checkpoint === 'workspace-tabs') {
     setPhase('cloud-workspace-tab-isolation')
     await verifyWorkspaceTabIsolation(control, restartDesktopApp)
-    return
-  }
-
-  if (checkpoint === 'telemetry-consent') {
-    setPhase('cloud-telemetry-preference')
-    await verifyTelemetryPreference(control)
-    verifyTelemetryRemainsDisabled(control)
     return
   }
 

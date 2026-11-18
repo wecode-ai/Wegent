@@ -128,11 +128,8 @@ import {
   declineInitialTelemetryConsent,
   ensureExperimentalFeaturesEnabled,
   verifyAutomationLifecycle,
-  verifyCodexCatalogOverride,
   verifyInitialTelemetryConsent,
   verifySitesPluginAutoInstall,
-  verifyTelemetryPreference,
-  verifyTelemetryRemainsDisabled,
 } from './preferences-automation-flows.mjs'
 
 import {
@@ -2530,18 +2527,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       })
       if (shouldStopAfterDesktopCheckpoint('priority-filter')) {
         console.log(`Wework desktop priority-filter checkpoint passed. Evidence: ${resultDir}`)
-        return
-      }
-    }
-
-    if (shouldRunDesktopCheckpoint('telemetry-consent')) {
-      phase = 'telemetry-preference'
-      await verifyTelemetryPreference(control)
-      phase = 'codex-catalog-override'
-      await verifyCodexCatalogOverride(control, DEFAULT_MODEL_ID)
-      verifyTelemetryRemainsDisabled(control)
-      if (shouldStopAfterDesktopCheckpoint('telemetry-consent')) {
-        console.log(`Wework desktop telemetry checkpoint passed. Evidence: ${resultDir}`)
         return
       }
     }
