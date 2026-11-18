@@ -78,6 +78,7 @@ test('retains only explicit recovery diagnostics when a child assertion fails', 
   )
   const diagnostics = [
     'startup-reset-cleanup-failure.png',
+    'startup-reset-development-release-routing.json',
     'startup-reset-evidence.json',
     'startup-reset-handoff.jsonl',
     'startup-reset-recovery.log',
@@ -100,6 +101,9 @@ test('accepts complete successful evidence and retains the required diagnostics'
   const result = await verify('completed', successfulRecovery)
 
   expect(result.evidence).toEqual(successfulRecovery)
+  expect(
+    JSON.parse(await readFile(join(root, 'startup-reset-development-release-routing.json'), 'utf8'))
+  ).toEqual({ electronReportsPackaged: true, startMain: true })
   expect(await readFile(join(root, 'startup-reset-runtime-confirmation.png'), 'utf8')).toBe(
     'unit diagnostic fixture'
   )
