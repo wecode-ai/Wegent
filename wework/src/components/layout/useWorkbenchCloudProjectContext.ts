@@ -1067,9 +1067,25 @@ export function useWorkbenchCloudProjectContext({
       ? deliveryItem
       : null
   const openBoundProjectSpaceTask = useCallback(() => {
-    if (!boundCloudProject || !boundCloudItem) return
-    const projectRef = projectSpaceRef(boundCloudProject)
-    const contentRoute = projectSpaceContentRoute(projectRef, boundCloudItem.id)
+    // Source IDs route the user immediately; the destination owns current access checks.
+    const execution = currentRuntimeTask?.issueExecution
+    const projectRef: RuntimeProjectSpaceRef | null = execution
+      ? {
+          projectId: execution.projectId,
+          projectStore: currentRuntimeTask?.projectSession ? 'backend' : 'local',
+        }
+      : boundCloudProject
+        ? projectSpaceRef(boundCloudProject)
+        : null
+    const itemId = execution?.issueId ?? boundCloudItem?.id
+    if (!projectRef || !itemId) return
+    const contentRoute = projectSpaceContentRoute(projectRef, itemId)
+    const options = {
+      contentRoute,
+      ...(boundCloudProject && sameProjectSpace(projectRef, projectSpaceRef(boundCloudProject))
+        ? { title: boundCloudProject.name }
+        : {}),
+    }
     if (workspaceTabs) {
       const existingBoardTab = workspaceTabs.tabs.find(
         tab =>
@@ -1078,20 +1094,14 @@ export function useWorkbenchCloudProjectContext({
           projectSpaceRouteMatchesProject(tab.contentRoute, projectRef)
       )
       if (existingBoardTab) {
-        workspaceTabs.selectTab(existingBoardTab.id, {
-          title: boundCloudProject.name,
-          contentRoute,
-        })
+        workspaceTabs.selectTab(existingBoardTab.id, options)
         return
       }
-      workspaceTabs.openTab('board', {
-        title: boundCloudProject.name,
-        contentRoute,
-      })
+      workspaceTabs.openTab('board', options)
       return
     }
     navigateTo(contentRoute)
-  }, [boundCloudItem, boundCloudProject, workspaceTabs])
+  }, [boundCloudItem, boundCloudProject, currentRuntimeTask, workspaceTabs])
 
   const finishDelivery = useCallback(() => {
     setDeliveryDialogOpen(false)
