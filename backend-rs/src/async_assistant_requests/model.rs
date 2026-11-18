@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 pub(super) const COLUMNS: &str = "id,executor_owner_user_id,execution_scope,status,COALESCE(observed_state,'') AS observed_state,COALESCE(runtime_device_id,'') AS runtime_device_id,COALESCE(execution_device_id,'') AS execution_device_id,COALESCE(runtime_task_id,'') AS runtime_task_id,execution_payload,updated_at";
+pub(super) const MAX_STORED_PAYLOAD_BYTES: usize = 60_000;
 
 #[derive(Clone, Debug, FromMysqlRow)]
 pub(super) struct RequestRow {
@@ -93,6 +94,10 @@ pub(super) fn valid_id(id: &str) -> bool {
             .all(|value| value.is_ascii_digit() || (b'a'..=b'f').contains(&value))
 }
 
+pub(super) fn payload_fits_storage(intent: &Value) -> bool {
+    intent.to_string().len() <= MAX_STORED_PAYLOAD_BYTES
+}
+
 impl RequestRow {
     pub fn intent(&self) -> Value {
         serde_json::from_str(&self.execution_payload).unwrap_or_else(|_| json!({}))
@@ -155,5 +160,12 @@ mod tests {
             request_id("7", "i", 1, "key"),
             request_id("7", "i", 1, "key")
         );
+    }
+
+    #[test]
+    fn request_history_stays_within_the_existing_text_storage() {
+        assert!(payload_fits_storage(&json!({"commands": []})));
+        let oversized = json!({"commands": ["x".repeat(MAX_STORED_PAYLOAD_BYTES)]});
+        assert!(!payload_fits_storage(&oversized));
     }
 }

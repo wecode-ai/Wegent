@@ -69,7 +69,6 @@ async fn verify(mysql: &MysqlService) -> Result<()> {
     downgrade(mysql, "d47dd270f4b6").await?;
     upgrade(mysql).await?;
     check(mysql).await?;
-    verify_assistant_request_payload(mysql).await?;
     verify_initialization(mysql).await?;
     verify_permission_data(mysql).await?;
     crate::socketio::issue_timestamp_tests::verify(mysql).await?;
@@ -77,32 +76,6 @@ async fn verify(mysql: &MysqlService) -> Result<()> {
     crate::socketio::verify_reconnect_projection(mysql).await?;
     crate::socketio::verify_late_human_reply_projection(mysql).await?;
     crate::stand_in_issue_events::verify_mentions(mysql).await?;
-    Ok(())
-}
-
-async fn verify_assistant_request_payload(mysql: &MysqlService) -> Result<()> {
-    downgrade(mysql, "b1c2d3e4f5a6").await?;
-    mysql
-        .execute(
-            "ALTER TABLE loop_item_executions MODIFY execution_payload TEXT NOT NULL",
-            (),
-        )
-        .await?;
-    upgrade(mysql).await?;
-    let payload = "accepted request evidence 界".repeat(4000);
-    assert!(payload.len() > 65535);
-    mysql.execute("INSERT INTO loop_item_executions (loop_item_id,error_message,execution_payload) VALUES ('assistant-storage-fixture','',?)", (payload.as_str(),)).await?;
-    downgrade(mysql, "b1c2d3e4f5a6").await?;
-    let stored: (String,) = mysql.fetch_one("SELECT execution_payload FROM loop_item_executions WHERE loop_item_id='assistant-storage-fixture'", ()).await?;
-    assert_eq!(stored.0, payload);
-    upgrade(mysql).await?;
-    check(mysql).await?;
-    mysql
-        .execute(
-            "DELETE FROM loop_item_executions WHERE loop_item_id='assistant-storage-fixture'",
-            (),
-        )
-        .await?;
     Ok(())
 }
 

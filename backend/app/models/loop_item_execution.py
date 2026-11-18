@@ -28,7 +28,6 @@ from sqlalchemy import (
     text,
     type_coerce,
 )
-from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -180,9 +179,7 @@ class LoopItemExecution(Base):
     # Stores the immutable, non-secret RuntimeTaskCreateRequest V2 intent plus
     # queue selection metadata. Provider credentials are materialized only by
     # the Local or Cloud compiler and are never persisted here.
-    execution_payload = Column(
-        Text().with_variant(LONGTEXT, "mysql"), nullable=False, default=""
-    )
+    execution_payload = Column(Text, nullable=False, default="")
     version = Column(Integer, nullable=False, default=1, server_default="1")
     created_at = Column(
         DateTime, nullable=False, server_default=text("CURRENT_TIMESTAMP")

@@ -17,6 +17,16 @@ use crate::loop_tasks::{
 use crate::plugins_marketplace::query::PluginQuery;
 use crate::socketio::personal_assistant_dispatch;
 
+fn ensure_storage_bound(intent: &Value) -> MysqlResult<()> {
+    if model::payload_fits_storage(intent) {
+        return Ok(());
+    }
+    Err(reject(
+        422,
+        "Assistant request history exceeds the storage limit; finish or cancel the current request before adding more actions",
+    ))
+}
+
 async fn assignment_on(
     query: &mut impl PluginQuery,
     issue: &store::Node,
@@ -358,6 +368,7 @@ async fn enqueue_on(
     endpoint: &str,
     intent: &Value,
 ) -> MysqlResult<RequestRow> {
+    ensure_storage_bound(intent)?;
     let input = queue::Admission {
         owner,
         assigner: owner,
@@ -397,6 +408,7 @@ pub(super) async fn save_on(
     row: &mut RequestRow,
     intent: &Value,
 ) -> MysqlResult<()> {
+    ensure_storage_bound(intent)?;
     tx.execute("UPDATE loop_item_executions SET execution_payload=?,updated_at=UTC_TIMESTAMP(6),version=version+1 WHERE id=?",(intent.to_string(),row.id)).await?;
     row.execution_payload = intent.to_string();
     Ok(())
