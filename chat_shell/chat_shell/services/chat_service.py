@@ -416,6 +416,7 @@ class ChatService(ChatInterface):
                 streaming=True,
                 enable_clarification=request.enable_clarification,
                 enable_deep_thinking=request.enable_deep_thinking,
+                enable_answer_evidence=request.enable_answer_evidence,
                 skills=request.skills,
                 pre_model_hook=chained_pre_model_hook,
             )

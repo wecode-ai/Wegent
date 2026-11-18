@@ -61,6 +61,7 @@ class AgentConfig:
     skills: list[dict[str, Any]] | None = None  # All skill configs (with preload field)
     pre_model_hook: Callable[[dict[str, Any]], Any] | None = None
     on_model_usage: Callable[..., Any] | None = None
+    enable_answer_evidence: bool = False
 
 
 class ChatAgent:
@@ -390,6 +391,7 @@ class ChatAgent:
                 enable_clarification=config.enable_clarification,
                 enable_deep_thinking=config.enable_deep_thinking,
                 skills=config.skills,
+                enable_answer_evidence=config.enable_answer_evidence,
             )
 
         # Determine inject_datetime value:

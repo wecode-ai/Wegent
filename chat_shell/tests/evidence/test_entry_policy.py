@@ -8,9 +8,10 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.messages import SystemMessage, ToolMessage, convert_to_messages
 from langchain_core.tools import StructuredTool
 
+from chat_shell.agent import ChatAgent
 from chat_shell.services import chat_service as module
 from chat_shell.services.answer_evidence import active_evidence, wrap_native_search
 from shared.models import (
@@ -66,11 +67,11 @@ async def test_chat_entry_controls_native_tool_output_and_model_input(
     )
     captured = {}
 
-    async def stream(*, config, **kwargs):
+    async def stream(*, config, messages, **kwargs):
         output = await tool._arun(query="document")
         captured["tool_output"] = output
         messages = [
-            HumanMessage(content="Read the document"),
+            *convert_to_messages(messages),
             ToolMessage(
                 content=output, name=tool.name, tool_call_id="search", id="result"
             ),
@@ -88,7 +89,7 @@ async def test_chat_entry_controls_native_tool_output_and_model_input(
         cleanup=AsyncMock(),
     )
     agent = SimpleNamespace(
-        build_messages=lambda **kwargs: [{"role": "user", "content": "Read"}],
+        build_messages=ChatAgent().build_messages,
         create_agent_builder=lambda config: SimpleNamespace(),
         stream=stream,
     )
@@ -166,12 +167,20 @@ async def test_chat_entry_controls_native_tool_output_and_model_input(
             if event == "response.completed"
         )
 
+    system_input = "\n".join(
+        message.content
+        for message in captured["model_input"]
+        if isinstance(message, SystemMessage)
+    )
     if enabled:
+        assert "<answer_evidence>" in system_input
+        assert "[[evidence:<evidence_id>]]" in system_input
         unit = json.loads(captured["tool_output"])["chunks"][0]
         assert unit["content"] == chunk["content"]
         assert f'[[evidence:{unit["evidence_id"]}]]' in str(captured["model_input"])
         assert completed["_answer_evidence"] == [unit]
     else:
+        assert system_input == "Answer the question"
         assert captured["tool_output"] == raw
         assert "evidence_id" not in str(captured["model_input"])
         assert "[[evidence:" not in str(captured["model_input"])
