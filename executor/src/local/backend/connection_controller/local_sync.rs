@@ -83,6 +83,7 @@ fn instance_id(root: &Path) -> Result<String, AppIpcError> {
         .map_err(|_| error("plugin_local_journal_unavailable"))?;
     file.lock_exclusive()
         .map_err(|_| error("plugin_local_journal_unavailable"))?;
+    let _lock = recovery::FileLock(file);
     let value = if path.exists() {
         load(&path)?
     } else {

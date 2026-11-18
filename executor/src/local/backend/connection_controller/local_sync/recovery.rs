@@ -4,7 +4,16 @@ use std::fs::File;
 
 type RecoveryTask = tokio::task::JoinHandle<Result<(), AppIpcError>>;
 
-pub(super) fn lock_file(path: &Path) -> Result<File, AppIpcError> {
+pub(super) struct FileLock(pub(super) File);
+
+impl Drop for FileLock {
+    fn drop(&mut self) {
+        // A concurrent fork can retain this file description after the owner ends.
+        let _ = FileExt::unlock(&self.0);
+    }
+}
+
+pub(super) fn lock_file(path: &Path) -> Result<FileLock, AppIpcError> {
     let file = std::fs::OpenOptions::new()
         .create(true)
         .truncate(false)
@@ -14,7 +23,7 @@ pub(super) fn lock_file(path: &Path) -> Result<File, AppIpcError> {
         .map_err(|_| error("plugin_local_journal_unavailable"))?;
     file.try_lock_exclusive()
         .map_err(|_| error("plugin_local_sync_busy"))?;
-    Ok(file)
+    Ok(FileLock(file))
 }
 
 pub(super) fn select_pending(pending: &[Value]) -> Option<Value> {
@@ -183,6 +192,26 @@ mod tests {
 
     fn journal(accepted: bool) -> Value {
         json!({"version":1,"nextIntentOrder":7,"pending":[{"operationId":"request-7","intentOrder":7,"action":"install","targetId":7,"payload":{"releaseId":3},"accepted":accepted}],"receipts":[]})
+    }
+
+    #[test]
+    fn dropping_an_owner_releases_the_lock_before_duplicate_descriptors_close() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("journal.lock");
+        let owner = lock_file(&path).unwrap();
+        let inherited = owner.0.try_clone().unwrap();
+        assert!(lock_file(&path).is_err(), "A live owner must exclude peers");
+        drop(owner);
+        let successor =
+            lock_file(&path).expect("A duplicated descriptor retained the previous owner's lock");
+        assert!(lock_file(&path).is_err());
+        drop(inherited);
+        assert!(
+            lock_file(&path).is_err(),
+            "Closing the old descriptor released the successor's lock"
+        );
+        drop(successor);
+        assert!(lock_file(&path).is_ok());
     }
 
     #[test]
