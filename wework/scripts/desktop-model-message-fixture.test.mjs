@@ -5,6 +5,9 @@ import { test } from 'vitest'
 import { DesktopE2EServer } from '../e2e/desktop/modules/desktop-server.mjs'
 import {
   MODEL_API_KEY,
+  DROPPED_PATH_COMPLETION_TEXT,
+  DROPPED_PATH_FILE_NAME,
+  DROPPED_PATH_FOLDER_NAME,
   CONNECTOR_AUTH_UNMATCHED_RESUME_PROMPT,
   CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT,
   PLUGIN_CREATOR_PROMPT,
@@ -25,6 +28,12 @@ for (const [name, prompt, completion, scenario] of [
   ],
   ['creator', PLUGIN_CREATOR_PROMPT, PLUGIN_CREATOR_COMPLETION_TEXT],
   ['refinement', PLUGIN_REFINEMENT_PROMPT, PLUGIN_REFINEMENT_COMPLETION_TEXT],
+  [
+    'dropped paths',
+    `/isolated-model-message-fixture/${DROPPED_PATH_FOLDER_NAME} ${DROPPED_PATH_FILE_NAME}`,
+    DROPPED_PATH_COMPLETION_TEXT,
+    'dropped_workspace_paths',
+  ],
 ]) {
   for (const protocol of ['responses', 'chat', 'anthropic']) {
     test(`${name} replies retain the selected ${protocol} wire protocol`, async () => {

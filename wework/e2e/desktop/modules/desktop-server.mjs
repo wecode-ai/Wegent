@@ -4236,11 +4236,7 @@ class DesktopE2EServer {
         false,
         'The dropped directory was incorrectly read as a file'
       )
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(DROPPED_PATH_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
+      this.writeLocalAssistantMessage(response, { protocol }, DROPPED_PATH_COMPLETION_TEXT)
       return
     }
 
