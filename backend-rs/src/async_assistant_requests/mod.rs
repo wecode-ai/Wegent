@@ -221,7 +221,19 @@ async fn act_on_assistant_request(
         .mysql
         .with_transaction(async |tx| {
             let issue = issue_on(tx, project_id, item_id, i64::from(current_user.id)).await?;
-            service::act_on(tx, &issue, i64::from(current_user.id), &action).await
+            let result = service::act_on(tx, &issue, i64::from(current_user.id), &action).await?;
+            crate::stand_in_issue_events::enqueue_assistant_request_on(
+                tx,
+                i64::from(current_user.id),
+                project_id,
+                item_id,
+                result.0["requestId"]
+                    .as_str()
+                    .expect("accepted request identity"),
+                &action.idempotency_key,
+            )
+            .await?;
+            Ok(result)
         })
         .await
         .map_err(http_error)?;

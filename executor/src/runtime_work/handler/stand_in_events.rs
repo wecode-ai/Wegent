@@ -26,6 +26,9 @@ impl RuntimeWorkRpcHandler {
         &self,
         payload: Value,
     ) -> Result<(), AppIpcError> {
+        if payload["assistantRequestId"].is_string() {
+            return self.process_assistant_request_wakeup(&payload).await;
+        }
         if payload["commentId"].is_string() {
             return self.process_stand_in_issue_mention(payload).await;
         }

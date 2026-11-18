@@ -25,6 +25,33 @@ async fn recover(fixture: &Fixture) {
 }
 
 #[tokio::test]
+async fn request_wakeup_admits_a_sibling_without_waiting_for_full_project_recovery() {
+    let fixture = fixture().await;
+    pause_runtime(&fixture);
+    fixture.assistant_requests.lock().unwrap()["requests"] = json!([admitted_request("a", "101")]);
+    recover(&fixture).await;
+    fixture.assistant_requests.lock().unwrap()["requests"] =
+        json!([admitted_request("a", "101"), admitted_request("b", "102")]);
+    for _ in 0..2 {
+        fixture
+            .handler
+            .process_stand_in_assignment(json!({
+                "projectId":"project", "itemId":"issue", "recipientUserId":7,
+                "assistantRequestId":"b", "actionId":"new-b"
+            }))
+            .await
+            .unwrap();
+    }
+    let scheduler = fixture.handler.turn_scheduler.lock().unwrap();
+    assert_eq!(scheduler.queued_turns.len(), 2);
+    assert!(scheduler
+        .queued_turns
+        .iter()
+        .any(|turn| turn.local_task_id == "assistant-request-b"));
+    assert_eq!(fixture.requests.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
 async fn child_recovery_is_idempotent_and_does_not_rebind_the_parent() {
     let fixture = fixture().await;
     pause_runtime(&fixture);

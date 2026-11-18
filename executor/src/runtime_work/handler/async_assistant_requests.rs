@@ -1,5 +1,6 @@
 //! Explicit child requests reuse the default assistant's consent and Runtime queue.
 use super::*;
+use crate::runtime_work::handler::stand_in::settings_error;
 
 fn request_path(project: &str, issue: &str) -> String {
     format!("/v1/cloud-projects/{project}/loop-items/{issue}/assistant-requests")
@@ -62,6 +63,52 @@ fn identity_diagnostic(request: &Value, user: i64, device: &str, local: &str) ->
 }
 
 impl RuntimeWorkRpcHandler {
+    /// Consume one durable request wakeup without enumerating every project.
+    pub(super) async fn process_assistant_request_wakeup(
+        &self,
+        payload: &Value,
+    ) -> Result<(), AppIpcError> {
+        let (Some(project), Some(issue_id), Some(user)) = (
+            payload["projectId"].as_str(),
+            payload["itemId"].as_str(),
+            payload["recipientUserId"].as_i64(),
+        ) else {
+            return Ok(());
+        };
+        let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
+        let personal = store
+            .personal_stand_in(user, &self.device_id)
+            .map_err(settings_error)?;
+        if !personal["lifecycle"]["status"].is_null() {
+            return Ok(());
+        }
+        let Some(config) = self
+            .stand_in_project_configs(std::slice::from_ref(&personal), project, "cloud")
+            .into_iter()
+            .find(|config| {
+                config["id"] == "@primary"
+                    && config["userId"] == user
+                    && config["enabled"] == true
+                    && config["handlingPolicy"]["automatic"] != false
+                    && self.stand_in_role_runs_here(config)
+            })
+        else {
+            return Ok(());
+        };
+        self.verify_runtime_user(&config).await?;
+        let issue = self
+            .runtime_http(
+                reqwest::Method::GET,
+                &format!("/v1/loop-items/{issue_id}"),
+                None,
+            )
+            .await?;
+        if issue["cloud_project_id"] != project || issue["assignee_user_id"] != user {
+            return Ok(());
+        }
+        self.recover_issue_assistant_requests(&config, &issue).await
+    }
+
     pub(super) async fn recover_issue_assistant_requests(
         &self,
         config: &Value,
