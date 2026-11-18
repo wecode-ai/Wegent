@@ -57,6 +57,17 @@ test('accepts Windows executables that do not import the VC runtime', async t =>
   await assert.doesNotReject(assertWindowsNativeRuntimeIndependent(root))
 })
 
+test('accepts VC runtime imports satisfied by an app-local DLL copy', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'wework-native-runtime-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  await mkdir(join(root, 'bin'))
+  await writeFile(join(root, 'bin', 'dependent.exe'), peBinary(['VCRUNTIME140.dll']))
+  await writeFile(join(root, 'bin', 'vcruntime140.dll'), 'bundled runtime bytes')
+  await assert.doesNotReject(assertWindowsNativeRuntimeIndependent(root))
+  await rm(join(root, 'bin', 'vcruntime140.dll'))
+  await assert.rejects(assertWindowsNativeRuntimeIndependent(root), /machine-wide VC\+\+ runtime/)
+})
+
 test('rejects every executable that depends on the machine-wide VC runtime', async t => {
   const root = await mkdtemp(join(tmpdir(), 'wework-native-runtime-'))
   t.after(() => rm(root, { recursive: true, force: true }))
@@ -75,10 +86,16 @@ test('rejects every executable that depends on the machine-wide VC runtime', asy
 })
 
 test('rejects malformed PE input rather than overlooking a runtime dependency', () => {
-  assert.throws(() => windowsPeImports(Buffer.alloc(100)), /x64 PE binary/)
+  assert.throws(() => windowsPeImports(Buffer.alloc(100)), /x64 or ARM64 PE binary/)
   const bytes = peBinary(['VCRUNTIME140.dll'])
   bytes.writeUInt32LE(0xffffff, 0x40c)
   assert.throws(() => windowsPeImports(bytes), /Invalid PE RVA/)
+})
+
+test('reads ARM64 PE imports under the same layout as x64', () => {
+  const arm64 = peBinary(['KERNEL32.dll'], ['VCRUNTIME140.dll'])
+  arm64.writeUInt16LE(0xaa64, 0x84)
+  assert.deepEqual(windowsPeImports(arm64), ['kernel32.dll', 'vcruntime140.dll'])
 })
 
 test('adds static CRT linking through encoded flags that existing flags cannot override', () => {

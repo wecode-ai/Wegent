@@ -18,10 +18,14 @@ function fixture() {
     path: ".github/workflows/wework-app.yml",
     event: "workflow_dispatch",
   };
-  const jobs = ["macOS arm64", "macOS x64", "Windows x64", "Linux x64"].map(
-    (platform) => ({ name: `Build ${platform}`, conclusion: "success" }),
-  );
-  const artifacts = ["macos-arm64", "windows-x64"].map((platform) => ({
+  const jobs = [
+    "macOS arm64",
+    "macOS x64",
+    "Windows x64",
+    "Windows arm64",
+    "Linux x64",
+  ].map((platform) => ({ name: `Build ${platform}`, conclusion: "success" }));
+  const artifacts = ["macos-arm64", "windows-x64", "windows-arm64"].map((platform) => ({
     name: `wework-upgrade-input-0.6.4-beta.4-${platform}`,
     expired: false,
     digest: `sha256:${"b".repeat(64)}`,
@@ -64,17 +68,21 @@ test("stable verification partitions both channels while beta verification canno
   assert.deepEqual(pairs("stable"), [
     ["macos", "arm64", "stable"],
     ["windows", "x64", "stable"],
+    ["windows", "arm64", "stable"],
     ["macos", "arm64", "beta"],
     ["windows", "x64", "beta"],
+    ["windows", "arm64", "beta"],
   ]);
   assert.deepEqual(pairs("beta"), [
     ["macos", "arm64", "beta"],
     ["windows", "x64", "beta"],
+    ["windows", "arm64", "beta"],
   ]);
   assert.deepEqual(pairs("stable", "0.6.4-beta.5"), pairs("beta"));
   assert.deepEqual(pairs("stable", "0.6.3"), [
     ["macos", "arm64", "stable"],
     ["windows", "x64", "stable"],
+    ["windows", "arm64", "stable"],
   ]);
   assert.throws(
     () => upgradeVerificationMatrix("nightly"),
@@ -95,7 +103,7 @@ test("non-publishing replay only requires the producers whose packages it verifi
   );
 });
 
-for (const platform of ["macOS arm64", "Windows x64"]) {
+for (const platform of ["macOS arm64", "Windows x64", "Windows arm64"]) {
   test(`replay still requires exactly one successful ${platform} producer`, () => {
     for (const failure of [
       "failure",
@@ -117,11 +125,12 @@ for (const platform of ["macOS arm64", "Windows x64"]) {
   });
 }
 
-test("normal dry runs and publication still require all four producers", () => {
+test("normal dry runs and publication still require all five producers", () => {
   for (const platform of [
     "macOS arm64",
     "macOS x64",
     "Windows x64",
+    "Windows arm64",
     "Linux x64",
   ]) {
     for (const publish of ["false", "true"]) {
@@ -259,7 +268,7 @@ test("retry diagnostics require an independent source and run on macOS and Windo
     JSON.parse(resolved.verification_matrix).include.map(
       (item) => item.platform,
     ),
-    ["macos", "windows"],
+    ["macos", "windows", "windows"],
   );
   for (const change of [
     { VERIFICATION_SOURCE_RUN_ID: "" },

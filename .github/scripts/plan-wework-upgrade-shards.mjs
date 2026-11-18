@@ -13,6 +13,7 @@ const include = [];
 for (const [platform, arch, runner] of [
   ["macos", "arm64", "macos-15"],
   ["windows", "x64", "windows-latest"],
+  ["windows", "arm64", "windows-11-arm"],
 ]) {
   const frozen = planUpgradeShards({
     catalogs: publishedUpgradePolicies({

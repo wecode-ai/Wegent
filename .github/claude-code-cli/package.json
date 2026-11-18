@@ -6,11 +6,11 @@
     "@anthropic-ai/claude-code@2.1.310": true,
     "@moonshot-ai/kimi-code@0.35.0": true,
     "node-pty@1.1.0": true,
-    "opencode-ai@1.18.16": true
+    "opencode-ai@1.19.5": true
   },
   "dependencies": {
     "@anthropic-ai/claude-code": "2.1.310",
     "@moonshot-ai/kimi-code": "0.35.0",
-    "opencode-ai": "1.18.16"
+    "opencode-ai": "1.19.5"
   }
 }
