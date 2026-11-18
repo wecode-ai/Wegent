@@ -1,4 +1,5 @@
 /* eslint-disable react-hooks/refs -- Pane hosts intentionally preserve live task sessions across layout changes. */
+import { useE2ELifecycleTrace } from '@/e2e/useE2ELifecycleTrace'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import {
   Columns2,
@@ -201,6 +202,17 @@ export function SplitWorkbenchPaneStack({
   )
   const mountedPaneKeys = [...layoutPaneKeys, ...retainedPaneKeys]
   const mountedPaneKeySignature = mountedPaneKeys.join('\u0000')
+  useE2ELifecycleTrace('SplitWorkbenchPaneStack', {
+    activeKey,
+    mountedPaneKeys,
+    cachedHostKeys: [...paneHostCacheRef.current.keys()],
+    devices: devices.map(device => ({
+      id: device.device_id,
+      appId: device.app_device_id,
+      socketId: device.socket_device_id,
+      runtimeInstanceId: device.runtime_instance_id,
+    })),
+  })
   const focusedViewPane =
     focusedViewPaneId === null ? null : findWorkbenchPane(layout.root, focusedViewPaneId)
   const effectiveFocusedViewPaneId = focusedViewPane?.id ?? null

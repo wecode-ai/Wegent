@@ -74,6 +74,7 @@ end run`,
   }
   if (process.platform === 'win32') {
     const script = `
+$ErrorActionPreference = 'Stop'
 [Console]::Error.WriteLine('Native decision stage: assembly-client-start')
 Add-Type -AssemblyName UIAutomationClient
 [Console]::Error.WriteLine('Native decision stage: assembly-types-start')
@@ -109,8 +110,9 @@ while ([DateTime]::UtcNow -lt $deadline) {
     [Console]::Error.WriteLine('Native decision stage: button-lookup-complete ' + $buttons.Count)
     foreach ($button in $buttons) {
       [Console]::Error.WriteLine('Native decision stage: button-name-start')
-      [Console]::Error.WriteLine('Native decision element: ' + $button.Current.Name)
+      [Console]::Error.WriteLine('Native decision element: type=' + $button.Current.ControlType.ProgrammaticName + ' class=' + $button.Current.ClassName)
       if ($button.Current.Name -in @(${allow ? "'Allow installation', 'Allow update', '允许安装', '允许更新'" : "'Cancel', '取消'"})) {
+        [Console]::Error.WriteLine('Native decision matched label: ' + $button.Current.Name)
         $pattern = $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
         [Console]::Error.WriteLine('Native decision stage: invoke-start')
         $pattern.Invoke()
@@ -135,7 +137,7 @@ throw 'The isolated app did not display its native Core plugin decision'
 `
     const startedAt = Date.now()
     try {
-      await execute(
+      const result = await execute(
         'powershell.exe',
         [
           '-NoProfile',
@@ -145,6 +147,12 @@ throw 'The isolated app did not display its native Core plugin decision'
         ],
         options
       )
+      console.info('[native-plugin-decision] Windows helper completed', {
+        applicationProcessId: pid,
+        elapsedMs: Date.now() - startedAt,
+        stdout: result.stdout,
+        stderr: result.stderr,
+      })
     } catch (error) {
       console.error('[native-plugin-decision] Windows helper failed', {
         applicationProcessId: pid,
@@ -152,6 +160,8 @@ throw 'The isolated app did not display its native Core plugin decision'
         killed: error.killed,
         signal: error.signal,
         code: error.code,
+        stdout: error.stdout,
+        stderr: error.stderr,
       })
       throw error
     }

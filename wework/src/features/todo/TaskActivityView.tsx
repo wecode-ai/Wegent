@@ -1,3 +1,4 @@
+import { useE2ELifecycleTrace } from '@/e2e/useE2ELifecycleTrace'
 import { IssueTimelineActions } from './IssueTimelineActions'
 import { IssueCommentChildAction } from '@wegent/collaboration'
 import { IssueManagerEvent } from './IssueManagerEvent'
@@ -265,6 +266,14 @@ export function TaskActivityView({
   // Local project spaces keep their board, comments and runs in the local
   // executor; every delivery/approval call must route to the project's space
   // API instead of always hitting the cloud backend.
+  useE2ELifecycleTrace('TaskActivityView', {
+    taskId: task.id,
+    projectId: project.id,
+    issueTimeline,
+    linear,
+    clientReady: Boolean(client),
+    executionSupport: Boolean(client?.executeTaskComment),
+  })
   const projectLocation = project.project_store === 'local' ? 'local' : 'cloud'
   const commentDraftScope = JSON.stringify([
     'issue-comment',
