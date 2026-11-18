@@ -37,6 +37,7 @@ pub(crate) async fn build_test_server() -> Result<brz_socket_io::Server, BoxErro
     Ok(server)
 }
 
+/// Register every public namespace on the shared HTTP service.
 pub async fn build(state: Arc<AppState>) -> Result<Server, BoxError> {
     let server = Server::builder().build().await?;
     let (socket_runtime, workers) = SocketRuntime::new();

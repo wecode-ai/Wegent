@@ -492,6 +492,9 @@ async fn verify_terminal_callbacks(writer: &MysqlService) -> anyhow::Result<()> 
     let mut app = crate::app_test_support::app(writer.clone());
     std::sync::Arc::get_mut(&mut app).unwrap().redis = Some(redis);
 
+    verify_cancel_access_and_device_routing(writer, &app).await?;
+    verify_live_chat_cancel_preserves_registration(writer, &app).await?;
+    verify_non_chat_cancel_liveness(writer, &app).await?;
     verify_chat_cancel_waits_for_runtime_then_falls_back(writer, &app).await?;
     verify_cancel_callback_order(writer, &app).await?;
     verify_terminal_callback_retry(writer, &app).await
@@ -650,35 +653,9 @@ async fn verify_chat_cancel_waits_for_runtime_then_falls_back(
         "server partial cancel result",
     )
     .await?;
-    let runtime = std::sync::Arc::new(crate::socketio::runtime::SocketRuntime::new().0);
-    // The token-expiry branch only touches the runtime when a token is expired;
-    // the normal admission path installs emitters during service construction.
-    let server = crate::socketio::handlers::build_test_server()
-        .await
-        .map_err(|error| anyhow::anyhow!("build test Socket.IO server: {error}"))?;
-    runtime.install_emitters(std::sync::Arc::new(
-        crate::socketio::runtime::SocketEmitters::for_test(&server)
-            .map_err(|error| anyhow::anyhow!("build test Socket.IO emitters: {error}"))?,
-    ));
-    let identity = crate::socketio::auth::Identity {
-        user_id: 7,
-        user_name: String::new(),
-        auth_type: "jwt",
-        email: None,
-    };
-    let claims =
-        serde_json::json!({"sub": "cancel-owner", "exp": chrono::Utc::now().timestamp() + 300});
-    let payload = {
-        use base64::Engine as _;
-        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims)?)
-    };
-    let token = format!("header.{payload}.signature");
-    let session = crate::socketio::chat_session::ChatSession::new(&identity, Some(&token), None);
-    crate::socketio::chat_control::cancel(
+    cancel_as(
         app,
-        &runtime,
-        &session,
-        "test-socket",
+        7,
         serde_json::json!({"subtask_id": 43, "shell_type": "Chat", "partial_content": "stale client result"}),
     )
     .await?;
@@ -708,6 +685,157 @@ async fn verify_chat_cancel_waits_for_runtime_then_falls_back(
     terminal_callback(app, "done", "late outcome")
         .await
         .unwrap();
+    assert_eq!(
+        callback_statuses(writer).await?,
+        ("CANCELLED".into(), "CANCELLED".into())
+    );
+    Ok(())
+}
+
+async fn cancel_as(
+    app: &crate::state::AppState,
+    user_id: i64,
+    data: serde_json::Value,
+) -> anyhow::Result<()> {
+    use base64::Engine as _;
+
+    let runtime = std::sync::Arc::new(crate::socketio::runtime::SocketRuntime::new().0);
+    let server = crate::socketio::handlers::build_test_server()
+        .await
+        .map_err(|error| anyhow::anyhow!("build test Socket.IO server: {error}"))?;
+    runtime.install_emitters(std::sync::Arc::new(
+        crate::socketio::runtime::SocketEmitters::for_test(&server)
+            .map_err(|error| anyhow::anyhow!("build test Socket.IO emitters: {error}"))?,
+    ));
+    let identity = crate::socketio::auth::Identity {
+        user_id,
+        user_name: String::new(),
+        auth_type: "jwt",
+        email: None,
+    };
+    let claims =
+        serde_json::json!({"sub": "cancel-owner", "exp": chrono::Utc::now().timestamp() + 300});
+    let payload =
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims)?);
+    let token = format!("header.{payload}.signature");
+    let session = crate::socketio::chat_session::ChatSession::new(&identity, Some(&token), None);
+    crate::socketio::chat_control::cancel(app, &runtime, &session, "test-socket", data).await?;
+    Ok(())
+}
+
+async fn verify_cancel_access_and_device_routing(
+    writer: &MysqlService,
+    app: &crate::state::AppState,
+) -> anyhow::Result<()> {
+    use serde_json::json;
+
+    let redis = app.redis.as_ref().expect("Redis fixture");
+    for (shell, executor) in [
+        ("Chat", None),
+        ("Codex", None),
+        ("Chat", Some("device-test")),
+    ] {
+        reset_callback_state(writer, "RUNNING").await?;
+        writer
+            .execute(
+                "UPDATE subtasks SET executor_name = ? WHERE id = 43",
+                (executor,),
+            )
+            .await?;
+        cancel_as(app, 999, json!({"subtask_id":43, "shell_type":shell})).await?;
+        assert_eq!(
+            callback_statuses(writer).await?,
+            ("RUNNING".into(), "RUNNING".into())
+        );
+        for key in ["chat:cancel:43", "chat:cancel-intent:43"] {
+            assert!(redis.get::<_, String>(key).await?.is_none());
+        }
+    }
+    // An omitted shell still routes to the device without a Chat grace timeout.
+    crate::internal_callback::session::set_task_streaming_status(redis, 12, 43, 7, "owner").await?;
+    cancel_as(app, 7, json!({"subtask_id":43})).await?;
+    assert_eq!(
+        callback_statuses(writer).await?,
+        ("CANCELLING".into(), "RUNNING".into())
+    );
+    crate::internal_callback::session::clear_task_streaming_status(redis, 12).await?;
+    cancel_as(app, 7, json!({"subtask_id":43})).await?;
+    assert_eq!(
+        callback_statuses(writer).await?,
+        ("CANCELLED".into(), "CANCELLED".into())
+    );
+    writer
+        .execute("UPDATE subtasks SET executor_name = NULL WHERE id = 43", ())
+        .await?;
+    Ok(())
+}
+
+async fn verify_live_chat_cancel_preserves_registration(
+    writer: &MysqlService,
+    app: &crate::state::AppState,
+) -> anyhow::Result<()> {
+    reset_callback_state(writer, "RUNNING").await?;
+    let redis = app.redis.as_ref().expect("Redis fixture");
+    let consumer = async {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while redis.get::<_, String>("chat:cancel:43").await?.is_none() {
+                tokio::task::yield_now().await;
+            }
+            anyhow::Ok(())
+        })
+        .await??;
+        crate::responses::stream_state::register_stream(Some(redis), 43).await;
+        assert_eq!(
+            redis.get::<_, String>("chat:cancel:43").await?,
+            Some("true".into())
+        );
+        terminal_callback(app, "cancelled", "")
+            .await
+            .expect("consumer terminal callback");
+        crate::responses::stream_state::unregister_stream(Some(redis), 43).await;
+        anyhow::Ok(())
+    };
+    let (request, consumer) = tokio::join!(
+        cancel_as(
+            app,
+            7,
+            serde_json::json!({"subtask_id":43, "shell_type":"Chat"})
+        ),
+        consumer,
+    );
+    request?;
+    consumer?;
+    assert_eq!(
+        callback_statuses(writer).await?,
+        ("CANCELLED".into(), "CANCELLED".into())
+    );
+    Ok(())
+}
+
+async fn verify_non_chat_cancel_liveness(
+    writer: &MysqlService,
+    app: &crate::state::AppState,
+) -> anyhow::Result<()> {
+    let redis = app.redis.as_ref().expect("Redis fixture");
+    reset_callback_state(writer, "RUNNING").await?;
+    crate::internal_callback::session::set_task_streaming_status(redis, 12, 43, 7, "owner").await?;
+    cancel_as(
+        app,
+        7,
+        serde_json::json!({"subtask_id":43, "shell_type":"Codex"}),
+    )
+    .await?;
+    assert_eq!(
+        callback_statuses(writer).await?,
+        ("CANCELLING".into(), "RUNNING".into())
+    );
+    crate::internal_callback::session::clear_task_streaming_status(redis, 12).await?;
+    cancel_as(
+        app,
+        7,
+        serde_json::json!({"subtask_id":43, "shell_type":"Codex"}),
+    )
+    .await?;
     assert_eq!(
         callback_statuses(writer).await?,
         ("CANCELLED".into(), "CANCELLED".into())

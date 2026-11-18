@@ -798,4 +798,5 @@ async fn an_already_settled_consumer_cleans_streaming_state() {
             .iter()
             .any(|call| call.starts_with("DEL-MANY chat:streaming:424243"))
     );
+    assert_eq!(redis.count("DEL chat:task_streaming:"), 0);
 }

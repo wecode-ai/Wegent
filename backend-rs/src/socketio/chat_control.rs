@@ -44,6 +44,7 @@ const CANCEL_FLAG_TTL: u64 = 300;
 const CHAT_CANCEL_GRACE: Duration = Duration::from_millis(2_500);
 /// Reuse the SSE consumer's one-second polling cadence while waiting for it.
 const CANCEL_POLL_INTERVAL: Duration = Duration::from_secs(1);
+const CANCELLING_STUCK_TIMEOUT_SECONDS: i64 = 1800;
 /// `DEFAULT_GUIDANCE_QUEUE_TTL_SECONDS`.
 const GUIDANCE_QUEUE_TTL_SECONDS: u64 = 60 * 60 * 24;
 
@@ -85,10 +86,7 @@ pub(crate) async fn cancel(
         .get("shell_type")
         .and_then(Value::as_str)
         .unwrap_or("Chat");
-    if device_id.is_none()
-        && shell_type != "Chat"
-        && let Some(ack) = access_denied(state, session, info.task_id, "chat:cancel").await?
-    {
+    if let Some(ack) = access_denied(state, session, info.task_id, "chat:cancel").await? {
         return Ok(Reply::payload(ack));
     }
     if !mark_cancelling(state, info.task_id, subtask_id).await? {
@@ -98,7 +96,7 @@ pub(crate) async fn cancel(
         state, runtime, user_id, &info, subtask_id, device_id, shell_type,
     )
     .await?;
-    if shell_type == "Chat" {
+    if device_id.is_none() && shell_type == "Chat" {
         let client_partial_content = data
             .get("partial_content")
             .and_then(Value::as_str)
@@ -125,16 +123,53 @@ pub(crate) async fn cancel(
     // A non-Chat executor can lose its runtime before the turn is dispatched.
     // Keep the recovery fallback for that path while Chat waits for its SSE
     // consumer above.
-    if !delivered {
+    if !stream_alive(state, info.task_id, subtask_id).await? {
         process_local_cancellation(state, info.task_id, subtask_id, "").await?;
         tracing::info!(
             task_id = info.task_id,
             subtask_id,
-            "chat:cancel finalized locally (runtime did not acknowledge)"
+            "chat:cancel finalized locally (stream runtime gone)"
         );
         return Ok(Reply::payload(json!({"success": true, "finalized": true})));
     }
+    if !delivered {
+        return Ok(Reply::payload(error_ack(
+            "Runtime did not acknowledge cancellation",
+        )));
+    }
     Ok(Reply::payload(json!({"success": true})))
+}
+
+/// Delivery failure alone does not prove that an executor stopped streaming.
+async fn stream_alive(
+    state: &AppState,
+    task_id: i64,
+    subtask_id: i64,
+) -> Result<bool, ClientError> {
+    use brz_redis::Redis as _;
+
+    let Some(redis) = state.redis.as_ref() else {
+        return Err(internal_error());
+    };
+    let raw = redis
+        .get::<_, String>(format!("chat:task_streaming:{task_id}"))
+        .await
+        .map_err(|error| {
+            tracing::warn!(%error, task_id, subtask_id, "cancel liveness read failed");
+            internal_error()
+        })?;
+    let status = raw.and_then(|raw| serde_json::from_str::<Value>(&raw).ok());
+    Ok(status.as_ref().is_some_and(|status| {
+        status.get("subtask_id").and_then(python_integer) == Some(subtask_id)
+            && status
+                .get("last_activity_at")
+                .and_then(Value::as_str)
+                .and_then(|stamp| chrono::DateTime::parse_from_rfc3339(stamp).ok())
+                .is_some_and(|stamp| {
+                    Utc::now().signed_duration_since(stamp).num_seconds()
+                        <= CANCELLING_STUCK_TIMEOUT_SECONDS
+                })
+    }))
 }
 
 /// Publish the terminal cancellation event through the shared callback path.
@@ -174,8 +209,7 @@ async fn process_local_cancellation(
 }
 
 /// Wait briefly for the active consumer to observe the cancel flag and commit
-/// a terminal status. A missing or expired streaming marker is advisory: it
-/// selects the local fallback path instead of blocking recovery.
+/// a terminal status. Stale streaming metadata cannot block local recovery.
 async fn wait_for_chat_cancellation(state: &AppState, task_id: i64, subtask_id: i64) -> bool {
     let deadline = tokio::time::Instant::now() + CHAT_CANCEL_GRACE;
     loop {
@@ -185,7 +219,8 @@ async fn wait_for_chat_cancellation(state: &AppState, task_id: i64, subtask_id: 
         if tokio::time::Instant::now() >= deadline {
             return false;
         }
-        tokio::time::sleep(CANCEL_POLL_INTERVAL).await;
+        tokio::time::sleep_until(deadline.min(tokio::time::Instant::now() + CANCEL_POLL_INTERVAL))
+            .await;
     }
 }
 
@@ -343,8 +378,16 @@ async fn deliver_cancel(
         };
         use brz_redis::Redis as _;
         let key = cancel_key(subtask_id);
-        return match redis.set_ex(key.as_str(), CANCEL_FLAG_TTL, "true").await {
-            Ok(()) => Ok(true),
+        let intent_key = format!("chat:cancel-intent:{subtask_id}");
+        let result: brz_redis::RedisResult<i64> = redis
+            .eval(
+                "redis.call('SET', KEYS[1], 'true', 'EX', ARGV[1]); redis.call('SET', KEYS[2], 'true', 'EX', ARGV[1]); return 1",
+                [key, intent_key],
+                [CANCEL_FLAG_TTL],
+            )
+            .await;
+        return match result {
+            Ok(_) => Ok(true),
             Err(error) => {
                 tracing::error!(%error, subtask_id, "SSE cancel flag write failed");
                 Ok(false)

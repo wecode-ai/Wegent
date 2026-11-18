@@ -727,10 +727,10 @@ async fn complete<M: Mysql, R: Redis>(
     .await
     .map_err(|_| Failure::terminal_persistence("Could not save the execution result"))?;
     let Some(committed) = committed else {
-        if let Err(error) = crate::internal_callback::session::cleanup_streaming_state(
+        if let Err(error) = crate::internal_callback::session::cleanup_settled_streaming_state(
             redis,
             event.subtask_id,
-            Some(event.task_id),
+            event.task_id,
         )
         .await
         {
