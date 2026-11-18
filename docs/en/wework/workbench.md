@@ -127,7 +127,7 @@ When checks fail, a merge conflict exists, or Merge Queue enters an abnormal sta
 
 Select a project name to expand or collapse its runtime tasks. Collapsed projects use a closed-folder icon; expanding a project changes the icon to an open folder so its state is easy to recognize.
 
-New tasks and conversations that receive a new message move immediately by latest activity. Ordinary project conversations sort only by recency; queue position controls execution order and never changes their sidebar position. Project conversations do not support drag reordering.
+New tasks and conversations that receive a user message move immediately by latest activity. Ordinary project conversations sort only by recency; queue position controls execution order and never changes their sidebar position. Project conversations do not support drag reordering.
 
 <a id="ai-questions"></a>
 

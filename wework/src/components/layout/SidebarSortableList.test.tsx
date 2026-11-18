@@ -92,52 +92,67 @@ describe('SidebarSortableList', () => {
 
   it('keeps pane drag available without reordering a non-sortable task list', async () => {
     const onMove = vi.fn().mockResolvedValue(undefined)
-    render(
-      <SidebarSortableList
-        items={items}
-        getId={item => item.id}
-        getLabel={item => item.label}
-        getExternalDragData={item => ({ paneKey: `pane:${item.id}`, title: item.label })}
-        onMove={onMove}
-        sortable={false}
-        testId="fixed-list"
-        renderItem={item => (
-          <span data-testid={`fixed-activator-${item.id}`} data-sidebar-drag-activator>
-            {item.label}
-          </span>
-        )}
-      />
-    )
+    const dragEndDetails: WorkbenchSidebarPaneDragEndData[] = []
+    const handleExternalDragEnd = (event: Event) => {
+      dragEndDetails.push((event as CustomEvent<WorkbenchSidebarPaneDragEndData>).detail)
+    }
+    window.addEventListener(WORKBENCH_SIDEBAR_PANE_DRAG_END_EVENT, handleExternalDragEnd)
+    try {
+      render(
+        <SidebarSortableList
+          items={items}
+          getId={item => item.id}
+          getLabel={item => item.label}
+          getExternalDragData={item => ({ paneKey: `pane:${item.id}`, title: item.label })}
+          onMove={onMove}
+          sortable={false}
+          testId="fixed-list"
+          renderItem={item => (
+            <span data-testid={`fixed-activator-${item.id}`} data-sidebar-drag-activator>
+              {item.label}
+            </span>
+          )}
+        />
+      )
 
-    const firstItem = screen.getByTestId('fixed-activator-first').parentElement as HTMLElement
-    mockRect(firstItem, 0)
-    expect(firstItem).toHaveAttribute('data-pane-drag-id', 'first')
-    expect(firstItem).not.toHaveAttribute('data-sidebar-sortable-id')
-    fireEvent.pointerDown(screen.getByTestId('fixed-activator-first'), {
-      button: 0,
-      buttons: 1,
-      clientX: 12,
-      clientY: 15,
-      isPrimary: true,
-      pointerId: 2,
-    })
-    fireEvent.pointerMove(document, {
-      buttons: 1,
-      clientX: 24,
-      clientY: 30,
-      isPrimary: true,
-      pointerId: 2,
-    })
-    fireEvent.pointerUp(document, {
-      button: 0,
-      buttons: 0,
-      clientX: 24,
-      clientY: 30,
-      isPrimary: true,
-      pointerId: 2,
-    })
+      const firstItem = screen.getByTestId('fixed-activator-first').parentElement as HTMLElement
+      mockRect(firstItem, 0)
+      expect(firstItem).toHaveAttribute('data-pane-drag-id', 'first')
+      expect(firstItem).not.toHaveAttribute('data-sidebar-sortable-id')
+      expect(firstItem).not.toHaveAttribute('role')
+      expect(firstItem).not.toHaveAttribute('tabindex')
+      fireEvent.pointerDown(screen.getByTestId('fixed-activator-first'), {
+        button: 0,
+        buttons: 1,
+        clientX: 12,
+        clientY: 15,
+        isPrimary: true,
+        pointerId: 2,
+      })
+      fireEvent.pointerMove(document, {
+        buttons: 1,
+        clientX: 24,
+        clientY: 30,
+        isPrimary: true,
+        pointerId: 2,
+      })
+      expect(firstItem).toHaveAttribute('data-dragging', 'true')
+      fireEvent.pointerUp(document, {
+        button: 0,
+        buttons: 0,
+        clientX: 24,
+        clientY: 30,
+        isPrimary: true,
+        pointerId: 2,
+      })
 
-    expect(onMove).not.toHaveBeenCalled()
-    await waitForPointerSensorCleanup()
+      expect(onMove).not.toHaveBeenCalled()
+      expect(dragEndDetails.at(-1)).toEqual(
+        expect.objectContaining({ paneKey: 'pane:first', clientX: 24, clientY: 30 })
+      )
+    } finally {
+      window.removeEventListener(WORKBENCH_SIDEBAR_PANE_DRAG_END_EVENT, handleExternalDragEnd)
+      await waitForPointerSensorCleanup()
+    }
   })
 })

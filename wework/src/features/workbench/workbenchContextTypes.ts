@@ -192,6 +192,7 @@ export interface RuntimePaneActionOptions {
   isCurrent?: () => boolean
   onError?: (error: string) => void
   onQueued?: (response: RuntimeSendResponse) => void
+  recordActivity?: boolean
   silentBusyRetry?: boolean
   optimisticUserMessage?: WorkbenchMessage & { role: 'user' }
 }

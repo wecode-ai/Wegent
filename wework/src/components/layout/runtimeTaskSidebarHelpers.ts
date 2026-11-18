@@ -93,9 +93,14 @@ export function getVisibleRuntimeSidebarTaskItems(
   return [...pinnedItems, ...unpinnedItems.slice(0, visibleCount)]
 }
 
-export function getNextRuntimeSidebarTaskVisibleLimit(currentLimit: number, totalCount: number) {
+export function getNextRuntimeSidebarTaskVisibleLimit(
+  currentLimit: number,
+  totalCount: number,
+  visibleCount = currentLimit
+) {
   return Math.min(
-    Math.max(RUNTIME_PROJECT_TASK_PREVIEW_LIMIT, currentLimit) + RUNTIME_PROJECT_TASK_EXPAND_STEP,
+    Math.max(RUNTIME_PROJECT_TASK_PREVIEW_LIMIT, currentLimit, visibleCount) +
+      RUNTIME_PROJECT_TASK_EXPAND_STEP,
     totalCount
   )
 }

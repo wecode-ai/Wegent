@@ -30,6 +30,7 @@ export interface SendRuntimeQueuedMessageOptions {
   appendAcceptedMessage?: boolean
   onError?: (error: string) => void
   initialGoal?: RuntimeGoalCreateInput | null
+  recordActivity?: boolean
   silentBusyRetry?: boolean
 }
 
@@ -99,6 +100,7 @@ export async function sendRuntimeQueuedMessage(
           queued = true
           queuePosition = response.queuePosition
         },
+        recordActivity: options.recordActivity,
         silentBusyRetry: options.silentBusyRetry,
       }
     )

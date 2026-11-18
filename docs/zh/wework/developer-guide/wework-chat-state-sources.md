@@ -107,7 +107,8 @@ effect 发布快照。后者会在输入事件结束时把旧草稿写回 DOM，
 
 独立会话和项目内普通会话只按最近活动从新到旧排列。`recencyAt` 缺失时依次使用
 `updatedAt`、`createdAt`。新会话创建或已有会话收到用户消息时，发送入口立即更新本地
-`recencyAt` 和 `updatedAt`，再读取执行器结果；刷新、重载和离线缓存不能恢复旧的人工顺序。
+`recencyAt`，再读取执行器结果；`updatedAt` 继续由执行器快照维护。刷新、重载和离线缓存
+不能恢复旧的人工顺序。
 
 任务级 `sidebarOrder` 不参与 Wework 排序，项目内普通会话也不再拖拽排序。Codex 兼容
 状态中的 `threadIds`、`sidebarOrder` 等字段原样保留，不迁移、不删除。置顶会话和项目

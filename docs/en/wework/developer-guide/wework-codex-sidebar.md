@@ -34,7 +34,7 @@ Project UI ids normally derive from the state-owning device and project key. Res
 
 A task UI identity combines the state-owning device with the task ID. Live-list refreshes merge tasks only by that identity; title, workspace path, and runtime kind are not identity fields. Distinct tasks can share a title, such as consecutive attachment-only submissions with no text, so neither the frontend nor Executor may infer duplicates from those display fields.
 
-Ordinary conversations in a project sort only by `recencyAt`, falling back to `updatedAt` and then `createdAt`, newest first. Creating a conversation or sending a user message updates local `recencyAt` and `updatedAt` immediately. Legacy `threadIds`, task-level `sidebarOrder`, and other Codex fields remain untouched but do not affect Wework ordering.
+Ordinary conversations in a project sort only by `recencyAt`, falling back to `updatedAt` and then `createdAt`, newest first. Creating a conversation or sending a user message updates local `recencyAt` immediately; executor snapshots continue to own `updatedAt`. Legacy `threadIds`, task-level `sidebarOrder`, and other Codex fields remain untouched but do not affect Wework ordering.
 
 `queuePosition` controls execution order only. The sidebar may show “Queued / position N”, but the row keeps its activity position. Current, running, unread, and waiting conversations only force visibility: when outside the default preview, the list expands through that conversation's real activity position.
 

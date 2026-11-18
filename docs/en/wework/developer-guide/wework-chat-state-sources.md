@@ -134,9 +134,9 @@ the operating system's candidate window.
 
 Standalone conversations and ordinary project conversations sort only by activity,
 newest first. `recencyAt` falls back to `updatedAt`, then `createdAt`. Creating a
-conversation or sending a user message updates local `recencyAt` and `updatedAt`
-immediately, before the executor response. Refreshes, reloads, and offline caches
-must not restore an obsolete manual order.
+conversation or sending a user message updates local `recencyAt` immediately, before
+the executor response. Executor snapshots continue to own `updatedAt`. Refreshes,
+reloads, and offline caches must not restore an obsolete manual order.
 
 Task-level `sidebarOrder` does not affect Wework ordering, and ordinary project
 conversations no longer support drag reordering. Codex compatibility fields such as

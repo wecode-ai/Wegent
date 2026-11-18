@@ -34,7 +34,7 @@ Wework 桌面端复用 Codex App 的侧栏状态语义。项目和实时任务�
 
 任务的 UI 标识由“状态所属设备 + task ID”组成。实时列表刷新只按这个标识合并任务；标题、工作区路径和运行时类型都不是身份字段。不同任务可以具有相同标题，例如连续发送两个只有附件且没有文本的任务，因此前端和 Executor 都不能用这些展示字段推断任务重复。
 
-项目内普通会话统一按 `recencyAt`（缺失时依次使用 `updatedAt`、`createdAt`）从新到旧排列。新会话创建和已有会话收到用户消息时，Wework 先更新本地的 `recencyAt`、`updatedAt`，不使用执行器返回顺序。旧的 `threadIds`、任务级 `sidebarOrder` 等 Codex 字段保留原值，但不参与 Wework 排序。
+项目内普通会话统一按 `recencyAt`（缺失时依次使用 `updatedAt`、`createdAt`）从新到旧排列。新会话创建和已有会话收到用户消息时，Wework 先更新本地的 `recencyAt`，`updatedAt` 仍由执行器快照维护。旧的 `threadIds`、任务级 `sidebarOrder` 等 Codex 字段保留原值，但不参与 Wework 排序。
 
 `queuePosition` 只表示排队任务的执行先后，侧栏仍可显示“排队中 / 第 N 个”，列表位置不随它变化。当前、运行中、未读和等待中的会话只保证可见；超出默认预览范围时，列表展开到该会话的真实最近活动位置。
 

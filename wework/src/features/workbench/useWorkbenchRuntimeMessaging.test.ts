@@ -190,17 +190,21 @@ test('records activity before an existing conversation reply completes', async (
     message: 'Continue',
     modelId: 'test-model',
   })
+  try {
+    await waitFor(() => expect(send).toHaveBeenCalledOnce())
+    expect(dispatch).toHaveBeenCalledWith({
+      type: 'runtime_task_activity_recorded',
+      address,
+      at: expect.any(String),
+    })
 
-  await waitFor(() => expect(send).toHaveBeenCalledOnce())
-  expect(dispatch).toHaveBeenCalledWith({
-    type: 'runtime_task_activity_recorded',
-    address,
-    at: expect.any(String),
-  })
-
-  finishSend({ accepted: true })
-  await expect(sending).resolves.toBe(true)
-  store.remove(address)
+    finishSend({ accepted: true })
+    await expect(sending).resolves.toBe(true)
+  } finally {
+    finishSend({ accepted: true })
+    await sending
+    store.remove(address)
+  }
 })
 
 test.each(['accepted', 'queued'] as const)(

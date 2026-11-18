@@ -156,7 +156,10 @@ class RuntimeConversationQueueController {
     }
   }
 
-  async send(message: RuntimePaneQueuedMessage): Promise<void> {
+  async send(
+    message: RuntimePaneQueuedMessage,
+    options: { recordActivity?: boolean } = {}
+  ): Promise<void> {
     this.clearInvalidatedRequest()
     const dependencies = this.dependencies
     if (!dependencies || this.inFlight) {
@@ -203,6 +206,7 @@ class RuntimeConversationQueueController {
         onError: error => {
           sendError = error
         },
+        recordActivity: options.recordActivity,
       })
       if (!operation.isCurrent()) return
       this.log('queue-send-result', message, {
@@ -278,8 +282,8 @@ class RuntimeConversationQueueController {
       return
     }
     const next = messages.find(message => message.status === 'queued' && !message.runtimeQueued)
-    if (!next || !consumeRuntimeTaskLifecycleBlock(this.busyBlocks, next.id, lifecycle)) {
-      this.observeDispatch(next ? 'busy-retry-blocked' : 'no-local-queued-message', lifecycle)
+    if (!next) {
+      this.observeDispatch('no-local-queued-message', lifecycle)
       return
     }
     const canStartGoal = Boolean(next.initialGoal) && !lifecycle?.derived.isTurnActive
@@ -287,8 +291,13 @@ class RuntimeConversationQueueController {
       this.observeDispatch(lifecycle?.continuable ? 'task-busy' : 'not-continuable', lifecycle)
       return
     }
+    const isBusyRetry = this.busyBlocks.has(next.id)
+    if (!consumeRuntimeTaskLifecycleBlock(this.busyBlocks, next.id, lifecycle)) {
+      this.observeDispatch('busy-retry-blocked', lifecycle)
+      return
+    }
     this.observeDispatch('ready', lifecycle)
-    void this.send(next)
+    void this.send(next, { recordActivity: !isBusyRetry })
   }
 
   private reconcileStartedMessages(lifecycle: RuntimeTaskLifecycleSnapshot | null): void {

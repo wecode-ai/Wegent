@@ -6,6 +6,7 @@ import type {
   RuntimeTaskSummary,
   RuntimeWorkListResponse,
 } from '@/types/api'
+import { dequal } from 'dequal'
 import type { RuntimePaneTranscript } from '@/types/workbench'
 import { RuntimeMessageReceipts } from './RuntimeMessageReceipts'
 import { readStoredTaskKeys, serializeTaskKeys } from './taskKeyStorage'
@@ -139,6 +140,8 @@ export class RuntimeTaskLifecycleStore {
     for (const { workspace, task } of collectRuntimeTasks(runtimeWork)) {
       const address = getRuntimeTaskAddress(workspace, task)
       const normalizedTask = normalizeRuntimeTaskSummary(task)
+      const currentTask = this.getTask(address)?.task
+      if (currentTask && isRuntimeTaskRecencyOnlyChange(currentTask, normalizedTask)) continue
       changed =
         this.reduceMachine(address, {
           type: 'executor_snapshot_received',
@@ -866,6 +869,19 @@ export class RuntimeTaskLifecycleStore {
       console.warn('Failed to persist runtime task running state', error)
     }
   }
+}
+
+function isRuntimeTaskRecencyOnlyChange(
+  current: RuntimeTaskSummary,
+  incoming: RuntimeTaskSummary
+): boolean {
+  return dequal(withoutRuntimeTaskRecency(current), withoutRuntimeTaskRecency(incoming))
+}
+
+function withoutRuntimeTaskRecency(task: RuntimeTaskSummary): RuntimeTaskSummary {
+  const next = { ...task }
+  delete next.recencyAt
+  return next
 }
 
 export function createRuntimeTaskLifecycleOwnershipView(

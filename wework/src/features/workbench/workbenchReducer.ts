@@ -428,7 +428,7 @@ function mergeRuntimeTasks(
       const nextTask = nextById.get(task.taskId)
       if (nextTask) {
         return shouldReplaceRuntimeTaskProjection(task, nextTask)
-          ? mergeRuntimeTaskSnapshotMetadata(nextTask, task)
+          ? preserveRuntimeTaskActivity(task, mergeRuntimeTaskSnapshotMetadata(nextTask, task))
           : mergeRuntimeTaskListState(task, nextTask)
       }
       if (
@@ -447,6 +447,22 @@ function mergeRuntimeTasks(
     }
   })
   return merged
+}
+
+function preserveRuntimeTaskActivity(
+  local: RuntimeTaskSummary,
+  incoming: RuntimeTaskSummary
+): RuntimeTaskSummary {
+  const localActivity = runtimeTaskActivityTime(local)
+  if (localActivity <= runtimeTaskActivityTime(incoming)) return incoming
+  return { ...incoming, recencyAt: local.recencyAt ?? localActivity }
+}
+
+function runtimeTaskActivityTime(task: RuntimeTaskSummary): number {
+  const value = task.recencyAt ?? task.updatedAt ?? task.createdAt
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0
+  const timestamp = value ? Date.parse(value) : 0
+  return Number.isNaN(timestamp) ? 0 : timestamp
 }
 
 function mergeRuntimeTaskListState(
@@ -1512,7 +1528,6 @@ function reduceWorkbenchState(state: WorkbenchState, action: WorkbenchAction): W
         ...state,
         runtimeWork: updateRuntimeWorkTask(state.runtimeWork, action.address, {
           recencyAt: action.at,
-          updatedAt: action.at,
         }),
       }
     case 'runtime_tasks_archived':

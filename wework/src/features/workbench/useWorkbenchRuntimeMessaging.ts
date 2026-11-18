@@ -536,7 +536,7 @@ export function useWorkbenchRuntimeMessaging({
         // Replies settle an existing native request and do not select a model.
         if (!userInputResponse && blockRuntimeSendForUnavailableModel(request.address, options))
           return false
-        recordRuntimeTaskActivity(request.address)
+        if (options?.recordActivity !== false) recordRuntimeTaskActivity(request.address)
         if (optimisticUserMessage) {
           applyRuntimeConversationAction(request.address, {
             type: 'user_added',
@@ -658,7 +658,6 @@ export function useWorkbenchRuntimeMessaging({
 
       let sendRequested = false
       try {
-        recordRuntimeTaskActivity(request.address)
         const outboundRequest = await prepareRuntimeSendRequest(request)
         const prepared = await executorClient.runtime.prepareRuntimeModel({
           deviceId: outboundRequest.address.deviceId,
@@ -668,6 +667,7 @@ export function useWorkbenchRuntimeMessaging({
           reportError(i18n.t('workbench.cloud_model_catalog_sync_cancelled'), options)
           return false
         }
+        recordRuntimeTaskActivity(request.address)
         lifecycleStore.sendRequested(outboundRequest.address)
         sendRequested = true
         const response =
@@ -704,13 +704,13 @@ export function useWorkbenchRuntimeMessaging({
 
       let sendRequested = false
       try {
-        recordRuntimeTaskActivity(request.address)
         const outboundRequest = await prepareRuntimeSendRequest(request)
         const prepared = await executorClient.runtime.prepareRuntimeModel({
           deviceId: outboundRequest.address.deviceId,
           modelId: outboundRequest.modelId,
         })
         if (!prepared) return false
+        recordRuntimeTaskActivity(request.address)
         lifecycleStore.sendRequested(outboundRequest.address)
         sendRequested = true
         const response = await executorClient.runtime.rollbackRuntimeTask(outboundRequest)

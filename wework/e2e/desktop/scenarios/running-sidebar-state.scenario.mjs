@@ -202,11 +202,15 @@ export function createDesktopScenario({ uiTimeoutMs, workspacePath }) {
           })
         }
         await control.command('waitFor', spinner, { timeoutMs: uiTimeoutMs })
-        await control.command('click', `[data-testid="project-runtime-tasks-expand-${projectId}"]`)
-        await control.command('waitFor', spinner, { timeoutMs: uiTimeoutMs })
-        await control.command(
-          'click',
-          `[data-testid="project-runtime-tasks-collapse-${projectId}"]`
+        assert.equal(
+          Number(
+            await control.command(
+              'getElementCount',
+              `[data-testid="project-runtime-tasks-expand-${projectId}"]`
+            )
+          ),
+          0,
+          'A running task expanded to its true recency position should not leave a Show more action'
         )
         await control.command('waitFor', spinner, { timeoutMs: uiTimeoutMs })
         await control.command('click', `[data-testid="runtime-local-task-row-${address.taskId}"]`)

@@ -137,14 +137,13 @@ function SortableItem({ id, disabled, sortingSuppressed, children }: SortableIte
 }
 
 function DraggableItem({ id, disabled, children }: Omit<SortableItemProps, 'sortingSuppressed'>) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id, disabled })
+  const { listeners, setNodeRef, isDragging } = useDraggable({ id, disabled })
   return (
     <div
       ref={setNodeRef}
       data-pane-drag-id={id}
       data-dragging={isDragging ? 'true' : undefined}
       className={cn('relative touch-none', isDragging && 'z-[75] opacity-35')}
-      {...attributes}
       {...listeners}
     >
       {children}
@@ -187,6 +186,11 @@ export function SidebarSortableList<T>({
       activationConstraint: { distance: SIDEBAR_SORTABLE_POINTER_DISTANCE },
     }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  )
+  const pointerSensors = useSensors(
+    useSensor(SidebarPointerSensor, {
+      activationConstraint: { distance: SIDEBAR_SORTABLE_POINTER_DISTANCE },
+    })
   )
 
   const clearPointerListeners = useCallback(() => {
@@ -260,6 +264,11 @@ export function SidebarSortableList<T>({
   const handleDragEnd = async ({ active, over }: DragEndEvent) => {
     setActiveId(null)
     const movedItem = itemById.get(String(active.id))
+    if (!movedItem && externalDragActiveRef.current) {
+      dispatchWorkbenchSidebarPaneDragCancel()
+      stopPointerTracking()
+      return
+    }
     const externalData = movedItem ? getExternalDragData?.(movedItem) : undefined
     const pointerCoordinates = pointerCoordinatesRef.current
     const pointerOutsideSidebar =
@@ -304,7 +313,7 @@ export function SidebarSortableList<T>({
   if (!sortable) {
     return (
       <DndContext
-        sensors={sensors}
+        sensors={pointerSensors}
         autoScroll={getSidebarAutoScrollConfiguration(Boolean(getExternalDragData))}
         collisionDetection={getExternalDragData ? sidebarCollisionDetection : closestCenter}
         onDragStart={handleDragStart}
@@ -319,7 +328,11 @@ export function SidebarSortableList<T>({
           {items.map(item => {
             const id = getId(item)
             return (
-              <DraggableItem key={id} id={id} disabled={!canDrag(item)}>
+              <DraggableItem
+                key={id}
+                id={id}
+                disabled={!canDrag(item) && !getExternalDragData?.(item)}
+              >
                 {renderItem(item)}
               </DraggableItem>
             )

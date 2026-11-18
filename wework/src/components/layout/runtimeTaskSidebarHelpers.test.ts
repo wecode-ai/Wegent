@@ -4,6 +4,7 @@ import type { RuntimeDeviceWorkspace } from '@/types/api'
 import { describe, expect, test } from 'vitest'
 import {
   getRuntimeSidebarTaskItems,
+  getNextRuntimeSidebarTaskVisibleLimit,
   getVisibleRuntimeSidebarTaskItems,
   hasHiddenRuntimeSidebarTaskItems,
   RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
@@ -155,6 +156,11 @@ describe('runtimeTaskSidebarHelpers', () => {
       'first',
       'second',
     ])
+  })
+
+  test('advances Show more past an automatically expanded prefix', () => {
+    expect(getNextRuntimeSidebarTaskVisibleLimit(5, 30, 18)).toBe(28)
+    expect(getNextRuntimeSidebarTaskVisibleLimit(15, 20, 18)).toBe(20)
   })
 
   test('sorts across projects by recency regardless of queue and running state', () => {

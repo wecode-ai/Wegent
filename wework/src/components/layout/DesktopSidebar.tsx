@@ -1324,6 +1324,7 @@ function RuntimeTaskRow({
       })
     : null
   const taskAddress = getRuntimeTaskAddress(workspace, task)
+  const taskTime = getRuntimeTaskTime(task)
   const archiveKey = getRuntimeTaskLifecycleKey(taskAddress)
   const subscribeArchive = useCallback(
     (listener: () => void) => subscribePendingRuntimeTaskArchive(archiveKey, listener),
@@ -1538,7 +1539,7 @@ function RuntimeTaskRow({
             workspacePath={taskWorkspacePath ? shortenSidebarHomePath(taskWorkspacePath) : null}
             hostLabel={hostLabel}
             hostId={hostId && hostId !== hostLabel ? hostId : null}
-            updatedLabel={task.updatedAt ? formatRelativeSidebarTime(task.updatedAt) : null}
+            updatedLabel={taskTime ? formatRelativeSidebarTime(taskTime) : null}
             branchWarning={hasRuntimeTaskBranchWarning(task)}
             worktree={worktreeTask}
           />
@@ -2791,7 +2792,6 @@ function ProjectItem({
                     }),
                     title: task.title,
                   })}
-                  canDrag={({ task }) => Boolean(getRuntimeTaskThreadId(task))}
                   sortable={false}
                   renderItem={({ workspace, task }) => (
                     <RuntimeTaskRow
@@ -2841,7 +2841,8 @@ function ProjectItem({
                           setRuntimeTaskVisibleLimit(currentLimit =>
                             getNextRuntimeSidebarTaskVisibleLimit(
                               currentLimit,
-                              prioritizedRuntimeTaskItems.length
+                              prioritizedRuntimeTaskItems.length,
+                              visibleRuntimeTaskItems.length
                             )
                           )
                         }
@@ -4753,7 +4754,6 @@ export function DesktopSidebar({
                             }),
                             title: task.title,
                           })}
-                          canDrag={({ task }) => Boolean(getRuntimeTaskThreadId(task))}
                           sortable={false}
                           renderItem={({ workspace, task }) => (
                             <RuntimeTaskRow

@@ -773,7 +773,8 @@ export function MobileDrawer({
                                           ...previous,
                                           [project.id]: getNextRuntimeSidebarTaskVisibleLimit(
                                             runtimeTaskVisibleLimit,
-                                            taskItems.length
+                                            taskItems.length,
+                                            visibleTaskItems.length
                                           ),
                                         }))
                                       }

@@ -669,6 +669,7 @@ describe('RuntimeConversationQueueController', () => {
     detach()
     await flushQueue()
     expect(send).toHaveBeenCalledTimes(1)
+    expect(send.mock.calls[0]?.[1]?.recordActivity).not.toBe(false)
     expect(controller.busyBlocks.has(item.id)).toBe(true)
     expect(getRuntimeConversationQueuedMessages(taskA)[0].status).toBe('queued')
 
@@ -691,6 +692,7 @@ describe('RuntimeConversationQueueController', () => {
     store.executorSettled(taskA)
     await flushQueue()
     expect(send).toHaveBeenCalledTimes(2)
+    expect(send.mock.calls[1]?.[1]?.recordActivity).toBe(false)
     expect(getRuntimeConversationQueuedMessages(taskA)[0].status).toBe('failed')
     expect(controller.busyBlocks.has(item.id)).toBe(false)
 

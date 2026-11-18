@@ -1352,7 +1352,84 @@ describe('workbenchReducer', () => {
     )
 
     expect(items.map(item => item.task.taskId)).toEqual(['replied', 'newer-before-reply'])
-    expect(items[0]?.task).toMatchObject({ recencyAt: 300, updatedAt: 300, sidebarOrder: 9 })
+    expect(items[0]?.task).toMatchObject({ recencyAt: 300, updatedAt: 100, sidebarOrder: 9 })
+  })
+
+  test('keeps local reply activity when a higher execution revision refreshes', () => {
+    const executionState = (revision: string) => ({
+      revision,
+      phase: 'running' as const,
+      turnId: `turn-${revision}`,
+      latestTurnId: `turn-${revision}`,
+      outcome: null,
+    })
+    const task = (revision: string, recencyAt: number) => ({
+      taskId: 'replied',
+      workspacePath: '/workspace/repo',
+      title: 'Replied',
+      runtime: 'codex' as const,
+      recencyAt,
+      updatedAt: recencyAt,
+      executionState: executionState(revision),
+    })
+    const active = workbenchReducer(
+      {
+        ...initialWorkbenchState,
+        runtimeWork: {
+          projects: [
+            {
+              project: { id: 7, name: 'Repo' },
+              deviceWorkspaces: [
+                {
+                  deviceId: 'device-1',
+                  workspacePath: '/workspace/repo',
+                  available: true,
+                  tasks: [task('1', 100), { ...task('1', 50), taskId: 'older' }],
+                },
+              ],
+            },
+          ],
+          chats: [],
+          totalTasks: 2,
+        },
+      },
+      {
+        type: 'runtime_task_activity_recorded',
+        address: { deviceId: 'device-1', taskId: 'replied' },
+        at: 300,
+      }
+    )
+    const refreshed = workbenchReducer(active, {
+      type: 'runtime_work_refreshed',
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Repo' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'device-1',
+                workspacePath: '/workspace/repo',
+                available: true,
+                tasks: [task('2', 200), { ...task('2', 50), taskId: 'older' }],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 2,
+      },
+    })
+
+    expect(
+      getRuntimeSidebarTaskItems(refreshed.runtimeWork?.projects[0].deviceWorkspaces ?? []).map(
+        item => item.task.taskId
+      )
+    ).toEqual(['replied', 'older'])
+    expect(
+      refreshed.runtimeWork?.projects[0].deviceWorkspaces[0]?.tasks.find(
+        item => item.taskId === 'replied'
+      )?.recencyAt
+    ).toBe(300)
   })
 
   test('keeps recency order after refresh despite cached manual sidebar slots', () => {
