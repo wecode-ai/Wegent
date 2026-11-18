@@ -68,6 +68,9 @@ fn cloud_config_bundle_failures_are_detected() {
     assert!(is_codex_cloud_config_error(
         "failed to read configuration layers: Your authentication session could not be refreshed automatically. Please log out and sign in again."
     ));
+    assert!(is_codex_cloud_config_error(
+        "failed to load configuration: Your authentication session could not be refreshed automatically. Please log out and sign in again."
+    ));
     assert!(!is_codex_cloud_config_error(
         "Your authentication session could not be refreshed automatically. Please log out and sign in again."
     ));
