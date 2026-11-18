@@ -41,12 +41,13 @@ impl RuntimeWorkRpcHandler {
             false,
         );
         self.ensure_notification_router().await;
-        // Refresh a loaded profile while stopped; keep cold activation under
-        // the existing durable recovery admission instead of loading it here.
+        // Apply the execution profile while the Goal is still stopped. Otherwise
+        // recovery reloads the passive history profile after activation and can
+        // unload the native continuation that the mutation already started.
         let thread_path = runtime_thread_path_from_link(link);
-        let registration = self
+        let (_, registration) = self
             .codex_app_server
-            .prepare_goal_activation_route(&request, thread_id, thread_path.as_deref())
+            .resume_thread_for_model_action(&request, thread_id, thread_path.as_deref())
             .await
             .map_err(|error| AppIpcError::new("model_route_failed", error))?;
         if let Some(route) = self
