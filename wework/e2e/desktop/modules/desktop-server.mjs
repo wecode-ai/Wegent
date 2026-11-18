@@ -1374,9 +1374,11 @@ class DesktopE2EServer {
           : url.pathname === '/v1/messages' || url.pathname === '/messages'
             ? 'anthropic'
             : null
+    let scenarioModelRequest
     try {
       if (this.desktopScenario && request.method === 'POST' && modelProtocol) {
         const body = await readRequestBody(request)
+        scenarioModelRequest = { body, scenario: this.scenario, failed: true }
         if (await this.writeNativeApprovalReview(response, body, modelProtocol)) return
         // Prediction history carries the task's ordinary markers. Route its
         // model request before scenario counters and held task responses.
@@ -1403,6 +1405,7 @@ class DesktopE2EServer {
       )
         return
     } catch (error) {
+      if (scenarioModelRequest) this.modelRequests.push(scenarioModelRequest)
       console.error(
         `[desktop-e2e] scenario HTTP handler failed for ${request.method} ${url.pathname}`,
         error

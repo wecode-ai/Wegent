@@ -310,18 +310,18 @@ export function createDesktopScenario(options) {
         // Each new conversation must use the model whose code_mode override this fixture owns.
         await selectE2EModel(control)
         await send(text)
+        await control.command(
+          'waitFor',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+          { text: `${text}_ANSWER`, timeoutMs: options.modelResponseTimeoutMs }
+        )
         const state = await waitForWorkbenchDebugState(
           control,
           snapshot =>
             Boolean(snapshot.workbench?.currentRuntimeTask) &&
             snapshot.workbench.currentRuntimeTask.taskId !== address?.taskId &&
             !snapshot.pane?.status?.isBusy,
-          'The other task must start before navigation'
-        )
-        await control.command(
-          'waitFor',
-          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-          { text: `${text}_ANSWER` }
+          'The other task must settle before navigation'
         )
         return state.workbench.currentRuntimeTask
       }

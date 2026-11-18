@@ -184,6 +184,12 @@ async function hasPending(root) {
 }
 
 export async function processQueue(root) {
+  while (true) {
+    if (!(await drainQueue(root))) return
+  }
+}
+
+async function drainQueue(root) {
   const { workspace, records } = await readJson(join(root, 'workspace.json'))
   const hooks = join(root, 'empty-hooks')
   const acquired = await withLock(
@@ -226,6 +232,6 @@ export async function processQueue(root) {
     },
     { wait: false }
   )
-  // Cover an enqueue racing the worker's last empty scan and lock release.
-  if (acquired && (await hasPending(root))) await startWorker(root)
+  // Recheck late enqueues in the same worker so its exit covers all accepted work.
+  return acquired && (await hasPending(root))
 }

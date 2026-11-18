@@ -851,3 +851,6 @@ mod cloud_config;
 
 #[path = "request_process_isolated_exit_tests.rs"]
 mod isolated_exit;
+
+#[path = "connection_mcp_process_tests.rs"]
+mod connection_mcp;

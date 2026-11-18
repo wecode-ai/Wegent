@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { once } from 'node:events'
+import { channel } from 'node:diagnostics_channel'
 import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
@@ -525,8 +527,26 @@ test('long snapshot refs use per-call long-path support without changing reposit
 })
 
 test('normal callbacks launch detached workers and release accepted snapshot refs', async t => {
+  const workers = []
+  const processes = channel('child_process')
+  const workerScript = fileURLToPath(new URL('./bin/log-turn.mjs', import.meta.url))
+  const observe = ({ process: child }) => {
+    child.once('spawn', () => {
+      if (child.spawnargs[1] === workerScript) workers.push({ child, exited: once(child, 'exit') })
+    })
+  }
+  processes.subscribe(observe)
+  // Workers may outlive their last Git ref; join them before removing the fixture.
+  t.after(async () => {
+    processes.unsubscribe(observe)
+    for (const { exited } of workers) assert.deepEqual(await exited, [0, null])
+  })
   const f = await fixture(t)
-  const invoke = input => handleEvent(input, f.config)
+  const invoke = async input => {
+    const result = await handleEvent(input, f.config)
+    for (const { child } of workers) child.ref()
+    return result
+  }
   await invoke(f.event(0, 'TurnStarted'))
   await writeFile(join(f.workspace, 'source.txt'), 'detached\n')
   await invoke(f.event(1))
