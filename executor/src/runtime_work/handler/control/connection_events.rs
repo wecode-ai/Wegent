@@ -3,6 +3,7 @@ use super::*;
 use wegent_protocol::connection_events::matches_event;
 mod admission;
 mod cloud;
+mod conditions;
 mod goal_reconciliation;
 mod observations;
 mod observers;
@@ -11,6 +12,8 @@ mod refresh;
 mod resource_delivery;
 mod session;
 
+#[cfg(test)]
+mod delivery_tests;
 #[cfg(test)]
 mod tests;
 
@@ -190,8 +193,9 @@ impl RuntimeWorkRpcHandler {
                 .await;
             return Ok(json!({"subscription":public_subscription(&record)}));
         }
-        validate_filter(&args["match"])?;
-        let intent = json!({"source":args["source"],"match":args.get("match").cloned().unwrap_or(json!({})),
+        let filter = conditions::resolve(&args)?;
+        validate_filter(&filter)?;
+        let intent = json!({"source":args["source"],"match":filter,
             "continuation":args["continuation"],"wait_for_event":args["wait_for_event"].as_bool().unwrap_or(false)});
         if let Some(record) = records.get(&id) {
             if record["intent"] != intent {
@@ -522,10 +526,7 @@ impl RuntimeWorkRpcHandler {
             }
             self.save_event_subscription(id, &record)?;
         }
-        if record["status"] != "pending"
-            || self.is_busy_local_task(&task)
-            || link.interaction_status.is_some()
-        {
+        if record["status"] != "pending" || link.interaction_status.is_some() {
             return Ok(());
         }
         // Serialize the final Goal check and durable send acceptance with user

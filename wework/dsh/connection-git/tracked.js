@@ -1,4 +1,4 @@
-import { collectWorkflowRun } from './workflow-run.js'
+import { collectCiRun } from './ci-run.js'
 
 export function createTrackedCollector(helpers) {
   return async function collectTracked(ctx, platform, source, next) {
@@ -52,13 +52,19 @@ export function createTrackedCollector(helpers) {
       )
       return { events: [], nextCheckpoint: next, hasMore: false }
     }
-    if (target.entityKind === 'workflow_run')
-      return collectWorkflowRun(ctx, source, next, target, {
-        parseProfile,
-        invalid,
-        fingerprint,
-        stableValue,
-      })
+    if (['workflow_run', 'pipeline'].includes(target.entityKind))
+      return collectCiRun(
+        ctx,
+        source,
+        next,
+        { ...target, platform },
+        {
+          parseProfile,
+          invalid,
+          fingerprint,
+          stableValue,
+        }
+      )
     const step = next.trackStep ?? 0
     const steps = target.entityKind === 'change_request' ? 4 : 2
     const operation =

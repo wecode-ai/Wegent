@@ -15,7 +15,7 @@ describe('event conditions', () => {
         },
         t
       )
-    ).toBe('(检查结果: 通过 或 检查结果: 失败) 且 sha: head')
+    ).toBe('(检查结果: 通过 或 检查结果: 失败) 且 提交: head')
   })
   test('keeps object equality and resource identities literal', () => {
     expect(connectionEventCondition({ '/topicId': 'SUCCESS', '/revision': { n: 7 } }, t)).toBe(
@@ -27,4 +27,19 @@ describe('event conditions', () => {
     expect(connectionEventCondition(null, t)).toBe('来源中的任意新事件')
     expect(connectionEventCondition({}, t)).toBe('来源中的任意新事件')
   })
+})
+
+test('describes merge conflict wake conditions while preserving literal identities', () => {
+  expect(
+    connectionEventCondition(
+      {
+        '/external/payload/headRefOid': 'CONFLICTING',
+        $any: [
+          { '/external/payload/mergeable': 'CONFLICTING' },
+          { '/external/payload/mergeStateStatus': 'DIRTY' },
+        ],
+      },
+      t
+    )
+  ).toBe('(合并状态: 存在冲突 或 合并门禁: 存在冲突) 且 提交: CONFLICTING')
 })

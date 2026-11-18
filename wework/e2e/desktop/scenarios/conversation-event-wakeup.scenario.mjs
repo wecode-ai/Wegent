@@ -22,6 +22,7 @@ import {
   selectE2EModel,
 } from '../modules/shared.mjs'
 import {
+  assistantMessage,
   createSse,
   handleEmptyReplyPrediction,
   readRequestBody,
@@ -51,6 +52,16 @@ export function createDesktopScenario(options) {
   let cancellationEvidence = null
   let questionOutput
   let sequence = 0
+  let busyResponse
+  let busyStarted = false
+  const releaseBusy = () => {
+    if (!busyResponse) return
+    const { response, id } = busyResponse
+    busyResponse = undefined
+    response.end(
+      createSse([assistantMessage(`${MARKER}_workflow_BUSY_FINISHED`), responseCompleted(id)])
+    )
+  }
   const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
   const codex = (control, method, params) =>
     rpc(control, 'runtime.codex.app_server.request', { method, params })
@@ -122,6 +133,18 @@ export function createDesktopScenario(options) {
       if (handleEmptyReplyPrediction(body, response)) return true
       if (!modelRequestTexts(body).includes(MARKER)) return false
       modelRequests++
+      if (
+        phase === 'workflow' &&
+        !busyStarted &&
+        modelRequestTexts(body).includes(`${MARKER}_workflow_BUSY_HOLD`)
+      ) {
+        busyStarted = true
+        const id = `conversation-busy-${++sequence}`
+        response.writeHead(200, { 'content-type': 'text/event-stream' })
+        response.write(createSse([responseCreated(id)]))
+        busyResponse = { response, id }
+        return true
+      }
       const held = phase === 'human' ? human.intercept(modelRequestTexts(body), response) : null
       if (held) return held
       const id = `conversation-event-${++sequence}`
@@ -411,9 +434,43 @@ export function createDesktopScenario(options) {
             assert.equal(modelRequests, requestsBefore, 'Waiting must not poll through model turns')
             await new Promise(resolve => setTimeout(resolve, 100))
           }
+          if (phase === 'workflow') {
+            await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
+              value: `${MARKER}_workflow_BUSY_HOLD`,
+            })
+            await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, { enabled: true })
+            await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+            await waitForValue(
+              getTask,
+              result => busyStarted && result.task.running,
+              'A real model turn must remain active while the event is delivered',
+              modelResponseTimeoutMs
+            )
+          }
           const match = event(`${phase}-event`, `${MARKER}_${phase}_EVENT_RECEIVED`)
           events.push(match, match)
           await saveEvents()
+          if (phase === 'workflow') {
+            await waitForValue(
+              getTask,
+              result =>
+                result.task.runtimeHandle?.connectionEventSubscriptions?.some(
+                  item =>
+                    item.subscription_key === `${MARKER}_workflow` &&
+                    item.status === 'delivered' &&
+                    item.operation_id
+                ),
+              'A received event must enter the existing message queue before the busy turn finishes',
+              30000
+            )
+            assert.equal((await getTask()).task.running, true)
+            assert.equal(
+              completed.has('workflow'),
+              false,
+              'The queued event must not interrupt the active turn'
+            )
+            releaseBusy()
+          }
           if (phase === 'human')
             await human.verifyPending(
               control,
@@ -477,10 +534,12 @@ export function createDesktopScenario(options) {
           )
         )
       } finally {
+        releaseBusy()
         await human.cleanup(control)
       }
     },
     cleanup() {
+      releaseBusy()
       human.release()
     },
     diagnostics() {

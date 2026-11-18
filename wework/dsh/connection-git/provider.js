@@ -1,4 +1,4 @@
-import { readWorkflowRun } from './workflow-run.js'
+import { readCiRun } from './ci-run.js'
 import { createTrackedCollector } from './tracked.js'
 import { createHash } from 'node:crypto'
 import { createGitSourceReader } from './source-read.js'
@@ -104,23 +104,28 @@ export function createProvider(platform) {
           )
             throw invalid('Repository discovery identity changed')
           for (const object of selection?.monitoredObjects ?? []) {
-            const details =
-              object.entityKind === 'workflow_run'
-                ? await readWorkflowRun(
-                    ctx,
-                    { profile, repository: name, number: object.number },
-                    { parseProfile, invalid }
-                  )
-                : await ctx.git.read({
-                    operation: 'object',
+            const details = ['workflow_run', 'pipeline'].includes(object.entityKind)
+              ? await readCiRun(
+                  ctx,
+                  {
+                    platform,
                     profile,
-                    instance: identity.instance,
                     repository: name,
-                    ...object,
-                  })
+                    repositoryId: row.id,
+                    number: object.number,
+                  },
+                  { parseProfile, invalid }
+                )
+              : await ctx.git.read({
+                  operation: 'object',
+                  profile,
+                  instance: identity.instance,
+                  repository: name,
+                  ...object,
+                })
             if (
               details.data?.[
-                object.entityKind === 'workflow_run'
+                ['workflow_run', 'pipeline'].includes(object.entityKind)
                   ? 'id'
                   : platform === 'github'
                     ? 'number'
@@ -707,6 +712,8 @@ function normalizePersonal(platform, source, stream, row, at, digest) {
 function canonicalTopic(platform, instance, repository, kind, number, url) {
   if (platform === 'github' && kind === 'workflow_run' && number && repository)
     return `${instance}/${repository}/actions/runs/${number}`
+  if (platform === 'gitlab' && kind === 'pipeline' && number && repository)
+    return `${instance}/${repository}/-/pipelines/${number}`
   if (['issue', 'change_request'].includes(kind) && number && repository)
     return `${instance}/${repository}/${platform === 'github' ? (kind === 'issue' ? 'issues' : 'pull') : kind === 'issue' ? '-/issues' : '-/merge_requests'}/${number}`
   if (typeof url === 'string') {

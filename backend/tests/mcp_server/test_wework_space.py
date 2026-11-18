@@ -28,6 +28,7 @@ from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
 from app.models.user import User
 from app.services import collaboration_manager_decisions
+from app.services.board_tools import candidates
 from app.services.issue_assignments import issue_assignment_service
 from app.services.project_automation_execution import project_automation_execution
 from app.services.project_incoming_hooks import project_incoming_hook_service
@@ -36,8 +37,13 @@ from tests.utils.collaboration import authorize_project, authorize_project_agent
 
 @pytest.mark.parametrize("name", ["list_board_items", "search_board_items"])
 def test_issue_query_tool_descriptions_distinguish_personal_tasks(name: str) -> None:
-    tool = getattr(wework_space, name)
-    description = tool._mcp_tool_info["description"]
+    if name == "search_board_items":
+        from app.services.board_tools.protocol import TOOLS
+
+        description = TOOLS[name]["description"]
+    else:
+        tool = getattr(wework_space, name)
+        description = tool._mcp_tool_info["description"]
 
     assert "Issues (事项)" in description
     assert "distinct from personal tasks and conversations" in description
@@ -392,6 +398,10 @@ def test_current_context_resolves_space_and_item_from_authenticated_task(
     assert context["space_id"] == str(project.id)
     assert context["item_id"] == item.id
     assert context["space"]["name"] == "Managed board"
+    assert context["space_ref"] == {
+        "project_store": "backend",
+        "space_id": str(project.id),
+    }
     assert context["item"]["title"] == "Bound board task"
 
 
@@ -406,7 +416,7 @@ def test_project_details_expose_assignable_members(
     test_db.commit()
     monkeypatch.setattr(wework_space, "SessionLocal", lambda: _SessionContext(test_db))
     monkeypatch.setattr(
-        wework_space.project_chat_service,
+        candidates.project_chat_service,
         "list_agents",
         lambda *_args, **_kwargs: [
             SimpleNamespace(

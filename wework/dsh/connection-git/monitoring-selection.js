@@ -11,9 +11,11 @@ export function monitoringMetadata(platform, value, { fingerprint, invalid }) {
       typeof object !== 'object' ||
       Array.isArray(object) ||
       Object.keys(object).some(key => !['entityKind', 'number'].includes(key)) ||
-      !['issue', 'change_request', ...(platform === 'github' ? ['workflow_run'] : [])].includes(
-        object.entityKind
-      ) ||
+      ![
+        'issue',
+        'change_request',
+        ...(platform === 'github' ? ['workflow_run'] : ['pipeline']),
+      ].includes(object.entityKind) ||
       !Number.isSafeInteger(object.number) ||
       object.number < 1
     )
@@ -26,7 +28,7 @@ export function monitoringMetadata(platform, value, { fingerprint, invalid }) {
   const monitoredObjects = [...unique.values()].sort(
     (a, b) => a.entityKind.localeCompare(b.entityKind) || a.number - b.number
   )
-  const groups = ['change_request', 'issue', 'workflow_run'].flatMap(kind => {
+  const groups = ['change_request', 'issue', 'workflow_run', 'pipeline'].flatMap(kind => {
     const numbers = monitoredObjects
       .filter(object => object.entityKind === kind)
       .map(
@@ -36,11 +38,13 @@ export function monitoringMetadata(platform, value, { fingerprint, invalid }) {
       ? [
           (kind === 'workflow_run'
             ? 'Workflow runs '
-            : kind === 'issue'
-              ? 'Issues '
-              : platform === 'github'
-                ? 'PRs '
-                : 'MRs ') + numbers.join(', '),
+            : kind === 'pipeline'
+              ? 'Pipelines '
+              : kind === 'issue'
+                ? 'Issues '
+                : platform === 'github'
+                  ? 'PRs '
+                  : 'MRs ') + numbers.join(', '),
         ]
       : []
   })

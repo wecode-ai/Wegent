@@ -17,14 +17,16 @@ export async function withCloudRuntimeRequest(cloudEnvironment, verify) {
     forceNew: true,
     timeout: DEFAULT_STEP_TIMEOUT_MS,
   })
-  const request = async (method, params, deviceId) => {
-    const ack = await socket.timeout(DEFAULT_STEP_TIMEOUT_MS).emitWithAck('runtime:request', {
+  const requestAck = (method, params, deviceId) =>
+    socket.timeout(DEFAULT_STEP_TIMEOUT_MS).emitWithAck('runtime:request', {
       type: 'request',
       id: randomUUID(),
       device_id: deviceId,
       method,
       params,
     })
+  const request = async (method, params, deviceId) => {
+    const ack = await requestAck(method, params, deviceId)
     assert.equal(ack.ok, true, ack.error?.message)
     return ack.result?.__runtimeRpcEncoding === 'gzip+base64+json'
       ? JSON.parse(gunzipSync(Buffer.from(ack.result.payload, 'base64')).toString('utf8'))
@@ -36,7 +38,7 @@ export async function withCloudRuntimeRequest(cloudEnvironment, verify) {
       socket.once('connect_error', reject)
       socket.connect()
     })
-    return await verify(request)
+    return await verify(request, requestAck)
   } finally {
     socket.disconnect()
   }
