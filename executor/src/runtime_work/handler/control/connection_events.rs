@@ -92,7 +92,7 @@ impl RuntimeWorkRpcHandler {
         {
             persisted["cloud_cancel_pending"] = json!(true);
         }
-        event_store::update(
+        let projected = event_store::update_and_read(
             &self.event_subscription_path(),
             event_store::Scope::Row("operations", id),
             |state| {
@@ -112,19 +112,14 @@ impl RuntimeWorkRpcHandler {
                 state["operations"][id] = persisted;
                 Ok(())
             },
-        )?;
-        let subscriptions = event_store::read(
-            &self.event_subscription_path(),
             event_store::Scope::TaskProjection(record["task_id"].as_str().unwrap_or_default()),
-            |state| {
-                Ok(state["operations"]
-                    .as_object()
-                    .unwrap()
-                    .values()
-                    .cloned()
-                    .collect::<Vec<_>>())
-            },
         )?;
+        let subscriptions = projected["operations"]
+            .as_object()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
         if let Some(task) = record["task_id"].as_str() {
             let mut changed = false;
             self.store.update_task(task, |link| {

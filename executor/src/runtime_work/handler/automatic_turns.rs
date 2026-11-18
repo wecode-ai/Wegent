@@ -497,7 +497,7 @@ mod tests {
                 .as_deref(),
             Some("awaitingUserReply")
         );
-        let phase = crate::workbench_control::journal::transact(&path, |state| {
+        let phase = super::control::connection_events::store::transact(&path, |state| {
             Ok(state["operations"]["source"]["native_event_phase"].clone())
         })
         .unwrap();

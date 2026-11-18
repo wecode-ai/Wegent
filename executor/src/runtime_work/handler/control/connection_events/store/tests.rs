@@ -167,3 +167,53 @@ fn activation_preserves_a_batch_already_captured_by_another_collector() {
         pending
     );
 }
+
+#[test]
+fn failed_projection_rolls_back_subscription_and_collector_reference() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("events.sqlite");
+    transact(&path, |state| {
+        state["observations"]["source"] = json!({"events":[]});
+        for id in ["first", "second"] {
+            state["operations"][id] =
+                json!({"task_id":"task","observation_id":"source","status":"armed"});
+        }
+        Ok(())
+    })
+    .unwrap();
+    open(&path)
+        .unwrap()
+        .execute(
+            "UPDATE records SET metadata='invalid' WHERE section='operations' AND id='second'",
+            [],
+        )
+        .unwrap();
+    update_and_read(
+        &path,
+        Scope::Row("operations", "first"),
+        |state| {
+            state["operations"]["first"]["status"] = json!("cancelled");
+            Ok(())
+        },
+        Scope::TaskProjection("task"),
+    )
+    .unwrap_err();
+    assert_eq!(
+        read(&path, Scope::Row("operations", "first"), |state| Ok(state
+            ["operations"]["first"]["status"]
+            .clone()))
+        .unwrap(),
+        "armed"
+    );
+    assert_eq!(
+        open(&path)
+            .unwrap()
+            .query_row(
+                "SELECT consumers FROM records WHERE section='observations' AND id='source'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        2
+    );
+}

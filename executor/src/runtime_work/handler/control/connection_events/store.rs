@@ -192,16 +192,12 @@ pub(super) fn read<T>(
     query(&load(&connection, scope)?)
 }
 
-pub(super) fn update<T>(
-    path: &Path,
+fn edit<T>(
+    transaction: &Transaction<'_>,
     scope: Scope<'_>,
     update: impl FnOnce(&mut Value) -> Result<T, AppIpcError>,
 ) -> Result<T, AppIpcError> {
-    let mut connection = open(path)?;
-    let transaction = connection
-        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
-        .map_err(storage)?;
-    let mut state = load(&transaction, scope)?;
+    let mut state = load(transaction, scope)?;
     let original = state.clone();
     let result = update(&mut state)?;
     for section in ["operations", "observations", "observers"] {
@@ -210,7 +206,7 @@ pub(super) fn update<T>(
             .ok_or_else(|| storage("Invalid connection event section"))?;
         for (id, record) in rows {
             if original[section].get(id) != Some(record) {
-                save(&transaction, section, id, record)?;
+                save(transaction, section, id, record)?;
             }
         }
         for id in original[section]
@@ -227,8 +223,37 @@ pub(super) fn update<T>(
                 .map_err(storage)?;
         }
     }
+    Ok(result)
+}
+
+pub(super) fn update<T>(
+    path: &Path,
+    scope: Scope<'_>,
+    update: impl FnOnce(&mut Value) -> Result<T, AppIpcError>,
+) -> Result<T, AppIpcError> {
+    let mut connection = open(path)?;
+    let transaction = connection
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(storage)?;
+    let result = edit(&transaction, scope, update)?;
     transaction.commit().map_err(storage)?;
     Ok(result)
+}
+
+pub(super) fn update_and_read(
+    path: &Path,
+    scope: Scope<'_>,
+    update: impl FnOnce(&mut Value) -> Result<(), AppIpcError>,
+    projection: Scope<'_>,
+) -> Result<Value, AppIpcError> {
+    let mut connection = open(path)?;
+    let transaction = connection
+        .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+        .map_err(storage)?;
+    edit(&transaction, scope, update)?;
+    let projected = load(&transaction, projection)?;
+    transaction.commit().map_err(storage)?;
+    Ok(projected)
 }
 
 #[cfg(test)]
