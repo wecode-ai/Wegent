@@ -241,6 +241,7 @@ export function TemporaryChatPanel({
     deleteAttachment: services.attachmentApi?.deleteAttachment,
     scopeKey: instanceId,
   })
+  const { captureAttachmentsForScope } = attachmentSelection
   const [localAddress, setAddress] = useState<RuntimeTaskAddress | null>(initialAddress)
   const address = controlledAddress === undefined ? localAddress : controlledAddress
   const requestUserInputHost = useRuntimeInteractionInputHost(address, coordinateUserInput)
@@ -873,7 +874,7 @@ export function TemporaryChatPanel({
       if (!transactionalDraft) setInput('')
       setTrialGuide(null)
 
-      const currentAttachments = sideChatProjectChat.attachments
+      const currentAttachments = captureAttachmentsForScope(instanceId)
       const initialGoal = goalDraftActive
         ? runtimeGoalCreateInput({
             objective: message,
@@ -1122,6 +1123,8 @@ export function TemporaryChatPanel({
       busy,
       conversationQueue,
       sideChatProjectChat,
+      captureAttachmentsForScope,
+      instanceId,
       selectedModelFields,
       runtimeContext,
       sendQueuedMessageAsGuidance,

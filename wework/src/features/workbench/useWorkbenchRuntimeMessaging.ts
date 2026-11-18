@@ -22,7 +22,11 @@ import {
   isWeWorkCompatibleDevice,
 } from '@/lib/device-capabilities'
 import { isSameModelSelection } from '@/lib/model-ui'
-import { localRuntimeAttachments, remoteAttachmentIds } from '@/lib/runtime-attachments'
+import {
+  resolvePreparingAttachments,
+  localRuntimeAttachments,
+  remoteAttachmentIds,
+} from '@/lib/runtime-attachments'
 import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import {
@@ -157,10 +161,12 @@ export async function prepareRuntimeAttachmentsForDevice(
   attachments: Attachment[] = [],
   uploadLocalAttachmentToCloud?: (attachment: Attachment) => Promise<Attachment>
 ): Promise<RuntimeAttachmentTransport> {
+  attachments = await resolvePreparingAttachments(attachments)
+  attachmentIds = [...new Set([...attachmentIds, ...remoteAttachmentIds(attachments)])]
   const device = devices.find(item => item.device_id === deviceId)
   const usesRemoteFilesystem = device?.device_type === 'cloud' || device?.device_type === 'remote'
   if (!usesRemoteFilesystem || attachments.length === 0) {
-    return { attachmentIds, attachments }
+    return { attachmentIds, attachments: localRuntimeAttachments(attachments) }
   }
 
   return prepareCloudAttachments(attachments, uploadLocalAttachmentToCloud, attachmentIds)
