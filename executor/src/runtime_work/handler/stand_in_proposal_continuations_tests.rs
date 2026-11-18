@@ -557,3 +557,225 @@ async fn immediate_owner_admission_survives_crash_before_link_generation_write()
         Some(new_owner)
     );
 }
+
+fn stamped_replacement(
+    handler: &RuntimeWorkRpcHandler,
+    identity: &StandInMcpIdentity,
+) -> SpawnTurnRequest {
+    let mut turn = handler.turn_scheduler.lock().unwrap().queued_turns[0].clone();
+    apply_runtime_payload_metadata(
+        &mut turn.request,
+        &json!({"commandId":"replacement-owner","message":"A replacement owner request"}),
+    );
+    handler
+        .stamp_stand_in_owner_request(&identity.task_id, &mut turn.request, false)
+        .unwrap();
+    turn
+}
+
+fn cancelled_owner(owner: &Value) -> Value {
+    let mut cancelled = owner.clone();
+    cancelled["cancelled"] = json!(true);
+    cancelled
+}
+
+#[tokio::test]
+async fn same_owner_cancellation_merges_with_journal_and_late_false_projection() {
+    let (_root, handler, identity) = fixture();
+    let owner = owner_input(&handler, &identity, "owner").await;
+    handler
+        .cancel_stand_in_owner_request(&identity.task_id, &owner)
+        .unwrap();
+    assert_eq!(
+        handler.current_stand_in_owner_request(&identity.task_id),
+        Some(cancelled_owner(&owner))
+    );
+    handler.record_stand_in_owner_admission(&identity.task_id, &owner);
+    handler
+        .cancel_stand_in_owner_request(&identity.task_id, &owner)
+        .unwrap();
+    assert_eq!(
+        handler.current_stand_in_owner_request(&identity.task_id),
+        Some(cancelled_owner(&owner))
+    );
+    assert_eq!(
+        handler
+            .local_task_link(&identity.task_id)
+            .unwrap()
+            .runtime_handle[OWNER],
+        cancelled_owner(&owner)
+    );
+}
+
+#[tokio::test]
+async fn same_revision_conflicting_owner_identity_remains_rejected() {
+    let (_root, handler, identity) = fixture();
+    let owner = owner_input(&handler, &identity, "owner").await;
+    for field in ["id", "unexpected_identity_field"] {
+        let mut conflicting = cancelled_owner(&owner);
+        conflicting[field] = json!("another-identity");
+        handler.store.update_task(&identity.task_id, |link| {
+            link.runtime_handle[OWNER] = conflicting.clone()
+        });
+        handler.record_stand_in_owner_admission(&identity.task_id, &owner);
+        handler
+            .cancel_stand_in_owner_request(&identity.task_id, &owner)
+            .unwrap();
+        assert_eq!(
+            handler.current_stand_in_owner_request(&identity.task_id),
+            None
+        );
+        assert_eq!(
+            handler
+                .local_task_link(&identity.task_id)
+                .unwrap()
+                .runtime_handle[OWNER],
+            conflicting
+        );
+    }
+}
+
+#[tokio::test]
+async fn cancelling_owner_does_not_consume_an_already_stamped_replacement_revision() {
+    let (_root, handler, identity) = fixture();
+    let owner = owner_input(&handler, &identity, "owner").await;
+    let replacement = stamped_replacement(&handler, &identity);
+    let next_owner = replacement.request.extra[OWNER].clone();
+    assert_eq!(
+        next_owner["revision"],
+        owner["revision"].as_u64().unwrap() + 1
+    );
+    handler
+        .cancel_stand_in_owner_request(&identity.task_id, &owner)
+        .unwrap();
+    assert_eq!(
+        handler.current_stand_in_owner_request(&identity.task_id),
+        Some(cancelled_owner(&owner))
+    );
+    handler
+        .persist_turn_queue(VecDeque::new(), None, &[replacement])
+        .await
+        .unwrap();
+    assert_eq!(
+        handler.current_stand_in_owner_request(&identity.task_id),
+        Some(next_owner)
+    );
+}
+
+#[tokio::test]
+async fn cancelling_old_preparation_preserves_journal_only_and_published_replacement() {
+    let (_root, handler, identity) = fixture();
+    let owner = owner_input(&handler, &identity, "owner").await;
+    let replacement = stamped_replacement(&handler, &identity);
+    let next_owner = replacement.request.extra[OWNER].clone();
+    handler
+        .persist_turn_queue(VecDeque::new(), None, &[replacement])
+        .await
+        .unwrap();
+    handler.store.update_task(&identity.task_id, |link| {
+        link.runtime_handle[OWNER] = owner.clone();
+        link.runtime_handle["executionRequest"][OWNER] = owner.clone();
+    });
+    assert_eq!(
+        handler
+            .local_task_link(&identity.task_id)
+            .unwrap()
+            .runtime_handle["executionRequest"][OWNER],
+        owner
+    );
+    handler
+        .cancel_stand_in_owner_request(&identity.task_id, &owner)
+        .unwrap();
+    assert_eq!(
+        handler.current_stand_in_owner_request(&identity.task_id),
+        Some(next_owner.clone())
+    );
+    handler.record_stand_in_owner_admission(&identity.task_id, &next_owner);
+    handler
+        .cancel_stand_in_owner_request(&identity.task_id, &owner)
+        .unwrap();
+    assert_eq!(
+        handler.current_stand_in_owner_request(&identity.task_id),
+        Some(next_owner.clone())
+    );
+    assert_eq!(
+        handler
+            .local_task_link(&identity.task_id)
+            .unwrap()
+            .runtime_handle[OWNER],
+        next_owner
+    );
+}
+
+#[tokio::test]
+async fn journal_only_owner_cancellation_survives_restart_and_revokes_proposal_resume() {
+    let (root, mut handler, identity) = fixture();
+    let owner = owner_input(&handler, &identity, "owner").await;
+    let draft = proposal(&handler, &identity, true);
+    let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+    store
+        .resolve_stand_in_proposal(7, "mac", draft["id"].as_str().unwrap(), true, None)
+        .unwrap();
+    handler.store.update_task(&identity.task_id, |link| {
+        link.runtime_handle[OWNER] = Value::Null;
+        link.runtime_handle["executionRequest"][OWNER] = Value::Null;
+    });
+    handler.turn_scheduler.lock().unwrap().queued_turns.clear();
+    assert_eq!(
+        handler.current_stand_in_owner_request(&identity.task_id),
+        Some(owner.clone())
+    );
+    handler
+        .invalidate_stand_in_owner_request(&identity.task_id)
+        .unwrap();
+    let saved =
+        super::super::turns::read_runtime_turn_state(handler.turn_queue_path.as_ref()).unwrap();
+    handler.store = RuntimeWorkStore::new(root.path().join("runtime.json"));
+    handler.command_journal = Arc::new(Mutex::new(saved.commands));
+    handler.turn_scheduler.lock().unwrap().queued_turns = saved.queued_turns;
+    assert_eq!(
+        handler.current_stand_in_owner_request(&identity.task_id),
+        Some(cancelled_owner(&owner))
+    );
+    let before = handler.turn_scheduler.lock().unwrap().queued_turns.len();
+    handler
+        .flush_stand_in_proposal_continuations()
+        .await
+        .unwrap();
+    assert_eq!(
+        handler.turn_scheduler.lock().unwrap().queued_turns.len(),
+        before
+    );
+    assert!(store
+        .pending_stand_in_proposal_continuations("mac")
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn cancelling_journal_owner_projects_over_an_older_link_without_identity_change() {
+    let (_root, handler, identity) = fixture();
+    let owner = owner_input(&handler, &identity, "owner").await;
+    let replacement = stamped_replacement(&handler, &identity);
+    let next_owner = replacement.request.extra[OWNER].clone();
+    handler
+        .persist_turn_queue(VecDeque::new(), None, &[replacement])
+        .await
+        .unwrap();
+    handler.store.update_task(&identity.task_id, |link| {
+        link.runtime_handle[OWNER] = owner.clone();
+        link.runtime_handle["executionRequest"][OWNER] = owner;
+    });
+    handler
+        .invalidate_stand_in_owner_request(&identity.task_id)
+        .unwrap();
+    assert_eq!(
+        handler.current_stand_in_owner_request(&identity.task_id),
+        Some(cancelled_owner(&next_owner))
+    );
+    handler.record_stand_in_owner_admission(&identity.task_id, &next_owner);
+    assert_eq!(
+        handler.current_stand_in_owner_request(&identity.task_id),
+        Some(cancelled_owner(&next_owner))
+    );
+}

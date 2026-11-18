@@ -283,7 +283,7 @@ function issueExecutionAddress(
   issueId: string,
   projectStore: CloudProject['project_store']
 ): RuntimeTaskAddress {
-  const issueExecution = { projectId, issueId, ...(projectStore ? { projectStore } : {}) }
+  const issueExecution = { projectId, issueId }
   return collaborationTaskAddress(
     {
       deviceId: binding.device_id,
@@ -303,11 +303,7 @@ function workspaceExecutionAddress(
   issueId: string,
   projectStore: CloudProject['project_store']
 ): RuntimeTaskAddress {
-  const issueExecution = {
-    projectId: binding.projectId,
-    issueId,
-    ...(projectStore ? { projectStore } : {}),
-  }
+  const issueExecution = { projectId: binding.projectId, issueId }
   return collaborationTaskAddress(
     {
       deviceId: binding.deviceId,

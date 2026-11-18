@@ -6,18 +6,6 @@ afterEach(() => {
 })
 
 describe('runtime task navigation', () => {
-  test.each(['local', 'backend'] as const)('retains the %s Issue return target', projectStore => {
-    const address = {
-      deviceId: 'device',
-      taskId: 'task',
-      issueExecution: { projectId: 'project', issueId: 'issue', projectStore },
-    }
-    const route = buildRuntimeTaskRoute(address)
-    expect(parseRuntimeTaskRoute('/runtime-tasks', route.slice(route.indexOf('?')))).toEqual(
-      address
-    )
-  })
-
   test('round-trips cloud Issue execution authorization context', () => {
     const route = buildRuntimeTaskRoute({
       deviceId: 'cloud-device',

@@ -3,6 +3,7 @@
 import assert from 'node:assert/strict'
 import { test, vi } from 'vitest'
 import { ensureExperimentalFeaturesEnabled } from '../e2e/desktop/modules/preferences-automation-flows.mjs'
+import { setExperimentalFeatures } from '../e2e/desktop/modules/harness-app-fixture.mjs'
 
 const TOGGLE_TEST_ID = 'general-experimental-features-toggle'
 const TOGGLE = `[data-testid="${TOGGLE_TEST_ID}"]`
@@ -88,4 +89,46 @@ test('reads a matching live preference again without toggling it', async () => {
   assert.equal(control.profile.experimentalFeaturesEnabled, true)
   assert.equal(control.toggles, 0)
   assert.equal(control.command.mock.calls.filter(([action]) => action === 'getAttribute').length, 2)
+})
+
+test('does not leave Settings after the optimistic toggle changes until its save finishes', async () => {
+  let checked = true
+  let saving = false
+  let returned = false
+  let completeSaving
+  const saved = new Promise(resolve => {
+    completeSaving = () => {
+      saving = false
+      resolve()
+    }
+  })
+  const control = {
+    async command(action, selector, options) {
+      if (action === 'navigate') return
+      if (action === 'getAttribute') return String(checked)
+      if (action === 'click') {
+        checked = false
+        saving = true
+        return
+      }
+      assert.equal(action, 'waitFor')
+      if (options.enabled && saving) await saved
+    },
+  }
+  const applying = setExperimentalFeatures(control, false, 10000).then(() => {
+    returned = true
+  })
+  await new Promise(resolve => setImmediate(resolve))
+  try {
+    assert.equal(checked, false)
+    assert.equal(
+      returned,
+      false,
+      'The dependent Applications assertion ran before preference persistence'
+    )
+  } finally {
+    completeSaving()
+  }
+  await applying
+  assert.equal(returned, true)
 })

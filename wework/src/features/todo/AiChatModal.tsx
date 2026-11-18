@@ -223,11 +223,7 @@ export function AiChatModal({
       currentAddress && issueId
         ? {
             ...currentAddress,
-            issueExecution: {
-              projectId: String(project.id),
-              issueId,
-              projectStore: project.project_store,
-            },
+            issueExecution: { projectId: String(project.id), issueId },
             ...(project.project_store === 'backend'
               ? { projectSession: { projectId: String(project.id), issueId } }
               : {}),

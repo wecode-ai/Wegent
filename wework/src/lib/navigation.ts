@@ -1,4 +1,3 @@
-import type { RuntimeTaskAddress } from '@/types/api'
 import { getRuntimeConfig } from '@/config/runtime'
 import type { DesktopAppKey } from '@/components/layout/DesktopAppSwitcher'
 import { resolveDshApp } from '@/features/dsh-runtime/dshApps'
@@ -65,7 +64,7 @@ export interface RuntimeTaskRoute {
   deviceId: string
   taskId: string
   workspacePath?: string | null
-  issueExecution?: RuntimeTaskAddress['issueExecution']
+  issueExecution?: { projectId: string; issueId: string }
   projectSession?: { projectId: string; issueId: string }
 }
 
@@ -94,21 +93,14 @@ export function parseRuntimeTaskRoute(path: string, search = ''): RuntimeTaskRou
 
   const issueProjectId = getRequiredSearchParam(searchParams, 'issueProjectId')
   const issueId = getRequiredSearchParam(searchParams, 'issueId')
-  const projectStore = searchParams.get('issueProjectStore')
-  const issueExecution: RuntimeTaskRoute['issueExecution'] =
-    issueProjectId && issueId
-      ? {
-          projectId: issueProjectId,
-          issueId,
-          ...(projectStore === 'local' || projectStore === 'backend' ? { projectStore } : {}),
-        }
-      : undefined
+  const issueExecution =
+    issueProjectId && issueId ? { projectId: issueProjectId, issueId } : undefined
   return {
     deviceId,
     taskId: taskIdParam,
     ...(issueExecution ? { issueExecution } : {}),
     ...(issueExecution && searchParams.get('projectSession') === '1'
-      ? { projectSession: { projectId: issueExecution.projectId, issueId: issueExecution.issueId } }
+      ? { projectSession: issueExecution }
       : {}),
   }
 }
@@ -120,9 +112,6 @@ export function buildRuntimeTaskRoute(address: RuntimeTaskRouteInput): string {
   if (address.issueExecution) {
     searchParams.set('issueProjectId', address.issueExecution.projectId)
     searchParams.set('issueId', address.issueExecution.issueId)
-    if (address.issueExecution.projectStore) {
-      searchParams.set('issueProjectStore', address.issueExecution.projectStore)
-    }
     if (address.projectSession) searchParams.set('projectSession', '1')
   }
   return `/runtime-tasks?${searchParams.toString()}`
