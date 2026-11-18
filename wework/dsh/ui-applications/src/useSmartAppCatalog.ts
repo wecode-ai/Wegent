@@ -12,6 +12,11 @@ import { harnessAppsApi, type HarnessAppInstallation } from '@/api/local/harness
 import { stripAppBasePath } from '@/config/runtime'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getSmartAppErrorMessage } from '@/lib/smart-app-error-message'
+import {
+  toBrowserPath,
+  WORKSPACE_NAVIGATION_EVENT,
+  type WorkspaceNavigationDetail,
+} from '@/lib/navigation'
 
 interface CatalogOwner {
   api: SmartAppsApi | null
@@ -201,14 +206,26 @@ export function useSmartAppCatalog({ api, mode, query, source, tag }: CatalogOwn
       const params = new URLSearchParams(window.location.search)
       if (
         stripAppBasePath(window.location.pathname) === '/sites' &&
-        params.get('app_type') === 'smart_app'
+        params.get('app_type') === 'smart_app' &&
+        (params.get('view') === 'owned' ? 'owned' : 'marketplace') === mode
       ) {
         void refresh()
       }
     }
+    const activate = (event: Event) => {
+      const { contentRoute } = (event as CustomEvent<WorkspaceNavigationDetail>).detail
+      // Changed routes refresh through popstate; reselecting the current route does not emit it.
+      if (toBrowserPath(contentRoute) === `${window.location.pathname}${window.location.search}`) {
+        reenter()
+      }
+    }
     window.addEventListener('popstate', reenter)
-    return () => window.removeEventListener('popstate', reenter)
-  }, [refresh])
+    window.addEventListener(WORKSPACE_NAVIGATION_EVENT, activate)
+    return () => {
+      window.removeEventListener('popstate', reenter)
+      window.removeEventListener(WORKSPACE_NAVIGATION_EVENT, activate)
+    }
+  }, [mode, refresh])
 
   const loadError = [local.error, cloud.error].filter(Boolean).join(' ')
   return {

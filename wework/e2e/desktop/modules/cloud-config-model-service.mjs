@@ -4,6 +4,7 @@ import { lstat, mkdir, readFile, readlink, rm, writeFile } from 'node:fs/promise
 import { createServer } from 'node:http'
 import { join } from 'node:path'
 import { rejectModelWebSocketUpgrade } from './reject-model-upgrade.mjs'
+import { cloudConfigNativeLauncher } from './cloud-config-native-process.mjs'
 import {
   assistantMessage,
   createSse,
@@ -41,7 +42,6 @@ export function createCloudConfigModelService({ readUsage } = {}) {
   let codexHome
   let nativeHome
   let unavailable = false
-  let bootstrapBundles = 0
   let bundleFailures = 0
   let bundleSuccesses = 0
   let accountChecks = 0
@@ -91,12 +91,11 @@ export function createCloudConfigModelService({ readUsage } = {}) {
           return
         }
         if (request.url?.endsWith('/config/bundle')) {
-          if (unavailable && bootstrapBundles === 0) {
+          if (unavailable) {
             bundleFailures += 1
             response.writeHead(503, { 'content-type': 'application/json' })
             response.end(JSON.stringify({ error: 'Model subscription service unavailable' }))
           } else {
-            bootstrapBundles = Math.max(0, bootstrapBundles - 1)
             bundleSuccesses += 1
             response.writeHead(200, { 'content-type': 'application/json' })
             response.end('{}')
@@ -108,6 +107,21 @@ export function createCloudConfigModelService({ readUsage } = {}) {
       })
       server.listen(0, '127.0.0.1')
       await once(server, 'listening')
+      const baseUrl = `http://127.0.0.1:${server.address().port}/backend-api/`
+      const wrapper = join(
+        codexHome,
+        process.platform === 'win32' ? 'codex-cloud.cmd' : 'codex-cloud'
+      )
+      await writeFile(
+        wrapper,
+        cloudConfigNativeLauncher({
+          binary: appEnvironment.CODEX_BINARY_PATH,
+          baseUrl,
+        }),
+        { mode: 0o755 }
+      )
+      appEnvironment.CODEX_BINARY_PATH = wrapper
+      appEnvironment.CODEX_BIN = wrapper
 
       nativeHome = join(appEnvironment.HOME, '.codex')
       await mkdir(nativeHome, { recursive: true })
@@ -149,7 +163,7 @@ export function createCloudConfigModelService({ readUsage } = {}) {
       const config = await readFile(configPath, 'utf8')
       await writeFile(
         configPath,
-        `openai_base_url = "${control.url}/backend-api/codex"\nchatgpt_base_url = "http://127.0.0.1:${server.address().port}/backend-api/"\n${config}`
+        `openai_base_url = "${control.url}/backend-api/codex"\nchatgpt_base_url = "${baseUrl}"\n${config}`
       )
     },
     attachServer(modelServer) {
@@ -159,10 +173,9 @@ export function createCloudConfigModelService({ readUsage } = {}) {
     },
     async failBundle() {
       unavailable = true
-      // Codex first loads bootstrap settings, then installs its long-lived cloud
-      // loader. Drop the service between those two real requests so the configured
-      // local origin survives and the second loader caches the genuine failure.
-      bootstrapBundles = 1
+      // The CLI override keeps the isolated subscription origin through native
+      // default-config fallback. Every loader sees the same unavailable service,
+      // including background processes that start before the intentional restart.
       // This is solely the isolated fixture's Codex cache. A cold process must
       // consult the failing service instead of reusing an identity-matched bundle.
       await rm(join(codexHome, 'cloud-config-bundle-cache.json'), { force: true })

@@ -1,9 +1,12 @@
 import { ApiError } from '@/api/http'
 import type { SmartAppMarketplaceItem, SmartAppsApi } from '@/api/smartApps'
+import { runDesktopControlClient } from '@/e2e/automation'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { notifyHarnessAppInstallationsChanged } from '@/features/harness-apps/harnessAppInstallationsChanged'
 import { openHarnessAppTab } from '@/features/harness-apps/harnessAppTabs'
 import { localHarnessModelOptionKey } from '@/features/local-harness/localHarnessModels'
 import type { UnifiedModel } from '@/types/api'
+import { installDshUiTestContributions } from '@/test/setup.dom'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import JSZip from 'jszip'
 import { beforeEach, describe, expect, onTestFinished, test, vi } from 'vitest'
@@ -36,7 +39,10 @@ vi.mock('@/hooks/useTranslation', () => {
   const translate = (_key: string, fallback?: string) => fallback ?? _key
   return { useTranslation: () => ({ t: translate, i18n: { language: 'zh-CN' } }) }
 })
-vi.mock('@/lib/navigation', () => ({ navigateTo: (path: string) => navigateTo(path) }))
+vi.mock('@/lib/navigation', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/navigation')>()),
+  navigateTo: (path: string) => navigateTo(path),
+}))
 vi.mock('@/lib/local-terminal', () => ({
   getLocalExecutorDeviceId: () => getLocalExecutorDeviceId(),
   revealLocalFile: (path: string) => revealLocalFile(path),
@@ -208,7 +214,15 @@ const importedInstallation = {
 }
 
 describe('SmartAppsMarketplacePage', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    await installDshUiTestContributions(
+      {
+        [WEWORK_DSH_SLOTS.route]: [
+          { id: 'applications.sites', path: '/sites', telemetryFeature: 'sites' },
+        ],
+      },
+      {}
+    )
     window.history.replaceState({}, '', '/')
     workbenchModels.current = [harnessModel]
     vi.mocked(openHarnessAppTab).mockClear()
@@ -289,6 +303,103 @@ describe('SmartAppsMarketplacePage', () => {
     }
   )
 
+  test.each(['', '/wework/app'])(
+    'installs both releases when desktop automation reenters the active marketplace under "%s"',
+    async appBasePath => {
+      const route = '/sites?app_type=smart_app'
+      window.__WEWORK_RUNTIME_CONFIG__ = { ...window.__WEWORK_RUNTIME_CONFIG__, appBasePath }
+      window.history.replaceState({}, '', `${appBasePath}${route}`)
+      let published = item({ version: '1.0.0' })
+      let installations: Array<
+        typeof importedInstallation & { smartAppId: number; releaseId: number }
+      > = []
+      listInstalled.mockImplementation(async () => installations)
+      const smartAppsApi = api()
+      vi.mocked(smartAppsApi.listMarketplace).mockImplementation(async () => ({
+        items: [published],
+      }))
+      vi.mocked(smartAppsApi.getDownload).mockImplementation(async () => ({
+        smartAppId: published.id,
+        releaseId: published.latestReleaseId,
+        version: published.version,
+        filename: 'research.zip',
+        downloadUrl: 'https://download.test/research.zip',
+        sha256: 'a'.repeat(64),
+        sizeBytes: 1024,
+        expiresAt: '2026-08-20T00:10:00Z',
+      }))
+      downloadPackage.mockImplementation(async () => ({
+        valid: true,
+        archivePath: '/tmp/research.zip',
+        sha256: 'a'.repeat(64),
+        manifest: { ...importedInstallation.manifest, version: published.version },
+        issues: [],
+      }))
+      installPackage.mockImplementation(async (_path, modelKey, association) => {
+        const installation = {
+          ...importedInstallation,
+          id: 'market-7',
+          modelKey,
+          manifest: { ...importedInstallation.manifest, version: published.version },
+          ...association,
+        }
+        installations = [installation]
+        return installation
+      })
+      render(
+        <div data-workspace-tab-content="marketplace" aria-hidden="false">
+          <SmartAppsMarketplacePage api={smartAppsApi} />
+        </div>
+      )
+      fireEvent.click(await screen.findByTestId('smart-app-marketplace-install-7'))
+      fireEvent.click(await screen.findByTestId('harness-app-install-confirm'))
+      await screen.findByTestId('harness-app-start-market-7')
+      expect(installations[0]).toMatchObject({ releaseId: 17, manifest: { version: '1.0.0' } })
+      published = item({ latestReleaseId: 18, version: '2.0.0' })
+      const navigation =
+        await vi.importActual<typeof import('@/lib/navigation')>('@/lib/navigation')
+      navigateTo.mockImplementation(navigation.navigateTo)
+      let delivered = false
+      const results: Array<{ ok: boolean; error?: string }> = []
+      vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+        if (url.includes('/commands?')) {
+          if (delivered) return new Response(null, { status: 410 })
+          delivered = true
+          return new Response(
+            JSON.stringify({
+              id: 'reenter-marketplace',
+              action: 'navigate',
+              selector: 'body',
+              value: route,
+            })
+          )
+        }
+        if (url.endsWith('/results')) results.push(JSON.parse(String(init?.body)))
+        return new Response('{}')
+      })
+      onTestFinished(() => vi.unstubAllGlobals())
+      await act(async () => runDesktopControlClient('http://127.0.0.1:43111', 'main'))
+      expect(results).toEqual([expect.objectContaining({ ok: true })])
+      expect(await screen.findByTestId('smart-app-marketplace-install-7')).toHaveTextContent('更新')
+      expect(screen.getByTestId('smart-app-marketplace-item-7')).toHaveTextContent('v2.0.0')
+      fireEvent.click(screen.getByTestId('smart-app-marketplace-install-7'))
+      expect(await screen.findByTestId('harness-app-preview')).toHaveTextContent('2.0.0')
+      fireEvent.click(screen.getByTestId('harness-app-install-confirm'))
+      await screen.findByTestId('harness-app-start-market-7')
+      expect(installPackage).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          archivePath: '/tmp/research.zip',
+          manifest: expect.objectContaining({ version: '2.0.0' }),
+        }),
+        localHarnessModelOptionKey(harnessModel),
+        { smartAppId: 7, releaseId: 18 }
+      )
+      expect(installations[0]).toMatchObject({ releaseId: 18, manifest: { version: '2.0.0' } })
+      expect(smartAppsApi.listMarketplace).toHaveBeenCalledTimes(4)
+    }
+  )
+
   test.each(['/wework/app-other/sites?app_type=smart_app'])(
     'does not refresh Smart apps for unrelated route "%s"',
     async route => {
@@ -308,6 +419,62 @@ describe('SmartAppsMarketplacePage', () => {
       expect(listInstalled).toHaveBeenCalledTimes(1)
     }
   )
+
+  test.each([
+    '/sites?app_type=smart_app&view=owned',
+    '/sites?app_type=plugin',
+    '/wework/app-other/sites?app_type=smart_app',
+  ])('ignores activation outside the marketplace owner at "%s"', async route => {
+    const smartAppsApi = api()
+    render(<SmartAppsMarketplacePage api={smartAppsApi} />)
+    await screen.findByTestId('smart-app-marketplace-item-7')
+    const navigation = await vi.importActual<typeof import('@/lib/navigation')>('@/lib/navigation')
+    window.history.replaceState({}, '', route)
+
+    await act(async () => navigation.navigateTo(route))
+
+    expect(smartAppsApi.listMarketplace).toHaveBeenCalledTimes(1)
+    expect(listInstalled).toHaveBeenCalledTimes(1)
+  })
+
+  test.each(['marketplace', 'owned'] as const)(
+    'refreshes only the active %s catalog when both owners are retained',
+    async mode => {
+      const marketplaceApi = api()
+      const ownedApi = api()
+      const route = `/sites?app_type=smart_app${mode === 'owned' ? '&view=owned' : ''}`
+      window.history.replaceState({}, '', route)
+      render(
+        <>
+          <SmartAppsMarketplacePage api={marketplaceApi} />
+          <SmartAppsMarketplacePage api={ownedApi} mode="owned" />
+        </>
+      )
+      await screen.findByTestId('smart-app-marketplace-item-7')
+      await waitFor(() => expect(ownedApi.listOwned).toHaveBeenCalledTimes(1))
+      const navigation =
+        await vi.importActual<typeof import('@/lib/navigation')>('@/lib/navigation')
+
+      await act(async () => navigation.navigateTo(route))
+
+      expect(marketplaceApi.listMarketplace).toHaveBeenCalledTimes(mode === 'marketplace' ? 2 : 1)
+      expect(ownedApi.listOwned).toHaveBeenCalledTimes(mode === 'owned' ? 2 : 1)
+      expect(listInstalled).toHaveBeenCalledTimes(3)
+    }
+  )
+
+  test('refreshes once through popstate when navigation changes the route', async () => {
+    window.history.replaceState({}, '', '/sites?app_type=smart_app&view=owned')
+    const smartAppsApi = api()
+    render(<SmartAppsMarketplacePage api={smartAppsApi} />)
+    await screen.findByTestId('smart-app-marketplace-item-7')
+    const navigation = await vi.importActual<typeof import('@/lib/navigation')>('@/lib/navigation')
+
+    await act(async () => navigation.navigateTo('/sites?app_type=smart_app'))
+
+    expect(smartAppsApi.listMarketplace).toHaveBeenCalledTimes(2)
+    expect(listInstalled).toHaveBeenCalledTimes(2)
+  })
 
   test('downloads an authorized package from the detail view', async () => {
     const smartAppsApi = api()

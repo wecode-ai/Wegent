@@ -74,7 +74,7 @@ function AccountStandInWorkspace({
   const [reentry, setReentry] = useState(0)
   const refreshKey = (entryRequestKey ?? 0) + reentry
   useEffect(() => {
-    if (embedded || !active || contentRoute !== '/stand-in') return
+    if (embedded || !active) return
     const onNavigate = (event: Event) => {
       if ((event as CustomEvent<WorkspaceNavigationDetail>).detail?.contentRoute === contentRoute)
         setReentry(current => current + 1)
@@ -100,13 +100,15 @@ function AccountStandInWorkspace({
   const notificationOwnerMatches = !query.get('userId') || query.get('userId') === String(ownerId)
   const deviceId = target?.deviceId
   const [roleLocation, setRoleLocation] = useState<
-    { deviceId: string; roleId?: string; settings?: boolean } | undefined
+    | { deviceId: string; roleId?: string; settings?: boolean; settingsRequestKey?: string }
+    | undefined
   >(() =>
     query.get('profileId') && query.get('profileId') !== '@primary' && query.get('deviceId')
       ? {
           deviceId: query.get('deviceId')!,
           roleId: query.get('profileId')!,
           settings: true,
+          settingsRequestKey: query.get('settingsRequest') ?? undefined,
         }
       : undefined
   )
@@ -140,19 +142,24 @@ function AccountStandInWorkspace({
   const [attempt, setAttempt] = useState(0)
   const [projects, setProjects] = useState<CollaborationProject[]>([])
   const overview = useRef<Pick<StandInSettingsHandle, 'requestLeave'>>(null)
-  const previousEntry = useRef(JSON.stringify([contentRoute, entryRequestKey]))
+  const previousEntry = useRef(JSON.stringify([contentRoute, refreshKey]))
   useEffect(() => {
-    const entry = JSON.stringify([contentRoute, entryRequestKey])
+    const entry = JSON.stringify([contentRoute, refreshKey])
     if (previousEntry.current === entry || !deviceId) return
     previousEntry.current = entry
     const params = new URLSearchParams(contentRoute.split('?')[1] ?? '')
     const roleId = params.get('profileId') ?? undefined
     const next = roleId && roleId !== '@primary' ? (params.get('deviceId') ?? deviceId) : deviceId
     const change = () =>
-      setRoleLocation({ deviceId: next, roleId, settings: !!params.get('settingsRequest') })
-    if (overview.current) overview.current.requestLeave(change)
+      setRoleLocation({
+        deviceId: next,
+        roleId,
+        settings: params.has('profileId') || params.has('settingsRequest'),
+        settingsRequestKey: entry,
+      })
+    if (next !== selectedDevice && overview.current) overview.current.requestLeave(change)
     else change()
-  }, [contentRoute, entryRequestKey, deviceId])
+  }, [contentRoute, refreshKey, deviceId, selectedDevice])
   const api = useMemo(
     () =>
       createWeworkPlatformApi(
@@ -378,9 +385,13 @@ function AccountStandInWorkspace({
             entryRequestKey={entryRequestKey}
             entryRoute={contentRoute}
             settingsRequestKey={
-              roleLocation?.settings || routeMatches
-                ? (query.get('settingsRequest') ?? undefined)
-                : undefined
+              roleLocation
+                ? roleLocation.settings
+                  ? roleLocation.settingsRequestKey
+                  : undefined
+                : routeMatches
+                  ? (query.get('settingsRequest') ?? undefined)
+                  : undefined
             }
             initialWorkView={query.get('view') === 'scheduled' ? 'scheduled' : 'work'}
             onSelectLocation={(next, roleId, settings) => {

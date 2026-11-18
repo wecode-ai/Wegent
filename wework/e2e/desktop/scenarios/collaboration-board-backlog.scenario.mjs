@@ -6,6 +6,7 @@ import assert from 'node:assert/strict'
 import { dragBoardCard, waitForBoardValue } from '../modules/collaboration-board-flows.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { createCollaborationBoardIssue } from '../modules/collaboration-board-issue.mjs'
+import { verifyBaseBoardStatusGrouping } from '../modules/base-board-status-grouping.mjs'
 import {
   configureFirstProjectExecutionEnvironment,
   createLocalCollaborationProject,
@@ -185,6 +186,14 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       })
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await selectCollaborationDomain(control, CONTENT, 'cloud')
+      await verifyBaseBoardStatusGrouping({
+        control,
+        request,
+        project,
+        scoped,
+        openBoard: openCloud,
+        uiTimeoutMs,
+      })
       await openCloud(control)
       const [backlog, design, develop] = await createView(control)
       const saved = await request(`/api/v1/cloud-projects/${project.id}`)

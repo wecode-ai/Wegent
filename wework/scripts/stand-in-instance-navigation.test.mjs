@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
-import { createElement, useEffect, useState } from 'react'
+import { createElement, Fragment, useEffect, useState } from 'react'
 import { act, cleanup, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { stopBoundStandIn } from '../e2e/desktop/modules/stand-in-instance-flows.mjs'
 import { installWeworkAutomationBridge, runDesktopControlClient } from '../src/e2e/automation'
@@ -10,6 +11,7 @@ import { labels } from '../src/features/workspace-tabs/workspaceTabsTestLabels'
 import { CloudConnectionContext } from '../src/features/cloud-connection/CloudConnectionContext'
 import { PersonalStandInWorkspace } from '../src/features/todo/PersonalStandInWorkspace'
 import { StandInOverviewPage } from '../src/features/todo/StandInOverviewPage'
+import { newStandInRole } from '../src/api/personalStandIn'
 import * as runtimeEnvironment from '../src/lib/runtime-environment'
 import * as clipboard from '../src/e2e/clipboard'
 import '../src/i18n'
@@ -26,6 +28,7 @@ const fixedTabs = [
   { id: 'fixed-task', kind: 'task', title: labels.task, contentRoute: '/', fixed: true },
   { id: 'fixed-board', kind: 'board', title: labels.board, contentRoute: '/todo', fixed: true },
 ]
+const devices = []
 const performanceDescriptor = Object.getOwnPropertyDescriptor(
   performance,
   'setResourceTimingBufferSize'
@@ -63,7 +66,12 @@ afterEach(() => {
 function boundInstance({ reportStopped = true } = {}) {
   const target = { userId: 7, deviceId: 'remote-executor', backendUrl: 'https://cloud.test' }
   let binding = { status: 'active', version: 3, target }
-  const settings = { userId: 7, executionDeviceId: target.deviceId, version: 1, roles: [] }
+  const settings = {
+    userId: 7,
+    executionDeviceId: target.deviceId,
+    version: 1,
+    roles: [newStandInRole(target.deviceId, 'reviewer')],
+  }
   const api = {
     binding: vi.fn(async (_device, operation = 'get', version) => {
       if (operation === 'get') return binding
@@ -86,6 +94,8 @@ function boundInstance({ reportStopped = true } = {}) {
       return { ...settings, lifecycle: { status: 'stopped' } }
     }),
     personalGet: vi.fn(async () => settings),
+    personalSave: vi.fn(),
+    memories: vi.fn(async () => []),
     onboarding: vi.fn(async () => ({ state: { version: 1, completed: false } })),
     completeOnboarding: vi.fn(),
     connectionProviders: vi.fn(async () => ({ items: [] })),
@@ -105,30 +115,44 @@ function boundInstance({ reportStopped = true } = {}) {
     assert.deepEqual(params, { operation: 'get' })
     return reportStopped ? binding : { ...binding, status: 'active' }
   })
-  return { api, services, target, getBinding: () => binding }
+  return { api, services, settings, target, getBinding: () => binding }
 }
 
 function OwnedStandInHost({ fixture }) {
   const tabs = useWorkspaceTabs()
   fixture.tabs = tabs
+  const taskActive = tabs.activeTabId === 'fixed-task'
+  const [taskVisited, setTaskVisited] = useState(taskActive)
+  if (taskActive && !taskVisited) setTaskVisited(true)
+  const task = tabs.tabs.find(tab => tab.id === 'fixed-task')
   // Fixed native board and task surfaces retain their host identity across routes.
-  if (tabs.activeTabId === 'fixed-board')
-    return createElement(StandInOverviewPage, {
-      services: fixture.services,
-      userId: 7,
-      api: {},
-      devices: [],
-      projects: [],
-      initialDeviceId: fixture.target.deviceId,
-    })
-  return createElement(PersonalStandInWorkspace, {
-    services: fixture.services,
-    user: { id: 7 },
-    devices: [],
-    active: true,
-    contentRoute: tabs.activeTab.contentRoute,
-    onClose: () => {},
-  })
+  return createElement(
+    Fragment,
+    null,
+    taskVisited &&
+      createElement(
+        'div',
+        { hidden: !taskActive, 'aria-hidden': !taskActive },
+        createElement(PersonalStandInWorkspace, {
+          services: fixture.services,
+          user: { id: 7 },
+          devices,
+          active: taskActive,
+          contentRoute: task.contentRoute,
+          entryRequestKey: fixture.entryRequestKeyForRoute?.(task.contentRoute),
+          onClose: () => {},
+        })
+      ),
+    !taskActive &&
+      createElement(StandInOverviewPage, {
+        services: fixture.services,
+        userId: 7,
+        api: {},
+        devices,
+        projects: [],
+        initialDeviceId: fixture.target.deviceId,
+      })
+  )
 }
 
 function WorkspaceHost({ fixture }) {
@@ -209,6 +233,147 @@ test('the original stop helper opens the bound profile through the workspace nav
   expect(fixture.getBinding()).toEqual({ status: 'stopped', version: 5, target: fixture.target })
   expect(fixture.api.completeOnboarding).not.toHaveBeenCalled()
   expect(control.commands.filter(command => command.action === 'navigate')).toHaveLength(1)
+})
+
+test.each([true, false])(
+  'opens primary settings in a retained task with onboarding completed=%s',
+  async completed => {
+    window.history.replaceState({}, '', '/stand-in?workspaceTab=fixed-task')
+    const fixture = boundInstance()
+    fixture.api.onboarding.mockResolvedValue({ state: { version: 1, completed } })
+    render(createElement(WorkspaceHost, { fixture }))
+    const overview = await screen.findByTestId('stand-in-overview')
+    expect(screen.queryByTestId('stand-in-instance-stop')).not.toBeInTheDocument()
+    const control = desktopControl()
+
+    await control.command('navigate', 'body', { value: '/stand-in?profileId=@primary' })
+
+    expect(fixture.tabs.activeTabId).toBe('fixed-task')
+    expect(screen.getByTestId('stand-in-overview')).toBe(overview)
+    expect(screen.queryByTestId('stand-in-primary-profile')).toBeInTheDocument()
+    expect(screen.queryByTestId('stand-in-instance-stop')).toBeInTheDocument()
+    await stopBoundStandIn(control, 1000)
+    expect(fixture.getBinding().status).toBe('stopped')
+  }
+)
+
+test('returns from the board to the retained primary workspace without replacing its overview', async () => {
+  window.history.replaceState({}, '', '/stand-in?workspaceTab=fixed-task')
+  const fixture = boundInstance()
+  fixture.api.onboarding.mockResolvedValue({ state: { version: 1, completed: true } })
+  render(createElement(WorkspaceHost, { fixture }))
+  const overview = await screen.findByTestId('stand-in-overview')
+  act(() => fixture.tabs.selectTab('fixed-board'))
+  const control = desktopControl()
+
+  await control.command('navigate', 'body', { value: '/stand-in?profileId=@primary' })
+
+  expect(fixture.tabs.activeTabId).toBe('fixed-task')
+  expect(screen.getByTestId('stand-in-overview')).toBe(overview)
+  expect(screen.getByTestId('stand-in-primary-profile')).toBeInTheDocument()
+  await stopBoundStandIn(control, 1000)
+  expect(fixture.getBinding().status).toBe('stopped')
+})
+
+test.each([false, true])(
+  'keeps the same draft and guards a role route once with layout entry keys=%s',
+  async layoutEntryKeys => {
+    window.history.replaceState({}, '', '/stand-in?profileId=@primary&workspaceTab=fixed-task')
+    const fixture = boundInstance()
+    if (layoutEntryKeys)
+      fixture.entryRequestKeyForRoute = vi.fn(route =>
+        route === '/stand-in?profileId=reviewer' ? 1 : 0
+      )
+    render(createElement(WorkspaceHost, { fixture }))
+    const user = userEvent.setup()
+    const field = await screen.findByTestId('stand-in-preferences')
+    await user.type(field, 'Keep this primary draft')
+    const control = desktopControl()
+
+    await control.command('navigate', 'body', { value: '/stand-in?profileId=@primary' })
+    expect(screen.getByTestId('stand-in-preferences')).toBe(field)
+    expect(field).toHaveValue('Keep this primary draft')
+    expect(screen.queryByTestId('stand-in-primary-discard')).not.toBeInTheDocument()
+
+    const readsBeforeRole = fixture.api.binding.mock.calls.length
+    await control.command('navigate', 'body', { value: '/stand-in?profileId=reviewer' })
+    if (layoutEntryKeys) expect(fixture.api.binding).toHaveBeenCalledTimes(readsBeforeRole + 1)
+    await user.click(await screen.findByTestId('stand-in-primary-keep-editing'))
+    expect(screen.getByTestId('stand-in-preferences')).toBe(field)
+    expect(field).toHaveValue('Keep this primary draft')
+    expect(screen.queryByTestId('stand-in-role-name')).not.toBeInTheDocument()
+
+    await control.command('navigate', 'body', { value: '/stand-in?profileId=reviewer' })
+    if (layoutEntryKeys) expect(fixture.api.binding).toHaveBeenCalledTimes(readsBeforeRole + 2)
+    await user.click(await screen.findByTestId('stand-in-primary-discard'))
+    expect(await screen.findByTestId('stand-in-role-name')).toBeInTheDocument()
+    expect(screen.queryByTestId('stand-in-primary-discard')).not.toBeInTheDocument()
+    expect(fixture.getBinding().target).toBe(fixture.target)
+    expect(fixture.api.binding.mock.calls.every(call => !call[1])).toBe(true)
+    expect(fixture.api.personalSave).not.toHaveBeenCalled()
+    if (layoutEntryKeys)
+      expect(fixture.entryRequestKeyForRoute).toHaveBeenCalledWith('/stand-in?profileId=reviewer')
+  }
+)
+
+test('preserves a dirty memory panel until a retained profile request is confirmed', async () => {
+  window.history.replaceState({}, '', '/stand-in?profileId=@primary&workspaceTab=fixed-task')
+  const fixture = boundInstance()
+  render(createElement(WorkspaceHost, { fixture }))
+  const user = userEvent.setup()
+  await user.click(await screen.findByTestId('stand-in-memory-open'))
+  await user.click(await screen.findByTestId('stand-in-memory-add'))
+  const field = screen.getByTestId('stand-in-memory-content')
+  await user.type(field, 'Keep this memory draft')
+  const control = desktopControl()
+
+  await control.command('navigate', 'body', { value: '/stand-in?profileId=reviewer' })
+  await user.click(await screen.findByTestId('stand-in-memory-keep'))
+  expect(screen.getByTestId('stand-in-memory-content')).toBe(field)
+  expect(field).toHaveValue('Keep this memory draft')
+
+  await control.command('navigate', 'body', { value: '/stand-in?profileId=reviewer' })
+  await user.click(await screen.findByTestId('stand-in-memory-discard'))
+  expect(await screen.findByTestId('stand-in-role-name')).toBeInTheDocument()
+  expect(screen.queryByTestId('stand-in-memory-discard')).not.toBeInTheDocument()
+  expect(fixture.getBinding().target).toBe(fixture.target)
+  expect(fixture.api.personalSave).not.toHaveBeenCalled()
+})
+
+test('guards a different device before opening its role and retains the primary binding', async () => {
+  window.history.replaceState({}, '', '/stand-in?profileId=@primary&workspaceTab=fixed-task')
+  const fixture = boundInstance()
+  fixture.api.personalGet.mockImplementation(async (userId, deviceId) => ({
+    ...fixture.settings,
+    userId,
+    executionDeviceId: deviceId,
+    roles: [newStandInRole(deviceId, 'reviewer')],
+  }))
+  render(createElement(WorkspaceHost, { fixture }))
+  const user = userEvent.setup()
+  const field = await screen.findByTestId('stand-in-preferences')
+  await user.type(field, 'Keep this device draft')
+  const control = desktopControl()
+  const route = '/stand-in?deviceId=second-executor&profileId=reviewer'
+
+  await control.command('navigate', 'body', { value: route })
+  await user.click(await screen.findByTestId('stand-in-primary-keep-editing'))
+  expect(screen.getByTestId('stand-in-preferences')).toBe(field)
+  expect(field).toHaveValue('Keep this device draft')
+  expect(fixture.api.personalGet.mock.calls.some(call => call[1] === 'second-executor')).toBe(false)
+
+  await control.command('navigate', 'body', { value: route })
+  await user.click(await screen.findByTestId('stand-in-primary-discard'))
+  expect(await screen.findByTestId('stand-in-role-name')).toBeInTheDocument()
+  expect(screen.queryByTestId('stand-in-primary-discard')).not.toBeInTheDocument()
+  expect(fixture.api.personalGet).toHaveBeenCalledWith(7, 'second-executor')
+  expect(fixture.getBinding().target).toBe(fixture.target)
+  expect(fixture.api.binding.mock.calls.every(call => !call[1])).toBe(true)
+
+  await control.command('navigate', 'body', { value: '/stand-in?profileId=@primary' })
+  expect(screen.getByTestId('stand-in-primary-profile')).toBeInTheDocument()
+  expect(fixture.getBinding().target).toBe(fixture.target)
+  expect(fixture.api.personalSave).not.toHaveBeenCalled()
 })
 
 test.each([true, false])(

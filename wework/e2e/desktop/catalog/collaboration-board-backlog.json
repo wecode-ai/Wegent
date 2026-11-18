@@ -8,5 +8,9 @@
       "shard": 8,
       "position": 18000
     }
-  }
+  },
+  "paths": [
+    "wework/e2e/desktop/modules/base-board-status-grouping.mjs",
+    "wework/src/features/todo/BaseBoardStatusMigration.test.tsx"
+  ]
 }
