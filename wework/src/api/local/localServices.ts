@@ -3585,14 +3585,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     },
   }
   const runtimeWorkApi = createRuntimeWorkApiFromIpc(
-    async (method, params, _deviceId, requestOptions) => {
-      if (
-        (method === 'runtime.tasks.transcript' || method === 'runtime.tasks.transcript.search') &&
-        (!params?.runtime || params.runtime === 'codex')
-      ) {
-        // Restored sessions may read Codex before model discovery initializes its proxy/catalog.
-        await ensureStatus()
-      }
+    (method, params, _deviceId, requestOptions) => {
       return requestOptions
         ? request(method, params, undefined, requestOptions)
         : request(method, params)

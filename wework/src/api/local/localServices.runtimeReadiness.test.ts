@@ -13,16 +13,6 @@ const status = {
   runtimeInstanceId: 'local-runtime',
 }
 
-function deferred<T>() {
-  let resolve!: (value: T) => void
-  let reject!: (reason: Error) => void
-  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise
-    reject = rejectPromise
-  })
-  return { promise, resolve, reject }
-}
-
 describe('local transcript startup ordering', () => {
   test('preserves advertised event support when adding worktree capabilities', async () => {
     const runtimeFeatures = { schemaVersion: 4, connectionEvents: { protocolVersion: 1 } }
@@ -106,11 +96,16 @@ describe('local transcript startup ordering', () => {
   })
 
   test.each(['read', 'search'] as const)(
-    '%s waits for startup before dispatching',
+    '%s preserves stored history when model preparation is unavailable',
     async operation => {
-      const startup = deferred<typeof status>()
-      const ensure = vi.fn(() => startup.promise)
-      const request = vi.fn().mockResolvedValue({ messages: [] })
+      const ensure = vi.fn(async () => {
+        throw new Error('Model preparation unavailable')
+      })
+      const expected =
+        operation === 'read'
+          ? { messages: [{ content: 'persisted' }] }
+          : { matches: [], totalMatches: 0, isCapped: false }
+      const request = vi.fn().mockResolvedValue(expected)
       const services = createLocalAppServices({
         subscribe: vi.fn().mockResolvedValue(vi.fn()),
         available: async () => status,
@@ -118,15 +113,15 @@ describe('local transcript startup ordering', () => {
         request,
       })
       const address = { deviceId: status.deviceId, taskId: 'persisted-task', runtime: 'codex' }
-      const pending =
+      const response =
         operation === 'read'
-          ? services.runtimeWorkApi!.getRuntimeTranscript(address)
-          : services.runtimeWorkApi!.searchRuntimeTranscript({ ...address, query: 'persisted' })
-
-      await vi.waitFor(() => expect(ensure).toHaveBeenCalledOnce())
-      expect(request).not.toHaveBeenCalled()
-      startup.resolve(status)
-      await pending
+          ? await services.runtimeWorkApi!.getRuntimeTranscript(address)
+          : await services.runtimeWorkApi!.searchRuntimeTranscript({
+              ...address,
+              query: 'persisted',
+            })
+      expect(response).toEqual(expected)
+      expect(ensure).not.toHaveBeenCalled()
       expect(request).toHaveBeenCalledWith(
         operation === 'read' ? 'runtime.tasks.transcript' : 'runtime.tasks.transcript.search',
         expect.objectContaining(address)
@@ -134,7 +129,7 @@ describe('local transcript startup ordering', () => {
     }
   )
 
-  test('default Codex reads wait for the startup catalog restart as well', async () => {
+  test('does not rewrite the model catalog or restart Codex to read stored history', async () => {
     saveLocalModelConfig({
       id: 'restored-model',
       displayName: 'Restored model',
@@ -148,42 +143,25 @@ describe('local transcript startup ordering', () => {
       }),
       catalogReady: false,
     })
-    const restart = deferred<{ restarted: boolean }>()
-    const request = vi.fn().mockImplementation(async (method: string) => {
-      if (method === 'runtime.codex.app_server.restart') return restart.promise
-      return { messages: [] }
-    })
+    const request = vi.fn().mockResolvedValue({ messages: [] })
     const services = createLocalAppServices({
       subscribe: vi.fn().mockResolvedValue(vi.fn()),
       available: async () => status,
       ensure: async () => status,
       request,
     })
-    const pending = services.runtimeWorkApi!.getRuntimeTranscript({
+    await services.runtimeWorkApi!.getRuntimeTranscript({
       deviceId: status.deviceId,
       taskId: 'persisted-task',
     })
-    await vi.waitFor(() =>
-      expect(request).toHaveBeenCalledWith('runtime.codex.app_server.restart', { ifIdle: true })
-    )
-    expect(request.mock.calls.some(([method]) => method === 'runtime.tasks.transcript')).toBe(false)
-    restart.resolve({ restarted: true })
-    await pending
-    expect(request.mock.calls.map(([method]) => method)).toEqual([
-      'runtime.codex.catalog.custom.write',
-      'runtime.codex.app_server.restart',
-      'runtime.tasks.transcript',
-    ])
+    expect(request.mock.calls.map(([method]) => method)).toEqual(['runtime.tasks.transcript'])
   })
 
-  test('startup failure is returned before any transcript is dispatched', async () => {
-    const request = vi.fn()
+  test('preserves transport initialization failures on stored history reads', async () => {
+    const request = vi.fn().mockRejectedValue(new Error('Proxy initialization failed'))
     const services = createLocalAppServices({
       subscribe: vi.fn().mockResolvedValue(vi.fn()),
       available: async () => status,
-      ensure: async () => {
-        throw new Error('Proxy initialization failed')
-      },
       request,
     })
     await expect(
@@ -192,7 +170,6 @@ describe('local transcript startup ordering', () => {
         taskId: 'persisted-task',
       })
     ).rejects.toThrow('Proxy initialization failed')
-    expect(request).not.toHaveBeenCalled()
   })
 })
 
