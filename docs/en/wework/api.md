@@ -59,6 +59,27 @@ These are HTTP API routing IDs, distinct from native Codex thread/turn IDs. A co
 
 Each turn includes only these fields and brief usage guidance; full API instructions remain in this document to avoid repeating them in the context. Wait for the current turn to finish before continuing it, use either `conversation` or `previous_response_id`, and omit device and title. No personal API Keys, login tokens, or model secrets are injected; HTTP calls still require a separately supplied personal API Key.
 
+## Codex input and application context boundary
+
+Desktop, mobile, and cloud-compiled Codex requests share one contract: `prompt` retains the user's text, which the executor converts to `input` for `turn/start` or `turn/steer`; application information travels separately in `additionalContext`. Project references, terminal state, and other application context are no longer concatenated into user text.
+
+Preserve `kind: application` for application context and `kind: untrusted` for external source content. Never promote external content into application instructions. Models still read project details through authorized tools. Context fields grant no permissions. The pinned Codex 0.169.1 renders `application` as developer messages and `untrusted` as separate `function_call_output` items in the `agent` namespace; neither is concatenated into user text.
+
+```mermaid
+sequenceDiagram
+    participant C as Desktop or mobile
+    participant B as Backend (cloud path)
+    participant E as Executor
+    participant X as Codex
+    C->>B: message + additionalContext
+    B->>E: prompt = message, separate additionalContext
+    C->>E: Local path: prompt = message, separate additionalContext
+    E->>X: input = user text, additionalContext = typed context
+    X-->>C: Native user messages and execution results
+```
+
+Message display, search, and transcripts no longer parse or hide `<application_context>`. Historical messages and user-authored tags with that name are treated as ordinary text. Attachments and explicit references keep their existing paths. Claude retains its dedicated context transport.
+
 ## Create a task
 
 Call `/devices` to select a device, then `/models` to get a model `id`. The device list uses the same personal API key and returns:
