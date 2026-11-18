@@ -136,7 +136,10 @@ pub(super) async fn terminal_on(
     Ok(effects)
 }
 
-async fn save_message(tx: &mut impl MysqlTransaction, message: &Message) -> MysqlResult<()> {
+pub(super) async fn save_message(
+    tx: &mut impl MysqlTransaction,
+    message: &Message,
+) -> MysqlResult<()> {
     tx.execute("UPDATE project_chat_messages SET content=?,status=?,message_type=?,metadata=?,updated_at=? WHERE id=?",(message.content.as_str(),message.status.as_str(),message.message_type.as_str(),Json(&message.metadata.0),message.updated_at,message.id)).await?;
     Ok(())
 }

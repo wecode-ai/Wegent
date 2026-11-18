@@ -27,7 +27,7 @@ test('keeps normal Electron launches unchanged', () => {
   )
 })
 
-test('runs the GPU service in-process for isolated root Electron E2E', () => {
+test('preserves the default GPU process boundary for isolated root Electron E2E', () => {
   assert.deepEqual(
     resolveElectronLaunchArguments({
       platform: 'linux',
@@ -35,7 +35,7 @@ test('runs the GPU service in-process for isolated root Electron E2E', () => {
       isolatedXvfb: 'true',
       verboseLoggingArguments: [],
     }),
-    ['--no-sandbox', '--disable-gpu', '--in-process-gpu', '--disable-dev-shm-usage']
+    ['--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage']
   )
 })
 
@@ -60,7 +60,6 @@ test('keeps scenario arguments for every platform', () => {
     [
       '--no-sandbox',
       '--disable-gpu',
-      '--in-process-gpu',
       '--disable-dev-shm-usage',
       '--proxy-server=http://127.0.0.1:18080',
     ]

@@ -184,3 +184,39 @@ async fn verify(mysql: &MysqlService) -> anyhow::Result<()> {
     );
     Ok(())
 }
+
+#[tokio::test]
+#[ignore = "requires disposable loopback MySQL; invoked by Backend Rust CI"]
+async fn receipt_uses_the_deployed_schema() -> anyhow::Result<()> {
+    crate::migrations::mysql_tests::isolated(async |mysql| {
+        crate::migrations::mysql_tests::seed_collaboration(mysql).await?;
+        let (schema,): (String,) = mysql.fetch_one("SELECT DATABASE()", ()).await?;
+        let address = std::env::var("WEGENT_TEST_MYSQL_ADDRESS")?;
+        let writers = MysqlService::connect_lazy_with_options(
+            &format!("mysql://root@{address}/{schema}?ssl-mode=disabled"),
+            brz_mysql::MysqlServiceOptions::default().with_max_connections(2),
+        )?;
+        let original = record("production-schema-review", "root");
+        let barrier = tokio::sync::Barrier::new(2);
+        let concurrent = async || writers.with_transaction(async |mut tx| {
+            // Establish both snapshots before either writer wins the Issue
+            // lock. Replay must read the winner's committed receipt.
+            let _: Vec<(String,)> = tx.fetch_all("SELECT id FROM loop_items WHERE id='root'", ()).await?;
+            barrier.wait().await;
+            v2::repository::append(tx, "1001", 7, &original).await
+        }).await;
+        let (first, second) = tokio::join!(concurrent(), concurrent());
+        let saved = first?.expect("first valid receipt");
+        assert_eq!(saved, second?.expect("concurrent replay"));
+        assert_eq!(
+            saved,
+            append(mysql, 7, &original)
+                .await
+                .expect("idempotent replay")
+        );
+        let (count,): (i64,) = mysql.fetch_one("SELECT COUNT(*) FROM loop_items WHERE resource_type='comment' AND JSON_EXTRACT(metadata,'$.event_type')='metric_evidence'",()).await?;
+        assert_eq!(count, 1);
+        Ok(())
+    })
+    .await
+}

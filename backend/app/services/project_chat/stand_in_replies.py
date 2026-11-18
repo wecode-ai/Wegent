@@ -20,6 +20,7 @@ from app.services.loop_item_status_history import (
 )
 from app.services.loop_item_unread import advance_content_revision
 from app.services.loop_items.task_bindings import active_task_binding_query
+from app.services.project_chat.message_provenance import shared_project_chat_message
 from app.services.project_chat.service import project_chat_service
 from shared.telemetry.decorators import trace_sync
 
@@ -57,6 +58,13 @@ def _dispatch_endpoint_belongs_to(
     except ValueError:
         return False
     return endpoint_owner == user_id
+
+
+def _public_reply_view(db: Session, row: ProjectChatMessage) -> ProjectChatMessageView:
+    view = project_chat_service.to_view(row, db=db)
+    return ProjectChatMessageView.model_validate(
+        shared_project_chat_message(view.model_dump(mode="json", by_alias=True))
+    )
 
 
 @trace_sync("stand_in.public_issue_reply", tracer_name="backend.project_chat")
@@ -120,7 +128,7 @@ def publish_stand_in_reply(
             raise HTTPException(
                 409, "The public message identity already has different content"
             )
-        return project_chat_service.to_view(existing, db=db)
+        return _public_reply_view(db, existing)
     message_id = str(uuid.uuid4())
     metadata = dict(item.metadata_json or {})
     policy = metadata.get("assistant_autonomy_policy")
@@ -184,6 +192,9 @@ def publish_stand_in_reply(
             "role_id": identity.role_id,
             "message_id": identity.message_id,
             "human_assignment_id": identity.human_assignment_id,
+            "binding_id": bindings[0].id,
+            "device_id": bindings[0].device_id,
+            "task_id": bindings[0].task_id,
         },
     }
     if auto_publish:
@@ -239,4 +250,4 @@ def publish_stand_in_reply(
     project_chat_service._queue_loop_item_change(db, item)
     project_chat_service._commit(db)
     db.refresh(row)
-    return project_chat_service.to_view(row, db=db)
+    return _public_reply_view(db, row)

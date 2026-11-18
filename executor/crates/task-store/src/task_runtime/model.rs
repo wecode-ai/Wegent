@@ -345,7 +345,7 @@ fn default_mcp_servers() -> Value {
     Value::Object(Default::default())
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LocalComment {
     #[serde(default)]
     pub actor_user_id: Option<String>,

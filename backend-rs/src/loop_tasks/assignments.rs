@@ -88,6 +88,7 @@ pub(super) async fn list_assignments(
     let mut result = list_assignment_items(&state.mysql, item_id, current_user).await?;
     for item in &mut result.items {
         if let Some(receipt) = item.dispatch_receipt.as_mut() {
+            super::assignment_receipts::project_delivery(state, receipt).await?;
             super::assignment_receipts::project_device_wait(state, receipt).await;
         }
     }

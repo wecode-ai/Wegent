@@ -1,3 +1,4 @@
+import { modelApplicationContextText } from './application-context-model.mjs'
 import assert from 'node:assert/strict'
 import { issueCommentFormSelector } from './issue-comment-selectors.mjs'
 import { readFile } from 'node:fs/promises'
@@ -288,7 +289,10 @@ export function createBoardReplyModelRegression({
       const text = latestModelInputText(body)
       if (!active && linkedIssueTask) {
         const { projectId, issue, held, requests } = linkedIssueTask
-        assert.ok(text.includes(`[projectSpaceIssue]`), 'The linked Task lost its Issue context')
+        const context = modelApplicationContextText(body, 'projectSpaceIssue')
+        assert.ok(context.includes(projectId), 'The linked Task lost its project context')
+        assert.ok(context.includes(issue.id), 'The linked Task lost its Issue context')
+        assert.ok(context.includes(issue.title), 'The linked Task lost its contextual Issue title')
         assert.ok(
           text.includes(`wework-issue://${projectId}/${issue.id}`),
           'The linked Task lost its Issue reference'

@@ -28,6 +28,7 @@ impl RuntimeWorkRpcHandler {
         routing.routes.insert(
             child.to_owned(),
             RuntimeThreadEventRoute {
+                goal_model_route: None,
                 local_task_id,
                 request,
                 event_mapper,
@@ -246,6 +247,7 @@ impl RuntimeWorkRpcHandler {
                 routing.routes.insert(
                     child_thread_id.clone(),
                     RuntimeThreadEventRoute {
+                        goal_model_route: None,
                         local_task_id: local_task_id.clone(),
                         request,
                         event_mapper: event_mapper.clone(),

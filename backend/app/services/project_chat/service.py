@@ -991,6 +991,7 @@ class ProjectChatService:
         user_name: str,
         request: ProjectChatSend,
         assistant_source: AssistantPublicationSource | None = None,
+        commit: bool = True,
     ) -> ProjectChatWriteResult:
         project = self._require_scope(
             db,
@@ -1024,7 +1025,12 @@ class ProjectChatService:
                     status.HTTP_409_CONFLICT,
                     "client_message_id already belongs to another conversation",
                 )
-            expected_publication = self._assistant_publication(assistant_source_binding)
+            expected_publication = self._assistant_publication(
+                assistant_source_binding,
+                requires_confirmation=bool(
+                    assistant_source and assistant_source.requires_confirmation
+                ),
+            )
             if (existing.metadata_json or {}).get(
                 "assistant_publication"
             ) != expected_publication:
@@ -1050,7 +1056,8 @@ class ProjectChatService:
         }
         if assistant_source_binding is not None:
             metadata["assistant_publication"] = self._assistant_publication(
-                assistant_source_binding
+                assistant_source_binding,
+                requires_confirmation=assistant_source.requires_confirmation,
             )
         if request.mentions and all(
             mention.type == "user" for mention in request.mentions
@@ -1148,7 +1155,10 @@ class ProjectChatService:
                 )
                 item.version += 1
                 self._queue_loop_item_change(db, item)
-        self._commit(db)
+        if commit:
+            self._commit(db)
+        else:
+            db.flush()
         db.refresh(row)
         return ProjectChatWriteResult(self.to_view(row, db=db), created=True)
 
@@ -1183,12 +1193,15 @@ class ProjectChatService:
         return binding
 
     @staticmethod
-    def _assistant_publication(binding: LoopItemTaskBinding | None) -> dict | None:
+    def _assistant_publication(
+        binding: LoopItemTaskBinding | None, *, requires_confirmation: bool = False
+    ) -> dict | None:
         if binding is None:
             return None
         return {
-            "verified": True,
-            "published_by": "human",
+            "verified": not requires_confirmation,
+            **({"source_verified": True} if requires_confirmation else {}),
+            "published_by": "ai" if requires_confirmation else "human",
             "binding_id": binding.id,
             "device_id": binding.device_id,
             "task_id": binding.task_id,
@@ -2948,10 +2961,22 @@ class ProjectChatService:
 
         metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
         publication = metadata.get("assistant_publication")
+        stand_in = metadata.get("stand_in")
+        if (
+            row.sender_type == "agent"
+            and isinstance(stand_in, dict)
+            and stand_in.get("binding_id")
+            and type(stand_in.get("user_id")) is int
+            and stand_in["user_id"] > 0
+        ):
+            publication = {**stand_in, "verified": True}
         runtime_device_id, runtime_task_id = row.runtime_device_id, row.runtime_task_id
         if not (runtime_device_id and runtime_task_id):
             runtime_device_id, runtime_task_id = None, None
-            if isinstance(publication, dict) and publication.get("verified") is True:
+            if isinstance(publication, dict) and (
+                publication.get("verified") is True
+                or publication.get("source_verified") is True
+            ):
                 device_id, task_id = publication.get("device_id"), publication.get(
                     "task_id"
                 )

@@ -6,6 +6,8 @@ mod activity;
 mod admission;
 #[path = "robot_authority.rs"]
 pub(crate) mod authority;
+#[path = "robot_managed.rs"]
+pub(crate) mod managed;
 #[path = "robot_model.rs"]
 pub(crate) mod model;
 #[path = "robot_projection.rs"]
@@ -130,6 +132,7 @@ async fn scan(app: &AppState, context: &JobContext) -> Result<Value> {
     let stalled = state::stalled(app).await?;
     wake::cancels(app, &stalled).await;
     admission::prepare(app).await?;
+    managed::prepare(app).await?;
     #[derive(FromMysqlRow)]
     struct Count {
         queued: u64,

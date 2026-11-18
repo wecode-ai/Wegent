@@ -80,7 +80,8 @@ export async function waitForCatalogRestart(control, executorLogPath, fromOffset
       confirmed = true
     }
     const log = (await readFile(executorLogPath, 'utf8')).slice(fromOffset)
-    if (!confirmation && catalogRestartCompleted(log)) {
+    const editorOpen = snapshot.testIds.includes('codex-catalog-editor-dialog')
+    if (!confirmation && !editorOpen && catalogRestartCompleted(log)) {
       return
     }
     await new Promise(resolve => setTimeout(resolve, 100))

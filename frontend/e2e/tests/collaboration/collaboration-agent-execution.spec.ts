@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { initializeProjectExecutionEnvironment } from '../../utils/issue-dispatch-test-support'
+import { createProjectChatClient } from '../../../../packages/chat-core/src/project-chat'
 import { selectCollaborationProjectView } from '../../utils/collaboration-test-support'
 import {
   authHeaders,
@@ -182,6 +183,116 @@ test.describe('Collaboration agent execution', () => {
     await expect(page.getByTestId('cloud-project-header')).toBeVisible()
     await capture(page, testInfo, 'wegent-01-workspace-project-agents')
     await executeAndAssertCase(page, request, projectId, agentCase, testInfo)
+  })
+
+  test('runs a managed Chat Team and continues its original persisted Task', async ({
+    page,
+    request,
+  }) => {
+    const projectId = project!.id
+    const prompt = `${TEST_PREFIX} MANAGED_CHAT_FIRST_TURN`
+    const followup = `${TEST_PREFIX} MANAGED_CHAT_SECOND_TURN`
+    configuredPrompts.add(prompt)
+    configuredPrompts.add(followup)
+    await configureToolScenario(request, prompt, [{ responseContent: 'MANAGED_CHAT_FIRST_RESULT' }])
+    await configureToolScenario(request, followup, [
+      { responseContent: 'MANAGED_CHAT_SECOND_RESULT' },
+    ])
+    const agent = await apiRequest<CollaborationAgent>(
+      request,
+      `/api/v1/cloud-projects/${projectId}/chat-agents`,
+      {
+        method: 'POST',
+        data: {
+          runtime: 'wegent',
+          wegent_team_id: resources.teamId,
+          name: `${TEST_PREFIX} managed Chat`,
+        },
+      }
+    )
+    const issue = await apiRequest<CollaborationIssue>(request, '/api/v1/loop-items', {
+      method: 'POST',
+      data: { cloud_project_id: projectId, title: prompt, description: prompt, status: 'pending' },
+    })
+    await page.goto(
+      `/collaboration/workspaces/${workspace!.id}/projects/${projectId}/issues/${issue.id}`
+    )
+    await page.getByTestId('cloud-todo-detail-assignee').click()
+    const saved = page.waitForResponse(
+      response =>
+        response.request().method() === 'POST' &&
+        new URL(response.url()).pathname.endsWith(`/loop-items/${issue.id}/assign`)
+    )
+    await page.getByTestId(`cloud-todo-detail-assignee-option-agent:${agent.id}`).click()
+    expect((await saved).ok()).toBe(true)
+    const first = await waitForCompletedExecution(request, projectId, issue.id)
+    expect(first.executionEnvironment).toBe('wegent')
+    expect(first.teamId).toBe(resources.teamId)
+    expect(first.backendTaskId).toBeGreaterThan(0)
+    expect(first.runtimeTaskId).toBe(String(first.backendTaskId))
+    expect(first.runtimeDeviceId).toBeFalsy()
+    const chat = createProjectChatClient({
+      socketBaseUrl: PROVIDER_NATIVE_API_URL,
+      socketPath: '/socket.io',
+      getToken: () => resources.token,
+      clientOrigin: 'web',
+    })
+    try {
+      const { snapshot, unsubscribe } = await chat.subscribe(projectId, issue.id, 0, () => {})
+      try {
+        const original = snapshot.messages.find(
+          message => message.metadata?.backend_task_id === first.backendTaskId
+        )
+        expect(original?.messageId).toBeTruthy()
+        expect(original?.metadata?.execution_url).toContain(`taskId=${first.backendTaskId}`)
+        const reply = await chat.send({
+          projectId,
+          taskId: issue.id,
+          clientMessageId: crypto.randomUUID(),
+          text: followup,
+          replyToMessageId: original!.messageId,
+        })
+        const continued = await chat.continueWegentTask!({
+          projectId,
+          taskId: issue.id,
+          triggerMessageId: reply.messageId,
+          agentId: agent.id,
+        })
+        let second: CollaborationExecution | undefined
+        await expect
+          .poll(
+            async () => {
+              const rows = await apiRequest<{ items: CollaborationExecution[] }>(
+                request,
+                `/api/v1/cloud-projects/${projectId}/executions?status=completed`
+              )
+              second = rows.items.find(row => row.loopItemId === issue.id && row.id !== first.id)
+              return second?.status
+            },
+            { timeout: 90_000 }
+          )
+          .toBe('completed')
+        expect(second!.backendTaskId).toBe(first.backendTaskId)
+        const reloaded = await chat.subscribe(projectId, issue.id, 0, () => {})
+        try {
+          expect(
+            reloaded.snapshot.messages.find(message => message.messageId === continued.messageId)
+              ?.content
+          ).toContain('MANAGED_CHAT_SECOND_RESULT')
+        } finally {
+          reloaded.unsubscribe()
+        }
+        const task = await apiRequest<{ subtasks: Array<{ role: string; prompt: string }> }>(
+          request,
+          `/api/tasks/${first.backendTaskId}`
+        )
+        expect(task.subtasks.filter(turn => turn.role === 'USER')).toHaveLength(2)
+      } finally {
+        unsubscribe()
+      }
+    } finally {
+      chat.dispose()
+    }
   })
 
   async function executeAndAssertCase(

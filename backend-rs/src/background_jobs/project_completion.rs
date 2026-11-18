@@ -177,7 +177,7 @@ fn identity(value: &Value) -> String {
         .unwrap_or_else(|| value.to_string())
 }
 
-fn final_text(result: Option<&Value>) -> Option<String> {
+pub(crate) fn final_text(result: Option<&Value>) -> Option<String> {
     let result = result?;
     for source in [Some(result), result.get("result")].into_iter().flatten() {
         for key in ["value", "text", "content", "output_text"] {

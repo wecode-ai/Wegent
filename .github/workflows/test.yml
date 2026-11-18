@@ -349,6 +349,14 @@ jobs:
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/project-agent-deletion-mysql.log
           cargo test --locked --lib cloud_projects::collaboration_metrics::mysql_tests -- --ignored \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/collaboration-metrics-mysql.log
+          cargo test --locked --lib loop_tasks::assistant_participation::mysql_tests -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/assistant-participation-mysql.log
+          cargo test --locked --lib milestones::tests::mutation_response_reads_the_uncommitted_writer_row -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/milestone-mysql.log
+          cargo test --locked --lib loop_tasks::assignment_receipts::tests -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/assignment-receipt-mysql.log
+          cargo test --locked --lib socketio::device_pull_claim::tests::device_queue_never_consumes_managed_teams -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/managed-device-queue-mysql.log
           cargo test --locked --lib device_records::retention::mysql_tests -- --ignored \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/device-retention-mysql.log
 
@@ -509,7 +517,7 @@ jobs:
       - name: Set up Node for native connection service contracts
         uses: actions/setup-node@v4
         with:
-          node-version: '22.23.4'
+          node-version: "22.23.4"
 
       - name: Set up shared Rust toolchain and cache
         uses: ./.github/actions/setup-rust-cache
@@ -615,6 +623,8 @@ jobs:
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
         run: |
+          cargo test --all-features --lib runtime_work::git_connections::tests::hosting_cli_uses_path_shims_without_shell_interpolation
+          node --test --test-name-pattern='long snapshot refs' examples/hooks/turn-diff-logger/logger.test.mjs
           cargo test --all-features --lib runtime_work::store::tests::atomic_write
           cargo test -p wegent-plugin-packages --all-features --lib local::capabilities::runtime_recovery::marketplace_sources::tests
           cargo test -p wegent-plugin-packages --all-features --lib services::workbench::recovery::tests
@@ -869,7 +879,7 @@ jobs:
           sudo -n gdb --version
           sudo install -m 644 .github/ci/wework-electron.apparmor /etc/apparmor.d/wework-electron-ci
           sudo apparmor_parser --replace /etc/apparmor.d/wework-electron-ci
-          dbus-run-session -- xvfb-run -a node --test wework/e2e/desktop/modules/upgrade-request-route.test.mjs
+          dbus-run-session -- xvfb-run -a node --test wework/e2e/desktop/modules/upgrade-request-route.test.mjs wework/e2e/desktop/modules/startup-gdb-probe.test.mjs wework/e2e/desktop/modules/startup-gpu-probe.test.mjs wework/scripts/startup-gpu-evidence.test.mjs
 
       - name: Verify measured Wework test sharding
         if: matrix.shard == 1

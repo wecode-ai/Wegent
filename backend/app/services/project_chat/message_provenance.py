@@ -181,6 +181,9 @@ def message_provenance(db: Session, row: ProjectChatMessage) -> dict[str, object
     verified_publication = isinstance(assistant_publication, dict) and (
         assistant_publication.get("verified") is True
     )
+    verified_source = isinstance(assistant_publication, dict) and (
+        assistant_publication.get("source_verified") is True
+    )
     published_by = (
         assistant_publication.get("published_by")
         if verified_publication and isinstance(assistant_publication, dict)
@@ -191,7 +194,7 @@ def message_provenance(db: Session, row: ProjectChatMessage) -> dict[str, object
         if historical
         else (
             "ai"
-            if verified_publication
+            if verified_publication or verified_source
             else {"user": "human", "agent": "ai"}.get(row.sender_type, "system")
         )
     )

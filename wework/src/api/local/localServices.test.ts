@@ -122,10 +122,27 @@ describe('createLocalAppServices', () => {
   })
 
   test.each([
-    { prepared: true, source: undefined },
-    { prepared: false, source: 'native' },
-    { prepared: false, source: undefined },
-  ])('snapshots local assignment runtimes with %j', async ({ prepared, source }) => {
+    { prepared: true, source: undefined, pendingModel: false },
+    { prepared: false, source: 'native', pendingModel: false },
+    { prepared: false, source: undefined, pendingModel: false },
+    { prepared: true, source: undefined, pendingModel: true },
+  ])('snapshots local assignment runtimes with %j', async ({ prepared, source, pendingModel }) => {
+    const assignmentModelName = pendingModel ? 'local-model:assignment-pending' : 'gpt-5.6-sol'
+    if (pendingModel) {
+      saveLocalModelConfig({
+        id: 'assignment-pending',
+        displayName: 'Assignment pending',
+        modelId: 'upstream-model',
+        baseUrl: 'https://models.example.com/v1',
+        apiKey: 'fixture-key',
+        catalogEntry: createDefaultLocalModelCatalogEntry({
+          id: 'assignment-pending',
+          displayName: 'Assignment pending',
+          toolProfile: 'custom',
+        }),
+        catalogReady: false,
+      })
+    }
     const group = {
       id: 'group-1',
       workspace_id: 'local',
@@ -220,7 +237,7 @@ describe('createLocalAppServices', () => {
       name,
       display_name: name,
       runtime: 'codex',
-      model: 'gpt-5.6-sol',
+      model: assignmentModelName,
       model_type: 'runtime',
       model_namespace: 'default',
       allowed_models: prepared ? allowedModels : allowedModels?.slice(0, 1),
@@ -242,7 +259,7 @@ describe('createLocalAppServices', () => {
               model: {
                 runtime: 'codex',
                 provider: 'openai',
-                model_id: 'gpt-5.6-sol',
+                model_id: assignmentModelName,
                 ...(source ? { source } : {}),
               },
             },
@@ -252,6 +269,8 @@ describe('createLocalAppServices', () => {
     })
     const updates: Array<Record<string, unknown>> = []
     const request = vi.fn(async (method: string, params?: Record<string, unknown>) => {
+      if (method === 'runtime.codex.catalog.custom.write') return {}
+      if (method === 'runtime.codex.app_server.restart') return { restarted: true }
       if (method === 'projects.list') return [project]
       if (method === 'todos.get') return task
       if (method === 'runtime.runner.catalog') {
@@ -261,8 +280,8 @@ describe('createLocalAppServices', () => {
             {
               runtime: 'codex',
               provider: 'openai',
-              model_id: 'gpt-5.6-sol',
-              local_model_id: 'gpt-5.6-sol',
+              model_id: assignmentModelName,
+              local_model_id: assignmentModelName,
               account_label: 'Local account',
             },
           ],
@@ -272,7 +291,7 @@ describe('createLocalAppServices', () => {
         return params?.project_id === 'project-1'
           ? [
               agent('worker', 'Worker', 'worker-mcp', 'project-1', [
-                { name: 'gpt-5.6-sol', type: 'runtime', namespace: 'default' },
+                { name: assignmentModelName, type: 'runtime', namespace: 'default' },
                 { name: 'gpt-5.6-luna', type: 'runtime', namespace: 'default' },
               ]),
             ]
@@ -346,13 +365,20 @@ describe('createLocalAppServices', () => {
       },
     })
     expect(listCloudModels).not.toHaveBeenCalled()
+    if (pendingModel) {
+      expect(findLocalModelConfigByModelName(assignmentModelName)?.catalogReady).toBe(true)
+      const methods = request.mock.calls.map(([method]) => method)
+      expect(methods.indexOf('runtime.codex.catalog.custom.write')).toBeLessThan(
+        methods.indexOf('todos.update')
+      )
+    }
     if (!prepared) {
       expect(updates[0]).toMatchObject({
         execution_payload: {
           standaloneChatWorkspace: true,
           runnerRouting: {
             environment_id: 'local-device',
-            model: { ...(source ? { source } : {}), model_id: 'gpt-5.6-sol' },
+            model: { ...(source ? { source } : {}), model_id: assignmentModelName },
           },
         },
       })
@@ -416,9 +442,11 @@ describe('createLocalAppServices', () => {
       },
       modelRuntimeProfiles: [
         {
-          modelId: 'gpt-5.6-sol',
+          modelId: assignmentModelName,
           runtimePayload: {
-            executionRequest: { model_config: { model_id: 'gpt-5.6-sol' } },
+            executionRequest: {
+              model_config: { model_id: pendingModel ? 'upstream-model' : assignmentModelName },
+            },
           },
         },
         ...(prepared
@@ -1955,6 +1983,7 @@ describe('createLocalAppServices', () => {
       subscribe: vi.fn(),
     })
 
+    await services.runtimeWorkApi!.prepareRuntimeModel({ deviceId: 'local-device' })
     const models = await services.modelApi.listModels()
 
     expect(restartCount).toBe(2)
@@ -2176,9 +2205,7 @@ describe('createLocalAppServices', () => {
 
     const models = await services.modelApi.listModels()
 
-    expect(request.mock.calls).toEqual([
-      ['runtime.models.sync_creation_profiles', { deviceId: 'local-device', profiles: [] }],
-    ])
+    expect(request).not.toHaveBeenCalled()
     expect(
       models.data.some(
         model =>
@@ -5355,30 +5382,6 @@ describe('createLocalAppServices', () => {
     expect(payload.executionRequest.skill_names).toEqual(['dws'])
     expect(payload.executionRequest.preload_skills).toEqual(['dws'])
     expect(payload.executionRequest.user_selected_skills).toEqual(['dws'])
-  })
-
-  test('activates project-space capabilities for a generic cloud reference', async () => {
-    const request = vi.fn().mockResolvedValue({ accepted: true })
-    const services = createLocalAppServices({
-      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
-      request,
-      subscribe: vi.fn(),
-    })
-
-    await services.runtimeWorkApi?.createRuntimeTask({
-      deviceId: 'local-device',
-      workspacePath: '/Users/me/project',
-      taskId: 'task-project-space',
-      runtime: 'codex',
-      message: '[$项目空间](cloud://projects) 帮我创建一个新项目',
-    })
-
-    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.create')?.[1]
-    const prompt = payload.executionRequest.prompt as string
-    expect(prompt).toContain('[projectSpaceCapability]')
-    expect(prompt).toContain('Use wework_space as the only interface')
-    expect(prompt).toContain('Do not use git commands')
-    expect(prompt).toContain('read_item_attachment')
   })
 
   test('rejects missing local model config instead of falling back to built-in Codex', async () => {

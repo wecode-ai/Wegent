@@ -28,6 +28,7 @@ class StandInPublicReply(BaseModel):
 class AssistantPublicationSource(BaseModel):
     device_id: str = Field(min_length=1, max_length=255)
     task_id: str = Field(min_length=1, max_length=255)
+    requires_confirmation: bool = False
 
 
 class IssueActivityCommentCreate(LoopItemCommentCreate):

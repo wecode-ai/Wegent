@@ -357,8 +357,8 @@ async fn source_owner_ids<M: Mysql>(
              UNION \
              SELECT DISTINCT COALESCE( \
                CASE WHEN JSON_TYPE(JSON_EXTRACT(m.metadata,'$.stand_in.user_id'))='INTEGER' \
-                 THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(m.metadata,'$.stand_in.user_id')) AS UNSIGNED) END, \
-               a.created_by_user_id, CAST(t.sender_id AS UNSIGNED)) AS owner_user_id \
+                 THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(m.metadata,'$.stand_in.user_id')) AS SIGNED) END, \
+               a.created_by_user_id, CAST(t.sender_id AS SIGNED)) AS owner_user_id \
                FROM project_chat_messages m \
                LEFT JOIN project_chat_messages t ON t.message_id=m.trigger_message_id \
                  AND t.project_id=m.project_id AND t.task_id=m.task_id AND t.sender_type='user' \
@@ -367,8 +367,8 @@ async fn source_owner_ids<M: Mysql>(
                WHERE m.project_id=? AND m.task_id=? AND m.sender_type='agent' \
                  AND COALESCE( \
                    CASE WHEN JSON_TYPE(JSON_EXTRACT(m.metadata,'$.stand_in.user_id'))='INTEGER' \
-                     THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(m.metadata,'$.stand_in.user_id')) AS UNSIGNED) END, \
-                   a.created_by_user_id, CAST(t.sender_id AS UNSIGNED), 0) > 0 \
+                     THEN CAST(JSON_UNQUOTE(JSON_EXTRACT(m.metadata,'$.stand_in.user_id')) AS SIGNED) END, \
+                   a.created_by_user_id, CAST(t.sender_id AS SIGNED), 0) > 0 \
              ORDER BY owner_user_id",
             (project, issue, project, issue, project, issue),
         )
@@ -878,5 +878,24 @@ mod tests {
         assert!(!sql.contains("SELECT content"));
         assert!(!sql.contains("wework_transcripts"));
         assert!(!sql.contains("m.sender_id=CAST(? AS CHAR)"));
+    }
+}
+
+#[cfg(test)]
+mod mysql_tests {
+    use super::*;
+    #[tokio::test]
+    #[ignore = "requires disposable loopback MySQL; invoked by Backend Rust CI"]
+    async fn reads_execution_sources_from_the_deployed_schema() -> anyhow::Result<()> {
+        crate::migrations::mysql_tests::isolated(async |mysql| {
+            crate::migrations::mysql_tests::seed_collaboration(mysql).await?;
+            mysql.execute("INSERT INTO loop_item_executions (loop_item_id,cloud_project_id,executor_owner_user_id,runtime_device_id,runtime_task_id,error_message,execution_payload) VALUES ('root','1001',7,'device','run','','{}')", ()).await?;
+            assert_eq!(source_owner_ids(mysql,"1001","root").await?, vec![7]);
+            let sources = participation_sources(mysql,"1001","root",7).await?;
+            assert_eq!(sources.len(),1);
+            assert_eq!(sources[0].owner_user_id,7);
+            assert_eq!(sources[0].task_id.as_deref(),Some("run"));
+            Ok(())
+        }).await
     }
 }

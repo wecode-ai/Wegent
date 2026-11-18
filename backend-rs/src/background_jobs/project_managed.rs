@@ -21,7 +21,7 @@ use crate::{
     state::AppState,
 };
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, serde::Serialize)]
 pub(crate) struct Execute {
     pub task_id: i64,
     pub assistant_subtask_id: i64,
@@ -137,6 +137,9 @@ pub(crate) async fn execute(state: &AppState, input: Execute) -> Result<Value> {
 }
 
 async fn execute_inner(state: &AppState, input: &Execute) -> Result<bool> {
+    if !super::super::robot::managed::authorize_task(state, input.task_id, input.user_id).await? {
+        return Ok(false);
+    }
     let tables = state.task_store.table_templates();
     let mysql = state
         .mysql
@@ -160,6 +163,9 @@ async fn execute_inner(state: &AppState, input: &Execute) -> Result<bool> {
             .await?;
     }
     let request = request_for_task(state, input).await?;
+    if !super::super::robot::managed::authorize_task(state, input.task_id, input.user_id).await? {
+        return Ok(false);
+    }
     // Cancellation can race expensive credential/skills/request preparation.
     let still_running:Option<Assistant>=mysql.fetch_optional(format!("SELECT id,task_id,user_id,role,status,message_id,executor_name,executor_namespace FROM {} WHERE id=? AND task_id=? AND user_id=? AND role='ASSISTANT' AND status='RUNNING'",tables.subtasks),(input.assistant_subtask_id,input.task_id,input.user_id)).await?;
     let task: Option<Task> = mysql
@@ -175,6 +181,16 @@ async fn execute_inner(state: &AppState, input: &Execute) -> Result<bool> {
         || task
             .as_ref()
             .is_none_or(|task| task.json.0["status"]["status"] != "RUNNING")
+    {
+        return Ok(false);
+    }
+    if !super::super::robot::managed::mark_started(
+        state,
+        input.task_id,
+        input.user_id,
+        routing::shell_type(&request) == "Chat",
+    )
+    .await?
     {
         return Ok(false);
     }

@@ -67,7 +67,8 @@ impl LocalTaskStore {
         else {
             return Ok(0);
         };
-        let retried = connection.execute(
+        let actions = query_values(
+            &connection,
             "WITH held AS MATERIALIZED (
                SELECT DISTINCT event.value FROM loop_items AS action,
                  json_each(action.metadata,'$.arguments.eventIds') AS event
@@ -101,9 +102,13 @@ impl LocalTaskStore {
              UPDATE loop_items SET metadata=json_set(metadata,'$.status','pending','$.resolution','explicit_retry','$.retryRequestId',?3),updated_at=?2
              WHERE id IN (SELECT DISTINCT id FROM latest WHERE position=1
                AND retried_request IS NOT ?3 AND julianday(updated_at)<=julianday(?4)
-               ORDER BY id LIMIT 100)",
+               ORDER BY id LIMIT 100) RETURNING metadata",
             params![user, now(), request_id, before],
         )?;
+        for action in &actions {
+            super::stand_in_history_index::record(&connection, ACTION, action)?;
+        }
+        let retried = actions.len();
         if retried < 100 {
             state["routingRetry"] = Value::Null;
             super::stand_in_processing::write(

@@ -6,8 +6,9 @@ import test from 'node:test'
 import vm from 'node:vm'
 import JSZip from 'jszip'
 
+import { waitForTerminalStatus } from '../test-support/export-status.mjs'
+
 import { apply as applyConversationExport } from '../conversation-export/index.js'
-import { waitForTerminalStatus } from '../conversation-export/test-support.mjs'
 
 async function loadClient({ setTimeoutImpl = setTimeout } = {}) {
   const source = await readFile(new URL('./client.js', import.meta.url), 'utf8')

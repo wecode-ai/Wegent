@@ -17,6 +17,7 @@ import {
 export type ProjectBoardGroupBy = "status" | "priority" | "assignee" | "tag";
 
 export interface ProjectBoardStateOptions {
+  fixedGroupBy?: ProjectBoardGroupBy;
   defaultGroupBy: ProjectBoardGroupBy;
   defaultSort?: ProjectBoardSort;
   defaultColumnSorts?: ProjectBoardColumnSorts;
@@ -27,6 +28,7 @@ export interface ProjectBoardStateOptions {
 }
 
 export function useProjectBoardState({
+  fixedGroupBy,
   defaultGroupBy,
   defaultSort = defaultProjectBoardSort,
   defaultColumnSorts,
@@ -35,7 +37,8 @@ export function useProjectBoardState({
   personalGroupStorageKey,
   personalSortStorageKey = null,
 }: ProjectBoardStateOptions) {
-  const [groupBy, setGroupBy] = useState<ProjectBoardGroupBy>("status");
+  const [selectedGroupBy, setGroupBy] = useState<ProjectBoardGroupBy>("status");
+  const groupBy = fixedGroupBy ?? selectedGroupBy;
   const [groupFilter, setGroupFilter] = useState("");
   const [query, setQuery] = useState("");
   const [columnSorts, setColumnSorts] = useState<ProjectBoardColumnSorts>({});
@@ -48,9 +51,10 @@ export function useProjectBoardState({
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const personalGroup = personalGroupStorageKey
-      ? localStorage.getItem(personalGroupStorageKey)
-      : null;
+    const personalGroup =
+      personalGroupStorageKey && !fixedGroupBy
+        ? localStorage.getItem(personalGroupStorageKey)
+        : null;
     setGroupBy(
       personalGroup === "status" ||
         personalGroup === "priority" ||
@@ -62,7 +66,7 @@ export function useProjectBoardState({
     setGroupFilter("");
     setQuery("");
     setQuickCreateStatus(null);
-  }, [defaultGroupBy, personalGroupStorageKey, viewScope]);
+  }, [defaultGroupBy, fixedGroupBy, personalGroupStorageKey, viewScope]);
 
   useEffect(() => {
     const refresh = () =>
@@ -127,6 +131,7 @@ export function useProjectBoardState({
 
   const selectGroupBy = useCallback(
     (nextGroupBy: ProjectBoardGroupBy) => {
+      if (fixedGroupBy) return;
       if (groupBy !== nextGroupBy && scrollRef.current) {
         scrollRef.current.scrollLeft = 0;
       }
@@ -136,7 +141,7 @@ export function useProjectBoardState({
         localStorage.setItem(personalGroupStorageKey, nextGroupBy);
       }
     },
-    [groupBy, personalGroupStorageKey],
+    [fixedGroupBy, groupBy, personalGroupStorageKey],
   );
 
   const toggleFocusExecutionColumns = useCallback(() => {

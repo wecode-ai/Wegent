@@ -61,6 +61,7 @@ import {
   buildExecutor,
   mcpElicitationConfigToml,
   prepareHarnessRuntimeRoots,
+  prepareRemoteDeviceConversationModel,
   resolveDesktopCodexBinary,
   toolDetailsMcpConfigToml,
   setMatrixUpstreamProtocol,
@@ -1333,6 +1334,8 @@ async function main() {
             : undefined,
         managedCloudIdentity: CLOUD_ONLY,
         modelServerUrl: control.url,
+        modelCatalogOverrides: desktopScenario?.cloudModelCatalogOverrides ?? [],
+        remoteExecutorType: desktopScenario?.remoteExecutorType,
         scenarioConfigToml: shouldConfigureToolDetailsMcp() ? toolDetailsMcpConfigToml() : '',
         workspacePath: desktopScenario?.remoteWorkspacePath ?? workspacePath,
       })
@@ -1567,6 +1570,9 @@ async function main() {
       const cleanEnvironment = upgradeUserEnvironment(appEnvironment, homePath)
       for (const key of Object.keys(appEnvironment)) delete appEnvironment[key]
       Object.assign(appEnvironment, cleanEnvironment)
+    }
+    if (DESKTOP_SEGMENT === 'remote-device-onboarding') {
+      await prepareRemoteDeviceConversationModel(electronUserDataDirectory, control.url)
     }
     await desktopScenario?.prepareApp?.({ appBinary, appEnvironment, codexHome, control })
     await desktopScenario?.prepareUserDataLaunch?.()
@@ -2688,11 +2694,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     )
     await control.command('waitFor', secondaryProjectRowSelector, {
       text: 'secondary-project',
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
     await control.command('waitFor', '[data-testid="project-work-button"]', {
       text: 'secondary-project',
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
 
     phase = 'composer-project-folder-select'

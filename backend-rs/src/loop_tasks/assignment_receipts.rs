@@ -108,7 +108,6 @@ async fn acknowledge_assignment(
             "Dispatch updates require a stand-in receipt",
         ));
     }
-    let mut public_result = None;
     let field = match payload.kind {
         ReceiptKind::HumanRead => "human_read_at",
         ReceiptKind::StandInReceived => {
@@ -144,11 +143,6 @@ async fn acknowledge_assignment(
                 require_owned_device(state, &user, &payload).await?;
             } else {
                 require_personal_binding(state, item_id, assignment_id, &user, &payload).await?;
-            }
-            if update.state == DispatchState::Completed {
-                public_result = Some(
-                    require_public_result(state, item_id, assignment_id, &user, &payload).await?,
-                );
             }
             "stand_in_received_at"
         }
@@ -190,12 +184,27 @@ async fn acknowledge_assignment(
             if let Some(update) = payload.dispatch.as_ref() {
                 let previous = assignment.as_ref().and_then(ReceiptRow::metadata).and_then(|row| row.dispatch_receipt.as_ref());
                 if !accept_update(previous, &payload) { return Ok(false); }
+                let public_result = if update.state == DispatchState::Completed {
+                    let Some(result) = public_result_on(tx, item_id, assignment_id, user.id, &payload).await? else { return Ok(false) };
+                    Some(result)
+                } else { None };
+                let confirmed = if let Some(result) = &public_result {
+                    confirmed_result_on(&mut &mut *tx, item_id, &result.id, &result.binding_id).await?
+                } else { None };
+                let delivery_id = if let (Some(result), Some(_)) = (&public_result, &confirmed) {
+                    delivered_result_on(&mut &mut *tx, item_id, &super::human_task_binding::direct_human_assignment_id(item_id, assignment_id), user.id, payload.task_id.as_deref().unwrap_or_default(), &result.binding_id).await?
+                } else { None };
+                let waiting_reason = if public_result.is_some() && confirmed.is_none() {
+                    Some("awaiting_publication")
+                } else if public_result.is_some() && delivery_id.is_none() {
+                    Some("awaiting_delivery")
+                } else { None };
                 let receipt = json!({
                     "projectId":locked[0].cloud_project_id,"issueId":item_id,
                     "humanAssignmentId":super::human_task_binding::direct_human_assignment_id(item_id,assignment_id),
-                    "ownerUserId":user.id,"state":update.state,"reasonCode":update.reason_code,
+                    "ownerUserId":user.id,"state":if waiting_reason.is_some() { json!(DispatchState::WaitingUser) } else { json!(update.state) },"reasonCode":waiting_reason.map(|reason|json!(reason)).unwrap_or_else(||json!(update.reason_code)),
                     "runtimeTaskId":payload.task_id.as_ref().map(|task|json!(task)).unwrap_or_else(||previous.map(|row|row["runtimeTaskId"].clone()).unwrap_or(Value::Null)),
-                    "deviceId":payload.device_id,"deliveryId":null,"publicMessageId":public_result,
+                    "deviceId":payload.device_id,"deliveryId":delivery_id,"publicMessageId":public_result.map(|result|result.id),"confirmedMessageId":confirmed,
                     "observedAt":update.observed_at,"updatedAt":timestamp,
                 });
                 persist_dispatch_receipt(tx, item_id, assignment_id, receipt).await?;
@@ -215,7 +224,7 @@ async fn acknowledge_assignment(
     if !written {
         return Err(FastApiError::detail(
             StatusCode::CONFLICT,
-            "Assignment is no longer active",
+            "Assignment, observation or public result is no longer valid",
         ));
     }
     Ok(json!({"acknowledged": true}))
@@ -297,35 +306,133 @@ async fn require_owned_device(
     ))
 }
 
-async fn require_public_result(
-    state: &AppState,
+#[derive(FromMysqlRow)]
+struct PublicResult {
+    id: String,
+    binding_id: String,
+}
+
+async fn public_result_on(
+    tx: &mut impl MysqlTransaction,
     item_id: &str,
     assignment_id: &str,
-    user: &FlexibleUser,
+    user_id: i32,
     payload: &ReceiptInput,
-) -> Result<String, FastApiError> {
+) -> brz_mysql::MysqlResult<Option<PublicResult>> {
     let id = payload
         .dispatch
         .as_ref()
         .and_then(|update| update.public_message_id.as_deref())
         .unwrap_or_default();
-    #[derive(FromMysqlRow)]
-    struct ResultRow {
-        id: String,
-    }
-    let row:Option<ResultRow> = state.mysql.fetch_optional(
+    tx.fetch_optional(
         // Public stand-in replies intentionally have no runtime address. Their
         // server-generated idempotency key binds the validated device and task.
-        "SELECT message_id AS id FROM project_chat_messages WHERE task_id=? AND client_message_id=SHA2(CONCAT(project_id,CHAR(0),task_id,CHAR(0),?,CHAR(0),?,CHAR(0),?),256) AND JSON_EXTRACT(metadata,'$.stand_in.user_id')=? AND JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.stand_in.human_assignment_id'))=? AND status='completed'",
-        (item_id,payload.device_id.as_deref().unwrap_or_default(),payload.task_id.as_deref().unwrap_or_default(),id,user.id,super::human_task_binding::direct_human_assignment_id(item_id,assignment_id)),
-    ).await.map_err(internal)?;
-    if let Some(row) = row {
-        return Ok(row.id);
+        "SELECT message_id AS id,CAST(JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.stand_in.binding_id')) AS CHAR CHARACTER SET utf8mb4) AS binding_id FROM project_chat_messages WHERE task_id=? AND client_message_id=SHA2(CONCAT(project_id,CHAR(0),task_id,CHAR(0),?,CHAR(0),?,CHAR(0),?),256) AND JSON_EXTRACT(metadata,'$.stand_in.user_id')=? AND JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.stand_in.human_assignment_id'))=? AND status='completed' AND JSON_TYPE(JSON_EXTRACT(metadata,'$.stand_in.binding_id'))='STRING' AND (deleted_at IS NULL OR deleted_at<='1970-01-02') FOR UPDATE",
+        (item_id,payload.device_id.as_deref().unwrap_or_default(),payload.task_id.as_deref().unwrap_or_default(),id,user_id,super::human_task_binding::direct_human_assignment_id(item_id,assignment_id)),
+    ).await
+}
+
+async fn confirmed_result_on(
+    query: &mut impl crate::plugins_marketplace::query::PluginQuery,
+    item_id: &str,
+    message_id: &str,
+    binding_id: &str,
+) -> brz_mysql::MysqlResult<Option<String>> {
+    let row: Option<(String,)> = query.fetch_optional(
+        "SELECT publication.message_id FROM project_chat_messages source JOIN project_chat_messages publication \
+         ON publication.project_id=source.project_id AND publication.task_id=source.task_id \
+         WHERE source.message_id=? AND source.task_id=? AND source.status='completed' \
+         AND (source.deleted_at IS NULL OR source.deleted_at<='1970-01-02') \
+         AND publication.status='completed' AND JSON_EXTRACT(publication.metadata,'$.assistant_publication.verified')=true \
+         AND (publication.message_id=source.message_id OR \
+           (publication.sender_type='user' AND publication.id>source.id \
+            AND JSON_UNQUOTE(JSON_EXTRACT(publication.metadata,'$.assistant_publication.binding_id'))=?)) \
+         AND (publication.deleted_at IS NULL OR publication.deleted_at<='1970-01-02') \
+         ORDER BY publication.id LIMIT 1",
+        (message_id, item_id, binding_id),
+    ).await?;
+    Ok(row.map(|row| row.0))
+}
+
+async fn delivered_result_on(
+    query: &mut impl crate::plugins_marketplace::query::PluginQuery,
+    item_id: &str,
+    assignment_id: &str,
+    owner: i32,
+    task_id: &str,
+    binding_id: &str,
+) -> brz_mysql::MysqlResult<Option<String>> {
+    let row: Option<(String,)> = query.fetch_optional(
+        "SELECT delivery.id FROM loop_items delivery JOIN loop_items binding ON binding.id=delivery.source_task_binding_id \
+         WHERE delivery.resource_type='delivery' AND delivery.status='delivered' AND delivery.loop_item_id=? \
+         AND binding.resource_type='execution' AND binding.loop_item_id=delivery.loop_item_id \
+         AND binding.task_user_id=? AND binding.task_id=? AND binding.id=? \
+         AND JSON_UNQUOTE(JSON_EXTRACT(binding.metadata,'$.human_assignment_id'))=? \
+         AND (binding.unlinked_at IS NULL OR binding.unlinked_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01')) \
+         AND (binding.deleted_at IS NULL OR binding.deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01')) \
+         AND (delivery.deleted_at IS NULL OR delivery.deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01')) \
+         ORDER BY delivery.delivered_at DESC,delivery.created_at DESC,delivery.id DESC LIMIT 1",
+        (item_id, owner, task_id, binding_id, assignment_id),
+    ).await?;
+    Ok(row.map(|row| row.0))
+}
+
+pub(super) async fn project_delivery(
+    state: &AppState,
+    receipt: &mut Value,
+) -> Result<(), FastApiError> {
+    if receipt["state"] == "completed" && receipt["deliveryId"].as_str().is_none_or(str::is_empty) {
+        receipt["state"] = json!("waiting_user");
+        receipt["reasonCode"] = json!("awaiting_delivery");
     }
-    Err(FastApiError::detail(
-        StatusCode::CONFLICT,
-        "A published assignment result is required",
-    ))
+    if !matches!(
+        receipt["reasonCode"].as_str(),
+        Some("awaiting_delivery" | "awaiting_publication")
+    ) {
+        return Ok(());
+    }
+    let (Some(issue), Some(assignment), Some(owner), Some(task)) = (
+        receipt["issueId"].as_str(),
+        receipt["humanAssignmentId"].as_str(),
+        receipt["ownerUserId"]
+            .as_i64()
+            .and_then(|id| i32::try_from(id).ok()),
+        receipt["runtimeTaskId"].as_str(),
+    ) else {
+        return Ok(());
+    };
+    let Some(message_id) = receipt["publicMessageId"].as_str() else {
+        return Ok(());
+    };
+    let source: Option<PublicResult> = state.mysql.fetch_optional(
+        "SELECT message_id AS id,CAST(JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.stand_in.binding_id')) AS CHAR CHARACTER SET utf8mb4) AS binding_id FROM project_chat_messages WHERE task_id=? AND message_id=? AND JSON_TYPE(JSON_EXTRACT(metadata,'$.stand_in.binding_id'))='STRING' AND (deleted_at IS NULL OR deleted_at<='1970-01-02')",
+        (issue,message_id),
+    ).await.map_err(internal)?;
+    let Some(source) = source else { return Ok(()) };
+    let confirmed = confirmed_result_on(&mut &state.mysql, issue, message_id, &source.binding_id)
+        .await
+        .map_err(internal)?;
+    let Some(confirmed) = confirmed else {
+        return Ok(());
+    };
+    let delivery = delivered_result_on(
+        &mut &state.mysql,
+        issue,
+        assignment,
+        owner,
+        task,
+        &source.binding_id,
+    )
+    .await
+    .map_err(internal)?;
+    receipt["confirmedMessageId"] = json!(confirmed);
+    receipt["reasonCode"] = json!("awaiting_delivery");
+    if let Some(id) = delivery {
+        receipt["state"] = json!("completed");
+        receipt["deliveryId"] = json!(id);
+        receipt["reasonCode"] = json!("delivery_published");
+    }
+    Ok(())
 }
 
 pub(super) async fn project_device_wait(state: &AppState, receipt: &mut Value) {
@@ -455,6 +562,74 @@ fn require_recipient(target_type: &str, target_id: &str, user_id: i32) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[ignore = "requires disposable loopback MySQL; invoked by Backend Rust CI"]
+    async fn public_results_require_confirmation_and_exact_assignment_source() -> anyhow::Result<()>
+    {
+        crate::migrations::mysql_tests::isolated(async |mysql| {
+            crate::migrations::mysql_tests::seed_collaboration(mysql).await?;
+            let assignment = super::super::human_task_binding::direct_human_assignment_id("root", "event");
+            let identity = json!({"stand_in":{"user_id":7,"human_assignment_id":assignment,"binding_id":"binding"}});
+            mysql.execute("INSERT INTO project_chat_messages(message_id,client_message_id,project_id,task_id,sender_type,content,metadata) VALUES ('public',SHA2(CONCAT('1001',CHAR(0),'root',CHAR(0),'device',CHAR(0),'runtime',CHAR(0),'local-result'),256),'1001','root','agent','result',?)",(Json(identity),)).await?;
+            let mut payload: ReceiptInput = serde_json::from_value(json!({
+                "kind":"stand_in_state","device_id":"device","task_id":"runtime",
+                "dispatch":{"state":"completed","observedAt":"2026-11-18T02:00:00Z","publicMessageId":"local-result"}
+            }))?;
+            mysql.with_transaction(async |tx| {
+                let source = public_result_on(tx,"root","event",7,&payload).await?.expect("validated source");
+                assert_eq!(source.id,"public");
+                assert_eq!(source.binding_id,"binding");
+                assert!(confirmed_result_on(&mut &mut *tx,"root",&source.id,&source.binding_id).await?.is_none());
+                assert!(public_result_on(tx,"root","another-event",7,&payload).await?.is_none());
+                assert!(public_result_on(tx,"root","event",8,&payload).await?.is_none());
+                payload.device_id = Some("other-device".into());
+                assert!(public_result_on(tx,"root","event",7,&payload).await?.is_none());
+                tx.execute("INSERT INTO project_chat_messages(message_id,runtime_activity_key,project_id,task_id,sender_type,content,metadata) VALUES ('confirmed','confirmed','1001','root','user','confirmed result',JSON_OBJECT('assistant_publication',JSON_OBJECT('verified',true,'binding_id','another-binding')))",()).await?;
+                assert!(confirmed_result_on(&mut &mut *tx,"root",&source.id,&source.binding_id).await?.is_none());
+                tx.execute("UPDATE project_chat_messages SET metadata=JSON_SET(metadata,'$.assistant_publication.binding_id','binding') WHERE message_id='confirmed'",()).await?;
+                assert_eq!(confirmed_result_on(&mut &mut *tx,"root",&source.id,&source.binding_id).await?.as_deref(),Some("confirmed"));
+                tx.execute("UPDATE project_chat_messages SET deleted_at=UTC_TIMESTAMP(6) WHERE message_id='confirmed'",()).await?;
+                assert!(confirmed_result_on(&mut &mut *tx,"root",&source.id,&source.binding_id).await?.is_none());
+                tx.execute("UPDATE project_chat_messages SET metadata=JSON_SET(metadata,'$.assistant_publication',JSON_OBJECT('verified',true,'published_by','ai')) WHERE message_id='public'",()).await?;
+                assert_eq!(confirmed_result_on(&mut &mut *tx,"root",&source.id,&source.binding_id).await?.as_deref(),Some("public"));
+                Ok(())
+            }).await?;
+            Ok(())
+        }).await
+    }
+
+    #[tokio::test]
+    #[ignore = "requires disposable loopback MySQL; invoked by Backend Rust CI"]
+    async fn only_delivered_results_of_the_current_assignment_settle_receipts() -> anyhow::Result<()>
+    {
+        crate::migrations::mysql_tests::isolated(async |mysql| {
+            crate::migrations::mysql_tests::seed_collaboration(mysql).await?;
+            mysql.with_transaction(async |tx| {
+                for (id, assignment) in [("current-binding", "current"), ("old-binding", "old")] {
+                    crate::background_jobs::project::store::insert(tx, "execution", json!({
+                        "id":id,"cloud_project_id":"1001","loop_item_id":"root", "task_user_id":7,
+                        "device_id":"device", "task_id":"runtime", "metadata":{"human_assignment_id":assignment}
+                    })).await?;
+                }
+                for (id, binding, status) in [("draft","current-binding","draft"), ("previous","old-binding","delivered")] {
+                    crate::background_jobs::project::store::insert(tx, "delivery", json!({
+                        "id":id,"loop_item_id":"root","source_task_binding_id":binding,"status":status
+                    })).await?;
+                }
+                assert!(delivered_result_on(&mut &mut *tx,"root","current",7,"runtime","current-binding").await?.is_none());
+                tx.execute("UPDATE loop_items SET status='delivered' WHERE id='draft'",()).await?;
+                assert_eq!(delivered_result_on(&mut &mut *tx,"root","current",7,"runtime","current-binding").await?.as_deref(),Some("draft"));
+                assert!(delivered_result_on(&mut &mut *tx,"root","current",8,"runtime","current-binding").await?.is_none());
+                assert!(delivered_result_on(&mut &mut *tx,"root","current",7,"another-runtime","current-binding").await?.is_none());
+                assert!(delivered_result_on(&mut &mut *tx,"root","current",7,"runtime","old-binding").await?.is_none());
+                tx.execute("UPDATE loop_items SET unlinked_at=UTC_TIMESTAMP(6) WHERE id='current-binding'",()).await?;
+                assert!(delivered_result_on(&mut &mut *tx,"root","current",7,"runtime","current-binding").await?.is_none());
+                Ok(())
+            }).await?;
+            Ok(())
+        }).await
+    }
 
     #[test]
     fn round_binding_receipts_require_the_issue_event_and_preserve_member_identity() {

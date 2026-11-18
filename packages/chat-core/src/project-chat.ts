@@ -8,7 +8,6 @@ const SEND_EVENT = 'wework:project_chat:message:send'
 const CREATED_EVENT = 'wework:project_chat:message:created'
 const AGENT_START_EVENT = 'wework:project_chat:agent:start'
 const AGENT_FAILED_EVENT = 'wework:project_chat:agent:failed'
-const WEGENT_CONTINUE_EVENT = 'wework:project_chat:wegent:continue'
 const AGENT_CHUNK_EVENT = 'wework:project_chat:agent:chunk'
 const LOOP_ITEM_CHANGED_EVENT = 'wework:loop_item:changed'
 const ACK_TIMEOUT_MS = 15_000
@@ -458,12 +457,19 @@ export function createProjectChatClient(
         )
       }
     },
-    continueWegentTask(input) {
-      return emitWithAck<ProjectChatMessage>(
+    async continueWegentTask(input) {
+      const messages = await emitWithAck<ProjectChatMessage[]>(
         client,
-        WEGENT_CONTINUE_EVENT,
+        'wework:project_chat:comment:execute',
         input,
+        90_000,
       )
+      const message = messages.find(
+        (message) => message.agentId === input.agentId,
+      )
+      if (!message)
+        throw new Error('The saved comment did not start an agent response')
+      return message
     },
     async subscribeLoopItemChanges(onChange) {
       const handler = (event: LoopItemChangedEvent) => {

@@ -322,7 +322,7 @@ pub(in crate::cloud_projects::collaboration_metrics) async fn append(
     let old: Vec<Row> = tx.fetch_all(
         "SELECT metadata FROM loop_items WHERE cloud_project_id=? AND parent_id=? AND resource_type='comment' \
          AND JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.event_type'))='metric_evidence' \
-         AND JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.record.key'))=? ORDER BY created_at,id",
+         AND JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.record.key'))=? ORDER BY created_at,id FOR UPDATE",
         (project,parent,record.key.as_str()),
     ).await?;
     let latest = old

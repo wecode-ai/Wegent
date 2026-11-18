@@ -48,6 +48,7 @@ export interface SharedWorkspaceHttpTransport {
 }
 
 export interface SharedWorkspaceHttpApi {
+  milestones: import("../milestones/types").MilestonesApi;
   metrics: import("../metrics/types").CollaborationMetricsApi;
   workspaces: SharedCollaborationWorkspacesApi;
   resources: SharedCollaborationResourcesApi;
@@ -275,6 +276,26 @@ export function createSharedWorkspaceHttpApi(
         transport.post(
           `/v1/cloud-projects/${encoded(projectId)}/collaboration-metrics/evidence`,
           record,
+        ),
+    },
+    milestones: {
+      getCacheScope: () => transport.getCacheScope?.() ?? transport,
+      list: (projectId) =>
+        transport.get(`/v1/cloud-projects/${encoded(projectId)}/milestones`),
+      create: (projectId, input) =>
+        transport.post(
+          `/v1/cloud-projects/${encoded(projectId)}/milestones`,
+          input,
+        ),
+      update: (projectId, id, input) =>
+        transport.patch(
+          `/v1/cloud-projects/${encoded(projectId)}/milestones/${encoded(id)}`,
+          input,
+        ),
+      remove: (projectId, id, version) =>
+        transport.delete(
+          `/v1/cloud-projects/${encoded(projectId)}/milestones/${encoded(id)}`,
+          { version },
         ),
     },
     workspaces: {

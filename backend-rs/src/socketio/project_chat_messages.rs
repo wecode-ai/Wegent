@@ -581,8 +581,21 @@ pub(super) fn runtime_source(row: &MessageRow) -> (String, String) {
         return (row.runtime_device_id.clone(), row.runtime_task_id.clone());
     }
     let metadata = row.metadata();
+    let stand_in = &metadata["stand_in"];
+    if row.sender_type == "agent"
+        && stand_in["binding_id"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty())
+        && stand_in["user_id"].as_i64().is_some_and(|id| id > 0)
+        && let (Some(device), Some(task)) =
+            (stand_in["device_id"].as_str(), stand_in["task_id"].as_str())
+        && !device.is_empty()
+        && !task.is_empty()
+    {
+        return (device.into(), task.into());
+    }
     let publication = &metadata["assistant_publication"];
-    if publication["verified"] != true {
+    if publication["verified"] != true && publication["source_verified"] != true {
         return (String::new(), String::new());
     }
     (
@@ -613,6 +626,7 @@ pub(crate) fn message_view(row: &MessageRow) -> Value {
         .and_then(|value| value.get("verified"))
         .and_then(Value::as_bool)
         == Some(true);
+    let verified_source = metadata["assistant_publication"]["source_verified"] == true;
     let published_by = metadata
         .get("assistant_publication")
         .filter(|_| verified_publication)
@@ -620,7 +634,7 @@ pub(crate) fn message_view(row: &MessageRow) -> Value {
         .and_then(Value::as_str);
     let source = if historical {
         "human"
-    } else if verified_publication {
+    } else if verified_publication || verified_source {
         "ai"
     } else {
         match row.sender_type.as_str() {

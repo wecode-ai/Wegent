@@ -8,6 +8,7 @@ import { createApiClient } from '../../utils/api-client'
 import { projectTest, type Resource } from '../../utils/collaboration-project-fixture'
 import {
   dragCollaborationIssueToColumn,
+  enableLegacyBoardGrouping,
   showAllProjectIssues,
   webApi,
 } from '../../utils/collaboration-test-support'
@@ -15,6 +16,32 @@ import {
 async function dragIssueToLane(page: Page, issueId: string, source: string, target: string) {
   return dragCollaborationIssueToColumn(page, issueId, target, source)
 }
+
+projectTest(
+  'keeps the legacy milestone deep link through creation and refresh',
+  async ({ page, scheduledProject: { path } }) => {
+    const projectId = path.split('/').at(-1)!
+    const title = `Web milestone ${crypto.randomUUID()}`
+    await page.goto(`${path}?view=milestones`)
+    await expect(page.getByTestId('milestones-page')).toBeVisible()
+    await expect(page).toHaveURL(`${path}?view=milestones`)
+    await page.getByTestId('milestone-create').click()
+    await page.getByTestId('milestone-title').fill(title)
+    const saved = page.waitForResponse(
+      response =>
+        response.url().endsWith(`/cloud-projects/${projectId}/milestones`) &&
+        response.request().method() === 'POST'
+    )
+    await page.getByTestId('milestone-save').click()
+    const response = await saved
+    expect(response.ok()).toBe(true)
+    const milestone = (await response.json()) as { id: string }
+    await expect(page.getByTestId(`milestone-${milestone.id}`)).toContainText(title)
+    await page.reload()
+    await expect(page).toHaveURL(`${path}?view=milestones`)
+    await expect(page.getByTestId(`milestone-${milestone.id}`)).toContainText(title)
+  }
+)
 
 projectTest(
   'counts authoritative root completions and exposes the personal project breakdown',
@@ -525,6 +552,7 @@ for (const groupBy of ['priority', 'assignee', 'tag'] as const) {
   projectTest(
     `saves manual ${groupBy} lane order across statuses and reloads`,
     async ({ page, scheduledProject: { path, issueId } }) => {
+      await enableLegacyBoardGrouping(page.context())
       const projectId = path.split('/').at(-1)!
       const project = await webApi<Resource & { current_user_id: number }>(
         page,

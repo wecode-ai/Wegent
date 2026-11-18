@@ -14,7 +14,10 @@ from app.models.resource_member import ResourceMember
 from app.models.user import User
 from app.models.wework_notification import WeworkNotification
 from app.schemas.delivery import LoopItemTaskBind, LoopItemUpdate
-from app.schemas.issue_activity_comment import StandInPublicReply
+from app.schemas.issue_activity_comment import (
+    AssistantPublicationSource,
+    StandInPublicReply,
+)
 from app.schemas.project_chat import LoopItemAssign, ProjectChatMention, ProjectChatSend
 from app.services.collaboration_human_assignments import human_task_bindings
 from app.services.loop_item_unread import (
@@ -122,6 +125,52 @@ def bind_current_dispatch(db, user, scope):
     )
 
 
+def test_tool_generated_comments_keep_source_without_human_confirmation(
+    test_db, test_user, scope
+):
+    project, issue, _, _, identity = scope
+    initial_status = issue.status
+    source = AssistantPublicationSource(
+        device_id=identity.device_id,
+        task_id=identity.task_id,
+        requires_confirmation=True,
+    )
+    request = ProjectChatSend(
+        client_message_id=str(uuid.uuid4()),
+        project_id=str(project.id),
+        task_id=issue.id,
+        content="Tool generated result",
+    )
+    result = project_chat_service.send(
+        test_db,
+        user_id=test_user.id,
+        user_name=test_user.user_name,
+        request=request,
+        assistant_source=source,
+    ).message
+    assert result.generation_source == "ai"
+    assert result.publication_source == "ai"
+    assert result.confirmation_state == "pending"
+    assert result.runtime_address == {
+        "deviceId": identity.device_id,
+        "taskId": identity.task_id,
+    }
+    stored = (
+        test_db.query(ProjectChatMessage).filter_by(message_id=result.message_id).one()
+    )
+    assert stored.metadata_json["assistant_publication"]["verified"] is False
+    assert issue.status == initial_status
+    with pytest.raises(HTTPException) as error:
+        project_chat_service.send(
+            test_db,
+            user_id=test_user.id,
+            user_name=test_user.user_name,
+            request=request,
+            assistant_source=source.model_copy(update={"requires_confirmation": False}),
+        )
+    assert error.value.status_code == 409
+
+
 def test_public_messages_are_separate_and_redelivery_is_idempotent(
     test_db, test_user, scope
 ):
@@ -138,6 +187,24 @@ def test_public_messages_are_separate_and_redelivery_is_idempotent(
     assert first.metadata["execution_dispatch"] == "comment_only"
     assert first.metadata["member_assistant_result"]["status"] == "completed"
     assert first.metadata["member_assistant_result"]["summary"] == first.content
+    row = test_db.query(ProjectChatMessage).filter_by(message_id=first.message_id).one()
+    owner = project_chat_service.to_shared_view(
+        row, db=test_db, viewer_user_id=test_user.id
+    )
+    observer = project_chat_service.to_shared_view(
+        row, db=test_db, viewer_user_id=test_user.id + 1
+    )
+    assert owner.runtime_address == {
+        "deviceId": scope[2].device_id,
+        "taskId": scope[2].task_id,
+    }
+    assert owner.trace_ref and owner.trace_state == "available"
+    assert observer.runtime_address is None
+    assert observer.trace_ref == owner.trace_ref
+    assert observer.trace_state == "restricted"
+    assert "stand_in" not in observer.metadata
+    assert owner.generation_source == "ai"
+    assert owner.confirmation_state == "pending"
     assert result.sequence_number > first.sequence_number
     assert test_db.query(ProjectChatMessage).filter_by(sender_type="agent").count() == 2
     with pytest.raises(HTTPException) as error:

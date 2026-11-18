@@ -284,6 +284,58 @@ mod tests {
     }
 
     #[test]
+    fn tool_generated_sources_do_not_acquire_human_confirmation() {
+        let mut source = row();
+        source.sender_type = "user".into();
+        source.runtime_device_id.clear();
+        source.runtime_task_id.clear();
+        source.metadata = Some(brz_mysql::Json(json!({"assistant_publication":{
+            "verified":false,"source_verified":true,"published_by":"ai",
+            "binding_id":"binding","device_id":"bound-device","task_id":"bound-task"
+        }})));
+        let mut owner = message_view(&source);
+        apply_private_source_access(&mut owner, &source, 7, Some(7), false);
+        assert_eq!(owner["generationSource"], "ai");
+        assert_eq!(owner["publicationSource"], "ai");
+        assert_eq!(owner["confirmationState"], "pending");
+        assert_eq!(
+            owner["runtimeAddress"],
+            json!({"deviceId":"bound-device","taskId":"bound-task"})
+        );
+        let mut observer = message_view(&source);
+        apply_private_source_access(&mut observer, &source, 8, Some(7), false);
+        assert!(observer["runtimeAddress"].is_null());
+        assert!(observer["metadata"].get("assistant_publication").is_none());
+        assert_eq!(observer["confirmationState"], "pending");
+    }
+
+    #[test]
+    fn stand_in_sources_are_owner_only_without_granting_publication() {
+        let mut source = row();
+        source.runtime_device_id.clear();
+        source.runtime_task_id.clear();
+        source.metadata = Some(brz_mysql::Json(json!({"stand_in": {
+            "binding_id":"binding", "user_id":7, "device_id":"bound-device", "task_id":"bound-task"
+        }})));
+        let mut owner = message_view(&source);
+        apply_private_source_access(&mut owner, &source, 7, Some(7), false);
+        assert_eq!(
+            owner["runtimeAddress"],
+            json!({"deviceId":"bound-device","taskId":"bound-task"})
+        );
+        assert_eq!(owner["generationSource"], "ai");
+        assert_eq!(owner["confirmationState"], "pending");
+        let mut observer = message_view(&source);
+        apply_private_source_access(&mut observer, &source, 8, Some(7), false);
+        assert!(observer["runtimeAddress"].is_null());
+        assert_eq!(observer["traceRef"], owner["traceRef"]);
+        assert_eq!(observer["traceState"], "restricted");
+        assert!(observer["metadata"].get("stand_in").is_none());
+        source.metadata.as_mut().unwrap().0["stand_in"]["task_id"] = json!("");
+        assert!(message_view(&source)["traceRef"].is_null());
+    }
+
+    #[test]
     fn verified_publications_resolve_complete_sources_without_mixing_pairs() {
         let mut published = row();
         published.sender_type = "user".into();

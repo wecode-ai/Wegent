@@ -282,3 +282,19 @@ async fn verify_permission_data(mysql: &MysqlService) -> Result<()> {
     assert_eq!(grants.n, 0);
     Ok(())
 }
+
+/// Exercise collaboration writes against the checked-in deployment schema.
+pub(crate) async fn seed_collaboration(mysql: &MysqlService) -> Result<()> {
+    upgrade(mysql).await?;
+    mysql.execute("INSERT INTO users (id,user_name,password_hash,role,auth_source,preferences,is_active) VALUES (7,'qa-owner','fixture','user','local','{}',true),(8,'qa-observer','fixture','user','local','{}',true)", ()).await?;
+    mysql.execute("INSERT INTO kinds (id,user_id,name,kind,namespace,json,is_active) VALUES (2001,7,'qa-space','CollaborationWorkspace','default',JSON_OBJECT(),true)", ()).await?;
+    mysql.execute("INSERT INTO loop_items (id,resource_type,description,status,metadata,created_at,updated_at) VALUES ('1001','project','','active',JSON_OBJECT('membership_mode','direct'),NOW(),NOW()),('root','task','','pending',JSON_OBJECT('security_level','open'),NOW(),NOW())", ()).await?;
+    mysql
+        .execute(
+            "UPDATE loop_items SET cloud_project_id='1001',created_by_user_id=7 WHERE id='root'",
+            (),
+        )
+        .await?;
+    mysql.execute("INSERT INTO resource_members (resource_type,resource_id,entity_type,entity_id,role,status,requested_at,created_at,updated_at) VALUES ('CloudProject',1001,'workspace','2001','Owner','approved',NOW(),NOW(),NOW()),('CloudProject',1001,'user','7','Maintainer','approved',NOW(),NOW(),NOW()),('CloudProject',1001,'user','8','Developer','approved',NOW(),NOW(),NOW())", ()).await?;
+    Ok(())
+}
