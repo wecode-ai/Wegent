@@ -5604,8 +5604,33 @@ fn temp_runtime_work_index_path(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "wegent-runtime-work-{label}-{}-{}-{sequence}.json",
         std::process::id(),
-        now_ms()
+        uuid::Uuid::new_v4()
     ))
+}
+
+#[test]
+fn same_label_fixture_paths_are_unique_under_parallel_creation() {
+    let paths = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..4)
+            .map(|_| {
+                scope.spawn(|| {
+                    (0..32)
+                        .map(|_| temp_runtime_work_index_path("preparation-terminal-state"))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|worker| worker.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+    let unique: std::collections::HashSet<_> = paths.iter().collect();
+    assert_eq!(
+        unique.len(),
+        paths.len(),
+        "Parallel fixtures must never share a runtime store"
+    );
 }
 
 fn initialize_test_repository(path: &Path) {
