@@ -20,9 +20,9 @@ from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.services.collaboration_human_assignments import direct_human_assignment_id
 from app.services.device.identity import (
-    _resolve_device_alias,
     device_connection_route_id,
     matching_online_info,
+    resolve_owned_device_alias,
 )
 from app.services.device.local_provider import LocalDeviceProvider
 from app.services.human_assistant_dispatch import (
@@ -128,13 +128,10 @@ def _pending_availability(
     )
     online = online_endpoints(devices)
     for item_id, execution in pending.items():
-        device = _resolve_device_alias(
-            [
-                device
-                for device in devices
-                if device.user_id == execution.executor_owner_user_id
-            ],
-            execution.execution_device_id,
+        device = resolve_owned_device_alias(
+            db,
+            user_id=execution.executor_owner_user_id,
+            device_id=execution.execution_device_id,
         )
         role, reason = (
             device_role(device, items[item_id])

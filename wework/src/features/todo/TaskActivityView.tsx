@@ -1282,7 +1282,7 @@ export function TaskActivityView({
           taskAiState={task.ai_state}
           executionDeviceName={deviceNameForMessage(message)}
           taskSummary={taskSummaryForMessage(message)}
-          hideTime={hideTime || (issueTimeline && isRoot)}
+          hideTime={issueTimeline && isRoot}
           onOpenExecution={openExecution}
           onStopExecution={address ? () => void stopRuntimeTask(message) : undefined}
           stopping={cancellingMessageId === message.messageId}
