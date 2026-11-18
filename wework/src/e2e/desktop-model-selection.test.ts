@@ -83,7 +83,10 @@ test('explicitly selects a matching fallback before its configured model becomes
             // A ready fallback can precede the catalog entry for the persisted model.
             if (snapshots >= 3) catalogRestored = true
             return JSON.stringify({
-              workbench: { currentRuntimeTask: task },
+              workbench: {
+                currentRuntimeTask: task,
+                composer: { isModelSelectionReady: snapshots >= 2 },
+              },
               pane: { currentRuntimeTask: task },
             })
           }
@@ -106,6 +109,11 @@ test('explicitly selects a matching fallback before its configured model becomes
           }
           if (action === 'getElementCount') return open ? '1' : '0'
           if (action === 'hover') open = true
+          if (
+            action === 'clickWhenEnabled' &&
+            selector.endsWith('[data-testid="model-selector-button"]')
+          )
+            open = true
           if (action === 'click') {
             if (selector === '[data-testid="new-chat-button"]') return ''
             assert.ok(selector.includes(`model-option-${model.optionIds[0]}`))
@@ -145,11 +153,15 @@ test('explicitly chooses the protocol model even when the pending default label 
         async command(action: string, selector: string, options?: { value?: string }) {
           if (action === 'getWorkbenchDebugSnapshot')
             return JSON.stringify({
-              workbench: { currentRuntimeTask: null },
+              workbench: {
+                currentRuntimeTask: null,
+                composer: { isModelSelectionReady: true },
+              },
               pane: { currentRuntimeTask: null },
             })
           if (action === 'snapshot')
             return JSON.stringify({ testIds: open ? ['model-selector-menu', option] : [] })
+          if (action === 'getElementMetrics') return '[]'
           if (selector.endsWith('[data-testid="model-selector-button"]')) {
             if (action === 'getText') return model.modelId
             if (action === 'getAttribute') return ''
@@ -221,6 +233,11 @@ test('selects Anthropic after the new conversation finishes restoring another mo
             return options?.value === 'aria-checked' ? String(selected) : ''
           }
           if (action === 'hover') open = true
+          if (
+            action === 'clickWhenEnabled' &&
+            selector.endsWith('[data-testid="model-selector-button"]')
+          )
+            open = true
           if (action === 'getElementCount') return open ? '1' : '0'
           if (action === 'click') {
             if (selector === '[data-testid="new-chat-button"]') return ''

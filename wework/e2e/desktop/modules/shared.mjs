@@ -1606,6 +1606,18 @@ async function selectE2EModel(
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
   }
+  // Capture open-picker identity without interacting with its isolated background trigger.
+  if (pickerOpen && diagnosticContext) {
+    await logE2EModelSelection({
+      control,
+      context: diagnosticContext,
+      composerSelector,
+      modelSelectorButton,
+      modelIds,
+      labels,
+      expectedProviderId,
+    })
+  }
   // An open modal picker isolates its background trigger, including retry entry points.
   if (!pickerOpen) {
     const selectedModelLabel = await control.command('getText', modelSelectorButton, {
