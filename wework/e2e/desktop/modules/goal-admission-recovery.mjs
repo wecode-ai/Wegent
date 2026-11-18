@@ -94,7 +94,7 @@ export function createGoalAdmissionRecovery({ workspacePath, uiTimeoutMs }) {
         assert.equal(created.accepted, true, created.error)
         address = { deviceId: created.deviceId, taskId, workspacePath }
         const original = await waitDone()
-        // Start from an unloaded thread; activation must durably own its native resume.
+        // Start from an unloaded thread to exercise native session preparation.
         await waitForValue(
           () => rpc('runtime.codex.app_server.restart', { ifIdle: true }),
           value => value.restarted === true,
@@ -109,7 +109,7 @@ export function createGoalAdmissionRecovery({ workspacePath, uiTimeoutMs }) {
         assert.equal(set.accepted, true, set.error)
         const before = set.goal
         assert.equal(before.status, 'active')
-        assert.equal(set.resumed, true, 'Activation must admit the owned Goal recovery')
+        assert.equal(set.resumed, false, 'Native Goal activation must not enqueue a second resume')
         await waitForValue(
           task,
           value => requests === 2 && value.running === true,

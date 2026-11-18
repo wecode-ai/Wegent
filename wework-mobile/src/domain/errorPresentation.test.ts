@@ -44,6 +44,14 @@ describe('mobile error copy follows PC classification', () => {
     expect(error.title).toBe('模型额度已用尽')
   })
 
+  it('presents overload reported by the runtime as an actionable model error', () => {
+    expect(describeMobileError('upstream request failed', undefined, 'server_overloaded')).toEqual({
+      title: '模型服务繁忙',
+      message: '请稍后重试，或切换其他模型。',
+      details: 'upstream request failed',
+    })
+  })
+
   it('redacts URL credentials, query/fragment secrets, headers and structured keys', () => {
     const diagnostic =
       'https://user:pass@example.test/api?token=query-secret#fragment-secret ' +
