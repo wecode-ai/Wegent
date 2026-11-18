@@ -2265,6 +2265,14 @@ class LoopItemService:
         project = db.get(CloudProject, str(item.cloud_project_id))
         human = require_active_issue_user(db, target_user_id)
         if not notify:
+            logger.info(
+                "Stand-in Issue wakeup suppressed reason=notify_assignee_false "
+                "issue_id=%s project_id=%s user_id=%s assignment_id=%s",
+                item.id,
+                item.cloud_project_id,
+                target_user_id,
+                assignment.id if assignment else None,
+            )
             return
         from app.services.collaboration_human_assignments import (
             notify_direct_human_assignment,

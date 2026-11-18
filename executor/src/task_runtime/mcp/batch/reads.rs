@@ -149,9 +149,12 @@ fn remote_result(response: &Value, entry: &Value, request_id: &Value) -> Value {
         return unavailable(entry, "Duplicate remote entry result");
     }
     let succeeded = result["state"] == "succeeded";
-    if (!succeeded && result["state"] != "failed")
-        || (succeeded && !result["result"].is_object())
-        || (!succeeded && !result["error"].is_object())
+    let valid_state = if succeeded {
+        result["result"].is_object()
+    } else {
+        result["state"] == "failed" && result["error"].is_object()
+    };
+    if !valid_state
         || entry
             .get("target")
             .is_some_and(|target| result["target"] != *target)
