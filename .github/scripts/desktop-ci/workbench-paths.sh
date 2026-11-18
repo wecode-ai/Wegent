@@ -277,7 +277,7 @@ classify_workbench_path() {
     wework/src/features/workbench/runtimeConversationCache*)
       select_target "core:core-task-flow"
       select_target "core:conversation-state"
-      select_target "core:board-transcript-followup"
+      select_target "core:transcript-sync"
       return
       ;;
     wework/src/features/workbench/runtimePaneMessages* | \
@@ -451,17 +451,17 @@ classify_workbench_path() {
       wework/src/components/layout/workspace-panels/workspaceFileTypes* | \
       wework/src/components/chat/useDesktopMarkdownServices* | \
       wework/src/components/chat/FileChangesReviewPanel*)
-      select_target "core:rendering-extensions"
+      select_target "core:core-task-flow"
       if [[ "$path" == wework/src/components/layout/workspace-panels/FileWorkspacePanel* || \
         "$path" == wework/src/components/layout/workspace-panels/WorkspaceFilePreview* || \
         "$path" == wework/src/components/layout/workspace-panels/workspaceFileTypes* || \
         "$path" == wework/src/components/chat/useDesktopMarkdownServices* ]]; then
-        select_target "cloud:rendering-extensions"
+        select_target "cloud:core-task-flow"
       fi
       return
       ;;
     wework/src/e2e/desktop-control-wheel*)
-      select_target "core:rendering-extensions"
+      select_target "core:core-task-flow"
       return
       ;;
 

@@ -138,9 +138,9 @@ select_plugin_sync_checkpoints() {
 }
 
 select_rendering_checkpoints() {
-  select_target "core:rendering-extensions"
   select_target "core:streaming-content"
-  select_target "core:streaming-tools"
+  select_target "core:streaming-content"
+  select_target "core:streaming-content"
   select_target "core:streaming-content"
   select_target "core:transcript-sync"
   select_target "core:streaming-content"

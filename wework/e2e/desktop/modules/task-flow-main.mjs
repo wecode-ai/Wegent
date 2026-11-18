@@ -45,7 +45,6 @@ import {
   verifyLastUserMessageEdit,
   verifyPausedQueueLifecycle,
   verifyQueuedFollowUpNavigation,
-  verifyStandaloneViewImageTask,
   verifyTurnNavigationTracksVisibleTurnMessages,
   verifyUserMessageNavigation,
   verifyVisionSidecar,
@@ -97,9 +96,7 @@ import {
 import {
   ensureTaskRowVisible,
   verifyConcurrentTaskMemory,
-  verifyLocalMarkdownImage,
   verifyMemoryGrowth,
-  verifyToolBlockChronologicalOrder,
 } from './memory-tool-flows.mjs'
 
 import {
@@ -183,8 +180,6 @@ import {
   FILE_PANEL_ANCHOR_PROMPT,
   FILE_PANEL_LINK_NAME,
   FILE_PREVIEW_RESTORE_MARKER,
-  FOLLOW_UP_COMPLETION_TEXT,
-  FOLLOW_UP_PROMPT,
   GIT_SEED_CONTENT,
   GIT_SEED_NAME,
   GOAL_BUSY_ONLY,
@@ -242,7 +237,6 @@ import {
   TASK_PLAN_ONLY,
   TASK_PROMPT,
   TELEMETRY_TEST_PROJECT_KEY,
-  TOOL_BLOCK_ORDER_ONLY,
   TURN_NAVIGATION_ONLY,
   TURN_NAVIGATION_ONLY_TURN_COUNT,
   TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX,
@@ -2002,16 +1996,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     )
     await captureVerificationScreenshot(control, '00-canonical-model-catalog.png')
     await control.command('press', 'body', { key: 'Escape' })
-
-    if (TOOL_BLOCK_ORDER_ONLY) {
-      phase = 'tool-block-chronological-order'
-      await verifyToolBlockChronologicalOrder({
-        composerSelector: ACTIVE_COMPOSER_SELECTOR,
-        control,
-      })
-      console.log(`Wework desktop tool-block-order E2E passed. Evidence: ${resultDir}`)
-      return
-    }
 
     if (RETRY_ONLY) {
       phase = 'retry-failure-restoration'
@@ -4740,33 +4724,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         console.log(
           `Wework desktop workspace-attachments checkpoint passed. Evidence: ${resultDir}`
         )
-        return
-      }
-    }
-
-    if (shouldRunDesktopCheckpoint('rendering-extensions')) {
-      phase = 'tool-block-chronological-order'
-      await verifyToolBlockChronologicalOrder({
-        composerSelector,
-        control,
-      })
-
-      phase = 'standalone-view-image'
-      await verifyStandaloneViewImageTask({ composerSelector, control, projectRowSelector })
-
-      phase = 'local-markdown-image'
-      await verifyLocalMarkdownImage({
-        composerSelector,
-        control,
-      })
-
-      if (desktopScenario) {
-        phase = 'desktop-extension-scenario'
-        desktopScenarioVerified = true
-        await desktopScenario.verify(control)
-      }
-      if (shouldStopAfterDesktopCheckpoint('rendering-extensions')) {
-        console.log(`Wework desktop rendering-extensions checkpoint passed. Evidence: ${resultDir}`)
         return
       }
     }

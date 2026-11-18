@@ -29,7 +29,7 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/board-transcript-followup.scenario.mjs | \
       wework/src/features/todo/useBoardRuntimeConversations*)
-      select_target "core:board-transcript-followup"
+      select_target "core:transcript-sync"
       return
       ;;    wework/e2e/desktop/scenarios/device-artifact-declaration.scenario.mjs)
       select_target "core:device-artifact-declaration"

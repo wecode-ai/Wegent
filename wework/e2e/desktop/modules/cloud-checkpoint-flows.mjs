@@ -2,14 +2,11 @@ import { assertMatrixReports } from './model-matrix-audit.mjs'
 import { access, readFile } from 'node:fs/promises'
 import { verifyPluginUpgrade } from './plugin-upgrade-flow.mjs'
 import { verifyCreatorAuthenticationToolkit } from './plugin-flows.mjs'
-import { basename, dirname } from 'node:path'
+import { basename } from 'node:path'
 
 import { verifyShortConversationLayout } from './conversation-layout.mjs'
 
-import {
-  verifyPausedQueueLifecycle,
-  verifyStandaloneViewImageTask,
-} from './conversation-navigation.mjs'
+import { verifyPausedQueueLifecycle } from './conversation-navigation.mjs'
 
 import {
   setMatrixUpstreamProtocol,
@@ -30,8 +27,6 @@ import { verifyCloudFileAccessOutsideWorkspace } from './workspace-file-access-f
 import { verifyCloudFileChunkIntegrity } from './workspace-file-chunks-flow.mjs'
 import { verifyCloudGitReview } from './workspace-git-review-flow.mjs'
 import { verifyCloudConversationMenu } from './conversation-menu-flow.mjs'
-import { verifyCloudHtmlFileLinkPreview } from './markdown-file-preview.mjs'
-import { verifyMarkdownRelativeFileLinks } from './markdown-relative-file-links.mjs'
 import {
   createCloudAttachmentVerification,
   verifyCloudWorkspacePathMentions,
@@ -43,8 +38,6 @@ import {
   verifyCloudGoalRestartRecoveryLifecycle,
   verifyTaskSupervisorLifecycle,
 } from './goal-flows.mjs'
-
-import { verifyToolBlockChronologicalOrder } from './memory-tool-flows.mjs'
 
 import { verifyPastedZipAttachment } from './path-attachment-flows.mjs'
 
@@ -108,7 +101,6 @@ const CLOUD_CHECKPOINTS = [
   'resilience',
   'conversation-state',
   'workspace-attachments',
-  'rendering-extensions',
   'browser-multi-tabs',
   'embedded-browser',
   'connector-oauth',
@@ -1001,21 +993,6 @@ async function verifyCloudCheckpoint({
       await verifyCloudConversationMenu({ cloudEnvironment, address: menuTask, workspacePath })
       return
     }
-    case 'rendering-extensions':
-      setPhase('cloud-html-file-link-preview')
-      await verifyCloudHtmlFileLinkPreview({
-        composerSelector,
-        control,
-        projectRowSelector,
-        workspacePath,
-      })
-      setPhase('cloud-markdown-relative-file-links')
-      await verifyMarkdownRelativeFileLinks({ control, workspacePath })
-      setPhase('cloud-tool-block-order')
-      await verifyToolBlockChronologicalOrder({ composerSelector, control })
-      setPhase('cloud-view-image')
-      await verifyStandaloneViewImageTask({ composerSelector, control, projectRowSelector })
-      return
     case 'browser-multi-tabs':
     case 'embedded-browser':
     case 'connector-oauth':

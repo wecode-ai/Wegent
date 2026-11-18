@@ -64,14 +64,12 @@ import {
   matrixToolCompletion,
   matrixToolPreamble,
   matrixToolPrompt,
-  namespacedFunctionCall,
   parseTelemetryPayload,
   reasoningTextItem,
   readRawRequestBody,
   readRequestBody,
   requestAdvertisesProgrammaticExec,
   requestAdvertisesShellTool,
-  requestAdvertisesViewImageTool,
   requestContainsToolOutput,
   responseCompleted,
   responseCreated,
@@ -95,7 +93,6 @@ import {
   streamingTextEvents,
   telemetryEvents,
 } from './response-protocol.mjs'
-import { tmpdir } from 'node:os'
 import { posix } from 'node:path'
 
 import {
@@ -120,9 +117,6 @@ import {
   CLOUD_COMPLETION_TEXT,
   CLOUD_FOLLOW_UP_COMPLETION_TEXT,
   CLOUD_FOLLOW_UP_PROMPT,
-  CLOUD_HTML_LINK_FILENAME,
-  CLOUD_HTML_LINK_MISSING_FILENAME,
-  CLOUD_HTML_LINK_PROMPT,
   CLOUD_MODEL_CASES,
   CLOUD_PUBLIC_MODEL_LABEL,
   CLOUD_PUBLIC_MODEL_NAME,
@@ -146,7 +140,6 @@ import {
   DROPPED_PATH_COMPLETION_TEXT,
   DROPPED_PATH_FILE_NAME,
   DROPPED_PATH_FOLDER_NAME,
-  EARLIER_TOOL_BLOCK_ID,
   EMBEDDED_BROWSER_BRIDGE_COLLISION_COMPLETION_TEXT,
   EMBEDDED_BROWSER_BRIDGE_COLLISION_PROMPT,
   EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT,
@@ -165,8 +158,6 @@ import {
   FORK_PROVIDER_SOURCE_PROMPT,
   FRESH_CHAT_COMPLETION_TEXT,
   FRESH_CHAT_PROMPT,
-  GENERIC_MCP_TOOL_BLOCK_ID,
-  GENERIC_MCP_TOOL_SEARCH_ID,
   GOAL_BUSY_COMPLETION_TEXT,
   GOAL_BUSY_OBJECTIVE,
   GOAL_BUSY_PLAN_PROMPT,
@@ -191,10 +182,6 @@ import {
   GUIDANCE_SCROLL_PRE_TOOL_TEXT,
   GUIDANCE_SCROLL_PROMPT,
   GUIDANCE_SCROLL_RESPONSE,
-  LATER_TOOL_BLOCK_ID,
-  LOCAL_MARKDOWN_IMAGE_ALT,
-  LOCAL_MARKDOWN_IMAGE_FILENAME,
-  LOCAL_MARKDOWN_IMAGE_PROMPT,
   LOCAL_MODEL_CASES,
   LOCAL_MODEL_SWITCH_COMPLETE,
   LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT,
@@ -216,8 +203,6 @@ import {
   MESSAGE_EDIT_UPDATED_COMPLETION_TEXT,
   MESSAGE_EDIT_UPDATED_PROMPT,
   MODEL_API_KEY,
-  NODE_REPL_TOOL_BLOCK_ID,
-  NODE_REPL_TOOL_SEARCH_ID,
   OFFICIAL_PLUGIN_COMPLETION_TEXT,
   OFFICIAL_PLUGIN_DISPLAY_NAME,
   OFFICIAL_PLUGIN_MCP_SEARCH_ID,
@@ -305,12 +290,8 @@ import {
   TASK_PLAN_STEP,
   TASK_PROMPT,
   TELEMETRY_CAPTURE_PATH,
-  TOOL_BLOCK_ORDER_COMPLETION_TEXT,
-  TOOL_BLOCK_ORDER_PROMPT,
   TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX,
   TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX,
-  VIEW_IMAGE_COMPLETION_TEXT,
-  VIEW_IMAGE_PROMPT,
   VISION_SIDECAR_COMPLETION_TEXT,
   VISION_SIDECAR_DESCRIPTION,
   VISION_SIDECAR_MAIN_REQUEST_SCENARIO,
@@ -566,7 +547,6 @@ class DesktopE2EServer {
     this.scenario = 'initial'
     this.modelStage = 'initial'
     this.mcpElicitationModel = createMcpElicitationModel()
-    this.viewImageStage = 'initial'
     this.memoryStage = 'initial'
     this.concurrentMemoryResponses = []
     this.concurrentMemoryTaskNumbers = new Set()
@@ -575,10 +555,8 @@ class DesktopE2EServer {
     this.matrixState = null
     this.toolLessPrewarmHandled = false
     this.embeddedBrowserSetupToolLessPrewarmHandled = false
-    this.viewImageToolLessPrewarmHandled = false
     this.memoryToolLessPrewarmHandled = false
     this.cloudToolLessPrewarmHandled = false
-    this.cloudHtmlLinkToolLessPrewarmHandled = false
     this.officialPluginToolLessPrewarmHandled = false
     this.toolOutput = null
     this.initialToolRelease = new Promise(resolvePromise => {
@@ -706,18 +684,6 @@ class DesktopE2EServer {
     })
     this.supervisorCorrectionRelease = new Promise(resolvePromise => {
       this.releaseSupervisorCorrection = resolvePromise
-    })
-    this.toolBlockNodeOutputObserved = new Promise(resolvePromise => {
-      this.resolveToolBlockNodeOutputObserved = resolvePromise
-    })
-    this.toolBlockNodeRelease = new Promise(resolvePromise => {
-      this.releaseToolBlockNode = resolvePromise
-    })
-    this.toolBlockGenericOutputObserved = new Promise(resolvePromise => {
-      this.resolveToolBlockGenericOutputObserved = resolvePromise
-    })
-    this.toolBlockGenericRelease = new Promise(resolvePromise => {
-      this.releaseToolBlockGeneric = resolvePromise
     })
     this.cloudInitialRelease = new Promise(resolvePromise => {
       this.releaseCloudInitial = resolvePromise
@@ -973,14 +939,10 @@ class DesktopE2EServer {
         'side_chat_guidance',
         'cloud_initial',
         'cloud_follow_up',
-        'cloud_html_link',
         'model_protocol_matrix',
         'provider_switch_retry',
         'vision_sidecar',
         'multimodal_vision',
-        'view_image',
-        'local_markdown_image',
-        'tool_block_order',
         'official_plugin',
         'plugin_development',
         'automation',
@@ -2715,28 +2677,6 @@ class DesktopE2EServer {
     }
 
     if (
-      this.scenario === 'view_image' &&
-      this.viewImageStage === 'initial' &&
-      !this.viewImageToolLessPrewarmHandled &&
-      !requestAdvertisesViewImageTool(body)
-    ) {
-      this.viewImageToolLessPrewarmHandled = true
-      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
-      return
-    }
-
-    if (
-      this.scenario === 'cloud_html_link' &&
-      !this.cloudHtmlLinkToolLessPrewarmHandled &&
-      !JSON.stringify(body).includes(CLOUD_HTML_LINK_PROMPT) &&
-      !requestAdvertisesShellTool(body)
-    ) {
-      this.cloudHtmlLinkToolLessPrewarmHandled = true
-      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
-      return
-    }
-
-    if (
       this.scenario === 'cloud_initial' &&
       this.cloudModelStage === 'initial' &&
       !this.cloudToolLessPrewarmHandled &&
@@ -2765,146 +2705,6 @@ class DesktopE2EServer {
     ) {
       this.officialPluginToolLessPrewarmHandled = true
       this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
-      return
-    }
-
-    if (this.scenario === 'tool_block_order' && !requestAdvertisesShellTool(body)) {
-      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
-      return
-    }
-
-    if (this.scenario === 'local_markdown_image') {
-      this.recordScenarioRequest('local_markdown_image', modelRequest)
-      assert.ok(
-        JSON.stringify(body).includes(LOCAL_MARKDOWN_IMAGE_PROMPT),
-        'The real Codex request did not contain the local Markdown image prompt'
-      )
-      const imageUrl = pathToFileURL(join(tmpdir(), LOCAL_MARKDOWN_IMAGE_FILENAME)).href
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(`![${LOCAL_MARKDOWN_IMAGE_ALT}](${imageUrl})`),
-        responseCompleted(responseId),
-      ])
-      return
-    }
-
-    if (this.scenario === 'tool_block_order') {
-      this.recordScenarioRequest('tool_block_order', modelRequest)
-      const requestNumber = this.scenarioRequests.get('tool_block_order').length
-      const requestText = JSON.stringify(body)
-
-      if (requestNumber === 1) {
-        assert.ok(
-          requestText.includes(TOOL_BLOCK_ORDER_PROMPT),
-          'The real Codex request did not contain the tool-block-order prompt'
-        )
-        const tool = selectShellToolCommand(body, 'printf earlier-created-tool', this.workspacePath)
-        this.writeSse(response, [
-          responseCreated(responseId),
-          ...selectedToolCall(EARLIER_TOOL_BLOCK_ID, tool),
-          responseCompleted(responseId),
-        ])
-        return
-      }
-
-      if (requestNumber === 2) {
-        assert.equal(
-          requestContainsToolOutput(body, EARLIER_TOOL_BLOCK_ID),
-          true,
-          'The earlier command output did not return through the real Codex tool loop'
-        )
-        const search = selectToolSearch(body, 'node_repl js')
-        this.writeSse(response, [
-          responseCreated(responseId),
-          ...toolSearchResponseEvents(NODE_REPL_TOOL_SEARCH_ID, search),
-          responseCompleted(responseId),
-        ])
-        return
-      }
-
-      if (requestNumber === 3) {
-        const tool = selectMcpTool(body, 'node_repl', 'js', {
-          code: "nodeRepl.write({ status: 'ready', value: 42 })",
-        })
-        this.writeSse(response, [
-          responseCreated(responseId),
-          ...selectedToolCall(NODE_REPL_TOOL_BLOCK_ID, tool),
-          responseCompleted(responseId),
-        ])
-        return
-      }
-
-      if (requestNumber === 4) {
-        assert.equal(
-          requestContainsToolOutput(body, NODE_REPL_TOOL_BLOCK_ID),
-          true,
-          'The Node REPL output did not return through the real Codex tool loop'
-        )
-        assert.ok(
-          requestText.includes("{ status: 'executed', result: 84 }"),
-          'The Node REPL MCP server result was not delivered to the model service'
-        )
-        this.resolveToolBlockNodeOutputObserved()
-        await this.toolBlockNodeRelease
-        const search = selectToolSearch(
-          body,
-          'github issue details',
-          'mcp__github__issues__get_issue_details'
-        )
-        this.writeSse(response, [
-          responseCreated(responseId),
-          ...toolSearchResponseEvents(GENERIC_MCP_TOOL_SEARCH_ID, search),
-          responseCompleted(responseId),
-        ])
-        return
-      }
-
-      if (requestNumber === 5) {
-        const tool = selectMcpTool(body, 'github__issues', 'get_issue_details', {
-          owner: 'wecode-ai',
-          repo: 'Wegent',
-          issue_number: 123,
-        })
-        this.writeSse(response, [
-          responseCreated(responseId),
-          ...selectedToolCall(GENERIC_MCP_TOOL_BLOCK_ID, tool),
-          responseCompleted(responseId),
-        ])
-        return
-      }
-
-      if (requestNumber === 6) {
-        assert.equal(
-          requestContainsToolOutput(body, GENERIC_MCP_TOOL_BLOCK_ID),
-          true,
-          'The generic MCP output did not return through the real Codex tool loop'
-        )
-        assert.ok(
-          requestText.includes('Tool detail verification'),
-          'The generic MCP server result was not delivered to the model service'
-        )
-        this.resolveToolBlockGenericOutputObserved()
-        await this.toolBlockGenericRelease
-        const tool = selectShellToolCommand(body, 'printf later-created-tool', this.workspacePath)
-        this.writeSse(response, [
-          responseCreated(responseId),
-          ...selectedToolCall(LATER_TOOL_BLOCK_ID, tool),
-          responseCompleted(responseId),
-        ])
-        return
-      }
-
-      assert.equal(requestNumber, 7, `Unexpected tool-block-order request ${requestNumber}`)
-      assert.equal(
-        requestContainsToolOutput(body, LATER_TOOL_BLOCK_ID),
-        true,
-        'The later command output did not return through the real Codex tool loop'
-      )
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(TOOL_BLOCK_ORDER_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
       return
     }
 
@@ -3294,44 +3094,6 @@ class DesktopE2EServer {
       assert.fail(`Unexpected guidance scroll model stage: ${this.guidanceScrollStage}`)
     }
 
-    if (this.scenario === 'view_image' && this.viewImageStage === 'initial') {
-      this.recordScenarioRequest('view_image', modelRequest)
-      assert.ok(
-        JSON.stringify(body).includes(VIEW_IMAGE_PROMPT),
-        'The real Codex request did not contain the view_image prompt'
-      )
-      const image = selectViewImageTool(body, this.workspacePath)
-      this.viewImageStage = 'awaiting_tool_output'
-      this.writeSse(response, [
-        responseCreated(responseId),
-        ...selectedToolCall('wework-e2e-view-image', image),
-        responseCompleted(responseId),
-      ])
-      return
-    }
-
-    if (this.scenario === 'view_image') {
-      assert.equal(
-        this.viewImageStage,
-        'awaiting_tool_output',
-        `Unexpected desktop E2E view_image stage: ${this.viewImageStage}`
-      )
-      this.recordScenarioRequest('view_image', modelRequest)
-      assert.equal(
-        requestContainsToolOutput(body, 'wework-e2e-view-image'),
-        true,
-        'The real Codex request did not report the view_image tool output to the model service'
-      )
-      this.viewImageStage = 'complete'
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(VIEW_IMAGE_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
-      return
-    }
-
     if (this.scenario === 'concurrent_memory') {
       const promptMatch = JSON.stringify(body).match(/WEWORK_DESKTOP_E2E_CONCURRENT_MEMORY_(\d+)/)
       assert.ok(promptMatch, 'Concurrent memory request did not contain a task UI prompt')
@@ -3394,30 +3156,6 @@ class DesktopE2EServer {
       this.memoryStage = 'streaming'
       await this.writeStreamingMarkdown(response, responseId, streamingMarkdownReport())
       this.memoryStage = 'complete'
-      return
-    }
-
-    if (this.scenario === 'cloud_html_link') {
-      this.recordScenarioRequest('cloud_html_link', modelRequest)
-      assert.ok(
-        JSON.stringify(body).includes(CLOUD_HTML_LINK_PROMPT),
-        'The real cloud Codex request did not contain the HTML link prompt'
-      )
-      const previewPath = join(this.cloudWorkspacePath, CLOUD_HTML_LINK_FILENAME).replaceAll(
-        '\\',
-        '/'
-      )
-      const missingPath = join(
-        this.cloudWorkspacePath,
-        CLOUD_HTML_LINK_MISSING_FILENAME
-      ).replaceAll('\\', '/')
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(
-          '[Cloud HTML preview](<' + previewPath + '>)\n[Missing Cloud HTML](<' + missingPath + '>)'
-        ),
-        responseCompleted(responseId),
-      ])
       return
     }
 

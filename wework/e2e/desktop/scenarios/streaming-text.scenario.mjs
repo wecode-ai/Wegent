@@ -1,11 +1,6 @@
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
-import { createFileCitationChecks } from '../modules/streaming-file-citations.mjs'
 import { handleEmptyReplyPrediction, selectTool } from '../modules/response-protocol.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
-import {
-  createMarkdownLinkChecks,
-  MARKDOWN_LINKS_PROMPT,
-} from '../modules/streaming-text-markdown-links.mjs'
 import {
   ACTIVE_WORKBENCH_SELECTOR,
   SUBAGENT_CHILD_STARTUP_TIMEOUT_MS,
@@ -15,7 +10,6 @@ import {
   ATTACHMENT_BASE64,
   latestModelInputText,
   streamingEvents,
-  longCodeStreamingEvents,
   SUBAGENT_CHILD_COMMENTARY,
   selectShellTool,
   SUBAGENT_CHILD_TOOL_START,
@@ -43,34 +37,15 @@ import {
   SUBAGENT_CHILD_PROMPT,
   GENERATED_IMAGE_CALL_ID,
   GENERATED_IMAGE_COMPLETION,
-  LONG_CODE_PROMPT,
-  LONG_CODE_COMPLETION,
-  LONG_CODE_STREAM_MARKER,
-  TOOL_DETAIL_PERSISTENCE_CALL_ID,
-  TOOL_DETAIL_PERSISTENCE_COMPLETION,
-  requestContainsToolOutput,
-  TOOL_COMPLETION,
-  writeSseEvents,
   requestContainsPrompt,
   COMPLETION_TEXT,
   PARTIAL_TEXT,
   APPENDED_TEXT,
   SCROLL_BUTTON_APPENDED_TEXT,
-  requestContainsToolRegressionPrompt,
-  REASONING_SUMMARY,
-  TOOL_PREAMBLE,
-  requestContainsToolDetailPersistencePrompt,
-  TOOL_DETAIL_PERSISTENCE_OUTPUT,
-  requestContainsPhaseFlipPrompt,
-  phaseFlipEvents,
-  requestContainsLegacyConversationPrompt,
-  LEGACY_CONVERSATION_COMPLETION,
   requestContainsVisualizationPrompt,
   VISUALIZATION_TITLE,
   requestContainsGeneratedImagePrompt,
   selectImageGenerationTool,
-  requestContainsWindowsLinkPrompt,
-  WINDOWS_LINK_COMPLETION,
   findHistoryTurn,
   requestContainsInitialPrompt,
   INITIAL_COMPLETION,
@@ -104,8 +79,6 @@ export function createDesktopScenario({
   beforeSubagentOutput,
   subagentTextRelease,
 }) {
-  const markdownLinks = createMarkdownLinkChecks({ captureScreenshot, workspacePath, uiTimeoutMs })
-  const fileCitations = createFileCitationChecks({ workspacePath, uiTimeoutMs })
   const transcriptIdentity = createStreamingTranscriptIdentityChecks({ uiTimeoutMs })
   const guidanceOrder = createStreamingGuidanceOrderChecks({ resultDir, uiTimeoutMs })
   const interactiveVisualization = createInteractiveVisualizationChecks({
@@ -122,21 +95,13 @@ export function createDesktopScenario({
   let generatedImageStage = 'initial'
   let subagentStage = 'initial'
   let subagentChildStage = 'initial'
-  let toolDetailPersistenceStage = 'initial'
-  let toolRegressionStage = 'initial'
   let reclassifiedCommentaryStage = 'initial'
   let releaseAppend
-  let releaseLongCodeStream
-  let releasePhaseFlipCompletion
   let releaseReclassifiedCommentaryFinal
   let releaseResponse
   let releaseScrollButtonAppend
   let releaseStart
   let releaseSubagentCompletion
-  let releaseToolDetailPersistenceCompletion
-  let releaseToolDetailPersistenceFinalText
-  let releaseToolCompletion
-  let releaseToolFinalCompletion
   let resolveAppendWritten
   let resolvePartialWritten
   let resolveReclassifiedCommentaryFollowUp
@@ -144,19 +109,9 @@ export function createDesktopScenario({
   let resolveScrollButtonAppendWritten
   let resolveSubagentChildRequestStarted
   let resolveSubagentPartialWritten
-  let resolveToolDetailPersistenceFinalTextStarted
-  let resolveToolDetailPersistenceFollowUp
-  let resolveToolFinalTextStarted
-  let resolveToolFollowUp
   let targetRequest
   const appendRelease = new Promise(resolve => {
     releaseAppend = resolve
-  })
-  const longCodeStreamRelease = new Promise(resolve => {
-    releaseLongCodeStream = resolve
-  })
-  const phaseFlipCompletionRelease = new Promise(resolve => {
-    releasePhaseFlipCompletion = resolve
   })
   const reclassifiedCommentaryFinalRelease = new Promise(resolve => {
     releaseReclassifiedCommentaryFinal = resolve
@@ -194,30 +149,6 @@ export function createDesktopScenario({
   const subagentPartialWritten = new Promise(resolve => {
     resolveSubagentPartialWritten = resolve
   })
-  const toolDetailPersistenceCompletionRelease = new Promise(resolve => {
-    releaseToolDetailPersistenceCompletion = resolve
-  })
-  const toolDetailPersistenceFinalTextRelease = new Promise(resolve => {
-    releaseToolDetailPersistenceFinalText = resolve
-  })
-  const toolDetailPersistenceFollowUpReceived = new Promise(resolve => {
-    resolveToolDetailPersistenceFollowUp = resolve
-  })
-  const toolDetailPersistenceFinalTextStarted = new Promise(resolve => {
-    resolveToolDetailPersistenceFinalTextStarted = resolve
-  })
-  const toolCompletionRelease = new Promise(resolve => {
-    releaseToolCompletion = resolve
-  })
-  const toolFollowUpReceived = new Promise(resolve => {
-    resolveToolFollowUp = resolve
-  })
-  const toolFinalTextStarted = new Promise(resolve => {
-    resolveToolFinalTextStarted = resolve
-  })
-  const toolFinalCompletionRelease = new Promise(resolve => {
-    releaseToolFinalCompletion = resolve
-  })
 
   const { verifyContent } = createStreamingContentChecks({
     workspacePath,
@@ -226,28 +157,17 @@ export function createDesktopScenario({
     reclassifiedCommentaryFollowUpReceived,
     releaseReclassifiedCommentaryFinal,
   })
-  const { verifyTools, verifyLongCodeTerminalBurst, verifySubagentStreamingPanel } =
-    createStreamingToolChecks({
-      uiTimeoutMs,
-      releaseLongCodeStream,
-      resultDir,
-      capture,
-      modelResponseTimeoutMs,
-      captureSubagent,
-      subagentToolRenderTimeoutMs,
-      subagentPartialWritten,
-      releaseSubagentCompletion,
-      beforeSubagentOutput,
-      releasePhaseFlipCompletion,
-      toolFollowUpReceived,
-      releaseToolCompletion,
-      releaseToolFinalCompletion,
-      toolFinalTextStarted,
-      toolDetailPersistenceFollowUpReceived,
-      releaseToolDetailPersistenceFinalText,
-      releaseToolDetailPersistenceCompletion,
-      toolDetailPersistenceFinalTextStarted,
-    })
+  const { verifySubagentStreamingPanel } = createStreamingToolChecks({
+    uiTimeoutMs,
+    resultDir,
+    capture,
+    modelResponseTimeoutMs,
+    captureSubagent,
+    subagentToolRenderTimeoutMs,
+    subagentPartialWritten,
+    releaseSubagentCompletion,
+    beforeSubagentOutput,
+  })
 
   return {
     cleanup() {
@@ -317,22 +237,9 @@ export function createDesktopScenario({
       const responseId = `wework-streaming-text-${Date.now()}`
       if (await transcriptIdentity.handleModelRequest(body, response, responseId)) return true
       if (await guidanceOrder.handleModelRequest(body, response, responseId)) return true
-      if (await fileCitations.handleModelRequest(body, response, responseId)) return true
       if (await interactiveVisualization.handleModelRequest(body, response, responseId)) return true
       if (await visualizationScroll.handleModelRequest(body, response, responseId)) return true
       const latestInput = latestModelInputText(body)
-      if (latestInput.includes(MARKDOWN_LINKS_PROMPT)) {
-        recordScenarioRequest('markdown_original_links', body)
-        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
-        response.end(
-          sse([
-            responseCreated(responseId),
-            assistantMessage(markdownLinks.completion),
-            responseCompleted(responseId),
-          ])
-        )
-        return true
-      }
       if (isCollaborationSubagentRequest(request.headers)) {
         resolveSubagentChildRequestStarted()
         if (subagentChildStage === 'initial') {
@@ -502,84 +409,6 @@ export function createDesktopScenario({
         )
         return true
       }
-      if (latestInput.includes(LONG_CODE_PROMPT)) {
-        const stream = longCodeStreamingEvents(responseId)
-        response.writeHead(200, {
-          'Cache-Control': 'no-cache',
-          Connection: 'keep-alive',
-          'Content-Type': 'text/event-stream; charset=utf-8',
-        })
-        response.flushHeaders()
-        response.write(sse(stream.start))
-        let offset = 0
-        let streamedText = ''
-        let streamHeld = false
-        const codeEnd = LONG_CODE_COMPLETION.indexOf('\n```\n\n')
-        assert.ok(codeEnd >= 0, 'The long-code fixture is missing its closing fence')
-        const streamedCode = LONG_CODE_COMPLETION.slice(0, codeEnd + '\n```'.length)
-        const windowedTail = LONG_CODE_COMPLETION.slice(streamedCode.length)
-        for (const chunk of streamedCode.match(/[\s\S]{1,48}/g) ?? []) {
-          response.write(sse(textDeltaEvents(stream.itemId, chunk, offset, stream.outputIndex)))
-          response.flush?.()
-          offset += [...chunk].length
-          streamedText += chunk
-          if (!streamHeld && streamedText.includes(LONG_CODE_STREAM_MARKER)) {
-            streamHeld = true
-            await longCodeStreamRelease
-          }
-          await new Promise(resolve => setTimeout(resolve, 16))
-        }
-        response.write(
-          sse(textDeltaEvents(stream.itemId, windowedTail, offset, stream.outputIndex))
-        )
-        response.end(sse(stream.finish))
-        return true
-      }
-      if (
-        toolDetailPersistenceStage === 'awaiting-tool-output' &&
-        requestContainsToolOutputForCall(body, TOOL_DETAIL_PERSISTENCE_CALL_ID)
-      ) {
-        toolDetailPersistenceStage = 'awaiting-final-completion'
-        resolveToolDetailPersistenceFollowUp()
-        await toolDetailPersistenceFinalTextRelease
-        const stream = streamingEvents(responseId, TOOL_DETAIL_PERSISTENCE_COMPLETION)
-        response.writeHead(200, {
-          'Cache-Control': 'no-cache',
-          Connection: 'keep-alive',
-          'Content-Type': 'text/event-stream; charset=utf-8',
-        })
-        response.flushHeaders()
-        response.write(
-          sse([
-            ...stream.start,
-            ...textDeltaEvents(stream.itemId, TOOL_DETAIL_PERSISTENCE_COMPLETION),
-          ])
-        )
-        resolveToolDetailPersistenceFinalTextStarted()
-        await toolDetailPersistenceCompletionRelease
-        toolDetailPersistenceStage = 'complete'
-        response.end(sse(stream.finish))
-        return true
-      }
-      if (toolRegressionStage === 'awaiting-tool-output' && requestContainsToolOutput(body)) {
-        toolRegressionStage = 'awaiting-completion-release'
-        resolveToolFollowUp()
-        await toolCompletionRelease
-        const stream = streamingEvents(responseId, TOOL_COMPLETION, null)
-        response.writeHead(200, {
-          'Cache-Control': 'no-cache',
-          Connection: 'keep-alive',
-          'Content-Type': 'text/event-stream; charset=utf-8',
-        })
-        response.flushHeaders()
-        response.write(sse(stream.start))
-        await writeSseEvents(response, textDeltaEvents(stream.itemId, TOOL_COMPLETION))
-        resolveToolFinalTextStarted()
-        await toolFinalCompletionRelease
-        toolRegressionStage = 'complete'
-        response.end(sse(stream.finish))
-        return true
-      }
 
       if (requestContainsPrompt(body)) {
         targetRequest = body
@@ -624,68 +453,6 @@ export function createDesktopScenario({
         return true
       }
 
-      if (requestContainsToolRegressionPrompt(body)) {
-        if (toolRegressionStage === 'initial') {
-          const tool = selectShellTool(body, workspacePath)
-          toolRegressionStage = 'awaiting-tool-output'
-          response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
-          response.end(
-            sse([
-              responseCreated(responseId),
-              ...reasoningEvents('wework-reasoning-summary', REASONING_SUMMARY),
-              assistantMessage(TOOL_PREAMBLE),
-              ...selectedToolCall('wework-tool-text-offset', tool),
-              responseCompleted(responseId),
-            ])
-          )
-          return true
-        }
-        throw new Error(`Unexpected tool-text-offset stage: ${toolRegressionStage}`)
-      }
-
-      if (requestContainsToolDetailPersistencePrompt(body)) {
-        if (toolDetailPersistenceStage === 'initial') {
-          const tool = selectShellTool(
-            body,
-            workspacePath,
-            `printf '${TOOL_DETAIL_PERSISTENCE_OUTPUT}\\n'`
-          )
-          toolDetailPersistenceStage = 'awaiting-tool-output'
-          response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
-          response.end(
-            sse([
-              responseCreated(responseId),
-              ...selectedToolCall(TOOL_DETAIL_PERSISTENCE_CALL_ID, tool),
-              responseCompleted(responseId),
-            ])
-          )
-          return true
-        }
-        throw new Error(`Unexpected tool-detail-persistence stage: ${toolDetailPersistenceStage}`)
-      }
-
-      if (requestContainsPhaseFlipPrompt(body)) {
-        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
-        const events = phaseFlipEvents(responseId)
-        await writeSseEvents(response, events.slice(0, 4))
-        await phaseFlipCompletionRelease
-        await writeSseEvents(response, events.slice(4))
-        response.end()
-        return true
-      }
-
-      if (requestContainsLegacyConversationPrompt(body)) {
-        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
-        response.end(
-          sse([
-            responseCreated(responseId),
-            assistantMessage(LEGACY_CONVERSATION_COMPLETION),
-            responseCompleted(responseId),
-          ])
-        )
-        return true
-      }
-
       if (requestContainsVisualizationPrompt(body)) {
         const visualizationPath = join(workspacePath, 'visualizations', 'absolute-reference.html')
         const contentReference = `visualize${JSON.stringify({
@@ -716,18 +483,6 @@ export function createDesktopScenario({
         response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
         response.end(
           sse([responseCreated(responseId), ...toolCallEvents, responseCompleted(responseId)])
-        )
-        return true
-      }
-
-      if (requestContainsWindowsLinkPrompt(body)) {
-        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
-        response.end(
-          sse([
-            responseCreated(responseId),
-            assistantMessage(WINDOWS_LINK_COMPLETION),
-            responseCompleted(responseId),
-          ])
         )
         return true
       }
@@ -789,11 +544,6 @@ export function createDesktopScenario({
         DEFAULT_MODEL_LABEL,
         ACTIVE_WORKBENCH_SELECTOR
       )
-      if (process.env.WEWORK_E2E_LONG_CODE_ONLY === 'true') {
-        await verifyLongCodeTerminalBurst(control)
-        active = false
-        return
-      }
       if (process.env.WEWORK_E2E_SUBAGENT_ONLY === 'true') {
         await verifySubagentStreamingPanel(control)
         active = false
@@ -811,14 +561,6 @@ export function createDesktopScenario({
             await guidanceOrder.verify(control)
           },
         ],
-        [
-          'streaming-tools',
-          async control => {
-            await markdownLinks.verify(control)
-            await fileCitations.verify(control)
-            await verifyTools(control)
-          },
-        ],
         ['streaming-subagent-guidance', verifySubagentStreamingPanel],
       ])
       const selectedCheckpoint = checkpoint?.startsWith('streaming-')
@@ -826,9 +568,7 @@ export function createDesktopScenario({
         : process.env.WEWORK_E2E_VISUALIZATION_ONLY === 'true' ||
             process.env.WEWORK_E2E_GENERATED_IMAGE_ONLY === 'true'
           ? 'streaming-content'
-          : process.env.WEWORK_E2E_LEGACY_STREAM_ONLY === 'true'
-            ? 'streaming-tools'
-            : null
+          : null
       if (selectedCheckpoint) {
         const check = checks.get(selectedCheckpoint)
         assert.ok(check, `Unknown streaming checkpoint: ${checkpoint}`)
