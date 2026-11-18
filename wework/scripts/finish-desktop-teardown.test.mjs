@@ -4,7 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { DesktopPerformanceJournal } from '../e2e/desktop/performance-journal.mjs'
-import { finishDesktopTeardown } from '../e2e/desktop/modules/finish-desktop-teardown.mjs'
+import {
+  finishDesktopTeardown,
+  persistDesktopCommandEvidence,
+} from '../e2e/desktop/modules/finish-desktop-teardown.mjs'
 
 async function fixture(t) {
   const resultDir = await mkdtemp(join(tmpdir(), 'desktop-final-outcome-'))
@@ -133,5 +136,22 @@ test('retains model requests and numeric HTTP evidence that arrived during teard
   assert.deepEqual(JSON.parse(await readFile(join(f.resultDir, 'http-requests.json'), 'utf8')), [
     http,
   ])
+  assert.equal((await readReport(f)).functionalPassed, false)
+})
+
+test('partial evidence survives a pending teardown without certifying success', async t => {
+  const f = await fixture(t)
+  f.control.commandHistory.push({
+    id: 'pending-cleanup-operation',
+    action: 'getRoute',
+    value: 'private-value',
+  })
+  await persistDesktopCommandEvidence(f)
+  assert.deepEqual(JSON.parse(await readFile(join(f.resultDir, 'command-history.json'), 'utf8')), [
+    { id: 'pending-cleanup-operation', action: 'getRoute' },
+  ])
+  await assert.rejects(readFile(join(f.resultDir, 'performance.json')), { code: 'ENOENT' })
+  f.teardownFailures.push({ label: 'process output', error: new Error('Evidence drainage failed') })
+  await assert.rejects(finishDesktopTeardown(f), /process output/)
   assert.equal((await readReport(f)).functionalPassed, false)
 })

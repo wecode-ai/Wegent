@@ -31,16 +31,8 @@ export function modelRequestEvidence(requests) {
   return evidenceRecords(requests, MODEL_EVIDENCE_FIELDS)
 }
 
-/** Persist the final outcome only after all lifecycle steps have settled. */
-export async function finishDesktopTeardown({
-  control,
-  resultDir,
-  testFailed,
-  teardownFailures,
-  cleanupError,
-}) {
-  if (control.fatalError && !teardownFailures.some(step => step.error === control.fatalError))
-    teardownFailures.push({ error: control.fatalError, label: 'desktop controller' })
+/** Save partial evidence before cleanup; it never certifies a final outcome. */
+export async function persistDesktopCommandEvidence({ control, resultDir, teardownFailures }) {
   for (const [name, value] of [
     ['model-requests.json', modelRequestEvidence(control.modelRequests)],
     ['http-requests.json', control.httpRequests],
@@ -52,6 +44,19 @@ export async function finishDesktopTeardown({
       teardownFailures.push({ error, label: name })
     }
   }
+}
+
+/** Persist the final outcome only after all lifecycle steps have settled. */
+export async function finishDesktopTeardown({
+  control,
+  resultDir,
+  testFailed,
+  teardownFailures,
+  cleanupError,
+}) {
+  if (control.fatalError && !teardownFailures.some(step => step.error === control.fatalError))
+    teardownFailures.push({ error: control.fatalError, label: 'desktop controller' })
+  await persistDesktopCommandEvidence({ control, resultDir, teardownFailures })
   try {
     const passed = !testFailed && !control.fatalError && !teardownFailures.length && !cleanupError
     await writeFile(

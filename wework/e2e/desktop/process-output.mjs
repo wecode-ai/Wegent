@@ -1,5 +1,6 @@
 import { createWriteStream } from 'node:fs'
 import { finished } from 'node:stream/promises'
+import { basename } from 'node:path'
 
 const outputs = new Map()
 
@@ -19,6 +20,7 @@ function outputFor(destination) {
       written: completionOf(writer),
       sources: new Set(),
       sourceCompletions: [],
+      allSources: [],
     }
     const sources = output.sources
     output.writer.on('error', error => {
@@ -33,6 +35,7 @@ export function appendProcessOutput(stream, destination) {
   if (!stream) return
   const output = outputFor(destination)
   output.sources.add(stream)
+  output.allSources.push(stream)
   output.sourceCompletions.push(completionOf(stream, { readable: true, writable: false }))
   const complete = () => output.sources.delete(stream)
   stream.once('end', complete)
@@ -44,6 +47,28 @@ export function appendProcessOutput(stream, destination) {
       output.writer.once('drain', () => stream.resume())
     }
   })
+}
+
+/** Lifecycle state only: never retain output contents, arguments, or environment. */
+export function processOutputDiagnostics() {
+  return [...outputs].map(([destination, output]) => ({
+    destination: basename(destination),
+    writer: {
+      pending: output.writer.pending,
+      closed: output.writer.closed,
+      destroyed: output.writer.destroyed,
+      finished: output.writer.writableFinished,
+      bufferedBytes: output.writer.writableLength,
+      needsDrain: output.writer.writableNeedDrain,
+    },
+    sources: output.allSources.map(stream => ({
+      ended: stream.readableEnded,
+      closed: stream.closed,
+      destroyed: stream.destroyed,
+      paused: stream.isPaused(),
+      bufferedBytes: stream.readableLength,
+    })),
+  }))
 }
 
 export async function flushProcessOutput() {

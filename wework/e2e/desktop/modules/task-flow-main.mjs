@@ -1,5 +1,11 @@
 import { writeFailureHeap } from './failure-heap-diagnostics.mjs'
-import { finishDesktopTeardown, modelRequestEvidence } from './finish-desktop-teardown.mjs'
+import {
+  finishDesktopTeardown,
+  modelRequestEvidence,
+  persistDesktopCommandEvidence,
+} from './finish-desktop-teardown.mjs'
+import { appendFile } from 'node:fs/promises'
+import { performance } from 'node:perf_hooks'
 import { publishSitesCreatorPlugins } from './sites-creator-plugins.mjs'
 import { SitesProtocolFixture } from './sites-protocol-fixture.mjs'
 import { BackendFaultGate } from './backend-fault-gate.mjs'
@@ -10,7 +16,7 @@ import {
 
 import { tmpdir } from 'node:os'
 import { startAsyncResourceDiagnostics } from '../../../../.github/scripts/node-async-resource-diagnostics.mjs'
-import { flushProcessOutput } from '../process-output.mjs'
+import { flushProcessOutput, processOutputDiagnostics } from '../process-output.mjs'
 import { simulatedDeviceApplicationId } from './simulated-device-identity.mjs'
 import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from '../upgrade-suite.mjs'
 import { waitForColdPackageStartup } from './cold-package-startup.mjs'
@@ -5061,15 +5067,34 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     )
     throw error
   } finally {
-    stopAsyncDiagnostics()
     const teardownFailures = []
-    const runTeardownStep = async (label, action) => {
+    let teardownEvidenceFailed = false
+    const recordTeardown = async record => {
+      record = { at: new Date().toISOString(), ...record }
+      console.log('[desktop-e2e-teardown]', JSON.stringify(record))
+      if (teardownEvidenceFailed) return
       try {
-        await action()
+        await appendFile(join(resultDir, 'teardown.jsonl'), JSON.stringify(record) + '\n')
       } catch (error) {
-        teardownFailures.push({ error, label })
+        teardownEvidenceFailed = true
+        teardownFailures.push({ error, label: 'teardown evidence' })
       }
     }
+    const runTeardownStep = async (label, action) => {
+      const started = performance.now()
+      await recordTeardown({ label, phase: 'start', at: new Date().toISOString() })
+      try {
+        await action()
+        await recordTeardown({ label, phase: 'completed', durationMs: performance.now() - started })
+      } catch (error) {
+        teardownFailures.push({ error, label })
+        await recordTeardown({ label, phase: 'failed', durationMs: performance.now() - started })
+      }
+    }
+    await recordTeardown({ phase: 'scenario-finished', testFailed })
+    await runTeardownStep('command and request evidence', () =>
+      persistDesktopCommandEvidence({ control, resultDir, teardownFailures })
+    )
     await runTeardownStep('final renderer snapshot', async () => {
       control.performance.recordExternalServiceProtocols([
         ...(desktopScenario?.externalServiceProtocols ?? []),
@@ -5113,7 +5138,10 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     await runTeardownStep('Sites external protocol fixture', async () =>
       control.sitesProtocol?.stop()
     )
-    await runTeardownStep('process output', flushProcessOutput)
+    await runTeardownStep('process output', async () => {
+      await recordTeardown({ phase: 'output-drain', outputs: processOutputDiagnostics() })
+      await flushProcessOutput()
+    })
     await runTeardownStep('Codex SQLite home', async () =>
       rm(codexSqliteHome, {
         recursive: true,
@@ -5130,7 +5158,9 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     let cleanupError
     if (teardownFailures.length === 0) {
       try {
+        await recordTeardown({ label: 'transient artifacts', phase: 'start' })
         const removed = await compactDesktopE2EResult(resultDir)
+        await recordTeardown({ label: 'transient artifacts', phase: 'completed' })
         if (removed > 0) {
           console.log(`[desktop-e2e] removed ${removed} transient runtime artifacts`)
         }
@@ -5138,18 +5168,25 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         cleanupError = error
       }
       try {
+        await recordTeardown({ label: 'active result marker', phase: 'start' })
         await clearDesktopE2EResultActive(resultDir)
+        await recordTeardown({ label: 'active result marker', phase: 'completed' })
       } catch (error) {
         cleanupError ??= error
       }
     }
-    await finishDesktopTeardown({
-      control,
-      resultDir,
-      testFailed,
-      teardownFailures,
-      cleanupError,
-    })
+    try {
+      await recordTeardown({ label: 'final outcome', phase: 'start' })
+      await finishDesktopTeardown({
+        control,
+        resultDir,
+        testFailed,
+        teardownFailures,
+        cleanupError,
+      })
+    } finally {
+      stopAsyncDiagnostics()
+    }
   }
 }
 
