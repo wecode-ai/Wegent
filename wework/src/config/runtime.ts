@@ -14,6 +14,7 @@ export interface RuntimeConfig {
   loginMode: 'password' | 'oidc' | 'all'
   oidcLoginText: string
   cloudDeviceScalingWikiUrl: string
+  featureFlags?: Record<string, boolean>
 }
 
 type RuntimeConfigOverrides = Partial<RuntimeConfig>
@@ -176,5 +177,12 @@ export function getRuntimeConfig(): RuntimeConfig {
       runtimeString(overrides, 'cloudDeviceScalingWikiUrl') ||
       import.meta.env.VITE_CLOUD_DEVICE_SCALING_WIKI_URL ||
       '',
+    ...(overrides.featureFlags && Object.keys(overrides.featureFlags).length > 0
+      ? { featureFlags: overrides.featureFlags }
+      : {}),
   }
+}
+
+export function isRuntimeFeatureEnabled(flag: string): boolean {
+  return getRuntimeConfig().featureFlags?.[flag] !== false
 }

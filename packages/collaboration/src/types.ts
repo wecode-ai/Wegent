@@ -14,7 +14,7 @@ export interface CollaborationIssueBadge {
   label: string;
   url?: string;
   icon?: string;
-  tone?: "neutral" | "success" | "warning" | "danger";
+  tone?: "neutral" | "info" | "success" | "warning" | "danger" | "merged";
   tooltip?: string;
 }
 

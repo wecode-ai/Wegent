@@ -1,11 +1,15 @@
 import {
+  Ban,
   CircleCheck,
   CircleDot,
   CircleX,
   Clock3,
   GitMerge,
   GitPullRequest,
+  ListChecks,
   Loader2,
+  LockKeyhole,
+  RefreshCw,
   TriangleAlert,
   type LucideIcon,
 } from 'lucide-react'
@@ -21,6 +25,7 @@ import { useAnchoredPortalMenu } from '@/hooks/useAnchoredPortalMenu'
 import { openExternalUrl } from '@/lib/external-links'
 import { cn } from '@/lib/utils'
 import type { ChangeRequest } from '@/types/environment'
+import { observationLabelKey } from '@/features/workbench/resourceObservation'
 import type { ResourceObservation } from '@/features/workbench/resourceObservation'
 import { ResourceObservationStatus } from './ResourceObservationStatus'
 
@@ -39,11 +44,11 @@ interface ChangeRequestStatusSnapshot {
 
 const statusGlyphs: Record<ChangeRequestVisualStatus, ChangeRequestStatusGlyphConfig> = {
   draft: { mainClassName: 'text-text-muted' },
-  open: { mainClassName: 'text-success wework:text-green-500' },
+  open: { mainClassName: 'text-info wework:text-blue-500' },
   checks_pending: {
-    mainClassName: 'text-success wework:text-green-500',
+    mainClassName: 'text-warning wework:text-amber-500',
     badgeIcon: Clock3,
-    badgeClassName: 'text-text-muted',
+    badgeClassName: 'text-warning wework:text-amber-500',
   },
   checks_passed: {
     mainClassName: 'text-success wework:text-green-500',
@@ -51,7 +56,7 @@ const statusGlyphs: Record<ChangeRequestVisualStatus, ChangeRequestStatusGlyphCo
     badgeClassName: 'text-success wework:text-green-500',
   },
   checks_failed: {
-    mainClassName: 'text-success wework:text-green-500',
+    mainClassName: 'text-destructive wework:text-red-500',
     badgeIcon: CircleX,
     badgeClassName: 'text-destructive wework:text-red-500',
   },
@@ -59,6 +64,26 @@ const statusGlyphs: Record<ChangeRequestVisualStatus, ChangeRequestStatusGlyphCo
     mainClassName: 'text-destructive wework:text-red-500',
     badgeIcon: TriangleAlert,
     badgeClassName: 'text-destructive wework:text-red-500',
+  },
+  blocked: {
+    mainClassName: 'text-destructive wework:text-red-500',
+    badgeIcon: Ban,
+    badgeClassName: 'text-destructive wework:text-red-500',
+  },
+  behind: {
+    mainClassName: 'text-warning wework:text-amber-500',
+    badgeIcon: RefreshCw,
+    badgeClassName: 'text-warning wework:text-amber-500',
+  },
+  unstable: {
+    mainClassName: 'text-warning wework:text-amber-500',
+    badgeIcon: TriangleAlert,
+    badgeClassName: 'text-warning wework:text-amber-500',
+  },
+  has_hooks: {
+    mainClassName: 'text-warning wework:text-amber-500',
+    badgeIcon: ListChecks,
+    badgeClassName: 'text-warning wework:text-amber-500',
   },
   merge_queue_queued: {
     mainClassName: 'text-warning wework:text-amber-500',
@@ -81,10 +106,15 @@ const statusGlyphs: Record<ChangeRequestVisualStatus, ChangeRequestStatusGlyphCo
     badgeIcon: Clock3,
     badgeClassName: 'text-destructive wework:text-red-500',
   },
-  merge_queue_conflicting: {
+  merge_queue_unmergeable: {
     mainClassName: 'text-destructive wework:text-red-500',
     badgeIcon: TriangleAlert,
     badgeClassName: 'text-destructive wework:text-red-500',
+  },
+  merge_queue_locked: {
+    mainClassName: 'text-warning wework:text-amber-500',
+    badgeIcon: LockKeyhole,
+    badgeClassName: 'text-warning wework:text-amber-500',
   },
   merge_queue_removed: {
     mainClassName: 'text-text-muted',
@@ -92,7 +122,8 @@ const statusGlyphs: Record<ChangeRequestVisualStatus, ChangeRequestStatusGlyphCo
     badgeClassName: 'text-text-muted',
   },
   closed: { mainClassName: 'text-destructive wework:text-red-500' },
-  merged: { mainClassName: 'text-success wework:text-violet-500' },
+  merged: { mainClassName: 'text-merged wework:text-violet-500' },
+  unknown: { mainClassName: 'text-text-muted' },
 }
 
 export function ChangeRequestStatusGlyph({
@@ -208,6 +239,22 @@ export function ChangeRequestStatusIcon({
   const status = changeRequestVisualStatus(changeRequest)
   const label = t(`workbench.change_request_status_${status}`, status)
   const prefix = changeRequest.provider === 'gitlab' ? '!' : '#'
+  const detailLabel = [
+    `${prefix}${changeRequest.number} · ${label}`,
+    changeRequest.reviewDecision
+      ? `${t('workbench.change_request_detail_review')}: ${t(`workbench.change_request_review_${changeRequest.reviewDecision}`)}`
+      : null,
+    changeRequest.mergeStateStatus
+      ? `${t('workbench.change_request_detail_merge_state')}: ${t(`workbench.change_request_merge_state_${changeRequest.mergeStateStatus}`)}`
+      : null,
+    changeRequest.headSha
+      ? `${t('workbench.change_request_detail_head_sha')}: ${changeRequest.headSha.slice(0, 12)}`
+      : null,
+    snapshot.stale ? t('workbench.change_request_status_stale') : null,
+    snapshot.observation ? t(observationLabelKey(snapshot.observation)) : null,
+  ]
+    .filter(Boolean)
+    .join(' · ')
 
   return (
     <span
@@ -215,12 +262,12 @@ export function ChangeRequestStatusIcon({
       className={cn('inline-flex shrink-0', className)}
       onClick={event => event.stopPropagation()}
     >
-      <Tooltip label={`${prefix}${changeRequest.number} · ${label}`}>
+      <Tooltip label={detailLabel}>
         <button
           ref={triggerRef}
           type="button"
           data-testid={testId}
-          aria-label={`${prefix}${changeRequest.number} · ${label}`}
+          aria-label={detailLabel}
           aria-expanded={open}
           onClick={() => setOpen(current => !current)}
           className="flex h-6 w-6 items-center justify-center rounded-md hover:bg-muted"
@@ -255,9 +302,27 @@ export function ChangeRequestStatusIcon({
                   <ResourceObservationStatus observation={snapshot.observation} />
                 </span>
               )}
+              {changeRequest.reviewDecision ? (
+                <span className="mt-1 block text-xs text-text-secondary">
+                  {t('workbench.change_request_detail_review')}:{' '}
+                  {t(`workbench.change_request_review_${changeRequest.reviewDecision}`)}
+                </span>
+              ) : null}
+              {changeRequest.mergeStateStatus ? (
+                <span className="mt-1 block text-xs text-text-secondary">
+                  {t('workbench.change_request_detail_merge_state')}:{' '}
+                  {t(`workbench.change_request_merge_state_${changeRequest.mergeStateStatus}`)}
+                </span>
+              ) : null}
               {changeRequest.mergeQueueReason ? (
                 <span className="mt-1 line-clamp-3 block text-xs text-text-muted">
                   {changeRequest.mergeQueueReason}
+                </span>
+              ) : null}
+              {changeRequest.headSha ? (
+                <span className="mt-1 block truncate font-mono text-xs text-text-muted">
+                  {t('workbench.change_request_detail_head_sha')}:{' '}
+                  {changeRequest.headSha.slice(0, 12)}
                 </span>
               ) : null}
               {snapshot?.stale ? (

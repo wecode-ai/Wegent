@@ -9,8 +9,10 @@ import type {
   ChangeRequestLookup,
   ChangeRequestLookupState,
   ChangeRequestMergeability,
+  ChangeRequestMergeStateStatus,
   ChangeRequestMergeQueueState,
   ChangeRequestProvider,
+  ChangeRequestReviewDecision,
   ChangeRequestState,
   EnvironmentInfo,
 } from '@/types/environment'
@@ -201,6 +203,62 @@ function normalizeChangeRequestState(value: string): ChangeRequestState {
   return 'open'
 }
 
+function normalizeMergeStateStatus(value: string): ChangeRequestMergeStateStatus {
+  switch (value.toLowerCase()) {
+    case 'clean':
+      return 'clean'
+    case 'blocked':
+      return 'blocked'
+    case 'behind':
+      return 'behind'
+    case 'unstable':
+      return 'unstable'
+    case 'has_hooks':
+      return 'has_hooks'
+    case 'dirty':
+      return 'dirty'
+    default:
+      return 'unknown'
+  }
+}
+
+function normalizeReviewDecision(value: string): ChangeRequestReviewDecision | null {
+  switch (value.toLowerCase()) {
+    case 'approved':
+      return 'approved'
+    case 'changes_requested':
+      return 'changes_requested'
+    case 'review_required':
+      return 'review_required'
+    default:
+      return null
+  }
+}
+
+export function normalizeChangeRequestMergeQueueState(value: string): ChangeRequestMergeQueueState {
+  switch (value.toUpperCase()) {
+    case 'QUEUED':
+      return 'queued'
+    case 'AWAITING_CHECKS':
+      return 'awaiting_checks'
+    case 'CHECKING':
+    case 'IN_PROGRESS':
+      return 'checking'
+    case 'MERGEABLE':
+      return 'mergeable'
+    case 'UNMERGEABLE':
+      return 'unmergeable'
+    case 'LOCKED':
+      return 'locked'
+    case 'FAILED':
+      return 'failed'
+    case 'TIMED_OUT':
+      return 'timed_out'
+    default:
+      return 'unknown'
+  }
+}
+
 function normalizeChecksState(statuses: string[]): ChangeRequestChecksState {
   if (statuses.length === 0) return 'unknown'
   const normalized = statuses.map(status => status.toLowerCase())
@@ -225,6 +283,7 @@ function normalizeChecksState(statuses: string[]): ChangeRequestChecksState {
     normalized.some(status =>
       [
         'pending',
+        'expected',
         'running',
         'in_progress',
         'queued',
@@ -254,7 +313,7 @@ function normalizeMergeability(
 ): ChangeRequestMergeability {
   if (provider === 'github') {
     const mergeable = stringValue(record, 'mergeable').toLowerCase()
-    const mergeStateStatus = stringValue(record, 'mergeStateStatus').toLowerCase()
+    const mergeStateStatus = normalizeMergeStateStatus(stringValue(record, 'mergeStateStatus'))
     if (mergeable === 'conflicting' || mergeStateStatus === 'dirty') return 'conflicting'
     if (mergeable === 'mergeable') return 'mergeable'
     return 'unknown'
@@ -273,6 +332,20 @@ function normalizeMergeability(
   }
   if (mergeStatus === 'mergeable' || mergeStatus === 'can_be_merged') return 'mergeable'
   return 'unknown'
+}
+
+function changeRequestHeadSha(record: Record<string, unknown>): string | null {
+  const head =
+    record.head && typeof record.head === 'object' && !Array.isArray(record.head)
+      ? (record.head as Record<string, unknown>)
+      : null
+  const lastCommit = outputAsRecord(record.last_commit)
+  return (
+    stringValue(record, 'headRefOid', 'sha', 'head_sha', 'headSha') ||
+    (head ? stringValue(head, 'sha') : '') ||
+    (lastCommit ? stringValue(lastCommit, 'id') : '') ||
+    null
+  )
 }
 
 function githubCheckStatuses(record: Record<string, unknown>): string[] {
@@ -337,7 +410,11 @@ function githubMergeQueueState(value: unknown): ChangeRequestMergeQueueState {
       ? (data.resource as Record<string, unknown>)
       : null
   if (!resource || !Object.hasOwn(resource, 'mergeQueueEntry')) return 'unknown'
-  return resource.mergeQueueEntry ? 'queued' : 'not_queued'
+  const entry = resource.mergeQueueEntry
+  if (!entry) return 'not_queued'
+  if (typeof entry !== 'object' || Array.isArray(entry)) return 'queued'
+  const state = stringValue(entry as Record<string, unknown>, 'state')
+  return state ? normalizeChangeRequestMergeQueueState(state) : 'queued'
 }
 
 export function parseChangeRequest(
@@ -359,11 +436,9 @@ export function parseChangeRequest(
     stringValue(record, 'headRefName', 'source_branch', 'sourceBranch') ||
     (head ? stringValue(head, 'ref') : '')
   const updatedAt = stringValue(record, 'updatedAt', 'updated_at')
-  const lastCommit = outputAsRecord(record.last_commit)
-  const headSha =
-    stringValue(record, 'headRefOid', 'sha') ||
-    (head ? stringValue(head, 'sha') : '') ||
-    (lastCommit ? stringValue(lastCommit, 'id') : '')
+  const mergeStateStatus = normalizeMergeStateStatus(stringValue(record, 'mergeStateStatus'))
+  const reviewDecision = normalizeReviewDecision(stringValue(record, 'reviewDecision'))
+  const headSha = changeRequestHeadSha(record)
 
   return {
     provider,
@@ -377,6 +452,8 @@ export function parseChangeRequest(
     ),
     mergeability: normalizeMergeability(provider, record),
     mergeQueue: 'unknown',
+    ...(mergeStateStatus !== 'unknown' ? { mergeStateStatus } : {}),
+    ...(reviewDecision ? { reviewDecision } : {}),
     ...(headBranch ? { headBranch } : {}),
     ...(headSha ? { headSha } : {}),
     ...(updatedAt ? { updatedAt } : {}),

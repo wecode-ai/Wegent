@@ -791,9 +791,15 @@ def test_local_device_command_registry_default_includes_diagnostic_commands():
     assert git_github_pull_requests_definition is not None
     assert "gh pr list --state all" in git_github_pull_requests_definition.command
     assert "mergeStateStatus" in git_github_pull_requests_definition.command
+    assert "reviewDecision" in git_github_pull_requests_definition.command
+    assert "headRefOid" in git_github_pull_requests_definition.command
     assert git_github_pull_requests_definition.post_processor == "json"
     assert git_github_pull_request_merge_queue_definition is not None
     assert "mergeQueueEntry" in git_github_pull_request_merge_queue_definition.command
+    assert (
+        "mergeQueueEntry{state}"
+        in git_github_pull_request_merge_queue_definition.command
+    )
     assert git_github_pull_request_merge_queue_definition.post_processor == "json"
     assert git_github_pull_requests_batch_definition is not None
     assert "gh api --method GET" in git_github_pull_requests_batch_definition.command

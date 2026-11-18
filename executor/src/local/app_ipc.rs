@@ -3759,7 +3759,13 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
         )),
         "git_github_pull_request_view" => Some(command_definition(
             "gh pr view --json <status-fields> <url>",
-            &["gh", "pr", "view", "--json", "number,url,title,state,isDraft,statusCheckRollup,mergeable,mergeStateStatus,mergedAt,updatedAt,headRefOid"],
+            &[
+                "gh",
+                "pr",
+                "view",
+                "--json",
+                "number,url,title,state,isDraft,statusCheckRollup,mergeable,mergeStateStatus,mergedAt,updatedAt,reviewDecision,headRefOid",
+            ],
             Some(PostProcessor::Json),
         )),
         "git_gitlab_merge_request_view" => Some(command_definition(
@@ -3778,7 +3784,7 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
                 "--limit",
                 "20",
                 "--json",
-                "number,url,title,state,isDraft,statusCheckRollup,mergeable,mergeStateStatus",
+                "number,url,title,state,isDraft,statusCheckRollup,mergeable,mergeStateStatus,reviewDecision,headRefOid",
                 "--head",
             ],
             Some(PostProcessor::Json),
@@ -3806,7 +3812,7 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
                 "api",
                 "graphql",
                 "-f",
-                "query=query($url:URI!){resource(url:$url){... on PullRequest{mergeQueueEntry{id}}}}",
+                "query=query($url:URI!){resource(url:$url){... on PullRequest{mergeQueueEntry{state}}}}",
             ],
             Some(PostProcessor::Json),
         )),
@@ -4524,6 +4530,20 @@ mod tests {
             .await
             .expect("client input should close");
         serving.await.expect("app IPC task should finish");
+    }
+
+    #[test]
+    fn linked_change_request_commands_accept_explicit_repository_urls() {
+        let github = local_app_command("git_github_pull_request_view").unwrap();
+        assert_eq!(&github.argv[..4], &["gh", "pr", "view", "--json"]);
+        assert!(github.argv[4].contains("statusCheckRollup"));
+        assert!(github.argv[4].contains("mergedAt"));
+        assert!(github.argv[4].contains("reviewDecision"));
+        assert!(github.argv[4].contains("headRefOid"));
+        let merge_queue = local_app_command("git_github_pull_request_merge_queue").unwrap();
+        assert!(merge_queue.argv[4].contains("mergeQueueEntry{state}"));
+        let gitlab = local_app_command("git_gitlab_merge_request_view").unwrap();
+        assert_eq!(gitlab.argv, &["glab", "mr", "view", "--output", "json"]);
     }
 
     #[test]

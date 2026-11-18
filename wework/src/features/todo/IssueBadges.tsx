@@ -1,4 +1,5 @@
 import {
+  Ban,
   Check,
   CircleCheck,
   CircleX,
@@ -6,8 +7,11 @@ import {
   GitMerge,
   GitPullRequest,
   GitPullRequestClosed,
+  ListChecks,
   Link2,
   Loader2,
+  LockKeyhole,
+  RefreshCw,
   TriangleAlert,
 } from 'lucide-react'
 import type { CollaborationIssueBadge } from '@wegent/collaboration'
@@ -45,22 +49,28 @@ export function IssueBadges({
 }
 
 const badgeIcons = {
+  ban: Ban,
   check: Check,
   'circle-check': CircleCheck,
   'circle-x': CircleX,
   'git-merge': GitMerge,
   'git-pull-request-closed': GitPullRequestClosed,
   loader: Loader2,
+  lock: LockKeyhole,
+  refresh: RefreshCw,
   clock: Clock3,
+  hooks: ListChecks,
   link: Link2,
   warning: TriangleAlert,
   'git-pull-request': GitPullRequest,
 }
 const badgeTones = {
   neutral: 'text-text-secondary',
+  info: 'text-info wework:text-blue-600',
   success: 'text-success wework:text-green-600',
   warning: 'text-warning wework:text-amber-600',
   danger: 'text-destructive wework:text-red-600',
+  merged: 'text-merged wework:text-violet-600',
 }
 
 function IssueBadgeView({ badge }: { badge: CollaborationIssueBadge }) {
@@ -68,9 +78,12 @@ function IssueBadgeView({ badge }: { badge: CollaborationIssueBadge }) {
   const content = (
     <>
       {Icon ? (
-        <Icon className={badge.icon === 'loader' ? 'h-3.5 w-3.5 animate-spin' : 'h-3.5 w-3.5'} />
+        <Icon
+          aria-hidden="true"
+          className={badge.icon === 'loader' ? 'h-3.5 w-3.5 animate-spin' : 'h-3.5 w-3.5'}
+        />
       ) : null}
-      <span>{badge.label}</span>
+      <span className="max-w-48 truncate">{badge.label}</span>
     </>
   )
   const className = `inline-flex h-6 items-center gap-1.5 rounded-md bg-muted/40 px-1.5 text-xs ${badgeTones[badge.tone ?? 'neutral']}`

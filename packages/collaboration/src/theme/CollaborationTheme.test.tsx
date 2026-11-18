@@ -35,6 +35,21 @@ describe("CollaborationTheme portal variables", () => {
   });
 
   it.each(["light", "dark"] as const)(
+    "defines distinct PR status tones in %s mode",
+    (mode) => {
+      const variables = resolveThemeVariables(mode);
+      expect(variables["--color-info"]).toBeTruthy();
+      expect(variables["--color-success"]).toBeTruthy();
+      expect(variables["--color-warning"]).toBeTruthy();
+      expect(variables["--color-destructive"]).toBeTruthy();
+      expect(variables["--color-merged"]).toBeTruthy();
+      expect(variables["--color-merged"]).not.toBe(
+        variables["--color-success"],
+      );
+    },
+  );
+
+  it.each(["light", "dark"] as const)(
     "preserves every default %s variable without overrides",
     async (mode) => {
       await act(async () =>
