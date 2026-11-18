@@ -130,6 +130,26 @@ impl CodexNotificationEventMapper {
                 }),
             )
         };
+        crate::logging::log_executor_event(
+            "runtime retry status published",
+            &[
+                ("local_task_id", context.local_task_id.to_owned()),
+                ("subtask_id", context.request.subtask_id.clone()),
+                ("event", event.to_owned()),
+                (
+                    "block_id",
+                    self.reconnecting_block_id.clone().unwrap_or_default(),
+                ),
+                (
+                    "proxy_wait_count",
+                    self.proxy_retry_wait_ids.len().to_string(),
+                ),
+                (
+                    "native_wait_count",
+                    self.native_retry_waits.len().to_string(),
+                ),
+            ],
+        );
         emit_response_event(
             context.event_tx,
             context.device_id,
@@ -144,6 +164,14 @@ impl CodexNotificationEventMapper {
         let Some(id) = self.reconnecting_block_id.take() else {
             return;
         };
+        crate::logging::log_executor_event(
+            "runtime retry status cleared",
+            &[
+                ("local_task_id", context.local_task_id.to_owned()),
+                ("subtask_id", context.request.subtask_id.clone()),
+                ("block_id", id.clone()),
+            ],
+        );
         emit_response_event(
             context.event_tx,
             context.device_id,

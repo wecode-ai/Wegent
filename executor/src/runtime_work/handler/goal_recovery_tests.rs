@@ -278,3 +278,334 @@ fn reactivated_native_goal_recovers_without_a_live_local_execution() {
         let _ = fs::remove_dir_all(root);
     });
 }
+
+#[test]
+fn goal_activation_binds_and_retains_the_route_until_the_goal_stops() {
+    run_goal_test(async {
+        for status in [Some("paused"), Some("blocked"), Some("complete"), None] {
+            let (mut handler, root, mut request) = setup("goal-model-route-lifetime");
+            request.model_config = json!({
+                "model_id": "goal-route-model",
+                "base_url": "http://synthetic.invalid/v1",
+                "api_key": "synthetic-key"
+            });
+            handler.store.update_task("task-1", |link| {
+                store_runtime_execution_request(&mut link.runtime_handle, &request);
+                link.goal_status = Some("blocked".into());
+            });
+            handler.retain_runtime_model_config("task-1", &request.model_config);
+            install_native_history(&mut handler, &root, vec![], None);
+            let link = handler.local_task_link("task-1").unwrap();
+            handler
+                .prepare_goal_model_route(&link, "thread-1", &json!({"status":"active"}))
+                .await
+                .unwrap();
+            assert!(local_model_proxy::thread_has_bound_route("thread-1"));
+            assert!(
+                handler.thread_event_routing.lock().unwrap().routes["thread-1"]
+                    .goal_model_route
+                    .is_some()
+            );
+            // Passive history refreshes must not drop the Goal's inference lease.
+            handler.register_thread_event_route_from_store("thread-1");
+            handler.sync_runtime_task_goal_status("task-1", Some("active".into()));
+            assert!(
+                handler.thread_event_routing.lock().unwrap().routes["thread-1"]
+                    .goal_model_route
+                    .is_some()
+            );
+            handler.sync_runtime_task_goal_status("task-1", status.map(str::to_owned));
+            assert!(
+                handler.thread_event_routing.lock().unwrap().routes["thread-1"]
+                    .goal_model_route
+                    .is_none()
+            );
+            handler.codex_app_server.restart().await;
+            let _ = fs::remove_dir_all(root);
+        }
+    });
+}
+
+#[test]
+fn timed_out_goal_activation_retains_its_route_until_native_state_confirms_stop() {
+    run_goal_test(async {
+        let _timeout = ScalarEnv::set("WEGENT_CODEX_RPC_TIMEOUT_SECONDS", "1");
+        let (mut handler, root, mut request) = setup("goal-model-route-ambiguous-activation");
+        let thread = "11111111-1111-4111-8111-111111111111";
+        request.model_config = json!({"model_id":"goal-route-model",
+            "base_url":"http://synthetic.invalid/v1","api_key":"synthetic-key"});
+        handler.store.update_task("task-1", |link| {
+            link.thread_id = Some(thread.into());
+            link.goal_status = Some("blocked".into());
+            store_runtime_execution_request(&mut link.runtime_handle, &request);
+        });
+        handler.retain_runtime_model_config("task-1", &request.model_config);
+        block_goal_admission(&handler);
+        install_native_history(&mut handler, &root, vec![], None);
+        fs::write(root.join("thread_goal_set.hold"), "").unwrap();
+        fs::write(
+            root.join("thread_goal_set.json"),
+            json!({"goal":{"status":"active"}}).to_string(),
+        )
+        .unwrap();
+        fs::write(root.join("thread_goal_set.notifications.jsonl"), json!({
+            "method":"thread/goal/updated", "params":{"threadId":thread,"goal":{"status":"active"}}
+        }).to_string() + "\n").unwrap();
+        let result = handler
+            .set_task_goal(json!({"taskId":"task-1","status":"active"}))
+            .await
+            .unwrap();
+        assert_eq!(result["accepted"], false);
+        assert!(
+            result["error"].as_str().unwrap().contains("timed out"),
+            "{result}"
+        );
+        assert!(handler.thread_event_routing.lock().unwrap().routes[thread]
+            .goal_model_route
+            .is_some());
+        fs::remove_file(root.join("thread_goal_set.hold")).unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while handler
+                .local_task_link("task-1")
+                .unwrap()
+                .goal_status
+                .as_deref()
+                != Some("active")
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(handler.thread_event_routing.lock().unwrap().routes[thread]
+            .goal_model_route
+            .is_some());
+        fs::write(
+            root.join("thread_goal_get.json"),
+            json!({"goal":{"status":"complete"}}).to_string(),
+        )
+        .unwrap();
+        let confirmed = handler
+            .get_task_goal(json!({"taskId":"task-1"}))
+            .await
+            .unwrap();
+        assert_eq!(confirmed["goal"]["status"], "complete");
+        assert!(handler.thread_event_routing.lock().unwrap().routes[thread]
+            .goal_model_route
+            .is_none());
+        handler.persist_current_turn_state().await.unwrap();
+        handler.codex_app_server.restart().await;
+        let _ = fs::remove_dir_all(root);
+    });
+}
+
+#[test]
+fn goal_reads_cannot_release_a_newer_activation_or_deadlock_conditional_mutations() {
+    run_goal_test(async {
+        let (mut handler, root, mut request) = setup("goal-read-activation-order");
+        let thread = "22222222-2222-4222-8222-222222222222";
+        request.model_config = json!({"model_id":"goal-route-model",
+            "base_url":"http://synthetic.invalid/v1","api_key":"synthetic-key"});
+        handler.store.update_task("task-1", |link| {
+            link.thread_id = Some(thread.into());
+            link.goal_status = Some("blocked".into());
+            store_runtime_execution_request(&mut link.runtime_handle, &request);
+        });
+        handler.retain_runtime_model_config("task-1", &request.model_config);
+        block_goal_admission(&handler);
+        install_native_history(&mut handler, &root, vec![], None);
+        fs::write(root.join("thread_goal_get.defer"), "").unwrap();
+        fs::write(
+            root.join("thread_goal_set.json"),
+            json!({"goal":{"status":"active"}}).to_string(),
+        )
+        .unwrap();
+        let reader = handler.clone();
+        let reading =
+            tokio::spawn(async move { reader.get_task_goal(json!({"taskId":"task-1"})).await });
+        let deferred = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Some(request) = fs::read_to_string(root.join("requests.jsonl"))
+                    .unwrap_or_default()
+                    .lines()
+                    .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                    .find(|request| request["method"] == "thread/goal/get")
+                {
+                    break request;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let writer = handler.clone();
+        let activating = tokio::spawn(async move {
+            writer
+                .set_task_goal(json!({"taskId":"task-1","status":"active"}))
+                .await
+        });
+        let activated = tokio::time::timeout(Duration::from_secs(5), activating)
+            .await
+            .expect("A pending read must not block Goal activation")
+            .unwrap()
+            .unwrap();
+        assert_eq!(activated["goal"]["status"], "active");
+        fs::write(root.join("test_fence.json"), "{}").unwrap();
+        fs::write(
+            root.join("test_fence.notifications.jsonl"),
+            json!({
+                "id":deferred["id"],"result":{"goal":{"status":"blocked"}}
+            })
+            .to_string()
+                + "\n",
+        )
+        .unwrap();
+        handler
+            .call_codex_thread_method("test/fence", json!({"threadId":thread}))
+            .await
+            .unwrap();
+        assert_eq!(reading.await.unwrap().unwrap()["goal"]["status"], "blocked");
+        assert_eq!(
+            handler
+                .local_task_link("task-1")
+                .unwrap()
+                .goal_status
+                .as_deref(),
+            Some("active")
+        );
+        assert!(handler.thread_event_routing.lock().unwrap().routes[thread]
+            .goal_model_route
+            .is_some());
+        fs::remove_file(root.join("thread_goal_get.defer")).unwrap();
+        fs::write(
+            root.join("thread_goal_get.json"),
+            json!({"goal":{"status":"active"}}).to_string(),
+        )
+        .unwrap();
+        fs::write(
+            root.join("thread_goal_set.json"),
+            json!({"goal":{"status":"paused"}}).to_string(),
+        )
+        .unwrap();
+        let paused = tokio::time::timeout(
+            Duration::from_secs(5),
+            handler.set_task_goal(json!({
+                "taskId":"task-1","status":"paused","eventGoalExpected":{"status":"active"}
+            })),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(paused["accepted"], true);
+        assert_eq!(paused["goal"]["status"], "paused");
+        handler.codex_app_server.restart().await;
+        let _ = fs::remove_dir_all(root);
+    });
+}
+
+#[test]
+fn inactive_notification_during_activation_cannot_release_the_prepared_route() {
+    run_goal_test(async {
+        let (mut handler, root, mut request) = setup("goal-notification-activation-order");
+        let thread = "22222222-2222-4222-8222-222222222222";
+        request.model_config = json!({"model_id":"goal-route-model",
+            "base_url":"http://synthetic.invalid/v1","api_key":"synthetic-key"});
+        handler.store.update_task("task-1", |link| {
+            link.thread_id = Some(thread.into());
+            link.goal_status = Some("blocked".into());
+            store_runtime_execution_request(&mut link.runtime_handle, &request);
+        });
+        handler.retain_runtime_model_config("task-1", &request.model_config);
+        block_goal_admission(&handler);
+        install_native_history(&mut handler, &root, vec![], None);
+        fs::write(root.join("thread_goal_set.defer"), "").unwrap();
+        let writer = handler.clone();
+        let activating = tokio::spawn(async move {
+            writer
+                .set_task_goal(json!({"taskId":"task-1","status":"active"}))
+                .await
+        });
+        let deferred = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Some(request) = fs::read_to_string(root.join("requests.jsonl"))
+                    .unwrap_or_default()
+                    .lines()
+                    .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                    .find(|request| request["method"] == "thread/goal/set")
+                {
+                    break request;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(handler.thread_event_routing.lock().unwrap().routes[thread]
+            .goal_model_route
+            .is_some());
+        fs::write(root.join("test_fence.json"), "{}").unwrap();
+        fs::write(root.join("test_fence.notifications.jsonl"), json!({
+            "method":"thread/goal/updated", "params":{"threadId":thread,"goal":{"status":"paused"}}
+        }).to_string() + "\n").unwrap();
+        handler
+            .call_codex_thread_method("test/fence", json!({"threadId":thread}))
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while handler
+                .local_task_link("task-1")
+                .unwrap()
+                .goal_status
+                .as_deref()
+                != Some("paused")
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(
+            handler.thread_event_routing.lock().unwrap().routes[thread]
+                .goal_model_route
+                .is_some(),
+            "An inactive notification cannot release a pending activation's registration"
+        );
+        fs::write(
+            root.join("test_fence.notifications.jsonl"),
+            json!({
+                "id":deferred["id"],"result":{"goal":{"status":"active"}}
+            })
+            .to_string()
+                + "\n",
+        )
+        .unwrap();
+        handler
+            .call_codex_thread_method("test/fence", json!({"threadId":thread}))
+            .await
+            .unwrap();
+        assert_eq!(
+            activating.await.unwrap().unwrap()["goal"]["status"],
+            "active"
+        );
+        assert!(handler.thread_event_routing.lock().unwrap().routes[thread]
+            .goal_model_route
+            .is_some());
+        fs::write(
+            root.join("thread_goal_get.json"),
+            json!({"goal":{"status":"paused"}}).to_string(),
+        )
+        .unwrap();
+        assert_eq!(
+            handler
+                .get_task_goal(json!({"taskId":"task-1"}))
+                .await
+                .unwrap()["goal"]["status"],
+            "paused"
+        );
+        assert!(handler.thread_event_routing.lock().unwrap().routes[thread]
+            .goal_model_route
+            .is_none());
+        handler.codex_app_server.restart().await;
+        let _ = fs::remove_dir_all(root);
+    });
+}

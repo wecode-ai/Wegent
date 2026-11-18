@@ -470,6 +470,12 @@ async function verifyAnthropicEmptyResponseRecovery({ composerSelector, control 
   await control.command('waitFor', composerSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  // A provisional default label is not an explicit protocol choice. Opening
+  // the picker makes the shared helper select the cloud option and pin it.
+  await control.command(
+    'clickWhenEnabled',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="model-selector-button"]`
+  )
   await selectE2EModel(
     control,
     anthropicModel.optionIds,

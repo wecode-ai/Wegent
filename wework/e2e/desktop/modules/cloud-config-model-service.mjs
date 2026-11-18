@@ -81,8 +81,18 @@ export function createCloudConfigModelService({ readUsage } = {}) {
           return
         }
         if (readUsage && request.url?.includes('/wham/usage')) {
-          response.writeHead(200, { 'content-type': 'application/json' })
-          response.end(JSON.stringify(readUsage()))
+          try {
+            const usage = await readUsage()
+            if (response.destroyed) return
+            response.writeHead(200, { 'content-type': 'application/json' })
+            response.end(JSON.stringify(usage))
+          } catch (error) {
+            console.error('[desktop-e2e] Model usage fixture failed', error)
+            if (!response.destroyed) {
+              response.writeHead(500, { 'content-type': 'application/json' })
+              response.end(JSON.stringify({ error: 'Model usage fixture failed' }))
+            }
+          }
           return
         }
         if (request.url?.startsWith('/backend-api/wham/accounts/check')) {
