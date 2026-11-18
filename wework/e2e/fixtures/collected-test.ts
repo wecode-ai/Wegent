@@ -8,10 +8,22 @@ import { DesktopErrorCollector } from '../desktop/error-collector.mjs'
 export type ErrorRecord = {
   source: string
   type: string
-  details: { requestId?: string; status?: number; url?: string; message?: string }
+  details: {
+    requestId?: string
+    status?: number
+    url?: string
+    message?: string
+    diagnostics?: { requestId?: string; status?: number }
+  }
 }
 
-type ExpectedResponse = { requestId: string; url: string; status: number; statusText: string }
+type ExpectedResponse = {
+  requestId: string
+  clientRequestId?: string
+  url: string
+  status: number
+  statusText: string
+}
 
 export const test = base.extend<{
   errors: {
@@ -107,6 +119,7 @@ export const test = base.extend<{
             assert.ok(status >= 400)
             expected.push({
               requestId: requestId(response.request()),
+              clientRequestId: response.request().headers()['x-request-id'],
               url: response.url(),
               status,
               statusText: response.statusText(),
@@ -134,10 +147,18 @@ export const test = base.extend<{
               entry.details.url === response.url &&
               entry.details.message ===
                 `Failed to load resource: the server responded with a status of ${response.status} (${response.statusText})`
+            const rendererResponse = (entry: ErrorRecord) =>
+              Boolean(response.clientRequestId) &&
+              entry.source === 'renderer' &&
+              entry.type === 'http:response' &&
+              entry.details.diagnostics?.requestId === response.clientRequestId &&
+              entry.details.diagnostics?.status === response.status
             // Chromium may emit a console record for an explicitly asserted HTTP failure.
-            return records.some(consoleError)
-              ? [network, { match: consoleError, count: 1 }]
-              : [network]
+            return [
+              network,
+              ...(records.some(consoleError) ? [{ match: consoleError, count: 1 }] : []),
+              ...(records.some(rendererResponse) ? [{ match: rendererResponse, count: 1 }] : []),
+            ]
           })
           await collector.assertCollectedErrors(
             {

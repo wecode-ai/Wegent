@@ -9,6 +9,7 @@ export {
   type QuickPhraseMode,
 } from '@wegent/chat-core/composer-quick-phrases'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import {
   INTERACTIONS_PATH,
   INTERACTIONS_TAB_ID,
@@ -584,7 +585,7 @@ export function emitAppPreferencesChanged(preferences: AppPreferences) {
 }
 
 export async function getAppPreferences(): Promise<AppPreferences> {
-  if (typeof window === 'undefined') {
+  if (!isElectronRuntime()) {
     return defaultAppPreferences
   }
   return mergeAppPreferences(await invokeDesktopHost<Record<string, unknown>>('preferences.get'))

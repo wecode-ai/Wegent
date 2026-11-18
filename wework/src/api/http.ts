@@ -210,7 +210,7 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
       })
     } catch (error) {
       window.clearTimeout(slowTimer)
-      reportE2EError('http:transport', error)
+      reportE2EError('http:transport', error, { requestId, method })
       console.warn(
         `[Wework] HTTP ${method} ${endpoint} failed.`,
         requestLogFields(logContext, {
@@ -251,7 +251,11 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
     diagnostics: HttpResponseDiagnostics
   ): Promise<ApiError> {
     const error = await parseError(response)
-    reportE2EError('http:response', error)
+    reportE2EError('http:response', error, {
+      requestId: diagnostics.logContext.requestId,
+      method: diagnostics.logContext.method,
+      status: response.status,
+    })
     console.warn(
       `[Wework] HTTP ${diagnostics.logContext.method} ${diagnostics.logContext.endpoint} returned ${response.status}.`,
       requestLogFields(diagnostics.logContext, {
