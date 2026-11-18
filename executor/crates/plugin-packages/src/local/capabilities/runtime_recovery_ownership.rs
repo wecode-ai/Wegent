@@ -4,104 +4,6 @@
 use super::*;
 
 impl GlobalCapabilityStore {
-    pub(in crate::local::capabilities) fn validate_marketplace_occupancy(
-        &self,
-        spec: &PluginSyncSpec,
-        entry: &Value,
-        manifest: &Value,
-    ) -> Result<(), CapabilitySyncError> {
-        self.validate_marketplace_preparation(spec, entry)?;
-        for (market, claude) in [
-            (self.codex_marketplace_dir(&spec.marketplace), false),
-            (self.claude_marketplace_dir(&spec.marketplace), true),
-        ] {
-            if claude && self.codex_only_plugins {
-                continue;
-            }
-            let target = market
-                .join("plugins")
-                .join(self.marketplace_plugin_name(spec, claude));
-            if !exists(&target) {
-                continue;
-            }
-            let (runtime, field) =
-                if claude && spec.marketplace != PERSONAL_SHARED_PLUGIN_MARKETPLACE {
-                    (self.plugin_runtime_link(spec), "claude_link")
-                } else {
-                    (self.plugin_codex_link(spec), "codex_link")
-                };
-            if target.is_symlink()
-                && fs::read_link(&target).ok().is_some_and(|link| {
-                    let linked = if link.is_absolute() {
-                        link
-                    } else {
-                        target.parent().unwrap().join(link)
-                    };
-                    // Uninstall retains versioned caches. A new install may replace
-                    // the source only when this exact cache still belongs to its key.
-                    let retained = self.shared_packages
-                        && linked.parent() == runtime.parent()
-                        && manifest
-                            .get("plugin_runtime_owners")
-                            .and_then(|owners| owners.get(linked.to_string_lossy().as_ref()))
-                            .and_then(Value::as_str)
-                            == Some(spec.key.as_str())
-                        && self.ensure_runtime_path(&linked, false).is_ok();
-                    linked == runtime
-                        || (spec.marketplace == PERSONAL_SHARED_PLUGIN_MARKETPLACE
-                            && !self.codex_only_plugins
-                            && linked == self.plugin_runtime_link(spec)
-                            && entry_owns_path(entry, &linked, "claude_link"))
-                        || retained
-                        || manifest
-                            .get("plugin_runtime_owner_origins")
-                            .and_then(|origins| origins.get(runtime.to_string_lossy().as_ref()))
-                            .is_some_and(|origin| {
-                                origin.get("key").and_then(Value::as_str) == Some(spec.key.as_str())
-                                    && origin.get("path").and_then(Value::as_str).map(Path::new)
-                                        == Some(linked.as_path())
-                            })
-                        || entry
-                            .get("runtime")
-                            .and_then(|value| value.get(field))
-                            .and_then(Value::as_str)
-                            .is_some_and(|old| Path::new(old) == linked)
-                })
-            {
-                continue;
-            }
-            if target.is_symlink() && entry.get("managed").and_then(Value::as_bool) == Some(true) {
-                let previous = checked_spec(&spec.key, entry)?;
-                if let Some(recorded) =
-                    self.recorded_runtime_at_current_home(&previous, entry, field)
-                {
-                    if fs::read_link(&target).ok().as_ref() == Some(&recorded) {
-                        self.ensure_runtime_path(&recorded, false)?;
-                        if self.matches_old_managed_copy(&recorded, entry, &spec.key)? {
-                            continue;
-                        }
-                    }
-                }
-            }
-            if self.owns_legacy_marketplace_source(spec, &target, entry, manifest)? {
-                continue;
-            }
-            if self.owns_managed_marketplace_copy(spec, &target, field, manifest)? {
-                continue;
-            }
-            // Existing personal sources and directories are not implicitly managed.
-            let same_install = entry.get("managed").and_then(Value::as_bool) == Some(true)
-                && entry.get("installed_plugin_id").and_then(Value::as_i64)
-                    == spec.installed_plugin_id;
-            if !same_install || !self.matches_old_managed_copy(&target, entry, &spec.key)? {
-                return Err(CapabilitySyncError::invalid_payload(
-                    "Plugin marketplace entry is occupied by an unrelated source",
-                ));
-            }
-        }
-        Ok(())
-    }
-
     pub(in crate::local::capabilities) fn validate_marketplace_preparation(
         &self,
         spec: &PluginSyncSpec,
@@ -138,31 +40,12 @@ impl GlobalCapabilityStore {
         Ok(())
     }
 
-    pub(super) fn recorded_runtime_at_current_home(
-        &self,
-        spec: &PluginSyncSpec,
-        entry: &Value,
-        field: &str,
-    ) -> Option<PathBuf> {
-        let recorded = Path::new(entry.get("runtime")?.get(field)?.as_str()?);
-        if !historical_cache_path(recorded, spec, field) {
-            return None;
-        }
-        let current = self
-            .plugin_runtime_targets(spec)
-            .into_iter()
-            .find(|(_, candidate)| *candidate == field)?
-            .0;
-        Some(current.parent()?.join(recorded.file_name()?))
-    }
-
     pub(in crate::local::capabilities) fn prepare_relocated_runtime_ownership(
         &self,
         spec: &PluginSyncSpec,
         package: &Path,
         manifest: &mut Value,
     ) -> Result<(), CapabilitySyncError> {
-        self.validate_recorded_runtime_before_relocation(spec, package, manifest)?;
         let relocated =
             object_map(manifest.get("plugin_runtime_relocated_owners")).unwrap_or_default();
         let pending = self
@@ -212,7 +95,6 @@ impl GlobalCapabilityStore {
                     && !same_runtime_contents(path, &template)?
                     && !self.matches_verified_legacy_contents(spec, path, package)?
                     && !self.relocated_runtime_matches_previous(spec, path, field, manifest)?
-                    && !self.owns_managed_marketplace_copy(spec, path, field, manifest)?
                 {
                     return Err(CapabilitySyncError::invalid_payload(
                         "Retained plugin destination is occupied by unrelated data; preserving it",
@@ -224,46 +106,6 @@ impl GlobalCapabilityStore {
             let path = path.to_string_lossy().into_owned();
             ensure_object_field(manifest, "plugin_runtime_relocated_owners").remove(&path);
             ensure_object_field(manifest, "plugin_runtime_owners").insert(path, json!(spec.key));
-        }
-        Ok(())
-    }
-
-    fn validate_recorded_runtime_before_relocation(
-        &self,
-        spec: &PluginSyncSpec,
-        package: &Path,
-        manifest: &Value,
-    ) -> Result<(), CapabilitySyncError> {
-        if let Some(entry) = manifest
-            .get("plugins")
-            .and_then(|plugins| plugins.get(&spec.key))
-        {
-            let previous = checked_spec(&spec.key, entry)?;
-            if previous.version == spec.version {
-                for (current, field) in self
-                    .plugin_runtime_targets(spec)
-                    .into_iter()
-                    .filter(|(_, field)| *field == "codex_link")
-                {
-                    let Some(recorded) =
-                        self.recorded_runtime_at_current_home(&previous, entry, field)
-                    else {
-                        continue;
-                    };
-                    if recorded != current && exists(&recorded) {
-                        self.ensure_runtime_path(&recorded, false)?;
-                        if !self.matches_verified_legacy_contents(&previous, &recorded, package)?
-                            && !self.relocated_runtime_matches_previous(
-                                spec, &recorded, field, manifest,
-                            )?
-                        {
-                            return Err(CapabilitySyncError::invalid_payload(
-                                "Retained plugin destination is occupied by unrelated data; preserving it",
-                            ));
-                        }
-                    }
-                }
-            }
         }
         Ok(())
     }
@@ -294,10 +136,6 @@ impl GlobalCapabilityStore {
                 .plugin_runtime_targets(&previous)
                 .iter()
                 .any(|(target, target_field)| target == path && *target_field == field)
-                && self
-                    .recorded_runtime_at_current_home(&previous, entry, field)
-                    .as_deref()
-                    != Some(path)
         {
             return Ok(false);
         }
@@ -544,7 +382,6 @@ pub(super) fn historical_cache_path(path: &Path, spec: &PluginSyncSpec, field: &
         return false;
     };
     let acceptable_version = version == spec.version
-        || (field == "codex_link" && version == "local")
         || (field == "claude_link"
             && spec
                 .checksum

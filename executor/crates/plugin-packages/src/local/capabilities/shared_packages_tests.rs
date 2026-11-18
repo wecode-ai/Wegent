@@ -253,7 +253,7 @@ async fn plugin_caches_are_writable_copies_and_shared_packages_survive_removal()
     let old = store.manifest.load().unwrap()["plugins"]["demo@wegent"].clone();
     let shared = PathBuf::from(old["store_path"].as_str().unwrap());
     let native = PathBuf::from(old["runtime"]["codex_link"].as_str().unwrap());
-    assert_eq!(native.file_name().unwrap(), "local");
+    assert_eq!(native.file_name().unwrap(), "1.0");
     assert!(!native.is_symlink());
     assert!(native.join(".codex-plugin/plugin.json").exists());
     assert!(!shared.join(".codex-plugin/plugin.json").exists());

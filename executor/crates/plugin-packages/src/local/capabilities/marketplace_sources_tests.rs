@@ -71,12 +71,10 @@ impl Fixture {
     async fn new(codex_only: bool) -> Self {
         let root = tempfile::tempdir().unwrap();
         let store = store(root.path(), codex_only);
-        // Historical caches coexist with the selected active projection.
-        for (version, id) in [("0.8.1", 39), ("0.9.12", 40), ("0.1.6", 41)] {
-            assert_eq!(sync(&store, version, id).await["success"], true);
-            let active = store.codex_plugins_dir.join("cache/wegent/demo/local");
-            copy_dir_recursive(&active, &active.parent().unwrap().join(version)).unwrap();
-        }
+        // All three historical versions exist, including the requested target cache.
+        assert_eq!(sync(&store, "0.8.1", 39).await["success"], true);
+        assert_eq!(sync(&store, "0.9.12", 40).await["success"], true);
+        assert_eq!(sync(&store, "0.1.6", 41).await["success"], true);
         let manifest = store.manifest.load().unwrap();
         let spec = checked_spec("demo@wegent", &manifest["plugins"]["demo@wegent"]).unwrap();
         let mut sources = Vec::new();
@@ -265,7 +263,7 @@ async fn copied_marketplace_sources_roll_back_a_failed_configuration_commit() {
         let target = fixture
             .store
             .codex_plugins_dir
-            .join("cache/wegent/demo/local");
+            .join("cache/wegent/demo/0.9.12");
         if !retained_target {
             remove_existing_path(&target).unwrap();
         }

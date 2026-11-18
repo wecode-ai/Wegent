@@ -644,17 +644,13 @@ impl GlobalCapabilityStore {
     }
 
     pub(super) fn plugin_codex_link(&self, spec: &PluginSyncSpec) -> PathBuf {
-        // Codex prefers `local` over all cached versions. The active projection
-        // follows the selected package while historical directories stay intact.
+        // Codex selects the manifest version and removes other cache versions
+        // during native installation. Content hashes belong in the shared store.
         self.codex_plugins_dir
             .join("cache")
             .join(&spec.marketplace)
             .join(&spec.name)
-            .join(if self.shared_packages {
-                "local"
-            } else {
-                &spec.version
-            })
+            .join(&spec.version)
     }
 
     fn plugin_cache_version(&self, spec: &PluginSyncSpec) -> String {

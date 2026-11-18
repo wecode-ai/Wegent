@@ -84,19 +84,14 @@ fn use_previous_sources(fixture: &Fixture) -> Value {
     let previous = &manifest[RECEIPTS]["demo@wegent"]["previous"];
     assert_eq!(previous["version"], "0.9.12");
     let spec = checked_spec("demo@wegent", previous).unwrap();
-    for ((runtime, field), source) in fixture
+    for ((runtime, _), source) in fixture
         .store
         .plugin_runtime_targets(&spec)
         .iter()
         .zip(&fixture.sources)
     {
         remove_existing_path(source).unwrap();
-        let historical = if *field == "codex_link" {
-            runtime.parent().unwrap().join(&spec.version)
-        } else {
-            runtime.clone()
-        };
-        copy_dir_recursive(&historical, source).unwrap();
+        copy_dir_recursive(runtime, source).unwrap();
         assert!(fixture
             .store
             .matches_old_managed_copy(source, previous, "demo@wegent")

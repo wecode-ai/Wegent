@@ -137,9 +137,6 @@ impl GlobalCapabilityStore {
             }
             let target = if field == "codex_link" {
                 self.plugin_codex_link(&spec)
-                    .parent()
-                    .unwrap()
-                    .join(version)
             } else {
                 self.plugins_dir
                     .join("cache")
@@ -247,27 +244,9 @@ impl GlobalCapabilityStore {
                     Path::new(old) != target && historical_cache_path(Path::new(old), &spec, field)
                 })
             {
-                let rebased = target
-                    .parent()
-                    .unwrap()
-                    .join(Path::new(old).file_name().unwrap());
-                let claude = field == "claude_link";
-                let market = if claude {
-                    self.claude_marketplace_dir(&spec.marketplace)
-                } else {
-                    self.codex_marketplace_dir(&spec.marketplace)
-                };
-                let source = market
-                    .join("plugins")
-                    .join(self.marketplace_plugin_name(&spec, claude));
-                let origin = if fs::read_link(source).ok().as_ref() == Some(&rebased) {
-                    rebased
-                } else {
-                    PathBuf::from(old)
-                };
                 ensure_object_field(manifest, "plugin_runtime_owner_origins").insert(
                     target.to_string_lossy().into_owned(),
-                    json!({"key":key,"path":origin}),
+                    json!({"key":key,"path":old}),
                 );
             }
         }
@@ -341,26 +320,15 @@ impl GlobalCapabilityStore {
         // Its next online installation can publish the archive through the normal flow.
         let store_current = old.get("store_path") == next.get("store_path")
             || self.current_recorded_store_path(old)?.is_some();
-        let private_current = spec.checksum.is_none()
-            && self.plugin_runtime_targets(spec).iter().all(|(_, field)| {
-                self.recorded_runtime_at_current_home(spec, old, field)
-                    .is_some_and(|path| {
-                        old["runtime"][field].as_str() == path.to_str()
-                            && self.ensure_runtime_path(&path, false).is_ok()
-                            && path.join(CODEX_PLUGIN_MANIFEST_PATH).is_file()
-                            && path.join(CLAUDE_PLUGIN_MANIFEST_PATH).is_file()
-                    })
-            });
-        Ok(private_current
-            || (old.get("runtime") == next.get("runtime")
-                && store_current
-                && old.get("previous") == next.get("previous")
-                && self.plugin_runtime_targets(spec).iter().all(|(path, _)| {
-                    path.is_dir()
-                        && !path.is_symlink()
-                        && path.join(CODEX_PLUGIN_MANIFEST_PATH).is_file()
-                        && path.join(CLAUDE_PLUGIN_MANIFEST_PATH).is_file()
-                })))
+        Ok(old.get("runtime") == next.get("runtime")
+            && store_current
+            && old.get("previous") == next.get("previous")
+            && self.plugin_runtime_targets(spec).iter().all(|(path, _)| {
+                path.is_dir()
+                    && !path.is_symlink()
+                    && path.join(CODEX_PLUGIN_MANIFEST_PATH).is_file()
+                    && path.join(CLAUDE_PLUGIN_MANIFEST_PATH).is_file()
+            }))
     }
 
     fn rebase_plugin_entry(
@@ -538,6 +506,91 @@ impl GlobalCapabilityStore {
         ensure_plugin_hook_permissions(&template)?;
         Ok(same_runtime_contents(target, &template)?
             || self.matches_verified_legacy_contents(spec, target, package)?)
+    }
+
+    pub(super) fn validate_marketplace_occupancy(
+        &self,
+        spec: &PluginSyncSpec,
+        entry: &Value,
+        manifest: &Value,
+    ) -> Result<(), CapabilitySyncError> {
+        self.validate_marketplace_preparation(spec, entry)?;
+        for (market, claude) in [
+            (self.codex_marketplace_dir(&spec.marketplace), false),
+            (self.claude_marketplace_dir(&spec.marketplace), true),
+        ] {
+            if claude && self.codex_only_plugins {
+                continue;
+            }
+            let target = market
+                .join("plugins")
+                .join(self.marketplace_plugin_name(spec, claude));
+            if !exists(&target) {
+                continue;
+            }
+            let (runtime, field) =
+                if claude && spec.marketplace != PERSONAL_SHARED_PLUGIN_MARKETPLACE {
+                    (self.plugin_runtime_link(spec), "claude_link")
+                } else {
+                    (self.plugin_codex_link(spec), "codex_link")
+                };
+            if target.is_symlink()
+                && fs::read_link(&target).ok().is_some_and(|link| {
+                    let linked = if link.is_absolute() {
+                        link
+                    } else {
+                        target.parent().unwrap().join(link)
+                    };
+                    // Uninstall retains versioned caches. A new install may replace
+                    // the source only when this exact cache still belongs to its key.
+                    let retained = self.shared_packages
+                        && linked.parent() == runtime.parent()
+                        && manifest
+                            .get("plugin_runtime_owners")
+                            .and_then(|owners| owners.get(linked.to_string_lossy().as_ref()))
+                            .and_then(Value::as_str)
+                            == Some(spec.key.as_str())
+                        && self.ensure_runtime_path(&linked, false).is_ok();
+                    linked == runtime
+                        || (spec.marketplace == PERSONAL_SHARED_PLUGIN_MARKETPLACE
+                            && !self.codex_only_plugins
+                            && linked == self.plugin_runtime_link(spec)
+                            && entry_owns_path(entry, &linked, "claude_link"))
+                        || retained
+                        || manifest
+                            .get("plugin_runtime_owner_origins")
+                            .and_then(|origins| origins.get(runtime.to_string_lossy().as_ref()))
+                            .is_some_and(|origin| {
+                                origin.get("key").and_then(Value::as_str) == Some(spec.key.as_str())
+                                    && origin.get("path").and_then(Value::as_str).map(Path::new)
+                                        == Some(linked.as_path())
+                            })
+                        || entry
+                            .get("runtime")
+                            .and_then(|value| value.get(field))
+                            .and_then(Value::as_str)
+                            .is_some_and(|old| Path::new(old) == linked)
+                })
+            {
+                continue;
+            }
+            if self.owns_legacy_marketplace_source(spec, &target, entry, manifest)? {
+                continue;
+            }
+            if self.owns_managed_marketplace_copy(spec, &target, field, manifest)? {
+                continue;
+            }
+            // Existing personal sources and directories are not implicitly managed.
+            let same_install = entry.get("managed").and_then(Value::as_bool) == Some(true)
+                && entry.get("installed_plugin_id").and_then(Value::as_i64)
+                    == spec.installed_plugin_id;
+            if !same_install || !self.matches_old_managed_copy(&target, entry, &spec.key)? {
+                return Err(CapabilitySyncError::invalid_payload(
+                    "Plugin marketplace entry is occupied by an unrelated source",
+                ));
+            }
+        }
+        Ok(())
     }
 
     pub(super) fn install_plugin_runtime_metadata(
