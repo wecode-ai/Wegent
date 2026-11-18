@@ -5,9 +5,12 @@ import { createRoot } from 'react-dom/client'
 import { describe, expect, it, vi } from 'vitest'
 import { ProjectBoardAdapter } from './ProjectBoardAdapter'
 import { createCollaborationTranslator } from '../i18n'
+import { baseBoardStatusGroupingFlag } from '../project-board/baseBoardStatusGrouping'
 
 describe('board card sub-issue progress', () => {
   it('keeps full child progress across filters, grouping and updates, and opens the child board', () => {
+    // Exercise arbitrary personal grouping through the supported rollback mode.
+    localStorage.setItem(baseBoardStatusGroupingFlag, 'false')
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
     const container = document.createElement('div')
     const root = createRoot(container)
