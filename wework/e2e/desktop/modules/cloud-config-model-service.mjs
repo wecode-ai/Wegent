@@ -55,8 +55,10 @@ export function createCloudConfigModelService({ readUsage } = {}) {
   const requests = []
   const authSnapshots = []
   const releases = new Set()
+  const authorizationHeader = () => `Bearer ${accessToken}`
 
   return {
+    authorizationHeader,
     plan(marker, responses = [{}]) {
       const rounds = responses.map(response => {
         let release
@@ -217,7 +219,7 @@ export function createCloudConfigModelService({ readUsage } = {}) {
         }
         authSnapshots.push(snapshot)
         console.info('[desktop-e2e] subscription auth file metadata', JSON.stringify(snapshot))
-        assert.equal(request.headers.authorization, `Bearer ${accessToken}`)
+        assert.equal(request.headers.authorization, authorizationHeader())
         assert.equal(request.headers['chatgpt-account-id'], ACCOUNT)
       }
       requests.push({ marker: plan.marker, round: plan.count, subscription })
