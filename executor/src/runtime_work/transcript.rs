@@ -28,8 +28,6 @@ use super::util::{
 const MAX_TRANSCRIPT_TOOL_OUTPUT_BYTES: usize = 64 * 1024;
 const MAX_TRANSCRIPT_MESSAGE_CONTENT_CHARS: usize = 200_000;
 const MAX_TRANSCRIPT_BLOCK_CONTENT_CHARS: usize = 120_000;
-const APPLICATION_CONTEXT_OPEN: &str = "<application_context>";
-const APPLICATION_CONTEXT_CLOSE: &str = "</application_context>";
 
 #[derive(Clone, Copy)]
 pub(crate) struct TranscriptBuildOptions {
