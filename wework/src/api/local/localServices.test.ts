@@ -21,7 +21,7 @@ import {
   qualifyLocalRuntimeWork,
 } from '@/lib/local-runtime-sidebar-identity'
 import type { TurnFileChangesSummary, User } from '@/types/api'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import * as codexPlugins from './codexPlugins'
 import {
   assignmentCloudExecutionFields,
@@ -65,11 +65,18 @@ const AUTHENTICATED_CLOUD_USER: User = {
 }
 
 describe('createLocalAppServices', () => {
+  let previousRuntimeConfig: Window['__WEWORK_RUNTIME_CONFIG__']
+
   beforeEach(() => {
+    previousRuntimeConfig = window.__WEWORK_RUNTIME_CONFIG__
     localStorage.clear()
     delete window.weworkElectronNetwork
     clearLocalModelConfigs()
     resetLocalRuntimeChatStreamsForTests()
+  })
+
+  afterEach(() => {
+    window.__WEWORK_RUNTIME_CONFIG__ = previousRuntimeConfig
   })
 
   test('requires a Wework cloud connection for default-market dependency installation', async () => {
@@ -2190,6 +2197,10 @@ describe('createLocalAppServices', () => {
   })
 
   test('omits codex models and skips the codex RPC when the subscription is off', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      ...window.__WEWORK_RUNTIME_CONFIG__,
+      desktopHost: 'electron',
+    }
     await updateAppPreferences({ localCodexSubscriptionEnabled: false })
     const request = vi.fn().mockResolvedValue({})
     const services = createLocalAppServices({

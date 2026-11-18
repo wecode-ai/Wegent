@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { expandCompletedProcessing } from '../../e2e/desktop/modules/streaming-text-fixture.mjs'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import * as desktopHost from '@/api/dsh/desktopHost'
@@ -21,12 +21,20 @@ import { replaceProviderModelConfigs } from '@/features/model-settings/providerM
 import * as codexPlugins from '@/api/local/codexPlugins'
 import { toInstalledPlugin } from '@wegent/chat-core/codex-installed-plugins'
 
+let previousRuntimeConfig: Window['__WEWORK_RUNTIME_CONFIG__']
+
+beforeEach(() => {
+  previousRuntimeConfig = window.__WEWORK_RUNTIME_CONFIG__
+  window.__WEWORK_RUNTIME_CONFIG__ = { ...previousRuntimeConfig, desktopHost: 'electron' }
+})
+
 afterEach(() => {
   delete window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__
   clearLocalModelConfigs()
   replaceProviderModelConfigs([])
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
+  window.__WEWORK_RUNTIME_CONFIG__ = previousRuntimeConfig
 })
 
 function providerModel(id: string, enabled = true) {
