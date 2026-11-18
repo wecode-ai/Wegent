@@ -140,7 +140,13 @@ impl GlobalCapabilityStore {
                 } else {
                     self.plugin_codex_link(&spec)
                 };
-                if !entry_owns_path(entry, &runtime, field) {
+                if entry
+                    .get("runtime")
+                    .and_then(|value| value.get(field))
+                    .and_then(Value::as_str)
+                    .map(Path::new)
+                    != Some(runtime.as_path())
+                {
                     continue;
                 }
                 let owner = manifest

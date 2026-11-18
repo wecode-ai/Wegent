@@ -43,7 +43,7 @@ impl PersonalInstallation {
         let runtime = self
             .store
             .codex_plugins_dir
-            .join("cache/wework-personal/demo/1.0");
+            .join("cache/wework-personal/demo/local");
         remove_existing_path(&self.source()).unwrap();
         copy_dir_recursive(&runtime, &self.source()).unwrap();
         assert!(!self.source().is_symlink());

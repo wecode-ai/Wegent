@@ -161,7 +161,7 @@ async fn skill_and_mcp_sync_do_not_recover_unrelated_migrated_plugins() {
         fs::rename(&old, &new).unwrap();
         let store = store(&new, true);
         fs::remove_dir_all(new.join("workbench/shared")).unwrap();
-        let target = new.join("codex/plugins/cache/wegent/demo/1.0");
+        let target = new.join("codex/plugins/cache/wegent/demo/local");
         fs::remove_dir_all(&target).unwrap();
         let before = store.manifest.load().unwrap();
         let handler = CapabilitySyncHandler::with_package_provider(
@@ -265,7 +265,7 @@ async fn single_plugin_sync_does_not_recover_an_unrelated_migrated_plugin() {
     fs::rename(&old, &new).unwrap();
     let store = store(&new, true);
     fs::remove_dir_all(new.join("workbench/shared")).unwrap();
-    let unrelated = new.join("codex/plugins/cache/wegent/demo/1.0");
+    let unrelated = new.join("codex/plugins/cache/wegent/demo/local");
     fs::remove_dir_all(&unrelated).unwrap();
     let before = store.manifest.load().unwrap();
     let handler = CapabilitySyncHandler::with_package_provider(
@@ -286,7 +286,9 @@ async fn single_plugin_sync_does_not_recover_an_unrelated_migrated_plugin() {
         after["plugins"]["demo@wegent"],
         before["plugins"]["demo@wegent"]
     );
-    assert!(new.join("codex/plugins/cache/wegent/another/1.0").is_dir());
+    assert!(new
+        .join("codex/plugins/cache/wegent/another/local")
+        .is_dir());
     assert!(!unrelated.exists());
     assert!(!old.exists());
 }
@@ -332,7 +334,7 @@ async fn requested_plugin_retry_uses_fresh_archive_after_startup_package_recover
             assert_eq!(entry["version"], version);
             assert!(Path::new(entry["store_path"].as_str().unwrap())
                 .starts_with(new.join("workbench/shared/plugins")));
-            let target = new.join("codex/plugins/cache/wegent/demo").join(version);
+            let target = new.join("codex/plugins/cache/wegent/demo/local");
             assert_eq!(
                 Path::new(entry["runtime"]["codex_link"].as_str().unwrap()),
                 target
@@ -380,7 +382,7 @@ async fn migrated_same_version_update_authenticates_existing_cache_with_previous
     assert_eq!(entry["version"], "1.0");
     assert_ne!(entry["checksum"], previous_checksum);
     assert_eq!(
-        fs::read_to_string(new.join("codex/plugins/cache/wegent/demo/1.0/skills/demo/SKILL.md"))
+        fs::read_to_string(new.join("codex/plugins/cache/wegent/demo/local/skills/demo/SKILL.md"))
             .unwrap(),
         "updated same version"
     );
@@ -396,7 +398,7 @@ async fn requested_plugin_sync_preserves_unrelated_targets_and_conflicting_owner
         installed(&old, true).await;
         fs::rename(&old, &new).unwrap();
         let store = store(&new, true);
-        let target = new.join("codex/plugins/cache/wegent/demo/1.0");
+        let target = new.join("codex/plugins/cache/wegent/demo/local");
         if conflicting_owner {
             let mut manifest = store.manifest.load().unwrap();
             manifest["plugin_runtime_owners"][target.to_string_lossy().as_ref()] =

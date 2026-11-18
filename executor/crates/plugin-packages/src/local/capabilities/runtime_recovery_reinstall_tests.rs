@@ -134,3 +134,61 @@ async fn reinstall_preserves_unowned_or_differently_owned_marketplace_sources() 
         assert_eq!(store.manifest.load().unwrap()["plugins"], expected_plugins);
     }
 }
+
+#[tokio::test]
+async fn migration_publishes_the_pinned_package_without_removing_a_higher_cache() {
+    let temp = tempfile::tempdir().unwrap();
+    let original = store(temp.path(), true);
+    let handler = CapabilitySyncHandler::with_package_provider(
+        "",
+        original.clone(),
+        Packages(archive("demo")),
+        std::sync::Arc::new(crate::NoRunningSessions),
+    );
+    assert_eq!(
+        handler.apply_sync(payload("demo")).await.unwrap()["success"],
+        true
+    );
+    let mut manifest = original.manifest.load().unwrap();
+    let spec = checked_spec("demo@wegent", &manifest["plugins"]["demo@wegent"]).unwrap();
+    let active = original.plugin_codex_link(&spec);
+    let pinned = active.parent().unwrap().join(&spec.version);
+    let higher = active.parent().unwrap().join("9.0");
+    fs::rename(&active, &pinned).unwrap();
+    copy_dir_atomic(&pinned, &higher).unwrap();
+    fs::write(higher.join("skills/demo/SKILL.md"), "higher cached package").unwrap();
+    manifest["plugins"]["demo@wegent"]["runtime"]["codex_link"] = json!(pinned);
+    let market = original
+        .codex_marketplace_dir("wegent")
+        .join("plugins/demo");
+    remove_existing_path(&market).unwrap();
+    std::os::unix::fs::symlink(&pinned, &market).unwrap();
+    original.manifest.save(manifest).unwrap();
+    let higher_before = tree_fingerprint(&higher).unwrap();
+    let pinned_before = tree_fingerprint(&pinned).unwrap();
+
+    let report = original.reconcile_managed_plugin_runtimes().unwrap();
+
+    assert!(report.failed.is_empty(), "{:?}", report.failed);
+    assert_eq!(report.restored, vec!["demo@wegent"]);
+    assert_eq!(
+        fs::read_to_string(active.join("skills/demo/SKILL.md")).unwrap(),
+        "plugin capability"
+    );
+    assert_eq!(active.file_name().unwrap(), "local");
+    assert!(!active.is_symlink());
+    assert_eq!(fs::read_link(market).unwrap(), active);
+    assert_eq!(tree_fingerprint(&higher).unwrap(), higher_before);
+    assert_eq!(tree_fingerprint(&pinned).unwrap(), pinned_before);
+    let recovered = original.manifest.load().unwrap();
+    assert_eq!(recovered["plugins"]["demo@wegent"]["version"], spec.version);
+    assert_eq!(
+        recovered["plugins"]["demo@wegent"]["runtime"]["codex_link"],
+        json!(active)
+    );
+    assert!(original
+        .reconcile_managed_plugin_runtimes()
+        .unwrap()
+        .restored
+        .is_empty());
+}

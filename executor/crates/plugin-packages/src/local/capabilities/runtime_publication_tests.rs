@@ -87,7 +87,7 @@ async fn planned_publication_preserves_current_skill_selector_over_older_selecto
     let current = store.plugin_codex_link(&spec).join("skills/demo/SKILL.md");
     let historical = temp
         .path()
-        .join("old/codex/plugins/cache/wegent/demo/1.0/skills/demo/SKILL.md");
+        .join("old/codex/plugins/cache/wegent/demo/local/skills/demo/SKILL.md");
     let config = store
         .codex_plugins_dir
         .parent()
@@ -134,7 +134,7 @@ async fn retained_runtime_owner_does_not_own_an_unrelated_same_suffix_marketplac
             .unwrap()["success"],
         true
     );
-    let personal = temp.path().join("personal/plugins/cache/wegent/demo/1.0");
+    let personal = temp.path().join("personal/plugins/cache/wegent/demo/local");
     fs::create_dir_all(&personal).unwrap();
     fs::write(personal.join("source.txt"), "keep").unwrap();
     let market = store.codex_marketplace_dir("wegent").join("plugins/demo");

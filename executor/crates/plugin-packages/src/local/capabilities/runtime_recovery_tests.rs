@@ -215,7 +215,7 @@ async fn unrelated_relocation_target_is_preserved() {
     installed(&old, true).await;
     fs::rename(&old, &new).unwrap();
     let store = store(&new, true);
-    let target = new.join("codex/plugins/cache/wegent/demo/1.0");
+    let target = new.join("codex/plugins/cache/wegent/demo/local");
     fs::write(target.join("personal-source.txt"), "preserve").unwrap();
     let result = store.reconcile_managed_plugin_runtimes().unwrap();
     assert!(result.failed.contains_key("demo@wegent"));
@@ -257,7 +257,7 @@ async fn empty_cloud_inventory_removes_stale_record_without_rebuilding_runtime()
     installed(&old, true).await;
     fs::rename(&old, &new).unwrap();
     let store = store(&new, true);
-    let target = new.join("codex/plugins/cache/wegent/demo/1.0");
+    let target = new.join("codex/plugins/cache/wegent/demo/local");
     fs::remove_dir_all(&target).unwrap();
     let handler = CapabilitySyncHandler::with_package_provider(
         "",
@@ -363,7 +363,7 @@ fn package_identity_mismatch_is_rejected() {
 }
 
 #[tokio::test]
-async fn relocated_previous_does_not_authorize_an_unrelated_downgrade_target() {
+async fn downgrade_preserves_an_unrelated_historical_cache() {
     let temp = tempfile::tempdir().unwrap();
     let old = temp.path().join("old");
     let new = temp.path().join("new");
@@ -380,9 +380,9 @@ async fn relocated_previous_does_not_authorize_an_unrelated_downgrade_target() {
     fs::rename(&old, &new).unwrap();
     let store = store(&new, true);
     let unknown = new.join("codex/plugins/cache/wegent/demo/1.0");
-    fs::remove_dir_all(&unknown).unwrap();
     fs::create_dir_all(&unknown).unwrap();
     fs::write(unknown.join("personal.txt"), "keep").unwrap();
+    let unknown_before = tree_fingerprint(&unknown).unwrap();
     let report = store.reconcile_managed_plugin_runtimes().unwrap();
     assert!(report.failed.is_empty(), "{:?}", report.failed);
     let handler = CapabilitySyncHandler::with_package_provider(
@@ -392,7 +392,17 @@ async fn relocated_previous_does_not_authorize_an_unrelated_downgrade_target() {
         std::sync::Arc::new(crate::NoRunningSessions),
     );
     let result = handler.apply_sync(payload("demo")).await.unwrap();
-    assert_eq!(result["success"], false, "{result}");
+    assert_eq!(result["success"], true, "{result}");
+    let manifest = store.manifest.load().unwrap();
+    let selected = &manifest["plugins"]["demo@wegent"];
+    assert_eq!(selected["version"], "1.0");
+    let active = Path::new(selected["runtime"]["codex_link"].as_str().unwrap());
+    assert_ne!(active, unknown);
+    assert_eq!(tree_fingerprint(&unknown).unwrap(), unknown_before);
+    assert_eq!(
+        fs::read_to_string(active.join("skills/demo/SKILL.md")).unwrap(),
+        "plugin capability"
+    );
     assert_eq!(
         fs::read_to_string(unknown.join("personal.txt")).unwrap(),
         "keep"
@@ -473,8 +483,9 @@ async fn owned_runtime_with_nested_symlink_is_never_snapshotted_or_materialized(
     fs::write(external.join("sentinel"), "private").unwrap();
     let target = store.plugin_codex_link(&spec);
     std::os::unix::fs::symlink(&external, target.join("user-source")).unwrap();
-    manifest["plugins"][&spec.key]["runtime"]["codex_link"] =
-        json!(temp.path().join("old/codex/plugins/cache/wegent/demo/1.0"));
+    manifest["plugins"][&spec.key]["runtime"]["codex_link"] = json!(temp
+        .path()
+        .join("old/codex/plugins/cache/wegent/demo/local"));
     manifest["plugins"][&spec.key]["runtime_recovery_error"] = json!("force recovery");
     store.manifest.save(manifest).unwrap();
     let report = store.reconcile_managed_plugin_runtimes().unwrap();
@@ -508,7 +519,7 @@ async fn personal_marketplace_directory_copy_can_be_updated_by_its_managed_insta
     copy_dir_recursive(
         &store
             .codex_plugins_dir
-            .join("cache/wework-personal/demo/1.0"),
+            .join("cache/wework-personal/demo/local"),
         &target,
     )
     .unwrap();
@@ -523,7 +534,7 @@ async fn personal_marketplace_directory_copy_can_be_updated_by_its_managed_insta
     assert_eq!(update.apply_sync(request).await.unwrap()["success"], true);
     assert!(store
         .codex_plugins_dir
-        .join("cache/wework-personal/demo/2.0")
+        .join("cache/wework-personal/demo/local")
         .exists());
 }
 

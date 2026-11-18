@@ -615,9 +615,21 @@ async fn same_version_legacy_update_authenticates_the_previous_cache_against_its
             if changed_cache {
                 "unrelated cache content"
             } else {
-                "new same-version capability"
+                "plugin capability"
             }
         );
+        if !changed_cache {
+            let manifest = store.manifest.load().unwrap();
+            let active = Path::new(
+                manifest["plugins"]["demo@wegent"]["runtime"]["codex_link"]
+                    .as_str()
+                    .unwrap(),
+            );
+            assert_eq!(
+                fs::read_to_string(active.join("skills/demo/SKILL.md")).unwrap(),
+                "new same-version capability"
+            );
+        }
     }
 }
 
