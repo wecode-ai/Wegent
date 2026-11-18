@@ -808,6 +808,7 @@ pub(super) async fn handle(headers: HeaderMap, body: Bytes) -> Result<Response, 
 
 struct RequestThreadIdentity {
     thread_id: String,
+    turn_id: Option<String>,
     parent_thread_id: Option<String>,
 }
 
