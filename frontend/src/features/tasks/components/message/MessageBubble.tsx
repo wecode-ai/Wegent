@@ -30,7 +30,20 @@ import {
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import EnhancedMarkdown, { type AnswerCitation } from './evidence/AnswerEvidenceMarkdown'
+import EnhancedMarkdown, {
+  type AnswerCitation,
+  type EvidenceScope,
+} from './evidence/AnswerEvidenceMarkdown'
+import {
+  filterAnswerSources,
+  getAnswerSourceIds,
+  isSourceHidden,
+  useAnswerSourceAccess,
+} from './evidence/sourceAccess'
+import {
+  getRenderedCitationIds,
+  stripAnswerEvidenceMarkers,
+} from '../../utils/answerEvidenceMarkers'
 import { ReasoningDisplay } from './thinking'
 import MixedContentView from './thinking/MixedContentView'
 import ThinkingDisplay from './thinking/ThinkingDisplay'
@@ -554,10 +567,77 @@ const MessageBubble = memo(
       const contentToParse = content.includes('${$$}$') ? content.split('${$$}$')[1] || '' : content
       return parseMarkdownFinalPrompt(contentToParse)
     }, [isUserTypeMessage, msg.content, msg.recoveredContent, msg.result?.blocks])
+    const sources = msg.sources || msg.result?.sources || []
+    const citations = msg.result?.answer_citations
+    const committed = !isUserTypeMessage && !isStreaming && msg.subtaskStatus === 'COMPLETED'
+    const citationSources = React.useMemo(() => {
+      const bySource = new Map<number, string>()
+      if (!committed || !citations?.length) return bySource
+      const markdown =
+        getCopyableContentFromBlocks(mixedContentBlocks) || msg.recoveredContent || msg.content
+      const renderedIds = getRenderedCitationIds(markdown)
+      for (const citation of citations) {
+        if (renderedIds.has(citation.citation_id) && !bySource.has(citation.knowledge_base_id)) {
+          bySource.set(citation.knowledge_base_id, citation.citation_id)
+        }
+      }
+      return bySource
+    }, [citations, committed, mixedContentBlocks, msg.content, msg.recoveredContent])
+    const sourceIds = [
+      ...getAnswerSourceIds(sources, msg.result?.retrieval_summary),
+      ...citationSources.keys(),
+    ]
+    const hasUnscopedSources =
+      sources.some(source => !source.kb_id) ||
+      msg.result?.retrieval_summary?.source_statuses?.some(
+        status => status.provider !== 'internal' && status.status === 'hit'
+      ) === true
+    const taskId = currentTaskId ?? selectedTaskDetail?.id
+    const permissions = useAnswerSourceAccess(
+      sourceIds,
+      taskId,
+      msg.subtaskId,
+      msg.result?.answer_generation_id,
+      committed && !shareToken,
+      citationSources,
+      !hasUnscopedSources
+    )
+    const access = permissions.relevantAccess
+    const hasVisitOnly = access.includes('visit-only')
+    const hasSourceDenial = access.includes('denied')
+    const hasOtherSources =
+      hasUnscopedSources || sourceIds.some(id => !isSourceHidden(permissions.access[id]))
+    const evidence: EvidenceScope = {
+      taskId,
+      workspaceId: permissions.workspaceId,
+      shared: Boolean(shareToken),
+      answerId: msg.subtaskId,
+      generationId: msg.result?.answer_generation_id,
+      citations,
+      committed,
+      visitOnly:
+        committed &&
+        hasVisitOnly &&
+        !hasOtherSources &&
+        access.every(value => value === 'visit-only'),
+      permissionScope: permissions.scope,
+      sourceAccess: permissions.access,
+      onSourceDenied: permissions.denySource,
+      onAnswerDenied: permissions.denyAnswer,
+      unavailableCitations: permissions.unavailableCitations,
+      onCitationUnavailable: permissions.markUnavailable,
+    }
+    const sourceReferences = filterAnswerSources(
+      sources,
+      msg.result?.retrieval_summary,
+      permissions.access,
+      hasVisitOnly || hasSourceDenial
+    )
+
     const blockSaveableMarkdown = React.useMemo(
       () =>
         getSaveableMarkdown(
-          getCopyableContentFromBlocks(msg.result?.blocks ?? []),
+          stripAnswerEvidenceMarkers(getCopyableContentFromBlocks(msg.result?.blocks ?? [])),
           msg.result?.annotations
         ),
       [msg.result?.annotations, msg.result?.blocks]
@@ -705,7 +785,7 @@ const MessageBubble = memo(
         visibleResult = `${visibleResult}\n\n[${authorizeLabel}](wegent://modal/connector-oauth?slug=${encodeURIComponent(connectorSlug)})`
       }
       const normalizedResult = getSaveableMarkdown(visibleResult, annotations)
-      const saveableMarkdown = `${promptPart ? promptPart + '\n\n' : ''}${normalizedResult}`
+      const saveableMarkdown = `${promptPart ? promptPart + '\n\n' : ''}${stripAnswerEvidenceMarkers(normalizedResult)}`
 
       const progressMatch = normalizedResult.match(/^__PROGRESS_BAR__:(.*?):(\d+)$/)
       if (progressMatch) {
@@ -744,12 +824,7 @@ const MessageBubble = memo(
 
       const markdownContent = (
         <EnhancedMarkdown
-          evidence={{
-            answerId: msg.subtaskId,
-            generationId: msg.result?.answer_generation_id,
-            citations: msg.result?.answer_citations,
-            committed: !isStreaming && msg.subtaskStatus === 'COMPLETED',
-          }}
+          evidence={evidence}
           source={normalizedResult}
           theme={theme}
           components={
@@ -831,10 +906,7 @@ const MessageBubble = memo(
           <CollapsibleMessage content={normalizedResult} enabled={shouldEnableCollapse}>
             {markdownContent}
           </CollapsibleMessage>
-          <SourceReferences
-            sources={msg.sources || msg.result?.sources || []}
-            retrievalSummary={msg.result?.retrieval_summary}
-          />
+          <SourceReferences {...sourceReferences} />
           <GeminiAnnotations annotations={msg.result?.annotations || []} />
           {/* Hide BubbleTools during streaming */}
           {!isStreaming && (
@@ -1135,6 +1207,8 @@ const MessageBubble = memo(
           ? 'max-w-[75%] w-auto'
           : 'w-full'
 
+    if (permissions.answerDenied) return <p role="alert">{t('chat:evidence.answer_denied')}</p>
+
     return (
       <ShareTokenProvider shareToken={shareToken}>
         <div
@@ -1160,6 +1234,30 @@ const MessageBubble = memo(
                       ({t('messages.recovered') || '已恢复'})
                     </span>
                   )}
+                </div>
+              )}
+              {!isUserTypeMessage && (hasVisitOnly || hasSourceDenial) && (
+                <p className="mb-2 text-sm text-text-muted" data-testid="answer-source-access">
+                  {t(
+                    hasSourceDenial
+                      ? 'chat:evidence.source_denied'
+                      : hasOtherSources
+                        ? 'chat:evidence.partial_visit_only'
+                        : 'chat:evidence.visit_only'
+                  )}
+                </p>
+              )}
+              {!isUserTypeMessage && permissions.permissionFailed && (
+                <div className="mb-2 flex items-center gap-2 text-sm text-text-muted">
+                  <p role="status">{t('chat:evidence.permission_failed')}</p>
+                  <button
+                    type="button"
+                    className="min-h-11 min-w-11 text-primary underline"
+                    data-testid="answer-source-retry-permission"
+                    onClick={permissions.retryPermission}
+                  >
+                    {t('chat:evidence.retry')}
+                  </button>
                 </div>
               )}
               {/* Show reasoning display for DeepSeek R1 and similar models */}
@@ -1194,6 +1292,12 @@ const MessageBubble = memo(
               <ContextBadgeList
                 contexts={(() => {
                   if (!msg.contexts) return undefined
+                  const contexts = msg.contexts.filter(
+                    context =>
+                      context.context_type !== 'knowledge_base' ||
+                      context.knowledge_id == null ||
+                      !isSourceHidden(permissions.access[context.knowledge_id])
+                  )
                   // For AI messages, check if there are image/video blocks in result.blocks
                   // If so, filter out attachments that are already displayed in ImageGallery/VideoPlayer
                   if (!isUserTypeMessage && msg.result?.blocks) {
@@ -1213,13 +1317,13 @@ const MessageBubble = memo(
                     }
                     // If there are attachment IDs in blocks, filter them out from contexts
                     if (attachmentIdsInBlocks.size > 0) {
-                      const filteredContexts = msg.contexts.filter(
+                      const filteredContexts = contexts.filter(
                         ctx => !attachmentIdsInBlocks.has(ctx.id)
                       )
                       return filteredContexts.length > 0 ? filteredContexts : undefined
                     }
                   }
-                  return msg.contexts
+                  return contexts
                 })()}
                 shareToken={shareToken}
                 displayGeneratedMedia={!isUserTypeMessage}
@@ -1258,12 +1362,7 @@ const MessageBubble = memo(
                   ) : !isUserTypeMessage && msg.result?.blocks && mixedContentBlocks.length > 0 ? (
                     <>
                       <MixedContentView
-                        evidence={{
-                          answerId: msg.subtaskId,
-                          generationId: msg.result?.answer_generation_id,
-                          citations: msg.result?.answer_citations,
-                          committed: !isStreaming && msg.subtaskStatus === 'COMPLETED',
-                        }}
+                        evidence={evidence}
                         thinking={msg.thinking ?? null}
                         content={msg.recoveredContent || msg.content || ''}
                         taskStatus={msg.subtaskStatus}
@@ -1278,10 +1377,7 @@ const MessageBubble = memo(
                         onAskUserSubmit={onAskUserSubmit}
                         onCardChatButtonClick={onSendMessage}
                       />
-                      <SourceReferences
-                        sources={msg.sources || msg.result?.sources || []}
-                        retrievalSummary={msg.result?.retrieval_summary}
-                      />
+                      <SourceReferences {...sourceReferences} />
                       <GeminiAnnotations annotations={msg.result?.annotations || []} />
                       {/* Hide BubbleTools during streaming */}
                       {!isStreaming && (
@@ -1452,6 +1548,9 @@ const MessageBubble = memo(
       prevProps.msg.botName === nextProps.msg.botName &&
       prevProps.msg.subtaskStatus === nextProps.msg.subtaskStatus &&
       prevProps.msg.subtaskId === nextProps.msg.subtaskId &&
+      prevProps.currentTaskId === nextProps.currentTaskId &&
+      prevProps.selectedTaskDetail?.id === nextProps.selectedTaskDetail?.id &&
+      prevProps.shareToken === nextProps.shareToken &&
       prevProps.msg.timestamp === nextProps.msg.timestamp &&
       prevProps.msg.recoveredContent === nextProps.msg.recoveredContent &&
       prevProps.msg.isRecovered === nextProps.msg.isRecovered &&
@@ -1467,6 +1566,7 @@ const MessageBubble = memo(
       prevProps.isCurrentUserMessage === nextProps.isCurrentUserMessage &&
       prevProps.onRetry === nextProps.onRetry &&
       prevThinkingLen === nextThinkingLen &&
+      prevProps.msg.sources === nextProps.msg.sources &&
       prevSourcesLen === nextSourcesLen &&
       prevReasoningLen === nextReasoningLen &&
       prevBlocksLen === nextBlocksLen &&

@@ -11,7 +11,7 @@ Includes permission check methods previously in KnowledgePermissionService.
 
 import logging
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import List, Literal, Optional, Tuple
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -34,7 +34,7 @@ from app.schemas.share import (
     InheritedAuthorizationSource,
     KBShareInfoResponse,
     KnowledgeBaseMemberListResponse,
-    MyKBPermissionResponse,
+    MyKBSourcePermissionResponse,
     MyPermissionSourcesResponse,
     PendingRequestInfo,
     ResourceMemberResponse,
@@ -382,7 +382,11 @@ class KnowledgeShareService(UnifiedShareService):
         db: Session,
         knowledge_base_id: int,
         user_id: int,
-    ) -> MyKBPermissionResponse:
+        *,
+        answer_id: int | None = None,
+        task_id: int | None = None,
+        citation_id: int | None = None,
+    ) -> MyKBSourcePermissionResponse:
         """
         Get current user's permission for a knowledge base.
 
@@ -392,9 +396,19 @@ class KnowledgeShareService(UnifiedShareService):
             user_id: Current user ID
 
         Returns:
-            MyKBPermissionResponse
+            MyKBSourcePermissionResponse
         """
-        # Get the knowledge base
+        from app.services.knowledge.answer_evidence import find_authorized_source_task
+
+        source_task_id, task_bound, snapshot_bound = find_authorized_source_task(
+            db,
+            user_id,
+            knowledge_base_id,
+            answer_id=answer_id,
+            task_id=task_id,
+            citation_id=citation_id,
+        )
+
         kb = (
             db.query(Kind)
             .filter(
@@ -406,7 +420,8 @@ class KnowledgeShareService(UnifiedShareService):
         )
 
         if not kb:
-            return MyKBPermissionResponse(
+            return MyKBSourcePermissionResponse(
+                task_source_bound=task_bound and answer_id is None,
                 has_access=False,
                 is_creator=False,
                 pending_request=None,
@@ -449,7 +464,26 @@ class KnowledgeShareService(UnifiedShareService):
 
         has_access = meets_direct_access_requirement(kb=kb, permission=permission)
 
-        return MyKBPermissionResponse(
+        source_access: Literal["readable", "visit-only", "denied"] = "denied"
+        if has_access:
+            source_access = "readable"
+        elif permission.has_access:
+            source_access = "visit-only"
+        elif source_task_id is not None:
+            from app.services.chat.task_default_knowledge_bases import (
+                resolve_task_default_knowledge_base_read_user_id,
+            )
+
+            if (
+                permission.is_denied and (task_bound or snapshot_bound)
+            ) or resolve_task_default_knowledge_base_read_user_id(
+                db, source_task_id, user_id, knowledge_base_id
+            ) is not None:
+                source_access = "visit-only"
+
+        return MyKBSourcePermissionResponse(
+            source_access=source_access,
+            task_source_bound=task_bound and answer_id is None,
             has_access=has_access,
             role=(
                 SchemaMemberRole.Owner

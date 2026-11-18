@@ -28,6 +28,7 @@ interface UseDocumentDetailOptions {
   includeContent?: boolean
   includeSummary?: boolean
   enabled?: boolean
+  onReadError?: (error: unknown) => void
 }
 
 // Omit content from detail to prevent confusion - use fullContent instead
@@ -80,6 +81,7 @@ export function useDocumentDetail({
   includeContent = true,
   includeSummary = true,
   enabled = true,
+  onReadError,
 }: UseDocumentDetailOptions): UseDocumentDetailReturn {
   const { t } = useTranslation('knowledge')
 
@@ -105,6 +107,8 @@ export function useDocumentDetail({
   // monotonically increasing request id to prevent stale responses from
   // overwriting a newer refresh.
   const fetchRequestIdRef = useRef(0)
+  const onReadErrorRef = useRef(onReadError)
+  onReadErrorRef.current = onReadError
 
   // Update ref when state changes
   useEffect(() => {
@@ -136,6 +140,7 @@ export function useDocumentDetail({
 
     try {
       setLoading(true)
+      setLoadingMore(false)
       setError(null)
 
       const response = await knowledgeBaseApi.getDocumentDetail(kbId, docId, {
@@ -174,6 +179,7 @@ export function useDocumentDetail({
       if (err instanceof Error && err.name === 'AbortError') {
         return
       }
+      onReadErrorRef.current?.(err)
       const errorMessage = err instanceof Error ? err.message : 'Failed to load document detail'
       setError(errorMessage)
       toast.error(t('document.document.detail.contentLoadFailed'))
@@ -191,6 +197,7 @@ export function useDocumentDetail({
 
     // Use ref to get latest offset value
     const offset = offsetRef.current
+    const requestId = fetchRequestIdRef.current
 
     try {
       setLoadingMore(true)
@@ -202,6 +209,7 @@ export function useDocumentDetail({
         limit: MAX_CHARS_PER_REQUEST,
       })
 
+      if (requestId !== fetchRequestIdRef.current) return
       if (response.content) {
         // Append new content to existing content
         setFullContent(prev => prev + response.content)
@@ -220,10 +228,12 @@ export function useDocumentDetail({
         setDetail(prev => (prev ? { ...prev, truncated: stillHasMore } : null))
       }
     } catch (err) {
+      if (requestId !== fetchRequestIdRef.current) return
+      onReadErrorRef.current?.(err)
       const errorMessage = err instanceof Error ? err.message : 'Failed to load more content'
       toast.error(errorMessage)
     } finally {
-      setLoadingMore(false)
+      if (requestId === fetchRequestIdRef.current) setLoadingMore(false)
     }
   }, [kbId, docId, hasMoreContent, loadingMore])
 

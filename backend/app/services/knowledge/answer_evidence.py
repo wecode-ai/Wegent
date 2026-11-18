@@ -27,8 +27,8 @@ class TrustedEvidence:
     user_id: int
 
 
-def fail(status: int, code: str) -> NoReturn:
-    raise HTTPException(status_code=status, detail={"code": code})
+def fail(status: int, code: str, **facts: str) -> NoReturn:
+    raise HTTPException(status_code=status, detail={"code": code, **facts})
 
 
 def require_source(db: Session, user_id: int, kb_id: int, doc_id: int) -> None:
@@ -36,7 +36,7 @@ def require_source(db: Session, user_id: int, kb_id: int, doc_id: int) -> None:
     if kb is None:
         fail(409, "CITATION_SOURCE_UNAVAILABLE")
     if not can_directly_access_knowledge_base(db, kb_id, user_id, kb=kb):
-        fail(403, "CITATION_ACCESS_DENIED")
+        fail(403, "CITATION_ACCESS_DENIED", denied_scope="source")
     document = (
         db.query(KnowledgeDocument).filter(KnowledgeDocument.id == doc_id).first()
     )
@@ -180,27 +180,84 @@ def bind_answer_evidence(db: Session, answer: Any, original: dict) -> dict:
     return result
 
 
+def _matches_snapshot_binding(
+    context: Any, answer_id: int, generation_id: str | None
+) -> bool:
+    binding = context.get("answer_evidence") if isinstance(context, dict) else None
+    return bool(
+        generation_id
+        and isinstance(binding, dict)
+        and binding.get("answer_id") == answer_id
+        and binding.get("generation_id") == generation_id
+        and isinstance(binding.get("local_id"), str)
+        and binding["local_id"]
+    )
+
+
+def find_authorized_source_task(
+    db: Session,
+    user_id: int,
+    kb_id: int,
+    *,
+    answer_id: int | None,
+    task_id: int | None,
+    citation_id: int | None = None,
+) -> tuple[int | None, bool, bool]:
+    """Return the readable task and whether it binds the source or owns its snapshot."""
+    answer = None
+    if answer_id is not None:
+        answer = subtask_store.get_by_id(db, subtask_id=answer_id)
+        if (
+            answer is None
+            or (task_id is not None and answer.task_id != task_id)
+            or answer.role != SubtaskRole.ASSISTANT
+            or answer.status != SubtaskStatus.COMPLETED
+        ):
+            return None, False, False
+        task_id = answer.task_id
+
+    if task_id is None or not task_access_store.is_member(
+        db, task_id=task_id, user_id=user_id
+    ):
+        return None, False, False
+    task = task_access_store.get_task(db, task_id=task_id)
+    if task is None:
+        return None, False, False
+    task_spec = task.json.get("spec") if isinstance(task.json, dict) else None
+    refs = task_spec.get("knowledgeBaseRefs") if isinstance(task_spec, dict) else None
+    task_bound = isinstance(refs, list) and any(
+        isinstance(ref, dict) and ref.get("id") == kb_id for ref in refs
+    )
+    if task_bound or answer is None or citation_id is None:
+        return task_id, task_bound, False
+
+    snapshot = (
+        db.query(KnowledgeCitation.caller_context)
+        .filter(
+            KnowledgeCitation.id == citation_id,
+            KnowledgeCitation.knowledge_base_id == kb_id,
+        )
+        .first()
+    )
+    snapshot_bound = snapshot is not None and _matches_snapshot_binding(
+        snapshot.caller_context, answer.id, answer.answer_generation_id
+    )
+    return task_id, False, snapshot_bound
+
+
 def read_citation(
     db: Session, user_id: int, citation_id: int, answer_id: int, generation_id: str
 ) -> dict:
     row = db.get(KnowledgeCitation, citation_id)
     if row is None:
         fail(404, "CITATION_NOT_FOUND")
-    context = row.caller_context
-    binding = context.get("answer_evidence") if isinstance(context, dict) else None
-    if (
-        not isinstance(binding, dict)
-        or binding.get("answer_id") != answer_id
-        or binding.get("generation_id") != generation_id
-        or not isinstance(binding.get("local_id"), str)
-        or not binding["local_id"]
-    ):
+    if not _matches_snapshot_binding(row.caller_context, answer_id, generation_id):
         fail(404, "CITATION_NOT_FOUND")
     answer = subtask_store.get_by_id(db, subtask_id=answer_id)
     if answer is None or not task_access_store.get_task(db, task_id=answer.task_id):
         fail(404, "CITATION_NOT_FOUND")
     if not task_access_store.is_member(db, task_id=answer.task_id, user_id=user_id):
-        fail(403, "CITATION_ACCESS_DENIED")
+        fail(403, "CITATION_ACCESS_DENIED", denied_scope="answer")
     if (
         answer.answer_generation_id != generation_id
         or answer.status != SubtaskStatus.COMPLETED

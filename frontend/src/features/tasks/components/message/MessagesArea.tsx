@@ -34,6 +34,8 @@ import { useToast } from '@/hooks/use-toast'
 import { useTheme } from '@/features/theme/ThemeProvider'
 import { useTypewriter } from '@/hooks/useTypewriter'
 import MessageBubble, { type Message } from './MessageBubble'
+import { TaskSourceDecisions, useTaskSourceDecisions } from './evidence/sourceAccess'
+import { stripAnswerEvidenceMarkers } from '../../utils/answerEvidenceMarkers'
 import { PreserveExecutorToggle } from '../PreserveExecutorToggle'
 import TaskShareModal from '../share/TaskShareModal'
 import ExportSelectModal, {
@@ -728,8 +730,9 @@ function MessagesArea({
         .map(msg => {
           // Remove markdown prefix from AI messages if present
           let content = msg.content || ''
-          if (msg.type === 'ai' && content.startsWith('${$$}$')) {
-            content = content.substring(6)
+          if (msg.type === 'ai') {
+            if (content.startsWith('${$$}$')) content = content.substring(6)
+            content = stripAnswerEvidenceMarkers(content)
           }
 
           // Only attachments are exportable. Knowledge base contexts are runtime metadata.
@@ -1569,4 +1572,15 @@ function MessagesArea({
   )
 }
 
-export default React.memo(MessagesArea)
+export default React.memo(function ScopedMessagesArea(props: MessagesAreaProps) {
+  const { denySelectedTaskAccess } = useTaskSession()
+  const sourceDecisions = useTaskSourceDecisions(
+    props.currentTaskId ?? undefined,
+    denySelectedTaskAccess
+  )
+  return (
+    <TaskSourceDecisions.Provider value={sourceDecisions}>
+      <MessagesArea {...props} />
+    </TaskSourceDecisions.Provider>
+  )
+})

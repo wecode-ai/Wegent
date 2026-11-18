@@ -5,7 +5,7 @@
 import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { KnowledgeDetailPanel } from '@/features/knowledge/document/components/KnowledgeDetailPanel'
-import type { KnowledgeBase } from '@/types/knowledge'
+import type { KnowledgeBase, MyPermissionResponse } from '@/types/knowledge'
 import type { ArtifactPromptRequest } from '@/types/knowledge-artifact'
 
 const mockChatArea = jest.fn()
@@ -13,6 +13,15 @@ const mockSourcePanel = jest.fn()
 const mockGenerationPanel = jest.fn()
 const mockSelectTask = jest.fn()
 const mockFetchPermission = jest.fn()
+const mockWorkspaceAccess = jest.fn()
+const readablePermission: MyPermissionResponse = {
+  has_access: true,
+  role: 'Developer',
+  is_creator: false,
+  source_access: 'readable',
+  pending_request: null,
+}
+let mockPermission = readablePermission
 
 jest.mock('next/navigation', () => ({
   useSearchParams: () => new URLSearchParams(),
@@ -42,7 +51,7 @@ jest.mock('@/features/tasks/session/TaskSession', () => ({
 
 jest.mock('@/features/knowledge/permission/hooks/useKnowledgePermissions', () => ({
   useKnowledgePermissions: () => ({
-    myPermission: { has_access: true, role: 'Developer', is_creator: false },
+    myPermission: mockPermission,
     fetchMyPermission: mockFetchPermission,
   }),
 }))
@@ -60,6 +69,11 @@ jest.mock('@/utils/namespace-permissions', () => ({
 jest.mock('@/features/tasks/components/chat', () => ({
   ChatArea: (props: { selectedDocumentIds: number[] }) => {
     mockChatArea(props)
+    const { useContext } = jest.requireActual('react')
+    const { WorkspaceSourceAccess } = jest.requireActual(
+      '@/features/tasks/components/message/evidence/sourceAccess'
+    )
+    mockWorkspaceAccess(useContext(WorkspaceSourceAccess))
     return <div data-testid="mock-chat-area" />
   },
 }))
@@ -162,6 +176,7 @@ const knowledgeBase: KnowledgeBase = {
 describe('KnowledgeDetailPanel workspace', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockPermission = readablePermission
   })
 
   it('shares one source scope across the source, chat, and generation columns', () => {
@@ -269,4 +284,39 @@ it('keeps the document list mounted while permissions are open', () => {
   fireEvent.mouseDown(screen.getByTestId('knowledge-detail-permissions-tab'), { button: 0 })
   fireEvent.click(screen.getByTestId('knowledge-detail-permissions-tab'))
   expect(screen.getByTestId('mock-classic-document-list')).toBe(list)
+})
+
+test('keeps the notebook chat on a confirmed visit-only transition and unmounts source readers', () => {
+  mockPermission = readablePermission
+  const view = () => <KnowledgeDetailPanel selectedKb={knowledgeBase} currentView="notebook" />
+  const { rerender } = render(view())
+  fireEvent.click(screen.getByTestId('mock-source-panel'))
+  expect(mockChatArea).toHaveBeenLastCalledWith(
+    expect.objectContaining({ selectedDocumentIds: [11, 12] })
+  )
+
+  mockPermission = {
+    has_access: false,
+    is_creator: false,
+    source_access: 'visit-only',
+    role: null,
+    pending_request: null,
+  }
+  rerender(view())
+  expect(screen.getByTestId('mock-chat-area')).toBeVisible()
+  expect(screen.queryByTestId('mock-source-panel')).not.toBeInTheDocument()
+  expect(screen.queryByTestId('knowledge-mobile-sources-tab')).not.toBeInTheDocument()
+  expect(mockChatArea).toHaveBeenLastCalledWith(
+    expect.objectContaining({ selectedDocumentIds: [] })
+  )
+  expect(mockWorkspaceAccess).toHaveBeenLastCalledWith(
+    expect.objectContaining({ knowledgeBaseId: knowledgeBase.id, access: 'visit-only' })
+  )
+
+  mockPermission = { ...readablePermission }
+  rerender(view())
+  expect(screen.getByTestId('mock-source-panel')).toBeInTheDocument()
+  expect(mockChatArea).toHaveBeenLastCalledWith(
+    expect.objectContaining({ selectedDocumentIds: [] })
+  )
 })

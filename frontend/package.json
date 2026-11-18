@@ -145,9 +145,11 @@
     "rehype-raw": "^7.0.0",
     "remark-gfm": "^4.0.0",
     "remark-math": "^6.0.0",
+    "remark-parse": "^11.0.0",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.4.0",
     "tailwindcss-animate": "^1.0.7",
+    "unified": "^11.0.5",
     "vaul": "^1.1.2",
     "zod": "^4.1.12"
   },

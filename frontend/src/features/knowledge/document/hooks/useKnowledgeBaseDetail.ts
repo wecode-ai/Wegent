@@ -6,7 +6,7 @@
  * Custom hook for fetching knowledge base detail by ID
  */
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { getKnowledgeBase } from '@/apis/knowledge'
 import { ApiError } from '@/apis/client'
 import type { KnowledgeBase } from '@/types/knowledge'
@@ -24,19 +24,28 @@ export function useKnowledgeBaseDetail(options: UseKnowledgeBaseDetailOptions) {
   // This prevents brief flash of error/empty state before the effect fires
   const [loading, setLoading] = useState(autoLoad && !!knowledgeBaseId)
   const [error, setError] = useState<string | null>(null)
+  const [errorStatus, setErrorStatus] = useState<number>()
+  const request = useRef(0)
+  const invalidateRequest = useCallback(() => {
+    request.current++
+  }, [])
   // Track access denied state for 403 errors
   const [accessDenied, setAccessDenied] = useState(false)
 
   const fetchKnowledgeBase = useCallback(async () => {
     if (!knowledgeBaseId) return
 
+    const attempt = ++request.current
     setLoading(true)
     setError(null)
+    setErrorStatus(undefined)
     setAccessDenied(false)
     try {
       const data = await getKnowledgeBase(knowledgeBaseId)
-      setKnowledgeBase(data)
+      if (attempt === request.current) setKnowledgeBase(data)
     } catch (err) {
+      if (attempt !== request.current) return
+      if (err instanceof ApiError) setErrorStatus(err.status)
       // Check if it's a 403 Forbidden error (access denied)
       if (err instanceof ApiError && err.status === 403) {
         // 403 path: exclusive access denied state
@@ -50,7 +59,7 @@ export function useKnowledgeBaseDetail(options: UseKnowledgeBaseDetailOptions) {
         setKnowledgeBase(null)
       }
     } finally {
-      setLoading(false)
+      if (attempt === request.current) setLoading(false)
     }
   }, [knowledgeBaseId])
 
@@ -58,12 +67,14 @@ export function useKnowledgeBaseDetail(options: UseKnowledgeBaseDetailOptions) {
     if (autoLoad && knowledgeBaseId) {
       fetchKnowledgeBase()
     }
-  }, [autoLoad, knowledgeBaseId, fetchKnowledgeBase])
+    return invalidateRequest
+  }, [autoLoad, knowledgeBaseId, fetchKnowledgeBase, invalidateRequest])
 
   return {
     knowledgeBase,
     loading,
     error,
+    ...(errorStatus !== undefined ? { errorStatus } : {}),
     accessDenied,
     refresh: fetchKnowledgeBase,
   }

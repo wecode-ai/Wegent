@@ -693,6 +693,7 @@
       }
     },
     "permission": {
+      "loadFailed": "权限读取失败",
       "noAccess": "您没有操作权限",
       "share": "分享",
       "shareLink": "邀请协作",

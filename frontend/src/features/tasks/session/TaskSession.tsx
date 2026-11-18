@@ -39,9 +39,13 @@ type MessageSession = Omit<
 
 export type TaskSession = Omit<
   TaskPuller,
-  'writeSelectedTask' | 'resetSelectedTaskState' | 'prepareSelectedTaskState'
+  | 'writeSelectedTask'
+  | 'resetSelectedTaskState'
+  | 'prepareSelectedTaskState'
+  | 'denySelectedTaskAccess'
 > &
   MessageSession & {
+    denySelectedTaskAccess: (taskId: number) => void
     currentTaskId: number | null
     taskState: TaskStateSnapshot | null
     messages: Map<string, UnifiedMessage>
@@ -67,6 +71,7 @@ export function TaskSessionProvider({ children }: { children: ReactNode }) {
   const taskPuller = useTaskPuller()
   const {
     pullTaskDetail,
+    denySelectedTaskAccess: markTaskAccessDenied,
     pullRuntime,
     writeSelectedTask,
     resetSelectedTaskState,
@@ -94,6 +99,13 @@ export function TaskSessionProvider({ children }: { children: ReactNode }) {
     machineRef.current = null
     setTaskState(null)
   }, [])
+
+  const denySelectedTaskAccess = useCallback(
+    (taskId: number) => {
+      if (markTaskAccessDenied(taskId)) disposeMachine()
+    },
+    [markTaskAccessDenied, disposeMachine]
+  )
 
   const createMachineDeps = useCallback(
     (): TaskStateMachineDeps => ({
@@ -263,6 +275,7 @@ export function TaskSessionProvider({ children }: { children: ReactNode }) {
 
     return {
       ...publicTaskPuller,
+      denySelectedTaskAccess,
       currentTaskId,
       selectTask,
       sendMessage: messageSyncer.sendMessage,
@@ -279,6 +292,7 @@ export function TaskSessionProvider({ children }: { children: ReactNode }) {
     }
   }, [
     currentTaskId,
+    denySelectedTaskAccess,
     messageSyncer,
     recoverCurrentTask,
     selectTask,

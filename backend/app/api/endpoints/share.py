@@ -12,7 +12,7 @@ Supports Team, Task, and KnowledgeBase resource types.
 import logging
 from typing import Dict, Optional, Union
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -26,7 +26,7 @@ from app.schemas.share import (
     KBShareInfoResponse,
     KnowledgeBaseMemberListResponse,
     MemberListResponse,
-    MyKBPermissionResponse,
+    MyKBSourcePermissionResponse,
     MyPermissionSourcesResponse,
     PendingRequestListResponse,
     PublicKnowledgeBaseResponse,
@@ -540,14 +540,18 @@ def review_request(
 
 @router.get(
     "/KnowledgeBase/{resource_id}/my-permission",
-    response_model=MyKBPermissionResponse,
+    response_model=MyKBSourcePermissionResponse,
     summary="Get my KnowledgeBase permission",
 )
 def get_my_kb_permission(
     resource_id: int,
+    response: Response,
+    task_id: int | None = Query(None, gt=0),
+    answer_id: int | None = Query(None, gt=0),
+    citation_id: int | None = Query(None, gt=0, le=9223372036854775807),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
-) -> MyKBPermissionResponse:
+) -> MyKBSourcePermissionResponse:
     """
     Get current user's permission for a knowledge base.
 
@@ -555,10 +559,14 @@ def get_my_kb_permission(
 
     - **resource_id**: Knowledge base ID
     """
+    response.headers["Cache-Control"] = "private, no-store"
     return knowledge_share_service.get_my_permission(
         db=db,
         knowledge_base_id=resource_id,
         user_id=current_user.id,
+        task_id=task_id,
+        answer_id=answer_id,
+        citation_id=citation_id,
     )
 
 

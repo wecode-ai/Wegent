@@ -9,6 +9,7 @@ import { knowledgeBaseApi } from '@/apis/knowledge-base'
 import { createKnowledgeBase, getKnowledgeBase } from '@/apis/knowledge'
 import { knowledgePermissionApi } from '@/apis/knowledge-permission'
 import { codeWikiApi } from '@/apis/code-wiki'
+import type { TaskDetail } from '@/types/api'
 import type {
   AllGroupedKnowledgeResponse,
   BatchPermissionAddResponse,
@@ -17,6 +18,10 @@ import type {
   PermissionResponse,
 } from '@/types/knowledge'
 
+let mockTaskDetail: Pick<TaskDetail, 'id' | 'task_type'> | null = null
+jest.mock('@/features/tasks/session/TaskSession', () => ({
+  useOptionalTaskSession: () => ({ selectedTaskDetail: mockTaskDetail }),
+}))
 const mockPush = jest.fn(),
   mockReplace = jest.fn()
 let mockParams = new URLSearchParams(),
@@ -69,6 +74,9 @@ jest.mock('@/features/knowledge/document/hooks/useAdvancedKnowledgeMode', () => 
   }),
 }))
 jest.mock('@/features/knowledge/document/components/KnowledgeDetailPanel', () => ({
+  KnowledgeChatArea: ({ knowledgeBaseId }: { knowledgeBaseId: number }) => (
+    <div data-testid="mock-history-chat">{knowledgeBaseId}</div>
+  ),
   KnowledgeDetailPanel: ({
     selectedKb,
     initialDocPath,
@@ -213,6 +221,7 @@ afterEach(async () => {
 })
 
 beforeEach(() => {
+  mockTaskDetail = null
   localStorage.clear()
   jest.clearAllMocks()
   mockParams = new URLSearchParams()
@@ -919,3 +928,22 @@ it.each(
     }
   }
 )
+
+test('opens a bound history conversation when its source is absent from discovery', async () => {
+  mockParams = new URLSearchParams('kb=989&taskId=21&type=document')
+  mockTaskDetail = { id: 21, task_type: 'knowledge' }
+  jest.mocked(knowledgePermissionApi.getMyPermission).mockResolvedValueOnce({
+    has_access: false,
+    is_creator: false,
+    role: null,
+    pending_request: null,
+    source_access: 'visit-only',
+    task_source_bound: true,
+  })
+
+  render(<KnowledgeDocumentPageMobile />)
+  expect(await screen.findByTestId('mock-history-chat')).toHaveTextContent('989')
+  expect(knowledgePermissionApi.getMyPermission).toHaveBeenCalledWith(989, { taskId: 21 })
+  expect(getKnowledgeBase).not.toHaveBeenCalledWith(989)
+  expect(screen.queryByTestId('mock-detail-panel')).not.toBeInTheDocument()
+})
