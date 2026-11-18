@@ -751,12 +751,10 @@ export async function verifyAsyncQuestionWaitingIndicator({ composerSelector, co
   )
 }
 
-async function findRuntimeTaskSortableListSelector(control, taskRowTestIds) {
+async function findRuntimeTaskListSelector(control, taskRowTestIds) {
   const snapshot = JSON.parse(await control.command('snapshot', 'body'))
   const candidateTestIds = snapshot.testIds.filter(
-    testId =>
-      testId === 'runtime-chat-task-sortable-list' ||
-      testId.startsWith('project-runtime-task-sortable-')
+    testId => testId === 'runtime-chat-task-list' || testId.startsWith('project-runtime-task-list-')
   )
   for (const testId of candidateTestIds) {
     const selector = `[data-testid="${testId}"]`
@@ -770,7 +768,7 @@ async function findRuntimeTaskSortableListSelector(control, taskRowTestIds) {
     )
     if (containsEveryTask.every(Boolean)) return selector
   }
-  throw new Error('The runtime tasks did not share a sortable sidebar list')
+  throw new Error('The runtime tasks did not share a sidebar list')
 }
 
 async function waitForRuntimeTaskOrder(control, listSelector, expectedTaskRowTestIds) {
@@ -805,11 +803,7 @@ async function assertRuntimeTaskOrderRemainsStable(
   }
 }
 
-async function verifyRuntimeTaskOrderAndUnreadVisibility({
-  composerSelector,
-  control,
-  executorHome,
-}) {
+async function verifyRuntimeTaskOrderAndUnreadVisibility({ composerSelector, control }) {
   const standaloneNewTaskButtonSelector = '[data-testid="runtime-chat-section-new-chat-button"]'
   const firstTaskRowTestId = await createCheckpointTaskFixture(
     control,
@@ -822,33 +816,14 @@ async function verifyRuntimeTaskOrderAndUnreadVisibility({
     standaloneNewTaskButtonSelector
   )
   const taskRows = [firstTaskRowTestId, secondTaskRowTestId]
-  const sortableListSelector = await findRuntimeTaskSortableListSelector(control, taskRows)
-  const sortableTestIdOrder = JSON.parse(
-    await control.command('getTestIdOrder', sortableListSelector)
+  const listSelector = await findRuntimeTaskListSelector(control, taskRows)
+  const initialOrder = JSON.parse(await control.command('getTestIdOrder', listSelector)).filter(
+    testId => taskRows.includes(testId)
   )
-  const initialOrder = sortableTestIdOrder.filter(testId => taskRows.includes(testId))
-  assert.deepEqual(
-    initialOrder.toSorted(),
-    taskRows.toSorted(),
-    'The task-order fixture did not expose both standalone tasks'
-  )
-
-  const sourceTaskRowTestId = initialOrder[1]
-  const targetTaskRowTestId = initialOrder[0]
-  await ensureTaskRowVisible(control, sourceTaskRowTestId)
-  await ensureTaskRowVisible(control, targetTaskRowTestId)
-  const reorderedTaskRows = [sourceTaskRowTestId, targetTaskRowTestId]
-  const sourceTaskId = sourceTaskRowTestId.replace('runtime-local-task-row-', '')
-  const targetTaskId = targetTaskRowTestId.replace('runtime-local-task-row-', '')
-  const runtimeIndex = JSON.parse(
-    await readFile(join(executorHome, 'runtime-work', 'index.json'), 'utf8')
-  )
-  const sourceTask = runtimeIndex.tasks[sourceTaskId]
-  const targetTask = runtimeIndex.tasks[targetTaskId]
-  assert.ok(sourceTask?.thread_id, 'The reordered task had no persisted thread ID')
-  assert.ok(targetTask?.thread_id, 'The target task had no persisted thread ID')
-  await control.command('click', `[data-testid="${sourceTaskRowTestId}"]`)
-  const sourceTaskDebug = JSON.parse(
+  assert.deepEqual(initialOrder.toSorted(), taskRows.toSorted())
+  await ensureTaskRowVisible(control, initialOrder[0])
+  await control.command('click', `[data-testid="${initialOrder[0]}"]`)
+  const openedTaskDebug = JSON.parse(
     await control.command('getWorkbenchDebugSnapshot', 'body')
   ).workbench
   await control.command('waitFor', '[data-testid="message-assistant"]', {
@@ -857,45 +832,8 @@ async function verifyRuntimeTaskOrderAndUnreadVisibility({
     stableMs: COMPOSER_READY_STABILITY_MS,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await assertRuntimeTaskOrderRemainsStable(control, sortableListSelector, initialOrder)
-  await control.command('click', `[data-testid="${targetTaskRowTestId}"]`)
-  const targetTaskDebug = JSON.parse(
-    await control.command('getWorkbenchDebugSnapshot', 'body')
-  ).workbench
-  assert.ok(sourceTaskDebug?.activeTaskProjectKey, 'The reordered task had no sidebar project key')
-  assert.equal(
-    sourceTaskDebug.activeTaskProjectKey,
-    targetTaskDebug?.activeTaskProjectKey,
-    'The task-order fixture placed its tasks in different sidebar groups'
-  )
-  await control.command('reorderRuntimeProjectTasks', 'body', {
-    value: JSON.stringify({
-      deviceId: 'local-device',
-      projectKey: sourceTaskDebug.activeTaskProjectKey,
-      threadId: sourceTask.thread_id,
-      beforeThreadId: targetTask.thread_id,
-      insertAtEnd: false,
-    }),
-  })
-  const reorderedRuntimeWork = JSON.parse(await control.command('getLocalRuntimeWork', 'body'))
-  const reorderedSourceTask = findRuntimeWorkTask(reorderedRuntimeWork, sourceTaskId)
-  const reorderedTargetTask = findRuntimeWorkTask(reorderedRuntimeWork, targetTaskId)
-  const sourceSidebarOrder = reorderedSourceTask?.sidebarOrder ?? reorderedSourceTask?.sidebar_order
-  const targetSidebarOrder = reorderedTargetTask?.sidebarOrder ?? reorderedTargetTask?.sidebar_order
-  assert.equal(
-    typeof sourceSidebarOrder,
-    'number',
-    'The executor did not return a sidebar order for the reordered task'
-  )
-  assert.equal(
-    typeof targetSidebarOrder,
-    'number',
-    'The executor did not return a sidebar order for the target task'
-  )
-  assert.ok(
-    sourceSidebarOrder < targetSidebarOrder,
-    `The executor did not persist the requested runtime task order (${sourceSidebarOrder} !< ${targetSidebarOrder})`
-  )
+  assert.ok(openedTaskDebug?.activeTaskProjectKey, 'The task had no sidebar project key')
+  await assertRuntimeTaskOrderRemainsStable(control, listSelector, initialOrder)
 
   const readyCountBeforeReload = control.readyCount
   await control.command('reloadMainWindow', 'body')
@@ -904,21 +842,18 @@ async function verifyRuntimeTaskOrderAndUnreadVisibility({
     WORKBENCH_READY_TIMEOUT_MS,
     'The task-order reload did not reconnect to the desktop controller'
   )
-  for (const taskRowTestId of reorderedTaskRows) {
+  for (const taskRowTestId of taskRows) {
     await control.command('waitFor', `[data-testid="${taskRowTestId}"]`, {
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
   }
-  const reloadedSortableListSelector = await findRuntimeTaskSortableListSelector(
-    control,
-    reorderedTaskRows
-  )
-  await control.command('waitFor', reloadedSortableListSelector, {
+  const reloadedListSelector = await findRuntimeTaskListSelector(control, taskRows)
+  await control.command('waitFor', reloadedListSelector, {
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
-  await waitForRuntimeTaskOrder(control, reloadedSortableListSelector, reorderedTaskRows)
+  await waitForRuntimeTaskOrder(control, reloadedListSelector, initialOrder)
 
-  await verifyNewChatBeforeManualOrder({ composerSelector, control, reorderedTaskRows })
+  await verifyNewChatRecencyOrder({ composerSelector, control, taskRows: initialOrder })
 
   const unreadBefore = JSON.parse(
     await control.command('getWorkbenchDebugSnapshot', 'body')
@@ -963,14 +898,14 @@ async function verifyRuntimeTaskOrderAndUnreadVisibility({
   )
 }
 
-async function verifyNewChatBeforeManualOrder({ composerSelector, control, reorderedTaskRows }) {
+async function verifyNewChatRecencyOrder({ composerSelector, control, taskRows }) {
   const newTaskRowTestId = await createCheckpointTaskFixture(
     control,
     composerSelector,
     '[data-testid="runtime-chat-section-new-chat-button"]'
   )
-  const expectedRows = [newTaskRowTestId, ...reorderedTaskRows]
-  const listSelector = await findRuntimeTaskSortableListSelector(control, expectedRows)
+  const expectedRows = [newTaskRowTestId, ...taskRows]
+  const listSelector = await findRuntimeTaskListSelector(control, expectedRows)
   await waitForRuntimeTaskOrder(control, listSelector, expectedRows)
   await assertRuntimeTaskOrderRemainsStable(control, listSelector, expectedRows)
 
@@ -986,7 +921,7 @@ async function verifyNewChatBeforeManualOrder({ composerSelector, control, reord
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
   }
-  const reloadedListSelector = await findRuntimeTaskSortableListSelector(control, expectedRows)
+  const reloadedListSelector = await findRuntimeTaskListSelector(control, expectedRows)
   await waitForRuntimeTaskOrder(control, reloadedListSelector, expectedRows)
   await assertRuntimeTaskOrderRemainsStable(control, reloadedListSelector, expectedRows)
 }

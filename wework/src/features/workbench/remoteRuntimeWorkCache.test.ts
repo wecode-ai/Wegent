@@ -135,6 +135,7 @@ describe('remote runtime work cache', () => {
             running: true,
             continuable: true,
             pinned: true,
+            sidebarOrder: 7,
             gitInfo: {
               branch: 'feature/offline-cache',
               secret: 'must-not-persist',
@@ -181,6 +182,7 @@ describe('remote runtime work cache', () => {
       runtime: 'codex',
       cachedProjection: true,
       pinned: true,
+      sidebarOrder: 7,
       gitInfo: { branch: 'feature/offline-cache' },
     })
     expect(restoredTask).not.toHaveProperty('running')

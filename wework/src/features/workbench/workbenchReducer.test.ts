@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'vitest'
+import { getRuntimeSidebarTaskItems } from '@/components/layout/runtimeTaskSidebarHelpers'
 import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
 import { createRuntimeProjectRemoval } from './workbenchDataRefreshHelpers'
 
@@ -1299,5 +1300,108 @@ describe('workbenchReducer', () => {
       pinnedOrder: 0,
       sidebarOrder: 3,
     })
+  })
+  test('records a user reply immediately for recency ordering', () => {
+    const state = {
+      ...initialWorkbenchState,
+      runtimeWork: {
+        projects: [
+          {
+            project: { id: 7, name: 'Repo' },
+            deviceWorkspaces: [
+              {
+                deviceId: 'device-1',
+                workspacePath: '/workspace/repo',
+                available: true,
+                tasks: [
+                  {
+                    taskId: 'replied',
+                    workspacePath: '/workspace/repo',
+                    title: 'Replied',
+                    runtime: 'codex' as const,
+                    recencyAt: 100,
+                    updatedAt: 100,
+                    sidebarOrder: 9,
+                  },
+                  {
+                    taskId: 'newer-before-reply',
+                    workspacePath: '/workspace/repo',
+                    title: 'Newer before reply',
+                    runtime: 'codex' as const,
+                    recencyAt: 200,
+                    updatedAt: 200,
+                    sidebarOrder: 0,
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        chats: [],
+        totalTasks: 2,
+      },
+    }
+
+    const replied = workbenchReducer(state, {
+      type: 'runtime_task_activity_recorded',
+      address: { deviceId: 'device-1', taskId: 'replied' },
+      at: 300,
+    })
+    const items = getRuntimeSidebarTaskItems(
+      replied.runtimeWork?.projects[0].deviceWorkspaces ?? []
+    )
+
+    expect(items.map(item => item.task.taskId)).toEqual(['replied', 'newer-before-reply'])
+    expect(items[0]?.task).toMatchObject({ recencyAt: 300, updatedAt: 300, sidebarOrder: 9 })
+  })
+
+  test('keeps recency order after refresh despite cached manual sidebar slots', () => {
+    const workspace = {
+      deviceId: 'device-1',
+      workspacePath: '/workspace/repo',
+      available: true,
+      tasks: [
+        {
+          taskId: 'older-manual-first',
+          workspacePath: '/workspace/repo',
+          title: 'Older manual first',
+          runtime: 'codex' as const,
+          recencyAt: 100,
+          sidebarOrder: 0,
+        },
+        {
+          taskId: 'newer-manual-last',
+          workspacePath: '/workspace/repo',
+          title: 'Newer manual last',
+          runtime: 'codex' as const,
+          recencyAt: 200,
+          sidebarOrder: 1,
+        },
+      ],
+    }
+    const refreshed = workbenchReducer(
+      {
+        ...initialWorkbenchState,
+        runtimeWork: {
+          projects: [{ project: { id: 7, name: 'Repo' }, deviceWorkspaces: [workspace] }],
+          chats: [],
+          totalTasks: 2,
+        },
+      },
+      {
+        type: 'runtime_work_refreshed',
+        runtimeWork: {
+          projects: [{ project: { id: 7, name: 'Repo' }, deviceWorkspaces: [workspace] }],
+          chats: [],
+          totalTasks: 2,
+        },
+      }
+    )
+
+    expect(
+      getRuntimeSidebarTaskItems(refreshed.runtimeWork?.projects[0].deviceWorkspaces ?? []).map(
+        item => item.task.taskId
+      )
+    ).toEqual(['newer-manual-last', 'older-manual-first'])
   })
 })

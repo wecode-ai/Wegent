@@ -176,8 +176,8 @@ async function verifyTaskTabLoadedCollaborationTask(control, taskId, taskTabIdsB
     ) === 0
   ) {
     const taskProjectIds = JSON.parse(await control.command('snapshot', FIXED_TASK_TAB_CONTENT))
-      .testIds.filter(testId => testId.startsWith('project-runtime-task-sortable-'))
-      .map(testId => testId.slice('project-runtime-task-sortable-'.length))
+      .testIds.filter(testId => testId.startsWith('project-runtime-task-list-'))
+      .map(testId => testId.slice('project-runtime-task-list-'.length))
     for (const projectId of taskProjectIds) {
       await control.command(
         'click',

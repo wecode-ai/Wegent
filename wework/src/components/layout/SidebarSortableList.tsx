@@ -3,6 +3,7 @@ import {
   DndContext,
   DragOverlay,
   KeyboardSensor,
+  useDraggable,
   useSensor,
   useSensors,
   type CollisionDetection,
@@ -30,17 +31,22 @@ import {
 
 const SIDEBAR_SORTABLE_POINTER_DISTANCE = 6
 
-interface SidebarSortableListProps<T> {
+interface SidebarSortableListBaseProps<T> {
   items: T[]
   getId: (item: T) => string
   getLabel: (item: T) => string
   canDrag?: (item: T) => boolean
   getExternalDragData?: (item: T) => WorkbenchSidebarPaneDragData
   renderItem: (item: T) => ReactNode
-  onMove: (item: T, beforeItem: T | null) => Promise<void>
   className?: string
   testId: string
 }
+
+type SidebarSortableListProps<T> = SidebarSortableListBaseProps<T> &
+  (
+    | { sortable: false; onMove?: (item: T, beforeItem: T | null) => Promise<void> }
+    | { sortable?: true; onMove: (item: T, beforeItem: T | null) => Promise<void> }
+  )
 
 interface SortableItemProps {
   id: string
@@ -130,6 +136,22 @@ function SortableItem({ id, disabled, sortingSuppressed, children }: SortableIte
   )
 }
 
+function DraggableItem({ id, disabled, children }: Omit<SortableItemProps, 'sortingSuppressed'>) {
+  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id, disabled })
+  return (
+    <div
+      ref={setNodeRef}
+      data-pane-drag-id={id}
+      data-dragging={isDragging ? 'true' : undefined}
+      className={cn('relative touch-none', isDragging && 'z-[75] opacity-35')}
+      {...attributes}
+      {...listeners}
+    >
+      {children}
+    </div>
+  )
+}
+
 export function SidebarSortableList<T>({
   items,
   getId,
@@ -138,6 +160,7 @@ export function SidebarSortableList<T>({
   getExternalDragData,
   renderItem,
   onMove,
+  sortable = true,
   className,
   testId,
 }: SidebarSortableListProps<T>) {
@@ -258,7 +281,7 @@ export function SidebarSortableList<T>({
         stopPointerTracking()
       }
     }
-    if (!over || active.id === over.id) return
+    if (!sortable || !onMove || !over || active.id === over.id) return
     const oldIndex = orderedIds.indexOf(String(active.id))
     const newIndex = orderedIds.indexOf(String(over.id))
     if (oldIndex < 0 || newIndex < 0) return
@@ -277,6 +300,41 @@ export function SidebarSortableList<T>({
   }
 
   const activeItem = activeId ? itemById.get(activeId) : undefined
+
+  if (!sortable) {
+    return (
+      <DndContext
+        sensors={sensors}
+        autoScroll={getSidebarAutoScrollConfiguration(Boolean(getExternalDragData))}
+        collisionDetection={getExternalDragData ? sidebarCollisionDetection : closestCenter}
+        onDragStart={handleDragStart}
+        onDragCancel={() => {
+          setActiveId(null)
+          if (externalDragActiveRef.current) dispatchWorkbenchSidebarPaneDragCancel()
+          stopPointerTracking()
+        }}
+        onDragEnd={event => void handleDragEnd(event)}
+      >
+        <div data-testid={testId} className={className}>
+          {items.map(item => {
+            const id = getId(item)
+            return (
+              <DraggableItem key={id} id={id} disabled={!canDrag(item)}>
+                {renderItem(item)}
+              </DraggableItem>
+            )
+          })}
+        </div>
+        <DragOverlay dropAnimation={null}>
+          {activeItem ? (
+            <div className="max-w-[280px] truncate rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary shadow-lg">
+              {getLabel(activeItem)}
+            </div>
+          ) : null}
+        </DragOverlay>
+      </DndContext>
+    )
+  }
 
   return (
     <DndContext

@@ -218,6 +218,11 @@ export type WorkbenchAction =
       address: RuntimeTaskAddress
       task: RuntimeTaskSummary
     }
+  | {
+      type: 'runtime_task_activity_recorded'
+      address: RuntimeTaskAddress
+      at: string | number
+    }
   | { type: 'runtime_tasks_archived'; addresses: RuntimeTaskAddress[] }
   | { type: 'current_task_cleared' }
   | { type: 'error_set'; error: string | null }
@@ -1501,6 +1506,14 @@ function reduceWorkbenchState(state: WorkbenchState, action: WorkbenchAction): W
       return {
         ...state,
         runtimeWork: updateRuntimeWorkTask(state.runtimeWork, action.address, action.task),
+      }
+    case 'runtime_task_activity_recorded':
+      return {
+        ...state,
+        runtimeWork: updateRuntimeWorkTask(state.runtimeWork, action.address, {
+          recencyAt: action.at,
+          updatedAt: action.at,
+        }),
       }
     case 'runtime_tasks_archived':
       return {

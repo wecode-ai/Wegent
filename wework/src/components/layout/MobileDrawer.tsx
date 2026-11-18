@@ -57,6 +57,7 @@ import {
   hasHiddenRuntimeSidebarTaskItems,
   isRuntimeTaskQueued,
   isRuntimeTaskSelected,
+  isRuntimeTaskWaiting,
   isRuntimeWorktreeTask,
   RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
 } from './runtimeTaskSidebarHelpers'
@@ -643,10 +644,20 @@ export function MobileDrawer({
                             taskItems,
                             runtimeTaskVisibleLimit,
                             currentRuntimeTask?.taskId,
-                            ({ workspace, task }) =>
-                              lifecycleSnapshot.runningTaskKeys.has(
-                                getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task))
+                            ({ workspace, task }) => {
+                              const lifecycleKey = getRuntimeTaskLifecycleKey(
+                                getRuntimeTaskAddress(workspace, task)
                               )
+                              return (
+                                lifecycleSnapshot.runningTaskKeys.has(lifecycleKey) ||
+                                lifecycleSnapshot.tasks.get(lifecycleKey)?.derived
+                                  .shouldShowSidebarWaiting === true ||
+                                isRuntimeTaskWaiting(task) ||
+                                visibleUnreadRuntimeTaskKeys.has(
+                                  getRuntimeTaskReminderItemKey(workspace, task)
+                                )
+                              )
+                            }
                           )
                           const hasHiddenTasks = hasHiddenRuntimeSidebarTaskItems(
                             taskItems,

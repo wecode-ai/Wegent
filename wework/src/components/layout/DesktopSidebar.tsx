@@ -145,7 +145,6 @@ import type {
   RuntimeProjectSpaceRef,
   RuntimeProjectPinRequest,
   RuntimeProjectReorderRequest,
-  RuntimeProjectTaskReorderRequest,
   RuntimeTaskPinRequest,
   RuntimeTaskAddress,
   RuntimeWorkListResponse,
@@ -205,6 +204,7 @@ import {
   hasHiddenRuntimeSidebarTaskItems,
   isRuntimeTaskQueued,
   isRuntimeTaskSelected,
+  isRuntimeTaskWaiting,
   isRuntimeWorktreeTask,
   RUNTIME_PROJECT_TASK_PREVIEW_LIMIT,
 } from './runtimeTaskSidebarHelpers'
@@ -311,7 +311,6 @@ interface DesktopSidebarProps {
   onReorderRuntimeProjects?: (data: RuntimeProjectReorderRequest) => Promise<void>
   onSetRuntimeProjectPinned?: (data: RuntimeProjectPinRequest) => Promise<void>
   onSetRuntimeProjectAppearance?: (data: RuntimeProjectAppearanceRequest) => Promise<void>
-  onReorderRuntimeProjectTasks?: (data: RuntimeProjectTaskReorderRequest) => Promise<void>
   onSetRuntimeTaskPinned?: (data: RuntimeTaskPinRequest) => Promise<void>
   onGetDeviceHomeDirectory: (deviceId: string) => Promise<string>
   onListDeviceDirectories: (deviceId: string, path: string) => Promise<string[]>
@@ -917,16 +916,6 @@ function hasRuntimeTaskBranchWarning(task: RuntimeTaskSummary): boolean {
   )
 }
 
-function isRuntimeTaskWaiting(task: RuntimeTaskSummary): boolean {
-  // The lifecycle store owns explicit interaction metadata and may already have
-  // accepted a reply newer than this task-list snapshot.
-  if (task.interactionStatus !== undefined) return false
-  const status = task.status?.trim().toLowerCase() ?? ''
-  return ['waiting', 'approval', 'input', 'attention', 'blocked'].some(value =>
-    status.includes(value)
-  )
-}
-
 function getRuntimeTaskPriorityReason(
   workspace: RuntimeDeviceWorkspace,
   task: RuntimeTaskSummary,
@@ -1266,6 +1255,7 @@ function RuntimeTaskRow({
   priorityReason,
   priorityLayout = false,
   statusInIndent = false,
+  dragActivator = false,
   splitGroup,
 }: {
   workspace: RuntimeDeviceWorkspace
@@ -1294,6 +1284,7 @@ function RuntimeTaskRow({
   priorityReason?: RuntimeTaskPriorityReason
   priorityLayout?: boolean
   statusInIndent?: boolean
+  dragActivator?: boolean
   splitGroup?: WorkbenchSplitGroupMembership
 }) {
   const { t } = useTranslation('common')
@@ -1611,6 +1602,7 @@ function RuntimeTaskRow({
                 text={task.title}
                 testId={`runtime-local-task-title-${task.taskId}`}
                 textTestId={`runtime-local-task-drag-activator-${task.taskId}`}
+                dragActivator={dragActivator}
                 shimmering={titleShimmering}
                 shimmerTestId={`runtime-local-task-title-shimmer-${task.taskId}`}
                 className="flex-none"
@@ -1634,6 +1626,7 @@ function RuntimeTaskRow({
               text={task.title}
               testId={`runtime-local-task-title-${task.taskId}`}
               textTestId={`runtime-local-task-drag-activator-${task.taskId}`}
+              dragActivator={dragActivator}
               shimmering={titleShimmering}
               shimmerTestId={`runtime-local-task-title-shimmer-${task.taskId}`}
             />
@@ -2237,7 +2230,6 @@ function ProjectItem({
   onCreatePermanentWorktree,
   onSetRuntimeProjectPinned,
   onSetRuntimeProjectAppearance,
-  onReorderRuntimeProjectTasks,
   onSetRuntimeTaskPinned,
   onRenameProject,
   onOpenRuntimeTask,
@@ -2273,7 +2265,6 @@ function ProjectItem({
   onReorderRuntimeProjects?: (data: RuntimeProjectReorderRequest) => Promise<void>
   onSetRuntimeProjectPinned?: (data: RuntimeProjectPinRequest) => Promise<void>
   onSetRuntimeProjectAppearance?: (data: RuntimeProjectAppearanceRequest) => Promise<void>
-  onReorderRuntimeProjectTasks?: (data: RuntimeProjectTaskReorderRequest) => Promise<void>
   onSetRuntimeTaskPinned?: (data: RuntimeTaskPinRequest) => Promise<void>
   onRenameProject: (project: ProjectWithTasks, projectWork?: RuntimeProjectWork) => void
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => Promise<void> | void
@@ -2342,16 +2333,23 @@ function ProjectItem({
         prioritizedRuntimeTaskItems,
         runtimeTaskVisibleLimit,
         currentRuntimeTask?.taskId,
-        ({ workspace, task }) =>
-          lifecycleSnapshot.runningTaskKeys.has(
-            getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task))
+        ({ workspace, task }) => {
+          const lifecycleKey = getRuntimeTaskLifecycleKey(getRuntimeTaskAddress(workspace, task))
+          return (
+            lifecycleSnapshot.runningTaskKeys.has(lifecycleKey) ||
+            waitingTaskKeys.has(lifecycleKey) ||
+            isRuntimeTaskWaiting(task) ||
+            unreadTaskKeys.has(getRuntimeTaskReminderItemKey(workspace, task))
           )
+        }
       ),
     [
       currentRuntimeTask?.taskId,
       lifecycleSnapshot.runningTaskKeys,
       prioritizedRuntimeTaskItems,
       runtimeTaskVisibleLimit,
+      unreadTaskKeys,
+      waitingTaskKeys,
     ]
   )
   const hasHiddenRuntimeTasks = hasHiddenRuntimeSidebarTaskItems(
@@ -2778,7 +2776,7 @@ function ProjectItem({
             ) : (
               <>
                 <SidebarSortableList
-                  testId={`project-runtime-task-sortable-${project.id}`}
+                  testId={`project-runtime-task-list-${project.id}`}
                   className="space-y-0.5"
                   items={visibleRuntimeTaskItems}
                   getId={({ workspace, task }) => getRuntimeTaskSortableId(workspace, task)}
@@ -2793,41 +2791,15 @@ function ProjectItem({
                     }),
                     title: task.title,
                   })}
-                  canDrag={({ task }) =>
-                    Boolean(
-                      getRuntimeTaskThreadId(task) &&
-                      runtimeProjectWork?.project.key &&
-                      onReorderRuntimeProjectTasks
-                    )
-                  }
-                  onMove={async (moved, before) => {
-                    const projectKey = runtimeProjectWork?.project.key
-                    const deviceId =
-                      runtimeProjectWork?.project.stateDeviceId || moved.workspace.deviceId
-                    const movedThreadId = getRuntimeTaskThreadId(moved.task)
-                    if (!projectKey || !movedThreadId || !onReorderRuntimeProjectTasks) {
-                      throw new Error('Runtime task ordering is unavailable')
-                    }
-                    const firstHiddenTask = prioritizedRuntimeTaskItems.at(
-                      visibleRuntimeTaskItems.length
-                    )?.task
-                    const beforeThreadId =
-                      (before ? getRuntimeTaskThreadId(before.task) : null) ||
-                      (firstHiddenTask ? getRuntimeTaskThreadId(firstHiddenTask) : null)
-                    await onReorderRuntimeProjectTasks({
-                      deviceId,
-                      projectKey,
-                      threadId: movedThreadId,
-                      beforeThreadId,
-                      insertAtEnd: beforeThreadId === null,
-                    })
-                  }}
+                  canDrag={({ task }) => Boolean(getRuntimeTaskThreadId(task))}
+                  sortable={false}
                   renderItem={({ workspace, task }) => (
                     <RuntimeTaskRow
                       workspace={workspace}
                       devices={devices}
                       task={task}
                       projectName={runtimeProjectWork?.project.name ?? project.name}
+                      dragActivator
                       selected={
                         getRuntimeTaskSplitGroup(splitGroupMemberships, workspace, task)?.active ||
                         isRuntimeTaskSelected(currentRuntimeTask, workspace, task)
@@ -2995,7 +2967,6 @@ export function DesktopSidebar({
   onReorderRuntimeProjects,
   onSetRuntimeProjectPinned,
   onSetRuntimeProjectAppearance,
-  onReorderRuntimeProjectTasks,
   onSetRuntimeTaskPinned,
   onGetDeviceHomeDirectory,
   onListDeviceDirectories,
@@ -4358,6 +4329,7 @@ export function DesktopSidebar({
                             devices={devices}
                             task={task}
                             projectName={projectWork?.project.name}
+                            dragActivator
                             selected={
                               getRuntimeTaskSplitGroup(splitGroupMemberships, workspace, task)
                                 ?.active ||
@@ -4443,7 +4415,6 @@ export function DesktopSidebar({
                             onReorderRuntimeProjects={onReorderRuntimeProjects}
                             onSetRuntimeProjectPinned={onSetRuntimeProjectPinned}
                             onSetRuntimeProjectAppearance={onSetRuntimeProjectAppearance}
-                            onReorderRuntimeProjectTasks={onReorderRuntimeProjectTasks}
                             onSetRuntimeTaskPinned={
                               onSetRuntimeTaskPinned
                                 ? setRuntimeTaskPinnedOptimistically
@@ -4679,7 +4650,6 @@ export function DesktopSidebar({
                               onReorderRuntimeProjects={onReorderRuntimeProjects}
                               onSetRuntimeProjectPinned={onSetRuntimeProjectPinned}
                               onSetRuntimeProjectAppearance={onSetRuntimeProjectAppearance}
-                              onReorderRuntimeProjectTasks={onReorderRuntimeProjectTasks}
                               onSetRuntimeTaskPinned={
                                 onSetRuntimeTaskPinned
                                   ? setRuntimeTaskPinnedOptimistically
@@ -4768,7 +4738,7 @@ export function DesktopSidebar({
                         )
                       ) : regularChatTaskItems.length > 0 ? (
                         <SidebarSortableList
-                          testId="runtime-chat-task-sortable-list"
+                          testId="runtime-chat-task-list"
                           className="space-y-0.5"
                           items={regularChatTaskItems}
                           getId={({ workspace, task }) => getRuntimeTaskSortableId(workspace, task)}
@@ -4783,36 +4753,15 @@ export function DesktopSidebar({
                             }),
                             title: task.title,
                           })}
-                          canDrag={({ task }) =>
-                            Boolean(getRuntimeTaskThreadId(task) && onReorderRuntimeProjectTasks)
-                          }
-                          onMove={async (moved, before) => {
-                            const movedThreadId = getRuntimeTaskThreadId(moved.task)
-                            if (!movedThreadId || !onReorderRuntimeProjectTasks) {
-                              throw new Error('Runtime task ordering is unavailable')
-                            }
-                            if (before && before.workspace.deviceId !== moved.workspace.deviceId) {
-                              throw new Error(
-                                'Tasks from different devices cannot be reordered together'
-                              )
-                            }
-                            const beforeThreadId = before
-                              ? getRuntimeTaskThreadId(before.task)
-                              : null
-                            await onReorderRuntimeProjectTasks({
-                              deviceId: moved.workspace.deviceId,
-                              projectKey: 'chats',
-                              threadId: movedThreadId,
-                              beforeThreadId,
-                              insertAtEnd: beforeThreadId === null,
-                            })
-                          }}
+                          canDrag={({ task }) => Boolean(getRuntimeTaskThreadId(task))}
+                          sortable={false}
                           renderItem={({ workspace, task }) => (
                             <RuntimeTaskRow
                               workspace={workspace}
                               devices={devices}
                               task={task}
                               projectName={null}
+                              dragActivator
                               selected={
                                 getRuntimeTaskSplitGroup(splitGroupMemberships, workspace, task)
                                   ?.active ||

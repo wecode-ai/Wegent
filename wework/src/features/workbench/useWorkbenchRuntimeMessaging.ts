@@ -450,6 +450,17 @@ export function useWorkbenchRuntimeMessaging({
     ]
   )
 
+  const recordRuntimeTaskActivity = useCallback(
+    (address: RuntimeTaskAddress) => {
+      dispatch({
+        type: 'runtime_task_activity_recorded',
+        address,
+        at: new Date().toISOString(),
+      })
+    },
+    [dispatch]
+  )
+
   const blockRuntimeSendForUnavailableModel = useCallback(
     (address: RuntimeTaskAddress, options?: RuntimePaneActionOptions): boolean => {
       if (
@@ -525,6 +536,7 @@ export function useWorkbenchRuntimeMessaging({
         // Replies settle an existing native request and do not select a model.
         if (!userInputResponse && blockRuntimeSendForUnavailableModel(request.address, options))
           return false
+        recordRuntimeTaskActivity(request.address)
         if (optimisticUserMessage) {
           applyRuntimeConversationAction(request.address, {
             type: 'user_added',
@@ -634,6 +646,7 @@ export function useWorkbenchRuntimeMessaging({
       executorClient,
       lifecycleStore,
       prepareRuntimeSendRequest,
+      recordRuntimeTaskActivity,
       refreshWorkLists,
       reportError,
     ]
@@ -645,6 +658,7 @@ export function useWorkbenchRuntimeMessaging({
 
       let sendRequested = false
       try {
+        recordRuntimeTaskActivity(request.address)
         const outboundRequest = await prepareRuntimeSendRequest(request)
         const prepared = await executorClient.runtime.prepareRuntimeModel({
           deviceId: outboundRequest.address.deviceId,
@@ -678,6 +692,7 @@ export function useWorkbenchRuntimeMessaging({
       executorClient,
       lifecycleStore,
       prepareRuntimeSendRequest,
+      recordRuntimeTaskActivity,
       refreshWorkLists,
       reportError,
     ]
@@ -689,6 +704,7 @@ export function useWorkbenchRuntimeMessaging({
 
       let sendRequested = false
       try {
+        recordRuntimeTaskActivity(request.address)
         const outboundRequest = await prepareRuntimeSendRequest(request)
         const prepared = await executorClient.runtime.prepareRuntimeModel({
           deviceId: outboundRequest.address.deviceId,
@@ -733,6 +749,7 @@ export function useWorkbenchRuntimeMessaging({
       executorClient,
       lifecycleStore,
       prepareRuntimeSendRequest,
+      recordRuntimeTaskActivity,
       refreshWorkLists,
     ]
   )
@@ -740,6 +757,7 @@ export function useWorkbenchRuntimeMessaging({
   const sendRuntimePaneGuidance = useCallback(
     async (request: RuntimeGuidanceRequest): Promise<RuntimePaneGuidanceResult> => {
       try {
+        recordRuntimeTaskActivity(request.address)
         let outboundRequest = request
         if (request.attachments?.length) {
           const preparedAttachments = await prepareRuntimeAttachmentsForDevice(
@@ -800,7 +818,14 @@ export function useWorkbenchRuntimeMessaging({
         }
       }
     },
-    [executorClient, refreshWorkLists, reportError, services.attachmentApi, state.devices]
+    [
+      executorClient,
+      recordRuntimeTaskActivity,
+      refreshWorkLists,
+      reportError,
+      services.attachmentApi,
+      state.devices,
+    ]
   )
 
   const compactRuntimePaneTask = useCallback(
