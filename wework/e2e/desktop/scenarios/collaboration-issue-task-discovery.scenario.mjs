@@ -116,6 +116,8 @@ export function createDesktopScenario({
     const panel = scoped('[data-testid="work-item-new-task-chat-panel"]')
     const composer = `${panel} [data-testid="chat-message-input"]`
     await control.command('waitFor', composer)
+    // This fixture responds through the Responses protocol, including in Issue composers.
+    await selectE2EModel(control, undefined, undefined, panel)
     // Mounting the composer does not imply its asynchronous model selection is ready.
     await control.command('waitFor', `${panel} [data-testid="send-message-button"]`, {
       enabled: true,

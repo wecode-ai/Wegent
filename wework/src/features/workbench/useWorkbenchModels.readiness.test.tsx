@@ -384,3 +384,43 @@ test('keeps a user-selected model through a catalog refresh for a bound task', a
   await waitFor(() => expect(result.current.isLoading).toBe(false))
   expect(result.current.getSelectedModelForScope('task-scope')).toEqual(cloud)
 })
+
+test('distinguishes a temporary draft default from an explicit choice when native discovery finishes', async () => {
+  const cloud: UnifiedModel = { name: 'cloud-anthropic', type: 'public' }
+  const native: UnifiedModel = { name: 'native-gpt', type: 'runtime' }
+  for (const explicitlySelected of [false, true]) {
+    let models = [cloud]
+    let notify: (() => void) | undefined
+    const api = {
+      listModels: vi.fn(async () => ({ data: models })),
+      subscribe: (listener: () => void) => {
+        notify = listener
+        return () => {
+          notify = undefined
+        }
+      },
+    }
+    const hook = renderHook(() =>
+      useWorkbenchModels({
+        api,
+        locked: false,
+        scopeKey: 'new-chat',
+        persistSelection: false,
+        selectionConfig: { modelName: native.name, modelType: native.type },
+        defaultSelectionConfig: () => ({ modelName: cloud.name, modelType: cloud.type }),
+      })
+    )
+    await waitFor(() => expect(hook.result.current.selectedModel).toEqual(cloud))
+    if (explicitlySelected) act(() => hook.result.current.setSelectedModel(cloud))
+    act(() => {
+      models = [native, cloud]
+      notify?.()
+    })
+    await waitFor(() => expect(hook.result.current.models).toEqual([native, cloud]))
+    await waitFor(() => expect(hook.result.current.isSelectionReady).toBe(true))
+    const expected = explicitlySelected ? cloud : native
+    await waitFor(() => expect(hook.result.current.getSelectedModel()).toEqual(expected))
+    expect(hook.result.current.selectedModel).toEqual(expected)
+    hook.unmount()
+  }
+})

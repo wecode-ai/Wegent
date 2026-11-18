@@ -106,6 +106,7 @@ $dialogCondition = [System.Windows.Automation.AndCondition]::new([System.Windows
 $expectedTitles = @(${TITLES.map(title => `'${title}'`).join(', ')})
 $allowedButtonNames = @(${allow ? "'Allow installation', 'Allow update', '允许安装', '允许更新'" : "'Cancel', '取消'"})
 $deadline = [DateTime]::UtcNow.AddSeconds(10)
+$iteration = 0
 while ([DateTime]::UtcNow -lt $deadline) {
   Write-DecisionStage 'search-started'
   $windows = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $condition)
@@ -190,6 +191,16 @@ ${WINDOWS_UIA_STRUCTURE_DIAGNOSTICS}
   }
   Start-Sleep -Milliseconds 100
 }
+$top = @([System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $condition) | ForEach-Object {
+  @{ name = $_.Current.Name; className = $_.Current.ClassName; handle = $_.Current.NativeWindowHandle; processId = $_.Current.ProcessId }
+})
+[Console]::Error.WriteLine('Native decision top-level windows: ' + (ConvertTo-Json -InputObject $top -Compress))
+$diagnostics = @([System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition) | Where-Object {
+  $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Window
+} | Select-Object -First 20 | ForEach-Object {
+  @{ name = $_.Current.Name; className = $_.Current.ClassName; handle = $_.Current.NativeWindowHandle; processId = $_.Current.ProcessId }
+})
+[Console]::Error.WriteLine('Native decision owned windows: ' + (ConvertTo-Json -InputObject $diagnostics -Compress))
 throw 'The isolated app did not display its native Core plugin decision'
 `
     await execute(
@@ -405,6 +416,10 @@ async function recordNativeDecisionDiagnostics(pid, window, allow, directory, op
   )
 }
 
+function isVanishedX11Window(error) {
+  return error.code === 1 && /BadWindow \(invalid Window parameter\)/.test(error.stderr ?? '')
+}
+
 async function findLinuxModal(pid, options) {
   const deadline = Date.now() + options.timeout
   const remaining = () => {
@@ -414,12 +429,18 @@ async function findLinuxModal(pid, options) {
     return { ...options, timeout }
   }
   while (Date.now() < deadline) {
-    const { stdout } = await execute(
-      'xdotool',
-      ['search', '--all', '--sync', '--onlyvisible', '--pid', String(pid)],
-      remaining()
-    )
-    const windows = stdout.trim().split(/\s+/).filter(Boolean)
+    let windows = []
+    try {
+      const { stdout } = await execute(
+        'xdotool',
+        ['search', '--all', '--sync', '--onlyvisible', '--pid', String(pid)],
+        remaining()
+      )
+      windows = stdout.trim().split(/\s+/).filter(Boolean)
+    } catch (error) {
+      // X_QueryTree can encounter a disappearing window during PID enumeration.
+      if (!isVanishedX11Window(error)) throw error
+    }
     // search --name reads only WM_NAME in Ubuntu's xdotool; GTK uses _NET_WM_NAME.
     // getwindowname resolves that EWMH UTF-8 property while preserving PID ownership.
     const titles = await Promise.all(
@@ -429,8 +450,7 @@ async function findLinuxModal(pid, options) {
           return { window, title: stdout.trim() }
         } catch (error) {
           // X11 windows can disappear between PID enumeration and property reads.
-          if (error.code === 1 && /BadWindow \(invalid Window parameter\)/.test(error.stderr ?? ''))
-            return null
+          if (isVanishedX11Window(error)) return null
           throw error
         }
       })

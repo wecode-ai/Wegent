@@ -1612,6 +1612,17 @@ async function selectE2EModel(
     const selectedProviderId = await control.command('getAttribute', modelSelectorButton, {
       value: 'data-model-provider-id',
     })
+    console.info(
+      '[desktop-e2e-model-selection]',
+      JSON.stringify({
+        modelIds,
+        labels,
+        modelSelectorButton,
+        selectedModelLabel,
+        selectedProviderId,
+        expectedProviderId,
+      })
+    )
     if (
       labels.some(label => selectedModelLabel.includes(label)) &&
       (!expectedProviderId || selectedProviderId === expectedProviderId)

@@ -144,3 +144,49 @@ test('subscription configuration evidence identifies bootstrap, outage and recov
     await rm(home, { recursive: true, force: true })
   }
 })
+
+test('shared usage routing waits for asynchronous quota preflight and reports rejection', async () => {
+  const { handleModelSubscriptionUsage } =
+    await import('../e2e/desktop/modules/model-subscription-usage.mjs')
+  let release
+  const held = new Promise(resolve => {
+    release = resolve
+  })
+  const writes = []
+  const response = {
+    writeHead: status => writes.push(status),
+    end: body => writes.push(JSON.parse(body)),
+  }
+  assert.equal(
+    handleModelSubscriptionUsage(
+      { method: 'GET', url: '/backend-api/wham/usage' },
+      response,
+      () => held
+    ),
+    true
+  )
+  assert.deepEqual(writes, [], 'Held quota preflight must not send an empty response')
+  const usage = { plan_type: 'enterprise', rate_limit: { allowed: false } }
+  release(usage)
+  await held
+  await Promise.resolve()
+  assert.deepEqual(writes, [200, usage])
+  const failure = new Error('Synthetic usage failure')
+  const original = console.error
+  const errors = []
+  console.error = (...args) => errors.push(args)
+  try {
+    const rejected = Promise.reject(failure)
+    handleModelSubscriptionUsage(
+      { method: 'GET', url: '/backend-api/wham/usage' },
+      response,
+      () => rejected
+    )
+    await rejected.catch(() => {})
+    await Promise.resolve()
+    assert.deepEqual(writes.slice(2), [500, { error: 'Model usage fixture failed' }])
+    assert.deepEqual(errors, [['[desktop-e2e] Model usage fixture failed', failure]])
+  } finally {
+    console.error = original
+  }
+})

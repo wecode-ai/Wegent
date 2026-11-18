@@ -302,19 +302,57 @@ console.log('HOOK_WRITES_COMPLETE')
       } finally {
         // The shared server's close callback is synchronous. Drain this fixture
         // while the native executor is still available, before returning verify.
-        await writeFile(marker('release'), 'release')
-        for (const taskId of tasks) await rpc('runtime.tasks.cancel', { taskId })
-        await waitForValue(
-          async () => {
-            const entered = await optionalFile(marker('entered'))
-            const finished = await optionalFile(marker('finished'))
-            const sorted = text => text.trim().split('\n').sort().join('\n')
-            return { entered: sorted(entered), finished: sorted(finished) }
-          },
-          value => value.entered === value.finished,
-          'Hook scripts did not finish before cleanup',
-          uiTimeoutMs
-        )
+        let drained = false
+        try {
+          await writeFile(marker('release'), 'release')
+          for (const taskId of tasks) await rpc('runtime.tasks.cancel', { taskId })
+          await waitForValue(
+            async () => {
+              const entered = await optionalFile(marker('entered'))
+              const finished = await optionalFile(marker('finished'))
+              const sorted = text => text.trim().split('\n').sort().join('\n')
+              return { entered: sorted(entered), finished: sorted(finished) }
+            },
+            value => value.entered === value.finished,
+            'Hook scripts did not finish before cleanup',
+            uiTimeoutMs
+          )
+          drained = true
+        } finally {
+          if (!verified || !drained) {
+            try {
+              // Top-level diagnostics survive runtime artifact compaction.
+              const queues = await readdir(join(root, 'logs', 'queues')).catch(() => [])
+              const workers = await Promise.all(
+                queues.map(async id => ({
+                  id,
+                  log: await optionalFile(join(root, 'logs', 'queues', id, 'worker.log')),
+                  pending: await readdir(join(root, 'logs', 'queues', id, 'pending')).catch(
+                    () => []
+                  ),
+                }))
+              )
+              const hooks = await rpc('runtime.hooks.list', {}).catch(error => ({
+                error: String(error),
+              }))
+              await writeFile(
+                join(resultDir, 'async-hooks-diagnostics.json'),
+                JSON.stringify(
+                  {
+                    workers,
+                    runs: hooks.plugins?.find(plugin => plugin.manifest.id === pluginId)
+                      ?.recentRuns,
+                    error: hooks.error,
+                  },
+                  null,
+                  2
+                )
+              ).catch(error => console.error('[async-hooks-diagnostics]', error))
+            } catch (diagnosticError) {
+              console.error('[async-hooks-diagnostics]', diagnosticError)
+            }
+          }
+        }
         if (installed) await rpc('runtime.hooks.delete', { pluginId })
         if (!verified) {
           const diagnostics = join(resultDir, 'scenario-diagnostics')

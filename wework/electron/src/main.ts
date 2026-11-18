@@ -2339,9 +2339,11 @@ async function shutdown(): Promise<void> {
     traceShutdownStep('plugin-development', () => development?.stop()),
     traceShutdownStep('desktop-runtime', () => desktopRuntime?.stop()),
   ])
-  await localWorkspaceCatalogLog.flush().catch(() => {
-    console.warn('[Wework] Failed to flush local workspace catalog diagnostics')
-  })
+  await traceShutdownStep('workspace-catalog-log', () => localWorkspaceCatalogLog.flush()).catch(
+    () => {
+      console.warn('[Wework] Failed to flush local workspace catalog diagnostics')
+    }
+  )
   const stopFailures = stoppedServices.filter(result => result.status === 'rejected')
   if (stopFailures.length)
     throw new AggregateError(

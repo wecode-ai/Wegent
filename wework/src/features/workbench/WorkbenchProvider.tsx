@@ -1,3 +1,4 @@
+import { useE2ELifecycleTrace } from '@/e2e/useE2ELifecycleTrace'
 import { useWorkbenchServiceConnections } from './workbenchServiceConnections'
 import { recordUiRender } from '@/e2e/ui-refresh-capture'
 import { getChangeRequestMonitor } from './changeRequestMonitor'
@@ -245,6 +246,11 @@ function OwnedWorkbenchProvider({
   recordUiRender('workbench-provider')
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
+  useE2ELifecycleTrace('WorkbenchOwner', {
+    workspaceTabId,
+    userId: workbenchIdentity.id,
+    cloud: cloudConnection?.isConnected ?? false,
+  })
   const isWorkspaceTabActive = useOptionalWorkspaceTabActivity()
   const canNavigateWorkspaceTab = useStableEvent(
     () => !workspaceTabId || !isWorkspaceTabActive || isWorkspaceTabActive(workspaceTabId)

@@ -22,7 +22,24 @@ export function handleModelSubscriptionUsage(
 ) {
   if (request.method !== 'GET' || request.url?.split('?')[0] !== '/backend-api/wham/usage')
     return false
-  response.writeHead(200, { 'content-type': 'application/json' })
-  response.end(JSON.stringify(readUsage()))
+  const writeUsage = usage => {
+    if (response.destroyed) return
+    response.writeHead(200, { 'content-type': 'application/json' })
+    response.end(JSON.stringify(usage))
+  }
+  const failUsage = error => {
+    console.error('[desktop-e2e] Model usage fixture failed', error)
+    if (response.destroyed) return
+    response.writeHead(500, { 'content-type': 'application/json' })
+    response.end(JSON.stringify({ error: 'Model usage fixture failed' }))
+  }
+  try {
+    const usage = readUsage()
+    if (usage && typeof usage.then === 'function')
+      void Promise.resolve(usage).then(writeUsage).catch(failUsage)
+    else writeUsage(usage)
+  } catch (error) {
+    failUsage(error)
+  }
   return true
 }
