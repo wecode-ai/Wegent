@@ -45,6 +45,7 @@ export function checkpointScenarioEnv(env, checkpoint) {
     checkpoint === 'native-window-chrome' ||
     checkpoint === 'window-lifecycle' ||
     checkpoint === 'core-task-flow' ||
+    checkpoint === 'task-completion-notifications' ||
     checkpoint === 'project-assignment-notification' ||
     checkpoint === 'stand-in-profile-settings' ||
     checkpoint === 'stand-in-git' ||

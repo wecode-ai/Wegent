@@ -6,7 +6,7 @@ sidebar_position: 12
 
 The fixed baseline `d13154ab65` contains **251 non-group checkpoint registrations**. Each was reviewed for timing, duplicate assertions and functional importance. **76 registrations (30.28%) are removed** and 175 retained. This includes ordinary UI matrices, duplicate scenarios, hosted aliases and dead registrations. Complete flows were not regrouped to manufacture deletion counts. Required safety assertions remain in existing hosts; retained coverage is not a claim that every removed UI combination is equivalent.
 
-The initial count of 248 missed registrations. Enumerating every baseline catalog definition corrected the count to 251 and raised the target to 76. Four later main additions—`connection-observation-storage`, `issue-reference-open`, `paste-image-send` and `runtime-load-performance`—are outside that fixed denominator; the current catalog has 179 non-group registrations. Main added immediate-send coverage to `clipboard-history-image`, so that checkpoint was restored and withdrawn from the deletion count.
+The initial count of 248 missed registrations. Enumerating every baseline catalog definition corrected the count to 251 and raised the target to 76. Five later main additions—`connection-observation-storage`, `issue-reference-open`, `paste-image-send`, `runtime-load-performance` and `task-completion-notifications`—are outside that fixed denominator; the current catalog has 180 non-group registrations. Main added immediate-send coverage to `clipboard-history-image`, so that checkpoint was restored and withdrawn from the deletion count.
 
 ## Parallel capacity
 

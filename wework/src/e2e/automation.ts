@@ -2913,6 +2913,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'focusMainWindow':
       await invokeDesktopHost('e2e.focusMainWindow')
       return ''
+    case 'blurMainWindow':
+      await invokeDesktopHost('e2e.blurMainWindow')
+      return ''
     case 'pressWindowKey':
       await invokeDesktopHost('e2e.pressKey', {
         windowLabel: getDesktopWindowLabel(),

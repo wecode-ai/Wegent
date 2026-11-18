@@ -6,7 +6,7 @@ sidebar_position: 12
 
 本次以固定提交 `d13154ab65` 的 **251 个非分组用例注册项**为基线，逐项审查耗时、重复验证和功能重要性，实际删除 **76 项（30.28%）**，保留 175 项。删除包含普通 UI 矩阵、重复场景、宿主别名和死注册；没有通过重组完整流程来替代删除。安全子断言继续由现有宿主执行，表中的保留覆盖不表示完整替代被删除的 UI 组合。
 
-最初的 248 项统计遗漏了注册项；复核固定提交的全部目录定义后改为 251 项，并将目标提高到 76。最新 main 另外新增的 `connection-observation-storage`、`issue-reference-open`、`paste-image-send`、`runtime-load-performance` 不混入旧基线，当前目录有 179 个非分组注册项。`clipboard-history-image` 因 main 新增粘贴后立即发送覆盖而恢复保留，已撤出删除数量。
+最初的 248 项统计遗漏了注册项；复核固定提交的全部目录定义后改为 251 项，并将目标提高到 76。最新 main 另外新增的 `connection-observation-storage`、`issue-reference-open`、`paste-image-send`、`runtime-load-performance`、`task-completion-notifications` 不混入旧基线，当前目录有 180 个非分组注册项。`clipboard-history-image` 因 main 新增粘贴后立即发送覆盖而恢复保留，已撤出删除数量。
 
 ## 并行度
 
