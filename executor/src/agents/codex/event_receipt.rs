@@ -180,7 +180,7 @@ mod tests {
         legacy["id"] = json!("wework_event_4af404a14e6a5e37428a4d00a0ab1a45");
         let legacy = json!({"type":"response_item","payload":legacy});
         let receipt = read_rows(
-            rows(&[legacy.clone()]).as_bytes(),
+            rows(std::slice::from_ref(&legacy)).as_bytes(),
             "thread-original",
             &current,
         )
