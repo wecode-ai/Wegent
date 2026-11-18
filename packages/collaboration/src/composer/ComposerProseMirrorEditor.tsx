@@ -832,7 +832,7 @@ export const ComposerProseMirrorEditor = forwardRef<
       />
       {!hasContent && !composing && (
         <div
-          className={`${props.className} composer-prosemirror-placeholder pointer-events-none absolute inset-0 !text-text-secondary`}
+          className={`${props.className} composer-prosemirror-placeholder pointer-events-none absolute inset-0 !text-text-muted/55`}
           data-testid={
             props.prediction && !props.disabled
               ? `${props.testId}-prediction`
