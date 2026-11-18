@@ -46,7 +46,8 @@ classify_wework_path() {
       wework/e2e/desktop/modules/plugin-personal-uninstall-flow.mjs)
       select_target "cloud:plugin-toggle-persistence"
       return
-      ;;    wework/e2e/desktop/modules/github-release-asset.mjs)
+      ;;
+    wework/e2e/desktop/modules/github-release-asset.mjs)
       select_target "core:harness-app-lifecycle"
       select_target "core:harness-app-models"
       select_target "cloud:plugin-legacy-upgrade"
@@ -175,10 +176,8 @@ classify_wework_path() {
       ;;
 
     # Keep startup interruption recovery covered when its host implementation changes.
-    wework/electron/src/host/renderer-startup-loader* | \
-      wework/electron/src/host/e2e-startup-network-fault* | \
-      wework/e2e/desktop/scenarios/startup-network-change.scenario.mjs)
-      select_target "core:startup-network-change"
+    wework/electron/src/host/renderer-startup-loader*)
+      select_target "core:startup-fault-isolation"
       return
       ;;
 

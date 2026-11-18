@@ -189,13 +189,11 @@ done
 
 for path in \
   wework/electron/src/host/renderer-startup-loader.ts \
-  wework/electron/src/host/renderer-startup-loader.test.ts \
-  wework/electron/src/host/e2e-startup-network-fault.ts \
-  wework/e2e/desktop/scenarios/startup-network-change.scenario.mjs; do
+  wework/electron/src/host/renderer-startup-loader.test.ts; do
   assert_desktop_case "Startup interruption path selects its desktop regression: $path" \
     'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"startup-network-change"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"startup-fault-isolation"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' "$path"
 done
