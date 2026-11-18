@@ -5,12 +5,38 @@ export const WINDOWS_NATIVE_DIAGNOSTIC_FIELDS = [
   'uia-button-type-matches',
   'uia-button-handle-matches',
   'uia-button-control-type-id',
+  'uia-provider-button-factories',
+  'uia-provider-created-matches',
   'native-handle-present',
   'native-pid-matches',
   'native-dialog-class-matches',
   'win32-children',
   'win32-buttons',
 ]
+
+/** Inspect the installed official provider only after identity validation failed. */
+export const WINDOWS_UIA_PROVIDER_DIAGNOSTICS = `
+function Read-ButtonProvider([IntPtr]$handle) {
+  try {
+    Write-DecisionStage 'provider-load-started'
+    $proxyName = [System.Windows.Automation.AutomationElement].Assembly.GetName()
+    $proxyName.Name = 'UIAutomationClientsideProviders'
+    $proxyAssembly = [System.Reflection.Assembly]::Load($proxyName)
+    Write-DecisionStage 'provider-loaded'
+    $proxyType = $proxyAssembly.GetType($proxyName.Name + '.UIAutomationClientSideProviders', $true)
+    $proxyTable = $proxyType.GetField('ClientSideProviderDescriptionTable').GetValue($null)
+    $factories = @($proxyTable | Where-Object { $_.ClassName -eq 'Button' })
+    Write-Output ("native-decision-structure:uia-provider-button-factories:{0}" -f $factories.Count)
+    if ($factories.Count -eq 1) {
+      Write-DecisionStage 'provider-create-started'
+      $proxy = $factories[0].ClientSideProviderFactoryCallback.Invoke($handle, 0, 0)
+      Write-Output ("native-decision-structure:uia-provider-created-matches:{0}" -f [int]($null -ne $proxy))
+    }
+  } catch {
+    Write-DecisionStage 'provider-diagnostics-failed'
+  }
+}
+`
 
 /** Capture one lightweight UIA snapshot before the native search can be terminated. */
 export const WINDOWS_UIA_STRUCTURE_DIAGNOSTICS = `
