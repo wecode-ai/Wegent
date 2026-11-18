@@ -76,18 +76,23 @@ export function createDesktopScenario({ workspacePath, resultDir, uiTimeoutMs })
         'The speed fixture did not return to a blank conversation',
         uiTimeoutMs
       )
-      const readyCount = control.readyCount
-      await control.command('reloadMainWindow', 'body')
-      await control.awaitReadyAfter(readyCount, WORKBENCH_READY_TIMEOUT_MS)
-
       let sidebarElapsedMs = null
       let conversationElapsedMs = null
       let measurementError = null
       try {
-        // Control readiness is emitted before the app mounts, so splash and
-        // process bootstrap stay outside this budget while the first sidebar
-        // fetch and paint stay inside it.
-        const sidebarStartedAt = performance.now()
+        const readyCount = control.readyCount
+        await control.command('reloadMainWindow', 'body')
+        const ready = await control.awaitReadyAfter(readyCount, WORKBENCH_READY_TIMEOUT_MS)
+        const sidebarStartedAt = ready?.receivedAtMs
+        assert.equal(
+          typeof sidebarStartedAt,
+          'number',
+          'Desktop readiness did not include its measurement timestamp'
+        )
+
+        // Readiness is emitted before the app mounts. Measuring from that exact
+        // event keeps process bootstrap outside the budget while counting the
+        // first sidebar fetch and paint.
         await control.command('waitFor', row, { visible: true, timeoutMs: uiTimeoutMs })
         sidebarElapsedMs = performance.now() - sidebarStartedAt
 
@@ -119,9 +124,8 @@ export function createDesktopScenario({ workspacePath, resultDir, uiTimeoutMs })
         JSON.stringify(
           {
             budgetMs: LOAD_BUDGET_MS,
-            sidebarLoadMs: sidebarElapsedMs == null ? null : Number(sidebarElapsedMs.toFixed(3)),
-            conversationOpenMs:
-              conversationElapsedMs == null ? null : Number(conversationElapsedMs.toFixed(3)),
+            sidebarLoadMs: sidebarElapsedMs,
+            conversationOpenMs: conversationElapsedMs,
             taskId: task.taskId,
             error:
               measurementError instanceof Error

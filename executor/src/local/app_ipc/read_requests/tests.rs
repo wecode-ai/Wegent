@@ -497,6 +497,37 @@ async fn padded_connection_read_methods_are_limited_and_cancellable() {
 }
 
 #[tokio::test]
+async fn connection_read_waits_for_active_capacity() {
+    let admission = new_connection_read_admission();
+    let requests = ConnectionReadRequests::new(new_history_read_admission(), admission.clone());
+    let method = "runtime.connections.git.read";
+    let (mut first, _) = requests.admit(Some(method), "first").unwrap().unwrap();
+    let (mut second, _) = requests.admit(Some(method), "second").unwrap().unwrap();
+    let (mut third, _) = requests.admit(Some(method), "third").unwrap().unwrap();
+
+    first.wait_for_admission().await.unwrap();
+    second.wait_for_admission().await.unwrap();
+    {
+        let third_wait = third.wait_for_admission();
+        tokio::pin!(third_wait);
+        assert!(
+            futures_util::poll!(third_wait.as_mut()).is_pending(),
+            "the third connection read must wait for an active permit"
+        );
+
+        drop(first);
+        third_wait.await.unwrap();
+    }
+    assert_eq!(admission.active.available_permits(), 0);
+    drop(second);
+    drop(third);
+    assert_eq!(
+        admission.active.available_permits(),
+        MAX_CONCURRENT_CONNECTION_READS
+    );
+}
+
+#[tokio::test]
 async fn history_queue_is_bounded_globally_and_waiting_cancellation_releases_capacity() {
     let runtime = ControlledRuntime::default();
     let server = AppIpcServer::new().with_runtime_work_handler(runtime.clone());
