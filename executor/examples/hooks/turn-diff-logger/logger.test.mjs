@@ -46,13 +46,15 @@ async function fixture(
   const workspace = join(root, workspaceDirectory)
   const logs = join(root, 'logs')
   await mkdir(workspace, { recursive: true })
-  git(workspace, 'init', '--quiet', '--template=')
-  git(workspace, 'config', 'user.name', 'Hook Tests')
-  git(workspace, 'config', 'user.email', 'hooks@example.invalid')
+  // Setup must create the long repository before its persisted setting is tested.
+  const prepareGit = (...args) => git(workspace, '-c', 'core.longpaths=true', ...args)
+  prepareGit('init', '--quiet', '--template=')
+  prepareGit('config', 'user.name', 'Hook Tests')
+  prepareGit('config', 'user.email', 'hooks@example.invalid')
   await writeFile(join(workspace, 'source.txt'), 'original\n')
   if (commit) {
-    git(workspace, 'add', '.')
-    git(workspace, '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'baseline')
+    prepareGit('add', '.')
+    prepareGit('-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'baseline')
   }
   const event = (sequence, hook_event_name = 'TurnCompleted', execution_id = 'one') => ({
     schema_version: 1,
@@ -503,7 +505,7 @@ test('long snapshot refs use per-call long-path support without changing reposit
   const f = await fixture(t, {
     workspaceDirectory: join('long-snapshot-parent-'.repeat(7), 'workspace with spaces'),
   })
-  git(f.workspace, 'config', 'core.longpaths', 'false')
+  git(f.workspace, '-c', 'core.longpaths=true', 'config', '--local', 'core.longpaths', 'false')
   assert.equal(await runGit(f.workspace, ['config', '--get', 'core.longpaths']), 'true')
   const start = await f.invoke(f.event(0, 'TurnStarted'))
   await writeFile(join(f.workspace, 'source.txt'), 'long-path change\n')
@@ -522,8 +524,21 @@ test('long snapshot refs use per-call long-path support without changing reposit
   const found = await records(f.logs)
   assert.equal(found.length, 1)
   assert.match(await readFile(patchPath(f, found[0]), 'utf8'), /\+long-path change/)
-  assert.equal(git(f.workspace, 'config', '--get', 'core.longpaths'), 'false')
-  assert.equal(git(f.workspace, 'for-each-ref', '--format=%(refname)', 'refs/wegent/turn-diff'), '')
+  assert.equal(
+    git(f.workspace, '-c', 'core.longpaths=true', 'config', '--local', '--get', 'core.longpaths'),
+    'false'
+  )
+  assert.equal(
+    git(
+      f.workspace,
+      '-c',
+      'core.longpaths=true',
+      'for-each-ref',
+      '--format=%(refname)',
+      'refs/wegent/turn-diff'
+    ),
+    ''
+  )
 })
 
 test('normal callbacks launch detached workers and release accepted snapshot refs', async t => {
