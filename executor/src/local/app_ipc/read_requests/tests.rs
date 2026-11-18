@@ -102,14 +102,14 @@ fn request(id: &str, method: &str) -> Value {
 #[test]
 fn cancellation_only_covers_cooperative_reads() {
     for method in CANCELLABLE_READ_METHODS {
-        assert!(is_cancellable_read(Some(method)));
+        assert!(admission_kind(Some(method)).is_some());
     }
     for method in [
         "runtime.tasks.transcript.search",
         "runtime.tasks.search",
         "runtime.tasks.send",
     ] {
-        assert!(!is_cancellable_read(Some(method)));
+        assert!(admission_kind(Some(method)).is_none());
     }
 }
 
@@ -263,15 +263,29 @@ async fn history_reads_wait_across_connections_without_blocking_control_requests
 
 #[tokio::test]
 async fn queued_history_admission_is_fifo_across_connections() {
-    let admission = Arc::new(HistoryReadAdmission::default());
-    let first_connection = ConnectionReadRequests::new(admission.clone());
-    let second_connection = ConnectionReadRequests::new(admission.clone());
-    let (mut first, _) = first_connection.admit("first").unwrap();
-    let (mut second, _) = second_connection.admit("second").unwrap();
+    let admission = new_history_read_admission();
+    let first_connection =
+        ConnectionReadRequests::new(admission.clone(), new_connection_read_admission());
+    let second_connection =
+        ConnectionReadRequests::new(admission.clone(), new_connection_read_admission());
+    let (mut first, _) = first_connection
+        .admit(Some("runtime.tasks.transcript"), "first")
+        .unwrap()
+        .unwrap();
+    let (mut second, _) = second_connection
+        .admit(Some("runtime.tasks.transcript"), "second")
+        .unwrap()
+        .unwrap();
     first.wait_for_admission().await.unwrap();
     second.wait_for_admission().await.unwrap();
-    let (mut queued_first, _) = second_connection.admit("queued-first").unwrap();
-    let (mut queued_second, _) = first_connection.admit("queued-second").unwrap();
+    let (mut queued_first, _) = second_connection
+        .admit(Some("runtime.tasks.transcript"), "queued-first")
+        .unwrap()
+        .unwrap();
+    let (mut queued_second, _) = first_connection
+        .admit(Some("runtime.tasks.transcript"), "queued-second")
+        .unwrap()
+        .unwrap();
     {
         let first_wait = queued_first.wait_for_admission();
         let second_wait = queued_second.wait_for_admission();
@@ -295,6 +309,49 @@ async fn queued_history_admission_is_fifo_across_connections() {
         admission.pending.available_permits(),
         MAX_PENDING_HISTORY_READS
     );
+}
+
+#[tokio::test]
+async fn connection_reads_do_not_consume_transcript_admission() {
+    let runtime = ControlledRuntime::default();
+    let server = AppIpcServer::new().with_runtime_work_handler(runtime.clone());
+    let (mut reader, mut writer) = connect(server).await;
+
+    for index in 0..MAX_CONCURRENT_CONNECTION_READS {
+        write_frame(
+            &mut writer,
+            request(
+                &format!("connection-{index}"),
+                "runtime.connections.git.read",
+            ),
+        )
+        .await;
+        runtime.entered.notified().await;
+    }
+    assert_eq!(
+        runtime.started.load(Ordering::SeqCst),
+        MAX_CONCURRENT_CONNECTION_READS
+    );
+
+    write_frame(
+        &mut writer,
+        request("transcript", "runtime.tasks.transcript"),
+    )
+    .await;
+    runtime.entered.notified().await;
+    assert_eq!(
+        runtime.started.load(Ordering::SeqCst),
+        MAX_CONCURRENT_CONNECTION_READS + 1
+    );
+
+    for _ in 0..=MAX_CONCURRENT_CONNECTION_READS {
+        runtime.release.notify_one();
+    }
+    let mut ids = Vec::new();
+    for _ in 0..=MAX_CONCURRENT_CONNECTION_READS {
+        ids.push(read_response(&mut reader).await["id"].clone());
+    }
+    assert!(ids.contains(&json!("transcript")));
 }
 
 #[tokio::test]

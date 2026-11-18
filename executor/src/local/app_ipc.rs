@@ -75,7 +75,8 @@ use crate::{
     version::get_version,
 };
 use read_requests::{
-    is_cancellable_read, wait_for_cancellation, ConnectionReadRequests, HistoryReadAdmission,
+    new_connection_read_admission, new_history_read_admission, wait_for_cancellation,
+    ConnectionReadRequests, ReadAdmission,
 };
 
 const DEFAULT_DEVICE_ID: &str = "local-device";
@@ -359,7 +360,8 @@ pub struct AppIpcServer {
     event_tx: broadcast::Sender<Value>,
     event_hub: ExecutorEventHub,
     bundled_plugin_marketplace: Arc<BlockingSingleFlight<BundledPluginMarketplace>>,
-    history_read_admission: Arc<HistoryReadAdmission>,
+    history_read_admission: Arc<ReadAdmission>,
+    connection_read_admission: Arc<ReadAdmission>,
     connection_read_only: bool,
     connection_provider_declarations: Arc<Vec<Value>>,
 }
@@ -378,7 +380,8 @@ impl Default for AppIpcServer {
             event_tx,
             event_hub,
             bundled_plugin_marketplace: Arc::new(BlockingSingleFlight::default()),
-            history_read_admission: Arc::new(HistoryReadAdmission::default()),
+            history_read_admission: new_history_read_admission(),
+            connection_read_admission: new_connection_read_admission(),
             connection_read_only: false,
             connection_provider_declarations: Arc::new(Vec::new()),
         }
@@ -1320,7 +1323,10 @@ impl AppIpcServer {
         let mut events = self.event_hub.subscribe_live();
         let mut frame = Vec::new();
         let mut bulk_backpressure_reported = false;
-        let read_requests = ConnectionReadRequests::new(self.history_read_admission.clone());
+        let read_requests = ConnectionReadRequests::new(
+            self.history_read_admission.clone(),
+            self.connection_read_admission.clone(),
+        );
         loop {
             frame.clear();
             tokio::select! {
@@ -1362,11 +1368,9 @@ impl AppIpcServer {
                             None,
                         );
                     }
-                    let admission = if is_cancellable_read(method.as_deref()) {
-                        request_id.as_deref().map(|id| read_requests.admit(id))
-                    } else {
-                        None
-                    };
+                    let admission = request_id
+                        .as_deref()
+                        .and_then(|id| read_requests.admit(method.as_deref(), id));
                     let (mut read_guard, mut cancellation) = match admission {
                         Some(Ok((guard, receiver))) => (Some(guard), Some(receiver)),
                         Some(Err(error)) => {
