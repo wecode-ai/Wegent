@@ -94,7 +94,9 @@ pub(super) fn retain_function_tools(request: &mut Value) -> Result<(), HttpError
 // rejects. The ID is only a local receipt key, so omit it from the replayed input.
 fn strip_legacy_event_message_ids(body: &[u8]) -> Result<Cow<'_, [u8]>, HttpError> {
     const LEGACY_PREFIX: &str = "wework_event_";
-    if !std::str::from_utf8(body).is_ok_and(|body| body.contains(LEGACY_PREFIX)) {
+    if !std::str::from_utf8(body)
+        .is_ok_and(|body| body.contains(LEGACY_PREFIX) || body.contains(r"\u"))
+    {
         return Ok(Cow::Borrowed(body));
     }
     let mut request: Value = serde_json::from_slice(body).map_err(|error| HttpError {

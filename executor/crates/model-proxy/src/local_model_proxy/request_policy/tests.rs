@@ -87,9 +87,12 @@ async fn official_chatgpt_normalizes_foreign_reasoning_before_forwarding() {
         ]
     });
 
+    let encoded = serde_json::to_string(&original)
+        .unwrap()
+        .replace("wework_event_", r"\u0077ework_event_");
     let prepared = prepare(
         &upstream,
-        &serde_json::to_vec(&original).unwrap(),
+        encoded.as_bytes(),
         None,
         &Default::default(),
         false,
