@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Cursor-based external synchronization and source-health probes.
-
 use super::{
-    cleanup, import,
+    cleanup,
+    import,
     index::enabled,
     sources::{self, SourceError},
     store,
@@ -282,17 +282,77 @@ async fn refresh_web_document(state: &Arc<AppState>, id: i64, generation: i64) -
                 ).await;
                 return Ok(false);
             }
-            // Content changed: store the new hash and trigger refresh via the shared external refresh path.
+            // Content changed: prepare the document for refresh, replace the
+            // attachment, and submit the index task.
             if let Some(obj) = source_config.get_mut("webAutoUpdate").and_then(Value::as_object_mut) {
                 obj.insert("content_hash".to_string(), json!(hash));
             }
-            let _ = state.mysql.execute(
-                "UPDATE knowledge_documents SET source_config = ?, updated_at = NOW() WHERE id = ? AND index_generation = ?",
-                (Json(&source_config), id, generation),
-            ).await?;
-            // The actual content replacement and re-index are handled by the manual refresh endpoint
-            // (POST /api/web-scraper/refresh) which shares the same hash-comparison logic.
-            // For the scheduled path we mark the document for refresh and return.
+            // 1. Prepare the document (increment generation, mark as processing).
+            let prepared = store::enqueue(&state.mysql, id, Some(generation), false, false).await?;
+            let was_success = prepared.previous_status.as_deref() == Some("success");
+            let Some(document) = prepared.document.filter(|_| prepared.accepted) else {
+                return Ok(false);
+            };
+            cleanup::cleanup_replaced(state, document.user_id, prepared.cleanup).await;
+
+            // 2. Upload the new content as an attachment.
+            let user_id = document.user_id;
+            let attachment = match crate::attachments::upload::upload_attachment_context(
+                state, user_id, &format!("{id}.md"), text.as_bytes(), 0, None,
+            ).await {
+                Ok(attachment) => attachment,
+                Err(upload_error) => {
+                    let public = super::state::processing_error(
+                        "web_refresh",
+                        "web_attachment_upload_failed",
+                        "The web document content could not be stored.",
+                        document.generation,
+                        Utc::now(),
+                    );
+                    let failure = store::fail(&state.mysql, id, document.generation, public, true, false).await?;
+                    cleanup::cleanup_replaced(state, user_id, failure.cleanup).await;
+                    tracing::warn!(document_id = id, error = ?upload_error, "Web auto-update attachment upload failed");
+                    return Ok(false);
+                }
+            };
+
+            // 3. Update the document's attachment and hash.
+            if let Err(update_error) = state.mysql.execute(
+                "UPDATE knowledge_documents SET attachment_id = ?, file_extension = 'md', file_size = ?, source_config = ?, updated_at = NOW() WHERE id = ? AND index_generation = ?",
+                (attachment, text.len() as i64, Json(&source_config), id, document.generation),
+            ).await {
+                let public = super::state::processing_error(
+                    "web_refresh",
+                    "web_attachment_update_failed",
+                    "The web document could not be updated.",
+                    document.generation,
+                    Utc::now(),
+                );
+                let failure = store::fail(&state.mysql, id, document.generation, public, true, false).await?;
+                cleanup::cleanup_replaced(state, user_id, failure.cleanup).await;
+                tracing::warn!(document_id = id, %update_error, "Web auto-update document update failed");
+                return Err(anyhow::anyhow!(update_error.to_string()));
+            }
+
+            // 4. Submit the index task.
+            if let Err(dispatch_error) = submit(
+                state,
+                super::index::NAME,
+                json!({"document_id": id, "expected_generation": document.generation}),
+                None,
+            ).await {
+                let public = super::state::processing_error(
+                    "dispatch",
+                    "web_index_dispatch_failed",
+                    "The web document index task could not be queued.",
+                    document.generation,
+                    Utc::now(),
+                );
+                let failure = store::fail(&state.mysql, id, document.generation, public, true, false).await?;
+                cleanup::cleanup_replaced(state, user_id, failure.cleanup).await;
+                tracing::warn!(document_id = id, %dispatch_error, "Web auto-update index dispatch failed");
+                return Ok(false);
+            }
             return Ok(true);
         }
     }

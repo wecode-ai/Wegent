@@ -34,7 +34,7 @@ struct WebAutoUpdateResponse {
 }
 
 /// PUT /api/knowledge-bases/{kb_id}/web-auto-update.
-#[brz_http_server::put("/api/knowledge-bases/{kb_id}/web-auto-update")]
+#[brz_http_server::put("/api/knowledge-bases/:kb_id/web-auto-update")]
 async fn set_web_auto_update(
     #[inject(state)] state: &Arc<AppState>,
     #[auth] user: crate::auth::SessionUser,
@@ -47,11 +47,12 @@ async fn set_web_auto_update(
         .ok_or_else(|| FastApiError::unhandled())?;
     let user_id = i64::from(user.id);
     require_manage(state, kb_id, user_id).await?;
+    let json_bool = if enabled { "true" } else { "false" };
     state
         .mysql
         .execute(
-            "UPDATE kinds SET json = JSON_SET(json, '$.spec.webAutoUpdateEnabled', ?), updated_at = NOW() WHERE id = ? AND kind = 'KnowledgeBase' AND is_active = true",
-            (enabled, kb_id),
+            "UPDATE kinds SET json = JSON_SET(json, '$.spec.webAutoUpdateEnabled', CAST(? AS JSON)), updated_at = NOW() WHERE id = ? AND kind = 'KnowledgeBase' AND is_active = true",
+            (json_bool, kb_id),
         )
         .await
         .map_err(|_| FastApiError::unhandled())?;
@@ -59,7 +60,7 @@ async fn set_web_auto_update(
 }
 
 /// GET /api/knowledge-bases/{kb_id}/web-auto-update.
-#[brz_http_server::get("/api/knowledge-bases/{kb_id}/web-auto-update")]
+#[brz_http_server::get("/api/knowledge-bases/:kb_id/web-auto-update")]
 async fn get_web_auto_update(
     #[inject(state)] state: &Arc<AppState>,
     #[auth] user: crate::auth::SessionUser,

@@ -78,19 +78,40 @@ impl ScrapeOutcome {
     }
 }
 
-/// A shared HTTP client for page fetching (no redirects, trust anchors, timeouts).
-fn http_client() -> Result<brz_http::Client, anyhow::Error> {
-    Ok(brz_http::Client::builder()
+/// Resolve the host, verify the resolved addresses are public, and build an
+/// HTTP client bound to those addresses (prevents TOCTOU SSRF).
+async fn validated_client(url: &url::Url) -> Result<brz_http::Client, ScrapeOutcome> {
+    let host = url.host_str().unwrap_or_default().to_string();
+    let port = url.port_or_known_default().unwrap_or(80);
+    let addresses: Vec<std::net::SocketAddr> = match url.host() {
+        Some(url::Host::Ipv4(ip)) => vec![std::net::SocketAddr::new(std::net::IpAddr::V4(ip), port)],
+        Some(url::Host::Ipv6(ip)) => vec![std::net::SocketAddr::new(std::net::IpAddr::V6(ip), port)],
+        Some(url::Host::Domain(domain)) => {
+            match tokio::net::lookup_host((domain, port)).await {
+                Ok(addrs) => addrs.collect(),
+                Err(_) => return Err(ScrapeOutcome::error(ERROR_FETCH_FAILED, "Host could not be resolved")),
+            }
+        }
+        None => return Err(ScrapeOutcome::error(ERROR_INVALID_URL, "URL has no host")),
+    };
+    if addresses.is_empty() || addresses.iter().all(|address| !crate::background_jobs::download::is_public_ip(address.ip())) {
+        return Err(ScrapeOutcome::error(ERROR_SSRF_BLOCKED, "Host resolves to a non-public address"));
+    }
+    let client = brz_http::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(10))
         .read_timeout(std::time::Duration::from_secs(60))
         .configure(|builder| {
-            let builder = builder.redirect(brz_http::reqwest::redirect::Policy::none());
+            let builder = builder
+                .redirect(brz_http::reqwest::redirect::Policy::none())
+                .resolve_to_addrs(&host, &addresses);
             match crate::http_trust::trust_anchor() {
                 Some(anchor) => builder.add_root_certificate(anchor),
                 None => builder,
             }
         })
-        .build()?)
+        .build()
+        .map_err(|_| ScrapeOutcome::error(ERROR_FETCH_FAILED, "HTTP client build failed"))?;
+    Ok(client)
 }
 
 /// Fetch a page's text content over plain HTTP (no browser rendering).
@@ -104,18 +125,21 @@ pub async fn fetch_url_content(url: &str) -> ScrapeOutcome {
         return ScrapeOutcome::error(guard_error.error_code, guard_error.message);
     }
 
-    let client = match http_client() {
-        Ok(client) => client,
-        Err(_) => {
-            return ScrapeOutcome::error(ERROR_FETCH_FAILED, "HTTP client unavailable");
-        }
+    let parsed = match url::Url::parse(url) {
+        Ok(parsed) => parsed,
+        Err(_) => return ScrapeOutcome::error(ERROR_INVALID_URL, "Invalid URL format"),
+    };
+
+    let client = match validated_client(&parsed).await {
+        Ok(result) => result,
+        Err(outcome) => return outcome,
     };
 
     let builder = match client.get(url) {
         Ok(builder) => builder,
         Err(e) => return ScrapeOutcome::error(ERROR_FETCH_FAILED, format!("Request build failed: {e}")),
     };
-    let response = match builder.send().await {
+    let mut response = match builder.send().await {
         Ok(response) => response,
         Err(send_error) => {
             return ScrapeOutcome::error(
@@ -132,16 +156,25 @@ pub async fn fetch_url_content(url: &str) -> ScrapeOutcome {
         );
     }
 
-    let html = match response.text().await {
-        Ok(text) => text,
-        Err(read_error) => {
-            return ScrapeOutcome::error(
-                ERROR_FETCH_FAILED,
-                format!("Failed to read page body: {read_error}"),
-            );
+    // P2-2: bounded body read (10 MB limit to prevent OOM on large pages).
+    const MAX_BODY_BYTES: usize = 10 * 1024 * 1024;
+    let mut bytes = Vec::new();
+    loop {
+        match response.chunk().await {
+            Ok(Some(chunk)) => {
+                if bytes.len() + chunk.len() > MAX_BODY_BYTES {
+                    return ScrapeOutcome::error(ERROR_FETCH_FAILED, "Page body exceeds 10 MB limit");
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            Ok(None) => break,
+            Err(read_error) => {
+                return ScrapeOutcome::error(ERROR_FETCH_FAILED, format!("Failed to read body: {read_error}"));
+            }
         }
-    };
+    }
 
+    let html = String::from_utf8_lossy(&bytes);
     let text = strip_html(&html);
     if text.trim().is_empty() {
         return ScrapeOutcome::error(ERROR_CONTENT_EMPTY, "Extracted text is empty");
@@ -156,16 +189,42 @@ pub async fn fetch_url_content(url: &str) -> ScrapeOutcome {
 }
 
 /// Strip HTML tags and decode the most common entities to plain text.
+///
+/// Content inside `<script>` and `<style>` tags is discarded entirely: those
+/// blocks contain JavaScript and CSS rather than page text, and hashing them
+/// would produce false positives when scripts change but visible content does not.
 fn strip_html(html: &str) -> String {
+    let lower = html.to_ascii_lowercase();
     let mut output = String::with_capacity(html.len());
-    let mut inside_tag = false;
-    let mut chars = html.chars().peekable();
-    while let Some(char) = chars.next() {
-        match char {
-            '<' => inside_tag = true,
-            '>' => inside_tag = false,
-            _ if !inside_tag => output.push(char),
-            _ => {}
+    let mut bytes = html.as_bytes();
+    let mut index = 0;
+
+    while index < bytes.len() {
+        if bytes[index] == b'<' {
+            let rest = &lower[index..];
+            // Check for script/style blocks and skip to their closing tag.
+            let skip_tag = ["<script", "<style"].iter()
+                .find(|tag| rest.starts_with(**tag));
+            if let Some(open_tag) = skip_tag {
+                let tag_name = &open_tag[1..]; // "script" or "style"
+                let close = format!("</{tag_name}>");
+                if let Some(close_pos) = rest.find(&close) {
+                    index += close_pos + close.len();
+                    continue;
+                }
+                // Unclosed script/style: skip the rest of the document.
+                index = bytes.len();
+                continue;
+            }
+            // Regular tag: skip to '>'.
+            if let Some(gt) = lower[index..].find('>') {
+                index += gt + 1;
+            } else {
+                break;
+            }
+        } else {
+            output.push(bytes[index] as char);
+            index += 1;
         }
     }
     decode_entities(&output)
@@ -257,7 +316,8 @@ mod tests {
         assert_eq!(strip_html("<div>a&lt;b&gt;c</div>"), "a<b>c");
         assert_eq!(strip_html(""), "");
         assert_eq!(strip_html("no tags"), "no tags");
-        assert_eq!(strip_html("<script>var x=1;</script>visible"), "var x=1;visible");
+        assert_eq!(strip_html("<script>var x=1;</script>visible"), "visible");
+        assert_eq!(strip_html("<style>body{color:red}</style>text"), "text");
         assert_eq!(strip_html("a &nbsp; b"), "a   b");
     }
 
