@@ -277,14 +277,17 @@ impl RuntimeWorkRpcHandler {
         }
         // Capture the activation window before returning, without another collection.
         if record["status"] == "armed" && record["cloud_subscription"].is_null() {
-            record =
-                event_store::update(&self.event_subscription_path(), event_store::Scope::Source(&observation_id), |state| {
+            record = event_store::update(
+                &self.event_subscription_path(),
+                event_store::Scope::Source(&observation_id),
+                |state| {
                     let stored = &state["observations"][&observation_id];
                     let observation =
                         json!({"sequence":stored["sequence"],"events":stored["events"]});
                     observations::capture_consumers(state, &observation_id, &observation);
                     Ok(state["operations"][&id].clone())
-                })?;
+                },
+            )?;
             self.save_event_subscription(&id, &record)?;
             if record["status"] == "pending" {
                 self.connection_observation_wakeup.notify_one();

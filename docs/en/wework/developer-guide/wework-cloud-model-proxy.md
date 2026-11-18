@@ -218,3 +218,5 @@ Protocol-conversion E2E coverage must include Responses, Chat Completions, and A
 - The executor Codex compatibility proxy puts the login token in the backend request's `Authorization: Bearer` header.
 - The backend resolves models by complete resource identity so same-named personal, public, and group models cannot use one another's configuration.
 - Wework uses the same direct proxy config for task creation, follow-up messages, and rollback without a separate model-config resolution request.
+
+The official Responses endpoint limits history input IDs to 64 characters. Host events keep complete operation IDs in native history for recoverable delivery receipts. During the existing official-history normalization pass, the proxy deterministically bounds oversized `id` / `call_id` values, including passthrough mode. Calls and outputs share the same mapping; tool arguments, message content, and native history remain unchanged. Existing failed conversations can therefore retry without deleting delivery evidence.

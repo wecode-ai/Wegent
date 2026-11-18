@@ -230,29 +230,38 @@ pub(super) fn normalize_responses_request_ids(body: &mut Value) -> usize {
     let mut changed = 0;
 
     for item in items {
-        let Some(object) = item.as_object_mut() else {
+        changed += normalize_responses_item_ids(item, false);
+    }
+    changed
+}
+
+pub(super) fn normalize_responses_item_ids(item: &mut Value, oversized_only: bool) -> usize {
+    let Some(object) = item.as_object_mut() else {
+        return 0;
+    };
+    let mut changed = 0;
+    for field in ["id", "call_id"] {
+        let Some(value) = object.get_mut(field) else {
             continue;
         };
-        for field in ["id", "call_id"] {
-            let Some(value) = object.get_mut(field) else {
-                continue;
-            };
-            let Some(raw) = value.as_str() else {
-                continue;
-            };
-            let normalized = normalized_responses_api_id(raw);
-            if normalized != raw {
-                *value = Value::String(normalized);
-                changed += 1;
-            }
+        let Some(raw) = value.as_str() else {
+            continue;
+        };
+        if oversized_only && raw.len() <= 64 {
+            continue;
+        }
+        let normalized = normalized_responses_api_id(raw);
+        if normalized != raw {
+            *value = Value::String(normalized);
+            changed += 1;
         }
     }
-
     changed
 }
 
 pub(super) fn normalized_responses_api_id(value: &str) -> String {
     if !value.is_empty()
+        && value.len() <= 64
         && value
             .chars()
             .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))

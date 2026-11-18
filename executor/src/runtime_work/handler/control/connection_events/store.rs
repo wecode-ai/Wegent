@@ -66,6 +66,10 @@ fn open(path: &Path) -> Result<Connection, AppIpcError> {
         CREATE INDEX IF NOT EXISTS records_cloud ON records(section,cloud);
         CREATE INDEX IF NOT EXISTS records_consumers ON records(section,consumers);
         CREATE INDEX IF NOT EXISTS records_consuming ON records(source,consuming);
+        CREATE TRIGGER IF NOT EXISTS collector_insert AFTER INSERT ON records WHEN NEW.section='observations' BEGIN
+          UPDATE records SET consumers=(SELECT COUNT(*) FROM records WHERE source=NEW.id AND consuming=1)
+            WHERE section='observations' AND id=NEW.id;
+        END;
         CREATE TRIGGER IF NOT EXISTS consumer_insert AFTER INSERT ON records WHEN NEW.consuming=1 BEGIN
           UPDATE records SET consumers=consumers+1 WHERE section='observations' AND id=NEW.source;
         END;
@@ -124,17 +128,6 @@ fn save(
         "observers" => record["status"] != "stopped",
         _ => false,
     };
-    let consumers: i64 = if section == "observations" {
-        transaction
-            .query_row(
-                "SELECT COUNT(*) FROM records WHERE source=?1 AND consuming=1",
-                [id],
-                |row| row.get(0),
-            )
-            .map_err(storage)?
-    } else {
-        0
-    };
     let waiting = !record["waiting_goal"].is_null()
         && matches!(
             record["status"].as_str(),
@@ -169,9 +162,9 @@ fn save(
         .as_str()
         .or_else(|| record["cloud_registration"]["subscription_id"].as_str());
     transaction.execute("INSERT INTO records(section,id,value,task,source,status,expires,cloud,active,metadata,waiting,consuming,consumers)
-        VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13) ON CONFLICT(section,id) DO UPDATE SET
+        VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,0) ON CONFLICT(section,id) DO UPDATE SET
         value=excluded.value,task=excluded.task,source=excluded.source,status=excluded.status,expires=excluded.expires,cloud=excluded.cloud,active=excluded.active,metadata=excluded.metadata,waiting=excluded.waiting,consuming=excluded.consuming",
-        params![section,id,value,record["task_id"].as_str(),record["observation_id"].as_str(),record["status"].as_str(),record["expires_at"].as_i64(),cloud,active,metadata,waiting,consuming,consumers]).map_err(storage)?;
+        params![section,id,value,record["task_id"].as_str(),record["observation_id"].as_str(),record["status"].as_str(),record["expires_at"].as_i64(),cloud,active,metadata,waiting,consuming]).map_err(storage)?;
     Ok(())
 }
 
