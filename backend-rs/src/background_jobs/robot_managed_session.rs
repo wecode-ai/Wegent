@@ -100,7 +100,7 @@ pub(super) async fn create(app: &AppState, expected: &Execution) -> Result<()> {
                 task_type:Some("chat"),source:"project_automation",project_id:0,api_key_name:None,model_id:selection["model"].as_str().filter(|model|!model.is_empty()),
                 force_override_bot_model:selection["model"].as_str().is_some_and(|model|!model.is_empty()),is_group_chat:false,is_api_call:false,auto_delete_executor:Some("true"),omit_mcp_binary_output:false,device_id:None,git_workspace:false,created_at:&now,updated_at:&now,
             },
-            repository:WorkspaceRepository {git_url:"",git_repo:"",git_repo_id:0,git_domain:"",branch_name:""},client_origin:"wework",project_id:0,created_at:&now,updated_at:&now,completed_at:"1970-01-01 00:00:00",
+            repository:WorkspaceRepository {git_url:"",git_repo:"",git_repo_id:0,git_domain:"",branch_name:""},client_origin:"frontend",project_id:0,created_at:&now,updated_at:&now,completed_at:"1970-01-01 00:00:00",
         };
         let setup = session::setup_chat_session(app.task_store.as_ref(),tx,&input).await.map_err(dependency)?;
         let execute = managed::Execute {task_id:setup.task_id,assistant_subtask_id:setup.assistant_subtask_id,user_subtask_id:setup.user_subtask_id,team_id:row.team_id,user_id:row.executor_owner_user_id,prompt,developer_instruction:String::new()};
