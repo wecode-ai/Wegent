@@ -195,7 +195,7 @@ classify_workbench_path() {
         select_target "core:collaboration-board-move-recovery"
       fi
       if [[ "$path" == wework/src/components/layout/useWorkbenchCloudProjectContext* ]]; then
-        select_target "core:cloud-context-resilience"
+        select_target "core:core-task-flow"
       fi
       return
       ;;
@@ -304,7 +304,7 @@ classify_workbench_path() {
       if [[ "$path" == wework/src/components/layout/DesktopWorkbenchMain.tsx ]]; then
         select_target "core:local-harness"
         select_target "core:temporary-chat"
-        select_target "core:cloud-context-resilience"
+        select_target "core:core-task-flow"
         select_target "core:task-board-association"
       fi
       return
@@ -331,7 +331,7 @@ classify_workbench_path() {
     # Cloud project-space lookup must not block the local composer.
     wework/src/features/todo/projectSpaceSelection* | \
       wework/e2e/desktop/scenarios/cloud-context-resilience.scenario.mjs)
-      select_target "core:cloud-context-resilience"
+      select_target "core:core-task-flow"
       return
       ;;
 

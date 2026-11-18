@@ -177,7 +177,7 @@ function completionSeconds(checkpoints, seconds) {
 test('reuses the existing history runner after its isolated checkpoint', async () => {
   const checkpoints = [
     'codex-native-catalog',
-    'cloud-context-resilience',
+    'collaboration-first-use',
     'embedded-browser',
     'task-board-association',
     'stand-in-cloud',
@@ -266,7 +266,7 @@ test('balancing includes exclusive startup checkpoints before the four-worker qu
     'release-package-startup': 100,
     'collaboration-issue-task-discovery': 80,
     'codex-native-catalog': 80,
-    'cloud-context-resilience': 20,
+    'collaboration-first-use': 20,
     'embedded-browser': 60,
     'task-board-association': 100,
     'stand-in-cloud': 80,
