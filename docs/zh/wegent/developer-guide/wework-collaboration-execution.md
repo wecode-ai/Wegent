@@ -15,7 +15,8 @@ flowchart LR
   Compile --> Queue[持久化执行队列]
   Queue --> Managed[原生托管作业与授权校验]
   Managed --> Task[真实 Backend Task]
-  Task --> Status
+  Task --> Activity[同事务绑定共享活动节点]
+  Activity --> Status
   Queue --> Routing[重新检查环境授权、模型能力和 Issue 设备绑定]
   Routing --> Wake[向实际设备所有者发送唤醒]
   Wake --> Pull[设备领取任务]
@@ -41,6 +42,8 @@ Wegent 托管 Issue 执行使用默认启用的原生作业 `wegent.managed_issu
 视频和研究类轮询任务在外部提交前持久化交接记录。已保存视频任务 ID 的轮次由现有视频轮询恢复；交接中断且没有可恢复任务 ID 时，执行明确失败并说明接收结果未知，不会自动再次提交给不支持请求去重的提供方。
 
 服务端托管 Task 使用 `frontend` 来源，与返回的 `/chat?taskId=...` 入口及默认 Task 读取 API 一致。项目来源继续由 `project_automation` 和绑定标签记录，不以桌面来源过滤隔离这类服务端会话。
+
+托管 Task 与共享活动节点在同一事务中绑定。普通指派没有现成评论或自动化活动时，按执行编号创建唯一节点；已有活动直接复用。终态投影按稳定编号找到节点，不受最近消息窗口影响，后续回复通过该节点继续同一 Task。托管节点不伪造设备地址。
 
 设备领取仍由持久化队列、原子认领和 Runtime 接收确认控制。唤醒通知只提示有工作，不携带任务，也不证明任务已经启动。
 路由任务向满足当前授权、模型和 Issue 绑定的设备发送通知，并使用设备所有者的连接身份。

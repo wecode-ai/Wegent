@@ -21,6 +21,8 @@ mod wake;
 
 #[cfg(test)]
 pub(crate) use activity::tests::verify_issue_activity_projection;
+#[cfg(test)]
+pub(crate) use projection::tests::verify_managed_activity;
 
 pub(crate) use activity::{
     finish as finish_runtime_activity, project_runtime_completion, start_runtime_activity,

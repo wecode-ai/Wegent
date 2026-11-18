@@ -501,6 +501,15 @@ pub(crate) async fn insert_message(
         })
 }
 
+pub(crate) async fn insert_message_on(
+    tx: &mut impl brz_mysql::MysqlTransaction,
+    message: &InsertMessage<'_>,
+) -> brz_mysql::MysqlResult<i64> {
+    tx.execute(INSERT_MESSAGE_SQL, insert_message_args(message))
+        .await
+        .map(|execution| execution.last_insert_id as i64)
+}
+
 pub(super) const INSERT_MESSAGE_SQL: &str = "INSERT INTO project_chat_messages (message_id, client_message_id, project_id, \
                task_id, sender_type, sender_id, sender_name, message_type, content, metadata, \
                trigger_message_id, reply_to_message_id, thread_root_message_id, agent_id, \

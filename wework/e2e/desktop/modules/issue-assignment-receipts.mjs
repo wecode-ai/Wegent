@@ -188,7 +188,7 @@ async function verifyIndexedReceipts(issueId, expected, request, database) {
   // Execution dispatch may advance during reads; reception receipts remain immutable.
   const receipts = result => ({
     ...result,
-    items: result.items.map(({ dispatch: _dispatch, ...receipt }) => receipt),
+    items: result.items.map(({ dispatch_receipt: _dispatchReceipt, ...receipt }) => receipt),
   })
   const results = await Promise.all([request(path), request(path)])
   for (const result of results) assert.deepEqual(receipts(result), receipts(expected))

@@ -147,9 +147,11 @@ async fn persist(
         store::insert(tx,"execution",json!({"cloud_project_id":row.cloud_project_id,"loop_item_id":issue.id,"task_user_id":row.executor_owner_user_id,"backend_task_id":setup.task_id,"task_id":setup.task_id.to_string(),"task_title":issue.title,"linked_by_user_id":row.assigner_user_id,"linked_at":chrono::Utc::now().naive_utc().format("%Y-%m-%d %H:%M:%S%.6f").to_string()})).await?;
     }
     let mut effects = projection::Effects::default();
-    if let Some(mut message) = projection::linked(tx, row).await? {
+    {
+        let mut message = projection::ensure_managed_activity(tx, row).await?;
         message.runtime_device_id.clear();
         message.runtime_task_id = setup.task_id.to_string();
+        message.metadata.0["execution_id"] = json!(row.id);
         message.metadata.0["backend_task_id"] = json!(setup.task_id);
         let origin = crate::config::env_or_dotenv("FRONTEND_URL")
             .unwrap_or_else(|| "http://localhost:3000".into());

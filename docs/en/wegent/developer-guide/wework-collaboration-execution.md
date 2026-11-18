@@ -15,7 +15,8 @@ flowchart LR
   Compile --> Queue[Durable execution queue]
   Queue --> Managed[Native managed jobs and authorization]
   Managed --> Task[Real Backend Task]
-  Task --> Status
+  Task --> Activity[Bind shared activity in the same transaction]
+  Activity --> Status
   Queue --> Routing[Recheck environment grants, models and Issue runner affinity]
   Routing --> Wake[Notify the actual runner owner]
   Wake --> Pull[Runner claims work]
@@ -41,6 +42,8 @@ Ordinary assignment requires no additional prompt: the managed Task uses the sha
 Video and research polling turns persist their handoff before external submission. A saved video job ID uses the existing video polling recovery. If a handoff is interrupted without a recoverable job ID, execution fails explicitly with unknown acceptance; providers without request deduplication are never automatically submitted again.
 
 Server-managed Tasks use the `frontend` origin, matching their returned `/chat?taskId=...` entry and the default Task read API. The `project_automation` source and binding labels retain project provenance without placing these server conversations behind the desktop-origin filter.
+
+The managed Task and its shared activity are bound in the same transaction. Ordinary assignments without a comment or automation activity create one node per execution; existing activities are reused. Terminal projection finds the node by its stable identity independently of the recent-message window, and replies continue the same Task through that node. Managed nodes never fabricate a device address.
 
 The durable queue, atomic claim, and Runtime acceptance control task delivery. A wake notification only announces work; it carries no task and does not establish execution success.
 Routed work notifies eligible devices using their owners' connection identities, after checking current grants, models, and Issue runner affinity.
