@@ -59,6 +59,7 @@ import {
   buildExecutor,
   mcpElicitationConfigToml,
   prepareHarnessRuntimeRoots,
+  prepareRemoteDeviceConversationModel,
   resolveDesktopCodexBinary,
   toolDetailsMcpConfigToml,
   setMatrixUpstreamProtocol,
@@ -1563,6 +1564,9 @@ async function main() {
       const cleanEnvironment = upgradeUserEnvironment(appEnvironment, homePath)
       for (const key of Object.keys(appEnvironment)) delete appEnvironment[key]
       Object.assign(appEnvironment, cleanEnvironment)
+    }
+    if (DESKTOP_SEGMENT === 'remote-device-onboarding') {
+      await prepareRemoteDeviceConversationModel(electronUserDataDirectory, control.url)
     }
     await desktopScenario?.prepareApp?.({ appBinary, appEnvironment, codexHome, control })
     await desktopScenario?.prepareUserDataLaunch?.()

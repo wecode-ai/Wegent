@@ -190,6 +190,9 @@ path = "/api/internal/chat/attachments/:attachment_id/text"
 [[routes]]
 methods = ["GET"]
 path = "/api/devices"
+[[routes]]
+methods = ["GET"]
+path = "/api/devices/runtime-owner"
 
 #[[routes]]
 #methods = ["DELETE"]
