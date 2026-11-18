@@ -271,16 +271,12 @@ export function createCatalogAutoCompactionVerification({
           }
           assert.deepEqual(identity(after), identity(before))
           assert.equal(current.compactions, 1, 'The above-threshold turn did not auto-compact')
-          const messageId = await control.command(
-            'getAttribute',
-            '[data-testid="message-assistant"]',
-            {
-              text: `${PREFIX}:${fixture.id}:answer:3`,
-              value: 'data-message-id',
-            }
-          )
-          assert.ok(messageId, 'The compacted turn did not expose its assistant message')
-          const message = `[data-message-id=${JSON.stringify(messageId)}]`
+          const turnId = after.workbench.activeLifecycle?.turn.latestId
+          assert.ok(turnId, 'The compacted turn has no completed native identity')
+          const message = `[data-message-id=${JSON.stringify(`runtime-view:${turnId}:assistant`)}]`
+          await control.command('waitFor', message, {
+            text: `${PREFIX}:${fixture.id}:answer:3`,
+          })
           const collapsed = `${message} [data-testid="final-processing-toggle"][aria-expanded="false"]`
           if (Number(await control.command('getElementCount', collapsed)) > 0) {
             await control.command('click', collapsed)
