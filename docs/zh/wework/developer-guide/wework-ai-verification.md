@@ -435,7 +435,7 @@ CPU Trace 的采样时间、HTML 解析时间与进程内存应分别解释。�
 
 浏览器登录页 E2E 复用桌面套件的真实 Rust／Python Backend、MySQL、Redis 和 MinIO，以及 CI 已构建的 Backend 产物。先完成后端准备，再启动 Vite，并将 HTTP／Socket.IO 代理指向本轮隔离端口。登录页保留原有可见性断言，同时要求真实 `/api/users/me` 返回未认证的 401，连接失败或服务端错误不能替代认证结果。仅模型服务使用替身；未使用的 Sites／Connector 替身不启动。浏览器后端日志单独上传，桌面场景的采样数量不代表浏览器采集覆盖。
 
-Playwright 用例使用 `e2e/fixtures/collected-test` 的自动采集 fixture，复用 `E2EErrorLog` 脱敏日志和 `DesktopErrorCollector` 逐条断言。网络响应、连接失败、页面异常、控制台错误及崩溃保留原级别；页面关闭后确认日志写入和连续序号，再核对显式错误预期。`errors.expectHttpError(response, status)` 绑定真实请求 ID；同一 URL、实际状态和原因完全对应的 Chromium 控制台记录最多允许一条。其他预期用 `errors.expectError(predicate, count)` 显式登记，未匹配错误失败。日志及断言摘要附在 Playwright 报告中；这不证明浏览器外部进程或所有 Worker 的覆盖。
+Playwright 用例使用 `e2e/fixtures/collected-test` 的自动采集 fixture，复用 `E2EErrorLog` 脱敏日志和 `DesktopErrorCollector` 逐条断言。网络响应、连接失败、页面异常、控制台错误及崩溃保留原级别；页面关闭后确认日志写入和连续序号，再核对显式错误预期。浏览器模式读取既有默认偏好，不调用仅由 Electron 提供的偏好接口；Electron 读取失败继续报错。`errors.expectHttpError(response, status)` 绑定真实请求 ID；客户端结构化 HTTP 报错额外用该次请求实际携带的 `X-Request-ID` 及状态关联，每种匹配记录精确断言一条；同一 URL、实际状态和原因完全对应的 Chromium 控制台记录最多允许一条。其他预期用 `errors.expectError(predicate, count)` 显式登记，未匹配错误失败。日志及断言摘要附在 Playwright 报告中；这不证明浏览器外部进程或所有 Worker 的覆盖。
 
 浏览器采集绑定整个 BrowserContext 的请求、响应、异常和控制台事件；新建页面及弹窗注册崩溃、关闭和 WebSocket 观察。WebSocket 使用独立连接 ID 记录打开、socketerror 和关闭，不记录帧载荷。测试收尾先关闭本轮 context，再确认日志 checkpoint，覆盖页面与连接的关闭阶段。
 
