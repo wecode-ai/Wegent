@@ -1539,8 +1539,8 @@ export function useWorkbenchPaneSession({
   )
 
   const sendQueuedMessage = useCallback(
-    async (message: RuntimePaneQueuedMessage) => {
-      await queueController?.send(message)
+    async (message: RuntimePaneQueuedMessage, options?: { recordActivity?: boolean }) => {
+      await queueController?.send(message, options)
     },
     [queueController]
   )
@@ -2507,7 +2507,7 @@ export function useWorkbenchPaneSession({
         notice: undefined,
       }
       setQueuedMessagesPaused(false)
-      await sendQueuedMessage(combinedMessage)
+      await sendQueuedMessage(combinedMessage, { recordActivity: Boolean(submittedInput) })
     },
     [
       currentRuntimeTask,

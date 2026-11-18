@@ -155,6 +155,21 @@ describe('RuntimeConversationQueueController', () => {
     }
   })
 
+  test('records activity when new input explicitly resumes the queue', async () => {
+    const store = idleStore(taskA)
+    const send = acceptingTransport(store)
+    const item = message('resumed-with-input')
+    cacheRuntimeConversationQueuedMessages(taskA, [item])
+    const { controller } = attach(taskA, store, send)
+
+    await controller.send(item, { recordActivity: true })
+
+    expect(send).toHaveBeenCalledExactlyOnceWith(
+      expect.any(Object),
+      expect.objectContaining({ recordActivity: true })
+    )
+  })
+
   test('never replays an unconfirmed send when an idle replacement returns no receipt', async () => {
     const store = idleStore(taskA)
     const send = acceptingTransport(store)
