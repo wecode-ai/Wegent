@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { IssueReferenceResult } from './resolveIssueReference'
+import type { IssueReferenceResult, IssueReferenceLookup } from './resolveIssueReference'
 import { Cloud, Search, X } from 'lucide-react'
 import type { CloudLoopItem, CloudProjectMember } from '@/api/deliveries'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -15,7 +15,7 @@ interface GlobalTodoSearchProps {
   query: string
   onQueryChange: (query: string) => void
   onClose: () => void
-  onResolveReference?: (reference: string) => Promise<IssueReferenceResult[]>
+  onResolveReference?: (reference: string) => Promise<IssueReferenceLookup>
   onSelectProject: (project: LocatedProjectSpace) => void
   onSelectItem: (project: LocatedProjectSpace, item: CloudLoopItem) => void
 }
@@ -55,12 +55,27 @@ export function GlobalTodoSearch({
     const requestRevision = revision.current
     setLookup({ query, busy: true })
     try {
-      const matches = await onResolveReference(fullReference)
+      const { matches, failures } = await onResolveReference(fullReference)
       if (revision.current !== requestRevision) return
-      if (matches.length === 1 && matches[0].item.can_view_detail !== false) {
+      if (
+        failures.length === 0 &&
+        matches.length === 1 &&
+        matches[0].item.can_view_detail !== false
+      ) {
         onSelectItem(matches[0].project, matches[0].item)
       }
-      setLookup({ query, busy: false, matches })
+      const error =
+        failures.length > 0
+          ? failures
+              .map(
+                failure =>
+                  `${t(failure.location === 'local' ? 'workbench.global_search_source_local' : 'workbench.global_search_source_cloud')}: ${failure.message}`
+              )
+              .join('; ')
+          : matches.length === 0
+            ? t('workbench.global_search_reference_missing')
+            : undefined
+      setLookup({ query, busy: false, matches, error })
     } catch (error) {
       if (revision.current !== requestRevision) return
       setLookup({
@@ -170,7 +185,12 @@ export function GlobalTodoSearch({
               onClick={() => onSelectItem(project, item)}
               className="flex w-full gap-3 rounded-lg px-3 py-2 text-left text-sm hover:bg-muted disabled:opacity-60"
             >
-              {project.name} · {item.id} · {item.title}
+              {t(
+                project.location === 'local'
+                  ? 'workbench.global_search_source_local'
+                  : 'workbench.global_search_source_cloud'
+              )}{' '}
+              · {project.name} · {item.id} · {item.title}
             </button>
           ))}
           {!normalizedQuery || referenceOnly ? (

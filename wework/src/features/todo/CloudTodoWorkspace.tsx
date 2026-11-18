@@ -5809,8 +5809,8 @@ export function CloudTodoWorkspace({
             projects={projects}
             projectItems={collaborationProjectItems}
             projectMembers={collaborationProjectMembers}
-            onResolveReference={reference =>
-              resolveIssueReference(reference, [
+            onResolveReference={async reference => {
+              const lookup = await resolveIssueReference(reference, [
                 ...(localProjectManageApi
                   ? [{ location: 'local' as const, api: localProjectManageApi }]
                   : []),
@@ -5818,7 +5818,17 @@ export function CloudTodoWorkspace({
                   ? [{ location: 'cloud' as const, api: cloudWorkspaceApi }]
                   : []),
               ])
-            }
+              for (const { project } of lookup.matches) {
+                if (
+                  projects.some(candidate =>
+                    sameProjectSpace(projectSpaceRef(candidate), projectSpaceRef(project))
+                  )
+                )
+                  continue
+                prependProject(project)
+              }
+              return lookup
+            }}
             query={globalSearchQuery}
             onQueryChange={setGlobalSearchQuery}
             onClose={() => setGlobalSearchOpen(false)}

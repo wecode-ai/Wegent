@@ -3012,6 +3012,59 @@ describe('CloudTodoWorkspace', () => {
     expect(await screen.findByTestId('cloud-todo-detail')).toBeInTheDocument()
   })
 
+  it.each(['local', 'cloud'] as const)(
+    'opens an Issue from a newly resolved %s project absent from the catalog',
+    async location => {
+      const workbenchServices = services()
+      const projectStore = location === 'local' ? ('local' as const) : ('backend' as const)
+      const initialProject = { ...project, project_store: projectStore }
+      const resolvedProject = {
+        ...initialProject,
+        id: '22',
+        project_key: 'NEW',
+        name: 'New unseen project',
+      }
+      const resolvedItem = {
+        ...item,
+        id: 'NEW-1',
+        cloud_project_id: resolvedProject.id,
+        title: 'Unloaded catalog Issue',
+      }
+      const sourceApi =
+        location === 'local' ? services().deliveryApi! : workbenchServices.deliveryApi!
+      const listProjects = vi.fn(async () => ({ items: [initialProject] }))
+      sourceApi.listCloudProjects = listProjects
+      sourceApi.getLoopItem = vi.fn(async () => resolvedItem)
+      sourceApi.listLoopItems = vi.fn(async projectId => ({
+        items: String(projectId) === resolvedProject.id ? [resolvedItem] : [item],
+      }))
+      if (location === 'local') {
+        workbenchServices.sharedWorkspaceApi = undefined
+        workbenchServices.projectSpaceApis = { local: sourceApi, defaultLocation: 'local' }
+      } else {
+        workbenchServices.projectSpaceDetailServices = undefined
+        vi.spyOn(workbenchServices.sharedWorkspaceApi!.projects, 'get').mockResolvedValue(
+          resolvedProject as never
+        )
+      }
+      render(
+        <CloudTodoWorkspace
+          user={{ id: 1, user_name: 'local', email: 'local@example.com' } as User}
+          localProjects={[]}
+          services={workbenchServices}
+        />
+      )
+      await screen.findAllByText(initialProject.name)
+      expect(screen.queryByText(resolvedProject.name)).not.toBeInTheDocument()
+      listProjects.mockResolvedValue({ items: [initialProject, resolvedProject] })
+      await userEvent.keyboard('{Meta>}k{/Meta}')
+      await userEvent.type(screen.getByTestId('cloud-global-search-input'), resolvedItem.id)
+      await userEvent.click(screen.getByTestId('cloud-global-search-open-issue'))
+      expect(await screen.findByTestId('cloud-todo-detail')).toHaveTextContent(resolvedItem.title)
+      expect(sourceApi.getLoopItem).toHaveBeenCalledWith(resolvedItem.id)
+    }
+  )
+
   it('restores a missing cloud GitLab credential from project management', async () => {
     const workbenchServices = services()
     const externalProject = {

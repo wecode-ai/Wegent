@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, act } from '@testing-libra
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { CloudLoopItem } from '@/api/deliveries'
 import '@/i18n'
-import type { IssueReferenceResult } from './resolveIssueReference'
+import type { IssueReferenceLookup } from './resolveIssueReference'
 import { GlobalTodoSearch } from './GlobalTodoSearch'
 
 afterEach(cleanup)
@@ -13,6 +13,7 @@ const project = {
   project_key: 'WEG',
   description: '',
   project_store: 'backend' as const,
+  location: 'cloud' as const,
 }
 const item = {
   id: 'opaque-issue-id',
@@ -104,7 +105,7 @@ function directSearch(resolve: (reference: string) => Promise<IssueReferenceResu
 }
 
 it.each(['mouse', 'keyboard'])('queries unloaded Issues using %s', async method => {
-  const resolve = vi.fn().mockResolvedValue([{ project, item }])
+  const resolve = vi.fn().mockResolvedValue({ matches: [{ project, item }], failures: [] })
   const { select } = directSearch(resolve)
   if (method === 'mouse') fireEvent.click(screen.getByTestId('cloud-global-search-open-issue'))
   else fireEvent.keyDown(screen.getByTestId('cloud-global-search-input'), { key: 'Enter' })
@@ -116,7 +117,7 @@ it('shows access/query failures and allows retry', async () => {
   const resolve = vi
     .fn()
     .mockRejectedValueOnce(new Error('403'))
-    .mockResolvedValueOnce([{ project, item }])
+    .mockResolvedValueOnce({ matches: [{ project, item }], failures: [] })
   const { select } = directSearch(resolve)
   fireEvent.click(screen.getByTestId('cloud-global-search-open-issue'))
   expect(await screen.findByRole('alert')).toHaveTextContent('403')
@@ -135,21 +136,22 @@ it('ignores old lookups after changing the reference', async () => {
   )
   fireEvent.click(screen.getByTestId('cloud-global-search-open-issue'))
   rerender(<GlobalTodoSearch {...props} query="WEG-1000" />)
-  await act(async () => finish([{ project, item }]))
+  await act(async () => finish({ matches: [{ project, item }], failures: [] }))
   expect(select).not.toHaveBeenCalled()
 })
 
 it('does not navigate to a lookup result without detail permission', async () => {
-  const { select } = directSearch(async () => [
-    { project, item: { ...item, can_view_detail: false } },
-  ])
+  const { select } = directSearch(async () => ({
+    matches: [{ project, item: { ...item, can_view_detail: false } }],
+    failures: [],
+  }))
   fireEvent.click(screen.getByTestId('cloud-global-search-open-issue'))
   expect(await screen.findByTestId('cloud-global-search-direct-backend:project-1')).toBeDisabled()
   expect(select).not.toHaveBeenCalled()
 })
 
 it.each(['12-999', '1ABC-999'])('accepts API-supported numeric project keys: %s', async query => {
-  const resolve = vi.fn().mockResolvedValue([{ project, item }])
+  const resolve = vi.fn().mockResolvedValue({ matches: [{ project, item }], failures: [] })
   const select = vi.fn()
   render(
     <GlobalTodoSearch
@@ -167,4 +169,61 @@ it.each(['12-999', '1ABC-999'])('accepts API-supported numeric project keys: %s'
   fireEvent.click(screen.getByTestId('cloud-global-search-open-issue'))
   await waitFor(() => expect(resolve).toHaveBeenCalledWith(query))
   expect(select).toHaveBeenCalledWith(project, item)
+})
+
+it('retains matches with source labels after a partial lookup failure and permits explicit choice', async () => {
+  const { select } = directSearch(async () => ({
+    matches: [{ project, item }],
+    failures: [{ location: 'local', message: 'Connection lost' }],
+  }))
+  fireEvent.click(screen.getByTestId('cloud-global-search-open-issue'))
+  expect(await screen.findByRole('alert')).toHaveTextContent('Connection lost')
+  expect(select).not.toHaveBeenCalled()
+  const choice = screen.getByTestId('cloud-global-search-direct-backend:project-1')
+  expect(choice).toHaveTextContent('云端')
+  fireEvent.click(choice)
+  expect(select).toHaveBeenCalledWith(project, item)
+})
+
+it('clears pending lookup results when its account scope remounts', async () => {
+  let finish!: (result: IssueReferenceLookup) => void
+  const { rerender, props, select } = directSearch(
+    () =>
+      new Promise(resolve => {
+        finish = resolve
+      })
+  )
+  fireEvent.click(screen.getByTestId('cloud-global-search-open-issue'))
+  rerender(<GlobalTodoSearch key="new-account" {...props} />)
+  await act(async () => finish({ matches: [{ project, item }], failures: [] }))
+  expect(select).not.toHaveBeenCalled()
+  expect(
+    screen.queryByTestId('cloud-global-search-direct-backend:project-1')
+  ).not.toBeInTheDocument()
+})
+
+it('distinguishes identical references from local and cloud sources', async () => {
+  const localProject = { ...project, location: 'local' as const, project_store: 'local' as const }
+  const { select } = directSearch(async () => ({
+    matches: [
+      { project, item },
+      { project: localProject, item },
+    ],
+    failures: [],
+  }))
+  fireEvent.click(screen.getByTestId('cloud-global-search-open-issue'))
+  expect(await screen.findByTestId('cloud-global-search-direct-local:project-1')).toHaveTextContent(
+    '本地'
+  )
+  expect(screen.getByTestId('cloud-global-search-direct-backend:project-1')).toHaveTextContent(
+    '云端'
+  )
+  expect(select).not.toHaveBeenCalled()
+})
+
+it('reports a missing or inaccessible reference', async () => {
+  const { select } = directSearch(async () => ({ matches: [], failures: [] }))
+  fireEvent.click(screen.getByTestId('cloud-global-search-open-issue'))
+  expect(await screen.findByRole('alert')).toHaveTextContent('Issue 不存在或你没有访问权限')
+  expect(select).not.toHaveBeenCalled()
 })

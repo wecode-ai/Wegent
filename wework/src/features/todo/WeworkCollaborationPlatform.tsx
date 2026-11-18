@@ -2016,6 +2016,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
     <div className="h-full min-h-0 flex-1" data-testid="wework-collaboration-platform">
       {issueSearchOpen && props.workspaceActive !== false && (
         <GlobalTodoSearch
+          key={templateScope}
           referenceOnly
           projects={[]}
           projectItems={{}}
