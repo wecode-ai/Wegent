@@ -3561,6 +3561,7 @@ fn app_ipc_request_metadata(line: &str) -> (Option<String>, Option<String>, Opti
             let method = message
                 .get("method")
                 .and_then(Value::as_str)
+                .map(str::trim)
                 .filter(|value| !value.trim().is_empty())
                 .map(str::to_owned);
             let command_key = message

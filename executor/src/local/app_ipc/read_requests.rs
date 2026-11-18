@@ -142,7 +142,7 @@ impl ConnectionReadRequests {
         let permit = admission.pending.clone().try_acquire_owned().map_err(|_| {
             AppIpcError::new(
                 "runtime_read_busy",
-                "History read queue is full; retry after the current read finishes",
+                "Read queue is full; retry after a current read finishes",
             )
         })?;
         let (sender, receiver) = watch::channel(false);

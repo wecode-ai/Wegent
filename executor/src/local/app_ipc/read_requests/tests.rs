@@ -78,6 +78,22 @@ async fn wait_for_count(counter: &AtomicUsize, expected: usize) {
     .expect("history request count must settle");
 }
 
+async fn wait_for_handler_entry(runtime: &ControlledRuntime) {
+    tokio::time::timeout(Duration::from_secs(1), runtime.entered.notified())
+        .await
+        .expect("read handler must enter before the test deadline");
+}
+
+async fn wait_for_available_permits(admission: &ReadAdmission, expected: usize) {
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while admission.pending.available_permits() != expected {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("read admission permits must settle");
+}
+
 async fn start_history_reads(
     writer: &mut tokio::io::WriteHalf<DuplexStream>,
     runtime: &ControlledRuntime,
@@ -315,9 +331,10 @@ async fn queued_history_admission_is_fifo_across_connections() {
 async fn connection_reads_do_not_consume_transcript_admission() {
     let runtime = ControlledRuntime::default();
     let server = AppIpcServer::new().with_runtime_work_handler(runtime.clone());
-    let (mut reader, mut writer) = connect(server).await;
+    let (mut reader, mut writer) = connect(server.clone()).await;
+    let (mut other_reader, mut other_writer) = connect(server.clone()).await;
 
-    for index in 0..MAX_CONCURRENT_CONNECTION_READS {
+    for index in 0..MAX_PENDING_CONNECTION_READS {
         write_frame(
             &mut writer,
             request(
@@ -326,32 +343,100 @@ async fn connection_reads_do_not_consume_transcript_admission() {
             ),
         )
         .await;
-        runtime.entered.notified().await;
+        if index < MAX_CONCURRENT_CONNECTION_READS {
+            wait_for_handler_entry(&runtime).await;
+        }
     }
+    wait_for_available_permits(&server.connection_read_admission, 0).await;
     assert_eq!(
         runtime.started.load(Ordering::SeqCst),
         MAX_CONCURRENT_CONNECTION_READS
     );
 
     write_frame(
-        &mut writer,
+        &mut other_writer,
+        request("connection-overflow", "runtime.connections.git.read"),
+    )
+    .await;
+    let overflow = read_response(&mut other_reader).await;
+    assert_eq!(overflow["error"]["code"], "runtime_read_busy");
+
+    write_frame(
+        &mut other_writer,
         request("transcript", "runtime.tasks.transcript"),
     )
     .await;
-    runtime.entered.notified().await;
+    wait_for_handler_entry(&runtime).await;
     assert_eq!(
         runtime.started.load(Ordering::SeqCst),
         MAX_CONCURRENT_CONNECTION_READS + 1
     );
+    assert_eq!(runtime.dropped.load(Ordering::SeqCst), 0);
 
-    for _ in 0..=MAX_CONCURRENT_CONNECTION_READS {
+    let expected_entries = MAX_PENDING_CONNECTION_READS + 1;
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while runtime.started.load(Ordering::SeqCst) < expected_entries {
+            runtime.release.notify_one();
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .expect("all admitted reads must enter after releasing capacity");
+    runtime.release.notify_one();
+    tokio::time::sleep(Duration::from_millis(1)).await;
+    runtime.release.notify_one();
+
+    let mut responses = Vec::new();
+    for _ in 0..MAX_PENDING_CONNECTION_READS {
+        responses.push(read_response(&mut reader).await);
+    }
+    responses.push(read_response(&mut other_reader).await);
+    assert!(responses.iter().all(|response| response["ok"] == true));
+    assert!(responses
+        .iter()
+        .any(|response| response["id"] == json!("transcript")));
+}
+
+#[tokio::test]
+async fn padded_connection_read_methods_are_limited_and_cancellable() {
+    let runtime = ControlledRuntime::default();
+    let server = AppIpcServer::new().with_runtime_work_handler(runtime.clone());
+    let (mut reader, mut writer) = connect(server.clone()).await;
+    let padded_method = " runtime.connections.git.read ";
+
+    for id in ["first", "second"] {
+        write_frame(&mut writer, request(id, padded_method)).await;
+        wait_for_handler_entry(&runtime).await;
+    }
+    write_frame(&mut writer, request("third", padded_method)).await;
+    wait_for_available_permits(
+        &server.connection_read_admission,
+        MAX_PENDING_CONNECTION_READS - 3,
+    )
+    .await;
+    assert_eq!(
+        runtime.started.load(Ordering::SeqCst),
+        MAX_CONCURRENT_CONNECTION_READS,
+        "a padded method must not bypass the connection admission limit"
+    );
+
+    write_frame(&mut writer, json!({"type":"cancel","id":"first"})).await;
+    let cancelled = read_response(&mut reader).await;
+    assert_eq!(cancelled["id"], "first");
+    assert_eq!(cancelled["error"]["code"], "request_cancelled");
+    assert_eq!(runtime.dropped.load(Ordering::SeqCst), 1);
+
+    wait_for_handler_entry(&runtime).await;
+    assert_eq!(
+        runtime.started.load(Ordering::SeqCst),
+        MAX_CONCURRENT_CONNECTION_READS + 1
+    );
+    let mut responses = Vec::new();
+    for _ in 0..MAX_CONCURRENT_CONNECTION_READS {
         runtime.release.notify_one();
+        responses.push(read_response(&mut reader).await);
     }
-    let mut ids = Vec::new();
-    for _ in 0..=MAX_CONCURRENT_CONNECTION_READS {
-        ids.push(read_response(&mut reader).await["id"].clone());
-    }
-    assert!(ids.contains(&json!("transcript")));
+    assert!(responses.iter().all(|response| response["ok"] == true));
 }
 
 #[tokio::test]

@@ -91,16 +91,7 @@ export function createDesktopScenario({ workspacePath, resultDir, uiTimeoutMs })
         const sidebarStartedAt = performance.now()
         rowVisibleAtReady = Number(await control.command('getElementCount', row)) > 0
         await control.command('waitFor', row, { visible: true, timeoutMs: uiTimeoutMs })
-        sidebarLoadMs = Math.round(performance.now() - sidebarStartedAt)
-        assert.equal(
-          rowVisibleAtReady,
-          false,
-          'The task row was visible before sidebar load timing started'
-        )
-        assert.ok(
-          sidebarLoadMs < LOAD_BUDGET_MS,
-          `Sidebar load exceeded ${LOAD_BUDGET_MS}ms: ${sidebarLoadMs}ms`
-        )
+        sidebarLoadMs = Number((performance.now() - sidebarStartedAt).toFixed(3))
 
         await control.command('click', '[data-testid="new-chat-button"]')
         await waitForWorkbenchDebugState(
@@ -120,11 +111,7 @@ export function createDesktopScenario({ workspacePath, resultDir, uiTimeoutMs })
             timeoutMs: uiTimeoutMs,
           }
         )
-        conversationOpenMs = Math.round(performance.now() - conversationStartedAt)
-        assert.ok(
-          conversationOpenMs < LOAD_BUDGET_MS,
-          `Conversation open exceeded ${LOAD_BUDGET_MS}ms: ${conversationOpenMs}ms`
-        )
+        conversationOpenMs = Number((performance.now() - conversationStartedAt).toFixed(3))
       } catch (error) {
         measurementError = error
       }
@@ -150,6 +137,19 @@ export function createDesktopScenario({ workspacePath, resultDir, uiTimeoutMs })
         )
       )
       if (measurementError) throw measurementError
+      assert.equal(
+        rowVisibleAtReady,
+        false,
+        'The task row was visible before sidebar load timing started'
+      )
+      assert.ok(
+        sidebarLoadMs != null && sidebarLoadMs < LOAD_BUDGET_MS,
+        `Sidebar load exceeded ${LOAD_BUDGET_MS}ms: ${sidebarLoadMs}ms`
+      )
+      assert.ok(
+        conversationOpenMs != null && conversationOpenMs < LOAD_BUDGET_MS,
+        `Conversation open exceeded ${LOAD_BUDGET_MS}ms: ${conversationOpenMs}ms`
+      )
     },
   }
 }
