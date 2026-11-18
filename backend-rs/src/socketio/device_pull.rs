@@ -150,9 +150,20 @@ async fn pull_execution(app: &AppState, command: &PullCommand<'_>) -> anyhow::Re
 /// Queue presence is only a hint: do not use stale model availability to
 /// suppress discovery, and never reserve or compile work during a probe.
 async fn probe_catalog(app: &AppState, command: &PullCommand<'_>) -> anyhow::Result<Value> {
-    let identities =
-        owned_execution_device_ids(app, command.owner_user_id, command.execution_target_id).await?;
-    let required = if unconfirmed_claim(app, command).await?.is_some() {
+    let Some(device) = resolve_owned_device_alias(
+        &app.mysql,
+        command.owner_user_id,
+        command.execution_target_id,
+    )
+    .await?
+    else {
+        return Ok(json!({"success": false, "error": "Runner is no longer authorized"}));
+    };
+    let identities = device_identity_ids(&device);
+    // Admission needs the first published catalog before any work can be queued.
+    // A valid empty catalog is still a completed publication, not an idle retry.
+    let unpublished = runner_catalog::normalize(&device.json["spec"]["runnerCatalog"]).is_none();
+    let required = if unpublished || unconfirmed_claim(app, command).await?.is_some() {
         true
     } else {
         let rows = claim::queue_rows_for_catalog_probe(

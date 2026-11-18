@@ -438,3 +438,5 @@ CPU Trace 的采样时间、HTML 解析时间与进程内存应分别解释。�
 Playwright 用例使用 `e2e/fixtures/collected-test` 的自动采集 fixture，复用 `E2EErrorLog` 脱敏日志和 `DesktopErrorCollector` 逐条断言。网络响应、连接失败、页面异常、控制台错误及崩溃保留原级别；页面关闭后确认日志写入和连续序号，再核对显式错误预期。`errors.expectHttpError(response, status)` 绑定真实请求 ID；同一 URL、实际状态和原因完全对应的 Chromium 控制台记录最多允许一条。其他预期用 `errors.expectError(predicate, count)` 显式登记，未匹配错误失败。日志及断言摘要附在 Playwright 报告中；这不证明浏览器外部进程或所有 Worker 的覆盖。
 
 浏览器采集绑定整个 BrowserContext 的请求、响应、异常和控制台事件；新建页面及弹窗注册崩溃、关闭和 WebSocket 观察。WebSocket 使用独立连接 ID 记录打开、socketerror 和关闭，不记录帧载荷。测试收尾先关闭本轮 context，再确认日志 checkpoint，覆盖页面与连接的关闭阶段。
+
+首次目录发布也是明确的目录需求：Backend 在尚未保存有效 `runnerCatalog` 时通过探测要求读取一次，避免任务准入依赖目录、目录读取又依赖任务入队的循环。已发布的有效空目录不会触发重复空闲读取；后续候选探测仍沿用设备授权和领取前复核。

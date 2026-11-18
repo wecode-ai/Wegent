@@ -172,6 +172,26 @@ async fn assert_heartbeats(
             json!({"catalog_probe": true})
         )
         .await,
+        json!({"success": true, "task": null, "catalog_required": true, "workspace_cleanup_intents": []})
+    );
+    assert_eq!(
+        event_ack(
+            &client,
+            91,
+            "runtime.tasks.pull",
+            json!({"runner_catalog": {"runtimes": ["codex"], "models": [], "errors": []}})
+        )
+        .await,
+        json!({"success": true, "task": null, "workspace_cleanup_intents": []})
+    );
+    assert_eq!(
+        event_ack(
+            &client,
+            92,
+            "runtime.tasks.pull",
+            json!({"catalog_probe": true})
+        )
+        .await,
         json!({"success": true, "task": null, "catalog_required": false, "workspace_cleanup_intents": []})
     );
     let registered = online(redis, key).await;
