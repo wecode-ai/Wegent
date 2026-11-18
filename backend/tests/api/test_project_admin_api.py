@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.security import create_access_token
 from app.mcp_server.auth import MCPAuthInfo
-from app.mcp_server.tools import wework_project_admin, wework_space
+from app.mcp_server.tools import wework_project_admin, wework_space, wework_space_batch
 from app.models.delivery import CloudProject
 from app.models.resource_member import ResourceMember
 from app.models.user import User
@@ -370,9 +370,9 @@ def test_space_tools_load_expired_project_rows(
         user_id=test_user.id, user_name=test_user.user_name, auth_type="user"
     )
     if operation == "list":
-        result = wework_space.list_spaces(token)
-        assert result[0]["id"] == project["id"]
-        assert result[0]["name"] == project["name"]
+        result = wework_space_batch.dispatch("list_spaces", token, {})
+        assert result["items"][0]["id"] == project["id"]
+        assert result["items"][0]["name"] == project["name"]
     else:
         result = wework_space.create_space(token, "Refreshed space", "REFRESHED")
         assert result["id"] != project["id"]

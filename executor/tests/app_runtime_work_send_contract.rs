@@ -4566,6 +4566,18 @@ async fn runtime_tasks_cancel_rejects_the_matching_pre_dispatch_send() {
         .expect("cancel should be accepted");
     assert_eq!(cancelled["accepted"], true);
 
+    let duplicate = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.tasks.cancel",
+            "payload": {
+                "taskId": "thread-1",
+                "clientUserMessageId": "cancelled-before-dispatch"
+            }
+        }))
+        .await
+        .expect("repeating the same pending cancellation should be accepted");
+    assert_eq!(duplicate["accepted"], true);
+
     let cancelled_again = handler
         .handle_runtime_rpc(json!({
             "method": "runtime.tasks.cancel",

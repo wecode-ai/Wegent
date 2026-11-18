@@ -1415,6 +1415,10 @@ fn mask_project(mut project: LoopItem) -> LoopItem {
     project
 }
 
+#[cfg(all(test, unix))]
+#[path = "mcp/context_store_regressions.rs"]
+mod context_store_regressions;
+
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
