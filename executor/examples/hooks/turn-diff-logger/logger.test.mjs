@@ -35,12 +35,15 @@ const git = (cwd, ...args) =>
     stdio: ['ignore', 'pipe', 'pipe'],
   }).trim()
 
-async function fixture(t, { commit = true } = {}) {
+async function fixture(
+  t,
+  { commit = true, workspaceDirectory = 'workspace with spaces' } = {}
+) {
   const root = await mkdtemp(join(tmpdir(), 'async-turn-hook-'))
   t.after(() => rm(root, { recursive: true, force: true }))
-  const workspace = join(root, 'workspace with spaces')
+  const workspace = join(root, workspaceDirectory)
   const logs = join(root, 'logs')
-  await mkdir(workspace)
+  await mkdir(workspace, { recursive: true })
   git(workspace, 'init', '--quiet', '--template=')
   git(workspace, 'config', 'user.name', 'Hook Tests')
   git(workspace, 'config', 'user.email', 'hooks@example.invalid')
@@ -494,7 +497,10 @@ test('archive cleanup preserves a baseline left behind by an interrupted produce
 })
 
 test('long snapshot refs use per-call long-path support without changing repository configuration', async t => {
-  const f = await fixture(t)
+  // Compact event refs must still exceed MAX_PATH in this explicit long workspace.
+  const f = await fixture(t, {
+    workspaceDirectory: join('long-snapshot-parent-'.repeat(7), 'workspace with spaces'),
+  })
   git(f.workspace, 'config', 'core.longpaths', 'false')
   assert.equal(await runGit(f.workspace, ['config', '--get', 'core.longpaths']), 'true')
   const start = await f.invoke(f.event(0, 'TurnStarted'))
