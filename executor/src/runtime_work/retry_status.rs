@@ -18,22 +18,14 @@ pub(super) fn codex_notification_resumes_turn(method: &str) -> bool {
 }
 
 fn retry_reason(params: &Value) -> &'static str {
-    let info = params.pointer("/error/codexErrorInfo");
-    if info.and_then(Value::as_str) == Some("serverOverloaded") {
-        return "overload";
-    }
-    if info.and_then(Value::as_str) == Some("rateLimitExceeded")
-        || info.is_some_and(|info| {
-            info.as_object().is_some_and(|variants| {
-                variants
-                    .values()
-                    .any(|value| value.get("httpStatusCode").and_then(Value::as_u64) == Some(429))
-            })
-        })
+    match params
+        .get("error")
+        .and_then(crate::agents::codex_error_type)
     {
-        "rate_limit"
-    } else {
-        "connection"
+        Some("rate_limit") => "rate_limit",
+        Some("server_overloaded") => "overload",
+        Some("network_error") => "connection",
+        _ => "unknown",
     }
 }
 
@@ -84,6 +76,11 @@ impl CodexNotificationEventMapper {
             self.native_retry_waits
                 .values()
                 .find(|params| retry_reason(params) == "rate_limit")
+                .or_else(|| {
+                    self.native_retry_waits
+                        .values()
+                        .find(|params| retry_reason(params) == "overload")
+                })
                 .or_else(|| self.native_retry_waits.values().next())
                 .cloned()
         };
@@ -103,6 +100,7 @@ impl CodexNotificationEventMapper {
             "retry_reason": retry_reason(params),
             "retry_at": params.get("retryAt"),
             "retry_attempt": params.get("retryAttempt"),
+            "retry_max_attempts": params.get("retryMaxAttempts"),
         });
         let (event, data) = if let Some(id) = self.reconnecting_block_id.as_ref() {
             (
@@ -204,13 +202,17 @@ mod tests {
                 "rate_limit"
             );
         }
-        for info in [
-            Value::Null,
-            json!({"httpConnectionFailed": {"httpStatusCode": 503}}),
+        for (info, expected) in [
+            (Value::Null, "unknown"),
+            (json!("serverOverloaded"), "overload"),
+            (
+                json!({"httpConnectionFailed": {"httpStatusCode": 503}}),
+                "connection",
+            ),
         ] {
             assert_eq!(
                 retry_reason(&json!({"error": {"codexErrorInfo": info, "message": "429"}})),
-                "connection"
+                expected
             );
         }
         assert_eq!(
@@ -261,6 +263,24 @@ mod tests {
         );
         let cleared = event_rx.try_recv().unwrap();
         assert_eq!(cleared["payload"]["data"]["updates"]["status"], "done");
+    }
+
+    #[test]
+    fn preserves_overload_reason_and_retry_progress() {
+        let (event_tx, mut event_rx) = broadcast::channel(8);
+        let request = ExecutionRequest::default();
+        let mut mapper = CodexNotificationEventMapper::default();
+        mapper.map(&Some(event_tx), "device", "task", &request, json!({
+            "method": "error", "params": {
+                "willRetry": true, "retryAttempt": 2, "retryMaxAttempts": 5,
+                "error": {"message": "connection interrupted", "codexErrorInfo": "serverOverloaded"}
+            }
+        }));
+        let event = event_rx.try_recv().unwrap();
+        let input = &event["payload"]["data"]["block"]["tool_input"];
+        assert_eq!(input["retry_reason"], "overload");
+        assert_eq!(input["retry_attempt"], 2);
+        assert_eq!(input["retry_max_attempts"], 5);
     }
 
     #[test]
