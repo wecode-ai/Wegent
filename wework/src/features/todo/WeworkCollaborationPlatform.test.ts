@@ -52,6 +52,7 @@ type BoardIssueCardRenderer = NonNullable<
 >
 
 const renderedProjectApis = vi.hoisted(() => new Map<string, SharedWorkspaceApi>())
+const renderedPlatformApis = vi.hoisted(() => new Map<string, SharedWorkspaceApi>())
 const renderedProjectControls = vi.hoisted(
   () =>
     new Map<
@@ -224,11 +225,13 @@ vi.mock('@wegent/collaboration', async importOriginal => {
       )
     },
     CollaborationPlatformApp: ({
+      api,
       host,
       navigationApis,
       refreshKey,
       renderProject,
     }: {
+      api: SharedWorkspaceApi
       host: {
         accountScope: string
         location: CollaborationPlatformLocation
@@ -253,6 +256,7 @@ vi.mock('@wegent/collaboration', async importOriginal => {
     }) => {
       const [showLocalProject, setShowLocalProject] = useState(false)
       const [showProjectImporter, setShowProjectImporter] = useState(false)
+      if (host.location.projectId) renderedPlatformApis.set(host.location.projectId, api)
       return createElement(
         'div',
         {
@@ -428,6 +432,7 @@ afterEach(() => {
   clearRuntimeConversationCacheForTests()
   renderedProjectControls.clear()
   renderedProjectApis.clear()
+  renderedPlatformApis.clear()
   localStorage.clear()
 })
 
@@ -536,6 +541,85 @@ function createHomeDraft() {
 }
 
 describe('Wework collaboration workspace API', () => {
+  it('opens a selected cloud Issue while the local runtime is unavailable', async () => {
+    const localDeliveryApi = createLocalDeliveryApi()
+    localDeliveryApi.getLoopItem = vi.fn().mockRejectedValue(new Error('Local runtime unavailable'))
+    vi.mocked(localDeliveryApi.listCloudProjects).mockRejectedValue(
+      new Error('Local runtime unavailable')
+    )
+    const project = { id: 'cloud-project', project_store: 'backend', name: 'Cloud project' }
+    const issue = { id: 'cloud-issue', cloud_project_id: project.id, title: 'Unloaded cloud Issue' }
+    const cloudGet = vi.fn().mockResolvedValue(project)
+    const onActiveProjectChange = vi.fn()
+    const cloudConnection: CloudConnectionContextValue = {
+      ...DISCONNECTED_STATE,
+      status: 'connected',
+      isConnected: true,
+      apiBaseUrl: 'https://cloud.example/api',
+      token: 'synthetic-cloud-token',
+      user: { id: 42, user_name: 'cloud-owner', email: '' },
+      serviceKey: 'https://cloud.example/api:account:42',
+      connectWithAuthorization: vi.fn(),
+      refreshUser: vi.fn(),
+      disconnect: vi.fn(),
+    }
+    render(
+      createElement(
+        CloudConnectionContext.Provider,
+        { value: cloudConnection },
+        createElement(WeworkCollaborationPlatform, {
+          homeDraft: createHomeDraft(),
+          user: { id: 1, user_name: 'local', email: '' } as never,
+          localProjects: [],
+          onActiveProjectChange,
+          services: {
+            projectSpaceApis: { local: localDeliveryApi },
+            sharedWorkspaceApi: {
+              workspaces: {},
+              projects: { get: cloudGet },
+              issues: { get: vi.fn().mockResolvedValue(issue) },
+            },
+          } as never,
+        })
+      )
+    )
+    fireEvent.keyDown(window, { key: 'k', metaKey: true })
+    fireEvent.change(await screen.findByTestId('cloud-global-search-input'), {
+      target: { value: 'CLOUD-1' },
+    })
+    fireEvent.click(screen.getByTestId('cloud-global-search-open-issue'))
+    expect(await screen.findByRole('alert')).toHaveTextContent('Local runtime unavailable')
+    fireEvent.click(screen.getByTestId('cloud-global-search-direct-backend:cloud-project'))
+    await waitFor(() =>
+      expect(onActiveProjectChange).toHaveBeenCalledWith(
+        expect.objectContaining({ id: project.id, location: 'cloud' })
+      )
+    )
+    expect(screen.queryByTestId('cloud-global-search')).not.toBeInTheDocument()
+    expect(screen.getByTestId('collaboration-platform-root')).toHaveAttribute(
+      'data-issue-id',
+      issue.id
+    )
+    await expect(renderedPlatformApis.get(project.id)!.projects.get(project.id)).resolves.toEqual(
+      project
+    )
+    expect(localDeliveryApi.listCloudProjects).not.toHaveBeenCalled()
+  })
+
+  it('loads a source-qualified cloud project without consulting the local runtime', async () => {
+    const localList = vi.fn().mockRejectedValue(new Error('Local runtime unavailable'))
+    const cloudProject = { id: 'cloud-project', project_store: 'backend', name: 'Cloud project' }
+    const cloudGet = vi.fn().mockResolvedValue(cloudProject)
+    const api = createWeworkPlatformApi(
+      { workspaces: {}, projects: { get: cloudGet } } as unknown as SharedWorkspaceApi,
+      { projects: { list: localList } } as unknown as SharedWorkspaceApi,
+      projectId => (projectId === 'cloud-project' ? 'cloud' : undefined)
+    )
+    await expect(api!.projects.get('cloud-project')).resolves.toEqual(cloudProject)
+    expect(localList).not.toHaveBeenCalled()
+    expect(cloudGet).toHaveBeenCalledWith('cloud-project')
+  })
+
   it('closes the reference search after navigating to a directly resolved local Issue', async () => {
     const localDeliveryApi = createLocalDeliveryApi()
     localDeliveryApi.getLoopItem = vi.fn().mockResolvedValue({

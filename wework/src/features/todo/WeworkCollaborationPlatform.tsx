@@ -1735,8 +1735,22 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
     api,
     props.services.projectSpaceApis?.local,
   ])
+  const activeProject =
+    String(props.activeProjectRef?.projectId) === DEFAULT_WORK_ITEM_PROJECT_ID
+      ? null
+      : (props.activeProjectRef ?? null)
+  const routedProjectId = activeProject ? String(activeProject.projectId) : null
+  const routedProjectStore = activeProject?.projectStore
+  const [location, setLocation] = useState<CollaborationPlatformLocation>(() => ({
+    ...(routeProjectLocation(activeProject, props.focusedItemId ?? null) ?? initialLocation),
+  }))
+  const getProjectStore = useStableEvent((projectId: string) => {
+    if (String(location.projectId ?? '') === projectId) return location.collaborationDomain
+    if (routedProjectId === projectId) return routedProjectStore === 'local' ? 'local' : 'cloud'
+    return undefined
+  })
   const platformApi = useMemo(() => {
-    const platform = createWeworkPlatformApi(api, localProjectApi)
+    const platform = createWeworkPlatformApi(api, localProjectApi, getProjectStore)
     if (!platform || !props.services.standInApi || !props.services.getLocalRuntimeSidebarIdentity)
       return platform
     const standIn = async (projectId: string) => {
@@ -1762,7 +1776,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
           (await standIn(projectId)).run!(projectId, issueId, deviceId, id),
       },
     }
-  }, [api, localProjectApi, props.services, props.user.id])
+  }, [api, localProjectApi, getProjectStore, props.services, props.user.id])
   const navigationApis = useMemo(
     () =>
       [
@@ -1773,15 +1787,6 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
       ].filter((candidate): candidate is SharedWorkspaceApi => Boolean(candidate)),
     [api, cloudConnection.isConnected, localProjectApi]
   )
-  const activeProject =
-    String(props.activeProjectRef?.projectId) === DEFAULT_WORK_ITEM_PROJECT_ID
-      ? null
-      : (props.activeProjectRef ?? null)
-  const routedProjectId = activeProject ? String(activeProject.projectId) : null
-  const routedProjectStore = activeProject?.projectStore
-  const [location, setLocation] = useState<CollaborationPlatformLocation>(() => ({
-    ...(routeProjectLocation(activeProject, props.focusedItemId ?? null) ?? initialLocation),
-  }))
   const [navigationSyncRevision, setNavigationSyncRevision] = useState(0)
   const [personalHomeEntryKey, setPersonalHomeEntryKey] = useState(0)
   const startupReadySent = useRef(false)
@@ -1910,7 +1915,10 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
     )
   }
 
-  const navigatePlatform = (nextLocation: CollaborationPlatformLocation) => {
+  const navigatePlatform = (
+    nextLocation: CollaborationPlatformLocation,
+    resolvedProject?: LocatedProjectSpace
+  ) => {
     const navigationRevision = ++navigationRequestRevisionRef.current
     if (
       !nextLocation.projectId &&
@@ -1936,8 +1944,11 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
       return
     }
     const requestedProjectId = String(nextLocation.projectId)
-    void platformApi.projects
-      .get(requestedProjectId)
+    void (
+      resolvedProject
+        ? Promise.resolve(resolvedProject)
+        : platformApi.projects.get(requestedProjectId)
+    )
       .then(project => {
         if (navigationRequestRevisionRef.current !== navigationRevision) return
         publishActiveProject({
@@ -2038,7 +2049,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
               item.id
             )
             if (next) {
-              navigatePlatform(next)
+              navigatePlatform(next, project)
               setIssueSearchOpen(false)
             }
           }}

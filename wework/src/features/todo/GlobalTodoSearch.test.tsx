@@ -144,6 +144,28 @@ it('ignores old lookups after changing the reference', async () => {
   expect(select).not.toHaveBeenCalled()
 })
 
+it('allows a new lookup after returning to an abandoned reference', async () => {
+  let finish!: (result: IssueReferenceLookup) => void
+  const resolve = vi
+    .fn()
+    .mockImplementationOnce(
+      () =>
+        new Promise<IssueReferenceLookup>(done => {
+          finish = done
+        })
+    )
+    .mockResolvedValueOnce({ matches: [{ project, item }], failures: [] })
+  const { rerender, props, select } = directSearch(resolve)
+  fireEvent.click(screen.getByTestId('cloud-global-search-open-issue'))
+  rerender(<GlobalTodoSearch {...props} query="WEG-1000" />)
+  await act(async () => finish({ matches: [{ project, item }], failures: [] }))
+  rerender(<GlobalTodoSearch {...props} />)
+  expect(screen.getByTestId('cloud-global-search-open-issue')).toBeEnabled()
+  fireEvent.keyDown(screen.getByTestId('cloud-global-search-input'), { key: 'Enter' })
+  await waitFor(() => expect(select).toHaveBeenCalledWith(project, item))
+  expect(resolve).toHaveBeenCalledTimes(2)
+})
+
 it('does not navigate to a lookup result without detail permission', async () => {
   const { select } = directSearch(async () => ({
     matches: [{ project, item: { ...item, can_view_detail: false } }],

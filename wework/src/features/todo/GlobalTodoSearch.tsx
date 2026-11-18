@@ -41,7 +41,10 @@ export function GlobalTodoSearch({
     busy: boolean
     error?: string
     matches?: IssueReferenceResult[]
-  } | null>(null)
+  }>({ query, scope: lookupScope, busy: false })
+  if (lookup.query !== query || lookup.scope !== lookupScope) {
+    setLookup({ query, scope: lookupScope, busy: false })
+  }
   const revision = useRef(0)
   // Invalidate during commit before native input can submit a lookup.
   useLayoutEffect(() => {
