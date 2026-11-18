@@ -34,6 +34,7 @@ vi.mock('node:fs/promises', async importOriginal => ({
   ...(await importOriginal()),
   chmod: vi.fn().mockResolvedValue(undefined),
   mkdir: vi.fn().mockResolvedValue(undefined),
+  symlink: vi.fn().mockResolvedValue(undefined),
   readFile: vi.fn(async path => {
     if (path.endsWith('executor.log')) return fixture.log
     if (path.endsWith('conversation-event-subscriptions.json'))
@@ -65,6 +66,7 @@ vi.mock('../e2e/desktop/modules/executor-rpc.mjs', () => ({
 
 const ENVIRONMENT = '[data-testid="environment-info-button"]'
 const CHECKS = '[data-testid="change-request-checks"]'
+const CHANGE_REQUEST = '[data-testid="change-request-button"]'
 
 beforeEach(() => {
   vi.useFakeTimers()
@@ -387,7 +389,9 @@ function baseControl(
       if (action === 'getAttribute')
         return selector === '[data-testid="change-request-status-switch"]'
           ? String(enabled)
-          : '#2631 检查中'
+          : selector === CHANGE_REQUEST && fixture.state === 'merged'
+            ? '#2631 已合并'
+            : '#2631 检查中'
       if (action === 'getText') return 'feat(wework): show pull request status'
       if (action === 'click' && selector === '[data-testid="change-request-open-settings"]')
         open = false
