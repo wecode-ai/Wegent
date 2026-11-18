@@ -59,6 +59,7 @@ async function registerDevice(
       success: true,
       device_id: deviceId,
       device_route_id: deviceId,
+      runtime_work_catalog_probe: true,
     })
     return client
   } catch (error) {
