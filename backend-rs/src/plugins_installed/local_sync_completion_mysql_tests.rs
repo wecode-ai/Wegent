@@ -152,13 +152,16 @@ pub(super) async fn verify(
         "Old install restored an uninstalled plugin"
     );
     ack_fence_tests::verify(&context, state).await?;
-    verify_alias_cleanup(&context).await?;
+    verify_alias_cleanup(&context, state).await?;
     registration_write_tests::verify(&context, state).await?;
     verify_contention(&context, state).await?;
     Ok(())
 }
 
-async fn verify_alias_cleanup(context: &Context<'_>) -> anyhow::Result<()> {
+async fn verify_alias_cleanup(
+    context: &Context<'_>,
+    state: &crate::state::AppState,
+) -> anyhow::Result<()> {
     #[derive(FromMysqlRow)]
     struct DeviceRowCount {
         n: i64,
@@ -176,14 +179,101 @@ async fn verify_alias_cleanup(context: &Context<'_>) -> anyhow::Result<()> {
         "Local-only confirmation retained a duplicate legacy alias"
     );
     assert_eq!(context.state().await?.as_deref(), Some("installed"));
+    // A converged canonical row must not hide a duplicate legacy alias.
+    context.mysql.execute("INSERT INTO plugin_device_installations (user_id,installed_kind_id,device_id,state,desired_release_id,actual_release_id,last_sync_at,updated_at) VALUES (81001,?,'completion-device','pending',42,0,NOW()-INTERVAL 1 DAY,NOW()-INTERVAL 1 DAY)", (context.id,)).await?;
+    let revision = context.write_revision().await?;
+    assert_eq!(
+        context.complete(&plan, "synced", 81001).await?["recorded"],
+        json!([context.id])
+    );
+    let count = context.mysql.fetch_one::<_,_,DeviceRowCount>("SELECT COUNT(*) AS n FROM plugin_device_installations WHERE user_id=81001 AND installed_kind_id=?", (context.id,)).await?;
+    assert_eq!(
+        count.n, 1,
+        "Converged install retained a duplicate legacy alias"
+    );
+    assert_eq!(
+        context.write_revision().await?,
+        json!(revision.as_i64().unwrap() + 1),
+        "Alias cleanup bypassed the revision commit fence"
+    );
+    let revision = context.write_revision().await?;
+    context.complete(&plan, "synced", 81001).await?;
+    assert_eq!(
+        context.write_revision().await?,
+        revision,
+        "Converged install receipt performed a write"
+    );
     context.set_intent(91, false).await?;
     let removal = context.plan().await?;
+    crate::plugins_installed::plugin_sync_protocol::register_plugin_snapshot_intent(
+        state,
+        81001,
+        &context.device,
+        &removal["payload"],
+    )
+    .await?;
+    // Dispatch already advanced the watermark, but only the alias row remains.
+    context.mysql.execute("UPDATE plugin_device_installations SET device_id='completion-device' WHERE user_id=81001 AND installed_kind_id=? AND device_id=?", (context.id, context.device.as_str())).await?;
+    let revision = context.write_revision().await?;
     assert_eq!(
         context.complete(&removal, "removed", 81001).await?["recorded"],
         json!([context.id])
     );
     let count = context.mysql.fetch_one::<_,_,DeviceRowCount>("SELECT COUNT(*) AS n FROM plugin_device_installations WHERE user_id=81001 AND installed_kind_id=?", (context.id,)).await?;
     assert_eq!(count.n, 0, "Local uninstall retained a legacy device row");
+    assert_eq!(
+        context.write_revision().await?,
+        json!(revision.as_i64().unwrap() + 1),
+        "Alias removal bypassed the revision commit fence"
+    );
+    let revision = context.write_revision().await?;
+    context.complete(&removal, "removed", 81001).await?;
+    assert_eq!(
+        context.write_revision().await?,
+        revision,
+        "Converged removal receipt performed a write"
+    );
+    verify_implicit_alias_removal(context, &removal).await?;
+    Ok(())
+}
+
+async fn verify_implicit_alias_removal(
+    context: &Context<'_>,
+    removal: &Value,
+) -> anyhow::Result<()> {
+    context.mysql.execute("INSERT INTO plugin_device_installations (user_id,installed_kind_id,device_id,state,last_sync_at,updated_at) VALUES (81001,?,'completion-device','uninstalling',NOW(),NOW())", (context.id,)).await?;
+    let mut receipt = context.receipt(removal, "removed");
+    receipt["completion"]["result"]["plugin_sync"]["complete"] = json!(true);
+    receipt["completion"]["result"]["plugins"] = json!([]);
+    let revision = context.write_revision().await?;
+    let response = context
+        .post(81001, "/api/plugins/local-sync/complete", receipt.clone())
+        .await?;
+    assert_eq!(response.status().as_u16(), 200);
+    assert_eq!(
+        response.json::<Value>().await?["recorded"],
+        json!([context.id])
+    );
+    #[derive(FromMysqlRow)]
+    struct Count {
+        n: i64,
+    }
+    let count: Count = context.mysql.fetch_one("SELECT COUNT(*) AS n FROM plugin_device_installations WHERE user_id=81001 AND installed_kind_id=?", (context.id,)).await?;
+    assert_eq!(
+        count.n, 0,
+        "Full completion missed an alias-only implicit removal"
+    );
+    assert_eq!(
+        context.write_revision().await?,
+        json!(revision.as_i64().unwrap() + 1)
+    );
+    let revision = context.write_revision().await?;
+    let response = context
+        .post(81001, "/api/plugins/local-sync/complete", receipt)
+        .await?;
+    assert_eq!(response.status().as_u16(), 200);
+    assert_eq!(response.json::<Value>().await?["recorded"], json!([]));
+    assert_eq!(context.write_revision().await?, revision);
     Ok(())
 }
 

@@ -4,7 +4,10 @@ use crate::plugins_installed::{
     plugin_sync_protocol, record_sync_result,
     write_coordination::{PluginWriteLease, business_revision},
 };
-use crate::plugins_marketplace::db::{InstalledKindRow, KIND_COLUMNS};
+use crate::plugins_marketplace::{
+    db::{InstalledKindRow, KIND_COLUMNS},
+    query::PluginQuery,
+};
 use brz_mysql::Mysql;
 use brz_redis::Redis;
 use std::collections::BTreeMap;
@@ -95,19 +98,25 @@ pub(super) async fn record_until<M: Mysql, R: Redis + Sync>(
         struct Removed {
             installed_kind_id: i64,
         }
-        let rows: Vec<Removed> = tokio::time::timeout_at(deadline, query.fetch_all(
+        let aliases =
+            tokio::time::timeout_at(deadline, device_aliases(&mut query, user_id, &device_id))
+                .await
+                .unwrap_or_else(|_| Err(coordination_error("plugin_write_busy")))?;
+        for alias in aliases {
+            let rows: Vec<Removed> = tokio::time::timeout_at(deadline, query.fetch_all(
             "SELECT installed_kind_id FROM plugin_device_installations WHERE user_id=? AND device_id=?",
-            (user_id, device_id.as_str()),
-        )).await.unwrap_or_else(|_| Err(coordination_error("plugin_write_busy")))?;
-        for row in rows {
-            if completion
-                .installed_revisions
-                .contains_key(&row.installed_kind_id)
-                && !items
-                    .iter()
-                    .any(|item| item["id"].as_i64() == Some(row.installed_kind_id))
-            {
-                items.push(json!({"id":row.installed_kind_id,"status":"removed"}));
+            (user_id, alias.as_str()),
+            )).await.unwrap_or_else(|_| Err(coordination_error("plugin_write_busy")))?;
+            for row in rows {
+                if completion
+                    .installed_revisions
+                    .contains_key(&row.installed_kind_id)
+                    && !items
+                        .iter()
+                        .any(|item| item["id"].as_i64() == Some(row.installed_kind_id))
+                {
+                    items.push(json!({"id":row.installed_kind_id,"status":"removed"}));
+                }
             }
         }
     }
@@ -217,7 +226,9 @@ async fn record_one<M: Mysql, R: Redis + Sync>(
                 let matches = if installed.is_active {
                     row.is_some_and(|row| row.state == "installed" && row.actual_release_id == release && row.desired_release_id == release)
                 } else { row.is_none() };
-                if matches { return Ok(true); }
+                if matches && !has_legacy_device_rows(&mut query, user_id, device_id, id).await? {
+                    return Ok(true);
+                }
                 // Dispatch advances the watermark before the device executes.
                 // The unchanged business revision fences semantic supersession;
                 // another queued delivery cannot invalidate actual materialization.
@@ -236,4 +247,40 @@ async fn record_one<M: Mysql, R: Redis + Sync>(
         write_ms=acquired.elapsed().as_millis() as u64, error=?outcome.as_ref().err().and_then(crate::plugins_installed::write_coordination::plugin_write_error_code),
         "Local plugin completion write finished");
     outcome
+}
+
+/// A matching canonical row cannot prove that the device's aliases converged.
+async fn has_legacy_device_rows<Q: PluginQuery>(
+    query: &mut Q,
+    user_id: i64,
+    device_id: &str,
+    installed_id: i64,
+) -> MysqlResult<bool> {
+    for alias in device_aliases(query, user_id, device_id).await? {
+        if alias == device_id {
+            continue;
+        }
+        let row: Option<crate::device_identity::PluginDeviceInstallationRow> = query
+            .fetch_optional(
+                crate::plugins_installed::report::DEVICE_ROW_QUERY,
+                (installed_id, alias.as_str()),
+            )
+            .await?;
+        if row.is_some() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+async fn device_aliases<Q: PluginQuery>(
+    query: &mut Q,
+    user_id: i64,
+    device_id: &str,
+) -> MysqlResult<Vec<String>> {
+    use crate::device_identity::{
+        DeviceKindRow, KINDS_DEVICE_QUERY, unambiguous_device_identity_ids,
+    };
+    let devices: Vec<DeviceKindRow> = query.fetch_all(KINDS_DEVICE_QUERY, (user_id,)).await?;
+    Ok(unambiguous_device_identity_ids(&devices, device_id))
 }
