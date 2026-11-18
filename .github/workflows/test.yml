@@ -525,6 +525,9 @@ jobs:
         working-directory: ./executor
         run: cargo fmt --all --check
 
+      - name: Run asynchronous lifecycle Hook script tests
+        run: node --test executor/examples/hooks/turn-diff-logger/logger.test.mjs
+
       - name: Run executor Rust tests
         working-directory: ./executor
         run: cargo test --all-features
