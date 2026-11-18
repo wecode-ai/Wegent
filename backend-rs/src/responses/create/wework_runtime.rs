@@ -17,8 +17,23 @@ use crate::auth::UserRow;
 use crate::background_jobs::project::runtime_rpc;
 use crate::device_identity::resolve_runtime_route_identity;
 use crate::http_compat::FastApiError;
+use crate::responses::create::bot_config::backend_url;
 use crate::responses::create::tokens;
 use crate::state::AppState;
+
+pub(super) fn ensure_execution_backend_url(execution: &Value) -> Result<(), FastApiError> {
+    if execution
+        .get("backend_url")
+        .and_then(Value::as_str)
+        .is_some_and(|url| !url.trim().is_empty())
+    {
+        return Ok(());
+    }
+    Err(FastApiError::detail(
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "Execution request is missing backend_url",
+    ))
+}
 
 fn runtime_execution_ids() -> (i64, i64) {
     let mut bytes = [0u8; 8];
@@ -191,7 +206,7 @@ pub(super) async fn execution_request(
         "interactive_form_answer" => json!(null),
         "auth_token" => json!(auth_token),
         "skill_identity_token" => json!(skill_identity_token),
-        "backend_url" => json!(""),
+        "backend_url" => json!(backend_url()),
         "attachments" => json!([]),
         "is_subscription" => json!(false),
         "system_mcp_config" => json!(null),
@@ -246,6 +261,7 @@ pub(super) async fn create_payload(
         selection,
     )
     .await?;
+    ensure_execution_backend_url(&execution)?;
     Ok(assemble_create_payload(
         execution,
         &message,
@@ -412,6 +428,7 @@ pub(super) async fn send_message(
         selection,
     )
     .await?;
+    ensure_execution_backend_url(&execution)?;
     if let Some(object) = execution.as_object_mut() {
         object.insert("new_session".to_string(), json!(false));
         object.insert("standalone_chat_workspace".to_string(), json!(false));

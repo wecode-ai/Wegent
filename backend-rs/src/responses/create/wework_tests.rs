@@ -173,8 +173,12 @@ fn assembles_the_runtime_create_payload_top_level() {
         .expect("options"),
         from_persisted: false,
     };
+    let execution = json!({
+        "prompt": "测试",
+        "backend_url": "https://backend.example/api"
+    });
     let payload = assemble_create_payload(
-        json!({"prompt": "测试"}),
+        execution,
         "测试",
         "12312",
         "task-1",
@@ -197,6 +201,20 @@ fn assembles_the_runtime_create_payload_top_level() {
         payload["modelSelection"]["options"]["weworkCloudModelNamespace"],
         "default"
     );
+    assert!(
+        payload["executionRequest"]["backend_url"]
+            .as_str()
+            .is_some_and(|url| !url.trim().is_empty())
+    );
+}
+
+#[test]
+fn rejects_runtime_execution_requests_without_backend_url() {
+    let error = super::wework_runtime::ensure_execution_backend_url(&json!({
+        "backend_url": " "
+    }))
+    .expect_err("missing backend_url must be rejected");
+    assert_eq!(error.to_string(), "Execution request is missing backend_url");
 }
 
 #[test]
