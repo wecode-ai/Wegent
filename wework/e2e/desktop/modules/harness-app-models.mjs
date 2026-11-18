@@ -449,12 +449,12 @@ async function openSmartAppsTab(control, uiTimeoutMs) {
 
 async function selectHarnessAppModel(control, installationId, label, uiTimeoutMs) {
   const selector = `[data-testid="harness-app-model-${installationId}"]`
-  await control.command('waitFor', `${selector} option`, {
-    text: label,
+  await control.command('waitFor', selector, {
+    enabled: true,
     stableMs: 300,
     timeoutMs: uiTimeoutMs,
   })
-  await control.command('select', selector, { by: 'label', value: label })
+  await control.command('select', selector, { by: 'label', value: label, timeoutMs: uiTimeoutMs })
   await control.command('waitFor', selector, {
     enabled: true,
     stableMs: 300,
