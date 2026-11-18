@@ -9,6 +9,19 @@ use crate::runtime_work::lifecycle::{queue_native_execution, settle_native_execu
 pub(super) const MARKER: &str = "wegent_quota_recovery";
 const RECHECK_MS: i64 = 60_000;
 
+impl concurrency::RuntimeTurnScheduler {
+    pub(super) fn next_quota_check_at(&self, now: i64, resume_ready: bool) -> Option<i64> {
+        self.queued_turns
+            .iter()
+            .filter_map(|turn| {
+                let deadline = wait(turn)?.next_check_at;
+                // Overdue waits must still wake, unless admission is currently blocked.
+                (deadline > now || resume_ready && self.can_resume(turn)).then_some(deadline)
+            })
+            .min()
+    }
+}
+
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct QuotaWait {
@@ -188,8 +201,7 @@ impl RuntimeWorkRpcHandler {
                 tokio::pin!(notified);
                 notified.as_mut().enable();
                 let deadline = handler.turn_scheduler.lock().expect("turn scheduler poisoned")
-                    .queued_turns.iter().filter_map(wait).map(|wait| wait.next_check_at)
-                    .filter(|deadline| *deadline > now_ms()).min();
+                    .next_quota_check_at(now_ms(), !handler.startup_recovery_deferred.load(Ordering::Acquire));
                 match deadline {
                     Some(deadline) => tokio::select! {
                         _ = &mut notified => {},

@@ -214,6 +214,10 @@ impl RuntimeTurnScheduler {
             && !self.active_task_ids.contains_key(&turn.local_task_id)
     }
 
+    pub(super) fn can_resume(&self, turn: &SpawnTurnRequest) -> bool {
+        self.has_capacity(turn) && !self.automatic_waits(turn)
+    }
+
     fn ready_queued_turns(&self, kind: RuntimeTaskKind) -> impl Iterator<Item = &SpawnTurnRequest> {
         let now = now_ms();
         self.queued_turns.iter().filter(move |turn| {
@@ -254,10 +258,7 @@ impl RuntimeTurnScheduler {
     }
 
     pub(super) fn enqueue(&mut self, turn: SpawnTurnRequest) -> Option<SpawnTurnRequest> {
-        if !self.has_capacity(&turn)
-            || self.automatic_waits(&turn)
-            || self.has_ready_queued_kind(turn.task_kind())
-        {
+        if !self.can_resume(&turn) || self.has_ready_queued_kind(turn.task_kind()) {
             self.queued_turns.push_back(turn);
             return None;
         }
@@ -320,7 +321,7 @@ impl RuntimeTurnScheduler {
         while let Some(position) = self
             .queued_turns
             .iter()
-            .position(|turn| self.has_capacity(turn) && !self.automatic_waits(turn))
+            .position(|turn| self.can_resume(turn))
         {
             let turn = self
                 .queued_turns

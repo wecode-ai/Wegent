@@ -618,7 +618,12 @@ printf '%s\n' '{{"type":"assistant","message":{{"content":[{{"type":"text","text
     let outcome = engine.run(with_backend_identity(request)).await;
 
     assert_eq!(
-        fs::read_to_string(preflight_environment).unwrap(),
+        fs::read_to_string(&preflight_environment).unwrap_or_else(|error| {
+            panic!(
+                "missing preflight evidence at {}: {error}; outcome: {outcome:?}",
+                preflight_environment.display()
+            )
+        }),
         "0\n2048\n5\n"
     );
     if times_out {
