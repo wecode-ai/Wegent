@@ -277,7 +277,7 @@ jobs:
             cargo_target: x86_64-pc-windows-msvc
             codex_target: x86_64-pc-windows-msvc
           - name: Linux x64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
             platform: linux
             arch: x64
             cargo_target: x86_64-unknown-linux-gnu
