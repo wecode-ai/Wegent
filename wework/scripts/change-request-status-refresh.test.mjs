@@ -8,7 +8,7 @@ import { createDesktopScenario } from '../e2e/desktop/scenarios/change-request-s
 import { ChangeRequestUiObserver } from '../src/features/workbench/changeRequestUiObserver'
 import { createConnectionObserverFixture } from '../src/test/connection-observer'
 
-const fixture = vi.hoisted(() => ({ log: '', state: 'pending', writes: [] }))
+const fixture = vi.hoisted(() => ({ log: '', state: 'pending', writes: [], observers: {} }))
 
 vi.mock('@/api/changeRequests', () => ({
   linkedChangeRequestTarget: (deviceId, changeRequestUrl) => ({
@@ -34,7 +34,12 @@ vi.mock('node:fs/promises', async importOriginal => ({
   ...(await importOriginal()),
   chmod: vi.fn().mockResolvedValue(undefined),
   mkdir: vi.fn().mockResolvedValue(undefined),
-  readFile: vi.fn(async path => (path.endsWith('executor.log') ? fixture.log : '1\n')),
+  readFile: vi.fn(async path => {
+    if (path.endsWith('executor.log')) return fixture.log
+    if (path.endsWith('conversation-event-subscriptions.json'))
+      return JSON.stringify({ observers: fixture.observers })
+    return '1\n'
+  }),
   writeFile: vi.fn(async (path, value) => {
     if (path.endsWith('.wework-change-request-e2e-state')) {
       fixture.state = value.trim()
@@ -68,6 +73,7 @@ beforeEach(() => {
   fixture.log = ''
   fixture.state = 'pending'
   fixture.writes = []
+  fixture.observers = {}
 })
 
 afterEach(() => {
@@ -84,12 +90,13 @@ test.each([true, false])(
     expect(await run.result).toBe(run.stopAfterPhase)
     expect(run.runtime.operations.map(operation => operation.state)).toEqual([
       'pending',
+      'pending',
       'failure',
       'failure',
       'success',
       'unavailable',
     ])
-    expect(run.runtime.operations[0].requestedAt).toBeGreaterThanOrEqual(500)
+    expect(run.runtime.operations[0].requestedAt).toBe(0)
     for (let index = 1; index < run.runtime.operations.length; index += 1) {
       expect(run.runtime.operations[index].requestedAt).toBeGreaterThanOrEqual(
         run.runtime.operations[index - 1].finishedAt
@@ -171,13 +178,13 @@ test.each([true, false])(
     })
     await vi.advanceTimersByTimeAsync(100_000)
     expect(await run.result).toBe(run.stopAfterPhase)
-    expect(run.runtime.operations).toContainEqual(
-      expect.objectContaining({
-        command: 'connection_observer_start',
-        state: 'unavailable',
-        ok: false,
-      })
+    const starts = run.runtime.operations.filter(
+      operation => operation.command === 'connection_observer_start'
     )
+    expect(starts).toHaveLength(2)
+    expect(starts.at(-1)).toMatchObject({ state: 'merged', ok: true })
+    expect(starts.some(operation => operation.state === 'unavailable')).toBe(false)
+    expect(fixture.writes.at(-1).at).toBeLessThanOrEqual(starts.at(-1).finishedAt - 250)
     expect(run.runtime.operations.at(-1)).toMatchObject({
       command: 'connection_observer_refresh',
       state: 'merged',
@@ -205,6 +212,7 @@ async function startVerification(options = {}) {
     // Retain the observed repair/screenshot interleaving without a real UI or filesystem.
     captureScreenshot: vi.fn(async () => delay(500)),
     homePath: join(tmpdir(), 'change-request-status-home'),
+    executorHome: join(tmpdir(), 'change-request-status-executor'),
     resultDir: join(tmpdir(), 'change-request-status-results'),
     workspacePath: join(tmpdir(), 'change-request-status-workspace'),
     uiTimeoutMs: 10_000,
@@ -264,6 +272,26 @@ function nativeObservationLease() {
   const operations = []
   const observer = new ChangeRequestUiObserver({
     async executeCommand(_device, request) {
+      const input = JSON.parse(request.args[0])
+      const leaseId = `observer-${input.consumerKey}-${input.generation}`
+      const lease = {
+        id: leaseId,
+        consumer_key: input.consumerKey,
+        generation: input.generation,
+        device_id: target.deviceId,
+        source: {
+          providerId: '@wegent/dsh-connection-git/github',
+          kind: 'repository',
+          transport: 'cli',
+          profile: JSON.stringify(['https://github.com', '1']),
+          id: '2630',
+          name: 'wecode-ai/Wegent',
+          monitoredObjects: [{ entityKind: 'change_request', number: 2631 }],
+        },
+        status: 'preparing',
+        expires_at: Date.now() + 90_000,
+      }
+      if (request.command_key === 'connection_observer_start') fixture.observers[leaseId] = lease
       const operation = {
         id: `native-${operations.length + 1}`,
         command: request.command_key,
@@ -277,6 +305,10 @@ function nativeObservationLease() {
       )
       operation.finishedAt = Date.now()
       fixture.log += observationLog('finished', operation)
+      if (request.command_key === 'connection_observer_start')
+        lease.status = operation.ok ? 'observing' : 'error'
+      if (request.command_key === 'connection_observer_stop' && fixture.observers[leaseId])
+        fixture.observers[leaseId].status = 'stopped'
       if (!operation.ok)
         throw Object.assign(new Error('Git CLI is unavailable'), { code: 'git_cli_missing' })
       const result = reply(request)
@@ -366,6 +398,9 @@ function baseControl(
       if (action === 'clickWhenEnabled' && selector === '[data-testid="git-device-sync-submit"]')
         await syncGitAccounts()
       if (action === 'waitFor' && selector === CHECKS) {
+        const deadline = Date.now() + (options.timeoutMs ?? 10_000)
+        while (runtime.pending && Date.now() < deadline) await delay(100)
+        expect(runtime.pending, 'The original UI step must settle within its budget').toBe(0)
         checks.push({
           text: options.text,
           timeoutMs: options.timeoutMs ?? 10_000,

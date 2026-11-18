@@ -10,9 +10,9 @@ import { CollaborationTemplateContext } from '../../packages/collaboration/src/t
 import { CollaborationTemplateStore } from '../../packages/collaboration/src/templates/store'
 import {
   discardTemplateProjectDraft,
-  openTemplateProjectBindings,
   submitConfiguredTemplateProject,
 } from '../e2e/desktop/scenarios/collaboration-templates.scenario.mjs'
+import { openProjectTemplateConfiguration } from '../e2e/desktop/modules/project-create-template-navigation.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const scoped = id => `${CONTENT} [data-testid="${id}"]`
@@ -210,7 +210,8 @@ async function fixture({ configuration, commandFailure, onCommand = () => {} } =
   }
 }
 
-const openBindings = control => openTemplateProjectBindings(control, { uiTimeoutMs: UI_TIMEOUT })
+const openBindings = control =>
+  openProjectTemplateConfiguration(control, CONTENT, { timeoutMs: UI_TIMEOUT })
 const discard = control =>
   discardTemplateProjectDraft(control, {
     uiTimeoutMs: UI_TIMEOUT,

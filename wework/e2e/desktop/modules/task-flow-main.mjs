@@ -1329,6 +1329,8 @@ async function main() {
             : undefined,
         managedCloudIdentity: CLOUD_ONLY,
         modelServerUrl: control.url,
+        modelCatalogOverrides: desktopScenario?.cloudModelCatalogOverrides ?? [],
+        remoteExecutorType: desktopScenario?.remoteExecutorType,
         scenarioConfigToml: shouldConfigureToolDetailsMcp() ? toolDetailsMcpConfigToml() : '',
         workspacePath: desktopScenario?.remoteWorkspacePath ?? workspacePath,
       })
@@ -2682,11 +2684,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     )
     await control.command('waitFor', secondaryProjectRowSelector, {
       text: 'secondary-project',
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
     await control.command('waitFor', '[data-testid="project-work-button"]', {
       text: 'secondary-project',
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
 
     phase = 'composer-project-folder-select'
