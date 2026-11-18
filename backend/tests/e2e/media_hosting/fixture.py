@@ -7,6 +7,7 @@
 import hashlib
 import json
 import os
+import re
 import secrets
 import socket
 import subprocess
@@ -32,12 +33,6 @@ from .model import ModelServer
 
 ROOT = Path(__file__).resolve().parents[4]
 REPORT = Path(os.environ["E2E_REPORT_DIR"]).resolve()
-
-
-def free_port() -> int:
-    with socket.socket() as listener:
-        listener.bind(("127.0.0.1", 0))
-        return listener.getsockname()[1]
 
 
 class HostingFixture(unittest.TestCase):
@@ -230,8 +225,6 @@ class HostingFixture(unittest.TestCase):
 
     @classmethod
     def start_application(cls) -> None:
-        python_port, rust_port = free_port(), free_port()
-        cls.url = f"http://127.0.0.1:{rust_port}"
         empty_env = REPORT / "empty.env"
         empty_env.write_text("")
         environment = dict(
@@ -248,8 +241,7 @@ class HostingFixture(unittest.TestCase):
             WEGENT_BACKEND_RS_ENV_FILE=str(empty_env),
             WEGENT_RS_ROUTES_FILE=str(ROOT / "backend-rs/config/routes.toml"),
             WEGENT_RS_LISTEN_HOST="127.0.0.1",
-            WEGENT_RS_LISTEN_PORT=str(rust_port),
-            WEGENT_PYTHON_UPSTREAM_URL=f"http://127.0.0.1:{python_port}",
+            WEGENT_RS_LISTEN_PORT="0",
             BREEZE_LOG_DIR=str(REPORT / "rust"),
             LOG_DIR=str(REPORT / "python"),
             EMBEDDED_CELERY_ENABLED="false",
@@ -263,48 +255,91 @@ class HostingFixture(unittest.TestCase):
             EXECUTOR_MANAGER_URL="http://127.0.0.1:1",
             RUST_LOG="info",
         )
-        cls.launch(
-            "python",
-            [
-                sys.executable,
-                "-m",
-                "uvicorn",
-                "media_hosting.application:app",
-                "--app-dir",
-                "tests/e2e",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                str(python_port),
-            ],
-            environment,
-            ROOT / "backend",
-        )
-        cls.launch(
+        # Transfer the bound socket to Uvicorn without releasing its port.
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen()
+            descriptor = listener.fileno()
+            environment["WEGENT_PYTHON_UPSTREAM_URL"] = (
+                f"http://127.0.0.1:{listener.getsockname()[1]}"
+            )
+            python = cls.launch(
+                "python",
+                [
+                    sys.executable,
+                    "-m",
+                    "uvicorn",
+                    "media_hosting.application:app",
+                    "--app-dir",
+                    "tests/e2e",
+                    "--fd",
+                    str(descriptor),
+                ],
+                environment,
+                ROOT / "backend",
+                pass_fds=(descriptor,),
+            )
+        rust = cls.launch(
             "rust", [os.environ["WEGENT_HOSTING_BINARY_PATH"]], environment, ROOT
         )
-        cls.client = httpx.Client(base_url=cls.url, timeout=45, trust_env=False)
-        cls.addClassCleanup(cls.client.close)
+        cls.wait_for_application(python, rust)
+
+    @classmethod
+    def wait_for_application(
+        cls, python: subprocess.Popen, rust: subprocess.Popen
+    ) -> None:
+        info_log = REPORT / "rust" / "info.log"
         deadline = time.monotonic() + 120
+        client = None
         while time.monotonic() < deadline:
-            try:
-                if cls.client.get("/api/health").status_code == 200:
-                    return
-            except httpx.TransportError:
-                pass
+            for name, process in (("python", python), ("rust", rust)):
+                if (code := process.poll()) is not None:
+                    raise AssertionError(
+                        f"{name} exited during startup with code {code}; see {name}.log"
+                    )
+            if client is None and info_log.exists():
+                # Use the gateway's bound address, as in the attachment S3 suite.
+                started = re.search(
+                    r"Wegent migration gateway started listen=(127\.0\.0\.1:\d+)",
+                    info_log.read_text(),
+                )
+                if started:
+                    cls.url = f"http://{started.group(1)}"
+                    client = cls.client = httpx.Client(
+                        base_url=cls.url, timeout=45, trust_env=False
+                    )
+                    cls.addClassCleanup(client.close)
+            if client is not None:
+                try:
+                    if client.get("/api/health").status_code == 200:
+                        return
+                except httpx.TransportError:
+                    pass
             time.sleep(0.2)
         raise AssertionError("Hybrid Backend startup failed; inspect process logs")
 
     @classmethod
     def launch(
-        cls, name: str, command: list[str], environment: dict[str, str], cwd: Path
-    ) -> None:
+        cls,
+        name: str,
+        command: list[str],
+        environment: dict[str, str],
+        cwd: Path,
+        *,
+        pass_fds: tuple[int, ...] = (),
+    ) -> subprocess.Popen:
         log = (REPORT / f"{name}.log").open("w")
         cls.addClassCleanup(log.close)
         process = subprocess.Popen(
-            command, cwd=cwd, env=environment, stdout=log, stderr=subprocess.STDOUT
+            command,
+            cwd=cwd,
+            env=environment,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            pass_fds=pass_fds,
         )
         cls.addClassCleanup(cls.stop, process)
+        return process
 
     @staticmethod
     def stop(process: subprocess.Popen) -> None:
