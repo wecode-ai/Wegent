@@ -772,6 +772,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           WEWORK_UPGRADE_DIAGNOSTICS_DIR: ${{ runner.temp }}/wework-upgrade-diagnostics
+          RUNNER_RESOURCE_LOG_PATH: ${{ runner.temp }}/wework-upgrade-diagnostics/runner-resources.jsonl
           WEWORK_E2E_SOCKET_IO_CLIENT: ${{ runner.temp }}/upgrade-input/wework-upgrade-client/socket.io-client.cjs
           WEWORK_E2E_YAML_PARSER: ${{ runner.temp }}/upgrade-input/wework-upgrade-client/yaml.cjs
           WEWORK_UPGRADE_DIAGNOSTIC_CHECKPOINT: ${{ needs.prepare-upgrade-inputs.outputs.diagnostic_checkpoint }}
@@ -784,7 +785,7 @@ jobs:
           WEWORK_UPGRADE_VERIFY_SOURCE: ${{ matrix.source_version }}
           WEWORK_UPGRADE_PREFETCH_DIRECTORY: ${{ needs.prepare-upgrade-inputs.outputs.diagnostic_checkpoint == '' && format('{0}/upgrade-prefetch', runner.temp) || '' }}
         run: |
-          node wework/scripts/verify-release-upgrades.mjs \
+          node .github/scripts/run-with-resource-logging.mjs node wework/scripts/verify-release-upgrades.mjs \
             "$RUNNER_TEMP/upgrade-input/wework-release-assets" \
             "${{ matrix.platform }}" "${{ matrix.arch }}" \
             "${{ needs.prepare-upgrade-inputs.outputs.channel }}" \
@@ -796,6 +797,7 @@ jobs:
         with:
           name: wework-release-upgrades-${{ matrix.platform }}-${{ matrix.arch }}-${{ matrix.channel }}-${{ matrix.source_version || 'diagnostic' }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
+            ${{ runner.temp }}/wework-upgrade-diagnostics/runner-resources.jsonl
             ${{ runner.temp }}/wework-upgrade-diagnostics/**/summary.json
             ${{ runner.temp }}/wework-upgrade-diagnostics/**/*.log
             ${{ runner.temp }}/wework-upgrade-diagnostics/**/*result.json
