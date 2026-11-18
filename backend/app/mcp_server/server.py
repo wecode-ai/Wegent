@@ -604,6 +604,9 @@ def ensure_wework_space_tools_registered() -> None:
         return
     from app.mcp_server.tool_registry import register_tools_to_server
     from app.mcp_server.tools import wework_space  # noqa: F401
+    from app.mcp_server.tools import wework_space_batch
+
+    wework_space_batch.register()
 
     count = register_tools_to_server(wework_space_mcp_server, "wework_space")
     logger.info("[MCP:WeworkSpace] Registered %s tools", count)
