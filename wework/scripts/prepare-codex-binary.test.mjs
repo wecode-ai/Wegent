@@ -34,6 +34,10 @@ test('direct execution through a directory link still runs the native preparatio
     new URL('./lib/process-lock.mjs', import.meta.url),
     join(root, 'scripts/lib/process-lock.mjs')
   )
+  await cp(
+    new URL('./lib/windows-native-runtime.mjs', import.meta.url),
+    join(root, 'scripts/lib/windows-native-runtime.mjs')
+  )
   await writeFile(join(root, 'codex-binaries.lock.json'), '{"targets":{}}')
   await symlink(
     resolve('node_modules'),
@@ -228,17 +232,12 @@ describe('ensureWindowsAppLocalCrt', () => {
     const { ensureWindowsAppLocalCrt } = await import('./prepare-codex-binary.mjs')
     const { root, target, pathDir } = await crtFixture(Buffer.from('pinned crt'))
     await ensureWindowsAppLocalCrt(root, target)
-    await expect(readFile(join(pathDir, 'vcruntime140.dll'), 'utf8')).resolves.toBe(
-      'pinned crt'
-    )
+    await expect(readFile(join(pathDir, 'vcruntime140.dll'), 'utf8')).resolves.toBe('pinned crt')
   })
 
   test('rejects a bundled runtime that does not match the manifest pin', async () => {
     const { ensureWindowsAppLocalCrt } = await import('./prepare-codex-binary.mjs')
-    const { root, target, pathDir } = await crtFixture(
-      Buffer.from('tampered crt'),
-      'f'.repeat(64)
-    )
+    const { root, target, pathDir } = await crtFixture(Buffer.from('tampered crt'), 'f'.repeat(64))
     await expect(ensureWindowsAppLocalCrt(root, target)).rejects.toThrow(
       /does not match the Codex windows-crt manifest/
     )
@@ -251,7 +250,8 @@ describe('ensureWindowsAppLocalCrt', () => {
     const { ensureWindowsAppLocalCrt } = await import('./prepare-codex-binary.mjs')
     const { root, target } = await crtFixture(Buffer.from('pinned crt'))
     await ensureWindowsAppLocalCrt(root, 'aarch64-apple-darwin')
-    await expect(readFile(join(root, 'vendor', target, 'codex-path', 'vcruntime140.dll')))
-      .rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(
+      readFile(join(root, 'vendor', target, 'codex-path', 'vcruntime140.dll'))
+    ).rejects.toMatchObject({ code: 'ENOENT' })
   })
 })
