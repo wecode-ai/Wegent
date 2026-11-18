@@ -1,3 +1,4 @@
+import { getModelLoadingDiagnostics } from '@/lib/model-loading-diagnostics'
 import { collectIssueDrawerDiagnostics } from './issue-drawer-diagnostics'
 import { waitForDomChange } from './waitForDomChange'
 import { readNativeModelFixtures, writeNativeModelFixtures } from './native-model-fixtures'
@@ -3701,6 +3702,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         runtimeStream: getRuntimeStreamDiagnostics(),
         desktopControlTransport: getDesktopControlDiagnostics(),
         nativeTerminalKeys: getNativeTerminalDiagnostics(),
+        modelLoading: getModelLoadingDiagnostics(),
         timeOrigin: performance.timeOrigin,
         network: performance.getEntriesByType('resource').map(entry => {
           const timing = entry as PerformanceResourceTiming

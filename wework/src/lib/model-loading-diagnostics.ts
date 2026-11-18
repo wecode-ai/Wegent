@@ -6,6 +6,7 @@ let persistenceWarningLogged = false
 let flushTimer: ReturnType<typeof setTimeout> | undefined
 let flushing = false
 const pendingEvents: Array<Record<string, unknown>> = []
+const recentEvents: Array<Record<string, unknown>> = []
 const FLUSH_INTERVAL_MS = 10_000
 const MAX_PENDING_EVENTS = 200
 
@@ -34,6 +35,10 @@ async function flushDiagnostics(): Promise<void> {
   }
 }
 
+export function getModelLoadingDiagnostics(): Array<Record<string, unknown>> {
+  return recentEvents.map(event => ({ ...event }))
+}
+
 export function createModelLoadingTrace(): string {
   return `models-${Date.now().toString(36)}-${++sequence}`
 }
@@ -47,6 +52,8 @@ export function logModelLoading(
   if (!isElectronRuntime()) return
   if (pendingEvents.length === MAX_PENDING_EVENTS) pendingEvents.shift()
   pendingEvents.push(event)
+  if (recentEvents.length === MAX_PENDING_EVENTS) recentEvents.shift()
+  recentEvents.push(event)
   scheduleFlush()
 }
 

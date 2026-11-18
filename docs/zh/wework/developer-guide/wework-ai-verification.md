@@ -186,6 +186,8 @@ pnpm --filter wework e2e:desktop:cloud -- --segment plugin-periodic-reconcile
 
 缺失记录保留为 `null`。`logs/app/model-loading.log` 的 `workbench.selection_restored`、`workbench.selection_changed` 和 `workbench.selection_seeded` 使用数字指纹关联模型和作用域。指纹只用于诊断。
 
+完整工作台诊断快照还包含 `modelLoading`：当前渲染器最近 200 条启动／请求分段事件的副本，包含尚未达到 10 秒持久化刷新时机的事件。该有界窗口用于补充宿主日志，不能作为完整事件历史；窗口重载后重新开始。
+
 执行器的 `runtime task model selection updated` 记录内存中的模型赋值。`runtime task get resolved link` 和 `runtime task transcript resolved link` 记录读取任务的模型身份。赋值日志不代表磁盘写入已经成功。
 
 `configured` 不等于磁盘中的原始任务记录。对于现有对话，配置来自任务摘要或运行句柄。对于新对话，配置来自项目配置或用户偏好。

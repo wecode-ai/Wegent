@@ -182,6 +182,8 @@ When full task data is selected, the feedback bundle's `context/task.json` inclu
 
 The `workbench.selection_restored`, `workbench.selection_changed` and `workbench.selection_seeded` events in `logs/app/model-loading.log` correlate scopes and models through numeric fingerprints. Fingerprints are diagnostic identifiers. The executor's `runtime task model selection updated` event records an in-memory assignment. The `runtime task get resolved link` and `runtime task transcript resolved link` events record the owning task's current model identity on reads. Assignment does not prove that a disk write succeeded.
 
+Full workbench diagnostic snapshots also include `modelLoading`: a copy of the current renderer’s latest 200 startup and request-phase events, including events not yet flushed by the 10-second persistence timer. This bounded window supplements host logs and is not a complete event history; it restarts on window reload.
+
 `configured` is not the raw on-disk task record. Existing conversations receive configuration from the task summary or runtime handle; new conversations can receive project configuration or user preferences.
 
 1. Export feedback before restarting.
