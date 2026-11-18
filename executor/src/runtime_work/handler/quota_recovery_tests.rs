@@ -882,3 +882,59 @@ async fn interrupt_timeout_preserves_the_unconfirmed_execution() {
     handler.finish_local_task_execution("task", execution);
     let _ = fs::remove_dir_all(root);
 }
+
+fn with_handler(label: &str, verify: impl FnOnce(&RuntimeWorkRpcHandler)) {
+    let _lock = crate::test_env::lock();
+    let home = tempfile::tempdir().unwrap();
+    let _homes: Vec<_> = [
+        "WEGENT_EXECUTOR_HOME",
+        "WEGENT_CODEX_HOME",
+        "CODEX_HOME",
+        "WEGENT_WORKBENCH_HOME",
+    ]
+    .into_iter()
+    .map(|key| ScalarEnv::set(key, home.path().to_str().unwrap()))
+    .collect();
+    let (handler, root) = super::super::tests::isolated_runtime_work_handler(label);
+    verify(&handler);
+    fs::remove_dir_all(root).unwrap();
+}
+
+fn seed_wait(handler: &RuntimeWorkRpcHandler, active: bool) {
+    let mut link = RuntimeTaskLink::new_pending("waiting".into(), "/work".into(), "Wait".into());
+    link.thread_id = Some("thread".into());
+    if active {
+        crate::runtime_work::lifecycle::begin_native_request(&mut link);
+    }
+    handler.store.upsert_task(link);
+    let turns = VecDeque::from([queued_wait("waiting", now_ms() + 3_600_000)]);
+    handler.turn_scheduler.lock().unwrap().queued_turns = turns.clone();
+    handler.project_quota_waits(&turns);
+}
+
+#[test]
+fn publishing_a_parked_quota_wait_also_settles_the_active_lifecycle() {
+    with_handler("quota-park-projection", |handler| {
+        seed_wait(handler, true);
+        let public = handler.get_task(&json!({"taskId":"waiting"})).unwrap();
+        assert_eq!(public["task"]["status"], "queued");
+        assert_eq!(public["task"]["running"], false);
+        assert_eq!(public["task"]["executionState"]["phase"], "queued");
+        assert!(public["task"]["runtimeHandle"]["quotaWait"].is_object());
+    });
+}
+
+#[test]
+fn admitting_a_quota_recheck_removes_the_wait_with_the_starting_lifecycle() {
+    with_handler("quota-admit-projection", |handler| {
+        seed_wait(handler, false);
+        handler.turn_scheduler.lock().unwrap().queued_turns.clear();
+        handler.store.update_task("waiting", |link| {
+            crate::runtime_work::lifecycle::begin_native_request(link);
+        });
+        let public = handler.get_task(&json!({"taskId":"waiting"})).unwrap();
+        assert_eq!(public["task"]["running"], true);
+        assert_eq!(public["task"]["executionState"]["phase"], "starting");
+        assert!(public["task"]["runtimeHandle"].get("quotaWait").is_none());
+    });
+}
