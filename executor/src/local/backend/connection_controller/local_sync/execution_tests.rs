@@ -3,17 +3,17 @@ use super::super::LocalBackendConnectionProfile;
 use super::*;
 use crate::local::backend::CapabilitySyncRpcHandler;
 use axum::{
-    Json, Router,
     extract::Query,
     response::IntoResponse,
     routing::{post, put},
+    Json, Router,
 };
 use std::{
     collections::HashMap,
     path::PathBuf,
     sync::{
-        Arc, Condvar, Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc, Condvar, Mutex,
     },
 };
 use tokio::sync::Notify;
@@ -616,10 +616,8 @@ async fn foreground_scope_is_released_on_cancellation_and_full_sync_defers() {
         "plugin_local_sync_busy"
     );
     drop(foreground);
-    assert!(
-        !fixture
-            .controller
-            .has_foreground_plugin_operation(&fixture.path)
-    );
+    assert!(!fixture
+        .controller
+        .has_foreground_plugin_operation(&fixture.path));
     assert!(fixture.sync(json!({"installedPluginId":9})).await.is_ok());
 }

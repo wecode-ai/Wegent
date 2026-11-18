@@ -12,7 +12,7 @@ mod completion;
 mod execution_tests;
 mod recovery;
 mod scanning;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::HashMap,
@@ -898,7 +898,7 @@ mod tests {
     use super::*;
     #[tokio::test]
     async fn mutation_transports_the_persisted_order_and_requires_its_acknowledgement() {
-        use axum::{Json, Router, extract::Query, response::IntoResponse, routing::delete};
+        use axum::{extract::Query, response::IntoResponse, routing::delete, Json, Router};
         use std::collections::HashMap;
         async fn mutate(Query(params): Query<HashMap<String, String>>) -> axum::response::Response {
             assert_eq!(params["local_intent_order"], "42");
@@ -1015,7 +1015,7 @@ mod tests {
 
     #[tokio::test]
     async fn supersession_requires_matching_backend_proof() {
-        use axum::{Router, response::IntoResponse, routing::delete};
+        use axum::{response::IntoResponse, routing::delete, Router};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let connection = ConnectionConfig {
             backend_url: format!("http://{}", listener.local_addr().unwrap()),

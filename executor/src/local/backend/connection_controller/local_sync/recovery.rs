@@ -221,7 +221,7 @@ impl LocalBackendConnectionController {
 mod tests {
     use super::super::super::LocalBackendConnectionProfile;
     use super::*;
-    use axum::{Json, Router, extract::Query, response::IntoResponse, routing::post};
+    use axum::{extract::Query, response::IntoResponse, routing::post, Json, Router};
     use std::{collections::HashMap, sync::Arc};
 
     impl LocalBackendConnectionController {
