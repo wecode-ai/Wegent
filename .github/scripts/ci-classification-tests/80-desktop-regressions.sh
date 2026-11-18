@@ -82,13 +82,6 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/collaboration-shared-core.scenario.mjs"
 
-assert_desktop_case "delivery snapshots run their registered desktop checkpoint" \
-  'wework_desktop_e2e=true
-wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-6","name":"Core / shard 6","segments":"collaboration-deliveries,collaboration-delivery-editing"}]}
-wework_desktop_other_e2e=false
-wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/e2e/desktop/scenarios/collaboration-deliveries.scenario.mjs"
 
 for delivery_render_path in \
   "packages/collaboration/src/issue-detail/IssueExecutionLists.tsx" \

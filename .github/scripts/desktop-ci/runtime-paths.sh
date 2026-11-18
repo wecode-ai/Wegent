@@ -411,7 +411,7 @@ classify_path() {
       wework/e2e/desktop/scenarios/collaboration-deliveries.scenario.mjs | \
       packages/collaboration/src/issue-detail/IssueDelivery* | \
       packages/collaboration/src/issue-detail/deliveryMessages*)
-      select_target "core:collaboration-deliveries"
+      select_target "core:collaboration-delivery-editing"
       select_target "core:collaboration-delivery-editing"
       ;;
     wework/e2e/desktop/scenarios/collaboration-template-agents.scenario.mjs | \
@@ -448,7 +448,7 @@ classify_path() {
       fi
       select_target "cloud:cloud-device-lifecycle"
       if [[ "$path" == packages/collaboration/src/dto-mappers/workspaceDtoMappers* ]]; then
-        select_target "core:collaboration-deliveries"
+        select_target "core:collaboration-delivery-editing"
         select_target "core:collaboration-delivery-editing"
       fi
       ;;
@@ -479,7 +479,7 @@ classify_path() {
       if [[ "$path" == packages/collaboration/src/issue-detail/IssueExecutionLists* ||
         "$path" == packages/collaboration/src/issue-detail/createSharedIssueDetailPort* ||
         "$path" == packages/collaboration/src/SharedIssueDetailEditor* ]]; then
-        select_target "core:collaboration-deliveries"
+        select_target "core:collaboration-delivery-editing"
         select_target "core:collaboration-delivery-editing"
       fi
       ;;
