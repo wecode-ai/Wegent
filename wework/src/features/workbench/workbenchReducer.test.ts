@@ -1331,7 +1331,7 @@ test('keeps an unresolved task owner until discovery proves its alias', () => {
             taskId: address.taskId,
             threadId: 'native-thread',
             title: 'Task',
-            runtime: 'codex',
+            runtime: 'claude_code',
             workspacePath: '/workspace',
           },
         ],
@@ -1354,6 +1354,7 @@ test('keeps an unresolved task owner until discovery proves its alias', () => {
   })
   expect(afterDiscovery.currentRuntimeTask).toEqual({
     ...address,
+    runtime: 'claude_code',
     deviceId: device.device_id,
     threadId: 'native-thread',
     workspacePath: '/workspace',
