@@ -887,6 +887,7 @@ GitHub Actions 将 plugins、core 和 cloud 三个 Linux 桌面场景作为矩�
 独立的运行目录与进程状态。
 
 隔离显示的 Xvfb 进程若在 5 秒内未报告显示编号，启动脚本会在清理前记录 Xvfb 及其直接子进程的状态、内核等待点和进程名，以定位启动阻塞。
+Linux x64 正式打包作业固定使用 Ubuntu 24.04，避免 `ubuntu-latest` 切换系统版本时直接改变发布构建环境。
 
 Linux 桌面场景会把 Electron 系统依赖下载得到的 `.deb` 文件缓存在 runner 用户目录，
 并按操作系统、CPU 架构和自然周轮换缓存。每次运行仍执行 `apt-get update`，旧缓存

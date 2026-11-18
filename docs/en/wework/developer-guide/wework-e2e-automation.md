@@ -1084,6 +1084,8 @@ process state.
 If the isolated Xvfb server does not report a display number within five seconds,
 the launcher logs the process state, kernel wait channel, and name for Xvfb and
 its immediate children before cleanup to help locate the startup stall.
+The Linux x64 release job uses Ubuntu 24.04 so changes to the operating system
+behind `ubuntu-latest` do not change the release build environment.
 
 The Linux desktop scenarios cache the downloaded `.deb` files for Electron system
 dependencies in the runner user's home directory. Cache keys rotate weekly and
