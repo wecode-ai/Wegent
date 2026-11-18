@@ -3987,7 +3987,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'select': {
       await waitForDesktopControlElement({ ...command, enabled: true }, () => '')
       const element = findDesktopControlElementsWithin(command.selector, command.target).find(
-        candidate =>
+        (candidate): candidate is HTMLSelectElement =>
           candidate instanceof HTMLSelectElement && desktopControlElementEnabled(candidate)
       )
       if (!element) throw new Error(`Selector "${command.selector}" is not a select element`)
