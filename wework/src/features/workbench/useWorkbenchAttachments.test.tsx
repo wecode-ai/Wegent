@@ -253,3 +253,33 @@ test('fails the accepted attachment preparation when upload fails instead of del
   })
   expect(result.current.attachments).toEqual([])
 })
+
+test('does not capture a cleared draft upload when a newer message is submitted', async () => {
+  let finish!: (value: Attachment) => void
+  const upload = vi.fn(
+    () =>
+      new Promise<Attachment>(resolve => {
+        finish = resolve
+      })
+  )
+  const remove = vi.fn().mockResolvedValue(undefined)
+  const { result } = renderHook(() =>
+    useWorkbenchAttachments({
+      scopeKey: 'chat',
+      uploadAttachment: upload,
+      deleteAttachment: remove,
+    })
+  )
+  let selecting!: Promise<void>
+  act(() => {
+    selecting = result.current.handleFileSelect(new File(['image'], 'cleared.png'))
+    result.current.resetAttachments()
+  })
+  expect(result.current.captureAttachmentsForScope('chat')).toEqual([])
+  await act(async () => {
+    finish({ ...attachment, id: 42 })
+    await selecting
+  })
+  expect(remove).toHaveBeenCalledWith(42)
+  expect(result.current.attachments).toEqual([])
+})

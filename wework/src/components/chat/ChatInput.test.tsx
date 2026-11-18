@@ -1239,30 +1239,33 @@ describe('ChatInput', () => {
     }
   )
 
-  test('uploads pasted images from the desktop message textbox', async () => {
-    const handleFileSelect = vi.fn().mockResolvedValue(undefined)
-    const image = new File(['image'], 'clipboard.png', { type: 'image/png' })
+  test.each(['', 'file:///tmp/clipboard.png'])(
+    'registers pasted images synchronously with clipboard URI %s',
+    uri => {
+      const handleFileSelect = vi.fn().mockResolvedValue(undefined)
+      const image = new File(['image'], 'clipboard.png', { type: 'image/png' })
 
-    render(
-      <ChatInput
-        value=""
-        onChange={vi.fn()}
-        onSubmit={vi.fn()}
-        disabled={false}
-        variant="desktop"
-        projectChat={projectChatControls({ handleFileSelect })}
-      />
-    )
+      render(
+        <ChatInput
+          value=""
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          disabled={false}
+          variant="desktop"
+          projectChat={projectChatControls({ handleFileSelect })}
+        />
+      )
 
-    fireEvent.paste(screen.getByTestId('chat-message-input'), {
-      clipboardData: {
-        files: [image],
-        getData: () => '',
-      },
-    })
+      fireEvent.paste(screen.getByTestId('chat-message-input'), {
+        clipboardData: {
+          files: [image],
+          getData: (type: string) => (type === 'text/uri-list' ? uri : ''),
+        },
+      })
 
-    expect(handleFileSelect).toHaveBeenCalledWith([image])
-  })
+      expect(handleFileSelect).toHaveBeenCalledWith([image])
+    }
+  )
 
   test('registers a TIFF synchronously before native conversion can finish', () => {
     const handleFileSelect = vi.fn().mockResolvedValue(undefined)

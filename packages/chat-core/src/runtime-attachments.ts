@@ -6,7 +6,9 @@ function hasLocalPath(attachment: Attachment): boolean {
 
 export function localRuntimeAttachments(attachments: Attachment[]): Attachment[] {
   return attachments
-    .filter(attachment => hasLocalPath(attachment) || attachment.status !== 'ready')
+    .filter(
+      attachment => hasLocalPath(attachment) || (attachment.id < 0 && attachment.status !== 'ready')
+    )
     .map(attachment => {
       const runtimeAttachment = { ...attachment }
       delete runtimeAttachment.text_content

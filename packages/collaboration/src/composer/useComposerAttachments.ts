@@ -20,6 +20,7 @@ export interface ComposerAttachmentsOptions {
 const DEFAULT_ATTACHMENT_SCOPE_KEY = 'default'
 
 interface PendingSelection {
+  file: File
   attachment: Attachment
   submitted: boolean
   captured: boolean
@@ -159,6 +160,7 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
           reject = no
         })
         const pending: PendingSelection = {
+          file,
           attachment: createPreparingAttachment(file, ready),
           submitted: false,
           captured: false,
@@ -260,7 +262,7 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
               ...enrichedAttachment,
               ui_kind: 'pasted-text',
             }
-          if (previewUrl && enrichedAttachment.mime_type === file.type) {
+          if (previewUrl && !pending.submitted && enrichedAttachment.mime_type === file.type) {
             if (enrichedAttachment.local_preview_url !== previewUrl) {
               releaseAttachmentPreview(enrichedAttachment)
             }
@@ -279,10 +281,9 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
             uploadingFiles.delete(fileId)
             return {
               ...current,
-              attachments:
-                pending.submitted || source?.cancelled
-                  ? current.attachments
-                  : [...current.attachments, enrichedAttachment],
+              attachments: source?.cancelled
+                ? current.attachments
+                : [...current.attachments, enrichedAttachment],
               uploadingFiles,
             }
           })
@@ -327,6 +328,12 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
 
   const removeSourceFileForScope = useCallback(
     async (targetScopeKey: string, file: File) => {
+      const pendingFiles = pendingByScope.current.get(targetScopeKey)
+      for (const pending of pendingFiles ?? []) {
+        if (pending.file !== file || pending.submitted) continue
+        pending.reject(new Error('Attachment selection was cancelled'))
+        pendingFiles?.delete(pending)
+      }
       const sources = sourcesByScope.current.get(targetScopeKey)
       const removed = [...(sources?.entries() ?? [])].filter(([, source]) => source.file === file)
       if (!removed.length) return
@@ -405,6 +412,7 @@ export function useComposerAttachments(options: ComposerAttachmentsOptions) {
       for (const pending of pendingByScope.current.get(targetScopeKey) ?? []) {
         if (pending.captured) pending.submitted = true
       }
+      pendingByScope.current.delete(targetScopeKey)
       scopeEpochs.current.set(targetScopeKey, (scopeEpochs.current.get(targetScopeKey) ?? 0) + 1)
       latestAttemptsByScope.current.delete(targetScopeKey)
       for (const source of sourcesByScope.current.get(targetScopeKey)?.values() ?? []) {

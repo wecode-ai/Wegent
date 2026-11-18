@@ -41,7 +41,7 @@ export const desktopComposerTransferServices: ComposerTransferServices = {
       source === 'clipboard' &&
       files.length > 0 &&
       files.every(isWorkspaceImageFile) &&
-      !this.hasPathTransfer(data)
+      !hasWorkspacePathDragData(data)
     ) {
       // Register pasted images before any asynchronous preparation or send event.
       return { attachmentFiles: files, referenceEntries: [] }
