@@ -1,6 +1,7 @@
 """Strict owned locks coexist with the scheduler's availability policy."""
 
-from unittest.mock import Mock
+import asyncio
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from redis import Redis
@@ -50,3 +51,40 @@ def test_owned_lock_propagates_redis_failure_instead_of_granting_ownership(monke
 
         with pytest.raises(ConnectionError):
             lock.acquire(token="owner-token")
+
+
+@pytest.mark.asyncio
+async def test_blocking_watchdog_waits_and_cancellation_preserves_the_current_owner():
+    gate = asyncio.Lock()
+    await gate.acquire()
+    attempted = asyncio.Event()
+
+    async def acquire():
+        attempted.set()
+        return await gate.acquire()
+
+    owned = Mock(acquire=acquire, release=AsyncMock(side_effect=gate.release))
+    client = Mock()
+    client.lock.return_value = owned
+    locks = DistributedLock()
+    locks._async_redis_client = client
+    entered = asyncio.Event()
+
+    async def callback():
+        async with locks.acquire_watchdog_context_async(
+            "pipeline-auto-advance:12", blocking=True, extend_interval_seconds=0
+        ) as acquired:
+            assert acquired
+            entered.set()
+
+    pending = asyncio.create_task(callback())
+    await attempted.wait()
+    assert not entered.is_set()
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+    assert gate.locked()
+    gate.release()
+    await callback()
+    assert entered.is_set()
+    assert not gate.locked()
