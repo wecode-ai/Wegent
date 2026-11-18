@@ -65,6 +65,7 @@ impl RuntimeWorkRpcHandler {
         };
         let mut request = runtime_model_request(&source, &payload)?;
         self.apply_backend_connection(&mut request);
+        self.resolve_local_model_reference(&mut request, &source.local_task_id)?;
         let client = self
             .codex_app_server
             .for_request(&request)
