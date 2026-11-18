@@ -1076,7 +1076,8 @@ jobs:
     name: Wework Mobile Native Upgrade
     needs: changes
     if: needs.changes.outputs.wework_mobile_native == 'true'
-    runs-on: macos-15
+    # The pinned iSH host build uses posix_spawn_file_actions_addchdir.
+    runs-on: macos-26
     timeout-minutes: 15
     permissions:
       contents: read
