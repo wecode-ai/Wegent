@@ -279,6 +279,69 @@ const agentMessage: ProjectChatMessage = {
 }
 
 describe('TaskActivityView', () => {
+  it('groups child creation with reply and preserves the source comment', async () => {
+    const user = userEvent.setup()
+    const reply = {
+      ...userMessage,
+      messageId: 'thread-reply',
+      rootMessageId: userMessage.messageId,
+      replyToMessageId: userMessage.messageId,
+      sequenceNumber: 2,
+      content: 'A separate follow-up',
+    }
+    const client = {
+      subscribe: vi.fn(async () => ({
+        snapshot: { messages: [userMessage, reply], latestSequence: 2, currentUserId: '1' },
+        unsubscribe: vi.fn(),
+      })),
+      send: vi.fn(async () => userMessage),
+      dispose: vi.fn(),
+    } satisfies ProjectChatClient
+    const createChild = vi.fn().mockResolvedValue({
+      id: 'child',
+      cloud_project_id: '11',
+      sequence_number: 2,
+      title: 'Follow-up',
+    })
+    const view = (assignment = true) => (
+      <TaskActivityView
+        client={client}
+        currentUserId={1}
+        project={{ id: '11', name: 'Wework' } as never}
+        task={{ id: 'WEG-1', title: 'Issue', status: 'in_progress', version: 1 } as never}
+        issueTimeline
+        linear
+        commentAssignment={assignment ? { options: [], assign: vi.fn(), createChild } : undefined}
+      />
+    )
+    const { rerender } = render(view())
+    const childAction = await screen.findByTestId('issue-comment-create-child-message-1')
+    const replyAction = screen.getByTestId('cloud-task-activity-reply-toggle-message-1')
+    expect(childAction.parentElement).toBe(replyAction.parentElement)
+    expect(childAction.parentElement).toHaveClass('task-detail-thread-actions')
+    expect(screen.getAllByTestId('issue-comment-create-child-message-1')).toHaveLength(1)
+    expect(screen.getByTestId('issue-comment-create-child-thread-reply')).toBeInTheDocument()
+    childAction.focus()
+    await user.tab()
+    expect(replyAction).toHaveFocus()
+    await user.click(childAction)
+    await user.click(screen.getByTestId('issue-comment-child-confirm-message-1'))
+    expect(createChild).toHaveBeenCalledWith(
+      expect.objectContaining({
+        body: userMessage.content,
+        sourceMessageId: userMessage.messageId,
+      })
+    )
+    expect(client.send).toHaveBeenCalledWith(
+      expect.objectContaining({
+        replyToMessageId: userMessage.messageId,
+      })
+    )
+    rerender(view(false))
+    expect(screen.queryByTestId('issue-comment-create-child-message-1')).toBeNull()
+    expect(screen.getByTestId('cloud-task-activity-reply-toggle-message-1')).toBeInTheDocument()
+  })
+
   it('updates an open discussion reply when its execution arrives without losing the draft', async () => {
     const user = userEvent.setup()
     let emit!: (message: ProjectChatMessage) => void

@@ -209,3 +209,5 @@ Default execution devices and device grants from new Issues are described in [Co
 Issue **Participants → +** supports search and multiple selections. The assignee picker also searches outside the project; confirmation grants management of that Issue only. See [Issue collaboration](./projects.md#project-controls).
 
 Link an existing task: **Collaboration → Issue details → Linked tasks → Link existing task**. See [Projects and Issues](./projects.md).
+
+Create a child from a comment: **Collaboration → Issue details → top-level comment action row → Create child Issue beside Reply**. Thread replies retain their own action. See [Create child Issues from comments](./projects.md#comment-child-issues) for availability and steps.
