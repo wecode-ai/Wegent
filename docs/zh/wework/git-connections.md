@@ -96,3 +96,9 @@ API 方法、路径与 Rust 选路清单以 `backend-rs/config/routes.toml` 为�
 接收器管理及领取操作使用用户认证，记录查询必须限定用户；消费和清理另校验当前设备与代次。接管、确认、撤销和接收通过 Redis Lua 脚本原子执行。TTL 负责闲置队列回收，访问时先记录未确认过期缺口，再清理载荷。Redis 不可用时返回暂时不可用，不切回数据库或进程内存。生产 Redis 应启用持久化并采用不驱逐这些数据的内存策略；Redis 恢复会影响暂存数据，不能把它当可随意清空的缓存。新代次重置本地领取状态，旧设备延迟执行的清理不得撤销新绑定。
 
 连接层复用现有助理收集、统筹、工作对话、人工参与和审批链路。能力包括 `git_read`、`git_write`、`prepare_git_workspace`、`git_webhook_plan` 和 `configure_git_webhook`，不增加另一套任务调度器。GitLab 参数依据[官方项目 Webhook API](https://docs.gitlab.com/api/project_webhooks/)；响应中的系统 Hook 字段不等于项目可订阅能力。
+
+## 等待指定 GitHub 打包运行
+
+在任务会话中提出“等待 main 的这次打包完成”，并提供运行链接或让 AI 查询目标运行。AI 先读取当前状态；已经完成则直接报告，否则发现仓库中的精确 `workflow_run` 对象并订阅。`monitoredObjects` 的 `number` 是 Actions run ID，不是 PR 编号。订阅条件同时约束规范运行链接、run ID、提交 SHA 和 `status: completed`，因此成功、失败或取消均会唤醒原会话；单项 job 成功不代表整次运行完成。
+
+同一 run ID 的重跑以 `run_attempt` 区分；仅等待指定重跑时增加该条件。合并后 main 的运行应绑定合并提交，不能用 PR head 的检查替代。保持执行设备运行；宿主负责采集与去重，等待期间不通过模型反复 sleep 查询。权限丢失会保留上次快照并明确标记不可用。

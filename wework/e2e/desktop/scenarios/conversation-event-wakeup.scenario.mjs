@@ -78,6 +78,19 @@ export function createDesktopScenario(options) {
     topicId,
     text,
     at: new Date().toISOString(),
+    ...(phase === 'workflow'
+      ? {
+          external: {
+            eventType: 'tracked.workflow_run',
+            payload: {
+              id: 44231414768,
+              head_sha: 'a'.repeat(40),
+              status: 'completed',
+              conclusion: 'failure',
+            },
+          },
+        }
+      : {}),
   })
 
   return {
@@ -141,10 +154,10 @@ export function createDesktopScenario(options) {
       active = true
       let originalAddress
       try {
-        for (const story of ['ordinary', 'goal', 'human', 'cancel', 'pause']) {
+        for (const story of ['ordinary', 'workflow', 'goal', 'human', 'cancel', 'pause']) {
           phase = story
           await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
-            value: `${MARKER}_${phase} ${phase === 'ordinary' ? '' : '请创建持续目标，'}请订阅文档变化并在变化后继续。`,
+            value: `${MARKER}_${phase} ${['ordinary', 'workflow'].includes(phase) ? '' : '请创建持续目标，'}请订阅文档变化并在变化后继续。`,
           })
           await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, { enabled: true })
           await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
@@ -338,6 +351,20 @@ export function createDesktopScenario(options) {
           // A negative observation window verifies that unrelated events and a
           // user pause never start model turns. This is not a UI readiness delay.
           events.push(event(`${phase}-ignored`, 'Unrelated document signal', 'unrelated-document'))
+          if (phase === 'workflow') {
+            for (const patch of [
+              { id: 9 },
+              { head_sha: 'b'.repeat(40) },
+              { status: 'in_progress' },
+            ]) {
+              const ignored = event(
+                `workflow-ignored-${JSON.stringify(patch)}`,
+                'Nonmatching workflow state'
+              )
+              Object.assign(ignored.external.payload, patch)
+              events.push(ignored)
+            }
+          }
           await saveEvents()
           if (phase !== 'pause') {
             await waitForValue(
