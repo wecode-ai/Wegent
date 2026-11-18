@@ -146,7 +146,11 @@ const mocks = vi.hoisted(() => ({
   lifecycleSnapshot: null as {
     task?: { threadId?: string; modelSelection?: ModelSelectionConfig }
     unread?: boolean
-    turn?: { id: string | null }
+    turn?: {
+      id: string | null
+      outcome?: 'succeeded' | 'failed' | 'cancelled' | null
+      active?: boolean
+    }
     derived: {
       isRunning: boolean
       isTurnActive: boolean
@@ -3432,6 +3436,41 @@ describe('TemporaryChatPanel', () => {
     await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(2))
     await waitFor(() => expect(screen.queryByTestId('mock-queue-row')).toBeNull())
   })
+
+  it.each(['failed', 'succeeded', 'cancelled'] as const)(
+    'restores model recovery when a %s turn never delivers a stream settle callback',
+    async outcome => {
+      mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }
+      mocks.lifecycleSnapshot = {
+        derived: { isRunning: true, isTurnActive: true },
+        turn: { id: 'active-turn', active: true, outcome: null },
+      }
+      mocks.sendRuntimePaneMessage.mockImplementationOnce(() => new Promise(() => {}))
+      const panel = () => (
+        <TemporaryChatPanel
+          nativeConversation
+          currentProject={null}
+          source={address}
+          instanceId="failed-turn-recovery"
+          initialAddress={address}
+        />
+      )
+      const { rerender } = render(panel())
+      await userEvent.click(screen.getByTestId('mock-send'))
+      await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledOnce())
+      expect(screen.getByTestId('mock-model-selector')).toBeDisabled()
+
+      mocks.lifecycleSnapshot = {
+        derived: { isRunning: false, isTurnActive: false },
+        turn: { id: `${outcome}-turn`, active: false, outcome },
+      }
+      rerender(panel())
+
+      await waitFor(() => expect(screen.getByTestId('mock-model-selector')).toBeEnabled())
+      await userEvent.click(screen.getByTestId('mock-send'))
+      await waitFor(() => expect(mocks.sendRuntimePaneMessage).toHaveBeenCalledTimes(2))
+    }
+  )
 
   it('drains a busy rejection when the external turn settled while the send was pending', async () => {
     mocks.runtimeWork = { projects: [], chats: [], totalTasks: 0 }

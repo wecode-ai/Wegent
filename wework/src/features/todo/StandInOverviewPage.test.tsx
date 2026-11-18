@@ -1203,6 +1203,16 @@ it('keeps first-use setup open when the existing settings save fails and allows 
   expect(completeOnboarding).toHaveBeenCalledOnce()
 })
 
+it('keeps configured roles usable while onboarding is unavailable', async () => {
+  const { props } = fixture()
+  vi.mocked(props.services.standInApi!.onboarding).mockImplementation(() => new Promise(() => {}))
+  render(<StandInOverviewPage {...props} />)
+
+  expect(await screen.findByTestId('stand-in-overview-role-default')).toBeVisible()
+  expect(screen.queryByTestId('stand-in-onboarding')).not.toBeInTheDocument()
+  expect(screen.getByTestId('stand-in-details-open')).toBeEnabled()
+})
+
 it('keeps profile recovery and creation reachable when the selected device and onboarding are offline', async () => {
   const { props } = fixture()
   vi.mocked(props.services.standInApi!.personalGet).mockRejectedValue(new Error('Executor offline'))

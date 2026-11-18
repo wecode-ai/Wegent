@@ -979,7 +979,9 @@ export function StandInOverviewPage({
           setExampleDraft({ id: ++exampleSequence.current, text })
         })
       }
-      bypass={Boolean(props.initialProfileId || profile || (!saved && state.error))}
+      bypass={Boolean(
+        props.initialProfileId || profile || saved?.roles.length || (!saved && state.error)
+      )}
       onClose={props.onCancel}
     >
       {content}
