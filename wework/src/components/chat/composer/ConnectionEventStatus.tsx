@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Bell, CircleAlert } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { connectionEventCondition } from '@/lib/connection-event-condition'
 import { connectionEventSubscriptions } from '@/lib/runtime-connection-events'
 import { ResourceObservationStatus } from '@/components/common/ResourceObservationStatus'
 import { connectionObservationHealth } from '@/features/workbench/resourceObservation'
@@ -154,6 +155,7 @@ export function ConnectionEventStatus({
                 · {sourceName}
               </span>
             </div>
+            <EventCondition match={item.match} />
             {onCancel && (
               <Button
                 type="button"
@@ -198,3 +200,17 @@ export function ConnectionEventStatus({
     </div>
   )
 }
+
+const EventCondition = memo(function EventCondition({ match }: { match: unknown }) {
+  const { t } = useTranslation('common')
+  const condition = useMemo(() => connectionEventCondition(match, t), [match, t])
+  return (
+    <span
+      className="order-last basis-full min-w-0 truncate pb-1 pl-5 text-text-secondary"
+      data-testid="connection-event-condition"
+      title={condition}
+    >
+      {t('workbench.event_condition_label', '等待条件')}: {condition}
+    </span>
+  )
+})

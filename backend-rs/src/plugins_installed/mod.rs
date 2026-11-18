@@ -20,6 +20,10 @@ mod catalog_write;
 mod desired_capabilities;
 mod handler;
 mod item;
+mod list;
+#[cfg(test)]
+pub(crate) mod test_support;
+pub use list::enrich_installed_list;
 mod local_sync;
 
 pub(crate) fn local_sync_enabled() -> bool {
@@ -39,14 +43,13 @@ use brz_mysql::{FromMysqlRow, Mysql, MysqlResult};
 use chrono::NaiveDateTime;
 pub use item::kind_to_item;
 use serde_json::{Map, Value};
-use std::collections::HashMap;
 
 pub(crate) use registration_sync::{
     CapabilityDispatch, DispatchOutcome, PluginPreparation, prepare_plugins_for_registered_device,
     record_registration_sync_result, sync_registration_capabilities,
 };
 
-use crate::device_identity::{DeviceRow, coalesce_plugin_device_rows, plugin_device_id};
+use crate::device_identity::DeviceRow;
 
 /// Source `plugin_marketplace.py` `EPOCH_TIME` sentinel mapped back to null.
 const EPOCH: NaiveDateTime = NaiveDateTime::new(
@@ -115,10 +118,9 @@ impl DeviceRow for DeviceInstallationRow {
     }
 }
 
-/// Minimal `plugins` projection used by enrichment (`db.get(Plugin, id)`).
+/// Minimal marketplace projection for batched latest-release comparison.
 #[derive(Debug, FromMysqlRow)]
 pub struct PluginRow {
-    #[allow(dead_code)]
     pub id: i64,
     pub latest_release_id: i64,
 }
@@ -160,14 +162,20 @@ where
     mysql.fetch_all(sql, installed_ids.to_vec()).await
 }
 
-pub async fn get_plugin<M>(mysql: &M, plugin_id: i64) -> MysqlResult<Option<PluginRow>>
+async fn list_plugins_by_ids<M>(mysql: &M, mut plugin_ids: Vec<i64>) -> MysqlResult<Vec<PluginRow>>
 where
     M: Mysql,
 {
+    plugin_ids.sort_unstable();
+    plugin_ids.dedup();
+    if plugin_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = vec!["?"; plugin_ids.len()].join(", ");
     mysql
-        .fetch_optional(
-            "SELECT id, latest_release_id FROM plugins WHERE id = ?",
-            (plugin_id,),
+        .fetch_all(
+            format!("SELECT id, latest_release_id FROM plugins WHERE id IN ({placeholders})"),
+            plugin_ids,
         )
         .await
 }
@@ -233,112 +241,6 @@ fn device_item(row: &DeviceInstallationRow, display_device_id: &str) -> Map<Stri
         .as_object()
         .expect("object")
         .clone()
-}
-
-/// `plugin_marketplace_service.enrich_installed_list`.
-///
-/// Appends device rows to each item's status, then rewrites
-/// `spec.installState` for a device-filtered view and applies marketplace
-/// latest-release comparison.
-pub async fn enrich_installed_list<M>(
-    mysql: &M,
-    items: &mut [Value],
-    device_id: Option<&str>,
-) -> MysqlResult<()>
-where
-    M: Mysql,
-{
-    let mut items_by_id: HashMap<i64, usize> = HashMap::new();
-    for (index, item) in items.iter().enumerate() {
-        if let Some(id) = installed_item_id(item) {
-            items_by_id.insert(id, index);
-        }
-    }
-    let device_rows =
-        list_device_installations(mysql, &items_by_id.keys().copied().collect::<Vec<_>>()).await?;
-    // Source `coalesce_plugin_device_rows`: resolve canonical device ids and
-    // keep the most-recently-reported row per `(installed_kind_id, canonical)`.
-    let coalesced = coalesce_plugin_device_rows(mysql, device_rows).await?;
-    // Source `enrich_installed_list`: the display loop and `rows_by_install`
-    // comprehension each call `plugin_device_id(db, row.user_id, device_id)`
-    // for every coalesced row. The result is stable for a given
-    // `(user_id, device_id)` pair, but the source emits these redundant DB
-    // queries to match. We replicate the same call pattern here, caching the
-    // result to avoid re-resolving, while still emitting the same number of
-    // `plugin_device_id` calls.
-    let mut rows_by_install: HashMap<i64, DeviceInstallationRow> = HashMap::new();
-    for ((_, canonical_id), row) in &coalesced {
-        let Some(&index) = items_by_id.get(&row.installed_kind_id) else {
-            continue;
-        };
-        // Source display loop: `plugin_device_id(db, row.user_id, device_id)`.
-        let resolved = if let Some(device_id) = device_id {
-            plugin_device_id(mysql, row.user_id, device_id).await?
-        } else {
-            canonical_id.clone()
-        };
-        let display_device_id = match device_id {
-            Some(request_id) if resolved == *canonical_id => request_id,
-            _ => canonical_id.as_str(),
-        };
-        append_device(items, index, row, display_device_id);
-        // Source `rows_by_install` comprehension also calls
-        // `plugin_device_id(db, row.user_id, device_id)`.
-        if let Some(device_id) = device_id {
-            let resolved2 = plugin_device_id(mysql, row.user_id, device_id).await?;
-            if resolved2 == *canonical_id {
-                rows_by_install.insert(row.installed_kind_id, row.clone());
-            }
-        }
-    }
-    for item in items.iter_mut() {
-        let Some(plugin_id) = item
-            .get("spec")
-            .and_then(|spec| spec.get("pluginId"))
-            .and_then(Value::as_i64)
-        else {
-            continue;
-        };
-        let installed_id = installed_item_id(item);
-        if let (Some(_device_id), Some(installed_id)) = (device_id, installed_id) {
-            let device_row = rows_by_install.get(&installed_id);
-            if !device_has_materialized_release(device_row) {
-                let install_state = item
-                    .get_mut("spec")
-                    .and_then(|spec| spec.as_object_mut())
-                    .expect("items have object specs");
-                let derived = match device_row.map(|row| row.state.as_str()) {
-                    Some("failed") => "failed",
-                    _ => "not_installed",
-                };
-                install_state.insert(
-                    "installState".to_string(),
-                    Value::String(derived.to_string()),
-                );
-                continue;
-            }
-            let device_row = device_row.expect("materialized implies present");
-            let release_id = item
-                .get("spec")
-                .and_then(|spec| spec.get("releaseId"))
-                .and_then(Value::as_i64);
-            if release_id.is_some_and(|release| device_row.actual_release_id != release) {
-                set_install_state(item, "update_available");
-                continue;
-            }
-            set_install_state(item, "installed");
-        }
-        let release_id = item
-            .get("spec")
-            .and_then(|spec| spec.get("releaseId"))
-            .and_then(Value::as_i64);
-        if let Some(plugin) = get_plugin(mysql, plugin_id).await?
-            && release_id.is_some_and(|release| plugin.latest_release_id != release)
-        {
-            set_install_state(item, "update_available");
-        }
-    }
-    Ok(())
 }
 
 fn set_install_state(item: &mut Value, state: &str) {
@@ -434,3 +336,6 @@ mod tests {
         assert_eq!(item["desiredReleaseId"], 77);
     }
 }
+
+#[cfg(test)]
+mod batch_mysql_tests;
