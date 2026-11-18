@@ -43,6 +43,10 @@ export function createConversationEventModel({
         item =>
           item.role === 'user' && JSON.stringify(item.content).includes(`${marker}_EVENT_RECEIVED`)
       )
+      assert.ok(input, 'The event must be delivered as a user message')
+      if (input.id !== undefined) {
+        assert.match(input.id, /^msg/, 'Responses rejects message IDs without the msg prefix')
+      }
       const text =
         typeof input.content === 'string'
           ? input.content
