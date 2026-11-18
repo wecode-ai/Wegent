@@ -92,6 +92,71 @@ test("CI package installation preserves distribution repositories and trust", (t
   );
   assert.notEqual(rejected.status, 0);
   assert.equal(readFileSync(calls, "utf8"), expected);
+
+  const sourceList = join(directory, "ubuntu.sources");
+  const sourceContent =
+    "Types: deb\nURIs: https://archive.ubuntu.com/ubuntu\nSuites: noble\nComponents: main universe\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n";
+  writeFileSync(sourceList, sourceContent);
+  writeFileSync(calls, "");
+  const scopedOptions = {
+    ...options,
+    env: { ...options.env, WEGENT_CI_APT_SOURCE_LIST: sourceList },
+  };
+  const scoped = spawnSync(
+    "bash",
+    [".github/scripts/install-e2e-apt-packages.sh", ...packages],
+    scopedOptions,
+  );
+  assert.equal(scoped.status, 0, scoped.stderr);
+  const sourceArguments =
+    "-o Dir::Etc::sourcelist=" + sourceList + " -o Dir::Etc::sourceparts=- ";
+  assert.equal(
+    readFileSync(calls, "utf8"),
+    [
+      sourceArguments + "-o APT::Update::Error-Mode=any update",
+      sourceArguments +
+        "install --yes --no-install-recommends " +
+        packages.join(" "),
+      "",
+    ].join("\n"),
+  );
+  assert.equal(readFileSync(sourceList, "utf8"), sourceContent);
+  writeFileSync(calls, "");
+  const missing = spawnSync(
+    "bash",
+    [".github/scripts/install-e2e-apt-packages.sh", ...packages],
+    {
+      ...scopedOptions,
+      env: {
+        ...scopedOptions.env,
+        WEGENT_CI_APT_SOURCE_LIST: join(directory, "absent.sources"),
+      },
+    },
+  );
+  assert.notEqual(missing.status, 0);
+  assert.equal(readFileSync(calls, "utf8"), "");
+  writeFileSync(
+    join(directory, "apt-get"),
+    '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$APT_TEST_COMMANDS"\nexit 42\n',
+  );
+  writeFileSync(join(directory, "getent"), "#!/usr/bin/env bash\nexit 0\n");
+  writeFileSync(
+    join(directory, "timeout"),
+    '#!/usr/bin/env bash\nshift\nexec "$@"\n',
+  );
+  for (const command of ["getent", "timeout"])
+    chmodSync(join(directory, command), 0o755);
+  const failedUpdate = spawnSync(
+    "bash",
+    [".github/scripts/install-e2e-apt-packages.sh", ...packages],
+    scopedOptions,
+  );
+  assert.equal(failedUpdate.status, 42);
+  assert.equal(
+    readFileSync(calls, "utf8"),
+    sourceArguments + "-o APT::Update::Error-Mode=any update\n",
+  );
+  assert.equal(readFileSync(sourceList, "utf8"), sourceContent);
 });
 
 test("historical fixtures use the exact GitHub release asset by ID", async () => {

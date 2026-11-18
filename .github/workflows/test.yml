@@ -870,6 +870,8 @@ jobs:
 
       - name: Verify isolated Electron update transport
         if: matrix.shard == 1
+        env:
+          WEGENT_CI_APT_SOURCE_LIST: /etc/apt/sources.list.d/ubuntu.sources
         run: |
           source .github/scripts/lib/apt-packages.sh
           mapfile -t missing < <(find_missing_apt_packages gdb)

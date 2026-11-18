@@ -33,6 +33,22 @@ run_apt_with_diagnostics() {
   return "$apt_status"
 }
 
+install_apt_packages() {
+  local privileged=()
+  if ((EUID != 0)); then privileged=(sudo); fi
+  local apt_options=()
+  if [[ -n "${WEGENT_CI_APT_SOURCE_LIST:-}" ]]; then
+    if [[ ! -f "$WEGENT_CI_APT_SOURCE_LIST" || ! -r "$WEGENT_CI_APT_SOURCE_LIST" ]]; then
+      printf 'The configured CI distribution source list is not readable: %s\n' "$WEGENT_CI_APT_SOURCE_LIST" >&2
+      return 1
+    fi
+    # Limit this transaction without changing the runner's repositories or trust.
+    apt_options=(-o "Dir::Etc::sourcelist=$WEGENT_CI_APT_SOURCE_LIST" -o Dir::Etc::sourceparts=-)
+  fi
+  run_apt_with_diagnostics "${privileged[@]}" apt-get "${apt_options[@]}" -o APT::Update::Error-Mode=any update || return
+  run_apt_with_diagnostics "${privileged[@]}" apt-get "${apt_options[@]}" install --yes --no-install-recommends "$@"
+}
+
 install_missing_apt_packages() {
   local package
   local missing=()
@@ -41,8 +57,5 @@ install_missing_apt_packages() {
   done < <(find_missing_apt_packages "$@")
   if ((${#missing[@]} == 0)); then return 0; fi
 
-  local privileged=()
-  if ((EUID != 0)); then privileged=(sudo); fi
-  run_apt_with_diagnostics "${privileged[@]}" apt-get -o APT::Update::Error-Mode=any update || return
-  run_apt_with_diagnostics "${privileged[@]}" apt-get install --yes --no-install-recommends "${missing[@]}"
+  install_apt_packages "${missing[@]}"
 }
