@@ -94,19 +94,19 @@ Add-Type -AssemblyName UIAutomationClient
 Write-DecisionStage 'client-loaded'
 Add-Type -AssemblyName UIAutomationTypes
 Write-DecisionStage 'types-loaded'
-$proxyName = [System.Windows.Automation.AutomationElement].Assembly.GetName()
-$proxyName.Name = 'UIAutomationClientsideProviders'
-Write-DecisionStage 'provider-register-started'
-try {
-  [System.Windows.Automation.ClientSettings]::RegisterClientSideProviderAssembly($proxyName)
-} catch {
-  throw
-}
-Write-DecisionStage 'provider-registered'
-Add-Type -ErrorAction Stop -TypeDefinition @'
+Add-Type -ErrorAction Stop -ReferencedAssemblies ([System.Windows.Automation.AutomationElement].Assembly.Location) -TypeDefinition @'
 ${WINDOWS_NATIVE_DIALOG_BUTTON_SOURCE}
 '@
 Write-DecisionStage 'native-reader-loaded'
+Write-DecisionStage 'provider-register-started'
+try {
+  $proxyName = [WeworkUiaClient]::RegisterProviders()
+} catch {
+  Write-DecisionStage 'provider-register-failed'
+  Write-DecisionStage ($_.Exception.GetBaseException().TargetSite.Name)
+  throw
+}
+Write-DecisionStage 'provider-registered'
 ${WINDOWS_UIA_PROVIDER_DIAGNOSTICS}
 $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, ${pid})
 $dialogCondition = [System.Windows.Automation.AndCondition]::new([System.Windows.Automation.Condition[]]@(
@@ -211,10 +211,6 @@ ${WINDOWS_UIA_STRUCTURE_DIAGNOSTICS}
   }
   Start-Sleep -Milliseconds 100
 }
-$top = @([System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $condition) | ForEach-Object {
-  @{ name = $_.Current.Name; className = $_.Current.ClassName; handle = $_.Current.NativeWindowHandle; processId = $_.Current.ProcessId }
-})
-[Console]::Error.WriteLine('Native decision top-level windows: ' + (ConvertTo-Json -InputObject $top -Compress))
 throw 'The isolated app did not display its native Core plugin decision'
 `
     await execute(
@@ -234,6 +230,8 @@ throw 'The isolated app did not display its native Core plugin decision'
         'types-loaded',
         'provider-register-started',
         'provider-registered',
+        'provider-register-failed',
+        'LoadDefaultProxies',
         'native-reader-loaded',
         'search-started',
         'search-completed',
@@ -253,8 +251,6 @@ throw 'The isolated app did not display its native Core plugin decision'
         'button-present',
         'button-handle-resolved',
         'button-identity-diagnostics-failed',
-        'provider-load-started',
-        'provider-loaded',
         'provider-create-started',
         'provider-diagnostics-failed',
         'button-ambiguous',
@@ -281,8 +277,7 @@ throw 'The isolated app did not display its native Core plugin decision'
             ...evidence,
           })
         )
-      if (!signal.aborted && evidence.stages.includes('dialog-matched'))
-        await recordWindowsNativeWindowDiagnostics(pid, signal)
+      if (!signal.aborted) await recordWindowsNativeWindowDiagnostics(pid, signal)
       throw error
     })
     return
@@ -367,7 +362,7 @@ function windowsDecisionEvidence(output, allowedStages) {
     WINDOWS_NATIVE_DIAGNOSTIC_FIELDS.map(field => [field, null])
   )
   for (const line of lines) {
-    const timing = /^native-decision-timing:([a-z-]+):(\d+)$/.exec(line)
+    const timing = /^native-decision-timing:([a-zA-Z-]+):(\d+)$/.exec(line)
     if (timing && allowedStages.has(timing[1]) && Number.isSafeInteger(Number(timing[2])))
       stageElapsedMs[timing[1]] = Number(timing[2])
     const count = /^native-decision-button-count:(\d+)$/.exec(line)

@@ -556,6 +556,18 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
+      - name: Set up Node for native Windows preflight
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24"
+
+      - name: Verify native plugin dialog client
+        timeout-minutes: 1
+        shell: pwsh
+        run: |
+          node wework/scripts/verify-native-plugin-window-diagnostics.mjs
+          if ($LASTEXITCODE -ne 0) { throw "Native dialog client verification failed" }
+
       - name: Restore or build Windows Wework desktop E2E package
         uses: ./.github/actions/build-wework-windows-e2e
         with:
@@ -574,13 +586,6 @@ jobs:
         timeout-minutes: 1
         shell: pwsh
         run: .github/scripts/test-windows-standard-user-process.ps1
-
-      - name: Verify native plugin dialog client
-        timeout-minutes: 1
-        shell: pwsh
-        run: |
-          node wework/scripts/verify-native-plugin-window-diagnostics.mjs
-          if ($LASTEXITCODE -ne 0) { throw "Native dialog client verification failed" }
 
       - name: Prepare Windows Redis E2E tools
         shell: pwsh

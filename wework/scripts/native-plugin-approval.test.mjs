@@ -589,7 +589,11 @@ test('retains Windows native failure stages and the unchanged deadline without e
     await expect(
       withNativePluginDecision({ applicationProcessId: 123, command: vi.fn() }, async () => null)
     ).rejects.toBe(original)
-    expect(native.execute).toHaveBeenCalledOnce()
+    expect(native.execute).toHaveBeenCalledTimes(2)
+    const [, observerArgs, observerOptions] = native.execute.mock.calls[1]
+    expect(observerOptions.timeout).toBe(4_000)
+    const observer = Buffer.from(observerArgs.at(-1), 'base64').toString('utf16le')
+    expect(observer).not.toMatch(/UIAutomation|Invoke|SendMessage|PostMessage|SendInput/)
     const [command, args, options] = native.execute.mock.calls[0]
     expect(command).toBe('powershell.exe')
     expect(args).toContain('-Mta')

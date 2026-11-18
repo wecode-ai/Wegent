@@ -18,9 +18,7 @@ export const WINDOWS_NATIVE_DIAGNOSTIC_FIELDS = [
 export const WINDOWS_UIA_PROVIDER_DIAGNOSTICS = `
 function Read-ButtonProvider([IntPtr]$handle) {
   try {
-    Write-DecisionStage 'provider-load-started'
     $proxyAssembly = [System.Reflection.Assembly]::Load($proxyName)
-    Write-DecisionStage 'provider-loaded'
     $proxyType = $proxyAssembly.GetType($proxyName.Name + '.UIAutomationClientSideProviders', $true)
     $proxyTable = $proxyType.GetField('ClientSideProviderDescriptionTable').GetValue($null)
     $factories = @($proxyTable | Where-Object { $_.ClassName -eq 'Button' })
@@ -72,8 +70,6 @@ using System.Text;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 public static class WeworkNativeDialogStructure {
-  [DllImport("user32.dll")] private static extern bool EnumWindows(WindowVisitor visitor, IntPtr data);
-  [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr window, StringBuilder text, int length);
   [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr window);
   [DllImport("user32.dll")] private static extern bool IsWindowEnabled(IntPtr window);
   [DllImport("user32.dll")] private static extern bool IsChild(IntPtr parent, IntPtr child);
@@ -84,6 +80,7 @@ public static class WeworkNativeDialogStructure {
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr window, StringBuilder name, int length);
 `
 
+// A non-inlined CLR registration frame lets official UIA inspect its referenced assembly version.
 export const WINDOWS_NATIVE_DIALOG_BUTTON_SOURCE = `${WINDOWS_NATIVE_DIALOG_INTEROP}
   private static bool OwnedWindow(IntPtr window, int expectedPid) {
     uint pid;
@@ -118,9 +115,20 @@ export const WINDOWS_NATIVE_DIALOG_BUTTON_SOURCE = `${WINDOWS_NATIVE_DIALOG_INTE
     return matches.ToArray();
   }
 }
+public static class WeworkUiaClient {
+  [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+  public static System.Reflection.AssemblyName RegisterProviders() {
+    var name = typeof(System.Windows.Automation.AutomationElement).Assembly.GetName();
+    name.Name = "UIAutomationClientsideProviders";
+    System.Windows.Automation.ClientSettings.RegisterClientSideProviderAssembly(name);
+    return name;
+  }
+}
 `
 
 export const WINDOWS_NATIVE_DIALOG_STRUCTURE_SOURCE = `${WINDOWS_NATIVE_DIALOG_INTEROP}
+  [DllImport("user32.dll")] private static extern bool EnumWindows(WindowVisitor visitor, IntPtr data);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr window, StringBuilder text, int length);
   public static int[] FindAndRead(int expectedPid, string[] titles) {
     var matches = new List<IntPtr>();
     bool complete = EnumWindows(delegate(IntPtr window, IntPtr data) {
