@@ -472,7 +472,7 @@ classify_path() {
       select_target "core:collaboration-issue-comment-mention"
       select_target "core:collaboration-issue-assignment-activity"
       select_target "core:collaboration-issue-comment-attachments"
-      select_target "core:collaboration-issue-attachment-preview"
+      select_target "core:collaboration-issue-comment-attachments"
       select_target "core:collaboration-issue-comment-notification"
       select_target "core:collaboration-board-move-recovery"
       select_target "core:collaboration-home-preload"
@@ -504,7 +504,7 @@ classify_path() {
       backend/app/api/endpoints/deliveries.py | \
       backend/tests/api/test_cloud_projects_api.py | \
       backend/tests/api/test_deliveries_api.py)
-      select_target "core:collaboration-issue-attachment-preview"
+      select_target "core:collaboration-issue-comment-attachments"
       ;;
     shared/rust/* | backend-rs/* | backend-rs/** | \
       wework/e2e/desktop/modules/cloud-environment.mjs | \

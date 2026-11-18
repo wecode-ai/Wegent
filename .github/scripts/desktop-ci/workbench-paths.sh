@@ -123,10 +123,6 @@ classify_workbench_path() {
       select_target "core:collaboration-issue-comment-attachments"
       return
       ;;
-    wework/e2e/desktop/scenarios/collaboration-issue-attachment-preview.scenario.mjs)
-      select_target "core:collaboration-issue-attachment-preview"
-      return
-      ;;
     wework/src/lib/clipboard-images* | \
       wework/src/features/todo/TaskDescriptionEditor* | \
       wework/src/components/chat/composer/desktopComposerServices* | \
