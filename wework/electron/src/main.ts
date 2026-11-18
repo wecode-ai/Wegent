@@ -526,11 +526,13 @@ const startupTelemetry = new StartupTelemetryLifecycle({
   now: () => performance.now(),
   publish: (type, payload) => {
     desktopHostEvents.publish(type, payload)
-    if (type === 'startup.succeeded' && process.env.WEWORK_ACTIVE_RELEASE_ID) {
+    if (type === 'startup.succeeded') {
       const releases = new ReleaseStore(join(app.getPath('userData'), 'releases'))
-      void releases
-        .confirm(process.env.WEWORK_ACTIVE_RELEASE_ID)
-        .catch(error => console.error('[release] failed to confirm startup', error))
+      const releaseId = process.env.WEWORK_ACTIVE_RELEASE_ID
+      const confirmation = releaseId
+        ? releases.confirm(releaseId)
+        : releases.active().then(active => (active ? releases.confirm(active.id) : undefined))
+      void confirmation.catch(error => console.error('[release] failed to confirm startup', error))
     }
   },
 })
