@@ -38,16 +38,7 @@ function Write-DecisionStage([string]$decisionStage) {
 }
 `
 
-/** Run only after the original input process failed; this observer never sends input. */
-export function windowsNativeWindowDiagnosticScript(pid, titles) {
-  const expectedTitles = titles.map(title => "'" + title.replaceAll("'", "''") + "'").join(', ')
-  return `
-${WINDOWS_DECISION_STAGE_DIAGNOSTICS}
-$targetPid = ${pid}
-$expectedTitles = [string[]]@(${expectedTitles})
-Write-DecisionStage 'observer-started'
-try {
-  Add-Type -ErrorAction Stop -TypeDefinition @'
+export const WINDOWS_NATIVE_DIALOG_STRUCTURE_SOURCE = `
 using System;
 using System.Text;
 using System.Collections.Generic;
@@ -55,6 +46,9 @@ using System.Runtime.InteropServices;
 public static class WeworkNativeDialogStructure {
   [DllImport("user32.dll")] private static extern bool EnumWindows(WindowVisitor visitor, IntPtr data);
   [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr window, StringBuilder text, int length);
+  [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr window);
+  [DllImport("user32.dll")] private static extern bool IsWindowEnabled(IntPtr window);
+  [DllImport("user32.dll")] private static extern bool IsChild(IntPtr parent, IntPtr child);
   private delegate bool WindowVisitor(IntPtr window, IntPtr data);
   [DllImport("user32.dll")] private static extern bool EnumChildWindows(IntPtr window, WindowVisitor visitor, IntPtr data);
   [DllImport("user32.dll")] private static extern uint GetWindowThreadProcessId(IntPtr window, out uint pid);
@@ -81,6 +75,38 @@ public static class WeworkNativeDialogStructure {
     Array.Copy(structure, 0, result, 1, structure.Length);
     return result;
   }
+  private static bool OwnedWindow(IntPtr window, int expectedPid) {
+    uint pid;
+    GetWindowThreadProcessId(window, out pid);
+    return pid == expectedPid && IsWindow(window);
+  }
+  private static bool ClassMatches(IntPtr window, string expected) {
+    var name = new StringBuilder(256);
+    if (GetClassName(window, name, name.Capacity) <= 0)
+      throw new InvalidOperationException("Native control class is unavailable");
+    return String.Equals(name.ToString(), expected, StringComparison.OrdinalIgnoreCase);
+  }
+  public static bool OwnedButton(IntPtr dialog, IntPtr button, int expectedPid) {
+    return OwnedWindow(dialog, expectedPid) && ClassMatches(dialog, "#32770")
+      && OwnedWindow(button, expectedPid) && IsChild(dialog, button)
+      && ClassMatches(button, "Button") && IsWindowVisible(button) && IsWindowEnabled(button);
+  }
+  public static IntPtr[] DialogButtons(IntPtr dialog, int expectedPid) {
+    if (!OwnedWindow(dialog, expectedPid) || !ClassMatches(dialog, "#32770"))
+      throw new InvalidOperationException("Native dialog ownership changed");
+    var matches = new List<IntPtr>();
+    bool readable = true;
+    EnumChildWindows(dialog, delegate(IntPtr child, IntPtr data) {
+      if (!OwnedWindow(child, expectedPid)) return true;
+      var name = new StringBuilder(256);
+      if (GetClassName(child, name, name.Capacity) <= 0) readable = false;
+      else if (String.Equals(name.ToString(), "Button", StringComparison.OrdinalIgnoreCase)
+        && IsWindowVisible(child) && IsWindowEnabled(child)) matches.Add(child);
+      return true;
+    }, IntPtr.Zero);
+    if (!readable) throw new InvalidOperationException("Native control classes are unavailable");
+    return matches.ToArray();
+  }
   private static int[] Read(IntPtr window, int expectedPid) {
     if (window == IntPtr.Zero) return new int[] { 0, -1, -1, -1, -1 };
     uint pid;
@@ -106,6 +132,19 @@ public static class WeworkNativeDialogStructure {
     return new int[] { 1, 1, dialogClass, children, classReadsComplete ? buttons : -1 };
   }
 }
+`
+
+/** Run only after the original input process failed; this observer never sends input. */
+export function windowsNativeWindowDiagnosticScript(pid, titles) {
+  const expectedTitles = titles.map(title => "'" + title.replaceAll("'", "''") + "'").join(', ')
+  return `
+${WINDOWS_DECISION_STAGE_DIAGNOSTICS}
+$targetPid = ${pid}
+$expectedTitles = [string[]]@(${expectedTitles})
+Write-DecisionStage 'observer-started'
+try {
+  Add-Type -ErrorAction Stop -TypeDefinition @'
+${WINDOWS_NATIVE_DIALOG_STRUCTURE_SOURCE}
 '@
   Write-DecisionStage 'observer-types-loaded'
   $nativeStructure = [WeworkNativeDialogStructure]::FindAndRead($targetPid, $expectedTitles)

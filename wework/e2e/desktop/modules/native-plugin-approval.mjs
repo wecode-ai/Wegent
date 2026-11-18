@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import {
   WINDOWS_DECISION_STAGE_DIAGNOSTICS,
+  WINDOWS_NATIVE_DIALOG_STRUCTURE_SOURCE,
   windowsNativeWindowDiagnosticScript,
   WINDOWS_NATIVE_DIAGNOSTIC_FIELDS,
   WINDOWS_UIA_STRUCTURE_DIAGNOSTICS,
@@ -92,13 +93,18 @@ Add-Type -AssemblyName UIAutomationClient
 Write-DecisionStage 'client-loaded'
 Add-Type -AssemblyName UIAutomationTypes
 Write-DecisionStage 'types-loaded'
+Add-Type -ErrorAction Stop -TypeDefinition @'
+${WINDOWS_NATIVE_DIALOG_STRUCTURE_SOURCE}
+'@
+Write-DecisionStage 'native-reader-loaded'
 $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, ${pid})
 $dialogCondition = [System.Windows.Automation.AndCondition]::new([System.Windows.Automation.Condition[]]@(
   $condition,
   [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ClassNameProperty, '#32770'),
   [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Window)
 ))
-$buttonCondition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
+$expectedTitles = @(${TITLES.map(title => `'${title}'`).join(', ')})
+$allowedButtonNames = @(${allow ? "'Allow installation', 'Allow update', '允许安装', '允许更新'" : "'Cancel', '取消'"})
 $deadline = [DateTime]::UtcNow.AddSeconds(10)
 while ([DateTime]::UtcNow -lt $deadline) {
   Write-DecisionStage 'search-started'
@@ -114,7 +120,7 @@ while ([DateTime]::UtcNow -lt $deadline) {
       Write-DecisionStage 'owned-dialog-present'
       $decisionTitle = $window.Current.Name
       Write-DecisionStage 'title-read'
-      if ($decisionTitle -notin @(${TITLES.map(title => `'${title}'`).join(', ')})) {
+      if ($decisionTitle -notin $expectedTitles) {
         Write-DecisionStage 'title-unmatched'
         continue
       }
@@ -129,26 +135,57 @@ while ([DateTime]::UtcNow -lt $deadline) {
     $window = $decisions[0]
     Write-DecisionStage 'dialog-matched'
     Write-DecisionStage 'button-search-started'
-    $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)
+    $dialogHandle = [IntPtr]$window.Current.NativeWindowHandle
+    $buttonHandles = [WeworkNativeDialogStructure]::DialogButtons($dialogHandle, $targetPid)
+    $buttons = [System.Collections.Generic.List[System.Windows.Automation.AutomationElement]]::new()
+    foreach ($buttonHandle in $buttonHandles) {
+      $nativeButton = [System.Windows.Automation.AutomationElement]::FromHandle($buttonHandle)
+      Write-DecisionStage 'button-handle-resolved'
+      if ($nativeButton.Current.ProcessId -ne $targetPid -or $nativeButton.Current.ControlType.Id -ne [System.Windows.Automation.ControlType]::Button.Id) {
+        throw 'The native Button handle did not expose its owned UIA Button'
+      }
+      $buttons.Add($nativeButton)
+    }
     Write-DecisionStage 'button-search-completed'
     Write-Output ("native-decision-button-count:{0}" -f $buttons.Count)
 ${WINDOWS_UIA_STRUCTURE_DIAGNOSTICS}
+    $matchingButtons = [System.Collections.Generic.List[System.Windows.Automation.AutomationElement]]::new()
     foreach ($button in $buttons) {
       Write-DecisionStage 'button-present'
       Write-DecisionStage 'button-name-read-started'
       $buttonName = $button.Current.Name
       Write-DecisionStage 'button-name-read'
-      if ($buttonName -in @(${allow ? "'Allow installation', 'Allow update', '允许安装', '允许更新'" : "'Cancel', '取消'"})) {
-        Write-DecisionStage 'button-matched'
-        Write-DecisionStage 'invoke-pattern-read-started'
-        $pattern = $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
-        Write-DecisionStage 'invoke-pattern-read'
-        Write-DecisionStage 'invoke-started'
-        $pattern.Invoke()
-        Write-DecisionStage 'invoke-completed'
-        exit 0
+      if ($buttonName -in $allowedButtonNames) {
+        $matchingButtons.Add($button)
+        continue
       }
       Write-DecisionStage 'button-name-unmatched'
+    }
+    if ($matchingButtons.Count -gt 1) {
+      Write-DecisionStage 'button-ambiguous'
+      throw 'The isolated app displayed ambiguous native decision buttons'
+    }
+    if ($matchingButtons.Count -eq 1) {
+      $button = $matchingButtons[0]
+      $decisionTitle = $window.Current.Name
+      if ($decisionTitle -notin $expectedTitles) {
+        throw 'The native dialog title changed before invocation'
+      }
+      if (-not [WeworkNativeDialogStructure]::OwnedButton($dialogHandle, [IntPtr]$button.Current.NativeWindowHandle, $targetPid)) {
+        throw 'The native Button ownership changed before invocation'
+      }
+      if ($button.Current.Name -notin $allowedButtonNames -or $button.Current.ProcessId -ne $targetPid -or $button.Current.ControlType.Id -ne [System.Windows.Automation.ControlType]::Button.Id) {
+        throw 'The selected native Button changed before invocation'
+      }
+      Write-DecisionStage 'selection-revalidated'
+      Write-DecisionStage 'button-matched'
+      Write-DecisionStage 'invoke-pattern-read-started'
+      $pattern = $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+      Write-DecisionStage 'invoke-pattern-read'
+      Write-DecisionStage 'invoke-started'
+      $pattern.Invoke()
+      Write-DecisionStage 'invoke-completed'
+      exit 0
     }
   }
   Start-Sleep -Milliseconds 100
@@ -170,6 +207,7 @@ throw 'The isolated app did not display its native Core plugin decision'
         'started',
         'client-loaded',
         'types-loaded',
+        'native-reader-loaded',
         'search-started',
         'search-completed',
         'owned-window-present',
@@ -186,6 +224,9 @@ throw 'The isolated app did not display its native Core plugin decision'
         'uia-structure-completed',
         'uia-structure-failed',
         'button-present',
+        'button-handle-resolved',
+        'button-ambiguous',
+        'selection-revalidated',
         'button-name-read-started',
         'button-name-read',
         'button-name-unmatched',
@@ -208,11 +249,7 @@ throw 'The isolated app did not display its native Core plugin decision'
             ...evidence,
           })
         )
-      if (
-        !signal.aborted &&
-        evidence.buttonCount === 0 &&
-        evidence.stages.includes('dialog-matched')
-      )
+      if (!signal.aborted && evidence.stages.includes('dialog-matched'))
         await recordWindowsNativeWindowDiagnostics(pid, signal)
       throw error
     })

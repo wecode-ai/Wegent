@@ -490,7 +490,7 @@ test('retains Windows native failure stages and the unchanged deadline without e
       '::ControlTypeProperty, [System.Windows.Automation.ControlType]::Window'
     )
     expect(script).toContain(
-      '::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button'
+      '$nativeButton.Current.ControlType.Id -ne [System.Windows.Automation.ControlType]::Button.Id'
     )
     expect(script).toContain(
       '$ownerWindow.FindAll([System.Windows.Automation.TreeScope]::Subtree, $dialogCondition)'
@@ -498,9 +498,13 @@ test('retains Windows native failure stages and the unchanged deadline without e
     expect(script).toContain('if ($decisions.Count -gt 1)')
     expect(script).toContain('UtcNow.AddSeconds(10)')
     expect(script).not.toContain('empty-button-diagnostics')
-    expect(script).not.toContain('GetWindowThreadProcessId')
+    expect(script).toContain('DialogButtons($dialogHandle, $targetPid)')
+    expect(script).toContain('::FromHandle($buttonHandle)')
     expect(script).not.toContain('SendMessage')
-    expect(script).not.toContain('GetWindowText')
+    expect(script).toContain(
+      'OwnedButton($dialogHandle, [IntPtr]$button.Current.NativeWindowHandle, $targetPid)'
+    )
+    expect(script).toContain('if ($matchingButtons.Count -gt 1)')
     expect(log).toHaveBeenCalledWith(
       '[native-plugin-decision-failed]',
       JSON.stringify({
@@ -606,7 +610,8 @@ test.each([false, true])(
         'utf16le'
       )
       expect(input).toContain('UtcNow.AddSeconds(10)')
-      expect(input).not.toContain('WeworkNativeDialogStructure')
+      expect(input).toContain('DialogButtons($dialogHandle, $targetPid)')
+      expect(input).not.toContain('observer-started')
       expect(observer).toContain('$targetPid = 123')
       expect(observer).toContain('Confirm Core plugin installation')
       expect(observer).toContain('Core 插件更新确认')
@@ -627,5 +632,40 @@ test.each([false, true])(
     } finally {
       log.mockRestore()
     }
+  }
+)
+
+test.each([true, false])(
+  'discovers owned native Button handles and preserves the UIA action contract; allow=%s',
+  async allow => {
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    native.execute.mockResolvedValue({ stdout: '' })
+    await withNativePluginDecision(
+      { applicationProcessId: 123, command: vi.fn() },
+      async () => null,
+      { allow }
+    )
+    const script = Buffer.from(native.execute.mock.calls[0][1].at(-1), 'base64').toString('utf16le')
+    expect(script).not.toContain(
+      '$window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)'
+    )
+    expect(script).toContain('DialogButtons($dialogHandle, $targetPid)')
+    expect(script).toContain('ClassMatches(dialog, "#32770")')
+    expect(script).toContain(
+      'String.Equals(name.ToString(), "Button", StringComparison.OrdinalIgnoreCase)'
+    )
+    expect(script).toContain('IsWindowVisible(child) && IsWindowEnabled(child)')
+    expect(script).toContain('OwnedWindow(button, expectedPid) && IsChild(dialog, button)')
+    expect(script).toContain('::FromHandle($buttonHandle)')
+    expect(script).toContain('if ($matchingButtons.Count -gt 1)')
+    expect(script).toContain('$button.Current.Name -notin $allowedButtonNames')
+    expect(script).toContain('[System.Windows.Automation.InvokePattern]::Pattern')
+    expect(script).not.toMatch(/SendMessage|PostMessage|SendInput|mouse_event|keybd_event/)
+    expect(script.indexOf("Write-DecisionStage 'selection-revalidated'")).toBeLessThan(
+      script.indexOf('$pattern.Invoke()')
+    )
+    expect(script).toContain(
+      allow ? "'Allow installation', 'Allow update', '允许安装', '允许更新'" : "'Cancel', '取消'"
+    )
   }
 )

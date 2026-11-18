@@ -575,12 +575,12 @@ jobs:
         shell: pwsh
         run: .github/scripts/test-windows-standard-user-process.ps1
 
-      - name: Verify read-only native plugin diagnostics
+      - name: Verify native plugin dialog client
         timeout-minutes: 1
         shell: pwsh
         run: |
           node wework/scripts/verify-native-plugin-window-diagnostics.mjs
-          if ($LASTEXITCODE -ne 0) { throw "Native read-only diagnostic verification failed" }
+          if ($LASTEXITCODE -ne 0) { throw "Native dialog client verification failed" }
 
       - name: Prepare Windows Redis E2E tools
         shell: pwsh
