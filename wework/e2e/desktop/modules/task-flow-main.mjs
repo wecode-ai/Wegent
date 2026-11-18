@@ -1675,8 +1675,8 @@ async function main() {
         ownerProcessId: process.pid,
       })
       await Promise.all([
-        appendProcessOutput(child.stdout, appLogPath),
-        appendProcessOutput(child.stderr, appLogPath),
+        appendProcessOutput(child.stdout, appLogPath, child),
+        appendProcessOutput(child.stderr, appLogPath, child),
       ])
       if (process.platform === 'win32') {
         const stopObserving = observeWindowsSocketExhaustion([child.stdout, child.stderr], () => {

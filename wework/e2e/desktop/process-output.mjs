@@ -1,8 +1,10 @@
 import { createWriteStream } from 'node:fs'
 import { finished } from 'node:stream/promises'
 import { basename } from 'node:path'
+import { PROCESS_STOP_TIMEOUT_MS } from './process-lifecycle.mjs'
 
 const outputs = new Map()
+const owners = new WeakMap()
 
 function completionOf(stream, options = {}) {
   return finished(stream, { cleanup: true, ...options }).then(
@@ -31,8 +33,9 @@ function outputFor(destination) {
   return output
 }
 
-export function appendProcessOutput(stream, destination) {
+export function appendProcessOutput(stream, destination, owner) {
   if (!stream) return
+  if (owner) owners.set(stream, owner)
   const output = outputFor(destination)
   output.sources.add(stream)
   output.allSources.push(stream)
@@ -62,6 +65,13 @@ export function processOutputDiagnostics() {
       needsDrain: output.writer.writableNeedDrain,
     },
     sources: output.allSources.map(stream => ({
+      owner: owners.has(stream)
+        ? {
+            pid: owners.get(stream).pid,
+            exitCode: owners.get(stream).exitCode,
+            signalCode: owners.get(stream).signalCode,
+          }
+        : null,
       ended: stream.readableEnded,
       closed: stream.closed,
       destroyed: stream.destroyed,
@@ -71,18 +81,42 @@ export function processOutputDiagnostics() {
   }))
 }
 
-export async function flushProcessOutput() {
+async function finishSources(output, destination, timeoutMs) {
+  let timeout
+  const completion = Promise.all(output.sourceCompletions)
+  const deadline = new Promise((_, reject) => {
+    timeout = setTimeout(() => {
+      const error = new Error(
+        `Process output sources did not close after shutdown: ${basename(destination)}`
+      )
+      error.code = 'ERR_PROCESS_OUTPUT_UNCLOSED'
+      reject(error)
+      // An incomplete log remains a failure; closing our readers only releases the collector.
+      for (const source of output.sources) source.destroy(error)
+    }, timeoutMs)
+  })
+  try {
+    return await Promise.race([completion, deadline])
+  } finally {
+    clearTimeout(timeout)
+    await completion
+    output.writer.end()
+  }
+}
+
+export async function flushProcessOutput({ sourceTimeoutMs = PROCESS_STOP_TIMEOUT_MS } = {}) {
   const results = await Promise.allSettled(
     [...outputs].map(async ([destination, output]) => {
       try {
-        const [written, sources] = await Promise.all([
+        const [writtenResult, sourcesResult] = await Promise.allSettled([
           output.written,
-          Promise.all(output.sourceCompletions).then(results => {
-            output.writer.end()
-            return results
-          }),
+          finishSources(output, destination, sourceTimeoutMs),
         ])
+        if (writtenResult.status === 'rejected') throw writtenResult.reason
+        const written = writtenResult.value
         if (written.status === 'rejected') throw written.reason
+        if (sourcesResult.status === 'rejected') throw sourcesResult.reason
+        const sources = sourcesResult.value
         const failures = sources.filter(result => result.status === 'rejected')
         if (failures.length) {
           throw new AggregateError(

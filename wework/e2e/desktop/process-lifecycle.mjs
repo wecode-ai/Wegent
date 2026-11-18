@@ -2,7 +2,7 @@ import { execFile, execFileSync, spawn } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 import { promisify } from 'node:util'
 
-const PROCESS_STOP_TIMEOUT_MS = 10_000
+export const PROCESS_STOP_TIMEOUT_MS = 10_000
 const PROCESS_GROUP_GRACE_PERIOD_MS = 1_000
 const PROCESS_GROUP_POLL_INTERVAL_MS = 25
 const DEAD_LINUX_PROCESS_STATES = new Set(['Z', 'X', 'x'])
