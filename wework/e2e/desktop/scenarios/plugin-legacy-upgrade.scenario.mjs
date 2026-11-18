@@ -290,12 +290,6 @@ export async function createDesktopScenario({
         installedId: fixtures.update.installedId,
       }
       assert.notEqual(initialUpdate.version, fixtures.update.version)
-      // The old executor is stopped. Change account intent before the first modern sync,
-      // so preparation cannot cache the old archive and bypass the runtime witness.
-      await update(initialUpdate, null, { releaseId: initialUpdate.releaseId })
-      const desired = await accountPlugin(cloud, initialUpdate.slug)
-      assert.equal(desired.spec.releaseId, initialUpdate.releaseId)
-      assert.equal(desired.spec.version, initialUpdate.version)
       evidence.push({
         phase: 'legacy-runtime-bytecode',
         sourceVersion: release.version,
@@ -304,6 +298,12 @@ export async function createDesktopScenario({
         ...bytecode,
       })
     }
+    // The old executor is stopped. Align account intent with this baseline before the
+    // first modern sync so preparation cannot race a version left by the prior baseline.
+    await update(initialUpdate, null, { releaseId: initialUpdate.releaseId })
+    const desired = await accountPlugin(cloud, initialUpdate.slug)
+    assert.equal(desired.spec.releaseId, initialUpdate.releaseId)
+    assert.equal(desired.spec.version, initialUpdate.version)
     return {
       release,
       fixtures,
