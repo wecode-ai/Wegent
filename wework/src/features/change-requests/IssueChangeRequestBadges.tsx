@@ -18,6 +18,7 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { LOCAL_WORKBENCH_DEVICE_ALIAS } from '@/lib/workbench-device'
 import { observationLabelKey } from '@/features/workbench/resourceObservation'
+import type { ChangeRequest } from '@/types/environment'
 
 export const CHANGE_REQUEST_LIFECYCLE_BADGE_FLAG = 'collab.changeRequestLifecycleBadge.v1'
 
@@ -62,6 +63,21 @@ const legacyVisuals: Record<
   merge_queue_removed: { icon: 'git-pull-request', tone: 'neutral' },
   closed: { icon: 'git-pull-request-closed', tone: 'neutral' },
   merged: { icon: 'git-merge', tone: 'success' },
+}
+
+function changeRequestBadgePresentation(
+  changeRequest: ChangeRequest,
+  lifecycleEnabled: boolean
+): {
+  status: ChangeRequestVisualStatus | LegacyChangeRequestVisualStatus
+  visual: Pick<CollaborationIssueBadge, 'icon' | 'tone'>
+} {
+  if (lifecycleEnabled) {
+    const status = changeRequestVisualStatus(changeRequest)
+    return { status, visual: visuals[status] }
+  }
+  const status = legacyChangeRequestVisualStatus(changeRequest)
+  return { status, visual: legacyVisuals[status] }
 }
 
 /** Adapts live PR state into generic badge data without writing it back to the Issue. */
@@ -146,10 +162,7 @@ export function IssueChangeRequestBadges({
         tooltip,
       }
     }
-    const lifecycleStatus = changeRequestVisualStatus(request)
-    const legacyStatus = legacyChangeRequestVisualStatus(request)
-    const status = lifecycleBadgeEnabled ? lifecycleStatus : legacyStatus
-    const visual = lifecycleBadgeEnabled ? visuals[lifecycleStatus] : legacyVisuals[legacyStatus]
+    const { status, visual } = changeRequestBadgePresentation(request, lifecycleBadgeEnabled)
     const statusLabel = t(`workbench.change_request_status_${status}`)
     const reviewDecision = request.reviewDecision ?? 'none'
     const mergeStateStatus = request.mergeStateStatus ?? 'unknown'
