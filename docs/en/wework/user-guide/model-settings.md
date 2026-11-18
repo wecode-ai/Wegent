@@ -60,6 +60,12 @@ Canceling does not save changes; discarding unsaved changes requires confirmatio
 
 This configuration UI improvement introduces no legacy migration, automatic regrouping or cleanup. Existing model IDs, conversation references and stored credentials are retained.
 
+## Confirming model catalog sync to a cloud device
+
+When selecting a local model that needs to be synced to a cloud device, review the device and model in the confirmation dialog, then sync or cancel. Multiple requests are confirmed individually in arrival order; confirming one does not approve later requests. While syncing, duplicate submission and cancellation are disabled. A failure remains visible so you can retry or cancel. Each subsequent request focuses Cancel; after the final response, focus returns to the original control.
+
+Closing the interface hosting the dialog cancels unconfirmed requests without syncing them. A sync you already confirmed continues to completion. When the confirmation interface is unavailable, the caller receives a cancellation result; you can select the model again after the interface is restored.
+
 ## Mobile standalone and provider configuration
 
 Open **Settings → Models and accounts**. The OpenAI account entry retains the existing Codex sign-in flow and does not require Wegent Backend login.

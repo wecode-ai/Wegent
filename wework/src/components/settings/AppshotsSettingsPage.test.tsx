@@ -1,5 +1,5 @@
 import type { AppPreferences } from '@/desktop/appPreferences'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { AppshotsSettingsPage } from './AppshotsSettingsPage'
@@ -35,9 +35,12 @@ const defaultPreferences: AppPreferences = {
   appshotsPlaySound: true,
 }
 
-vi.mock('@/hooks/useTranslation', () => ({
-  useTranslation: () => ({ t: (_key: string, fallback?: string) => fallback ?? _key }),
-}))
+const language = vi.hoisted(() => ({ current: 'en' }))
+vi.mock('@/hooks/useTranslation', () => {
+  const en = (key: string, fallback?: string) => fallback ?? key
+  const zh = (key: string, fallback?: string) => fallback ?? key
+  return { useTranslation: () => ({ t: language.current === 'en' ? en : zh }) }
+})
 
 vi.mock('@/desktop/appshots', () => ({
   getAppshotsStatus: getAppshotsStatusMock,
@@ -74,6 +77,7 @@ vi.mock('@/desktop/appPreferences', () => ({
 
 describe('AppshotsSettingsPage', () => {
   beforeEach(() => {
+    language.current = 'en'
     getAppshotsStatusMock.mockReset()
     getAppPreferencesMock.mockReset()
     updateAppPreferencesMock.mockReset()
@@ -106,5 +110,88 @@ describe('AppshotsSettingsPage', () => {
     await user.click(await screen.findByTestId('appshots-open-accessibility-settings-button'))
 
     expect(openAppshotsPermissionSettingsMock).toHaveBeenCalledWith('accessibility')
+  })
+  test('shows shortcut readiness while the independent sound preference is pending', async () => {
+    let resolve!: (value: AppPreferences) => void
+    getAppPreferencesMock.mockReturnValueOnce(
+      new Promise<AppPreferences>(done => {
+        resolve = done
+      })
+    )
+    render(<AppshotsSettingsPage />)
+    await act(async () => {})
+    expect(screen.getByText('在任意应用中截取最前面的窗口')).toBeInTheDocument()
+    expect(screen.getByTestId('appshots-play-sound-toggle')).toBeDisabled()
+    await act(async () => resolve({ ...defaultPreferences, appshotsPlaySound: false }))
+    expect(screen.getByTestId('appshots-play-sound-toggle')).toHaveAttribute(
+      'aria-checked',
+      'false'
+    )
+  })
+
+  test('changing language does not repeat native status or preference reads', async () => {
+    const view = render(<AppshotsSettingsPage />)
+    await act(async () => {})
+    language.current = 'zh'
+    view.rerender(<AppshotsSettingsPage />)
+    await act(async () => {})
+    expect(getAppshotsStatusMock).toHaveBeenCalledOnce()
+    expect(getAppPreferencesMock).toHaveBeenCalledOnce()
+  })
+  test('keeps successful shortcut status visible when the sound preference read fails', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      getAppPreferencesMock.mockRejectedValueOnce(new Error('preferences unavailable'))
+      render(<AppshotsSettingsPage />)
+      await act(async () => {})
+      expect(screen.getByText('在任意应用中截取最前面的窗口')).toBeInTheDocument()
+      expect(screen.getByTestId('appshots-settings-error')).toBeInTheDocument()
+      expect(screen.getByTestId('appshots-play-sound-toggle')).toBeDisabled()
+    } finally {
+      log.mockRestore()
+    }
+  })
+
+  test('reports a failed capability read without claiming that the platform is unsupported', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      getAppshotsStatusMock.mockRejectedValueOnce(new Error('host unavailable'))
+      render(<AppshotsSettingsPage />)
+      await act(async () => {})
+      expect(screen.getByTestId('appshots-settings-error')).toHaveTextContent(
+        '应用快照设置加载失败'
+      )
+      expect(screen.queryByText('应用快照目前仅支持 macOS。')).toBeNull()
+      expect(screen.getByTestId('appshots-play-sound-toggle')).toBeDisabled()
+    } finally {
+      log.mockRestore()
+    }
+  })
+
+  test('preserves a sound preference after saving fails and supports retry without reloading', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      updateAppPreferencesMock.mockRejectedValueOnce(new Error('offline'))
+      render(<AppshotsSettingsPage />)
+      await act(async () => {})
+      const user = userEvent.setup()
+      await user.click(screen.getByTestId('appshots-play-sound-toggle'))
+      expect(screen.getByTestId('appshots-play-sound-toggle')).toHaveAttribute(
+        'aria-checked',
+        'true'
+      )
+      expect(screen.getByTestId('appshots-settings-error')).toHaveTextContent(
+        '应用快照设置保存失败'
+      )
+      await user.click(screen.getByTestId('appshots-play-sound-toggle'))
+      expect(screen.getByTestId('appshots-play-sound-toggle')).toHaveAttribute(
+        'aria-checked',
+        'false'
+      )
+      expect(screen.queryByTestId('appshots-settings-error')).toBeNull()
+      expect(getAppPreferencesMock).toHaveBeenCalledOnce()
+    } finally {
+      log.mockRestore()
+    }
   })
 })

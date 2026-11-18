@@ -170,7 +170,7 @@ iPhone 和 Android 的主页、搜索、设备筛选与会话入口见 [Wework �
 | 集成 → 浏览器       | 下载目录、浏览器数据与缓存                                                            | `/settings/browser`                     |
 | 编码 → 执行环境     | Node.js 等执行环境配置，见[设置与数据](./settings.md)                                 | `/settings/execution-environments`      |
 | 编码 → 编码工具     | OpenCode、Claude Code、Kimi Code；实验性功能                                          | `/settings/harnesses`                   |
-| 编码 → Hooks        | 配置工具与异步生命周期钩子；见[设置说明](./settings.md#hooks-controls) | `/settings/hooks` |
+| 编码 → Hooks        | 配置工具与异步生命周期钩子；见[设置说明](./settings.md#hooks-controls)                | `/settings/hooks`                       |
 | 编码 → 代码托管     | GitHub / GitLab 等连接；开发者模式的 Git 插件入口，见[Git 连接](./git-connections.md) | `/settings/git-hosting`                 |
 | 编码 → 工作树       | Worktree 位置、保留与清理；开发者模式的 Git 插件入口                                  | `/settings/worktrees`                   |
 | 已归档 → 已归档任务 | 搜索、恢复、删除归档对话                                                              | `/settings/archived-conversations`      |
@@ -189,7 +189,7 @@ iPhone 和 Android 的主页、搜索、设备筛选与会话入口见 [Wework �
 
 输入区、项目菜单、账户菜单等非注册式控件仍需代码审查人工核对，自动测试不能证明所有按钮均已覆盖，也不能证明运行中界面的实际布局。维护规则见仓库 `wework/AGENTS.md`。构建会将中英文文档复制进内置 wework-docs，已安装的旧版本不会因仓库文档更新而即时变化。
 
-启动时出现恢复中心或本机服务提示时，操作入口与限制见[启动故障与恢复](./getting-started.md#startup-recovery)。
+启动时出现恢复中心或本机服务提示时，操作入口与限制见[启动故障与恢复](./getting-started.md#startup-recovery)。**检查 Codex 配置 → 重试** 在配置读取尚未完成或失败时可见，用于重新读取状态。
 
 个人分组的 **… → 分组设置** 管理当前账户实际拥有的个人分组；项目标题及项目行右侧不再提供加号。见[项目入口](./projects.md#workspace-resource-controls)。
 

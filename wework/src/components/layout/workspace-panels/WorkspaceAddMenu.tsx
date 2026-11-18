@@ -1,7 +1,8 @@
+import { useDocumentEvent, useEscapeKey } from '@wegent/collaboration/dom-events'
 import { Plus } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import {
-  useEffect,
+  useCallback,
   useLayoutEffect,
   useRef,
   useState,
@@ -102,33 +103,34 @@ export function WorkspaceAddMenu({
     }
   }, [align, open, preferredPlacement])
 
-  useEffect(() => {
-    if (!open) return
-
+  const close = () => {
+    setOpen(false)
+    setPosition(null)
+  }
+  const bindMenu = useCallback((node: HTMLDivElement | null) => {
+    menuRef.current = node
+    if (!node) return
     setEmbeddedBrowserOcclusion(EMBEDDED_BROWSER_OCCLUSION_ID, true)
-    const handlePointerDown = (event: globalThis.PointerEvent) => {
-      const target = event.target as Node
-      if (buttonRef.current?.contains(target) || menuRef.current?.contains(target)) {
-        return
-      }
-      setOpen(false)
-      setPosition(null)
-    }
-    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setOpen(false)
-        setPosition(null)
-      }
-    }
-
-    document.addEventListener('pointerdown', handlePointerDown, true)
-    document.addEventListener('keydown', handleKeyDown)
     return () => {
+      menuRef.current = null
       setEmbeddedBrowserOcclusion(EMBEDDED_BROWSER_OCCLUSION_ID, false)
-      document.removeEventListener('pointerdown', handlePointerDown, true)
-      document.removeEventListener('keydown', handleKeyDown)
     }
-  }, [open])
+  }, [])
+  useDocumentEvent(
+    'pointerdown',
+    event => {
+      const target = event.target
+      if (
+        !(target instanceof Node) ||
+        buttonRef.current?.contains(target) ||
+        menuRef.current?.contains(target)
+      )
+        return
+      close()
+    },
+    { enabled: open, capture: true }
+  )
+  useEscapeKey(close, open, menuRef)
 
   const toggleOpen = (event: MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation()
@@ -169,7 +171,7 @@ export function WorkspaceAddMenu({
       {open &&
         createPortal(
           <div
-            ref={menuRef}
+            ref={bindMenu}
             data-testid={menuTestId}
             role="menu"
             style={{

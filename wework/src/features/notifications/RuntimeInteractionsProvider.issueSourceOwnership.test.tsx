@@ -117,7 +117,7 @@ it('keeps an offline cached shared question in its inbox without probing its pri
     refresh: harness.refresh,
   }
   render(
-    <NotificationTaskContext.Provider value={{ taskSource, registerTaskSource: () => {} }}>
+    <NotificationTaskContext.Provider value={{ taskSource }}>
       <RuntimeInteractionsProvider accountKey="test:1">{probe}</RuntimeInteractionsProvider>
     </NotificationTaskContext.Provider>
   )

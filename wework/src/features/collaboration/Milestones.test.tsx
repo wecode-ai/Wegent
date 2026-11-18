@@ -546,3 +546,37 @@ it.each([
     })
   }
 )
+
+it('resets batch selection and ignores results when the account changes during an update', async () => {
+  const client = api()
+  let scope = 'account-one'
+  client.milestones.getCacheScope = () => scope
+  const issue = { id: 'I-1', title: 'First account Issue', version: 1 } as CollaborationIssue
+  let finish!: (result: CollaborationIssue) => void
+  vi.mocked(client.issues.update).mockReturnValueOnce(
+    new Promise<CollaborationIssue>(accept => {
+      finish = accept
+    })
+  )
+  const onUpdated = vi.fn()
+  const props = {
+    api: client,
+    projectId: 'p1',
+    issues: [issue],
+    locale: 'en' as const,
+    onUpdated,
+  }
+  const view = render(<MilestoneBulkAction {...props} />)
+  await chooseMilestone('milestone-bulk-select', milestone.id)
+  fireEvent.click(screen.getByTestId('milestone-bulk-apply'))
+  expect(client.issues.update).toHaveBeenCalledOnce()
+  scope = 'account-two'
+  view.rerender(<MilestoneBulkAction {...props} />)
+  await waitFor(() => expect(screen.getByTestId('milestone-bulk-select')).toBeEnabled())
+  expect(screen.getByTestId('milestone-bulk-apply')).toBeDisabled()
+  await act(async () => finish({ ...issue, milestone_id: milestone.id }))
+  expect(onUpdated).not.toHaveBeenCalled()
+  expect(screen.queryByRole('alert')).toBeNull()
+  await chooseMilestone('milestone-bulk-select', milestone.id)
+  expect(screen.getByTestId('milestone-bulk-apply')).toBeEnabled()
+})

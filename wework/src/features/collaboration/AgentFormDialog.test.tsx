@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { useState, useSyncExternalStore } from 'react'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
@@ -100,15 +101,16 @@ it('waits for the Agent configuration before exposing editable fields', async ()
     resolve = settle
   })
   const save = vi.fn()
+  const configuration = createAsyncResource('agent-configuration', () => load)
   function Editor() {
-    const [loading, setLoading] = useState(true)
-    const [name, setName] = useState('')
-    useEffect(() => {
-      void load.then(value => {
-        setName(value)
-        setLoading(false)
-      })
-    }, [])
+    const snapshot = useSyncExternalStore(
+      configuration.subscribe,
+      configuration.getSnapshot,
+      configuration.getSnapshot
+    )
+    const [editedName, setName] = useState<string | null>(null)
+    const loading = snapshot.status !== 'ready'
+    const name = editedName ?? snapshot.data ?? ''
     return (
       <AgentFormDialog
         busy={false}

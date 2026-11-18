@@ -8,6 +8,7 @@ import {
 } from './pluginMarketplaceCache'
 import { remoteCatalogErrorKind } from './remotePluginError'
 import { useOpenAiPluginCatalog } from './useOpenAiPluginCatalog'
+import { installedItem, item } from './pluginMarketplaceCache.test-fixtures'
 
 const remoteItem = {
   id: 'github@openai-curated-remote',
@@ -189,4 +190,136 @@ describe('on-demand OpenAI catalog', () => {
   ])('classifies %s without displaying server payloads', (error, expected) => {
     expect(remoteCatalogErrorKind(error)).toBe(expected)
   })
+})
+
+test('does not restore old catalog metadata after logout clears the inventory', async () => {
+  seed()
+  const pending = deferred()
+  const readCatalog = vi.fn(() => pending.promise)
+  const { result } = renderHook(() =>
+    useOpenAiPluginCatalog({ cacheKey: 'account', enabled: true, readCatalog })
+  )
+  await waitFor(() => expect(readCatalog).toHaveBeenCalledOnce())
+  act(() => clearPluginMarketplaceCache())
+  await act(async () => pending.resolve({ items: [remoteItem], deviceId: 'device' }))
+  expect(result.current.loading).toBe(false)
+  expect(getPluginMarketplaceCache('account')).toBeNull()
+})
+
+test('reactivates with an ordinary read after a detached response is ignored', async () => {
+  seed()
+  const pending = deferred()
+  const readCatalog = vi
+    .fn()
+    .mockReturnValueOnce(pending.promise)
+    .mockResolvedValue({ items: [], deviceId: 'device' })
+  const { result, rerender } = renderHook(
+    ({ enabled }) => useOpenAiPluginCatalog({ cacheKey: 'account', enabled, readCatalog }),
+    { initialProps: { enabled: true } }
+  )
+  await waitFor(() => expect(readCatalog).toHaveBeenCalledTimes(1))
+  rerender({ enabled: false })
+  await act(async () => pending.resolve({ items: [], deviceId: 'device' }))
+  expect(getPluginMarketplaceCache('account')?.marketplaceItems).toEqual([remoteItem])
+  expect(result.current.loading).toBe(false)
+  rerender({ enabled: true })
+  await waitFor(() => expect(result.current.loading).toBe(false))
+  expect(readCatalog).toHaveBeenCalledTimes(2)
+  expect(readCatalog).toHaveBeenLastCalledWith({ forceRefetch: false, accountScope: 'account' })
+  expect(getPluginMarketplaceCache('account')?.marketplaceItems).toEqual([])
+})
+
+test('manual refresh supersedes an older read and does not force the next tab activation', async () => {
+  seed()
+  const initial = deferred(),
+    refreshed = deferred()
+  const readCatalog = vi
+    .fn()
+    .mockReturnValueOnce(initial.promise)
+    .mockReturnValueOnce(refreshed.promise)
+    .mockResolvedValue({ items: [], deviceId: 'device' })
+  const { result, rerender } = renderHook(
+    ({ enabled }) => useOpenAiPluginCatalog({ cacheKey: 'account', enabled, readCatalog }),
+    { initialProps: { enabled: true } }
+  )
+  await waitFor(() => expect(readCatalog).toHaveBeenCalledTimes(1))
+  act(() => result.current.refresh())
+  expect(readCatalog).toHaveBeenLastCalledWith({ forceRefetch: true, accountScope: 'account' })
+  await act(async () => refreshed.resolve({ items: [], deviceId: 'device' }))
+  await act(async () => initial.resolve({ items: [remoteItem], deviceId: 'device' }))
+  expect(getPluginMarketplaceCache('account')?.marketplaceItems).toEqual([])
+  rerender({ enabled: false })
+  rerender({ enabled: true })
+  await waitFor(() => expect(readCatalog).toHaveBeenCalledTimes(3))
+  expect(readCatalog).toHaveBeenLastCalledWith({ forceRefetch: false, accountScope: 'account' })
+})
+
+test.each(['installed', 'removed'] as const)(
+  'projects the current %s membership after a catalog read started',
+  async membership => {
+    seed()
+    const pending = deferred()
+    const readCatalog = vi.fn(() => pending.promise)
+    const { result } = renderHook(() =>
+      useOpenAiPluginCatalog({ cacheKey: 'account', enabled: true, readCatalog })
+    )
+    await waitFor(() => expect(readCatalog).toHaveBeenCalledTimes(1))
+    const plugin = installedItem(
+      'github@openai-curated-remote',
+      'openai-curated-remote',
+      'github'
+    ).raw
+    const local = item({ id: 'local', name: 'local', manifest: { marketplaceId: 'local' } })
+    const current = getPluginMarketplaceCache('account')!
+    act(() =>
+      setPluginMarketplaceCache(
+        {
+          ...current,
+          installedPlugins: membership === 'installed' ? [plugin] : [],
+          marketplaceItems: [local, remoteItem],
+          selectedMarketplaceKey: 'local',
+        },
+        { mutation: true }
+      )
+    )
+    await act(async () =>
+      pending.resolve({
+        items: [
+          { ...remoteItem, installed: membership === 'removed', enabled: membership === 'removed' },
+        ],
+        deviceId: 'device',
+      })
+    )
+    expect(result.current.error).toBeNull()
+    const next = getPluginMarketplaceCache('account')!
+    expect(next.marketplaceItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'local' }),
+        expect.objectContaining({
+          id: remoteItem.id,
+          installed: membership === 'installed',
+          enabled: membership === 'installed',
+        }),
+      ])
+    )
+    expect(next.installedPlugins).toHaveLength(membership === 'installed' ? 1 : 0)
+    expect(next.selectedMarketplaceKey).toBe('local')
+  }
+)
+
+test('ignores the prior reader when its replacement completes in the same account', async () => {
+  seed()
+  const pending = deferred()
+  const old = vi.fn(() => pending.promise),
+    current = vi.fn().mockResolvedValue({ items: [], deviceId: 'device' })
+  const { result, rerender } = renderHook(
+    ({ reader }) =>
+      useOpenAiPluginCatalog({ cacheKey: 'account', enabled: true, readCatalog: reader }),
+    { initialProps: { reader: old } }
+  )
+  await waitFor(() => expect(old).toHaveBeenCalledTimes(1))
+  rerender({ reader: current })
+  await waitFor(() => expect(result.current.loading).toBe(false))
+  await act(async () => pending.resolve({ items: [remoteItem], deviceId: 'device' }))
+  expect(getPluginMarketplaceCache('account')?.marketplaceItems).toEqual([])
 })

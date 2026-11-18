@@ -1,5 +1,5 @@
 import { File, FileText, MessageSquareText, Search, Settings, X } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CollaborationTranslate } from '../i18n'
 import { useCollaborationPortalTheme } from '../theme'
@@ -99,7 +99,9 @@ function StashCard({
               <span
                 key={`${path}-${index}`}
                 className="absolute"
-                style={{ transform: `translateX(${(index - (thumbnails.length - 1) / 2) * 12}px)` }}
+                style={{
+                  transform: `translateX(${(index - (thumbnails.length - 1) / 2) * 12}px)`,
+                }}
               >
                 <StashThumbnail path={path} attachmentUrl={attachmentUrl} />
               </span>
@@ -221,13 +223,18 @@ export function QuickPhraseMenu({
   const globalRegular = filteredGlobalPhrases.filter(item => !item.id.startsWith('stash-'))
   const visiblePhrases = [...stashed, ...filteredProjectPhrases, ...globalRegular]
 
-  useEffect(() => {
-    if (!open) return
-    inputRef.current?.focus()
-    menuRef.current
-      ?.querySelector<HTMLElement>('[role="option"][aria-selected="true"]')
-      ?.scrollIntoView?.({ block: 'nearest' })
-  }, [open, selectedIndex])
+  const attachMenu = useCallback(
+    (node: HTMLDivElement | null) => {
+      menuRef.current = node
+      if (!node || !open) return
+      inputRef.current?.focus()
+      node
+        .querySelectorAll<HTMLElement>('[role="option"]')
+        .item(selectedIndex)
+        ?.scrollIntoView?.({ block: 'nearest' })
+    },
+    [open, selectedIndex]
+  )
 
   const choose = (phrase: QuickPhrase) => {
     onSelect(phrase)
@@ -279,7 +286,7 @@ export function QuickPhraseMenu({
         createPortal(
           <div
             {...portalTheme}
-            ref={menuRef}
+            ref={attachMenu}
             data-testid="quick-phrase-menu"
             style={{
               ...portalTheme.style,

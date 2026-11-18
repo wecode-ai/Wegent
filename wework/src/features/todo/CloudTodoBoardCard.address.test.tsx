@@ -73,7 +73,9 @@ it.each(cases)(
       turns: [],
       rangeStart: 0,
     })
-    const onLoadRuntimeGoal = vi.fn().mockResolvedValue(undefined)
+    const onLoadRuntimeGoal = vi
+      .fn()
+      .mockResolvedValue({ accepted: true, taskId: 'task-1', goal: null })
     const onOpenRuntimeTask = vi.fn()
     const modelSelection = { modelName: 'gpt-5.6-sol', modelType: 'public' as const }
     const address: RuntimeTaskAddress = {

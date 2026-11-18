@@ -33,3 +33,41 @@ it.each([false, true])('constrains the entire picker to the available space (wid
   unmount()
   anchor.remove()
 })
+
+it('retains body ownership until the last popover closes and suspends dismissal events', () => {
+  const anchor = document.createElement('button')
+  document.body.append(anchor)
+  const close = vi.fn()
+  const first = render(
+    <AnchorPopover anchor={anchor} title="First" testId="first" onClose={close}>
+      <button>Action</button>
+    </AnchorPopover>
+  )
+  const second = render(
+    <AnchorPopover anchor={anchor} title="Second" testId="second" onClose={vi.fn()}>
+      <button>Other</button>
+    </AnchorPopover>
+  )
+  expect(document.body).toHaveAttribute('data-wework-anchor-popover-open')
+  first.unmount()
+  expect(document.body).toHaveAttribute('data-wework-anchor-popover-open')
+  second.unmount()
+  expect(document.body).not.toHaveAttribute('data-wework-anchor-popover-open')
+  const suspended = render(
+    <AnchorPopover anchor={anchor} title="Suspended" testId="suspended" onClose={close} suspended>
+      <button>Action</button>
+    </AnchorPopover>
+  )
+  fireEvent.keyDown(document, { key: 'Escape' })
+  fireEvent.pointerDown(document.body)
+  expect(close).not.toHaveBeenCalled()
+  suspended.rerender(
+    <AnchorPopover anchor={anchor} title="Active" testId="suspended" onClose={close}>
+      <button>Action</button>
+    </AnchorPopover>
+  )
+  fireEvent.keyDown(document, { key: 'Escape' })
+  expect(close).toHaveBeenCalledOnce()
+  suspended.unmount()
+  anchor.remove()
+})

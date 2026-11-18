@@ -4,7 +4,6 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { StandInNotificationProcessing } from './StandInNotificationProcessing'
 import { assignment, runtimeItem } from './standInNotifications.fixtures'
 import { mergeStandInNotifications } from './standInNotifications'
-import { useStandInAssignmentNotifications } from './useStandInAssignmentNotifications'
 import { useStandInNotifications } from './useStandInNotifications'
 import type { TaskSource } from './NotificationTaskSourceContext'
 import {
@@ -347,10 +346,17 @@ describe('notification inline handling', () => {
       payload: { ...assignment.payload, assignmentId: 'active-assignment' },
     }
     function PendingAssignment() {
-      useStandInAssignmentNotifications(
+      useStandInNotifications(
         { items: [pending], unread_count: 1, next_offset: null },
-        { services: automaticServices } as TaskSource,
+        {
+          items: [],
+          unreadTaskKeys: new Set<string>(),
+          markRuntimeTaskRead: vi.fn(),
+          services: automaticServices,
+        } as TaskSource,
         'account',
+        false,
+        false,
         1
       )
       return (

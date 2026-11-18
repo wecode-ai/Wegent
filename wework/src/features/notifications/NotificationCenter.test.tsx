@@ -1,3 +1,5 @@
+import { createNotificationTaskRegistry } from './notificationTaskRegistry'
+import { NotificationTaskContext, type TaskSource } from './NotificationTaskSourceContext'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -5,10 +7,6 @@ import {
   type CloudConnectionContextValue,
 } from '@/features/cloud-connection/CloudConnectionContext'
 import { NotificationCenter } from './NotificationCenter'
-import {
-  NotificationTaskSourceBridge,
-  NotificationTaskSourceProvider,
-} from './NotificationTaskSource'
 import { subscribeIssueDispatch } from './issueDispatch'
 import { readActiveNotificationPreferences } from './notificationPreferences'
 import { WEWORK_OPEN_SCHEME_EVENT } from './schemeEvents'
@@ -82,12 +80,17 @@ const task = {
 }
 const markRuntimeTaskRead = vi.fn()
 
-const viewWithTask = (value = connection) => (
-  <NotificationTaskSourceProvider>
-    <NotificationTaskSourceBridge id="task-tab" active />
-    {view(value)}
-  </NotificationTaskSourceProvider>
-)
+const viewWithTask = (value = connection) => {
+  const registry = createNotificationTaskRegistry()
+  const source = taskState.reminders as TaskSource | null
+  if (source)
+    registry.claim({ id: 'task-tab', accountKey: 'notification-center-fixture' }, source, true)
+  return (
+    <NotificationTaskContext.Provider value={{ taskSource: registry.getSnapshot() }}>
+      {view(value)}
+    </NotificationTaskContext.Provider>
+  )
+}
 
 beforeEach(() => {
   vi.clearAllMocks()

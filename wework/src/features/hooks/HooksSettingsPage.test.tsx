@@ -116,3 +116,31 @@ describe('HooksSettingsPage', () => {
     await waitFor(() => expect(request).toHaveBeenCalledWith('runtime.hooks.list'))
   })
 })
+
+test('merges a completed run received before the initial list resolves', async () => {
+  request.mockReset()
+  subscribe.mockReset().mockResolvedValue(vi.fn())
+  let finish!: (value: { plugins: ResolvedHookPlugin[] }) => void
+  request.mockReturnValueOnce(
+    new Promise(resolve => {
+      finish = resolve
+    })
+  )
+  render(<HooksSettingsPage />)
+  const listener = subscribe.mock.calls[0][0]
+  const run = {
+    runId: 'early-run',
+    pluginId: 'reporter',
+    handlerId: 'handler-1',
+    status: 'succeeded',
+    startedAtMs: 100,
+    durationMs: 77,
+    stdoutPreview: '',
+    stderrPreview: '',
+    stdoutTruncated: false,
+    stderrTruncated: false,
+  } as HookRunSummary
+  act(() => listener({ event: 'runtime.hooks.run_completed', payload: { run } }))
+  await act(async () => finish({ plugins: [reporter] }))
+  expect(await screen.findByTestId('hook-row-reporter')).toHaveTextContent('77 ms')
+})

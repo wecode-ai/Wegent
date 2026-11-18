@@ -471,7 +471,8 @@ describe('persisted conversation find', () => {
   })
 
   test('classifies an unresolved completed load as location failure and rebuilds its search', async () => {
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    // Deadline expiry observes wall time as well as scheduled callbacks.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] })
     const search = vi
       .fn()
       .mockResolvedValueOnce({

@@ -1,4 +1,5 @@
-import { useEffect, useState, type ComponentProps, type ReactNode } from 'react'
+import { useState, type ComponentProps, type ReactNode } from 'react'
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import type { SharedWorkspaceApi, WorkspaceTaskBinding } from '@wegent/collaboration'
@@ -266,11 +267,7 @@ function createApi() {
 
 function Harness({ active = true }: { active?: boolean }) {
   const [search, setSearch] = useState(window.location.search)
-  useEffect(() => {
-    const receive = () => setSearch(window.location.search)
-    window.addEventListener('popstate', receive)
-    return () => window.removeEventListener('popstate', receive)
-  }, [])
+  useWindowEvent('popstate', () => setSearch(window.location.search))
   return <CollaborationExpApp active={active} search={search} />
 }
 

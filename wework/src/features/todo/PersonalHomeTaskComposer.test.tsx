@@ -65,19 +65,21 @@ function setup(local = false, realAttachments = false) {
     createProjectRuntimeTask,
   })
   const attachment = { id: 11, filename: 'release-notes.md', status: 'ready' }
-  if (!realAttachments)
-    mocks.attachments.mockReturnValue({
-      attachments: [attachment],
-      uploadingFiles: new Map(),
-      isAttachmentReadyToSend: true,
-      errors: new Map(),
-      handleFileSelect: vi.fn(),
-      handleTrackedFileSelect: vi.fn(),
-      removeSourceFile: vi.fn(),
-      getSelectedAttachments: vi.fn(() => [attachment]),
-      getSourceFile: vi.fn(),
-      resetAttachments: vi.fn(),
-    })
+  if (!realAttachments) {
+    const uploadAttachment = vi.fn(async () => attachment as never)
+    const deleteAttachment = vi.fn(async () => undefined)
+    mocks.attachments.mockImplementation(options =>
+      useComposerAttachments({
+        ...options,
+        uploadAttachment: options.uploadAttachment ?? uploadAttachment,
+        deleteAttachment: options.deleteAttachment ?? deleteAttachment,
+        initialState: {
+          ...options.initialState,
+          attachments: options.initialState?.attachments ?? [{ attachment }],
+        },
+      })
+    )
+  }
   const api = {
     issues: {
       create: vi.fn(async () => issue),

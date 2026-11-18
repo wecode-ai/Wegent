@@ -89,7 +89,7 @@ import {
 } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { SharedWorkspaceApi } from '@wegent/collaboration'
-import { useEffect, useMemo } from 'react'
+import { useImperativeHandle, useMemo } from 'react'
 import { afterAll, beforeAll, beforeEach, describe, expect, test, vi } from 'vitest'
 import { installGitUiTestContributions } from '../../../dsh/ui-git/test-support'
 import { DesktopWorkbenchLayout as ActualDesktopWorkbenchLayout } from './DesktopWorkbenchLayout'
@@ -337,13 +337,13 @@ const deviceSurfaceExtensionMock = vi.hoisted(() => {
         action: ((options?: { notifyOpened?: boolean }) => Promise<void>) | null
       ) => void
     }) => {
-      useEffect(() => {
-        const launchAction = async (options?: { notifyOpened?: boolean }) => {
+      useImperativeHandle(
+        onLaunchActionChange,
+        () => async (options?: { notifyOpened?: boolean }) => {
           await launch(options)
-        }
-        onLaunchActionChange?.(launchAction)
-        return () => onLaunchActionChange?.(null)
-      }, [onLaunchActionChange])
+        },
+        []
+      )
       return null
     },
     isInternalPageUrl: vi.fn(() => false),
@@ -624,6 +624,7 @@ vi.mock('@pierre/trees/react', async () => {
   const React = await vi.importActual<typeof import('react')>('react')
 
   interface MockTreeModel {
+    getSnapshot(): Pick<MockTreeModel, 'paths' | 'expandedPaths' | 'search' | 'selectedPaths'>
     paths: string[]
     expandedPaths: Set<string>
     search: string | null
@@ -655,11 +656,10 @@ vi.mock('@pierre/trees/react', async () => {
 
   return {
     FileTree: ({ model, ...props }: { model: MockTreeModel; [key: string]: unknown }) => {
-      const [, rerender] = React.useReducer((version: number) => version + 1, 0)
-      React.useEffect(() => model.subscribe(rerender), [model])
-      const visiblePaths = model.search
-        ? model.paths.filter(path => path.toLowerCase().includes(model.search!.toLowerCase()))
-        : model.paths
+      const snapshot = React.useSyncExternalStore(model.subscribe, model.getSnapshot)
+      const visiblePaths = snapshot.search
+        ? snapshot.paths.filter(path => path.toLowerCase().includes(snapshot.search!.toLowerCase()))
+        : snapshot.paths
 
       return (
         <div {...props}>
@@ -667,7 +667,7 @@ vi.mock('@pierre/trees/react', async () => {
             const isDirectory = path.endsWith('/')
             const label = path.replace(/\/+$/, '').split('/').pop() || path
             const depth = path.replace(/\/+$/, '').split('/').length - 1
-            const selected = model.selectedPaths.includes(path)
+            const selected = snapshot.selectedPaths.includes(path)
             const testId = isDirectory ? 'workspace-directory-row' : 'workspace-file-row'
 
             return (
@@ -676,7 +676,7 @@ vi.mock('@pierre/trees/react', async () => {
                 type="button"
                 data-testid={testId}
                 data-depth={depth.toString()}
-                aria-expanded={isDirectory ? model.expandedPaths.has(path) : undefined}
+                aria-expanded={isDirectory ? snapshot.expandedPaths.has(path) : undefined}
                 className={selected ? 'ring-1 ring-primary' : undefined}
                 onClick={() => model.selectPath(path)}
               >
@@ -705,7 +705,15 @@ vi.mock('@pierre/trees/react', async () => {
 
       if (!modelRef.current) {
         const listeners = new Set<() => void>()
+        let snapshot: ReturnType<MockTreeModel['getSnapshot']> | undefined
         modelRef.current = {
+          getSnapshot: () =>
+            (snapshot ??= {
+              paths: [...modelRef.current!.paths],
+              expandedPaths: new Set(modelRef.current!.expandedPaths),
+              search: modelRef.current!.search,
+              selectedPaths: [...modelRef.current!.selectedPaths],
+            }),
           paths,
           expandedPaths: new Set(initialExpandedPaths),
           search: null,
@@ -736,7 +744,10 @@ vi.mock('@pierre/trees/react', async () => {
               listeners.delete(listener)
             }
           },
-          notify: () => listeners.forEach(listener => listener()),
+          notify: () => {
+            snapshot = undefined
+            listeners.forEach(listener => listener())
+          },
           resetPaths(nextPaths, options) {
             this.paths = nextPaths
             this.expandedPaths = new Set(options?.initialExpandedPaths)

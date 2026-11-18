@@ -2,10 +2,11 @@ import { ApiError } from '@/api/http'
 import type { MiniProgram, Site, SiteListItem, SitesApi } from '@/api/sites'
 import '@/i18n'
 import { copyTextToClipboard } from '@/lib/clipboard'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ComponentProps } from 'react'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import { useDOMEvent } from '@wegent/collaboration/dom-events'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { SitesWorkspace as SitesWorkspaceComponent } from './SitesWorkspace'
 
@@ -14,11 +15,7 @@ type SitesWorkspaceProps = Omit<ComponentProps<typeof SitesWorkspaceComponent>, 
 function SitesWorkspace(props: SitesWorkspaceProps) {
   const [search, setSearch] = useState(window.location.search)
 
-  useEffect(() => {
-    const syncSearch = () => setSearch(window.location.search)
-    window.addEventListener('popstate', syncSearch)
-    return () => window.removeEventListener('popstate', syncSearch)
-  }, [])
+  useDOMEvent('window', 'popstate', () => setSearch(window.location.search))
 
   return <SitesWorkspaceComponent {...props} search={search} />
 }
@@ -199,6 +196,83 @@ describe('SitesWorkspace', () => {
     window.history.replaceState({}, '', '/sites')
   })
 
+  test('opens an environment deep link after loading and consumes it on close', async () => {
+    window.history.replaceState(
+      {},
+      '',
+      '/sites?app_type=web&view=environment-variables&project_id=prj-product&workspaceTab=apps'
+    )
+    const api = createApi()
+    let resolve!: (value: Awaited<ReturnType<SitesApi['listSites']>>) => void
+    vi.mocked(api.listSites).mockReturnValueOnce(
+      new Promise(accept => {
+        resolve = accept
+      })
+    )
+    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
+    expect(screen.queryByTestId('environment-variables-dialog')).not.toBeInTheDocument()
+    await act(async () => resolve({ items: [unpublishedSite], total: 1, offset: 0, limit: 20 }))
+    expect(await screen.findByTestId('environment-variables-dialog')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('environment-close-button'))
+    expect(screen.queryByTestId('environment-variables-dialog')).not.toBeInTheDocument()
+    const params = new URLSearchParams(window.location.search)
+    expect(params.has('view')).toBe(false)
+    expect(params.has('project_id')).toBe(false)
+    expect(params.get('workspaceTab')).toBe('apps')
+    await userEvent.click(screen.getByTestId('sites-refresh-button'))
+    await screen.findByText('产品发布页')
+    expect(screen.queryByTestId('environment-variables-dialog')).not.toBeInTheDocument()
+    expect(api.getEnvironmentVariables).toHaveBeenCalledTimes(1)
+  })
+
+  test('selects a discovered available type without requiring a route rewrite', async () => {
+    const api = createApi()
+    vi.mocked(api.listApplicationTypes).mockResolvedValue({
+      items: [
+        {
+          app_type: 'miniapp',
+          enabled: true,
+          order: 1,
+          capabilities: ['open_experience'],
+        },
+      ],
+    })
+    vi.mocked(api.listSites).mockImplementation(async options => ({
+      items: options?.appType === 'miniapp' ? [miniProgram] : [unpublishedSite],
+      total: 1,
+      offset: 0,
+      limit: 20,
+    }))
+    render(<SitesWorkspace api={api} onCreate={vi.fn()} />)
+    await screen.findByText('微博活动助手')
+    expect(screen.getByTestId('applications-tab-miniapp')).toHaveAttribute('aria-selected', 'true')
+    expect(screen.queryByTestId('applications-tab-web')).not.toBeInTheDocument()
+    expect(api.listSites).toHaveBeenLastCalledWith(
+      expect.objectContaining({ appType: 'miniapp', q: '' })
+    )
+  })
+
+  test('smart apps do not start a hidden sites list request', async () => {
+    const api = createApi()
+    render(
+      <SitesWorkspace
+        api={api}
+        onCreate={vi.fn()}
+        smartAppsEnabled
+        smartAppsContent={<p>Smart content</p>}
+      />
+    )
+    await screen.findByText('Smart content')
+    await waitFor(() => expect(api.listApplicationTypes).toHaveBeenCalledTimes(1))
+    expect(api.listSites).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByTestId('applications-tab-web'))
+    await screen.findByText('产品发布页')
+    expect(api.listSites).toHaveBeenCalledTimes(1)
+    await userEvent.click(screen.getByTestId('applications-tab-smart-app'))
+    expect(screen.getByText('Smart content')).toBeInTheDocument()
+    expect(api.listSites).toHaveBeenCalledTimes(1)
+  })
+
   test('shows an unavailable product state when Backend reports Sites is not configured', async () => {
     const api = createApi()
     vi.mocked(api.listSites).mockRejectedValueOnce(
@@ -356,6 +430,13 @@ describe('SitesWorkspace', () => {
       'https://example.com/mini-experience'
     )
     expect(screen.getByTestId('mini-program-qrcode-svg')).toBeInTheDocument()
+    expect(screen.getByTestId('mini-program-qrcode-close')).toHaveFocus()
+    await userEvent.keyboard('{Tab}')
+    expect(screen.getByTestId('mini-program-qrcode-close')).toHaveFocus()
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByTestId('mini-program-qrcode-dialog')).not.toBeInTheDocument()
+    expect(screen.getByTestId('mini-program-qrcode-mini-1')).toHaveFocus()
+    await userEvent.click(screen.getByTestId('mini-program-qrcode-mini-1'))
     await userEvent.click(screen.getByTestId('mini-program-qrcode-close'))
     expect(screen.queryByTestId('mini-program-qrcode-dialog')).not.toBeInTheDocument()
 

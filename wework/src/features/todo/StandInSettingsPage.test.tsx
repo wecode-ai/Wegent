@@ -390,7 +390,7 @@ describe('Personal stand-in settings', () => {
     const { rerender } = render(<StandInSettingsPage {...props} />)
     await user.type(await screen.findByTestId('stand-in-role-name'), ' changed')
     rerender(<StandInSettingsPage {...props} services={{ ...props.services }} />)
-    await waitFor(() => expect(personalGet).toHaveBeenCalledTimes(2))
+    expect(personalGet).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId('stand-in-role-name')).toHaveValue(' changed')
   })
 

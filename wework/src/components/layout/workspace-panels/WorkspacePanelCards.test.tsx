@@ -10,7 +10,7 @@ import type { DeviceInfo } from '@/types/api'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Monitor } from 'lucide-react'
-import { useCallback, useEffect, type ComponentProps } from 'react'
+import { useCallback, useImperativeHandle, type ComponentProps } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { WorkspacePanelCards as ActualWorkspacePanelCards } from './WorkspacePanelCards'
 
@@ -65,10 +65,7 @@ const deviceSurfaceExtensionMock = vi.hoisted(() => {
           },
           [onBusyChange, onErrorChange, onOpened]
         )
-        useEffect(() => {
-          onLaunchActionChange?.(launchAction)
-          return () => onLaunchActionChange?.(null)
-        }, [launchAction, onLaunchActionChange])
+        useImperativeHandle(onLaunchActionChange, () => launchAction, [launchAction])
 
         return (
           <button

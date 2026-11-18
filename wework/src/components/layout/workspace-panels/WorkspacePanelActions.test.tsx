@@ -365,4 +365,33 @@ describe('WorkspacePanelActions', () => {
     )
     expect(openExternalUrlMock).not.toHaveBeenCalled()
   })
+  test('isolates a native opener catalog failure and recovers through the existing picker', async () => {
+    isLocalTerminalAvailableMock.mockReturnValue(true)
+    listLocalWorkspaceOpenersMock.mockRejectedValueOnce(
+      new Error('Native opener catalog unavailable')
+    )
+    const project = {
+      id: 7,
+      name: 'Local project',
+      tasks: [],
+      config: {
+        execution: { targetType: 'local' as const, deviceId: 'device-1' },
+        workspace: { source: 'local_path' as const, localPath: '/Users/me/project' },
+      },
+    }
+    const { rerender } = render(<WorkspacePanelActions {...baseProps} currentProject={project} />)
+    expect(await screen.findByTestId('workspace-opener-load-error')).toHaveTextContent(
+      'Native opener catalog unavailable'
+    )
+    expect(screen.queryByTestId('code-server-error-dialog')).not.toBeInTheDocument()
+    expect(screen.getByTestId('toggle-right-workspace-panel-button')).toBeEnabled()
+    await userEvent.click(screen.getByTestId('open-local-workspace-picker-button'))
+    expect(screen.getByTestId('open-local-workspace-picker-menu')).toBeInTheDocument()
+    expect(screen.queryByTestId('workspace-opener-load-error')).toBeNull()
+    expect(listLocalWorkspaceOpenersMock).toHaveBeenCalledTimes(2)
+    rerender(
+      <WorkspacePanelActions {...baseProps} currentProject={project} mode="right-panel-toggle" />
+    )
+    expect(listLocalWorkspaceOpenersMock).toHaveBeenCalledTimes(2)
+  })
 })

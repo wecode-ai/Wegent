@@ -1,9 +1,11 @@
 import { act, cleanup, render } from '@testing-library/react'
-import { StrictMode } from 'react'
+import { StrictMode, useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import { NotificationEventsBridge } from './NotificationEventsBridge'
+import { createAppRouteSession } from '@/appRouteSession'
+import { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
+import { useTranslation } from '@/hooks/useTranslation'
 
 const { send, windowLabel, t } = vi.hoisted(() => ({
   send: vi.fn(),
@@ -11,10 +13,39 @@ const { send, windowLabel, t } = vi.hoisted(() => ({
   t: (key: string) => key,
 }))
 vi.mock('@/hooks/useTranslation', () => ({ useTranslation: () => ({ t }) }))
-vi.mock('@/lib/runtime-environment', () => ({ getDesktopWindowLabel: windowLabel }))
+vi.mock('@/lib/runtime-environment', () => ({
+  getDesktopWindowLabel: windowLabel,
+  isElectronRuntime: () => false,
+}))
+vi.mock('@/telemetry/client', () => ({ track: vi.fn() }))
 vi.mock('@/features/workbench/runtimeTaskSystemNotifications', () => ({
   sendSystemNotification: send,
 }))
+function NotificationEventsBridge({
+  chatStream,
+  currentUserId,
+  localUserId,
+}: Pick<WorkbenchServices, 'chatStream'> & { currentUserId?: number; localUserId?: number }) {
+  const { t } = useTranslation('common')
+  const [session] = useState(() =>
+    createAppRouteSession({
+      tabs: null,
+      lifecycleStore: new RuntimeTaskLifecycleStore('notification-test-account'),
+    })
+  )
+  const notifications = useMemo(
+    () => ({ chatStream, currentUserId, localUserId, t }),
+    [chatStream, currentUserId, localUserId, t]
+  )
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      session.subscribe(listener, { pathname: '/', search: '' }, false, {}, true, notifications),
+    [session, notifications]
+  )
+  const mounted = useSyncExternalStore(subscribe, session.getSnapshot, session.getSnapshot)
+  return <output>{mounted.ids.size}</output>
+}
+
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
@@ -61,7 +92,7 @@ describe('application notification events', () => {
 
   it.each(['main', 'workspace-1'])(
     'owns one subscription and limits system delivery: %s',
-    label => {
+    async label => {
       windowLabel.mockReturnValue(label)
       const listeners = new Set<ChatStreamHandlers>()
       const chatStream = {
@@ -102,6 +133,7 @@ describe('application notification events', () => {
         })
       }
       view.unmount()
+      await Promise.resolve()
       expect(listeners.size).toBe(0)
       window.removeEventListener('wework-notifications-changed', refresh)
     }

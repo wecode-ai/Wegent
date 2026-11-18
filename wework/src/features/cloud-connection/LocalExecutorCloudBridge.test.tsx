@@ -2,7 +2,7 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
-import { LocalExecutorCloudBridge } from './LocalExecutorCloudBridge'
+import { LocalExecutorCloudBridge } from './LocalExecutorCloudFixture'
 import { connectedCloudBridge } from './localExecutorCloudBridgeFixture'
 import {
   resetLocalExecutorCloudConnectionStatus,

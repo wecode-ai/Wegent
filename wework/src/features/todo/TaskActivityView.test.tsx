@@ -28,6 +28,17 @@ import { issueAssignmentRevision } from './issueAssignmentReceiptScope'
 import { TaskActivityView } from './TaskActivityView'
 import { clearIssueCommentDraftsForTests } from './useIssueCommentDraft'
 
+const cloudReplyQueueScope = JSON.stringify([
+  'task-activity',
+  '',
+  null,
+  1,
+  1,
+  'cloud',
+  '11',
+  'WEG-1',
+])
+
 const createProjectRuntimeTask = vi.fn()
 const sendRuntimePaneMessage = vi.fn()
 const openRuntimeTask = vi.fn()
@@ -1845,7 +1856,7 @@ describe('TaskActivityView', () => {
           vi.mocked(client.send).mock.invocationCallOrder[0]
         )
       } else {
-        const key = 'task-activity:cloud:11:WEG-1:manager-assignment'
+        const key = `${cloudReplyQueueScope}:manager-assignment`
         await waitFor(() =>
           expect(replyQueueStoreMock.value!.get(key)[0]).toMatchObject({
             content: 'See evidence',
@@ -2001,7 +2012,7 @@ describe('TaskActivityView', () => {
       if (reply)
         await waitFor(() =>
           expect(
-            replyQueueStoreMock.value!.get('task-activity:cloud:11:WEG-1:message-1')[0]
+            replyQueueStoreMock.value!.get(`${cloudReplyQueueScope}:message-1`)[0]
           ).toMatchObject({
             content: 'See image',
             attachments: [expect.objectContaining({ id: -42 })],
@@ -2023,7 +2034,7 @@ describe('TaskActivityView', () => {
       ])
       if (reply) {
         act(() => {
-          replyQueueStoreMock.value!.update('task-activity:cloud:11:WEG-1:message-1', current =>
+          replyQueueStoreMock.value!.update(`${cloudReplyQueueScope}:message-1`, current =>
             current.map(message => ({ ...message, status: 'queued' }))
           )
         })
@@ -2090,7 +2101,7 @@ describe('TaskActivityView', () => {
       if (reply)
         await waitFor(() =>
           expect(
-            replyQueueStoreMock.value!.get('task-activity:cloud:11:WEG-1:message-1')[0]
+            replyQueueStoreMock.value!.get(`${cloudReplyQueueScope}:message-1`)[0]
           ).toMatchObject({ content: 'See image', status: 'failed' })
         )
       else {
@@ -2102,7 +2113,7 @@ describe('TaskActivityView', () => {
 
       if (reply)
         act(() => {
-          replyQueueStoreMock.value!.update('task-activity:cloud:11:WEG-1:message-1', current =>
+          replyQueueStoreMock.value!.update(`${cloudReplyQueueScope}:message-1`, current =>
             current.map(message => ({ ...message, status: 'queued' }))
           )
         })

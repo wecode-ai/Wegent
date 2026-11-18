@@ -90,6 +90,7 @@ function ScrollableMessagePaneContent({
     internalScrollRef,
     scrollRef,
     contentRef,
+    bindContentRef,
     stickyFooterRef,
     contentFooterRef,
     scrollTailHeight,
@@ -226,7 +227,7 @@ function ScrollableMessagePaneContent({
         )}
       >
         <div
-          ref={contentRef}
+          ref={bindContentRef}
           data-testid={`${scrollTestId}-content`}
           className={cn(
             'min-w-0 [overflow-anchor:none]',

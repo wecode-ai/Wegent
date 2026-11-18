@@ -12,13 +12,17 @@ const drawing = vi.hoisted(() => ({
 }))
 
 vi.mock('@excalidraw/excalidraw', async () => {
-  const { useEffect } = await import('react')
+  const { useCallback, useImperativeHandle } = await import('react')
   return {
     exportToBlob: drawing.exportToBlob,
     Excalidraw: ({ excalidrawAPI }: { excalidrawAPI: (api: typeof drawing) => void }) => {
-      useEffect(() => {
-        excalidrawAPI(drawing)
-      }, [excalidrawAPI])
+      const attach = useCallback(
+        (api: typeof drawing | null) => {
+          if (api) excalidrawAPI(api)
+        },
+        [excalidrawAPI]
+      )
+      useImperativeHandle(attach, () => drawing, [])
       return null
     },
   }

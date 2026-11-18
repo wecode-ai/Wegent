@@ -1,15 +1,17 @@
-import { renderHook } from '@testing-library/react'
 import { expect, test } from 'vitest'
 import { subscribeBusinessEvents } from './businessEvents'
-import { useStandInOpened } from './useStandInOpened'
+import { createStandInOpenedReceipt } from './standInOpenedReceipt'
 
 test('counts work navigation once per visit without exposing the local task key', () => {
   const events: unknown[] = []
   const unsubscribe = subscribeBusinessEvents(event => events.push(event))
   try {
-    const view = renderHook(({ active, key }) => useStandInOpened('work', 'role', active, key), {
-      initialProps: { active: true, key: 'private-device:private-task' },
-    })
+    const record = createStandInOpenedReceipt()
+    const view = {
+      rerender: ({ active, key }: { active: boolean; key: string }) =>
+        record('work', 'role', active, key),
+    }
+    view.rerender({ active: true, key: 'private-device:private-task' })
     view.rerender({ active: true, key: 'private-device:private-task' })
     expect(events).toHaveLength(1)
     view.rerender({ active: true, key: 'private-device:other-task' })
@@ -19,7 +21,6 @@ test('counts work navigation once per visit without exposing the local task key'
     expect(events).toHaveLength(3)
     expect(JSON.stringify(events)).not.toContain('private-device')
     expect(JSON.stringify(events)).not.toContain('private-task')
-    view.unmount()
   } finally {
     unsubscribe()
   }

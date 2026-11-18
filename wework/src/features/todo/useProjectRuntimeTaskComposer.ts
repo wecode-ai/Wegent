@@ -1,4 +1,4 @@
-import { useCallback } from 'react'
+import { useMemo } from 'react'
 
 import type { RuntimeTaskComposerCreateOptions } from '@/types/workbench'
 import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
@@ -9,7 +9,7 @@ import type {
   RuntimeTaskCreateRequest,
 } from '@/types/api'
 
-interface UseProjectRuntimeTaskComposerOptions {
+export interface UseProjectRuntimeTaskComposerOptions {
   resolveDeviceId?: () => Promise<string>
   project: ProjectWithTasks | null
   deviceWorkspaceId?: number | null
@@ -28,62 +28,90 @@ interface UseProjectRuntimeTaskComposerOptions {
   ) => Promise<void> | void
 }
 
-export function useProjectRuntimeTaskComposer({
-  resolveDeviceId,
-  project,
-  deviceWorkspaceId,
-  workspaceExecution,
-  workspaceSource,
-  taskRequest,
-  runtimeContext,
-  prepareTask,
-  onTaskCreated,
-}: UseProjectRuntimeTaskComposerOptions) {
-  const { createProjectRuntimeTask } = useWorkbenchPaneContext()
+export function createProjectRuntimeTaskComposer(
+  createProjectRuntimeTask: ReturnType<typeof useWorkbenchPaneContext>['createProjectRuntimeTask'],
+  {
+    resolveDeviceId,
+    project,
+    deviceWorkspaceId,
+    workspaceExecution,
+    workspaceSource,
+    taskRequest,
+    runtimeContext,
+    prepareTask,
+    onTaskCreated,
+  }: UseProjectRuntimeTaskComposerOptions
+) {
+  return async (message: string, options: RuntimeTaskComposerCreateOptions) => {
+    let deviceId: string | undefined
+    try {
+      deviceId = await resolveDeviceId?.()
+    } catch (cause) {
+      options.onError(cause instanceof Error ? cause.message : String(cause))
+      return false
+    }
+    const address = await createProjectRuntimeTask(message, {
+      project,
+      deviceWorkspaceId,
+      ...(deviceId ? { deviceId, deviceWorkspaceId: null } : {}),
+      ...(workspaceExecution !== undefined ? { workspaceExecution } : {}),
+      workspaceSource,
+      ...(taskRequest !== undefined ? { taskRequest } : {}),
+      runtime: 'codex',
+      attachments: options.attachments,
+      ...(options.initialGoal ? { initialGoal: options.initialGoal } : {}),
+      optimisticUserMessage: options.optimisticUserMessage,
+      executionModel: options.executionModel,
+      collaborationMode: 'default',
+      ...runtimeContext,
+      onError: options.onError,
+      prepareRuntimeTask: prepareTask ? address => prepareTask(address, project) : undefined,
+      onRuntimeTaskOptimisticOpen: options.onRuntimeTaskOptimisticOpen,
+    })
+    if (address) {
+      await onTaskCreated?.(address, project, deviceWorkspaceId ?? null)
+    }
+    return address
+  }
+}
 
-  return useCallback(
-    async (message: string, options: RuntimeTaskComposerCreateOptions) => {
-      let deviceId: string | undefined
-      try {
-        deviceId = await resolveDeviceId?.()
-      } catch (cause) {
-        options.onError(cause instanceof Error ? cause.message : String(cause))
-        return false
-      }
-      const address = await createProjectRuntimeTask(message, {
+export function useProjectRuntimeTaskComposer(options: UseProjectRuntimeTaskComposerOptions) {
+  const { createProjectRuntimeTask } = useWorkbenchPaneContext()
+  const {
+    resolveDeviceId,
+    project,
+    deviceWorkspaceId,
+    workspaceExecution,
+    workspaceSource,
+    taskRequest,
+    runtimeContext,
+    prepareTask,
+    onTaskCreated,
+  } = options
+  return useMemo(
+    () =>
+      createProjectRuntimeTaskComposer(createProjectRuntimeTask, {
+        resolveDeviceId,
         project,
         deviceWorkspaceId,
-        ...(deviceId ? { deviceId, deviceWorkspaceId: null } : {}),
-        ...(workspaceExecution !== undefined ? { workspaceExecution } : {}),
+        workspaceExecution,
         workspaceSource,
-        ...(taskRequest !== undefined ? { taskRequest } : {}),
-        runtime: 'codex',
-        attachments: options.attachments,
-        ...(options.initialGoal ? { initialGoal: options.initialGoal } : {}),
-        optimisticUserMessage: options.optimisticUserMessage,
-        executionModel: options.executionModel,
-        collaborationMode: 'default',
-        ...runtimeContext,
-        onError: options.onError,
-        prepareRuntimeTask: prepareTask ? address => prepareTask(address, project) : undefined,
-        onRuntimeTaskOptimisticOpen: options.onRuntimeTaskOptimisticOpen,
-      })
-      if (address) {
-        await onTaskCreated?.(address, project, deviceWorkspaceId ?? null)
-      }
-      return address
-    },
+        taskRequest,
+        runtimeContext,
+        prepareTask,
+        onTaskCreated,
+      }),
     [
       createProjectRuntimeTask,
-      deviceWorkspaceId,
-      onTaskCreated,
-      prepareTask,
-      project,
       resolveDeviceId,
-      runtimeContext,
-      taskRequest,
+      project,
+      deviceWorkspaceId,
       workspaceExecution,
       workspaceSource,
+      taskRequest,
+      runtimeContext,
+      prepareTask,
+      onTaskCreated,
     ]
   )
 }

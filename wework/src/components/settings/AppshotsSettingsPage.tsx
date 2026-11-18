@@ -1,5 +1,6 @@
 import { Loader2, ScanLine } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useState, useSyncExternalStore } from 'react'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -11,7 +12,6 @@ import {
   getAppshotsStatus,
   openAppshotsPermissionSettings,
   type AppshotPermission,
-  type AppshotsStatus,
 } from '@/desktop/appshots'
 import {
   SettingsGroup,
@@ -23,42 +23,51 @@ import {
 
 export function AppshotsSettingsPage() {
   const { t } = useTranslation('common')
-  const [status, setStatus] = useState<AppshotsStatus | null>(null)
-  const [playSound, setPlaySound] = useState(defaultAppPreferences.appshotsPlaySound)
-  const [loading, setLoading] = useState(true)
+  const [statusResource] = useState(() =>
+    createAsyncResource('appshots-status', getAppshotsStatus, {
+      failure: cause => console.error('[Wework] Failed to load Appshots status:', cause),
+    })
+  )
+  const [preferencesResource] = useState(() =>
+    createAsyncResource('appshots-preferences', getAppPreferences, {
+      failure: cause => console.error('[Wework] Failed to load Appshots preferences:', cause),
+    })
+  )
+  const statusState = useSyncExternalStore(
+    statusResource.subscribe,
+    statusResource.getSnapshot,
+    statusResource.getSnapshot
+  )
+  const preferencesState = useSyncExternalStore(
+    preferencesResource.subscribe,
+    preferencesResource.getSnapshot,
+    preferencesResource.getSnapshot
+  )
+  const status = statusState.data
+  const playSound =
+    preferencesState.data?.appshotsPlaySound ?? defaultAppPreferences.appshotsPlaySound
+  const loading = statusState.status === 'idle' || statusState.status === 'loading'
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    let active = true
-    Promise.all([getAppshotsStatus(), getAppPreferences()])
-      .then(([nextStatus, preferences]) => {
-        if (!active) return
-        setStatus(nextStatus)
-        setPlaySound(preferences.appshotsPlaySound)
-      })
-      .catch(loadError => {
-        console.error('[Wework] Failed to load Appshots settings:', loadError)
-        if (active) setError(t('workbench.appshots_load_failed', '应用快照设置加载失败'))
-      })
-      .finally(() => {
-        if (active) setLoading(false)
-      })
-
-    return () => {
-      active = false
-    }
-  }, [t])
+  const [failure, setFailure] = useState<'save' | 'permission' | null>(null)
+  const loadFailedText = t('workbench.appshots_load_failed', '应用快照设置加载失败')
+  const error =
+    failure === 'save'
+      ? t('workbench.appshots_save_failed', '应用快照设置保存失败')
+      : failure === 'permission'
+        ? t('workbench.appshots_open_settings_failed', '无法打开系统设置')
+        : statusState.status === 'error' || preferencesState.status === 'error'
+          ? loadFailedText
+          : null
 
   const updatePlaySound = async (value: boolean) => {
     setSaving(true)
-    setError(null)
+    setFailure(null)
     try {
       const preferences = await updateAppPreferences({ appshotsPlaySound: value })
-      setPlaySound(preferences.appshotsPlaySound)
+      preferencesResource.update(() => preferences)
     } catch (saveError) {
       console.error('[Wework] Failed to save Appshots settings:', saveError)
-      setError(t('workbench.appshots_save_failed', '应用快照设置保存失败'))
+      setFailure('save')
     } finally {
       setSaving(false)
     }
@@ -68,7 +77,7 @@ export function AppshotsSettingsPage() {
   const openPermissionSettings = (permission: AppshotPermission) => {
     void openAppshotsPermissionSettings(permission).catch(openError => {
       console.error('[Wework] Failed to open Appshots permission settings:', openError)
-      setError(t('workbench.appshots_open_settings_failed', '无法打开系统设置'))
+      setFailure('permission')
     })
   }
 
@@ -134,18 +143,22 @@ export function AppshotsSettingsPage() {
           description={
             loading
               ? t('common.loading', '加载中...')
-              : shortcutReady
-                ? t('workbench.appshots_shortcut_description', '在任意应用中截取最前面的窗口')
-                : status?.supported
-                  ? t(
-                      'workbench.appshots_shortcut_unavailable',
-                      '快捷键已被其他应用占用，请退出冲突的应用后重启 Wework。'
-                    )
-                  : t('workbench.appshots_macos_only', '应用快照目前仅支持 macOS。')
+              : statusState.status === 'error'
+                ? loadFailedText
+                : shortcutReady
+                  ? t('workbench.appshots_shortcut_description', '在任意应用中截取最前面的窗口')
+                  : status?.supported
+                    ? t(
+                        'workbench.appshots_shortcut_unavailable',
+                        '快捷键已被其他应用占用，请退出冲突的应用后重启 Wework。'
+                      )
+                    : t('workbench.appshots_macos_only', '应用快照目前仅支持 macOS。')
           }
           control={
             loading ? (
               <Loader2 className="h-4 w-4 animate-spin text-text-muted" />
+            ) : statusState.status === 'error' ? (
+              <span className="text-xs text-text-secondary">{loadFailedText}</span>
             ) : (
               <KeyboardShortcut
                 value={(status?.shortcut ?? 'CommandOrControl+Shift+2').replace(
@@ -200,7 +213,7 @@ export function AppshotsSettingsPage() {
             <SettingsSwitch
               data-testid="appshots-play-sound-toggle"
               checked={playSound}
-              disabled={loading || saving || !status?.supported}
+              disabled={preferencesState.status !== 'ready' || saving || !status?.supported}
               onCheckedChange={value => void updatePlaySound(value)}
             />
           }

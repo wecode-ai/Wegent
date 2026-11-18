@@ -1,12 +1,13 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { useReducer } from 'react'
+import { useState, useSyncExternalStore } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { ExecutorClient } from '@/api/executorAccess'
 import { LOCAL_USER } from '@/api/local/localSession'
 import type { DeviceInfo, RuntimeWorkListResponse, User } from '@/types/api'
 import type { WorkbenchServices } from './workbenchServices'
 import { useWorkbenchDataRefresh } from './useWorkbenchDataRefresh'
-import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
+import { createWorkbenchSessionState } from './workbenchSessionState'
+import { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import { readCachedDeviceList } from './workbenchCloudStatus'
 import {
   readCachedRemoteRuntimeWork,
@@ -68,14 +69,21 @@ function setup(
       client: ExecutorClient
       ownershipKey?: string
     }) => {
-      const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState)
+      const [stateSource] = useState(() =>
+        createWorkbenchSessionState(
+          user,
+          new RuntimeTaskLifecycleStore('data-refresh-fixture'),
+          false
+        )
+      )
+      const { state } = useSyncExternalStore(stateSource.subscribe, stateSource.getSnapshot)
+      const dispatch = stateSource.dispatch
       const actions = useWorkbenchDataRefresh({
         user,
         ownershipKey,
         executorClient: client,
         services: workbenchServices,
-        state,
-        dispatch,
+        stateSource,
       })
       return { state, dispatch, ...actions }
     },

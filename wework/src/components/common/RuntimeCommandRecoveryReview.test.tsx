@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { expect, it, vi } from 'vitest'
 import '@/i18n'
@@ -176,4 +176,75 @@ it('does not check subsequent work if the resolver returns an unconfirmed result
   expect(await screen.findByRole('alert')).toHaveTextContent('重新读取')
   expect(f.onContinue).not.toHaveBeenCalled()
   expect(screen.queryByTestId('runtime-command-recovery-confirm')).toBeNull()
+})
+
+it('shows a failed read and retries without resolving or continuing anything', async () => {
+  const commands: RuntimeTaskCommandsApi = {
+    get: vi
+      .fn()
+      .mockRejectedValueOnce(new Error('private backend detail'))
+      .mockResolvedValueOnce(receipt),
+    resolve: vi.fn(),
+  }
+  const onContinue = vi.fn()
+  render(
+    <RuntimeCommandRecoveryReview
+      commands={commands}
+      deviceId="owner-device"
+      target={target}
+      onCancel={vi.fn()}
+      onContinue={onContinue}
+    />
+  )
+  expect(await screen.findByRole('alert')).not.toHaveTextContent('private backend detail')
+  expect(screen.queryByTestId('runtime-command-recovery-confirm')).toBeNull()
+  await userEvent.click(screen.getByTestId('runtime-command-recovery-refresh'))
+  expect(await screen.findByTestId('runtime-command-recovery-confirm')).toBeEnabled()
+  expect(screen.queryByRole('alert')).toBeNull()
+  expect(commands.get).toHaveBeenCalledTimes(2)
+  expect(commands.resolve).not.toHaveBeenCalled()
+  expect(onContinue).not.toHaveBeenCalled()
+})
+
+it('ignores the old API response after the command reader changes', async () => {
+  let resolveOld!: (value: RuntimeCommandReceipt) => void
+  const commands: RuntimeTaskCommandsApi = {
+    get: vi.fn().mockReturnValue(
+      new Promise<RuntimeCommandReceipt>(accept => {
+        resolveOld = accept
+      })
+    ),
+    resolve: vi.fn(),
+  }
+  const onContinue = vi.fn()
+  const view = render(
+    <RuntimeCommandRecoveryReview
+      commands={commands}
+      deviceId="owner-device"
+      target={target}
+      onCancel={vi.fn()}
+      onContinue={onContinue}
+    />
+  )
+  const replacement: RuntimeTaskCommandsApi = {
+    get: vi.fn().mockResolvedValue({ ...receipt, taskTitle: 'Current reader' }),
+    resolve: vi.fn(),
+  }
+  view.rerender(
+    <RuntimeCommandRecoveryReview
+      commands={replacement}
+      deviceId="owner-device"
+      target={target}
+      onCancel={vi.fn()}
+      onContinue={onContinue}
+    />
+  )
+  expect(await screen.findByTestId('runtime-command-recovery-task')).toHaveTextContent(
+    'Current reader'
+  )
+  await act(async () => resolveOld(receipt))
+  expect(screen.getByTestId('runtime-command-recovery-task')).toHaveTextContent('Current reader')
+  expect(commands.resolve).not.toHaveBeenCalled()
+  expect(replacement.resolve).not.toHaveBeenCalled()
+  expect(onContinue).not.toHaveBeenCalled()
 })

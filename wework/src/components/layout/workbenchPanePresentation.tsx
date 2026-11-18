@@ -1,13 +1,5 @@
 /* eslint-disable react-refresh/only-export-components -- Pane presentation hooks share this context. */
-import {
-  createContext,
-  memo,
-  useContext,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  type ReactNode,
-} from 'react'
+import { createContext, memo, useContext, useCallback, useMemo, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { getWorkbenchPaneKey, type WorkbenchPaneIdentity } from './workbenchPaneIdentity'
 
@@ -88,18 +80,18 @@ export function SingleWorkbenchPane({
 }
 
 export function WorkbenchPaneHost({ host }: { host: HTMLDivElement }) {
-  const slotRef = useRef<HTMLDivElement>(null)
+  const bindSlot = useCallback(
+    (slot: HTMLDivElement | null) => {
+      if (!slot || host.parentElement === slot) return
+      slot.append(host)
+      return () => {
+        if (host.parentElement === slot) host.remove()
+      }
+    },
+    [host]
+  )
 
-  useLayoutEffect(() => {
-    const slot = slotRef.current
-    if (!slot || host.parentElement === slot) return
-    slot.append(host)
-    return () => {
-      if (host.parentElement === slot) host.remove()
-    }
-  }, [host])
-
-  return <div ref={slotRef} className="h-full min-h-0 min-w-0" />
+  return <div ref={bindSlot} className="h-full min-h-0 min-w-0" />
 }
 
 export function WorkbenchPanePortal({

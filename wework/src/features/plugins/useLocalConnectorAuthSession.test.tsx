@@ -44,7 +44,7 @@ describe('useLocalConnectorAuthSession', () => {
         await vi.advanceTimersByTimeAsync(0)
       })
 
-      unmount()
+      await act(async () => unmount())
 
       expect(mocks.cancel).toHaveBeenCalledTimes(status === 'ok' ? 0 : 1)
       if (status !== 'ok') {
@@ -79,7 +79,7 @@ describe('useLocalConnectorAuthSession', () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0)
     })
-    unmount()
+    await act(async () => unmount())
 
     await act(async () => {
       finishStart({ status: 'waiting_scan', sessionId: 'late-session' })
@@ -114,7 +114,7 @@ describe('useLocalConnectorAuthSession', () => {
       await vi.advanceTimersByTimeAsync(100)
     })
     expect(mocks.poll).toHaveBeenCalledTimes(1)
-    unmount()
+    await act(async () => unmount())
 
     await act(async () => {
       finishPoll({ status: 'ok' })

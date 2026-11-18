@@ -99,3 +99,66 @@ describe('useBufferedStreamingText', () => {
     expect(result.current).toBe('😀你好')
   })
 })
+
+test('keeps the original batch deadline while more text arrives', () => {
+  vi.useFakeTimers()
+  try {
+    const { result, rerender, unmount } = renderHook(
+      ({ content }) => useBufferedStreamingText(content, true, 100),
+      { initialProps: { content: 'A' } }
+    )
+    rerender({ content: 'AB' })
+    act(() => vi.advanceTimersByTime(90))
+    rerender({ content: 'ABC' })
+    expect(result.current).toBe('A')
+    act(() => vi.advanceTimersByTime(10))
+    act(() => vi.advanceTimersToNextFrame())
+    expect(result.current).toBe('ABC')
+    unmount()
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+test.each([0, 100])('cancels all pending scheduling on detach (batch=%s)', async interval => {
+  vi.useFakeTimers()
+  try {
+    const { rerender, unmount } = renderHook(
+      ({ content }) => useBufferedStreamingText(content, true, interval),
+      { initialProps: { content: 'A' } }
+    )
+    rerender({ content: 'AB' })
+    expect(vi.getTimerCount()).toBeGreaterThan(0)
+    await act(async () => unmount())
+    expect(vi.getTimerCount()).toBe(0)
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+test('ignores an already queued old animation frame after replacing the content', () => {
+  vi.useFakeTimers()
+  const frames: FrameRequestCallback[] = []
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+    frames.push(callback)
+    return frames.length
+  })
+  vi.stubGlobal('cancelAnimationFrame', vi.fn())
+  try {
+    const { result, rerender, unmount } = renderHook(
+      ({ content }) => useBufferedStreamingText(content, true),
+      { initialProps: { content: 'A' } }
+    )
+    rerender({ content: 'AB' })
+    rerender({ content: 'X' })
+    rerender({ content: 'XY' })
+    act(() => frames[0](0))
+    expect(result.current).toBe('X')
+    act(() => frames[1](16))
+    expect(result.current).toBe('XY')
+    unmount()
+  } finally {
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+  }
+})

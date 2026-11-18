@@ -41,6 +41,89 @@ const folderPickerProps = {
 }
 
 describe('LocalProjectEditDialog', () => {
+  test('ignores inventory from a previous API owner while keeping the current project draft', async () => {
+    let resolveOld!: (value: unknown) => void
+    const oldApi = {
+      readState: vi.fn(
+        () =>
+          new Promise(resolve => {
+            resolveOld = resolve
+          })
+      ),
+      installAvailablePlugin: vi.fn(),
+    }
+    const currentApi = {
+      readState: vi.fn().mockResolvedValue({
+        marketplaceItems: [
+          {
+            id: 'current',
+            name: 'current',
+            displayName: 'Current catalog',
+            installed: true,
+            manifest: { marketplaceId: 'team' },
+          },
+        ],
+      }),
+      installAvailablePlugin: vi.fn(),
+    }
+    const common = {
+      ...folderPickerProps,
+      open: true,
+      projectWork,
+      onClose: vi.fn(),
+      onSave: vi.fn(),
+      onDelete: vi.fn(),
+    }
+    const view = render(<LocalProjectEditDialog {...common} pluginApi={oldApi as never} />)
+    await userEvent.type(screen.getByTestId('local-project-name-input'), ' draft')
+    await userEvent.click(screen.getByTestId('local-project-settings-plugins-tab'))
+    expect(oldApi.readState).toHaveBeenCalledTimes(1)
+    view.rerender(<LocalProjectEditDialog {...common} pluginApi={currentApi as never} />)
+    await screen.findByText('Current catalog')
+    await act(async () =>
+      resolveOld({ marketplaceItems: [{ id: 'old', name: 'old', displayName: 'Old catalog' }] })
+    )
+    expect(screen.queryByText('Old catalog')).not.toBeInTheDocument()
+    expect(screen.getByText('Current catalog')).toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('local-project-settings-basic-tab'))
+    expect(screen.getByTestId('local-project-name-input')).toHaveValue('Product draft')
+  })
+
+  test('project-space source changes clear old choices and ignore the previous pending read', async () => {
+    let resolveOld!: (value: unknown) => void
+    const oldApi = {
+      listCloudProjects: vi.fn(
+        () =>
+          new Promise(resolve => {
+            resolveOld = resolve
+          })
+      ),
+    } as unknown as ProjectSpaceApi
+    const currentApi = {
+      listCloudProjects: vi.fn().mockResolvedValue({
+        items: [{ id: 'current', name: 'Current space', project_store: 'local', key: 'current' }],
+      }),
+    } as unknown as ProjectSpaceApi
+    const common = {
+      ...folderPickerProps,
+      open: true,
+      projectWork,
+      onClose: vi.fn(),
+      onSave: vi.fn(),
+      onDelete: vi.fn(),
+    }
+    const view = render(<LocalProjectEditDialog {...common} projectSpaceApis={[oldApi]} />)
+    await waitFor(() => expect(oldApi.listCloudProjects).toHaveBeenCalledTimes(1))
+    expect(screen.getByTestId('local-project-auto-join-space-select')).toBeDisabled()
+    view.rerender(<LocalProjectEditDialog {...common} projectSpaceApis={[currentApi]} />)
+    await screen.findByRole('option', { name: /Current space/ })
+    await act(async () =>
+      resolveOld({ items: [{ id: 'old', name: 'Old space', project_store: 'local', key: 'old' }] })
+    )
+    expect(screen.queryByRole('option', { name: /Old space/ })).not.toBeInTheDocument()
+    expect(screen.getByTestId('local-project-auto-join-space-select')).toBeEnabled()
+  })
+
   test('keeps a saved model readable when unsupported and absent from the catalog', () => {
     render(
       <LocalProjectEditDialog

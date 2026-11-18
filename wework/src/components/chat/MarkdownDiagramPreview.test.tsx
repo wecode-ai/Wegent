@@ -37,32 +37,37 @@ const imageExportMocks = vi.hoisted(() => ({
   save: vi.fn(),
 }))
 
-vi.mock('../../../../packages/collaboration/src/markdown/useDiagramArtifact', async () => {
-  const { useEffect } = await import('react')
+vi.mock('../../../../packages/collaboration/src/markdown/diagramArtifact', () => {
+  const idle = { status: 'idle' }
   return {
-    useDiagramArtifact: (
-      request: { code: string; kind: string; theme: string; plantumlServerUrl?: string },
-      enabled: boolean
+    getIdleDiagramSnapshot: () => idle,
+    getDiagramResource: (
+      ...args: [Document, { code: string; kind: string; theme: string; plantumlServerUrl?: string }]
     ) => {
-      const { code, kind, theme, plantumlServerUrl } = request
-      useEffect(() => {
-        if (enabled) artifactMocks.render({ code, kind, theme, plantumlServerUrl })
-      }, [enabled, code, kind, theme, plantumlServerUrl])
-      return enabled ? { status: 'ready', artifact: artifactMocks.artifact } : { status: 'loading' }
+      const request = args[1]
+      const snapshot = { status: 'ready', artifact: artifactMocks.artifact }
+      return {
+        getSnapshot: () => snapshot,
+        subscribe: () => () => {},
+        prepare: () => artifactMocks.render(request),
+      }
     },
   }
 })
 vi.mock('../../../../packages/collaboration/src/markdown/DiagramCanvas', async () => {
-  const { useEffect } = await import('react')
+  const { useCallback } = await import('react')
   return {
     DiagramCanvas: ({ onReady }: { onReady: () => void }) => {
-      useEffect(() => {
-        if (artifactMocks.autoReady) onReady()
-      }, [onReady])
+      const attachImage = useCallback(
+        (node: HTMLImageElement | null) => {
+          if (node && artifactMocks.autoReady) onReady()
+        },
+        [onReady]
+      )
       return (
         <div>
           <button data-testid="diagram-zoom-out-button">Zoom out</button>
-          <img data-testid="diagram-image" onLoad={onReady} alt="Diagram" />
+          <img ref={attachImage} data-testid="diagram-image" onLoad={onReady} alt="Diagram" />
         </div>
       )
     },
@@ -251,4 +256,26 @@ test('refreshes a stale intersection after a layout jump without waiting for scr
   expect(cancel).toHaveBeenCalledWith(1)
   act(() => refresh(performance.now()))
   expect(pendingObservation.observe).toHaveBeenCalledTimes(1)
+})
+
+test('owns fullscreen keyboard focus and restores the remounted inline trigger', () => {
+  const view = render(<MarkdownDiagramPreview code="graph LR\nA --> B" language="mermaid" />)
+  const trigger = screen.getByTestId('diagram-fullscreen-button')
+  trigger.focus()
+  fireEvent.click(trigger)
+  const exit = screen.getByTestId('diagram-exit-fullscreen-button')
+  const first = screen.getByTestId('diagram-zoom-out-button')
+  expect(exit).toHaveFocus()
+  expect(view.container).toHaveAttribute('inert')
+  fireEvent.keyDown(exit, { key: 'Tab' })
+  expect(first).toHaveFocus()
+  fireEvent.keyDown(first, { key: 'Tab', shiftKey: true })
+  expect(exit).toHaveFocus()
+  fireEvent.keyDown(exit, { key: 'Escape', isComposing: true })
+  expect(screen.getByTestId('assistant-diagram-fullscreen')).toBeInTheDocument()
+  fireEvent.keyDown(exit, { key: 'Escape' })
+  expect(screen.queryByTestId('assistant-diagram-fullscreen')).not.toBeInTheDocument()
+  expect(screen.getByTestId('diagram-fullscreen-button')).not.toBe(trigger)
+  expect(screen.getByTestId('diagram-fullscreen-button')).toHaveFocus()
+  expect(view.container).not.toHaveAttribute('inert')
 })

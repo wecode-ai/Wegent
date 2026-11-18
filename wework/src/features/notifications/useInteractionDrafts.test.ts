@@ -45,8 +45,8 @@ afterEach(() => {
 it('merges edits from separate windows into the latest persisted draft map', async () => {
   const main = createInteractionDraftStore('test:1')
   const secondary = createInteractionDraftStore('test:1')
-  const stopMain = main.activate()
-  const stopSecondary = secondary.activate()
+  const stopMain = main.subscribe(() => {})
+  const stopSecondary = secondary.subscribe(() => {})
 
   secondary.setDraft('secondary', 'From the secondary window')
   await secondary.flush()
@@ -64,10 +64,9 @@ it('merges edits from separate windows into the latest persisted draft map', asy
 it('refreshes the local snapshot when another window persists a draft', async () => {
   const first = createInteractionDraftStore('test:1')
   const second = createInteractionDraftStore('test:1')
-  const stopFirst = first.activate()
-  const stopSecond = second.activate()
   const listener = vi.fn()
-  first.subscribe(listener)
+  const stopFirst = first.subscribe(listener)
+  const stopSecond = second.subscribe(() => {})
 
   second.setDraft('remote', 'Saved in another window')
   await second.flush()
@@ -84,11 +83,11 @@ it('refreshes the local snapshot when another window persists a draft', async ()
 it('does not overwrite a newer window snapshot when an older store activates', async () => {
   const stale = createInteractionDraftStore('test:1')
   const current = createInteractionDraftStore('test:1')
-  const stopCurrent = current.activate()
+  const stopCurrent = current.subscribe(() => {})
   current.setDraft('retained', 'Keep this confirmed draft')
   await current.flush()
 
-  const stopStale = stale.activate()
+  const stopStale = stale.subscribe(() => {})
 
   expect(JSON.parse(localStorage.getItem(draftsKey)!)).toEqual({
     retained: 'Keep this confirmed draft',
@@ -101,8 +100,8 @@ it('does not overwrite a newer window snapshot when an older store activates', a
 it('retains recovery metadata from the latest persisted text, not a stale window snapshot', async () => {
   const main = createInteractionDraftStore('test:1')
   const secondary = createInteractionDraftStore('test:1')
-  const stopMain = main.activate()
-  const stopSecondary = secondary.activate()
+  const stopMain = main.subscribe(() => {})
+  const stopSecondary = secondary.subscribe(() => {})
   main.setDraft(interaction.id, 'Do not lose this reply')
   await main.flush()
 
@@ -121,7 +120,7 @@ it('persists upgraded legacy drafts together with a later edit', async () => {
   saveInteractionState(draftsKey, { [interaction.id]: 'Legacy reply' })
   saveInteractionState(historyKey, [interaction])
   const store = createInteractionDraftStore('test:1')
-  const stop = store.activate()
+  const stop = store.subscribe(() => {})
   expect(store.getSnapshot()[interaction.id]).toMatchObject({
     text: 'Legacy reply',
     interaction,
@@ -140,7 +139,7 @@ it('persists upgraded legacy drafts together with a later edit', async () => {
 it('keeps the draft visible when discard cannot be persisted', async () => {
   vi.spyOn(console, 'error').mockImplementation(() => {})
   const store = createInteractionDraftStore('test:1')
-  const stop = store.activate()
+  const stop = store.subscribe(() => {})
   store.setDraft('reply', 'Keep until discard commits')
   await store.flush()
   const original = Storage.prototype.setItem
@@ -157,7 +156,7 @@ it('keeps the draft visible when discard cannot be persisted', async () => {
 it('keeps the visible draft when discard cannot be flushed to disk', async () => {
   vi.spyOn(console, 'error').mockImplementation(() => {})
   const store = createInteractionDraftStore('test:1')
-  const stop = store.activate()
+  const stop = store.subscribe(() => {})
   store.setDraft('reply', 'Keep until discard commits')
   await store.flush()
   flushStorage.mockRejectedValueOnce(new Error('Disk unavailable'))
@@ -172,7 +171,7 @@ it('keeps the visible draft when discard cannot be flushed to disk', async () =>
 it('retains an unsaved local draft after its write fails', async () => {
   vi.spyOn(console, 'error').mockImplementation(() => {})
   const store = createInteractionDraftStore('test:1')
-  const stop = store.activate()
+  const stop = store.subscribe(() => {})
   const original = Storage.prototype.setItem
   const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (key, value) {
     if (key === draftsKey) throw new Error('Quota exceeded')
@@ -208,7 +207,7 @@ it('retains an unsaved local draft after its write fails', async () => {
 it('keeps a failed clear hidden when settlement has no new native text', async () => {
   vi.spyOn(console, 'error').mockImplementation(() => {})
   const store = createInteractionDraftStore('test:1')
-  const stop = store.activate()
+  const stop = store.subscribe(() => {})
   store.setDraft(interaction.id, 'Old draft')
   await store.flush()
   const original = Storage.prototype.setItem
@@ -228,4 +227,23 @@ it('keeps a failed clear hidden when settlement has no new native text', async (
   )
   expect(store.getSnapshot()).toEqual({})
   stop()
+})
+
+it('keeps one storage connection until the last subscriber leaves', async () => {
+  const store = createInteractionDraftStore('test:1')
+  const first = store.subscribe(vi.fn())
+  const second = store.subscribe(vi.fn())
+  first()
+  store.setDraft('shared', 'still active')
+  await store.flush()
+  expect(store.getSnapshot().shared).toBe('still active')
+  second()
+  store.setDraft('detached', 'ignored')
+  await store.flush()
+  expect(store.getSnapshot().detached).toBeUndefined()
+  const stopAgain = store.subscribe(vi.fn())
+  store.setDraft('active-again', 'reconnected')
+  await store.flush()
+  expect(store.getSnapshot()['active-again']).toBe('reconnected')
+  stopAgain()
 })

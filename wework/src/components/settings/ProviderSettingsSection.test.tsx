@@ -463,4 +463,24 @@ describe('Provider settings page', () => {
     expect(savedProviders()).toBeUndefined()
     expect(snapshot.providers).toHaveLength(1)
   })
+
+  test('discovery from a closed editor cannot populate a reopened editor for the same provider', async () => {
+    let finish!: (models: string[]) => void
+    discover = () =>
+      new Promise<string[]>(resolve => {
+        finish = resolve
+      })
+    const user = await openEditor()
+    await user.click(screen.getByTestId('provider-discover'))
+    await user.click(screen.getByTestId('provider-editor-close'))
+    expect(screen.queryByTestId('provider-editor')).not.toBeInTheDocument()
+    discover = async () => ['current-model']
+    await user.click(screen.getByTestId('provider-edit-relay'))
+    await user.click(screen.getByTestId('provider-discover'))
+    await screen.findByTestId('provider-discovered-current-model')
+    await act(async () => finish(['detached-model']))
+    expect(screen.queryByTestId('provider-discovered-detached-model')).not.toBeInTheDocument()
+    expect(screen.getByTestId('provider-discovered-current-model')).toBeEnabled()
+    expect(screen.getByTestId('provider-discover')).toBeEnabled()
+  })
 })

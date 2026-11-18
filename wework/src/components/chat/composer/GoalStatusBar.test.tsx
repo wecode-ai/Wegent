@@ -1,5 +1,5 @@
 import type { RuntimeGoal } from '@/types/api'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { GoalStatusBar } from './GoalStatusBar'
 
@@ -43,5 +43,38 @@ describe('GoalStatusBar', () => {
     expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('需要恢复')
     fireEvent.click(screen.getByTestId('resume-goal-button'))
     expect(onResumeGoal).toHaveBeenCalledOnce()
+  })
+  test('uses authoritative elapsed updates and stops ticking when paused or unmounted', () => {
+    vi.setSystemTime(10000)
+    const { rerender, unmount } = render(<GoalStatusBar goal={{ ...goal, status: 'active' }} />)
+    expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('12s')
+    act(() => vi.advanceTimersByTime(3000))
+    expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('15s')
+    rerender(
+      <GoalStatusBar goal={{ ...goal, status: 'active', timeUsedSeconds: 20, updatedAt: 13000 }} />
+    )
+    expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('20s')
+    act(() => vi.advanceTimersByTime(1000))
+    expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('21s')
+    rerender(<GoalStatusBar goal={{ ...goal, status: 'paused', timeUsedSeconds: 21 }} />)
+    expect(vi.getTimerCount()).toBe(0)
+    act(() => vi.advanceTimersByTime(10000))
+    expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('21s')
+    rerender(<GoalStatusBar goal={{ ...goal, status: 'active', timeUsedSeconds: 21 }} />)
+    act(() => vi.advanceTimersByTime(2000))
+    expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('23s')
+    unmount()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  test('does not restart elapsed time on an unrelated render but resets for a different conversation', () => {
+    const { rerender } = render(<GoalStatusBar goal={{ ...goal, status: 'active' }} />)
+    act(() => vi.advanceTimersByTime(2000))
+    rerender(<GoalStatusBar goal={{ ...goal, status: 'active' }} continuing />)
+    expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('14s')
+    rerender(<GoalStatusBar goal={{ ...goal, status: 'active', threadId: 'thread-2' }} />)
+    expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('12s')
+    act(() => vi.advanceTimersByTime(1000))
+    expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('13s')
   })
 })

@@ -1,5 +1,5 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
-import { useEffect } from 'react'
+import { useCallback, useImperativeHandle } from 'react'
 import { beforeEach, expect, test, vi } from 'vitest'
 
 import type {
@@ -45,7 +45,13 @@ vi.mock('@/components/layout/workspace-panels/WorkspaceBrowserPanelContainer', (
     openRequest: EmbeddedBrowserOpenRequest | null
     onNativeLabelChange?: (label: string | null) => void
   }) => {
-    useEffect(() => onNativeLabelChange?.('browser-native-1'), [onNativeLabelChange])
+    const reportNativeHandle = useCallback(
+      (nativeLabel: string | null) => {
+        if (nativeLabel) onNativeLabelChange?.(nativeLabel)
+      },
+      [onNativeLabelChange]
+    )
+    useImperativeHandle(reportNativeHandle, () => 'browser-native-1', [])
     return (
       <div
         data-testid="workspace-browser-panel"

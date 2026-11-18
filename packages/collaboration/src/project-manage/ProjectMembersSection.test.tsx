@@ -44,6 +44,8 @@ const direct: ProjectManageMember = {
 function makeController(members = [inherited, direct]) {
   return {
     members,
+    memberPanelRef: vi.fn(),
+    memberSearchError: undefined,
     loading: false,
     loadError: null as string | null,
     retryLoad: vi.fn(),

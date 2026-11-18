@@ -180,3 +180,39 @@ describe('automatic conversation history pagination', () => {
     expect(onLoad).not.toHaveBeenCalled()
   })
 })
+
+test.each([
+  { height: 300, margin: '800px 0px 0px' },
+  { height: 1200, margin: '1200px 0px 0px' },
+])('prefetches one viewport with an 800px minimum (height=$height)', ({ height, margin }) => {
+  const scroller = document.createElement('div')
+  Object.defineProperty(scroller, 'clientHeight', { value: height })
+  const onLoad = vi.fn()
+  render(boundary({ onLoad, scrollRef: { current: scroller } }))
+  expect(observers[0].options).toMatchObject({ root: scroller, rootMargin: margin, threshold: 0 })
+  intersect(false)
+  expect(onLoad).not.toHaveBeenCalled()
+})
+
+test('does not restart an unmounted boundary after its outstanding request settles', async () => {
+  let finish!: () => void
+  const onLoad = vi.fn().mockImplementation(
+    () =>
+      new Promise<void>(accept => {
+        finish = accept
+      })
+  )
+  const onPrepare = vi.fn()
+  const view = render(boundary({ onLoad, onPrepare }))
+  intersect()
+  const queued = observers[0].callback
+  view.unmount()
+  await act(async () => finish())
+  act(() =>
+    queued([{ isIntersecting: true } as IntersectionObserverEntry], {} as IntersectionObserver)
+  )
+  expect(onLoad).toHaveBeenCalledOnce()
+  expect(onPrepare).toHaveBeenCalledExactlyOnceWith(true)
+  expect(observers.every(observer => !observer.active)).toBe(true)
+  expect(screen.queryByTestId('load-older-runtime-transcript-button')).not.toBeInTheDocument()
+})

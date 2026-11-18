@@ -12,7 +12,8 @@ import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRe
 import { WindowFrameControls } from '@/components/layout/WindowFrameControls'
 import { ApplicationMenuButton } from './ApplicationMenuButton'
 import { GlobalFeedbackButton } from '@/features/feedback/GlobalFeedbackButton'
-import { useLayoutEffect, useRef, type ReactNode } from 'react'
+import { useRef, type CSSProperties, type ReactNode } from 'react'
+import { useElementGeometry } from '@wegent/collaboration/dom-events'
 import { WorkspaceTabStrip } from '@/features/workspace-tabs/WorkspaceTabStrip'
 import type { WorkspaceTabKind } from '@/features/workspace-tabs/workspaceTabs'
 
@@ -35,27 +36,14 @@ export function ChromeTitlebar({
   const isDesktop = isDesktopRuntime()
   const platform = getPlatform()
   const feedbackSlotVisible = isDesktop
-  const titlebarRef = useRef<HTMLDivElement>(null)
   const actionsRef = useRef<HTMLDivElement>(null)
   const fixedActionsWidth = 'var(--titlebar-fixed-actions-width, 0px)'
-  useLayoutEffect(() => {
-    const actions = actionsRef.current
-    if (!actions) return
-    const measure = () => {
-      titlebarRef.current?.style.setProperty(
-        '--titlebar-fixed-actions-width',
-        `${actions.getBoundingClientRect().width}px`
-      )
-    }
-    measure()
-    const observer = new ResizeObserver(measure)
-    observer.observe(actions)
-    return () => observer.disconnect()
-  }, [])
+  const geometry = useElementGeometry([actionsRef])
+  const actionsWidth = geometry?.elements[0]?.width ?? 0
 
   return (
     <div
-      ref={titlebarRef}
+      style={{ '--titlebar-fixed-actions-width': `${actionsWidth}px` } as CSSProperties}
       data-testid="chrome-titlebar"
       className={cn(
         'relative z-titlebar flex h-12 shrink-0 items-center bg-[rgb(var(--color-titlebar))] pr-2 select-none sm:max-md:h-11 md:h-[38px]',

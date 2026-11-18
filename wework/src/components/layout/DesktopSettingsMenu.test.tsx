@@ -3,7 +3,7 @@ import { getWegentUsageDisplay } from '@/api/wegentUsage'
 import { defaultAppPreferences } from '@/desktop/appPreferences'
 import { AppPreferencesContext } from '@/features/app-preferences/appPreferencesContext'
 import type { AppUpdateError } from '@/features/app-update/app-update-error'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { createInstance } from 'i18next'
@@ -16,6 +16,12 @@ const mockCheckNow = vi.fn()
 const mockInstallUpdate = vi.fn()
 const runtimeModeMock = vi.hoisted(() => ({
   isLocalFirstAppRuntime: vi.fn(() => false),
+}))
+const cloudConnectionMock = vi.hoisted(() => ({
+  isConnected: true,
+  apiBaseUrl: 'https://wegent.example.com/api',
+  token: 'token',
+  serviceKey: 'service-one',
 }))
 let mockUpdateState = {
   availableUpdate: null as null | { currentVersion: string; version: string },
@@ -33,11 +39,7 @@ vi.mock('@/features/app-update/app-update-context', () => ({
 vi.mock('@/lib/runtime-mode', () => runtimeModeMock)
 
 vi.mock('@/features/cloud-connection/useCloudConnection', () => ({
-  useOptionalCloudConnection: () => ({
-    isConnected: true,
-    apiBaseUrl: 'https://wegent.example.com/api',
-    token: 'token',
-  }),
+  useOptionalCloudConnection: () => cloudConnectionMock,
 }))
 
 vi.mock('@/api/local/codexUsage', () => ({
@@ -114,7 +116,7 @@ function renderMenu({
       showLogout={showLogout}
     />
   )
-  render(
+  return render(
     <I18nextProvider i18n={translations}>
       {localCodexSubscriptionEnabled === undefined ? (
         menu
@@ -136,6 +138,11 @@ describe('DesktopSettingsMenu', () => {
   beforeEach(async () => {
     await translations.init({ lng: 'zh-CN', resources: { 'zh-CN': { common: zh } } })
     vi.clearAllMocks()
+    Object.assign(cloudConnectionMock, {
+      isConnected: true,
+      token: 'token',
+      serviceKey: 'service-one',
+    })
     mockUpdateState = {
       availableUpdate: null,
       status: 'idle',
@@ -299,5 +306,63 @@ describe('DesktopSettingsMenu', () => {
     expect(screen.getByText('已用 108.13% · 剩余 -84.7 元')).toBeInTheDocument()
     expect(screen.getByText('1,126.7 / 1,042 元')).toHaveClass('break-words')
     expect(screen.getByText('已用 108.13% · 剩余 -84.7 元')).toHaveClass('break-words')
+  })
+  test('does not duplicate an in-flight preload when expanding quota', async () => {
+    let resolve!: (value: Awaited<ReturnType<typeof getWegentUsageDisplay>>) => void
+    const value = await getWegentUsageDisplayMock.getMockImplementation()!({
+      ...cloudConnectionMock,
+    })
+    getWegentUsageDisplayMock.mockImplementationOnce(
+      () =>
+        new Promise(accept => {
+          resolve = accept
+        })
+    )
+    getWegentUsageDisplayMock.mockClear()
+    renderMenu()
+    fireEvent.click(screen.getByTestId('wegent-usage-menu-button'))
+    expect(getWegentUsageDisplayMock).toHaveBeenCalledOnce()
+    await act(async () => resolve(value))
+    expect(screen.getByText(value.value)).toBeInTheDocument()
+  })
+
+  test('isolates a replacement cloud connection from the previous pending quota response', async () => {
+    const value = await getWegentUsageDisplayMock.getMockImplementation()!({
+      ...cloudConnectionMock,
+    })
+    let resolveOld!: (result: typeof value) => void
+    getWegentUsageDisplayMock.mockImplementationOnce(
+      () =>
+        new Promise(accept => {
+          resolveOld = accept
+        })
+    )
+    const { rerender } = renderMenu()
+    fireEvent.click(screen.getByTestId('wegent-usage-menu-button'))
+    cloudConnectionMock.token = 'replacement-token'
+    cloudConnectionMock.serviceKey = 'service-two'
+    getWegentUsageDisplayMock.mockResolvedValue({ ...value, value: 'New account quota' })
+    rerender(
+      <I18nextProvider i18n={translations}>
+        <DesktopSettingsMenu
+          user={null}
+          onOpenSettings={vi.fn()}
+          onOpenAbout={vi.fn()}
+          onLogout={vi.fn()}
+        />
+      </I18nextProvider>
+    )
+    expect(await screen.findByText('New account quota')).toBeInTheDocument()
+    await act(async () => resolveOld(value))
+    expect(screen.getByText('New account quota')).toBeInTheDocument()
+    expect(screen.queryByText(value.value)).not.toBeInTheDocument()
+  })
+
+  test('does not load quota while disconnected, including after expansion', () => {
+    cloudConnectionMock.isConnected = false
+    renderMenu()
+    fireEvent.click(screen.getByTestId('wegent-usage-menu-button'))
+    expect(getWegentUsageDisplayMock).not.toHaveBeenCalled()
+    expect(screen.getByTestId('wegent-usage-detail-panel')).toHaveTextContent('登录 Wegent')
   })
 })

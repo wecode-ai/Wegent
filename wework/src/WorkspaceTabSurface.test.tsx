@@ -7,8 +7,8 @@ import {
   unregisterHarnessAppTab,
 } from '@/features/harness-apps/harnessAppTabs'
 import { preloadDefaultDshUiTestModules } from '@/test/setup.dom'
-import { act, render, screen, waitFor } from '@testing-library/react'
-import { useEffect } from 'react'
+import { act, render as renderView, screen, waitFor } from '@testing-library/react'
+import { useCallback } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { WorkspaceTabSurface } from './App'
 
@@ -36,6 +36,77 @@ const runtimeEnvironmentMocks = vi.hoisted(() => ({
   electron: false,
 }))
 
+interface SurfaceLaunchRequest {
+  installationId: string
+  onStartupSettled?: (id: string) => void
+}
+const providerRequests = new Map<string, SurfaceLaunchRequest | undefined>()
+const viewReleases = new Set<() => void>()
+/** Arrange native owner commits from real mounted tab surfaces, independently of React effects. */
+function render(ui: Parameters<typeof renderView>[0]) {
+  const view = renderView(ui)
+  const owners = new Map<string, { request?: SurfaceLaunchRequest; cancelled: boolean }>()
+  const synchronize = () => {
+    const mounted = new Set(
+      [...view.container.querySelectorAll('[data-workspace-tab-content]')].map(
+        node => node.getAttribute('data-workspace-tab-content')!
+      )
+    )
+    for (const [id, owner] of owners)
+      if (!mounted.has(id)) {
+        owner.cancelled = true
+        if (owner.request) harnessAppLauncherMocks.cleanup(owner.request.installationId)
+        workbenchProviderMocks.cleanup()
+        owners.delete(id)
+      }
+    for (const id of mounted) {
+      if (!providerRequests.has(id)) continue
+      const request = providerRequests.get(id)
+      let owner = owners.get(id)
+      if (!owner) {
+        owner = { cancelled: false }
+        owners.set(id, owner)
+      }
+      if (owner.request?.installationId === request?.installationId) {
+        owner.request = request
+        continue
+      }
+      if (owner.request) harnessAppLauncherMocks.cleanup(owner.request.installationId)
+      owner.request = request
+      if (!request) continue
+      const lifetime = owner
+      harnessAppLauncherMocks.requested(request.installationId)
+      void harnessAppLauncherMocks.waitUntilReady().then(() => {
+        if (lifetime.cancelled || lifetime.request?.installationId !== request.installationId)
+          return
+        harnessAppLauncherMocks.started(request.installationId)
+        harnessAppLauncherMocks.registered(request.installationId)
+        lifetime.request.onStartupSettled?.(request.installationId)
+      })
+    }
+  }
+  synchronize()
+  const unmount = () => {
+    view.unmount()
+    synchronize()
+    viewReleases.delete(unmount)
+  }
+  viewReleases.add(unmount)
+  return {
+    ...view,
+    unmount,
+    rerender: (next: Parameters<typeof view.rerender>[0]) => {
+      view.rerender(next)
+      synchronize()
+    },
+  }
+}
+afterEach(() => {
+  for (const release of viewReleases) release()
+  viewReleases.clear()
+  providerRequests.clear()
+})
+
 vi.mock('@/components/topnav/AppIframe', () => ({
   AppIframe: (props: {
     active?: boolean
@@ -44,8 +115,10 @@ vi.mock('@/components/topnav/AppIframe', () => ({
     src: string
   }) => {
     appIframeMocks.props(props)
-    useEffect(() => appIframeMocks.cleanup, [])
-    return <div data-testid="mock-app-iframe" data-active={String(props.active)} />
+    const bindFrame = useCallback((element: HTMLDivElement | null) => {
+      if (element) return appIframeMocks.cleanup
+    }, [])
+    return <div ref={bindFrame} data-testid="mock-app-iframe" data-active={String(props.active)} />
   },
 }))
 
@@ -57,49 +130,18 @@ vi.mock('@/components/topnav/workspaceTabPortalOwnership', () => ({
   setActiveWorkspaceTabPortalOwner: portalOwnershipMocks.setActiveOwner,
 }))
 
-vi.mock('@/features/harness-apps/HarnessAppAutoLauncher', () => ({
-  HarnessAppAutoLauncher: ({
-    installationId,
-    onStartupSettled,
-  }: {
-    installationId: string
-    onStartupSettled?: (installationId: string) => void
-  }) => {
-    useEffect(() => {
-      let cancelled = false
-      harnessAppLauncherMocks.requested(installationId)
-      void harnessAppLauncherMocks.waitUntilReady().then(() => {
-        if (!cancelled) {
-          harnessAppLauncherMocks.started(installationId)
-          harnessAppLauncherMocks.registered(installationId)
-          onStartupSettled?.(installationId)
-        }
-      })
-      return () => {
-        cancelled = true
-        harnessAppLauncherMocks.cleanup(installationId)
-      }
-    }, [installationId, onStartupSettled])
-    return null
-  },
-}))
-
-vi.mock('@/lib/runtime-environment', async importOriginal => {
-  const actual = await importOriginal<typeof import('@/lib/runtime-environment')>()
-  return {
-    ...actual,
-    isElectronRuntime: () => runtimeEnvironmentMocks.electron,
-  }
-})
-
 vi.mock('@/features/workbench/WorkbenchProvider', () => ({
   WorkbenchProvider: ({
     children,
     composerAppsSourceActive,
     loadTaskComposerCatalogs,
     workspaceTabRevealRevision,
+    workspaceTabId,
+    harnessAppLaunch,
   }: {
     children: React.ReactNode
+    workspaceTabId: string
+    harnessAppLaunch?: SurfaceLaunchRequest
     composerAppsSourceActive?: boolean
     loadTaskComposerCatalogs?: boolean
     workspaceTabRevealRevision?: number
@@ -107,7 +149,7 @@ vi.mock('@/features/workbench/WorkbenchProvider', () => ({
     workbenchProviderMocks.composerAppsSourceActive(composerAppsSourceActive)
     workbenchProviderMocks.loadTaskComposerCatalogs(loadTaskComposerCatalogs)
     workbenchProviderMocks.workspaceTabRevealRevision(workspaceTabRevealRevision)
-    useEffect(() => workbenchProviderMocks.cleanup, [])
+    providerRequests.set(workspaceTabId, harnessAppLaunch)
     return <>{children}</>
   },
 }))

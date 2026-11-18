@@ -1,5 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react'
-import { useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ComposerToolbar } from './ComposerToolbar'
 
@@ -23,9 +23,16 @@ vi.mock('@/features/dsh-runtime/DshContributionSlotSurface', () => ({
   }) => {
     const [active, setActive] = useState(false)
     const { onActiveChange } = props
-    useEffect(() => () => onActiveChange(false), [onActiveChange])
+    const bindVoiceButton = useCallback(
+      (button: HTMLButtonElement | null) => {
+        if (!button) return
+        return () => onActiveChange(false)
+      },
+      [onActiveChange]
+    )
     return (
       <button
+        ref={bindVoiceButton}
         data-testid="test-voice-input"
         onClick={() => {
           setActive(!active)

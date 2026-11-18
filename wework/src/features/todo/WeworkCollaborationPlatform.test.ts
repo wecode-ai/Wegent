@@ -1,3 +1,4 @@
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import { DEFAULT_WORK_ITEM_PROJECT_ID, type DeliveryApi } from '@/api/deliveries'
 import { ApiError } from '@/api/http'
 import { createLocalProjectChatAgentApi } from '@/api/local/localDelivery'
@@ -24,7 +25,8 @@ import type {
 import {
   createElement,
   useCallback,
-  useEffect,
+  useMemo,
+  useSyncExternalStore,
   useRef,
   useState,
   type ComponentProps,
@@ -101,29 +103,43 @@ vi.mock('@wegent/collaboration', async importOriginal => {
         })
       }
       const renderCount = useRef(0)
-      const [projectIds, setProjectIds] = useState('')
       const [resourceNames, setResourceNames] = useState('')
       const [automationNames, setAutomationNames] = useState('')
-      const [snapshotStatuses, setSnapshotStatuses] = useState('')
       renderCount.current += 1
-      const loadSnapshot = useCallback(() => {
-        const projectId = host.location.projectId
-        if (!projectId || !api.issues.getBoardSnapshot) return
-        void api.issues
-          .getBoardSnapshot(projectId)
-          .then(snapshot => setSnapshotStatuses(snapshot.items.map(item => item.status).join(',')))
-          .catch(() => undefined)
-      }, [api.issues, host.location.projectId])
-      useEffect(() => {
-        loadSnapshot()
-      }, [loadSnapshot, refreshProjectRequestKey])
-      useEffect(() => {
-        if (typeof api.projects.list !== 'function') return
-        void api.projects
-          .list()
-          .then(projects => setProjectIds(projects.map(project => String(project.id)).join(',')))
-          .catch(() => setProjectIds('error'))
-      }, [api])
+      const projectId = host.location.projectId
+      const boardResource = useMemo(
+        () =>
+          createAsyncResource('board-probe', async () => {
+            if (!projectId || !api.issues.getBoardSnapshot) return ''
+            const snapshot = await api.issues.getBoardSnapshot(projectId)
+            return snapshot.items.map(item => item.status).join(',')
+          }),
+        [api.issues, projectId]
+      )
+      const subscribeBoard = useCallback(
+        (listener: () => void) => boardResource.subscribe(listener, refreshProjectRequestKey),
+        [boardResource, refreshProjectRequestKey]
+      )
+      const snapshotStatuses =
+        useSyncExternalStore(subscribeBoard, boardResource.getSnapshot).data ?? ''
+      const projectsResource = useMemo(
+        () =>
+          createAsyncResource('projects-probe', async () => {
+            if (typeof api.projects.list !== 'function') return ''
+            try {
+              const projects = await api.projects.list()
+              return projects.map(project => String(project.id)).join(',')
+            } catch {
+              return 'error'
+            }
+          }),
+        [api]
+      )
+      const projectIds =
+        useSyncExternalStore(projectsResource.subscribe, projectsResource.getSnapshot).data ?? ''
+      const loadSnapshot = () => {
+        void boardResource.reload()
+      }
       const createAgent = () => {
         const projectId = host.location.projectId
         if (!projectId) return

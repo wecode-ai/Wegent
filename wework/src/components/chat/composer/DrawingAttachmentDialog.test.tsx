@@ -85,4 +85,47 @@ describe('DrawingAttachmentDialog', () => {
     expect(trigger).toHaveFocus()
     trigger.remove()
   })
+  it('does not attach an export after its drawing window is removed', async () => {
+    let finish!: (file: File) => void
+    drawing.exportImage.mockImplementation(
+      () =>
+        new Promise(resolve => {
+          finish = resolve
+        })
+    )
+    const onAttach = vi.fn()
+    const onClose = vi.fn()
+    const view = render(<DrawingAttachmentDialog onAttach={onAttach} onClose={onClose} />)
+    fireEvent.click(await screen.findByTestId('test-draw'))
+    fireEvent.click(screen.getByTestId('drawing-confirm-button'))
+    expect(drawing.exportImage).toHaveBeenCalledOnce()
+    view.unmount()
+    await act(async () => finish(new File(['png'], 'drawing.png')))
+    expect(onAttach).not.toHaveBeenCalled()
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('does not close a replacement window after an old attachment finishes', async () => {
+    let finish!: () => void
+    const onAttach = vi.fn(
+      () =>
+        new Promise<void>(resolve => {
+          finish = resolve
+        })
+    )
+    const oldClose = vi.fn()
+    const newClose = vi.fn()
+    const { rerender } = render(
+      <DrawingAttachmentDialog key="old" onAttach={onAttach} onClose={oldClose} />
+    )
+    fireEvent.click(await screen.findByTestId('test-draw'))
+    fireEvent.click(screen.getByTestId('drawing-confirm-button'))
+    await waitFor(() => expect(onAttach).toHaveBeenCalledOnce())
+    rerender(<DrawingAttachmentDialog key="new" onAttach={onAttach} onClose={newClose} />)
+    await screen.findByTestId('test-draw')
+    await act(async () => finish())
+    expect(oldClose).not.toHaveBeenCalled()
+    expect(newClose).not.toHaveBeenCalled()
+    expect(screen.getByTestId('drawing-attachment-dialog')).toBeInTheDocument()
+  })
 })

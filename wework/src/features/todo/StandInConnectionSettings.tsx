@@ -1,8 +1,17 @@
 import { dequal } from 'dequal'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
+import {
+  useCallback,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type Ref,
+} from 'react'
 import { MessageSquare } from 'lucide-react'
-import type { CollaborationProject } from '@wegent/collaboration'
+import { createConnectionSettingsModel } from './standInConnectionSettingsModel'
+import type { CollaborationProject, TagDraftStore } from '@wegent/collaboration'
 import type { StandInRole } from '@/api/personalStandIn'
 import type { ConnectionProviderDescriptor, StandInExecutorApi } from '@/api/standIn'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -36,7 +45,7 @@ export function StandInConnectionSettings({
   focusedProjectId,
   scheduling,
   onScheduleDirtyChange,
-  onDraftDirtyChange,
+  tagDraft,
   initialCalendar = false,
   onCalendarViewChange,
   onDetailViewChange,
@@ -57,7 +66,7 @@ export function StandInConnectionSettings({
   focusedProjectId?: string
   scheduling?: { userId: number; roleId: string }
   onScheduleDirtyChange?(dirty: boolean): void
-  onDraftDirtyChange?(dirty: boolean): void
+  tagDraft?: TagDraftStore
   initialCalendar?: boolean
   onCalendarViewChange?(open: boolean): void
   onDetailViewChange?(open: boolean): void
@@ -75,9 +84,45 @@ export function StandInConnectionSettings({
       !dequal(role.collaboration, savedConfiguration.collaboration) ||
       !dequal(role.calendar, savedConfiguration.calendar))
   )
-  const [scheduleDirty, setScheduleDirty] = useState(false)
-  const [emailDirty, setEmailDirty] = useState(false)
-  const [view, setView] = useState<string | null>(initialCalendar ? 'time' : null)
+  const timeTitle = t('standIn.workspace.time_connection')
+  const projectsTitle = t('standIn.personal.collaboration')
+  const unavailableTitle = t('standIn.workspace.connection_unavailable')
+  const input = useMemo(
+    () => ({
+      api,
+      deviceId,
+      locale: i18n.language,
+      timeTitle,
+      projectsTitle,
+      unavailableTitle,
+      onScheduleDirtyChange,
+      onCalendarViewChange,
+      onDetailViewChange,
+      onDetailTitleChange,
+    }),
+    [
+      api,
+      deviceId,
+      i18n.language,
+      timeTitle,
+      projectsTitle,
+      unavailableTitle,
+      onScheduleDirtyChange,
+      onCalendarViewChange,
+      onDetailViewChange,
+      onDetailTitleChange,
+    ]
+  )
+  const [model] = useState(() => createConnectionSettingsModel(input, initialCalendar))
+  const subscribe = useCallback(
+    (listener: () => void) => model.subscribe(listener, input),
+    [model, input]
+  )
+  const state = useSyncExternalStore(subscribe, model.getSnapshot, model.getSnapshot)
+  const { view, scheduleDirty } = state
+  const setView = model.setView
+  const setScheduleDirty = model.setScheduleDirty
+  const setEmailDirty = model.setEmailDirty
   const calendarRef = useRef<AutomationNavigationHandle>(null)
   const emailRef = useRef<AutomationNavigationHandle>(null)
   const projectRef = useRef<StandInProjectNavigationHandle>(null)
@@ -96,93 +141,12 @@ export function StandInConnectionSettings({
       requestLeave(action)
     },
   }))
-  useEffect(() => {
-    onScheduleDirtyChange?.(scheduleDirty || emailDirty)
-  }, [scheduleDirty, emailDirty, onScheduleDirtyChange])
-  useEffect(() => {
-    onDetailViewChange?.(view !== null)
-    return () => onDetailViewChange?.(false)
-  }, [view, onDetailViewChange])
-  useEffect(() => {
-    onCalendarViewChange?.(view === 'time')
-    return () => onCalendarViewChange?.(false)
-  }, [view, onCalendarViewChange])
-  const [catalog, setCatalog] = useState<{
-    key: string
-    api: StandInExecutorApi
-    items: ConnectionProviderDescriptor[]
-    error: string | null
-    revision: number
-  } | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [installing, setInstalling] = useState(false)
-  const [refresh, setRefresh] = useState(0)
-  const catalogKey = JSON.stringify([deviceId, i18n.language])
-  const currentCatalog = catalog?.key === catalogKey && catalog.api === api ? catalog : null
-  const providers = currentCatalog?.items ?? []
-  const loading =
-    view !== 'time' &&
-    (installing || Boolean(api && (!currentCatalog || currentCatalog.revision !== refresh)))
-  const visibleError = view === 'time' ? null : (error ?? currentCatalog?.error)
-  useEffect(() => {
-    if (!api || view === 'time') return
-    let active = true
-    void api
-      .connectionProviders(deviceId)
-      .then(result => {
-        if (active)
-          setCatalog({
-            key: catalogKey,
-            api,
-            items: result.items.map(item => ({ ...item, ...item.locales?.[i18n.language] })),
-            error: null,
-            revision: refresh,
-          })
-      })
-      .catch(cause => {
-        if (active)
-          setCatalog(previous => ({
-            key: catalogKey,
-            api,
-            items: previous?.key === catalogKey && previous.api === api ? previous.items : [],
-            error: getStandInErrorMessage(cause),
-            revision: refresh,
-          }))
-      })
-    return () => {
-      active = false
-    }
-  }, [api, deviceId, catalogKey, i18n.language, view, refresh])
+  const matches = state.api === api && state.deviceId === deviceId && state.locale === i18n.language
+  const providers = matches ? state.providers : []
+  const loading = view !== 'time' && (matches ? state.loading : Boolean(api))
+  const visibleError = matches ? state.error : null
   const provider = providers.find(item => item.id === view)
-  const detailTitle =
-    view === 'time'
-      ? t('standIn.workspace.time_connection')
-      : view === 'projects'
-        ? t('standIn.personal.collaboration')
-        : (provider?.displayName ?? (view ? t('standIn.workspace.connection_unavailable') : null))
-  useEffect(() => {
-    onDetailTitleChange?.(detailTitle)
-    return () => onDetailTitleChange?.(null)
-  }, [detailTitle, onDetailTitleChange])
-  const install = async (item: ConnectionProviderDescriptor) => {
-    if (!api) return
-    setInstalling(true)
-    setError(null)
-    try {
-      await api.installConnectionDependencies(
-        deviceId,
-        item.id,
-        item.dependencies
-          .filter(dependency => dependency.status === 'missing')
-          .map(dependency => dependency.alias)
-      )
-      setRefresh(value => value + 1)
-    } catch (cause) {
-      setError(getStandInErrorMessage(cause))
-    } finally {
-      setInstalling(false)
-    }
-  }
+  const install = model.install
   return (
     <section
       className={view === 'time' ? 'flex min-h-0 flex-1 flex-col gap-3' : 'space-y-3'}
@@ -240,7 +204,7 @@ export function StandInConnectionSettings({
           ) : view === 'projects' ? (
             <StandInConnections
               ref={projectRef}
-              onDraftDirtyChange={onDraftDirtyChange}
+              tagDraft={tagDraft}
               role={role}
               projects={projects}
               allowLocalProjects={deviceId === localDeviceId}
@@ -264,6 +228,8 @@ export function StandInConnectionSettings({
               />
               {provider.id === EMAIL_PROVIDER ? (
                 <StandInEmailConnections
+                  ownerApi={api}
+                  userId={scheduling?.userId}
                   ref={emailRef}
                   onDirtyChange={setEmailDirty}
                   key={deviceId}
@@ -274,6 +240,7 @@ export function StandInConnectionSettings({
                 />
               ) : provider.id.startsWith(GIT_CONNECTION_PREFIX) ? (
                 <StandInGitConnections
+                  userId={scheduling?.userId}
                   key={`${deviceId}:${role.id}:${provider.id}`}
                   provider={provider}
                   role={role}
@@ -292,7 +259,7 @@ export function StandInConnectionSettings({
                   localDeviceId={localDeviceId}
                   disabled={disabled || loading}
                   onChange={onChange}
-                  onReady={() => setRefresh(value => value + 1)}
+                  onReady={() => model.reload()}
                 />
               ) : null}
               {provider.id !== EMAIL_PROVIDER &&
@@ -339,7 +306,7 @@ export function StandInConnectionSettings({
           type="button"
           data-testid="stand-in-provider-retry"
           className="min-h-11 min-w-11 text-sm underline md:min-h-9"
-          onClick={() => setRefresh(value => value + 1)}
+          onClick={() => model.reload()}
         >
           {t('standIn.workspace.connection_retry')}
         </button>
@@ -352,8 +319,7 @@ export function StandInConnectionSettings({
             disabled={loading}
             data-testid="stand-in-connections-retry"
             onClick={() => {
-              setError(null)
-              setRefresh(value => value + 1)
+              model.reload()
             }}
             className="min-h-11 min-w-11 text-sm underline md:min-h-9"
           >

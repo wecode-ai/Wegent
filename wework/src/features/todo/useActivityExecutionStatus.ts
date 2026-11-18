@@ -19,13 +19,30 @@ const EMPTY_TURNS: RuntimeConversationTurn[] = []
 export function useActivityExecutionStatus(
   message: ProjectChatMessage | undefined,
   turnId?: string,
-  allowSingleTurn = false
+  allowSingleTurn = false,
+  onTurnIdentified?: (turnId: string) => void
 ) {
   const address = message?.runtimeAddress
   const subscribe = useCallback(
-    (listener: () => void) =>
-      address ? subscribeRuntimeConversation(address, listener) : () => {},
-    [address]
+    (listener: () => void) => {
+      if (!address) return () => {}
+      const identify = () => {
+        const turn = resolveActivityExecutionTurn(
+          message,
+          getRuntimeConversationTurns(address),
+          turnId,
+          allowSingleTurn
+        )
+        if (turn?.id) onTurnIdentified?.(turn.id)
+      }
+      const release = subscribeRuntimeConversation(address, () => {
+        identify()
+        listener()
+      })
+      identify()
+      return release
+    },
+    [address, message, turnId, allowSingleTurn, onTurnIdentified]
   )
   const getSnapshot = useCallback(
     () => (address ? getRuntimeConversationTurns(address) : EMPTY_TURNS),
@@ -71,9 +88,10 @@ export function useActivityExecutionBinding(messages: ProjectChatMessage[], mess
 export function useActivityExecutionDisplayStatus(
   message: ProjectChatMessage | undefined,
   turnId?: string,
-  allowSingleTurn = false
+  allowSingleTurn = false,
+  onTurnIdentified?: (turnId: string) => void
 ) {
-  const turn = useActivityExecutionStatus(message, turnId, allowSingleTurn)
+  const turn = useActivityExecutionStatus(message, turnId, allowSingleTurn, onTurnIdentified)
   const lifecycle = useRuntimeTaskLifecycle(message?.runtimeAddress)
   return {
     turn,

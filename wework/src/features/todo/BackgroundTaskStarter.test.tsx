@@ -1,8 +1,8 @@
-import { render, waitFor } from '@testing-library/react'
+import { waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { RuntimeTaskAddress } from '@/types/api'
-import { BackgroundTaskStarter } from './BackgroundTaskStarter'
+import { startBackgroundTask } from './backgroundTaskCommand'
 
 const mocks = vi.hoisted(() => ({
   createConversation: vi.fn(),
@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => ({
 }))
 
 vi.mock('./useProjectRuntimeTaskComposer', () => ({
-  useProjectRuntimeTaskComposer: (options: unknown) => {
+  createProjectRuntimeTaskComposer: (_create: unknown, options: unknown) => {
     mocks.useComposer(options)
     return mocks.createConversation
   },
@@ -41,15 +41,16 @@ describe('BackgroundTaskStarter', () => {
       return address
     })
 
-    const { container } = render(
-      <BackgroundTaskStarter
-        project={{
+    const container = document.body
+    void startBackgroundTask(
+      {
+        project: {
           id: 11,
           name: 'Wegent V4',
           description: '',
-        }}
-        localProjects={[{ id: 91, name: '运营工作区', tasks: [] }]}
-        task={{
+        },
+        localProjects: [{ id: 91, name: '运营工作区', tasks: [] }],
+        task: {
           id: 'WEG-1',
           cloud_project_id: 11,
           sequence_number: 1,
@@ -67,12 +68,18 @@ describe('BackgroundTaskStarter', () => {
           created_at: '2026-07-22T00:00:00Z',
           updated_at: '2026-07-22T00:00:00Z',
           completed_at: null,
-        }}
-        input="Implement cloud MCP"
-        initialLocalProjectId={91}
-        onAddressChange={onAddressChange}
-        onError={vi.fn()}
-      />
+        },
+        input: 'Implement cloud MCP',
+        initialLocalProjectId: 91,
+        onAddressChange: onAddressChange,
+        onError: vi.fn(),
+      },
+      {
+        state: {
+          runtimeWork: mocks.runtimeWork,
+        } as import('@/features/workbench/workbenchContextTypes').WorkbenchContextValue['state'],
+        createProjectRuntimeTask: vi.fn(),
+      }
     )
 
     expect(container).toBeEmptyDOMElement()

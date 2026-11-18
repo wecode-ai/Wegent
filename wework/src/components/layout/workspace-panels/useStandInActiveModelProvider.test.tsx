@@ -106,3 +106,34 @@ describe('legacy stand-in provider identity', () => {
     expect(readTask).toHaveBeenCalledOnce()
   })
 })
+
+it('isolates API sessions even when their read function and task address match', async () => {
+  let finish!: (value: ReadResult) => void
+  const readTask = vi
+    .fn<StandInExecutorApi['readTask']>()
+    .mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finish = resolve
+        })
+    )
+    .mockResolvedValueOnce(response('thread', 'current'))
+  const first = { readTask } as unknown as StandInExecutorApi
+  const second = { readTask } as unknown as StandInExecutorApi
+  const { result, rerender } = renderHook(
+    ({ api }) =>
+      useStandInActiveModelProvider({
+        enabled: true,
+        api,
+        address,
+        threadId: 'thread',
+        selection,
+        runtimeHandle: undefined,
+      }),
+    { initialProps: { api: first } }
+  )
+  rerender({ api: second })
+  await waitFor(() => expect(result.current.provider).toBe('current'))
+  await act(async () => finish(response('thread', 'old')))
+  expect(result.current.provider).toBe('current')
+})

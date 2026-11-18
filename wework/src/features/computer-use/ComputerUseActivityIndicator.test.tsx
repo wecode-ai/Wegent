@@ -79,3 +79,33 @@ describe('ComputerUseActivityIndicator', () => {
     await waitFor(() => expect(mocks.stop).toHaveBeenCalledOnce())
   })
 })
+
+test('does not restore a stopped action from an older in-flight status read', async () => {
+  vi.useFakeTimers()
+  let finish!: (value: typeof activeStatus) => void
+  mocks.getStatus
+    .mockReset()
+    .mockResolvedValueOnce(activeStatus)
+    .mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finish = resolve
+        })
+    )
+  mocks.stop.mockResolvedValue({ ...activeStatus, currentTool: null })
+  const view = render(<ComputerUseActivityIndicator />)
+  try {
+    await act(() => vi.advanceTimersByTimeAsync(0))
+    await act(() => vi.advanceTimersByTimeAsync(1000))
+    expect(mocks.getStatus).toHaveBeenCalledTimes(2)
+    await act(async () => fireEvent.click(screen.getByTestId('computer-use-stop-button')))
+    expect(screen.queryByTestId('computer-use-activity-indicator')).not.toBeInTheDocument()
+    await act(() => vi.advanceTimersByTimeAsync(2000))
+    expect(mocks.getStatus).toHaveBeenCalledTimes(2)
+    await act(async () => finish(activeStatus))
+    expect(screen.queryByTestId('computer-use-activity-indicator')).not.toBeInTheDocument()
+  } finally {
+    view.unmount()
+    vi.useRealTimers()
+  }
+})

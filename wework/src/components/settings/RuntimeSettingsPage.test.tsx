@@ -76,6 +76,7 @@ describe('RuntimeSettingsPage', () => {
     fireEvent.change(screen.getByTestId('runtime-profile-name'), {
       target: { value: 'My Runtime' },
     })
+    await waitFor(() => expect(screen.getByTestId('runtime-profile-save')).toBeEnabled())
     fireEvent.click(screen.getByTestId('runtime-profile-save'))
 
     await waitFor(() =>

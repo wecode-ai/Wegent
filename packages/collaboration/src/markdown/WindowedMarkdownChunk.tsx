@@ -1,12 +1,4 @@
-import {
-  useCallback,
-  useContext,
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react'
+import { useCallback, useContext, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { flushSync } from 'react-dom'
 import { isOversizedAtomicMarkdownChunk } from './assistantMarkdownWindowing'
 import {
@@ -112,18 +104,31 @@ export function WindowedMarkdownChunk({
     },
     [scope]
   )
-  const attachChunk = useCallback(
-    (chunk: HTMLDivElement | null) => {
-      chunkRef.current = chunk
-      if (!chunk || shouldRender) return
+  const attachChunk = useCallback((chunk: HTMLDivElement | null) => {
+    chunkRef.current = chunk
+    if (!chunk) return
+    return () => {
+      chunkRef.current = null
+      if (!isConversationDiagnosticsEnabled()) return
+      recordConversationDiagnostic('markdown-unmounted', {
+        ...diagnosticDetailsRef.current,
+        elapsedMs: diagnosticLayoutRef.current
+          ? performance.now() - diagnosticLayoutRef.current.measuredAtMs
+          : 0,
+      })
+    }
+  }, [])
+  const attachPlaceholder = useCallback(
+    (placeholder: HTMLDivElement | null) => {
+      const chunk = placeholder?.parentElement
+      if (!placeholder || !chunk) return
       // Parent virtual rows measure in the same commit, before this chunk's
       // retained-layout state update can render. Restore its width-matched height now.
       const height = retainPlaceholderLayout(chunk.getBoundingClientRect(), content)
       chunk.style.minHeight = `${height}px`
-      const placeholder = chunk.querySelector<HTMLElement>('[data-markdown-window-placeholder]')
-      if (placeholder) placeholder.style.maxHeight = `${height}px`
+      placeholder.style.maxHeight = `${height}px`
     },
-    [content, retainPlaceholderLayout, shouldRender]
+    [content, retainPlaceholderLayout]
   )
   const viewportRender = useCallback((viewport: DOMRect): (() => void) | undefined => {
     const chunk = chunkRef.current
@@ -272,19 +277,6 @@ export function WindowedMarkdownChunk({
     return () => observer.disconnect()
   }, [saveRenderedLayout, retainPlaceholderLayout, scope, viewportRender])
 
-  useEffect(
-    () => () => {
-      if (!isConversationDiagnosticsEnabled()) return
-      recordConversationDiagnostic('markdown-unmounted', {
-        ...diagnosticDetailsRef.current,
-        elapsedMs: diagnosticLayoutRef.current
-          ? performance.now() - diagnosticLayoutRef.current.measuredAtMs
-          : 0,
-      })
-    },
-    []
-  )
-
   return (
     <div
       ref={attachChunk}
@@ -297,6 +289,7 @@ export function WindowedMarkdownChunk({
         children
       ) : (
         <div
+          ref={attachPlaceholder}
           data-markdown-window-placeholder
           className="overflow-hidden whitespace-pre-wrap leading-6"
           style={{ maxHeight: reservedHeight }}

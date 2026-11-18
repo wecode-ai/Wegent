@@ -1,5 +1,10 @@
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
 import { useToolInteractionServices } from '../ToolInteractionServices'
-import { useEffect, useLayoutEffect, useState } from 'react'
+import { useLayoutEffect, useMemo, useSyncExternalStore } from 'react'
 import { useConversationTranslation } from '../ConversationTranslation'
 import type { ProcessingBlock, SubagentBlock } from './types'
 import type { MarkdownFileOpenOptions as WorkspaceFileOpenOptions } from '../../markdown/MarkdownServices'
@@ -304,18 +309,24 @@ function PlanBlockItem({
 }
 
 function useDelayedBlockVisibility(blockId: string | null, delayMs: number): boolean {
-  const [visibleBlockId, setVisibleBlockId] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!blockId) return
-    const timer = window.setTimeout(() => setVisibleBlockId(blockId), delayMs)
-    return () => {
-      window.clearTimeout(timer)
-      setVisibleBlockId(null)
-    }
-  }, [blockId, delayMs])
-
-  return blockId !== null && visibleBlockId === blockId
+  const timer = useMemo(
+    () =>
+      blockId === null
+        ? null
+        : createAsyncResource(
+            JSON.stringify([blockId, delayMs]),
+            async () => true,
+            // Measure visible delay from committed observation, including a resumed pane.
+            { delayMs, refreshOnSubscribe: true }
+          ),
+    [blockId, delayMs]
+  )
+  const snapshot = useSyncExternalStore(
+    timer?.subscribe ?? subscribeIdleResource,
+    timer?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  return blockId !== null && snapshot.status === 'ready'
 }
 
 function ProcessTextBlockItem({

@@ -1,9 +1,9 @@
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import '@/i18n'
+import i18n from '@/i18n'
 import type { DeviceInfo } from '@/types/api'
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { WorktreesSettingsPage } from './WorktreesSettingsPage'
 
 describe('WorktreesSettingsPage', () => {
@@ -245,5 +245,192 @@ describe('WorktreesSettingsPage', () => {
       expect(screen.getByText('/cloud/repo')).toBeInTheDocument()
       expect(screen.getByTestId('worktrees-keep-count-input')).toHaveValue(7)
     })
+  })
+
+  test('a pending worktree list does not block settings', async () => {
+    listWorktrees.mockReturnValueOnce(new Promise(() => {}))
+    render(<WorktreesSettingsPage api={api} devices={devices} />)
+    await waitFor(() => expect(getWorktreeSettings).toHaveBeenCalledOnce())
+    await act(async () => {
+      await getWorktreeSettings.mock.results[0].value
+    })
+    expect(screen.getByTestId('worktrees-keep-count-input')).toHaveValue(15)
+  })
+
+  test('pending settings do not block the worktree list', async () => {
+    getWorktreeSettings.mockReturnValueOnce(new Promise(() => {}))
+    render(<WorktreesSettingsPage api={api} devices={devices} />)
+    await waitFor(() => expect(listWorktrees).toHaveBeenCalledOnce())
+    await act(async () => {
+      await listWorktrees.mock.results[0].value
+    })
+    expect(screen.getByText('Fix settings')).toBeInTheDocument()
+  })
+
+  test('language changes preserve an unsaved root without repeating device requests', async () => {
+    const previousLanguage = i18n.language
+    const view = render(<WorktreesSettingsPage api={api} devices={devices} />)
+    try {
+      await screen.findByText('Fix settings')
+      fireEvent.change(screen.getByTestId('worktrees-root-input'), {
+        target: { value: '/unsaved' },
+      })
+      await act(async () => {
+        await i18n.changeLanguage(previousLanguage.startsWith('en') ? 'zh-CN' : 'en')
+      })
+      await act(() => new Promise<void>(resolve => window.setTimeout(resolve, 0)))
+      expect(getWorktreeSettings).toHaveBeenCalledOnce()
+      expect(listWorktrees).toHaveBeenCalledOnce()
+      expect(screen.getByTestId('worktrees-root-input')).toHaveValue('/unsaved')
+    } finally {
+      view.unmount()
+      await act(async () => {
+        await i18n.changeLanguage(previousLanguage)
+      })
+    }
+  })
+
+  test('a save receipt from the previous API cannot change the current API settings or modal', async () => {
+    let finish!: (settings: unknown) => void
+    updateWorktreeSettings.mockReturnValueOnce(
+      new Promise(resolve => {
+        finish = resolve
+      })
+    )
+    const view = render(<WorktreesSettingsPage api={api} devices={devices} />)
+    await screen.findByText('Fix settings')
+    fireEvent.change(screen.getByTestId('worktrees-root-input'), { target: { value: '/old' } })
+    fireEvent.blur(screen.getByTestId('worktrees-root-input'))
+    const nextApi = {
+      ...api,
+      getWorktreeSettings: vi.fn().mockResolvedValue({
+        deviceId: 'local-device',
+        worktreeRoot: '/current',
+        resolvedWorktreeRoot: '/current',
+        autoCleanupEnabled: true,
+        keepCount: 5,
+      }),
+    }
+    view.rerender(<WorktreesSettingsPage api={nextApi} devices={devices} />)
+    await waitFor(() => expect(screen.getByTestId('worktrees-root-input')).toHaveValue('/current'))
+    await userEvent.click(screen.getByTestId('worktrees-auto-cleanup-switch'))
+    await act(async () =>
+      finish({
+        deviceId: 'local-device',
+        worktreeRoot: '/old',
+        autoCleanupEnabled: false,
+        keepCount: 99,
+      })
+    )
+    expect(screen.getByTestId('worktrees-root-input')).toHaveValue('/current')
+    expect(screen.getByTestId('worktrees-keep-count-input')).toHaveValue(5)
+    expect(screen.getByTestId('disable-worktree-cleanup-dialog')).toBeInTheDocument()
+    expect(screen.queryByTestId('worktrees-saved-notice')).not.toBeInTheDocument()
+  })
+
+  afterEach(() => vi.useRealTimers())
+
+  test('repeated saves of the same notice each receive a full expiration interval', async () => {
+    vi.useFakeTimers()
+    const view = render(<WorktreesSettingsPage api={api} devices={devices} />)
+    try {
+      await act(() => vi.advanceTimersByTimeAsync(0))
+      const input = screen.getByTestId('worktrees-keep-count-input')
+      fireEvent.change(input, { target: { value: '16' } })
+      await act(async () => {
+        fireEvent.blur(input)
+      })
+      expect(screen.getByTestId('worktrees-saved-notice')).toBeInTheDocument()
+      await act(() => vi.advanceTimersByTimeAsync(1000))
+      fireEvent.change(input, { target: { value: '17' } })
+      await act(async () => {
+        fireEvent.blur(input)
+      })
+      await act(() => vi.advanceTimersByTimeAsync(1001))
+      expect(screen.getByTestId('worktrees-saved-notice')).toBeInTheDocument()
+      await act(() => vi.advanceTimersByTimeAsync(999))
+      expect(screen.queryByTestId('worktrees-saved-notice')).not.toBeInTheDocument()
+      expect(updateWorktreeSettings).toHaveBeenCalledTimes(2)
+    } finally {
+      view.unmount()
+    }
+  })
+
+  test('refresh keeps unsaved fields and updates only fields that were clean', async () => {
+    render(<WorktreesSettingsPage api={api} devices={devices} />)
+    await screen.findByText('Fix settings')
+    fireEvent.change(screen.getByTestId('worktrees-root-input'), { target: { value: '/unsaved' } })
+    getWorktreeSettings.mockResolvedValueOnce({
+      deviceId: 'local-device',
+      worktreeRoot: '/server',
+      autoCleanupEnabled: true,
+      keepCount: 23,
+    })
+    await userEvent.click(screen.getByTestId('worktrees-refresh-button'))
+    await waitFor(() => expect(screen.getByTestId('worktrees-keep-count-input')).toHaveValue(23))
+    expect(screen.getByTestId('worktrees-root-input')).toHaveValue('/unsaved')
+    expect(updateWorktreeSettings).not.toHaveBeenCalled()
+  })
+
+  test('list failures do not hide settings or appear as an empty list and refresh can recover', async () => {
+    listWorktrees.mockRejectedValueOnce(new Error('list offline'))
+    render(<WorktreesSettingsPage api={api} devices={devices} />)
+    await screen.findByText('list offline')
+    expect(screen.getByTestId('worktrees-keep-count-input')).toHaveValue(15)
+    expect(
+      screen.queryByText(i18n.t('workbench.worktrees_empty_description'))
+    ).not.toBeInTheDocument()
+    await userEvent.click(screen.getByTestId('worktrees-refresh-button'))
+    await screen.findByText('Fix settings')
+    expect(screen.queryByText('list offline')).not.toBeInTheDocument()
+  })
+
+  test('a failed list response is treated as a failure instead of an empty success', async () => {
+    listWorktrees.mockResolvedValueOnce({ success: false, deviceId: 'local-device', items: [] })
+    render(<WorktreesSettingsPage api={api} devices={devices} />)
+    await waitFor(() => expect(screen.getByTestId('worktrees-root-input')).toBeInTheDocument())
+    expect(screen.getByText(i18n.t('workbench.worktrees_load_failed'))).toBeInTheDocument()
+    expect(
+      screen.queryByText(i18n.t('workbench.worktrees_empty_description'))
+    ).not.toBeInTheDocument()
+  })
+
+  test('a failed sidebar refresh after deletion does not close another worktree confirmation', async () => {
+    const response = await listWorktrees()
+    const second = {
+      ...response.items[0],
+      worktreeId: 'runtime-2',
+      path: '/worktrees/runtime-2/repo',
+    }
+    listWorktrees
+      .mockResolvedValueOnce({ ...response, items: [...response.items, second] })
+      .mockResolvedValue({ ...response, items: [second] })
+    let failRefresh!: (reason: unknown) => void
+    const refresh = vi.fn(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          failRefresh = reject
+        })
+    )
+    render(<WorktreesSettingsPage api={api} devices={devices} onRefreshWorkLists={refresh} />)
+    await userEvent.click(await screen.findByTestId('delete-worktree-button-runtime-1'))
+    await userEvent.click(screen.getByTestId('confirm-recycle-worktree-button'))
+    await waitFor(() =>
+      expect(screen.queryByTestId('confirm-recycle-worktree-button')).not.toBeInTheDocument()
+    )
+    await userEvent.click(screen.getByTestId('delete-worktree-button-runtime-2'))
+    await act(async () => failRefresh(new Error('sidebar refresh failed')))
+    expect(screen.getByTestId('confirm-recycle-worktree-button')).toBeInTheDocument()
+    expect(deleteWorktree).toHaveBeenCalledOnce()
+  })
+
+  test('an unavailable device performs no reads and is not reported as an empty list', () => {
+    render(<WorktreesSettingsPage api={api} devices={[]} />)
+    expect(getWorktreeSettings).not.toHaveBeenCalled()
+    expect(listWorktrees).not.toHaveBeenCalled()
+    expect(screen.getByText(i18n.t('workbench.worktrees_device_unavailable'))).toBeInTheDocument()
+    expect(
+      screen.queryByText(i18n.t('workbench.worktrees_empty_description'))
+    ).not.toBeInTheDocument()
   })
 })

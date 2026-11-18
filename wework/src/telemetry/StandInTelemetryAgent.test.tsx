@@ -1,6 +1,7 @@
-import { act, render, waitFor } from '@testing-library/react'
+import { act, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
-import { StandInTelemetryAgent } from './StandInTelemetryAgent'
+import { createStandInTelemetrySession } from './standInTelemetrySession'
+import type { TaskSource } from '@/features/notifications/NotificationTaskSourceContext'
 
 const mocks = vi.hoisted(() => ({
   enabled: true,
@@ -33,6 +34,31 @@ vi.mock('./standInDelivery', () => ({
   clearStandInDeliveries: mocks.clearAll,
   createStandInDelivery: () => ({ collect: mocks.collect, flush: mocks.flush, clear: mocks.clear }),
 }))
+
+const telemetryFixtures = new Set<() => void>()
+function renderStandInTelemetry() {
+  const actor = createStandInTelemetrySession()
+  const update = () => {
+    const source = mocks.source as TaskSource | null
+    actor.update({
+      mainWindow: true,
+      source,
+      backendUrl: 'local',
+      userId: source?.userId,
+      policy: mocks.loaded && mocks.asked && !mocks.enabled ? false : mocks.enabled ? true : null,
+    })
+  }
+  const stop = () => {
+    actor.stop()
+    telemetryFixtures.delete(stop)
+  }
+  telemetryFixtures.add(stop)
+  update()
+  return { rerender: update, unmount: stop }
+}
+afterEach(() => {
+  for (const stop of telemetryFixtures) stop()
+})
 
 beforeEach(() => {
   mocks.enabled = true
@@ -68,7 +94,7 @@ afterEach(() => vi.useRealTimers())
 
 describe('stand-in telemetry main-window lifecycle', () => {
   test('collects without opening a stand-in page and routes the consent boundary to online devices', async () => {
-    render(<StandInTelemetryAgent />)
+    renderStandInTelemetry()
     await waitFor(() => expect(mocks.collect).toHaveBeenCalledTimes(2))
     expect(mocks.configure).toHaveBeenCalledWith(7, 'local', true, 1234)
     expect(mocks.configure).toHaveBeenCalledWith(7, 'remote', true, 1234)
@@ -77,7 +103,7 @@ describe('stand-in telemetry main-window lifecycle', () => {
   test('clears all local account queues before an unavailable Executor can reconnect', async () => {
     mocks.enabled = false
     mocks.identity.mockResolvedValue(null)
-    render(<StandInTelemetryAgent />)
+    renderStandInTelemetry()
     await waitFor(() => expect(mocks.clearAll).toHaveBeenCalled())
     expect(mocks.collect).not.toHaveBeenCalled()
     expect(mocks.flush).not.toHaveBeenCalled()
@@ -85,13 +111,13 @@ describe('stand-in telemetry main-window lifecycle', () => {
   test('does not overwrite an Executor policy while initial consent is unknown', () => {
     mocks.enabled = false
     mocks.asked = false
-    render(<StandInTelemetryAgent />)
+    renderStandInTelemetry()
     expect(mocks.configure).not.toHaveBeenCalled()
     expect(mocks.clearAll).not.toHaveBeenCalled()
   })
   test('propagates a saved refusal to all connected Executors', async () => {
     mocks.enabled = false
-    render(<StandInTelemetryAgent />)
+    renderStandInTelemetry()
     await waitFor(() => expect(mocks.configure).toHaveBeenCalledTimes(2))
     expect(mocks.configure).toHaveBeenCalledWith(7, 'local', false, 1234)
     expect(mocks.collect).not.toHaveBeenCalled()
@@ -103,7 +129,7 @@ describe('stand-in telemetry main-window lifecycle', () => {
     async enabled => {
       vi.useFakeTimers()
       mocks.enabled = enabled
-      await act(async () => render(<StandInTelemetryAgent />))
+      await act(async () => renderStandInTelemetry())
       await act(async () => vi.advanceTimersByTimeAsync(15_000))
 
       expect(mocks.identity).toHaveBeenCalledTimes(4)
@@ -118,7 +144,7 @@ describe('stand-in telemetry main-window lifecycle', () => {
     vi.useFakeTimers()
     mocks.source = { ...(mocks.source as object), devices: [] }
     mocks.configure.mockRejectedValueOnce(new Error('Disconnected'))
-    await act(async () => render(<StandInTelemetryAgent />))
+    await act(async () => renderStandInTelemetry())
     expect(mocks.collect).not.toHaveBeenCalled()
     await act(async () => vi.advanceTimersByTimeAsync(5_000))
     expect(mocks.configure).toHaveBeenCalledTimes(2)
@@ -135,19 +161,19 @@ describe('stand-in telemetry main-window lifecycle', () => {
     vi.useFakeTimers()
     mocks.source = { ...(mocks.source as object), devices: [] }
     mocks.enabled = false
-    let view!: ReturnType<typeof render>
+    let view!: ReturnType<typeof renderStandInTelemetry>
     await act(async () => {
-      view = render(<StandInTelemetryAgent />)
+      view = renderStandInTelemetry()
     })
     expect(mocks.configure).toHaveBeenLastCalledWith(7, 'local', false, 1234)
     expect(mocks.collect).not.toHaveBeenCalled()
 
     mocks.enabled = true
-    await act(async () => view.rerender(<StandInTelemetryAgent />))
+    await act(async () => view.rerender())
     expect(mocks.configure).toHaveBeenLastCalledWith(7, 'local', true, 1234)
     expect(mocks.collect).toHaveBeenCalledOnce()
     mocks.enabled = false
-    await act(async () => view.rerender(<StandInTelemetryAgent />))
+    await act(async () => view.rerender())
     expect(mocks.configure).toHaveBeenLastCalledWith(7, 'local', false, 1234)
     await act(async () => vi.advanceTimersByTimeAsync(10_000))
     expect(mocks.configure).toHaveBeenCalledTimes(3)
@@ -157,14 +183,14 @@ describe('stand-in telemetry main-window lifecycle', () => {
   test('does not rewrite local consent when only the online device inventory changes', async () => {
     mocks.enabled = false
     mocks.source = { ...(mocks.source as object), devices: [] }
-    const view = render(<StandInTelemetryAgent />)
+    const view = renderStandInTelemetry()
     await waitFor(() => expect(mocks.configure).toHaveBeenCalledOnce())
 
     mocks.source = {
       ...(mocks.source as object),
       devices: [{ device_id: 'new-remote', status: 'online' }],
     }
-    view.rerender(<StandInTelemetryAgent />)
+    view.rerender()
     await waitFor(() => expect(mocks.configure).toHaveBeenCalledWith(7, 'new-remote', false, 1234))
     expect(mocks.configure.mock.calls.filter(([, device]) => device === 'local')).toHaveLength(1)
   })
@@ -177,13 +203,13 @@ describe('stand-in telemetry main-window lifecycle', () => {
       })
     )
     mocks.source = { ...(mocks.source as object), devices: [] }
-    const view = render(<StandInTelemetryAgent />)
+    const view = renderStandInTelemetry()
     await waitFor(() => expect(mocks.configure).toHaveBeenCalledOnce())
     mocks.source = {
       ...(mocks.source as object),
       devices: [{ device_id: 'new-remote', status: 'online' }],
     }
-    view.rerender(<StandInTelemetryAgent />)
+    view.rerender()
     await act(async () => {})
     const localWrites = mocks.configure.mock.calls.filter(([, device]) => device === 'local').length
     await act(async () => finish())
@@ -199,11 +225,11 @@ describe('stand-in telemetry main-window lifecycle', () => {
       })
     )
     mocks.source = { ...(mocks.source as object), devices: [] }
-    const view = render(<StandInTelemetryAgent />)
+    const view = renderStandInTelemetry()
     await waitFor(() => expect(mocks.configure).toHaveBeenCalledOnce())
 
     mocks.enabled = false
-    view.rerender(<StandInTelemetryAgent />)
+    view.rerender()
     await act(async () => {})
     const writesBeforePreviousCompletion = mocks.configure.mock.calls.length
     await act(async () => finish())

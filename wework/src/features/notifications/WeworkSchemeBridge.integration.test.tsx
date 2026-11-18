@@ -1,5 +1,6 @@
 import { act, cleanup, render, screen } from '@testing-library/react'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { WorkspaceTabsProvider } from '@/features/workspace-tabs/WorkspaceTabsContext'
 import { useWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
@@ -30,12 +31,9 @@ function Harness({ tabs }: { tabs: WorkspaceTab[] }) {
     pathname: window.location.pathname,
     search: window.location.search,
   }))
-  useEffect(() => {
-    const updateLocation = () =>
-      setLocation({ pathname: window.location.pathname, search: window.location.search })
-    window.addEventListener('popstate', updateLocation)
-    return () => window.removeEventListener('popstate', updateLocation)
-  }, [])
+  useWindowEvent('popstate', () =>
+    setLocation({ pathname: window.location.pathname, search: window.location.search })
+  )
   return (
     <WorkspaceTabsProvider
       {...location}

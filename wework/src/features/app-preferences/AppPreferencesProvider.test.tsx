@@ -85,4 +85,30 @@ describe('AppPreferencesProvider', () => {
     view.unmount()
     expect(unsubscribe).toHaveBeenCalledOnce()
   })
+
+  test('a late initial read cannot overwrite a newer preference event', async () => {
+    let resolveRead!: (preferences: typeof defaultAppPreferences) => void
+    getAppPreferencesMock.mockReturnValue(
+      new Promise(resolve => {
+        resolveRead = resolve
+      })
+    )
+    render(
+      <AppPreferencesProvider>
+        <PreferenceProbe label="latest" />
+      </AppPreferencesProvider>
+    )
+    act(() =>
+      window.dispatchEvent(
+        new CustomEvent(APP_PREFERENCES_CHANGED_EVENT, {
+          detail: { ...defaultAppPreferences, experimentalFeaturesEnabled: true },
+        })
+      )
+    )
+    expect(screen.getByText('latest:true:true')).toBeInTheDocument()
+    await act(async () => {
+      resolveRead({ ...defaultAppPreferences, experimentalFeaturesEnabled: false })
+    })
+    expect(screen.getByText('latest:true:true')).toBeInTheDocument()
+  })
 })

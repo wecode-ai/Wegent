@@ -1,3 +1,8 @@
+import {
+  getIssueCommentDraft,
+  updateIssueCommentDraft,
+  clearIssueCommentDraftsForTests,
+} from '@/features/todo/useIssueCommentDraft'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { TaskReplyQueueStore } from '@wegent/collaboration/execution/taskReplyQueue'
 import { useTaskReplyQueue } from '@wegent/collaboration/execution/useTaskReplyQueue'
@@ -5,7 +10,7 @@ import type {
   TaskCardDispatchResult,
   TaskReplyCard,
 } from '@wegent/collaboration/execution/taskCardReply'
-import { expect, it, vi } from 'vitest'
+import { beforeEach, expect, it, vi } from 'vitest'
 import { NotificationEntityContext } from './NotificationEntityContext'
 import {
   RuntimeInteractionsContext,
@@ -22,6 +27,8 @@ import {
   useNotificationCommentDispatch,
 } from './useNotificationCommentReply'
 
+beforeEach(clearIssueCommentDraftsForTests)
+
 it('coordinates the original Issue reply without replacing its native send callback', async () => {
   const [item] = await readRuntimeInteractions(interactionTask, {
     getRuntimeTranscript: vi.fn(async () => interactionTranscript(interactionQuestion)),
@@ -37,15 +44,14 @@ it('coordinates the original Issue reply without replacing its native send callb
     respond,
     setDraft,
   } as unknown as RuntimeInteractionsValue
-  const card = { root: { messageId: 'root' } }
+  const card = { root: { messageId: 'root' }, replies: [] } as unknown as TaskReplyCard
   const selectTarget = vi.fn()
   const props = {
     projectId: 'project',
     issueId: 'issue',
     store: 'backend' as 'local' | 'backend',
     cards: [card],
-    target: card,
-    selectTarget,
+    draftScope: 'notification-reply-fixture',
   }
   const { result, rerender } = renderHook(props => useNotificationCommentReply(props), {
     initialProps: props,
@@ -65,6 +71,8 @@ it('coordinates the original Issue reply without replacing its native send callb
       </RuntimeInteractionsContext.Provider>
     ),
   })
+  const selectedTarget = getIssueCommentDraft(props.draftScope).replyTarget
+  if (selectedTarget) selectTarget(selectedTarget)
   expect(selectTarget).toHaveBeenCalledExactlyOnceWith(card)
   expect(result.current?.draft).toBe('Saved reply')
   expect(result.current?.disabled).toBe(false)
@@ -85,7 +93,12 @@ it('coordinates the original Issue reply without replacing its native send callb
   rerender(props)
   expect(result.current?.draft).toBe('Saved reply')
   expect(result.current?.disabled).toBe(true)
-  rerender({ ...props, target: { root: { messageId: 'other-root' } } })
+  act(() =>
+    updateIssueCommentDraft(props.draftScope, {
+      replyTarget: { root: { messageId: 'other-root' }, replies: [] } as unknown as TaskReplyCard,
+    })
+  )
+  rerender(props)
   expect(result.current?.composing).toBe(false)
 })
 it('binds queued answers to their exact request instead of the visible request on the same root', async () => {
@@ -159,8 +172,7 @@ it.each(['absent', 'handled'])(
           issueId: entity.issueId,
           store: entity.store,
           cards: [card],
-          target: null,
-          selectTarget,
+          draftScope: 'notification-reply-unbound-fixture',
         }),
       {
         wrapper: ({ children }) => (

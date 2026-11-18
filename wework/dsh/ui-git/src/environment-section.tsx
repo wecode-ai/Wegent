@@ -10,8 +10,9 @@ import {
   Upload,
   X,
 } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useRef, useState, type FormEvent } from 'react'
 import { createPortal } from 'react-dom'
+import { useDocumentEvent } from '@wegent/collaboration/dom-events'
 
 import { BranchSelector } from '@/components/common/BranchSelector'
 import { ChangeRequestStatusIcon } from '@/components/common/ChangeRequestStatusIcon'
@@ -174,35 +175,31 @@ function GitEnvironmentSectionContent({
     setCommitError(null)
   }, [])
 
-  useEffect(() => {
-    if (!commitFormOpen) return
-
-    const handlePointerDown = (event: PointerEvent) => {
+  useDocumentEvent(
+    'pointerdown',
+    event => {
       const target = event.target
       if (
         !(target instanceof Node) ||
         commitFormRef.current?.contains(target) ||
         commitButtonRef.current?.contains(target)
-      ) {
+      )
         return
-      }
       closeCommitForm()
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
+    },
+    { enabled: commitFormOpen }
+  )
+  useDocumentEvent(
+    'keydown',
+    event => {
       if (event.key !== 'Escape') return
       event.preventDefault()
       event.stopPropagation()
       closeCommitForm()
       commitButtonRef.current?.focus()
-    }
-
-    document.addEventListener('pointerdown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown, true)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown, true)
-    }
-  }, [closeCommitForm, commitFormOpen])
+    },
+    { enabled: commitFormOpen, capture: true }
+  )
 
   if (!hasDiffStats && !hasGitInfo && !canShowBranchSelector) return null
 

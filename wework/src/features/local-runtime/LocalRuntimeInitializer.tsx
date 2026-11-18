@@ -1,4 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { LocalExecutorCloudInput } from '@/features/cloud-connection/localExecutorCloudService'
+import {
+  createLocalRuntimeStartupSource,
+  type LocalRuntimeState,
+} from './localRuntimeStartupSource'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import { AlertCircle, Check, Copy } from 'lucide-react'
 import { LocalRuntimeNoticeContext } from './localRuntimeNoticeContext'
@@ -29,12 +34,8 @@ type CopyDebugState = 'idle' | 'copying' | 'copied' | 'failed'
 interface LocalRuntimeInitializerProps {
   children: ReactNode
   startupReady?: boolean
+  cloudConnection?: LocalExecutorCloudInput
 }
-
-type LocalRuntimeState =
-  | { phase: 'starting'; error: string | null }
-  | { phase: 'ready'; error: null }
-  | { phase: 'failed'; error: string; cause: unknown }
 
 interface LocalRuntimeErrorText {
   notRunning: string
@@ -216,12 +217,11 @@ function SlowStartupHelp({ copyState, onCopyDebugInfo }: SlowStartupHelpProps) {
 export function LocalRuntimeInitializer({
   children,
   startupReady = true,
+  cloudConnection,
 }: LocalRuntimeInitializerProps) {
   const { t } = useTranslation('localRuntime')
   const enabled = useMemo(() => shouldInitializeLocalRuntime(), [])
   const fallbackError = t('fallback_error')
-  const [slowStartupTimedOut, setSlowStartupTimedOut] = useState(false)
-  const [startupAttempt, setStartupAttempt] = useState(0)
   const [copyDebugState, setCopyDebugState] = useState<CopyDebugState>('idle')
   const runtimeErrorText = useMemo(
     () => ({
@@ -230,43 +230,25 @@ export function LocalRuntimeInitializer({
     }),
     [t]
   )
-  const [state, setState] = useState<LocalRuntimeState>(() => ({
-    phase: enabled ? 'starting' : 'ready',
-    error: null,
-  }))
-
-  useEffect(() => {
-    if (!enabled) {
-      return undefined
-    }
-
-    const timer = window.setTimeout(() => {
-      setSlowStartupTimedOut(true)
-    }, LOCAL_RUNTIME_SLOW_STARTUP_MS)
-    return () => window.clearTimeout(timer)
-  }, [enabled, startupAttempt])
-
+  const [startup] = useState(() =>
+    createLocalRuntimeStartupSource(enabled, LOCAL_RUNTIME_SLOW_STARTUP_MS)
+  )
+  const resolveStartup = useCallback(
+    () => resolveLocalRuntimeState(fallbackError, runtimeErrorText),
+    [fallbackError, runtimeErrorText]
+  )
+  const subscribeStartup = useCallback(
+    (listener: () => void) => startup.subscribe(listener, resolveStartup, cloudConnection),
+    [startup, resolveStartup, cloudConnection]
+  )
+  const { state, startupAttempt, slowStartupTimedOut } = useSyncExternalStore(
+    subscribeStartup,
+    startup.getSnapshot
+  )
   const retryInitialize = useCallback(async () => {
-    if (!enabled) return
-    setStartupAttempt(attempt => attempt + 1)
-    setSlowStartupTimedOut(false)
     setCopyDebugState('idle')
-    setState(previous => ({ phase: 'starting', error: previous.error }))
-    setState(await resolveLocalRuntimeState(fallbackError, runtimeErrorText))
-  }, [enabled, fallbackError, runtimeErrorText])
-
-  useEffect(() => {
-    if (!enabled) return undefined
-    let cancelled = false
-    void resolveLocalRuntimeState(fallbackError, runtimeErrorText).then(nextState => {
-      if (!cancelled) {
-        setState(nextState)
-      }
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [enabled, fallbackError, runtimeErrorText])
+    await startup.retry()
+  }, [startup])
 
   const handleCopyDebugInfo = useCallback(async () => {
     setCopyDebugState('copying')

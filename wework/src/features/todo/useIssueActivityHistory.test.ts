@@ -152,4 +152,30 @@ describe('useIssueActivityHistory', () => {
     await waitFor(() => expect(result.current.loading).toBe(false))
     expect(result.current.assignmentHistory).toEqual([assignment])
   })
+  it('reopening an already settled version refreshes without returning to initial loading', async () => {
+    let finish!: (item: CloudLoopItem) => void
+    const api = {
+      getLoopItem: vi
+        .fn()
+        .mockResolvedValueOnce({ ...task, assignment_history: [assignment] })
+        .mockImplementationOnce(
+          () =>
+            new Promise<CloudLoopItem>(resolve => {
+              finish = resolve
+            })
+        ),
+    }
+    const { result, rerender } = renderHook(
+      ({ enabled }) => useIssueActivityHistory(task, [], enabled, api),
+      { initialProps: { enabled: true } }
+    )
+    await waitFor(() => expect(result.current.assignmentHistory).toEqual([assignment]))
+    rerender({ enabled: false })
+    rerender({ enabled: true })
+    expect(api.getLoopItem).toHaveBeenCalledTimes(2)
+    expect(result.current.loading).toBe(false)
+    expect(result.current.assignmentHistory).toEqual([assignment])
+    await act(async () => finish({ ...task, assignment_history: [] }))
+    expect(result.current.assignmentHistory).toEqual([])
+  })
 })

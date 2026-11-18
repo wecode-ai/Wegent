@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
+import { useDialogKeyboard } from '@wegent/collaboration/dom-events'
+import { createMiniProgramLinkCopy } from './miniProgramLinkCopy'
 import {
   AlertCircle,
   Check,
@@ -14,7 +16,6 @@ import {
 } from 'lucide-react'
 import type { ApplicationCapability, MiniProgram, Site } from '@/api/sites'
 import { useTranslation } from '@/hooks/useTranslation'
-import { copyTextToClipboard } from '@/lib/clipboard'
 import { openExternalUrl } from '@/lib/external-links'
 import { createQrCodeModules, qrCodeOffset, qrCodeViewBox } from './qrCodeSvg'
 import { SiteActionsMenu } from './SiteActionsMenu'
@@ -187,7 +188,11 @@ function QrCodeDialog({
   onClose: () => void
 }) {
   const { t } = useTranslation('sites')
-  const closeButtonRef = useRef<HTMLButtonElement>(null)
+  const dialogRef = useDialogKeyboard<HTMLDivElement>(
+    onClose,
+    true,
+    '[data-testid="mini-program-qrcode-close"]'
+  )
   const modules = useMemo(() => {
     try {
       return createQrCodeModules(url)
@@ -197,18 +202,6 @@ function QrCodeDialog({
     }
   }, [url])
   const offset = qrCodeOffset()
-
-  useEffect(() => {
-    closeButtonRef.current?.focus()
-  }, [])
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [onClose])
 
   return (
     <div
@@ -220,6 +213,8 @@ function QrCodeDialog({
       <div
         role="dialog"
         aria-modal="true"
+        ref={dialogRef}
+        tabIndex={-1}
         aria-labelledby="mini-program-qrcode-title"
         data-testid="mini-program-qrcode-dialog"
         className="w-full max-w-[360px] rounded-lg border border-border bg-popover p-5 shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
@@ -236,7 +231,6 @@ function QrCodeDialog({
             <p className="mt-1 truncate text-xs leading-5 text-text-secondary">{url}</p>
           </div>
           <button
-            ref={closeButtonRef}
             type="button"
             data-testid="mini-program-qrcode-close"
             onClick={onClose}
@@ -306,8 +300,6 @@ export function MiniProgramApplicationRow({
 }) {
   const { t } = useTranslation('sites')
   const [qrCodeOpen, setQrCodeOpen] = useState(false)
-  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
-  const copyStateResetTimeoutRef = useRef<number | null>(null)
   const updatedAt = new Intl.DateTimeFormat(undefined, {
     year: 'numeric',
     month: 'short',
@@ -316,32 +308,9 @@ export function MiniProgramApplicationRow({
   const experienceUrl = program.experience_url ?? ''
   const canUseExperienceUrl = capabilities.has('open_experience') && experienceUrl
 
-  useEffect(
-    () => () => {
-      if (copyStateResetTimeoutRef.current !== null) {
-        window.clearTimeout(copyStateResetTimeoutRef.current)
-      }
-    },
-    []
-  )
-
-  const copyExperienceUrl = async () => {
-    if (!experienceUrl) return
-    try {
-      await copyTextToClipboard(experienceUrl)
-      setCopyState('copied')
-      if (copyStateResetTimeoutRef.current !== null) {
-        window.clearTimeout(copyStateResetTimeoutRef.current)
-      }
-      copyStateResetTimeoutRef.current = window.setTimeout(() => {
-        copyStateResetTimeoutRef.current = null
-        setCopyState('idle')
-      }, 1500)
-    } catch (error) {
-      console.error('Failed to copy mini program URL:', error)
-      setCopyState('failed')
-    }
-  }
+  const copy = useMemo(() => createMiniProgramLinkCopy(experienceUrl), [experienceUrl])
+  const copyState = useSyncExternalStore(copy.subscribe, copy.getSnapshot, copy.getSnapshot)
+  const copyExperienceUrl = copy.copy
 
   return (
     <article

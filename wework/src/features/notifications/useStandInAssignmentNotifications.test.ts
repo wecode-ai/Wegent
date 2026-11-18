@@ -4,16 +4,28 @@ import type { WeworkInbox } from '@/api/notifications'
 import type { TaskSource } from './NotificationTaskSourceContext'
 import type { DeviceInfo } from '@/types/devices'
 import { assignment } from './standInNotifications.fixtures'
-import { useStandInAssignmentNotifications } from './useStandInAssignmentNotifications'
+import { useStandInNotifications } from './useStandInNotifications'
 import { publishPersonalStandIn, type PersonalStandInSettings } from '@/api/personalStandIn'
 
 const { windowLabel } = vi.hoisted(() => ({ windowLabel: vi.fn(() => 'main') }))
 vi.mock('@/lib/runtime-environment', () => ({ getDesktopWindowLabel: windowLabel }))
 
+function useStandInAssignmentNotifications(
+  inbox: WeworkInbox | null,
+  source: TaskSource | null,
+  accountKey: string,
+  userId: number | null
+) {
+  return useStandInNotifications(inbox, source, accountKey, false, false, userId)
+}
+
 function fixture() {
   const notifyAssignment = vi.fn().mockResolvedValue(undefined)
   const identity = vi.fn().mockResolvedValue({ deviceId: 'mac' })
   const source = {
+    items: [],
+    unreadTaskKeys: new Set<string>(),
+    markRuntimeTaskRead: vi.fn(),
     services: { standInApi: { notifyAssignment }, getLocalRuntimeSidebarIdentity: identity },
   } as unknown as TaskSource
   const inbox: WeworkInbox = {

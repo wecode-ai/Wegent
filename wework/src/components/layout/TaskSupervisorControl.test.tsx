@@ -1,7 +1,12 @@
+import '@/i18n'
 import type { RuntimeSupervisorState } from '@/types/api'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, test, vi } from 'vitest'
-import { SupervisorSuggestionCards, TaskSupervisorControl } from './TaskSupervisorControl'
+import {
+  SupervisorSuggestionCards,
+  TaskSupervisorControl,
+  TaskSupervisorStatusButton,
+} from './TaskSupervisorControl'
 
 const supervisor: RuntimeSupervisorState = {
   mode: 'suggest',
@@ -373,4 +378,36 @@ describe('TaskSupervisorControl', () => {
     fireEvent.click(screen.getByTestId('task-supervisor-accept-suggestion'))
     await waitFor(() => expect(onAccept).toHaveBeenCalledWith(supervisor.suggestions[0]))
   })
+})
+
+test('stops the supervisor countdown when due and restarts for the next check', () => {
+  vi.useFakeTimers()
+  vi.setSystemTime(10000)
+  const view = render(
+    <TaskSupervisorStatusButton
+      supervisor={{ ...supervisor, lastEvaluatedAt: 10000, intervalSeconds: 3 }}
+      onClick={vi.fn()}
+    />
+  )
+  try {
+    expect(screen.getByTestId('task-supervisor-status-next-check')).toHaveTextContent('0:03')
+    act(() => vi.advanceTimersByTime(2000))
+    expect(screen.getByTestId('task-supervisor-status-next-check')).toHaveTextContent('0:01')
+    act(() => vi.advanceTimersByTime(1000))
+    expect(screen.getByTestId('task-supervisor-status-next-check')).toHaveTextContent('0:00')
+    expect(vi.getTimerCount()).toBe(0)
+    view.rerender(
+      <TaskSupervisorStatusButton
+        supervisor={{ ...supervisor, lastEvaluatedAt: 13000, intervalSeconds: 3 }}
+        onClick={vi.fn()}
+      />
+    )
+    expect(screen.getByTestId('task-supervisor-status-next-check')).toHaveTextContent('0:03')
+    expect(vi.getTimerCount()).toBe(1)
+    view.unmount()
+    expect(vi.getTimerCount()).toBe(0)
+  } finally {
+    view.unmount()
+    vi.useRealTimers()
+  }
 })

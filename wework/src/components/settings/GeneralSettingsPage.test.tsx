@@ -860,3 +860,60 @@ describe('GeneralSettingsPage', () => {
     expect(importExternalContentMock).toHaveBeenCalledTimes(2)
   })
 })
+
+test('isolates concurrency reads and saves when the Runtime API changes', async () => {
+  type Settings = {
+    maxConcurrentTasks: number
+    maxConcurrentStandInTasks: number
+    maxConcurrentAgentTasks: number
+  }
+  const settings = (value: number): Settings => ({
+    maxConcurrentTasks: value,
+    maxConcurrentStandInTasks: value,
+    maxConcurrentAgentTasks: value,
+  })
+  let finishRead!: (value: Settings) => void
+  let finishSave!: (value: Settings) => void
+  const first = {
+    getRuntimeSettings: () =>
+      new Promise<Settings>(resolve => {
+        finishRead = resolve
+      }),
+    updateRuntimeSettings: vi.fn(),
+  }
+  const second = {
+    getRuntimeSettings: async () => settings(6),
+    updateRuntimeSettings: vi.fn(
+      () =>
+        new Promise<Settings>(resolve => {
+          finishSave = resolve
+        })
+    ),
+  }
+  const third = { getRuntimeSettings: async () => settings(8), updateRuntimeSettings: vi.fn() }
+  const renderScope = (api: unknown) => (
+    <WorkbenchContext.Provider
+      value={
+        {
+          services: { runtimeWorkApi: api },
+          refreshWorkLists: async () => {},
+        } as unknown as WorkbenchContextValue
+      }
+    >
+      <RuntimeConcurrencySettings />
+    </WorkbenchContext.Provider>
+  )
+  const view = render(renderScope(first))
+  view.rerender(renderScope(second))
+  const select = screen.getByTestId('general-max-concurrent-tasks-select')
+  await waitFor(() => expect(select).toHaveValue('6'))
+  await act(async () => finishRead(settings(5)))
+  expect(select).toHaveValue('6')
+  fireEvent.change(select, { target: { value: '2' } })
+  expect(second.updateRuntimeSettings).toHaveBeenCalledWith({ maxConcurrentTasks: 2 })
+  view.rerender(renderScope(third))
+  await waitFor(() => expect(select).toHaveValue('8'))
+  await act(async () => finishSave(settings(2)))
+  expect(select).toHaveValue('8')
+  expect(select).toBeEnabled()
+})

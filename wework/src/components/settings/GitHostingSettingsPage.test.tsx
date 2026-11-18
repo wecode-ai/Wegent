@@ -1,9 +1,10 @@
 import { defaultAppPreferences } from '@/desktop/appPreferences'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { notifyLocalConnectorAuthChanged } from '@/api/local/localConnectorAuthEvents'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import './../../../src/i18n'
+import i18n from '@/i18n'
+import type { GitHostingCliStatus } from '@/api/gitHostingCli'
 import { DeviceGitSyncSection } from './DeviceGitSyncSection'
 import { GitHostingSettingsPage } from './GitHostingSettingsPage'
 
@@ -394,5 +395,141 @@ describe('GitHostingSettingsPage', () => {
     )
     expect(screen.queryByTestId('git-device-sync-accounts')).not.toBeInTheDocument()
     expect(screen.queryByTestId('git-device-sync-submit')).not.toBeInTheDocument()
+  })
+  test('publishes GitHub readiness while GitLab detection is still pending', async () => {
+    vi.useFakeTimers()
+    let finish!: (value: GitHostingCliStatus) => void
+    const pending = new Promise<GitHostingCliStatus>(resolve => {
+      finish = resolve
+    })
+    getGitHostingCliStatus.mockImplementation(provider =>
+      provider === 'gitlab'
+        ? pending
+        : Promise.resolve({ installed: true, authenticated: true, detectionError: null })
+    )
+    try {
+      render(<GitHostingSettingsPage />)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(screen.getByTestId('git-hosting-cli-github-status')).toHaveTextContent('已就绪')
+      expect(screen.getByTestId('git-hosting-cli-gitlab-status')).toHaveTextContent('检测中')
+    } finally {
+      await act(async () => {
+        finish({
+          provider: 'gitlab',
+          tool: 'glab',
+          installed: true,
+          authenticated: true,
+          detectionError: null,
+          version: null,
+          executablePath: null,
+        })
+      })
+      vi.useRealTimers()
+    }
+  })
+
+  test('changing language does not repeat native CLI detection', async () => {
+    vi.useFakeTimers()
+    const previousLanguage = i18n.language
+    try {
+      render(<GitHostingSettingsPage />)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(getGitHostingCliStatus).toHaveBeenCalledTimes(2)
+      await act(async () => {
+        await i18n.changeLanguage('en')
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      expect(getGitHostingCliStatus).toHaveBeenCalledTimes(2)
+    } finally {
+      await act(async () => {
+        await i18n.changeLanguage(previousLanguage)
+      })
+      vi.useRealTimers()
+    }
+  })
+
+  test('keeps the latest copy confirmation visible for its full duration', async () => {
+    vi.useFakeTimers()
+    try {
+      render(<GitHostingSettingsPage />)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      const button = screen.getByTestId('git-hosting-cli-github-copy-login')
+      await act(async () => {
+        fireEvent.click(button)
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000)
+      })
+      await act(async () => {
+        fireEvent.click(button)
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(500)
+      })
+      expect(button).toHaveTextContent('已复制')
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1000)
+      })
+      expect(button).not.toHaveTextContent('已复制')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+  test('does not overwrite a refreshed authentication result with a previous pending read', async () => {
+    vi.useFakeTimers()
+    let finish!: (value: GitHostingCliStatus) => void
+    const pending = new Promise<GitHostingCliStatus>(resolve => {
+      finish = resolve
+    })
+    let first = true
+    getGitHostingCliStatus.mockImplementation(provider => {
+      if (provider === 'github' && first) {
+        first = false
+        return pending
+      }
+      return Promise.resolve({ installed: true, authenticated: true, detectionError: null })
+    })
+    try {
+      render(<GitHostingSettingsPage />)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+      await act(async () => {
+        notifyLocalConnectorAuthChanged()
+      })
+      expect(screen.getByTestId('git-hosting-cli-github-status')).toHaveTextContent('已就绪')
+      await act(async () => {
+        finish({
+          provider: 'github',
+          tool: 'gh',
+          installed: true,
+          authenticated: false,
+          detectionError: null,
+          version: null,
+          executablePath: null,
+        })
+      })
+      expect(screen.getByTestId('git-hosting-cli-github-status')).toHaveTextContent('已就绪')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  test('stops refreshing when its page is unmounted', async () => {
+    const view = render(<GitHostingSettingsPage />)
+    await screen.findByText('gh version 2.80.0')
+    view.unmount()
+    getGitHostingCliStatus.mockClear()
+    act(() => {
+      window.dispatchEvent(new Event('focus'))
+      notifyLocalConnectorAuthChanged()
+    })
+    expect(getGitHostingCliStatus).not.toHaveBeenCalled()
   })
 })

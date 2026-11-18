@@ -54,7 +54,7 @@ describe('runtime conversation search pages', () => {
     const { result } = renderHook(() =>
       useRuntimeConversationSearch({
         target,
-        targetRef: { current: target },
+        getTarget: () => target,
         searchTranscript,
         loadTranscript: vi.fn(),
       })
@@ -86,7 +86,7 @@ describe('runtime conversation search pages', () => {
     const { result } = renderHook(() =>
       useRuntimeConversationSearch({
         target,
-        targetRef: { current: target },
+        getTarget: () => target,
         searchTranscript: vi.fn(() => pending.promise),
         loadTranscript,
       })
@@ -124,7 +124,12 @@ describe('runtime conversation search pages', () => {
     })
     const loadTranscript = vi.fn().mockResolvedValue(transcript)
     const { result } = renderHook(() =>
-      useRuntimeConversationSearch({ target, targetRef, searchTranscript, loadTranscript })
+      useRuntimeConversationSearch({
+        target,
+        getTarget: () => targetRef.current,
+        searchTranscript,
+        loadTranscript,
+      })
     )
     const signal = new AbortController().signal
     await act(async () => {
@@ -177,7 +182,7 @@ describe('runtime conversation search pages', () => {
     const { result } = renderHook(() =>
       useRuntimeConversationSearch({
         target,
-        targetRef: { current: target },
+        getTarget: () => target,
         searchTranscript: vi.fn(),
         loadTranscript,
       })
@@ -203,7 +208,7 @@ describe('runtime conversation search pages', () => {
     const targetRef = { current: target }
     const options = {
       target,
-      targetRef,
+      getTarget: () => targetRef.current,
       searchTranscript: vi.fn(),
       loadTranscript: vi
         .fn()
@@ -271,7 +276,7 @@ describe('runtime conversation search pages', () => {
     const { result } = renderHook(() =>
       useRuntimeConversationSearch({
         target,
-        targetRef: { current: target },
+        getTarget: () => target,
         searchTranscript: vi.fn(),
         loadTranscript,
       })
@@ -348,7 +353,7 @@ describe('runtime conversation search pages', () => {
     const { result } = renderHook(() =>
       useRuntimeConversationSearch({
         target,
-        targetRef: { current: target },
+        getTarget: () => target,
         searchTranscript: vi.fn(),
         loadTranscript,
       })
@@ -387,7 +392,7 @@ describe('runtime conversation search pages', () => {
     const { result } = renderHook(() =>
       useRuntimeConversationSearch({
         target,
-        targetRef: { current: target },
+        getTarget: () => target,
         searchTranscript: vi.fn(),
         loadTranscript,
       })
@@ -426,7 +431,7 @@ describe('runtime conversation search pages', () => {
     const { result } = renderHook(() =>
       useRuntimeConversationSearch({
         target,
-        targetRef: { current: target },
+        getTarget: () => target,
         searchTranscript: vi.fn(),
         loadTranscript,
       })
@@ -462,7 +467,7 @@ describe('runtime conversation search pages', () => {
       const targetRef = { current: target }
       const options = {
         target,
-        targetRef,
+        getTarget: () => targetRef.current,
         reloadRevision: 0,
         searchTranscript: vi
           .fn()
@@ -518,7 +523,7 @@ describe('runtime conversation search pages', () => {
     const { result } = renderHook(() =>
       useRuntimeConversationSearch({
         target,
-        targetRef: { current: target },
+        getTarget: () => target,
         searchTranscript: vi.fn(),
         loadTranscript,
       })

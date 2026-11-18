@@ -219,3 +219,32 @@ test('a virtual row unmount removes its portaled menu', async () => {
   result.unmount()
   expect(screen.queryByTestId('plugin-marketplace-actions-menu-dingtalk')).not.toBeInTheDocument()
 })
+
+test('category dialog traps focus and restores its opener after removal', async () => {
+  const user = userEvent.setup()
+  render(<button data-testid="category-opener">Browse</button>)
+  const opener = screen.getByTestId('category-opener')
+  opener.focus()
+  const view = render(
+    <CategoryBrowseDialog
+      section={{ key: 'empty', title: 'Empty', items: [] }}
+      isLoggedIn
+      isReconciling={false}
+      installingMarketplacePluginIds={new Set()}
+      isLocallyUninstalling={() => false}
+      allowPendingRetry={false}
+      rowLabels={props.labels}
+      onClose={vi.fn()}
+      onAction={vi.fn()}
+    />
+  )
+  expect(screen.getByTestId('plugins-category-browse-dialog')).toHaveFocus()
+  await user.tab()
+  expect(screen.getByTestId('plugins-category-browse-close')).toHaveFocus()
+  await user.tab()
+  expect(screen.getByTestId('plugins-category-browse-close')).toHaveFocus()
+  await user.tab({ shift: true })
+  expect(screen.getByTestId('plugins-category-browse-close')).toHaveFocus()
+  view.unmount()
+  expect(opener).toHaveFocus()
+})

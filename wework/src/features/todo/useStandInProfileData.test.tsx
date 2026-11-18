@@ -3,6 +3,7 @@ import { expect, it, vi } from 'vitest'
 import type { Automation } from '@/types/automation'
 import type { AutomationApi } from '@/features/workbench/workbenchServices'
 import { useStandInProfileSchedules } from './useStandInProfileData'
+import { WORKBENCH_AUTOMATIONS_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
 
 const automation = {
   id: 'schedule',
@@ -63,4 +64,38 @@ it('keeps schedule errors separate and supports retry', async () => {
   act(() => result.current.retry())
   await waitFor(() => expect(result.current.items).toEqual([automation]))
   expect(result.current.error).toBeUndefined()
+})
+
+it('owns refresh timers and change events only while its API is subscribed', async () => {
+  vi.useFakeTimers()
+  try {
+    const listAutomations = vi.fn().mockResolvedValue({ items: [automation] })
+    const api = { listAutomations } as unknown as AutomationApi
+    const { result, rerender, unmount } = renderHook(
+      ({ source }: { source: AutomationApi | undefined }) =>
+        useStandInProfileSchedules(source, 7, 'role', 'device'),
+      { initialProps: { source: undefined as AutomationApi | undefined } }
+    )
+    expect(vi.getTimerCount()).toBe(0)
+    act(() => result.current.retry())
+    expect(listAutomations).not.toHaveBeenCalled()
+    rerender({ source: api })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(result.current.items).toEqual([automation])
+    expect(vi.getTimerCount()).toBe(1)
+    await act(() => vi.advanceTimersByTimeAsync(30_000))
+    expect(listAutomations).toHaveBeenCalledTimes(2)
+    await act(async () => window.dispatchEvent(new Event(WORKBENCH_AUTOMATIONS_CHANGED_EVENT)))
+    expect(listAutomations).toHaveBeenCalledTimes(3)
+    rerender({ source: undefined })
+    expect(result.current.items).toEqual([])
+    expect(vi.getTimerCount()).toBe(0)
+    await act(async () => window.dispatchEvent(new Event(WORKBENCH_AUTOMATIONS_CHANGED_EVENT)))
+    expect(listAutomations).toHaveBeenCalledTimes(3)
+    unmount()
+  } finally {
+    vi.useRealTimers()
+  }
 })

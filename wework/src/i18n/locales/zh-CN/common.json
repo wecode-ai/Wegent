@@ -4470,7 +4470,10 @@
     "remote_task_access_load_failed": "无法读取本机远程任务访问设置。",
     "remote_task_access_save_failed": "设置保存失败，远程任务访问状态未改变。",
     "agent_creator_environment_automatic": "自动选择项目可用环境",
-    "agent_creator_environment_configured": "已指定环境，展开查看"
+    "agent_creator_environment_configured": "已指定环境，展开查看",
+    "codex_home_check_title": "检查 Codex 配置",
+    "codex_home_check_loading": "正在读取本机配置。您可以重试检查。",
+    "codex_home_check_recovery": "请根据下方错误修复本机配置或执行环境，然后重试检查。"
   },
   "delivery": {
     "action": "交付",
@@ -5040,6 +5043,7 @@
     "task_progress_empty": "暂无任务进展详情",
     "current_conversation_goal": "当前会话目标",
     "current_conversation_goal_loading": "正在加载会话目标…",
+    "current_conversation_goal_failed": "无法读取会话目标",
     "view_task_progress_named": "查看进展：{{title}}",
     "open_task_page_named": "打开任务页：{{title}}",
     "my_work_pending_approval": "待我批准",

@@ -1,5 +1,5 @@
 import '@/i18n'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { FileChangesReviewPanel } from './FileChangesReviewPanel'
@@ -95,6 +95,29 @@ const treeDiff = [
 ].join('\n')
 
 describe('FileChangesReviewPanel', () => {
+  test('view menu keeps inside interactions and closes on outside pointer or Escape', async () => {
+    render(
+      <FileChangesReviewPanel
+        loading={false}
+        diff={twoFileDiff}
+        viewOptions={[
+          { id: 'unstaged', label: 'Working changes', active: true, onSelect: vi.fn() },
+        ]}
+      />
+    )
+    const trigger = screen.getByTestId('review-view-switcher-button')
+    await userEvent.click(trigger)
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.pointerDown(trigger)
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    fireEvent.pointerDown(document.body)
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    await userEvent.click(trigger)
+    await userEvent.keyboard('{Escape}')
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    expect(trigger).toHaveFocus()
+  })
+
   test('keeps the copy label when writing to the clipboard fails', async () => {
     const writeText = vi.fn().mockRejectedValue(new Error('denied'))
     Object.assign(navigator, {

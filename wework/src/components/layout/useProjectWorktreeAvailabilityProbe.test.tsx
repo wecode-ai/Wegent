@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { describe, expect, test, vi } from 'vitest'
+import { describe, expect, it, test, vi } from 'vitest'
 import type {
   DeviceInfo,
   ProjectWithTasks,
@@ -119,4 +119,41 @@ describe('useProjectWorktreeAvailabilityProbe', () => {
     expect(api.getWorktreeCapabilities).toHaveBeenCalledTimes(1)
     expect(api.preflightWorktree).toHaveBeenCalledTimes(1)
   })
+})
+
+it('isolates probe identities and ignores a response from a replaced API', async () => {
+  let finish!: (value: RuntimeWorktreeCapabilitiesResponse) => void
+  const oldApi: ProjectWorktreeAvailabilityApi = {
+    getWorktreeCapabilities: vi.fn(
+      () =>
+        new Promise(resolve => {
+          finish = resolve
+        })
+    ),
+    preflightWorktree: vi.fn(),
+  }
+  const api: ProjectWorktreeAvailabilityApi = {
+    getWorktreeCapabilities: vi
+      .fn()
+      .mockResolvedValue({ success: true, deviceId: 'cloud-device', runtimeWorktrees: null }),
+    preflightWorktree: vi.fn(),
+  }
+  const input = {
+    api: oldApi,
+    device: createDevice(),
+    project: createProject(),
+    workspace: createWorkspace(),
+    key: 'old',
+    enabled: true,
+  }
+  const { result, rerender } = renderHook(props => useProjectWorktreeAvailabilityProbe(props), {
+    initialProps: input,
+  })
+  await waitFor(() => expect(oldApi.getWorktreeCapabilities).toHaveBeenCalledOnce())
+  rerender({ ...input, api, key: 'new' })
+  await waitFor(() => expect(result.current?.key).toBe('new'))
+  const current = result.current
+  await act(async () => finish({ success: true, deviceId: 'cloud-device', runtimeWorktrees: null }))
+  expect(result.current).toBe(current)
+  expect(oldApi.preflightWorktree).not.toHaveBeenCalled()
 })

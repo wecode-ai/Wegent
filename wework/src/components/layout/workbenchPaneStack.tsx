@@ -1,5 +1,5 @@
-/* eslint-disable react-hooks/refs -- Pane hosts intentionally preserve live task sessions across layout changes. */
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useDOMEvent, useWindowEvent } from '@wegent/collaboration/dom-events'
+import { useCallback, useRef, useState, type ReactNode } from 'react'
 import {
   Columns2,
   Focus,
@@ -110,10 +110,13 @@ export function SplitWorkbenchPaneStack({
 }: SplitWorkbenchPaneStackProps) {
   const { t } = useTranslation()
   const activeKey = getWorkbenchPaneKey(activePane)
-  const paneCacheRef = useRef(new Map<string, WorkbenchPaneIdentity>())
-  const paneHostCacheRef = useRef(new Map<string, HTMLDivElement>())
+  const [paneResources, setPaneResources] = useState(() => ({
+    signature: '',
+    panes: new Map<string, WorkbenchPaneIdentity>(),
+    hosts: new Map<string, HTMLDivElement>(),
+  }))
   const sidebarDragActiveRef = useRef(false)
-  paneCacheRef.current.set(activeKey, activePane)
+  paneResources.panes.set(activeKey, activePane)
   const [draggedPaneKey, setDraggedPaneKey] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<DropTarget | null>(null)
   const [focusedViewPaneId, setFocusedViewPaneId] = useState<string | null>(null)
@@ -142,27 +145,30 @@ export function SplitWorkbenchPaneStack({
 
   const resolveCachedPane = useCallback(
     (paneKey: string) => {
-      const cached = paneCacheRef.current.get(paneKey)
+      const cached = paneResources.panes.get(paneKey)
       if (cached) return cached
       const resolved = resolvePane(paneKey)
       if (resolved && getWorkbenchPaneKey(resolved) === paneKey) {
-        paneCacheRef.current.set(paneKey, resolved)
+        paneResources.panes.set(paneKey, resolved)
       }
       return resolved
     },
-    [resolvePane]
+    [paneResources.panes, resolvePane]
   )
 
-  const getPaneHost = useCallback((paneKey: string) => {
-    const cached = paneHostCacheRef.current.get(paneKey)
-    if (cached) return cached
-    if (typeof document === 'undefined') return null
-    const host = document.createElement('div')
-    host.className = 'h-full min-h-0 min-w-0'
-    host.dataset.workbenchPaneHost = paneKey
-    paneHostCacheRef.current.set(paneKey, host)
-    return host
-  }, [])
+  const getPaneHost = useCallback(
+    (paneKey: string) => {
+      const cached = paneResources.hosts.get(paneKey)
+      if (cached) return cached
+      if (typeof document === 'undefined') return null
+      const host = document.createElement('div')
+      host.className = 'h-full min-h-0 min-w-0'
+      host.dataset.workbenchPaneHost = paneKey
+      paneResources.hosts.set(paneKey, host)
+      return host
+    },
+    [paneResources.hosts]
+  )
 
   const panes = collectWorkbenchPanes(layout.root)
   const splitMode = panes.length > 1
@@ -185,26 +191,23 @@ export function SplitWorkbenchPaneStack({
     retainedPaneKeys
   )
 
-  useEffect(() => {
-    const retainedKeys = new Set(
-      mountedPaneKeySignature ? mountedPaneKeySignature.split('\u0000') : []
-    )
-    paneHostCacheRef.current.forEach((host, paneKey) => {
-      if (retainedKeys.has(paneKey)) return
-      host.remove()
-      paneHostCacheRef.current.delete(paneKey)
-      paneCacheRef.current.delete(paneKey)
+  if (paneResources.signature !== mountedPaneKeySignature) {
+    const retainedKeys = new Set(mountedPaneKeys)
+    // Host refs detach native nodes on commit. Hidden panes remain in the retained set.
+    setPaneResources({
+      signature: mountedPaneKeySignature,
+      panes: new Map([...paneResources.panes].filter(([key]) => retainedKeys.has(key))),
+      hosts: new Map([...paneResources.hosts].filter(([key]) => retainedKeys.has(key))),
     })
-  }, [mountedPaneKeySignature])
+  }
 
-  useEffect(() => {
-    if (!effectiveFocusedViewPaneId) return
-    const handleKeyDown = (event: KeyboardEvent) => {
+  useWindowEvent(
+    'keydown',
+    event => {
       if (event.key === 'Escape' && !event.defaultPrevented) setFocusedViewPaneId(null)
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [effectiveFocusedViewPaneId])
+    },
+    { enabled: Boolean(effectiveFocusedViewPaneId) }
+  )
 
   const focusPane = useCallback(
     (paneId: string) => {
@@ -248,50 +251,41 @@ export function SplitWorkbenchPaneStack({
     [onLayoutPlace, onPaneFocus, resolveCachedPane, setFocusedViewPaneId]
   )
 
-  useEffect(() => {
-    const readDropTarget = (clientX: number, clientY: number): DropTarget | null => {
-      const element = document
-        .elementsFromPoint(clientX, clientY)
-        .map(candidate =>
-          candidate.closest<HTMLElement>('[data-workbench-pane-drop-target="true"]')
-        )
-        .find((candidate): candidate is HTMLElement => candidate !== null)
-      const paneId = element?.dataset.workbenchPaneId
-      const position = element?.dataset.workbenchPaneDropPosition as
-        | DropTarget['position']
-        | undefined
-      return paneId && position ? { paneId, position } : null
+  const readDropTarget = (clientX: number, clientY: number): DropTarget | null => {
+    const element = document
+      .elementsFromPoint(clientX, clientY)
+      .map(candidate => candidate.closest<HTMLElement>('[data-workbench-pane-drop-target="true"]'))
+      .find((candidate): candidate is HTMLElement => candidate !== null)
+    const paneId = element?.dataset.workbenchPaneId
+    const position = element?.dataset.workbenchPaneDropPosition as
+      | DropTarget['position']
+      | undefined
+    return paneId && position ? { paneId, position } : null
+  }
+  const handleDragStart = (event: Event) => {
+    const detail = (event as CustomEvent<WorkbenchSidebarPaneDragData>).detail
+    if (!detail?.paneKey) return
+    sidebarDragActiveRef.current = true
+    setDraggedPaneKey(detail.paneKey)
+  }
+  const handleDragMove = (event: PointerEvent) => {
+    if (!sidebarDragActiveRef.current) return
+    setDropTarget(readDropTarget(event.clientX, event.clientY))
+  }
+  const handleDragEnd = (event: Event) => {
+    const detail = (event as CustomEvent<WorkbenchSidebarPaneDragEndData | null>).detail
+    sidebarDragActiveRef.current = false
+    const target = detail ? readDropTarget(detail.clientX, detail.clientY) : null
+    if (detail && target) {
+      detail.handled = true
+      placeTask(detail.paneKey, target)
     }
-    const handleDragStart = (event: Event) => {
-      const detail = (event as CustomEvent<WorkbenchSidebarPaneDragData>).detail
-      if (!detail?.paneKey) return
-      sidebarDragActiveRef.current = true
-      setDraggedPaneKey(detail.paneKey)
-    }
-    const handleDragMove = (event: PointerEvent) => {
-      if (!sidebarDragActiveRef.current) return
-      setDropTarget(readDropTarget(event.clientX, event.clientY))
-    }
-    const handleDragEnd = (event: Event) => {
-      const detail = (event as CustomEvent<WorkbenchSidebarPaneDragEndData | null>).detail
-      sidebarDragActiveRef.current = false
-      const target = detail ? readDropTarget(detail.clientX, detail.clientY) : null
-      if (detail && target) {
-        detail.handled = true
-        placeTask(detail.paneKey, target)
-      }
-      setDraggedPaneKey(null)
-      setDropTarget(null)
-    }
-    window.addEventListener(WORKBENCH_SIDEBAR_PANE_DRAG_START_EVENT, handleDragStart)
-    window.addEventListener('pointermove', handleDragMove, true)
-    window.addEventListener(WORKBENCH_SIDEBAR_PANE_DRAG_END_EVENT, handleDragEnd)
-    return () => {
-      window.removeEventListener(WORKBENCH_SIDEBAR_PANE_DRAG_START_EVENT, handleDragStart)
-      window.removeEventListener('pointermove', handleDragMove, true)
-      window.removeEventListener(WORKBENCH_SIDEBAR_PANE_DRAG_END_EVENT, handleDragEnd)
-    }
-  }, [placeTask])
+    setDraggedPaneKey(null)
+    setDropTarget(null)
+  }
+  useDOMEvent('window', WORKBENCH_SIDEBAR_PANE_DRAG_START_EVENT, handleDragStart)
+  useWindowEvent('pointermove', handleDragMove, { capture: true })
+  useDOMEvent('window', WORKBENCH_SIDEBAR_PANE_DRAG_END_EVENT, handleDragEnd)
 
   return (
     <>

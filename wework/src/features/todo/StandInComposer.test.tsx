@@ -16,7 +16,8 @@ import {
 } from '@wegent/collaboration'
 import { useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { StandInComposer } from './StandInComposer'
+import { StandInComposerFields } from './StandInComposer'
+import { useStandInComposerDraft } from './useStandInComposerDraft'
 
 vi.mock('@/components/layout/useProjectWorktreeAvailabilityProbe', () => ({
   useProjectWorktreeAvailabilityProbe: ({ key }: { key: string }) => ({
@@ -66,7 +67,7 @@ function Fixture({
   showPrompt?: boolean
   showDevice?: boolean
 }) {
-  const [draft, setDraft] = useState<WorkspaceStandInSettings>({
+  const [settings, setDraft] = useState<WorkspaceStandInSettings>({
     enabled: false,
     prompt: '',
     executionDeviceId: 'mac',
@@ -75,17 +76,19 @@ function Fixture({
     model: initialModel,
     modelOptions: initialModelOptions,
   })
-  const [valid, setValid] = useState(false)
+  const { draft, models } = useStandInComposerDraft(settings, services, showPrompt)
+  const submitDisabled = false
+  const valid = !submitDisabled
   return (
     <>
-      <StandInComposer
+      <StandInComposerFields
+        models={models}
         draft={draft}
         showPrompt={showPrompt}
         onChange={setDraft}
         onSave={async prompt => save({ ...draft, prompt })}
-        onValidityChange={setValid}
         disabled={false}
-        submitDisabled={false}
+        submitDisabled={submitDisabled}
         deviceControl={showDevice ? <button data-testid="stand-in-device">Mac</button> : null}
         runtimeWork={work}
         services={services}

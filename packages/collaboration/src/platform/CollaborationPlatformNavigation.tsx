@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useId, useMemo, useRef, useState } from "react";
-import { useEscapeKey } from "../markdown/useEscapeKey";
+import { useId, useMemo, useRef, useState } from 'react'
+import { useEscapeKey } from '../markdown/useEscapeKey'
+import { useDOMEvent } from '../dom-events'
 import {
   CloudOff,
   ChevronRight,
@@ -12,24 +13,21 @@ import {
   Plus,
   Settings,
   SquarePen,
-} from "lucide-react";
-import { ActionMenu } from "../controls/ActionMenu";
+} from 'lucide-react'
+import { ActionMenu } from '../controls/ActionMenu'
 import {
   CollaborationPrimaryNavigation,
   CollaborationManagementNavigation,
-} from "./CollaborationPrimaryNavigation";
-import { canAccessCollaborationProjectView } from "../permissions";
+} from './CollaborationPrimaryNavigation'
+import { canAccessCollaborationProjectView } from '../permissions'
 import type {
   CollaborationProject,
   CollaborationWorkspace,
   CollaborationWorkspaceNavigationContext,
-} from "../types";
-import type {
-  CollaborationDomain,
-  CollaborationPlatformHostAdapter,
-} from "./types";
-import type { PlatformMessages } from "./platformMessages";
-import { buildWorkspaceNavigation } from "./workspaceNavigation";
+} from '../types'
+import type { CollaborationDomain, CollaborationPlatformHostAdapter } from './types'
+import type { PlatformMessages } from './platformMessages'
+import { buildWorkspaceNavigation } from './workspaceNavigation'
 
 export function CollaborationPlatformNavigation({
   domain,
@@ -49,87 +47,81 @@ export function CollaborationPlatformNavigation({
   onArchiveProject: archiveProject,
   footer,
 }: {
-  domain: CollaborationDomain;
-  mobileNavigationOpen: boolean;
-  onMobileNavigationOpenChange(open: boolean): void;
-  host: CollaborationPlatformHostAdapter;
-  messages: PlatformMessages;
-  workspaces: CollaborationWorkspace[];
-  workspaceNavigationContext: CollaborationWorkspaceNavigationContext | null;
-  projects: CollaborationProject[];
-  navigationIncomplete: boolean;
-  onRetryNavigation(): Promise<void>;
-  canCreateWorkspace: boolean;
-  onCreateWorkspace(): void;
-  onCreateProject(
-    workspaceId: string,
-    mode: "blank" | "folder" | "existing",
-  ): void;
-  onCreateStandaloneProject(location: CollaborationDomain): void;
-  onArchiveProject(project: CollaborationProject): void;
-  footer?: React.ReactNode;
+  domain: CollaborationDomain
+  mobileNavigationOpen: boolean
+  onMobileNavigationOpenChange(open: boolean): void
+  host: CollaborationPlatformHostAdapter
+  messages: PlatformMessages
+  workspaces: CollaborationWorkspace[]
+  workspaceNavigationContext: CollaborationWorkspaceNavigationContext | null
+  projects: CollaborationProject[]
+  navigationIncomplete: boolean
+  onRetryNavigation(): Promise<void>
+  canCreateWorkspace: boolean
+  onCreateWorkspace(): void
+  onCreateProject(workspaceId: string, mode: 'blank' | 'folder' | 'existing'): void
+  onCreateStandaloneProject(location: CollaborationDomain): void
+  onArchiveProject(project: CollaborationProject): void
+  footer?: React.ReactNode
 }) {
-  const navigationId = useId();
-  const navigationRef = useRef<HTMLDivElement>(null);
-  const toggleRef = useRef<HTMLButtonElement>(null);
+  const navigationId = useId()
+  const navigationRef = useRef<HTMLDivElement>(null)
+  const toggleRef = useRef<HTMLButtonElement>(null)
   const closeNavigation = () => {
-    setMobileNavigationOpen(false);
+    setMobileNavigationOpen(false)
     if (
       navigationRef.current?.contains(document.activeElement) &&
       toggleRef.current?.getClientRects().length
     )
-      toggleRef.current.focus();
-  };
-  useEscapeKey(closeNavigation, mobileNavigationOpen, navigationRef);
-  useEffect(() => {
-    const media = window.matchMedia("(max-width: 767px)");
-    const update = () => {
-      if (!media.matches) setMobileNavigationOpen(false);
-    };
-    media.addEventListener("change", update);
-    return () => media.removeEventListener("change", update);
-  }, [setMobileNavigationOpen]);
-  const host = sourceHost;
+      toggleRef.current.focus()
+  }
+  useEscapeKey(closeNavigation, mobileNavigationOpen, navigationRef)
+  const mobileMedia = useMemo(
+    () => (typeof window === 'undefined' ? null : window.matchMedia('(max-width: 767px)')),
+    []
+  )
+  useDOMEvent<MediaQueryListEvent>(mobileMedia, 'change', event => {
+    if (!event.matches) setMobileNavigationOpen(false)
+  })
+  const host = sourceHost
   const navigationHost: CollaborationPlatformHostAdapter = {
     ...sourceHost,
-    navigate: (location) => {
-      closeNavigation();
-      sourceHost.navigate(location);
+    navigate: location => {
+      closeNavigation()
+      sourceHost.navigate(location)
     },
     createIndependentIssue: sourceHost.createIndependentIssue
       ? () => {
-          closeNavigation();
-          sourceHost.createIndependentIssue!();
+          closeNavigation()
+          sourceHost.createIndependentIssue!()
         }
       : undefined,
-  };
+  }
   const onCreateWorkspace = () => {
-    closeNavigation();
-    createWorkspace();
-  };
+    closeNavigation()
+    createWorkspace()
+  }
   const onCreateProject: typeof createProject = (...args) => {
-    closeNavigation();
-    createProject(...args);
-  };
-  const onCreateStandaloneProject: typeof createStandaloneProject = (
-    ...args
-  ) => {
-    closeNavigation();
-    createStandaloneProject(...args);
-  };
+    closeNavigation()
+    createProject(...args)
+  }
+  const onCreateStandaloneProject: typeof createStandaloneProject = (...args) => {
+    closeNavigation()
+    createStandaloneProject(...args)
+  }
   const onArchiveProject: typeof archiveProject = (...args) => {
-    closeNavigation();
-    archiveProject(...args);
-  };
+    closeNavigation()
+    archiveProject(...args)
+  }
   const { workspaces: navigationWorkspaces, projectsByWorkspace } = useMemo(
     () =>
       buildWorkspaceNavigation(
         workspaces,
         projects,
         workspaceNavigationContext,
-        host.capabilities.projectNavigation === "projects"
+        host.capabilities.projectNavigation === 'projects'
           ? messages.defaultProjectWorkspace
-          : undefined,
+          : undefined
       ),
     [
       projects,
@@ -137,69 +129,59 @@ export function CollaborationPlatformNavigation({
       workspaceNavigationContext,
       host.capabilities.projectNavigation,
       messages.defaultProjectWorkspace,
-    ],
-  );
-  const selectedProjectWorkspaceId = [...projectsByWorkspace].find(
-    ([, items]) =>
-      items.some((project) => project.id === host.location.projectId),
-  )?.[0];
-  const selectedWorkspaceId =
-    selectedProjectWorkspaceId ?? host.location.workspaceId ?? null;
+    ]
+  )
+  const selectedProjectWorkspaceId = [...projectsByWorkspace].find(([, items]) =>
+    items.some(project => project.id === host.location.projectId)
+  )?.[0]
+  const selectedWorkspaceId = selectedProjectWorkspaceId ?? host.location.workspaceId ?? null
   const autoExpandedWorkspaceId =
-    selectedWorkspaceId ?? navigationWorkspaces[0]?.workspace.id ?? null;
-  const [workspaceExpansion, setWorkspaceExpansion] = useState<
-    Map<string, boolean>
-  >(
-    () =>
-      new Map(autoExpandedWorkspaceId ? [[autoExpandedWorkspaceId, true]] : []),
-  );
-  const [autoExpandedWorkspaceSelection, setAutoExpandedWorkspaceSelection] =
-    useState<string | null>(autoExpandedWorkspaceId);
-  const projectFirst = host.capabilities.projectNavigation === "projects";
-  const [workspacesExpanded, setWorkspacesExpanded] = useState(true);
-  const [retryingNavigation, setRetryingNavigation] = useState(false);
-  const fullSidebar = host.capabilities.sidebarPresentation !== "context";
-  const projectSettings = Boolean(
-    host.location.projectId && host.location.projectView === "manage",
-  );
+    selectedWorkspaceId ?? navigationWorkspaces[0]?.workspace.id ?? null
+  const [workspaceExpansion, setWorkspaceExpansion] = useState<Map<string, boolean>>(
+    () => new Map(autoExpandedWorkspaceId ? [[autoExpandedWorkspaceId, true]] : [])
+  )
+  const [autoExpandedWorkspaceSelection, setAutoExpandedWorkspaceSelection] = useState<
+    string | null
+  >(autoExpandedWorkspaceId)
+  const projectFirst = host.capabilities.projectNavigation === 'projects'
+  const [workspacesExpanded, setWorkspacesExpanded] = useState(true)
+  const [retryingNavigation, setRetryingNavigation] = useState(false)
+  const fullSidebar = host.capabilities.sidebarPresentation !== 'context'
+  const projectSettings = Boolean(host.location.projectId && host.location.projectView === 'manage')
   // Expansion follows the selected workspace during render so it cannot land
   // after the user has already clicked the toggle that was just rendered.
   if (autoExpandedWorkspaceSelection !== autoExpandedWorkspaceId) {
-    setAutoExpandedWorkspaceSelection(autoExpandedWorkspaceId);
+    setAutoExpandedWorkspaceSelection(autoExpandedWorkspaceId)
     if (autoExpandedWorkspaceId) {
-      setWorkspaceExpansion((current) => {
-        if (current.get(autoExpandedWorkspaceId) === true) return current;
-        const next = new Map(current);
-        next.set(autoExpandedWorkspaceId, true);
-        return next;
-      });
+      setWorkspaceExpansion(current => {
+        if (current.get(autoExpandedWorkspaceId) === true) return current
+        const next = new Map(current)
+        next.set(autoExpandedWorkspaceId, true)
+        return next
+      })
     }
   }
-  const openWorkspaceHome = (
-    workspaceId: string,
-    collaborationDomain: CollaborationDomain,
-  ) =>
+  const openWorkspaceHome = (workspaceId: string, collaborationDomain: CollaborationDomain) =>
     navigationHost.navigate({
-      platformView: "spaces",
+      platformView: 'spaces',
       collaborationDomain,
       workspaceId,
-      workspaceView: "home",
+      workspaceView: 'home',
       projectId: null,
-      projectView: "board",
+      projectView: 'board',
       issueId: null,
-    });
+    })
   const toggleWorkspace = (workspaceId: string) => {
-    setWorkspaceExpansion((current) => {
-      const next = new Map(current);
-      next.set(workspaceId, !(current.get(workspaceId) ?? projectFirst));
-      return next;
-    });
-  };
-  const allowLocalProjects =
-    host.capabilities.workspaceLocations?.includes("local") ?? true;
+    setWorkspaceExpansion(current => {
+      const next = new Map(current)
+      next.set(workspaceId, !(current.get(workspaceId) ?? projectFirst))
+      return next
+    })
+  }
+  const allowLocalProjects = host.capabilities.workspaceLocations?.includes('local') ?? true
   const localWorkspace = workspaces.find(
-    (workspace) => allowLocalProjects && workspace.location === "local",
-  );
+    workspace => allowLocalProjects && workspace.location === 'local'
+  )
   const createWorkspaceButton = canCreateWorkspace ? (
     <button
       type="button"
@@ -213,13 +195,11 @@ export function CollaborationPlatformNavigation({
         <FolderPlus aria-hidden="true" />
       </span>
     </button>
-  ) : null;
+  ) : null
   const renderWorkspaceActions = (
-    candidate: ReturnType<
-      typeof buildWorkspaceNavigation
-    >["workspaces"][number]["workspace"],
+    candidate: ReturnType<typeof buildWorkspaceNavigation>['workspaces'][number]['workspace'],
     isDefault = false,
-    canOpen = true,
+    canOpen = true
   ) => (
     <ActionMenu
       ariaLabel={messages.settings}
@@ -228,44 +208,37 @@ export function CollaborationPlatformNavigation({
         {
           label: messages.addProject,
           icon: Plus,
-          testId: "collaboration-workspace-nav-create-project",
+          testId: 'collaboration-workspace-nav-create-project',
           disabled:
             isDefault &&
-            (host.capabilities.projectLocation ?? domain) === "local" &&
+            (host.capabilities.projectLocation ?? domain) === 'local' &&
             !localWorkspace,
           ...(isDefault
             ? {
                 onSelect: () =>
-                  onCreateStandaloneProject(
-                    host.capabilities.projectLocation ?? domain,
-                  ),
+                  onCreateStandaloneProject(host.capabilities.projectLocation ?? domain),
               }
             : {
                 children: [
                   {
                     label: messages.blankProject,
                     icon: SquarePen,
-                    testId: "collaboration-workspace-nav-create-blank-project",
-                    onSelect: () => onCreateProject(candidate.id, "blank"),
+                    testId: 'collaboration-workspace-nav-create-blank-project',
+                    onSelect: () => onCreateProject(candidate.id, 'blank'),
                   },
-                  ...(candidate.location === "local" &&
-                  localWorkspace &&
-                  host.renderProjectImporter
+                  ...(candidate.location === 'local' && localWorkspace && host.renderProjectImporter
                     ? [
                         {
                           label: messages.addFolder,
                           icon: FolderPlus,
-                          testId: "collaboration-workspace-nav-add-folder",
-                          onSelect: () =>
-                            onCreateProject(localWorkspace!.id, "folder"),
+                          testId: 'collaboration-workspace-nav-add-folder',
+                          onSelect: () => onCreateProject(localWorkspace!.id, 'folder'),
                         },
                         {
                           label: messages.importExistingProject,
                           icon: FolderOpen,
-                          testId:
-                            "collaboration-workspace-nav-import-existing-project",
-                          onSelect: () =>
-                            onCreateProject(localWorkspace!.id, "existing"),
+                          testId: 'collaboration-workspace-nav-import-existing-project',
+                          onSelect: () => onCreateProject(localWorkspace!.id, 'existing'),
                         },
                       ]
                     : []),
@@ -276,23 +249,23 @@ export function CollaborationPlatformNavigation({
           ? [
               {
                 separator: true,
-                label: "",
-                testId: "collaboration-workspace-nav-project-separator",
+                label: '',
+                testId: 'collaboration-workspace-nav-project-separator',
               },
               {
                 label: messages.settings,
                 icon: Settings,
-                testId: "collaboration-workspace-nav-settings",
+                testId: 'collaboration-workspace-nav-settings',
                 onSelect: () => {
                   navigationHost.navigate({
-                    platformView: "spaces",
+                    platformView: 'spaces',
                     workspaceId: candidate.id,
                     collaborationDomain: candidate.location,
-                    workspaceView: "settings",
+                    workspaceView: 'settings',
                     projectId: null,
-                    projectView: "board",
+                    projectView: 'board',
                     issueId: null,
-                  });
+                  })
                 },
               },
             ]
@@ -302,37 +275,35 @@ export function CollaborationPlatformNavigation({
       showTriggerTooltip={false}
       testId={
         host.location.workspaceId === candidate.id
-          ? "collaboration-workspace-actions"
+          ? 'collaboration-workspace-actions'
           : `collaboration-workspace-actions-${candidate.id}`
       }
       triggerClassName="collaboration-workspace-action-trigger"
     />
-  );
+  )
   const renderWorkspaceGroup = ({
     workspace: candidate,
     canOpen,
     isDefault,
-  }: ReturnType<typeof buildWorkspaceNavigation>["workspaces"][number]) => {
-    const expanded = workspaceExpansion.get(candidate.id) ?? projectFirst;
-    const candidateProjects = projectsByWorkspace.get(candidate.id) ?? [];
-    const workspaceActive =
-      host.location.workspaceId === candidate.id && !host.location.projectId;
+  }: ReturnType<typeof buildWorkspaceNavigation>['workspaces'][number]) => {
+    const expanded = workspaceExpansion.get(candidate.id) ?? projectFirst
+    const candidateProjects = projectsByWorkspace.get(candidate.id) ?? []
+    const workspaceActive = host.location.workspaceId === candidate.id && !host.location.projectId
     const canManageWorkspace =
       isDefault ||
       (canOpen &&
-        "access_role" in candidate &&
-        (candidate.access_role === "Owner" ||
-          candidate.access_role === "Maintainer"));
+        'access_role' in candidate &&
+        (candidate.access_role === 'Owner' || candidate.access_role === 'Maintainer'))
     return (
       <section
         className="collaboration-workspace-group"
         data-testid={`collaboration-workspace-tree-${candidate.id}`}
-        key={isDefault ? "personal-group" : candidate.id}
+        key={isDefault ? 'personal-group' : candidate.id}
       >
         <div
           className={`collaboration-workspace-row${
-            workspaceActive ? " active" : ""
-          }${canManageWorkspace ? " has-actions" : ""}`}
+            workspaceActive ? ' active' : ''
+          }${canManageWorkspace ? ' has-actions' : ''}`}
         >
           {canOpen ? (
             <button
@@ -340,27 +311,20 @@ export function CollaborationPlatformNavigation({
               className="collaboration-workspace-identity"
               data-testid={
                 host.location.workspaceId === candidate.id
-                  ? "collaboration-workspace-nav-projects"
+                  ? 'collaboration-workspace-nav-projects'
                   : `collaboration-workspace-home-${candidate.id}`
               }
-              aria-current={workspaceActive ? "page" : undefined}
-              onClick={() =>
-                openWorkspaceHome(candidate.id, candidate.location)
-              }
+              aria-current={workspaceActive ? 'page' : undefined}
+              onClick={() => openWorkspaceHome(candidate.id, candidate.location)}
             >
-              <span
-                className="collaboration-workspace-folder"
-                aria-hidden="true"
-              >
+              <span className="collaboration-workspace-folder" aria-hidden="true">
                 <FolderOpen />
               </span>
               <span
                 className="collaboration-workspace-title-block"
                 data-testid={`collaboration-workspace-${candidate.id}`}
               >
-                <span className="collaboration-workspace-title">
-                  {candidate.name}
-                </span>
+                <span className="collaboration-workspace-title">{candidate.name}</span>
               </span>
             </button>
           ) : (
@@ -368,19 +332,14 @@ export function CollaborationPlatformNavigation({
               className="collaboration-workspace-identity"
               data-testid="collaboration-project-parent-workspace-context"
             >
-              <span
-                className="collaboration-workspace-folder"
-                aria-hidden="true"
-              >
+              <span className="collaboration-workspace-folder" aria-hidden="true">
                 <FolderOpen />
               </span>
               <span
                 className="collaboration-workspace-title-block"
                 data-testid={`collaboration-workspace-${candidate.id}`}
               >
-                <span className="collaboration-workspace-title">
-                  {candidate.name}
-                </span>
+                <span className="collaboration-workspace-title">{candidate.name}</span>
               </span>
             </div>
           )}
@@ -394,9 +353,7 @@ export function CollaborationPlatformNavigation({
               type="button"
               className="collaboration-workspace-toggle"
               aria-expanded={expanded}
-              aria-label={
-                expanded ? messages.collapseWorkspace : messages.expandWorkspace
-              }
+              aria-label={expanded ? messages.collapseWorkspace : messages.expandWorkspace}
               data-testid={`collaboration-workspace-toggle-${candidate.id}`}
               onClick={() => toggleWorkspace(candidate.id)}
             >
@@ -409,7 +366,7 @@ export function CollaborationPlatformNavigation({
             className="collaboration-workspace-project-list"
             aria-label={`${candidate.name} · ${messages.projects}`}
           >
-            {candidateProjects.map((project) => (
+            {candidateProjects.map(project => (
               <ProjectNavigationRow
                 key={project.id}
                 project={project}
@@ -421,11 +378,11 @@ export function CollaborationPlatformNavigation({
           </nav>
         ) : null}
       </section>
-    );
-  };
+    )
+  }
   return (
     <aside
-      className={`collaboration-platform-sidebar collaboration-platform-sidebar-${host.capabilities.sidebarPresentation ?? "full"}${projectSettings ? " collaboration-platform-sidebar-settings" : ""}${mobileNavigationOpen ? " is-mobile-open" : ""}`}
+      className={`collaboration-platform-sidebar collaboration-platform-sidebar-${host.capabilities.sidebarPresentation ?? 'full'}${projectSettings ? ' collaboration-platform-sidebar-settings' : ''}${mobileNavigationOpen ? ' is-mobile-open' : ''}`}
       data-testid="collaboration-platform-sidebar"
       data-navigation-expanded={mobileNavigationOpen}
     >
@@ -433,21 +390,17 @@ export function CollaborationPlatformNavigation({
         <button
           ref={toggleRef}
           type="button"
-          className={`collaboration-mobile-navigation-toggle${projectSettings ? " collaboration-settings-navigation-toggle" : ""}`}
+          className={`collaboration-mobile-navigation-toggle${projectSettings ? ' collaboration-settings-navigation-toggle' : ''}`}
           data-testid={
             projectSettings
-              ? "collaboration-settings-navigation-toggle"
-              : "collaboration-navigation-toggle"
+              ? 'collaboration-settings-navigation-toggle'
+              : 'collaboration-navigation-toggle'
           }
           aria-expanded={mobileNavigationOpen}
           aria-controls={navigationId}
           onClick={() => setMobileNavigationOpen(!mobileNavigationOpen)}
         >
-          <span>
-            {projectSettings
-              ? messages.settingsNavigation
-              : messages.navigation}
-          </span>
+          <span>{projectSettings ? messages.settingsNavigation : messages.navigation}</span>
           <ChevronRight aria-hidden="true" />
         </button>
       ) : null}
@@ -459,9 +412,7 @@ export function CollaborationPlatformNavigation({
       >
         {fullSidebar ? (
           <>
-            <div className="collaboration-platform-brand">
-              {messages.collaborationHome}
-            </div>
+            <div className="collaboration-platform-brand">{messages.collaborationHome}</div>
             <CollaborationPrimaryNavigation
               domain={domain}
               host={navigationHost}
@@ -469,10 +420,7 @@ export function CollaborationPlatformNavigation({
             />
           </>
         ) : null}
-        <div
-          className="collaboration-projects-scroll"
-          data-testid="collaboration-projects-scroll"
-        >
+        <div className="collaboration-projects-scroll" data-testid="collaboration-projects-scroll">
           {!projectFirst ? (
             <div className="collaboration-workspace-section-heading">
               {fullSidebar ? (
@@ -488,15 +436,13 @@ export function CollaborationPlatformNavigation({
                   className="collaboration-workspace-section-toggle"
                   aria-expanded={workspacesExpanded}
                   data-testid="collaboration-workspaces-section-toggle"
-                  onClick={() => setWorkspacesExpanded((expanded) => !expanded)}
+                  onClick={() => setWorkspacesExpanded(expanded => !expanded)}
                 >
                   <span>{messages.collaborationSpaces}</span>
                   <ChevronRight aria-hidden="true" />
                 </button>
               )}
-              <div className="collaboration-workspace-section-actions">
-                {createWorkspaceButton}
-              </div>
+              <div className="collaboration-workspace-section-actions">{createWorkspaceButton}</div>
             </div>
           ) : null}
           {navigationIncomplete ? (
@@ -512,11 +458,11 @@ export function CollaborationPlatformNavigation({
                 data-testid="collaboration-navigation-retry"
                 disabled={retryingNavigation}
                 onClick={async () => {
-                  setRetryingNavigation(true);
+                  setRetryingNavigation(true)
                   try {
-                    await onRetryNavigation();
+                    await onRetryNavigation()
                   } finally {
-                    setRetryingNavigation(false);
+                    setRetryingNavigation(false)
                   }
                 }}
               >
@@ -527,9 +473,7 @@ export function CollaborationPlatformNavigation({
           {projectFirst ? (
             <>
               <div className="collaboration-workspace-section-heading">
-                <span className="collaboration-workspace-section-title">
-                  {messages.projects}
-                </span>
+                <span className="collaboration-workspace-section-title">{messages.projects}</span>
                 <div className="collaboration-workspace-section-actions">
                   {createWorkspaceButton}
                 </div>
@@ -555,12 +499,10 @@ export function CollaborationPlatformNavigation({
             messages={messages}
           />
         ) : null}
-        {footer ? (
-          <div className="collaboration-platform-sidebar-footer">{footer}</div>
-        ) : null}
+        {footer ? <div className="collaboration-platform-sidebar-footer">{footer}</div> : null}
       </div>
     </aside>
-  );
+  )
 }
 
 function ProjectNavigationRow({
@@ -569,35 +511,32 @@ function ProjectNavigationRow({
   messages,
   onArchiveProject,
 }: {
-  project: CollaborationProject;
-  host: CollaborationPlatformHostAdapter;
-  messages: PlatformMessages;
-  onArchiveProject(project: CollaborationProject): void;
+  project: CollaborationProject
+  host: CollaborationPlatformHostAdapter
+  messages: PlatformMessages
+  onArchiveProject(project: CollaborationProject): void
 }) {
   return (
     <div
-      className={`collaboration-workspace-project-row${project.project_store === "local" ? " has-offline-project" : ""}`}
+      className={`collaboration-workspace-project-row${project.project_store === 'local' ? ' has-offline-project' : ''}`}
       key={project.id}
     >
       <button
         type="button"
         className={`collaboration-workspace-project${
-          host.location.projectId === project.id ? " active" : ""
+          host.location.projectId === project.id ? ' active' : ''
         }`}
-        aria-current={
-          host.location.projectId === project.id ? "page" : undefined
-        }
+        aria-current={host.location.projectId === project.id ? 'page' : undefined}
         title={project.name}
         data-testid={`collaboration-workspace-project-${project.id}`}
         onClick={() =>
           host.navigate({
-            platformView: "spaces",
+            platformView: 'spaces',
             workspaceId: project.workspace_id ?? null,
-            collaborationDomain:
-              project.project_store === "local" ? "local" : "cloud",
-            workspaceView: "projects",
+            collaborationDomain: project.project_store === 'local' ? 'local' : 'cloud',
+            workspaceView: 'projects',
             projectId: project.id,
-            projectView: "board",
+            projectView: 'board',
             issueId: null,
           })
         }
@@ -605,7 +544,7 @@ function ProjectNavigationRow({
         {host.renderProjectSidebarBadge?.(project)}
         <span>{project.name}</span>
       </button>
-      {project.project_store === "local" ? (
+      {project.project_store === 'local' ? (
         host.convertLocalProjectToCloud ? (
           <button
             type="button"
@@ -629,7 +568,7 @@ function ProjectNavigationRow({
         )
       ) : null}
       <div className="collaboration-project-row-actions">
-        {canAccessCollaborationProjectView(project, "manage") && (
+        {canAccessCollaborationProjectView(project, 'manage') && (
           <ActionMenu
             ariaLabel={`${messages.projectActions} · ${project.name}`}
             testId={`collaboration-project-menu-${project.id}`}
@@ -641,14 +580,13 @@ function ProjectNavigationRow({
                 testId: `collaboration-project-settings-${project.id}`,
                 onSelect: () =>
                   host.navigate({
-                    platformView: "spaces",
-                    collaborationDomain:
-                      project.project_store === "local" ? "local" : "cloud",
+                    platformView: 'spaces',
+                    collaborationDomain: project.project_store === 'local' ? 'local' : 'cloud',
                     workspaceId: project.workspace_id ?? null,
-                    workspaceView: "projects",
+                    workspaceView: 'projects',
                     projectId: project.id,
-                    projectView: "manage",
-                    projectSettingsSection: "project",
+                    projectView: 'manage',
+                    projectSettingsSection: 'project',
                     issueId: null,
                   }),
               },
@@ -662,5 +600,5 @@ function ProjectNavigationRow({
         )}
       </div>
     </div>
-  );
+  )
 }

@@ -1,11 +1,7 @@
-import { act, cleanup, render, waitFor } from '@testing-library/react'
-import { StrictMode } from 'react'
+import { act, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import {
-  CloudConnectionContext,
-  type CloudConnectionContextValue,
-} from '@/features/cloud-connection/CloudConnectionContext'
-import { WeworkSchemeBridge } from './WeworkSchemeBridge'
+import type { CloudConnectionContextValue } from '@/features/cloud-connection/CloudConnectionContext'
+import { createWeworkSchemeService, type WeworkSchemeInput } from './weworkSchemeService'
 import { openWeworkScheme } from './schemeEvents'
 import type { WorkspaceTab } from '@/features/workspace-tabs/workspaceTabs'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
@@ -66,7 +62,25 @@ beforeEach(() => {
   experimentFeature.enabled = false
   experimentFeature.loaded = true
 })
-afterEach(cleanup)
+const schemeServices: ReturnType<typeof createWeworkSchemeService>[] = []
+function render(initial: { connection: CloudConnectionContextValue | null; replay?: boolean }) {
+  const service = createWeworkSchemeService()
+  schemeServices.push(service)
+  const commit = (value: typeof initial) =>
+    service.observe({
+      connection: value.connection,
+      tabs: workspaceTabs as WeworkSchemeInput['tabs'],
+      experiment: { ...experimentFeature },
+      t: ((key: string, fallback?: string) => fallback ?? key) as WeworkSchemeInput['t'],
+    })
+  commit(initial)
+  if (initial.replay) {
+    service.disconnect()
+    commit(initial)
+  }
+  return { rerender: commit, unmount: service.disconnect }
+}
+afterEach(() => schemeServices.splice(0).forEach(service => service.disconnect()))
 
 describe('Wework scheme bridge', () => {
   it('keeps existing project notifications on the original board when the experiment is disabled', () => {
@@ -79,7 +93,7 @@ describe('Wework scheme bridge', () => {
         fixed: true,
       },
     ]
-    render(<WeworkSchemeBridge />)
+    render({ connection: null })
     act(() => openWeworkScheme('wework://boards/local/local-project/issues/OFF-1'))
     expect(openTab).toHaveBeenCalledExactlyOnceWith('board', {
       contentRoute: expect.stringMatching(
@@ -101,7 +115,7 @@ describe('Wework scheme bridge', () => {
         fixed: true,
       },
     ]
-    render(<WeworkSchemeBridge />)
+    render({ connection: null })
     act(() => {
       openWeworkScheme('wework://boards/local/local-project/issues/OFF-1/comments/comment-1')
       openWeworkScheme('wework://boards/local/other-project/issues/OFF-2')
@@ -140,7 +154,7 @@ describe('Wework scheme bridge', () => {
 
   it('leaves legacy notifications on /todo until an experiment tab has been opened', () => {
     experimentFeature.enabled = true
-    render(<WeworkSchemeBridge />)
+    render({ connection: null })
     act(() => openWeworkScheme('wework://boards/local/local-project/issues/OFF-1'))
     expect(openTab).toHaveBeenCalledExactlyOnceWith('board', {
       contentRoute: expect.stringMatching(/^\/todo\?/),
@@ -148,7 +162,7 @@ describe('Wework scheme bridge', () => {
   })
 
   it('ignores explicit experiment schemes while disabled and reuses the experiment after enabling', () => {
-    const { rerender } = render(<WeworkSchemeBridge />)
+    const { rerender } = render({ connection: null })
     act(() =>
       openWeworkScheme('wework://collaboration-exp?projectStore=local&projectId=one&issueId=first')
     )
@@ -163,7 +177,7 @@ describe('Wework scheme bridge', () => {
         fixed: true,
       },
     ]
-    rerender(<WeworkSchemeBridge />)
+    rerender({ connection: null })
     act(() =>
       openWeworkScheme('wework://collaboration-exp?projectStore=local&projectId=two&issueId=second')
     )
@@ -178,7 +192,7 @@ describe('Wework scheme bridge', () => {
 
   it('gives repeated explicit experiment targets a new focus request while preserving their query', () => {
     experimentFeature.enabled = true
-    render(<WeworkSchemeBridge />)
+    render({ connection: null })
     const params = new URLSearchParams({
       projectStore: 'local',
       projectId: 'one',
@@ -207,7 +221,7 @@ describe('Wework scheme bridge', () => {
     expect(tokens.has('old-token')).toBe(false)
   })
   it('opens a local assignment even when cloud authentication is unavailable', () => {
-    render(<WeworkSchemeBridge />)
+    render({ connection: null })
     act(() => {
       openWeworkScheme('wework://boards/local/local-project-1/issues/OFF-1')
     })
@@ -225,7 +239,7 @@ describe('Wework scheme bridge', () => {
       getDesktopWindowLabel.mockReturnValue(windowLabel)
       invokeDesktopHost.mockResolvedValue([{ id: 1, url: 'wework://tasks/device-1/task-1' }])
 
-      render(<WeworkSchemeBridge />)
+      render({ connection: null })
       await act(async () => {})
 
       expect(invokeDesktopHost).not.toHaveBeenCalled()
@@ -252,7 +266,7 @@ describe('Wework scheme bridge', () => {
       },
     ]
     workspaceTabs.activeTabId = 'active-task'
-    render(<WeworkSchemeBridge />)
+    render({ connection: null })
 
     act(() => {
       openWeworkScheme('wework://tasks/local-device/first-turn')
@@ -269,13 +283,9 @@ describe('Wework scheme bridge', () => {
       { id: 'current', kind, title: 'Current', contentRoute: '/', fixed: false },
     ]
     workspaceTabs.activeTabId = 'current'
-    render(
-      <CloudConnectionContext.Provider
-        value={{ isConnected: true, token: 'test-token' } as CloudConnectionContextValue}
-      >
-        <WeworkSchemeBridge />
-      </CloudConnectionContext.Provider>
-    )
+    render({
+      connection: { isConnected: true, token: 'test-token' } as CloudConnectionContextValue,
+    })
 
     act(() => {
       openWeworkScheme(
@@ -301,13 +311,9 @@ describe('Wework scheme bridge', () => {
       },
     ]
     workspaceTabs.activeTabId = 'other'
-    render(
-      <CloudConnectionContext.Provider
-        value={{ isConnected: true, token: 'test-token' } as CloudConnectionContextValue}
-      >
-        <WeworkSchemeBridge />
-      </CloudConnectionContext.Provider>
-    )
+    render({
+      connection: { isConnected: true, token: 'test-token' } as CloudConnectionContextValue,
+    })
 
     act(() => {
       openWeworkScheme('wework://boards/12/issues/WEG-1/comments/c-1')
@@ -336,7 +342,7 @@ describe('Wework scheme bridge', () => {
       { id: 'board', kind: 'board', title: 'Board', contentRoute: '/todo', fixed: true },
     ]
     workspaceTabs.activeTabId = 'board'
-    render(<WeworkSchemeBridge />)
+    render({ connection: null })
 
     act(() => {
       openWeworkScheme('wework://tasks/local-device/first-turn')
@@ -363,13 +369,9 @@ describe('Wework scheme bridge', () => {
       invokeDesktopHost.mockImplementation(async (capability: string) =>
         capability === 'navigation.pendingSchemes' ? pending : undefined
       )
-      render(
-        <CloudConnectionContext.Provider
-          value={{ isConnected: true, token: 'test-token' } as CloudConnectionContextValue}
-        >
-          <WeworkSchemeBridge />
-        </CloudConnectionContext.Provider>
-      )
+      render({
+        connection: { isConnected: true, token: 'test-token' } as CloudConnectionContextValue,
+      })
       await act(async () => {})
       expect(openTab).not.toHaveBeenCalled()
       pending = [{ id: 3, url }]
@@ -389,13 +391,9 @@ describe('Wework scheme bridge', () => {
   )
 
   it('opens a registered DSH app through the workspace tab navigator', async () => {
-    render(
-      <CloudConnectionContext.Provider
-        value={{ isConnected: true, token: 'test-token' } as CloudConnectionContextValue}
-      >
-        <WeworkSchemeBridge />
-      </CloudConnectionContext.Provider>
-    )
+    render({
+      connection: { isConnected: true, token: 'test-token' } as CloudConnectionContextValue,
+    })
 
     act(() => {
       openWeworkScheme('wework://apps/wegent')
@@ -408,7 +406,7 @@ describe('Wework scheme bridge', () => {
 
   it('rejects an unregistered DSH app without opening a route-shaped tab', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
-    render(<WeworkSchemeBridge />)
+    render({ connection: null })
 
     act(() => {
       openWeworkScheme('wework://apps/harness-research-local')
@@ -431,13 +429,9 @@ describe('Wework scheme bridge', () => {
       return () => {}
     }
     try {
-      render(
-        <CloudConnectionContext.Provider
-          value={{ isConnected: true, token: 'test-token' } as CloudConnectionContextValue}
-        >
-          <WeworkSchemeBridge />
-        </CloudConnectionContext.Provider>
-      )
+      render({
+        connection: { isConnected: true, token: 'test-token' } as CloudConnectionContextValue,
+      })
       act(() => {
         openWeworkScheme('wework://apps/wegent')
       })
@@ -464,7 +458,7 @@ describe('Wework scheme bridge', () => {
       state: 'running',
     }
     listHarnessApps.mockResolvedValue([installation])
-    render(<WeworkSchemeBridge />)
+    render({ connection: null })
 
     act(() => {
       openWeworkScheme('wework://smart-apps/42')
@@ -477,7 +471,7 @@ describe('Wework scheme bridge', () => {
   })
 
   it('routes a missing Smart app to the targeted installation prompt', async () => {
-    render(<WeworkSchemeBridge />)
+    render({ connection: null })
 
     act(() => {
       openWeworkScheme('wework://smart-apps/42')
@@ -501,7 +495,7 @@ describe('Wework scheme bridge', () => {
       state: 'installed',
     }
     listHarnessApps.mockResolvedValue([installation])
-    render(<WeworkSchemeBridge />)
+    render({ connection: null })
 
     act(() => {
       openWeworkScheme('wework://smart-apps/42')
@@ -522,11 +516,7 @@ describe('Wework scheme bridge', () => {
     invokeDesktopHost.mockImplementation(async (capability: string) =>
       capability === 'navigation.pendingSchemes' ? pending : undefined
     )
-    render(
-      <StrictMode>
-        <WeworkSchemeBridge />
-      </StrictMode>
-    )
+    render({ connection: null, replay: true })
     await waitFor(() =>
       expect(invokeDesktopHost).toHaveBeenCalledWith('navigation.acknowledgeScheme', { id: 1 })
     )
@@ -554,7 +544,7 @@ describe('Wework scheme bridge', () => {
       requests = requests.filter(request => request.id !== input?.id)
       return undefined
     })
-    render(<WeworkSchemeBridge />)
+    render({ connection: null })
 
     await waitFor(() =>
       expect(invokeDesktopHost).toHaveBeenCalledWith('navigation.acknowledgeScheme', { id: 2 })
@@ -586,19 +576,13 @@ describe('Wework scheme bridge', () => {
         ? [{ id: 2, url: 'wework://boards/12/issues/ISSUE-1' }]
         : undefined
     )
-    const view = (connected: boolean) => (
-      <CloudConnectionContext.Provider
-        value={
-          {
-            status: connected ? 'connected' : 'restoring',
-            isConnected: connected,
-            token: connected ? 'test-token' : null,
-          } as CloudConnectionContextValue
-        }
-      >
-        <WeworkSchemeBridge />
-      </CloudConnectionContext.Provider>
-    )
+    const view = (connected: boolean) => ({
+      connection: {
+        status: connected ? 'connected' : 'restoring',
+        isConnected: connected,
+        token: connected ? 'test-token' : null,
+      } as CloudConnectionContextValue,
+    })
     const rendered = render(view(false))
     await act(async () => {})
     expect(openTab).not.toHaveBeenCalled()
@@ -617,11 +601,7 @@ describe('Wework scheme bridge', () => {
       isConnected: false,
       token: null,
     } as CloudConnectionContextValue
-    const view = (value: CloudConnectionContextValue) => (
-      <CloudConnectionContext.Provider value={value}>
-        <WeworkSchemeBridge />
-      </CloudConnectionContext.Provider>
-    )
+    const view = (value: CloudConnectionContextValue) => ({ connection: value })
     const rendered = render(view(connection))
     act(() => {
       openWeworkScheme('wework://boards/12/issues/ISSUE-1')
@@ -641,7 +621,7 @@ describe('Wework scheme bridge', () => {
   })
 
   it('opens the board homepage without a cloud account', () => {
-    render(<WeworkSchemeBridge />)
+    render({ connection: null })
     act(() => {
       openWeworkScheme('wework://boards')
     })
@@ -650,7 +630,7 @@ describe('Wework scheme bridge', () => {
 
   it('opens local task links without a cloud account and rejects unknown routes', () => {
     openTab.mockClear()
-    render(<WeworkSchemeBridge />)
+    render({ connection: null })
     act(() => {
       openWeworkScheme('wework://tasks/local-device/task-1')
     })

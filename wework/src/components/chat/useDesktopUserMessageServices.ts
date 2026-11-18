@@ -1,5 +1,11 @@
 import { getCodeCommentPreviewRightBoundary } from './conversationViewportBoundary'
-import { useContext, useEffect, useMemo, useState } from 'react'
+import { useContext, useMemo, useSyncExternalStore } from 'react'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
+import { useDOMEvent } from '@wegent/collaboration/dom-events'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import type { UserMessageServices } from '@wegent/collaboration/conversation'
 import { useAttachmentImageServices } from './useAttachmentImageServices'
@@ -18,6 +24,8 @@ import { LOCAL_WORKBENCH_DEVICE_ALIAS, resolveLocalWorkbenchDeviceId } from '@/l
 import { resolveHomeRelativeWorkspacePath } from '@/lib/workspace-paths'
 import { useReferenceNavigation } from './useReferenceNavigation'
 
+const EMPTY_SKILLS: LocalDeviceSkill[] = []
+
 /** Builds the desktop services used to render and activate user-message references. */
 export function useDesktopUserMessageServices(hasSkillReferences = false): UserMessageServices {
   const images = useAttachmentImageServices()
@@ -28,74 +36,55 @@ export function useDesktopUserMessageServices(hasSkillReferences = false): UserM
   const catalog = useComposerCatalogBinding()
   const listSkills = catalog.listSkills ?? pane?.projectChat.listLocalSkills
   const getHomeDirectory = pane?.getDeviceHomeDirectory
+  const catalogEvent = catalog.catalogEvents.catalogChanged
   const localDeviceId = resolveLocalWorkbenchDeviceId(
     pane?.state.devices.filter(device => device.device_type === 'local') ?? [],
     LOCAL_WORKBENCH_DEVICE_ALIAS
   )!
-  const [loaded, setLoaded] = useState<{
-    source: typeof listSkills
-    homeSource: typeof getHomeDirectory
-    deviceId: string
-    homeDirectory?: string
-    skills: LocalDeviceSkill[]
-  } | null>(null)
-  useEffect(() => {
-    if (!hasSkillReferences || !listSkills) return
-    let revision = 0
-    const refresh = () => {
-      const request = ++revision
-      setLoaded(null)
-      const home = getHomeDirectory
-        ? resolveHomeRelativeWorkspacePath('~/', localDeviceId, getHomeDirectory).catch(
-            () => undefined
-          )
-        : Promise.resolve(undefined)
-      void Promise.all([listSkills(), home]).then(
-        ([skills, homeDirectory]) => {
-          if (request === revision) {
-            setLoaded({
-              source: listSkills,
-              homeSource: getHomeDirectory,
-              deviceId: localDeviceId,
-              skills,
-              homeDirectory,
-            })
-          }
-        },
-        () => {
-          if (request === revision) {
-            setLoaded({
-              source: listSkills,
-              homeSource: getHomeDirectory,
-              deviceId: localDeviceId,
-              skills: [],
-            })
-          }
-        }
-      )
-    }
-    refresh()
-    const event = catalog.catalogEvents.catalogChanged
-    if (event) window.addEventListener(event, refresh)
-    return () => {
-      revision++
-      if (event) window.removeEventListener(event, refresh)
-    }
-  }, [
-    catalog.catalogEvents.catalogChanged,
-    hasSkillReferences,
-    listSkills,
-    getHomeDirectory,
-    localDeviceId,
-  ])
-  const current =
-    loaded?.source === listSkills &&
-    loaded?.homeSource === getHomeDirectory &&
-    loaded?.deviceId === localDeviceId
-      ? loaded
-      : null
-  const localSkills = current?.skills
-  const localSkillHomeDirectory = current?.homeDirectory
+  const skillsResource = useMemo(
+    () =>
+      createAsyncResource<LocalDeviceSkill[]>(
+        `message-skills/${localDeviceId}/${catalogEvent ?? ''}`,
+        () => (listSkills ? listSkills() : Promise.resolve([])),
+        { refreshOnSubscribe: true }
+      ),
+    [listSkills, localDeviceId, catalogEvent]
+  )
+  const homeResource = useMemo(
+    () =>
+      createAsyncResource(
+        `message-skill-home/${localDeviceId}`,
+        () =>
+          getHomeDirectory
+            ? resolveHomeRelativeWorkspacePath('~/', localDeviceId, getHomeDirectory)
+            : Promise.resolve(undefined),
+        { refreshOnSubscribe: true }
+      ),
+    [getHomeDirectory, localDeviceId]
+  )
+  const active = hasSkillReferences && !!listSkills
+  const skillsQuery = useSyncExternalStore(
+    active ? skillsResource.subscribe : subscribeIdleResource,
+    skillsResource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const homeQuery = useSyncExternalStore(
+    active && getHomeDirectory ? homeResource.subscribe : subscribeIdleResource,
+    homeResource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  useDOMEvent(
+    'window',
+    catalogEvent ?? '',
+    () => {
+      void skillsResource.reload()
+      if (getHomeDirectory) void homeResource.reload()
+    },
+    { enabled: active && !!catalogEvent }
+  )
+  const localSkills =
+    skillsQuery.data ?? (skillsQuery.status === 'error' ? EMPTY_SKILLS : undefined)
+  const localSkillHomeDirectory = homeQuery.data
   return useMemo(
     () => ({
       localSkills,

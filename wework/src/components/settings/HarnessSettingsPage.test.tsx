@@ -1,8 +1,8 @@
 import { defaultAppPreferences } from '@/desktop/appPreferences'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
-import './../../../src/i18n'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import i18n from '@/i18n'
 import { HarnessSettingsPage } from './HarnessSettingsPage'
 
 const listLocalHarnessesMock = vi.hoisted(() => vi.fn())
@@ -31,6 +31,11 @@ vi.mock('@/desktop/appPreferences', async importOriginal => {
     ...actual,
     updateAppPreferences: updateAppPreferencesMock,
   }
+})
+
+afterEach(() => {
+  cleanup()
+  vi.useRealTimers()
 })
 
 describe('HarnessSettingsPage', () => {
@@ -194,5 +199,100 @@ describe('HarnessSettingsPage', () => {
     expect(screen.getByTestId('harness-permission-mode-claude_code')).toBeInTheDocument()
     expect(screen.queryByTestId('refresh-harness-settings')).not.toBeInTheDocument()
     expect(screen.queryByTestId('save-harness-settings')).not.toBeInTheDocument()
+  })
+
+  test('detects a selected executable once instead of issuing duplicate reads', async () => {
+    render(<HarnessSettingsPage />)
+    await screen.findByText('1.2.3')
+    expect(listLocalHarnessesMock).toHaveBeenCalledTimes(1)
+    await userEvent.click(screen.getByTestId('harness-settings-toggle-claude_code'))
+    await userEvent.click(screen.getByTestId('harness-executable-select-claude_code'))
+    await waitFor(() => expect(listLocalHarnessesMock).toHaveBeenCalledTimes(2))
+    expect(listLocalHarnessesMock).toHaveBeenLastCalledWith({
+      opencode: null,
+      claude_code: '/opt/claude/bin/claude',
+      kimi_code: null,
+    })
+  })
+
+  test('retains a failed autosave draft and retries only from the explicit retry button', async () => {
+    render(<HarnessSettingsPage />)
+    await screen.findByText('1.2.3')
+    fireEvent.click(screen.getByTestId('harness-settings-toggle-claude_code'))
+    vi.useFakeTimers()
+    updateAppPreferencesMock.mockRejectedValueOnce(new Error('Write failed'))
+    fireEvent.change(screen.getByTestId('harness-args-claude_code'), {
+      target: { value: '--unsaved' },
+    })
+    await act(async () => vi.advanceTimersByTimeAsync(400))
+    expect(screen.getByTestId('harness-settings-status')).toHaveTextContent('编码工具设置保存失败')
+    expect(screen.getByTestId('harness-args-claude_code')).toHaveValue('--unsaved')
+    await act(async () => vi.advanceTimersByTimeAsync(4000))
+    expect(updateAppPreferencesMock).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByTestId('harness-settings-retry-save'))
+    await act(async () => {})
+    expect(updateAppPreferencesMock).toHaveBeenCalledTimes(2)
+    expect(screen.getByTestId('harness-settings-status')).toHaveTextContent(
+      '编码工具设置已自动保存'
+    )
+    expect(listLocalHarnessesMock).toHaveBeenCalledTimes(1)
+  })
+
+  test('retries detection independently and does not write preferences', async () => {
+    listLocalHarnessesMock.mockRejectedValueOnce(new Error('Detection unavailable'))
+    render(<HarnessSettingsPage />)
+    expect(await screen.findByTestId('harness-settings-detection-error')).toHaveTextContent(
+      '编码工具检测失败'
+    )
+    expect(screen.getByTestId('harness-settings-claude_code')).not.toHaveTextContent('未检测到')
+    await userEvent.click(screen.getByTestId('harness-settings-retry-detection'))
+    expect(await screen.findByText('1.2.3')).toBeInTheDocument()
+    expect(listLocalHarnessesMock).toHaveBeenCalledTimes(2)
+    expect(updateAppPreferencesMock).not.toHaveBeenCalled()
+  })
+
+  test('keeps a detection failure visible after an independent successful save', async () => {
+    listLocalHarnessesMock.mockRejectedValueOnce(new Error('Detection unavailable'))
+    render(<HarnessSettingsPage />)
+    await screen.findByTestId('harness-settings-detection-error')
+    fireEvent.click(screen.getByTestId('harness-settings-toggle-claude_code'))
+    vi.useFakeTimers()
+    fireEvent.change(screen.getByTestId('harness-args-claude_code'), {
+      target: { value: '--draft' },
+    })
+    await act(async () => vi.advanceTimersByTimeAsync(400))
+    expect(screen.getByTestId('harness-settings-status')).toHaveTextContent(
+      '编码工具设置已自动保存'
+    )
+    expect(screen.getByTestId('harness-settings-detection-error')).toBeInTheDocument()
+    expect(listLocalHarnessesMock).toHaveBeenCalledTimes(1)
+  })
+
+  test('preserves drafts and the save deadline across language changes without redetecting', async () => {
+    render(<HarnessSettingsPage />)
+    await screen.findByText('1.2.3')
+    fireEvent.click(screen.getByTestId('harness-settings-toggle-claude_code'))
+    vi.useFakeTimers()
+    fireEvent.change(screen.getByTestId('harness-args-claude_code'), {
+      target: { value: '--draft' },
+    })
+    await act(async () => vi.advanceTimersByTimeAsync(200))
+    const previousLanguage = i18n.language
+    try {
+      await act(async () => {
+        await i18n.changeLanguage('en')
+      })
+      expect(screen.getByTestId('harness-args-claude_code')).toHaveValue('--draft')
+      expect(listLocalHarnessesMock).toHaveBeenCalledTimes(1)
+      await act(async () => vi.advanceTimersByTimeAsync(200))
+      expect(updateAppPreferencesMock).toHaveBeenCalledTimes(1)
+      expect(screen.getByTestId('harness-settings-status')).toHaveTextContent(
+        'Coding tool settings saved automatically'
+      )
+    } finally {
+      await act(async () => {
+        await i18n.changeLanguage(previousLanguage)
+      })
+    }
   })
 })

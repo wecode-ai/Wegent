@@ -1,5 +1,5 @@
 import { context, harness, view } from './runtimeInteractionsProvider.fixtures'
-import { act, fireEvent, renderHook, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import {
   applyRequestUserInputResponseToBlock,
@@ -22,7 +22,7 @@ import {
 import { interactionResponse } from './runtimeInteractions'
 import * as diagnostics from './interactionDiagnostics'
 import { issueHumanInteraction } from './issueHumanInteractions'
-import { useRuntimeInteractionSettlements } from './useRuntimeInteractionSettlements'
+import { createRuntimeInteractionSettlements } from './runtimeInteractionSettlements'
 import { archiveInteraction } from './interactionStorage'
 
 const historyKey = 'wework.interactions:test:1:history'
@@ -417,7 +417,13 @@ it.each([true, false])('keeps shared Issue settlement authoritative (cached=%s)'
     cached,
   }
   const settle = vi.fn().mockResolvedValue(undefined)
-  renderHook(() => useRuntimeInteractionSettlements([item], settle))
+  const settlements = createRuntimeInteractionSettlements({
+    active: () => true,
+    pending: () => [item],
+    settle,
+  })
+  settlements.synchronize()
   await act(async () => cacheQuestion({ ...interactionQuestion, interactionStatus: 'answered' }))
   expect(settle).not.toHaveBeenCalled()
+  settlements.disconnect()
 })

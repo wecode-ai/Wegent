@@ -1,11 +1,11 @@
 import { usePluginRefreshReconciliation } from '@/components/plugins/hooks/usePluginRefreshReconciliation'
-import { act, render, renderHook, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { act, renderHook, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   PLUGIN_RELEASE_AVAILABLE_EVENT,
   PLUGIN_AUTO_UPDATE_COMPLETED_EVENT,
-  PluginAutoUpdateCoordinator,
-} from './PluginAutoUpdateCoordinator'
+} from './pluginAutoUpdateEvents'
+import { createPluginAutoUpdateActor } from './pluginAutoUpdateActor'
 import {
   beginPluginDeviceSync,
   clearPluginDeviceAutoSyncAttempts,
@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => {
   const handlers = new Map<string, Set<(payload?: unknown) => void>>()
   return {
     handlers,
+    runtimeListeners: new Set<() => void>(),
     ensureConnected: vi.fn(async () => undefined),
     dispose: vi.fn(),
     socketOn: vi.fn((event: string, handler: (payload?: unknown) => void) => {
@@ -66,7 +67,11 @@ vi.mock('@/features/cloud-connection/useCloudConnection', () => ({
 }))
 
 vi.mock('@/features/cloud-connection/localExecutorCloudConnectionStatus', () => ({
-  useLocalExecutorCloudConnectionStatus: () => ({
+  subscribeLocalExecutorCloudConnectionStatus: (listener: () => void) => {
+    mocks.runtimeListeners.add(listener)
+    return () => mocks.runtimeListeners.delete(listener)
+  },
+  getLocalExecutorCloudConnectionStatus: () => ({
     apiBaseUrl: 'https://cloud.example.com/api',
     connected: mocks.runtimeConnected,
   }),
@@ -112,6 +117,34 @@ vi.mock('@/telemetry/businessEvents', () => ({ trackPluginEvent: mocks.track }))
 function emit(event: string, payload?: unknown) {
   for (const handler of mocks.handlers.get(event) ?? []) handler(payload)
 }
+
+const coordinators = new Set<ReturnType<typeof createPluginAutoUpdateActor>>()
+function renderCoordinator() {
+  const actor = createPluginAutoUpdateActor()
+  coordinators.add(actor)
+  const rerender = () => {
+    actor.observe({
+      isConnected: true,
+      apiBaseUrl: 'https://cloud.example.com/api',
+      socketBaseUrl: mocks.socketBaseUrl,
+      socketPath: mocks.socketPath,
+      token: mocks.token,
+    })
+    for (const listener of mocks.runtimeListeners) listener()
+  }
+  rerender()
+  return {
+    rerender,
+    unmount: () => {
+      actor.disconnect()
+      coordinators.delete(actor)
+    },
+  }
+}
+afterEach(() => {
+  for (const actor of coordinators) actor.disconnect()
+  coordinators.clear()
+})
 
 describe('PluginAutoUpdateCoordinator', () => {
   beforeEach(() => {
@@ -182,7 +215,7 @@ describe('PluginAutoUpdateCoordinator', () => {
 
   test('uses the registered route for background release sync and discovery', async () => {
     mocks.routeId = 'app-record-73'
-    render(<PluginAutoUpdateCoordinator />)
+    renderCoordinator()
 
     await waitFor(() => expect(mocks.syncInstalledPluginToDevice).toHaveBeenCalledOnce())
     expect(mocks.listMarketplacePlugins).toHaveBeenCalledWith({ deviceId: mocks.routeId })
@@ -214,7 +247,7 @@ describe('PluginAutoUpdateCoordinator', () => {
         },
       }
     })
-    render(<PluginAutoUpdateCoordinator />)
+    renderCoordinator()
     await waitFor(() => expect(mocks.notifyLocalPluginSkillsChanged).toHaveBeenCalledTimes(2))
     expect(mocks.autoUpdateInstalledPlugins).toHaveBeenCalledWith('local_pull_v1')
     expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
@@ -246,7 +279,7 @@ describe('PluginAutoUpdateCoordinator', () => {
         result: { scope: 'plugins', plugins: [{ id: 1, status: 'synced', version: '2.0.0' }] },
       }
     })
-    render(<PluginAutoUpdateCoordinator />)
+    renderCoordinator()
     await waitFor(() => expect(mocks.requestLocalExecutor).toHaveBeenCalledOnce())
     expect(mocks.autoUpdateInstalledPlugins).not.toHaveBeenCalled()
     enabled = true
@@ -281,7 +314,7 @@ describe('PluginAutoUpdateCoordinator', () => {
           result: { scope: 'plugins', plugins: unchanged ? [] : [{ id: 1, status: 'removed' }] },
         }
       })
-      render(<PluginAutoUpdateCoordinator />)
+      renderCoordinator()
       await waitFor(() => expect(reconciled).toBe(true))
       await act(async () => {})
       expect(mocks.requestLocalExecutor).toHaveBeenCalledWith('executor.plugins.local_sync', {
@@ -313,7 +346,7 @@ describe('PluginAutoUpdateCoordinator', () => {
       })
       const published = vi.fn()
       window.addEventListener(PLUGIN_AUTO_UPDATE_COMPLETED_EVENT, published)
-      const view = render(<PluginAutoUpdateCoordinator />)
+      const view = renderCoordinator()
       try {
         await waitFor(() => expect(mocks.autoUpdateInstalledPlugins).toHaveBeenCalledOnce())
         await waitFor(() => expect(published).toHaveBeenCalledOnce())
@@ -351,7 +384,7 @@ describe('PluginAutoUpdateCoordinator', () => {
         result: { scope: 'plugins', plugins: [{ id: 1, status: 'removed' }] },
       }
     })
-    const view = render(<PluginAutoUpdateCoordinator />)
+    const view = renderCoordinator()
     try {
       await waitFor(() => expect(mocks.autoUpdateInstalledPlugins).toHaveBeenCalledOnce())
       await waitFor(() => expect(mocks.notifyLocalPluginSkillsChanged).toHaveBeenCalledOnce())
@@ -391,7 +424,7 @@ describe('PluginAutoUpdateCoordinator', () => {
           },
         }
       })
-      const view = render(<PluginAutoUpdateCoordinator />)
+      const view = renderCoordinator()
       try {
         await waitFor(() => expect(mocks.notifyLocalPluginSkillsChanged).toHaveBeenCalledOnce())
         expect(mocks.autoUpdateInstalledPlugins).toHaveBeenCalledOnce()
@@ -445,7 +478,7 @@ describe('PluginAutoUpdateCoordinator', () => {
           })
         : unchanged
     })
-    const view = render(<PluginAutoUpdateCoordinator />)
+    const view = renderCoordinator()
     try {
       await waitFor(() => expect(mocks.autoUpdateInstalledPlugins).toHaveBeenCalledOnce())
       await waitFor(() => expect(fullCount).toBe(1))
@@ -495,11 +528,11 @@ describe('PluginAutoUpdateCoordinator', () => {
         result: { scope: 'plugins', plugins: [] },
       }
     })
-    const view = render(<PluginAutoUpdateCoordinator />)
+    const view = renderCoordinator()
     try {
       await waitFor(() => expect(finishOld).toBeTypeOf('function'))
       mocks.token = 'next-account-token'
-      view.rerender(<PluginAutoUpdateCoordinator />)
+      view.rerenderCoordinator()
       await waitFor(() =>
         expect(mocks.requestLocalExecutor).toHaveBeenCalledWith(
           'executor.plugins.local_sync',
@@ -542,7 +575,7 @@ describe('PluginAutoUpdateCoordinator', () => {
         },
       ],
     }))
-    render(<PluginAutoUpdateCoordinator />)
+    renderCoordinator()
 
     await waitFor(() => expect(mocks.autoUpdateInstalledPlugins).toHaveBeenCalledOnce())
     await waitFor(() => expect(hasInFlightPluginDeviceSync('device-1')).toBe(false))
@@ -553,7 +586,7 @@ describe('PluginAutoUpdateCoordinator', () => {
 
   test('retains a release notification while a policy save holds the shared device lock', async () => {
     const finishPolicySave = beginPluginDeviceSync('device-1')!
-    render(<PluginAutoUpdateCoordinator />)
+    renderCoordinator()
     await waitFor(() => expect(mocks.listLocalInstalledPlugins).toHaveBeenCalled())
     await act(async () => emit(PLUGIN_RELEASE_AVAILABLE_EVENT, { releaseId: 4 }))
     expect(mocks.autoUpdateInstalledPlugins).not.toHaveBeenCalled()
@@ -566,7 +599,7 @@ describe('PluginAutoUpdateCoordinator', () => {
 
   test('cancels a blocked update check when its coordinator unmounts', async () => {
     const finishPolicySave = beginPluginDeviceSync('device-1')!
-    const view = render(<PluginAutoUpdateCoordinator />)
+    const view = renderCoordinator()
     await waitFor(() => expect(mocks.listLocalInstalledPlugins).toHaveBeenCalled())
 
     view.unmount()
@@ -595,18 +628,18 @@ describe('PluginAutoUpdateCoordinator', () => {
           )
         })
     )
-    const view = render(<PluginAutoUpdateCoordinator />)
+    const view = renderCoordinator()
     await waitFor(() => expect(mocks.syncInstalledPluginToDevice).toHaveBeenCalledOnce())
     const signal = mocks.httpOptions?.signal
 
     mocks.runtimeConnected = false
-    view.rerender(<PluginAutoUpdateCoordinator />)
+    view.rerenderCoordinator()
     await act(async () => {})
     expect(signal?.aborted).toBe(false)
     expect(hasInFlightPluginDeviceSync('device-1')).toBe(true)
 
     mocks.runtimeConnected = true
-    view.rerender(<PluginAutoUpdateCoordinator />)
+    view.rerenderCoordinator()
     await act(async () => {})
     expect(mocks.syncInstalledPluginToDevice).toHaveBeenCalledOnce()
     expect(hasInFlightPluginDeviceSync('device-1')).toBe(true)
@@ -670,12 +703,12 @@ describe('PluginAutoUpdateCoordinator', () => {
       onError,
     }
     const manual = renderHook(usePluginRefreshReconciliation, { initialProps: initial })
-    const view = render(<PluginAutoUpdateCoordinator />)
+    const view = renderCoordinator()
     try {
       await waitFor(() => expect(mocks.syncInstalledPluginsToDevice).toHaveBeenCalledOnce())
       expect(hasInFlightPluginDeviceSync('device-1')).toBe(true)
       mocks.token = 'returned-author-token'
-      view.rerender(<PluginAutoUpdateCoordinator />)
+      view.rerenderCoordinator()
       manual.rerender({ ...initial, request: 1, accountKey: 'author' })
 
       await waitFor(() => expect(onError).toHaveBeenCalledWith(collision))
@@ -700,13 +733,13 @@ describe('PluginAutoUpdateCoordinator', () => {
           })
       )
       .mockResolvedValueOnce({ updated: [], updatedCount: 0, remainingCount: 0 })
-    const view = render(<PluginAutoUpdateCoordinator />)
+    const view = renderCoordinator()
     await waitFor(() => expect(mocks.autoUpdateInstalledPlugins).toHaveBeenCalledOnce())
     expect(hasInFlightPluginDeviceSync('device-1')).toBe(true)
     const previousSignal = mocks.httpOptions?.signal
 
     mocks.token = 'next-account-token'
-    view.rerender(<PluginAutoUpdateCoordinator />)
+    view.rerenderCoordinator()
 
     expect(previousSignal?.aborted).toBe(true)
     await waitFor(() => expect(hasInFlightPluginDeviceSync('device-1')).toBe(false))
@@ -729,7 +762,7 @@ describe('PluginAutoUpdateCoordinator', () => {
           finishSync = () => resolve(response)
         })
     )
-    const view = render(<PluginAutoUpdateCoordinator />)
+    const view = renderCoordinator()
     await waitFor(() => expect(mocks.syncInstalledPluginToDevice).toHaveBeenCalledOnce())
 
     view.unmount()
@@ -741,7 +774,7 @@ describe('PluginAutoUpdateCoordinator', () => {
   })
 
   test('checks on startup and when a published release event arrives', async () => {
-    render(<PluginAutoUpdateCoordinator />)
+    renderCoordinator()
 
     await waitFor(() => expect(mocks.autoUpdateInstalledPlugins).toHaveBeenCalledOnce())
     expect(mocks.syncInstalledPluginToDevice).toHaveBeenCalledWith(1, 'device-1')
@@ -825,7 +858,7 @@ describe('PluginAutoUpdateCoordinator', () => {
       },
     })
 
-    render(<PluginAutoUpdateCoordinator />)
+    renderCoordinator()
 
     await waitFor(() => expect(mocks.autoUpdateInstalledPlugins).toHaveBeenCalledTimes(2))
     expect(mocks.syncInstalledPluginToDevice).toHaveBeenCalledOnce()
@@ -836,7 +869,7 @@ describe('PluginAutoUpdateCoordinator', () => {
   })
 
   test('removes socket handlers and disconnects its notification client on unmount', async () => {
-    const view = render(<PluginAutoUpdateCoordinator />)
+    const view = renderCoordinator()
     await waitFor(() => expect(mocks.ensureConnected).toHaveBeenCalledOnce())
 
     view.unmount()

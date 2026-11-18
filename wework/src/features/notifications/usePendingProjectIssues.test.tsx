@@ -53,7 +53,7 @@ it.each(['local', 'backend'] as const)(
       projectSpaceApis: { [store === 'local' ? 'local' : 'cloud']: { listMyWork } },
     })
     const wrapper = ({ children }: { children: ReactNode }) => (
-      <NotificationTaskContext.Provider value={{ taskSource: source, registerTaskSource: vi.fn() }}>
+      <NotificationTaskContext.Provider value={{ taskSource: source }}>
         {children}
       </NotificationTaskContext.Provider>
     )
@@ -111,7 +111,7 @@ it('continues through an empty cursor page and filters actual human ownership', 
   )
   const source = taskSource({ projectSpaceApis: { cloud: { listMyWork: read } } })
   const wrapper = ({ children }: { children: ReactNode }) => (
-    <NotificationTaskContext.Provider value={{ taskSource: source, registerTaskSource: vi.fn() }}>
+    <NotificationTaskContext.Provider value={{ taskSource: source }}>
       {children}
     </NotificationTaskContext.Provider>
   )
@@ -152,7 +152,7 @@ it.each([
       },
     ]
     const wrapper = ({ children }: { children: ReactNode }) => (
-      <NotificationTaskContext.Provider value={{ taskSource: source, registerTaskSource: vi.fn() }}>
+      <NotificationTaskContext.Provider value={{ taskSource: source }}>
         {children}
       </NotificationTaskContext.Provider>
     )
@@ -169,7 +169,7 @@ it('keeps local results usable when the cloud is offline and does no reads on in
     projectSpaceApis: { local: { listMyWork: local }, cloud: { listMyWork: cloud } },
   })
   const wrapper = ({ children }: { children: ReactNode }) => (
-    <NotificationTaskContext.Provider value={{ taskSource: source, registerTaskSource: vi.fn() }}>
+    <NotificationTaskContext.Provider value={{ taskSource: source }}>
       {children}
     </NotificationTaskContext.Provider>
   )
@@ -204,7 +204,7 @@ it('uses the composed local viewer scope for native ownership and verified profi
     },
   })
   const wrapper = ({ children }: { children: ReactNode }) => (
-    <NotificationTaskContext.Provider value={{ taskSource: source, registerTaskSource: vi.fn() }}>
+    <NotificationTaskContext.Provider value={{ taskSource: source }}>
       {children}
     </NotificationTaskContext.Provider>
   )
@@ -230,7 +230,7 @@ it('clears old account data and ignores an old in-flight result after scope chan
   )
   let source = taskSource({ projectSpaceApis: { cloud: { listMyWork: old } } })
   const wrapper = ({ children }: { children: ReactNode }) => (
-    <NotificationTaskContext.Provider value={{ taskSource: source, registerTaskSource: vi.fn() }}>
+    <NotificationTaskContext.Provider value={{ taskSource: source }}>
       {children}
     </NotificationTaskContext.Provider>
   )

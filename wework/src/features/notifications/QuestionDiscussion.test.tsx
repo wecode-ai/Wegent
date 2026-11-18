@@ -1,6 +1,6 @@
 import '@/i18n'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { useContext, useEffect, useRef, useState } from 'react'
+import { useContext, useImperativeHandle, useRef, useState } from 'react'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { QuestionDiscussionProvider } from './QuestionDiscussionProvider'
 import { QuestionDiscussionScope, QuestionDiscussionTabPanel } from './QuestionDiscussionScope'
@@ -141,11 +141,12 @@ function DiscussionTabs({
     </>
   )
 }
+const captureStore = (store: QuestionDiscussionStore | null) => {
+  if (store) latestStore = store
+}
 function StoreProbe() {
   const store = useContext(QuestionDiscussionStoreContext)!
-  useEffect(() => {
-    latestStore = store
-  }, [store])
+  useImperativeHandle(captureStore, () => store, [store])
   return null
 }
 function setup(count = 1, input = payload) {
@@ -634,11 +635,12 @@ test('a shared creation failure is visible in the currently open entry surface',
 
 test('account switches isolate discussion drafts and late creation without remounting unrelated input', async () => {
   let store!: QuestionDiscussionStore
+  const capture = (current: QuestionDiscussionStore | null) => {
+    if (current) store = current
+  }
   function Probe() {
     const current = useContext(QuestionDiscussionStoreContext)!
-    useEffect(() => {
-      store = current
-    }, [current])
+    useImperativeHandle(capture, () => current, [current])
     return <input aria-label="Keep connection input" defaultValue="" />
   }
   const tree = (accountKey: string) => (

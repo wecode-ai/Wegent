@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useClock } from '../clock'
 import type { CollaborationTranslate } from '../i18n'
 import { formatDuration } from './blocks/processingDuration'
 
@@ -13,12 +13,7 @@ export function AutomaticRetryStatus(props: AutomaticRetryStatusProps) {
 }
 
 function RetryCountdown({ reason, retryAt, translate }: AutomaticRetryStatusProps) {
-  const [now, setNow] = useState(Date.now)
-  useEffect(() => {
-    if (!retryAt) return
-    const timer = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(timer)
-  }, [retryAt])
+  const now = useClock(Boolean(retryAt), { until: retryAt ?? undefined })
   const remaining = retryAt ? Math.max(0, retryAt - now) : 0
   const key =
     reason === 'quota'

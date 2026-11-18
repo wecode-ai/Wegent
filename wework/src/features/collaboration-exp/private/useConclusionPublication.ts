@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import {
   canCommentCollaborationIssue,
   type CollaborationIssue,
@@ -52,20 +52,14 @@ export function useConclusionPublication(input: ConclusionPublicationInput) {
   useLayoutEffect(() => {
     latest.current = input
   }, [input])
-  const mounted = useRef(true)
   const generation = useRef(0)
-  const [operation, setOperation] = useState<{
-    scopeKey: string
-    publishing: boolean
-    error: ConclusionPublicationError | null
-  }>({ scopeKey: input.scopeKey, publishing: false, error: null })
-  useEffect(() => {
-    mounted.current = true
-    return () => {
-      mounted.current = false
-      generation.current += 1
-    }
-  }, [])
+  const [operationSource] = useState(() => createPublicationOperation(key))
+  const operation = useSyncExternalStore(
+    operationSource.subscribe,
+    operationSource.getSnapshot,
+    operationSource.getSnapshot
+  )
+  const setOperation = operationSource.set
   useLayoutEffect(() => {
     const state = stateFor(key)
     state.users += 1
@@ -83,20 +77,28 @@ export function useConclusionPublication(input: ConclusionPublicationInput) {
     const body = request.draft.value.trim()
     const key = publicationKey(request)
     const state = stateFor(key)
-    if (!request.active || !body || state.pending || request.draft.getValue().trim() !== body)
+    if (
+      !operationSource.isActive() ||
+      !request.active ||
+      !body ||
+      state.pending ||
+      request.draft.getValue().trim() !== body
+    )
       return false
     state.pending = true
     const requestGeneration = generation.current
+    const lifetime = operationSource.getGeneration()
     const stillCurrent = () =>
-      mounted.current &&
+      operationSource.isActive() &&
+      operationSource.getGeneration() === lifetime &&
       generation.current === requestGeneration &&
       latest.current.accountKey === request.accountKey &&
-      latest.current.scopeKey === request.scopeKey &&
+      publicationKey(latest.current) === key &&
       latest.current.api === request.api &&
       latest.current.expectedUserId === request.expectedUserId &&
       latest.current.active &&
       latest.current.draft.value.trim() === body
-    setOperation({ scopeKey: request.scopeKey, publishing: true, error: null })
+    setOperation({ scopeKey: key, publishing: true, error: null })
     let published = false
     let submission: ReturnType<ConclusionPublicationInput['draft']['beginSubmission']> | undefined
     try {
@@ -113,16 +115,20 @@ export function useConclusionPublication(input: ConclusionPublicationInput) {
         (project.current_user_id !== undefined &&
           project.current_user_id !== request.expectedUserId)
       ) {
-        if (mounted.current && latest.current.scopeKey === request.scopeKey)
-          setOperation({ scopeKey: request.scopeKey, publishing: false, error: 'stale' })
+        if (
+          operationSource.isActive() &&
+          publicationKey(latest.current) === key &&
+          operationSource.getGeneration() === lifetime
+        )
+          setOperation({ scopeKey: key, publishing: false, error: 'stale' })
         return false
       }
       if (project.status === 'archived' || issue.status === 'archived' || issue.archived_at) {
-        setOperation({ scopeKey: request.scopeKey, publishing: false, error: 'archived' })
+        setOperation({ scopeKey: key, publishing: false, error: 'archived' })
         return false
       }
       if (!canCommentCollaborationIssue(project, issue)) {
-        setOperation({ scopeKey: request.scopeKey, publishing: false, error: 'permission' })
+        setOperation({ scopeKey: key, publishing: false, error: 'permission' })
         return false
       }
       submission = request.draft.beginSubmission(request.draft.value)
@@ -134,9 +140,13 @@ export function useConclusionPublication(input: ConclusionPublicationInput) {
       await request.onPublished()
       return true
     } catch {
-      if (mounted.current && latest.current.scopeKey === request.scopeKey)
+      if (
+        operationSource.isActive() &&
+        publicationKey(latest.current) === key &&
+        operationSource.getGeneration() === lifetime
+      )
         setOperation({
-          scopeKey: request.scopeKey,
+          scopeKey: key,
           publishing: false,
           error: published ? 'refresh' : 'failed',
         })
@@ -145,16 +155,53 @@ export function useConclusionPublication(input: ConclusionPublicationInput) {
       submission?.release()
       state.pending = false
       releaseUnused(key, state)
-      if (mounted.current && latest.current.scopeKey === request.scopeKey)
+      if (
+        operationSource.isActive() &&
+        publicationKey(latest.current) === key &&
+        operationSource.getGeneration() === lifetime
+      )
         setOperation(current =>
-          current.scopeKey === request.scopeKey ? { ...current, publishing: false } : current
+          current.scopeKey === key ? { ...current, publishing: false } : current
         )
     }
   }
 
   return {
     publish,
-    publishing: operation.scopeKey === input.scopeKey && operation.publishing,
-    error: operation.scopeKey === input.scopeKey ? operation.error : null,
+    getOperation: operationSource.getSnapshot,
+    publishing: operation.scopeKey === key && operation.publishing,
+    error: operation.scopeKey === key ? operation.error : null,
+  }
+}
+
+interface PublicationOperation {
+  scopeKey: string
+  publishing: boolean
+  error: ConclusionPublicationError | null
+}
+
+/** The live operation snapshot owns its observers and fences detached async completions. */
+function createPublicationOperation(scopeKey: string) {
+  let snapshot: PublicationOperation = { scopeKey, publishing: false, error: null }
+  let generation = 0
+  const listeners = new Set<() => void>()
+  return {
+    getSnapshot: () => snapshot,
+    getGeneration: () => generation,
+    isActive: () => listeners.size > 0,
+    subscribe(listener: () => void) {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+        if (!listeners.size) generation += 1
+      }
+    },
+    set(value: PublicationOperation | ((current: PublicationOperation) => PublicationOperation)) {
+      if (!listeners.size) return
+      const next = typeof value === 'function' ? value(snapshot) : value
+      if (next === snapshot) return
+      snapshot = next
+      listeners.forEach(listener => listener())
+    },
   }
 }

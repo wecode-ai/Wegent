@@ -8,6 +8,7 @@ import type { DeviceInfo } from '@/types/api'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { useStandInProjects } from './useStandInProjects'
+import { publishPersonalStandIn } from '@/api/personalStandIn'
 
 const row: StandInProjectSettings = {
   projectId: 'project',
@@ -81,4 +82,50 @@ describe('Stand-in sidebar indicators', () => {
     })
     expect(result.current.has('cloud:project')).toBe(false)
   })
+})
+
+it('keeps a newer save when a personal-settings refresh returns an older project snapshot', async () => {
+  let finish!: (rows: StandInProjectSettings[]) => void
+  const list = vi
+    .fn<StandInExecutorApi['list']>()
+    .mockResolvedValueOnce([row])
+    .mockImplementationOnce(
+      () =>
+        new Promise(resolve => {
+          finish = resolve
+        })
+    )
+  const { services, api } = fixture(list)
+  const { result } = renderHook(() => useStandInProjects(services, undefined, 7))
+  await waitFor(() => expect(result.current.has('cloud:project')).toBe(true))
+  act(() => publishPersonalStandIn({ userId: 7, executionDeviceId: 'mac', version: 2, roles: [] }))
+  expect(list).toHaveBeenCalledTimes(2)
+  await act(async () => {
+    await api.save('project', { ...row, enabled: false })
+  })
+  await act(async () => finish([row]))
+  expect(result.current.has('cloud:project')).toBe(false)
+})
+
+it('clears an old API snapshot and ignores an identity lookup completed after unmount', async () => {
+  const first = fixture()
+  const second = fixture(vi.fn<StandInExecutorApi['list']>().mockResolvedValue([]))
+  const { result, rerender, unmount } = renderHook(
+    ({ services }) => useStandInProjects(services, undefined, 7),
+    { initialProps: { services: first.services } }
+  )
+  await waitFor(() => expect(result.current.has('cloud:project')).toBe(true))
+  rerender({ services: second.services })
+  expect(result.current.size).toBe(0)
+  await waitFor(() => expect(second.transport.list).toHaveBeenCalledTimes(1))
+  let identity!: (value: { deviceId: string }) => void
+  const third = fixture()
+  third.services.getLocalRuntimeSidebarIdentity = () =>
+    new Promise(resolve => {
+      identity = resolve
+    })
+  rerender({ services: third.services })
+  unmount()
+  await act(async () => identity({ deviceId: 'mac' }))
+  expect(third.transport.list).not.toHaveBeenCalled()
 })

@@ -7,16 +7,7 @@ import {
 } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
 import { useStandInRoleDirectory } from './useStandInRoleDirectory'
-
-const profile = (
-  device: string,
-  roles: PersonalStandInSettings['roles']
-): PersonalStandInSettings => ({
-  userId: 7,
-  executionDeviceId: device,
-  version: 1,
-  roles,
-})
+import { standInProfile as profile } from './personalStandInSettings.testFixtures'
 
 it('discovers a role created directly on another available device without a source forwarding record', async () => {
   const role = { ...newStandInRole('remote', 'review'), name: 'Remote review' }

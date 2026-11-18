@@ -11,7 +11,7 @@ import {
   notifyLocalHarnessSessionsChanged,
   unarchiveLocalHarnessSession,
 } from '@/lib/local-terminal'
-import type { ArchivedConversationItem } from '@/types/api'
+import { archivedItem, archivedItemAt } from './archivedConversations.testFixtures'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
@@ -38,33 +38,6 @@ const listArchivedLocalHarnessSessionsMock = vi.mocked(listArchivedLocalHarnessS
 const notifyLocalHarnessSessionsChangedMock = vi.mocked(notifyLocalHarnessSessionsChanged)
 const unarchiveLocalHarnessSessionMock = vi.mocked(unarchiveLocalHarnessSession)
 
-const archivedItem: ArchivedConversationItem = {
-  id: 'conversation-1',
-  taskId: 'codex-1',
-  title: 'Greet user',
-  projectKey: 'project-1',
-  projectName: 'weekly-mail',
-  workspacePath: '/Users/crystal/dev/git/weekly-report',
-  deviceId: 'device-1',
-  deviceAddress: '10.201.3.200:1420',
-  source: 'local',
-  createdAt: '2026-06-24T10:00:00Z',
-  updatedAt: '2026-06-24T10:30:00Z',
-}
-
-function archivedItemAt(
-  index: number,
-  overrides: Partial<ArchivedConversationItem> = {}
-): ArchivedConversationItem {
-  return {
-    ...archivedItem,
-    id: `conversation-${index}`,
-    taskId: `codex-${index}`,
-    title: `Archived conversation ${index}`,
-    ...overrides,
-  }
-}
-
 describe('ArchivedConversationsSettingsPage', () => {
   const listArchivedConversations = vi.fn()
   const deleteArchivedConversation = vi.fn()
@@ -79,9 +52,13 @@ describe('ArchivedConversationsSettingsPage', () => {
       projectGroups: [],
       total: 1,
     })
-    deleteArchivedConversation.mockReset().mockResolvedValue({})
+    deleteArchivedConversation
+      .mockReset()
+      .mockImplementation(async address => ({ accepted: true, taskId: address.taskId }))
     deleteArchivedConversationsBulk.mockReset().mockResolvedValue({ results: [] })
-    unarchiveConversation.mockReset().mockResolvedValue({})
+    unarchiveConversation
+      .mockReset()
+      .mockImplementation(async address => ({ accepted: true, taskId: address.taskId }))
     deleteArchivedLocalHarnessSessionMock.mockReset().mockResolvedValue(undefined)
     listArchivedLocalHarnessSessionsMock.mockReset().mockResolvedValue([])
     notifyLocalHarnessSessionsChangedMock.mockReset()

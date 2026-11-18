@@ -1,3 +1,8 @@
+import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+import { useSessionTelemetryConsent } from '@/telemetry/sessionConsent'
+import { useTelemetryEnabled } from '@/telemetry/client'
+import { getDesktopWindowLabel } from '@/lib/runtime-environment'
+import { createNotificationTaskRegistry } from '@/features/notifications/notificationTaskRegistry'
 import { composerSchema } from '@/components/chat/composer/composerProseMirrorModel'
 import { updateAppPreferences } from '@/desktop/appPreferences'
 import { importDshUiModule } from '@/features/dsh-runtime/dshUiModules'
@@ -10,6 +15,7 @@ import { useCloudConnection } from '@/features/cloud-connection/useCloudConnecti
 import { LOCAL_USER } from '@/api/local/localSession'
 import {
   NotificationTaskContext,
+  NotificationTaskRegistryContext,
   type TaskSource,
 } from '@/features/notifications/NotificationTaskSourceContext'
 import { useRuntimeInteractions } from '@/features/notifications/RuntimeInteractionsContext'
@@ -29,7 +35,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { EditorState } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
-import { useContext, useEffect, useState } from 'react'
+import { useCallback, useState, useSyncExternalStore } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import ApplicationsRoute from '../dsh/ui-applications/src/route'
 import CoreAppSurface from '../dsh/ui-core-apps/src/app-surface'
@@ -53,15 +59,8 @@ const appOwnerFixture = vi.hoisted(() => ({
 
 function TestAppOwnerRoute() {
   const cloudConnection = useCloudConnection()
-  const notificationSource = useContext(NotificationTaskContext)
-  const registerTaskSource = notificationSource?.registerTaskSource
-  const source = appOwnerFixture.source
   const interactions = useRuntimeInteractions()
   const [mountState, setMountState] = useState(0)
-  useEffect(() => {
-    registerTaskSource?.('app-owner-fixture', source, true)
-    return () => registerTaskSource?.('app-owner-fixture', null, true)
-  }, [registerTaskSource, source])
   return (
     <>
       <output data-testid="app-owner-account">{cloudConnection.user?.id}</output>
@@ -84,6 +83,55 @@ function TestAppOwnerRoute() {
     </>
   )
 }
+
+function TestNotificationTaskSourceProvider({ children }: { children: React.ReactNode }) {
+  const cloud = useCloudConnection()
+  const [registry] = useState(createNotificationTaskRegistry)
+  const [owner] = useState(() => ({
+    id: 'app-owner-fixture',
+    accountKey: JSON.stringify([cloud.apiBaseUrl, cloud.user?.id ?? appOwnerFixture.user?.id]),
+  }))
+  const source = appOwnerFixture.source
+  const preferences = useAppPreferencesState()
+  const sessionConsent = useSessionTelemetryConsent()
+  const enabled = useTelemetryEnabled()
+  const policy =
+    sessionConsent === false ||
+    (preferences?.loaded &&
+      preferences.preferences.telemetryConsentAsked &&
+      !preferences.preferences.telemetryEnabled)
+      ? false
+      : enabled
+        ? true
+        : null
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      const unsubscribe = registry.subscribe(listener, {
+        mainWindow: getDesktopWindowLabel() === 'main',
+        backendUrl: cloud.apiBaseUrl ?? 'local',
+        userId: cloud.user?.id,
+        policy,
+      })
+      const lease = source ? registry.claim(owner, source, true) : null
+      return () => {
+        unsubscribe()
+        lease?.release()
+      }
+    },
+    [registry, owner, source, cloud.apiBaseUrl, cloud.user?.id, policy]
+  )
+  const taskSource = useSyncExternalStore(subscribe, registry.getSnapshot, registry.getSnapshot)
+  return (
+    <NotificationTaskRegistryContext.Provider value={registry}>
+      <NotificationTaskContext.Provider value={{ taskSource }}>
+        {children}
+      </NotificationTaskContext.Provider>
+    </NotificationTaskRegistryContext.Provider>
+  )
+}
+vi.mock('@/features/notifications/NotificationTaskSource', () => ({
+  NotificationTaskSourceProvider: TestNotificationTaskSourceProvider,
+}))
 
 const telemetryMocks = vi.hoisted(() => ({ track: vi.fn(), trackEvent: vi.fn() }))
 
@@ -337,15 +385,11 @@ vi.mock('@/features/local-runtime/CodexHomeInitializer', () => ({
   CodexHomeInitializer: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }))
 
-vi.mock('@/features/idle-tasks/IdleTaskCoordinator', () => ({
-  IdleTaskCoordinator: ({ active }: { active: boolean }) => {
-    idleTaskCoordinatorMocks.active(active)
-    return null
-  },
-}))
-
-vi.mock('@/features/idle-tasks/WeworkIdleTasks', () => ({
-  WeworkIdleTasks: () => null,
+vi.mock('@/features/idle-tasks/workbenchIdleMaintenance', () => ({
+  createWorkbenchIdleMaintenance: () => ({
+    setReady: idleTaskCoordinatorMocks.active,
+    dispose: vi.fn(),
+  }),
 }))
 
 vi.mock('@/api/local/codexPlugins', async importOriginal => {
@@ -798,13 +842,17 @@ vi.mock('@/features/workbench/WorkbenchProvider', () => ({
     children: React.ReactNode
     onStartupReadyChange?: (ready: boolean) => void
   }) => {
-    useEffect(() => {
-      workbenchProviderMocks.mounts()
+    const bindWorkbench = useCallback((element: HTMLDivElement | null) => {
+      if (element) workbenchProviderMocks.mounts()
     }, [])
     if (workbenchProviderMocks.autoReady) {
       queueMicrotask(() => onStartupReadyChange?.(true))
     }
-    return <>{children}</>
+    return (
+      <div className="contents" ref={bindWorkbench}>
+        {children}
+      </div>
+    )
   },
 }))
 

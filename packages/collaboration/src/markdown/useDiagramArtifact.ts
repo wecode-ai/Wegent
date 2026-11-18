@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react'
+import { useCallback, useMemo, useSyncExternalStore } from 'react'
 import { getDiagramResource, getIdleDiagramSnapshot, type DiagramRequest } from './diagramArtifact'
 
 const subscribeIdle = () => () => {}
@@ -12,12 +12,20 @@ export function useDiagramArtifact(request: DiagramRequest, enabled: boolean) {
         : null,
     [enabled, code, kind, theme, plantumlServerUrl]
   )
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      if (!resource) return subscribeIdle()
+      const unsubscribe = resource.subscribe(listener)
+      resource.prepare()
+      return unsubscribe
+    },
+    [resource]
+  )
   const snapshot = useSyncExternalStore(
-    resource?.subscribe ?? subscribeIdle,
+    subscribe,
     resource?.getSnapshot ?? getIdleDiagramSnapshot,
     getIdleDiagramSnapshot
   )
-  useEffect(() => resource?.prepare(), [resource])
   const retry = useCallback(() => resource?.prepare(), [resource])
   return { ...snapshot, retry }
 }

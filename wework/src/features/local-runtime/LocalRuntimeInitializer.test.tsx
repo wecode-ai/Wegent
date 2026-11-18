@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { useEffect } from 'react'
+import { useCallback } from 'react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import '@/i18n'
 import {
@@ -29,11 +29,18 @@ const readLogMock = vi.mocked(readLocalExecutorLog)
 const SLOW_STARTUP_WARNING_MS = 10000
 
 function MountProbe({ onMount }: { onMount: () => void }) {
-  useEffect(() => {
-    onMount()
-  }, [onMount])
+  const observeMount = useCallback(
+    (element: HTMLDivElement | null) => {
+      if (element) onMount()
+    },
+    [onMount]
+  )
 
-  return <div data-testid="main-app">Main app</div>
+  return (
+    <div ref={observeMount} data-testid="main-app">
+      Main app
+    </div>
+  )
 }
 
 describe('LocalRuntimeInitializer', () => {

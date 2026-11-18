@@ -220,7 +220,7 @@ it.each(['local', 'backend'] as const)(
       markRuntimeTaskRead: vi.fn(),
     }
     render(
-      <NotificationTaskContext.Provider value={{ taskSource, registerTaskSource: vi.fn() }}>
+      <NotificationTaskContext.Provider value={{ taskSource }}>
         <RuntimeInteractionsProvider accountKey="test:1">{probe}</RuntimeInteractionsProvider>
       </NotificationTaskContext.Provider>
     )

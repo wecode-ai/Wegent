@@ -1,11 +1,13 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
+import { useFocusRequest, useScrollRequest } from '@wegent/collaboration/dom-events'
 import { ArrowRight, Circle, FileText, Lock, Sparkles } from 'lucide-react'
 import {
   IssueActivityMarkdown,
   issueNeedsUser,
   pendingIssueHumanRequests,
 } from '@wegent/collaboration'
-import type { CollaborationAttachment, SharedWorkspaceApi } from '@wegent/collaboration'
+import type { SharedWorkspaceApi } from '@wegent/collaboration'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimeTaskAddress } from '@/types/api'
@@ -54,40 +56,47 @@ export function TaskTimeline(props: Props) {
   const focusRequest = props.focusRequest
   const filterRequest = JSON.stringify([selectedNodeId, focusRequest])
   const hasSelectedNode = timeline.nodes.some(node => node.id === selectedNodeId)
-  useEffect(() => {
-    if (!selectedNodeId || !hasSelectedNode) return
-    const node = Array.from(
-      contentRef.current?.querySelectorAll<HTMLElement>('[data-testid]') ?? []
-    ).find(
-      element => element.dataset.testid === `collaboration-exp-timeline-node-${selectedNodeId}`
-    )
-    node?.scrollIntoView?.({ block: 'nearest' })
-    if (focusRequest) node?.focus({ preventScroll: true })
-  }, [selectedNodeId, hasSelectedNode, focusRequest])
+  const selectedNodeSelector = '.experience-timeline-node[data-linked="true"]'
+  useScrollRequest(contentRef, selectedNodeSelector, filterRequest, {
+    enabled: Boolean(selectedNodeId && hasSelectedNode),
+    block: 'nearest',
+  })
+  useFocusRequest(contentRef, filterRequest, {
+    enabled: Boolean(selectedNodeId && hasSelectedNode && focusRequest),
+    preventScroll: true,
+    selector: selectedNodeSelector,
+  })
   const [filterState, setFilter] = useState({
     request: filterRequest,
     value: 'all' as TimelineFilter,
   })
   const filter = props.filter ?? (filterState.request === filterRequest ? filterState.value : 'all')
-  const [attachmentState, setAttachmentState] = useState<{
-    items: CollaborationAttachment[]
-    error: string | null
-  }>({ items: [], error: null })
-  useEffect(() => {
-    if (!props.active) return
-    let cancelled = false
-    void props.api.attachments.list(issue.id).then(
-      items => {
-        if (!cancelled) setAttachmentState({ items, error: null })
-      },
-      cause => {
-        if (!cancelled) setAttachmentState(previous => ({ ...previous, error: String(cause) }))
-      }
-    )
-    return () => {
-      cancelled = true
-    }
-  }, [props.api, issue.id, props.active, props.revision])
+  const attachmentScope = JSON.stringify([
+    props.data.project.project_store,
+    props.data.project.id,
+    issue.id,
+  ])
+  const attachmentSource = useMemo(
+    () =>
+      createAsyncResource(attachmentScope, () => props.api.attachments.list(issue.id), {
+        refreshOnSubscribe: true,
+      }),
+    [attachmentScope, props.api, issue.id]
+  )
+  const subscribeAttachments = useCallback(
+    (notify: () => void) =>
+      props.active ? attachmentSource.subscribe(notify, props.revision) : subscribeIdleResource(),
+    [attachmentSource, props.active, props.revision]
+  )
+  const attachments = useSyncExternalStore(
+    subscribeAttachments,
+    attachmentSource.getSnapshot,
+    attachmentSource.getSnapshot
+  )
+  const attachmentState = {
+    items: attachments.data ?? [],
+    error: attachments.error === undefined ? null : String(attachments.error),
+  }
   const nodes = timeline.nodes.filter(
     node =>
       filter === 'all' ||

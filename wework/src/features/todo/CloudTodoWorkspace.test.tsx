@@ -1,3 +1,4 @@
+import type { ReactElement, ReactNode } from 'react'
 import {
   createWeworkSharedWorkspaceApi,
   createWeworkWorkspaceRuntimePort,
@@ -20,7 +21,15 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import '@/i18n'
 import type { RuntimeTaskCreateRequest, RuntimeTranscriptResponse, User } from '@/types/api'
 import type { DndContextProps, DragCancelEvent, DragEndEvent, DragStartEvent } from '@dnd-kit/core'
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render as renderComponent,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CloudTodoWorkspace } from './CloudTodoWorkspace'
@@ -29,6 +38,18 @@ import {
   saveProjectSpaceCodeWorkspacePreference,
 } from './projectSpaceCodeWorkspacePreference'
 import { workItemTaskInput } from './workItemTaskInput'
+
+function render(element: ReactElement) {
+  const owner = {
+    state: { devices: [], runtimeWork: null },
+    projectChat: {},
+    createProjectRuntimeTask: vi.fn(),
+  } as unknown as WorkbenchContextValue
+  function WorkbenchOwner({ children }: { children: ReactNode }) {
+    return <WorkbenchContext.Provider value={owner}>{children}</WorkbenchContext.Provider>
+  }
+  return renderComponent(element, { wrapper: WorkbenchOwner })
+}
 
 vi.mock('@/api/dsh/desktopHost', () => ({
   invokeDesktopHost: vi.fn(async (capability: string, params: Record<string, unknown> = {}) => {
@@ -304,41 +325,45 @@ vi.mock('./AiChatModal', () => ({
   ),
 }))
 
-vi.mock('./BackgroundTaskStarter', () => ({
-  BackgroundTaskStarter: ({
-    onAddressChange,
-    onTaskCreated,
-    prepareTask,
-    taskRequest,
-  }: {
-    onAddressChange: (address: { deviceId: string; taskId: string }) => void
-    taskRequest?: RuntimeTaskCreateRequest | null
-    onTaskCreated?: (
-      address: { deviceId: string; taskId: string },
-      localProject: { id: number; name: string; tasks: [] } | null,
-      deviceWorkspaceId: number | null
-    ) => void | Promise<void>
-    prepareTask?: (
-      address: { deviceId: string; taskId: string },
-      localProject: { id: number; name: string; tasks: [] } | null
-    ) => void | Promise<void | (() => void | Promise<void>)>
-  }) => (
-    <button
-      type="button"
-      data-testid="mock-start-background-task"
-      data-task-request={JSON.stringify(taskRequest ?? null)}
-      onClick={() => {
-        const address = { deviceId: 'local-device', taskId: 'runtime-created' }
-        const localProject = { id: 91, name: '运营工作区', tasks: [] as [] }
-        void Promise.resolve(prepareTask?.(address, localProject)).then(() => {
-          onAddressChange(address)
-          return onTaskCreated?.(address, localProject, null)
-        })
-      }}
-    >
-      后台创建 Runtime 任务
-    </button>
-  ),
+vi.mock('./backgroundTaskCommand', () => ({
+  startBackgroundTask: (props: import('./backgroundTaskCommand').BackgroundTaskRequest) => {
+    const BackgroundTaskCommandFixture = ({
+      onAddressChange,
+      onTaskCreated,
+      prepareTask,
+      taskRequest,
+    }: {
+      onAddressChange: (address: { deviceId: string; taskId: string }) => void
+      taskRequest?: RuntimeTaskCreateRequest | null
+      onTaskCreated?: (
+        address: { deviceId: string; taskId: string },
+        localProject: { id: number; name: string; tasks: [] } | null,
+        deviceWorkspaceId: number | null
+      ) => void | Promise<void>
+      prepareTask?: (
+        address: { deviceId: string; taskId: string },
+        localProject: { id: number; name: string; tasks: [] } | null
+      ) => void | Promise<void | (() => void | Promise<void>)>
+    }) => (
+      <button
+        type="button"
+        data-testid="mock-start-background-task"
+        data-task-request={JSON.stringify(taskRequest ?? null)}
+        onClick={() => {
+          const address = { deviceId: 'local-device', taskId: 'runtime-created' }
+          const localProject = { id: 91, name: '运营工作区', tasks: [] as [] }
+          void Promise.resolve(prepareTask?.(address, localProject)).then(() => {
+            onAddressChange(address)
+            return onTaskCreated?.(address, localProject, null)
+          })
+        }}
+      >
+        后台创建 Runtime 任务
+      </button>
+    )
+    renderComponent(<BackgroundTaskCommandFixture {...props} />)
+    return Promise.resolve(false)
+  },
 }))
 
 const project = {

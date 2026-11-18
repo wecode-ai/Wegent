@@ -1,6 +1,6 @@
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { useEffect } from 'react'
+import { useCallback, useImperativeHandle } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHttpClient } from '@/api/http'
 import { updateAppPreferences } from '@/desktop/appPreferences'
@@ -115,7 +115,13 @@ function CloudSnapshotProbe({
   observe: (snapshot: CloudConnectionContextValue) => void
 }) {
   const cloud = useCloudConnection()
-  useEffect(() => observe(cloud), [cloud, observe])
+  const expose = useCallback(
+    (current: CloudConnectionContextValue | null) => {
+      if (current) observe(current)
+    },
+    [observe]
+  )
+  useImperativeHandle(expose, () => cloud, [cloud])
   return null
 }
 

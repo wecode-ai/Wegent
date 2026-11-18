@@ -1,10 +1,14 @@
 import { getTelemetryConfig } from './config'
 import { trackPluginEvent } from './businessEvents'
-import { act, render, waitFor } from '@testing-library/react'
+import { act, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { beginOperation } from './operationBus'
-import { TelemetryAgent } from './TelemetryAgent'
-import { setSessionTelemetryConsent } from './sessionConsent'
+import { createTelemetrySession } from './telemetrySession'
+import {
+  setSessionTelemetryConsent,
+  getSessionTelemetryConsent,
+  subscribeSessionTelemetryConsent,
+} from './sessionConsent'
 
 const mocks = vi.hoisted(() => ({
   auth: {
@@ -68,6 +72,40 @@ vi.mock('@/features/app-preferences/useAppPreferencesState', () => ({
   useAppPreferencesState: () => mocks.preferences,
 }))
 
+const telemetryFixtures = new Set<() => void>()
+function renderTelemetry() {
+  const actor = createTelemetrySession()
+  const update = () =>
+    actor.update({
+      user: mocks.auth.user,
+      isLoading: mocks.auth.isLoading,
+      enabled: mocks.telemetryEnabled,
+      explicitlyDisabled:
+        getSessionTelemetryConsent() === false ||
+        (mocks.preferences.loaded &&
+          mocks.preferences.preferences.telemetryConsentAsked &&
+          !mocks.preferences.preferences.telemetryEnabled),
+      electronRuntime: true,
+      pathname: window.location.pathname,
+      search: window.location.search,
+      feature: window.location.pathname === '/plugins' ? 'plugins' : undefined,
+    })
+  window.addEventListener('popstate', update)
+  const unsubscribe = subscribeSessionTelemetryConsent(update)
+  const stop = () => {
+    window.removeEventListener('popstate', update)
+    unsubscribe()
+    actor.stop()
+    telemetryFixtures.delete(stop)
+  }
+  telemetryFixtures.add(stop)
+  update()
+  return { rerender: update, unmount: stop }
+}
+afterEach(() => {
+  for (const stop of telemetryFixtures) stop()
+})
+
 describe('TelemetryAgent', () => {
   beforeEach(() => {
     setSessionTelemetryConsent(undefined)
@@ -90,7 +128,7 @@ describe('TelemetryAgent', () => {
   })
 
   test('updates account identity without depending on event routing', () => {
-    const view = render(<TelemetryAgent />)
+    const view = renderTelemetry()
     expect(setTelemetryUser).toHaveBeenLastCalledWith(mocks.auth.user)
     view.unmount()
     expect(setTelemetryUser).toHaveBeenLastCalledWith(null)
@@ -110,7 +148,7 @@ describe('TelemetryAgent', () => {
         manifest: { name: 'research', displayName: 'Research', version: '1.0.0' },
       },
     ])
-    render(<TelemetryAgent />)
+    renderTelemetry()
     await waitFor(() =>
       expect(mocks.publish).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -127,7 +165,7 @@ describe('TelemetryAgent', () => {
 
   test('does not load application identity with the default privacy policy', async () => {
     window.history.replaceState({}, '', '/app/harness-restored')
-    render(<TelemetryAgent />)
+    renderTelemetry()
     await waitFor(() =>
       expect(mocks.publish).toHaveBeenCalledWith(
         expect.objectContaining({ name: 'smart_app_opened' })
@@ -143,7 +181,7 @@ describe('TelemetryAgent', () => {
     mocks.listApps.mockRejectedValue(new Error('offline'))
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
     try {
-      render(<TelemetryAgent />)
+      renderTelemetry()
       await waitFor(() =>
         expect(mocks.publish).toHaveBeenCalledWith(
           expect.objectContaining({ name: 'smart_app_opened' })
@@ -164,9 +202,9 @@ describe('TelemetryAgent', () => {
       })
     )
     window.history.replaceState({}, '', '/app/harness-restored')
-    const view = render(<TelemetryAgent />)
+    const view = renderTelemetry()
     mocks.auth.user = { id: 8, user_name: 'Bob', email: 'bob@example.invalid' }
-    view.rerender(<TelemetryAgent />)
+    view.rerender()
     await act(async () => resolveApps([]))
     expect(mocks.publish).not.toHaveBeenCalled()
   })
@@ -183,7 +221,7 @@ describe('TelemetryAgent', () => {
         })
       )
       window.history.replaceState({}, '', '/app/harness-restored')
-      render(<TelemetryAgent />)
+      renderTelemetry()
       await act(async () => setSessionTelemetryConsent(false))
       expect(mocks.telemetryEnabled).toBe(true)
       await act(async () => finish?.())
@@ -192,7 +230,7 @@ describe('TelemetryAgent', () => {
   )
 
   test('automatically publishes each Smart App route transition once', async () => {
-    render(<TelemetryAgent />)
+    renderTelemetry()
 
     await waitFor(() =>
       expect(mocks.publish).toHaveBeenCalledWith(
@@ -217,12 +255,12 @@ describe('TelemetryAgent', () => {
 
   test('waits for authentication before publishing route observations', async () => {
     mocks.auth.isLoading = true
-    const view = render(<TelemetryAgent />)
+    const view = renderTelemetry()
 
     expect(mocks.publish).not.toHaveBeenCalled()
 
     mocks.auth.isLoading = false
-    view.rerender(<TelemetryAgent />)
+    view.rerender()
 
     await waitFor(() =>
       expect(mocks.publish).toHaveBeenCalledWith(
@@ -236,7 +274,7 @@ describe('TelemetryAgent', () => {
   test('publishes the current route after telemetry is enabled', async () => {
     mocks.preferences.preferences = { telemetryConsentAsked: false, telemetryEnabled: false }
     mocks.telemetryEnabled = false
-    const view = render(<TelemetryAgent />)
+    const view = renderTelemetry()
 
     expect(mocks.publish).not.toHaveBeenCalled()
     expect(mocks.hostEventHandler).not.toBeNull()
@@ -251,7 +289,7 @@ describe('TelemetryAgent', () => {
 
     mocks.preferences.preferences = { telemetryConsentAsked: true, telemetryEnabled: true }
     mocks.telemetryEnabled = true
-    view.rerender(<TelemetryAgent />)
+    view.rerender()
 
     await waitFor(() => expect(mocks.publish).toHaveBeenCalledTimes(2))
     expect(mocks.publish).toHaveBeenCalledWith(
@@ -265,7 +303,7 @@ describe('TelemetryAgent', () => {
   test('discards startup events collected before an explicit telemetry refusal', async () => {
     mocks.preferences.preferences = { telemetryConsentAsked: false, telemetryEnabled: false }
     mocks.telemetryEnabled = false
-    const view = render(<TelemetryAgent />)
+    const view = renderTelemetry()
 
     act(() => {
       mocks.hostEventHandler?.({
@@ -275,11 +313,11 @@ describe('TelemetryAgent', () => {
     })
 
     mocks.preferences.preferences = { telemetryConsentAsked: true, telemetryEnabled: false }
-    view.rerender(<TelemetryAgent />)
+    view.rerender()
 
     mocks.preferences.preferences = { telemetryConsentAsked: true, telemetryEnabled: true }
     mocks.telemetryEnabled = true
-    view.rerender(<TelemetryAgent />)
+    view.rerender()
 
     await waitFor(() =>
       expect(mocks.publish).toHaveBeenCalledWith(
@@ -293,7 +331,7 @@ describe('TelemetryAgent', () => {
 
   test('dispatches plugin observations and operation results through the shared dispatcher', async () => {
     window.history.replaceState({}, '', '/plugins')
-    render(<TelemetryAgent />)
+    renderTelemetry()
     await waitFor(() =>
       expect(mocks.publish).toHaveBeenCalledWith(
         expect.objectContaining({ name: 'plugin_center_opened' })
@@ -316,7 +354,7 @@ describe('TelemetryAgent', () => {
   })
 
   test('turns operation results into generated events', async () => {
-    render(<TelemetryAgent />)
+    renderTelemetry()
     await waitFor(() => expect(mocks.publish).toHaveBeenCalledTimes(1))
 
     beginOperation('smart_app.install').fail('install')
@@ -332,7 +370,7 @@ describe('TelemetryAgent', () => {
   })
 
   test('turns desktop startup lifecycle events into correlated analytics events', async () => {
-    render(<TelemetryAgent />)
+    renderTelemetry()
     await waitFor(() => expect(mocks.hostEventHandler).not.toBeNull())
 
     act(() => {
@@ -367,7 +405,7 @@ describe('TelemetryAgent', () => {
   })
 
   test('forwards plugin identity from operation results', async () => {
-    render(<TelemetryAgent />)
+    renderTelemetry()
     await waitFor(() => expect(mocks.publish).toHaveBeenCalledTimes(1))
 
     beginOperation('plugin.authorize', {
