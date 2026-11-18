@@ -1473,6 +1473,7 @@ jobs:
           python-version: "3.12"
 
       - name: Prepare shared macOS desktop E2E build
+        id: macos_e2e_build
         uses: ./.github/actions/build-wework-macos-e2e
         with:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
@@ -1480,6 +1481,7 @@ jobs:
           prepare-script: ${{ (github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')) && '.github/scripts/prepare-macos-inspector-e2e.sh' || '' }}
 
       - name: Prepare real macOS object storage
+        id: macos_object_storage
         uses: ./.github/actions/build-minio-e2e
         with:
           upload-artifact: "false"
@@ -1496,7 +1498,7 @@ jobs:
           node wework/e2e/desktop/run-checkpoints.mjs --memory-only
 
       - name: Run Wework desktop macOS Inspector E2E
-        if: github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')
+        if: ${{ !cancelled() && steps.macos_e2e_build.outcome == 'success' && steps.macos_object_storage.outcome == 'success' && (github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')) }}
         env:
           CI: true
           WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"
