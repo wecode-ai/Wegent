@@ -10,6 +10,9 @@ mod goal_recovery_tests;
 #[path = "native_capacity_tests.rs"]
 mod native_capacity_tests;
 
+#[path = "retry_routing_tests.rs"]
+mod retry_routing_tests;
+
 #[test]
 fn recoverable_failure_keeps_execution_owned_until_native_retry_or_process_exit() {
     use crate::runtime_work::lifecycle::NativeExecutionPhase;
