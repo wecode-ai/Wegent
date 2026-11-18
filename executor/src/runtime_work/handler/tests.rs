@@ -3678,7 +3678,8 @@ async fn codex_account_switch_waits_for_model_discovery() {
     assert_eq!(error.code, "codex_account_switch_failed");
     assert_eq!(error.message, "Codex account was not found");
     assert!(
-        !current_auth_path().exists() && !account_store_directory().exists(),
+        !super::codex_accounts::current_auth_path().exists()
+            && !super::codex_accounts::account_store_directory().exists(),
         "a failed account switch must not write authentication or account state"
     );
     let _ = fs::remove_dir_all(root);
