@@ -29,6 +29,7 @@ export interface ProcessDiagnosticsGroup {
 export interface ProcessDiagnosticsSnapshot {
   timestamp_ms: number
   main_pid: number
+  main_process_memory_bytes: NodeJS.MemoryUsage | null
   groups: ProcessDiagnosticsGroup[]
   processes: ProcessDiagnosticsProcess[]
 }
@@ -220,6 +221,7 @@ export async function getElectronProcessSnapshot(
   return {
     timestamp_ms: Date.now(),
     main_pid: mainPid,
+    main_process_memory_bytes: mainPid === process.pid ? process.memoryUsage() : null,
     groups: [...groupsByName.values()].sort(
       (left, right) => right.physical_footprint_kib - left.physical_footprint_kib
     ),

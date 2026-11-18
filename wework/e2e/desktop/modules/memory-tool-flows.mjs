@@ -1,10 +1,6 @@
 import { readNativeMcpCallId, readNativeCommandCallId } from './native-tool-call-id.mjs'
-import {
-  captureMemorySample,
-  captureTotalMemorySample,
-  waitForNewTaskRow,
-  waitForSnapshot,
-} from './conversation-layout.mjs'
+import { captureMemorySample, captureTotalMemorySample } from './memory-samples.mjs'
+import { waitForNewTaskRow, waitForSnapshot } from './conversation-layout.mjs'
 
 import {
   ACTIVE_WORKBENCH_SELECTOR,

@@ -120,6 +120,7 @@ describe('physical memory snapshots', () => {
   it('keeps native physical footprint separate from RSS and limits probing to descendants', async () => {
     const snapshot = await getElectronProcessSnapshot(10)
 
+    expect(snapshot.main_process_memory_bytes).toBeNull()
     expect(
       snapshot.processes.map(({ pid, rss_kib, physical_footprint_kib }) => ({
         pid,
