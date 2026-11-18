@@ -38,8 +38,8 @@ import {
 } from '../modules/response-protocol.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
-const PROJECT = `分身工作区-${process.pid}`
-const SOURCE = `分身代码-${process.pid}`
+const PROJECT = `助理工作区-${process.pid}`
+const SOURCE = `助理代码-${process.pid}`
 const MARKER = `STAND_IN_WORKSPACE_${process.pid}`
 const USER_ID = 9001
 const hasOsSandbox = process.platform !== 'win32'
@@ -516,7 +516,7 @@ export function createDesktopScenario({
         uiTimeoutMs
       )
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
-      await createLocalCollaborationProject(control, CONTENT, '分身复用-' + process.pid)
+      await createLocalCollaborationProject(control, CONTENT, '助理复用-' + process.pid)
       await openProjectStandIn(control, `${CONTENT} [data-testid="stand-in-open"]`)
       assert.equal(await control.command('getValue', '[data-testid="stand-in-prompt"]'), MARKER)
       const afterProject = await requestExecutor(

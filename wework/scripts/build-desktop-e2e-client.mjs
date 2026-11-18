@@ -24,13 +24,16 @@ for (const [name, entry] of entries) {
   await build({
     configFile: false,
     publicDir: false,
+    // Node artifacts use Rolldown's TypeScript transform, not App-specific tsconfigs.
+    oxc: false,
     ssr: { noExternal: true },
     build: {
       ssr: entry,
       outDir: resolve(outputDirectory),
       emptyOutDir: false,
       minify: false,
-      rollupOptions: {
+      rolldownOptions: {
+        tsconfig: false,
         output: { format: 'cjs', entryFileNames: `${name}.cjs` },
       },
     },

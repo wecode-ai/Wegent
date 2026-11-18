@@ -30,7 +30,7 @@ pub struct UserRow {
     #[allow(dead_code)]
     pub users_email: Option<String>,
     #[allow(dead_code)]
-    pub users_git_info: Json<brz_json::OpaqueJson>,
+    pub users_git_info: Option<Json<brz_json::OpaqueJson>>,
     pub users_is_active: bool,
     pub users_role: String,
     #[allow(dead_code)]
@@ -112,6 +112,28 @@ where
         .await
 }
 
+/// Load one user by id, mirroring the connector MCP server's
+/// `db.get(User, user_id)` lookup for a task token.
+pub async fn find_user_by_id<M>(mysql: &M, user_id: i64) -> MysqlResult<Option<UserRow>>
+where
+    M: Mysql,
+{
+    mysql
+        .fetch_optional(
+            "SELECT users.id AS users_id, users.user_name AS users_user_name, \
+             users.password_hash AS users_password_hash, users.email AS users_email, \
+             users.git_info AS users_git_info, users.is_active AS users_is_active, \
+             users.`role` AS users_role, users.auth_source AS users_auth_source, \
+             users.preferences AS users_preferences, users.created_at AS users_created_at, \
+             users.updated_at AS users_updated_at \
+             FROM users \
+             WHERE users.id = ? \
+             LIMIT 1",
+            (user_id,),
+        )
+        .await
+}
+
 /// List all active `ConnectorApp` kinds rows ordered by name then id,
 /// mirroring `ConnectorAppService.list_all_apps`.
 pub async fn list_connector_app_kinds<M>(mysql: &M) -> MysqlResult<Vec<KindRow>>
@@ -127,7 +149,7 @@ where
              kinds.updated_at AS kinds_updated_at \
              FROM kinds \
              WHERE kinds.kind = 'ConnectorApp' AND kinds.namespace = 'system' \
-             AND kinds.is_active = 1 ORDER BY kinds.name, kinds.id",
+             AND kinds.user_id = 0 AND kinds.is_active = 1 ORDER BY kinds.name, kinds.id",
             (),
         )
         .await

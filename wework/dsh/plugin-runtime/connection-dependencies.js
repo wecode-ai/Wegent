@@ -4,7 +4,6 @@ export class ConnectionDependencies {
   constructor(request, satisfies) {
     this.request = request
     this.satisfies = satisfies
-    this.operation = Promise.resolve()
   }
 
   async inventory() {
@@ -31,10 +30,10 @@ export class ConnectionDependencies {
     })
   }
 
-  async plan(definition, includeCatalog = false) {
+  async plan(definition, catalog) {
     const installed = await this.inventory()
-    if (!includeCatalog) return dependencyPlan(definition, installed, this.satisfies)
-    const response = await this.request('plugin/list', { cwds: [] })
+    if (catalog === undefined) return dependencyPlan(definition, installed, this.satisfies)
+    const response = catalog
     if (!Array.isArray(response.marketplaces) || response.marketplaceLoadErrors?.length) {
       throw new ConnectionError('dependency_catalog_failed', 'Cannot read the Codex plugin catalog')
     }
@@ -62,51 +61,47 @@ export class ConnectionDependencies {
     return dependencyPlan(definition, inventory, this.satisfies)
   }
 
-  // Installation is explicit. Catalog reads and background collection never install anything.
-  install(definition, aliases) {
-    const operation = this.operation.then(async () => {
-      const plan = await this.plan(definition, true)
+  // The owning Runtime executes installations; a reader only produces a plan.
+  async installationPlan(definition, aliases, catalog) {
+    if (!catalog || !Array.isArray(catalog.marketplaces))
+      throw new ConnectionError(
+        'dependency_catalog_failed',
+        'Native dependency catalog is required'
+      )
+    const plan = await this.plan(definition, catalog)
+    if (
+      !Array.isArray(aliases) ||
+      aliases.some(alias => !plan.some(item => item.alias === alias))
+    ) {
+      throw new ConnectionError('invalid_dependency', 'Unknown dependency alias')
+    }
+    const installations = []
+    for (const dependency of plan.filter(item => aliases.includes(item.alias))) {
+      if (dependency.status === 'ready') continue
+      if (dependency.status !== 'missing' || !dependency.resolved) {
+        throw new ConnectionError(
+          'dependency_conflict',
+          `Resolve dependency ${dependency.alias} before installing`
+        )
+      }
+      const target = dependency.resolved
       if (
-        !Array.isArray(aliases) ||
-        aliases.some(alias => !plan.some(item => item.alias === alias))
+        dependency.version !== '*' &&
+        (!target.version || !this.satisfies(target.version, dependency.version))
       ) {
-        throw new ConnectionError('invalid_dependency', 'Unknown dependency alias')
+        throw new ConnectionError(
+          'dependency_conflict',
+          'The available dependency version is incompatible'
+        )
       }
-      for (const dependency of plan.filter(item => aliases.includes(item.alias))) {
-        if (dependency.status === 'ready') continue
-        if (dependency.status !== 'missing' || !dependency.resolved) {
-          throw new ConnectionError(
-            'dependency_conflict',
-            `Resolve dependency ${dependency.alias} before installing`
-          )
-        }
-        const target = dependency.resolved
-        if (
-          dependency.version !== '*' &&
-          (!target.version || !this.satisfies(target.version, dependency.version))
-        ) {
-          throw new ConnectionError(
-            'dependency_conflict',
-            'The available dependency version is incompatible'
-          )
-        }
-        if (target.availability === 'DISABLED_BY_ADMIN') {
-          throw new ConnectionError(
-            'dependency_denied',
-            'Dependency installation is disabled by the administrator'
-          )
-        }
-        // A shared installed dependency is never upgraded or enabled implicitly.
-        await this.request('plugin/install', {
-          pluginName: target.name,
-          ...(target.marketplacePath
-            ? { marketplacePath: target.marketplacePath }
-            : { remoteMarketplaceName: target.marketplaceId }),
-        })
+      if (target.availability === 'DISABLED_BY_ADMIN') {
+        throw new ConnectionError(
+          'dependency_denied',
+          'Dependency installation is disabled by the administrator'
+        )
       }
-      return this.plan(definition)
-    })
-    this.operation = operation.catch(() => undefined)
-    return operation
+      installations.push({ alias: dependency.alias, version: dependency.version, target })
+    }
+    return { dependencies: plan, installations }
   }
 }

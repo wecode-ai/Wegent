@@ -119,10 +119,10 @@ describe('Issue participation status', () => {
   it('uses the stand-in icon with the actual role name', () => {
     const html = markup('in_progress', [], 'zh-CN', 'running', true, {
       kind: 'stand_in',
-      name: '研发分身',
+      name: '研发助理',
     })
     expect(html).toContain('data-processing-kind="stand_in"')
-    expect(html).toContain('>研发分身</span>')
-    expect(html).not.toContain('>分身处理<')
+    expect(html).toContain('>研发助理</span>')
+    expect(html).not.toContain('>助理处理<')
   })
 })

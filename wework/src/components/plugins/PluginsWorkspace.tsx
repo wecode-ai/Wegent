@@ -53,7 +53,13 @@ import {
   listPersonalMarketplacePluginsFromDisk,
   peekLocalCodexPluginsReadState,
 } from '@/api/local/codexPlugins'
-import { authorizeWegentConnector, listWegentConnectorApps } from '@/api/cloud/connectorApps'
+import {
+  authorizeWegentConnector,
+  connectorAuthorizationErrorMessage,
+  listWegentConnectorApps,
+  notifyConnectorAuthorizationChanged,
+  refreshWegentConnector,
+} from '@/api/cloud/connectorApps'
 import { trackPluginEvent as track } from '@/telemetry/businessEvents'
 import {
   installedPluginTelemetryIdentity,
@@ -86,7 +92,7 @@ import { openExternalUrl } from '@/lib/external-links'
 import { getErrorMessage } from '@/lib/error-message'
 import { isDesktopRuntime } from '@/lib/runtime-environment'
 import { navigateTo } from '@/lib/navigation'
-import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
+import { openConnectorAuthorizationWindow } from '@/lib/connector-authorization-window'
 import {
   ensureLocalExecutorAvailable,
   getKnownLocalExecutorDeviceId,
@@ -819,6 +825,9 @@ export function PluginsWorkspace({
     setPluginPublishTarget(null)
     setPluginPublishError(null)
     setPluginPublishShareRecovery(false)
+    setPluginOperationNotice(null)
+    connectorActionInFlight.current = false
+    setConnectorActionSlug(null)
     setPendingInstall(null)
     setPendingPluginUpdate(null)
     preparingInstallPluginIdsRef.current.clear()
@@ -3126,7 +3135,8 @@ export function PluginsWorkspace({
           cloudApiBaseUrl,
           cloudToken,
           requirement.slug,
-          openCloudAuthorizationWindow
+          openConnectorAuthorizationWindow,
+          { isCurrent }
         )
         if (!isCurrent()) return
       } finally {
@@ -3218,7 +3228,8 @@ export function PluginsWorkspace({
     plugin?: InstalledPluginItem | PluginMarketplaceItem | null
   ) => {
     const detailId = selectedMarketplacePluginId ?? selectedPluginId
-    const detailIsCurrent = () => activeConnectorDetailRef.current === detailId
+    const scopeIsCurrent = capturePluginScope()
+    const detailIsCurrent = () => scopeIsCurrent() && activeConnectorDetailRef.current === detailId
     const reportDetailError = (message: string) => {
       const pluginId =
         selectedMarketplacePluginId ??
@@ -3412,6 +3423,7 @@ export function PluginsWorkspace({
     }
     try {
       const apps = await listWegentConnectorApps(cloudApiBaseUrl, cloudToken)
+      if (!detailIsCurrent()) return
       const app = apps.find(
         candidate => candidate.slug.trim().toLowerCase() === slug.trim().toLowerCase()
       )
@@ -3423,14 +3435,30 @@ export function PluginsWorkspace({
         navigateTo('/settings/connections')
         return
       }
+      if (app.connection.status === 'expired') {
+        try {
+          const connection = await refreshWegentConnector(cloudApiBaseUrl, cloudToken, app.slug)
+          if (!detailIsCurrent()) return
+          if (connection.status === 'connected') {
+            notifyConnectorAuthorizationChanged()
+            navigateTo('/settings/connections')
+            return
+          }
+        } catch {
+          if (!detailIsCurrent()) return
+          // Token refresh is an optimization. A provider that rejects it must
+          // still recover through the normal consent flow.
+        }
+      }
       await authorizeWegentConnector(
         cloudApiBaseUrl,
         cloudToken,
         app.slug,
-        openCloudAuthorizationWindow
+        openConnectorAuthorizationWindow,
+        { isCurrent: detailIsCurrent }
       )
     } catch (error) {
-      reportDetailError(error instanceof Error ? error.message : 'Connector authorization failed')
+      reportDetailError(connectorAuthorizationErrorMessage(error, connectorDisplayName(slug), t))
     }
   }
 
@@ -3439,15 +3467,18 @@ export function PluginsWorkspace({
     plugin?: InstalledPluginItem | PluginMarketplaceItem | null
   ) => {
     if (connectorActionInFlight.current || pendingCodexAuthorization) return
+    const isCurrent = capturePluginScope()
     connectorActionInFlight.current = true
     connectorAuthRevisionRef.current += 1
     setConnectorActionSlug(slug)
     try {
       await performManagePluginConnector(slug, plugin)
     } finally {
-      connectorActionInFlight.current = false
-      connectorAuthRevisionRef.current += 1
-      setConnectorActionSlug(null)
+      if (isCurrent()) {
+        connectorActionInFlight.current = false
+        connectorAuthRevisionRef.current += 1
+        setConnectorActionSlug(null)
+      }
     }
   }
 

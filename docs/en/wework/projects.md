@@ -161,6 +161,11 @@ Open **Milestones** in the project. The Issue-detail selector only associates ex
 
 ## Members, discussion assignment and archival
 
+In a native cloud project Issue, open **Participants → +**, search by name or email, select multiple people across searches, then click **Add**. Results outside the project explain that access is limited to this Issue and require confirmation. Canceling creates no invitations. The assignee picker uses the same search and confirmation flow and saves after confirmation. GitHub/GitLab and other external Issues retain their source provider membership and access policies.
+
+An outside participant manages only the invited Issue: reading, commenting, editing, inviting people and assigning to people. This grants no project membership, access to the project or other Issues, project administration, or project execution resources. The Issue link opens its details directly. Removing a participant revokes access unless they remain the current assignee; past assignments grant no continuing access. Multi-selection adds participants individually; errors remain visible and successful additions are retained.
+
+
 | Feature                            | Steps                                                                                                                       | Conditions and result                                                                                              |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
 | Add project member                 | Project settings → Project members → Add member → search username/email → choose role → click result                      | Clicking adds immediately; no extra Save button; requires management permission                                    |
@@ -310,6 +315,7 @@ Assignment errors identify the Agent, the Issue's bound environment, the policy 
 
 In a global, space or project agent create/settings form, check resource ownership and choose the capability source:
 
+
 | Option/action                       | Steps and limits                                                                                                                                                      |
 | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Follow runtime device (recommended) | Uses that running device's current user's plugins, Skills, MCP and local capabilities; today's device preview is not a guarantee for a different device               |
@@ -399,9 +405,11 @@ Each completed step is marked automatically, and the guide hides after all three
 
 Empty columns also explain what belongs in each stage and name the creation action that is currently available. During a drag, the destination column describes the resulting status. The default **My tasks** board uses task terminology, while other project spaces continue to use issue terminology.
 
+<a id="board-views"></a>
+
 ## Save and switch board views
 
-The native task board's view dropdown on the right provides switching, creation, and board settings on the same toolbar as **Focus view** and **Archived**. The base board groups Issues by the five default statuses: Inbox, Pending, In progress, In review, and Completed. Status and custom tags remain separate Issue properties.
+The native task board's view dropdown on the right provides switching, creation, and board settings on the same toolbar as **Focus view** and **Archived**. Choosing **Base board** always displays lanes in the project's configured status order, normally Inbox, Pending, In progress, In review, and Completed. Personal grouping preferences and workflow tags cannot override this order. Status and custom tags remain separate Issue properties.
 
 Project administrators can save multiple views, bind each lane to a status or tag, reorder lanes, configure tag filters, and choose the project default view. Entering a project opens its default; subsequent switches apply to the current visit. Views and their default are shared with project members. Deleting the default view restores the base board. Lane settings and card fields are edited in one dialog and saved together; card fields apply to every view in the project.
 
@@ -422,7 +430,7 @@ Renaming or deleting a tag in a native project saves the catalog, tags on undele
 
 An Issue can appear in both its matching status and tag lanes. After a cross-type drag, the destination card is highlighted and feedback describes the actual change. Dragging into a tag lane never reopens a completed Issue. Custom views with In progress or In review lanes also support Focus view to expand execution progress.
 
-Existing projects keep the base board without converting historical Issue statuses or tags. Concurrent configuration changes produce a conflict message and refresh the latest configuration. Older clients cannot edit unknown view formats created by newer versions.
+When an administrator opens a project with historical tag grouping, Wework saves the corrected base grouping while preserving the status order, Issues, tags, and default custom view. If saving fails, the status board remains usable; choose **Retry saving** in the message to try again. Switching views changes the current display without saving the project grouping. Concurrent view configuration changes produce a conflict message and refresh the latest configuration. Older clients cannot edit unknown view formats created by newer versions.
 
 ## Quick tag filters
 
@@ -518,6 +526,12 @@ Send a message directly without selecting another project or working directory. 
 Opening a conversation does not enable background project coordination. For work that needs a tracked owner, status, and deliverables, create a board task and assign a member, robot, or collaboration group.
 
 ## Issue details and execution tasks
+
+<a id="issue-linked-existing-tasks"></a>
+
+### Link an existing task
+
+Beside **Linked tasks** in Issue details, click **Link existing task**, search by title or ID, and select an existing task from your current task list. Saving the link adds it to the linked task list without starting it or changing the Issue status. A task has one active Issue link; any existing Issue link moves to the current Issue. Read-only Issues hide this action. A failed link keeps the picker open for retry.
 
 In Issue activity, click an attachment link or embedded image to preview it and download the original. Images, Markdown documents and other files share resource resolution and authenticated reads for the current Issue. An attachment ID identifies a file directly; local and relative paths match the link label and full basename exactly. Only a unique match opens. Execution paths are never read as files on the viewer's device.
 
@@ -675,12 +689,15 @@ Independent Issue details show invited Agents and Teams. Before **Ask AI to help
 
 If an edit encounters a version conflict, the local draft is retained. **Reload latest content** still lets you choose **Keep editing**; only **Discard changes and reload** discards local changes and reads the latest Issue. You can then edit the refreshed content.
 
+<a id="comment-child-issues"></a>
+
 ## Create child Issues from comments
 
 In the Issue comment composer toolbar, use the **Assignment mode** branch icon and select **Create child Issue**, write a comment, choose an assignee, and select **Send and create child Issue**. The original comment is saved before the child is created. The selected assignee owns the child; the parent assignment remains unchanged. A failed creation or assignment keeps an actionable error, and retry reuses a child already created. Creation uses a stable operation identifier, so concurrent requests or a lost response do not create duplicate children.
 
-Use **Create child Issue** beside any existing visible comment, including comments with or without mentions. Confirming the assignee also adds a discussion reply linking to the new child. Current Issue edit and comment permissions apply; mentions grant no additional access. Children retain the stricter of parent visibility and the project default so copied comments do not become project-public.
+In Issue details, the action row beneath each top-level comment places **Create child Issue** beside **Reply**; replies within a thread retain their own **Create child Issue** action. Use the action on any existing visible comment, including comments with or without mentions. Confirming the assignee also adds a discussion reply linking to the new child. Current Issue edit and comment permissions apply; mentions grant no additional access. Children retain the stricter of parent visibility and the project default so copied comments do not become project-public.
 
 Project maintainers can choose **Project settings → AI configuration → Agents → Delete** and confirm removal. Existing tasks, execution history and shared source resources remain intact. Replace or remove all leader, member and stage references in collaboration groups first. System-managed current-device Agents cannot be deleted. Removing a collaboration group also requires confirmation; Cancel leaves it unchanged.
 
 Use **Project settings → AI configuration → Execution environments** to maintain AI devices, repositories and setup steps. Explicit preparation shows **Project directory ready** on completion. Version conflicts preserve your draft. **Load latest configuration** replaces the draft with server values; **Keep draft and refresh version** retains your input without submitting it. Review it before clicking **Save configuration**, which replaces the latest environment configuration. A failed read can be retried without repeating a write.
+

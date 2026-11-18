@@ -25,7 +25,7 @@ export const platformMessages = {
     createdIssues: "我创建的",
     participatingIssues: "我参与的",
     collaborationManagement: "协作管理",
-    standIn: "我的分身",
+    standIn: "我的助理",
     templates: "模板",
     newConversation: "新建对话",
     teams: "协作小组",

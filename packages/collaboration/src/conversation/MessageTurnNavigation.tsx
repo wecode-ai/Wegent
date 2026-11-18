@@ -187,22 +187,33 @@ export function MessageTurnNavigation({
       }
       const finish = () => {
         if (settled) return
-        cleanup()
         const anchor = findMessageAnchor(contentRef, messageId)
-        if (
-          anchor &&
-          Math.abs(scroller.scrollTop - getMessageAnchorTargetTop(scroller, anchor)) < 1
-        )
-          onLocated?.()
+        if (!anchor) return
+        const measuredTargetTop = getMessageAnchorTargetTop(scroller, anchor)
+        if (Math.abs(scroller.scrollTop - measuredTargetTop) >= 1) {
+          targetTop = measuredTargetTop
+          logTurnNavigation('scroll-retargeted', {
+            messageId,
+            targetTop,
+            ...getScrollMetrics(scroller, anchor),
+          })
+          scrollToContentPosition(scroller, targetTop, 'auto')
+          if (frame) cancelSafeAnimationFrame(frame)
+          frame = requestSafeAnimationFrame(check)
+          return
+        }
+        cleanup()
+        logTurnNavigation('scroll-settled', {
+          messageId,
+          ...getScrollMetrics(scroller, anchor),
+        })
+        onLocated?.()
         onNavigationScrollTargetChange?.(null)
       }
       const check = () => {
         frame = null
         const anchor = findMessageAnchor(contentRef, messageId)
-        if (!anchor) {
-          finish()
-          return
-        }
+        if (!anchor || settled) return
         const target = getMessageAnchorTargetTop(scroller, anchor)
         if (Math.abs(scroller.scrollTop - target) < 1) finish()
       }

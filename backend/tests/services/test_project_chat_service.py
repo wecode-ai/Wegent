@@ -3739,6 +3739,50 @@ def test_related_task_visitor_can_use_visible_task_chat_only(
     assert [message.message_id for message in messages] == [
         owner_message.message.message_id
     ]
+    invited_reply = project_chat_service.send(
+        test_db,
+        user_id=visitor.id,
+        user_name=visitor.user_name,
+        request=ProjectChatSend(
+            clientMessageId=str(uuid.uuid4()),
+            projectId=project.id,
+            taskId=visible_task.id,
+            content="Current assignee can discuss the invited Issue",
+        ),
+    )
+    assert (
+        invited_reply.message.content
+        == "Current assignee can discuss the invited Issue"
+    )
+    test_db.add(
+        ResourceMember.create(
+            resource_type=ResourceType.CLOUD_PROJECT.value,
+            resource_id=int(project.id),
+            entity_type="user",
+            entity_id=str(visitor.id),
+            role="Viewer",
+            status=MemberStatus.APPROVED.value,
+        )
+    )
+    test_db.commit()
+    explicit_reply = project_chat_service.send(
+        test_db,
+        user_id=visitor.id,
+        user_name=visitor.user_name,
+        request=ProjectChatSend(
+            clientMessageId=str(uuid.uuid4()),
+            projectId=project.id,
+            taskId=visible_task.id,
+            content="Invited explicit Viewer can discuss this Issue",
+        ),
+    )
+    assert (
+        explicit_reply.message.content
+        == "Invited explicit Viewer can discuss this Issue"
+    )
+    visible_task.assignee_user_id = None
+    visible_task.metadata_json = {"security_level": "open"}
+    test_db.commit()
     with pytest.raises(HTTPException) as denied:
         project_chat_service.send(
             test_db,

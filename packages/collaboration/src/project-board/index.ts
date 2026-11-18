@@ -16,5 +16,8 @@ export * from "./BoardViewEditor";
 export * from "./saveProjectBoardViews";
 export { collectProjectTags } from "./projectTags";
 export * from "./parentBoardGrouping";
-export * from './useParentIssueBoard'
-export * from './useBoardTagFilter'
+export * from "./useParentIssueBoard";
+export * from "./useBoardTagFilter";
+export * from "./baseBoardStatusGrouping";
+export * from "./BaseBoardStatusMigrationNotice";
+export * from "./useBaseBoardStatusMigration";

@@ -1,3 +1,4 @@
+import { waitForDomChange } from './waitForDomChange'
 import { readNativeModelFixtures, writeNativeModelFixtures } from './native-model-fixtures'
 import { collectConversationRenderingDiagnostics } from './conversation-rendering-diagnostics'
 import {
@@ -93,6 +94,7 @@ import {
   releaseLocalExecutorRequestHoldForE2E,
 } from '@/desktop/localExecutor'
 import { executeVerificationControlCommand } from './verification-control'
+import { verifyConnectorAuthorizationIsolation } from './connector-authorization-isolation'
 import { captureEmbeddedBrowserSnapshot, evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
 import { chooseDesktopControlOption, selectDesktopControlOption } from './desktop-control-select'
 import { cloudIdentityFailure } from './cloud-identity-diagnostics'
@@ -1767,7 +1769,7 @@ async function waitForDesktopControlElement(
       } else {
         matchedAt = null
       }
-      await waitForDesktopControlTick()
+      await waitForDomChange(document)
       continue
     }
 
@@ -1787,7 +1789,7 @@ async function waitForDesktopControlElement(
     } else {
       matchedAt = null
     }
-    await waitForDesktopControlTick()
+    await waitForDomChange(document)
   }
 
   const diagnostics = findDesktopControlElementsWithin(command.selector, command.target).map(
@@ -2190,6 +2192,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
   if (verificationResult.handled) return verificationResult.value
 
   switch (command.action) {
+    case 'verifyConnectorAuthorizationIsolation':
+      await verifyConnectorAuthorizationIsolation(command.value ?? '')
+      return 'true'
     case 'crashRenderer':
       rendererCrashStore.trigger()
       return 'Renderer crash requested'
@@ -2404,13 +2409,14 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         apiBaseUrl: string
         connectorToken: string
         expiresAtMs: number
+        syncRevision?: number
       }
       return JSON.stringify(
         await requestLocalExecutor('runtime.connectors.configure', {
           apiBaseUrl: input.apiBaseUrl,
           connectorToken: input.connectorToken,
           expiresAtMs: input.expiresAtMs,
-          syncRevision: nextConnectorSyncRevision(),
+          syncRevision: input.syncRevision ?? nextConnectorSyncRevision(),
         })
       )
     }
@@ -2441,12 +2447,16 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       return JSON.stringify(root[E2E_DROPPED_RUNTIME_EVENT_COUNTS_KEY] ?? {})
     }
     case 'holdLocalExecutorRequests': {
-      const { method, phase } = JSON.parse(command.value ?? '{}') as {
+      const { method, phase, maxHeldCount } = JSON.parse(command.value ?? '{}') as {
         method?: string
         phase?: 'before-dispatch' | 'after-response'
+        maxHeldCount?: number
       }
       if (!method) throw new Error('holdLocalExecutorRequests requires a method')
-      holdLocalExecutorRequestsForE2E(method, phase)
+      if (maxHeldCount !== undefined && (!Number.isSafeInteger(maxHeldCount) || maxHeldCount < 1)) {
+        throw new Error('maxHeldCount must be a positive integer')
+      }
+      holdLocalExecutorRequestsForE2E(method, phase, maxHeldCount)
       return ''
     }
     case 'awaitLocalExecutorRequestHold':

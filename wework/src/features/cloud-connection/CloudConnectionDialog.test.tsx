@@ -5,10 +5,16 @@ import {
   CloudConnectionContext,
   DISCONNECTED_STATE,
   type CloudConnectionContextValue,
+  type OpenCloudAuthorizationUrl,
 } from './CloudConnectionContext'
 import { CloudConnectionDialog } from './CloudConnectionDialog'
 import i18n from '@/i18n'
 import { useState } from 'react'
+import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
+
+vi.mock('@/lib/cloud-authorization-window', () => ({
+  openCloudAuthorizationWindow: vi.fn(async () => undefined),
+}))
 
 function cloudConnection(backendUrl?: string): CloudConnectionContextValue {
   return {
@@ -36,6 +42,18 @@ function renderDialog(connection: CloudConnectionContextValue, onClose = vi.fn()
 }
 
 describe('CloudConnectionDialog', () => {
+  it('keeps explicit disconnect available to repair failed native sign-in', async () => {
+    const connection = {
+      ...cloudConnection('https://saved.example.com'),
+      status: 'error' as const,
+      error: 'Cloud credentials are unreadable',
+    }
+    renderDialog(connection)
+    expect(screen.getByTestId('cloud-connection-error')).toBeInTheDocument()
+    expect(connection.disconnect).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByTestId('cloud-disconnect-button'))
+    expect(connection.disconnect).toHaveBeenCalledOnce()
+  })
   afterEach(async () => {
     vi.unstubAllEnvs()
     await i18n.changeLanguage('zh-CN')
@@ -183,6 +201,28 @@ describe('CloudConnectionDialog', () => {
 
     expect(toggle.closest('details')).toHaveAttribute('open')
     expect(screen.getByTestId('cloud-socket-url-input')).toHaveValue('wss://socket.example.com')
+  })
+
+  it('uses the original cloud opener for HTTP login with a separate frontend port', async () => {
+    const backendUrl = 'http://192.0.2.10:8000'
+    const authorizeUrl = 'http://192.0.2.10:3000/auth/wework/authorize?session_id=session-1'
+    const connectWithAuthorization = vi
+      .fn()
+      .mockImplementation(
+        async (_backendUrl: string, openAuthorization?: OpenCloudAuthorizationUrl) => {
+          await openAuthorization?.(authorizeUrl)
+        }
+      )
+    renderDialog({ ...cloudConnection(backendUrl), connectWithAuthorization })
+
+    await userEvent.click(screen.getByTestId('cloud-authorization-submit-button'))
+
+    expect(connectWithAuthorization).toHaveBeenCalledWith(
+      backendUrl,
+      openCloudAuthorizationWindow,
+      ''
+    )
+    expect(openCloudAuthorizationWindow).toHaveBeenCalledWith(authorizeUrl)
   })
 
   it('localizes an expired cloud session error', () => {

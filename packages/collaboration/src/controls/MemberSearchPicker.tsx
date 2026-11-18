@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { Search } from 'lucide-react'
+import { Check, Search } from 'lucide-react'
 import type { ReactNode, Ref } from 'react'
 
 const focus =
@@ -26,6 +26,8 @@ export function MemberSearchPicker<User extends { id: number; user_name: string 
   error,
   children,
   searchable = true,
+  selectedUserIds,
+  userDescription,
 }: {
   query: string
   onQueryChange(query: string): void
@@ -42,6 +44,8 @@ export function MemberSearchPicker<User extends { id: number; user_name: string 
   loadingLabel?: string
   error?: string
   children?: ReactNode
+  selectedUserIds?: ReadonlySet<number>
+  userDescription?(user: User): string | undefined
   searchable?: boolean
 }) {
   return (
@@ -69,13 +73,27 @@ export function MemberSearchPicker<User extends { id: number; user_name: string 
             key={user.id}
             type="button"
             data-testid={resultTestId(user.id)}
+            aria-pressed={selectedUserIds ? selectedUserIds.has(user.id) : undefined}
             disabled={savingUserId !== null}
             onClick={() => onSelect(user)}
             className={`flex min-h-11 w-full items-center gap-2 rounded-lg px-2 text-left hover:bg-muted disabled:opacity-40 ${focus}`}
           >
-            <span className="min-w-0 flex-1 truncate text-sm">{user.user_name}</span>
+            <span className="min-w-0 flex-1 text-sm">
+              <span className="block truncate">{user.user_name}</span>
+              {userDescription?.(user) && (
+                <span className="block whitespace-normal break-words text-xs text-text-muted">
+                  {userDescription(user)}
+                </span>
+              )}
+            </span>
             <span className="text-xs text-text-muted">
-              {savingUserId === user.id ? addingLabel : addLabel}
+              {selectedUserIds?.has(user.id) ? (
+                <Check aria-hidden="true" className="h-4 w-4" />
+              ) : savingUserId === user.id ? (
+                addingLabel
+              ) : (
+                addLabel
+              )}
             </span>
           </button>
         ))}

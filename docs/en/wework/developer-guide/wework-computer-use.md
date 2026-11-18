@@ -5,7 +5,7 @@ sidebar_position: 39
 # Computer use
 
 Wework computer use lets local Codex conversations control desktop applications
-after the user grants permission. It uses `@trycua/cua-driver` for accessibility
+after the user grants permission. It uses `@trycua/cua-driver` 0.52.13 for accessibility
 and screen access, while Wework continues to own conversation integration,
 permission state, action approval, cancellation, and MCP exposure.
 
@@ -27,6 +27,12 @@ Codex
   -> @trycua/cua-driver
   -> platform accessibility and screen-capture APIs
 ```
+
+The worker explicitly creates its runtime with
+`CuaDriver.create({ embedded: true, claudeCodeCompatibility: false })`.
+This prevents the newer SDK from discovering or launching a separately installed
+CuaDriver.app and keeps native calls, permission attribution, and lifecycle under
+Wework's ownership.
 
 The Electron main process owns the CUA Driver lifecycle. Once computer use is
 enabled and system permissions are ready, `ComputerUseService` creates the
@@ -80,8 +86,9 @@ reason. Late results cannot replace cancellation errors.
 
 The worker derives read-only classification from the SDK catalog's `readOnlyHint`,
 without a handwritten tool registry. Read-only calls and discovery cancel their
-SDK Future directly. Mutating calls retain that Future: CUA 0.22.1 can otherwise
-leave native input running and skip release cleanup. Action admission remains
+SDK Future directly. Mutating calls retain that Future to avoid leaving native
+input running or skipping release cleanup when cancellation drops the Future.
+Action admission remains
 occupied until the native call actually finishes or its process exits. Driver
 shutdown also waits for process exit before a replacement can be created.
 Discovery and tool calls share cancellation handling. If the worker has not
@@ -95,9 +102,8 @@ The main-process `[computer-use]` log records an operation ID, host and native
 worker PIDs, tool name, start, completion, cancellation, failure, and elapsed
 time without arguments, screenshots, session content, or tokens. Check these
 stages before sampling that operation's `nativePid`. An aggregate call's display
-name does not identify the blocked operation. CUA 0.22.1 bounds AX traversal at
-20 seconds, but cancelling a Rust
-Future cannot forcibly stop already running `spawn_blocking` native work.
+name does not identify the blocked operation. Cancelling a Rust Future cannot
+forcibly stop already running `spawn_blocking` native work.
 Successful SDK cancellation alone therefore does not prove native-thread exit.
 
 ## Permissions and settings
@@ -134,7 +140,11 @@ available.
 CUA is not a separate sidecar and is never installed dynamically from the user
 environment or network. The Electron package pins `@trycua/cua-driver`, and
 pnpm selects the platform-native package, such as
-`@trycua/cua-driver-darwin-arm64`.
+`@trycua/cua-driver-darwin-arm64`. Declare all six platform-native packages as
+direct `optionalDependencies` of the Electron package at the same version as
+the Driver. Relying only on transitive optional dependencies can cause
+electron-builder to omit native libraries. The staging `package.json` generated
+by local packaging must retain these declarations as well.
 
 JavaScript files enter `app.asar`, while native `.node`, `.dylib`, `.so`, and
 `.dll` files are unpacked into `app.asar.unpacked` by the Electron packaging

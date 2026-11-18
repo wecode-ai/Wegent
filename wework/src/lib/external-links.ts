@@ -6,6 +6,8 @@ import { requestEmbeddedBrowserOpen } from './embedded-browser'
 import { browserDiagnosticOrigin } from './browser-url'
 import { getAppPreferences, type BrowserLinkTarget } from '@/desktop/appPreferences'
 import { openWeworkScheme } from '@/features/notifications/schemeEvents'
+import { parseConversationMentionHref } from './conversation-mentions'
+import { parseIssueMentionHref } from './issue-mentions'
 
 interface OpenExternalUrlOptions {
   target?: BrowserLinkTarget
@@ -108,24 +110,84 @@ export async function openExternalUrl(
   }
 }
 
-function findClickedAnchor(target: EventTarget | null): HTMLAnchorElement | null {
+function isAnchor(node: EventTarget | null): node is Element {
+  return (
+    node instanceof Element &&
+    node.localName === 'a' &&
+    (node.hasAttribute('href') || node.hasAttributeNS('http://www.w3.org/1999/xlink', 'href'))
+  )
+}
+
+function anchorHref(anchor: Element): string {
+  return (
+    anchor.getAttribute('href') ??
+    anchor.getAttributeNS('http://www.w3.org/1999/xlink', 'href') ??
+    ''
+  )
+}
+
+function resolvedAnchorHref(anchor: Element): string {
+  try {
+    return new URL(anchorHref(anchor), anchor.baseURI).href
+  } catch {
+    return ''
+  }
+}
+
+function findClickedAnchor(event: MouseEvent): Element | null {
+  const composed = event.composedPath().find(isAnchor)
+  if (composed instanceof Element) return composed
+  const target = event.target
   if (!(target instanceof Element)) return null
-  return target.closest('a[href]')
+  const anchor = target.closest('a')
+  return isAnchor(anchor) ? anchor : null
 }
 
 export function installExternalLinkHandler() {
+  const rejectUnsafeLink = (event: MouseEvent) => {
+    const anchor = findClickedAnchor(event)
+    if (!anchor) return
+    const href = anchorHref(anchor)
+    if (parseConversationMentionHref(href) || parseIssueMentionHref(href)) {
+      // Internal references navigate through their owning React handler, never the browser.
+      event.preventDefault()
+      return
+    }
+    if (
+      !isHttpUrl(resolvedAnchorHref(anchor)) &&
+      !href.startsWith('#') &&
+      !href.startsWith('wework:')
+    ) {
+      event.preventDefault()
+      event.stopImmediatePropagation()
+    }
+  }
   const handleClick = (event: MouseEvent) => {
     if (event.defaultPrevented || event.button !== 0) return
-
-    const anchor = findClickedAnchor(event.target)
-    if (!anchor || !isHttpUrl(anchor.href)) return
+    const anchor = findClickedAnchor(event)
+    if (!anchor) return
+    const target = anchorHref(anchor).trim()
+    if (!target || target === '#') {
+      event.preventDefault()
+      return
+    }
+    if (target.startsWith('#')) return
+    const href = resolvedAnchorHref(anchor)
+    if (!isHttpUrl(href)) return
 
     event.preventDefault()
-    void openExternalUrl(anchor.href, { source: 'document' }).catch(error => {
+    void openExternalUrl(href, { source: 'document' }).catch(error => {
       console.error('Failed to open external URL:', error)
     })
   }
 
+  // Capture before third-party document renderers or propagation-stopping handlers.
+  document.addEventListener('click', rejectUnsafeLink, true)
+  document.addEventListener('auxclick', rejectUnsafeLink, true)
   document.addEventListener('click', handleClick)
-  return () => document.removeEventListener('click', handleClick)
+  return () => {
+    document.removeEventListener('click', rejectUnsafeLink, true)
+    document.removeEventListener('auxclick', rejectUnsafeLink, true)
+    document.removeEventListener('click', handleClick)
+  }
 }

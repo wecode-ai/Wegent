@@ -510,12 +510,12 @@ export function ProjectBoardBody<TItem>({
         )}
       </nav>
       {showQuickStart ? renderQuickStart?.(state) : null}
-      {renderStatus?.() ??
-        (boardError ? (
-          <p className="mx-6 mb-2 text-xs text-destructive" role="alert">
-            {boardError}
-          </p>
-        ) : null)}
+      {renderStatus?.()}
+      {boardError ? (
+        <p className="mx-6 mb-2 text-xs text-destructive" role="alert">
+          {boardError}
+        </p>
+      ) : null}
       {dropFeedback && (
         <p
           role="status"

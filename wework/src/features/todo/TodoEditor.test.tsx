@@ -154,14 +154,54 @@ describe('TodoEditor external item sync', () => {
       )
       await userEvent.click(screen.getByTestId('cloud-todo-add-collaborator'))
       const select = await screen.findByTestId('cloud-todo-collaborator-select')
-      await screen.findByRole('option', { name: 'Local owner' })
-      await userEvent.selectOptions(select, '0')
+      await userEvent.click(await screen.findByTestId('cloud-todo-collaborator-option-0'))
       expect(screen.getByTestId('cloud-todo-confirm-collaborator')).toBeEnabled()
-      expect(select).toHaveAccessibleName('选择项目空间成员')
+      expect(select).toHaveAccessibleName('搜索并选择参与者')
       await userEvent.click(screen.getByTestId('cloud-todo-confirm-collaborator'))
       await waitFor(() => expect(add).toHaveBeenCalledWith('WEG-1', 0))
     }
   )
+  it('confirms outside assignees before saving, including cached search results', async () => {
+    const assign = vi.fn(async () => ({
+      ...baseItem,
+      version: 2,
+      assignee_user_id: 42,
+      assignee_name: 'Outside person',
+    }))
+    const search = vi.fn(async () => ({
+      users: [{ id: 42, user_name: 'Outside person', is_active: true }],
+    }))
+    render(
+      <TodoEditor
+        mode="edit"
+        item={baseItem}
+        project={{ ...project, access_role: 'Owner' }}
+        allItems={[baseItem]}
+        onUpdated={vi.fn()}
+        onClose={vi.fn()}
+        api={
+          { ...(api as object), searchCloudProjectUsers: search, assignLoopItem: assign } as never
+        }
+      />
+    )
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-assignee'))
+    await userEvent.type(screen.getByTestId('cloud-todo-detail-assignee-search'), 'Outside')
+    const option = await screen.findByTestId('cloud-todo-detail-assignee-option-user:42')
+    expect(option).toHaveTextContent('非项目成员')
+    await userEvent.click(option)
+    expect(assign).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByTestId('issue-outside-assignee-cancel'))
+    expect(assign).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-assignee'))
+    await userEvent.type(screen.getByTestId('cloud-todo-detail-assignee-search'), 'Outside')
+    await userEvent.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:42'))
+    await userEvent.click(screen.getByTestId('issue-outside-assignee-confirm'))
+    await waitFor(() => expect(assign).toHaveBeenCalledTimes(1))
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-assignee'))
+    await userEvent.click(await screen.findByTestId('cloud-todo-detail-assignee-option-user:42'))
+    expect(screen.getByTestId('issue-outside-assignee-dialog')).toBeVisible()
+    expect(assign).toHaveBeenCalledTimes(1)
+  })
   it('shows the persisted none priority without relabelling it as medium', () => {
     const item = { ...baseItem, priority: 'none' as const }
     render(
@@ -697,6 +737,35 @@ describe('TodoEditor external item sync', () => {
     await userEvent.click(screen.getByTestId('cloud-todo-create-task'))
     expect(onCreateTask).toHaveBeenCalledOnce()
   })
+
+  it.each([true, false])(
+    'shows existing-task linking only for editable Issues (%s)',
+    async canEdit => {
+      const item = {
+        ...baseItem,
+        project_store: 'backend' as const,
+        can_edit: canEdit,
+        can_view_detail: true,
+      }
+      const onLink = vi.fn().mockResolvedValue(undefined)
+      render(
+        <TodoEditor
+          mode="edit"
+          presentation="workspace-panel"
+          item={item}
+          project={project}
+          allItems={[item]}
+          api={api}
+          currentUserId={1}
+          onUpdated={vi.fn()}
+          onClose={vi.fn()}
+          existingTaskSource={{ port: { bindTask: onLink, unbindTask: vi.fn() } }}
+        />
+      )
+      if (canEdit) expect(await screen.findByTestId('issue-link-existing-task')).toBeVisible()
+      else expect(screen.queryByTestId('issue-link-existing-task')).not.toBeInTheDocument()
+    }
+  )
 
   it('shows only the linked-task create button until that section scrolls above the viewport', async () => {
     let anchorBottom = 1000

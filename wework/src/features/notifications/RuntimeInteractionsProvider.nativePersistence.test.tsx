@@ -4,6 +4,15 @@ import { expect, it, vi } from 'vitest'
 
 const prefix = 'wework.interactions:test:1:'
 
+function storageSnapshot() {
+  return Object.fromEntries(
+    Array.from({ length: localStorage.length }, (_, index) => {
+      const key = localStorage.key(index)!
+      return [key, localStorage.getItem(key)!]
+    })
+  )
+}
+
 function hostQueue() {
   harness.desktop = true
   let replies = [{ id: 'disk-receipt', interactionId: '', text: 'Recover from the host queue' }]
@@ -29,11 +38,11 @@ it.each(['localStorage', 'disk'])(
     await waitFor(() => expect(context!.pending).toHaveLength(1))
     const item = context!.pending[0]
     await act(async () => context!.dismiss(item))
-    const disk = Object.fromEntries(Object.entries(localStorage))
+    const disk = storageSnapshot()
     let available = false
     harness.flushStorage.mockImplementation(async () => {
       if (!available) throw new Error('Disk unavailable')
-      Object.assign(disk, Object.fromEntries(Object.entries(localStorage)))
+      Object.assign(disk, storageSnapshot())
     })
     const original = Storage.prototype.setItem
     vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (key, value) {

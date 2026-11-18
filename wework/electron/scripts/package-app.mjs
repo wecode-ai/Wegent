@@ -72,6 +72,7 @@ await writeFile(
       type: sourcePackage.type,
       main: sourcePackage.main,
       dependencies: sourcePackage.dependencies,
+      optionalDependencies: sourcePackage.optionalDependencies,
       ...builderConfig.extraMetadata,
     },
     null,

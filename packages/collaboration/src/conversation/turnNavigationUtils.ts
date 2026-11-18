@@ -1,5 +1,5 @@
 import type { RefObject } from 'react'
-import { isStandInActivityMessage } from './standInActivity'
+import { isHostActivityMessage } from './standInActivity'
 import type { RuntimeTurnNavigationItem } from '@wegent/chat-core/runtime'
 import { visibleRuntimeUserMessage } from '@wegent/chat-core/runtime-user-message'
 import {
@@ -29,12 +29,12 @@ export function buildUserTurnsForNavigation(
   if (navigation === undefined) return buildUserTurns(messages)
   if (navigation.length === 0) return []
 
-  const activityMessages = messages.filter(isStandInActivityMessage)
+  const activityMessages = messages.filter(isHostActivityMessage)
   const activityIds = new Set(activityMessages.map(message => message.id))
   const activityTurns = new Set(activityMessages.map(message => message.turnId).filter(Boolean))
   const userTurns = new Set(
     messages
-      .filter(message => message.role === 'user' && !isStandInActivityMessage(message))
+      .filter(message => message.role === 'user' && !isHostActivityMessage(message))
       .map(message => message.turnId)
   )
   return buildUserTurnsFromNavigation(
@@ -60,7 +60,7 @@ function buildUserTurns(messages: NavigationMessage[]): UserTurn[] {
   const turns: UserTurn[] = []
   const pendingResponsePreviewTurnIndexes: number[] = []
   messages.forEach((message, index) => {
-    if (isStandInActivityMessage(message)) return
+    if (isHostActivityMessage(message)) return
     if (message.role !== 'user') {
       if (message.role === 'assistant' && pendingResponsePreviewTurnIndexes.length > 0) {
         const responsePreview = getAssistantPreview(message)
@@ -356,7 +356,7 @@ export function getScrollMetrics(scroller: HTMLElement, anchor?: HTMLElement | n
 }
 
 export function logTurnNavigation(event: string, details: Record<string, unknown>) {
-  console.warn(`[Wework] Message turn navigation ${event}`, details)
+  console.warn(`[Wework] Message turn navigation ${event}`, JSON.stringify(details))
 }
 
 export function getMessageAnchorById(content: HTMLElement) {

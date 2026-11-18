@@ -22,6 +22,7 @@ flowchart TD
 ## Streaming and completed content
 
 - Runtime events reach the reducer immediately. Presentation buffering does not delay persistence, input requests, cancellation or completion states.
+- History and streaming merges retain loaded neighbors and restore known messages to native snapshot order. Runtime `clientUserMessageId` binds each user message to its exact reply, keeping the user first when history reads overlap sending without inferring ownership from client timestamps.
 - Mobile uses 48, 96 or 160ms batching windows based on text length, followed by a frame flush. Incoming deltas do not restart the deadline.
 - Initial content, replacements and terminal snapshots appear immediately. Unmount releases batch, frame and fallback work.
 - PC retains its default next-frame behavior. Shared scheduling uses platform globals; Metro and test resolution bind shared hooks to the native app's single React instance.

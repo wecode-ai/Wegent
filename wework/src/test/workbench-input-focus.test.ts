@@ -176,16 +176,16 @@ beforeAll(async () => {
 
 afterEach(() => document.body.replaceChildren())
 
-test.each(['light', 'dark'])('%s native form fields keep their pointer border', theme => {
+test.each(
+  ['light', 'dark'].flatMap(theme => ['input', 'textarea', 'select'].map(tag => ({ theme, tag })))
+)('$theme $tag keeps its pointer border', ({ theme, tag }) => {
   const classes = sourceClass(sources.email, /className="([^"]*border border-border[^"]*)"/)
-  for (const tag of ['input', 'textarea', 'select']) {
-    const markup = field(classes, tag)
-    const { pointer } = expectPointerBaseline(markup, theme)
-    expect(pointer.borderWidth).toBe('1px')
-    expect(pointer.outlineStyle).toBe('none')
-    for (const modality of ['keyboard', undefined] as const) {
-      expect(computed(markup, modality, { theme }).outlineStyle).toBe('auto')
-    }
+  const markup = field(classes, tag)
+  const { pointer } = expectPointerBaseline(markup, theme)
+  expect(pointer.borderWidth).toBe('1px')
+  expect(pointer.outlineStyle).toBe('none')
+  for (const modality of ['keyboard', undefined] as const) {
+    expect(computed(markup, modality, { theme }).outlineStyle).toBe('auto')
   }
 })
 

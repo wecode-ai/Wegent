@@ -11,6 +11,7 @@ import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import {
   copyLocalExecutorDebugInfo,
   ensureLocalExecutorAvailable,
+  ensureLocalExecutorStarted,
   readLocalExecutorLog,
   type LocalExecutorLog,
   type LocalExecutorStatus,
@@ -267,6 +268,20 @@ export function LocalRuntimeInitializer({
       cancelled = true
     }
   }, [enabled, fallbackError, runtimeErrorText])
+
+  useEffect(() => {
+    if (!enabled || state.phase !== 'ready') return undefined
+    let cancelled = false
+    // Prepare execution recovery and default plugins after mounting the workbench.
+    void ensureLocalExecutorStarted().catch(error => {
+      if (!cancelled) {
+        setState({ phase: 'failed', error: errorMessage(error, fallbackError), cause: error })
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [enabled, state.phase, startupAttempt, fallbackError])
 
   const handleCopyDebugInfo = useCallback(async () => {
     setCopyDebugState('copying')

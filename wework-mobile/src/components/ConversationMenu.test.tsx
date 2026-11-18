@@ -49,7 +49,9 @@ vi.mock('./ConversationMenuNative', async () => {
       return createElement(
         'NativeMenu',
         props,
-        props.children,
+        typeof props.children === 'function'
+          ? props.children({ disabled: props.disabled, onLongPress: vi.fn() })
+          : props.children,
         ...props.actions.map(action =>
           createElement('NativeAction', {
             key: action.id,
@@ -127,7 +129,9 @@ describe('conversation menu', () => {
     props.onPin.mockRejectedValue(new Error('device offline'))
     await act(() => element('conversation-pin').props.onPress())
     expect(renderer.root.findByType(NativeErrorAlert)).toBeDefined()
-    expect(renderer.root.findByType(NativeErrorAlert).props.error).toBe('device offline')
+    expect(renderer.root.findByType(NativeErrorAlert).props.error).toEqual(
+      new Error('device offline')
+    )
   })
   it('does not substitute a task ID when the conversation thread is not established', async () => {
     await act(() => renderer.update(<ConversationMenu {...props} threadId={null} />))
@@ -178,7 +182,7 @@ describe('conversation menu', () => {
     await act(() => element('conversation-rename-input').props.onChangeText('Retry title'))
     await act(() => element('conversation-rename-save').props.onPress())
     expect(element('conversation-rename-input').props.value).toBe('Retry title')
-    expect(renderer.root.findByType(ErrorNotice).props.error).toBe('device offline')
+    expect(renderer.root.findByType(ErrorNotice).props.error).toEqual(new Error('device offline'))
     await act(() => element('conversation-rename-save').props.onPress())
     expect(props.onRename).toHaveBeenLastCalledWith('Retry title')
     expect(renderer.root.findAllByProps({ testID: 'conversation-rename-dialog' })).toHaveLength(0)
@@ -200,5 +204,35 @@ describe('conversation menu', () => {
     await act(() => renderer.update(<ConversationMenu {...props} pinned />))
     expect(element('conversation-pin').props.title).toBe('取消置顶')
     expect(element('conversation-archive').props.destructive).toBe(true)
+  })
+  it('shares the archive pending owner between swipe and long-press actions', async () => {
+    let finish!: () => void
+    props.onArchive.mockImplementation(
+      () =>
+        new Promise<void>(resolve => {
+          finish = resolve
+        })
+    )
+    const onAction = vi.fn()
+    await act(() =>
+      renderer.update(
+        <ConversationMenu
+          {...props}
+          listItem
+          onAction={onAction}
+          renderRow={input => React.createElement('MenuRow', input)}
+        />
+      )
+    )
+    const row = () => renderer.root.findByType('MenuRow' as never)
+    expect(renderer.root.findByType('NativeMenu' as never).props.trigger).toBe('longPress')
+    expect(renderer.root.findAllByProps({ testID: 'conversation-files' })).toHaveLength(0)
+    await act(() => row().props.onArchive())
+    expect(row().props.disabled).toBe(true)
+    await act(() => element('conversation-archive').props.onPress())
+    expect(props.onArchive).toHaveBeenCalledOnce()
+    expect(onAction).toHaveBeenCalledOnce()
+    await act(() => finish())
+    expect(row().props.disabled).toBe(false)
   })
 })
