@@ -158,10 +158,20 @@ async fn assert_heartbeats(
             &client,
             1,
             "device:register",
-            json!({"device_id": device_id, "name": "Heartbeat E2E", "device_type": "local"}),
+            json!({"device_id": device_id, "name": "Heartbeat E2E", "device_type": "local", "runtime_instance_id": "heartbeat-runtime"}),
         )
         .await,
-        json!({"success": true, "device_id": device_id, "device_route_id": device_id})
+        json!({"success": true, "device_id": device_id, "device_route_id": device_id, "runtime_work_catalog_probe": true})
+    );
+    assert_eq!(
+        event_ack(
+            &client,
+            90,
+            "runtime.tasks.pull",
+            json!({"catalog_probe": true})
+        )
+        .await,
+        json!({"success": true, "task": null, "catalog_required": false, "workspace_cleanup_intents": []})
     );
     let registered = online(redis, key).await;
     assert_eq!(registered["socket_id"], client.socket_id());
@@ -553,7 +563,7 @@ async fn assert_app_conflicts(
             registration("runtime-original", "electron-original")
         )
         .await,
-        json!({"success": true, "device_id": name, "device_route_id": route}),
+        json!({"success": true, "device_id": name, "device_route_id": route, "runtime_work_catalog_probe": true}),
     );
     assert_eq!(
         event_ack(

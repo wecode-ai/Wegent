@@ -25,6 +25,8 @@ use std::{
 #[derive(Clone, Default)]
 struct RuntimeWorkPollTransport {
     pull_calls: Arc<AtomicUsize>,
+    probe_calls: Arc<AtomicUsize>,
+    probe_needs_catalog: Arc<AtomicBool>,
     accepted_tasks: Arc<AtomicUsize>,
     fail_first_pull: Arc<AtomicBool>,
     cleanup_enabled: Arc<AtomicBool>,
@@ -62,6 +64,12 @@ impl LocalBackendTransport for RuntimeWorkPollTransport {
                     .unwrap()
                     .clone()
                     .unwrap_or_else(|| json!({"success": true}))),
+                "runtime.tasks.pull" if payload["catalog_probe"] == true => {
+                    self.probe_calls.fetch_add(1, AtomicOrdering::AcqRel);
+                    Ok(
+                        json!({"success": true, "task": null, "catalog_required": self.probe_needs_catalog.load(AtomicOrdering::Acquire)}),
+                    )
+                }
                 "runtime.tasks.pull" => {
                     assert!(payload["runner_catalog"]["models"].is_array());
                     let pull_index = self.pull_calls.fetch_add(1, AtomicOrdering::AcqRel);
@@ -135,6 +143,7 @@ impl LocalBackendTransport for RuntimeWorkPollTransport {
 
 struct BlockingCapacityRuntimeWorkHandler {
     capacity_calls: AtomicUsize,
+    catalog_calls: AtomicUsize,
     create_calls: AtomicUsize,
     first_capacity_started: Notify,
     release_first_capacity: Notify,
@@ -144,6 +153,7 @@ impl BlockingCapacityRuntimeWorkHandler {
     fn new() -> Self {
         Self {
             capacity_calls: AtomicUsize::new(0),
+            catalog_calls: AtomicUsize::new(0),
             create_calls: AtomicUsize::new(0),
             first_capacity_started: Notify::new(),
             release_first_capacity: Notify::new(),
@@ -158,7 +168,10 @@ impl RuntimeWorkHandler for BlockingCapacityRuntimeWorkHandler {
     ) -> Pin<Box<dyn Future<Output = Result<Value, AppIpcError>> + Send + 'a>> {
         Box::pin(async move {
             match data.get("method").and_then(Value::as_str) {
-                Some("runtime.runner.catalog") => Ok(json!({"models": []})),
+                Some("runtime.runner.catalog") => {
+                    self.catalog_calls.fetch_add(1, AtomicOrdering::AcqRel);
+                    Ok(json!({"models": []}))
+                }
                 Some("runtime.capacity.get") => {
                     let call_index = self.capacity_calls.fetch_add(1, AtomicOrdering::AcqRel);
                     if call_index == 0 {
@@ -725,4 +738,41 @@ fn initial_backend_registration_is_visible_to_app_ipc_plugin_requests() {
         rejected_profile.unwrap_err().code,
         "plugin_route_profile_mismatch"
     );
+}
+
+#[tokio::test]
+async fn negotiated_idle_poll_does_not_start_runner_and_reconnect_resets_capability() {
+    let transport = RuntimeWorkPollTransport::default();
+    *transport.register_ack.lock().unwrap() =
+        Some(json!({"success": true, "runtime_work_catalog_probe": true}));
+    let client = LocalBackendClient::new(backend_config("local-device"), transport.clone());
+    client
+        .register_device(Duration::from_secs(1))
+        .await
+        .unwrap();
+    let concrete = Arc::new(BlockingCapacityRuntimeWorkHandler::new());
+    concrete.release_first_capacity.notify_one();
+    let handler: Arc<dyn RuntimeWorkHandler> = concrete.clone();
+    drain_available_runtime_work(&client, &handler).await;
+    assert_eq!(concrete.catalog_calls.load(AtomicOrdering::Acquire), 0);
+    assert_eq!(transport.pull_calls.load(AtomicOrdering::Acquire), 0);
+    assert_eq!(transport.probe_calls.load(AtomicOrdering::Acquire), 1);
+
+    transport
+        .probe_needs_catalog
+        .store(true, AtomicOrdering::Release);
+    transport.pull_calls.store(1, AtomicOrdering::Release);
+    drain_available_runtime_work(&client, &handler).await;
+    assert_eq!(concrete.catalog_calls.load(AtomicOrdering::Acquire), 1);
+    assert_eq!(transport.accepted_tasks.load(AtomicOrdering::Acquire), 1);
+
+    *transport.register_ack.lock().unwrap() = Some(json!({"success": true}));
+    client
+        .register_device(Duration::from_secs(1))
+        .await
+        .unwrap();
+    assert!(!client.supports_catalog_probe());
+    drain_available_runtime_work(&client, &handler).await;
+    assert_eq!(concrete.catalog_calls.load(AtomicOrdering::Acquire), 2);
+    assert_eq!(transport.probe_calls.load(AtomicOrdering::Acquire), 2);
 }

@@ -7,7 +7,10 @@ use std::{
     future::Future,
     path::Path,
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::Duration,
 };
 
@@ -31,6 +34,7 @@ const RUNTIME_WORKSPACE_CLEANUP_ACCEPT_EVENT: &str = "runtime.workspace_cleanup.
 
 pub struct RuntimeWorkPull {
     pub task: Option<Value>,
+    pub catalog_required: bool,
     pub workspace_cleanup_intents: Vec<Value>,
 }
 
@@ -67,6 +71,7 @@ where
     running_tasks: LocalRunningTaskTracker,
     capability_reporter: Arc<dyn CapabilityReportProvider>,
     runtime_transfer_port: Arc<Mutex<Option<u16>>>,
+    runtime_work_catalog_probe: Arc<AtomicBool>,
     pub(super) remote_task_access: crate::runtime_work::remote_task_access::RemoteTaskAccess,
 }
 
@@ -109,6 +114,7 @@ where
             running_tasks,
             capability_reporter: Arc::new(capability_reporter),
             runtime_transfer_port: Arc::new(Mutex::new(None)),
+            runtime_work_catalog_probe: Arc::new(AtomicBool::new(false)),
             remote_task_access: crate::runtime_work::remote_task_access::RemoteTaskAccess::from_env(
             ),
         }
@@ -139,6 +145,8 @@ where
                 "persistent device and Runtime identities are required for registration".to_owned(),
             );
         }
+        self.runtime_work_catalog_probe
+            .store(false, Ordering::Release);
         let response = self
             .transport
             .call(REGISTER_EVENT, self.registration_payload(), timeout)
@@ -153,6 +161,13 @@ where
                 _ => return Ok(None),
             }
         }
+        self.runtime_work_catalog_probe.store(
+            ack_payload(&response)
+                .and_then(|payload| payload.get("runtime_work_catalog_probe"))
+                .and_then(Value::as_bool)
+                == Some(true),
+            Ordering::Release,
+        );
         let route_id = ack_payload(&response)
             .and_then(|payload| payload.get("device_route_id"))
             .and_then(Value::as_str)
@@ -182,13 +197,36 @@ where
         timeout: Duration,
         catalog: Value,
     ) -> Result<RuntimeWorkPull, String> {
+        self.pull_runtime_work_payload(timeout, json!({"runner_catalog": catalog}))
+            .await
+    }
+
+    pub(super) fn supports_catalog_probe(&self) -> bool {
+        self.runtime_work_catalog_probe.load(Ordering::Acquire)
+    }
+
+    pub(super) async fn probe_runtime_work(
+        &self,
+        timeout: Duration,
+    ) -> Result<RuntimeWorkPull, String> {
+        let work = self
+            .pull_runtime_work_payload(timeout, json!({"catalog_probe": true}))
+            .await?;
+        if work.task.is_some() {
+            return Err("Catalog probe unexpectedly claimed Runtime work".to_owned());
+        }
+        Ok(work)
+    }
+
+    async fn pull_runtime_work_payload(
+        &self,
+        timeout: Duration,
+        request: Value,
+    ) -> Result<RuntimeWorkPull, String> {
+        let probe = request.get("catalog_probe").and_then(Value::as_bool) == Some(true);
         let response = self
             .transport
-            .call(
-                RUNTIME_TASK_PULL_EVENT,
-                json!({"runner_catalog": catalog}),
-                timeout,
-            )
+            .call(RUNTIME_TASK_PULL_EVENT, request, timeout)
             .await?;
         let payload = ack_payload(&response);
         if payload
@@ -202,7 +240,14 @@ where
                 .unwrap_or("Runtime task pull failed")
                 .to_owned());
         }
+        let catalog_required = payload
+            .and_then(|value| value.get("catalog_required"))
+            .and_then(Value::as_bool);
+        if probe && catalog_required.is_none() {
+            return Err("Catalog probe response is missing catalog_required".to_owned());
+        }
         Ok(RuntimeWorkPull {
+            catalog_required: catalog_required.unwrap_or(false),
             task: payload
                 .and_then(|value| value.get("task"))
                 .cloned()

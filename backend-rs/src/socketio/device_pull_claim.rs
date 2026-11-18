@@ -481,10 +481,29 @@ pub(super) async fn queue_rows(
     execution_device_ids: &[String],
     environment: &str,
 ) -> MysqlResult<Vec<QueueExecutionRow>> {
+    queue_rows_with_assignments(app, owner_user_id, execution_device_ids, environment, false).await
+}
+
+pub(super) async fn queue_rows_for_catalog_probe(
+    app: &AppState,
+    owner_user_id: i64,
+    execution_device_ids: &[String],
+    environment: &str,
+) -> MysqlResult<Vec<QueueExecutionRow>> {
+    queue_rows_with_assignments(app, owner_user_id, execution_device_ids, environment, true).await
+}
+
+async fn queue_rows_with_assignments(
+    app: &AppState,
+    owner_user_id: i64,
+    execution_device_ids: &[String],
+    environment: &str,
+    include_assignments: bool,
+) -> MysqlResult<Vec<QueueExecutionRow>> {
     let placeholders = std::iter::repeat_n("?", execution_device_ids.len())
         .collect::<Vec<_>>()
         .join(",");
-    let sql = queue_sql(&placeholders);
+    let sql = queue_sql(&placeholders, include_assignments);
     let mut args = Vec::with_capacity(execution_device_ids.len() + 2);
     args.push(StatementArg::Int(owner_user_id));
     args.extend(
@@ -496,7 +515,12 @@ pub(super) async fn queue_rows(
     app.mysql.fetch_all(sql, args).await
 }
 
-fn queue_sql(placeholders: &str) -> String {
+fn queue_sql(placeholders: &str, include_assignments: bool) -> String {
+    let assignment_filter = if include_assignments {
+        String::new()
+    } else {
+        format!("AND {ASSIGNMENT_REQUEST_OBJECT_EXPR} = 0")
+    };
     format!(
         "SELECT {EXECUTION_COLUMNS} \
          FROM loop_item_executions \
@@ -506,7 +530,7 @@ fn queue_sql(placeholders: &str) -> String {
               AND loop_item_executions.execution_environment = ? \
               OR loop_item_executions.execution_device_id = '') \
          AND loop_item_executions.status = 'queued' \
-         AND {ASSIGNMENT_REQUEST_OBJECT_EXPR} = 0 \
+         {assignment_filter} \
          ORDER BY loop_item_executions.priority_weight DESC, \
                   loop_item_executions.queued_at ASC, loop_item_executions.id ASC"
     )
@@ -949,7 +973,7 @@ mod tests {
         assert!(USES_RUNNER_ROUTING_EXPR.contains("'$.\"runner_routing\"'"));
         assert!(USES_RUNNER_ROUTING_EXPR.ends_with("= 1"));
 
-        let queue = queue_sql("?,?,?");
+        let queue = queue_sql("?,?,?", false);
         assert!(queue.contains("execution_device_id IN (?,?,?)"));
         assert!(queue.contains("= 'object', 0) = 0"));
         assert!(!queue.contains("= 1 = 0"));
