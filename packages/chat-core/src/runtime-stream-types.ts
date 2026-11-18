@@ -112,6 +112,7 @@ export interface ChatBlockUpdatedPayload {
   blockId: string;
   content?: string;
   contentDelta?: string;
+  contentOffset?: number;
   toolOutput?: unknown;
   toolOutputDelta?: string;
   toolOutputTruncated?: boolean;

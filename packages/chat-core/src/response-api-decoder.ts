@@ -670,6 +670,9 @@ export function emitResponseBlockUpdated(
     {
       ...(typeof updates.content === "string" && { content: updates.content }),
       ...(typeof contentDelta === "string" && { contentDelta }),
+      ...(optionalNumberField(updates, "content_offset") !== undefined && {
+        contentOffset: optionalNumberField(updates, "content_offset"),
+      }),
       ...(typeof (updates.toolOutput ?? updates.tool_output) !==
         "undefined" && {
         toolOutput: updates.toolOutput ?? updates.tool_output,

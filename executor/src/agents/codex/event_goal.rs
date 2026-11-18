@@ -1,6 +1,7 @@
 //! Host-admitted event work must enter native Goal accounting before model execution.
 use futures_util::future::BoxFuture;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use tokio::sync::OwnedMutexGuard;
 
 use super::{event_receipt, CodexAppServerClient, CodexLaunchConfig, CodexTurnRequestContext};
@@ -112,7 +113,12 @@ impl EventGoalAdmission {
             return Err("Event work cannot change its original native thread".into());
         }
         self.check(rpc).await?;
-        let item = json!({"type":"message","id":format!("wework-event:{}",self.operation),"role":"user","content":[{"type":"input_text","text":crate::runtime_work::prompt_text(&self.input)}]});
+        let mut item_id = format!(
+            "wework_event_{:x}",
+            Sha256::digest(self.operation.as_bytes())
+        );
+        item_id.truncate(45);
+        let item = json!({"type":"message","id":item_id,"role":"user","content":[{"type":"input_text","text":crate::runtime_work::prompt_text(&self.input)}]});
         let history = rpc
             .request(
                 "thread/read",
