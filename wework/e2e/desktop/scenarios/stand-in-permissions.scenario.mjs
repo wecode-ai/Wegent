@@ -185,7 +185,7 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
       // Establish the denied role before assignment can wake the real Stand-in.
       await setRole('Viewer')
       const executionProbe = await request(
-        cloud.authToken,
+        ownerToken,
         `/v1/cloud-projects/${project.id}/loop-items`,
         'POST',
         { title: 'Personal task execute permission', assignee_user_id: user.id },
