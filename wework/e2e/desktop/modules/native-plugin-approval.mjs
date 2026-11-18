@@ -8,8 +8,12 @@ export const NATIVE_PLUGIN_DECISION_TIMEOUT_MS = 40_000
 const TITLES = [
   'Confirm Core plugin installation',
   'Confirm Core plugin update',
+  'Install this Core plugin?',
+  'Update this Core plugin?',
   'Core 插件安装确认',
   'Core 插件更新确认',
+  '允许安装此 Core 插件吗？',
+  '允许更新此 Core 插件吗？',
 ]
 let decisionSequence = 0
 

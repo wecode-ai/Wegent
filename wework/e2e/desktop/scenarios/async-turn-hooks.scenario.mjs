@@ -79,9 +79,6 @@ export function createDesktopScenario({ resultDir, uiTimeoutMs, modelResponseTim
         assert.match(result.output, /HOOK_WRITES_COMPLETE/)
         events = [assistantMessage(`${PROMPT}_${phase}_DONE`)]
       } else {
-        // The model fixture holds its first reply until the asynchronous baseline
-        // exists, so diff assertions do not depend on the accepted startup race.
-        if (phase === 'git') await waitMarker('baseline')
         const quote = value => '"' + value.replaceAll('"', '\\"') + '"'
         events = shellCommandResponse(
           body,
@@ -190,9 +187,18 @@ try {
         writer = join(root, 'write.mjs')
         await writeFile(
           writer,
-          `import { writeFile, open } from 'node:fs/promises'
+          `import { access, open, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 const cwd = process.argv[2]
+const root = ${JSON.stringify(root)}
+const deadline = Date.now() + 60000
+while (true) {
+  try { await access(join(root, 'baseline')); break }
+  catch (error) { if (error.code !== 'ENOENT') throw error }
+  if (Date.now() >= deadline) throw new Error('Lifecycle baseline was not written')
+  await delay(50)
+}
 await writeFile(join(cwd, 'source.txt'), 'agent change\\n')
 await writeFile(join(cwd, 'child.txt'), 'shared workspace shell write\\n')
 const file = await open(join(cwd, 'large.txt'), 'w')
