@@ -128,6 +128,8 @@ RUSTUP_TOOLCHAIN=1.88.0 cargo test --test runner_contract --test callback_contra
 
 ## 切片 4：前端总览
 
+状态：已实现第一版。
+
 ### 行为
 
 - Assistant 消息旁展示总用时和关键阶段 summary。
@@ -147,6 +149,28 @@ RUSTUP_TOOLCHAIN=1.88.0 cargo test --test runner_contract --test callback_contra
 - 阶段区间计算
 - 缺失数据降级
 - Web 与 Wework 复用组件
+
+### 实现说明
+
+第一版 Web 任务消息直接从 `subtask.result.timing` 读取服务端持久化数据，并在
+AI 消息头部下方展示紧凑 summary。点击后展开轻量 waterfall。缺失阶段自然隐藏。
+
+Wework 原生 runtime 会话暂未把 subtask result 投影到共享 assistant 消息；
+本阶段不伪造客户端时间，待 runtime transcript 提供 result timing 后复用同一展示组件。
+
+### 验证记录
+
+```bash
+pnpm --dir frontend test src/features/tasks/components/message/TaskTimingOverview.test.tsx
+pnpm --dir frontend exec prettier --check \
+  src/features/tasks/components/message/TaskTimingOverview.tsx \
+  src/__tests__/features/tasks/components/message/TaskTimingOverview.test.tsx \
+  src/features/tasks/components/message/MessageBubble.tsx \
+  src/features/tasks/presentation/useMessagePresenter.ts
+```
+
+- Jest：2 passed
+- Prettier：通过
 
 ## 顺序与验收
 

@@ -61,6 +61,7 @@ import { SmartLink, SmartImage, SmartTextLine } from '@/components/common/SmartU
 import { formatDateTime } from '@/utils/dateTime'
 import { getTeamDisplayName } from '@/utils/team'
 import { ErrorCard } from './ErrorCard'
+import { TaskTimingOverview } from './TaskTimingOverview'
 export interface Message {
   type: 'user' | 'ai'
   content: string
@@ -79,6 +80,7 @@ export interface Message {
     retrieval_summary?: RetrievalSummaryPayload
     reasoning_content?: string // Reasoning content from DeepSeek R1 etc.
     blocks?: MessageBlock[] // Message blocks for mixed rendering (new format)
+    timing?: Record<string, number> // Wall-time stage boundaries
     annotations?: GeminiAnnotation[] // Gemini Deep Research grounding annotations
     /** Video generation progress (0-100) */
     progress?: number
@@ -1154,6 +1156,7 @@ const MessageBubble = memo(
                   )}
                 </div>
               )}
+              {!isUserTypeMessage && <TaskTimingOverview timing={msg.result?.timing} />}
               {/* Show reasoning display for DeepSeek R1 and similar models */}
               {!isUserTypeMessage && displayReasoningContent && (
                 <ReasoningDisplay

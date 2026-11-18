@@ -66,6 +66,7 @@ export interface DisplayMessage {
     retrieval_summary?: RetrievalSummaryPayload
     reasoning_content?: string // DeepSeek R1 reasoning content
     blocks?: MessageBlock[] // Message blocks for mixed content rendering
+    timing?: Record<string, number> // Wall-time stage boundaries
     /** Video generation config (stored in user message subtask for display) */
     video_config?: {
       model?: string
