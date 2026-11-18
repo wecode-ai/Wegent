@@ -237,17 +237,23 @@ async fn chat_preserves_configured_skills_with_legacy_shell_metadata() {
 
 #[tokio::test]
 async fn unproven_chat_continuation_carries_the_explicit_fallback_marker() {
-    let (team, bot) = chat_agent();
-    let mut input = chat_input(&team, &bot);
+    let (team, mut bot) = chat_agent();
     let bot_json = json!({
         "ghostRef": {"name": "analysis-ghost", "namespace": "default"},
         "modelRef": {"name": "test-model", "namespace": "default"},
         "shellRef": {"name": "ClaudeCode", "namespace": "default"},
     });
     bot.json = Json(json!({"spec": bot_json}));
+    let mut input = chat_input(&team, &bot);
     input.allow_new_session_fallback = true;
-    let fixture =
-        MysqlRows::start_results(move |sql| skill_fixture(sql, false, false)).await;
+    let fixture = MysqlRows::start_results(|sql| {
+        if sql.contains("kinds.kind = 'Shell'") {
+            coordinate_fixture(sql)
+        } else {
+            skill_fixture(sql, false, false)
+        }
+    })
+    .await;
     let state = crate::app_test_support::app(fixture.mysql.clone());
     let request = build_chat_execution_request(&state, &input, false, &[], None, None, None)
         .await

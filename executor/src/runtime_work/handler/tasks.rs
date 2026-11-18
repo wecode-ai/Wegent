@@ -1346,6 +1346,15 @@ impl RuntimeWorkRpcHandler {
         let backend_fallback = request.legacy_session_fallback;
         request.new_session = start_new_session || backend_fallback;
         let start_fresh_native_session = request.new_session;
+        log_executor_event(
+            "runtime continuation session selected",
+            &[
+                ("local_task_id", local_task_id.clone()),
+                ("explicit_new_session", start_new_session.to_string()),
+                ("legacy_session_fallback", backend_fallback.to_string()),
+                ("new_session", request.new_session.to_string()),
+            ],
+        );
         if request.runtime_project_key.is_none() {
             request.runtime_project_key = existing_link
                 .as_ref()

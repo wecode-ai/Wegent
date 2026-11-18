@@ -58,6 +58,9 @@ The interface height follows its content, and saved interaction state is restore
 
 <a id="connection-event-waits"></a>
 
+Event waits show the effective condition in the composer, including alternatives such as checks passing or failing in one subscription. Long conditions have a full tooltip. The left task sidebar indicates waiting, received or monitoring error status and returns to the running indicator when execution resumes.
+
+
 ### Ask AI to wait for connection events
 
 In the **task conversation composer**, ask AI to continue here when a document or another connected resource changes. AI discovers installed connection providers, selects the resource and saves a subscription through tools. No manual schedule setup is required. Ordinary conversations and Goals both support this; available events depend on the provider and account permissions. The device executor must advertise event protocol support. Older devices retain ordinary chat and existing PR status queries; unavailable event actions show an upgrade hint.

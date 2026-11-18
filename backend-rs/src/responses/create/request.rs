@@ -1023,6 +1023,17 @@ async fn build_request_with_runtime(
             &legacy_session_bindings,
         );
     let new_session = input.new_session || legacy_session_fallback;
+    if input.allow_new_session_fallback {
+        tracing::info!(
+            task_id = input.task_id,
+            subtask_id = input.assistant_subtask_id,
+            requested_new_session = input.new_session,
+            legacy_session_fallback,
+            inherited_session_count = inherited_sessions.len(),
+            legacy_binding_count = legacy_session_bindings.len(),
+            "chat continuation session selected"
+        );
+    }
 
     // `_process_contexts` (`unified.py:464`): the executor attachment payload
     // is built from the user subtask's attachment contexts at this position,
