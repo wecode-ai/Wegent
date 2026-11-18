@@ -1304,6 +1304,7 @@ pub async fn handle(
             let task_id = payload.task_id.unwrap_or(0);
             let continuation = payload.task_id.map(|task_id| Continuation {
                 task_id,
+                is_subscription: scope.is_subscription,
                 task_json: scope.task_json.clone(),
             });
             let generation = payload.generation_options();

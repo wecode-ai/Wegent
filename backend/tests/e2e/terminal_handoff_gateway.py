@@ -555,7 +555,14 @@ class TerminalHandoffGateway(unittest.TestCase):
             self.assertIn(answer, json.dumps(capture))
             self.assertNotIn("late callback payload", json.dumps(capture))
 
-    async def _send_chat_turns(self, team_id: int, prompts: list[str]) -> list[dict]:
+    async def _send_chat_turns(
+        self,
+        team_id: int,
+        prompts: list[str],
+        *,
+        task_id: int | None = None,
+        is_group_chat: bool = False,
+    ) -> list[dict]:
         client = socketio.AsyncClient(reconnection=False)
         await client.connect(
             str(self.api.base_url),
@@ -566,9 +573,18 @@ class TerminalHandoffGateway(unittest.TestCase):
         try:
             responses = []
             for prompt in prompts:
+                payload = {
+                    "team_id": team_id,
+                    "message": prompt,
+                    "task_type": "chat",
+                }
+                if is_group_chat:
+                    payload["is_group_chat"] = True
+                if task_id is not None:
+                    payload["task_id"] = task_id
                 result = await client.call(
                     "chat:send",
-                    {"team_id": team_id, "message": prompt, "task_type": "chat"},
+                    payload,
                     namespace="/chat",
                     timeout=15,
                 )
@@ -577,6 +593,36 @@ class TerminalHandoffGateway(unittest.TestCase):
             return responses
         finally:
             await client.disconnect()
+
+    def test_rust_appends_a_chat_turn_to_an_owned_subscription_task(self) -> None:
+        team_id, _ = self._create_team(pipeline=False)
+        (initial,) = asyncio.run(
+            self._send_chat_turns(team_id, ["Initial message"], is_group_chat=True)
+        )
+        task_id = initial["task_id"]
+        with SessionLocal() as db:
+            task = db.get(TaskResource, task_id)
+            self.assertIsNotNone(task)
+            task.is_active = TaskResource.STATE_SUBSCRIPTION
+            db.commit()
+
+        (continued,) = asyncio.run(
+            self._send_chat_turns(
+                team_id, ["Follow-up message"], task_id=task_id, is_group_chat=True
+            )
+        )
+
+        self.assertEqual(continued["task_id"], task_id)
+        _, rows = self._snapshot(task_id)
+        self.assertEqual([row["role"] for row in rows], ["USER", "USER"])
+        self.assertEqual(
+            [row["id"] for row in rows],
+            [initial["subtask_id"], continued["subtask_id"]],
+        )
+        with SessionLocal() as db:
+            self.assertEqual(
+                db.get(TaskResource, task_id).is_active, TaskResource.STATE_SUBSCRIPTION
+            )
 
     def _wait_for_held_model_requests(self, count: int) -> None:
         self._wait_for(
