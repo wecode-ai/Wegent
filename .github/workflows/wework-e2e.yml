@@ -564,6 +564,8 @@ jobs:
 
       - name: Verify native plugin dialog client
         timeout-minutes: 1
+        env:
+          WEWORK_E2E_NATIVE_OBSERVER_DIRECTORY: ${{ runner.temp }}/wework-native-observer
         shell: pwsh
         run: |
           node wework/scripts/verify-native-plugin-window-diagnostics.mjs
@@ -578,6 +580,7 @@ jobs:
         shell: pwsh
         run: |
           $directory = Join-Path $env:GITHUB_WORKSPACE "wework/electron/release/WeWork-win32-x64/resources/e2e-client"
+          Copy-Item -Path "$env:RUNNER_TEMP/wework-native-observer/*.dll" -Destination $directory
           $binary = Join-Path $directory "node-cli-protocol.exe"
           rustc wework/e2e/desktop/fixtures/node-cli-protocol.rs --edition 2021 -o $binary
           if ($LASTEXITCODE -ne 0) { throw "Git CLI protocol fixture compilation failed" }
@@ -899,6 +902,7 @@ jobs:
           WEWORK_E2E_APP_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/WeWork.exe
           WEWORK_E2E_SOCKET_IO_CLIENT: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/e2e-client/socket.io-client.cjs
           WEWORK_E2E_YAML_PARSER: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/e2e-client/yaml.cjs
+          WEWORK_E2E_NATIVE_OBSERVER_DIRECTORY: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/e2e-client
           WEWORK_E2E_NODE_CLI_PROTOCOL_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/e2e-client/node-cli-protocol.exe
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/bin/wegent-executor.exe
           WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/bin/wegent-backend-rs.exe

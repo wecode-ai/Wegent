@@ -1,3 +1,7 @@
+import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
+import { join } from 'node:path'
+
 export const WINDOWS_NATIVE_DIAGNOSTIC_FIELDS = [
   'uia-descendants',
   'uia-buttons',
@@ -177,8 +181,13 @@ export const WINDOWS_NATIVE_DIALOG_STRUCTURE_SOURCE = `${WINDOWS_NATIVE_DIALOG_I
 }
 `
 
+export const WINDOWS_NATIVE_OBSERVER_ASSEMBLY = `native-window-observer-${createHash('sha256').update(WINDOWS_NATIVE_DIALOG_STRUCTURE_SOURCE).digest('hex')}.dll`
+
 /** Run only after the original input process failed; this observer never sends input. */
 export function windowsNativeWindowDiagnosticScript(pid, titles) {
+  const directory = process.env.WEWORK_E2E_NATIVE_OBSERVER_DIRECTORY
+  assert.ok(directory, 'The shared runner must prepare the native window observer assembly')
+  const assemblyPath = join(directory, WINDOWS_NATIVE_OBSERVER_ASSEMBLY).replaceAll("'", "''")
   const expectedTitles = titles.map(title => "'" + title.replaceAll("'", "''") + "'").join(', ')
   return `
 ${WINDOWS_DECISION_STAGE_DIAGNOSTICS}
@@ -186,9 +195,7 @@ $targetPid = ${pid}
 $expectedTitles = [string[]]@(${expectedTitles})
 Write-DecisionStage 'observer-started'
 try {
-  Add-Type -ErrorAction Stop -TypeDefinition @'
-${WINDOWS_NATIVE_DIALOG_STRUCTURE_SOURCE}
-'@
+  [void][System.Reflection.Assembly]::LoadFrom('${assemblyPath}')
   Write-DecisionStage 'observer-types-loaded'
   $nativeStructure = [WeworkNativeDialogStructure]::FindAndRead($targetPid, $expectedTitles)
   if ($nativeStructure[0] -eq 1) {

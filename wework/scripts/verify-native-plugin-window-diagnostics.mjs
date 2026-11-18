@@ -1,9 +1,15 @@
 import assert from 'node:assert/strict'
 import { execFileSync, spawn } from 'node:child_process'
+import { prepareWindowsNativeObserver } from './lib/native-window-observer.mjs'
 import { withNativePluginDecision } from '../e2e/desktop/modules/native-plugin-approval.mjs'
 import { windowsNativeWindowDiagnosticScript } from '../e2e/desktop/modules/native-plugin-window-diagnostics.mjs'
 
 assert.equal(process.platform, 'win32', 'This verification requires real Windows APIs')
+assert.ok(
+  process.env.WEWORK_E2E_NATIVE_OBSERVER_DIRECTORY,
+  'A shared observer output directory is required'
+)
+await prepareWindowsNativeObserver(process.env.WEWORK_E2E_NATIVE_OBSERVER_DIRECTORY)
 const script = windowsNativeWindowDiagnosticScript(process.pid, [
   'WEWORK_E2E_READONLY_OBSERVER_NO_DIALOG',
 ])
@@ -24,7 +30,9 @@ for (const stage of ['observer-types-loaded', 'observer-dialog-missing', 'observ
     `Missing native stage: ${stage}`
   )
 assert.doesNotMatch(stdout, /observer-failed|observer-dialog-matched|native-decision-structure:/)
-console.log('Native Win32 diagnostic compiled and enumerated without fabricating a missing dialog')
+console.log(
+  'Prepared native Win32 diagnostic loaded and enumerated without fabricating a missing dialog'
+)
 
 // Own a real OS dialog in a disposable child; never alter another process's controls.
 const fixtureScript = `

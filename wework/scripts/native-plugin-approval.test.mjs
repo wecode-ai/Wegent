@@ -1,7 +1,10 @@
 // @vitest-environment node
-import { afterEach, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { withNativePluginDecision } from '../e2e/desktop/modules/native-plugin-approval.mjs'
-import { WINDOWS_UIA_STRUCTURE_DIAGNOSTICS } from '../e2e/desktop/modules/native-plugin-window-diagnostics.mjs'
+import {
+  WINDOWS_UIA_STRUCTURE_DIAGNOSTICS,
+  WINDOWS_NATIVE_DIALOG_STRUCTURE_SOURCE,
+} from '../e2e/desktop/modules/native-plugin-window-diagnostics.mjs'
 
 const native = vi.hoisted(() => ({ execute: vi.fn() }))
 vi.mock('node:child_process', () => ({
@@ -9,6 +12,10 @@ vi.mock('node:child_process', () => ({
     [Symbol.for('nodejs.util.promisify.custom')]: native.execute,
   }),
 }))
+const observerDirectory = process.env.WEWORK_E2E_NATIVE_OBSERVER_DIRECTORY
+beforeEach(() => {
+  process.env.WEWORK_E2E_NATIVE_OBSERVER_DIRECTORY = 'C:/wework-observer'
+})
 const platform = Object.getOwnPropertyDescriptor(process, 'platform')
 test('the initial zero-button snapshot is read-only, sampled once, and precedes the search deadline', async () => {
   Object.defineProperty(process, 'platform', { value: 'win32' })
@@ -25,6 +32,8 @@ test('the initial zero-button snapshot is read-only, sampled once, and precedes 
   expect(script.split('::TrueCondition)').length - 1).toBe(1)
 })
 afterEach(() => {
+  if (observerDirectory === undefined) delete process.env.WEWORK_E2E_NATIVE_OBSERVER_DIRECTORY
+  else process.env.WEWORK_E2E_NATIVE_OBSERVER_DIRECTORY = observerDirectory
   vi.useRealTimers()
   Object.defineProperty(process, 'platform', platform)
   native.execute.mockReset()
@@ -748,10 +757,12 @@ test.each([false, true])(
       expect(observer).toContain('$targetPid = 123')
       expect(observer).toContain('Confirm Core plugin installation')
       expect(observer).toContain('Core 插件更新确认')
-      expect(observer).toContain('pid != expectedPid')
-      expect(observer).toContain('name.ToString() != "#32770"')
-      expect(observer).toContain('Array.IndexOf(titles, title.ToString()) < 0')
-      expect(observer).toContain('if (matches.Count != 1)')
+      expect(WINDOWS_NATIVE_DIALOG_STRUCTURE_SOURCE).toContain('pid != expectedPid')
+      expect(WINDOWS_NATIVE_DIALOG_STRUCTURE_SOURCE).toContain('name.ToString() != "#32770"')
+      expect(WINDOWS_NATIVE_DIALOG_STRUCTURE_SOURCE).toContain(
+        'Array.IndexOf(titles, title.ToString()) < 0'
+      )
+      expect(WINDOWS_NATIVE_DIALOG_STRUCTURE_SOURCE).toContain('if (matches.Count != 1)')
       expect(observer).not.toMatch(
         /InvokePattern|SendMessage|SetForegroundWindow|mouse_event|keybd_event|Start-Sleep/
       )
