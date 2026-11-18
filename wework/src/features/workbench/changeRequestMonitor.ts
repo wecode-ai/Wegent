@@ -118,6 +118,8 @@ export class ChangeRequestMonitor {
   private refreshPromise: Promise<void> | null = null
   private refreshTimer: number | null = null
   private refreshScheduled = false
+  private targetRevision = 0
+  private refreshTargetRevision = 0
   private visibilityListener: (() => void) | null = null
   private connectionObservations: ChangeRequestObservation[] = []
   private deviceAliases = new Map<string, string>()
@@ -138,7 +140,10 @@ export class ChangeRequestMonitor {
     })
     this.synchronizeUiObservers()
     this.startTimer()
-    if (!current) this.scheduleRefresh()
+    if (!current) {
+      this.targetRevision++
+      this.scheduleRefresh()
+    }
     return () => {
       const registered = this.targets.get(key)
       if (!registered) return
@@ -524,6 +529,7 @@ export class ChangeRequestMonitor {
             .filter((watch): watch is ChangeRequestObservation => Boolean(watch))
         : []
     if (targets.length === 0 && watches.length === 0) return
+    this.refreshTargetRevision = this.targetRevision
     this.refreshPromise = Promise.all([
       this.refreshObservations(watches),
       this.loadVisibleTargets(targets, options.shareInflight === false),
@@ -615,8 +621,15 @@ export class ChangeRequestMonitor {
     if (this.refreshScheduled) return
     this.refreshScheduled = true
     queueMicrotask(() => {
-      this.refreshScheduled = false
-      void this.refresh()
+      const refresh = () => {
+        this.refreshScheduled = false
+        void this.refresh()
+      }
+      // A new target must be collected after the current batch, which captured
+      // its targets before this registration. Keep registrations coalesced.
+      if (this.refreshPromise && this.refreshTargetRevision !== this.targetRevision)
+        void this.refreshPromise.then(refresh, refresh)
+      else refresh()
     })
   }
 

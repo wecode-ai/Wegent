@@ -345,7 +345,7 @@ fn default_mcp_servers() -> Value {
     Value::Object(Default::default())
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LocalComment {
     pub id: i64,
     pub message_id: String,
