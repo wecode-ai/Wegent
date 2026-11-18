@@ -202,7 +202,7 @@ fn goal_activation_acknowledges_only_durable_recovery_ownership() {
                 assert_eq!(response["success"], true, "{response}");
                 assert_eq!(
                     response["resumed"], false,
-                    "Route preparation loads the session before goal/set starts native work"
+                    "Preparing a cold session must leave continuation owned by native Goal"
                 );
                 let repeated = handler
                     .set_task_goal(json!({
