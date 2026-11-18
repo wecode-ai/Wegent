@@ -20,9 +20,13 @@ class _FakeStreamResponse:
         self.status_code = status_code
         self.headers = headers or {}
         self._chunks = chunks if chunks is not None else [b""]
+        self.consumed_chunks = 0
 
     async def aiter_bytes(self):
         for chunk in self._chunks:
+            if isinstance(chunk, BaseException):
+                raise chunk
+            self.consumed_chunks += 1
             yield chunk
 
 
@@ -190,6 +194,48 @@ async def test_workspace_artifact_preserves_client_status_and_maps_5xx_to_502(
         )
     assert exc_info.value.status_code == expected_status
     assert exc_info.value.detail == expected_detail
+
+
+@pytest.mark.parametrize(
+    ("upstream_status", "expected_status", "first_chunk", "expected_detail"),
+    [
+        (404, 404, b'{"detail":"Artifact missing"}', "Artifact missing"),
+        (500, 502, b"internal failure", "Remote artifact request failed"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_workspace_artifact_oversized_error_body_preserves_upstream_status(
+    mocker, upstream_status, expected_status, first_chunk, expected_detail
+):
+    mocker.patch.object(
+        routers,
+        "_resolve_workspace_runtime_base_url",
+        mocker.AsyncMock(return_value="http://executor.local:8000"),
+    )
+    preview_limit = 64 * 1024
+    response = _FakeStreamResponse(
+        status_code=upstream_status,
+        headers={"content-length": str(preview_limit + len(first_chunk) + 1)},
+        chunks=[
+            first_chunk,
+            b" " * preview_limit,
+            AssertionError("error preview read past its limit"),
+        ],
+    )
+    _mock_stream_client(mocker, response=response)
+
+    with pytest.raises(routers.HTTPException) as exc_info:
+        await routers.get_executor_workspace_artifact(
+            task_id=42,
+            executor_name="executor-1",
+            binding_id="b" * 64,
+            subtask_id="7",
+            path="missing.bin",
+        )
+
+    assert exc_info.value.status_code == expected_status
+    assert exc_info.value.detail == expected_detail
+    assert response.consumed_chunks == 2
 
 
 @pytest.mark.asyncio

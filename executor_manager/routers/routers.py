@@ -51,6 +51,7 @@ logger = setup_logger(__name__)
 
 WORKSPACE_FILE_TIMEOUT_SECONDS = 130.0
 MAX_WORKSPACE_ARTIFACT_FILE_BYTES = 50 * 1024 * 1024
+MAX_WORKSPACE_ARTIFACT_ERROR_PREVIEW_BYTES = 64 * 1024
 
 # Create FastAPI app
 app = FastAPI(
@@ -558,8 +559,13 @@ async def _resolve_workspace_runtime_base_url(
 
     sandbox_manager = get_sandbox_manager()
     sandbox = await sandbox_manager.get_sandbox(str(task_id))
-    if sandbox and sandbox.base_url and (
-        not executor_name or getattr(sandbox, "container_name", None) == executor_name
+    if (
+        sandbox
+        and sandbox.base_url
+        and (
+            not executor_name
+            or getattr(sandbox, "container_name", None) == executor_name
+        )
     ):
         return str(sandbox.base_url).rstrip("/")
 
@@ -634,6 +640,21 @@ async def _read_bounded_artifact_response(
                 detail="Artifact exceeds 50 MiB limit",
             )
         chunks.append(chunk)
+    return b"".join(chunks)
+
+
+async def _read_artifact_error_preview(
+    response: httpx.Response,
+    max_bytes: int,
+) -> bytes:
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in response.aiter_bytes():
+        remaining = max_bytes - total
+        chunks.append(chunk[:remaining])
+        total += min(len(chunk), remaining)
+        if total >= max_bytes:
+            break
     return b"".join(chunks)
 
 
@@ -828,7 +849,9 @@ async def get_executor_workspace_artifact(
                             "content-type", "application/octet-stream"
                         ),
                     )
-                raw_error = await _read_bounded_artifact_response(response, 64 * 1024)
+                raw_error = await _read_artifact_error_preview(
+                    response, MAX_WORKSPACE_ARTIFACT_ERROR_PREVIEW_BYTES
+                )
                 status_code = response.status_code
     except HTTPException:
         raise
