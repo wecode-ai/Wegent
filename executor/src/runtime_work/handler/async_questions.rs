@@ -79,7 +79,7 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<(), AppIpcError> {
         let Some(PreparedQuestionReply::Async {
             session,
-            answer: prepared,
+            answer: mut prepared,
         }) = prepared
         else {
             return Err(AppIpcError::new(
@@ -108,15 +108,13 @@ impl RuntimeWorkRpcHandler {
                     .is_some_and(|files| !files.is_empty())
             })
         }) {
-            // Active turns use guidance; idle turns use the ordinary attachment prompt.
-            payload["message"] = json!(prepared.response["answers"]
-                .as_object()
-                .into_iter()
-                .flat_map(|answers| answers.values())
-                .flat_map(|answer| answer["answers"].as_array().into_iter().flatten())
-                .filter_map(Value::as_str)
-                .collect::<Vec<_>>()
-                .join("\n"));
+            // Both guidance and a new turn must retain the question-to-file mapping.
+            payload["message"] = json!(format!(
+                "Question answers:\n{}",
+                serde_json::to_string_pretty(&prepared.response["answers"])
+                    .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?
+            ));
+            prepared.request.prompt = payload["message"].clone();
         }
         let client_user_message_id = prepared.request.subtask_id.clone();
         payload["attachments"] = prepared.request.extra["attachments"].clone();

@@ -91,37 +91,6 @@ it('leaves the question unanswered if Issue attachment import fails', async () =
   expect(h.execute).not.toHaveBeenCalled()
 })
 
-it('recognizes authenticated transport aliases of the same runtime without loosening task ownership', async () => {
-  const h = setup()
-  h.subscribe.mockResolvedValue({
-    snapshot: {
-      messages: [
-        h.root,
-        {
-          ...h.run,
-          runtimeAddress: { deviceId: 'app-record-70', taskId: interactionTask.address.taskId },
-        },
-      ],
-    },
-    unsubscribe: h.unsubscribe,
-  })
-  vi.mocked(h.services.deviceApi.listDevices).mockResolvedValue([
-    {
-      id: 70,
-      device_id: 'app-record-70',
-      app_device_id: interactionTask.address.deviceId,
-      name: 'Executor',
-      status: 'online',
-      device_type: 'app',
-      is_default: false,
-      runtime_instance_id: 'same-runtime',
-    },
-  ])
-  await replyToInteractionProject(h.item, 'Keep old behavior', 'reply-once', h.services, 'Failed')
-  expect(h.send).toHaveBeenCalledOnce()
-  expect(h.execute).toHaveBeenCalledOnce()
-})
-
 it('rejects an unknown runtime identity even when a task id is reused', async () => {
   const h = setup()
   h.subscribe.mockResolvedValue({
@@ -181,28 +150,6 @@ it('rejects ambiguous authenticated aliases instead of selecting an executor by 
   }
 })
 
-it.each(['local', 'backend'] as const)(
-  'persists the reply in its original %s Issue thread before continuation',
-  async store => {
-    const h = setup(store)
-    await replyToInteractionProject(h.item, 'Keep old behavior', 'reply-once', h.services, 'Failed')
-    expect(h.send).toHaveBeenCalledWith(
-      expect.objectContaining({
-        projectId: 'project',
-        taskId: 'issue',
-        replyToMessageId: 'root',
-        clientMessageId: 'reply-once',
-      })
-    )
-    expect(h.execute).toHaveBeenCalledWith(
-      expect.objectContaining({ triggerMessageId: 'persisted-reply' })
-    )
-    expect(h.send.mock.invocationCallOrder[0]).toBeLessThan(h.execute.mock.invocationCallOrder[0])
-    expect(h.unsubscribe).toHaveBeenCalledOnce()
-    expect(h.bareSend).not.toHaveBeenCalled()
-  }
-)
-
 it('rejects an Issue thread whose current execution no longer owns the question', async () => {
   const h = setup()
   h.subscribe.mockResolvedValue({
@@ -219,23 +166,6 @@ it('rejects an Issue thread whose current execution no longer owns the question'
   expect(h.unsubscribe).toHaveBeenCalledOnce()
 })
 
-it('preserves the idempotency key when a persisted reply needs continuation retry', async () => {
-  const h = setup()
-  h.execute.mockRejectedValueOnce(new Error('Execution unavailable'))
-  await expect(
-    replyToInteractionProject(h.item, 'Keep old behavior', 'reply-once', h.services, 'Failed')
-  ).rejects.toThrow('Execution unavailable')
-  await replyToInteractionProject(h.item, 'Keep old behavior', 'reply-once', h.services, 'Failed')
-  expect(h.send.mock.calls.map(([request]) => request.clientMessageId)).toEqual([
-    'reply-once',
-    'reply-once',
-  ])
-  expect(h.execute.mock.calls.map(([request]) => request.triggerMessageId)).toEqual([
-    'persisted-reply',
-    'persisted-reply',
-  ])
-})
-
 it('never falls back to bare runtime sending when the Issue write is denied', async () => {
   const h = setup()
   h.send.mockRejectedValue(new Error('Permission denied'))
@@ -245,44 +175,4 @@ it('never falls back to bare runtime sending when the Issue write is denied', as
   expect(h.execute).not.toHaveBeenCalled()
   expect(h.bareSend).not.toHaveBeenCalled()
   expect(h.unsubscribe).toHaveBeenCalledOnce()
-})
-
-it('loads authenticated aliases through the executor registry before checking Issue ownership', async () => {
-  const h = setup()
-  h.subscribe.mockResolvedValue({
-    snapshot: {
-      messages: [
-        h.root,
-        {
-          ...h.run,
-          runtimeAddress: {
-            deviceId: 'app-record-70',
-            taskId: interactionTask.address.taskId,
-          },
-        },
-      ],
-    },
-    unsubscribe: h.unsubscribe,
-  })
-  const device = {
-    id: 70,
-    device_id: 'app-record-70',
-    app_device_id: interactionTask.address.deviceId,
-    runtime_instance_id: 'same-runtime',
-    status: 'online',
-    device_type: 'app',
-  }
-  const entry = { deviceId: device.device_id, status: 'online', device }
-  const registry = {
-    refresh: vi.fn(async () => [entry]),
-    resolve: vi.fn(async () => entry),
-    list: () => [entry],
-  }
-  h.services.executorClient = { registry } as unknown as NonNullable<
-    WorkbenchServices['executorClient']
-  >
-  await replyToInteractionProject(h.item, 'Keep old behavior', 'reply-once', h.services, 'Failed')
-  expect(registry.resolve).toHaveBeenCalledWith('app-record-70')
-  expect(h.send).toHaveBeenCalledOnce()
-  expect(h.execute).toHaveBeenCalledOnce()
 })

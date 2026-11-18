@@ -664,10 +664,17 @@ async fn question_files_use_native_context_but_preserve_the_original_reply_in_hi
         "pending"
     );
     let mut request = ExecutionRequest::default();
-    request.extra.insert("attachments".into(), json!([file]));
+    // Backend blocking replies omit executionRequest and carry resolved files separately.
+    request.extra.insert("attachments".into(), json!([]));
+    handler.store.update_task("task-1", |link| {
+        link.runtime_handle["executionRequest"] = serde_json::to_value(&request).unwrap();
+    });
     assert_eq!(
         handler
-            .send_request_user_input_response("task-1", response.clone(), Some(request))
+            .send_message(
+                json!({"taskId":"task-1", "message":"Review", "attachments":[file],
+                "requestUserInputResponse":response.clone()})
+            )
             .await
             .unwrap()["success"],
         true

@@ -341,3 +341,75 @@ async fn blocking_question_download_race(stop: bool) {
     server.await.unwrap();
     fs::remove_dir_all(root).unwrap();
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn async_question_attachment_groups_reach_new_turn_prompt() {
+    let (mut handler, root) = isolated_runtime_work_handler("async-question-file-groups");
+    install_native_history(
+        &mut handler,
+        &root,
+        vec![json!({
+            "id":"turn-1", "status":"completed", "items":[{
+                "id":"question", "type":"agentMessage", "questions":[
+                    {"title":"First file?"}, {"title":"Second file and details?"}
+                ]
+            }]
+        })],
+        None,
+    );
+    let files = json!([
+        {"id":-1,"original_filename":"a.txt","local_path":"/tmp/a.txt","status":"ready"},
+        {"id":-2,"original_filename":"b.txt","local_path":"/tmp/b.txt","status":"ready"}
+    ]);
+    let mut link = RuntimeTaskLink::new_pending(
+        "task".into(),
+        root.to_string_lossy().into_owned(),
+        "Question files".into(),
+    );
+    link.thread_id = Some("thread-1".into());
+    link.runtime_handle["executionRequest"] =
+        json!({"task_id":"task","subtask_id":"original","prompt":"Original prompt"});
+    handler.upsert_local_task(link);
+    let response = json!({"delivery":"async","itemId":"question","interactionScope":"turn-1",
+    "answers":{
+        "question_1":{"answers":[],"attachments":[{"id":-1}]},
+        "question_2":{"answers":["First line\nSecond line"],"attachments":[{"id":-2}]}
+    }});
+    let mut payload = json!({"taskId":"task","message":"First line\nSecond line", "attachments":files,
+        "requestUserInputResponse":response});
+    let prepared = handler.prepare_question_reply(&payload).await.unwrap();
+    handler
+        .apply_prepared_async_question_reply("task", &response, &mut payload, prepared)
+        .await
+        .unwrap();
+    let mut request = execution_request(&payload).unwrap();
+    apply_runtime_payload_metadata(&mut request, &payload);
+    assert_eq!(request.prompt, payload["message"]);
+    let groups: Value = serde_json::from_str(
+        request
+            .prompt
+            .as_str()
+            .unwrap()
+            .strip_prefix("Question answers:\n")
+            .unwrap(),
+    )
+    .unwrap();
+    assert!(groups["question_1"]["answers"]
+        .to_string()
+        .contains("/tmp/a.txt"));
+    assert!(!groups["question_1"].to_string().contains("b.txt"));
+    assert_eq!(
+        groups["question_2"]["answers"][0],
+        "First line\nSecond line"
+    );
+    assert!(groups["question_2"].to_string().contains("/tmp/b.txt"));
+    assert!(!groups["question_2"].to_string().contains("a.txt"));
+    assert!(payload.get("requestUserInputResponse").is_none());
+    handler
+        .codex_app_server
+        .request("test/stop", json!({}))
+        .await
+        .unwrap();
+    let _ = fs::remove_dir_all(root);
+}

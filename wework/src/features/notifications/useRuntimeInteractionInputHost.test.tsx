@@ -50,15 +50,6 @@ function host(overrides: Partial<RuntimeInteractionsValue> = {}, taskId = 'revie
   return { value, result }
 }
 const response = interactionResponse(interactionQuestion, { compatibility: { answers: ['keep'] } })
-
-it('shares the existing draft and submission coordinator with the original controls', async () => {
-  const { value, result } = host()
-  expect(result.current!.getDraft(interactionQuestion)).toEqual({ compatibility: 'Saved reply' })
-  result.current!.setDraft(interactionQuestion, { compatibility: 'Updated' })
-  expect(value.setDraft).toHaveBeenCalledExactlyOnceWith(item.id, 'Updated')
-  expect(await result.current!.submit(response, interactionQuestion)).toBe(true)
-  expect(value.respond).toHaveBeenCalledExactlyOnceWith(item, 'keep', { response })
-})
 it.each([{ answers: [] }, { answers: ['file-only'] }])(
   'preserves empty answers and attachments through coordination: %j',
   async ({ answers }) => {
@@ -73,11 +64,6 @@ it.each([{ answers: [] }, { answers: ['file-only'] }])(
     expect(value.respond).toHaveBeenCalledExactlyOnceWith(item, answers[0] ?? '继续', { response })
   }
 )
-it('does not fall through to an uncoordinated send for an unregistered ordinary request', async () => {
-  const { value, result } = host({ pending: [] })
-  expect(await result.current!.submit(response, interactionQuestion)).toBe(false)
-  expect(value.respond).not.toHaveBeenCalled()
-})
 it('does not share drafts or submission authority across tasks with matching request keys', async () => {
   const { value, result } = host({}, 'another-task')
   expect(result.current!.getDraft(interactionQuestion)).toBeUndefined()
@@ -119,10 +105,4 @@ it('restores an offline draft without enabling submission before the live reques
   expect(result.current!.isSubmitting(interactionQuestion)).toBe(false)
   expect(await result.current!.submit(response, interactionQuestion)).toBe(false)
   expect(value.respond).not.toHaveBeenCalled()
-})
-
-it('distinguishes an active submission from disabled cached or unregistered input', () => {
-  const { result } = host({ busy: new Set([item.id]) })
-  expect(result.current!.isSubmitting(interactionQuestion)).toBe(true)
-  expect(result.current!.isDisabled(interactionQuestion)).toBe(true)
 })

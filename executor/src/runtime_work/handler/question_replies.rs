@@ -48,7 +48,7 @@ impl RuntimeWorkRpcHandler {
                 .await
                 .map(Some);
         }
-        self.prepare_blocking_question_reply(&task, &response, execution_request(payload))
+        self.prepare_blocking_question_reply(&task, &response, payload)
             .await
     }
 
@@ -56,7 +56,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         task: &str,
         response: &Value,
-        request: Option<ExecutionRequest>,
+        payload: &Value,
     ) -> Result<Option<PreparedQuestionReply>, AppIpcError> {
         if !has_question_files(response) {
             return Ok(None);
@@ -65,12 +65,21 @@ impl RuntimeWorkRpcHandler {
         let Ok(pending) = self.pending_question_reply(task, response) else {
             return Ok(None);
         };
-        let request = request.ok_or_else(|| {
-            AppIpcError::new(
-                "bad_request",
-                "executionRequest is required for question attachments",
-            )
-        })?;
+        // Cloud question replies omit executionRequest: reuse the profile bound
+        // to this pending task, replacing only this reply's attachment records.
+        let mut request = execution_request(payload)
+            .or_else(|| {
+                self.local_task_link(task)
+                    .and_then(|link| execution_request(&link.runtime_handle))
+                    .map(|mut request| {
+                        request.extra.insert("attachments".into(), json!([]));
+                        request
+                    })
+            })
+            .ok_or_else(|| AppIpcError::new("bad_request", "Task execution request is missing"))?;
+        if let Some(files) = payload.get("attachments").filter(|files| files.is_array()) {
+            request.extra.insert("attachments".into(), files.clone());
+        }
         let answer = crate::agents::runtime_capabilities::prepare_user_input_response(
             request,
             response.clone(),
@@ -184,7 +193,7 @@ impl RuntimeWorkRpcHandler {
         request: Option<ExecutionRequest>,
     ) -> Result<Value, AppIpcError> {
         let prepared = self
-            .prepare_blocking_question_reply(task, &response, request)
+            .prepare_blocking_question_reply(task, &response, &json!({"executionRequest":request}))
             .await?;
         let gate = self.task_send_gate(task);
         let _guard = gate.lock().await;

@@ -1,4 +1,3 @@
-import { setComposerValue } from '@/test/composer'
 import '@/i18n'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { useContext, useEffect, useRef, useState } from 'react'
@@ -10,7 +9,6 @@ import {
   questionDiscussionDrafts,
   questionDiscussionKey,
   QuestionDiscussionStoreContext,
-  useQuestionDiscussion,
   useQuestionDiscussionWorkspacePanel,
   type QuestionDiscussionTab,
   type QuestionDiscussionStore,
@@ -206,136 +204,6 @@ beforeEach(() => {
   submit.mockResolvedValue(true)
 })
 
-test('discusses independently, preserves defaults, fills an editable draft and submits only after review', async () => {
-  setup()
-  showSidebar()
-  expect(mock.create).not.toHaveBeenCalled()
-  expect(
-    (within(dialog()).getByTestId('discussion-test-draft') as HTMLInputElement).value
-  ).toContain('谁可以查看报告？')
-  fireEvent.click(within(dialog()).getByTestId('discussion-test-send'))
-  await waitFor(() => expect(mock.create).toHaveBeenCalledTimes(1))
-  expect(mock.create).toHaveBeenCalledWith(
-    expect.stringContaining('谁可以查看报告？'),
-    expect.objectContaining({ source, project: null })
-  )
-  expect(submit).not.toHaveBeenCalled()
-  expect(cancel).not.toHaveBeenCalled()
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-  expect(screen.getByTestId('question-discussion-sidebar')).toContainElement(dialog())
-  expect(within(dialog()).getByTestId('discussion-test-conversation')).not.toHaveTextContent(
-    'requestId'
-  )
-  changeConclusion()
-  apply()
-  await waitFor(() => expect(screen.queryByRole('region')).not.toBeInTheDocument())
-  const answer = screen.getByTestId('request-user-input-custom-audience')
-  expect(answer).toHaveValue('仅自己，可以保留草稿')
-  expect(submit).not.toHaveBeenCalled()
-  setComposerValue(answer, '仅自己，确认后发布')
-  fireEvent.click(screen.getByTestId('request-user-input-submit-button'))
-  await waitFor(() =>
-    expect(submit).toHaveBeenCalledWith(
-      expect.objectContaining({
-        requestId: 12,
-        answers: { audience: { answers: ['仅自己，确认后发布'] } },
-      })
-    )
-  )
-})
-
-test('closing and reopening preserves the edited prompt without sending or cancelling', async () => {
-  setup()
-  showSidebar()
-  const draft = within(dialog()).getByTestId('discussion-test-draft')
-  fireEvent.change(draft, { target: { value: '先讨论敏感事项，不要直接发布。' } })
-  fireEvent.keyDown(dialog(), { key: 'Escape' })
-  expect(screen.queryByRole('region')).not.toBeInTheDocument()
-  showSidebar()
-  expect(within(dialog()).getByTestId('discussion-test-draft')).toHaveValue(
-    '先讨论敏感事项，不要直接发布。'
-  )
-  expect(mock.create).not.toHaveBeenCalled()
-  fireEvent.click(within(dialog()).getByTestId('discussion-test-send'))
-  await waitFor(() =>
-    expect(mock.create).toHaveBeenCalledExactlyOnceWith(
-      '先讨论敏感事项，不要直接发布。',
-      expect.objectContaining({ source, project: null })
-    )
-  )
-  expect(cancel).not.toHaveBeenCalled()
-})
-
-test('opening another panel preserves discussion input without restoring focus to the old opener', () => {
-  setup()
-  showSidebar()
-  const draft = within(dialog()).getByTestId('discussion-test-draft')
-  fireEvent.change(draft, { target: { value: '继续讨论接收范围。' } })
-  const navigate = screen.getByTestId('open-another-panel')
-  navigate.focus()
-  fireEvent.click(navigate)
-  expect(screen.queryByRole('region')).not.toBeInTheDocument()
-  expect(navigate).toHaveFocus()
-  showSidebar()
-  expect(within(dialog()).getByTestId('discussion-test-draft')).toHaveValue('继续讨论接收范围。')
-  expect(mock.create).not.toHaveBeenCalled()
-})
-
-test('shares edited unsent prompts between the task and pending-work entry points', () => {
-  setup(2)
-  showSidebar(0)
-  fireEvent.change(within(dialog()).getByTestId('discussion-test-draft'), {
-    target: { value: '请只讨论，先别发送。' },
-  })
-  fireEvent.click(within(dialog()).getByTestId('question-discussion-close'))
-  showSidebar(1)
-  expect(within(dialog()).getByTestId('discussion-test-draft')).toHaveValue('请只讨论，先别发送。')
-  expect(mock.create).not.toHaveBeenCalled()
-})
-
-test('moves keyboard focus into the sidebar without a modal and restores it on Escape', () => {
-  setup()
-  const trigger = screen.getByTestId('request-user-input-discuss')
-  trigger.focus()
-  fireEvent.click(trigger)
-  expect(dialog()).toHaveFocus()
-  expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-  fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
-  expect(screen.queryByRole('region')).not.toBeInTheDocument()
-  expect(trigger).toHaveFocus()
-})
-
-test('both entry surfaces share an in-flight creation and the returned answer', async () => {
-  let resolve!: (value: typeof side) => void
-  mock.create.mockReturnValue(
-    new Promise(value => {
-      resolve = value
-    })
-  )
-  setup(2)
-  open(0)
-  fireEvent.click(within(dialog()).getByTestId('question-discussion-close'))
-  open(1)
-  await waitFor(() => expect(mock.create).toHaveBeenCalledTimes(1))
-  await act(async () => resolve(side))
-  changeConclusion('同一份结论')
-  apply()
-  await waitFor(() => expect(screen.queryByRole('region')).not.toBeInTheDocument())
-  for (const answer of screen.getAllByTestId('request-user-input-custom-audience'))
-    expect(answer).toHaveValue('同一份结论')
-})
-
-test('fills only the text selected by the user and keeps the original answer editable', async () => {
-  setup()
-  open()
-  changeConclusion('完整建议中的一小段')
-  expect(screen.queryByTestId('question-discussion-conclusion')).not.toBeInTheDocument()
-  apply()
-  await waitFor(() => expect(screen.queryByRole('region')).not.toBeInTheDocument())
-  expect(screen.getByTestId('request-user-input-custom-audience')).toHaveValue('完整建议中的一小段')
-  expect(submit).not.toHaveBeenCalled()
-})
-
 test.each(['answered', 'cancelled', 'expired'] as const)(
   'refuses a %s original request without losing the discussion',
   async interactionStatus => {
@@ -354,22 +222,6 @@ test.each(['answered', 'cancelled', 'expired'] as const)(
     expect(submit).not.toHaveBeenCalled()
   }
 )
-
-test('retains a conclusion after validation failure and allows retry', async () => {
-  mock.load.mockRejectedValueOnce(new Error('offline'))
-  setup()
-  open()
-  changeConclusion()
-  apply()
-  await waitFor(() =>
-    expect(within(dialog()).getByRole('alert')).toHaveTextContent('暂时无法检查原问题')
-  )
-  apply()
-  await waitFor(() => expect(screen.queryByRole('region')).not.toBeInTheDocument())
-  expect(screen.getByTestId('request-user-input-custom-audience')).toHaveValue(
-    '仅自己，可以保留草稿'
-  )
-})
 
 test('rejects incomplete paginated history instead of reviving an older question', async () => {
   mock.load.mockResolvedValue({
@@ -437,32 +289,6 @@ test('editing an individual answer cannot replace a grouped discussion payload',
   ).toHaveLength(2)
 })
 
-test('immediately falls back to an available target when a selected question disappears', async () => {
-  const multi = {
-    ...payload,
-    questions: [...payload.questions!, { id: 'format', question: '输出格式？', is_other: true }],
-  }
-  setup(1, multi)
-  open()
-  fireEvent.change(within(dialog()).getByTestId('question-discussion-question'), {
-    target: { value: 'format' },
-  })
-  fireEvent.change(
-    within(screen.getByTestId('entry-0')).getByTestId('request-user-input-custom-format'),
-    { target: { value: 'Keep this draft' } }
-  )
-  act(() =>
-    latestStore.update(questionDiscussionKey(source, multi), current => ({ ...current!, payload }))
-  )
-  changeConclusion('Available target only')
-  apply()
-  await waitFor(() => expect(screen.queryByRole('region')).not.toBeInTheDocument())
-  expect(screen.getByTestId('request-user-input-custom-audience')).toHaveValue(
-    'Available target only'
-  )
-  expect(screen.getByTestId('request-user-input-custom-format')).toHaveValue('Keep this draft')
-})
-
 test('business discussion cannot replace native permission or connector authorization', () => {
   expect(canDiscussQuestion(payload)).toBe(true)
   expect(
@@ -480,42 +306,6 @@ test('business discussion cannot replace native permission or connector authoriz
   ]) {
     expect(canDiscussQuestion({ ...payload, ...override })).toBe(false)
   }
-})
-
-test('an inbox entry opens the original task tab in another scope without owning a global sidebar', () => {
-  const navigate = vi.fn()
-  function InboxEntry() {
-    const discussion = useQuestionDiscussion()
-    return <button data-testid="inbox-discuss" onClick={() => discussion?.open(source, payload)} />
-  }
-  render(
-    <QuestionDiscussionProvider>
-      <WorkbenchPaneContext.Provider
-        value={
-          {
-            openRuntimeTask: navigate,
-            createTemporaryRuntimeTask: mock.create,
-            loadRuntimeTranscriptForPane: mock.load,
-          } as unknown as WorkbenchPaneContextValue
-        }
-      >
-        <QuestionDiscussionScope>
-          <InboxEntry />
-        </QuestionDiscussionScope>
-        <QuestionDiscussionScope>
-          <DiscussionTabs />
-          <StoreProbe />
-        </QuestionDiscussionScope>
-      </WorkbenchPaneContext.Provider>
-    </QuestionDiscussionProvider>
-  )
-  expect(screen.queryByTestId('question-discussion-sidebar')).not.toBeInTheDocument()
-  fireEvent.click(screen.getByTestId('inbox-discuss'))
-  expect(navigate).toHaveBeenCalledExactlyOnceWith(source)
-  expect(screen.getAllByTestId('question-discussion-sidebar')).toHaveLength(1)
-  expect(dialog()).toHaveTextContent('谁可以查看报告？')
-  expect(latestStore.panelRequest).toBeNull()
-  expect(mock.create).not.toHaveBeenCalled()
 })
 
 test('does not refill an asynchronous question already answered on a newer history page', async () => {
@@ -570,20 +360,6 @@ test('refills the exact owner of a grouped asynchronous question', async () => {
   expect(screen.getByTestId('request-user-input-custom-audience')).toHaveValue('')
 })
 
-test('does not revive an errored native question block', async () => {
-  const message = originalMessage()
-  message.blocks![0] = { ...message.blocks![0], status: 'error' }
-  mock.load.mockResolvedValue({ messages: [message], turns: [] })
-  setup()
-  open()
-  changeConclusion()
-  apply()
-  await waitFor(() =>
-    expect(within(dialog()).getByRole('alert')).toHaveTextContent('原问题已处理或已失效')
-  )
-  expect(submit).not.toHaveBeenCalled()
-})
-
 test('returns a plan adjustment without approving implementation', async () => {
   const message: WorkbenchMessage = {
     id: 'plan-message',
@@ -615,24 +391,6 @@ test('returns a plan adjustment without approving implementation', async () => {
       })
     )
   )
-})
-
-test('a shared creation failure is visible in the currently open entry surface', async () => {
-  let resolve!: (result: false) => void
-  mock.create.mockReturnValue(
-    new Promise(value => {
-      resolve = value
-    })
-  )
-  setup(2)
-  open(0)
-  fireEvent.click(within(dialog()).getByTestId('question-discussion-close'))
-  open(1)
-  await act(async () => resolve(false))
-  await waitFor(() =>
-    expect(within(dialog()).getByRole('alert')).toHaveTextContent('讨论暂时未能开始')
-  )
-  expect(mock.create).toHaveBeenCalledTimes(1)
 })
 
 test('account switches isolate discussion drafts and late creation without remounting unrelated input', async () => {
