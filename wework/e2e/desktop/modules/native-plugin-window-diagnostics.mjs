@@ -8,11 +8,10 @@ export const WINDOWS_NATIVE_DIAGNOSTIC_FIELDS = [
   'win32-buttons',
 ]
 
-/** Read only the matched dialog's structure; never log native text or send input. */
-export const WINDOWS_EMPTY_BUTTON_DIAGNOSTICS = `
-if ($decisions.Count -eq 1 -and $buttons.Count -eq 0) {
-  $window = $decisions[0]
-  Write-DecisionStage 'empty-button-diagnostics-started'
+/** Capture one lightweight UIA snapshot before the native search can be terminated. */
+export const WINDOWS_UIA_STRUCTURE_DIAGNOSTICS = `
+if ($buttons.Count -eq 0 -and -not $decisionStages.Contains('uia-structure-started')) {
+  Write-DecisionStage 'uia-structure-started'
   try {
     $descendants = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
     Write-Output ("native-decision-structure:uia-descendants:{0}" -f $descendants.Count)
@@ -21,6 +20,19 @@ if ($decisions.Count -eq 1 -and $buttons.Count -eq 0) {
       if ($descendant.Current.ControlType.Id -eq [System.Windows.Automation.ControlType]::Button.Id) { $unfilteredButtons++ }
     }
     Write-Output ("native-decision-structure:uia-buttons:{0}" -f $unfilteredButtons)
+    Write-DecisionStage 'uia-structure-completed'
+  } catch {
+    Write-DecisionStage 'uia-structure-failed'
+  }
+}
+`
+
+/** Read only the matched dialog's Win32 structure after input search has failed. */
+export const WINDOWS_EMPTY_BUTTON_DIAGNOSTICS = `
+if ($decisions.Count -eq 1 -and $buttons.Count -eq 0) {
+  $window = $decisions[0]
+  Write-DecisionStage 'empty-button-diagnostics-started'
+  try {
     Add-Type -ErrorAction Stop -TypeDefinition @'
 using System;
 using System.Text;

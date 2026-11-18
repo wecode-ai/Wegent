@@ -65,6 +65,7 @@ import {
   getDesktopControlDiagnostics,
   recordDesktopControlPhase,
 } from './desktop-control-diagnostics'
+import { getElementMotionDiagnostics } from './element-motion-diagnostics'
 import {
   acquireConversationDiagnosticCapture,
   getConversationDiagnosticsSnapshot,
@@ -1811,6 +1812,7 @@ async function waitForDesktopControlElement(
       rendered: desktopControlElementRendered(element),
       visible: desktopControlElementVisible(element),
       rect: element.getBoundingClientRect().toJSON(),
+      motion: getElementMotionDiagnostics(element),
     })
   )
   throw new Error(

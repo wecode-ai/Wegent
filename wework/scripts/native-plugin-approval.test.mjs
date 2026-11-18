@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { afterEach, expect, test, vi } from 'vitest'
 import { withNativePluginDecision } from '../e2e/desktop/modules/native-plugin-approval.mjs'
+import { WINDOWS_UIA_STRUCTURE_DIAGNOSTICS } from '../e2e/desktop/modules/native-plugin-window-diagnostics.mjs'
 
 const native = vi.hoisted(() => ({ execute: vi.fn() }))
 vi.mock('node:child_process', () => ({
@@ -9,6 +10,20 @@ vi.mock('node:child_process', () => ({
   }),
 }))
 const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+test('the initial zero-button snapshot is read-only, sampled once, and precedes the search deadline', async () => {
+  Object.defineProperty(process, 'platform', { value: 'win32' })
+  native.execute.mockResolvedValue({ stdout: '' })
+  await withNativePluginDecision({ applicationProcessId: 123, command: vi.fn() }, async () => null)
+  const script = Buffer.from(native.execute.mock.calls[0][1].at(-1), 'base64').toString('utf16le')
+  expect(script.indexOf(WINDOWS_UIA_STRUCTURE_DIAGNOSTICS)).toBeLessThan(
+    script.lastIndexOf('Start-Sleep -Milliseconds 100')
+  )
+  expect(WINDOWS_UIA_STRUCTURE_DIAGNOSTICS).toContain(
+    "$buttons.Count -eq 0 -and -not $decisionStages.Contains('uia-structure-started')"
+  )
+  expect(WINDOWS_UIA_STRUCTURE_DIAGNOSTICS).not.toMatch(/\.Name|Invoke|GetWindowText|Start-Sleep/)
+  expect(script.split('::TrueCondition)').length - 1).toBe(1)
+})
 afterEach(() => {
   vi.useRealTimers()
   Object.defineProperty(process, 'platform', platform)

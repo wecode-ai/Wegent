@@ -5,6 +5,7 @@ import { promisify } from 'node:util'
 import {
   WINDOWS_EMPTY_BUTTON_DIAGNOSTICS,
   WINDOWS_NATIVE_DIAGNOSTIC_FIELDS,
+  WINDOWS_UIA_STRUCTURE_DIAGNOSTICS,
 } from './native-plugin-window-diagnostics.mjs'
 
 const execute = promisify(execFile)
@@ -137,6 +138,7 @@ while ([DateTime]::UtcNow -lt $deadline) {
     $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)
     Write-DecisionStage 'button-search-completed'
     Write-Output ("native-decision-button-count:{0}" -f $buttons.Count)
+${WINDOWS_UIA_STRUCTURE_DIAGNOSTICS}
     foreach ($button in $buttons) {
       Write-DecisionStage 'button-present'
       Write-DecisionStage 'button-name-read-started'
@@ -187,6 +189,9 @@ throw 'The isolated app did not display its native Core plugin decision'
         'dialog-ambiguous',
         'button-search-started',
         'button-search-completed',
+        'uia-structure-started',
+        'uia-structure-completed',
+        'uia-structure-failed',
         'empty-button-diagnostics-started',
         'empty-button-diagnostics-completed',
         'empty-button-diagnostics-failed',
