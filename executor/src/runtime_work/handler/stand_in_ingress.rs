@@ -93,14 +93,17 @@ impl RuntimeWorkRpcHandler {
         });
     }
 
-    async fn poll_connection_stand_ins(&self) -> Result<(), AppIpcError> {
+    pub(super) async fn poll_connection_stand_ins(&self) -> Result<(), AppIpcError> {
         let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(settings_error)?;
         for settings in store
             .all_personal_stand_ins(&self.device_id)
             .map_err(settings_error)?
         {
             let user = settings["userId"].as_i64().unwrap_or_default();
-            self.reconcile_git_disconnects(&store, user).await?;
+            if self.has_local_workbench_identity()? && self.verify_local_runtime_user(user).is_err()
+            {
+                continue;
+            }
             let identities = stand_in_identities(&settings);
             let receiving: Vec<Value> = identities
                 .iter()
@@ -108,8 +111,8 @@ impl RuntimeWorkRpcHandler {
                 .cloned()
                 .collect();
             let sources = collection_sources(&receiving);
-            if !sources.is_empty() && self.backend_connection_snapshot()?.is_some() {
-                self.verify_runtime_user(&json!({"userId":user})).await?;
+            if !sources.is_empty() {
+                self.verify_personal_runtime_user(user).await?;
             }
             for (source, roles) in sources.values() {
                 let mut state = store
@@ -143,6 +146,7 @@ impl RuntimeWorkRpcHandler {
                     outcome,
                 )?;
             }
+            self.reconcile_git_disconnects(&store, user).await?;
             for mut work in store
                 .list_stand_in_work(user, None)
                 .map_err(settings_error)?
@@ -231,6 +235,7 @@ impl RuntimeWorkRpcHandler {
                 "Missing connection checkpoint",
             )
         })?;
+        self.verify_personal_runtime_user(user).await?;
         validate_collection_version(store, user, &self.device_id, settings_version)?;
         let page = (messages, json!({"checkpoint":checkpoint}));
         self.collect_connection_page(store, user, source, roles, page)

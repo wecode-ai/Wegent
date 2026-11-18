@@ -42,10 +42,7 @@ fn context_user(payload: &Value) -> Result<i64, AppIpcError> {
 
 impl RuntimeWorkRpcHandler {
     async fn coordination_identity(&self, user: i64) -> Result<(), AppIpcError> {
-        if self.backend_connection_snapshot()?.is_some() {
-            self.verify_runtime_user(&json!({"userId":user})).await?;
-        }
-        Ok(())
+        self.verify_personal_runtime_user(user).await
     }
 
     pub(in crate::runtime_work::handler) async fn coordination_rpc(

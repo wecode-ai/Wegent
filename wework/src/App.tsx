@@ -971,7 +971,7 @@ function AppShellContent() {
   const { pathname: path, search } = useCurrentLocation()
   const { user, isLoading } = useAuth()
   const cloudConnection = useCloudConnection()
-  const { key: ownershipKey } = resolveWorkbenchOwnership(cloudConnection, user)
+  const { user: runtimeOwner, key: ownershipKey } = resolveWorkbenchOwnership(cloudConnection, user)
   const { activeAppKey, navigateToApp } = useChromeTabs(path)
   const isElectron = isElectronRuntime()
   const isDesktop = isDesktopRuntime()
@@ -982,6 +982,7 @@ function AppShellContent() {
   const localExecutorCloudBridge =
     !isPopoutWindow && !isWorkspaceWindow ? (
       <LocalExecutorCloudBridge
+        ownerUserId={runtimeOwner?.id ?? null}
         apiBaseUrl={cloudConnection.apiBaseUrl}
         backendUrl={cloudConnection.backendUrl}
         socketBaseUrl={cloudConnection.socketBaseUrl}

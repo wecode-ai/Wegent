@@ -13,6 +13,60 @@ impl RuntimeWorkRpcHandler {
             })
     }
 
+    pub(super) fn configure_local_runtime_owner(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        let owner = if payload["userId"].is_null() {
+            None
+        } else {
+            Some(runtime_user(&payload)?)
+        };
+        let mut current = self.local_runtime_owner.lock().map_err(|_| {
+            AppIpcError::new("permission_denied", "Local Runtime identity is unavailable")
+        })?;
+        if *current != Some(owner) {
+            *current = Some(owner);
+            self.connection_observation_wakeup.notify_one();
+        }
+        Ok(json!({"configured":owner.is_some()}))
+    }
+
+    pub(super) fn verify_local_runtime_user(&self, user: i64) -> Result<(), AppIpcError> {
+        let owner = self.local_runtime_owner.lock().map_err(|_| {
+            AppIpcError::new("permission_denied", "Local Runtime identity is unavailable")
+        })?;
+        if owner.as_ref().copied().flatten() != Some(user) {
+            return Err(AppIpcError::new(
+                "permission_denied",
+                "The requested owner must match the local workbench account",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn has_local_workbench_identity(&self) -> Result<bool, AppIpcError> {
+        Ok(self.backend_device_route.is_some()
+            || self
+                .local_runtime_owner
+                .lock()
+                .map_err(|_| {
+                    AppIpcError::new("permission_denied", "Local Runtime identity is unavailable")
+                })?
+                .is_some())
+    }
+
+    pub(super) async fn verify_personal_runtime_user(&self, user: i64) -> Result<(), AppIpcError> {
+        if self.has_local_workbench_identity()? {
+            self.verify_local_runtime_user(user)
+        } else if self.backend_connection_snapshot()?.is_some() {
+            // Headless cloud Executors keep their connected-account authority.
+            self.verify_runtime_user(&json!({"userId":user})).await
+        } else {
+            Ok(())
+        }
+    }
+
     /// Desktop identity routes local IPC; cloud writes use the registered Runtime.
     pub(super) fn cloud_device_id(&self) -> Result<String, AppIpcError> {
         let Some(slot) = &self.backend_device_route else {

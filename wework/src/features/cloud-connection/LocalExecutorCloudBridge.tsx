@@ -27,6 +27,7 @@ function runtimeAuthRefreshDelayMs(expiresInSeconds: number) {
 }
 
 type LocalExecutorCloudBridgeProps = LocalExecutorCloudConnection & {
+  ownerUserId?: number | null
   preferencesLoaded: boolean
 }
 
@@ -37,6 +38,7 @@ export function LocalExecutorCloudBridge({
   isConnected,
   token,
   preferencesLoaded,
+  ownerUserId = null,
 }: LocalExecutorCloudBridgeProps) {
   const connectionGenerationRef = useRef(0)
   const [connectorRefreshRevision, setConnectorRefreshRevision] = useState(0)
@@ -48,6 +50,7 @@ export function LocalExecutorCloudBridge({
   }, [])
 
   useEffect(() => {
+    if (!isCloudConnectionUiAvailable()) return
     const generation = connectionGenerationRef.current + 1
     connectionGenerationRef.current = generation
     if (!preferencesLoaded) {
@@ -109,8 +112,21 @@ export function LocalExecutorCloudBridge({
       }
     }
 
+    const configureOwner = () =>
+      requestLocalExecutor('runtime.owner.configure', { userId: ownerUserId })
+
     const refreshConnectionStatus = async () => {
-      if (!isCurrentConnectionAttempt() || !connected || !apiBaseUrl) return
+      if (!isCurrentConnectionAttempt()) return
+      try {
+        await configureOwner()
+      } catch (error) {
+        console.error('[Wework] Failed to configure local Runtime owner', error)
+      }
+      if (!isCurrentConnectionAttempt()) return
+      if (!connected || !apiBaseUrl) {
+        statusTimer = setTimeout(() => void refreshConnectionStatus(), 1_000)
+        return
+      }
       const status = await refreshLocalExecutorCloudConnectionStatus(apiBaseUrl)
       if (!isCurrentConnectionAttempt()) return
       if (status?.configured === false && status.explicitly_disconnected !== true) {
@@ -133,6 +149,8 @@ export function LocalExecutorCloudBridge({
       if (applyingConnection || retryScheduled) return
       applyingConnection = true
       try {
+        await configureOwner()
+        if (!isCurrentConnectionAttempt()) return
         const result = await applyLocalExecutorCloudConnection(
           {
             apiBaseUrl,
@@ -195,7 +213,15 @@ export function LocalExecutorCloudBridge({
       if (statusTimer) clearTimeout(statusTimer)
       setLocalExecutorCloudConnectionStatus({ apiBaseUrl: apiBaseUrl || '', connected: false })
     }
-  }, [apiBaseUrl, configuredBackendUrl, isConnected, preferencesLoaded, socketBaseUrl, token])
+  }, [
+    apiBaseUrl,
+    configuredBackendUrl,
+    isConnected,
+    ownerUserId,
+    preferencesLoaded,
+    socketBaseUrl,
+    token,
+  ])
 
   useEffect(() => {
     if (!isCloudConnectionUiAvailable()) return

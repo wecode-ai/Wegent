@@ -24,6 +24,10 @@ mod source_bindings;
 mod session_policy;
 
 #[cfg(test)]
+#[path = "stand_in_intake_isolation_tests.rs"]
+mod intake_isolation_tests;
+
+#[cfg(test)]
 #[path = "stand_in_processing_tests.rs"]
 mod tests;
 
@@ -182,7 +186,7 @@ impl RuntimeWorkRpcHandler {
         let identities = stand_in_identities(settings);
         pending.sort_by_key(|event| intake_order(&identities, event, now));
         let mut events = Vec::new();
-        for mut event in pending {
+        'events: for mut event in pending {
             event = self.resolve_connection_event_binding(&event, &identities);
             let mut recipients = Vec::new();
             for role in &identities {
@@ -220,7 +224,19 @@ impl RuntimeWorkRpcHandler {
                     {
                         continue
                     }
-                    Err(error) => return Err(error),
+                    Err(error) => {
+                        log_executor_event(
+                            "Stand-in intake event deferred",
+                            &[
+                                (
+                                    "event_id",
+                                    event["id"].as_str().unwrap_or_default().to_owned(),
+                                ),
+                                ("code", error.code),
+                            ],
+                        );
+                        continue 'events;
+                    }
                 }
                 recipients.push(role["id"].clone());
             }

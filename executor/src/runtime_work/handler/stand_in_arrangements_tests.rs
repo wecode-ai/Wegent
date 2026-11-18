@@ -69,7 +69,12 @@ async fn collaboration_chat_inherits_primary_settings_with_separate_persistent_h
     let primary = handler
         .stand_in_conversation(json!({"userId":7,"message":"Personal chat"}))
         .await
-        .unwrap();
+        .unwrap_or_else(|error| {
+            panic!(
+                "Personal chat failed: {error:?}; native requests: {:?}",
+                fs::read_to_string(root.path().join("requests.jsonl"))
+            )
+        });
     let collaboration = handler
         .stand_in_conversation(json!({"userId":7,"message":"Discuss project work",
         "options":{"conversationScope":"collaboration"}}))
