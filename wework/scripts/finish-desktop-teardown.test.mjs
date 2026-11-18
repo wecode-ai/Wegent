@@ -116,7 +116,11 @@ test('retains model requests and numeric HTTP evidence that arrived during teard
   await writeFile(join(f.resultDir, 'model-requests.json'), '[]')
   const lateRequest = { body: { model: 'fixture-model', input: 'Late synthetic fixture request' } }
   const http = { method: 'POST', path: '/v1/responses', status: 500, completed: true }
-  f.control.modelRequests.push(lateRequest)
+  f.control.modelRequests.push({
+    ...lateRequest,
+    authorization: 'private-model-authorization',
+    headers: { 'x-api-key': 'private-model-key' },
+  })
   f.control.httpRequests.push(http)
   f.teardownFailures.push({
     label: 'desktop controller',

@@ -62,6 +62,7 @@ test.each([
   const response = Object.assign(new EventEmitter(), memoryResponse(), { setHeader() {} })
   await server.handle(request, response)
   assert.equal(response.status, 200)
+  assert.equal(server.modelRequests.length, 1)
   const events = response.output
     .split('\n')
     .filter(line => line.startsWith('data: ') && line !== 'data: [DONE]')
@@ -89,6 +90,29 @@ test.each([
           : 'message_stop'
     )
   )
+})
+
+test('retains successfully handled scenario requests once and links transport evidence without credentials', async () => {
+  const body = { input: [{ role: 'user', content: 'Synthetic handled request' }] }
+  const server = new DesktopE2EServer('/tmp/scenario-model-evidence', undefined, {
+    async handleHttp() {
+      assert.equal(server.modelRequests.length, 1, 'Record arrival before awaiting the handler')
+      return true
+    },
+  })
+  server.url = 'http://fixture'
+  const request = Readable.from([JSON.stringify(body)])
+  Object.assign(request, {
+    method: 'POST',
+    url: '/v1/responses',
+    headers: { authorization: 'private-authorization' },
+  })
+  const response = Object.assign(new EventEmitter(), memoryResponse(), { setHeader() {} })
+  await server.handle(request, response)
+  assert.deepEqual(server.modelRequests, [
+    { body, scenario: 'initial', protocol: 'responses', httpRequestIndex: 0 },
+  ])
+  assert.equal(server.httpRequests[0].pathname, '/v1/responses')
 })
 
 test.each([undefined, 'Bearer desktop-e2e'])(

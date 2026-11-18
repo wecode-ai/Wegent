@@ -1363,6 +1363,7 @@ class DesktopE2EServer {
     }
 
     const url = new URL(request.url ?? '/', this.url)
+    const httpRequestIndex = this.httpRequests.length
     recordHttpRequest(request, response, url, this.httpRequests)
     if (await this.handleControlRoute(request, response, url)) return
     const officialCodexResponses = url.pathname === '/backend-api/codex/responses'
@@ -1374,17 +1375,25 @@ class DesktopE2EServer {
           : url.pathname === '/v1/messages' || url.pathname === '/messages'
             ? 'anthropic'
             : null
-    let scenarioModelRequest
+    let routedModelRequest
     try {
       if (this.desktopScenario && request.method === 'POST' && modelProtocol) {
         const body = await readRequestBody(request)
-        scenarioModelRequest = { body, scenario: this.scenario, failed: true }
+        routedModelRequest = {
+          body,
+          scenario: this.scenario,
+          protocol: modelProtocol,
+          httpRequestIndex,
+        }
+        this.modelRequests.push(routedModelRequest)
         if (await this.writeNativeApprovalReview(response, body, modelProtocol)) return
         // Prediction history carries the task's ordinary markers. Route its
         // model request before scenario counters and held task responses.
         if (isReplyPredictionRequest(body) && !this.desktopScenario.handlesReplyPredictions) {
           await this.handleModelResponse(request, response, modelProtocol, {
             acceptAnyBearer: officialCodexResponses,
+            httpRequestIndex,
+            modelRequest: routedModelRequest,
           })
           return
         }
@@ -1402,10 +1411,13 @@ class DesktopE2EServer {
               }
             : null
         )
-      )
+      ) {
         return
+      }
     } catch (error) {
-      if (scenarioModelRequest) this.modelRequests.push(scenarioModelRequest)
+      if (routedModelRequest) {
+        routedModelRequest.failed = true
+      }
       console.error(
         `[desktop-e2e] scenario HTTP handler failed for ${request.method} ${url.pathname}`,
         error
@@ -1491,6 +1503,8 @@ class DesktopE2EServer {
       }
       await this.handleModelResponse(request, response, modelProtocol, {
         acceptAnyBearer: officialCodexResponses,
+        httpRequestIndex,
+        modelRequest: routedModelRequest,
       })
       return
     }
@@ -1707,8 +1721,14 @@ class DesktopE2EServer {
   async handleModelResponse(request, response, protocol, options = {}) {
     const body = await readRequestBody(request)
     const authorization = request.headers.authorization ?? null
-    const modelRequest = { authorization, body, scenario: this.scenario }
-    this.modelRequests.push(modelRequest)
+    const modelRequest = options.modelRequest ?? {
+      body,
+      scenario: this.scenario,
+      protocol,
+      httpRequestIndex: options.httpRequestIndex,
+    }
+    modelRequest.authorization = authorization
+    if (!options.modelRequest) this.modelRequests.push(modelRequest)
     const authenticated =
       authorization === `Bearer ${MODEL_API_KEY}` ||
       request.headers['x-api-key'] === MODEL_API_KEY ||

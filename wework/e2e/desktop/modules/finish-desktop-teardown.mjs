@@ -17,13 +17,12 @@ const COMMAND_EVIDENCE_FIELDS = [
   'actionSucceeded',
 ]
 
-function commandEvidence(commands) {
-  return commands.map(command =>
+const MODEL_EVIDENCE_FIELDS = ['body', 'scenario', 'failed', 'protocol', 'httpRequestIndex']
+
+function evidenceRecords(records, fields) {
+  return records.map(record =>
     Object.fromEntries(
-      COMMAND_EVIDENCE_FIELDS.filter(field => Object.hasOwn(command, field)).map(field => [
-        field,
-        command[field],
-      ])
+      fields.filter(field => Object.hasOwn(record, field)).map(field => [field, record[field]])
     )
   )
 }
@@ -39,9 +38,9 @@ export async function finishDesktopTeardown({
   if (control.fatalError && !teardownFailures.some(step => step.error === control.fatalError))
     teardownFailures.push({ error: control.fatalError, label: 'desktop controller' })
   for (const [name, value] of [
-    ['model-requests.json', control.modelRequests],
+    ['model-requests.json', evidenceRecords(control.modelRequests, MODEL_EVIDENCE_FIELDS)],
     ['http-requests.json', control.httpRequests],
-    ['command-history.json', commandEvidence(control.commandHistory)],
+    ['command-history.json', evidenceRecords(control.commandHistory, COMMAND_EVIDENCE_FIELDS)],
   ]) {
     try {
       await writeFile(join(resultDir, name), JSON.stringify(value, null, 2))
