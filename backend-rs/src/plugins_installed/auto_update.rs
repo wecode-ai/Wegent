@@ -21,7 +21,7 @@ use crate::json_compat::{python_str, python_strip, python_truthy};
 use crate::permissions::{EntityResolvers, ResolutionPurpose};
 use crate::plugins_marketplace::db::{
     InstalledKindRow, KIND_COLUMNS, NamespaceRow, PLUGIN_COLUMNS, PluginReleaseRow, PluginRow,
-    RELEASE_COLUMNS, ResourceMemberRow, UserRepository,
+    ResourceMemberRow, UserRepository,
 };
 use crate::plugins_marketplace::query::PluginQuery;
 use crate::state::AppState;
@@ -149,27 +149,6 @@ where
     mysql
         .fetch_all(
             format!("SELECT {PLUGIN_COLUMNS} FROM plugins WHERE plugins.id IN ({placeholders})"),
-            ids.to_vec(),
-        )
-        .await
-}
-
-/// `db.query(PluginRelease).filter(PluginRelease.id.in_(release_ids))` — the
-/// source does not filter by status here; readiness is checked per candidate.
-async fn list_releases_by_ids<M>(mysql: &M, ids: &[i64]) -> MysqlResult<Vec<PluginReleaseRow>>
-where
-    M: Mysql,
-{
-    if ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    let placeholders = vec!["?"; ids.len()].join(", ");
-    mysql
-        .fetch_all(
-            format!(
-                "SELECT {RELEASE_COLUMNS} FROM plugin_releases WHERE plugin_releases.id IN \
-                 ({placeholders})"
-            ),
             ids.to_vec(),
         )
         .await
@@ -394,11 +373,12 @@ where
             release_ids.push(plugin.latest_release_id);
         }
     }
-    let releases_by_id: HashMap<i64, PluginReleaseRow> = list_releases_by_ids(mysql, &release_ids)
-        .await?
-        .into_iter()
-        .map(|release| (release.id, release))
-        .collect();
+    let releases_by_id: HashMap<i64, PluginReleaseRow> =
+        crate::plugins_marketplace::db::list_release_rows_by_ids_on(&mut &*mysql, &release_ids)
+            .await?
+            .into_iter()
+            .map(|release| (release.id, release))
+            .collect();
 
     let catalog_plugin_ids: Vec<i64> = plugins_by_id.keys().copied().collect();
     let grants_by_plugin_id =

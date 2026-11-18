@@ -284,6 +284,7 @@ export interface WorkbenchContextValue {
     setComposerErrorForScope?: (scopeKey: string, error: string | null) => void
     setSelectedSkills: (skills: SkillRef[]) => void
     toggleSkill: (skill: SkillRef) => void
+    captureAttachmentsForScope: (scope: string) => Attachment[]
     handleFileSelect: (files: File | File[]) => Promise<void>
     handleFileSelectForScope: (scopeKey: string, files: File | File[]) => Promise<void>
     addExistingAttachment: (attachment: Attachment) => void

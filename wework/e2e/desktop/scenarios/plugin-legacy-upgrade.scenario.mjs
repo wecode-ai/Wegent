@@ -181,9 +181,13 @@ export async function createDesktopScenario({
           'POST'
         )
         fixture.installedId = Number((await accountPlugin(cloud, fixture.slug)).metadata.labels.id)
-        // Each baseline must reset account intent as well as the historical device override.
+        // Each baseline reuses the account but starts with a different device.
+        // Reset account intent too, so the modern device cannot inherit the
+        // previous baseline's upgraded release while native migration is checked.
         await update(fixture, null, { releaseId: fixture.releaseId })
-        assert.equal((await accountPlugin(cloud, fixture.slug)).spec.releaseId, fixture.releaseId)
+        const desired = await accountPlugin(cloud, fixture.slug)
+        assert.equal(desired.spec.releaseId, fixture.releaseId)
+        assert.equal(desired.spec.version, fixture.version)
         await update(fixture, installer.deviceId, { releaseId: fixture.releaseId })
         await update(fixture, installer.deviceId, {
           updatePolicy: 'manual',

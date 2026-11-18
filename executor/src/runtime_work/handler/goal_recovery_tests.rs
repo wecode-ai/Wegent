@@ -186,8 +186,8 @@ fn goal_activation_acknowledges_only_durable_recovery_ownership() {
                 let response = result.unwrap();
                 assert_eq!(response["success"], true, "{response}");
                 assert_eq!(
-                    response["resumed"], true,
-                    "An unloaded Goal needs an owned continuation"
+                    response["resumed"], false,
+                    "Goal activation prepares the native session before mutation and must not admit duplicate work"
                 );
                 let repeated = handler
                     .set_task_goal(json!({
@@ -196,14 +196,14 @@ fn goal_activation_acknowledges_only_durable_recovery_ownership() {
                     .await
                     .unwrap();
                 assert_eq!(repeated["resumed"], false);
-                assert_eq!(handler.turn_scheduler.lock().unwrap().queued_turns.len(), 1);
+                assert_eq!(handler.turn_scheduler.lock().unwrap().queued_turns.len(), 0);
                 assert_eq!(
                     handler
                         .local_task_link("task-1")
                         .unwrap()
                         .goal_execution_status
                         .as_deref(),
-                    Some("recovering")
+                    Some("running")
                 );
                 assert!(turns::read_runtime_turn_state(&handler.turn_queue_path)
                     .unwrap()

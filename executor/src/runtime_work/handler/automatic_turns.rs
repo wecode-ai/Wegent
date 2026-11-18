@@ -425,8 +425,8 @@ mod tests {
         let path = handler
             .store
             .index_path()
-            .with_file_name("conversation-event-subscriptions.json");
-        crate::workbench_control::journal::transact(&path,|state| {
+            .with_file_name("conversation-event-subscriptions.sqlite");
+        super::control::connection_events::store::transact(&path,|state| {
             state["operations"]["source"]=json!({"task_id":"waiting-work","operation_id":"automatic-followup","session":{"engine":"Codex","id":"original-thread"},"resource_event_keys":[event_key],"events":[{"id":"original-event"}],"source":{"name":"Review"},"native_event_phase":"injected"});
             Ok(())
         }).unwrap();
@@ -505,7 +505,7 @@ mod tests {
                 .as_deref(),
             Some("awaitingUserReply")
         );
-        let phase = crate::workbench_control::journal::transact(&path, |state| {
+        let phase = super::control::connection_events::store::transact(&path, |state| {
             Ok(state["operations"]["source"]["native_event_phase"].clone())
         })
         .unwrap();

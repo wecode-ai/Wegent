@@ -1,4 +1,5 @@
 import type { Cookie, Session } from 'electron'
+import { EventEmitter, once } from 'node:events'
 import { afterEach, expect, test, vi } from 'vitest'
 import { copyDshBrowserAuthentication, dshBrowserRequestHeaders } from './dsh-browser-auth.js'
 import { DshRuntime } from './dsh-runtime.js'
@@ -50,13 +51,14 @@ test.each(['1', 'legacy'])(
     const originalPid = runtime.pid()!
     expect(await browserStatus(url, target.cookies)).toBe(200)
 
+    // The replacement PID is visible before authentication has refreshed the WebView session.
+    const refreshed = target.nextCookieWrite()
     process.kill(originalPid, 'SIGKILL')
-    await vi.waitFor(async () => {
-      expect(runtime.pid()).not.toBeNull()
-      expect(runtime.pid()).not.toBe(originalPid)
-      expect([...target.cookies.values()][0]?.value).toBe(String(runtime.pid()))
-      expect(await browserStatus(url, target.cookies)).toBe(200)
-    })
+    await refreshed
+    expect(runtime.pid()).not.toBeNull()
+    expect(runtime.pid()).not.toBe(originalPid)
+    expect([...target.cookies.values()][0]?.value).toBe(String(runtime.pid()))
+    expect(await browserStatus(url, target.cookies)).toBe(200)
 
     expect(runtime.url()).toBe(url)
     expect([...target.cookies.values()][0].value).not.toBe(firstCookie.value)
@@ -254,19 +256,21 @@ function managedRuntime(mode: string): DshRuntime {
 
 function browserSession() {
   const cookies = new Map<string, Cookie>()
+  const events = new EventEmitter()
   const session = {
     cookies: {
       get: async (filter: { name?: string }) =>
         [...cookies.values()].filter(cookie => !filter.name || cookie.name === filter.name),
       set: async (cookie: Cookie) => {
         cookies.set(cookie.name, { ...cookie, domain: '127.0.0.1' })
+        events.emit('cookie-set')
       },
       remove: async (_url: string, name: string) => {
         cookies.delete(name)
       },
     },
   } as unknown as Session
-  return { cookies, session }
+  return { cookies, session, nextCookieWrite: () => once(events, 'cookie-set') }
 }
 
 async function browserStatus(url: string, cookies: Map<string, Cookie>) {
