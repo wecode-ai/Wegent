@@ -45,8 +45,9 @@ def _build_client(db):
         (True, 502, "Provider temporarily unavailable"),
     ],
 )
+@pytest.mark.parametrize("instance_override", [False, True])
 def test_cloud_device_restart_failure(
-    monkeypatch, provider_configured, status_code, message
+    monkeypatch, provider_configured, status_code, message, instance_override
 ):
     db = SimpleNamespace()
     device_kind = SimpleNamespace(
@@ -65,11 +66,22 @@ def test_cloud_device_restart_failure(
         else None
     )
     monkeypatch.setattr(cloud_device_restart, "_restart_handler", restart)
-    monkeypatch.setattr(
-        device_monitor.device_service,
-        "get_device_by_device_id",
-        staticmethod(lambda _db, user_id, device_id: device_kind),
-    )
+
+    if instance_override:
+        monkeypatch.setitem(
+            devices.device_service.__dict__,
+            "get_device_by_device_id",
+            lambda *_args: pytest.fail("Instance lookup was not replaced"),
+        )
+
+    def lookup(_db, user_id, device_id):
+        return device_kind
+
+    # The admin endpoint imports the class and the user endpoint its singleton.
+    # Patch both lookup sites without leaving attributes on the shared service.
+    service = SimpleNamespace(get_device_by_device_id=lookup)
+    monkeypatch.setattr(device_monitor, "device_service", service)
+    monkeypatch.setattr(devices, "device_service", service)
 
     client = _build_client(db)
     response = client.post(
