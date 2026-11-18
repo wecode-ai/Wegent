@@ -74,37 +74,145 @@ end run`,
   }
   if (process.platform === 'win32') {
     const script = `
+$ErrorActionPreference = 'Stop'
+[Console]::Error.WriteLine('Native decision stage: assembly-client-start')
 Add-Type -AssemblyName UIAutomationClient
+[Console]::Error.WriteLine('Native decision stage: assembly-types-start')
 Add-Type -AssemblyName UIAutomationTypes
+[Console]::Error.WriteLine('Native decision stage: assemblies-ready')
+# TaskDialog CCPushButton panes do not expose UIA InvokePattern. Send real pointer input.
+Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+public static class NativePluginPointer {
+  [StructLayout(LayoutKind.Sequential)] struct MouseInput {
+    public int X, Y;
+    public uint Data, Flags, Time;
+    public UIntPtr Extra;
+  }
+  [StructLayout(LayoutKind.Explicit)] struct InputData {
+    [FieldOffset(0)] public MouseInput Mouse;
+  }
+  [StructLayout(LayoutKind.Sequential)] struct Input {
+    public uint Type;
+    public InputData Data;
+  }
+  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
+  [DllImport("user32.dll", SetLastError = true)] static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll", SetLastError = true)] static extern uint SendInput(uint count, Input[] inputs, int size);
+  static Input MouseEvent(uint flags) {
+    return new Input { Type = 0, Data = new InputData { Mouse = new MouseInput {
+      X = 0, Y = 0, Data = 0, Flags = flags, Time = 0, Extra = UIntPtr.Zero
+    } } };
+  }
+  public static void Click(int window, int x, int y) {
+    if (GetForegroundWindow() != new IntPtr(window))
+      throw new InvalidOperationException("The isolated native decision is not the foreground window");
+    SetThreadDpiAwarenessContext(new IntPtr(-4));
+    if (!SetCursorPos(x, y)) throw new Win32Exception(Marshal.GetLastWin32Error());
+    var inputs = new[] { MouseEvent(0x0002), MouseEvent(0x0004) };
+    int size = Marshal.SizeOf(typeof(Input));
+    uint admitted = SendInput(2, inputs, size);
+    if (admitted != 2) {
+      int error = Marshal.GetLastWin32Error();
+      // Release an admitted press before reporting a partial native input failure.
+      if (admitted == 1) SendInput(1, new[] { inputs[1] }, size);
+      throw new Win32Exception(error, "The native decision pointer input was not fully admitted");
+    }
+  }
+}
+'@
+
 $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, ${pid})
 $deadline = [DateTime]::UtcNow.AddSeconds(10)
+$iteration = 0
 while ([DateTime]::UtcNow -lt $deadline) {
-  $windows = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $condition)
+  $iteration += 1
+  [Console]::Error.WriteLine('Native decision stage: root-lookup-start ' + $iteration)
+  $roots = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $condition)
+  # UIA exposes Electron's owned modal as a child of its main window.
+  # Preserve the isolated process boundary for both levels.
+  $windows = @(foreach ($root in $roots) {
+    $root
+    $root.FindAll([System.Windows.Automation.TreeScope]::Children, $condition)
+  })
+  [Console]::Error.WriteLine('Native decision stage: root-lookup-complete ' + $windows.Count)
   foreach ($window in $windows) {
+    [Console]::Error.WriteLine('Native decision stage: window-name-start')
+    [Console]::Error.WriteLine('Native decision window: ' + $window.Current.Name)
+    if ($iteration -eq 1) {
+      [Console]::Error.WriteLine('Native decision stage: window-children-start')
+      $children = @($window.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object {
+        @{ name = $_.Current.Name; className = $_.Current.ClassName; controlType = $_.Current.ControlType.ProgrammaticName; processId = $_.Current.ProcessId }
+      })
+      [Console]::Error.WriteLine('Native decision window children: ' + (ConvertTo-Json -InputObject $children -Compress))
+    }
     if ($window.Current.Name -notin @(${TITLES.map(title => `'${title}'`).join(', ')})) { continue }
+    [Console]::Error.WriteLine('Native decision stage: button-lookup-start')
     $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
+    [Console]::Error.WriteLine('Native decision stage: button-lookup-complete ' + $buttons.Count)
     foreach ($button in $buttons) {
+      [Console]::Error.WriteLine('Native decision stage: button-name-start')
+      [Console]::Error.WriteLine('Native decision element: type=' + $button.Current.ControlType.ProgrammaticName + ' class=' + $button.Current.ClassName)
       if ($button.Current.Name -in @(${allow ? "'Allow installation', 'Allow update', '允许安装', '允许更新'" : "'Cancel', '取消'"})) {
-        $pattern = $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
-        $pattern.Invoke()
+        [Console]::Error.WriteLine('Native decision matched label: ' + $button.Current.Name)
+        $rectangle = $button.Current.BoundingRectangle
+        if ($button.Current.IsOffscreen -or -not $button.Current.IsEnabled -or $rectangle.IsEmpty -or $rectangle.Width -le 0 -or $rectangle.Height -le 0) {
+          throw 'The owned native decision control is not clickable'
+        }
+        [Console]::Error.WriteLine('Native decision stage: pointer-start')
+        [NativePluginPointer]::Click($window.Current.NativeWindowHandle, [int][Math]::Round($rectangle.X + $rectangle.Width / 2), [int][Math]::Round($rectangle.Y + $rectangle.Height / 2))
+        [Console]::Error.WriteLine('Native decision stage: pointer-complete')
         exit 0
       }
     }
   }
   Start-Sleep -Milliseconds 100
 }
+$top = @([System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $condition) | ForEach-Object {
+  @{ name = $_.Current.Name; className = $_.Current.ClassName; handle = $_.Current.NativeWindowHandle; processId = $_.Current.ProcessId }
+})
+[Console]::Error.WriteLine('Native decision top-level windows: ' + (ConvertTo-Json -InputObject $top -Compress))
+$diagnostics = @([System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition) | Where-Object {
+  $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Window
+} | Select-Object -First 20 | ForEach-Object {
+  @{ name = $_.Current.Name; className = $_.Current.ClassName; handle = $_.Current.NativeWindowHandle; processId = $_.Current.ProcessId }
+})
+[Console]::Error.WriteLine('Native decision owned windows: ' + (ConvertTo-Json -InputObject $diagnostics -Compress))
 throw 'The isolated app did not display its native Core plugin decision'
 `
-    await execute(
-      'powershell.exe',
-      [
-        '-NoProfile',
-        '-NonInteractive',
-        '-EncodedCommand',
-        Buffer.from(script, 'utf16le').toString('base64'),
-      ],
-      options
-    )
+    const startedAt = Date.now()
+    try {
+      const result = await execute(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-EncodedCommand',
+          Buffer.from(script, 'utf16le').toString('base64'),
+        ],
+        options
+      )
+      console.info('[native-plugin-decision] Windows helper completed', {
+        applicationProcessId: pid,
+        elapsedMs: Date.now() - startedAt,
+        stdout: result.stdout,
+        stderr: result.stderr,
+      })
+    } catch (error) {
+      console.error('[native-plugin-decision] Windows helper failed', {
+        applicationProcessId: pid,
+        elapsedMs: Date.now() - startedAt,
+        killed: error.killed,
+        signal: error.signal,
+        code: error.code,
+        stdout: error.stdout,
+        stderr: error.stderr,
+      })
+      throw error
+    }
     return
   }
   // X11 keyboard input targets only this process's named modal. Cancel is the default.

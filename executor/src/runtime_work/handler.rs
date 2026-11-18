@@ -149,6 +149,8 @@ mod fork_transfer;
 mod git_connections;
 mod git_source_workspace;
 mod git_webhook_setup;
+mod goal_model_route;
+mod goal_status;
 mod hooks;
 pub(super) mod lifecycle;
 mod mcp_app_source;
@@ -555,6 +557,8 @@ pub struct RuntimeWorkRpcHandler {
     event_tx: Option<broadcast::Sender<Value>>,
     next_execution_id: Arc<AtomicU64>,
     task_send_gates: Arc<Mutex<HashMap<String, Weak<AsyncMutex<()>>>>>,
+    goal_status_revisions:
+        Arc<Mutex<HashMap<String, Weak<Mutex<goal_status::GoalStatusRevision>>>>>,
     cancelled_pending_sends: Arc<Mutex<HashMap<String, HashSet<String>>>>,
     stand_in_lifecycle_gate: Arc<Mutex<()>>,
     turn_scheduler: Arc<Mutex<RuntimeTurnScheduler>>,
@@ -670,6 +674,7 @@ struct CachedCodexTranscriptNavigation {
 }
 
 struct RuntimeThreadEventRoute {
+    goal_model_route: Option<Arc<crate::agents::LocalProxyRegistration>>,
     local_task_id: String,
     request: ExecutionRequest,
     event_mapper: Arc<Mutex<CodexNotificationEventMapper>>,
@@ -782,6 +787,7 @@ impl RuntimeThreadEventRoute {
         generation: u64,
     ) -> Self {
         Self {
+            goal_model_route: None,
             local_task_id,
             request,
             event_mapper: Arc::new(Mutex::new(CodexNotificationEventMapper::default())),
@@ -945,6 +951,7 @@ impl RuntimeWorkRpcHandler {
             event_tx,
             next_execution_id: Arc::new(AtomicU64::new(1)),
             task_send_gates: Arc::new(Mutex::new(HashMap::new())),
+            goal_status_revisions: Arc::new(Mutex::new(HashMap::new())),
             cancelled_pending_sends: Arc::new(Mutex::new(HashMap::new())),
             stand_in_lifecycle_gate: Arc::new(Mutex::new(())),
             turn_scheduler: Arc::new(Mutex::new(RuntimeTurnScheduler::new(
