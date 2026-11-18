@@ -637,6 +637,10 @@ test('retains Windows native failure stages and the unchanged deadline without e
         emptyButtonDiagnostics: {
           'uia-descendants': null,
           'uia-buttons': null,
+          'uia-button-pid-matches': null,
+          'uia-button-type-matches': null,
+          'uia-button-handle-matches': null,
+          'uia-button-control-type-id': null,
           'native-handle-present': null,
           'native-pid-matches': null,
           'native-dialog-class-matches': null,
@@ -659,6 +663,14 @@ test.each([
   ['native-dialog-class-matches', '0', 0],
   ['win32-children', '4', 4],
   ['win32-buttons', '2', 2],
+  ['uia-button-pid-matches', '0', 0],
+  ['uia-button-type-matches', '1', 1],
+  ['uia-button-handle-matches', '0', 0],
+  ['uia-button-control-type-id', '50033', 50033],
+  ['uia-button-pid-matches', '2', null],
+  ['uia-button-type-matches', '2', null],
+  ['uia-button-handle-matches', '2', null],
+  ['uia-button-control-type-id', 'unknown', null],
   ['uia-descendants', '-1', null],
   ['uia-buttons', 'unknown', null],
   ['native-handle-present', '2', null],
@@ -795,4 +807,19 @@ test('Windows encoded native input fits the CreateProcess command-line limit', a
   expect(script).toContain('DialogButtons($dialogHandle, $targetPid)')
   expect(script).not.toContain('FindAndRead(')
   expect(script).not.toContain('private static int[] Read(')
+})
+
+test('native identity rejection records only fixed numeric facts before retaining its failure', async () => {
+  Object.defineProperty(process, 'platform', { value: 'win32' })
+  native.execute.mockResolvedValue({ stdout: '' })
+  await withNativePluginDecision({ applicationProcessId: 123, command: vi.fn() }, async () => null)
+  const script = Buffer.from(native.execute.mock.calls[0][1].at(-1), 'base64').toString('utf16le')
+  const diagnostic = script.slice(
+    script.indexOf('        try {'),
+    script.indexOf("throw 'The native Button handle did not expose its owned UIA Button'")
+  )
+  for (const field of ['pid-matches', 'type-matches', 'handle-matches', 'control-type-id'])
+    expect(diagnostic).toContain('native-decision-structure:uia-button-' + field + ':')
+  expect(diagnostic).toContain("Write-DecisionStage 'button-identity-diagnostics-failed'")
+  expect(diagnostic).not.toMatch(/\.Name|GetWindowText|SendInput|Invoke\(/)
 })

@@ -143,6 +143,14 @@ while ([DateTime]::UtcNow -lt $deadline) {
       $nativeButton = [System.Windows.Automation.AutomationElement]::FromHandle($buttonHandle)
       Write-DecisionStage 'button-handle-resolved'
       if ($nativeButton.Current.ProcessId -ne $targetPid -or $nativeButton.Current.ControlType.Id -ne [System.Windows.Automation.ControlType]::Button.Id) {
+        try {
+          Write-Output ("native-decision-structure:uia-button-pid-matches:{0}" -f [int]($nativeButton.Current.ProcessId -eq $targetPid))
+          Write-Output ("native-decision-structure:uia-button-type-matches:{0}" -f [int]($nativeButton.Current.ControlType.Id -eq [System.Windows.Automation.ControlType]::Button.Id))
+          Write-Output ("native-decision-structure:uia-button-handle-matches:{0}" -f [int]([IntPtr]$nativeButton.Current.NativeWindowHandle -eq $buttonHandle))
+          Write-Output ("native-decision-structure:uia-button-control-type-id:{0}" -f $nativeButton.Current.ControlType.Id)
+        } catch {
+          Write-DecisionStage 'button-identity-diagnostics-failed'
+        }
         throw 'The native Button handle did not expose its owned UIA Button'
       }
       $buttons.Add($nativeButton)
@@ -236,6 +244,7 @@ throw 'The isolated app did not display its native Core plugin decision'
         'uia-structure-failed',
         'button-present',
         'button-handle-resolved',
+        'button-identity-diagnostics-failed',
         'button-ambiguous',
         'selection-revalidated',
         'button-name-read-started',
@@ -358,9 +367,7 @@ function windowsDecisionEvidence(output, allowedStages) {
       structure &&
       WINDOWS_NATIVE_DIAGNOSTIC_FIELDS.includes(structure[1]) &&
       Number.isSafeInteger(Number(structure[2])) &&
-      (!['native-handle-present', 'native-pid-matches', 'native-dialog-class-matches'].includes(
-        structure[1]
-      ) ||
+      (!(structure[1] === 'native-handle-present' || structure[1].endsWith('-matches')) ||
         Number(structure[2]) <= 1)
     )
       emptyButtonDiagnostics[structure[1]] = Number(structure[2])

@@ -1,6 +1,10 @@
 export const WINDOWS_NATIVE_DIAGNOSTIC_FIELDS = [
   'uia-descendants',
   'uia-buttons',
+  'uia-button-pid-matches',
+  'uia-button-type-matches',
+  'uia-button-handle-matches',
+  'uia-button-control-type-id',
   'native-handle-present',
   'native-pid-matches',
   'native-dialog-class-matches',
