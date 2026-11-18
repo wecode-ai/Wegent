@@ -447,7 +447,7 @@ classify_wework_path() {
       select_target "core:project-assignment-notification"
       select_target "core:core-task-flow"
       select_target "core:human-interactions"
-      select_target "core:human-interactions-browser"
+      select_target "core:human-interactions"
       select_target "core:human-interactions-hidden"
       select_target "core:human-interactions-issue"
       if [[ "$path" == wework/src/features/notifications/RuntimeInteractions* || \
