@@ -103,11 +103,30 @@ async fn failed_materialization_never_confirms_an_installed_device() {
 }
 
 #[tokio::test]
+async fn receipt_contention_retries_with_the_same_result_without_reapplying() {
+    let fixture = registered_fixture(Plan::Valid).await;
+    *fixture.completion_error.lock().unwrap() = "plugin_write_busy".into();
+    fixture.completion_failures.store(1, Ordering::SeqCst);
+    assert_eq!(
+        fixture
+            .sync(json!({"action":"update","targetId":8,"payload":{"releaseId":3}}))
+            .await
+            .unwrap()["localCompleted"],
+        true
+    );
+    assert_eq!(fixture.installer.applications.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.submissions.lock().unwrap().len(), 1);
+    let confirmations = fixture.completions.lock().unwrap();
+    assert_eq!(confirmations.len(), 2);
+    assert_eq!(confirmations[0], confirmations[1]);
+}
+
+#[tokio::test]
 async fn transient_confirmation_failures_preserve_actual_results_and_recover() {
     for code in ["plugin_write_busy", "plugin_write_lease_lost"] {
         let fixture = registered_fixture(Plan::Valid).await;
         *fixture.completion_error.lock().unwrap() = code.into();
-        fixture.completion_failures.store(1, Ordering::SeqCst);
+        fixture.completion_failures.store(3, Ordering::SeqCst);
         let failure = fixture
             .sync(json!({"action":"update","targetId":8,"payload":{"releaseId":3}}))
             .await
@@ -186,7 +205,7 @@ async fn unchanged_confirmation_cannot_clear_a_newer_plugins_pending_recovery() 
             .await
             .unwrap();
         *fixture.completion_error.lock().unwrap() = "plugin_write_busy".into();
-        fixture.completion_failures.store(1, Ordering::SeqCst);
+        fixture.completion_failures.store(3, Ordering::SeqCst);
         let failure = fixture
             .sync(json!({"installedPluginId":9}))
             .await

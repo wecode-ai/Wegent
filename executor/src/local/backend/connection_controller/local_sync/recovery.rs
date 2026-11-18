@@ -33,6 +33,73 @@ pub(super) fn select_pending(pending: &[Value]) -> Option<Value> {
         .cloned()
 }
 
+pub(super) fn outcomes(journal: &Value) -> Vec<Value> {
+    let mut outcomes = Vec::new();
+    for (archive, status) in [
+        ("reconciledOperations", "reconciled"),
+        ("supersededOperations", "superseded"),
+        ("rejectedOperations", "rejected"),
+    ] {
+        for entry in journal[archive].as_array().into_iter().flatten() {
+            let request = if status == "rejected" {
+                &entry["request"]
+            } else {
+                entry
+            };
+            if let (Some(operation_id), Some(progress_id)) = (
+                request["operationId"].as_str(),
+                request["progressId"].as_str(),
+            ) {
+                outcomes.push(json!({
+                    "operationId":operation_id, "progressId":progress_id, "status":status,
+                    "errorCode":entry["errorCode"], "httpStatus":entry["httpStatus"],
+                }));
+            }
+        }
+    }
+    outcomes
+}
+
+fn extend_archive(journal: &mut Value, field: &str, operations: Vec<Value>) {
+    if operations.is_empty() {
+        return;
+    }
+    if !journal[field].is_array() {
+        journal[field] = json!([]);
+    }
+    let archive = journal[field].as_array_mut().unwrap();
+    archive.extend(operations);
+    if archive.len() > 100 {
+        archive.drain(..archive.len() - 100);
+    }
+}
+
+pub(super) fn retire_reconciled(
+    journal: &mut Value,
+    ids: &[String],
+    current_operations: Option<&[Value]>,
+) {
+    let mut reconciled = Vec::new();
+    let mut superseded = Vec::new();
+    journal["pending"].as_array_mut().unwrap().retain(|entry| {
+        let applied = entry["operationId"]
+            .as_str()
+            .is_some_and(|operation_id| ids.iter().any(|id| id == operation_id));
+        if applied && entry["progressId"].is_string() {
+            if current_operations.is_some_and(|ids| !ids.contains(&entry["operationId"])) {
+                superseded.push(entry.clone());
+            } else {
+                reconciled.push(json!({
+                    "operationId":entry["operationId"], "progressId":entry["progressId"],
+                }));
+            }
+        }
+        !applied
+    });
+    extend_archive(journal, "reconciledOperations", reconciled);
+    extend_archive(journal, "supersededOperations", superseded);
+}
+
 pub(super) fn record_submission_attempt(journal: &mut Value, operation: &str) {
     if let Some(entry) = journal["pending"]
         .as_array_mut()
@@ -61,13 +128,7 @@ pub(super) fn record_submission_result(
     match outcome {
         Ok(SubmitOutcome::Superseded) => {
             let original = entry.clone();
-            if !journal["supersededOperations"].is_array() {
-                journal["supersededOperations"] = json!([]);
-            }
-            journal["supersededOperations"]
-                .as_array_mut()
-                .unwrap()
-                .push(original);
+            extend_archive(journal, "supersededOperations", vec![original]);
             retire_superseded(journal, operation);
         }
         Ok(SubmitOutcome::Accepted) => {
@@ -76,14 +137,7 @@ pub(super) fn record_submission_result(
         }
         Ok(SubmitOutcome::Rejected { failure, status }) if entry["accepted"] != true => {
             let rejected = json!({"request":entry.clone(),"errorCode":failure.code,"httpStatus":status,"rejectedAt":chrono::Utc::now().timestamp()});
-            if !journal["rejectedOperations"].is_array() {
-                journal["rejectedOperations"] = json!([]);
-            }
-            let archive = journal["rejectedOperations"].as_array_mut().unwrap();
-            archive.push(rejected);
-            if archive.len() > 100 {
-                archive.drain(..archive.len() - 100);
-            }
+            extend_archive(journal, "rejectedOperations", vec![rejected]);
             retire_superseded(journal, operation);
         }
         Ok(SubmitOutcome::Rejected { failure, .. }) | Err(failure) => {
@@ -167,7 +221,7 @@ impl LocalBackendConnectionController {
 mod tests {
     use super::super::super::LocalBackendConnectionProfile;
     use super::*;
-    use axum::{extract::Query, response::IntoResponse, routing::post, Json, Router};
+    use axum::{Json, Router, extract::Query, response::IntoResponse, routing::post};
     use std::{collections::HashMap, sync::Arc};
 
     impl LocalBackendConnectionController {

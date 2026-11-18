@@ -155,6 +155,54 @@ pub(super) async fn verify(
     verify_alias_cleanup(&context, state).await?;
     registration_write_tests::verify(&context, state).await?;
     verify_contention(&context, state).await?;
+    verify_independent_receipt_watermarks(&context).await?;
+    Ok(())
+}
+
+async fn verify_independent_receipt_watermarks(context: &Context<'_>) -> anyhow::Result<()> {
+    use crate::plugins_installed::plugin_sync_protocol::{
+        lock_plugin_sync_state, merge_local_receipt_watermark, plugin_snapshot_watermark,
+    };
+    let plan = context.plan().await?;
+    let generation = plan["generation"].as_i64().unwrap();
+    let device = "receipt-merge-fixture";
+    let mut query = context.mysql;
+    let snapshot = lock_plugin_sync_state(&mut query, 81001).await?;
+    context
+        .mysql
+        .with_transaction(async |tx| {
+            let mut query = &mut *tx;
+            merge_local_receipt_watermark(&mut query, 81001, &snapshot, device, 1, generation).await
+        })
+        .await?;
+    context
+        .mysql
+        .with_transaction(async |tx| {
+            let mut query = &mut *tx;
+            merge_local_receipt_watermark(&mut query, 81001, &snapshot, device, 2, generation).await
+        })
+        .await?;
+    let error = context
+        .mysql
+        .with_transaction(async |tx| {
+            let mut query = &mut *tx;
+            merge_local_receipt_watermark(&mut query, 81001, &snapshot, device, 1, generation).await
+        })
+        .await
+        .expect_err("A changed watermark for the same plugin must be revalidated");
+    assert_eq!(
+        crate::plugins_installed::write_coordination::plugin_write_error_code(&error),
+        Some("plugin_write_conflict")
+    );
+    let stored = lock_plugin_sync_state(&mut query, 81001).await?;
+    assert_eq!(
+        plugin_snapshot_watermark(&stored.json, device, 1),
+        generation
+    );
+    assert_eq!(
+        plugin_snapshot_watermark(&stored.json, device, 2),
+        generation
+    );
     Ok(())
 }
 

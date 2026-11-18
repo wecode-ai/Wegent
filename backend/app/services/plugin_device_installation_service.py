@@ -27,6 +27,7 @@ from app.services.plugin_device_identity import (
     plugin_device_id,
     reconcile_plugin_device_rows,
 )
+from app.services.plugin_kind_revision import kind_revision
 from app.services.plugin_write_coordination import (
     acquire_plugin_write_lock,
     acquire_plugin_write_locks,
@@ -336,6 +337,35 @@ class PluginDeviceInstallationService:
             ),
         )
 
+    def record_scoped_device_result(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        result: DeviceCapabilitySyncResult,
+        installed_id: int,
+        revision: int,
+        desired: bool,
+    ) -> None:
+        try:
+            acquire_plugin_write_lock(
+                db, user_id, installed_id=installed_id, blocking_timeout=0
+            )
+            installed = db.get(Kind, installed_id)
+            if (
+                installed is not None
+                and (desired or not installed.is_active)
+                and kind_revision(installed) == revision
+            ):
+                self._record_device_sync_result(
+                    db, user_id, result, installed_ids=[installed_id]
+                )
+            db.commit()
+        except OperationalError as error:
+            if not _is_mysql_deadlock(error):
+                raise
+            raise PluginWriteError("plugin_write_conflict") from error
+
     def acknowledge_local_installs(
         self,
         db: Session,
@@ -412,17 +442,15 @@ class PluginDeviceInstallationService:
                 self, db, user_id, result, installed_ids=installed_ids
             )
             return
-        installs = [
-            row
-            for row in self._desired_installs(db, user_id)
-            if row.id in installed_ids
-        ]
+        installs = self._desired_installs(db, user_id, installed_ids=installed_ids)
         if snapshot is not None:
             from app.services.device.plugin_sync_recording import (
                 current_legacy_plugin_ids,
             )
 
-            confirmed = current_legacy_plugin_ids(db, user_id, result)
+            confirmed = current_legacy_plugin_ids(
+                db, user_id, result, installed_ids=installed_ids
+            )
         else:
             confirmed = None
         desired_ids = {installed.id for installed in installs}
@@ -503,17 +531,15 @@ class PluginDeviceInstallationService:
         *,
         installed_ids: list[int] | None = None,
     ) -> None:
-        rows = (
-            db.query(PluginDeviceInstallation)
-            .filter(
-                PluginDeviceInstallation.user_id == user_id,
-                PluginDeviceInstallation.device_id == result.device_id,
-            )
-            .all()
+        rows = db.query(PluginDeviceInstallation).filter(
+            PluginDeviceInstallation.user_id == user_id,
+            PluginDeviceInstallation.device_id == result.device_id,
         )
+        if installed_ids is not None:
+            rows = rows.filter(
+                PluginDeviceInstallation.installed_kind_id.in_(installed_ids)
+            )
         for row in rows:
-            if installed_ids is not None and row.installed_kind_id not in installed_ids:
-                continue
             if (
                 row.installed_kind_id in desired_ids
                 or row.installed_kind_id in reported_ids
@@ -804,17 +830,18 @@ class PluginDeviceInstallationService:
             )
         return sorted(owned.intersection(selected))
 
-    def _desired_installs(self, db: Session, user_id: int) -> list[Kind]:
-        return (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id,
-                Kind.kind == "InstalledPlugin",
-                Kind.namespace == "default",
-                Kind.is_active,
-            )
-            .all()
+    def _desired_installs(
+        self, db: Session, user_id: int, *, installed_ids: list[int] | None = None
+    ) -> list[Kind]:
+        query = db.query(Kind).filter(
+            Kind.user_id == user_id,
+            Kind.kind == "InstalledPlugin",
+            Kind.namespace == "default",
+            Kind.is_active,
         )
+        if installed_ids is not None:
+            query = query.filter(Kind.id.in_(installed_ids))
+        return query.all()
 
 
 plugin_device_installation_service = PluginDeviceInstallationService()

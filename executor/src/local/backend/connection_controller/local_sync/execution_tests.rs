@@ -3,17 +3,17 @@ use super::super::LocalBackendConnectionProfile;
 use super::*;
 use crate::local::backend::CapabilitySyncRpcHandler;
 use axum::{
+    Json, Router,
     extract::Query,
     response::IntoResponse,
     routing::{post, put},
-    Json, Router,
 };
 use std::{
     collections::HashMap,
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Condvar, Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
 };
 use tokio::sync::Notify;
@@ -92,6 +92,7 @@ impl Drop for HeldDigest {
 #[derive(Clone, Copy, Debug)]
 enum Plan {
     Valid,
+    SupersededOriginal,
     HttpFailure,
     InvalidSnapshot,
     UnexpectedUnchanged,
@@ -290,9 +291,14 @@ impl Fixture {
                             return Json(json!({"protocolVersion":1,"revision":"a".repeat(64),"unchanged":true,"generation":1,"installedRevisions":{"8":1}})).into_response();
                         }
                         let operation = body["operationId"].as_str();
-                        let removed = operation.is_some_and(|id| removals.lock().unwrap().get(id) == Some(&true));
+                        let removed = matches!(plan, Plan::SupersededOriginal)
+                            || operation.is_some_and(|id| removals.lock().unwrap().get(id) == Some(&true));
                         let installed_id = body["installedPluginId"].as_u64().unwrap_or(8);
-                        Json(json!({"protocolVersion":1,"revision":"a".repeat(64),"generation":1,"installedRevisions":{installed_id.to_string():1},"operation":operation.map(|id|json!({"operationId":id,"state":"intent_saved","installedPluginId":8})),"payload":{"mode":"merge","scope":if targeted {"plugin_delta"}else{"plugins"},"plugins":if removed {json!([])}else{json!([{"installed_plugin_id":installed_id}])},"removed_plugins":if removed {json!([{"installed_plugin_id":installed_id}])}else{json!([])},"plugin_sync":{"version":2,"generation":1,"complete":!targeted}}})).into_response()
+                        let mut response = json!({"protocolVersion":1,"revision":"a".repeat(64),"generation":1,"installedRevisions":{installed_id.to_string():1},"operation":operation.map(|id|json!({"operationId":id,"state":"intent_saved","installedPluginId":8})),"payload":{"mode":"merge","scope":if targeted {"plugin_delta"}else{"plugins"},"plugins":if removed {json!([])}else{json!([{"installed_plugin_id":installed_id}])},"removed_plugins":if removed {json!([{"installed_plugin_id":installed_id}])}else{json!([])},"plugin_sync":{"version":2,"generation":1,"complete":!targeted}}});
+                        if matches!(plan, Plan::SupersededOriginal) {
+                            response["currentOperationIds"] = json!([]);
+                        }
+                        Json(response).into_response()
                     }
                 }
             }))
@@ -313,7 +319,9 @@ impl Fixture {
                     async move {
                         let recorded: Vec<Value> = body["completion"]["result"]["plugins"].as_array().unwrap().iter().map(|item| item["id"].clone()).collect();
                         completions.lock().unwrap().push(body);
-                        let fail = failures.swap(0, Ordering::SeqCst) != 0;
+                        let fail = failures
+                            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |count| count.checked_sub(1))
+                            .is_ok();
                         if hold.swap(false, Ordering::SeqCst) {
                             entered.notify_one();
                             release.notified().await;
@@ -418,6 +426,7 @@ impl Fixture {
                     capabilities: &json!({"enabled":true}),
                     instance: "native",
                     path: &self.path,
+                    progress: None,
                 },
                 load_journal(&self.path)?,
                 &mut lease,
@@ -607,8 +616,10 @@ async fn foreground_scope_is_released_on_cancellation_and_full_sync_defers() {
         "plugin_local_sync_busy"
     );
     drop(foreground);
-    assert!(!fixture
-        .controller
-        .has_foreground_plugin_operation(&fixture.path));
+    assert!(
+        !fixture
+            .controller
+            .has_foreground_plugin_operation(&fixture.path)
+    );
     assert!(fixture.sync(json!({"installedPluginId":9})).await.is_ok());
 }

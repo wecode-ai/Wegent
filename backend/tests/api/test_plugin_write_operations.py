@@ -270,7 +270,9 @@ def plugin_requests(tmp_path, monkeypatch):
     async def current_sync(**_kwargs):
         remote_calls.append("recovery")
         with sessions() as db:
-            return device_result(db, report_plugins=True)
+            return device_result(db, report_plugins=True).model_copy(
+                update={"acknowledged": True}
+            )
 
     async def changed_sync(*, user_id, device_id, installed_plugin_ids):
         assert user_id == user.id

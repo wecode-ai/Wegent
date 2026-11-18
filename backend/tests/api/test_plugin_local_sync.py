@@ -357,11 +357,13 @@ def test_background_replay_reads_latest_removal_instead_of_old_install(
 ):
     from unittest.mock import AsyncMock
 
+    from app.services.device.runtime_route import runtime_route_resolver
+
     c = local_context
     monkeypatch.setattr(
-        plugin_device_sync.device_capability_sync_service,
-        "supports_plugin_delta",
-        AsyncMock(return_value=False),
+        runtime_route_resolver,
+        "resolve",
+        AsyncMock(return_value=Mock(online_info={})),
     )
     seed_cloud_device(c)
     initial = install(c)
@@ -372,7 +374,7 @@ def test_background_replay_reads_latest_removal_instead_of_old_install(
     assert removed.status_code == 204
     c.run_background()
     assert c.account() is None
-    assert "background-plugin" in c.remote_calls or "recovery" in c.remote_calls
+    assert set(c.remote_calls) == {"recovery"}
 
 
 def test_cloud_failure_does_not_rollback_local_acceptance(local_context, monkeypatch):

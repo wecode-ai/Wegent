@@ -209,6 +209,58 @@ pub(crate) fn plugin_snapshot_watermark(
     complete.max(generation_value(plugin))
 }
 
+/// Merge an issued receipt against the live row at the flush boundary.
+/// Unrelated plugins can advance the account revision without invalidating
+/// this receipt. A newer dispatch for this target still requires revalidation.
+pub(super) async fn merge_local_receipt_watermark<Q: PluginQuery>(
+    query: &mut Q,
+    user_id: i64,
+    state: &PluginSyncState,
+    device_id: &str,
+    installed_id: i64,
+    generation: i64,
+) -> MysqlResult<()> {
+    let id = state
+        .id
+        .ok_or_else(|| coordination_error("plugin_write_conflict"))?;
+    let row: InstalledKindRow = query
+        .fetch_optional(
+            format!(
+                "SELECT {KIND_COLUMNS} FROM kinds WHERE id=? AND user_id=?
+                 AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account'
+                 AND is_active=1 FOR UPDATE"
+            ),
+            (id, user_id),
+        )
+        .await?
+        .ok_or_else(|| coordination_error("plugin_write_conflict"))?;
+    let current = PluginSyncState {
+        id: Some(row.id),
+        json: row.json.0.to_value(),
+    };
+    if generation > generation_value(current.json["spec"].get("generation"))
+        || plugin_snapshot_watermark(&current.json, device_id, installed_id)
+            != plugin_snapshot_watermark(&state.json, device_id, installed_id)
+    {
+        tracing::debug!(
+            user_id,
+            installed_id,
+            "Local plugin receipt watermark changed"
+        );
+        return Err(coordination_error("plugin_write_conflict"));
+    }
+    let mut document = current.json.clone();
+    advance_plugin_snapshot_watermark(&mut document, device_id, generation, false, &[installed_id]);
+    write_sync_state_document(
+        query,
+        current.id,
+        user_id,
+        &python_json_value(&document),
+        true,
+    )
+    .await
+}
+
 /// One device's state entry, if the document carries one.
 fn device_entry<'a>(document: &'a Value, device_id: &str) -> Option<&'a Map<String, Value>> {
     document

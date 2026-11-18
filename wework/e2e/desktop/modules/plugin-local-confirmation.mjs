@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { holdPluginWriteLease } from './plugin-write-lease.mjs'
@@ -25,7 +25,7 @@ export async function verifyPluginLocalConfirmation({
       control,
       'executor.plugins.local_sync',
       { backend_url: apiProxy.url, auth_token: cloud.authToken, ...params },
-      { timeoutMs }
+      { timeoutMs, requestId: randomUUID() }
     ).then(response => response.payload)
   const probe = await invoke({ probeOnly: true })
   const source = probe.result?.sourceDeviceId
@@ -52,7 +52,8 @@ export async function verifyPluginLocalConfirmation({
     held = await holdPluginWriteLease(cloud, item)
     const offset = apiProxy.requests.length
     let settled = false
-    pending = invoke({ installedPluginId: item.installedId }).then(
+    const progressId = randomUUID()
+    pending = invoke({ installedPluginId: item.installedId, progressId }).then(
       value => {
         settled = true
         return value
@@ -63,6 +64,8 @@ export async function verifyPluginLocalConfirmation({
       }
     )
     await held.waitFor('contended')
+    const progress = await invoke({ progressOnly: true, progressId })
+    assert.equal(progress.result?.confirming, true)
     const request = await until(
       () =>
         apiProxy.requests
@@ -97,20 +100,22 @@ export async function verifyPluginLocalConfirmation({
     })
     apiProxy.rule = request =>
       request.path === '/api/plugins/local-sync/complete' ? 'disconnect' : originalRule(request)
+    const updateProgressId = randomUUID()
     const interrupted = await invoke({
       action: 'update',
       targetId: item.installedId,
       payload: { releaseId: update.releaseId },
+      progressId: updateProgressId,
     })
     assert.equal(interrupted.error?.code, 'plugin_local_confirmation_pending')
     const unfinished = await journal()
     assert.equal(unfinished.reconcilePending, true)
     assert.equal(unfinished.confirmedDeviceRevision, null)
-    assert.ok(
-      unfinished.pending.some(
-        operation => operation.targetId === item.installedId && operation.accepted === true
-      )
+    const pendingUpdate = unfinished.pending.find(
+      operation => operation.targetId === item.installedId && operation.accepted === true
     )
+    assert.ok(pendingUpdate)
+    assert.equal(pendingUpdate.progressId, updateProgressId)
     assert.ok(
       unfinished.lastResult.plugins.some(
         plugin => Number(plugin.id) === item.installedId && plugin.status === 'synced'
@@ -121,6 +126,16 @@ export async function verifyPluginLocalConfirmation({
     const recovered = await invoke({ full: true })
     assert.equal(recovered.error, undefined, JSON.stringify(recovered.error))
     assert.equal(recovered.result.localCompleted, true)
+    assert.deepEqual(
+      recovered.result.recoveryOutcomes.find(outcome => outcome.progressId === updateProgressId),
+      {
+        operationId: pendingUpdate.operationId,
+        progressId: updateProgressId,
+        status: 'reconciled',
+        errorCode: null,
+        httpStatus: null,
+      }
+    )
     assert.equal((await journal()).reconcilePending, false)
     const rows = await cloud.queryDatabase(
       'SELECT state,desired_release_id,actual_release_id FROM plugin_device_installations WHERE user_id=1 AND installed_kind_id=%s AND device_id=%s',
