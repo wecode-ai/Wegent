@@ -621,7 +621,6 @@ const CLOUD_ONLY = process.argv.includes('--cloud-only')
 const CLOUD_FEATURES_ONLY = process.argv.includes('--cloud-features-only')
 const CLOUD_VISION_ONLY = process.argv.includes('--cloud-vision-only')
 const PLUGINS_ONLY = process.argv.includes('--plugins-only')
-const AUTOMATION_ONLY = process.argv.includes('--automation-only')
 const MEMORY_ONLY = process.argv.includes('--memory-only')
 const WORKTREE_STATUS_ONLY = process.argv.includes('--worktree-status-only')
 const QUEUE_NAVIGATION_ONLY = process.argv.includes('--queue-navigation-only')
@@ -681,10 +680,6 @@ const CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT =
 const STARTUP_NETWORK_PROBE_MARKETPLACE_NAME = 'desktop-e2e-startup-network-probe'
 const STARTUP_NETWORK_PROBE_MARKETPLACE_URL =
   'https://desktop-e2e-startup-probe.invalid/marketplace.git'
-const AUTOMATION_NAME = 'Desktop E2E automation'
-const AUTOMATION_PROMPT = 'WEWORK_DESKTOP_E2E_AUTOMATION: report the current workspace status.'
-const AUTOMATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_AUTOMATION_COMPLETE'
-const AUTOMATION_SCHEDULE_TIMEOUT_MS = 70_000
 
 function readCommandLineOption(name) {
   const index = process.argv.indexOf(name)
@@ -719,7 +714,6 @@ function getActiveOnlyModes() {
     ['--cloud-features-only', CLOUD_FEATURES_ONLY],
     ['--cloud-vision-only', CLOUD_VISION_ONLY],
     ['--plugins-only', PLUGINS_ONLY],
-    ['--automation-only', AUTOMATION_ONLY],
     ['--memory-only', MEMORY_ONLY],
     ['--worktree-status-only', WORKTREE_STATUS_ONLY],
     ['--queue-navigation-only', QUEUE_NAVIGATION_ONLY],
@@ -2021,7 +2015,6 @@ export {
   CLOUD_FEATURES_ONLY,
   CLOUD_VISION_ONLY,
   PLUGINS_ONLY,
-  AUTOMATION_ONLY,
   MEMORY_ONLY,
   WORKTREE_STATUS_ONLY,
   QUEUE_NAVIGATION_ONLY,
@@ -2071,10 +2064,6 @@ export {
   CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT,
   STARTUP_NETWORK_PROBE_MARKETPLACE_NAME,
   STARTUP_NETWORK_PROBE_MARKETPLACE_URL,
-  AUTOMATION_NAME,
-  AUTOMATION_PROMPT,
-  AUTOMATION_COMPLETION_TEXT,
-  AUTOMATION_SCHEDULE_TIMEOUT_MS,
   readCommandLineOption,
   getActiveOnlyModes,
   validateDesktopSegmentOptions,

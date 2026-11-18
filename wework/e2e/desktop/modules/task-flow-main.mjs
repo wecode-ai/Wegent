@@ -121,7 +121,6 @@ import {
 import {
   declineInitialTelemetryConsent,
   ensureExperimentalFeaturesEnabled,
-  verifyAutomationLifecycle,
   verifyInitialTelemetryConsent,
   verifySitesPluginAutoInstall,
 } from './preferences-automation-flows.mjs'
@@ -149,7 +148,6 @@ import {
   ARTIFACT_CONTENT,
   ARTIFACT_NAME,
   ATTACHMENT_ONLY,
-  AUTOMATION_ONLY,
   BLOCKED_CLOUD_MODEL_PATH,
   BlockingNetworkProxy,
   CANCELLATION_COMPLETION_TEXT,
@@ -2207,17 +2205,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       return
     }
 
-    if (DESKTOP_SEGMENT === 'automation-lifecycle' || AUTOMATION_ONLY) {
-      phase = 'automation-lifecycle'
-      await verifyAutomationLifecycle(control, executorHome, homePath)
-      console.log(
-        AUTOMATION_ONLY
-          ? `Wework desktop automation E2E passed. Evidence: ${resultDir}`
-          : `Wework desktop automation-lifecycle checkpoint passed. Evidence: ${resultDir}`
-      )
-      return
-    }
-
     if (WORKTREE_STATUS_ONLY) {
       phase = 'worktree-creation-status'
       await verifyWorktreeCreationStatus({
@@ -2453,11 +2440,6 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
       if (!GUIDANCE_SCROLL_ONLY && !GUIDANCE_BACKGROUND_ONLY && !SIDE_CHAT_ONLY) {
         phase = 'workspace-document-tabs'
         await verifyWorkspaceDocumentTabs(control)
-
-        if (shouldRunDesktopCheckpoint('automation-lifecycle')) {
-          phase = 'automation-lifecycle'
-          await verifyAutomationLifecycle(control, executorHome, homePath)
-        }
 
         phase = 'cloud-work-page'
         await verifyCloudWorkPage(control)

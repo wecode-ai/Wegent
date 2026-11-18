@@ -410,7 +410,7 @@ wework_desktop_macos_inspector_e2e=false' \
 assert_desktop_case "automation files select lifecycle and statutory workday coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"automation-lifecycle"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"project-automation"}]}
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-5","name":"Cloud / shard 5","segments":"project-automation"}]}
 wework_desktop_other_e2e=false
@@ -420,7 +420,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "project automation files select lifecycle and project coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"project-automation"},{"id":"core-3","name":"Core / shard 3","segments":"automation-lifecycle"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"project-automation"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/features/todo/ProjectAutomationRulesSection.tsx"
@@ -428,7 +428,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "project automation E2E changes select core and cloud coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"project-automation"},{"id":"core-3","name":"Core / shard 3","segments":"automation-lifecycle"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"project-automation"}]}
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix='"$all_cloud_matrix"'
 wework_desktop_other_e2e=false

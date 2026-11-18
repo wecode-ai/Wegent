@@ -471,7 +471,7 @@ classify_wework_path() {
       return
       ;;
     wework/e2e/desktop/scenarios/project-automation.scenario.mjs)
-      select_target "core:automation-lifecycle"
+      select_target "core:project-automation"
       select_target "core:project-automation"
       select_target "cloud:all"
       return

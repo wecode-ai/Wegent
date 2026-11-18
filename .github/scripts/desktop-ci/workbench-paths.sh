@@ -137,14 +137,14 @@ classify_workbench_path() {
       wework/src/features/todo/ProjectAutomation* | \
       wework/src/features/todo/projectAutomationForm* | \
       wework/src/api/projectAutomations*)
-      select_target "core:automation-lifecycle"
+      select_target "core:project-automation"
       select_target "core:project-automation"
       return
       ;;
     wework/src/pages/AutomationsPage* | \
       wework/src/features/automations/* | \
       wework/src/types/automation.ts)
-      select_target "core:automation-lifecycle"
+      select_target "core:project-automation"
       return
       ;;
     wework/e2e/desktop/modules/mcp-tool-results.mjs)

@@ -100,8 +100,6 @@ import {
   ANTHROPIC_EMPTY_PROMPT,
   ATTACHMENT_ONLY_COMPLETION_TEXT,
   ATTACHMENT_ONLY_FILENAME,
-  AUTOMATION_COMPLETION_TEXT,
-  AUTOMATION_PROMPT,
   BACKGROUND_COMPLETION_RESTORE_PROMPT,
   BACKGROUND_COMPLETION_RESTORE_TEXT,
   BACKGROUND_FOLLOW_UP_RESTORE_PROMPT,
@@ -698,7 +696,6 @@ class DesktopE2EServer {
     this.goalRestartScenarioByThreadId = new Map()
     this.firstResumedGoalRestartScenario = null
     this.cloudGoalRestartStage = 'initial'
-    this.automationStage = 'manual_goal'
     this.scenarioRequests = new Map()
     this.scenarioWaiters = new Map()
     this.heldScenarioResponses = new Map()
@@ -945,7 +942,6 @@ class DesktopE2EServer {
         'multimodal_vision',
         'official_plugin',
         'plugin_development',
-        'automation',
         'skill_mention_display',
         'connector_auth_unmatched_resume',
         'supervisor',
@@ -4294,46 +4290,6 @@ class DesktopE2EServer {
             `${pathToFileURL(join(this.workspacePath, FILE_PANEL_LINK_NAME)).href}:1`
           )
         ),
-        responseCompleted(responseId),
-      ])
-      return
-    }
-
-    if (this.scenario === 'automation') {
-      this.recordScenarioRequest('automation', modelRequest)
-      if (this.automationStage === 'manual_goal' || this.automationStage === 'scheduled_goal') {
-        assert.ok(
-          JSON.stringify(body).includes(AUTOMATION_PROMPT),
-          'The automation prompt was lost before model execution'
-        )
-        const updateGoal = selectTool(body, 'update_goal', { status: 'complete' })
-        const callId =
-          this.automationStage === 'manual_goal'
-            ? 'wework-e2e-automation-manual-goal'
-            : 'wework-e2e-automation-scheduled-goal'
-        this.automationStage =
-          this.automationStage === 'manual_goal' ? 'manual_goal_output' : 'scheduled_goal_output'
-        this.writeSse(response, [
-          responseCreated(responseId),
-          ...selectedToolCall(callId, updateGoal),
-          responseCompleted(responseId),
-        ])
-        return
-      }
-      assert.equal(
-        requestContainsToolOutput(body),
-        true,
-        'The automation Goal did not return its update_goal output'
-      )
-      const manualRun = this.automationStage === 'manual_goal_output'
-      assert.ok(
-        manualRun || this.automationStage === 'scheduled_goal_output',
-        `Unexpected automation model stage: ${this.automationStage}`
-      )
-      this.automationStage = manualRun ? 'scheduled_goal' : 'complete'
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(`${AUTOMATION_COMPLETION_TEXT}_${manualRun ? 1 : 2}`),
         responseCompleted(responseId),
       ])
       return

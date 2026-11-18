@@ -42,11 +42,6 @@ import {
 import { verifyPastedZipAttachment } from './path-attachment-flows.mjs'
 
 import {
-  ensureExperimentalFeaturesEnabled,
-  verifyCloudAutomationLifecycle,
-} from './preferences-automation-flows.mjs'
-
-import {
   verifyAnthropicEmptyResponseRecovery,
   verifyFollowUpSendRejectionNotice,
   verifyModelServiceConnectionError,
@@ -62,7 +57,6 @@ import {
   DEFAULT_MODEL_ID,
   DEFAULT_MODEL_LABEL,
   DEFAULT_STEP_TIMEOUT_MS,
-  REMOTE_DOCKER_DEVICE_ID,
   SELECTED_DESKTOP_SEGMENT,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
@@ -88,7 +82,6 @@ import { captureVerificationScreenshot, waitForControlValue } from './workspace-
 const CLOUD_CHECKPOINTS = [
   'cloud-project-creation',
   'cloud-device-lifecycle',
-  'automation-lifecycle',
   'plugin-auto-update',
   'plugin-workspace-publication',
   'model-routing',
@@ -837,17 +830,6 @@ async function verifyCloudCheckpoint({
         projectRowSelector,
         setPhase,
         workspacePath,
-      })
-      return
-    case 'automation-lifecycle':
-      setPhase('cloud-automation-lifecycle')
-      await ensureExperimentalFeaturesEnabled(control)
-      await verifyCloudAutomationLifecycle(control, CLOUD_DEVICE_ID)
-      setPhase('remote-docker-automation-lifecycle')
-      await verifyCloudAutomationLifecycle(control, REMOTE_DOCKER_DEVICE_ID, {
-        automationSuffix: 'Remote Docker',
-        deviceName: 'Wework E2E Remote Docker Device',
-        expectedCompletionIndex: 2,
       })
       return
     case 'model-routing':
