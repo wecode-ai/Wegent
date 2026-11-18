@@ -44,7 +44,7 @@ test.each([
     await service.prepareApp({
       appEnvironment: { HOME: home },
       codexHome,
-      control: { url: 'http://127.0.0.1:1' },
+      control: { url: 'http://127.0.0.1:1', httpRequests: [] },
     })
     const config = await readFile(join(codexHome, 'config.toml'), 'utf8')
     const baseUrl = config.match(/^chatgpt_base_url = "([^"]+)"/m)?.[1]
@@ -85,4 +85,62 @@ test('shared usage routing preserves quota-exhaustion overrides and rejects unre
     { method: 'GET', url: '/api/users/me' },
   ])
     assert.equal(handleModelSubscriptionUsage(request, response), false)
+})
+
+test('subscription configuration evidence identifies bootstrap, outage and recovery responses', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'wework-model-config-diagnostics-'))
+  const service = createCloudConfigModelService()
+  const control = { url: 'http://127.0.0.1:1', httpRequests: [] }
+  try {
+    const codexHome = join(home, 'runtime-codex')
+    await mkdir(codexHome)
+    await writeFile(join(codexHome, 'config.toml'), '')
+    await service.prepareApp({ appEnvironment: { HOME: home }, codexHome, control })
+    const config = await readFile(join(codexHome, 'config.toml'), 'utf8')
+    const baseUrl = config.match(/^chatgpt_base_url = "([^"]+)"/m)?.[1]
+    assert.ok(baseUrl)
+    const bundle = new URL('config/bundle', baseUrl)
+    await service.failBundle()
+    assert.equal((await fetch(bundle)).status, 200)
+    assert.equal((await fetch(bundle)).status, 503)
+    service.recoverBundle()
+    assert.equal((await fetch(bundle)).status, 200)
+    const usage = new URL('wham/usage?private=synthetic-query-secret', baseUrl)
+    assert.equal(
+      (
+        await fetch(usage, {
+          headers: { authorization: 'Bearer synthetic-header-secret' },
+        })
+      ).status,
+      200
+    )
+    assert.deepEqual(
+      control.httpRequests.map(x => x.status),
+      [200, 503, 200, 200]
+    )
+    assert.deepEqual(
+      control.httpRequests.map(x => x.fixtureUnavailable),
+      [true, true, false, false]
+    )
+    assert.deepEqual(
+      control.httpRequests.map(x => x.bootstrapBundlesRemaining),
+      [1, 0, 0, 0]
+    )
+    assert.ok(
+      control.httpRequests.every(
+        x =>
+          x.service === 'subscription-configuration' &&
+          x.finishedAtUnixMs >= x.startedAtUnixMs &&
+          x.durationMs >= 0
+      )
+    )
+    assert.equal(control.httpRequests[3].pathname, '/backend-api/wham/usage')
+    assert.doesNotMatch(
+      JSON.stringify(control.httpRequests),
+      /synthetic-query-secret|synthetic-header-secret/
+    )
+  } finally {
+    await service.close()
+    await rm(home, { recursive: true, force: true })
+  }
 })

@@ -61,6 +61,8 @@ pnpm --filter wework e2e:desktop -- --segment codex-cloud-config-recovery
 
 该检查点使用真实 Electron、executor 和 Codex，仅在隔离的模型订阅服务中模拟企业账号的 cloud-config bundle 失败。它覆盖已有线程续聊、新线程、配置和模型读取、Goal 重启恢复、官方订阅认证恢复，以及云模型运行期间的认证并发保护；同时检查最终回复、原生会话记录和重载后的任务状态。测试账号与目录均由 fixture 创建。该检查点通过现有桌面 CI 的 Core 分片执行。
 
+订阅配置服务与主模型服务复用 HTTP 诊断，保存在 `scenario-state.json` 的 `httpRequests` 中。每条请求记录方法、无查询参数的路径、起止时间和完成状态码；完成前连接关闭时明确标记 `aborted`，不把缺失的完成数据记成零。配置服务还记录请求进入时的故障开关和剩余 bootstrap 次数，用来区分故障注入顺序、原生配置加载和认证失败。诊断不包含请求头、查询参数或请求体，也不改变响应、重试、等待期限或原有断言。
+
 仅运行云端项目桌面 E2E：
 
 ```bash

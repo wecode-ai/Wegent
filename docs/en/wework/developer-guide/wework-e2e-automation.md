@@ -60,6 +60,8 @@ pnpm --filter wework e2e:desktop -- --segment codex-cloud-config-recovery
 
 This checkpoint uses real Electron, executor, and Codex processes, with an isolated model subscription service simulating enterprise cloud-config bundle failures. It covers existing-thread continuation, new threads, configuration and model reads, Goal recovery after restart, official subscription authentication recovery, and concurrent authentication protection while a cloud-model turn runs. Assertions include the final reply, native transcripts, and task state after reload. The fixture creates its own account and directories. Existing desktop CI Core shards run this checkpoint.
 
+The subscription configuration service and primary model service share HTTP diagnostics in `scenario-state.json` under `httpRequests`. Entries retain the method, path without query parameters, start/end times, and completed response status. Connections closed before completion are marked `aborted`; missing completion data is never reported as zero. Configuration requests also retain the fault switch and remaining bootstrap count at arrival to distinguish injection order, native configuration loading, and authentication failures. Headers, queries, and bodies are excluded. Diagnostics do not change responses, retries, deadlines, or scenario assertions.
+
 Run only the cloud-project desktop E2E:
 
 ```bash

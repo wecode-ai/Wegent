@@ -1,3 +1,4 @@
+import { recordHttpRequest } from './http-request-diagnostics.mjs'
 import {
   handleModelSubscriptionUsage,
   modelSubscriptionUsage,
@@ -74,7 +75,19 @@ export function createCloudConfigModelService({
     },
     async prepareApp({ appEnvironment, codexHome: home, control }) {
       codexHome = home
+      assert.ok(Array.isArray(control.httpRequests), 'Shared HTTP diagnostics are unavailable')
       server = createServer((request, response) => {
+        recordHttpRequest(
+          request,
+          response,
+          new URL(request.url ?? '/', 'http://subscription-model.invalid'),
+          control.httpRequests,
+          {
+            service: 'subscription-configuration',
+            fixtureUnavailable: unavailable,
+            bootstrapBundlesRemaining: bootstrapBundles,
+          }
+        )
         if (handleModelSubscriptionUsage(request, response, readUsage)) return
         if (request.url?.startsWith('/backend-api/wham/accounts/check')) {
           accountChecks += 1

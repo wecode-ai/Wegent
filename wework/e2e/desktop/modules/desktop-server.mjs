@@ -1,3 +1,4 @@
+import { recordHttpRequest } from './http-request-diagnostics.mjs'
 import { modelTextStream } from './model-text-stream.mjs'
 import { handleModelSubscriptionUsage } from './model-subscription-usage.mjs'
 import { selectedToolCall } from './model-tool-calls.mjs'
@@ -1362,17 +1363,7 @@ class DesktopE2EServer {
     }
 
     const url = new URL(request.url ?? '/', this.url)
-    const requestDiagnostic = {
-      method: request.method ?? 'UNKNOWN',
-      pathname: url.pathname,
-      startedAtUnixMs: Date.now(),
-    }
-    this.httpRequests.push(requestDiagnostic)
-    response.once('finish', () => {
-      requestDiagnostic.finishedAtUnixMs = Date.now()
-      requestDiagnostic.durationMs =
-        requestDiagnostic.finishedAtUnixMs - requestDiagnostic.startedAtUnixMs
-    })
+    recordHttpRequest(request, response, url, this.httpRequests)
     if (await this.handleControlRoute(request, response, url)) return
     const officialCodexResponses = url.pathname === '/backend-api/codex/responses'
     const modelProtocol =
