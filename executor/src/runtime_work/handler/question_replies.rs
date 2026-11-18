@@ -67,17 +67,19 @@ impl RuntimeWorkRpcHandler {
         };
         // Cloud question replies omit executionRequest: reuse the profile bound
         // to this pending task, replacing only this reply's attachment records.
-        let mut request = execution_request(payload)
-            .or_else(|| {
-                self.local_task_link(task)
-                    .and_then(|link| execution_request(&link.runtime_handle))
-                    .map(|mut request| {
-                        request.extra.insert("attachments".into(), json!([]));
-                        self.restore_question_execution_request(task, &mut request);
-                        request
-                    })
-            })
-            .ok_or_else(|| AppIpcError::new("bad_request", "Task execution request is missing"))?;
+        let mut request = if let Some(request) = execution_request(payload) {
+            request
+        } else {
+            let link = self
+                .local_task_link(task)
+                .ok_or_else(|| AppIpcError::new("not_found", "Task no longer exists"))?;
+            let mut request = execution_request(&link.runtime_handle).ok_or_else(|| {
+                AppIpcError::new("bad_request", "Task execution request is missing")
+            })?;
+            request.extra.insert("attachments".into(), json!([]));
+            self.restore_question_execution_request(task, &mut request, &link.runtime_handle)?;
+            request
+        };
         if let Some(files) = payload.get("attachments").filter(|files| files.is_array()) {
             request.extra.insert("attachments".into(), files.clone());
         }
@@ -98,7 +100,8 @@ impl RuntimeWorkRpcHandler {
         &self,
         task: &str,
         request: &mut ExecutionRequest,
-    ) {
+        runtime_handle: &Value,
+    ) -> Result<(), AppIpcError> {
         // Persisted profiles intentionally omit credentials and per-send identity.
         // Restore them only in memory, after validating the pending question.
         request.task_id = task.to_owned();
@@ -106,7 +109,12 @@ impl RuntimeWorkRpcHandler {
             request.subtask_id = uuid::Uuid::new_v4().to_string();
         }
         crate::runtime_work::api_context::bind_task_identity(request, &self.device_id, task);
+        if !request.is_local_project() {
+            super::project_coordination_execution::restore_identity(request, runtime_handle)
+                .map_err(|error| AppIpcError::new("attachment_preparation_failed", error))?;
+        }
         self.apply_backend_connection(request);
+        Ok(())
     }
 
     fn pending_question_reply(

@@ -220,14 +220,23 @@ fn globally_routed_async_question_persists_waiting_until_next_send() {
     let _ = fs::remove_file(index_path);
 }
 
-#[tokio::test]
-async fn question_file_download_does_not_block_stop_or_deliver_after_stop() {
-    blocking_question_download_race(true).await;
+#[test]
+fn question_file_download_does_not_block_stop_or_deliver_after_stop() {
+    run_blocking_question_download_race(true);
 }
 
-#[tokio::test]
-async fn question_file_download_cannot_buffer_a_duplicate_for_the_next_question() {
-    blocking_question_download_race(false).await;
+#[test]
+fn question_file_download_cannot_buffer_a_duplicate_for_the_next_question() {
+    run_blocking_question_download_race(false);
+}
+
+fn run_blocking_question_download_race(stop: bool) {
+    let _lock = crate::test_env::lock();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(blocking_question_download_race(stop));
 }
 
 async fn blocking_question_download_race(stop: bool) {
@@ -361,8 +370,18 @@ async fn blocking_question_download_race(stop: bool) {
 }
 
 #[cfg(unix)]
-#[tokio::test]
-async fn async_question_attachment_groups_reach_new_turn_prompt() {
+#[test]
+fn async_question_attachment_groups_reach_new_turn_prompt() {
+    let _lock = crate::test_env::lock();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(assert_async_question_attachment_groups());
+}
+
+#[cfg(unix)]
+async fn assert_async_question_attachment_groups() {
     let (mut handler, root) = isolated_runtime_work_handler("async-question-file-groups");
     install_native_history(
         &mut handler,

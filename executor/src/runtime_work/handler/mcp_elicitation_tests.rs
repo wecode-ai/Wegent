@@ -618,9 +618,33 @@ fn mcp_elicitation_history_keeps_reused_request_ids_scoped_to_their_turn() {
     let _ = fs::remove_dir_all(root);
 }
 
-#[tokio::test]
-async fn question_files_use_current_connection_but_preserve_the_original_reply_in_history() {
-    let (handler, root) = interaction_handler("question-files-history");
+#[test]
+fn question_files_use_current_connection_but_preserve_the_original_reply_in_history() {
+    question_files_preserve_execution_identity(false);
+}
+
+#[test]
+fn question_files_restore_enabling_member_without_device_owner_substitution() {
+    question_files_preserve_execution_identity(true);
+}
+
+fn question_files_preserve_execution_identity(coordinator: bool) {
+    let _lock = crate::test_env::lock();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(assert_question_files_preserve_execution_identity(
+            coordinator,
+        ));
+}
+
+async fn assert_question_files_preserve_execution_identity(coordinator: bool) {
+    let (handler, root) = interaction_handler(if coordinator {
+        "question-files-coordinator"
+    } else {
+        "question-files-history"
+    });
     let execution_id = start_test_execution(&handler, "task-1");
     handler.record_active_codex_turn("task-1", execution_id, "thread-1".into(), "turn-1".into());
     handler.record_active_codex_transcript_item(
@@ -644,6 +668,11 @@ async fn question_files_use_current_connection_but_preserve_the_original_reply_i
         auth_token: "current-download-token".into(),
         ..ConnectionConfig::default()
     });
+    let expected_token = if coordinator {
+        "enabling-member-token"
+    } else {
+        "current-download-token"
+    };
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.unwrap();
         let mut headers = Vec::new();
@@ -653,7 +682,7 @@ async fn question_files_use_current_connection_but_preserve_the_original_reply_i
             assert!(count > 0 && headers.len() < 8192);
             headers.extend_from_slice(&buffer[..count]);
         }
-        assert!(String::from_utf8_lossy(&headers).contains("Bearer current-download-token"));
+        assert!(String::from_utf8_lossy(&headers).contains(&format!("Bearer {expected_token}")));
         stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 18\r\nConnection: close\r\n\r\nReal question file").await.unwrap();
     });
     let file = json!({"id": 1, "filename": "brief.txt", "original_filename":"brief.txt"});
@@ -684,22 +713,62 @@ async fn question_files_use_current_connection_but_preserve_the_original_reply_i
     let mut request = ExecutionRequest::default();
     // Backend blocking replies omit executionRequest and carry resolved files separately.
     request.extra.insert("attachments".into(), json!([]));
+    if coordinator {
+        request.extra.insert(
+            "origin".into(),
+            json!({"project_coordination":{
+                "projectId":"1001", "groupId":"101", "commandId":"command-1", "userId":7,
+                "deviceId":"device-1", "generation":"generation-1", "inputDigest":"digest-1"
+            }}),
+        );
+        request.auth_token = Some("enabling-member-token".into());
+    }
+    let identity = project_coordination_execution::capture_identity(&request);
     handler.store.update_task("task-1", |link| {
         store_runtime_execution_request(&mut link.runtime_handle, &request);
+        if let Some(identity) = identity {
+            link.runtime_handle[project_coordination_execution::IDENTITY_KEY] = identity;
+        }
     });
-    let connection = handler.backend_connection.lock().unwrap().take();
-    assert_eq!(
-        handler
-            .prepare_question_reply(&json!({"taskId":"task-1", "attachments":[file.clone()],
-        "requestUserInputResponse":response.clone()}))
-            .await
-            .err()
-            .unwrap()
-            .code,
-        "attachment_preparation_failed"
-    );
+    let reply = json!({"taskId":"task-1", "attachments":[file.clone()],
+        "requestUserInputResponse":response.clone()});
+    if coordinator {
+        let identity = handler.local_task_link("task-1").unwrap().runtime_handle
+            [project_coordination_execution::IDENTITY_KEY]
+            .clone();
+        let mut mismatch = identity.clone();
+        mismatch["context"]["generation"] = json!("superseded");
+        for unavailable in [Value::Null, mismatch] {
+            handler.store.update_task("task-1", |link| {
+                link.runtime_handle[project_coordination_execution::IDENTITY_KEY] = unavailable;
+            });
+            assert_eq!(
+                handler
+                    .prepare_question_reply(&reply)
+                    .await
+                    .err()
+                    .unwrap()
+                    .code,
+                "attachment_preparation_failed"
+            );
+        }
+        handler.store.update_task("task-1", |link| {
+            link.runtime_handle[project_coordination_execution::IDENTITY_KEY] = identity;
+        });
+    } else {
+        let connection = handler.backend_connection.lock().unwrap().take();
+        assert_eq!(
+            handler
+                .prepare_question_reply(&reply)
+                .await
+                .err()
+                .unwrap()
+                .code,
+            "attachment_preparation_failed"
+        );
+        *handler.backend_connection.lock().unwrap() = connection;
+    }
     assert!(receiver.try_recv().is_err());
-    *handler.backend_connection.lock().unwrap() = connection;
     assert_eq!(
         handler
             .send_message(

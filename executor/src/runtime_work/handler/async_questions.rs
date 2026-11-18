@@ -58,7 +58,7 @@ impl RuntimeWorkRpcHandler {
             .filter(|request| request.is_object())
             .ok_or_else(|| AppIpcError::new("bad_request", "Task execution request is missing"))?;
         let mut request = async_reply_execution_request(saved, payload)?;
-        self.restore_question_execution_request(task_id, &mut request);
+        self.restore_question_execution_request(task_id, &mut request, &link.runtime_handle)?;
         let prepared = crate::agents::runtime_capabilities::prepare_user_input_response(
             request,
             response.clone(),
