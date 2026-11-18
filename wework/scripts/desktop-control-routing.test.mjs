@@ -260,6 +260,48 @@ test('accepts an in-flight runtime result after the control client reconnects', 
   assert.ok(control.controlCommandAvailableAt.get('main-2') > Date.now())
 })
 
+test('replays an in-flight wait after its control client is replaced', async t => {
+  const control = await startControl(t)
+  await register(control, 'main', 'main-1')
+  const result = control.command('waitFor', '[data-testid="ready"]')
+  const firstResponse = await fetch(`${control.controlUrl}/commands?clientId=main-1&wait=1`)
+  const command = await firstResponse.json()
+  await post(control, 'started', { id: command.id, clientId: 'main-1' })
+
+  await register(control, 'main', 'main-2')
+  assert.equal(control.commandResults.has(command.id), true)
+  const replayResponse = await fetch(`${control.controlUrl}/commands?clientId=main-2&wait=1`)
+  const replay = await replayResponse.json()
+  assert.equal(replay.id, command.id)
+  await post(control, 'started', { id: command.id, clientId: 'main-2' })
+  await post(control, 'results', {
+    id: command.id,
+    clientId: 'main-2',
+    ok: true,
+    value: 'ready',
+  })
+  assert.equal(await result, 'ready')
+})
+
+test('replays an undelivered wait on the replacement client', async t => {
+  const control = await startControl(t)
+  await register(control, 'main', 'main-1')
+  const result = control.command('waitFor', '[data-testid="ready"]')
+
+  await register(control, 'main', 'main-2')
+  const replayResponse = await fetch(`${control.controlUrl}/commands?clientId=main-2&wait=1`)
+  const replay = await replayResponse.json()
+  assert.equal(replay.action, 'waitFor')
+  await post(control, 'started', { id: replay.id, clientId: 'main-2' })
+  await post(control, 'results', {
+    id: replay.id,
+    clientId: 'main-2',
+    ok: true,
+    value: 'ready',
+  })
+  assert.equal(await result, 'ready')
+})
+
 test('delivers account credentials without retaining them in diagnostic command history', async t => {
   const control = await startControl(t)
   await register(control, 'main', 'main-1')
