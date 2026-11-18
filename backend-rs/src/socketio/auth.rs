@@ -33,7 +33,7 @@ pub struct Identity {
 }
 
 /// `API_KEY_PREFIX` (`app/core/auth_utils.py`).
-const API_KEY_PREFIX: &str = "wg-";
+pub(crate) const API_KEY_PREFIX: &str = "wg-";
 /// `TOKEN_PREFIX` (`app/services/workspaces/runner_registration.py`).
 const RUNNER_TOKEN_PREFIX: &str = "wgr-";
 const API_KEY_BY_HASH_QUERY: &str = "SELECT api_keys.id AS api_keys_id, \
@@ -151,31 +151,33 @@ pub async fn verify(state: &AppState, token: &str) -> Result<Identity, AuthError
         return verify_runner(state, token).await;
     }
     if token.starts_with(API_KEY_PREFIX) {
-        return verify_api_key(state, token).await;
+        return verify_personal_api_key(&state.mysql, token).await;
     }
     verify_jwt(state, token).await
 }
 
-async fn verify_api_key(state: &AppState, token: &str) -> Result<Identity, AuthError> {
+/// Resolve the active owner of a valid personal API key.
+pub(crate) async fn verify_personal_api_key(
+    mysql: &impl brz_mysql::Mysql,
+    token: &str,
+) -> Result<Identity, AuthError> {
     let hash = hex_sha256(token);
-    let key: Option<ApiKeyRow> = state
-        .mysql
+    let key: Option<ApiKeyRow> = mysql
         .fetch_optional(API_KEY_BY_HASH_QUERY, (hash, "personal"))
         .await
         .map_err(|error| {
-            tracing::error!(%error, "Socket.IO API key read failed");
+            tracing::error!(%error, "Personal API key lookup failed");
             AuthError::StorageUnavailable
         })?;
     let Some(key) = key.filter(|key| key.expires_at >= chrono::Utc::now().naive_utc()) else {
         return Err(AuthError::Refused("Invalid or expired API key"));
     };
     let unknown = AuthError::Refused("Invalid or expired API key");
-    let user: Option<SocketUser> = state
-        .mysql
+    let user: Option<SocketUser> = mysql
         .fetch_optional(USER_BY_ID_QUERY, (key.user_id,))
         .await
         .map_err(|error| {
-            tracing::error!(%error, "Socket.IO API key user lookup failed");
+            tracing::error!(%error, "Personal API key owner lookup failed");
             AuthError::StorageUnavailable
         })?;
     let Some(user) = user.filter(|user| user.is_active != 0) else {
