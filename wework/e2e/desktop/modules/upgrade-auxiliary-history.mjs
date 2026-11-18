@@ -43,6 +43,9 @@ export function createUpgradeAuxiliaryHistory(pair, control, options) {
   const enabled = pair.to.afterStopPreparation === 1
   const home = options.codexHome
   const timeoutMs = options.workbenchReadyTimeoutMs
+  // Windows spends noticeably longer compressing a cold archived rollout after
+  // Codex startup; this remains a bounded native operation.
+  const coldHistoryTimeoutMs = Math.max(timeoutMs, 300_000)
   const provider = 'upgrade-history-fixture'
   const replies = []
   let forkId
@@ -184,7 +187,7 @@ export function createUpgradeAuxiliaryHistory(pair, control, options) {
           async () => rollout(home, forkId),
           path => path.endsWith('.jsonl.zst'),
           'Native cold-history compression did not finish',
-          timeoutMs
+          coldHistoryTimeoutMs
         )
         const { thread } = await native.rpc('thread/read', { threadId: forkId, includeTurns: true })
         assert.equal(thread.id, forkId)
