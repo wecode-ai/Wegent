@@ -208,7 +208,7 @@ test('unmeasured checkpoints retain their original shard and partial selection n
   assert.deepEqual(segments(balanced).sort(), segments(completeMatrix).sort())
   assert.deepEqual(checkpoints(balanced).sort(), checkpoints(completeMatrix).sort())
   assert.equal(new Set(checkpoints(balanced)).size, checkpoints(completeMatrix).length)
-  assert.equal(balanced.include.length, completeMatrix.include.length)
+  assert.equal(balanced.include.length, completeMatrix.include.length + 1)
   const ordinary = matrix =>
     matrix.include.filter(shard => !['core-9', 'core-10'].includes(shard.id))
   assert.ok(
@@ -268,7 +268,7 @@ test('additional unmeasured checkpoints cannot raise known peaks or receive new 
       Math.max(...ordinary(balanced).map(load)) <= Math.max(...ordinary(completeMatrix).map(load))
     )
     assert.deepEqual(segments(balanced).sort(), segments(completeMatrix).sort())
-    assert.equal(balanced.include.length, completeMatrix.include.length)
+    assert.equal(balanced.include.length, completeMatrix.include.length + 1)
     for (const shard of completeMatrix.include) {
       const originalSegments = shard.segments.split(',')
       if (originalSegments.every(segment => checkpointSeconds(segment, seconds) !== null)) continue
@@ -281,6 +281,38 @@ test('additional unmeasured checkpoints cannot raise known peaks or receive new 
       }
     }
   }
+})
+
+test('extra capacity is limited to a complete workload that one runner can make fit', () => {
+  const cheap = Object.fromEntries(checkpoints(completeMatrix).map(checkpoint => [checkpoint, 1]))
+  assert.equal(
+    balanceWindowsMatrix(completeMatrix, cheap).include.length,
+    completeMatrix.include.length
+  )
+  const oversized = {
+    ...cheap,
+    'application-menu': processDeadlineSeconds() + 1,
+  }
+  assert.equal(
+    balanceWindowsMatrix(completeMatrix, oversized).include.length,
+    completeMatrix.include.length
+  )
+  const balanced = balanceWindowsMatrix(completeMatrix)
+  assert.equal(balanced.include.length, completeMatrix.include.length + 1)
+  assert.ok(balanced.include.some(shard => shard.id === 'core-11'))
+  for (const id of ['core-9', 'core-10']) {
+    assert.deepEqual(
+      balanced.include.find(shard => shard.id === id),
+      completeMatrix.include.find(shard => shard.id === id)
+    )
+  }
+})
+
+test('scheduler capacity uses the actual existing process deadline', () => {
+  const evidence = JSON.parse(
+    readFileSync(new URL('../ci/wework-windows-checkpoint-durations.json', import.meta.url))
+  )
+  assert.equal(evidence.processDeadlineSeconds, processDeadlineSeconds())
 })
 
 test('duplicate selection is rejected rather than silently losing coverage', () => {

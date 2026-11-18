@@ -2,9 +2,13 @@ import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 
 import { expandDesktopCheckpoints } from '../../wework/e2e/desktop/checkpoints.mjs'
+import { loadDesktopCheckpointCatalog } from '../../wework/e2e/desktop/checkpoint-catalog.mjs'
 
 const measurements = JSON.parse(
   readFileSync(new URL('../ci/wework-windows-checkpoint-durations.json', import.meta.url))
+)
+const fullCoreCheckpoints = expandDesktopCheckpoints(
+  loadDesktopCheckpointCatalog().ci.core_segments
 )
 
 const preparationGroups = {
@@ -90,8 +94,8 @@ function balanceMeasuredWork(shards, ordinary, unmeasured, checkpoints) {
   } while (moved)
 }
 
-export function balanceWindowsMatrix(matrix, seconds = measurements.seconds) {
-  // Preserve the two exclusive benchmark shards and the existing runner budget.
+function balanceShards(matrix, seconds, additionalRunners = 0) {
+  // Preserve the two exclusive benchmark shards and unknown-work ownership.
   const fixed = new Set(['core-9', 'core-10'])
   const unmeasured = new Set()
   const preparationSegments = new Set(Object.values(preparationGroups).flat())
@@ -111,6 +115,20 @@ export function balanceWindowsMatrix(matrix, seconds = measurements.seconds) {
   }))
   // Never add new measured work to a shard whose remaining cost is unknown.
   const ordinary = shards.filter(entry => !fixed.has(entry.id) && !unmeasured.has(entry.id))
+  if (ordinary.length) {
+    const lastId = Math.max(...shards.map(shard => Number(shard.id.match(/-(\d+)$/)?.[1]) || 0))
+    for (let index = 1; index <= additionalRunners; index++) {
+      const extra = {
+        ...ordinary[0],
+        id: `core-${lastId + index}`,
+        name: `Core / shard ${lastId + index}`,
+        segments: [],
+        seconds: 0,
+      }
+      shards.push(extra)
+      ordinary.push(extra)
+    }
+  }
   if (!ordinary.length) {
     // A partial selection with no measured destination retains its original work.
     for (const id of unmeasured) fixed.add(id)
@@ -132,7 +150,28 @@ export function balanceWindowsMatrix(matrix, seconds = measurements.seconds) {
   }
   balanceMeasuredWork(shards, ordinary, unmeasured, pending)
   return {
-    include: shards
+    shards,
+    movablePeak: Math.max(0, ...ordinary.map(shard => shard.seconds)),
+  }
+}
+
+export function balanceWindowsMatrix(matrix, seconds = measurements.seconds) {
+  let result = balanceShards(matrix, seconds)
+  const capacity = measurements.processDeadlineSeconds - measurements.runnerOverheadSeconds
+  // One extra shared runner is authorized when measured work cannot fit the deadline.
+  // A single oversized task cannot justify another runner that cannot resolve it.
+  const selected = new Set(
+    matrix.include.flatMap(shard => expandDesktopCheckpoints(shard.segments.split(',')))
+  )
+  if (
+    fullCoreCheckpoints.every(checkpoint => selected.has(checkpoint)) &&
+    result.movablePeak >= capacity
+  ) {
+    const expanded = balanceShards(matrix, seconds, 1)
+    if (expanded.movablePeak < capacity) result = expanded
+  }
+  return {
+    include: result.shards
       .filter(shard => shard.segments.length)
       .map(({ seconds: _, ...entry }) => ({
         ...entry,
