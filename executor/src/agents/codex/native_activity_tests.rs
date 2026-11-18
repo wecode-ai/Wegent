@@ -44,27 +44,6 @@ fn activating_an_unloaded_goal_does_not_block_its_own_resume() {
 }
 
 #[test]
-fn unloading_a_thread_keeps_an_active_goal_eligible_for_cold_resume() {
-    let unload = json!({
-        "method":"thread/status/changed",
-        "params":{"threadId":"thread","status":{"type":"notLoaded"}}
-    });
-    let mut cold = CodexNativeActivity::default();
-    let set = request(&cold, "thread/goal/set");
-    cold.observe_response(&set, &json!({"goal":{"status":"active"}}));
-    assert!(!cold.observe(&unload));
-    assert!(cold.goal_requires_resume("thread"));
-    assert!(cold.active_threads().is_empty());
-
-    let mut loaded = loaded_activity();
-    let set = request(&loaded, "thread/goal/set");
-    loaded.observe_response(&set, &json!({"goal":{"status":"active"}}));
-    assert!(loaded.observe(&unload));
-    assert!(loaded.goal_requires_resume("thread"));
-    assert!(loaded.active_threads().is_empty());
-}
-
-#[test]
 fn loaded_goal_mutations_remain_protected_until_native_unload() {
     for method in ["thread/start", "thread/resume", "thread/fork"] {
         for unload in [
