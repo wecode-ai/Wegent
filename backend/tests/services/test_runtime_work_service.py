@@ -6049,3 +6049,36 @@ async def test_task_archive_forwards_cleanup_and_preserves_accepted_cleanup_erro
     }
     assert response.accepted is True
     assert response.cleanup_error == "Snapshot unavailable"
+
+
+@pytest.mark.parametrize(
+    ("requested_runtime", "shell_type"),
+    [("claude_code", "Codex"), ("codex", "ClaudeCode")],
+)
+def test_context_transport_follows_compiled_team_runtime(
+    requested_runtime: str, shell_type: str
+) -> None:
+    from app.schemas.runtime_work import RuntimeTaskCreateRequest
+    from app.services import runtime_work_service
+    from shared.models.execution import ExecutionRequest
+
+    context = {"project": {"kind": "application", "value": "Project reference"}}
+    request = RuntimeTaskCreateRequest(
+        schemaVersion=3,
+        wegentTeamId=42,
+        runtime=requested_runtime,
+        message="User request",
+        additionalContext=context,
+    )
+    execution = ExecutionRequest(bot=[{"shell_type": shell_type}])
+
+    runtime_work_service._apply_runtime_create_request(execution, request)
+
+    assert execution.to_dict()["additional_context"] == context
+    if shell_type == "Codex":
+        assert execution.prompt == request.message
+    else:
+        assert execution.prompt == (
+            "<application_context>\n[project]\nProject reference\n"
+            "</application_context>\n\nUser request"
+        )
