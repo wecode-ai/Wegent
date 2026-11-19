@@ -23,21 +23,42 @@ export async function prepareWindowsNativeObserver(directory) {
     const assemblyPath = join(directory, assembly)
     const script = `
 $ErrorActionPreference = 'Stop'
+Write-Output '[native-observer] powershell-ready'
+$prepareClock = [System.Diagnostics.Stopwatch]::StartNew()
 ${references ? 'Add-Type -AssemblyName UIAutomationClient' : ''}
+Write-Output '[native-observer] compiler-started'
 Add-Type ${references} -TypeDefinition @'
 ${source}
 '@ -OutputAssembly '${assemblyPath.replaceAll("'", "''")}' -OutputType Library
+Write-Output ('[native-observer] compiler-finished elapsed_ms=' + $prepareClock.ElapsedMilliseconds)
 `
-    await promisify(execFile)(
-      'powershell.exe',
-      [
-        '-NoProfile',
-        '-NonInteractive',
-        '-EncodedCommand',
-        Buffer.from(script, 'utf16le').toString('base64'),
-      ],
-      { encoding: 'utf8', timeout: 30_000 }
-    )
+    const startedAt = performance.now()
+    console.log('[native-observer] preparation-started', { assembly })
+    try {
+      const { stdout, stderr } = await promisify(execFile)(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-EncodedCommand',
+          Buffer.from(script, 'utf16le').toString('base64'),
+        ],
+        { encoding: 'utf8', timeout: 30_000 }
+      )
+      if (stdout) console.log(stdout.trimEnd())
+      if (stderr) console.error(stderr.trimEnd())
+    } catch (error) {
+      console.error('[native-observer] preparation-failed', {
+        assembly,
+        elapsedMs: Math.round(performance.now() - startedAt),
+        code: error.code,
+        killed: error.killed,
+        signal: error.signal,
+        stdout: error.stdout,
+        stderr: error.stderr,
+      })
+      throw error
+    }
     await access(assemblyPath)
   }
 }
