@@ -40,7 +40,7 @@ Find the existing component and Story before editing production callers. `compon
 
 ## Consistent usage
 
-Use `ActionMenu` for commands and `SelectField` for choosing a value. Use `SearchableSelect` for searching, grouping and multiple selection, while preserving domain request cancellation and permission filtering. Use `Switch`, `Checkbox` and `RadioGroup` for their corresponding settings. Page tabs use `TabsRoot`, `TabsList` and `TabsTab`; short setting choices use `SegmentedControl`.
+Use `ActionMenu` for commands and `SelectField` for choosing a value. Use `SearchableSelect` for searching, grouping and multiple selection, while preserving domain request cancellation and permission filtering. Use `Switch`, `Checkbox` and `RadioGroup` for their corresponding settings. Page tabs use `TabsRoot`, `TabsList` and `TabsTab`. Use `appearance="surface"` in desktop window chrome, where the tab background identifies the active workspace. Use `SegmentedControl` for short setting choices.
 
 Use `activateSelected` when activating any single-select option starts a follow-up action. For example, choosing the current project again lets a task link to a different Issue in that project.
 

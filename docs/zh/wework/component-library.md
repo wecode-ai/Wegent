@@ -44,7 +44,7 @@ Storybook 配置启用了 `@storybook/addon-mcp` 和组件清单功能。启动�
 - 需要搜索、分组或多选时使用 `SearchableSelect`。异步搜索由业务层提供，保留请求失效和权限过滤。
 - 单选的每次激活都会执行后续操作时使用 `activateSelected`。例如任务已经关联到某个项目时，再次选中同一项目可以改绑其中的事项。
 - 开关使用 `Switch`；独立勾选使用 `Checkbox`；互斥选项使用 `RadioGroup` 和 `Radio`。
-- 页面标签使用 `TabsRoot`、`TabsList`、`TabsTab`；少量互斥设置使用 `SegmentedControl`。
+- 页面标签使用 `TabsRoot`、`TabsList`、`TabsTab`。桌面窗口顶部使用 `appearance="surface"`，由选中页签的底色标识当前工作区。少量互斥设置使用 `SegmentedControl`。
 - 设置页面复用 `SettingsGroup`、`SettingsRow`，不要再定义另一套行高、边框和标签布局。
 
 ```tsx

@@ -136,10 +136,10 @@ the static CSS bundle:
 
 | Token/role     | Default size | Typical line height | Weight    | Use                                   |
 | -------------- | -----------: | ------------------: | --------- | ------------------------------------- |
-| `text-xs`      |       `12px` |              `16px` | `445–500` | shortcuts, timestamps, dense metadata |
-| `text-sm`      |       `13px` |         `18px–19px` | `445–500` | helper text and compact controls      |
-| `text-base`    |       `14px` |              `21px` | `445–500` | rows, menus, forms and ordinary body  |
-| `text-lg`      |       `16px` |         `24px–25px` | `445–500` | emphasized UI                         |
+| `text-xs`      |       `12px` |              `16px` | `420–500` | shortcuts, timestamps, dense metadata |
+| `text-sm`      |       `13px` |         `18px–19px` | `420–500` | helper text and compact controls      |
+| `text-base`    |       `14px` |              `21px` | `420–500` | rows, menus, forms and ordinary body  |
+| `text-lg`      |       `16px` |         `24px–25px` | `420–500` | emphasized UI                         |
 | Heading small  |       `18px` |              `24px` | `500`     | section or dialog heading             |
 | Heading medium |       `20px` |              `27px` | `500`     | page heading where needed             |
 | Heading large  |       `24px` |              `29px` | `500`     | rare prominent heading                |
@@ -167,9 +167,10 @@ font size is allowed only when it derives from the shared typography tokens,
 such as an animated transition between two heading roles. Third-party content
 that cannot inherit Wework variables requires a narrow documented exception.
 
-The primary Electron UI weight is `445`, matching ChatGPT's platform-adjusted
-normal weight. Ordinary UI and conversation text inherit this weight instead of forcing
-`font-normal` (`400`) on their containers. Emphasis and headings use `500`. Use `600` sparingly and avoid `700` in product chrome.
+The primary Electron UI weight is `420`. Ordinary UI and conversation text
+inherit it, and the desktop `font-normal` utility uses the same token. Task and
+collaboration sidebar labels use the shared font family, size, and weight.
+Emphasis and headings use `500`. Use `600` sparingly and avoid `700` in product chrome.
 
 Entered composer text uses the primary text color so it reads as content. Normal
 menu labels and composer actions such as the quick-phrase trigger also use the
@@ -538,7 +539,7 @@ The active-conversation capture is also normative:
 - User messages are right-aligned compact neutral bubbles. Assistant content is
   left-aligned prose, not wrapped in a card. Turn metadata and feedback actions
   are quiet and subordinate.
-- Conversation prose and tool-process rows inherit the primary UI `445` weight; chat
+- Conversation prose and tool-process rows inherit the primary UI `420` weight; chat
   headings, strong text, and table headings use `500`. Keep document-preview
   typography separate. Tool summaries use tertiary text and expandable details,
   without a full-width divider. Optional MCP App discovery failures do not

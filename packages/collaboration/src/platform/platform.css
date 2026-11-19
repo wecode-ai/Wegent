@@ -355,10 +355,6 @@
   background: rgb(var(--color-sidebar-active));
 }
 
-.collaboration-workspace-row.active .collaboration-workspace-identity {
-  font-weight: 600;
-}
-
 .collaboration-project-card-mark {
   display: inline-flex;
   align-items: center;
@@ -386,8 +382,8 @@
   color: inherit;
   background: transparent;
   font-size: var(--text-base);
-  font-weight: 400;
-  line-height: 20px;
+  font-weight: var(--font-weight-ui);
+  line-height: 1.5;
   text-align: left;
   cursor: pointer;
 }
@@ -531,8 +527,8 @@
   color: rgb(var(--color-text-secondary));
   background: transparent;
   font-size: var(--text-base);
-  font-weight: 400;
-  line-height: 20px;
+  font-weight: var(--font-weight-ui);
+  line-height: 1.5;
   text-align: left;
   cursor: pointer;
 }
@@ -549,7 +545,6 @@
   .collaboration-workspace-project.active {
   color: rgb(var(--color-text-primary));
   background: rgb(var(--color-bg-muted));
-  font-weight: 600;
 }
 
 .collaboration-workspace-project.active::before {

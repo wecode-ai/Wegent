@@ -2713,7 +2713,7 @@
 .task-detail-new-comment[data-workflow='true'] {
   container: issue-comment / inline-size;
   padding: 12px;
-  font-weight: var(--font-weight-ui, 445);
+  font-weight: var(--font-weight-ui, 420);
 }
 
 .task-detail-new-comment[data-workflow='true'] .task-detail-new-comment-actions {

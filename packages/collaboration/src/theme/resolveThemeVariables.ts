@@ -76,7 +76,7 @@ export function resolveThemeVariables(
     "--font-code": appearance.codeFont,
     "--font-size-ui": `${appearance.uiFontSize}px`,
     "--font-size-code": `${appearance.codeFontSize}px`,
-    "--font-weight-ui": "445",
+    "--font-weight-ui": "420",
     "--text-chat": `${appearance.uiFontSize}px`,
     "--text-code": `${appearance.codeFontSize}px`,
     "--text-code-sm": `${Math.max(8, appearance.codeFontSize - 1)}px`,

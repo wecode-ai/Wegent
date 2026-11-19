@@ -178,6 +178,7 @@ function WorkspaceTabButton({
       )}
     >
       <TabsTab
+        appearance="surface"
         value={tab.id}
         type="button"
         id={`workspace-tab-select-${tab.id}`}
@@ -525,6 +526,7 @@ export function WorkspaceTabStrip({
           render={<div className="contents" />}
         >
           <TabsList
+            appearance="surface"
             render={<div />}
             ref={bindTabStrip}
             data-testid="workspace-tab-strip"
