@@ -46,17 +46,23 @@ test('fails an unclosed output source and retains bytes already delivered', asyn
   const moduleUrl = pathToFileURL(
     resolve(import.meta.dirname, '../../e2e/desktop/process-output.mjs')
   ).href
-  const { appendProcessOutput, flushProcessOutput, processOutputDiagnostics } = await import(
+  const { appendChildProcessOutput, flushProcessOutput, processOutputDiagnostics } = await import(
     /* @vite-ignore */ moduleUrl
   )
   const directory = await mkdtemp(join(tmpdir(), 'wework-unclosed-output-'))
   const destination = join(directory, 'app.log')
   const source = new PassThrough()
-  const owner = { pid: 42, exitCode: 0, signalCode: null }
+  const stderr = new PassThrough()
+  const identity = { pid: 42, exitCode: 0, signalCode: null }
+  const owner = { ...identity, stdout: source, stderr }
   try {
-    appendProcessOutput(source, destination, owner)
+    appendChildProcessOutput(owner, destination)
     source.write('last received evidence\n')
-    expect(processOutputDiagnostics()[0].sources[0].owner).toEqual(owner)
+    expect(processOutputDiagnostics()[0].sources.map(entry => entry.owner)).toEqual([
+      identity,
+      identity,
+    ])
+    stderr.end()
     const error = await flushProcessOutput({ sourceTimeoutMs: 0 }).catch(
       (failure: unknown) => failure
     )
@@ -67,6 +73,7 @@ test('fails an unclosed output source and retains bytes already delivered', asyn
     expect(processOutputDiagnostics()).toEqual([])
   } finally {
     source.destroy()
+    stderr.destroy()
     await flushProcessOutput()
     await rm(directory, { recursive: true, force: true })
   }

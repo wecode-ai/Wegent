@@ -26,7 +26,7 @@ import {
   SELECTED_DESKTOP_SEGMENT,
   WORKBENCH_READY_TIMEOUT_MS,
   appendFile,
-  appendProcessOutput,
+  appendChildProcessOutput,
   assert,
   commandOutput,
   commandOutputAsync,
@@ -140,10 +140,7 @@ async function startMysqlServer(logPath) {
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: process.platform !== 'win32',
   })
-  await Promise.all([
-    appendProcessOutput(server.stdout, logPath),
-    appendProcessOutput(server.stderr, logPath),
-  ])
+  appendChildProcessOutput(server, logPath)
   const connectionOptions = {
     host: '127.0.0.1',
     port,
@@ -260,10 +257,7 @@ async function startRedisServer(
       ['--port', String(port), '--save', '', '--appendonly', 'no'],
       { stdio: ['ignore', 'pipe', 'pipe'] }
     )
-    await Promise.all([
-      appendProcessOutput(redis.stdout, logPath),
-      appendProcessOutput(redis.stderr, logPath),
-    ])
+    appendChildProcessOutput(redis, logPath)
     try {
       await waitForRedisReady(redis, logPath, fromOffset)
       return { port, redis }
@@ -507,10 +501,7 @@ class RealCloudEnvironment {
         detached: process.platform !== 'win32',
       }
     )
-    await Promise.all([
-      appendProcessOutput(this.pythonBackend.stdout, this.backendLogPath),
-      appendProcessOutput(this.pythonBackend.stderr, this.backendLogPath),
-    ])
+    appendChildProcessOutput(this.pythonBackend, this.backendLogPath)
     await this.observePreparation('python-backend-ready', () =>
       waitForProcessUrl(
         `http://127.0.0.1:${this.pythonBackendPort}/api/docs`,
@@ -536,10 +527,7 @@ class RealCloudEnvironment {
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
     })
-    await Promise.all([
-      appendProcessOutput(this.rustBackend.stdout, this.backendLogPath),
-      appendProcessOutput(this.rustBackend.stderr, this.backendLogPath),
-    ])
+    appendChildProcessOutput(this.rustBackend, this.backendLogPath)
     await this.observePreparation('rust-gateway-ready', () =>
       waitForProcessUrl(
         `${this.backendUrl}/api/startup`,
@@ -1156,10 +1144,7 @@ class RealCloudEnvironment {
     executor.once('exit', (code, signal) => {
       void appendFile(logPath, `Executor exited: code=${code}, signal=${signal}\n`)
     })
-    await Promise.all([
-      appendProcessOutput(executor.stdout, logPath),
-      appendProcessOutput(executor.stderr, logPath),
-    ])
+    appendChildProcessOutput(executor, logPath)
     return executor
   }
 
@@ -1271,10 +1256,7 @@ class RealCloudEnvironment {
       detached: process.platform !== 'win32',
     })
     this.generatedRemoteExecutors.push(executor)
-    await Promise.all([
-      appendProcessOutput(executor.stdout, logPath),
-      appendProcessOutput(executor.stderr, logPath),
-    ])
+    appendChildProcessOutput(executor, logPath)
     return { executor, logPath }
   }
 
@@ -1560,10 +1542,7 @@ class RealCloudEnvironment {
       detached: process.platform !== 'win32',
     })
     this.generatedRemoteExecutors.push(executor)
-    await Promise.all([
-      appendProcessOutput(executor.stdout, logPath),
-      appendProcessOutput(executor.stderr, logPath),
-    ])
+    appendChildProcessOutput(executor, logPath)
     await this.waitForDevice(deviceId, logPath)
     return { home, logPath, executor }
   }

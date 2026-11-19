@@ -23,7 +23,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { DESKTOP_CHECKPOINTS, PLUGIN_SEGMENTS } from '../checkpoints.mjs'
 import { reservePort } from '../port-reservation.mjs'
-import { appendProcessOutput } from '../process-output.mjs'
+import { appendChildProcessOutput } from '../process-output.mjs'
 import {
   crashOwnedProcessTree,
   logDesktopE2eSignal,
@@ -2143,7 +2143,7 @@ export {
   waitForUrl,
   fetchJson,
   resolveExecutable,
-  appendProcessOutput,
+  appendChildProcessOutput,
   processIsAlive,
   macosSleepAssertionIds,
   waitForMacosSleepAssertion,

@@ -282,7 +282,7 @@ import {
   WINDOW_LIFECYCLE_COMPLETION_TEXT,
   WORKTREE_STATUS_ONLY,
   WORKBENCH_READY_TIMEOUT_MS,
-  appendProcessOutput,
+  appendChildProcessOutput,
   assert,
   commandOutput,
   confirmLocalProjectName,
@@ -1675,10 +1675,7 @@ async function main() {
         applicationProcessId: child.pid,
         ownerProcessId: process.pid,
       })
-      await Promise.all([
-        appendProcessOutput(child.stdout, appLogPath, child),
-        appendProcessOutput(child.stderr, appLogPath, child),
-      ])
+      appendChildProcessOutput(child, appLogPath)
       if (process.platform === 'win32') {
         const stopObserving = observeWindowsSocketExhaustion([child.stdout, child.stderr], () => {
           void Promise.resolve()

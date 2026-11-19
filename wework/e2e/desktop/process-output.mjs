@@ -33,6 +33,10 @@ function outputFor(destination) {
   return output
 }
 
+export function appendChildProcessOutput(child, destination) {
+  for (const stream of [child.stdout, child.stderr]) appendProcessOutput(stream, destination, child)
+}
+
 export function appendProcessOutput(stream, destination, owner) {
   if (!stream) return
   if (owner) owners.set(stream, owner)
