@@ -3,8 +3,8 @@ import { access, cp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promis
 import { dirname, join } from 'node:path'
 import { fetchJson, resultDir } from './shared.mjs'
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
-import { waitForValue } from './workspace-agent-setup.mjs'
 import { cleanupPluginUpgradeFixtures } from './plugin-upgrade-fixture-cleanup.mjs'
+import { waitForValue } from './workspace-agent-setup.mjs'
 
 const pluginKey = 'desktop-e2e-upgrade'
 const oldVersion = '0.1.1'
@@ -270,10 +270,10 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
     'Uninstall left the cloud install active'
   )
   await waitForValue(
-    async () => (await readCapabilities()).plugins[managedKey] ?? null,
-    plugin => plugin === null,
-    `Device capability manifest still contains uninstalled plugin ${managedKey}`,
-    5000
+    readCapabilities,
+    capabilities => capabilities.plugins[managedKey] === undefined,
+    'Uninstall did not remove the managed plugin from the local capability manifest',
+    PLUGIN_SYNC_TIMEOUT_MS
   )
   // Immutable packages remain available to running agents; Codex owns its cache.
   await access(removedEntry.store_path)

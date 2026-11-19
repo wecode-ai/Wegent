@@ -47,11 +47,53 @@ fn conversation_transport_dispatches_the_current_turn_context() {
             assert_eq!(next, first);
             let called = client.post(&next.url).bearer_auth(&endpoint.token)
                 .header(CONTEXT_HANDLE_HEADER, &next.headers["X-Wework-Mcp-Context"])
-                .header(MCP_SESSION_ID_HEADER, session)
+                .header(MCP_SESSION_ID_HEADER, &session)
                 .json(&json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_current_context","arguments":{}}}))
                 .send().await.unwrap();
             assert_eq!(called.status(), StatusCode::OK);
             assert_eq!(called.json::<Value>().await.unwrap()["result"]["structuredContent"]["turn"], "second-turn");
+            let handle = &next.headers["X-Wework-Mcp-Context"];
+            let first_execution = retain_control_mcp_context(handle).unwrap().unwrap();
+            let overlapping_execution = retain_control_mcp_context(handle).unwrap().unwrap();
+            let registry = {
+                let running = running_endpoint().lock().unwrap();
+                std::sync::Arc::clone(&running.as_ref().unwrap().contexts)
+            };
+            let expire_idle_deadline = || {
+                registry.lock().unwrap().get_mut(handle).unwrap().expires_at = Instant::now();
+            };
+            expire_idle_deadline();
+            drop(first_execution);
+            let list_providers = || {
+                client
+                    .post(&next.url)
+                    .bearer_auth(&endpoint.token)
+                    .header(CONTEXT_HANDLE_HEADER, handle)
+                    .header(MCP_SESSION_ID_HEADER, &session)
+                    .json(&json!({
+                        "jsonrpc": "2.0",
+                        "id": 3,
+                        "method": "tools/call",
+                        "params": {"name": "list_connection_event_providers", "arguments": {}},
+                    }))
+                    .send()
+            };
+            let active = list_providers().await.unwrap();
+            assert_eq!(active.status(), StatusCode::OK);
+            assert_eq!(
+                active.json::<Value>().await.unwrap()["result"]["structuredContent"]["turn"],
+                "second-turn"
+            );
+
+            let turn_end = Instant::now();
+            drop(overlapping_execution);
+            assert!(registry.lock().unwrap()[handle].expires_at >= turn_end + CONTEXT_HANDLE_TTL);
+            expire_idle_deadline();
+            assert_eq!(
+                list_providers().await.unwrap().status(),
+                StatusCode::UNAUTHORIZED
+            );
+
             request.extra.insert("origin".into(), json!({"type":"stand_in_identity","userId":7}));
             assert!(super::super::mcp::control_mcp_client_config(&request).unwrap().is_none());
         });
