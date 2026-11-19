@@ -65,7 +65,7 @@ Expand **Wait condition** above the composer to see the full effective condition
 
 ### Ask AI to wait for connection events
 
-Follow-up turns in Codex conversations receive a summary of subscriptions still waiting for events. The next turn receives an empty list after the last wait ends. The summary reflects the state at turn submission, and AI can query the subscription tool for the latest state.
+Follow-up turns in Codex conversations receive a summary of subscriptions still waiting for events. The next turn receives an empty list after the last wait ends. The summary reflects the state at turn submission, and AI can query the subscription tool for the latest state. When the conversation has a bound PR or MR, the context includes its link and prompts AI to verify the current commit and use an event subscription if it needs to wait.
 
 In the **task conversation composer**, ask AI to continue here when a document or another connected resource changes. AI discovers installed connection providers, selects the resource and saves a subscription through tools. No manual schedule setup is required. Ordinary conversations and Goals both support this; available events depend on the provider and account permissions. The device executor must advertise event protocol support. Older devices retain ordinary chat and existing PR status queries; unavailable event actions show an upgrade hint.
 

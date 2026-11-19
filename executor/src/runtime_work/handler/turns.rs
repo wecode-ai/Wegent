@@ -1869,7 +1869,7 @@ impl RuntimeWorkRpcHandler {
                     .await?;
                 if let Some(thread) = direct_thread_id.as_deref().or(resume_thread_id.as_deref()) {
                     handler
-                        .append_waiting_event_context(&turn_local_task_id, thread, &mut request)
+                        .append_connection_event_context(&turn_local_task_id, thread, &mut request)
                         .await;
                 }
                 handler

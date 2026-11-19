@@ -48,12 +48,25 @@ fn public_subscription(record: &Value) -> Value {
 }
 
 impl RuntimeWorkRpcHandler {
-    pub(in crate::runtime_work::handler) async fn append_waiting_event_context(
+    pub(in crate::runtime_work::handler) async fn append_connection_event_context(
         &self,
         task: &str,
         thread: &str,
         request: &mut ExecutionRequest,
     ) {
+        let change_requests = self
+            .store
+            .read_task(task, |link| {
+                link.runtime_handle["changeRequests"]
+                    .as_array()
+                    .map(|urls| {
+                        urls.iter()
+                            .filter_map(Value::as_str)
+                            .filter_map(|url| canonical_pr(url).ok())
+                            .collect::<Vec<_>>()
+                    })
+            })
+            .flatten();
         let path = self.event_subscription_path();
         let task = task.to_owned();
         let thread = thread.to_owned();
@@ -79,9 +92,20 @@ impl RuntimeWorkRpcHandler {
             })
         })
         .await;
+        let unavailable = "Waiting subscription state is unavailable. Query list_connection_event_subscriptions if needed.";
         let value = match snapshot {
             Ok(Ok(value)) => value.replace('<', "\\u003c").replace('>', "\\u003e"),
-            _ => "Waiting subscription state is unavailable. Query list_connection_event_subscriptions if needed.".to_owned(),
+            Ok(Err(error)) => {
+                log_executor_event(
+                    "runtime waiting subscription snapshot unavailable",
+                    &[("code", error.code)],
+                );
+                unavailable.to_owned()
+            }
+            Err(_) => {
+                log_executor_event("runtime waiting subscription worker failed", &[]);
+                unavailable.to_owned()
+            }
         };
         let key = if request.extra.contains_key("additionalContext")
             || !request.extra.contains_key("additional_context")
@@ -100,6 +124,20 @@ impl RuntimeWorkRpcHandler {
                 "wework.connection-events.waiting".into(),
                 json!({"kind": "untrusted", "value": value}),
             );
+            if let Some(urls) = change_requests {
+                let value = if urls.is_empty() {
+                    "[]".to_owned()
+                } else {
+                    format!(
+                        "Change requests bound to this conversation: {}\nIf the task needs to wait for checks or merge, verify the current status and exact head SHA. Reuse a matching waiting subscription if present. Otherwise discover the exact resource and call subscribe_connection_events with wait_for_event:true. After arming, recheck once and yield the turn if still waiting. Do not sleep or poll.",
+                        json!(urls)
+                    )
+                };
+                context.insert(
+                    "wework.connection-events.change-requests".into(),
+                    json!({"kind": "application", "value": value}),
+                );
+            }
         }
     }
 

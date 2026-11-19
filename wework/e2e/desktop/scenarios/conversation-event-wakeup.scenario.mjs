@@ -34,13 +34,14 @@ const MARKER = 'WEWORK_CONVERSATION_EVENT'
 const PROVIDER = '@test/connection-source/records'
 
 function latestWaitingSubscriptions(body) {
-  const snapshots = [
-    ...modelRequestTexts(body, 'user').matchAll(
-      /<external_wework\.connection-events\.waiting>([\s\S]*?)<\/external_wework\.connection-events\.waiting>/g
-    ),
-  ]
-  assert.ok(snapshots.length, 'The model must receive a waiting subscription snapshot')
-  return JSON.parse(snapshots.at(-1)[1])
+  const snapshot = body.input.findLast(
+    item =>
+      item.type === 'function_call_output' &&
+      item.namespace === 'agent' &&
+      item.name === 'weworkconnectioneventswaiting'
+  )
+  assert.ok(snapshot, 'The model must receive a waiting subscription snapshot')
+  return JSON.parse(snapshot.output)
 }
 
 export function createDesktopScenario(options) {
