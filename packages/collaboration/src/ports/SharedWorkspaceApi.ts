@@ -144,6 +144,7 @@ export interface WorkspaceTaskBinding {
 }
 
 export interface WorkspaceBoardSnapshot extends CollaborationBoardSnapshot {
+  projectVersion?: number;
   taskBindings: WorkspaceTaskBinding[];
 }
 

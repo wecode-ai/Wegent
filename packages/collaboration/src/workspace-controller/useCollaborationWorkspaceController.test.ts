@@ -296,7 +296,7 @@ describe("collaboration workspace controller", () => {
       const metadata = deferred<CollaborationProject>();
       vi.mocked(api.projects.get).mockReturnValueOnce(metadata.promise);
       const retry = commands.loadProject(project.id);
-      expect(api.projects.get).toHaveBeenCalledTimes(3);
+      expect(api.projects.get).toHaveBeenCalledTimes(4);
       expect(state.loading).toBe(true);
       expect(state.project).toBeNull();
       metadata.resolve(project);
@@ -768,7 +768,7 @@ describe("collaboration workspace controller", () => {
         .mockRejectedValueOnce(
           Object.assign(new Error("Project access revoked"), { status: 403 }),
         )
-        .mockResolvedValueOnce(recovered);
+        .mockResolvedValue(recovered);
       await commands.loadProject(project.id, false, { revalidate: true });
       await commands.loadProject(project.id, false, { revalidate: true });
       expect(state.projects).toEqual([recovered]);

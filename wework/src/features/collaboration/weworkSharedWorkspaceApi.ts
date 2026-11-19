@@ -266,6 +266,7 @@ function toBoardSnapshot(
   contextProjectId: string
 ): WorkspaceBoardSnapshot {
   return {
+    projectVersion: snapshot.project_version,
     items: snapshot.items.map(toIssue),
     members: snapshot.members.map(toMember),
     agents: snapshot.agents.map(toAgent),

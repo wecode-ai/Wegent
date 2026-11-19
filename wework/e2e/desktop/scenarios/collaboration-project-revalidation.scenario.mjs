@@ -51,6 +51,10 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
   }
   const metadataReads = () =>
     proxy.requests.filter(entry => entry.method === 'GET' && entry.path === projectPath()).length
+  const snapshotReads = () =>
+    proxy.requests.filter(
+      entry => entry.method === 'GET' && entry.path === `${projectPath()}/board-snapshot`
+    ).length
   const wait = (load, expected, message) => waitForBoardValue(load, expected, message, uiTimeoutMs)
   const expectColumns = async (control, ids) => {
     await wait(
@@ -164,11 +168,61 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         text: 'Stages v2',
       })
 
+      // A project update between the metadata and snapshot reads must invalidate that pair.
+      await selectTaskTab(control)
+      const beforeRaceReads = metadataReads()
+      const beforeRaceSnapshots = snapshotReads()
+      const raceRequestStart = proxy.requests.length
+      proxy.rule = entry =>
+        entry.method === 'GET' && entry.path === `${projectPath()}/board-snapshot`
+          ? 'hold-response'
+          : null
+      await selectBoardTab(control)
+      await control.command('waitFor', sync('revalidating'), { timeoutMs: uiTimeoutMs })
+      await wait(
+        () => proxy.requests.slice(raceRequestStart).some(entry => entry.committedResponseHeld),
+        true,
+        'The board snapshot response must be held during the concurrent update'
+      )
+      const heldSnapshot = proxy.requests
+        .slice(raceRequestStart)
+        .find(entry => entry.committedResponseHeld)
+      assert.ok(heldSnapshot, 'The held board snapshot request was not found')
+      const raceUpdate = await patch({
+        name: 'Concurrent update without reopening',
+        board_views: view('Stages race', [review, pending]),
+      })
+      const issueBeforeRace = await request(`/api/v1/loop-items/${issue.id}`)
+      await request(`/api/v1/loop-items/${issue.id}`, 'PATCH', {
+        version: issueBeforeRace.version,
+        tags: ['review'],
+      })
+      assert.ok(raceUpdate.version > tabUpdate.version)
+      proxy.rule = () => null
+      assert.equal(await heldSnapshot.release(), true, 'The held snapshot must be released')
+      await expectColumns(control, ['review', 'todo'])
+      await control.command(
+        'waitFor',
+        `${lane('review')} [data-testid="cloud-todo-card-${issue.id}"]`
+      )
+      await waitFresh(control)
+      assert.ok(
+        metadataReads() >= beforeRaceReads + 2,
+        'Revalidation must verify the project version before and after the snapshot'
+      )
+      assert.ok(
+        snapshotReads() >= beforeRaceSnapshots + 2,
+        'A mismatched snapshot must be discarded and read again'
+      )
+      await control.command('waitFor', scoped('[data-testid="board-view-picker"]'), {
+        text: 'Stages race',
+      })
+
       // Native hidden-to-visible recovery must also refresh the retained renderer.
       await control.command('closeMainWindowToTray', 'body')
       const beforeFocusRead = metadataReads()
       const focusUpdate = await patch({ board_views: view('Stages v3', [design, review, pending]) })
-      assert.ok(focusUpdate.version > tabUpdate.version)
+      assert.ok(focusUpdate.version > raceUpdate.version)
       await control.command('focusMainWindow', 'body')
       await wait(
         () => metadataReads() > beforeFocusRead,

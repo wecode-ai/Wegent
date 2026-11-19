@@ -602,6 +602,7 @@ export interface LoopItemPage {
 }
 
 export interface ProjectBoardSnapshot {
+  project_version?: number
   items: CloudLoopItem[]
   task_bindings: LoopItemTaskBinding[]
   members: CloudProjectMember[]

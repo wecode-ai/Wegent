@@ -875,6 +875,7 @@ const externalGitBoardStatuses = [
   "completed",
 ] as const;
 const defaultExternalGitBoardPageSize = 100;
+const maxProjectSnapshotVersionAttempts = 2;
 
 function isExternalGitProject(project: CollaborationProject): boolean {
   return (
@@ -1034,14 +1035,19 @@ export function createCollaborationWorkspaceControllerCommands({
     promise:
       myWorkEnabled && api.myWork ? api.myWork.list() : Promise.resolve([]),
   });
-  const loadStandardSnapshot = (projectId: string) => {
-    const active = standardSnapshotLoads.get(projectId);
+  const loadStandardSnapshot = (
+    projectId: string,
+    options?: { bypassCache?: boolean },
+  ) => {
+    const active = options?.bypassCache
+      ? null
+      : standardSnapshotLoads.get(projectId);
     if (active) return active;
     const pending = api.issues.getBoardSnapshot(projectId).finally(() => {
       if (standardSnapshotLoads.get(projectId) === pending)
         standardSnapshotLoads.delete(projectId);
     });
-    standardSnapshotLoads.set(projectId, pending);
+    if (!options?.bypassCache) standardSnapshotLoads.set(projectId, pending);
     return pending;
   };
   const loadHomeSnapshot = (projectId: string) => {
@@ -1207,6 +1213,53 @@ export function createCollaborationWorkspaceControllerCommands({
     pendingReadRequests.set(issue.id, request);
     return request;
   };
+  const loadProjectBoardSnapshot = async (
+    project: CollaborationProject,
+    options: { useHomeSnapshot: boolean },
+  ): Promise<{
+    snapshot: WorkspaceBoardSnapshot;
+    externalBoard: {
+      parentId: string | null;
+      pageCursors: Record<string, string | null>;
+    } | null;
+  }> => {
+    const externalBoardOptions = getExternalBoardOptions();
+    const externalBoard = isExternalGitProject(project)
+      ? await loadExternalGitBoardSnapshot(
+          api,
+          project.id,
+          externalBoardOptions,
+          getProjectSnapshot(project.id),
+        )
+      : null;
+    const homeSnapshotLoad = options.useHomeSnapshot
+      ? homeSnapshotLoads.get(project.id)
+      : null;
+    const homeSnapshot = homeSnapshotLoad
+      ? await homeSnapshotLoad
+      : options.useHomeSnapshot
+        ? (homeSnapshotResults.get(project.id) ?? null)
+        : null;
+    if (options.useHomeSnapshot) {
+      homeSnapshotLoads.delete(project.id);
+      homeSnapshotResults.delete(project.id);
+    }
+    const snapshot =
+      externalBoard?.snapshot ??
+      homeSnapshot ??
+      (await loadStandardSnapshot(project.id, {
+        bypassCache: !options.useHomeSnapshot,
+      }));
+    return {
+      snapshot,
+      externalBoard: externalBoard
+        ? {
+            parentId: externalBoardOptions.parentId,
+            pageCursors: externalBoard.pageCursors,
+          }
+        : null,
+    };
+  };
   const performProjectLoad = async (
     projectId: string,
     showLoading = true,
@@ -1238,7 +1291,7 @@ export function createCollaborationWorkspaceControllerCommands({
       )
         return;
       revokedProjectIds.delete(projectId);
-      const project = acceptProject(incoming);
+      let project = acceptProject(incoming);
       if (options?.revalidate && project !== incoming) return;
       mutationGeneration = projectMutationGeneration(projectId);
       metadataVersion = project.version;
@@ -1249,30 +1302,63 @@ export function createCollaborationWorkspaceControllerCommands({
         dispatch({ type: "project-metadata-loaded", project });
         return;
       }
-      const externalBoardOptions = getExternalBoardOptions();
-      const externalBoard = isExternalGitProject(project)
-        ? await loadExternalGitBoardSnapshot(
-            api,
-            projectId,
-            externalBoardOptions,
-            getProjectSnapshot(projectId),
+      let snapshotRead: Awaited<
+        ReturnType<typeof loadProjectBoardSnapshot>
+      > | null = null;
+      if (options?.revalidate) {
+        for (
+          let attempt = 0;
+          attempt < maxProjectSnapshotVersionAttempts;
+          attempt += 1
+        ) {
+          const read = await loadProjectBoardSnapshot(project, {
+            useHomeSnapshot: false,
+          });
+          if (
+            !isCurrent() ||
+            mutationGeneration !== projectMutationGeneration(projectId)
           )
-        : null;
-      const homeSnapshotLoad = homeSnapshotLoads.get(projectId);
-      const homeSnapshot = homeSnapshotLoad
-        ? await homeSnapshotLoad
-        : (homeSnapshotResults.get(projectId) ?? null);
-      homeSnapshotLoads.delete(projectId);
-      homeSnapshotResults.delete(projectId);
-      const snapshot =
-        externalBoard?.snapshot ??
-        homeSnapshot ??
-        (await loadStandardSnapshot(projectId));
+            return;
+          const verification = await api.projects.get(projectId);
+          if (
+            !isCurrent() ||
+            mutationGeneration !== projectMutationGeneration(projectId)
+          )
+            return;
+          const verifiedProject = acceptProject(verification);
+          if (verifiedProject !== verification) return;
+          const snapshotVersion = read.snapshot.projectVersion;
+          if (
+            snapshotVersion === verifiedProject.version ||
+            (snapshotVersion === undefined &&
+              verifiedProject.version === project.version)
+          ) {
+            project = verifiedProject;
+            mutationGeneration = projectMutationGeneration(projectId);
+            metadataVersion = project.version;
+            snapshotRead = read;
+            break;
+          }
+          project = verifiedProject;
+          mutationGeneration = projectMutationGeneration(projectId);
+          metadataVersion = project.version;
+          if (attempt + 1 === maxProjectSnapshotVersionAttempts) {
+            throw new Error(messages.loadFailed);
+          }
+          dispatch({ type: "project-metadata-loaded", project });
+        }
+        if (!snapshotRead) throw new Error(messages.loadFailed);
+      } else {
+        snapshotRead = await loadProjectBoardSnapshot(project, {
+          useHomeSnapshot: true,
+        });
+      }
       if (
         !isCurrent() ||
         mutationGeneration !== projectMutationGeneration(projectId)
       )
         return;
+      const { snapshot, externalBoard } = snapshotRead;
       const selected = getSelectedIssue();
       if (
         externalBoard &&
@@ -1307,12 +1393,7 @@ export function createCollaborationWorkspaceControllerCommands({
         type: "project-loaded",
         project,
         snapshot,
-        externalBoard: externalBoard
-          ? {
-              parentId: externalBoardOptions.parentId,
-              pageCursors: externalBoard.pageCursors,
-            }
-          : undefined,
+        externalBoard: externalBoard ?? undefined,
       });
       loadedProjectId = projectId;
     } catch (cause) {

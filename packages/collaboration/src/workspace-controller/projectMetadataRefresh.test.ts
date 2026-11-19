@@ -4,7 +4,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import type { SharedWorkspaceApi, WorkspaceBoardSnapshot } from '../ports/SharedWorkspaceApi'
-import type { CollaborationProject } from '../types'
+import type { CollaborationIssue, CollaborationProject } from '../types'
 import {
   collaborationWorkspaceControllerReducer,
   createCollaborationWorkspaceControllerCommands,
@@ -36,6 +36,25 @@ const updated: CollaborationProject = {
   board_views: { schema_version: 1, views: [], default_view_id: 'default' },
 }
 const snapshot: WorkspaceBoardSnapshot = { items: [], members: [], agents: [], taskBindings: [] }
+const issue: CollaborationIssue = {
+  id: 'issue-1',
+  cloud_project_id: project.id,
+  sequence_number: 1,
+  parent_id: null,
+  created_by_user_id: 1,
+  assignee_user_id: null,
+  title: 'Issue',
+  description: '',
+  status: 'pending',
+  priority: 'none',
+  due_at: null,
+  tags: [],
+  sort_order: 0,
+  version: 1,
+  created_at: '2026-11-17T00:00:00Z',
+  updated_at: '2026-11-17T00:00:00Z',
+  completed_at: null,
+}
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -77,7 +96,7 @@ function createController() {
 }
 
 describe('project metadata revalidation', () => {
-  it('shares a same-version initial board read and clears its superseded loading state', async () => {
+  it('starts a version-bracketed board read and clears its superseded loading state', async () => {
     const { commands, get, getBoardSnapshot, getState } = createController()
     const pending = deferred<WorkspaceBoardSnapshot>()
     get.mockResolvedValueOnce(project)
@@ -86,27 +105,28 @@ describe('project metadata revalidation', () => {
     expect(getState().loading).toBe(true)
     const validation = commands.loadProject(project.id, false, { revalidate: true })
     await vi.waitFor(() => expect(get).toHaveBeenCalledOnce())
-    expect(getBoardSnapshot).toHaveBeenCalledOnce()
+    expect(getBoardSnapshot).toHaveBeenCalledTimes(2)
     pending.resolve(snapshot)
     await Promise.all([initial, validation])
 
-    expect(getState().project).toEqual(project)
+    expect(getState().project).toEqual(updated)
     expect(getState().loading).toBe(false)
   })
 
-  it('reuses a pending home snapshot when initial project metadata has the same version', async () => {
+  it('does not reuse an unversioned home snapshot during revalidation', async () => {
     const { commands, get, getBoardSnapshot } = createController()
     const pending = deferred<WorkspaceBoardSnapshot>()
-    get.mockResolvedValueOnce(project)
+    get.mockResolvedValue(project)
     getBoardSnapshot.mockReturnValueOnce(pending.promise)
     const home = commands.loadProjects()
     await vi.waitFor(() => expect(getBoardSnapshot).toHaveBeenCalledOnce())
 
     const validation = commands.loadProject(project.id, false, { revalidate: true })
     await vi.waitFor(() => expect(get).toHaveBeenCalledOnce())
-    expect(getBoardSnapshot).toHaveBeenCalledOnce()
+    expect(getBoardSnapshot).toHaveBeenCalledTimes(2)
     pending.resolve(snapshot)
     await Promise.all([home, validation])
+    expect(getBoardSnapshot).toHaveBeenCalledTimes(2)
   })
 
   it('publishes fresh metadata before its board finishes loading', async () => {
@@ -123,6 +143,67 @@ describe('project metadata revalidation', () => {
     pending.resolve(snapshot)
     await loading
     expect(getState().project).toEqual(updated)
+  })
+
+  it('discards a snapshot when project metadata changes while it is read', async () => {
+    const { commands, get, getBoardSnapshot, getState } = createController()
+    const oldSnapshot: WorkspaceBoardSnapshot = {
+      ...snapshot,
+      projectVersion: 1,
+      items: [{ ...issue, title: 'Old board' }],
+    }
+    const newSnapshot: WorkspaceBoardSnapshot = {
+      ...snapshot,
+      projectVersion: 2,
+      items: [{ ...issue, title: 'New board' }],
+    }
+    get.mockResolvedValueOnce(project).mockResolvedValue(updated)
+    getBoardSnapshot
+      .mockResolvedValueOnce(oldSnapshot)
+      .mockResolvedValueOnce(newSnapshot)
+
+    await commands.loadProject(project.id, false, { revalidate: true })
+
+    expect(get).toHaveBeenCalledTimes(3)
+    expect(getBoardSnapshot).toHaveBeenCalledTimes(2)
+    expect(getState().project).toEqual(updated)
+    expect(getState().projectItems[project.id]).toEqual(newSnapshot.items)
+  })
+
+  it('accepts a snapshot that already matches the newer project version', async () => {
+    const { commands, get, getBoardSnapshot, getState } = createController()
+    const newSnapshot: WorkspaceBoardSnapshot = {
+      ...snapshot,
+      projectVersion: 2,
+      items: [{ ...issue, title: 'New board' }],
+    }
+    get.mockResolvedValueOnce(project).mockResolvedValue(updated)
+    getBoardSnapshot.mockResolvedValueOnce(newSnapshot)
+
+    await commands.loadProject(project.id, false, { revalidate: true })
+
+    expect(get).toHaveBeenCalledTimes(2)
+    expect(getBoardSnapshot).toHaveBeenCalledOnce()
+    expect(getState().project).toEqual(updated)
+    expect(getState().projectItems[project.id]).toEqual(newSnapshot.items)
+  })
+
+  it('rejects a snapshot that keeps changing beyond the version-check bound', async () => {
+    const { commands, get, getBoardSnapshot, getState } = createController()
+    const latest: CollaborationProject = { ...updated, version: 3, name: 'Latest project' }
+    get
+      .mockResolvedValueOnce(project)
+      .mockResolvedValueOnce(updated)
+      .mockResolvedValueOnce(latest)
+
+    await expect(
+      commands.loadProject(project.id, false, { revalidate: true, throwOnError: true })
+    ).rejects.toThrow('Load failed')
+
+    expect(get).toHaveBeenCalledTimes(3)
+    expect(getBoardSnapshot).toHaveBeenCalledTimes(2)
+    expect(getState().project).toEqual(updated)
+    expect(getState().errorSource).toBe('load')
   })
 
   it('does not let a periodic board refresh supersede an in-flight metadata revalidation', async () => {
@@ -192,7 +273,7 @@ describe('project metadata revalidation', () => {
     await Promise.all([loading, changedBoard])
 
     expect(getState().project).toEqual(updated)
-    expect(get).toHaveBeenCalledOnce()
+    expect(get).toHaveBeenCalledTimes(2)
     expect(getBoardSnapshot).toHaveBeenCalledTimes(2)
   })
 

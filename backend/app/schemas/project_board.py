@@ -12,6 +12,7 @@ from app.schemas.project_chat import ProjectChatAgentView
 
 
 class ProjectBoardSnapshotResponse(BaseModel):
+    project_version: int
     items: list[LoopItemResponse]
     task_bindings: list[LoopItemTaskBindingResponse]
     members: list[CloudProjectMemberResponse]

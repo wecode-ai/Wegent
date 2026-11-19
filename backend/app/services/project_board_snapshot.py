@@ -87,6 +87,7 @@ class ProjectBoardSnapshotService:
         items = self._item_views(db, access, user_id)
         if access.is_viewer:
             return ProjectBoardSnapshotResponse(
+                project_version=access.project.version,
                 items=items,
                 task_bindings=[],
                 members=[],
@@ -106,6 +107,7 @@ class ProjectBoardSnapshotService:
             user_id=user_id,
         )
         return ProjectBoardSnapshotResponse(
+            project_version=access.project.version,
             items=items,
             task_bindings=[
                 LoopItemTaskBindingResponse.model_validate(binding)
