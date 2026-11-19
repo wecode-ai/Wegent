@@ -1,3 +1,4 @@
+import { captureOutputOwnership, inspectOutputOwners } from '../process-output-ownership.mjs'
 import { writeFailureHeap } from './failure-heap-diagnostics.mjs'
 import {
   finishDesktopTeardown,
@@ -5107,6 +5108,17 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
             control.performance.errors.add('Final renderer snapshot was not acknowledged')
       }
     })
+    let outputOwnership = null
+    if (process.platform === 'win32') {
+      await runTeardownStep('process output ownership', async () => {
+        if (app?.exitCode !== null || app?.signalCode !== null) {
+          await recordTeardown({ phase: 'output-ownership', status: 'application-exited' })
+          return
+        }
+        outputOwnership = await captureOutputOwnership(control)
+        await recordTeardown({ phase: 'output-ownership', snapshot: outputOwnership })
+      })
+    }
     await runTeardownStep('desktop application', async () => stopDesktopAppProcess(app))
     await runTeardownStep('error evidence summary', async () => {
       await writeFile(
@@ -5140,7 +5152,17 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     )
     await runTeardownStep('process output', async () => {
       await recordTeardown({ phase: 'output-drain', outputs: processOutputDiagnostics() })
-      await flushProcessOutput()
+      try {
+        await flushProcessOutput()
+      } catch (error) {
+        if (outputOwnership) {
+          await recordTeardown({
+            phase: 'output-owner-identities-after-drain-failure',
+            processes: await inspectOutputOwners(outputOwnership),
+          })
+        }
+        throw error
+      }
     })
     await runTeardownStep('Codex SQLite home', async () =>
       rm(codexSqliteHome, {

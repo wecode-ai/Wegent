@@ -132,6 +132,8 @@ use text_generation::configure_text_generation;
 mod auth_mode;
 #[path = "codex/diagnostics.rs"]
 mod diagnostics;
+mod stdout_reader;
+use stdout_reader::read_persistent_codex_app_server_stdout;
 mod rpc_response;
 use rpc_response::{response_result, CodexRpcOrigin};
 #[path = "codex/home.rs"]
@@ -2049,149 +2051,6 @@ fn codex_router_auth_command() -> (&'static str, Vec<String>) {
 #[cfg(any(windows, test))]
 fn windows_codex_router_auth_script() -> String {
     format!("<nul set /p ={} & exit /b 0", local_model_proxy::API_KEY)
-}
-
-async fn read_persistent_codex_app_server_stdout(
-    mut stdout: CodexStdout,
-    pending: Arc<Mutex<HashMap<u64, PendingCodexResponse>>>,
-    notifications: CodexNotificationHub,
-) {
-    loop {
-        let mut line = String::new();
-        let message = match stdout.read_line(&mut line).await {
-            Ok(0) => {
-                notify_shared_process_closed(
-                    &notifications,
-                    "codex app-server exited while shared process was running",
-                )
-                .await;
-                fail_all_pending(
-                    &pending,
-                    "codex app-server exited while shared process was running".to_owned(),
-                )
-                .await;
-                break;
-            }
-            Ok(_) => match serde_json::from_str::<Value>(&line) {
-                Ok(message) => message,
-                Err(error) => {
-                    notify_shared_process_closed(
-                        &notifications,
-                        &format!("failed to parse codex JSON-RPC message: {error}"),
-                    )
-                    .await;
-                    fail_all_pending(
-                        &pending,
-                        format!("failed to parse codex JSON-RPC message: {error}"),
-                    )
-                    .await;
-                    break;
-                }
-            },
-            Err(error) => {
-                notify_shared_process_closed(
-                    &notifications,
-                    &format!("failed to read codex JSON-RPC message: {error}"),
-                )
-                .await;
-                fail_all_pending(
-                    &pending,
-                    format!("failed to read codex JSON-RPC message: {error}"),
-                )
-                .await;
-                break;
-            }
-        };
-
-        if is_json_rpc_response(&message) {
-            if let Some(request_id) = response_id(&message) {
-                if let Some(request) = pending.lock().await.remove(&request_id) {
-                    let result = response_result(
-                        message,
-                        &request.method,
-                        CodexRpcOrigin::Shared(Some(notifications.process_generation)),
-                    );
-                    if let (Some(context), Ok(response)) = (&request.native_request, &result) {
-                        notifications.update_native_activity(|activity| {
-                            activity.observe_response(context, response)
-                        });
-                    }
-                    let _ = request.sender.send(result);
-                    notifications.thread_activity_changed.notify_waiters();
-                    continue;
-                }
-            }
-        }
-
-        log_codex_mcp_startup_status(&message, notifications.process_generation);
-
-        notifications
-            .send(external_work::project_review_notification(message))
-            .await;
-    }
-    notifications.thread_activity_changed.notify_waiters();
-}
-
-fn log_codex_mcp_startup_status(message: &Value, process_generation: u64) {
-    if message.get("method").and_then(Value::as_str) != Some("mcpServer/startupStatus/updated") {
-        return;
-    }
-    let params = message.get("params").unwrap_or(message);
-    log_executor_event(
-        "codex MCP startup status",
-        &[
-            ("process_generation", process_generation.to_string()),
-            (
-                "thread_id",
-                params
-                    .get("threadId")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-            ),
-            (
-                "server_name",
-                params
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-            ),
-            (
-                "status",
-                params
-                    .get("status")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-            ),
-            (
-                "error_present",
-                params
-                    .get("error")
-                    .is_some_and(|value| !value.is_null())
-                    .to_string(),
-            ),
-            (
-                "failure_reason_present",
-                params
-                    .get("failureReason")
-                    .is_some_and(|value| !value.is_null())
-                    .to_string(),
-            ),
-            (
-                "failure_reason",
-                params["failureReason"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_owned(),
-            ),
-            (
-                "error",
-                diagnostics::redact_diagnostic_text(params["error"].as_str().unwrap_or_default()),
-            ),
-        ],
-    );
 }
 
 async fn notify_shared_process_closed(notifications: &CodexNotificationHub, message: &str) {
