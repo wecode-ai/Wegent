@@ -76,10 +76,6 @@ export async function createDesktopScenario({
   const evidence = []
   const publishedReleases = new Map()
   const userHomeFor = release => join(homePath, `legacy-${release.version}`)
-  const rootFor = release =>
-    namespace
-      ? join(userHomeFor(release), '.wework/apps', namespace)
-      : join(userHomeFor(release), '.wework')
   const workbenchFor = release => join(userHomeFor(release), '.wegent/workbench')
   const desktopFor = release => join(workbenchFor(release), 'wework', namespace || 'default')
   const environment = release => ({
@@ -139,7 +135,9 @@ export async function createDesktopScenario({
   }
 
   async function seed(release) {
-    const root = rootFor(release)
+    // Exercise plugin-format migration in the Home both binaries explicitly use.
+    // Desktop startup no longer relocates the historical installer's Home.
+    const root = desktopFor(release)
     await mkdir(join(root, 'codex'), { recursive: true })
     await copyFile(seedConfig, join(root, 'codex/config.toml'))
     const userSkill = join(userHomeFor(release), 'personal-skill/SKILL.md')
