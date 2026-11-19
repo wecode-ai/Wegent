@@ -57,12 +57,12 @@ export function createConversationEventModel({
       return [assistantMessage(`${marker}_DONE`)]
     }
     if (modelRequestTexts(body).includes(`${marker}_EVENT_RECEIVED`)) {
-      if (phase === 'human') onEvent()
-      const input = body.input.findLast(
+      const inputs = body.input.filter(
         item =>
           item.role === 'user' && JSON.stringify(item.content).includes(`${marker}_EVENT_RECEIVED`)
       )
-      assert.ok(input, 'The event must be delivered as a user message')
+      assert.equal(inputs.length, 1, 'The event must be delivered as one user message')
+      const [input] = inputs
       if (input.id !== undefined) {
         assert.match(input.id, /^msg/, 'Responses rejects message IDs without the msg prefix')
       }
@@ -109,6 +109,8 @@ export function createConversationEventModel({
         ['goal', 'human'].includes(phase) &&
         !requestContainsToolOutput(body, `${marker}_complete`)
       ) {
+        // The Responses continuation also carries this event in its history.
+        if (phase === 'human') onEvent()
         return selectedToolCall(
           `${marker}_complete`,
           selectTool(body, 'update_goal', { status: 'complete' })
