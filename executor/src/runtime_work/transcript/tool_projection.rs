@@ -700,7 +700,7 @@ pub(super) fn tool_status(item: &Value) -> String {
             || is_codex_tool_output_item_type(&item_type)
             || is_likely_codex_tool_output_item_type(&item_type)
             || item.get("output").is_some()
-            || item.get("result").is_some()
+            || item.get("result").is_some_and(|result| !result.is_null())
             || item.get("aggregatedOutput").is_some()
             || item.get("aggregated_output").is_some()
             || item.get("stdout").is_some()
@@ -758,7 +758,7 @@ fn mcp_tool_status(item: &Value, item_type: &str) -> Option<String> {
         return Some("error".to_owned());
     }
 
-    let result = item.get("result")?;
+    let result = item.get("result").filter(|result| !result.is_null())?;
     if result.get("Err").or_else(|| result.get("err")).is_some() {
         return Some("error".to_owned());
     }
