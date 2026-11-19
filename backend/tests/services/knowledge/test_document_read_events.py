@@ -145,7 +145,7 @@ def test_external_mcp_document_read_reports_caller(
         return_value={1: SimpleNamespace(extracted_text="body")},
     )
     result = _get_document_content_sync(user_id=7, document_id=9, offset=0, limit=10)
-    assert '"content":"body"' in result
+    assert result["content"] == "body"
     assert len(read_events) == 1
     assert read_events[0]["data"]["actor_user_id"] == 7
     assert read_events[0]["data"]["effective_reader_id"] == 7
@@ -180,5 +180,5 @@ def test_external_mcp_serialization_failure_is_not_reported_as_success(
         side_effect=ValueError("invalid response"),
     )
     result = _get_document_content_sync(user_id=7, document_id=9, offset=0, limit=10)
-    assert "internal_error" in result
+    assert result == {"error": "Internal error", "code": "internal_error"}
     assert [event["status"] for event in read_events] == ["failed"]
