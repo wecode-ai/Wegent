@@ -11,7 +11,9 @@ use brz_redis::Redis;
 use chrono::{NaiveDateTime, Utc};
 use serde_json::{Value, json};
 
-use crate::socketio::project_chat_messages::{database_timestamp, utc_isoformat};
+use crate::socketio::project_chat_messages::{
+    MessageRow, database_timestamp, message_view, shared_message_payload,
+};
 use crate::socketio_emit::{SOCKETIO_CHANNEL, emit_message};
 
 const TERMINAL: &[&str] = &["succeeded", "failed", "cancelled", "skipped"];
@@ -84,27 +86,27 @@ pub(crate) struct Message {
 
 impl Message {
     pub(crate) fn view(&self) -> Value {
-        let optional = |value: &str| (!value.is_empty()).then(|| value.to_string());
-        json!({
-            "sequenceNumber": self.id,
-            "messageId": self.message_id,
-            "clientMessageId": optional(&self.client_message_id),
-            "projectId": self.project_id,
-            "taskId": optional(&self.task_id),
-            "sender": {"type": self.sender_type, "id": self.sender_id, "name": self.sender_name},
-            "type": self.message_type,
-            "content": self.content,
-            "metadata": self.metadata.0,
-            "triggerMessageId": optional(&self.trigger_message_id),
-            "replyToMessageId": optional(&self.reply_to_message_id),
-            "rootMessageId": optional(&self.thread_root_message_id),
-            "agentId": optional(&self.agent_id),
-            "runtimeAddress": if self.runtime_device_id.is_empty() || self.runtime_task_id.is_empty() {
-                Value::Null
-            } else { json!({"deviceId": self.runtime_device_id, "taskId": self.runtime_task_id}) },
-            "status": self.status,
-            "createdAt": utc_isoformat(self.created_at),
-            "updatedAt": utc_isoformat(self.updated_at),
+        message_view(&MessageRow {
+            id: self.id,
+            message_id: self.message_id.clone(),
+            client_message_id: self.client_message_id.clone(),
+            project_id: self.project_id.clone(),
+            task_id: self.task_id.clone(),
+            sender_type: self.sender_type.clone(),
+            sender_id: self.sender_id.clone(),
+            sender_name: self.sender_name.clone(),
+            message_type: self.message_type.clone(),
+            content: self.content.clone(),
+            metadata: Some(self.metadata.clone()),
+            trigger_message_id: self.trigger_message_id.clone(),
+            reply_to_message_id: self.reply_to_message_id.clone(),
+            thread_root_message_id: self.thread_root_message_id.clone(),
+            agent_id: self.agent_id.clone(),
+            runtime_device_id: self.runtime_device_id.clone(),
+            runtime_task_id: self.runtime_task_id.clone(),
+            status: self.status.clone(),
+            created_at: self.created_at,
+            updated_at: self.updated_at,
         })
     }
 }
@@ -175,7 +177,7 @@ fn identity(value: &Value) -> String {
         .unwrap_or_else(|| value.to_string())
 }
 
-fn final_text(result: Option<&Value>) -> Option<String> {
+pub(crate) fn final_text(result: Option<&Value>) -> Option<String> {
     let result = result?;
     for source in [Some(result), result.get("result")].into_iter().flatten() {
         for key in ["value", "text", "content", "output_text"] {
@@ -431,7 +433,7 @@ pub(crate) async fn publish<R: Redis>(redis: &R, message: &Message) -> Result<()
             message.project_id, message.task_id
         )
     };
-    let data = serde_json::to_string(&json!([message.view()]))?;
+    let data = serde_json::to_string(&json!([shared_message_payload(&message.view())]))?;
     let payload = emit_message(
         "wework:project_chat:message:created",
         &data,
@@ -535,6 +537,25 @@ mod tests {
             crate::socketio::project_chat_messages::utc_timestamp(message.updated_at),
             updated_utc
         );
+    }
+
+    #[test]
+    fn background_activity_uses_the_canonical_provenance_and_room_source_contract() {
+        let (_, mut message) = activity();
+        message.runtime_device_id = "owner-device".into();
+        message.runtime_task_id = "private-task".into();
+        message.message_type = "agent_status".into();
+        message.content = "Private planning process".into();
+        message.metadata = Json(json!({"private_prompt":"secret","dispatch_role":"manager"}));
+        let shared = shared_message_payload(&message.view());
+        assert_eq!(shared["generationSource"], "ai");
+        assert_eq!(shared["confirmationState"], "pending");
+        assert_eq!(shared["traceState"], "restricted");
+        assert_eq!(shared["traceRef"].as_str().unwrap().len(), 64);
+        assert!(shared["runtimeAddress"].is_null());
+        assert_eq!(shared["content"], "");
+        assert_eq!(shared["metadata"], json!({"dispatch_role":"manager"}));
+        assert_eq!(message.content, "Private planning process");
     }
 
     #[test]

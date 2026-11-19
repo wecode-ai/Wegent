@@ -122,6 +122,7 @@ export const HOST_CAPABILITIES = [
   'e2e.getApplicationMenuSnapshot',
   'e2e.activateApplicationMenu',
   'e2e.hideMainWindow',
+  'e2e.blurMainWindow',
   'e2e.getWindowFocusSnapshot',
   'e2e.getWindowBackgroundPolicy',
   'e2e.activateTray',

@@ -15,6 +15,7 @@ interface WorkItemComposerGuideProps {
   item?: CloudLoopItem | null
   api?: ProjectSpaceApi
   currentTask?: RuntimeTaskAddress | null
+  taskOwnerKey?: string | null
   goalPresent?: boolean
   integrated?: boolean
   toolbar?: boolean
@@ -43,6 +44,7 @@ function WorkItemComposerGuideContent({
   item,
   api,
   currentTask,
+  taskOwnerKey,
   goalPresent = false,
   integrated = false,
   toolbar = false,
@@ -57,9 +59,9 @@ function WorkItemComposerGuideContent({
   const containerRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const canChangeProject = Boolean(onSelectProject)
-  const pickerStoreKey = currentTask
-    ? `task:${currentTask.deviceId}:${currentTask.taskId}`
-    : (item?.id ?? null)
+  const pickerStoreKey =
+    taskOwnerKey ??
+    (currentTask ? `task:${currentTask.deviceId}:${currentTask.taskId}` : (item?.id ?? null))
   // Open state outlives this component: a pane remount during restore must
   // re-render an open picker instead of silently closing it (issue #4637).
   // Persisted only for identity-stable guides; project-only guides keep
@@ -94,30 +96,57 @@ function WorkItemComposerGuideContent({
   const menuOpen = open && canChangeProject
   const closeMenu = useCallback(() => {
     if (import.meta.env.VITE_WEWORK_E2E === 'true')
-      console.debug('[Wework] Project picker lifecycle', { event: 'close-requested', traceId })
+      console.debug(
+        '[Wework] Project picker lifecycle',
+        JSON.stringify({ event: 'close-requested', traceId })
+      )
     setOpen(false)
   }, [setOpen, traceId])
 
   useEffect(() => {
     if (import.meta.env.VITE_WEWORK_E2E !== 'true') return
-    console.debug('[Wework] Project picker lifecycle', { event: 'mounted', traceId })
+    console.debug(
+      '[Wework] Project picker lifecycle',
+      JSON.stringify({ event: 'mounted', traceId })
+    )
     return () => {
-      console.debug('[Wework] Project picker lifecycle', { event: 'unmounted', traceId })
+      console.debug(
+        '[Wework] Project picker lifecycle',
+        JSON.stringify({ event: 'unmounted', traceId })
+      )
     }
   }, [traceId])
 
   useEffect(() => {
     if (import.meta.env.VITE_WEWORK_E2E !== 'true') return
-    console.debug('[Wework] Project picker lifecycle', {
-      event: 'state',
-      traceId,
-      open,
-      projectId: project?.id ?? null,
-      projectStore: project?.project_store ?? null,
-      itemId: item?.id ?? null,
-      taskId: currentTask?.taskId ?? null,
-    })
-  }, [traceId, open, project?.id, project?.project_store, item?.id, currentTask?.taskId])
+    console.debug(
+      '[Wework] Project picker lifecycle',
+      JSON.stringify({
+        event: 'state',
+        traceId,
+        open,
+        projectId: project?.id ?? null,
+        projectStore: project?.project_store ?? null,
+        itemId: item?.id ?? null,
+        taskId: currentTask?.taskId ?? null,
+        deviceId: currentTask?.deviceId ?? null,
+        pickerStoreKey,
+        canChangeProject,
+        menuOpen,
+      })
+    )
+  }, [
+    traceId,
+    open,
+    project?.id,
+    project?.project_store,
+    item?.id,
+    currentTask?.taskId,
+    currentTask?.deviceId,
+    pickerStoreKey,
+    canChangeProject,
+    menuOpen,
+  ])
 
   useEffect(() => {
     if (!api || !itemId) return

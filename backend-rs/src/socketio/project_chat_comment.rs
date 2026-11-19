@@ -117,7 +117,7 @@ pub(super) async fn enqueue_root(
                 let execution = if let Some((id, _)) = member.as_ref() {
                     load_execution(tx, trigger, *id).await?
                 } else {
-                    bound_execution(tx, trigger, &bound).await?
+                    bound_execution(state, tx, trigger, &bound).await?
                 };
                 let Some(execution) = execution else {
                     return Ok(Err(execution_failed()));
@@ -283,7 +283,10 @@ pub(super) async fn enqueue_root(
             "Project chat comment execution queued"
         );
     }
-    Ok((vec![messages::message_view(&row)], new_response))
+    Ok((
+        vec![messages::message_view_with_actor(state, user_id, &row).await?],
+        new_response,
+    ))
 }
 
 async fn load_comment_attachments(
@@ -444,6 +447,7 @@ fn claim_human_reply(
 }
 
 async fn bound_execution(
+    state: &AppState,
     tx: &mut brz_mysql::MysqlTransactionService,
     trigger: &MessageRow,
     bound: &MessageRow,
@@ -470,6 +474,13 @@ async fn bound_execution(
         )
     {
         return Ok(Some(execution));
+    }
+    if execution.execution_environment == "wegent" {
+        return if robot::managed::source_matches(state, &execution, &bound.metadata()).await? {
+            Ok(Some(execution))
+        } else {
+            Ok(None)
+        };
     }
     let owner = execution.executor_owner_user_id;
     let recorded = crate::device_identity::resolve_owned_device_alias_on(

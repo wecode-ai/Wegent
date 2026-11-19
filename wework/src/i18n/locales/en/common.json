@@ -4524,8 +4524,13 @@
     "plugins_install_authorization_pending": "{{name}} is installed. Connect your account in plugin details if required.",
     "plugins_local_sync_network_error": "The service is temporarily unavailable. Check your network and retry; submitted operations can resume after recovery.",
     "plugins_local_sync_busy": "Plugin state is still synchronizing. Try again shortly.",
+    "plugins_local_sync_processing": "Processing plugin changes.",
+    "plugins_local_sync_confirmation_pending": "Local plugin changes are complete. Syncing installation status.",
     "plugins_local_sync_apply_error": "Local plugin processing did not finish. Refresh the installation state and retry.",
-    "plugins_local_sync_unconfirmed": "The submission result is not confirmed. Refresh to check the installation state first.",
+    "plugins_local_sync_unconfirmed": "Confirming the plugin operation in the background.",
+    "plugins_local_recovery_denied": "The plugin operation failed because this account lacks permission.",
+    "plugins_local_recovery_missing": "The plugin operation failed because the plugin or version is no longer available.",
+    "plugins_local_recovery_rejected": "The server rejected the plugin operation.",
     "plugins_local_sync_journal_error": "Local operation records could not be read or saved. Check disk space and permissions, then retry.",
     "plugins_local_sync_superseded": "Another operation changed the plugin target. Refresh and use the latest state.",
     "plugins_local_sync_disabled": "New local plugin operations are temporarily disabled. Try again later.",
@@ -4604,6 +4609,18 @@
     "source_unavailable": "The source conversation is unavailable. Existing messages can still be kept or removed."
   },
   "todo": {
+    "dispatch": {
+      "queued": "Assistant queued",
+      "waiting_device": "Waiting for a device",
+      "blocked_policy": "Automatic handling is off",
+      "tag_mismatch": "Issue tags do not match assistant scope",
+      "running": "Assistant running",
+      "waiting_user": "Waiting for input or publication",
+      "completed": "Assistant result published",
+      "failed": "Assistant failed",
+      "cancelled": "Assistant cancelled",
+      "repair": "Assistant settings"
+    },
     "comment_assignment_mode": "Assignment action",
     "assign_current_issue": "Assign current Issue",
     "create_child_issue": "Create child Issue",
