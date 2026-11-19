@@ -185,7 +185,7 @@ export function usePluginInstalledOperations({
       catalog
         .getSnapshot()
         .pluginMarketplaceState.items.find(item => String(item.id) === String(id))
-    operations.beginUninstall(id)
+    operations.beginUninstall(id, catalogItem?.id)
     const markUninstalledLocally = () => {
       const marketplaceId = plugin
         ? installedPluginMarketplaceId(plugin.raw)
@@ -300,7 +300,7 @@ export function usePluginInstalledOperations({
       })
       .finally(() => {
         if (!isCurrent()) return
-        operations.finishUninstall(id)
+        operations.finishUninstall(id, catalogItem?.id)
       })
   }
 

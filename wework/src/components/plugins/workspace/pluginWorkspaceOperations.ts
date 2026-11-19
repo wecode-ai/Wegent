@@ -8,6 +8,9 @@ interface PendingLocalAuth {
   resolve(): void
   reject(error: Error): void
 }
+export const marketplaceUninstallOperationKey = (id: string | number) =>
+  JSON.stringify(['marketplace-uninstall', String(id)])
+
 export function createPluginWorkspaceOperations(key: string) {
   let snapshot: {
     installingMarketplacePluginIds: Set<string | number>
@@ -70,12 +73,17 @@ export function createPluginWorkspaceOperations(key: string) {
       next.delete(id)
       publish({ installingMarketplacePluginIds: next })
     },
-    beginUninstall(id: string | number) {
-      publish({ uninstallingPluginIds: new Set(snapshot.uninstallingPluginIds).add(String(id)) })
+    beginUninstall(id: string | number, marketplaceItemId?: string | number) {
+      const next = new Set(snapshot.uninstallingPluginIds).add(String(id))
+      if (marketplaceItemId !== undefined)
+        next.add(marketplaceUninstallOperationKey(marketplaceItemId))
+      publish({ uninstallingPluginIds: next })
     },
-    finishUninstall(id: string | number) {
+    finishUninstall(id: string | number, marketplaceItemId?: string | number) {
       const next = new Set(snapshot.uninstallingPluginIds)
       next.delete(String(id))
+      if (marketplaceItemId !== undefined)
+        next.delete(marketplaceUninstallOperationKey(marketplaceItemId))
       publish({ uninstallingPluginIds: next })
     },
     beginPolicy(id: string | number) {
