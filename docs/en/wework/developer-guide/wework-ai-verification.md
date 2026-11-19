@@ -462,3 +462,7 @@ In E2E mode, Executor records receipt and dispatch times for native `commandExec
 Windows process-tree termination checks the `taskkill` exit code. Partial descendant termination fails with `ERR_WINDOWS_PROCESS_TREE_TERMINATION`, retaining the target PID and exit code, even if the parent has exited. This does not prove that a failed descendant holds a log handle; the independent output-drain gate still runs.
 
 A termination-command failure also records presence and creation times for the known owned PIDs immediately; a later drainage failure records another observation. The original error is rethrown without automatically retrying termination.
+
+Private activity-source diagnostics record message ID, sequence, revision, source state, address presence, and lookup duration separately for initial snapshots, broadcasts, and targeted resolution. Obsolete revisions and inactive subscriptions remain observable. Message content, raw trace references, and Runtime addresses are excluded; permissions and stale-response guards are unchanged.
+
+Wework forwards these safe fields through the message client diagnostic callback to the existing `reportE2EDiagnostic` channel, persisting info records in the shared journal. The debug-panel ring buffer is not the only evidence source.

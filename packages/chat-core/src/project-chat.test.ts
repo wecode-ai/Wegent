@@ -144,6 +144,7 @@ describe('createProjectChatClient', () => {
     async (traceState) => {
       const room: ProjectChatMessage = {
         ...message,
+        content: 'private activity content',
         traceRef: 'opaque',
         traceState: 'restricted',
         runtimeAddress: null,
@@ -167,7 +168,9 @@ describe('createProjectChatClient', () => {
         })
       })
       const onMessage = vi.fn()
+      const diagnostics: unknown[] = []
       const client = createProjectChatClient({
+        onDiagnostic: (type, details) => diagnostics.push({ type, details }),
         socketBaseUrl: 'https://cloud.example.com',
         socketPath: '/socket.io',
         getToken: () => 'token',
@@ -192,6 +195,15 @@ describe('createProjectChatClient', () => {
         expect.any(Function),
       )
       expect(room.runtimeAddress).toBeNull()
+      expect(diagnostics.length).toBeGreaterThan(0)
+      const diagnosticText = JSON.stringify(diagnostics)
+      for (const privateValue of [
+        'private activity content',
+        'opaque',
+        'owned-device',
+        'private-task',
+      ])
+        expect(diagnosticText).not.toContain(privateValue)
     },
   )
 

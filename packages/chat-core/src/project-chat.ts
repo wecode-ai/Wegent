@@ -178,6 +178,10 @@ interface ProjectChatClientOptions {
   getToken: () => string | null
   clientOrigin?: 'wework' | 'web'
   requestRunnerSelection?: (request: unknown) => Promise<unknown>
+  onDiagnostic?: (
+    type: string,
+    details: Record<string, string | number | boolean | null>,
+  ) => void
 }
 
 interface SocketAck<T> {
@@ -193,6 +197,27 @@ interface SocketAck<T> {
 export function createProjectChatClient(
   options: ProjectChatClientOptions,
 ): ProjectChatClient {
+  function logActivitySource(
+    stage: string,
+    message: ProjectChatMessage,
+    fields: Record<string, string | number | boolean | null> = {},
+  ): void {
+    if (!message.traceRef && !message.metadata.activity_type) return
+    const details = {
+      stage,
+      messageId: message.messageId,
+      sequenceNumber: message.sequenceNumber,
+      traceState: message.traceState ?? 'unknown',
+      hasTraceRef: Boolean(message.traceRef),
+      hasRuntimeAddress: Boolean(
+        message.runtimeAddress?.deviceId && message.runtimeAddress.taskId,
+      ),
+      ...fields,
+    }
+    console.debug('[Wework] Project chat activity source', details)
+    options.onDiagnostic?.('project-chat-source', details)
+  }
+
   const client = createSocketClient({
     socketBaseUrl:
       typeof options.socketBaseUrl === 'function'
@@ -253,9 +278,11 @@ export function createProjectChatClient(
       >()
       const sourceReads = new Map<string, Promise<void>>()
       const resolveSource = (message: ProjectChatMessage, revision: number) => {
+        logActivitySource('received', message, { revision })
         if (!message.traceRef || message.traceState !== 'restricted') return
         // Resolve this viewer's exact persisted source; the first message's
         // sequence zero cursor otherwise selects the newest history page.
+        const startedAt = Date.now()
         const read = emitWithAck<ProjectChatSubscription>(
           client,
           SUBSCRIBE_EVENT,
@@ -268,17 +295,34 @@ export function createProjectChatClient(
           },
         )
           .then((snapshot) => {
-            if (!active) {
-              leaveUnusedRoom(projectId, taskId)
-              return
-            }
-            if ((revisions.get(message.messageId) ?? 0) !== revision) return
             const resolved = snapshot.messages.find(
               (row) =>
                 row.messageId === message.messageId &&
                 row.projectId === projectId &&
                 (row.taskId ?? undefined) === taskId,
             )
+            const currentRevision = revisions.get(message.messageId) ?? 0
+            logActivitySource('resolved', message, {
+              revision,
+              currentRevision,
+              active,
+              elapsedMs: Date.now() - startedAt,
+              matched: Boolean(resolved),
+              returnedTraceState: resolved?.traceState ?? 'unknown',
+              returnedRuntimeAddress: Boolean(
+                resolved?.runtimeAddress?.deviceId &&
+                resolved.runtimeAddress.taskId,
+              ),
+              latestPresent: latestMessages.has(message.messageId),
+              traceMatches:
+                latestMessages.get(message.messageId)?.traceRef ===
+                message.traceRef,
+            })
+            if (!active) {
+              leaveUnusedRoom(projectId, taskId)
+              return
+            }
+            if (currentRevision !== revision) return
             const latest = latestMessages.get(message.messageId)
             if (resolved && latest && latest.traceRef === message.traceRef) {
               resolvedSources.set(message.messageId, {
@@ -376,6 +420,7 @@ export function createProjectChatClient(
         )
         subscribed = true
         for (const message of snapshot.messages) {
+          logActivitySource('snapshot', message)
           const previous = latestMessages.get(message.messageId)
           if (!previous || acceptsProjectChatMessage(previous, message))
             latestMessages.set(message.messageId, message)
