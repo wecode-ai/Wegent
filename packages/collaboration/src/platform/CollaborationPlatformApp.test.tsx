@@ -5525,7 +5525,9 @@ describe("CollaborationPlatformApp real component flow", () => {
     const { api } = createApi({ initialProjects: [] });
     api.automations!.list = vi
       .fn()
-      .mockRejectedValue(new Error("Configuration unavailable"));
+      .mockRejectedValue(
+        Object.assign(new Error("Configuration unavailable"), { status: 500 }),
+      );
     const templateStore = new CollaborationTemplateStore({
       scope: "partial-template",
       ownerId: 7,
@@ -5543,7 +5545,9 @@ describe("CollaborationPlatformApp real component flow", () => {
     await click(byTestId("collaboration-project-create-confirm"));
     expect(api.projects.create).toHaveBeenCalledTimes(1);
     expect(container.textContent).toContain("项目已创建");
-    expect(container.textContent).toContain("Configuration unavailable");
+    expect(container.textContent).toContain("服务端");
+    expect(container.textContent).toContain("HTTP 500");
+    expect(container.textContent).not.toContain("Configuration unavailable");
     expect(
       container
         .querySelector('[role="alert"]')!

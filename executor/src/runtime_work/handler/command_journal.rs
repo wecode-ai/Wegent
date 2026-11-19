@@ -776,6 +776,11 @@ impl RuntimeWorkRpcHandler {
         turn: &SpawnTurnRequest,
         state: CommandState,
     ) {
+        let outcome = if state == CommandState::Failed {
+            "failed"
+        } else {
+            "cancelled"
+        };
         if turn.request.extra.contains_key(quota_recovery::MARKER) {
             self.finish_quota_command(turn).await;
             return;
@@ -824,6 +829,15 @@ impl RuntimeWorkRpcHandler {
                 );
             }
         }
+        self.store.update_task(&turn.local_task_id, |link| {
+            // Preparation can end after admission but before a native process binds.
+            if crate::runtime_work::lifecycle::native_execution_state(link).is_some_and(|state| {
+                state.phase == crate::runtime_work::lifecycle::NativeExecutionPhase::Starting
+                    && state.process_generation.is_none()
+            }) {
+                crate::runtime_work::lifecycle::settle_native_execution(link, outcome);
+            }
+        });
         self.finish_scheduled_turn_locked(&turn.local_task_id, operation)
             .await;
     }

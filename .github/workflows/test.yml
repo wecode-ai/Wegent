@@ -393,6 +393,16 @@ jobs:
           cargo test --locked -p wegent-backend-rs --lib personal_issues::mysql_tests -- --ignored \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/personal-issues-mysql.log
 
+      - name: Verify template import receipts and client recovery with MySQL
+        working-directory: backend-rs
+        env:
+          GIT_TOKEN_AES_KEY: "01234567890123456789012345678901"
+          GIT_TOKEN_AES_IV: "0123456789abcdef"
+        run: |
+          set -o pipefail
+          cargo test --locked --lib template_imports::mysql_tests -- --ignored --nocapture \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/template-imports-mysql.log
+
       - name: Verify Responses HTTP E2E with large JSON and long conversations
         working-directory: backend-rs
         env:

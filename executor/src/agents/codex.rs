@@ -123,6 +123,7 @@ mod cloud_config_error_tests;
 #[path = "codex/debug_stdout.rs"]
 mod debug_stdout;
 mod external_work;
+mod home_writer;
 #[cfg(test)]
 mod native_event_tests;
 mod reply_prediction;
@@ -1545,8 +1546,8 @@ pub(crate) async fn terminate_shared_codex_app_servers() -> usize {
 
 fn is_codex_cloud_config_error(error: &str) -> bool {
     error.contains("cloud config bundle")
-        || ((error.contains("failed to read configuration layers")
-            || error.contains("failed to load configuration:"))
+        || ((error.contains("failed to load configuration")
+            || error.contains("failed to read configuration layers"))
             && error.contains("Your authentication session could not be refreshed automatically. Please log out and sign in again."))
 }
 
@@ -1557,6 +1558,7 @@ struct CodexAppServerSharedState {
     next_id: u64,
     auth_mode: CodexAuthMode,
     active_threads: HashMap<String, usize>,
+    named_home_writer_admission: Arc<Mutex<()>>,
     preparing_turns: startup::SharedTurnPreparations,
     thread_activity_changed: Arc<tokio::sync::Notify>,
     mcp_app_sessions: HashSet<(String, String, String)>,
@@ -1619,6 +1621,7 @@ impl Default for CodexAppServerSharedState {
             next_id: 1,
             auth_mode: CodexAuthMode::default(),
             active_threads: HashMap::new(),
+            named_home_writer_admission: Arc::new(Mutex::new(())),
             preparing_turns: startup::SharedTurnPreparations::default(),
             thread_activity_changed: Arc::new(tokio::sync::Notify::new()),
             mcp_app_sessions: HashSet::new(),
@@ -2832,13 +2835,17 @@ pub async fn run_codex_app_server_turn_with_cancel(
 async fn run_codex_app_server_turn_with_runtime(
     binary: &str,
     request: ExecutionRequest,
-    options: CodexAppServerTurnOptions,
+    mut options: CodexAppServerTurnOptions,
     runtime_notifications: Option<CodexNotificationHub>,
 ) -> Result<CodexAppServerTurn, String> {
     let mut capability_lease =
         Some(crate::services::capability_activation::begin_execution().await);
     let _home_lease = super::instance_home::acquire(&request)?;
     let admission_client = CodexAppServerClient::new(binary).for_request(&request)?;
+    let _home_writer = admission_client
+        .admit_named_home_writer(options.cancellation.as_mut())
+        .await
+        .map_err(|()| CODEX_APP_SERVER_TURN_CANCELLED.to_owned())?;
     let mut thread_admission = match options
         .resume_thread_id
         .as_deref()

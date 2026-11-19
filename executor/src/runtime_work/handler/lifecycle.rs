@@ -29,7 +29,7 @@ impl RuntimeWorkRpcHandler {
         task_id: &str,
         state: &NativeExecutionState,
     ) {
-        if state.phase != NativeExecutionPhase::Idle || self.is_active_local_task(task_id) {
+        if state.phase != NativeExecutionPhase::Idle || self.has_local_execution_owner(task_id) {
             return;
         }
         if !self
@@ -43,28 +43,35 @@ impl RuntimeWorkRpcHandler {
         }
         let handler = self.clone();
         let task_id = task_id.to_owned();
-        let settled = state.clone();
+        let state = state.clone();
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             runtime.spawn(async move {
-                let operation = handler.turn_queue_operation.clone().lock_owned().await;
-                // Recheck after admission: a newer local or native turn may now
-                // own this task, so an older completion must not free its slot.
-                // Snapshot revisions also include metadata, which does not transfer native ownership.
-                let still_settled = handler.store.read_task(&task_id, |link| {
-                    native_execution_state(link).is_some_and(|state| {
-                        state.phase == NativeExecutionPhase::Idle
-                            && state.epoch == settled.epoch
-                            && state.process_generation == settled.process_generation
-                            && state.native_sequence == settled.native_sequence
-                            && state.latest_turn_id == settled.latest_turn_id
-                    })
-                }) == Some(true);
-                if still_settled && !handler.is_active_local_task(&task_id) {
-                    handler
-                        .finish_scheduled_turn_locked(&task_id, operation)
-                        .await;
-                }
+                handler
+                    .finish_settled_native_execution(&task_id, &state)
+                    .await;
             });
+        }
+    }
+
+    pub(super) async fn finish_settled_native_execution(
+        &self,
+        task_id: &str,
+        expected: &NativeExecutionState,
+    ) {
+        let operation = self.turn_queue_operation.clone().lock_owned().await;
+        // Snapshot revisions also version model, Goal, and interaction metadata.
+        // Capacity belongs to the native boundary, not that presentation revision.
+        let still_settled = self.store.read_task(task_id, |link| {
+            native_execution_state(link).is_some_and(|state| {
+                state.phase == NativeExecutionPhase::Idle
+                    && state.epoch == expected.epoch
+                    && state.process_generation == expected.process_generation
+                    && state.native_sequence == expected.native_sequence
+                    && state.latest_turn_id == expected.latest_turn_id
+            })
+        }) == Some(true);
+        if still_settled && !self.has_local_execution_owner(task_id) {
+            self.finish_scheduled_turn_locked(task_id, operation).await;
         }
     }
 

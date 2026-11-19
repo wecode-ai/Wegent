@@ -407,14 +407,15 @@ impl RuntimeWorkRpcHandler {
             self.finish_quota_command(&turn).await;
             return;
         };
+        // Local execution ownership now serializes this task. Cancellation must
+        // acquire the send gate while native quota requests are pending.
+        drop(send);
         let Some(mut wait) = wait(&turn) else {
             self.finish_local_task_execution(&turn.local_task_id, execution);
             self.end_quota_turn(&turn, "Invalid saved quota recovery record")
                 .await;
             return;
         };
-        // Cancellation must acquire the send gate while native account reads are pending.
-        drop(send);
         let checked = tokio::select! {
             biased;
             _ = &mut cancelled => {

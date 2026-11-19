@@ -25,6 +25,7 @@ fn input() -> (Value, SpawnTurnRequest) {
 
 #[tokio::test]
 async fn synthetic_interruption_never_becomes_a_durable_cancel_receipt() {
+    let _environment = NativeHistoryEnvironment::new();
     for completed in [false, true] {
         let (mut handler, root) = isolated_runtime_work_handler("command-native-boundary");
         handler.command_journal.lock().unwrap().clear();
@@ -77,6 +78,7 @@ async fn synthetic_interruption_never_becomes_a_durable_cancel_receipt() {
 
 #[tokio::test]
 async fn queued_history_keeps_command_unconfirmed_when_processing_admission_closes() {
+    let _environment = NativeHistoryEnvironment::new();
     let (mut handler, root) = isolated_runtime_work_handler("command-history-busy");
     handler.command_journal.lock().unwrap().clear();
     install_native_history(

@@ -16,6 +16,10 @@ const USER_ID = 9001
 /** A project connection must visibly enable a previously disabled personal stand-in. */
 export function createDesktopScenario({ uiTimeoutMs }) {
   return {
+    appEnvironment: {
+      WEWORK_E2E_HOST_PIPE_DIAGNOSTICS: '1',
+      WEWORK_PROJECT_INDEX_DIAGNOSTICS: '1',
+    },
     async verify(control) {
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')

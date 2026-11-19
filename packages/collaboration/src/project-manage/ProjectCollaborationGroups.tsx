@@ -18,6 +18,10 @@ import {
 } from "../templates/agents";
 import { applyProjectTemplate } from "../templates/projectConfiguration";
 import { templateMessages } from "../templates/messages";
+import { reconcileCreatedTemplateFailure } from "../templates/projectApplyRecovery";
+import { ProjectTemplateImportRecovery } from "../templates/ProjectTemplateImportRecovery";
+import { TemplateImportRetryError } from "../templates/projectTemplateImport";
+import type { TemplateImportOperation } from "../templates/projectTemplateImportTypes";
 import { createCollaborationTranslator } from "../i18n";
 import { requestFailureMessage } from "../controls/requestFailure";
 import {
@@ -75,9 +79,15 @@ function ScopedProjectCollaborationGroups({
     onProjectChanged,
   );
   const translate = createCollaborationTranslator(locale);
+  const [importRevision, setImportRevision] = useState(0);
+  const [importOperation, setImportOperation] =
+    useState<TemplateImportOperation>();
 
   const active = useRef(false);
+  const currentLocale = useRef(locale);
+  currentLocale.current = locale;
   const reloadRevision = useRef(0);
+  const isCurrent = () => active.current && currentLocale.current === locale;
 
   const requireActive = () => {
     if (!active.current) {
@@ -130,6 +140,32 @@ function ScopedProjectCollaborationGroups({
   async function reloadAfterMutation() {
     await projectRefresh.refresh();
     await reload();
+  }
+
+  const onGroupsRefreshed = (refreshedGroups: CollaborationGroup[]) => {
+    if (!isCurrent()) return;
+    setGroups(refreshedGroups);
+    setCollectionState("ready");
+    setGroupsError(null);
+  };
+
+  async function finishTemplate(createdGroups: CollaborationGroup[]) {
+    if (!isCurrent()) return;
+    try {
+      await reload();
+      if (!isCurrent()) return;
+      const latest = await api.projects.get(projectId);
+      if (isCurrent()) onProjectChanged?.(latest);
+    } catch (cause) {
+      if (!isCurrent()) return;
+      throw await reconcileCreatedTemplateFailure(cause, {
+        api,
+        projectId,
+        locale,
+        createdGroups,
+        onGroupsRefreshed,
+      });
+    }
   }
 
   useEffect(() => {
@@ -304,6 +340,21 @@ function ScopedProjectCollaborationGroups({
           </button>
         </div>
       ) : null}
+      {canManage && location === "cloud" && (
+        <ProjectTemplateImportRecovery
+          api={api}
+          projectId={projectId}
+          locale={locale}
+          isActive={isCurrent}
+          operation={importOperation}
+          refreshKey={importRevision}
+          onGroupsRefreshed={onGroupsRefreshed}
+          onResumed={async (createdGroups) => {
+            await finishTemplate(createdGroups);
+            if (isCurrent()) setImportOperation(undefined);
+          }}
+        />
+      )}
       <WorkspaceCollaborationGroupsConfiguration
         groups={groups}
         collectionState={collectionState}
@@ -327,17 +378,26 @@ function ScopedProjectCollaborationGroups({
           },
           async createTemplateGroups(document, drafts) {
             requireActive();
-            const created = await applyProjectTemplate(
-              api,
-              projectId,
-              document,
-              drafts,
-              locale,
-              templateMessages[locale].partial,
-              templateRoutingResolver(),
-            );
-            await reloadAfterMutation();
-            return created;
+            try {
+              const created = await applyProjectTemplate(
+                api,
+                projectId,
+                document,
+                drafts,
+                locale,
+                templateMessages[locale].partial,
+                templateRoutingResolver(),
+                onGroupsRefreshed,
+              );
+              await finishTemplate(created);
+              return created;
+            } catch (cause) {
+              if (isCurrent() && cause instanceof TemplateImportRetryError) {
+                setImportOperation(cause.operation);
+                setImportRevision((value) => value + 1);
+              }
+              throw cause;
+            }
           },
           searchUsers: async () => [],
           addMember: async () => {

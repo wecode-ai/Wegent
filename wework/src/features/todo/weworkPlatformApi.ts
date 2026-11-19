@@ -89,6 +89,28 @@ export function createWeworkPlatformApi(
 
   return withoutDefaultWorkItemProject({
     ...cloudApi,
+    templateImports: cloudApi.templateImports
+      ? {
+          async supports(projectId) {
+            return (await projectLocation(projectId)) === 'cloud'
+          },
+          async begin(projectId, input) {
+            if ((await projectLocation(projectId)) === 'local')
+              throw new Error('Template import receipts require a cloud project')
+            return cloudApi.templateImports!.begin(projectId, input)
+          },
+          async get(projectId, operationId) {
+            if ((await projectLocation(projectId)) === 'local')
+              throw new Error('Template import receipts require a cloud project')
+            return cloudApi.templateImports!.get(projectId, operationId)
+          },
+          async list(projectId) {
+            return (await projectLocation(projectId)) === 'local'
+              ? []
+              : cloudApi.templateImports!.list(projectId)
+          },
+        }
+      : undefined,
     workspaces: {
       ...cloudApi.workspaces,
       async list() {
@@ -223,10 +245,12 @@ export function createWeworkPlatformApi(
         if (store) return (store === 'local' ? localApi : cloudApi).projects.get(projectId)
         return (await localProject(projectId)) ?? cloudApi.projects.get(projectId)
       },
-      async update(projectId, input) {
+      async update(projectId, input, context) {
         return (await projectLocation(projectId)) === 'local'
           ? localApi.projects.update(projectId, input)
-          : cloudApi.projects.update(projectId, input)
+          : context
+            ? cloudApi.projects.update(projectId, input, context)
+            : cloudApi.projects.update(projectId, input)
       },
       async archive(projectId, version) {
         return (await projectLocation(projectId)) === 'local'
@@ -266,13 +290,15 @@ export function createWeworkPlatformApi(
         }
         return target.addCollaborationGroup(projectId, groupId)
       },
-      async createCollaborationGroup(projectId, input) {
+      async createCollaborationGroup(projectId, input, context) {
         const target =
           (await projectLocation(projectId)) === 'local' ? localApi.projects : cloudApi.projects
         if (!target.createCollaborationGroup) {
           throw new Error('Collaboration group API is unavailable')
         }
-        return target.createCollaborationGroup(projectId, input)
+        return context
+          ? target.createCollaborationGroup(projectId, input, context)
+          : target.createCollaborationGroup(projectId, input)
       },
       async updateCollaborationGroup(projectId, groupId, input) {
         const target =
@@ -328,10 +354,12 @@ export function createWeworkPlatformApi(
         const api = (await projectLocation(projectId)) === 'local' ? localApi : cloudApi
         return options ? api.agents.list(projectId, options) : api.agents.list(projectId)
       },
-      async create(projectId, input) {
+      async create(projectId, input, context) {
         return (await projectLocation(projectId)) === 'local'
           ? localApi.agents.create(projectId, input)
-          : cloudApi.agents.create(projectId, input)
+          : context
+            ? cloudApi.agents.create(projectId, input, context)
+            : cloudApi.agents.create(projectId, input)
       },
       async update(projectId, agentId, input) {
         return (await projectLocation(projectId)) === 'local'
@@ -343,8 +371,9 @@ export function createWeworkPlatformApi(
       async list(projectId) {
         return (await projectAutomations(projectId)).list(projectId)
       },
-      async create(projectId, input) {
-        return (await projectAutomations(projectId)).create(projectId, input)
+      async create(projectId, input, context) {
+        const target = await projectAutomations(projectId)
+        return context ? target.create(projectId, input, context) : target.create(projectId, input)
       },
       async migrateWorkflow(projectId, input) {
         return (await projectAutomations(projectId)).migrateWorkflow(projectId, input)

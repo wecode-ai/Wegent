@@ -3,8 +3,20 @@ import type { SharedWorkspaceApi, WorkspaceAutomationRule } from '../ports/Share
 import type { CollaborationGroup, CollaborationProject } from '../types'
 import { builtinCollaborationTemplates } from './builtins'
 import { bindTemplate, templateFromProject, validateTemplate } from './document'
+import { PartialTemplateApplyError, TemplateConfigurationError } from './apply'
+import { templateAgentBindings } from './agents'
 import { applyProjectTemplate } from './projectConfiguration'
-import { PartialTemplateApplyError } from './apply'
+import { TemplateApplyRecoveryError } from './projectApplyRecovery'
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
 
 function fixture() {
   const document = structuredClone(builtinCollaborationTemplates()[0].document)
@@ -46,8 +58,10 @@ function fixture() {
       get: vi.fn(async () => project),
       update: vi.fn(async () => project),
       createCollaborationGroup: vi.fn(async () => group),
+      listCollaborationGroups: vi.fn(async () => [] as CollaborationGroup[]),
     },
     agents: {
+      create: vi.fn(),
       list: vi.fn(async () =>
         ['coordinator', 'executor'].map(id => ({
           id,
@@ -68,6 +82,19 @@ function fixture() {
 }
 
 describe('template execution defaults', () => {
+  it('uses the local capability route when durable imports do not support this project', async () => {
+    const { api, document, drafts } = fixture()
+    api.templateImports = {
+      supports: vi.fn(async () => false),
+      begin: vi.fn(),
+      get: vi.fn(),
+      list: vi.fn(),
+    }
+    await applyProjectTemplate(api, 'project-1', document, drafts, 'zh-CN', 'Partial')
+    expect(api.templateImports.begin).not.toHaveBeenCalled()
+    expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
+  })
+
   it('routes new tasks to the persisted group and makes the stage view default without changing the status board', async () => {
     const { api, document, drafts, group, project } = fixture()
     project.board_config = {
@@ -198,7 +225,11 @@ describe('template execution defaults', () => {
     vi.mocked(api.projects.update).mockRejectedValue(new Error('Version conflict'))
     await expect(
       applyProjectTemplate(api, 'project-1', document, drafts, 'zh-CN', 'Partial')
-    ).rejects.toBeInstanceOf(PartialTemplateApplyError)
+    ).rejects.toMatchObject({
+      outcome: 'partial',
+      retryBlocked: true,
+      cause: expect.objectContaining({ message: 'Version conflict' }),
+    })
     expect(api.projects.createCollaborationGroup).toHaveBeenCalledTimes(1)
     expect(api.automations!.create).toHaveBeenCalledTimes(1)
   })
@@ -219,6 +250,382 @@ describe('template execution defaults', () => {
       mutate(document)
       expect(() => validateTemplate(document)).toThrow()
     }
+  })
+})
+
+describe('template failure reconciliation', () => {
+  it('blocks a local board-only import after its update commits but the response is lost', async () => {
+    const { api, document, project } = fixture()
+    document.spec.resources.collaboration.groups = []
+    delete document.spec.resources.collaboration.project.taskAssignment
+    const cause = new TypeError('Failed to fetch')
+    vi.mocked(api.projects.update).mockImplementationOnce(async (_id, input) => {
+      project.version++
+      project.tags = input.tags!
+      project.board_views = input.boardViews!
+      throw cause
+    })
+
+    const failure = await applyProjectTemplate(
+      api,
+      project.id,
+      document,
+      [],
+      'zh-CN',
+      'Partial'
+    ).catch(error => error as TemplateApplyRecoveryError)
+    expect(project.board_views!.views).toHaveLength(2)
+    expect(failure).toMatchObject({ cause, outcome: 'unknown', retryBlocked: true })
+    expect(failure.message).not.toContain('模板尚未开始创建')
+    expect(await failure.recheck()).toMatchObject({ outcome: 'unknown', retryBlocked: true })
+    expect(api.projects.update).toHaveBeenCalledOnce()
+    expect(api.projects.createCollaborationGroup).not.toHaveBeenCalled()
+    expect(api.agents.create).not.toHaveBeenCalled()
+    expect(api.automations!.create).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    new TypeError('Failed to fetch'),
+    Object.assign(new Error('Internal server error'), { status: 500 }),
+  ])('keeps local board preflight failures retryable before its first write: %s', async cause => {
+    const { api, document, project } = fixture()
+    document.spec.resources.collaboration.groups = []
+    delete document.spec.resources.collaboration.project.taskAssignment
+    vi.mocked(api.projects.get).mockRejectedValue(cause)
+
+    await expect(
+      applyProjectTemplate(api, project.id, document, [], 'zh-CN', 'Partial')
+    ).rejects.toMatchObject({ cause, outcome: 'unchanged', retryBlocked: false })
+    expect(project.board_views!.views).toHaveLength(1)
+    expect(api.projects.update).not.toHaveBeenCalled()
+    expect(api.projects.createCollaborationGroup).not.toHaveBeenCalled()
+    expect(api.agents.create).not.toHaveBeenCalled()
+    expect(api.automations!.create).not.toHaveBeenCalled()
+  })
+
+  it.each([400, 401, 403, 409, 422])(
+    'retains HTTP %i and refreshes unchanged groups without creating Agents',
+    async status => {
+      const { api, document, drafts } = fixture()
+      const cause = Object.assign(new Error('Request failed'), { status, detail: 'rejected' })
+      vi.mocked(api.projects.createCollaborationGroup!).mockRejectedValue(cause)
+      const refreshed = vi.fn()
+      const failure = await applyProjectTemplate(
+        api,
+        'project-1',
+        document,
+        drafts,
+        'zh-CN',
+        'Partial',
+        undefined,
+        refreshed
+      ).catch(error => error as TemplateApplyRecoveryError)
+      expect(failure).toBeInstanceOf(TemplateApplyRecoveryError)
+      expect(failure).toMatchObject({ cause, outcome: 'unchanged', retryBlocked: false })
+      expect(api.projects.listCollaborationGroups).toHaveBeenCalledTimes(2)
+      expect(refreshed).toHaveBeenCalledWith([])
+      expect(api.agents.create).not.toHaveBeenCalled()
+      expect(api.automations!.create).not.toHaveBeenCalled()
+    }
+  )
+
+  it('does not attribute a pre-existing same-name group to this attempt', async () => {
+    const { api, document, drafts, group } = fixture()
+    vi.mocked(api.projects.listCollaborationGroups!).mockResolvedValue([group])
+    const cause = Object.assign(new Error('duplicate'), { status: 409 })
+    vi.mocked(api.projects.createCollaborationGroup!).mockRejectedValue(cause)
+    await expect(
+      applyProjectTemplate(api, 'project-1', document, drafts, 'zh-CN', 'Partial')
+    ).rejects.toMatchObject({ cause, outcome: 'unchanged', retryBlocked: false })
+  })
+
+  it('does not attribute a concurrently created same-name group to a rejected request', async () => {
+    const { api, document, drafts, group } = fixture()
+    const request = deferred<CollaborationGroup>()
+    const started = deferred<void>()
+    const concurrent = { ...group, id: 'concurrent-group' }
+    let groups: CollaborationGroup[] = []
+    vi.mocked(api.projects.listCollaborationGroups!).mockImplementation(async () => groups)
+    vi.mocked(api.projects.createCollaborationGroup!).mockImplementationOnce(() => {
+      started.resolve()
+      return request.promise
+    })
+    const refreshed = vi.fn()
+    const application = applyProjectTemplate(
+      api,
+      'project-1',
+      document,
+      drafts,
+      'zh-CN',
+      'Partial',
+      undefined,
+      refreshed
+    ).catch(error => error as TemplateApplyRecoveryError)
+    await started.promise
+    groups = [concurrent]
+    const cause = Object.assign(new Error('duplicate'), {
+      status: 409,
+      detail: 'Collaboration group name already exists in this owner scope',
+    })
+    request.reject(cause)
+    const failure = await application
+    expect(failure).toMatchObject({ cause, outcome: 'unchanged', retryBlocked: false })
+    expect(failure.message).toContain('小组名称')
+    expect(failure.message).not.toContain('已创建小组')
+    expect(failure.message).not.toContain('未发现本次新增')
+    expect(refreshed).toHaveBeenCalledWith([concurrent])
+    expect(await failure.recheck()).toMatchObject({ outcome: 'unchanged', retryBlocked: false })
+    expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
+  })
+
+  it('reports only confirmed groups when a later request loses a same-name race', async () => {
+    const { api, document, drafts, group } = fixture()
+    const second = { ...drafts[0], name: 'Concurrent second group' }
+    const request = deferred<CollaborationGroup>()
+    const started = deferred<void>()
+    let groups: CollaborationGroup[] = []
+    vi.mocked(api.projects.listCollaborationGroups!).mockImplementation(async () => groups)
+    vi.mocked(api.projects.createCollaborationGroup!)
+      .mockResolvedValueOnce(group)
+      .mockImplementationOnce(() => {
+        started.resolve()
+        return request.promise
+      })
+    const application = applyProjectTemplate(
+      api,
+      'project-1',
+      document,
+      [...drafts, second],
+      'zh-CN',
+      'Partial'
+    ).catch(error => error as TemplateApplyRecoveryError)
+    await started.promise
+    groups = [group, { ...group, id: 'concurrent-group', name: second.name }]
+    const cause = Object.assign(new Error('duplicate'), { status: 409 })
+    request.reject(cause)
+    const failure = await application
+    expect(failure).toMatchObject({ outcome: 'partial', retryBlocked: true })
+    expect((failure.cause as Error).cause).toBe(cause)
+    expect(failure.message).toContain(`已创建小组：${group.name}。`)
+    expect(failure.message).not.toContain(second.name)
+    expect(await failure.recheck()).toMatchObject({ outcome: 'partial', retryBlocked: true })
+    expect(api.projects.createCollaborationGroup).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([400, 401, 403, 409, 422])(
+    'keeps a rejected HTTP %i retryable when reconciliation reads fail',
+    async status => {
+      const { api, document, drafts } = fixture()
+      const cause = Object.assign(new Error('Request rejected'), { status })
+      vi.mocked(api.projects.createCollaborationGroup!).mockRejectedValue(cause)
+      vi.mocked(api.projects.listCollaborationGroups!)
+        .mockResolvedValueOnce([])
+        .mockRejectedValue(new TypeError('Failed to fetch'))
+      const failure = await applyProjectTemplate(
+        api,
+        'project-1',
+        document,
+        drafts,
+        'zh-CN',
+        'Partial'
+      ).catch(error => error as TemplateApplyRecoveryError)
+      expect(failure).toMatchObject({ cause, outcome: 'unchanged', retryBlocked: false })
+      expect(failure.message).toContain('创建请求已被拒绝')
+      expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('observes a matching group without claiming ownership after losing its response', async () => {
+    const { api, document, drafts, group } = fixture()
+    const cause = new TypeError('Failed to fetch')
+    vi.mocked(api.projects.createCollaborationGroup!).mockRejectedValue(cause)
+    vi.mocked(api.projects.listCollaborationGroups!)
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([{ ...group, name: drafts[0].name }])
+    const failure = await applyProjectTemplate(
+      api,
+      'project-1',
+      document,
+      drafts,
+      'zh-CN',
+      'Partial'
+    ).catch(error => error as TemplateApplyRecoveryError)
+    expect(failure).toMatchObject({ cause, outcome: 'unknown', retryBlocked: true })
+    expect(failure.message).toContain(drafts[0].name)
+    expect(failure.message).toContain('尚不能确认是否由本次请求创建')
+    expect(failure.message).not.toContain('已创建小组')
+    expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
+  })
+
+  it('keeps an uncertain result blocked after a failed refresh and an empty recheck', async () => {
+    const { api, document, drafts } = fixture()
+    vi.mocked(api.projects.createCollaborationGroup!).mockRejectedValue(
+      new TypeError('Failed to fetch')
+    )
+    vi.mocked(api.projects.listCollaborationGroups!)
+      .mockResolvedValueOnce([])
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce([])
+    const failure = await applyProjectTemplate(
+      api,
+      'project-1',
+      document,
+      drafts,
+      'zh-CN',
+      'Partial'
+    ).catch(error => error as TemplateApplyRecoveryError)
+    expect(failure).toMatchObject({ outcome: 'unknown', retryBlocked: true })
+    expect(await failure.recheck()).toMatchObject({ outcome: 'unknown', retryBlocked: true })
+    expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    new TypeError('Failed to fetch'),
+    Object.assign(new Error('Internal server error'), { status: 500 }),
+    Object.assign(new Error('Gateway timeout'), { status: 504 }),
+  ])('keeps empty reads blocked while a failed request can still commit: %s', async cause => {
+    const { api, document, drafts, group } = fixture()
+    const request = deferred<CollaborationGroup>()
+    const started = deferred<void>()
+    const persisted = deferred<CollaborationGroup>()
+    let groups: CollaborationGroup[] = []
+    const commit = persisted.promise.then(created => {
+      groups = [created]
+    })
+    vi.mocked(api.projects.createCollaborationGroup!).mockImplementationOnce(() => {
+      started.resolve()
+      return request.promise
+    })
+    vi.mocked(api.projects.listCollaborationGroups!).mockImplementation(async () => groups)
+    const application = applyProjectTemplate(
+      api,
+      'project-1',
+      document,
+      drafts,
+      'zh-CN',
+      'Partial'
+    ).catch(error => error as TemplateApplyRecoveryError)
+    await started.promise
+    request.reject(cause)
+    const failure = await application
+    expect(failure).toMatchObject({ cause, outcome: 'unknown', retryBlocked: true })
+    expect(failure.message).not.toContain('未发现本次新增')
+    expect(await failure.recheck()).toMatchObject({ outcome: 'unknown', retryBlocked: true })
+    expect(await failure.recheck()).toMatchObject({ outcome: 'unknown', retryBlocked: true })
+    persisted.resolve(group)
+    await commit
+    const observed = await failure.recheck()
+    expect(observed).toMatchObject({ cause, outcome: 'unknown', retryBlocked: true })
+    expect(observed.message).toContain(group.name)
+    expect(observed.message).toContain('尚不能确认是否由本次请求创建')
+    expect(observed.message).not.toContain('已创建小组')
+    groups = []
+    expect(await observed.recheck()).toMatchObject({ outcome: 'unknown', retryBlocked: true })
+    expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
+  })
+
+  it('retains the rejected HTTP cause inside a partial creation error', async () => {
+    const { api, document, drafts, group } = fixture()
+    const cause = Object.assign(new Error('Internal server error'), { status: 500 })
+    vi.mocked(api.projects.createCollaborationGroup!)
+      .mockResolvedValueOnce(group)
+      .mockRejectedValueOnce(cause)
+    const failure = await applyProjectTemplate(
+      api,
+      'project-1',
+      document,
+      [...drafts, { ...drafts[0], name: 'Second group' }],
+      'zh-CN',
+      'Partial'
+    ).catch(error => error as TemplateApplyRecoveryError)
+    expect(failure).toMatchObject({ outcome: 'partial', retryBlocked: true })
+    expect(failure.cause).toBeInstanceOf(PartialTemplateApplyError)
+    expect((failure.cause as Error).cause).toBe(cause)
+    expect(failure.message).toContain('500')
+    expect(failure.message).not.toContain('检查连接')
+    expect(api.projects.createCollaborationGroup).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps client configuration errors before the first write retryable', async () => {
+    const { api, document } = fixture()
+    const drafts = bindTemplate(document, templateAgentBindings(document))
+    const cause = new TemplateConfigurationError('Choose another runtime')
+    const resolveRouting = vi.fn().mockRejectedValue(cause)
+    await expect(
+      applyProjectTemplate(api, 'project-1', document, drafts, 'zh-CN', 'Partial', resolveRouting)
+    ).rejects.toMatchObject({ cause, outcome: 'unchanged', retryBlocked: false })
+    expect(api.projects.createCollaborationGroup).not.toHaveBeenCalled()
+    expect(api.agents.create).not.toHaveBeenCalled()
+  })
+
+  it('keeps a known created group blocked when refreshing the list also fails', async () => {
+    const { api, document, drafts } = fixture()
+    vi.mocked(api.automations!.create).mockRejectedValue(
+      Object.assign(new Error('server'), { status: 500 })
+    )
+    vi.mocked(api.projects.listCollaborationGroups!)
+      .mockResolvedValueOnce([])
+      .mockRejectedValue(new TypeError('Failed to fetch'))
+    const failure = await applyProjectTemplate(
+      api,
+      'project-1',
+      document,
+      drafts,
+      'zh-CN',
+      'Partial'
+    ).catch(error => error as TemplateApplyRecoveryError)
+    expect(failure).toMatchObject({ outcome: 'partial', retryBlocked: true })
+    expect(failure.message).toContain('尚不能确认')
+    expect(failure.message).toContain('无法刷新协作小组列表')
+    expect(failure.message).not.toContain('请求可能仍在处理')
+    expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
+  })
+
+  it.each([
+    new Error('preflight'),
+    new TypeError('Failed to fetch'),
+    Object.assign(new Error('Internal server error'), { status: 500 }),
+  ])('keeps failed preflight retryable when reads fail: %s', async cause => {
+    const { api, document, drafts } = fixture()
+    vi.mocked(api.automations!.list).mockRejectedValue(cause)
+    vi.mocked(api.projects.listCollaborationGroups!)
+      .mockResolvedValueOnce([])
+      .mockRejectedValue(new TypeError('Failed to fetch'))
+    await expect(
+      applyProjectTemplate(api, 'project-1', document, drafts, 'zh-CN', 'Partial')
+    ).rejects.toMatchObject({ cause, outcome: 'unchanged', retryBlocked: false })
+    expect(api.projects.createCollaborationGroup).not.toHaveBeenCalled()
+  })
+
+  it('applies the six existing human roles without creating Agents or resolving models', async () => {
+    const { api, document, group } = fixture()
+    const definition = document.spec.resources.collaboration.groups[0]
+    const drafts = bindTemplate(document, {
+      [definition.key]: Object.fromEntries(
+        definition.roles.map((role, index) => [
+          role.key,
+          { kind: 'human', id: String(index + 1), responsibility: role.responsibility },
+        ])
+      ),
+    })
+    const humanGroup = { ...group, ...drafts[0] } as CollaborationGroup
+    vi.mocked(api.projects.createCollaborationGroup!).mockResolvedValue(humanGroup)
+    const resolveRouting = vi.fn()
+    await expect(
+      applyProjectTemplate(api, 'project-1', document, drafts, 'zh-CN', 'Partial', resolveRouting)
+    ).resolves.toEqual([humanGroup])
+    expect(api.agents.create).not.toHaveBeenCalled()
+    expect(api.agents.list).not.toHaveBeenCalled()
+    expect(resolveRouting).not.toHaveBeenCalled()
+    expect(api.projects.createCollaborationGroup).toHaveBeenCalledWith(
+      'project-1',
+      expect.objectContaining({
+        leader: expect.objectContaining({ kind: 'human', id: '1' }),
+        members: expect.arrayContaining([expect.objectContaining({ kind: 'human', id: '6' })]),
+      })
+    )
+    expect(api.automations!.create).toHaveBeenCalledOnce()
+    expect(api.projects.update).toHaveBeenCalledOnce()
   })
 })
 

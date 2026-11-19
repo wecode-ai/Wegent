@@ -19,6 +19,7 @@ from app.schemas.workspace import (
     CollaborationGroupStage,
     CollaborationGroupUpdate,
 )
+from app.services.template_imports import TemplateImportRequest, lock_template_import
 from app.services.workspaces.access import require_workspace_role
 from app.services.workspaces.storage import (
     ensure_resource_grant,
@@ -197,12 +198,28 @@ class WorkspaceCollaborationGroupService:
         project_id: int,
         user_id: int,
         values: CollaborationGroupCreate,
+        *,
+        template_import: TemplateImportRequest | None = None,
     ) -> dict[str, object]:
         from app.services.cloud_projects.access import require_cloud_project_role
 
+        template_write = lock_template_import(
+            db,
+            template_import,
+            project_id=project_id,
+            user_id=user_id,
+            kind="group",
+            payload=values,
+        )
         require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
         self._lock_project_for_group_mutation(db, project_id)
         workspace_id = self._require_project_workspace(db, project_id)
+        if template_write is not None and template_write.resource_id is not None:
+            group = self._get_project_owned_group(
+                db, project_id, int(template_write.resource_id)
+            )
+            db.commit()
+            return _group_values(workspace_id, "project", project_id, group)
         self._validate_name_available(
             db,
             owner_type="project",
@@ -239,6 +256,8 @@ class WorkspaceCollaborationGroupService:
                 invited_by_user_id=user_id,
             )
         )
+        if template_write is not None:
+            template_write.record(group.id)
         db.commit()
         db.refresh(group)
         return _group_values(workspace_id, "project", project_id, group)

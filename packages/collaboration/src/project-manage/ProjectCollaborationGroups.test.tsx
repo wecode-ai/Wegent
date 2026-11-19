@@ -4,12 +4,14 @@
 
 import { act, useState, type ComponentProps } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { WorkspaceCollaborationGroupsConfiguration } from '../platform/WorkspaceResourceConfiguration'
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type { CollaborationGroup, CollaborationMember, CollaborationProject } from '../types'
 import { useCollaborationWorkspaceController } from '../workspace-controller/useCollaborationWorkspaceController'
 import { ProjectCollaborationGroups } from './ProjectCollaborationGroups'
+import { builtinCollaborationTemplates } from '../templates/builtins'
+import { bindTemplate } from '../templates/document'
 
 const view = vi.hoisted(() => ({
   props: null as ComponentProps<typeof WorkspaceCollaborationGroupsConfiguration> | null,
@@ -44,6 +46,10 @@ const agent = { id: 'agent-1', name: 'Reviewer' }
 let root: Root | undefined
 let container: HTMLDivElement
 
+beforeEach(() => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
+})
+
 function apiFor(listMembers = vi.fn(async () => [member])) {
   return {
     projects: {
@@ -54,6 +60,22 @@ function apiFor(listMembers = vi.fn(async () => [member])) {
     agents: { list: vi.fn(async () => [agent]) },
     members: { list: listMembers },
   } as unknown as SharedWorkspaceApi
+}
+
+function boundHumanTemplate() {
+  const document = structuredClone(builtinCollaborationTemplates()[0].document)
+  delete document.spec.resources.collaboration.project.taskAssignment
+  delete document.spec.resources.collaboration.project.board
+  const definition = document.spec.resources.collaboration.groups[0]
+  const drafts = bindTemplate(document, {
+    [definition.key]: Object.fromEntries(
+      definition.roles.map((role, index) => [
+        role.key,
+        { kind: 'human', id: String(index + 1), responsibility: '' },
+      ])
+    ),
+  })
+  return { document, definition, drafts }
 }
 
 async function render(
@@ -91,6 +113,59 @@ afterEach(() => {
 })
 
 describe('project collaboration-group loading', () => {
+  it('refreshes the displayed groups after a template creation response is lost', async () => {
+    const api = apiFor()
+    const { document, definition, drafts } = boundHumanTemplate()
+    const created = { ...group, id: 'new-group', name: definition.name }
+    vi.mocked(api.projects.listCollaborationGroups!)
+      .mockResolvedValueOnce([group])
+      .mockResolvedValueOnce([group])
+      .mockResolvedValueOnce([group, created])
+    vi.mocked(api.projects.createCollaborationGroup!).mockRejectedValue(
+      new TypeError('Failed to fetch')
+    )
+    await render(api)
+    await act(async () => {
+      await expect(
+        view.props!.commands.createTemplateGroups!(document, drafts)
+      ).rejects.toMatchObject({ outcome: 'unknown', retryBlocked: true })
+    })
+    expect(view.props!.groups).toEqual([group, created])
+    expect(container.textContent).toContain(created.name)
+    expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
+  })
+
+  it.each(['groups', 'project'] as const)(
+    'reconciles confirmed template groups when the final %s refresh fails',
+    async failureAt => {
+      const api = apiFor()
+      const { document, definition, drafts } = boundHumanTemplate()
+      const created = { ...group, id: 'created', name: definition.name }
+      const cause = Object.assign(new Error('Internal Server Error'), { status: 500 })
+      api.projects.get = vi.fn().mockRejectedValue(cause)
+      vi.mocked(api.projects.createCollaborationGroup!).mockResolvedValue(created)
+      const list = vi
+        .mocked(api.projects.listCollaborationGroups!)
+        .mockResolvedValueOnce([group])
+        .mockResolvedValueOnce([group])
+      if (failureAt === 'groups') list.mockRejectedValueOnce(cause)
+      else list.mockResolvedValueOnce([group, created])
+      list.mockResolvedValue([group, created])
+      const onProjectChanged = vi.fn()
+      await render(api, 'project-1', 'workspace-1', onProjectChanged)
+      await act(async () => {
+        await expect(
+          view.props!.commands.createTemplateGroups!(document, drafts)
+        ).rejects.toMatchObject({ outcome: 'partial', retryBlocked: true, cause })
+      })
+      expect(view.props!.groups).toEqual([group, created])
+      expect(view.props!.collectionState).toBe('ready')
+      expect(api.projects.listCollaborationGroups).toHaveBeenCalledTimes(4)
+      expect(api.projects.createCollaborationGroup).toHaveBeenCalledOnce()
+      expect(onProjectChanged).not.toHaveBeenCalled()
+    }
+  )
+
   it('publishes the advanced project version after group writes and retries refresh without repeating the write', async () => {
     const api = apiFor()
     const latest = { id: 'project-1', version: 5 } as CollaborationProject

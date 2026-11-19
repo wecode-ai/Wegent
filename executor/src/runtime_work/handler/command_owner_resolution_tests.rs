@@ -1,6 +1,8 @@
 //! Owner resolution preserves uncertainty, durability and original execution identity.
 use super::*;
-use crate::runtime_work::handler::tests::{install_native_history, isolated_runtime_work_handler};
+use crate::runtime_work::handler::tests::{
+    install_native_history, isolated_runtime_work_handler, NativeHistoryEnvironment,
+};
 
 fn fixture(label: &str) -> (RuntimeWorkRpcHandler, PathBuf, SpawnTurnRequest, Value) {
     let (mut handler, root) = isolated_runtime_work_handler(label);
@@ -66,6 +68,7 @@ async fn cleanup(handler: &RuntimeWorkRpcHandler, root: PathBuf) {
 
 #[tokio::test]
 async fn owner_abandonment_is_durable_idempotent_and_never_replays_unknown_execution() {
+    let _environment = NativeHistoryEnvironment::new();
     let (handler, root, turn, resolve) = fixture("owner-resolution-durable");
     let review = handler
         .dispatch_method(
@@ -139,6 +142,7 @@ async fn owner_abandonment_is_durable_idempotent_and_never_replays_unknown_execu
 
 #[tokio::test]
 async fn owner_resolution_rejects_stale_foreign_and_active_execution() {
+    let _environment = NativeHistoryEnvironment::new();
     let (handler, root, _, resolve) = fixture("owner-resolution-guards");
     for (field, value) in [
         ("expectedFingerprint", json!("changed")),
@@ -198,6 +202,7 @@ async fn owner_resolution_rejects_stale_foreign_and_active_execution() {
 
 #[tokio::test]
 async fn failed_owner_resolution_commit_rolls_back_without_inventing_a_receipt() {
+    let _environment = NativeHistoryEnvironment::new();
     let (mut handler, root, _, resolve) = fixture("owner-resolution-commit-failure");
     let invalid = root.join("queue-is-a-directory");
     fs::create_dir_all(&invalid).unwrap();
@@ -211,6 +216,7 @@ async fn failed_owner_resolution_commit_rolls_back_without_inventing_a_receipt()
 
 #[tokio::test]
 async fn owner_resolution_checks_the_connected_account_instead_of_trusting_payload_user() {
+    let _environment = NativeHistoryEnvironment::new();
     use axum::{routing::get, Json, Router};
     let app = Router::new().route("/api/users/me", get(|| async { Json(json!({"id":8})) }));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -242,6 +248,7 @@ async fn owner_resolution_checks_the_connected_account_instead_of_trusting_paylo
 #[tokio::test]
 async fn abandoned_receipt_retires_only_original_assessment_after_restart_without_replaying_actions(
 ) {
+    let _environment = NativeHistoryEnvironment::new();
     let (handler, root, _, _) = fixture("owner-resolution-controller-restart");
     let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
     let mut settings = store.personal_stand_in(7, "device-1").unwrap();
@@ -338,6 +345,7 @@ async fn abandoned_receipt_retires_only_original_assessment_after_restart_withou
 
 #[tokio::test]
 async fn native_unloaded_owner_resolution_preserves_unknown_history_and_original_binding() {
+    let _environment = NativeHistoryEnvironment::new();
     let (handler, root, _, resolve) = fixture("owner-resolution-native-unloaded");
     fs::write(
         root.join("thread_read.json"),
@@ -374,6 +382,7 @@ async fn native_unloaded_owner_resolution_preserves_unknown_history_and_original
 
 #[tokio::test]
 async fn native_owner_resolution_rejects_positive_activity_and_unavailable_runtime_status() {
+    let _environment = NativeHistoryEnvironment::new();
     for (index, status, expected) in [
         (0, Some("active"), "command_resolution_active"),
         (1, Some("systemError"), "command_resolution_unavailable"),
@@ -410,6 +419,7 @@ async fn native_owner_resolution_rejects_positive_activity_and_unavailable_runti
 
 #[tokio::test]
 async fn unloaded_native_does_not_bypass_local_goal_or_queued_admission() {
+    let _environment = NativeHistoryEnvironment::new();
     let (handler, root, turn, resolve) = fixture("owner-resolution-unloaded-local-admission");
     fs::write(
         root.join("thread_read.json"),

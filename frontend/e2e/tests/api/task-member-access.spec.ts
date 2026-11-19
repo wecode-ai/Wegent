@@ -6,6 +6,8 @@ import { expect, test } from '../../fixtures/test-fixtures'
 import { ApiClient, createApiClient } from '../../utils/api-client'
 import { deleteDedicatedBotModel } from '../../utils/cleanup-dedicated-bot-model'
 
+const MOCK_MODEL_SERVER_URL = process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999'
+
 type CurrentUserResponse = {
   id: number
   user_name: string
@@ -74,10 +76,10 @@ test.describe('Task member access through Rust routes', () => {
   let memberApi: ApiClient
   let createdTaskId: number | null = null
   let memberFixture: MemberFixture | null = null
-  let teamId: number | null = null
-  let botId: number | null = null
-  let teamName: string
+  let createdBotId: number | null = null
+  let createdTeamId: number | null = null
   let botName: string
+  let teamName: string
 
   test.beforeEach(async ({ request, testPrefix }) => {
     ownerApi = createApiClient(request)
@@ -88,49 +90,62 @@ test.describe('Task member access through Rust routes', () => {
 
     botName = `${testPrefix}-member-access-bot`
     teamName = `${testPrefix}-member-access-team`
-    const bot = await ownerApi.post<{ id: number }>('/api/bots', {
+    const bot = await ownerApi.createBot({
       name: botName,
       shell_name: 'Chat',
-      agent_config: {},
-      system_prompt: 'Task member access fixture.',
+      agent_config: {
+        env: {
+          model: 'openai',
+          model_id: 'mock-member-access',
+          api_key: 'mock-api-key',
+          base_url: `${MOCK_MODEL_SERVER_URL}/v1`,
+        },
+      },
+      system_prompt: 'Task member access test.',
       namespace: 'default',
       is_active: true,
     })
     expect(bot.status, JSON.stringify(bot.data)).toBe(201)
-    botId = bot.data!.id
-    const team = await ownerApi.post<{ id: number }>('/api/teams', {
+    createdBotId = (bot.data as { id: number }).id
+
+    const team = await ownerApi.createTeam({
       name: teamName,
-      bots: [{ bot_id: botId, role: 'leader' }],
+      bots: [{ bot_id: createdBotId, role: 'leader' }],
       bind_mode: ['code'],
-      namespace: 'default',
       requires_workspace: false,
       workflow: { mode: 'solo' },
     })
     expect(team.status, JSON.stringify(team.data)).toBe(201)
-    teamId = team.data!.id
+    createdTeamId = (team.data as { id: number }).id
   })
 
   test.afterEach(async () => {
-    if (memberFixture) {
-      setTaskMemberState(memberFixture, 'absent')
-      memberFixture = null
-    }
-    if (createdTaskId !== null) {
-      await ownerApi.deleteTask(String(createdTaskId))
-      createdTaskId = null
-    }
-    if (teamId !== null) {
-      const deleted = await ownerApi.delete(
-        `/api/teams/${teamId}?force=true&confirm_name=${encodeURIComponent(teamName)}`
-      )
-      expect.soft(deleted.status, JSON.stringify(deleted.data)).toBe(200)
-      teamId = null
-    }
-    if (botId !== null) {
-      const deleted = await ownerApi.delete(`/api/bots/${botId}`)
-      expect.soft(deleted.status, JSON.stringify(deleted.data)).toBe(200)
-      botId = null
-      await deleteDedicatedBotModel(ownerApi, botName)
+    try {
+      if (memberFixture) {
+        setTaskMemberState(memberFixture, 'absent')
+        memberFixture = null
+      }
+    } finally {
+      try {
+        if (createdTaskId !== null) {
+          await ownerApi.deleteTask(String(createdTaskId))
+          createdTaskId = null
+        }
+      } finally {
+        if (createdTeamId !== null) {
+          const removed = await ownerApi.delete(
+            `/api/teams/${createdTeamId}?force=true&confirm_name=${encodeURIComponent(teamName)}`
+          )
+          expect.soft(removed.status, JSON.stringify(removed.data)).toBe(200)
+          createdTeamId = null
+        }
+        if (createdBotId !== null) {
+          const removed = await ownerApi.delete(`/api/bots/${createdBotId}`)
+          expect.soft(removed.status, JSON.stringify(removed.data)).toBe(200)
+          createdBotId = null
+          await deleteDedicatedBotModel(ownerApi, botName)
+        }
+      }
     }
   })
 
@@ -151,7 +166,7 @@ test.describe('Task member access through Rust routes', () => {
     const prompt = `e2e approved task member access ${taskId}`
     const created = await ownerApi.post(`/api/tasks/${taskId}`, {
       prompt,
-      team_id: teamId,
+      team_id: createdTeamId,
       type: 'offline',
       task_type: 'code',
       git_url: '',

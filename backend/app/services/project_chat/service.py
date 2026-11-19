@@ -89,6 +89,7 @@ from app.services.project_chat.workspace_binding import (
     read_agent_workspace_binding,
     write_workspace_binding,
 )
+from app.services.template_imports import TemplateImportRequest, lock_template_import
 
 logger = logging.getLogger(__name__)
 
@@ -569,7 +570,16 @@ class ProjectChatService:
         user_id: int,
         project_id: str,
         request: ProjectChatAgentCreate,
+        template_import: TemplateImportRequest | None = None,
     ) -> ProjectChatAgentView:
+        template_write = lock_template_import(
+            db,
+            template_import,
+            project_id=project_id,
+            user_id=user_id,
+            kind="agent",
+            payload=request,
+        )
         project = self._require_scope(
             db,
             user_id=user_id,
@@ -577,6 +587,16 @@ class ProjectChatService:
             task_id=None,
             required_role=BaseRole.Maintainer,
         )
+        if template_write is not None and template_write.resource_id is not None:
+            row = self._agent_row(
+                db,
+                project_id=project_id,
+                agent_id=template_write.resource_id,
+                active_only=True,
+            )
+            require_project_agent_visibility(row, user_id)
+            db.commit()
+            return self.agent_to_view(row, db=db, viewer_user_id=user_id)
         from app.services.runner_routing import validate_agent_policies
 
         validate_agent_policies(
@@ -705,6 +725,8 @@ class ProjectChatService:
             collaboration_permission_service.share_project_agent(
                 db, project, row, user_id
             )
+        if template_write is not None:
+            template_write.record(row.id)
         self._commit(db)
         db.refresh(row)
         return self.agent_to_view(row, db=db, viewer_user_id=user_id)

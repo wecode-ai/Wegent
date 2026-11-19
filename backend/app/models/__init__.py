@@ -73,6 +73,7 @@ from app.models.subtask import Subtask
 from app.models.subtask_context import SubtaskContext
 from app.models.system_config import SystemConfig
 from app.models.task import TaskResource
+from app.models.template_import import TemplateImportOperation
 
 # Do NOT import Base here to avoid conflicts with app.db.base.Base
 # All models should import Base directly from app.db.base
@@ -143,6 +144,7 @@ __all__ = [
     "PluginPublicationEvent",
     "PluginPublicationIdempotency",
     "PluginReleaseIdempotency",
+    "TemplateImportOperation",
     "SmartApp",
     "SmartAppRelease",
     "SmartAppSubmission",

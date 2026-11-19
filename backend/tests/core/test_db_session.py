@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from pathlib import Path
+
 import pytest
 from pytest_mock import MockerFixture
 from sqlalchemy.ext.asyncio import create_async_engine
@@ -70,11 +72,35 @@ async def test_mysql_async_engine_uses_independent_pool_limits(monkeypatch):
     engine = session._create_async_engine()
 
     try:
+        assert engine.sync_engine.hide_parameters is True
         assert isinstance(engine.pool, ObservedAsyncQueuePool)
         assert engine.pool.size() == 4
         assert engine.pool._max_overflow == 2
         assert engine.pool._timeout == 13
         assert engine.pool._recycle == 2345
+    finally:
+        await engine.dispose()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_sqlite_async_engine_hides_parameters_and_preserves_pragmas(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    database_path = tmp_path / "async.sqlite3"
+    monkeypatch.setattr(
+        session, "SQLALCHEMY_DATABASE_URL", f"sqlite:///{database_path}"
+    )
+    engine = session._create_async_engine()
+
+    try:
+        assert engine.sync_engine.hide_parameters is True
+        async with engine.connect() as connection:
+            journal_mode = await connection.exec_driver_sql("PRAGMA journal_mode")
+            busy_timeout = await connection.exec_driver_sql("PRAGMA busy_timeout")
+
+        assert journal_mode.scalar() == "wal"
+        assert busy_timeout.scalar() == 30000
     finally:
         await engine.dispose()
 

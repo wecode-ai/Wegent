@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type { ProjectAgentConfigurationHost } from '../project-agent-config/types'
-import type { CollaborationProject } from '../types'
+import type { CollaborationGroup, CollaborationProject } from '../types'
 import type { CollaborationLocale } from '../i18n'
 import type { CollaborationTemplate } from './types'
 import { TemplateBindingsDialog, type TemplateParticipant } from './TemplateBindings'
@@ -12,8 +12,12 @@ import { TemplateDialog } from './TemplateDialog'
 import { templateFailureMessage, templateMessages } from './messages'
 import { templateRoutingResolver } from './agents'
 import { applyProjectTemplate } from './projectConfiguration'
-import { PartialTemplateApplyError, TemplateConfigurationError } from './apply'
+import { TemplateConfigurationError } from './apply'
+import { reconcileCreatedTemplateFailure } from './projectApplyRecovery'
 import { TemplateProjectEnvironment } from './TemplateProjectEnvironment'
+import { ProjectTemplateImportRecovery } from './ProjectTemplateImportRecovery'
+import { TemplateImportRetryError } from './projectTemplateImport'
+import type { TemplateImportOperation } from './projectTemplateImportTypes'
 
 export function ProjectTemplateApplyDialog({
   api,
@@ -35,20 +39,48 @@ export function ProjectTemplateApplyDialog({
   onApplied(project: CollaborationProject): void
 }) {
   const m = templateMessages[locale]
-  const [context, setContext] = useState<{
+  const [attempt, setAttempt] = useState(0)
+  const scope = useMemo(
+    () => ({ api, projectId, locale, attempt, active: false }),
+    [api, projectId, locale, attempt]
+  )
+  const currentScope = useRef(scope)
+  currentScope.current = scope
+  const isCurrent = useCallback(() => scope.active && currentScope.current === scope, [scope])
+  const close = () => {
+    if (!isCurrent()) return
+    scope.active = false
+    onClose()
+  }
+  const [loadedContext, setContext] = useState<{
+    scope: typeof scope
     project: CollaborationProject
     candidates: TemplateParticipant[]
     names: string[]
   } | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [attempt, setAttempt] = useState(0)
+  const context = loadedContext?.scope === scope ? loadedContext : null
+  const [loadError, setError] = useState<{ scope: typeof scope; message: string } | null>(null)
+  const error = loadError?.scope === scope ? loadError.message : null
   const [environmentId, setEnvironmentId] = useState<string>()
+  const [recoveryBusy, setRecoveryBusy] = useState(false)
+  const [importRevision, setImportRevision] = useState(0)
+  const [importFailure, setImportFailure] = useState<{
+    scope: typeof scope
+    operation?: TemplateImportOperation
+  } | null>(null)
   useEffect(() => {
+    const { api, projectId, locale } = scope
+    const m = templateMessages[locale]
     let active = true
+    scope.active = true
     setContext(null)
     setError(null)
+    setEnvironmentId(undefined)
+    setRecoveryBusy(false)
+    setImportFailure(null)
     void (async () => {
       const project = await api.projects.get(projectId)
+      if (!active || !isCurrent()) return
       if (project.access_role !== 'Owner' && project.access_role !== 'Maintainer')
         throw new TemplateConfigurationError(m.manageRequired)
       const [members, agents, groups] = await Promise.all([
@@ -56,8 +88,9 @@ export function ProjectTemplateApplyDialog({
         api.agents.list(projectId),
         api.projects.listCollaborationGroups?.(projectId) ?? Promise.resolve([]),
       ])
-      if (!active) return
+      if (!active || !isCurrent()) return
       setContext({
+        scope,
         project,
         names: groups.map(group => group.name),
         candidates: [
@@ -78,20 +111,45 @@ export function ProjectTemplateApplyDialog({
         ],
       })
     })().catch(cause => {
-      if (active)
-        setError(
-          cause instanceof TemplateConfigurationError
-            ? cause.message
-            : templateFailureMessage(cause, locale)
-        )
+      if (active && isCurrent())
+        setError({
+          scope,
+          message:
+            cause instanceof TemplateConfigurationError
+              ? cause.message
+              : templateFailureMessage(cause, locale),
+        })
     })
     return () => {
       active = false
+      scope.active = false
     }
-  }, [api, projectId, locale, m.manageRequired, attempt])
+  }, [scope, isCurrent])
+  const onGroupsRefreshed = (groups: CollaborationGroup[]) =>
+    setContext(current =>
+      isCurrent() && current?.scope === scope
+        ? { ...current, names: groups.map(group => group.name) }
+        : current
+    )
+  const finish = async (createdGroups: CollaborationGroup[]) => {
+    if (!isCurrent()) return
+    try {
+      const project = await api.projects.get(projectId)
+      if (isCurrent()) onApplied(project)
+    } catch (cause) {
+      if (!isCurrent()) return
+      throw await reconcileCreatedTemplateFailure(cause, {
+        api,
+        projectId,
+        locale,
+        createdGroups,
+        onGroupsRefreshed,
+      })
+    }
+  }
   if (!context)
     return (
-      <TemplateDialog title={m.bindingsTitle} closeLabel={m.close} onClose={onClose}>
+      <TemplateDialog title={m.bindingsTitle} closeLabel={m.close} onClose={close}>
         {error ? (
           <p role="alert">
             {error}{' '}
@@ -116,7 +174,30 @@ export function ProjectTemplateApplyDialog({
       candidates={context.candidates}
       currentUserId={currentUserId}
       existingNames={context.names}
-      onClose={onClose}
+      onClose={close}
+      recoveryBusy={recoveryBusy}
+      renderRecovery={busy => (
+        <ProjectTemplateImportRecovery
+          api={api}
+          projectId={projectId}
+          locale={locale}
+          disabled={busy && !recoveryBusy}
+          refreshKey={importRevision}
+          operation={importFailure?.scope === scope ? importFailure.operation : undefined}
+          isActive={isCurrent}
+          onBusyChange={value => {
+            if (isCurrent()) setRecoveryBusy(value)
+          }}
+          onGroupsRefreshed={onGroupsRefreshed}
+          onResumed={async groups => {
+            await finish(groups)
+            if (isCurrent()) {
+              setImportFailure(null)
+              close()
+            }
+          }}
+        />
+      )}
       modelConfiguration={
         agentConfiguration
           ? {
@@ -143,19 +224,25 @@ export function ProjectTemplateApplyDialog({
           : undefined
       }
       onApply={async (drafts, configured, resolveRouting) => {
-        await applyProjectTemplate(
-          api,
-          projectId,
-          configured,
-          drafts,
-          locale,
-          m.partial,
-          resolveRouting ?? templateRoutingResolver(environmentId)
-        )
+        if (!isCurrent()) return
         try {
-          onApplied(await api.projects.get(projectId))
+          const groups = await applyProjectTemplate(
+            api,
+            projectId,
+            configured,
+            drafts,
+            locale,
+            m.partial,
+            resolveRouting ?? templateRoutingResolver(environmentId),
+            onGroupsRefreshed
+          )
+          await finish(groups)
         } catch (cause) {
-          throw new PartialTemplateApplyError(m.partial, { cause })
+          if (isCurrent() && cause instanceof TemplateImportRetryError) {
+            setImportFailure({ scope, operation: cause.operation })
+            setImportRevision(value => value + 1)
+          }
+          throw cause
         }
       }}
     />

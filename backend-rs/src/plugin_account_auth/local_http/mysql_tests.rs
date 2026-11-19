@@ -15,21 +15,22 @@ const SIGNING: &str = "native-plugin-contract-test";
 const OWNER: i64 = 82001;
 const USER: &str = "native-plugin-owner";
 
-#[tokio::test]
-#[ignore = "requires disposable MySQL/Redis and plugin credential keyring"]
-async fn http_auth_execution_lifecycle_and_uncertain_recovery_without_device() -> anyhow::Result<()>
-{
-    assert!(crate::plugins_installed::local_sync_enabled());
-    crate::migrations::mysql_tests::isolated(verify).await
-}
-// Real HTTP, MySQL, and Redis lease work needs an integration timeout budget.
 fn http_client() -> brz_http::Client {
+    // The default socket budget is shorter than a valid 3s plugin write lease wait.
     brz_http::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(5))
         .read_timeout(std::time::Duration::from_secs(5))
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .unwrap()
+}
+
+#[tokio::test]
+#[ignore = "requires disposable MySQL/Redis and plugin credential keyring"]
+async fn http_auth_execution_lifecycle_and_uncertain_recovery_without_device() -> anyhow::Result<()>
+{
+    assert!(crate::plugins_installed::local_sync_enabled());
+    crate::migrations::mysql_tests::isolated(verify).await
 }
 
 struct Api {

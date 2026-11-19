@@ -16,7 +16,7 @@ export async function applyTemplateGroups<T>(
   try {
     for (const draft of drafts) created.push(await create(draft))
   } catch (error) {
-    if (created.length) throw new PartialTemplateApplyError(partialMessage)
+    if (created.length) throw new PartialTemplateApplyError(partialMessage, { cause: error })
     throw error
   }
   return created

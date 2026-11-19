@@ -1,14 +1,21 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
+import type { SharedWorkspaceApi, WorkspaceAutomationInput } from '../ports/SharedWorkspaceApi'
 import type { CollaborationGroup } from '../types'
 import type { CollaborationLocale } from '../i18n'
 import type { TemplateRoutingResolver, CollaborationTemplate } from './types'
 import type { ProjectCreateCollaborationGroupDraft } from '../project-create/types'
 import { normalizeCollaborationGroupDraftForPersistence } from '../project-create/collaborationGroupDraft'
-import { materializeTemplateAgents } from './agents'
-import { applyTemplateGroups, PartialTemplateApplyError, TemplateConfigurationError } from './apply'
+import { materializeTemplateAgents, templateAgentId, templateAgentReferences } from './agents'
+import { applyTemplateGroups, TemplateConfigurationError } from './apply'
+import { reconcileProjectTemplateFailure } from './projectApplyRecovery'
+import type { TemplateProjectConfigurationOptions } from './projectTemplateImportTypes'
+import {
+  applyDurableProjectTemplate,
+  resumeDurableProjectTemplate,
+  restartDurableProjectTemplate,
+} from './projectTemplateImport'
 
 export async function prepareTemplateProject(
   api: SharedWorkspaceApi,
@@ -43,11 +50,12 @@ export async function configureTemplateProject(
   projectId: string,
   document: CollaborationTemplate,
   groups: CollaborationGroup[],
-  locale: CollaborationLocale
+  locale: CollaborationLocale,
+  options: TemplateProjectConfigurationOptions = {}
 ) {
   const configuration = document.spec.resources.collaboration
   const { taskAssignment, board } = configuration.project
-  if (taskAssignment) {
+  if (taskAssignment && !options.isCompleted?.('automation')) {
     const index = configuration.groups.findIndex(group => group.key === taskAssignment.groupKey)
     const group = groups[index]
     if (!group || !api.automations) throw new Error('template_group_unavailable')
@@ -66,7 +74,7 @@ export async function configureTemplateProject(
         agent.modelPolicy?.mode === 'fixed'
       )
     })
-    await api.automations.create(projectId, {
+    const input: WorkspaceAutomationInput = {
       name: locale === 'zh-CN' ? `新任务 → ${group.name}` : `New issues → ${group.name}`,
       prompt:
         group.instructions ||
@@ -86,12 +94,17 @@ export async function configureTemplateProject(
       targetKind: 'collaboration_group',
       targetId: group.id,
       enabled: taskAssignment.enabled && routingReady,
-    })
+    }
+    const context = options.context?.('automation')
+    const created = context
+      ? await api.automations.create(projectId, input, context)
+      : await api.automations.create(projectId, input)
+    await options.onStepCompleted?.('automation', created.id)
   }
-  if (!board) return
+  if (!board || options.isCompleted?.('board')) return
   const latest = await api.projects.get(projectId)
-  const id = crypto.randomUUID()
-  await api.projects.update(projectId, {
+  const id = options.boardId?.('view') ?? crypto.randomUUID()
+  const input: Parameters<SharedWorkspaceApi['projects']['update']>[1] = {
     version: latest.version,
     tags: [...new Set([...latest.tags, ...board.tags])],
     ...(latest.board_config ? { boardConfig: { ...latest.board_config, group_by: 'status' } } : {}),
@@ -100,18 +113,18 @@ export async function configureTemplateProject(
       schema_version: 1,
       default_view_id: id,
       views: [
-        ...(latest.board_views?.views ?? []),
+        ...(latest.board_views?.views ?? []).filter(view => view.id !== id),
         {
           id,
           name: board.name,
           columns: [
             {
-              id: crypto.randomUUID(),
+              id: options.boardId?.('unmatched') ?? crypto.randomUUID(),
               type: 'unmatched',
               value: locale === 'zh-CN' ? '待分派' : 'Backlog',
             },
-            ...board.tags.map(tag => ({
-              id: crypto.randomUUID(),
+            ...board.tags.map((tag, index) => ({
+              id: options.boardId?.(`tag-${index}`) ?? crypto.randomUUID(),
               type: 'tag' as const,
               value: tag,
             })),
@@ -120,7 +133,12 @@ export async function configureTemplateProject(
         },
       ],
     },
-  })
+  }
+  const context = options.context?.('board')
+  const updated = context
+    ? await api.projects.update(projectId, input, context)
+    : await api.projects.update(projectId, input)
+  await options.onStepCompleted?.('board', updated.id)
 }
 
 export async function applyProjectTemplate(
@@ -130,43 +148,140 @@ export async function applyProjectTemplate(
   drafts: ProjectCreateCollaborationGroupDraft[],
   locale: CollaborationLocale,
   partialMessage: string,
-  resolveRouting?: TemplateRoutingResolver
+  resolveRouting?: TemplateRoutingResolver,
+  onGroupsRefreshed?: (groups: CollaborationGroup[]) => void
 ) {
+  if (api.templateImports && ((await api.templateImports.supports?.(projectId)) ?? true)) {
+    return applyDurableProjectTemplate(
+      api,
+      projectId,
+      document,
+      drafts,
+      locale,
+      partialMessage,
+      resolveRouting,
+      onGroupsRefreshed,
+      { prepare: prepareTemplateProject, configure: configureTemplateProject }
+    )
+  }
   if (!api.projects.createCollaborationGroup) throw new Error('template_group_unavailable')
-  await prepareTemplateProject(api, projectId, document, locale)
-  const resolved = await materializeTemplateAgents(
+  const references = templateAgentReferences(drafts)
+  const agentNames = (document.spec.resources.collaboration.agents ?? [])
+    .filter(agent => references.has(templateAgentId(agent.key)))
+    .map(agent => agent.name)
+  const recovery = {
     api,
     projectId,
-    document,
-    drafts,
-    partialMessage,
-    undefined,
-    resolveRouting
-  )
-  let groups: CollaborationGroup[]
+    locale,
+    groupNames: drafts.map(group => group.name.trim()),
+    baselineGroups: undefined as CollaborationGroup[] | undefined,
+    baselineAgentIds: undefined as Set<string> | undefined,
+    agentNames,
+    unconfirmedAgentCreation: false,
+    mutationStarted: false,
+    createdAgents: false,
+    createdGroups: [] as CollaborationGroup[],
+    onGroupsRefreshed,
+  }
   try {
-    groups = await applyTemplateGroups(
+    recovery.baselineGroups = await api.projects.listCollaborationGroups?.(projectId)
+    await prepareTemplateProject(api, projectId, document, locale)
+    if (agentNames.length) {
+      const agents = await api.agents.list(projectId, { forceRefresh: true })
+      recovery.baselineAgentIds = new Set(agents.map(agent => String(agent.team_id ?? agent.id)))
+    }
+    const resolved = await materializeTemplateAgents(
+      {
+        agents: {
+          ...api.agents,
+          create: async (...args) => {
+            recovery.mutationStarted = true
+            recovery.unconfirmedAgentCreation = true
+            const created = await api.agents.create(...args)
+            recovery.createdAgents = true
+            recovery.unconfirmedAgentCreation = false
+            return created
+          },
+        },
+      },
+      projectId,
+      document,
+      drafts,
+      partialMessage,
+      undefined,
+      resolveRouting
+    )
+    const groups = await applyTemplateGroups(
       resolved.drafts,
-      raw =>
-        api.projects.createCollaborationGroup!(projectId, {
+      async raw => {
+        recovery.mutationStarted = true
+        const created = await api.projects.createCollaborationGroup!(projectId, {
           ...normalizeCollaborationGroupDraftForPersistence(raw),
           coordinationMode: 'manager',
-        }),
+        })
+        recovery.createdGroups.push(created)
+        return created
+      },
       partialMessage
     )
-  } catch (cause) {
-    if (resolved.agentIds.size) throw new PartialTemplateApplyError(partialMessage, { cause })
-    throw cause
-  }
-  try {
-    await configureTemplateProject(api, projectId, document, groups, locale)
-  } catch (error) {
-    throw new PartialTemplateApplyError(
-      locale === 'zh-CN'
-        ? '小组已添加，但默认分配或阶段看板未全部配置成功。请在项目设置中检查，避免重复导入。'
-        : 'Groups were added, but task routing or the stage board could not be fully configured. Check project settings before importing again.',
-      { cause: error }
+    await configureTemplateProject(
+      {
+        ...api,
+        projects: {
+          ...api.projects,
+          update: async (...args) => {
+            recovery.mutationStarted = true
+            return api.projects.update(...args)
+          },
+        },
+        automations: api.automations && {
+          ...api.automations,
+          create: async (...args) => {
+            recovery.mutationStarted = true
+            return api.automations!.create(...args)
+          },
+        },
+      },
+      projectId,
+      document,
+      groups,
+      locale
     )
+    return groups
+  } catch (cause) {
+    throw await reconcileProjectTemplateFailure(cause, recovery)
   }
-  return groups
+}
+
+export async function resumeProjectTemplateImport(
+  api: SharedWorkspaceApi,
+  projectId: string,
+  operationId: string,
+  locale: CollaborationLocale,
+  onGroupsRefreshed?: (groups: CollaborationGroup[]) => void
+) {
+  return resumeDurableProjectTemplate(api, projectId, operationId, locale, onGroupsRefreshed, {
+    prepare: prepareTemplateProject,
+    configure: configureTemplateProject,
+  })
+}
+
+export async function restartProjectTemplateImport(
+  api: SharedWorkspaceApi,
+  projectId: string,
+  completedOperationId: string,
+  locale: CollaborationLocale,
+  onGroupsRefreshed?: (groups: CollaborationGroup[]) => void
+) {
+  return restartDurableProjectTemplate(
+    api,
+    projectId,
+    completedOperationId,
+    locale,
+    onGroupsRefreshed,
+    {
+      prepare: prepareTemplateProject,
+      configure: configureTemplateProject,
+    }
+  )
 }

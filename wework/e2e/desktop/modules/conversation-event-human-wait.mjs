@@ -167,7 +167,46 @@ export function createEventHumanWait({ rpc, workspacePath, uiTimeoutMs, captureS
         'clickWhenEnabled',
         `${card} [data-testid="request-user-input-submit-button"]`
       )
-      await waitHeld('event-human-answer')
+      try {
+        await waitHeld('event-human-answer')
+      } catch (error) {
+        try {
+          const observations = await Promise.allSettled([
+            getTask(),
+            rpc(control, 'runtime.tasks.get', { taskId: blockerTask }),
+            rpc(control, 'runtime.capacity.get', {}),
+          ])
+          const value = index =>
+            observations[index].status === 'fulfilled' ? observations[index].value : null
+          const capacity = value(2)
+          console.error('[conversation-event-human-wait] answer-model-wait-failed', {
+            task: answerWaitTaskState(value(0)?.task),
+            blocker: answerWaitTaskState(value(1)?.task),
+            capacity: capacity
+              ? {
+                  active: capacity.active,
+                  queued: capacity.queued,
+                  maxConcurrentTasks: capacity.maxConcurrentTasks,
+                  questionActive: capacity.active_task_ids.includes(address.taskId),
+                  blockerActive: capacity.active_task_ids.includes(blockerTask),
+                  personal: {
+                    active: capacity.categories.personal.active,
+                    queued: capacity.categories.personal.queued,
+                    limit: capacity.categories.personal.limit,
+                  },
+                }
+              : null,
+            modelRequestsSinceEvent: readRequestCount() - requestsBefore,
+            heldModelRequests: [...releases.keys()],
+            unavailableObservations: observations.flatMap((result, index) =>
+              result.status === 'rejected' ? [index] : []
+            ),
+          })
+        } catch {
+          // Diagnostic failures must never replace the original assertion.
+        }
+        throw error
+      }
       await rpc(control, 'runtime.settings.update', { maxConcurrentTasks: 1 })
       releases.get('event-human-answer')()
       await waitForValue(
@@ -202,5 +241,25 @@ export function createEventHumanWait({ rpc, workspacePath, uiTimeoutMs, captureS
         originalSettings = undefined
       }
     },
+  }
+}
+
+function answerWaitTaskState(task) {
+  if (!task) return null
+  const state = task.executionState
+  return {
+    taskId: task.taskId,
+    threadId: task.threadId,
+    running: task.running,
+    status: task.status,
+    interactionStatus: task.interactionStatus,
+    phase: state?.phase,
+    revision: state?.revision,
+    turnId: state?.turnId,
+    latestTurnId: state?.latestTurnId,
+    subscriptions: task.runtimeHandle?.connectionEventSubscriptions?.map(item => ({
+      key: item.subscription_key,
+      status: item.status,
+    })),
   }
 }

@@ -771,7 +771,7 @@ for (const published of [false, true]) {
         assert.equal(result.status, 31, result.stderr);
         assert.equal(
           readFileSync(log, "utf8"),
-          "-o APT::Update::Error-Mode=any update\n",
+          "update\n",
         );
       } else {
         assert.equal(result.status, 0, result.stderr);

@@ -7,6 +7,9 @@ use super::*;
 #[path = "goal_recovery_tests.rs"]
 mod goal_recovery_tests;
 
+#[path = "capacity_release_tests.rs"]
+mod capacity_release_tests;
+
 #[path = "native_capacity_tests.rs"]
 mod native_capacity_tests;
 

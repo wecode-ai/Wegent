@@ -43,6 +43,8 @@ install_missing_apt_packages() {
 
   local privileged=()
   if ((EUID != 0)); then privileged=(sudo); fi
-  run_apt_with_diagnostics "${privileged[@]}" apt-get -o APT::Update::Error-Mode=any update || return
+  # A stale third-party index must not block packages that the distribution
+  # repositories can still provide. Installation remains strict below.
+  run_apt_with_diagnostics "${privileged[@]}" apt-get update || return
   run_apt_with_diagnostics "${privileged[@]}" apt-get install --yes --no-install-recommends "${missing[@]}"
 }

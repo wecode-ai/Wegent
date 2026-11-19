@@ -86,9 +86,17 @@ Credentials are shown only this time. Do not put their values in chat, documents
 
 <a id="collaboration-template-models"></a>
 
-In **Confirm collaboration setup**, choose **Apply template** directly or expand **Runtime (optional)** to select an environment and models. Agents of the same runtime share the selected model, without changing device defaults. Incomplete options are requested when execution starts. Template automation remains disabled until its execution policies are configured; enable it in project settings afterwards. Failed catalog loads can be refreshed without losing names or member choices.
+In **Confirm collaboration setup**, choose **Apply template** directly or expand **Runtime (optional)** to select an environment and models. Agents of the same runtime share the selected model, without changing device defaults. Incomplete options are requested when execution starts. When required execution policies are incomplete, template automation remains disabled; enable it in project settings after completing them. Failed catalog loads can be refreshed without losing names or member choices.
 
 <a id="template-controls"></a>
+
+When applying a template to an existing project fails, the dialog distinguishes expired login or permissions, duplicate names, invalid member or stage configuration, server errors and connection failures, then refreshes collaboration groups. The current name and role bindings are preserved. Binding every role to existing members creates no template Agents.
+
+Cloud projects save the import configuration and confirmed steps. After a lost connection, closing the dialog, switching import entry points or signing into the same account on another client, select an unfinished import to continue. Only unfinished steps run; completed steps reuse server-confirmed resources. Concurrent requests from the same account for the same project and configuration share one import and do not duplicate Agents, groups, automation rules or boards. Different accounts have independent import records. Recovery requires current project maintenance permission. Changing the template, members, names or actual runtime configuration starts a different import. Completed board steps preserve later human edits.
+
+If resources from a completed import are later deleted, applying the same configuration again lets you inspect the original import record and choose **Start a new import** after checking its saved configuration. This explicitly starts another generation of resources. Two clients starting again from the same completed record still share one generation. Original records and receipts remain intact, so late requests from the old import cannot recreate resources. Existing group names are checked before creating Agents.
+
+Local projects retain their local storage flow. An uncertain result after a write preserves the draft and blocks another submission, even if a refreshed list is temporarily empty. Use **Refresh** for a read-only check. Matching names alone do not prove that this attempt created a resource. An explicitly rejected request without earlier successful writes, or validation failure before creation, allows retry after adjusting the configuration.
 
 To delete an imported personal template, open **Collaboration → Templates → My templates → Delete template** on its card, check its name and confirm. Cancel leaves it unchanged. Only your own personal templates have this action; built-in and other users’ templates cannot be deleted. Unsynced drafts can be deleted offline. Synced templates require a cloud connection and are removed from your account and this device. Existing projects and groups are unaffected. On failure, the template remains available and you can retry in the dialog.
 
@@ -171,10 +179,9 @@ In a native cloud project Issue, open **Participants → +**, search by name or 
 
 An outside participant manages only the invited Issue: reading, commenting, editing, inviting people and assigning to people. This grants no project membership, access to the project or other Issues, project administration, or project execution resources. The Issue link opens its details directly. Removing a participant revokes access unless they remain the current assignee; past assignments grant no continuing access. Multi-selection adds participants individually; errors remain visible and successful additions are retained.
 
-
 | Feature                            | Steps                                                                                                                       | Conditions and result                                                                                              |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| Add project member                 | Project settings → Project members → Add member → search username/email → choose role → click result                      | Clicking adds immediately; no extra Save button; requires management permission                                    |
+| Add project member                 | Project settings → Project members → Add member → search username/email → choose role → click result                        | Clicking adds immediately; no extra Save button; requires management permission                                    |
 | Responsibilities, role and removal | Edit responsibilities/capabilities on the row and blur to save; change role/remove where allowed                            | Inherited membership, effective role and permissions constrain actions; not every member can be removed            |
 | Discuss, assign or move            | Issue details → discussion composer → Assign to or Move to → select target → Send and update                                | Selection only stages changes; without text, select Update issue; use × to cancel a selection                      |
 | Close and reopen                   | Issue details → arrow beside Send inside the composer, bottom right → Close issue or Reopen issue                           | With a draft, the action is Comment and close; details stay open and closure uses the existing Completed state     |
@@ -321,12 +328,11 @@ Assignment errors identify the Agent, the Issue's bound environment, the policy 
 
 In a global, space or project agent create/settings form, check resource ownership and choose the capability source:
 
-
 | Option/action                       | Steps and limits                                                                                                                                                      |
 | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Follow runtime device (recommended) | Uses that running device's current user's plugins, Skills, MCP and local capabilities; today's device preview is not a guarantee for a different device               |
 | Fix capabilities to Agent           | Search/add/remove plugins and Skills to store them with the agent; plugin capability selection is Codex-only and configured capabilities synchronize before execution |
-| Advanced MCP                        | In fixed mode, edit MCP JSON in Tools and skills and check format/source trust; do not put credentials in prose or chat                                              |
+| Advanced MCP                        | In fixed mode, edit MCP JSON in Tools and skills and check format/source trust; do not put credentials in prose or chat                                               |
 | Prompt references                   | Plugin/Skill references require fixed capabilities and lock required selections; review/remove the reference before changing its required item                        |
 | Save                                | Explicitly save after reviewing capabilities, execution environment and model; choosing an option alone does not save                                                 |
 | Disable                             | Disabling in project agent configuration submits immediately, without another confirmation dialog; not deletion of the source agent or termination of an existing run |
@@ -706,4 +712,3 @@ In Issue details, the action row beneath each top-level comment places **Create 
 Project maintainers can choose **Project settings → AI configuration → Agents → Delete** and confirm removal. Existing tasks, execution history and shared source resources remain intact. Replace or remove all leader, member and stage references in collaboration groups first. System-managed current-device Agents cannot be deleted. Removing a collaboration group also requires confirmation; Cancel leaves it unchanged.
 
 Use **Project settings → AI configuration → Execution environments** to maintain AI devices, repositories and setup steps. Explicit preparation shows **Project directory ready** on completion. Version conflicts preserve your draft. **Load latest configuration** replaces the draft with server values; **Keep draft and refresh version** retains your input without submitting it. Review it before clicking **Save configuration**, which replaces the latest environment configuration. A failed read can be retried without repeating a write.
-

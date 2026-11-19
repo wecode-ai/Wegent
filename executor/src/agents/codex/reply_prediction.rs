@@ -157,6 +157,10 @@ impl CodexAppServerClient {
         cancellation: &mut oneshot::Receiver<()>,
         launch_config: Option<&CodexLaunchConfig>,
     ) -> Result<Option<String>, String> {
+        let _home_writer = match self.admit_named_home_writer(Some(cancellation)).await {
+            Ok(writer) => writer,
+            Err(()) => return Ok(None),
+        };
         let gate = self.thread_lifecycle_gate(source_thread_id).await;
         let _admission = gate.lock().await;
         let retained = {
@@ -439,6 +443,7 @@ while IFS= read -r line; do
       else printf '{"id":%s,"result":{"thread":{"id":"prediction"}}}\n' "$id"; fi ;;
     *'"method":"turn/start"'*)
       printf '{"id":%s,"result":{"turn":{"id":"prediction-turn","status":"inProgress"}}}\n' "$id"
+      touch '__LOG__.turn-started'
       if [ '__MODE__' = 'complete' ]; then
         printf '%s\n' '{"method":"item/completed","params":{"threadId":"unrelated","item":{"type":"agentMessage","text":"wrong"}}}'
         printf '%s\n' '{"method":"item/completed","params":{"threadId":"prediction","turnId":"prediction-turn","item":{"type":"agentMessage","text":"{\"suggestion\":\"请继续\"}"}}}'
@@ -447,7 +452,13 @@ while IFS= read -r line; do
         printf '%s\n' '{"method":"turn/started","params":{"threadId":"source","turn":{"id":"new-parent-turn"}}}'
       fi ;;
     *'"method":"turn/interrupt"'*) printf '{"id":%s,"result":{}}\n' "$id" ;;
-    *'"method":"thread/unsubscribe"'*) printf '{"id":%s,"result":{"status":"notLoaded"}}\n' "$id" ;;
+    *'"method":"thread/unsubscribe"'*)
+      if [ '__MODE__' = 'delayed-parent-close' ] && printf '%s' "$line" | grep -q '"threadId":"source"'; then
+        touch '__LOG__.parent-closing'
+        while [ ! -f '__LOG__.allow-parent-close' ]; do sleep 0.01; done
+        printf '{"id":%s,"result":{"status":"unsubscribed"}}\n' "$id"
+        printf '%s\n' '{"method":"thread/closed","params":{"threadId":"source"}}'
+      else printf '{"id":%s,"result":{"status":"notLoaded"}}\n' "$id"; fi ;;
   esac
 done
 "#;
@@ -700,6 +711,61 @@ done
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn named_home_writer_waits_for_prediction_parent_native_close() {
+        let fixture = Fixture::new("delayed-parent-close");
+        let (cancel, receiver) = oneshot::channel();
+        let prediction = fixture.predict(None, receiver);
+        tokio::pin!(prediction);
+        let wait_for_file = |path: PathBuf| async move {
+            timeout(Duration::from_secs(5), async {
+                while !path.exists() {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("Native fixture did not reach its checkpoint");
+        };
+        let closing = fixture.log.with_extension("jsonl.parent-closing");
+        tokio::select! {
+            result = &mut prediction => panic!("Prediction ended before parent close: {result:?}"),
+            () = wait_for_file(closing) => {},
+        }
+
+        // Isolated execution uses the same admission after its exclusive Home lease.
+        let admission = fixture.client.admit_named_home_writer(None);
+        tokio::pin!(admission);
+        let first = futures_util::poll!(&mut admission);
+        let blocked_by_parent_close = first.is_pending();
+        fs::write(fixture.log.with_extension("jsonl.allow-parent-close"), "").unwrap();
+        let writer = match first {
+            std::task::Poll::Ready(writer) => writer,
+            std::task::Poll::Pending => tokio::select! {
+                result = &mut prediction => panic!("Prediction ended before writer admission: {result:?}"),
+                writer = &mut admission => writer,
+            },
+        }
+        .unwrap();
+
+        // The independent prediction fork must progress while real execution owns the Home.
+        let fork_started = fixture.log.with_extension("jsonl.turn-started");
+        tokio::select! {
+            result = &mut prediction => panic!("Prediction ended before its fork: {result:?}"),
+            () = wait_for_file(fork_started) => {},
+        }
+        cancel.send(()).unwrap();
+        let result = prediction.await;
+        drop(writer);
+        fixture.stop().await;
+
+        assert!(
+            blocked_by_parent_close,
+            "Isolated execution was admitted while prediction still owned the parent's native writer"
+        );
+        assert_eq!(result.unwrap_err(), CODEX_APP_SERVER_TURN_CANCELLED);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn prediction_preserves_a_retained_parent_without_reconfiguring_it() {
         let fixture = Fixture::new("complete");
         fixture.client.subscribe_notifications().await.unwrap();
@@ -841,6 +907,31 @@ done
             .calls()
             .iter()
             .any(|call| call["method"] == "thread/fork" || call["method"] == "thread/resume"));
+        fixture.stop().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn prediction_cancelled_while_waiting_for_home_returns_no_suggestion() {
+        let fixture = Fixture::new("complete");
+        let writer = fixture.client.admit_named_home_writer(None).await.unwrap();
+        let (cancel, receiver) = oneshot::channel();
+        let prediction = fixture.predict(Some("latest"), receiver);
+        tokio::pin!(prediction);
+        assert!(futures_util::poll!(&mut prediction).is_pending());
+        cancel.send(()).unwrap();
+        assert_eq!(prediction.await.unwrap(), json!({"suggestion": null}));
+        assert!(!fixture
+            .calls()
+            .iter()
+            .any(|call| call["method"] == "thread/fork" || call["method"] == "thread/resume"));
+        drop(writer);
+        assert!(fixture
+            .client
+            .admit_named_home_writer(None)
+            .await
+            .unwrap()
+            .is_some());
         fixture.stop().await;
     }
 

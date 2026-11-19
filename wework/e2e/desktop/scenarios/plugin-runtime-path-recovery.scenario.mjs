@@ -49,6 +49,7 @@ import {
   closeComposerPluginPicker,
   openComposerPluginPicker,
 } from '../modules/conversation-layout.mjs'
+import { processIsAlive } from '../process-lifecycle.mjs'
 import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
@@ -59,6 +60,26 @@ import {
 } from '../modules/shared.mjs'
 
 const quote = value => `'${value.replaceAll("'", "'\\''")}'`
+
+async function stopRecordedExecutor(processId) {
+  if (!Number.isSafeInteger(processId) || processId <= 0 || !processIsAlive(processId)) return
+  process.kill(processId, 'SIGTERM')
+  try {
+    await until(
+      () => !processIsAlive(processId),
+      stopped => stopped,
+      `Executor ${processId} survived application shutdown`,
+      5_000
+    )
+  } catch {
+    if (processIsAlive(processId)) process.kill(processId, 'SIGKILL')
+    await until(
+      () => !processIsAlive(processId),
+      stopped => stopped,
+      `Executor ${processId} survived forced shutdown`
+    )
+  }
+}
 
 // Only Responses model output is synthetic. Installs, migrations, runtime reads,
 // package files, backend outages and Codex shell execution use real integrations.
@@ -323,6 +344,7 @@ export async function createDesktopScenario({
     backendStopped = true
     await restartDesktopApp({
       async afterStop() {
+        await stopRecordedExecutor(runtimeBefore.executorPid)
         for (const value of [original, retained]) {
           recordFormatting(
             'format-only-before-relocation',

@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useState, type RefObject } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { cn } from '@/lib/utils'
 
@@ -27,13 +27,19 @@ export function TransientNotice({
   action,
 }: TransientNoticeProps) {
   const [horizontalPlacement, setHorizontalPlacement] = useState<HorizontalPlacement | null>(null)
+  const onClearRef = useRef(onClear)
+  const hasAction = Boolean(action)
+
+  useLayoutEffect(() => {
+    onClearRef.current = onClear
+  }, [onClear])
 
   useEffect(() => {
-    if (!message || action) return
+    if (!message || hasAction) return
 
-    const timeout = window.setTimeout(onClear, 2200)
+    const timeout = window.setTimeout(() => onClearRef.current(), 2200)
     return () => window.clearTimeout(timeout)
-  }, [action, message, onClear])
+  }, [hasAction, message])
 
   useLayoutEffect(() => {
     if (!message || !horizontalAnchorRef || !visible) return

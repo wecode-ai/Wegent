@@ -76,6 +76,7 @@ from app.services.loop_items.service import loop_item_service
 from app.services.message_forwarding_service import message_forwarding_service
 from app.services.project_board_snapshot import project_board_snapshot_service
 from app.services.project_chat.service import project_chat_service
+from app.services.template_imports import TemplateImportDependency
 from app.stores.tasks import subtask_store, task_access_store, task_store
 
 router = APIRouter()
@@ -222,8 +223,11 @@ def update_cloud_project(
     values: CloudProjectUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
+    template_import: TemplateImportDependency = None,
 ) -> CloudProjectResponse:
-    project = cloud_project_service.update(db, project_id, current_user.id, values)
+    project = cloud_project_service.update(
+        db, project_id, current_user.id, values, template_import=template_import
+    )
     return _project_response(db, project, current_user)
 
 
@@ -317,9 +321,14 @@ def create_project_chat_agent(
     values: ProjectChatAgentCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
+    template_import: TemplateImportDependency = None,
 ) -> ProjectChatAgentView:
     return project_chat_service.create_agent(
-        db, user_id=current_user.id, project_id=str(project_id), request=values
+        db,
+        user_id=current_user.id,
+        project_id=str(project_id),
+        request=values,
+        template_import=template_import,
     )
 
 

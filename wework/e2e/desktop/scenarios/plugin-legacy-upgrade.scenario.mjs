@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { copyFile, lstat, mkdir, readFile, readlink, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { promisify } from 'node:util'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
 import { findNestedString, requestContainsSkillLocator } from '../modules/desktop-server.mjs'
@@ -31,6 +31,10 @@ import {
   until,
 } from '../modules/plugin-regression-fixture.mjs'
 import { packagedResourcesRoot } from '../modules/workbench-schema-compatibility.mjs'
+import {
+  resolveSkillLocatorPaths,
+  skillLocatorFailureSummary,
+} from '../modules/skill-locator-diagnostics.mjs'
 import {
   assistantMessage,
   readRequestBody,
@@ -292,12 +296,6 @@ export async function createDesktopScenario({
         installedId: fixtures.update.installedId,
       }
       assert.notEqual(initialUpdate.version, fixtures.update.version)
-      // The old executor is stopped. Change account intent before the first modern sync,
-      // so preparation cannot cache the old archive and bypass the runtime witness.
-      await update(initialUpdate, null, { releaseId: initialUpdate.releaseId })
-      const desired = await accountPlugin(cloud, initialUpdate.slug)
-      assert.equal(desired.spec.releaseId, initialUpdate.releaseId)
-      assert.equal(desired.spec.version, initialUpdate.version)
       evidence.push({
         phase: 'legacy-runtime-bytecode',
         sourceVersion: release.version,
@@ -306,6 +304,12 @@ export async function createDesktopScenario({
         ...bytecode,
       })
     }
+    // The old executor is stopped. Align account intent with this baseline before the
+    // first modern sync so preparation cannot race a version left by the prior baseline.
+    await update(initialUpdate, null, { releaseId: initialUpdate.releaseId })
+    const desired = await accountPlugin(cloud, initialUpdate.slug)
+    assert.equal(desired.spec.releaseId, initialUpdate.releaseId)
+    assert.equal(desired.spec.version, initialUpdate.version)
     return {
       release,
       fixtures,
@@ -322,6 +326,9 @@ export async function createDesktopScenario({
       () => entry(fixture),
       value =>
         value?.version === version &&
+        // The manifest version and versioned native runtime publish independently.
+        // Do not cache the historical skill path between those two publications.
+        basename(value.runtime.codex_link) === version &&
         !value.runtime_recovery_error &&
         value.runtime.codex_link.startsWith(desktopFor(current.release)),
       `Migrated ${fixture.slug} did not reach ${version}`,
@@ -336,6 +343,7 @@ export async function createDesktopScenario({
     const id = `legacy-business-${Date.now()}`
     active = {
       id,
+      version,
       prompt: `WEWORK_LEGACY_PLUGIN ${id}`,
       output: null,
       // Keep the prepared Corepack ahead of host tools after native login-shell hydration.
@@ -513,8 +521,12 @@ export async function createDesktopScenario({
         events = [assistantMessage(`${active.id} completed`)]
       } else if (active && JSON.stringify(body.input ?? '').includes(active.prompt)) {
         assert.ok(requestAdvertisesShellCommand(body))
-        const discovered = requestContainsSkillLocator(body, active.skillPath, active.skillName)
-        if (!discovered) {
+        const hasSkillLocator = requestContainsSkillLocator(
+          body,
+          active.skillPath,
+          active.skillName
+        )
+        if (!hasSkillLocator) {
           const catalog =
             findNestedString(body, text => text.includes('### Available skills')) ?? ''
           await writeFile(
@@ -538,10 +550,31 @@ export async function createDesktopScenario({
             console.error('Legacy skill discovery diagnostics failed:', error.message)
           )
         }
-        assert.ok(
-          discovered,
-          `Codex did not discover the historical plugin in its migrated native runtime: ${active.skillPath}`
-        )
+        const failureMessage =
+          'Codex did not discover the historical plugin in its migrated native runtime'
+        let message = failureMessage
+        if (!hasSkillLocator) {
+          try {
+            const summary = skillLocatorFailureSummary(body, {
+              skillPath: active.skillPath,
+              skillName: active.skillName,
+              pluginName: 'smart-app-builder',
+            })
+            message = `${failureMessage}: ${JSON.stringify({
+              at: new Date().toISOString(),
+              invocationId: active.id,
+              baselineVersion: current.release.version,
+              pluginVersion: active.version,
+              ...(await resolveSkillLocatorPaths(summary, {
+                pluginName: 'smart-app-builder',
+                allowedRoot: homePath,
+              })),
+            })}`
+          } catch {
+            message = `${failureMessage}: diagnostics unavailable`
+          }
+        }
+        assert.ok(hasSkillLocator, message)
         events = shellCommandResponse(body, active.id, active.command, workspacePath)
       } else events = [assistantMessage('Legacy plugin migration fixture ready')]
       response.writeHead(200, { 'Content-Type': 'text/event-stream' })

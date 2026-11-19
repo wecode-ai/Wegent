@@ -625,6 +625,15 @@ impl RuntimeWorkRpcHandler {
         self.active_local_execution_id(local_task_id).is_some()
     }
 
+    pub(super) fn has_local_execution_owner(&self, local_task_id: &str) -> bool {
+        self.is_active_local_task(local_task_id)
+            || self
+                .preparing_turns
+                .lock()
+                .expect("preparation map poisoned")
+                .contains_key(local_task_id)
+    }
+
     pub(super) fn clear_active_request_user_input(&self, local_task_id: &str, execution_id: u64) {
         let mut active = self
             .active_request_user_inputs

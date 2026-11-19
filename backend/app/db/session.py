@@ -56,6 +56,7 @@ def _create_engine():
                 SQLALCHEMY_DATABASE_URL,
                 connect_args={"check_same_thread": False, "timeout": 30},
                 pool_pre_ping=True,
+                hide_parameters=True,
             )
         )
     else:
@@ -65,6 +66,7 @@ def _create_engine():
             SQLALCHEMY_DATABASE_URL,
             isolation_level=MYSQL_TRANSACTION_ISOLATION,
             pool_pre_ping=True,
+            hide_parameters=True,
             poolclass=ObservedQueuePool,
             pool_size=settings.DB_POOL_SIZE,
             max_overflow=settings.DB_MAX_OVERFLOW,
@@ -126,6 +128,7 @@ def _create_async_engine() -> AsyncEngine:
             async_url,
             connect_args={"timeout": 30},
             pool_pre_ping=True,
+            hide_parameters=True,
         )
         _configure_sqlite_engine(async_engine.sync_engine)
         return async_engine
@@ -136,6 +139,7 @@ def _create_async_engine() -> AsyncEngine:
             "init_command": f"SET time_zone = '{MYSQL_SESSION_TIMEZONE_OFFSET}'",
         },
         pool_pre_ping=True,
+        hide_parameters=True,
         poolclass=ObservedAsyncQueuePool,
         pool_size=settings.DB_ASYNC_POOL_SIZE,
         max_overflow=settings.DB_ASYNC_MAX_OVERFLOW,

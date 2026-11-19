@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { writeFile } from 'node:fs/promises'
+import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createDesktopScenario as createStatusScenario } from './change-request-status.scenario.mjs'
 import {
@@ -8,6 +8,7 @@ import {
   selectE2EModel,
 } from '../modules/shared.mjs'
 import { waitForSnapshot } from '../modules/conversation-layout.mjs'
+import { waitForChangeRequestRefresh } from '../modules/change-request-refresh.mjs'
 import {
   assistantMessage,
   createSse,
@@ -64,9 +65,15 @@ export async function createDesktopScenario(options) {
       await existing.verify(control)
       active = true
       try {
+        const logPath = join(options.resultDir, 'executor.log')
+        const fromOffset = (await readFile(logPath, 'utf8')).length
         await writeFile(join(options.homePath, '.wework-change-request-e2e-state'), 'failure\n')
         await control.command('click', ENVIRONMENT)
         await control.command('click', ENVIRONMENT)
+        await waitForChangeRequestRefresh(logPath, {
+          fromOffset,
+          timeoutMs: options.runtimeOperationTimeoutMs,
+        })
         await control.command('waitFor', '[data-testid="change-request-checks"]', {
           text: '检查失败',
         })

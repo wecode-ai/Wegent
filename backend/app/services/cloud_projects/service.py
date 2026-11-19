@@ -42,6 +42,7 @@ from app.services.execution_environment_initialization import (
 )
 from app.services.loop_item_status_history import write_status_change
 from app.services.project_automation_domain import ACTIVE_RUN_STATUSES
+from app.services.template_imports import TemplateImportRequest, lock_template_import
 from app.services.workspaces.access import require_workspace_role
 from app.services.workspaces.environment_status import execution_environment_statuses
 from app.services.workspaces.resource_mapping import execution_environment_values
@@ -237,10 +238,28 @@ class CloudProjectService(CloudProjectMemberService):
         project_id: int,
         user_id: int,
         values: CloudProjectUpdate,
+        *,
+        template_import: TemplateImportRequest | None = None,
     ) -> CloudProject:
+        template_write = lock_template_import(
+            db,
+            template_import,
+            project_id=project_id,
+            user_id=user_id,
+            kind="board",
+            payload=values,
+        )
         project = require_cloud_project_role(
             db, project_id, user_id, BaseRole.Maintainer
         ).project
+        if template_write is not None and template_write.resource_id is not None:
+            db.commit()
+            db.refresh(project)
+            return project
+        if template_write is not None and values.tag_change is not None:
+            raise HTTPException(
+                422, "Template imports cannot perform incremental tag changes"
+            )
         if values.tag_change is not None:
             from app.services.cloud_projects.tags import change_project_tag
 
@@ -475,6 +494,8 @@ class CloudProjectService(CloudProjectMemberService):
 
         db.flush()
         pending = revoke_unauthorized_project_work(db, project.id)
+        if template_write is not None:
+            template_write.record(project.id)
         db.commit()
         request_execution_cancellations(pending)
         db.refresh(project)

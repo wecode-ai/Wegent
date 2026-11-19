@@ -11,6 +11,7 @@ import {
   verifyTemplateDeletion,
   verifyTemplateDeletionPermissions,
 } from '../modules/template-deletion-flow.mjs'
+import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import {
   confirmProjectTemplateConfiguration,
   openProjectTemplateConfiguration,
@@ -19,6 +20,75 @@ import {
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const scoped = selector => `${CONTENT} ${selector}`
 const testId = name => scoped(`[data-testid="${name}"]`)
+const PROJECT_DIALOG =
+  '[data-testid="workspace-tab-content-fixed-board"] [data-testid="collaboration-project-create-dialog"]'
+
+const waitForProjectDialogUnmount = (control, timeoutMs, message) =>
+  waitForValue(
+    () => control.command('getElementCount', PROJECT_DIALOG),
+    count => Number(count) === 0,
+    message,
+    timeoutMs
+  )
+
+export async function discardTemplateProjectDraft(
+  control,
+  { uiTimeoutMs, workbenchReadyTimeoutMs }
+) {
+  await control.command('clickWhenEnabled', testId('collaboration-project-create-cancel'), {
+    visible: true,
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('waitFor', testId('collaboration-project-create-discard'), {
+    visible: true,
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command(
+    'clickWhenEnabled',
+    testId('collaboration-project-create-discard-confirm'),
+    {
+      visible: true,
+      timeoutMs: uiTimeoutMs,
+    }
+  )
+  await waitForProjectDialogUnmount(
+    control,
+    workbenchReadyTimeoutMs,
+    'Template project draft did not close'
+  )
+}
+
+export async function submitConfiguredTemplateProject(
+  control,
+  { projectName, uiTimeoutMs, workbenchReadyTimeoutMs, beforeSubmit }
+) {
+  await confirmProjectTemplateConfiguration(control, CONTENT, {
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('waitFor', testId('collaboration-project-create-confirm'), {
+    visible: true,
+    timeoutMs: uiTimeoutMs,
+  })
+  await control.command('fill', testId('collaboration-project-name-input'), {
+    value: projectName,
+  })
+  await beforeSubmit()
+  await control.command('clickWhenEnabled', testId('collaboration-project-create-confirm'), {
+    visible: true,
+    timeoutMs: uiTimeoutMs,
+  })
+  // The form stays mounted while template resources are configured. Its footer
+  // can be hidden by configuration navigation before submission has completed.
+  await waitForProjectDialogUnmount(
+    control,
+    workbenchReadyTimeoutMs,
+    'Template project configuration did not finish'
+  )
+  await control.command('waitFor', testId('cloud-project-header-title'), {
+    text: projectName,
+    timeoutMs: uiTimeoutMs,
+  })
+}
 
 export async function fillTemplateRoleBindings(control, count) {
   await control.command('waitFor', testId('template-customize-main'))
@@ -76,16 +146,24 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
   const wait = (control, name, text, timeoutMs = uiTimeoutMs) =>
     control.command('waitFor', testId(name), { text, timeoutMs })
   const openTemplateProject = async (control, text) => {
-    await click(control, 'template-use')
+    await control.command('clickWhenEnabled', testId('template-use'), {
+      visible: true,
+      timeoutMs: uiTimeoutMs,
+    })
     const workspace = testId('collaboration-project-workspace-wework-local-workspace')
     const templateSection = testId('project-create-template-section')
     await control.command('waitFor', `${workspace}, ${templateSection}`, {
+      visible: true,
       timeoutMs: uiTimeoutMs,
     })
     if (Number(await control.command('getElementCount', workspace)) > 0) {
-      await control.command('clickWhenEnabled', workspace, { timeoutMs: uiTimeoutMs })
+      await control.command('clickWhenEnabled', workspace, {
+        visible: true,
+        timeoutMs: uiTimeoutMs,
+      })
     }
     await control.command('waitFor', templateSection, {
+      visible: true,
       ...(text ? { text } : {}),
       timeoutMs: uiTimeoutMs,
     })
@@ -337,7 +415,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await wait(control, 'collaboration-workspace-wework-local-workspace')
       await openTemplateProject(control, accountTemplate.document.spec.displayName)
       await capture(control, '00-account-download')
-      await click(control, 'collaboration-project-create-cancel')
+      await discardTemplateProjectDraft(control, { uiTimeoutMs, workbenchReadyTimeoutMs })
       await wait(
         control,
         `template-card-${accountTemplate.document.metadata.name}`,
@@ -367,7 +445,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         0,
         'A self-contained template must be ready without selecting existing Agents'
       )
-      await openProjectTemplateConfiguration(control, CONTENT)
+      await openProjectTemplateConfiguration(control, CONTENT, { timeoutMs: uiTimeoutMs })
       await click(control, 'template-customize-main')
       await control.command('select', testId('template-role-main-role-1'), { value: '' })
       await control.command('waitFor', testId('collaboration-project-name-input'), {
@@ -385,20 +463,12 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         'Unbound roles did not block template configuration'
       )
       await fillTemplateRoleBindings(control, 6)
-      await confirmProjectTemplateConfiguration(control, CONTENT)
-      await control.command('fill', testId('collaboration-project-name-input'), {
-        value: projectName,
+      await submitConfiguredTemplateProject(control, {
+        projectName,
+        uiTimeoutMs,
+        workbenchReadyTimeoutMs,
+        beforeSubmit: () => capture(control, '03-create-bindings'),
       })
-      await capture(control, '03-create-bindings')
-      await control.command('clickWhenEnabled', testId('collaboration-project-create-confirm'), {
-        timeoutMs: uiTimeoutMs,
-      })
-      // Creation configures template resources before onCreated closes the form.
-      await control.command('waitFor', testId('collaboration-project-create-confirm'), {
-        visible: false,
-        timeoutMs: workbenchReadyTimeoutMs,
-      })
-      await wait(control, 'cloud-project-header-title', projectName, workbenchReadyTimeoutMs)
       await selectCollaborationProjectView(control, CONTENT, 'manage', uiTimeoutMs)
       await click(control, 'collaboration-project-settings-sharing')
       await wait(control, 'project-template-settings')

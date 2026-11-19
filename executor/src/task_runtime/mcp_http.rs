@@ -88,6 +88,8 @@ struct RunningSpaceMcpEndpoint {
     contexts: std::sync::Arc<StdMutex<HashMap<String, RegisteredContext>>>,
     shutdown_tx: Option<oneshot::Sender<()>>,
     server_task: Option<thread::JoinHandle<()>>,
+    #[cfg(test)]
+    _store_root: tempfile::TempDir,
 }
 
 impl RunningSpaceMcpEndpoint {
@@ -109,6 +111,16 @@ impl RunningSpaceMcpEndpoint {
 fn running_endpoint() -> &'static StdMutex<Option<RunningSpaceMcpEndpoint>> {
     static RUNNING: OnceLock<StdMutex<Option<RunningSpaceMcpEndpoint>>> = OnceLock::new();
     RUNNING.get_or_init(|| StdMutex::new(None))
+}
+
+#[cfg(test)]
+fn test_endpoint_runtime() -> Result<(tempfile::TempDir, TaskRuntime), String> {
+    // The shared server outlives caller fixtures and their mutable Home settings.
+    let root = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let store = super::LocalTaskStore::open(root.path().join("tasks.sqlite"))
+        .map_err(|error| error.to_string())?;
+    let runtime = TaskRuntime::new(store).map_err(|error| error.to_string())?;
+    Ok((root, runtime))
 }
 
 fn collaboration_dispatcher_registry(
@@ -141,7 +153,10 @@ pub(crate) async fn ensure_space_mcp_http_endpoint() -> Result<SpaceMcpEndpoint,
         return Ok(endpoint);
     }
 
+    #[cfg(not(test))]
     let runtime = TaskRuntime::from_env().map_err(|error| error.to_string())?;
+    #[cfg(test)]
+    let (store_root, runtime) = test_endpoint_runtime()?;
     let listener = StdTcpListener::bind("127.0.0.1:0")
         .map_err(|error| format!("failed to bind project-space MCP endpoint: {error}"))?;
     listener
@@ -223,6 +238,8 @@ pub(crate) async fn ensure_space_mcp_http_endpoint() -> Result<SpaceMcpEndpoint,
         contexts,
         shutdown_tx: Some(shutdown_tx),
         server_task: Some(server_task),
+        #[cfg(test)]
+        _store_root: store_root,
     };
     let readiness = match ready_rx.recv_timeout(Duration::from_secs(2)) {
         Ok(result) => {
@@ -708,10 +725,22 @@ mod tests {
     }
 
     #[test]
+    fn test_endpoint_database_is_owned_independently_of_the_callers_home() {
+        let (root, runtime) = test_endpoint_runtime().unwrap();
+        let path = runtime.stand_in_store().path();
+        assert_eq!(path, root.path().join("tasks.sqlite"));
+        assert_ne!(path, super::super::LocalTaskStore::default_path());
+        assert!(path.is_file());
+    }
+
+    #[test]
     fn endpoint_stop_signals_shutdown_and_joins_the_server_thread() {
+        let (store_root, store) = test_endpoint_runtime().unwrap();
+        let store_path = store.stand_in_store().path().to_owned();
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let (stopped_tx, stopped_rx) = mpsc::sync_channel(1);
         let server_task = thread::spawn(move || {
+            let _store = store;
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
@@ -729,10 +758,12 @@ mod tests {
             contexts: std::sync::Arc::new(StdMutex::new(HashMap::new())),
             shutdown_tx: Some(shutdown_tx),
             server_task: Some(server_task),
+            _store_root: store_root,
         }
         .stop();
 
         stopped_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(!store_path.exists());
     }
 
     #[tokio::test]

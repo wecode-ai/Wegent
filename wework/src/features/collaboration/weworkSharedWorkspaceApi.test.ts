@@ -30,6 +30,46 @@ import {
 
 type DeliveryApi = ReturnType<typeof createDeliveryApi>
 
+it('forwards durable template context through desktop board and automation writes', async () => {
+  const client = {
+    get: vi.fn(),
+    getBlob: vi.fn(),
+    post: vi.fn().mockResolvedValue({ id: 'rule' }),
+    put: vi.fn(),
+    patch: vi.fn().mockResolvedValue({ id: 'project' }),
+    delete: vi.fn(),
+  }
+  const api = createWeworkSharedWorkspaceApi({
+    client,
+    deliveryApi: createMockDeliveryApi(),
+    projectAutomationApi: {} as never,
+    projectIncomingHookApi: {} as never,
+    runtimeProfileApi: {} as never,
+  })
+  const context = { operationId: 'operation', stepKey: 'board:project-board' }
+  const options = {
+    headers: {
+      'X-Template-Import-Id': 'operation',
+      'X-Template-Import-Step': 'board:project-board',
+    },
+  }
+  await api.projects.update('project', { version: 1, tags: ['QA'] }, context)
+  expect(client.patch).toHaveBeenCalledWith(
+    '/v1/cloud-projects/project',
+    { version: 1, tags: ['QA'] },
+    options
+  )
+  await api.automations!.create(
+    'project',
+    { name: 'Rule' } as Parameters<NonNullable<typeof api.automations>['create']>[1],
+    context
+  )
+  expect(client.post).toHaveBeenCalledWith(
+    '/v1/cloud-projects/project/automations',
+    { name: 'Rule' },
+    options
+  )
+})
 const project = {
   id: 'project-1',
   project_key: 'PROJ',
@@ -1050,6 +1090,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         'incomingHooks',
         'runtimeProfiles',
         'agents',
+        'templateImports',
       ].sort()
     )
     expect(WEWORK_SHARED_WORKSPACE_MISSING_METHODS).toEqual([])

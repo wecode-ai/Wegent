@@ -30,12 +30,13 @@ def registration_sync(monkeypatch):
     """Use the real desired-state builder and session rollback/close boundary."""
     events = []
     session_threads = []
-    failure = {"stage": None, "error": None}
+    failure = {"stage": None, "error": None, "persistent": False}
 
     def fail_once(stage):
         events.append(stage)
         if failure["stage"] == stage:
-            failure["stage"] = None
+            if not failure["persistent"]:
+                failure["stage"] = None
             raise failure["error"]
 
     class RegistrationSession:
@@ -56,6 +57,9 @@ def registration_sync(monkeypatch):
             events.append("close")
 
     monkeypatch.setattr(device_namespace, "SessionLocal", RegistrationSession)
+    monkeypatch.setattr(
+        device_namespace, "PLUGIN_REGISTRATION_RECOVERY_DELAYS_SECONDS", (0,)
+    )
     monkeypatch.setattr(device_namespace, "configure_plugin_session", Mock())
     catalog = Mock(side_effect=lambda *args, **kwargs: fail_once("catalog"))
     pending = Mock(side_effect=lambda *args, **kwargs: fail_once("pending"))
@@ -167,7 +171,7 @@ async def test_plugin_prep_failure_syncs_skills_mcps_only(
     registration_sync, stage, code
 ):
     rig = registration_sync
-    rig.failure.update(stage=stage, error=PluginWriteError(code))
+    rig.failure.update(stage=stage, error=PluginWriteError(code), persistent=True)
 
     await _sync(rig)
 
@@ -177,7 +181,12 @@ async def test_plugin_prep_failure_syncs_skills_mcps_only(
         "skills": rig.skills,
         "mcps": rig.mcps,
     }
-    assert rig.events[-3:] == ["rollback", "close", "dispatch"]
+    dispatch_at = rig.events.index("dispatch")
+    assert rig.events[dispatch_at - 2 : dispatch_at + 1] == [
+        "rollback",
+        "close",
+        "dispatch",
+    ]
     rig.plugin_loader.assert_not_called()
     rig.record.assert_not_called()
     assert rig.skill_loader.call_count == 2
@@ -187,11 +196,11 @@ async def test_plugin_prep_failure_syncs_skills_mcps_only(
 
 
 @pytest.mark.asyncio
-async def test_next_successful_registration_restores_full_replace(registration_sync):
+async def test_transient_prep_failure_recovers_full_replace_in_registration(
+    registration_sync,
+):
     rig = registration_sync
     rig.failure.update(stage="commit", error=PluginWriteError("plugin_write_conflict"))
-    await _sync(rig)
-
     await _sync(rig)
 
     assert rig.dispatch.await_count == 2

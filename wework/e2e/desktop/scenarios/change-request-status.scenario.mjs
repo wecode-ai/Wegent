@@ -7,6 +7,7 @@ import { isDeepStrictEqual, promisify } from 'node:util'
 import { waitForAttribute } from '../modules/workspace-flows.mjs'
 import { selectE2EModel, waitForLogPattern } from '../modules/shared.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { waitForChangeRequestRefresh } from '../modules/change-request-refresh.mjs'
 import { until } from '../modules/plugin-regression-fixture.mjs'
 
 const execFileAsync = promisify(execFile)
@@ -265,15 +266,24 @@ async function queryTimestamps(path) {
     .filter(Number.isFinite)
 }
 
-async function refreshEnvironment(control) {
+async function openEnvironment(control, executorLogPath, runtimeOperationTimeoutMs) {
+  const fromOffset = (await readFile(executorLogPath, 'utf8')).length
+  await control.command('click', ENVIRONMENT_BUTTON)
+  await control.command('waitFor', '[data-testid="environment-info-popover"]')
+  await waitForChangeRequestRefresh(executorLogPath, {
+    fromOffset,
+    timeoutMs: runtimeOperationTimeoutMs,
+  })
+}
+
+async function refreshEnvironment(control, executorLogPath, runtimeOperationTimeoutMs) {
   await control.command('click', ENVIRONMENT_BUTTON)
   assert.equal(
     Number(await control.command('getElementCount', '[data-testid="environment-info-popover"]')),
     0,
     'The environment summary did not close before refresh'
   )
-  await control.command('click', ENVIRONMENT_BUTTON)
-  await control.command('waitFor', '[data-testid="environment-info-popover"]')
+  await openEnvironment(control, executorLogPath, runtimeOperationTimeoutMs)
 }
 
 async function readNativeUiObservers(journalPath) {
@@ -281,7 +291,7 @@ async function readNativeUiObservers(journalPath) {
     const database = new DatabaseSync(journalPath, { readOnly: true })
     try {
       // Match the native event store's lock budget during concurrent WAL recovery.
-      database.exec('PRAGMA busy_timeout = 250')
+      database.exec('PRAGMA busy_timeout = 10000')
       return database
         .prepare("SELECT id,value FROM records WHERE section='observers'")
         .all()
@@ -390,6 +400,7 @@ export async function createDesktopScenario({
   executorHome,
   homePath,
   resultDir,
+  runtimeOperationTimeoutMs,
   uiTimeoutMs,
   workspacePath,
 }) {
@@ -536,13 +547,13 @@ export async function createDesktopScenario({
       if (
         Number(
           await control.command('getElementCount', '[data-testid="environment-info-popover"]')
-        ) === 0
+        ) > 0
       ) {
         await control.command('click', ENVIRONMENT_BUTTON)
       }
-      await control.command('waitFor', '[data-testid="environment-info-popover"]')
-      await capture(control, 'change-request-status-01-task-created.png')
 
+      await openEnvironment(control, executorLogPath, runtimeOperationTimeoutMs)
+      await capture(control, 'change-request-status-01-task-created.png')
       await control.command('waitFor', CHANGE_REQUEST_BUTTON, {
         text: '#2631',
         timeoutMs: 4_000,
@@ -568,8 +579,7 @@ export async function createDesktopScenario({
       )
       await capture(control, 'change-request-status-02-pending.png')
 
-      // Branch discovery can render before the first shared observer has finished collecting.
-      // Establish the baseline only after that original activation has completed.
+      // Establish the baseline with the summary open, after its first collection finishes.
       const observerLog = await waitForLogPattern(
         executorLogPath,
         /app IPC request finished .*command_key=connection_observer_start .*ok=true/,
@@ -624,11 +634,10 @@ export async function createDesktopScenario({
         1,
         'An equivalent runtime task refresh restarted the shared PR/MR observer'
       )
-      await control.command('click', ENVIRONMENT_BUTTON)
-      await control.command('waitFor', '[data-testid="environment-info-popover"]')
+      await openEnvironment(control, executorLogPath, runtimeOperationTimeoutMs)
 
       await writeFile(statePath, 'failure\n')
-      await refreshEnvironment(control)
+      await refreshEnvironment(control, executorLogPath, runtimeOperationTimeoutMs)
       await control.command('waitFor', '[data-testid="change-request-checks"]', {
         text: '检查失败',
       })
@@ -648,11 +657,10 @@ export async function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await capture(control, 'change-request-status-03-repair-user-message.png')
-      await control.command('click', ENVIRONMENT_BUTTON)
-      await control.command('waitFor', '[data-testid="environment-info-popover"]')
+      await openEnvironment(control, executorLogPath, runtimeOperationTimeoutMs)
 
       await writeFile(statePath, 'success\n')
-      await refreshEnvironment(control)
+      await refreshEnvironment(control, executorLogPath, runtimeOperationTimeoutMs)
       await control.command('waitFor', '[data-testid="change-request-checks"]', {
         text: '检查通过',
       })
@@ -672,7 +680,7 @@ export async function createDesktopScenario({
       await control.command('click', '[data-testid="environment-change-request-status"]')
 
       await writeFile(statePath, 'unavailable\n')
-      await refreshEnvironment(control)
+      await refreshEnvironment(control, executorLogPath, runtimeOperationTimeoutMs)
       await control.command('waitFor', '[data-testid="change-request-lookup-hint"]', {
         text: '安装 GitHub CLI',
       })

@@ -38,16 +38,29 @@ import type {
   CollaborationIssue,
   CollaborationWorkspaceMember,
 } from "../types";
+import type {
+  SharedWorkspaceTemplateImportsApi,
+  TemplateImportContext,
+} from "../templates/projectTemplateImportTypes";
 
 export interface SharedWorkspaceHttpTransport {
   getCacheScope?(): unknown;
   get<T>(endpoint: string): Promise<T>;
-  post<T>(endpoint: string, data?: unknown): Promise<T>;
-  patch<T>(endpoint: string, data?: unknown): Promise<T>;
+  post<T>(
+    endpoint: string,
+    data?: unknown,
+    options?: { headers?: Record<string, string> },
+  ): Promise<T>;
+  patch<T>(
+    endpoint: string,
+    data?: unknown,
+    options?: { headers?: Record<string, string> },
+  ): Promise<T>;
   delete<T>(endpoint: string, data?: unknown): Promise<T>;
 }
 
 export interface SharedWorkspaceHttpApi {
+  templateImports: SharedWorkspaceTemplateImportsApi;
   milestones: import("../milestones/types").MilestonesApi;
   metrics: import("../metrics/types").CollaborationMetricsApi;
   workspaces: SharedCollaborationWorkspacesApi;
@@ -79,6 +92,37 @@ export interface SharedWorkspaceHttpApi {
   comments: SharedWorkspaceCommentsApi;
   assignments: SharedWorkspaceAssignmentsApi;
   agents: SharedWorkspaceAgentsApi;
+}
+
+function templateImportHeaders(context: TemplateImportContext) {
+  return {
+    headers: {
+      "X-Template-Import-Id": context.operationId,
+      "X-Template-Import-Step": context.stepKey,
+    },
+  };
+}
+
+export function templateImportPost<T>(
+  transport: Pick<SharedWorkspaceHttpTransport, "post">,
+  endpoint: string,
+  input: unknown,
+  context?: TemplateImportContext,
+): Promise<T> {
+  return context
+    ? transport.post<T>(endpoint, input, templateImportHeaders(context))
+    : transport.post<T>(endpoint, input);
+}
+
+export function templateImportPatch<T>(
+  transport: Pick<SharedWorkspaceHttpTransport, "patch">,
+  endpoint: string,
+  input: unknown,
+  context?: TemplateImportContext,
+): Promise<T> {
+  return context
+    ? transport.patch<T>(endpoint, input, templateImportHeaders(context))
+    : transport.patch<T>(endpoint, input);
 }
 
 function encoded(value: string | number): string {
@@ -266,6 +310,25 @@ export function createSharedWorkspaceHttpApi(
     cache.invalidate("/v1/resources");
   };
   return {
+    templateImports: {
+      begin(projectId, input) {
+        return transport.post(
+          `/v1/cloud-projects/${encoded(projectId)}/template-imports`,
+          input,
+        );
+      },
+      get(projectId, operationId) {
+        return transport.get(
+          `/v1/cloud-projects/${encoded(projectId)}/template-imports/${encoded(operationId)}`,
+        );
+      },
+      async list(projectId) {
+        const response = await transport.get<{
+          items: import("../templates/projectTemplateImportTypes").TemplateImportOperation[];
+        }>(`/v1/cloud-projects/${encoded(projectId)}/template-imports`);
+        return response.items;
+      },
+    },
     metrics: {
       project: (projectId) =>
         transport.get(
@@ -644,11 +707,13 @@ export function createSharedWorkspaceHttpApi(
           ),
         );
       },
-      async createCollaborationGroup(projectId, input) {
+      async createCollaborationGroup(projectId, input, context) {
         return mapCollaborationGroupDto(
-          await transport.post(
+          await templateImportPost(
+            transport,
             `/v1/cloud-projects/${encoded(projectId)}/collaboration-groups`,
             workspaceHttpRequestBody(input),
+            context,
           ),
         );
       },
@@ -764,11 +829,13 @@ export function createSharedWorkspaceHttpApi(
         );
         return response.map(mapProjectAgentDto);
       },
-      async create(projectId, input) {
+      async create(projectId, input, context) {
         const agent = mapProjectAgentDto(
-          await transport.post(
+          await templateImportPost(
+            transport,
             `/v1/cloud-projects/${encoded(projectId)}/chat-agents`,
             workspaceHttpRequestBody(input),
+            context,
           ),
         );
         invalidateAgents(projectId);

@@ -4,6 +4,9 @@
 
 import {
   createSharedWorkspaceHttpApi,
+  templateImportPatch,
+  templateImportPost,
+  workspaceHttpRequestBody,
   createAutomationExecutionCatalogApi,
   mapCollaborationExecutionDto,
   mapWorkspaceDeliveryAssetDto,
@@ -894,6 +897,7 @@ export function createWeworkSharedWorkspaceApi<
 
   return {
     ...delivery,
+    templateImports: sharedHttpApi.templateImports,
     workspaces: sharedHttpApi.workspaces,
     metrics: sharedHttpApi.metrics,
     resources: sharedHttpApi.resources,
@@ -905,6 +909,17 @@ export function createWeworkSharedWorkspaceApi<
     projects: {
       ...delivery.projects,
       ...sharedHttpApi.projects,
+      async update(projectId, input, context) {
+        if (!context) return delivery.projects.update(projectId, input)
+        return toProject(
+          await templateImportPatch<CloudProject>(
+            client,
+            `/v1/cloud-projects/${encodeURIComponent(projectId)}`,
+            workspaceHttpRequestBody(input),
+            context
+          )
+        )
+      },
       async list(workspaceId) {
         if (!workspaceId) return delivery.projects.list()
         const response = await client.get<{ items: CloudProject[] }>(
@@ -965,6 +980,15 @@ export function createWeworkSharedWorkspaceApi<
     assignments: sharedHttpApi.assignments,
     automations: {
       ...createWeworkAutomationsApi(projectAutomationApi),
+      async create(projectId, input, context) {
+        if (!context) return toAutomationRule(await projectAutomationApi.create(projectId, input))
+        return templateImportPost(
+          client,
+          `/v1/cloud-projects/${encodeURIComponent(projectId)}/automations`,
+          workspaceHttpRequestBody(input),
+          context
+        )
+      },
       async cancelRun(projectId, runId) {
         return toAutomationRun(await projectAutomationApi.cancelRun(projectId, runId))
       },

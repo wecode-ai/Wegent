@@ -7,6 +7,9 @@ use super::tasks::{
 };
 use super::turns::{read_runtime_turn_queue, write_runtime_turn_queue};
 use super::*;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static RUNTIME_WORK_TEST_PATH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 #[path = "tests/im_callback_routing.rs"]
 mod im_callback_routing;
@@ -42,7 +45,7 @@ fn connection_mcp_transport_and_discovery_never_resume_persisted_model_turns() {
 
 #[path = "native_history_test_support.rs"]
 pub(super) mod native_history_test_support;
-pub(super) use native_history_test_support::install_native_history;
+pub(super) use native_history_test_support::{install_native_history, NativeHistoryEnvironment};
 
 #[path = "command_recovery_tests.rs"]
 mod command_recovery_tests;
@@ -5601,8 +5604,9 @@ fn archived_cleanup_targets_do_not_delete_regular_project_root() {
 }
 
 fn temp_runtime_work_index_path(label: &str) -> PathBuf {
+    let sequence = RUNTIME_WORK_TEST_PATH_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     std::env::temp_dir().join(format!(
-        "wegent-runtime-work-{label}-{}-{}.json",
+        "wegent-runtime-work-{label}-{}-{}-{sequence}.json",
         std::process::id(),
         uuid::Uuid::new_v4()
     ))

@@ -1252,6 +1252,14 @@ path = "/api/v1/personal-issues/:issue_id/project"
 methods = ["GET", "POST"]
 path = "/api/v1/cloud-projects/:project_id/import-local"
 
+# Durable template import discovery and resource receipt recovery.
+[[routes]]
+methods = ["GET", "POST"]
+path = "/api/v1/cloud-projects/:project_id/template-imports"
+[[routes]]
+methods = ["GET"]
+path = "/api/v1/cloud-projects/:project_id/template-imports/:operation_id"
+
 [[routes]]
 methods = ["GET"]
 path = "/api/v1/personal-issues/:issue_id/resources/:kind/:resource_id"
