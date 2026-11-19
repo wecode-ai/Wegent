@@ -442,7 +442,12 @@ export function createDesktopPaneWorkspaceSession(
       const launch = consumeWorkbenchWorkspaceLaunch(
         input.workspaceLaunchDeviceId,
         input.workspaceLaunchPath,
-        input.currentRuntimeTask?.taskId
+        input.currentRuntimeTask?.taskId,
+        {
+          ownershipKey: input.ownershipKey,
+          workspaceTabId: input.workspaceTabId,
+          paneKey: input.paneKey,
+        }
       )
       if (launch) {
         if (launch.initialInput) input.replacePaneInput(launch.initialInput)

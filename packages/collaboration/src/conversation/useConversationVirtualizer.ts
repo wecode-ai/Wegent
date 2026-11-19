@@ -104,10 +104,11 @@ export function useConversationVirtualizer({
           () => elementScroll(offset, settings, instance)
         )
       const after = element?.scrollTop ?? before
+      // Attribute our write before offset observers can synchronously restore a reader anchor.
+      onScrollAdjustment?.(after - before)
       // Instant writes have already landed. A native scroll event can be delayed
       // or absent, so acknowledge the actual offset before the next commit.
       if (element && settings.behavior !== 'smooth') readOffsetRef.current?.(after, false)
-      onScrollAdjustment?.(after - before)
     },
   })
 

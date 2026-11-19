@@ -624,6 +624,8 @@ export function OwnedWorkbenchProvider({
   })
 
   const openStandaloneWorkspace = useOpenStandaloneWorkspace({
+    getSnapshot: stateSource.getSnapshot,
+    workspaceTabId,
     projectSelectionStartedRef,
     state,
     executorClient,

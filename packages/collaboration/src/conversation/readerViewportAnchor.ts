@@ -10,6 +10,10 @@ import {
   recordConversationScrollDiagnostic as recordScrollDiagnostic,
 } from './conversationDiagnostics'
 import { startConversationFrameProbe, stopConversationFrameProbe } from './conversationFrameProbe'
+import {
+  CONVERSATION_SCROLL_WRITE_SOURCE,
+  recordConversationScrollWrite,
+} from './conversationScrollWrite'
 import type { UserViewportAnchor } from './scrollableMessageTypes'
 
 export interface ReaderViewportState {
@@ -132,8 +136,19 @@ export function createReaderViewportAnchor(
       return
     }
     const previousScrollTop = scroller.scrollTop
-    scroller.scrollTop = previousScrollTop + correction
-    const appliedScrollTop = scroller.scrollTop - previousScrollTop
+    let appliedScrollTop = 0
+    recordConversationScrollWrite(
+      scroller,
+      CONVERSATION_SCROLL_WRITE_SOURCE.contentPosition,
+      previousScrollTop + correction,
+      () => {
+        scroller.scrollTop = previousScrollTop + correction
+        appliedScrollTop = scroller.scrollTop - previousScrollTop
+        // Offset observers can synchronously measure again after this write.
+        state.selfScrollOffset += appliedScrollTop
+        state.lastScrollPosition = getDistanceFromTop(scroller)
+      }
+    )
     recordScrollDiagnostic('anchor-correction', scroller, {
       ...getConversationDiagnosticContext(anchorElement),
       anchorOffset,
@@ -148,8 +163,6 @@ export function createReaderViewportAnchor(
     // the reader's position. Counting the write we did apply keeps the reader's own scrolling
     // separable, and keeping the sample lets the next layout change finish the correction instead of
     // adopting the clamped position as the one the reader chose.
-    state.selfScrollOffset += appliedScrollTop
-    state.lastScrollPosition = getDistanceFromTop(scroller)
     if (Math.abs(appliedScrollTop - correction) < 1 && !layoutChanged) {
       // The reader is settled again where this sample was taken, so the next layout change has to
       // measure from here rather than from a baseline that already includes this correction.
