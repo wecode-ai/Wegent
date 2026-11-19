@@ -1,3 +1,4 @@
+import { assertFeedbackModelSnapshot } from '../modules/task-feedback-model-identity.mjs'
 import assert from 'node:assert/strict'
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -174,6 +175,7 @@ export function createDesktopScenario(options) {
           'Recovery duplicated the assistant message'
         )
         assert.equal(control.readyCount, readyCount, 'Cloud recovery required a renderer reload')
+        await assertFeedbackModelSnapshot(control, address, CLOUD_PUBLIC_MODEL_NAME)
       } finally {
         finishModel?.()
         proxy.disconnectWebSockets(false)
