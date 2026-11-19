@@ -1493,6 +1493,9 @@ export function useWorkbenchRuntimeMessaging({
             ? { taskId: response.taskId || optimisticAddress.taskId }
             : {}),
         }
+        const resolvedSameIdentity =
+          optimisticAddress.deviceId === address.deviceId &&
+          optimisticAddress.taskId === address.taskId
         debugRuntimeCreateFlow('create-resolved', {
           taskId: address.taskId,
           runtime,
@@ -1500,12 +1503,11 @@ export function useWorkbenchRuntimeMessaging({
           accepted: response.accepted,
           optimisticAddress: runtimeAddressLog(optimisticAddress),
           resolvedAddress: runtimeAddressLog(address),
-          sameIdentity: isSameRuntimeTaskIdentity(optimisticAddress, address),
+          sameIdentity: resolvedSameIdentity,
           responseHasWorkspacePath: Boolean(response.workspacePath),
           responseHasTaskId: Boolean(response.taskId),
         })
         const resolvedWorkspacePath = address.workspacePath ?? optimisticWorkspacePath
-        const resolvedSameIdentity = isSameRuntimeTaskIdentity(optimisticAddress, address)
         const optimisticTaskStillSelected = runtimeTasks.isCurrentRuntimeTask(optimisticAddress)
         if (!resolvedSameIdentity) {
           dispatch({ type: 'runtime_task_optimistic_removed', address: optimisticAddress })

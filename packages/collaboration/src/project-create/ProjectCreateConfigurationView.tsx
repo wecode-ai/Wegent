@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
+import { useOwnedFocusTarget } from '../dom-events'
 import { ArrowLeft } from 'lucide-react'
 import { useDialogKeyboard } from '../controls/useDialogKeyboard'
 
@@ -31,34 +32,11 @@ export function ProjectCreateConfigurationView({
     false,
     restoreFocus
   )
-  const lastOwnedFocus = useRef<HTMLElement | null>(null)
-  const restoreLostFocus = useCallback(() => {
-    const section = ref.current
-    if (!active || focusTarget === undefined || !section) return
-    const current = document.activeElement
-    const removedControlLostFocus =
-      (current === document.body || current === null) &&
-      lastOwnedFocus.current !== null &&
-      !lastOwnedFocus.current.isConnected
-    if (current !== section && !removedControlLostFocus) return
-    const requested = focusTarget === null ? null : section.querySelector<HTMLElement>(focusTarget)
-    const target =
-      requested && !requested.closest('[hidden], [inert]') && !requested.matches(':disabled')
-        ? requested
-        : section
-    if (current !== target) target.focus()
-  }, [active, focusTarget, ref])
-  useLayoutEffect(restoreLostFocus, [restoreLostFocus])
-  // ProseMirror creates its editable DOM in a child passive effect.
-  useEffect(restoreLostFocus, [restoreLostFocus])
+  useOwnedFocusTarget(ref, focusTarget, active)
   return (
     <section
       ref={ref}
       aria-label={focusLabel}
-      onFocusCapture={event => {
-        if (event.target instanceof HTMLElement && ref.current?.contains(event.target))
-          lastOwnedFocus.current = event.target
-      }}
       className="collaboration-project-create-configuration"
       data-testid={testId}
       tabIndex={-1}

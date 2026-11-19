@@ -166,6 +166,13 @@ export function createPluginApi(client: HttpClient, apiBaseUrl = '') {
     uninstallInstalledPlugin(id: string | number, deviceId?: string): Promise<void> {
       return uninstallCloudPlugin(client, id, deviceQuery(deviceId))
     },
+    uninstallInstalledPluginWithDeviceHandoff(
+      id: string | number,
+      deviceId: string
+    ): Promise<void> {
+      const query = new URLSearchParams({ device_id: deviceId, source_device_id: deviceId })
+      return uninstallCloudPlugin(client, id, `?${query}`)
+    },
     listMarketplacePlugins(
       params: { q?: string; source?: string; deviceId?: string } = {}
     ): Promise<PluginMarketplaceListResponse> {

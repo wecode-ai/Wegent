@@ -1,4 +1,5 @@
-import { useEffect, useState, type ReactNode, type RefObject } from 'react'
+import { useIntersectionEvent } from '../dom-events'
+import { useCallback, useState, type ReactNode, type RefObject } from 'react'
 
 /** Keep the work item identifiable once its editable title scrolls out of view. */
 export function IssueHeaderContext({
@@ -19,20 +20,16 @@ export function IssueHeaderContext({
   children: ReactNode
 }) {
   const [visibleIssue, setVisibleIssue] = useState<string | null>(null)
-  useEffect(() => {
-    const root = scrollRef.current
-    const anchor = titleRef.current
-    if (!enabled || !root || !anchor || typeof IntersectionObserver === 'undefined') return
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        const top = entry.rootBounds?.top ?? root.getBoundingClientRect().top
-        setVisibleIssue(entry.boundingClientRect.bottom <= top ? issueId : null)
-      },
-      { root, threshold: 0 },
-    )
-    observer.observe(anchor)
-    return () => observer.disconnect()
-  }, [enabled, issueId, scrollRef, titleRef])
+  const updateContext = useCallback(
+    ([entry]: IntersectionObserverEntry[]) => {
+      const root = scrollRef.current
+      if (!root) return
+      const top = entry.rootBounds?.top ?? root.getBoundingClientRect().top
+      setVisibleIssue(entry.boundingClientRect.bottom <= top ? issueId : null)
+    },
+    [issueId, scrollRef]
+  )
+  useIntersectionEvent(titleRef, updateContext, { enabled, root: scrollRef, threshold: 0 })
 
   return (
     <div className="min-w-0 flex-1">

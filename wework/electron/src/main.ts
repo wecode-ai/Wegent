@@ -426,6 +426,15 @@ const desktopAppearance = new DesktopAppearanceController({
 })
 let popoutShortcut: GlobalShortcutController | null = null
 let systemDragContext: { conversationTitle: string | null } = { conversationTitle: null }
+let systemDragPresentationSequence = 0
+let systemDragPresentationId: number | null = null
+let systemDragPresentationRequested = false
+const currentSystemDragContext = () => ({
+  ...systemDragContext,
+  presentationId: systemDragPresentationId,
+})
+const publishSystemDragContext = () =>
+  desktopHostEvents.publish('systemDrag.context', currentSystemDragContext())
 let pendingSystemDrops: Array<{
   action: 'new-chat' | 'follow-up' | 'stash'
   text: string | null
@@ -1453,8 +1462,24 @@ function resizePopoutWindow(previousMode: PopoutWindowMode, mode: PopoutWindowMo
   target.setBounds(popoutWindowBounds(current, workArea, previousMode, mode))
 }
 
-async function showSystemDragPanel(): Promise<void> {
-  const target = await ensureAuxiliaryWindow('system-drag-panel')
+async function showSystemDragPanel(): Promise<number> {
+  const presentationId = ++systemDragPresentationSequence
+  systemDragPresentationId = presentationId
+  systemDragPresentationRequested = true
+  publishSystemDragContext()
+  let target: BrowserWindow
+  try {
+    target = await ensureAuxiliaryWindow('system-drag-panel')
+  } catch (error) {
+    if (systemDragPresentationId === presentationId) {
+      systemDragPresentationId = null
+      publishSystemDragContext()
+    }
+    throw error
+  }
+  if (systemDragPresentationId !== presentationId || !systemDragPresentationRequested) {
+    return presentationId
+  }
   const owner = BrowserWindow.getFocusedWindow() ?? mainWindow
   if (owner && owner !== target && target.getParentWindow() !== owner) {
     target.setParentWindow(owner)
@@ -1471,6 +1496,7 @@ async function showSystemDragPanel(): Promise<void> {
   target.setPosition(x, display.workArea.y + 8)
   target.showInactive()
   target.moveTop()
+  return presentationId
 }
 
 async function showPopoutWindow(): Promise<void> {
@@ -2811,13 +2837,25 @@ async function configureDesktopRuntime(): Promise<void> {
             await popoutWindowReadyPromise
             return captureWebContentsDataUrl(target.webContents)
           },
-          completeSystemDragDrop: async payload => {
+          completeSystemDragDrop: async (payload, presentationId) => {
+            // Direct native actions bind the current presentation synchronously at host entry.
+            const owner = presentationId ?? systemDragPresentationId
+            if (owner !== systemDragPresentationId) return false
             pendingSystemDrops.push(payload)
             await showPopoutWindow()
+            return owner === systemDragPresentationId
           },
           dismissPopout: () => popoutWindow?.hide(),
-          dismissSystemDragPanel: () => systemDragWindow?.hide(),
-          getSystemDragContext: () => systemDragContext,
+          dismissSystemDragPanel: presentationId => {
+            if (presentationId === null || presentationId !== systemDragPresentationId) return false
+            // Native dragend may hide before the matching drop request reaches the host.
+            // Keep its identity valid for that drop, while cancelling any pending show.
+            systemDragPresentationRequested = false
+            systemDragWindow?.hide()
+            publishSystemDragContext()
+            return true
+          },
+          getSystemDragContext: currentSystemDragContext,
           runtimeDiagnostics: () => ({
             ...(desktopRuntime?.diagnostics() ?? {
               coreDshPid: null,
@@ -2839,6 +2877,7 @@ async function configureDesktopRuntime(): Promise<void> {
           scheduleCoreDshRestart,
           setSystemDragContext: context => {
             systemDragContext = context
+            publishSystemDragContext()
           },
           setPopoutMode: mode => {
             const previousMode = popoutWindowMode
@@ -2848,10 +2887,7 @@ async function configureDesktopRuntime(): Promise<void> {
           setSystemSleepEnabled: enabled => systemSleep.setEnabled(enabled),
           setSystemSleepTaskActive: (source, active) => systemSleep.setTaskActive(source, active),
           showPopout: showPopoutWindow,
-          showSystemDragPanel: () =>
-            showSystemDragPanel().catch(error => {
-              console.error('Failed to show system drag panel:', error)
-            }),
+          showSystemDragPanel,
           systemDragPanelVisible: () =>
             Boolean(
               systemDragWindow && !systemDragWindow.isDestroyed() && systemDragWindow.isVisible()

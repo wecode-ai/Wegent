@@ -50,3 +50,43 @@ describe('composer quick phrase preferences', () => {
     expect(store.getSnapshot().phrases).toEqual([])
   })
 })
+
+it('loads once for concurrent subscribers and reuses loaded preferences after resubscribing', async () => {
+  const load = vi.fn().mockResolvedValue(defaultQuickPhrases)
+  const store = createQuickPhrasePreferencesStore({ load, save: vi.fn() })
+  const first = store.subscribe(vi.fn())
+  const second = store.subscribe(vi.fn())
+  await store.load()
+  expect(load).toHaveBeenCalledOnce()
+  expect(store.getSnapshot()).toMatchObject({
+    loaded: true,
+    pending: false,
+    phrases: defaultQuickPhrases,
+  })
+  first()
+  second()
+  const third = store.subscribe(vi.fn())
+  expect(load).toHaveBeenCalledOnce()
+  third()
+})
+
+it('permits a later subscriber to retry an initial failed read', async () => {
+  const load = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('Offline'))
+    .mockResolvedValue(defaultQuickPhrases)
+  const store = createQuickPhrasePreferencesStore({ load, save: vi.fn() })
+  const first = store.subscribe(vi.fn())
+  await store.load()
+  expect(store.getSnapshot()).toMatchObject({ loaded: false, error: 'Offline' })
+  first()
+  const second = store.subscribe(vi.fn())
+  await store.load()
+  expect(load).toHaveBeenCalledTimes(2)
+  expect(store.getSnapshot()).toMatchObject({
+    loaded: true,
+    error: null,
+    phrases: defaultQuickPhrases,
+  })
+  second()
+})

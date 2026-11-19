@@ -1,16 +1,10 @@
 import { Box, Download, FolderOpen, RefreshCw, RotateCcw } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useRef, useState, useSyncExternalStore } from 'react'
 
-import { subscribeDesktopHostEvents } from '@/api/dsh/desktopHost'
+import { executionEnvironmentResource } from '@/desktop/executionEnvironmentResource'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
-import {
-  chooseNodeExecutable,
-  ensurePython,
-  listExecutionEnvironments,
-  type ExecutionEnvironmentStatus,
-  useBuiltinNode,
-} from '@/desktop/executionEnvironments'
+import { chooseNodeExecutable, useBuiltinNode } from '@/desktop/executionEnvironments'
 
 import { SettingsPage, SettingsPageHeader } from './settings-ui'
 
@@ -28,63 +22,30 @@ function formatBytes(bytes: number) {
 
 export function ExecutionEnvironmentsSettingsPage() {
   const { t } = useTranslation()
-  const [environments, setEnvironments] = useState<ExecutionEnvironmentStatus[]>([])
-  const [loading, setLoading] = useState(true)
-  const [actionId, setActionId] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const latestPythonStatus = useRef<ExecutionEnvironmentStatus | null>(null)
-
-  const refresh = useCallback(async () => {
-    const previousPythonStatus = latestPythonStatus.current
-    try {
-      const next = await listExecutionEnvironments()
-      setEnvironments(
-        next.map(item =>
-          item.id === 'python' && latestPythonStatus.current !== previousPythonStatus
-            ? (latestPythonStatus.current ?? item)
-            : item
-        )
-      )
-      setError(null)
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    const initialRefresh = window.setTimeout(() => void refresh(), 0)
-    return () => {
-      window.clearTimeout(initialRefresh)
-    }
-  }, [refresh])
-
-  useEffect(
-    () =>
-      subscribeDesktopHostEvents(event => {
-        if (event.type !== 'python-runtime-status') return
-        const status = event.payload as unknown as ExecutionEnvironmentStatus
-        latestPythonStatus.current = status
-        setEnvironments(previous =>
-          previous.some(item => item.id === 'python')
-            ? previous.map(item => (item.id === 'python' ? status : item))
-            : [...previous, status]
-        )
-      }),
-    []
+  const snapshot = useSyncExternalStore(
+    executionEnvironmentResource.subscribeSettings,
+    executionEnvironmentResource.getSnapshot
   )
-
+  const { environments, loading } = snapshot
+  const [activeActions, setActiveActions] = useState<Set<string>>(() => new Set())
+  const pending = useRef(new Set<string>())
+  const [actionError, setActionError] = useState<unknown>(null)
+  const cause = actionError ?? snapshot.error
+  const error = cause == null ? null : cause instanceof Error ? cause.message : String(cause)
   const runAction = async (id: string, action: () => Promise<unknown>) => {
-    setActionId(id)
-    setError(null)
+    if (pending.current.has(id)) return
+    pending.current.add(id)
+    setActiveActions(new Set(pending.current))
+    setActionError(null)
+    const scope = snapshot.scope
     try {
       await action()
-      await refresh()
+      await executionEnvironmentResource.reload(scope)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
+      setActionError(cause)
     } finally {
-      setActionId(null)
+      pending.current.delete(id)
+      setActiveActions(new Set(pending.current))
     }
   }
 
@@ -115,7 +76,7 @@ export function ExecutionEnvironmentsSettingsPage() {
         )}
         {environments.map(environment => {
           const isNode = environment.id === 'node'
-          const busy = actionId === environment.id
+          const busy = activeActions.has(environment.id) || (!isNode && snapshot.preparingPython)
           const downloading = environment.state === 'downloading'
           const installed = environment.state === 'installed'
           const progress =
@@ -264,7 +225,9 @@ export function ExecutionEnvironmentsSettingsPage() {
                         variant="outline"
                         disabled={busy || downloading}
                         data-testid="execution-environment-python-install"
-                        onClick={() => void runAction('python', ensurePython)}
+                        onClick={() =>
+                          void runAction('python', executionEnvironmentResource.preparePython)
+                        }
                       >
                         {installed ? <RefreshCw /> : <Download />}
                         {environment.state === 'error'

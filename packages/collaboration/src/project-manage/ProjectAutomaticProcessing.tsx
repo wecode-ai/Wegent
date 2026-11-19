@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Bot, Pencil, Plus, Trash2, UserRound, UsersRound, X } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
 
 import { collaborationMessages, type CollaborationTranslate } from '../i18n'
 import { projectStatuses } from '../board'
@@ -16,14 +17,8 @@ import type {
   SharedWorkspaceApi,
   WorkspaceAutomationInput,
   WorkspaceAutomationRule,
-  WorkspaceIncomingHook,
 } from '../ports/SharedWorkspaceApi'
-import type {
-  CollaborationAgent,
-  CollaborationGroup,
-  CollaborationMember,
-  CollaborationProject,
-} from '../types'
+import type { CollaborationAgent, CollaborationMember, CollaborationProject } from '../types'
 import { useAutomaticProcessingRules } from './useAutomaticProcessingRules'
 import { ProjectSettingsPage } from './ProjectSettingsPage'
 import {
@@ -87,7 +82,6 @@ function AutomaticProcessingSwitch({
 export function ProjectAutomaticProcessing({
   api,
   project,
-  members,
   agents,
   locale,
   translate,
@@ -107,27 +101,111 @@ export function ProjectAutomaticProcessing({
     error: rulesError,
     load,
   } = useAutomaticProcessingRules(api.automations, project.id)
-  const [groups, setGroups] = useState<CollaborationGroup[]>([])
-  const [availableAgents, setAvailableAgents] = useState<CollaborationAgent[]>(agents)
-  const [availableMembers, setAvailableMembers] = useState<CollaborationMember[]>(members)
-  const [optionsLoading, setOptionsLoading] = useState(true)
-  const [hooks, setHooks] = useState<WorkspaceIncomingHook[]>([])
+  const projectId = project.id
+  const optionsResource = useMemo(
+    () =>
+      createAsyncResource('automatic-processing-options', async () => {
+        const [groups, agents, members] = await Promise.all([
+          api.projects.listCollaborationGroups?.(projectId) ?? [],
+          api.agents.list(projectId),
+          api.members.list(projectId),
+        ])
+        return { groups, agents, members }
+      }),
+    [api, projectId]
+  )
+  const optionsSnapshot = useSyncExternalStore(
+    optionsResource.subscribe,
+    optionsResource.getSnapshot,
+    optionsResource.getSnapshot
+  )
+  const optionsLoading = optionsSnapshot.status === 'idle' || optionsSnapshot.status === 'loading'
+  const [agentSnapshot, setAgentSnapshot] = useState(() => ({
+    resource: optionsResource,
+    catalog: optionsSnapshot.data,
+    source: agents,
+    value: agents,
+  }))
+  if (
+    agentSnapshot.resource !== optionsResource ||
+    agentSnapshot.catalog !== optionsSnapshot.data
+  ) {
+    setAgentSnapshot({
+      resource: optionsResource,
+      catalog: optionsSnapshot.data,
+      source: agents,
+      value: optionsSnapshot.data?.agents ?? agents,
+    })
+  } else if (agentSnapshot.source !== agents) {
+    setAgentSnapshot({ ...agentSnapshot, source: agents, value: agents })
+  }
+  const availableAgents = agentSnapshot.value
   const [draft, setDraft] = useState<AutomaticProcessingDraft>(EMPTY_DRAFT)
   const [editing, setEditing] = useState(false)
   const [pendingRemoval, setPendingRemoval] = useState<WorkspaceAutomationRule | null>(null)
-  const [hooksLoading, setHooksLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const [actionError, setError] = useState('')
   const [cronError, setCronError] = useState('')
-  const [optionsError, setOptionsError] = useState('')
-  const [hooksError, setHooksError] = useState('')
   const [hooksRevision, setHooksRevision] = useState(0)
-  const translateRef = useRef(translate)
-  translateRef.current = translate
-  const saveScope = useMemo(() => ({ api, projectId: project.id }), [api, project.id])
-  const activeSaveScope = useRef(saveScope)
-  activeSaveScope.current = saveScope
   const needsHooks = editing && draft.trigger === 'external'
+  const incomingHooksApi = api.incomingHooks
+  const hookScope = useMemo(
+    () => ({ api, incomingHooksApi, projectId }),
+    [api, incomingHooksApi, projectId]
+  )
+  const hooksResource = useMemo(
+    () =>
+      createAsyncResource(
+        'automatic-processing-hooks',
+        async () => ({
+          hooks: await hookScope.incomingHooksApi!.list(hookScope.projectId),
+          readId: Symbol('incoming-hooks-read'),
+        }),
+        { refreshOnSubscribe: true }
+      ),
+    [hookScope]
+  )
+  const subscribeHooks = useCallback(
+    (listener: () => void) => hooksResource.subscribe(listener, hooksRevision),
+    [hooksResource, hooksRevision]
+  )
+  const hooksEnabled = needsHooks && Boolean(incomingHooksApi)
+  const hooksSnapshot = useSyncExternalStore(
+    hooksEnabled ? subscribeHooks : subscribeIdleResource,
+    hooksResource.getSnapshot,
+    hooksResource.getSnapshot
+  )
+  const hooks = hooksSnapshot.data?.hooks ?? []
+  const hooksLoading =
+    hooksEnabled && (hooksSnapshot.status === 'idle' || hooksSnapshot.status === 'loading')
+  const dataError = (cause: unknown) =>
+    cause instanceof Error
+      ? cause.message
+      : translate('todo.automatic_processing_load_failed', '加载自动处理失败')
+  const optionsError = optionsSnapshot.status === 'error' ? dataError(optionsSnapshot.error) : ''
+  const hooksError =
+    hooksEnabled && hooksSnapshot.status === 'error' ? dataError(hooksSnapshot.error) : ''
+  const [formScope, setFormScope] = useState(optionsResource)
+  if (formScope !== optionsResource) {
+    setFormScope(optionsResource)
+    setDraft(EMPTY_DRAFT)
+    setEditing(false)
+    setPendingRemoval(null)
+    setError('')
+    setCronError('')
+  }
+  const [handledHooksRead, setHandledHooksRead] = useState<symbol>()
+  if (
+    hooksEnabled &&
+    hooksSnapshot.status === 'ready' &&
+    hooksSnapshot.data &&
+    handledHooksRead !== hooksSnapshot.data.readId
+  ) {
+    setHandledHooksRead(hooksSnapshot.data.readId)
+    const hook = hooks[0]
+    if (hook && !draft.hookId)
+      setDraft({ ...draft, hookId: hook.id, eventType: eventTypesForHook(hook)[0] ?? '' })
+  }
   const error =
     actionError ||
     optionsError ||
@@ -150,99 +228,14 @@ export function ProjectAutomaticProcessing({
   const projectRefresh = useProjectSettingsRefresh(api, project.id, onProjectChange)
 
   async function reloadAfterMutation() {
+    if (!optionsResource.hasSubscribers()) return
     await projectRefresh.refresh()
-    await load()
+    if (optionsResource.hasSubscribers()) await load()
   }
-
-  useEffect(() => {
-    setDraft(EMPTY_DRAFT)
-    setEditing(false)
-    setHooks([])
-    setHooksError('')
-    setError('')
-  }, [api, project.id])
-
-  useEffect(() => {
-    let active = true
-    setGroups([])
-    setAvailableMembers([])
-    setOptionsLoading(true)
-    setOptionsError('')
-    void Promise.all([
-      api.projects.listCollaborationGroups?.(project.id) ?? [],
-      api.agents.list(project.id),
-      api.members.list(project.id),
-    ])
-      .then(([nextGroups, nextAgents, nextMembers]) => {
-        if (!active) return
-        setGroups(nextGroups)
-        setAvailableAgents(nextAgents)
-        setAvailableMembers(nextMembers)
-      })
-      .catch((cause: unknown) => {
-        if (!active) return
-        setOptionsError(
-          cause instanceof Error
-            ? cause.message
-            : translateRef.current('todo.automatic_processing_load_failed', '加载自动处理失败')
-        )
-      })
-      .finally(() => {
-        if (active) setOptionsLoading(false)
-      })
-    return () => {
-      active = false
-    }
-  }, [api, project.id])
-
-  useEffect(() => {
-    if (!needsHooks || !api.incomingHooks) {
-      setHooksLoading(false)
-      return
-    }
-    let active = true
-    setHooksLoading(true)
-    setHooksError('')
-    void api.incomingHooks
-      .list(project.id)
-      .then(nextHooks => {
-        if (!active) return
-        setHooks(nextHooks)
-        const hook = nextHooks[0]
-        if (hook)
-          setDraft(current =>
-            current.hookId
-              ? current
-              : {
-                  ...current,
-                  hookId: hook.id,
-                  eventType: eventTypesForHook(hook)[0] ?? '',
-                }
-          )
-      })
-      .catch((cause: unknown) => {
-        if (!active) return
-        setHooksError(
-          cause instanceof Error
-            ? cause.message
-            : translateRef.current('todo.automatic_processing_load_failed', '加载自动处理失败')
-        )
-      })
-      .finally(() => {
-        if (active) setHooksLoading(false)
-      })
-    return () => {
-      active = false
-    }
-  }, [api.incomingHooks, project.id, needsHooks, hooksRevision])
-
-  useEffect(() => {
-    setAvailableAgents(agents)
-  }, [agents])
 
   const targetOptions = useMemo(
     () => ({
-      human: availableMembers.map(member => ({
+      human: (optionsSnapshot.data?.members ?? []).map(member => ({
         id: String(member.user_id),
         name: member.user_name,
       })),
@@ -250,12 +243,12 @@ export function ProjectAutomaticProcessing({
         id: agent.id,
         name: agent.name,
       })),
-      collaboration_group: groups.map(group => ({
+      collaboration_group: (optionsSnapshot.data?.groups ?? []).map(group => ({
         id: group.id,
         name: group.name,
       })),
     }),
-    [availableAgents, groups, availableMembers]
+    [availableAgents, optionsSnapshot.data]
   )
   const targetAvailable = targetOptions[draft.targetKind].some(
     option => option.id === draft.targetId
@@ -449,11 +442,11 @@ export function ProjectAutomaticProcessing({
         await api.automations.create(project.id, input)
       }
       await reloadAfterMutation()
-      if (activeSaveScope.current !== saveScope) return
+      if (!optionsResource.hasSubscribers()) return
       setEditing(false)
       setDraft(EMPTY_DRAFT)
     } catch (saveError) {
-      if (activeSaveScope.current !== saveScope) return
+      if (!optionsResource.hasSubscribers()) return
       const failure = automaticProcessingSaveError(saveError, translate)
       if (draft.trigger === 'schedule' && failure.cronInvalid) {
         setCronError(failure.message)
@@ -476,6 +469,7 @@ export function ProjectAutomaticProcessing({
       })
       await reloadAfterMutation()
     } catch (toggleError) {
+      if (!optionsResource.hasSubscribers()) return
       setError(
         toggleError instanceof Error
           ? toggleError.message
@@ -492,6 +486,7 @@ export function ProjectAutomaticProcessing({
     setError('')
     try {
       await api.automations.remove(project.id, rule.id)
+      if (!optionsResource.hasSubscribers()) return
       if (draft.id === rule.id) {
         setEditing(false)
         setDraft(EMPTY_DRAFT)

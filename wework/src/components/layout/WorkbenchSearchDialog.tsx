@@ -1,10 +1,11 @@
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { Loader2, Search, X } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { useDOMEvent } from '@wegent/collaboration/dom-events'
+import { createWorkbenchSearchSession } from './workbenchSearchSession'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isImeEnterEvent } from '@/lib/ime'
 import { cn } from '@/lib/utils'
-import { isPrimaryStandInConversation } from '@/lib/runtime-task-visibility'
 import {
   WORKBENCH_CLOUD_SEARCH_RESULTS_EVENT,
   type WorkbenchCloudSearchResultsDetail,
@@ -15,10 +16,6 @@ import type {
   RuntimeWorkSearchResponse,
   RuntimeWorkSearchItem,
 } from '@/types/api'
-
-const SEARCH_DEBOUNCE_MS = 180
-const SEARCH_LIMIT = 20
-const SEARCH_CACHE_LIMIT = 20
 
 interface WorkbenchSearchDialogProps {
   open: boolean
@@ -51,82 +48,28 @@ function WorkbenchSearchDialogPanel({
 }: Omit<WorkbenchSearchDialogProps, 'open'>) {
   const { t } = useTranslation('common')
   const dialogRef = useDialogKeyboard<HTMLDivElement>(onClose)
-  const searchCacheRef = useRef(new Map<string, RuntimeWorkSearchItem[]>())
-  const cloudResultsRef = useRef(new Map<string, RuntimeWorkSearchItem[]>())
   const [query, setQuery] = useState('')
-  const [items, setItems] = useState<RuntimeWorkSearchItem[]>([])
-  const [selectedIndex, setSelectedIndex] = useState(0)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [searchedQuery, setSearchedQuery] = useState('')
   const trimmedQuery = query.trim()
-
-  useEffect(() => {
-    const handleCloudResults = (event: Event) => {
-      const detail = (event as CustomEvent<WorkbenchCloudSearchResultsDetail>).detail
-      const resultQuery = detail?.request.query.trim()
-      if (!resultQuery) return
-      cloudResultsRef.current.set(resultQuery, detail.response.items)
-      if (resultQuery !== trimmedQuery) return
-      setItems(current => {
-        const merged = mergeSearchItems(current, detail.response.items, SEARCH_LIMIT)
-        rememberSearchResults(searchCacheRef.current, resultQuery, merged)
-        return merged
-      })
-    }
-
-    window.addEventListener(WORKBENCH_CLOUD_SEARCH_RESULTS_EVENT, handleCloudResults)
-    return () =>
-      window.removeEventListener(WORKBENCH_CLOUD_SEARCH_RESULTS_EVENT, handleCloudResults)
-  }, [trimmedQuery])
-
-  useEffect(() => {
-    if (!trimmedQuery) return
-
-    if (searchCacheRef.current.has(trimmedQuery)) {
-      const cachedItems = searchCacheRef.current.get(trimmedQuery) ?? []
-      setItems(cachedItems)
-      setSelectedIndex(0)
-      setError(null)
-      setLoading(false)
-      setSearchedQuery(trimmedQuery)
-      return
-    }
-
-    let cancelled = false
-    const timer = window.setTimeout(() => {
-      setLoading(true)
-      onSearchRuntimeWork({ query: trimmedQuery, limit: SEARCH_LIMIT })
-        .then(response => {
-          if (cancelled) return
-          const merged = mergeSearchItems(
-            response.items,
-            cloudResultsRef.current.get(trimmedQuery) ?? [],
-            SEARCH_LIMIT
-          )
-          rememberSearchResults(searchCacheRef.current, trimmedQuery, merged)
-          setItems(merged)
-          setSelectedIndex(0)
-          setError(null)
-          setSearchedQuery(trimmedQuery)
-        })
-        .catch(() => {
-          if (cancelled) return
-          setItems([])
-          setError(t('workbench.search_failed'))
-          setSearchedQuery(trimmedQuery)
-        })
-        .finally(() => {
-          if (!cancelled) setLoading(false)
-        })
-    }, SEARCH_DEBOUNCE_MS)
-
-    return () => {
-      cancelled = true
-      window.clearTimeout(timer)
-    }
-  }, [onSearchRuntimeWork, t, trimmedQuery])
-
+  const session = useMemo(
+    () => createWorkbenchSearchSession(onSearchRuntimeWork),
+    [onSearchRuntimeWork]
+  )
+  const subscribe = useCallback(
+    (listener: () => void) => session.subscribe(listener, trimmedQuery),
+    [session, trimmedQuery]
+  )
+  const response = useSyncExternalStore(subscribe, session.getSnapshot, session.getServerSnapshot)
+  const items = trimmedQuery ? response.items : []
+  const { selectedIndex, searchedQuery } = response
+  const loading = Boolean(trimmedQuery) && response.query === trimmedQuery && response.loading
+  const error =
+    response.query === trimmedQuery && response.failed ? t('workbench.search_failed') : null
+  const setSelectedIndex = session.select
+  useDOMEvent<CustomEvent<WorkbenchCloudSearchResultsDetail>>(
+    'window',
+    WORKBENCH_CLOUD_SEARCH_RESULTS_EVENT,
+    event => session.acceptCloud(event.detail)
+  )
   const selectedItem = items[selectedIndex] ?? null
   const hasQuery = trimmedQuery.length > 0
   const statusLabel = useMemo(() => {
@@ -168,15 +111,6 @@ function WorkbenchSearchDialogPanel({
               const nextQuery = event.target.value
               setQuery(nextQuery)
               setSelectedIndex(0)
-              setError(null)
-              if (nextQuery.trim()) {
-                setLoading(false)
-                setSearchedQuery('')
-              } else {
-                setItems([])
-                setLoading(false)
-                setSearchedQuery('')
-              }
             }}
             onKeyDown={event => {
               if (event.key === 'ArrowDown') {
@@ -248,50 +182,6 @@ function WorkbenchSearchDialogPanel({
       </div>
     </div>
   )
-}
-
-function rememberSearchResults(
-  cache: Map<string, RuntimeWorkSearchItem[]>,
-  query: string,
-  items: RuntimeWorkSearchItem[]
-) {
-  if (cache.has(query)) {
-    cache.delete(query)
-  }
-  cache.set(query, items)
-  if (cache.size <= SEARCH_CACHE_LIMIT) return
-  const oldestKey = cache.keys().next().value
-  if (oldestKey) {
-    cache.delete(oldestKey)
-  }
-}
-
-function mergeSearchItems(
-  primary: RuntimeWorkSearchItem[],
-  secondary: RuntimeWorkSearchItem[],
-  limit: number
-): RuntimeWorkSearchItem[] {
-  const merged = new Map<string, RuntimeWorkSearchItem>()
-  const candidates = [...primary, ...secondary]
-  candidates.forEach(item => {
-    if (isPrimaryStandInConversation(item.address)) return
-    const key = [
-      item.address.deviceId,
-      item.address.taskId,
-      item.address.workspacePath ?? '',
-      item.messageId ?? '',
-    ].join('\0')
-    merged.set(key, item)
-  })
-  return [...merged.values()]
-    .sort((left, right) => searchUpdatedAt(right) - searchUpdatedAt(left))
-    .slice(0, limit)
-}
-
-function searchUpdatedAt(item: RuntimeWorkSearchItem): number {
-  if (!item.updatedAt) return 0
-  const timestamp = new Date(item.updatedAt).getTime()
-  return Number.isFinite(timestamp) ? timestamp : 0
 }
 
 function renderHighlightedSnippet(snippet: string, query: string) {

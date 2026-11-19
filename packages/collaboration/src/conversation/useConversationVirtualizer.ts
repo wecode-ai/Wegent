@@ -5,7 +5,14 @@ import {
   type Virtualizer,
   type VirtualizerOptions,
 } from '@tanstack/react-virtual'
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import {
+  useCallback,
+  useState,
+  useSyncExternalStore,
+  useLayoutEffect,
+  useRef,
+  type RefObject,
+} from 'react'
 import {
   CONVERSATION_SCROLL_WRITE_SOURCE,
   observeConversationScrollWrites,
@@ -40,11 +47,17 @@ export function useConversationVirtualizer({
   scrollTailHeight = 0,
   ...options
 }: Options) {
-  const [prefix, setPrefix] = useState(0)
-  const readOffsetRef = useRef<((offset: number, scrolling: boolean) => void) | null>(null)
-  const [viewportReady, setViewportReady] = useState(
-    () => (scrollElementRef?.current?.clientHeight ?? 0) > 0
+  const [measurements] = useState(createListMeasurements)
+  const subscribeMeasurements = useCallback(
+    (listener: () => void) => measurements.subscribe(listener, listRef, scrollElementRef),
+    [measurements, listRef, scrollElementRef]
   )
+  const { prefix, viewportReady } = useSyncExternalStore(
+    options.enabled ? subscribeMeasurements : noMeasurements,
+    measurements.getSnapshot,
+    () => EMPTY_MEASUREMENTS
+  )
+  const readOffsetRef = useRef<((offset: number, scrolling: boolean) => void) | null>(null)
   // A hidden pane has no scroll range and cannot establish an initial offset.
   const enabled = options.enabled && viewportReady
   // eslint-disable-next-line react-hooks/incompatible-library
@@ -91,10 +104,11 @@ export function useConversationVirtualizer({
           () => elementScroll(offset, settings, instance)
         )
       const after = element?.scrollTop ?? before
+      // Attribute our write before offset observers can synchronously restore a reader anchor.
+      onScrollAdjustment?.(after - before)
       // Instant writes have already landed. A native scroll event can be delayed
       // or absent, so acknowledge the actual offset before the next commit.
       if (element && settings.behavior !== 'smooth') readOffsetRef.current?.(after, false)
-      onScrollAdjustment?.(after - before)
     },
   })
 
@@ -106,36 +120,75 @@ export function useConversationVirtualizer({
     }
   }, [enabled, virtualizer, virtualizerRef])
 
-  useEffect(() => {
-    const list = listRef.current
-    const viewport = scrollElementRef?.current
-    if (!list || !viewport || !viewport.contains(list) || !options.enabled) return
-    const update = () => {
-      const rect = list.getBoundingClientRect()
-      const prefix = Math.max(
-        0,
-        Math.round(rect.top - viewport.getBoundingClientRect().top + viewport.scrollTop)
-      )
-      setPrefix(prefix)
-      setViewportReady(ready => ready || viewport.clientHeight > 0)
-    }
-    update()
-    const observer = new ResizeObserver(update)
-    observer.observe(viewport)
-    for (
-      let node: HTMLElement | null = list;
-      node && node !== viewport;
-      node = node.parentElement
-    ) {
-      observer.observe(node)
-      if (node.nextElementSibling) observer.observe(node.nextElementSibling)
-    }
-    return () => observer.disconnect()
-  }, [listRef, options.enabled, scrollElementRef])
   return {
     virtualizer,
     tailHeight: scrollTailHeight,
     scrollMargin: prefix,
     viewportReady,
+  }
+}
+
+const EMPTY_MEASUREMENTS = { prefix: 0, viewportReady: false }
+const noMeasurements = () => () => {}
+
+function createListMeasurements() {
+  let snapshot = { prefix: 0, viewportReady: false }
+  let previousList: HTMLDivElement | null = null
+  let previousViewport: HTMLDivElement | null = null
+  return {
+    getSnapshot: () => snapshot,
+    subscribe(
+      listener: () => void,
+      listRef: RefObject<HTMLDivElement | null>,
+      scrollRef?: RefObject<HTMLDivElement | null>
+    ) {
+      const list = listRef.current
+      const viewport = scrollRef?.current
+      if (!list || !viewport || !viewport.contains(list)) {
+        previousList = null
+        previousViewport = null
+        if (snapshot.prefix !== 0 || snapshot.viewportReady) {
+          snapshot = { prefix: 0, viewportReady: false }
+          listener()
+        }
+        return () => {}
+      }
+      let active = true
+      let resetReadiness = list !== previousList || viewport !== previousViewport
+      previousList = list
+      previousViewport = viewport
+      const update = () => {
+        if (!active) return
+        const prefix = Math.max(
+          0,
+          Math.round(
+            list.getBoundingClientRect().top -
+              viewport.getBoundingClientRect().top +
+              viewport.scrollTop
+          )
+        )
+        const viewportReady =
+          (!resetReadiness && snapshot.viewportReady) || viewport.clientHeight > 0
+        resetReadiness = false
+        if (prefix === snapshot.prefix && viewportReady === snapshot.viewportReady) return
+        snapshot = { prefix, viewportReady }
+        listener()
+      }
+      update()
+      const observer = new ResizeObserver(update)
+      observer.observe(viewport)
+      for (
+        let node: HTMLElement | null = list;
+        node && node !== viewport;
+        node = node.parentElement
+      ) {
+        observer.observe(node)
+        if (node.nextElementSibling) observer.observe(node.nextElementSibling)
+      }
+      return () => {
+        active = false
+        observer.disconnect()
+      }
+    },
   }
 }

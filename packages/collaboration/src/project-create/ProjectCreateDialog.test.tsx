@@ -105,8 +105,8 @@ it.each(['result', 'failure', 'result-back', 'failure-back'])(
     await click('collaboration-project-create-new-group')
     const editor = get('collaboration-project-create-generation-instructions')
     expect(document.activeElement).toBe(editor)
-    const intervals = vi.spyOn(window, 'setInterval')
-    const clearInterval = vi.spyOn(window, 'clearInterval')
+    const scheduledTimers = vi.spyOn(globalThis, 'setTimeout')
+    const cancelTimer = vi.spyOn(globalThis, 'clearTimeout')
     await act(async () =>
       editor.dispatchEvent(
         new KeyboardEvent('keydown', {
@@ -156,9 +156,15 @@ it.each(['result', 'failure', 'result-back', 'failure-back'])(
         outcome.startsWith('failure') ? projectCreateLabels.en.generationRequest : 'button'
       )
     })
-    expect(intervals).toHaveBeenCalled()
-    for (const interval of intervals.mock.results) {
-      if (interval.type === 'return') expect(clearInterval).toHaveBeenCalledWith(interval.value)
+    // The shared clock schedules its named tick; composer and test timeouts have separate owners.
+    const clockTimers = scheduledTimers.mock.calls.flatMap(([callback], index) =>
+      typeof callback === 'function' && callback.name === 'tick'
+        ? [scheduledTimers.mock.results[index]]
+        : []
+    )
+    expect(clockTimers).not.toHaveLength(0)
+    for (const timer of clockTimers) {
+      if (timer.type === 'return') expect(cancelTimer).toHaveBeenCalledWith(timer.value)
     }
   }
 )

@@ -1,6 +1,16 @@
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useMemo, useSyncExternalStore } from 'react'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
 import type { StandInExecutorApi, StandInProcessingStatus } from '@/api/standIn'
+
+interface ProcessingSnapshot {
+  status: StandInProcessingStatus | null
+  error: string | null
+}
 
 export function useStandInProcessingStatus(
   api: StandInExecutorApi | undefined,
@@ -8,59 +18,45 @@ export function useStandInProcessingStatus(
   deviceId: string,
   enabled: boolean
 ) {
-  const scope = `${userId}:${deviceId}`
-  const [state, setState] = useState<{
-    scope: string
-    api: StandInExecutorApi | undefined
-    status: StandInProcessingStatus | null
-    error: string | null
-  }>({ scope, api, status: null, error: null })
+  const resource = useMemo(
+    () =>
+      createAsyncResource<ProcessingSnapshot>(
+        JSON.stringify([userId, deviceId]),
+        async () => ({ status: await api!.processingStatus(userId, deviceId), error: null }),
+        { refreshIntervalMs: 15_000, refreshOnSubscribe: true }
+      ),
+    [api, userId, deviceId]
+  )
+  const query = useSyncExternalStore(
+    api && enabled ? resource.subscribe : subscribeIdleResource,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
   const setStatus = useCallback(
     (status: StandInProcessingStatus) => {
-      setState(previous => ({
-        scope,
-        api,
+      resource.update(previous => ({
         status,
-        error: previous.scope === scope && previous.api === api ? previous.error : null,
+        error:
+          resource.getSnapshot().status === 'error'
+            ? getStandInErrorMessage(resource.getSnapshot().error)
+            : (previous?.error ?? null),
       }))
     },
-    [scope, api]
+    [resource]
   )
   const setError = useCallback(
     (error: string | null) => {
-      setState(previous => ({
-        scope,
-        api,
-        status: previous.scope === scope && previous.api === api ? previous.status : null,
-        error,
-      }))
+      resource.update(previous => ({ status: previous?.status ?? null, error }))
     },
-    [scope, api]
+    [resource]
   )
-  useEffect(() => {
-    if (!api || !enabled) return
-    let active = true
-    const load = () => {
-      void api
-        .processingStatus(userId, deviceId)
-        .then(result => {
-          if (active) setState({ scope, api, status: result, error: null })
-        })
-        .catch(cause => {
-          if (active) setError(getStandInErrorMessage(cause))
-        })
-    }
-    load()
-    const timer = setInterval(load, 15000)
-    return () => {
-      active = false
-      clearInterval(timer)
-    }
-  }, [api, enabled, userId, deviceId, scope, setError])
-  const current = enabled && state.scope === scope && state.api === api
   return {
-    status: current ? state.status : null,
-    error: current ? state.error : null,
+    status: enabled ? (query.data?.status ?? null) : null,
+    error: enabled
+      ? query.status === 'error'
+        ? getStandInErrorMessage(query.error)
+        : (query.data?.error ?? null)
+      : null,
     setStatus,
     setError,
   }

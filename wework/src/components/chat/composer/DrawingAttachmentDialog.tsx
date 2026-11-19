@@ -1,5 +1,6 @@
 import { Check, Loader2, X } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState, useSyncExternalStore } from 'react'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import { createPortal } from 'react-dom'
 import { Button } from '@/components/ui/button'
 import { Tooltip } from '@/components/ui/tooltip'
@@ -19,8 +20,18 @@ export function DrawingAttachmentDialog({
   onAttach,
 }: DrawingAttachmentDialogProps) {
   const { t } = useTranslation('common')
-  const [canvasModule, setCanvasModule] = useState<typeof import('./DrawingCanvas') | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [canvasResource] = useState(() =>
+    createAsyncResource('drawing-canvas', () => import('./DrawingCanvas'))
+  )
+  const snapshot = useSyncExternalStore(
+    canvasResource.subscribe,
+    canvasResource.getSnapshot,
+    canvasResource.getSnapshot
+  )
+  const canvasModule = snapshot.data ?? null
+  const [operationError, setError] = useState<string | null>(null)
+  const error =
+    operationError ?? (snapshot.status === 'error' ? t('workbench.drawing.load_error') : null)
   const [hasContent, setHasContent] = useState(false)
   const [exporting, setExporting] = useState(false)
   const busyRef = useRef(false)
@@ -29,21 +40,6 @@ export function DrawingAttachmentDialog({
     if (!busyRef.current) onClose()
   })
 
-  useEffect(() => {
-    let active = true
-    void import('./DrawingCanvas').then(
-      module => {
-        if (active) setCanvasModule(module)
-      },
-      () => {
-        if (active) setError(t('workbench.drawing.load_error'))
-      }
-    )
-    return () => {
-      active = false
-    }
-  }, [t])
-
   const attachDrawing = async () => {
     if (!canvasRef.current || !hasContent || disabled || busyRef.current) return
     busyRef.current = true
@@ -51,8 +47,9 @@ export function DrawingAttachmentDialog({
     setError(null)
     try {
       const file = await canvasRef.current.exportImage()
+      if (!dialogRef.current?.isConnected) return
       await onAttach(file)
-      onClose()
+      if (dialogRef.current?.isConnected) onClose()
     } catch {
       setError(t('workbench.drawing.export_error'))
     } finally {

@@ -1,12 +1,11 @@
-import { useRef } from 'react'
+import { useCallback } from 'react'
 import { cn } from '@/lib/utils'
-import { useSidebarTitleScroll } from './useSidebarTitleScroll'
+import { bindSidebarTitleScroll } from './sidebarTitleScroll'
 
 interface SidebarTaskTitleProps {
   text: string
   testId: string
   textTestId?: string
-  shimmering?: boolean
   shimmerTestId?: string
   className?: string
 }
@@ -15,35 +14,41 @@ export function SidebarTaskTitle({
   text,
   testId,
   textTestId,
-  shimmering,
   shimmerTestId,
   className,
 }: SidebarTaskTitleProps) {
-  const containerRef = useRef<HTMLSpanElement>(null)
-  const viewportRef = useRef<HTMLSpanElement>(null)
-  const textRef = useRef<HTMLSpanElement>(null)
-  useSidebarTitleScroll(containerRef, viewportRef, textRef, text)
+  const bindTitle = useCallback(
+    (container: HTMLSpanElement | null) => {
+      if (!container) return
+      return bindSidebarTitleScroll(
+        container,
+        container.querySelector<HTMLSpanElement>('.sidebar-task-title-viewport'),
+        container.querySelector<HTMLSpanElement>('.sidebar-task-title-text'),
+        shimmerTestId
+          ? container.querySelector<HTMLSpanElement>('[data-sidebar-title-shimmer-host]')
+          : null
+      )
+    },
+    [shimmerTestId]
+  )
 
   return (
     <span
-      ref={containerRef}
+      ref={bindTitle}
       data-sidebar-drag-activator={textTestId ? '' : undefined}
       data-testid={testId}
-      className={cn(
-        'runtime-task-title relative min-w-0 flex-1',
-        shimmering && 'is-updated',
-        className
-      )}
+      className={cn('runtime-task-title relative min-w-0 flex-1', className)}
     >
-      <span ref={viewportRef} className="sidebar-task-title-viewport">
-        {shimmering && (
+      <span className="sidebar-task-title-viewport">
+        {shimmerTestId && (
           <span
             aria-hidden="true"
-            className="runtime-task-title-shimmer"
-            data-testid={shimmerTestId}
+            className="contents"
+            data-sidebar-title-shimmer-host=""
+            data-shimmer-testid={shimmerTestId}
           />
         )}
-        <span ref={textRef} data-testid={textTestId} className="sidebar-task-title-text">
+        <span data-testid={textTestId} className="sidebar-task-title-text">
           {text}
         </span>
       </span>

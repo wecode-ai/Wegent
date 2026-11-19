@@ -1,6 +1,11 @@
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { useCallback, useEffect, useState } from 'react'
-import type { StandInExecutorApi, StandInInboxWork, StandInSourceError } from '@/api/standIn'
+import { useMemo, useSyncExternalStore } from 'react'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
+import type { StandInExecutorApi, StandInInboxWork } from '@/api/standIn'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
 
 export function inboxRuntimeItem(
@@ -49,50 +54,31 @@ export function useStandInInbox(
   enabled = true,
   connectionScope = ''
 ) {
-  const [data, setData] = useState<{
-    api: StandInExecutorApi
-    scope: string
-    items: StandInInboxWork[]
-    sourceErrors: StandInSourceError[]
-  }>()
-  const [failure, setFailure] = useState<{
-    api: StandInExecutorApi
-    scope: string
-    error: string
-  }>()
-  const [revision, setRevision] = useState(0)
-  const refresh = useCallback(() => setRevision(value => value + 1), [])
-  const scope = JSON.stringify([connectionScope, userId, deviceId])
-  useEffect(() => {
-    if (!enabled || !api || !deviceId) return
-    let active = true
-    let timer: ReturnType<typeof setTimeout>
-    const poll = async () => {
-      try {
-        const next = await api.inbox(userId, deviceId)
-        if (active) {
-          setData({ ...next, api, scope })
-          setFailure(undefined)
-        }
-      } catch (cause) {
-        if (active) setFailure({ api, scope, error: getStandInErrorMessage(cause) })
-      } finally {
-        if (active) timer = setTimeout(poll, 3000)
-      }
-    }
-    void poll()
-    return () => {
-      active = false
-      clearTimeout(timer)
-    }
-  }, [api, userId, deviceId, revision, scope, enabled])
-  const current = data?.api === api && data?.scope === scope ? data : undefined
-  const error = failure?.api === api && failure?.scope === scope ? failure.error : null
+  const scope = `${userId}:${deviceId}`
+  const resourceScope = JSON.stringify([connectionScope, userId, deviceId])
+  const resource = useMemo(
+    () =>
+      createAsyncResource(resourceScope, () => api!.inbox(userId, deviceId!), {
+        refreshIntervalMs: 3000,
+        refreshIntervalMode: 'after-settle',
+        refreshOnSubscribe: true,
+      }),
+    [api, userId, deviceId, resourceScope]
+  )
+  const query = useSyncExternalStore(
+    enabled && api && deviceId ? resource.subscribe : subscribeIdleResource,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const refresh = () => {
+    if (enabled && api && deviceId) void resource.reload()
+  }
   return {
-    scope: current?.scope,
-    items: current?.items ?? [],
-    sourceErrors: current?.sourceErrors ?? [],
-    error,
+    ...query.data,
+    scope: query.data ? scope : undefined,
+    items: query.data?.items ?? [],
+    sourceErrors: query.data?.sourceErrors ?? [],
+    error: query.status === 'error' ? getStandInErrorMessage(query.error) : null,
     refresh,
   }
 }
