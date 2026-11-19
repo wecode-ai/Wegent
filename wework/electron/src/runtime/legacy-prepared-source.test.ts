@@ -11,7 +11,11 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { afterEach, expect, test, vi } from 'vitest'
+import { afterAll, afterEach, expect, test, vi } from 'vitest'
+import {
+  disableAmbientAsarInterception,
+  restoreAmbientAsarInterception,
+} from './ambient-asar-fixtures.js'
 import { currentCoreProfile, profileRevision } from './release-profile.js'
 import { atomicReleaseWrite, ReleaseStore, type DesktopRelease } from './release-store.js'
 import { ownsLegacyPreparedSource } from './legacy-prepared-source.js'
@@ -22,9 +26,11 @@ vi.mock('./release-parent-process.js', () => ({
 import { recoverReleaseLayout } from './release-layout-recovery.js'
 
 const roots: string[] = []
+disableAmbientAsarInterception()
 afterEach(async () => {
   for (const root of roots.splice(0)) await rm(root, { recursive: true, force: true })
 })
+afterAll(restoreAmbientAsarInterception)
 
 async function fixture() {
   const home = await realpath(await mkdtemp(join(tmpdir(), 'legacy-prepared-source-')))
