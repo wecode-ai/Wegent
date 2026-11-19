@@ -142,11 +142,18 @@ test('Linux balancing reuses the history runner without changing coverage, runne
     assert(!isResourceExclusiveCheckpoint(checkpoint, true))
     assert(measurements.scopes.core[checkpoint] > 0)
   }
-  for (const id of ['core-9', 'core-10'])
-    assert.deepEqual(
-      balanced.include.find((entry) => entry.id === id),
-      original.include.find((entry) => entry.id === id),
-    )
+  for (const [id, checkpoint] of [
+    ['core-9', 'human-interactions-hidden'],
+    ['core-10', 'collaboration-shared-core'],
+  ]) {
+    assert.equal(balanced.include.find((entry) => entry.id === id).segments, checkpoint)
+  }
+  for (const checkpoint of ['python-runtime', 'plugin-development']) {
+    const shard = balanced.include.find((entry) => entry.segments.split(',').includes(checkpoint))
+    assert(!shard.segments.split(',').some((peer) =>
+      ['collaboration-shared-core', 'collaboration-templates', 'collaboration-template-app-device-routing'].includes(peer),
+    ))
+  }
   const alone = {
     include: original.include.filter((entry) => entry.id === 'core-6'),
   }
@@ -323,7 +330,7 @@ test('balancing includes exclusive startup checkpoints before the four-worker qu
         ),
       ),
   )
-  assert.equal(peak, 240)
+  assert.equal(peak, 220)
   assert.deepEqual(
     balanced.include.map((entry) => entry.id),
     matrix.include.map((entry) => entry.id),
