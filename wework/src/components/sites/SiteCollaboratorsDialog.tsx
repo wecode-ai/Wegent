@@ -1,12 +1,14 @@
-import { DeleteIconButton } from '@wegent/collaboration/controls/DeleteIconButton'
-import type { Site, SiteCollaborator, SitesApi } from '@/api/sites'
+import type { Site, SitesApi } from '@/api/sites'
 import { useTranslation } from '@/hooks/useTranslation'
 import { createRequestId } from '@/lib/request-id'
+import { DeleteIconButton } from '@wegent/collaboration/controls/DeleteIconButton'
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { AlertCircle, Loader2, UserPlus, X } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState, useSyncExternalStore } from 'react'
+import { createSiteCollaboratorsResource } from './siteCollaboratorsResource'
+import { useSiteDialogScope } from './useSiteDialogScope'
 
 interface SiteCollaboratorsDialogProps {
   api: SitesApi
@@ -14,44 +16,45 @@ interface SiteCollaboratorsDialogProps {
   onClose: () => void
 }
 
-export function SiteCollaboratorsDialog({ api, site, onClose }: SiteCollaboratorsDialogProps) {
+export function SiteCollaboratorsDialog(props: SiteCollaboratorsDialogProps) {
+  const scope = useSiteDialogScope(props.api, props.site.siteid)
+  return (
+    <SiteCollaboratorsDialogContent key={scope.key} {...props} restoreFocus={scope.restoreFocus} />
+  )
+}
+
+function SiteCollaboratorsDialogContent({
+  api,
+  site,
+  onClose,
+  restoreFocus,
+}: SiteCollaboratorsDialogProps & { restoreFocus: () => HTMLElement | null }) {
   const { t } = useTranslation('sites')
-  const closeRef = useRef<HTMLButtonElement>(null)
-  const [items, setItems] = useState<SiteCollaborator[]>([])
+  const [resource] = useState(() => createSiteCollaboratorsResource(api, site.siteid))
+  const snapshot = useSyncExternalStore(resource.subscribe, resource.getSnapshot)
+  const { items, loading } = snapshot
   const [subject, setSubject] = useState('')
-  const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [removing, setRemoving] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    closeRef.current?.focus()
-    let active = true
-    void api
-      .listCollaborators(site.siteid)
-      .then(response => {
-        if (active) setItems(response.items)
-      })
-      .catch(reason => {
-        if (active) {
-          setError(
-            reason instanceof Error
-              ? reason.message
-              : t('collaborators_load_failed', '协作者加载失败')
-          )
-        }
-      })
-      .finally(() => {
-        if (active) setLoading(false)
-      })
-    return () => {
-      active = false
-    }
-  }, [api, site.siteid, t])
+  const [actionError, setError] = useState<string | null>(null)
+  const loadFailed = snapshot.failure !== null
+  const error =
+    actionError ??
+    (snapshot.failure
+      ? snapshot.failure.cause instanceof Error
+        ? snapshot.failure.cause.message || t('collaborators_load_failed', '协作者加载失败')
+        : t('collaborators_load_failed', '协作者加载失败')
+      : null)
+  const adding = useRef(false)
+  const deleting = useRef<string | null>(null)
+  const close = () => {
+    if (!adding.current && !deleting.current) onClose()
+  }
 
   const add = async () => {
     const normalized = subject.trim()
-    if (!normalized || saving) return
+    if (!normalized || adding.current) return
+    adding.current = true
     setSaving(true)
     setError(null)
     try {
@@ -60,32 +63,32 @@ export function SiteCollaboratorsDialog({ api, site, onClose }: SiteCollaborator
         normalized,
         createRequestId('collaborator')
       )
-      setItems(current => [
-        ...current.filter(item => item.subject !== collaborator.subject),
-        collaborator,
-      ])
+      resource.accept(collaborator.subject, collaborator)
       setSubject('')
     } catch (reason) {
       setError(
         reason instanceof Error ? reason.message : t('collaborator_add_failed', '添加协作者失败')
       )
     } finally {
+      adding.current = false
       setSaving(false)
     }
   }
 
   const remove = async (collaboratorSubject: string) => {
-    if (removing) return
+    if (deleting.current) return
+    deleting.current = collaboratorSubject
     setRemoving(collaboratorSubject)
     setError(null)
     try {
       await api.removeCollaborator(site.siteid, collaboratorSubject)
-      setItems(current => current.filter(item => item.subject !== collaboratorSubject))
+      resource.accept(collaboratorSubject, null)
     } catch (reason) {
       setError(
         reason instanceof Error ? reason.message : t('collaborator_remove_failed', '移除协作者失败')
       )
     } finally {
+      deleting.current = null
       setRemoving(null)
     }
   }
@@ -94,13 +97,13 @@ export function SiteCollaboratorsDialog({ api, site, onClose }: SiteCollaborator
     <div
       className="fixed inset-0 z-modal flex items-center justify-center bg-black/40 px-4"
       onClick={event => {
-        if (event.target === event.currentTarget && !saving && !removing) onClose()
+        if (event.target === event.currentTarget) close()
       }}
     >
       <DialogSurface
-        onClose={() => {
-          if (!(saving || Boolean(removing))) onClose()
-        }}
+        onClose={close}
+        initialFocus={'[data-testid="site-collaborators-close"]'}
+        finalFocus={restoreFocus}
         render={
           <section
             aria-labelledby="site-collaborators-title"
@@ -118,11 +121,10 @@ export function SiteCollaboratorsDialog({ api, site, onClose }: SiteCollaborator
           </div>
           <ControlButton
             variant="unstyled"
-            ref={closeRef}
             type="button"
             data-testid="site-collaborators-close"
             aria-label={t('close', '关闭')}
-            onClick={onClose}
+            onClick={close}
             disabled={saving || Boolean(removing)}
             className="flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-surface hover:text-text-primary disabled:opacity-50"
           >
@@ -168,12 +170,28 @@ export function SiteCollaboratorsDialog({ api, site, onClose }: SiteCollaborator
           </p>
         ) : null}
 
+        {loadFailed && (
+          <ControlButton
+            variant="outline"
+            size="sm"
+            type="button"
+            data-testid="site-collaborators-retry"
+            onClick={() => {
+              setError(null)
+              void resource.reload()
+            }}
+            className="mt-2 min-h-11 rounded-md border border-border px-3 text-sm md:min-h-8"
+          >
+            {t('retry', '重试')}
+          </ControlButton>
+        )}
+
         <div className="mt-4 min-h-24 rounded-lg border border-border">
           {loading ? (
             <div className="flex min-h-24 items-center justify-center">
               <Loader2 className="h-5 w-5 animate-spin text-text-secondary" aria-hidden="true" />
             </div>
-          ) : items.length === 0 ? (
+          ) : loadFailed && items.length === 0 ? null : items.length === 0 ? (
             <p className="flex min-h-24 items-center justify-center text-sm text-text-secondary">
               {t('no_collaborators', '暂无协作者')}
             </p>

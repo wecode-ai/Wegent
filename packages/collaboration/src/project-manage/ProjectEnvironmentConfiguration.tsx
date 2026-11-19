@@ -7,7 +7,8 @@ import { Button as ControlButton } from '../markdown/Button'
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useId, useRef, useState } from 'react'
+import { useId, useMemo, useRef, useState } from 'react'
+import { useFocusRequest } from '../dom-events'
 import type { CollaborationTranslate } from '../i18n'
 import type { WorkspaceGitBranch, WorkspaceGitRepository } from '../ports/SharedWorkspaceApi'
 import type {
@@ -88,10 +89,14 @@ export function ProjectEnvironmentConfiguration({
   const configurationErrorId = useId()
   const configurationErrorRef = useRef<HTMLParagraphElement>(null)
   const configurationNoticeRef = useRef<HTMLParagraphElement>(null)
-  useEffect(() => {
-    if (configurationError) configurationErrorRef.current?.focus()
-    else if (configurationNotice) configurationNoticeRef.current?.focus()
-  }, [configurationError, configurationNotice])
+  const focusRequest = useMemo(
+    () => ({ configurationError, configurationNotice }),
+    [configurationError, configurationNotice]
+  )
+  useFocusRequest(configurationErrorRef, focusRequest, { enabled: Boolean(configurationError) })
+  useFocusRequest(configurationNoticeRef, focusRequest, {
+    enabled: !configurationError && Boolean(configurationNotice),
+  })
   const [showAdvancedRepositories, setShowAdvancedRepositories] = useState(false)
   return (
     <div className="space-y-5 pt-2">

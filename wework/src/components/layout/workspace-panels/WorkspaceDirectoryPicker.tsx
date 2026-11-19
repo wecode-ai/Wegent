@@ -1,14 +1,15 @@
 import type { MenuPosition } from '@/components/common/ActionMenu'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { WorkspaceFileApi, WorkspaceFileEntry, WorkspaceTarget } from '@/types/workspace-files'
-import { VirtualTree } from '@wegent/collaboration/controls/VirtualTree'
 import { Menu, MenuContextTrigger } from '@wegent/collaboration/controls/MenuParts'
+import { VirtualTree } from '@wegent/collaboration/controls/VirtualTree'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Folder, FolderOpen } from 'lucide-react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
 import { createFileTreeData, resolveFileTreePath } from './fileTreeData'
 import { useFileTreeExpansion } from './useFileTreeExpansion'
+import { createWorkspaceDirectoryResource } from './workspaceDirectoryResource'
 import { WorkspaceFileIcon } from './WorkspaceFileIcon'
-import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createWorkspaceTreeModel, getEntryByTreePath } from './workspaceFileTreeModel'
 
 interface PickerProps {
@@ -22,53 +23,29 @@ interface PickerProps {
 }
 
 export function WorkspaceDirectoryPicker(props: PickerProps) {
-  const { api, target, directoryPath } = props
+  const { api, target, directoryPath, activePath, expandActive } = props
   const { t } = useTranslation('common')
-  const [entries, setEntries] = useState<Record<string, WorkspaceFileEntry[]>>({})
-  const [errors, setErrors] = useState<Record<string, string>>({})
-  const [loading, setLoading] = useState(0)
-  const requested = useRef(new Set<string>())
-  const mounted = useRef(true)
-  useEffect(() => {
-    mounted.current = true
-    return () => {
-      mounted.current = false
-    }
-  }, [])
-
-  const load = useCallback(
-    async (path: string, retry = false, signal?: AbortSignal) => {
-      if (requested.current.has(path) && !retry) return
-      requested.current.add(path)
-      setLoading(count => count + 1)
-      setErrors(current => {
-        const next = { ...current }
-        delete next[path]
-        return next
-      })
-      try {
-        const result = await api.listWorkspaceEntries(target.deviceId, path, target.path)
-        if (mounted.current && !signal?.aborted)
-          setEntries(current => ({ ...current, [path]: result.entries }))
-      } catch (error) {
-        requested.current.delete(path)
-        if (mounted.current && !signal?.aborted)
-          setErrors(current => ({
-            ...current,
-            [path]: error instanceof Error ? error.message : String(error),
-          }))
-        throw error
-      } finally {
-        if (signal?.aborted) requested.current.delete(path)
-        if (mounted.current) setLoading(count => count - 1)
-      }
-    },
-    [api, target.deviceId, target.path]
+  const resource = useMemo(
+    () =>
+      createWorkspaceDirectoryResource(
+        api,
+        target.deviceId,
+        target.path,
+        directoryPath,
+        expandActive ? activePath : null
+      ),
+    [activePath, api, directoryPath, expandActive, target.deviceId, target.path]
   )
-
-  useEffect(() => {
-    void load(directoryPath).catch(() => {})
-  }, [directoryPath, load])
+  const { entries, errors, loading } = useSyncExternalStore(
+    resource.subscribe,
+    resource.getSnapshot,
+    resource.getSnapshot
+  )
+  const load = async (path: string, retry?: boolean) => {
+    await resource.load(path, retry)
+    const error = resource.getSnapshot().errors[path]
+    if (error) throw new Error(error)
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -126,12 +103,6 @@ function DirectoryTree({
       }),
     [directoryPath, activePath, expandActive, entries]
   )
-  useEffect(() => {
-    for (const path of tree.expandedTreePaths) {
-      const entry = getEntryByTreePath(tree.entryByTreePath, path, tree.caseInsensitivePaths)
-      if (entry?.isDirectory) void load(entry.path).catch(() => {})
-    }
-  }, [tree, load])
   const data = useMemo(() => createFileTreeData(tree.paths, '', false), [tree.paths])
   const { values: expanded, setValues: setExpanded } = useFileTreeExpansion(
     data,

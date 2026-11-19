@@ -1,10 +1,15 @@
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { branchMatchesQuery } from '@wegent/chat-core/workspace-branches'
 import { SearchableSelect } from '@wegent/collaboration/controls/SearchableSelect'
 import { Button } from '@wegent/collaboration/markdown/Button'
 import { ChevronDown, GitBranch, X } from 'lucide-react'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 
 export function BranchPicker({
   value,
@@ -45,42 +50,37 @@ export function BranchPicker({
   const open = openRevision === closeSignal
   const setOpen = (next: boolean) => setOpenRevision(next ? closeSignal : null)
   const [query, setQuery] = useState('')
-  const [branches, setBranches] = useState<string[]>([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [reload, setReload] = useState(0)
+  const branchResource = useMemo(
+    () =>
+      createAsyncResource(
+        prefix,
+        async signal => {
+          if (onRefresh) await onRefresh()
+          signal.throwIfAborted()
+          return onListBranches()
+        },
+        { refreshOnSubscribe: true }
+      ),
+    [prefix, onListBranches, onRefresh]
+  )
+  const snapshot = useSyncExternalStore(
+    open ? branchResource.subscribe : subscribeIdleResource,
+    open ? branchResource.getSnapshot : getIdleResourceSnapshot
+  )
+  const branches = snapshot.data ?? []
+  const loading = open && (snapshot.status === 'idle' || snapshot.status === 'loading')
+  const [selectionError, setError] = useState<string | null>(null)
+  const error =
+    selectionError ??
+    (snapshot.status === 'error'
+      ? snapshot.error instanceof Error
+        ? snapshot.error.message
+        : t('workbench.environment_branch_load_failed', '分支加载失败')
+      : null)
   const selecting = useRef(false)
-  useEffect(() => {
-    if (!open) return
-    let active = true
-    void (async () => {
-      try {
-        await onRefresh?.()
-        const result = await onListBranches()
-        if (active) setBranches(result)
-      } catch (cause) {
-        if (active) {
-          setBranches([])
-          setError(
-            cause instanceof Error
-              ? cause.message
-              : t('workbench.environment_branch_load_failed', '分支加载失败')
-          )
-        }
-      } finally {
-        if (active) setLoading(false)
-      }
-    })()
-    return () => {
-      active = false
-    }
-  }, [open, onListBranches, onRefresh, reload, t])
   const changeOpen = (next: boolean) => {
     if (!next && (selecting.current || busy)) return
-    if (next) {
-      setLoading(true)
-      setError(null)
-    }
+    if (next) setError(null)
     setOpen(next)
     onOpenChange?.(next)
   }
@@ -89,7 +89,8 @@ export function BranchPicker({
     selecting.current = true
     setError(null)
     try {
-      await onChoose(branch)
+      const result = onChoose(branch)
+      if (result) await result
       setOpen(false)
       onOpenChange?.(false)
     } catch (cause) {
@@ -149,9 +150,8 @@ export function BranchPicker({
                 type="button"
                 data-testid={prefix + '-branch-retry'}
                 onClick={() => {
-                  setLoading(true)
                   setError(null)
-                  setReload(count => count + 1)
+                  void branchResource.reload()
                 }}
               >
                 {t('common.retry', '重试')}

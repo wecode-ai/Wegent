@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export * from './IssueDetailCore'
+export { formatIssueAttachmentSize } from './issueAttachmentSize'
 export { TagEditor } from './TagEditor'
 export * from './IssueActivityPanel'
 export * from './IssueActivityFeed'
@@ -58,7 +59,6 @@ export { issueTaskSummaryForMessage } from './issueTaskSummary'
 export { issueCommentBody } from './useIssueCommentAttachments'
 
 export { IssueCommentChildAction } from './IssueCommentChildAction'
-export type {
-  CommentChildInput,
-  CommentSubmissionOptions,
-} from './useCommentAssignment'
+export type { CommentChildInput, CommentSubmissionOptions } from './useCommentAssignment'
+
+export { createTagDraft, type TagDraftStore } from './tagDraft'

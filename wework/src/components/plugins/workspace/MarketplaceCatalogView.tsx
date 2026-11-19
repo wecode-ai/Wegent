@@ -1,25 +1,22 @@
-import { SegmentedControl } from '@wegent/collaboration/controls/SegmentedControl'
 import { Button } from '@/components/ui/button'
 import type { remoteCatalogErrorKind } from '@/features/plugins/remotePluginError'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { PluginMarketplaceItem } from '@/types/api'
+import { SegmentedControl } from '@wegent/collaboration/controls/SegmentedControl'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Boxes, RefreshCw } from 'lucide-react'
-import { memo, useMemo, type ReactNode, type RefObject } from 'react'
-import {
-  previewMarketplaceSectionItems,
-  type MarketplaceCategorySection,
-} from '../marketplaceCategorySections'
-import {
-  MarketplaceSearchInput,
-  type MarketplaceSearchInputHandle,
-} from '../MarketplaceSearchInput'
+import type { ReactNode, Ref, RefObject } from 'react'
+import { memo, useMemo } from 'react'
+import type { MarketplaceCategorySection } from '../marketplaceCategorySections'
+import { previewMarketplaceSectionItems } from '../marketplaceCategorySections'
+import type { MarketplaceSearchInputHandle } from '../MarketplaceSearchInput'
+import { MarketplaceSearchInput } from '../MarketplaceSearchInput'
 import type { PluginDistribution } from '../pluginDistribution'
 import { MarketplaceCardGrid } from './MarketplaceCardGrid'
+import type { MarketplaceOption } from './marketplaceWorkspaceHelpers'
 import {
   MARKETPLACE_SECTION_PREVIEW_COUNT,
   marketplaceSectionRevealLabel,
-  type MarketplaceOption,
 } from './marketplaceWorkspaceHelpers'
 import { PluginMarketplaceLoadingSkeleton } from './PluginMarketplaceLoadingSkeleton'
 import { PluginMarketplaceRevealButton } from './PluginMarketplaceRevealButton'
@@ -73,7 +70,7 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
   localMarketplaceTabs: MarketplaceOption[]
   query: string
   searchInputRef: RefObject<MarketplaceSearchInputHandle | null>
-  scrollRef: RefObject<HTMLDivElement | null>
+  scrollRef: Ref<HTMLDivElement>
   installedStrip: ReactNode
   showInstalledStrip: boolean
   pluginMarketplaceState: {

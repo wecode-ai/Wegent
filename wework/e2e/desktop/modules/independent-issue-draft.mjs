@@ -94,9 +94,17 @@ export async function chooseIssueProperty(control, id, value, query = '') {
   const optionId = `${id}-option-${value || 'empty'}`
   await control.command('waitFor', testId(optionId), { visible: true })
   await control.command('nativePress', search, { key: 'ArrowDown' })
-  assert.equal(await control.command('getActiveElementTestId', 'body'), optionId)
-  await control.command('nativePress', testId(optionId), { key: 'Enter' })
+  const option = testId(optionId)
+  const activeDescendant = await control.command('getAttribute', search, {
+    value: 'aria-activedescendant',
+  })
+  const optionDomId = await control.command('getAttribute', option, { value: 'id' })
+  assert.ok(activeDescendant, 'ArrowDown must highlight a real option')
+  assert.equal(activeDescendant, optionDomId, 'ArrowDown must highlight the requested option')
+  assert.equal(await control.command('getAttribute', option, { value: 'data-active' }), 'true')
+  await control.command('nativePress', search, { key: 'Enter' })
   await control.command('waitFor', testId(`${id}-menu`), { visible: false })
+  assert.equal(await control.command('getAttribute', testId(id), { value: 'data-value' }), value)
   await control.command('waitFor', `${testId(id)}:focus`, { visible: true })
 }
 

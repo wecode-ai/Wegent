@@ -1,57 +1,59 @@
+import { Button as ControlButton } from '../markdown/Button'
+import { createAsyncResource, getIdleResourceSnapshot } from '@wegent/chat-core/async-resource'
+import { useMediaQuery } from '../media-query'
+import { PluginTrialTemplateStrip } from '../composer/PluginTrialTemplateStrip'
+import { ComposerPluginIcon } from '../composer/ComposerPluginIcon'
 import {
-  buildTrialTemplatePrompt,
   createPluginTrialGuide,
+  buildTrialTemplatePrompt,
 } from '@wegent/chat-core/composer-plugin-trial'
-import type { RuntimePaneQueuedMessage } from '@wegent/chat-core/conversation-queue'
-import type { UnifiedModel } from '@wegent/chat-core/models'
-import { createPluginAssetResolver } from '@wegent/chat-core/plugin-assets'
-import type { Attachment, RuntimeTaskAddress } from '@wegent/chat-core/runtime'
-import type { LocalDeviceApp } from '@wegent/chat-core/runtime-composer-catalog'
+import {
+  compareComposerPluginsByUsage,
+  sortComposerPluginsByUsage,
+  readRecentPluginAppIds,
+  RECENT_PLUGIN_APPS_KEY,
+} from '../composer/composerPluginSort'
+import { recordPluginUsageFromInput } from '../composer/pluginUsage'
 import { createRuntimeComposerPluginSource } from '@wegent/chat-core/runtime-composer-plugin-source'
+import type { LocalDeviceApp } from '@wegent/chat-core/runtime-composer-catalog'
+import { createPluginAssetResolver } from '@wegent/chat-core/plugin-assets'
+import { createComposerCatalogStore } from '../composer/createComposerCatalogStore'
+import { PluginPickerMenu } from '../composer/PluginPickerMenu'
+import { appReference, displayAppName } from '../composer/composerMentionCandidates'
+import { registerComposerMentionIcon } from '../composer/composerMentions'
+import { useCollaborationPortalTheme, useDocumentTheme } from '../theme'
+import { createComposerPluginAssetReader } from '../composer/pluginAssetReader'
 import type { createRuntimeConversationSession } from '@wegent/chat-core/runtime-conversation-session'
+import type { RuntimePaneQueuedMessage } from '@wegent/chat-core/conversation-queue'
+import { ConversationQueuePanel } from '../conversation/ConversationQueuePanel'
+import { persistAttachmentReferences } from '../composer/attachmentFiles'
+import { useBrowserTaskConversationQueue } from './useBrowserTaskConversationQueue'
+import { useCallback, useMemo, useRef, useSyncExternalStore } from 'react'
+import { useBrowserTaskDraft } from './browserTaskDraftContext'
+import type { RuntimeTaskAddress } from '@wegent/chat-core/runtime'
+import type { RuntimeTaskSummary } from '@wegent/chat-core/runtime-task-api-types'
+import type { SharedWorkspaceRuntimeApi } from '../ports/SharedWorkspaceApi'
+import type { CollaborationTranslate } from '../i18n'
+import type { AttachmentImageServices } from './AttachmentImageView'
+import type { Attachment } from '@wegent/chat-core/runtime'
+import { ComposerAttachmentBadges } from './ComposerAttachmentBadges'
+import { ModelSelector } from '../controls/ModelSelector'
 import {
   findModelForSelection,
   modelSelectionFromRuntimeHandle,
 } from '@wegent/chat-core/runtime-model-selection'
-import type { RuntimeTaskSummary } from '@wegent/chat-core/runtime-task-api-types'
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { runtimeContinuationRequest } from '../execution/runtimeContinuationRequest'
 import {
-  ComposerErrorBanner,
-  ComposerToolbar,
   ProjectComposerBody,
+  ComposerErrorBanner,
   type ComposerInputHandle,
+  ComposerToolbar,
   type ComposerSubmitOptions,
 } from '../composer'
-import { applyQuickPhrase } from '../composer/applyQuickPhrase'
-import { persistAttachmentReferences } from '../composer/attachmentFiles'
 import { ComposerAutocompleteInput } from '../composer/ComposerAutocompleteInput'
-import { appReference, displayAppName } from '../composer/composerMentionCandidates'
-import { registerComposerMentionIcon } from '../composer/composerMentions'
-import { ComposerPluginIcon } from '../composer/ComposerPluginIcon'
-import {
-  compareComposerPluginsByUsage,
-  readRecentPluginAppIds,
-  RECENT_PLUGIN_APPS_KEY,
-  sortComposerPluginsByUsage,
-} from '../composer/composerPluginSort'
 import { ContextUsageIndicator } from '../composer/ContextUsageIndicator'
-import { createComposerCatalogStore } from '../composer/createComposerCatalogStore'
-import { createComposerPluginAssetReader } from '../composer/pluginAssetReader'
-import { PluginPickerMenu } from '../composer/PluginPickerMenu'
-import { PluginTrialTemplateStrip } from '../composer/PluginTrialTemplateStrip'
-import { recordPluginUsageFromInput } from '../composer/pluginUsage'
-import { ModelSelector } from '../controls/ModelSelector'
-import { ConversationQueuePanel } from '../conversation/ConversationQueuePanel'
-import { runtimeContinuationRequest } from '../execution/runtimeContinuationRequest'
-import type { CollaborationTranslate } from '../i18n'
-import { Button as ControlButton } from '../markdown/Button'
-import type { SharedWorkspaceRuntimeApi } from '../ports/SharedWorkspaceApi'
-import { useCollaborationPortalTheme, useDocumentTheme } from '../theme'
-import type { AttachmentImageServices } from './AttachmentImageView'
 import { BrowserQuickPhraseMenu } from './BrowserQuickPhraseMenu'
-import { useBrowserTaskDraft } from './browserTaskDraftContext'
-import { ComposerAttachmentBadges } from './ComposerAttachmentBadges'
-import { useBrowserTaskConversationQueue } from './useBrowserTaskConversationQueue'
+import { applyQuickPhrase } from '../composer/applyQuickPhrase'
 
 const pluginAssets = createPluginAssetResolver(path => path)
 
@@ -103,9 +105,22 @@ export function BrowserTaskComposer({
     sending: busy,
     translate: t,
   })
-  const [catalog, setCatalog] = useState<UnifiedModel[] | null>(null)
-  const [catalogError, setCatalogError] = useState<string | null>(null)
-  const [catalogRevision, setCatalogRevision] = useState(0)
+  const models = useMemo(
+    () => createAsyncResource(String(address.deviceId), () => runtime.listModels(address.deviceId)),
+    [runtime, address.deviceId]
+  )
+  const modelSnapshot = useSyncExternalStore(
+    models.subscribe,
+    models.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const catalog = modelSnapshot.data ?? null
+  const catalogError =
+    modelSnapshot.status === 'error' || modelSnapshot.error !== undefined
+      ? String(
+          modelSnapshot.error instanceof Error ? modelSnapshot.error.message : modelSnapshot.error
+        )
+      : null
   const composerRef = useRef<ComposerInputHandle>(null)
   const conversation = useSyncExternalStore(
     session.subscribe,
@@ -136,31 +151,8 @@ export function BrowserTaskComposer({
       }),
     [appearanceMode]
   )
-  const [isMobile, setMobile] = useState(false)
-  useEffect(() => {
-    const media = window.matchMedia('(max-width: 767px)')
-    const change = () => setMobile(media.matches)
-    change()
-    media.addEventListener('change', change)
-    return () => media.removeEventListener('change', change)
-  }, [])
-  useEffect(() => {
-    let active = true
-    void runtime
-      .listModels(address.deviceId)
-      .then(models => {
-        if (active) {
-          setCatalog(models)
-          setCatalogError(null)
-        }
-      })
-      .catch(cause => {
-        if (active) setCatalogError(String(cause instanceof Error ? cause.message : cause))
-      })
-    return () => {
-      active = false
-    }
-  }, [runtime, address.deviceId, catalogRevision])
+  const isMobile = useMediaQuery('(max-width: 767px)')
+
   const persistedSelection =
     task?.modelSelection ?? modelSelectionFromRuntimeHandle(task?.runtimeHandle)
   const activeModel = findModelForSelection(catalog ?? [], persistedSelection)
@@ -266,11 +258,10 @@ export function BrowserTaskComposer({
         error={error || catalogError}
         action={
           catalogError ? (
-            <ControlButton
-              variant="unstyled"
+            <ControlButton variant="unstyled"
               type="button"
               data-testid="task-conversation-models-retry"
-              onClick={() => setCatalogRevision(value => value + 1)}
+              onClick={() => void models.reload()}
               className="ml-2 underline"
             >
               {t('activity.retry')}

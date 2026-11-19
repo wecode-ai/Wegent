@@ -391,15 +391,9 @@ export function IssueChatMessage({
                       : 'activity.task_activity_ai_execution'
                   )}
                 </CollapsibleTrigger>
-                <CollapsiblePanel>
-                  <div className="task-detail-thread-run-metadata">
-                    {deviceName ? (
-                      <span>{deviceName}</span>
-                    ) : runId ? (
-                      <span>Run {runId}</span>
-                    ) : null}
-                    {modelName ? <span>{modelName}</span> : null}
-                  </div>
+                <CollapsiblePanel className="task-detail-thread-run-metadata">
+                  {deviceName ? <span>{deviceName}</span> : runId ? <span>Run {runId}</span> : null}
+                  {modelName ? <span>{modelName}</span> : null}
                 </CollapsiblePanel>
               </CollapsibleRoot>
             ) : (

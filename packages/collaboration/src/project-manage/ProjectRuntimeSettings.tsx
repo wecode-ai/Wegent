@@ -1,23 +1,23 @@
 import { SelectContent, SelectItem, SelectRoot, SelectTrigger } from '../controls/SelectParts'
-import { normalizeSelectValue } from '../controls/selectValue'
 import { TextField as ControlInput } from '../controls/TextField'
 import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 
 import type { CollaborationTranslate } from '../i18n'
-import type {
-  SharedWorkspaceApi,
-  WorkspaceAutomationExecutionCatalog,
-  WorkspaceRuntimeProfile,
-} from '../ports/SharedWorkspaceApi'
 import {
   useRuntimeConfiguration,
   useRuntimeConfigurationRevision,
   type ProfileConfigurationTarget,
 } from '../runtime-profile/context'
+import type { SharedWorkspaceApi, WorkspaceRuntimeProfile } from '../ports/SharedWorkspaceApi'
+
+import {
+  createProjectRuntimeSettingsResource,
+  RuntimeCatalogUnavailableError,
+} from './projectRuntimeSettingsResource'
 
 function complete(profile: WorkspaceRuntimeProfile | undefined): boolean {
   return Boolean(profile?.status === 'active' && profile.executionDeviceId && profile.model)
@@ -44,54 +44,71 @@ export function ProjectRuntimeSettings({
 }) {
   const revision = useRuntimeConfigurationRevision()
   const configureRuntime = useRuntimeConfiguration()
-  const [catalog, setCatalog] = useState<WorkspaceAutomationExecutionCatalog | null>(null)
-  const [profiles, setProfiles] = useState<WorkspaceRuntimeProfile[]>([])
-  const [defaultId, setDefaultId] = useState<string | null>(null)
+  const resource = useMemo(
+    () => createProjectRuntimeSettingsResource(api, projectId, target),
+    [api, projectId, target]
+  )
+  const subscribe = useCallback(
+    (listener: () => void) => resource.subscribe(listener, revision),
+    [resource, revision]
+  )
+  const snapshot = useSyncExternalStore(subscribe, resource.getSnapshot, resource.getSnapshot)
+  const data = snapshot.data
+  const catalog = data?.catalog ?? null
+  const profiles = catalog?.runtimeProfiles ?? []
+  const defaultId = data?.defaultId ?? null
   const [selectedId, setSelectedId] = useState('')
   const [creating, setCreating] = useState(initialCreating)
   const [name, setName] = useState('')
   const [deviceId, setDeviceId] = useState('')
   const [modelIndex, setModelIndex] = useState('')
-  const [loading, setLoading] = useState(true)
+  const loading = snapshot.status === 'idle' || snapshot.status === 'loading'
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
+  const [actionError, setError] = useState('')
   const [saved, setSaved] = useState(false)
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  const [observed, setObserved] = useState({
+    resource,
+    revision,
+    initialCreating,
+    readId: undefined as symbol | undefined,
+  })
+  if (observed.resource !== resource) {
+    setObserved({ resource, revision, initialCreating, readId: undefined })
+    setSelectedId('')
+    setCreating(initialCreating)
+    setName('')
+    setDeviceId('')
+    setModelIndex('')
     setError('')
-    try {
-      if (!api.automationExecutionCatalog) {
-        throw new Error(t('runtimeSettings.unavailable', '当前客户端不支持配置执行环境'))
-      }
-      const [nextCatalog, binding] = await Promise.all([
-        api.automationExecutionCatalog.load(projectId),
-        target
-          ? Promise.resolve({ runtimeProfileId: null })
-          : api.runtimeProfiles.getProjectDefault(projectId),
-      ])
-      setCatalog(nextCatalog)
-      setProfiles(nextCatalog.runtimeProfiles ?? [])
-      setDefaultId(binding.runtimeProfileId)
-      setSelectedId(binding.runtimeProfileId ?? '')
-      if (initialCreating)
-        setCreating(
-          !complete(
-            nextCatalog.runtimeProfiles?.find(profile => profile.id === binding.runtimeProfileId)
-          )
-        )
-    } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : t('runtimeSettings.loadFailed', '加载执行配置失败')
+    setSaved(false)
+  } else if (observed.revision !== revision) {
+    setObserved({ ...observed, revision })
+    setError('')
+  } else if (
+    data &&
+    (observed.readId !== data.readId || observed.initialCreating !== initialCreating)
+  ) {
+    setObserved({ resource, revision, initialCreating, readId: data.readId })
+    setSelectedId(data.defaultId ?? '')
+    if (initialCreating)
+      setCreating(
+        !complete(data.catalog.runtimeProfiles?.find(profile => profile.id === data.defaultId))
       )
-    } finally {
-      setLoading(false)
-    }
-  }, [api, projectId, t, initialCreating, target])
-
-  useEffect(() => {
-    void load()
-  }, [load, revision])
+  }
+  const error =
+    actionError ||
+    (snapshot.status === 'error'
+      ? snapshot.error instanceof RuntimeCatalogUnavailableError
+        ? t('runtimeSettings.unavailable', '当前客户端不支持配置执行环境')
+        : snapshot.error instanceof Error
+          ? snapshot.error.message
+          : t('runtimeSettings.loadFailed', '加载执行配置失败')
+      : '')
+  const load = useCallback(async () => {
+    setError('')
+    await resource.reload()
+  }, [resource])
 
   const current = profiles.find(profile => profile.id === defaultId)
   const selected = profiles.find(profile => profile.id === selectedId)
@@ -121,7 +138,18 @@ export function ProjectRuntimeSettings({
           modelType: model.type,
           modelOptions: model.options,
         })
-        setProfiles(items => [...items, profile!])
+        if (!resource.isActive()) return
+        resource.update(value =>
+          value
+            ? {
+                ...value,
+                catalog: {
+                  ...value.catalog,
+                  runtimeProfiles: [...(value.catalog.runtimeProfiles ?? []), profile!],
+                },
+              }
+            : value
+        )
         setSelectedId(profile.id)
         setCreating(false)
       }
@@ -130,11 +158,16 @@ export function ProjectRuntimeSettings({
         await target.apply(profile)
       } else {
         const binding = await api.runtimeProfiles.setProjectDefault(projectId, profile.id)
-        setDefaultId(binding.runtimeProfileId)
+        if (!resource.isActive()) return
+        resource.update(value =>
+          value ? { ...value, defaultId: binding.runtimeProfileId } : value
+        )
       }
+      if (!resource.isActive()) return
       await onConfigured?.(profile)
-      setSaved(true)
+      if (resource.isActive()) setSaved(true)
     } catch (cause) {
+      if (!resource.isActive()) return
       setError(
         cause instanceof Error ? cause.message : t('runtimeSettings.saveFailed', '保存执行配置失败')
       )
@@ -144,6 +177,8 @@ export function ProjectRuntimeSettings({
     }
   }
 
+  const controlClass =
+    'h-11 w-full min-w-0 rounded-lg border border-border bg-background px-3 text-sm md:h-9'
   return (
     <section className="mt-6 border-t border-border pt-5" data-testid="project-runtime-settings">
       <h2 className="text-heading-sm font-semibold">
@@ -193,7 +228,7 @@ export function ProjectRuntimeSettings({
               <span className="mb-1 block">{t('runtimeSettings.profile', '执行配置')}</span>
               <SelectRoot
                 disabled={saving}
-                value={normalizeSelectValue(selectedId)}
+                value={String(selectedId)}
                 onValueChange={selectedValue => {
                   if (selectedValue === null) return
                   setSelectedId(selectedValue)
@@ -201,7 +236,7 @@ export function ProjectRuntimeSettings({
                   setSaved(false)
                 }}
               >
-                <SelectTrigger className="w-full min-w-0" data-testid="project-runtime-profile" />
+                <SelectTrigger className={controlClass} data-testid="project-runtime-profile" />
                 <SelectContent>
                   <SelectItem value="">{t('runtimeSettings.select', '选择执行配置')}</SelectItem>
                   {profiles
@@ -240,7 +275,7 @@ export function ProjectRuntimeSettings({
               <label className="text-sm sm:col-span-2">
                 <span className="mb-1 block">{t('runtimeSettings.name', '配置名称')}</span>
                 <ControlInput
-                  className="w-full min-w-0"
+                  className={controlClass}
                   data-testid="project-runtime-name"
                   autoFocus={initialCreating}
                   value={name}
@@ -252,15 +287,15 @@ export function ProjectRuntimeSettings({
               <label className="text-sm">
                 <span className="mb-1 block">{t('runtimeSettings.device', '执行设备')}</span>
                 <SelectRoot
-                  value={normalizeSelectValue(deviceId)}
                   disabled={saving}
+                  value={String(deviceId)}
                   onValueChange={selectedValue => {
                     if (selectedValue === null) return
                     setDeviceId(selectedValue)
                     setModelIndex('')
                   }}
                 >
-                  <SelectTrigger className="w-full min-w-0" data-testid="project-runtime-device" />
+                  <SelectTrigger className={controlClass} data-testid="project-runtime-device" />
                   <SelectContent>
                     <SelectItem value="">
                       {t('runtimeSettings.selectDevice', '选择执行设备')}
@@ -276,13 +311,14 @@ export function ProjectRuntimeSettings({
               <label className="text-sm">
                 <span className="mb-1 block">{t('runtimeSettings.model', '模型')}</span>
                 <SelectRoot
-                  value={normalizeSelectValue(modelIndex)}
                   disabled={saving || !environment}
+                  value={String(modelIndex)}
                   onValueChange={selectedValue => {
-                    if (selectedValue !== null) return setModelIndex(selectedValue)
+                    if (selectedValue === null) return
+                    return setModelIndex(selectedValue)
                   }}
                 >
-                  <SelectTrigger className="w-full min-w-0" data-testid="project-runtime-model" />
+                  <SelectTrigger className={controlClass} data-testid="project-runtime-model" />
                   <SelectContent>
                     <SelectItem value="">{t('runtimeSettings.selectModel', '选择模型')}</SelectItem>
                     {models.map(item => (

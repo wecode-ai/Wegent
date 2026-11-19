@@ -1,10 +1,10 @@
+import { createPluginRouteRuntimeTaskOpener } from './plugin-route-navigation'
 import { DesktopCollapsedSidebarToggle } from '@/components/layout/DesktopCollapsedSidebarToggle'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
 import { MobileDrawer } from '@/components/layout/MobileDrawer'
 import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSidebarCollapsed'
 import { WorkbenchSearchDialog } from '@/components/layout/WorkbenchSearchDialog'
-import { prefetchPluginsWorkspace } from '@/components/plugins/workspace/prefetchPluginsWorkspace'
 import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
 import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
 import { getRuntimeConfig } from '@/config/runtime'
@@ -16,12 +16,12 @@ import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { isElectronRuntime } from '@/lib/runtime-environment'
-import { track } from '@/telemetry/client'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Menu } from 'lucide-react'
+import { lazy } from 'react'
+import { Suspense } from 'react'
+import { useState } from 'react'
 import type { ReactNode } from 'react'
-import { lazy, Suspense, useEffect, useState } from 'react'
-import { createPluginRouteRuntimeTaskOpener } from './plugin-route-navigation'
 
 const PluginsWorkspace = lazy(() =>
   import('@/components/plugins/PluginsWorkspace').then(module => ({
@@ -145,13 +145,6 @@ export function PluginsPage({ routeSearch = '' }: { routeSearch?: string }) {
   const isDesktop = isElectronRuntime()
   const pluginReference = parsePluginDetailRoute(routeSearch)
   const handleOpenRuntimeTask = createPluginRouteRuntimeTaskOpener(openRuntimeTask)
-
-  useEffect(() => {
-    track('plugin_center_opened', { surface: 'catalog' })
-    if (!isElectronRuntime()) return
-    const timeoutId = window.setTimeout(() => prefetchPluginsWorkspace(), 400)
-    return () => window.clearTimeout(timeoutId)
-  }, [])
 
   const handleSelectProject = (projectId: number) => {
     navigateTo('/')

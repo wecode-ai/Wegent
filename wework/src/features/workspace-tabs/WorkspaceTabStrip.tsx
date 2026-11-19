@@ -24,13 +24,18 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import { cn } from '@/lib/utils'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
 import { ActionMenu } from '@wegent/collaboration/controls/ActionMenu'
 import { TabsList, TabsRoot, TabsTab } from '@wegent/collaboration/controls/Tabs'
+import { useDOMEvent, useElementGeometry } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Bot, Boxes, CheckSquare2, CloudOff, Columns3, Pin, Plus, X } from 'lucide-react'
 import {
-  useEffect,
-  useLayoutEffect,
+  useCallback,
   useMemo,
   useRef,
   useState,
@@ -44,7 +49,7 @@ import {
   saveFixedWorkspaceTabs,
 } from './fixedWorkspaceTabs'
 import type { WorkspaceTab, WorkspaceTabKind } from './workspaceTabs'
-import { useWorkspaceTabs } from './workspaceTabsContextValue'
+import { useWorkspaceTabs, useWorkspaceTabsSession } from './workspaceTabsContextValue'
 import {
   closeEmptyWorkspaceWindow,
   openWorkspaceTabWindow,
@@ -280,7 +285,6 @@ export function WorkspaceTabStrip({
   const collaborationExperience = useAppPreferenceFeatureState('collaborationExperienceEnabled')
   const {
     tabs,
-    activeTabId,
     openTab,
     selectTab,
     closeTab,
@@ -291,12 +295,29 @@ export function WorkspaceTabStrip({
   } = useWorkspaceTabs()
   const [addButton, setAddButton] = useState<HTMLButtonElement | null>(null)
   const tabStripRef = useRef<HTMLDivElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
   const [focusedTabId, setFocusedTabId] = useState<string | null>(null)
   const [addMenuPosition, setAddMenuPosition] = useState<MenuPosition | null>(null)
   const [contextMenu, setContextMenu] = useState<TabContextMenuState | null>(null)
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null)
   const [cloudConnectionOpen, setCloudConnectionOpen] = useState(false)
-  const [installedSmartApps, setInstalledSmartApps] = useState<HarnessAppInstallation[]>([])
+  const installedAppsResource = useMemo(
+    () =>
+      createAsyncResource('workspace-tab-installed-apps', () => harnessAppsApi.list(), {
+        refreshOnSubscribe: true,
+        failure: error =>
+          console.warn('[Wework] failed to load installed Smart apps for the tab menu', error),
+      }),
+    []
+  )
+  const installedApps = useSyncExternalStore(
+    addMenuPosition && experimentalFeaturesEnabled
+      ? installedAppsResource.subscribe
+      : subscribeIdleResource,
+    installedAppsResource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const installedSmartApps = installedApps.data ?? []
   const registeredDshTabs = useSyncExternalStore(
     dshWorkspaceTabs.subscribe,
     dshWorkspaceTabs.getTabs,
@@ -304,98 +325,60 @@ export function WorkspaceTabStrip({
   )
   const agentAvailable = Boolean(cloud.isConnected && cloud.webUrl)
   const availableKindSet = useMemo(() => new Set(availableKinds), [availableKinds])
-  const visibleTabs = useMemo(
-    () => tabs.filter(tab => availableKindSet.has(tab.kind)),
-    [availableKindSet, tabs]
+  const session = useWorkspaceTabsSession()
+  const availableTabs = useMemo(
+    () => session.observeAvailableTabs(availableKinds),
+    [session, availableKinds]
   )
-  const visibleActiveTabId =
-    visibleTabs.find(tab => tab.id === activeTabId)?.id ?? visibleTabs[0]?.id ?? activeTabId
+  const { tabs: visibleTabs, activeTabId: visibleActiveTabId } = useSyncExternalStore(
+    availableTabs.subscribe,
+    availableTabs.getSnapshot,
+    availableTabs.getSnapshot
+  )
   const rovingTabId = visibleTabs.some(tab => tab.id === focusedTabId)
     ? focusedTabId
     : visibleActiveTabId
 
-  useLayoutEffect(() => {
-    const strip = tabStripRef.current
-    if (!strip) return
-    const revealActive = () => {
-      if (!strip.clientWidth) return
+  const geometryTargets = useMemo(() => [containerRef, tabStripRef], [])
+  const geometry = useElementGeometry(geometryTargets)
+  const bindTabStrip = useCallback(
+    (strip: HTMLDivElement | null) => {
+      tabStripRef.current = strip
+      if (!strip?.clientWidth) return
       strip.style.setProperty('--workspace-tab-viewport-width', `${strip.clientWidth}px`)
-      const targetId = rovingTabId ?? visibleActiveTabId
+      const targetId = visibleTabs.find(tab => tab.id === rovingTabId)?.id ?? visibleActiveTabId
       const active = Array.from(strip.querySelectorAll<HTMLElement>('[role="tab"]')).find(
         tab => tab.dataset.tabId === targetId
       )?.parentElement
       if (!active) return
-      const viewport = strip.getBoundingClientRect()
+      const viewport = geometry?.elements[1] ?? strip.getBoundingClientRect()
       const tab = active.getBoundingClientRect()
       if (tab.left < viewport.left) strip.scrollLeft += tab.left - viewport.left
       else if (tab.right > viewport.right) strip.scrollLeft += tab.right - viewport.right
-    }
-    revealActive()
-    const observer = new ResizeObserver(revealActive)
-    // Available space is independent of the widths we assign to the tabs.
-    observer.observe(strip.parentElement!)
-    return () => observer.disconnect()
-  }, [visibleActiveTabId, visibleTabs, rovingTabId])
+    },
+    [geometry, rovingTabId, visibleActiveTabId, visibleTabs]
+  )
 
-  useEffect(() => {
-    if (!addMenuPosition || !experimentalFeaturesEnabled) return
-    let cancelled = false
-    void harnessAppsApi
-      .list()
-      .then(apps => {
-        if (!cancelled) setInstalledSmartApps(apps)
-      })
-      .catch(error => {
-        console.warn('[Wework] failed to load installed Smart apps for the tab menu', error)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [addMenuPosition, experimentalFeaturesEnabled])
-
-  useEffect(() => {
-    if (tabs.length > 0 && visibleTabs.length === 0) {
-      const fallbackKind =
-        availableKinds.find(kind => kind !== 'auxiliary' && kind !== 'board') ?? availableKinds[0]
-      if (fallbackKind) openTab(fallbackKind)
+  useDOMEvent<KeyboardEvent>('window', 'keydown', event => {
+    if (!(event.metaKey || event.ctrlKey) || event.altKey) return
+    if (event.key.toLowerCase() === 'w' && !event.shiftKey) {
+      event.preventDefault()
+      closeTab(visibleActiveTabId)
       return
     }
-    if (visibleActiveTabId === activeTabId) return
-    selectTab(visibleActiveTabId)
-  }, [
-    activeTabId,
-    availableKinds,
-    openTab,
-    selectTab,
-    tabs.length,
-    visibleActiveTabId,
-    visibleTabs.length,
-  ])
-
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.altKey) return
-      if (event.key.toLowerCase() === 'w' && !event.shiftKey) {
-        event.preventDefault()
-        closeTab(visibleActiveTabId)
-        return
-      }
-      if (event.key.toLowerCase() === 't' && event.shiftKey) {
-        event.preventDefault()
-        restoreClosedTab()
-        return
-      }
-      if (!event.shiftKey && /^[1-9]$/.test(event.key)) {
-        const index = event.key === '9' ? visibleTabs.length - 1 : Number(event.key) - 1
-        const tab = visibleTabs[index]
-        if (!tab) return
-        event.preventDefault()
-        selectTab(tab.id)
-      }
+    if (event.key.toLowerCase() === 't' && event.shiftKey) {
+      event.preventDefault()
+      restoreClosedTab()
+      return
     }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [activeTabId, closeTab, restoreClosedTab, selectTab, visibleActiveTabId, visibleTabs])
+    if (!event.shiftKey && /^[1-9]$/.test(event.key)) {
+      const index = event.key === '9' ? visibleTabs.length - 1 : Number(event.key) - 1
+      const tab = visibleTabs[index]
+      if (!tab) return
+      event.preventDefault()
+      selectTab(tab.id)
+    }
+  })
 
   const openNewTab = (kind: WorkspaceTabKind) => {
     if (!availableKindSet.has(kind)) return
@@ -522,6 +505,7 @@ export function WorkspaceTabStrip({
   return (
     <>
       <div
+        ref={containerRef}
         data-testid="workspace-tab-strip-container"
         className={cn('flex h-full min-w-0 flex-1 items-center px-2', className)}
       >
@@ -542,7 +526,7 @@ export function WorkspaceTabStrip({
         >
           <TabsList
             render={<div />}
-            ref={tabStripRef}
+            ref={bindTabStrip}
             data-testid="workspace-tab-strip"
             aria-label={t('workbench.workspace_tabs', '工作区标签页')}
             className="workspace-tab-strip-scrollbar flex h-full min-w-0 max-w-[calc(100%-3rem)] flex-none items-center gap-0.5 overflow-x-auto overflow-y-hidden md:max-w-[calc(100%-2rem)]"

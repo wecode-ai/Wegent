@@ -6,18 +6,13 @@ window.__ModuleLoader__.load({
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' })
 
     const React = require('react')
-    const { Fragment, createElement, useEffect, useRef, useState } = React
+    const { Fragment, createElement, useCallback, useState } = React
     const { createPortal } = require('react-dom')
 
     const APP_RUNTIME_READY_EVENT = 'wework:app-runtime-ready'
     const EXTENSION_HOST_CHANGE_EVENT = 'wework-dsh-extension-host-change'
-    const PLUGIN_BACKEND_PATH = '/wework/plugins/v1/rpc'
-    // Plugin clients call their backend as soon as they mount, which can race the
-    // backend's own registration. Retry only calls that provably never ran.
-    const PLUGIN_BACKEND_RETRY_DELAYS_MS = [100, 300, 700, 1500, 2000, 3000, 3000, 4000]
     const ROOT_PRIORITY = -100
     const CONTRIBUTION_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/
-    const CONTEXT_KEY_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/
     const SLOT_GROUP_DECLARATIONS = {
       'wework.internal.catalog': { kind: 'single', scope: 'root' },
       'wework.internal.shell': { kind: 'single', scope: 'root' },
@@ -63,56 +58,6 @@ window.__ModuleLoader__.load({
       return value
     }
 
-    async function requestPluginBackend(fetchImpl, body, assertActive) {
-      for (let attempt = 0; ; attempt += 1) {
-        assertActive()
-        try {
-          return await sendPluginBackend(fetchImpl, body)
-        } catch (error) {
-          const delay = PLUGIN_BACKEND_RETRY_DELAYS_MS[attempt]
-          if (delay === undefined || !backendMayStillStart(error)) throw error
-          assertActive()
-          await new Promise(resolve => setTimeout(resolve, delay))
-        }
-      }
-    }
-
-    async function sendPluginBackend(fetchImpl, body) {
-      let response
-      try {
-        response = await fetchImpl(PLUGIN_BACKEND_PATH, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(body),
-        })
-      } catch (cause) {
-        const error = new Error('Plugin backend is unreachable', { cause })
-        error.code = 'backend_unreachable'
-        throw error
-      }
-      const payload = await response.json()
-      if (!response.ok || !payload?.ok) {
-        const error = new Error(
-          payload?.error?.message || `Plugin backend request failed: ${response.status}`
-        )
-        error.code = payload?.error?.code ?? 'backend_failed'
-        error.retryable = Boolean(payload?.error?.retryable)
-        throw error
-      }
-      return payload.result
-    }
-
-    function backendMayStillStart(error) {
-      return error?.code === 'plugin_not_found'
-    }
-
-    function requiredContextKey(value) {
-      if (typeof value !== 'string' || !CONTEXT_KEY_PATTERN.test(value)) {
-        throw new Error(`Context key must match ${CONTEXT_KEY_PATTERN}`)
-      }
-      return value
-    }
-
     function requiredOwner(owner, label) {
       if (!owner || typeof owner.effect !== 'function') {
         throw new Error(`${label} requires a Cordis context owner`)
@@ -133,13 +78,18 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function createContributionRegistry(kind, onChange) {
+    function createContributionRegistry(
+      kind,
+      onChange,
+      ownerLabel = kind,
+      prepare = freezeContribution
+    ) {
       const entries = new Map()
 
       return {
         register(owner, rawEntry) {
           requiredOwner(owner, `${kind} registration`)
-          const entry = freezeContribution(rawEntry)
+          const entry = prepare(rawEntry)
           const id = requiredContributionId(entry.id, `${kind} id`)
           if (entries.has(id)) throw new Error(`${kind} already registered: ${id}`)
           entries.set(id, entry)
@@ -152,7 +102,7 @@ window.__ModuleLoader__.load({
             entries.delete(id)
             onChange()
           }
-          owner.effect(() => dispose, `wework-${kind}: ${id}`)
+          owner.effect(() => dispose, `wework-${ownerLabel}: ${id}`)
           return dispose
         },
         get(id) {
@@ -169,23 +119,33 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function createContributionCatalog(onChange) {
+    function createContributionCatalog(
+      onChange,
+      {
+        kind = 'Contribution',
+        entryKind = kind,
+        ownerLabel = 'contribution',
+        validate = validateContribution,
+        sort = true,
+        notifyOnClear = true,
+      } = {}
+    ) {
       const locations = new Map()
 
       return Object.freeze({
         register(owner, rawLocation, rawEntry) {
-          requiredOwner(owner, 'Contribution registration')
-          const location = requiredContributionId(rawLocation, 'Contribution location')
+          requiredOwner(owner, `${kind} registration`)
+          const location = requiredContributionId(rawLocation, `${kind} location`)
           const entry = freezeContribution(rawEntry)
-          const id = requiredContributionId(entry.id, 'Contribution id')
-          validateContribution(location, entry)
+          const id = requiredContributionId(entry.id, `${entryKind} id`)
+          validate?.(location, entry)
           let entries = locations.get(location)
           if (!entries) {
             entries = new Map()
             locations.set(location, entries)
           }
           if (entries.has(id)) {
-            throw new Error(`Contribution already registered: ${location}/${id}`)
+            throw new Error(`${entryKind} already registered: ${location}/${id}`)
           }
           entries.set(id, entry)
           onChange()
@@ -198,84 +158,69 @@ window.__ModuleLoader__.load({
             if (entries.size === 0) locations.delete(location)
             onChange()
           }
-          owner.effect(() => dispose, `wework-contribution: ${location}/${id}`)
+          owner.effect(() => dispose, `wework-${ownerLabel}: ${location}/${id}`)
           return dispose
         },
         get(location, id) {
           return (
             locations
-              .get(requiredContributionId(location, 'Contribution location'))
-              ?.get(requiredContributionId(id, 'Contribution id')) ?? null
+              .get(requiredContributionId(location, `${kind} location`))
+              ?.get(requiredContributionId(id, `${entryKind} id`)) ?? null
           )
         },
         list(location) {
-          return [
-            ...(locations
-              .get(requiredContributionId(location, 'Contribution location'))
-              ?.values() ?? []),
-          ].sort((left, right) => (left.order ?? 100) - (right.order ?? 100))
+          const entries = [
+            ...(locations.get(requiredContributionId(location, `${kind} location`))?.values() ??
+              []),
+          ]
+          return sort
+            ? entries.sort((left, right) => (left.order ?? 100) - (right.order ?? 100))
+            : entries
         },
         clear() {
           if (locations.size === 0) return
           locations.clear()
-          onChange()
+          if (notifyOnClear) onChange()
         },
       })
     }
 
     function createProviderRegistry(kind, requiredMethods, onChange) {
-      const providers = new Map()
-
-      return Object.freeze({
-        register(owner, rawProvider) {
-          requiredOwner(owner, `${kind} provider registration`)
+      const registry = createContributionRegistry(
+        `${kind} provider`,
+        onChange,
+        `${kind}-provider`,
+        rawProvider => {
           if (!rawProvider || typeof rawProvider !== 'object') {
             throw new Error(`${kind} provider must be an object`)
           }
           const provider = freezeContribution(rawProvider)
           const id = requiredContributionId(provider.id, `${kind} provider id`)
           for (const method of requiredMethods) {
-            if (typeof provider[method] !== 'function') {
+            if (typeof provider[method] !== 'function')
               throw new Error(`${kind} provider "${id}" requires ${method}()`)
-            }
           }
-          if (providers.has(id)) throw new Error(`${kind} provider already registered: ${id}`)
-          providers.set(id, provider)
-          onChange()
-          let disposed = false
-          const dispose = () => {
-            if (disposed) return
-            disposed = true
-            if (providers.get(id) !== provider) return
-            providers.delete(id)
-            onChange()
-          }
-          owner.effect(() => dispose, `wework-${kind}-provider: ${id}`)
-          return dispose
-        },
+          return provider
+        }
+      )
+      return Object.freeze({
+        register: registry.register,
         get(id) {
-          return providers.get(requiredContributionId(id, `${kind} provider id`)) ?? null
+          return registry.get(requiredContributionId(id, `${kind} provider id`))
         },
         list() {
-          return [...providers.values()].sort(
-            (left, right) => (left.order ?? 100) - (right.order ?? 100)
-          )
+          return registry.list().sort((left, right) => (left.order ?? 100) - (right.order ?? 100))
         },
         async invoke(id, method, ...args) {
           const providerId = requiredContributionId(id, `${kind} provider id`)
-          const provider = providers.get(providerId)
+          const provider = registry.get(providerId)
           if (!provider) throw new Error(`${kind} provider is not registered: ${providerId}`)
           const handler = provider[method]
-          if (typeof handler !== 'function') {
+          if (typeof handler !== 'function')
             throw new Error(`${kind} provider "${providerId}" does not implement ${method}()`)
-          }
           return handler(...args)
         },
-        clear() {
-          if (providers.size === 0) return
-          providers.clear()
-          onChange()
-        },
+        clear: registry.clear,
       })
     }
 
@@ -369,7 +314,7 @@ window.__ModuleLoader__.load({
         return expression.any.some(item => matchesContextExpression(values, item))
       }
       if ('not' in expression) return !matchesContextExpression(values, expression.not)
-      const key = requiredContextKey(expression.key)
+      const key = requiredContributionId(expression.key, 'Context key')
       if ('equals' in expression) return Object.is(values.get(key), expression.equals)
       if ('notEquals' in expression) return !Object.is(values.get(key), expression.notEquals)
       if ('in' in expression) {
@@ -388,7 +333,6 @@ window.__ModuleLoader__.load({
       const contextValues = new Map()
       const contextContributions = new Map()
       const commandHandlers = new Map()
-      const menuLocations = new Map()
       const storage = options.storage ?? createMemoryStorage()
       const backendFetch = options.fetch ?? window.fetch?.bind(window)
       const localization = createLocalizationService(
@@ -400,6 +344,11 @@ window.__ModuleLoader__.load({
 
       const assertActive = () => {
         if (!active) throw new Error('Wework extension runtime is disposed')
+      }
+      const subscribe = listener => {
+        assertActive()
+        listeners.add(listener)
+        return () => listeners.delete(listener)
       }
       const notify = () => {
         revision += 1
@@ -414,13 +363,39 @@ window.__ModuleLoader__.load({
       const configurations = createContributionRegistry('configuration', notify)
       const keybindings = createContributionRegistry('keybinding', notify)
       const contributions = createContributionCatalog(notify)
-      const chatProviders = createProviderRegistry('chat', ['prepareContext'], notify)
-      const testingProviders = createProviderRegistry('testing', ['discover', 'run'], notify)
-      const environmentProviders = createProviderRegistry(
+      const menuCatalog = createContributionCatalog(notify, {
+        kind: 'Menu',
+        entryKind: 'Menu item',
+        ownerLabel: 'menu',
+        validate: null,
+        sort: false,
+        notifyOnClear: false,
+      })
+      function providerPort(kind, requiredMethods, methods = requiredMethods) {
+        const providers = createProviderRegistry(kind, requiredMethods, notify)
+        const port = { providers }
+        for (const method of methods) {
+          port[method] = (id, argument) => providers.invoke(id, method, argument)
+        }
+        return Object.freeze(port)
+      }
+      const chat = providerPort('chat', ['prepareContext'])
+      const testing = providerPort('testing', ['discover', 'run'], ['discover', 'run', 'cancel'])
+      const environments = providerPort(
         'environment',
         ['inspect', 'prepare'],
-        notify
+        ['inspect', 'prepare', 'switchTo']
       )
+      const projectContributions = entries =>
+        entries
+          .filter(item => matchesContextExpression(contextValues, item.when))
+          .map(item =>
+            Object.freeze({
+              ...item,
+              enabled: matchesContextExpression(contextValues, item.enablement),
+            })
+          )
+          .sort((left, right) => (left.order ?? 100) - (right.order ?? 100))
       const telemetrySinks = createProviderRegistry(
         'telemetry-sink',
         ['accept'],
@@ -452,7 +427,18 @@ window.__ModuleLoader__.load({
                 if (typeof backendFetch !== 'function') {
                   throw new Error('Plugin backend transport is unavailable')
                 }
-                return requestPluginBackend(backendFetch, { plugin, method, params }, assertActive)
+                const body = { plugin, method, params }
+                let firstBody
+                try {
+                  firstBody = JSON.stringify(body)
+                } catch (cause) {
+                  const error = new Error('Plugin backend is unreachable', { cause })
+                  error.code = 'backend_unreachable'
+                  throw error
+                }
+                const { requestPluginBackend } = await require.async('./client.backend-request.js')
+                assertActive()
+                return requestPluginBackend(backendFetch, body, assertActive, firstBody)
               },
             })
           },
@@ -476,12 +462,8 @@ window.__ModuleLoader__.load({
             owner.effect(() => dispose, `wework-command-handler: ${id}`)
             return dispose
           },
-          get(id) {
-            return commands.get(id)
-          },
-          list() {
-            return commands.list()
-          },
+          get: commands.get,
+          list: commands.list,
           async execute(id, args, invocation = {}) {
             assertActive()
             const commandId = requiredContributionId(id, 'Command id')
@@ -493,17 +475,13 @@ window.__ModuleLoader__.load({
             }
             return handler(args, Object.freeze({ source: 'api', ...invocation, commandId }))
           },
-          subscribe(listener) {
-            assertActive()
-            listeners.add(listener)
-            return () => listeners.delete(listener)
-          },
+          subscribe,
         }),
         context: Object.freeze({
           set(owner, rawKey, value) {
             assertActive()
             requiredOwner(owner, 'Context registration')
-            const key = requiredContextKey(rawKey)
+            const key = requiredContributionId(rawKey, 'Context key')
             const token = Object.freeze({})
             let contributions = contextContributions.get(key)
             if (!contributions) {
@@ -530,7 +508,7 @@ window.__ModuleLoader__.load({
             return dispose
           },
           get(key) {
-            return contextValues.get(requiredContextKey(key))
+            return contextValues.get(requiredContributionId(key, 'Context key'))
           },
           entries() {
             return Object.freeze(Object.fromEntries(contextValues))
@@ -538,11 +516,7 @@ window.__ModuleLoader__.load({
           matches(expression) {
             return matchesContextExpression(contextValues, expression)
           },
-          subscribe(listener) {
-            assertActive()
-            listeners.add(listener)
-            return () => listeners.delete(listener)
-          },
+          subscribe,
         }),
         composer: Object.freeze({
           bind(controller) {
@@ -584,22 +558,9 @@ window.__ModuleLoader__.load({
               return composerReferences.register(owner, definition)
             },
             list() {
-              return composerReferences
-                .list()
-                .filter(reference => matchesContextExpression(contextValues, reference.when))
-                .map(reference =>
-                  Object.freeze({
-                    ...reference,
-                    enabled: matchesContextExpression(contextValues, reference.enablement),
-                  })
-                )
-                .sort((left, right) => (left.order ?? 100) - (right.order ?? 100))
+              return projectContributions(composerReferences.list())
             },
-            subscribe(listener) {
-              assertActive()
-              listeners.add(listener)
-              return () => listeners.delete(listener)
-            },
+            subscribe,
           }),
         }),
         conversations: Object.freeze({
@@ -617,83 +578,18 @@ window.__ModuleLoader__.load({
           },
         }),
         contributions,
-        chat: Object.freeze({
-          providers: chatProviders,
-          prepareContext(id, request) {
-            return chatProviders.invoke(id, 'prepareContext', request)
-          },
-        }),
-        testing: Object.freeze({
-          providers: testingProviders,
-          discover(id, request) {
-            return testingProviders.invoke(id, 'discover', request)
-          },
-          run(id, request) {
-            return testingProviders.invoke(id, 'run', request)
-          },
-          cancel(id, runId) {
-            return testingProviders.invoke(id, 'cancel', runId)
-          },
-        }),
-        environments: Object.freeze({
-          providers: environmentProviders,
-          inspect(id, request) {
-            return environmentProviders.invoke(id, 'inspect', request)
-          },
-          prepare(id, request) {
-            return environmentProviders.invoke(id, 'prepare', request)
-          },
-          switchTo(id, request) {
-            return environmentProviders.invoke(id, 'switchTo', request)
-          },
-        }),
+        chat,
+        testing,
+        environments,
         menus: Object.freeze({
-          register(owner, rawLocation, rawItem) {
+          register(owner, location, item) {
             assertActive()
-            requiredOwner(owner, 'Menu registration')
-            const location = requiredContributionId(rawLocation, 'Menu location')
-            const item = freezeContribution(rawItem)
-            const id = requiredContributionId(item.id, 'Menu item id')
-            let entries = menuLocations.get(location)
-            if (!entries) {
-              entries = new Map()
-              menuLocations.set(location, entries)
-            }
-            if (entries.has(id)) throw new Error(`Menu item already registered: ${location}/${id}`)
-            entries.set(id, item)
-            notify()
-            let disposed = false
-            const dispose = () => {
-              if (disposed) return
-              disposed = true
-              if (entries.get(id) !== item) return
-              entries.delete(id)
-              if (entries.size === 0) menuLocations.delete(location)
-              notify()
-            }
-            owner.effect(() => dispose, `wework-menu: ${location}/${id}`)
-            return dispose
+            return menuCatalog.register(owner, location, item)
           },
           list(location) {
-            const entries = [
-              ...(menuLocations.get(requiredContributionId(location, 'Menu location'))?.values() ??
-                []),
-            ]
-            return entries
-              .filter(item => matchesContextExpression(contextValues, item.when))
-              .map(item =>
-                Object.freeze({
-                  ...item,
-                  enabled: matchesContextExpression(contextValues, item.enablement),
-                })
-              )
-              .sort((left, right) => (left.order ?? 100) - (right.order ?? 100))
+            return projectContributions(menuCatalog.list(location))
           },
-          subscribe(listener) {
-            assertActive()
-            listeners.add(listener)
-            return () => listeners.delete(listener)
-          },
+          subscribe,
         }),
         keybindings: Object.freeze({
           register(owner, definition) {
@@ -707,11 +603,7 @@ window.__ModuleLoader__.load({
               .list()
               .filter(binding => matchesContextExpression(contextValues, binding.when))
           },
-          subscribe(listener) {
-            assertActive()
-            listeners.add(listener)
-            return () => listeners.delete(listener)
-          },
+          subscribe,
         }),
         localization,
         configuration: Object.freeze({
@@ -722,9 +614,7 @@ window.__ModuleLoader__.load({
             }
             return configurations.register(owner, definition)
           },
-          getDefinition(id) {
-            return configurations.get(id)
-          },
+          getDefinition: configurations.get,
           get(id) {
             const definition = configurations.get(requiredContributionId(id, 'Configuration id'))
             if (!definition) return null
@@ -748,11 +638,7 @@ window.__ModuleLoader__.load({
             createScopedStorage(storage, 'configuration', notify).set(configurationId, next)
             return next
           },
-          subscribe(listener) {
-            assertActive()
-            listeners.add(listener)
-            return () => listeners.delete(listener)
-          },
+          subscribe,
         }),
         telemetry: Object.freeze({
           sinks: Object.freeze({
@@ -763,12 +649,8 @@ window.__ModuleLoader__.load({
               }
               return telemetrySinks.register(owner, sink)
             },
-            get(id) {
-              return telemetrySinks.get(id)
-            },
-            list() {
-              return telemetrySinks.list()
-            },
+            get: telemetrySinks.get,
+            list: telemetrySinks.list,
             subscribe(listener) {
               assertActive()
               if (typeof listener !== 'function') {
@@ -804,28 +686,10 @@ window.__ModuleLoader__.load({
           }
         },
         host: Object.freeze({
+          ...service,
           dialog,
           getRevision: () => revision,
-          subscribe(listener) {
-            assertActive()
-            listeners.add(listener)
-            return () => listeners.delete(listener)
-          },
-          commands: service.commands,
-          backend: service.backend,
-          chat: service.chat,
-          composer: service.composer,
-          conversations: service.conversations,
-          contributions: service.contributions,
-          context: service.context,
-          environments: service.environments,
-          menus: service.menus,
-          keybindings: service.keybindings,
-          localization: service.localization,
-          configuration: service.configuration,
-          storage: service.storage,
-          telemetry: service.telemetry,
-          testing: service.testing,
+          subscribe,
         }),
         dispose() {
           if (!active) return
@@ -838,13 +702,13 @@ window.__ModuleLoader__.load({
           composerReferences.clear()
           contributions.clear()
           configurations.clear()
-          chatProviders.clear()
-          environmentProviders.clear()
+          chat.providers.clear()
+          environments.providers.clear()
           contextContributions.clear()
           keybindings.clear()
           contextValues.clear()
-          menuLocations.clear()
-          testingProviders.clear()
+          menuCatalog.clear()
+          testing.providers.clear()
           telemetrySinks.clear()
           telemetrySinkListeners.clear()
         },
@@ -970,11 +834,11 @@ window.__ModuleLoader__.load({
           extensionRuntime.bindConversationController(controller),
       })
       return function WeworkRoot({ renderSlot, renderSlotChain }) {
-        const containerRef = useRef(null)
         const [error, setError] = useState(null)
         const [revision, setRevision] = useState(0)
 
-        useEffect(() => {
+        const bindContainer = useCallback(container => {
+          if (!container) return
           let disposed = false
           let unmount = () => {}
           slotRuntime.setInvalidateRoot(() => setRevision(value => value + 1))
@@ -991,7 +855,6 @@ window.__ModuleLoader__.load({
           })
 
           const mount = () => {
-            const container = containerRef.current
             const runtime = hostWindow.__WEWORK_APP_RUNTIME__
             if (!container || !runtime) return false
             hostWindow.removeEventListener(APP_RUNTIME_READY_EVENT, mount)
@@ -1059,7 +922,7 @@ window.__ModuleLoader__.load({
           Fragment,
           null,
           createElement('div', {
-            ref: containerRef,
+            ref: bindContainer,
             'data-testid': 'wework-dsh-root',
             'data-wework-dsh-slots': JSON.stringify(slotEntries),
             style: { height: '100vh', width: '100vw' },

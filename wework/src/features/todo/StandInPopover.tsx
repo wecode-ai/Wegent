@@ -1,8 +1,4 @@
-import {
-  roleIncludesProject,
-  subscribePersonalStandIn,
-  type PersonalStandInSettings,
-} from '@/api/personalStandIn'
+import { roleIncludesProject } from '@/api/personalStandIn'
 import { BetaBadge } from '@/components/common/BetaBadge'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -15,7 +11,13 @@ import type {
 import { StandInIcon } from '@wegent/collaboration'
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
-import { useEffect, useRef, useState } from 'react'
+import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
+import { createStandInPopoverSettingsResource } from './standInPopoverSettingsResource'
 import { createPortal } from 'react-dom'
 import { StandInSettingsPage, type StandInSettingsHandle } from './StandInSettingsPage'
 
@@ -56,48 +58,45 @@ export function StandInPopover({
   const editorDeviceId = initialDeviceId || savedDeviceId
   const [saving, setSaving] = useState(false)
   const editorRef = useRef<StandInSettingsHandle>(null)
-  const [settings, setSettings] = useState<PersonalStandInSettings | null>(null)
-  const [availableProjects, setAvailableProjects] = useState<CollaborationProject[]>([])
   const requestClose = () => {
     if (!saving) editorRef.current?.requestClose()
   }
   const dialogRef = useRef<HTMLElement>(null)
-  useEffect(() => {
-    let active = true
-    let targetDeviceId = editorDeviceId
-    const unsubscribe = subscribePersonalStandIn(value => {
-      if (active && value.userId === userId && value.executionDeviceId === targetDeviceId)
-        setSettings(value)
-    })
-    void (async () => {
-      const identity = await services?.getLocalRuntimeSidebarIdentity?.()
-      if (!identity || !services?.standInApi || userId == null) return
-      targetDeviceId = editorDeviceId || identity.deviceId
-      const result = await services.standInApi.personalGet(userId, targetDeviceId)
-      if (active) setSettings(result)
-    })().catch(() => {
-      /* The settings page exposes load errors and recovery. */
-    })
-    return () => {
-      active = false
-      unsubscribe()
-    }
-  }, [services, userId, editorDeviceId])
-  useEffect(() => {
-    if (!open) return
-    let active = true
-    void api.projects
-      .list()
-      .then(rows => {
-        if (active) setAvailableProjects(rows)
-      })
-      .catch(() => {
-        /* Existing project data remains available while disconnected. */
-      })
-    return () => {
-      active = false
-    }
-  }, [api, open])
+  const settingsResource = useMemo(
+    () =>
+      services?.standInApi && userId != null
+        ? createStandInPopoverSettingsResource({
+            api: services.standInApi,
+            identify: services.getLocalRuntimeSidebarIdentity,
+            userId,
+            deviceId: editorDeviceId,
+          })
+        : null,
+    [services, userId, editorDeviceId]
+  )
+  const settingsSnapshot = useSyncExternalStore(
+    settingsResource?.subscribe ?? subscribeIdleResource,
+    settingsResource?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const settings = settingsSnapshot.data
+  const projectResource = useMemo(
+    () =>
+      createAsyncResource(
+        JSON.stringify(['stand-in-project-catalog', userId]),
+        () => api.projects.list(),
+        { refreshOnSubscribe: true }
+      ),
+    [api, userId]
+  )
+  const projectSnapshot = useSyncExternalStore(
+    open && services?.standInApi && userId != null
+      ? projectResource.subscribe
+      : subscribeIdleResource,
+    projectResource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const availableProjects = projectSnapshot.data ?? []
   if (!services?.standInApi || userId == null) return null
   const projectRef = {
     id: project.id,

@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState } from 'react'
+import { createContext, useCallback, useContext } from 'react'
 
 export const BlockNoteSdkPopupContext = createContext<Set<symbol> | null>(null)
 
@@ -8,13 +8,17 @@ export function useBlockNoteSdkPopups() {
   return popups
 }
 
-export function useBlockNoteSdkPopupPresence(open: boolean) {
+export function useBlockNoteSdkPopupRef() {
   const popups = useBlockNoteSdkPopups()
-  const [token] = useState(() => Symbol('editor-popup'))
-  useEffect(() => {
-    if (open) popups.add(token)
-    return () => {
-      popups.delete(token)
-    }
-  }, [open, popups, token])
+  return useCallback(
+    (element: HTMLElement | null) => {
+      if (!element) return
+      const token = Symbol('editor-popup')
+      popups.add(token)
+      return () => {
+        popups.delete(token)
+      }
+    },
+    [popups]
+  )
 }

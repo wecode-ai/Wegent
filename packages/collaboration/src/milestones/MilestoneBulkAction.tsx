@@ -1,11 +1,11 @@
-import { useEffect, useRef, useState } from 'react'
 import { Button as ControlButton } from '../markdown/Button'
-import { bulkIssueStatus } from '../platform/bulkIssueStatus'
+import { useState, useSyncExternalStore } from 'react'
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type { CollaborationIssue } from '../types'
 import { MilestonePicker } from './MilestonePicker'
 import { milestoneMessages } from './messages'
 import { useMilestones } from './useMilestones'
+import { createMilestoneBulkActionStore } from './milestoneBulkActionStore'
 
 export function MilestoneBulkAction({
   api,
@@ -22,80 +22,47 @@ export function MilestoneBulkAction({
 }) {
   const m = milestoneMessages[locale]
   const query = useMilestones(api.milestones, projectId)
-  const [value, setValue] = useState<string | null>()
-  const [busy, setBusy] = useState(false)
-  const [failures, setFailures] = useState<string[]>([])
-  const [freshIssues, setFreshIssues] = useState<Record<string, CollaborationIssue>>({})
-  const generation = useRef(0)
   const authScope = api.milestones?.getCacheScope?.()
-  const selection = issues.map(issue => issue.id).join('|')
-  useEffect(() => {
-    generation.current++
+  const [owner, setOwner] = useState(() => ({
+    api,
+    projectId,
+    authScope,
+    store: createMilestoneBulkActionStore(api),
+  }))
+  const [value, setValue] = useState<string | null>()
+  if (owner.api !== api || owner.projectId !== projectId || owner.authScope !== authScope) {
+    setOwner({
+      api,
+      projectId,
+      authScope,
+      store: createMilestoneBulkActionStore(api),
+    })
     setValue(undefined)
-    setFailures([])
-    setFreshIssues({})
-    setBusy(false)
-    return () => {
-      generation.current++
-    }
-  }, [api, projectId, authScope])
-  useEffect(() => {
-    if (busy || !failures.length) return
+  }
+  const snapshot = useSyncExternalStore(
+    owner.store.subscribe,
+    owner.store.getSnapshot,
+    owner.store.getSnapshot
+  )
+  const { busy, freshIssues } = snapshot
+  const [failureState, setFailureState] = useState(() => ({
+    source: snapshot.failures,
+    retained: snapshot.failures,
+  }))
+  if (failureState.source !== snapshot.failures) {
+    setFailureState({ source: snapshot.failures, retained: snapshot.failures })
+  }
+  const failures =
+    failureState.source === snapshot.failures ? failureState.retained : snapshot.failures
+  if (!busy && failures.length) {
     const selected = new Set(issues.map(issue => issue.id))
     const remaining = failures.filter(id => selected.has(id))
-    if (remaining.length !== failures.length) setFailures(remaining)
-  }, [selection, issues, failures, busy])
-
+    if (remaining.length !== failures.length)
+      setFailureState({ source: snapshot.failures, retained: remaining })
+  }
   async function apply() {
     if (value === undefined || query.loading || query.error || busy) return
-    const current = ++generation.current
-    const isCurrent = () => current === generation.current
-    setBusy(true)
-    const targets = failures.length ? issues.filter(issue => failures.includes(issue.id)) : issues
-    const completed: CollaborationIssue[] = []
-    const failed = await bulkIssueStatus(
-      targets,
-      async selected => {
-        // Retry reads current authority and version rather than replaying a stale patch.
-        const issue = failures.includes(selected.id) ? await api.issues.get(selected.id) : selected
-        if (!isCurrent()) return null
-        if ((issue.milestone_id ?? null) === value) {
-          completed.push(issue)
-          return issue
-        }
-        const updated = await api.issues.update(issue.id, {
-          version: issue.version,
-          milestoneId: value,
-        })
-        completed.push(updated)
-        return updated
-      },
-      () => m.bulkFailed
-    )
-    if (!isCurrent()) return
-    const failedIds = failed.map(failure => failure.issueId)
-    const refreshed = await Promise.allSettled(
-      failedIds.map(async id => {
-        const issue = await api.issues.get(id)
-        return issue
-      })
-    )
-    if (!isCurrent()) return
-    // Publish together: moving an Issue out of this filtered table must not
-    // unmount the action before its remaining results have been reconciled.
-    completed.forEach(onUpdated)
-    refreshed.forEach(result => {
-      if (result.status === 'fulfilled') onUpdated(result.value)
-    })
-    setFreshIssues(
-      Object.fromEntries(
-        refreshed.flatMap(result =>
-          result.status === 'fulfilled' ? [[result.value.id, result.value]] : []
-        )
-      )
-    )
-    setFailures(failedIds)
-    setBusy(false)
+    await owner.store.apply(issues, value, failures, m.bulkFailed, onUpdated)
   }
 
   return (
@@ -107,8 +74,7 @@ export function MilestoneBulkAction({
         value={value}
         onChange={next => {
           setValue(next)
-          setFailures([])
-          setFreshIssues({})
+          setFailureState({ source: snapshot.failures, retained: [] })
         }}
         label={m.bulk}
         searchLabel={m.search}
@@ -120,9 +86,7 @@ export function MilestoneBulkAction({
         disabled={busy}
         testId="milestone-bulk-select"
       />
-      <ControlButton
-        variant="outline"
-        size="sm"
+      <ControlButton variant="outline"
         type="button"
         data-testid="milestone-bulk-apply"
         disabled={busy || value === undefined || query.loading || query.error}

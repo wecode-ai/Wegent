@@ -12,6 +12,7 @@ import {
 import './ProjectExperience.css'
 
 export interface ProjectPresentationProps {
+  nowMs?: number
   projects: readonly ExperienceProjectScope[]
   rows: readonly ExperienceTaskRow[]
   projectData?: readonly ExperienceProjectData[]
@@ -19,6 +20,7 @@ export interface ProjectPresentationProps {
 }
 
 export function ProjectList({
+  nowMs,
   projects,
   rows,
   projectData,
@@ -61,7 +63,7 @@ export function ProjectList({
                     <strong>{project.name}</strong>
                     {source && (
                       <time dateTime={source.updated_at}>
-                        {formatRelativeSidebarTime(source.updated_at)}
+                        {formatRelativeSidebarTime(source.updated_at, nowMs)}
                       </time>
                     )}
                   </span>

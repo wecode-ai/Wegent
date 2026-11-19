@@ -409,86 +409,77 @@ export function ScheduleDndArea({
     previewRange: null,
     previewDates: new Set(),
   })
-  const clearDragPreview = () =>
-    setDragPreview({
-      activeId: null,
-      activeIssueId: null,
-      activeMode: null,
-      transform: { x: 0, y: 0 },
-      targetDate: null,
-      previewRange: null,
-      previewDates: new Set(),
-    })
-  const handleDragStart = (id: string) => {
-    const source = scheduleDragSource(id)
-    const issue = source
-      ? issues.find((candidate) => candidate.id === source.issueId)
-      : null
-    const range = issue ? ganttIssueRange(issue) : null
-    setDragPreview({
-      activeId: id,
-      activeIssueId: source?.issueId ?? null,
-      activeMode: source?.mode ?? null,
-      transform: { x: 0, y: 0 },
-      targetDate: null,
-      previewRange: range
-        ? {
-            startAt: localDateKey(range.start),
-            dueAt: localDateKey(range.end),
-          }
-        : null,
-      previewDates: new Set(),
-    })
-  }
-  const handleDragMove = (delta: { x: number; y: number }) => {
-    setDragPreview((current) => ({
-      ...current,
-      transform: delta,
-    }))
-  }
-  const handleDragOver = (id: string, over: string | null) => {
-    const drop = scheduleDrop(id, over ?? undefined)
-    const issue = drop
-      ? issues.find((candidate) => candidate.id === drop.issueId)
-      : null
-    const range =
-      issue && drop ? scheduleRangeUpdate(issue, drop.mode, drop.date) : null
-    setDragPreview((current) => ({
-      ...current,
-      targetDate: drop?.date ?? null,
-      previewRange: range ?? current.previewRange,
-      previewDates: new Set(
-        previewOccupiedRange && range ? scheduleRangeDateKeys(range) : [],
-      ),
-    }))
-  }
-  const handleDragEnd = (
-    id: string,
-    over: string | null,
-    canceled: boolean,
-  ) => {
-    const drop = canceled ? null : scheduleDrop(id, over ?? undefined)
-    if (!drop || !onSchedule) {
-      clearDragPreview()
-      return
+  const actions = useMemo(() => {
+    const clearDragPreview = () =>
+      setDragPreview({
+        activeId: null,
+        activeIssueId: null,
+        activeMode: null,
+        transform: { x: 0, y: 0 },
+        targetDate: null,
+        previewRange: null,
+        previewDates: new Set(),
+      })
+    const handleDragStart = (id: string) => {
+      const source = scheduleDragSource(id)
+      const issue = source ? issues.find(candidate => candidate.id === source.issueId) : null
+      const range = issue ? ganttIssueRange(issue) : null
+      setDragPreview({
+        activeId: id,
+        activeIssueId: source?.issueId ?? null,
+        activeMode: source?.mode ?? null,
+        transform: { x: 0, y: 0 },
+        targetDate: null,
+        previewRange: range
+          ? {
+              startAt: localDateKey(range.start),
+              dueAt: localDateKey(range.end),
+            }
+          : null,
+        previewDates: new Set(),
+      })
     }
-    const issue = issues.find((candidate) => candidate.id === drop.issueId)
-    const range = issue
-      ? scheduleRangeUpdate(issue, drop.mode, drop.date)
-      : null
-    if (issue && range && canEditCollaborationIssue(issue))
-      void onSchedule(issue, range)
-    clearDragPreview()
-  }
+    const handleDragMove = (delta: { x: number; y: number }) => {
+      setDragPreview(current => ({
+        ...current,
+        transform: delta,
+      }))
+    }
+    const handleDragOver = (id: string, over: string | null) => {
+      const drop = scheduleDrop(id, over ?? undefined)
+      const issue = drop ? issues.find(candidate => candidate.id === drop.issueId) : null
+      const range = issue && drop ? scheduleRangeUpdate(issue, drop.mode, drop.date) : null
+      setDragPreview(current => ({
+        ...current,
+        targetDate: drop?.date ?? null,
+        previewRange: range ?? current.previewRange,
+        previewDates: new Set(previewOccupiedRange && range ? scheduleRangeDateKeys(range) : []),
+      }))
+    }
+    const handleDragEnd = (id: string, over: string | null, canceled: boolean) => {
+      const drop = canceled ? null : scheduleDrop(id, over ?? undefined)
+      if (!drop || !onSchedule) {
+        clearDragPreview()
+        return
+      }
+      const issue = issues.find(candidate => candidate.id === drop.issueId)
+      const range = issue ? scheduleRangeUpdate(issue, drop.mode, drop.date) : null
+      if (issue && range && canEditCollaborationIssue(issue)) void onSchedule(issue, range)
+      clearDragPreview()
+    }
+    return {
+      start: handleDragStart,
+      move: (id: string, delta: { x: number; y: number }, over: string | null) => {
+        handleDragMove(delta)
+        handleDragOver(id, over)
+      },
+      end: handleDragEnd,
+    }
+  }, [issues, onSchedule, previewOccupiedRange])
   return (
     <SchedulePointerContext.Provider
       value={{
-        start: handleDragStart,
-        move: (id, delta, over) => {
-          handleDragMove(delta)
-          handleDragOver(id, over)
-        },
-        end: handleDragEnd,
+        ...actions,
         activeId: dragPreview.activeId,
         delta: dragPreview.transform,
       }}

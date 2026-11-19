@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import type { Meta, StoryObj } from '@storybook/react-vite'
 import {
   Toast,
@@ -19,9 +19,14 @@ function Queue({ error = false, loading = false }) {
   const { t } = useTranslation('componentCatalog')
   const [toaster] = useState(createToaster)
   const [actions, setActions] = useState(0)
-  useEffect(() => () => toaster.dismiss(), [toaster])
+  const attachQueue = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (node) return () => toaster.dismiss()
+    },
+    [toaster]
+  )
   return (
-    <div className="space-y-3">
+    <div ref={attachQueue} className="space-y-3">
       <Button
         data-testid="catalog-toast-show"
         onClick={() =>

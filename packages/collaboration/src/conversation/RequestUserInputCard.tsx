@@ -1,33 +1,25 @@
+import { TextField as ControlInput } from '../controls/TextField'
+import { Button as ControlButton } from '../markdown/Button'
+import { useCallback, useId, useMemo, useRef, useState } from 'react'
+import type { FormEvent, KeyboardEvent, ReactNode } from 'react'
+import { ChevronDown, CornerDownLeft, MessageCircleQuestion, Pencil } from 'lucide-react'
+import { useConversationTranslation } from './ConversationTranslation'
 import { isImeEnterEvent } from '@wegent/chat-core/ime'
+import { activityClassNames as cn } from '../issue-detail/activityClassNames'
 import type {
-  RequestUserInputOption,
+  RequestUserInputResponse,
   RequestUserInputPayload,
   RequestUserInputQuestion,
-  RequestUserInputResponse,
+  RequestUserInputOption,
 } from '@wegent/chat-core/runtime'
+export type { RequestUserInputPayload } from '@wegent/chat-core/runtime'
 import {
   hasImplementationPlanText,
   hasRequestUserInputResponse,
   requestUserInputApprovalDescription,
 } from '@wegent/chat-core/runtime-user-input'
-import {
-  ChevronDown,
-  CornerDownLeft,
-  MessageCircleQuestion,
-  Pencil,
-} from 'lucide-react'
-import type { FormEvent, KeyboardEvent, ReactNode } from 'react'
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
-import { TextField as ControlInput } from '../controls/TextField'
-import { activityClassNames as cn } from '../issue-detail/activityClassNames'
-import { Button as ControlButton } from '../markdown/Button'
-import { useConversationTranslation } from './ConversationTranslation'
 import { McpUrlAuthorizationCard } from './McpUrlAuthorizationCard'
-import {
-  requestUserInputExpired,
-  useRequestUserInputDeadline,
-} from './useRequestUserInputDeadline'
-export type { RequestUserInputPayload } from '@wegent/chat-core/runtime'
+import { requestUserInputExpired, useRequestUserInputDeadline } from './useRequestUserInputDeadline'
 
 export interface RequestUserInputCardProps {
   payload: RequestUserInputPayload
@@ -36,9 +28,7 @@ export interface RequestUserInputCardProps {
   error?: string
   draftAnswers?: Record<string, string>
   onDraftAnswersChange?: (answers: Record<string, string>) => void
-  onSubmit?: (
-    response: RequestUserInputResponse,
-  ) => boolean | void | Promise<boolean | void>
+  onSubmit?: (response: RequestUserInputResponse) => boolean | void | Promise<boolean | void>
   onIgnore?: () => void
   onCollapse?: () => void
   additionalActions?: ReactNode
@@ -50,16 +40,11 @@ export function RequestUserInputCard(props: RequestUserInputCardProps) {
   if (
     expired ||
     hasRequestUserInputResponse(props.payload) ||
-    (props.payload.interactionStatus &&
-      props.payload.interactionStatus !== 'pending')
+    (props.payload.interactionStatus && props.payload.interactionStatus !== 'pending')
   ) {
     return (
       <RequestUserInputSummary
-        payload={
-          expired
-            ? { ...props.payload, interactionStatus: 'expired' }
-            : props.payload
-        }
+        payload={expired ? { ...props.payload, interactionStatus: 'expired' } : props.payload}
       />
     )
   }
@@ -84,11 +69,13 @@ function RequestUserInputForm({
 }: RequestUserInputCardProps & { remainingTime: string | null }) {
   const { t } = useConversationTranslation()
   const formId = useId()
-  const formRef = useRef<HTMLFormElement | null>(null)
+  const focusForm = useCallback((node: HTMLFormElement | null) => {
+    node?.focus({ preventScroll: true })
+  }, [])
   const submitInFlightRef = useRef(false)
   const questions = useMemo(
     () => normalizeQuestions(localizeApprovalQuestions(payload, t)),
-    [payload, t],
+    [payload, t]
   )
   const isCommandApproval =
     (payload.interactionKind ?? payload.interaction_kind) === 'approval' &&
@@ -100,7 +87,7 @@ function RequestUserInputForm({
     questions[0].options.length > 0 &&
     !questions[0].allowCustom
   const [localAnswers, setLocalAnswers] = useState<Record<string, string>>(() =>
-    initialAnswers(questions),
+    initialAnswers(questions)
   )
   // Newly arriving questions receive their defaults without resetting drafts.
   const selectedAnswers = {
@@ -109,35 +96,21 @@ function RequestUserInputForm({
     ...draftAnswers,
   }
   const setSelectedAnswers = (
-    update:
-      | Record<string, string>
-      | ((current: Record<string, string>) => Record<string, string>),
+    update: Record<string, string> | ((current: Record<string, string>) => Record<string, string>)
   ) => {
     const next = typeof update === 'function' ? update(selectedAnswers) : update
     setLocalAnswers(next)
     onDraftAnswersChange?.(next)
   }
   const [activeQuestionId, setActiveQuestionId] = useState<string | null>(() =>
-    initialActiveQuestionId(questions, draftAnswers),
+    initialActiveQuestionId(questions, draftAnswers)
   )
-  const selectedQuestionId =
-    customDraftQuestionId(questions, draftAnswers) ?? activeQuestionId
+  const selectedQuestionId = customDraftQuestionId(questions, draftAnswers) ?? activeQuestionId
   const [submitted, setSubmitted] = useState(false)
   const isDisabled = disabled || submitted
 
-  useEffect(() => {
-    formRef.current?.focus({ preventScroll: true })
-  }, [])
-
-  const submitAnswers = async (
-    answers: RequestUserInputResponse['answers'],
-  ): Promise<boolean> => {
-    if (
-      isDisabled ||
-      requestUserInputExpired(payload) ||
-      submitInFlightRef.current ||
-      !onSubmit
-    )
+  const submitAnswers = async (answers: RequestUserInputResponse['answers']): Promise<boolean> => {
+    if (isDisabled || requestUserInputExpired(payload) || submitInFlightRef.current || !onSubmit)
       return false
 
     submitInFlightRef.current = true
@@ -145,9 +118,7 @@ function RequestUserInputForm({
       const accepted = await onSubmit({
         requestId: payload.requestId ?? payload.request_id,
         itemId: payload.itemId ?? payload.item_id,
-        ...(payload.interactionScope
-          ? { interactionScope: payload.interactionScope }
-          : {}),
+        ...(payload.interactionScope ? { interactionScope: payload.interactionScope } : {}),
         answers,
       })
       if (accepted !== false) setSubmitted(true)
@@ -159,21 +130,20 @@ function RequestUserInputForm({
 
   const handleSubmit = (
     answersOverride?: Record<string, string>,
-    activeQuestionIdOverride?: string | null,
+    activeQuestionIdOverride?: string | null
   ): Promise<boolean> => {
     if (questions.length === 0) return Promise.resolve(false)
     return submitAnswers(
       responseAnswers(
         questions,
         answersOverride ?? selectedAnswers,
-        activeQuestionIdOverride ?? selectedQuestionId,
-      ),
+        activeQuestionIdOverride ?? selectedQuestionId
+      )
     )
   }
 
   const isMcpForm = payload.interactionKind === 'mcp_form'
-  const canIgnore =
-    Boolean(onCollapse) || (isMcpForm ? Boolean(onSubmit) : Boolean(onIgnore))
+  const canIgnore = Boolean(onCollapse) || (isMcpForm ? Boolean(onSubmit) : Boolean(onIgnore))
   const handleIgnore = () => {
     if (onCollapse) return onCollapse()
     // Cancel this MCP request, not the containing task or its other questions.
@@ -188,7 +158,7 @@ function RequestUserInputForm({
 
   const selectOption = (
     question: ReturnType<typeof normalizeQuestions>[number],
-    option: RequestUserInputOption,
+    option: RequestUserInputOption
   ) => {
     const nextAnswers = {
       ...selectedAnswers,
@@ -214,13 +184,7 @@ function RequestUserInputForm({
 
     if (isImeEnterEvent(event)) return
 
-    if (
-      event.key !== 'Enter' ||
-      event.shiftKey ||
-      event.metaKey ||
-      event.ctrlKey ||
-      event.altKey
-    ) {
+    if (event.key !== 'Enter' || event.shiftKey || event.metaKey || event.ctrlKey || event.altKey) {
       return
     }
 
@@ -244,11 +208,7 @@ function RequestUserInputForm({
           onClick={handleIgnore}
           className="inline-flex h-11 min-w-[44px] shrink-0 items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-text-muted hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-60 md:h-8"
         >
-          {t(
-            onCollapse
-              ? 'request_user_input.collapse'
-              : 'request_user_input.ignore',
-          )}
+          {t(onCollapse ? 'request_user_input.collapse' : 'request_user_input.ignore')}
           <kbd className="rounded border border-border/70 bg-background px-1.5 py-0.5 text-xs font-medium text-text-secondary">
             ESC
           </kbd>
@@ -273,16 +233,14 @@ function RequestUserInputForm({
 
   return (
     <form
-      ref={formRef}
+      ref={focusForm}
       data-testid="request-user-input-card"
       onSubmit={handleFormSubmit}
       onKeyDown={handleKeyDown}
       tabIndex={-1}
       className={cn(
         'mx-auto flex max-h-[min(60dvh,36rem)] w-full max-w-2xl flex-col px-3 py-3',
-        compact
-          ? 'rounded-lg bg-muted/70'
-          : 'rounded-2xl border border-border/70 bg-base shadow-sm',
+        compact ? 'rounded-lg bg-muted/70' : 'rounded-2xl border border-border/70 bg-base shadow-sm'
       )}
     >
       {remainingTime && (
@@ -317,22 +275,14 @@ function RequestUserInputForm({
                 data-testid={`request-user-input-question-${question.id}`}
                 className="mb-1.5 whitespace-pre-wrap break-words text-sm font-medium leading-5 text-text-primary"
               >
-                {isCommandApproval
-                  ? highlightRm(question.question)
-                  : question.question}
+                {isCommandApproval ? highlightRm(question.question) : question.question}
               </div>
               {question.options.length > 0 ? (
-                <div
-                  className={cn(
-                    'flex',
-                    compact ? 'flex-wrap gap-2' : 'flex-col gap-1',
-                  )}
-                >
+                <div className={cn('flex', compact ? 'flex-wrap gap-2' : 'flex-col gap-1')}>
                   {question.options.map((option, index) => {
                     const isSelected =
                       selectedAnswers[question.id] === option.value &&
-                      (!isImplementationPlanRequest ||
-                        selectedQuestionId === question.id)
+                      (!isImplementationPlanRequest || selectedQuestionId === question.id)
                     return (
                       <ControlButton
                         variant="unstyled"
@@ -347,7 +297,7 @@ function RequestUserInputForm({
                             ? 'min-h-11 rounded-md border border-border md:min-h-7'
                             : 'min-h-9 w-full rounded-xl',
                           isSelected ? 'bg-muted' : 'hover:bg-muted/70',
-                          isDisabled && 'cursor-not-allowed opacity-60',
+                          isDisabled && 'cursor-not-allowed opacity-60'
                         )}
                       >
                         {!compact && (
@@ -356,7 +306,7 @@ function RequestUserInputForm({
                               'flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold leading-none',
                               isSelected
                                 ? 'bg-text-primary text-background'
-                                : 'bg-muted text-text-muted',
+                                : 'bg-muted text-text-muted'
                             )}
                           >
                             {index + 1}
@@ -389,14 +339,14 @@ function RequestUserInputForm({
                     aria-labelledby={`${formId}-${questionIndex}`}
                     value={selectedAnswers[question.id] ?? ''}
                     disabled={isDisabled}
-                    onChange={(event) => {
+                    onChange={event => {
                       setActiveQuestionId(question.id)
-                      setSelectedAnswers((current) => ({
+                      setSelectedAnswers(current => ({
                         ...current,
                         [question.id]: event.target.value,
                       }))
                     }}
-                    className="min-w-0 flex-1 font-medium leading-5 placeholder:text-text-muted disabled:cursor-not-allowed disabled:opacity-60"
+                    className="h-8 min-w-0 flex-1 rounded-lg border-0 bg-transparent px-0 text-sm font-medium leading-5 text-text-primary outline-none placeholder:text-text-muted disabled:cursor-not-allowed disabled:opacity-60"
                     placeholder={t('request_user_input.custom_placeholder')}
                   />
                 </div>
@@ -406,52 +356,34 @@ function RequestUserInputForm({
         </div>
       </div>
       {!optionOnly && (
-        <div className="mt-2 flex shrink-0 items-center justify-end gap-2">
-          {actionControls}
-        </div>
+        <div className="mt-2 flex shrink-0 items-center justify-end gap-2">{actionControls}</div>
       )}
     </form>
   )
 }
 
-export function RequestUserInputSummary({
-  payload,
-}: {
-  payload: RequestUserInputPayload
-}) {
+export function RequestUserInputSummary({ payload }: { payload: RequestUserInputPayload }) {
   const { t } = useConversationTranslation()
   const questions = useMemo(
     () => normalizeQuestions(localizeApprovalQuestions(payload, t)),
-    [payload, t],
+    [payload, t]
   )
   const response =
-    payload.response ??
-    payload.requestUserInputResponse ??
-    payload.request_user_input_response
-  const rows = questions.map((question) => {
+    payload.response ?? payload.requestUserInputResponse ?? payload.request_user_input_response
+  const rows = questions.map(question => {
     const answer = responseAnswerText(response, question.id)
     return {
       id: question.id,
       question: question.question,
-      answer:
-        question.options.find((option) => option.value === answer)?.label ??
-        answer,
+      answer: question.options.find(option => option.value === answer)?.label ?? answer,
     }
   })
 
-  const interactionStatus = requestUserInputExpired(payload)
-    ? 'expired'
-    : payload.interactionStatus
+  const interactionStatus = requestUserInputExpired(payload) ? 'expired' : payload.interactionStatus
   if (interactionStatus === 'expired' || interactionStatus === 'cancelled') {
     return (
-      <div
-        data-testid="request-user-input-summary"
-        className="text-sm text-text-secondary"
-      >
-        <p
-          role="status"
-          data-testid={`request-user-input-${interactionStatus}`}
-        >
+      <div data-testid="request-user-input-summary" className="text-sm text-text-secondary">
+        <p role="status" data-testid={`request-user-input-${interactionStatus}`}>
           {t(`request_user_input.${interactionStatus}`)}
         </p>
       </div>
@@ -460,10 +392,7 @@ export function RequestUserInputSummary({
 
   if (payload.interactionKind === 'mcp_url') {
     return (
-      <div
-        data-testid="request-user-input-summary"
-        className="text-sm text-text-secondary"
-      >
+      <div data-testid="request-user-input-summary" className="text-sm text-text-secondary">
         {t('request_user_input.url_summary')}
       </div>
     )
@@ -476,30 +405,16 @@ export function RequestUserInputSummary({
       className="min-w-0 overflow-x-hidden text-sm leading-6 text-text-secondary"
     >
       <div className="mb-1.5 inline-flex max-w-full items-center gap-1.5 text-text-muted">
-        <MessageCircleQuestion
-          className="h-4 w-4 shrink-0"
-          strokeWidth={1.7}
-          aria-hidden="true"
-        />
-        <span>
-          {t('request_user_input.asked_count', { count: rows.length })}
-        </span>
-        <ChevronDown
-          className="h-3.5 w-3.5 shrink-0"
-          strokeWidth={2}
-          aria-hidden="true"
-        />
+        <MessageCircleQuestion className="h-4 w-4 shrink-0" strokeWidth={1.7} aria-hidden="true" />
+        <span>{t('request_user_input.asked_count', { count: rows.length })}</span>
+        <ChevronDown className="h-3.5 w-3.5 shrink-0" strokeWidth={2} aria-hidden="true" />
       </div>
       <div className="ml-5 flex min-w-0 flex-col gap-1.5">
-        {rows.map((row) => (
+        {rows.map(row => (
           <div key={row.id} className="min-w-0">
-            <div className="font-medium text-text-secondary">
-              {row.question}
-            </div>
+            <div className="font-medium text-text-secondary">{row.question}</div>
             {row.answer ? (
-              <div className="mt-0.5 whitespace-pre-wrap text-text-muted">
-                {row.answer}
-              </div>
+              <div className="mt-0.5 whitespace-pre-wrap text-text-muted">{row.answer}</div>
             ) : null}
           </div>
         ))}
@@ -512,38 +427,31 @@ function normalizeQuestions(questions: RequestUserInputQuestion[] | undefined) {
   return (questions ?? []).map((question, index) => {
     const id = question.id?.trim() || `question_${index + 1}`
     const options = (question.options ?? [])
-      .map((option) => ({
+      .map(option => ({
         label: option.label?.trim() ?? '',
         description: option.description?.trim() ?? '',
         value: option.value?.trim() || option.label?.trim() || '',
       }))
-      .filter((option) => option.label)
+      .filter(option => option.label)
     return {
       id,
       header: question.header?.trim() ?? '',
       question: question.question?.trim() || id,
       options,
-      allowCustom: Boolean(
-        question.is_other ?? question.isOther ?? options.length === 0,
-      ),
+      allowCustom: Boolean(question.is_other ?? question.isOther ?? options.length === 0),
     }
   })
 }
 
-function initialAnswers(
-  questions: ReturnType<typeof normalizeQuestions>,
-): Record<string, string> {
+function initialAnswers(questions: ReturnType<typeof normalizeQuestions>): Record<string, string> {
   return Object.fromEntries(
-    questions.map((question) => [
-      question.id,
-      question.options[0]?.value ?? '',
-    ]),
+    questions.map(question => [question.id, question.options[0]?.value ?? ''])
   )
 }
 
 function initialActiveQuestionId(
   questions: ReturnType<typeof normalizeQuestions>,
-  draftAnswers?: Record<string, string>,
+  draftAnswers?: Record<string, string>
 ): string | null {
   return (
     customDraftQuestionId(questions, draftAnswers) ??
@@ -563,33 +471,30 @@ function highlightRm(commandText: string) {
       </strong>
     ) : (
       part
-    ),
+    )
   )
 }
 
 function customDraftQuestionId(
   questions: ReturnType<typeof normalizeQuestions>,
-  draftAnswers?: Record<string, string>,
+  draftAnswers?: Record<string, string>
 ): string | undefined {
   return questions.find(
-    (question) =>
+    question =>
       question.allowCustom &&
       draftAnswers?.[question.id]?.trim() &&
-      !question.options.some(
-        (option) => option.value === draftAnswers[question.id],
-      ),
+      !question.options.some(option => option.value === draftAnswers[question.id])
   )?.id
 }
 
 function localizeApprovalQuestions(
   payload: RequestUserInputPayload,
-  t: ReturnType<typeof useConversationTranslation>['t'],
+  t: ReturnType<typeof useConversationTranslation>['t']
 ): RequestUserInputQuestion[] | undefined {
   const interactionKind = payload.interactionKind ?? payload.interaction_kind
   if (interactionKind !== 'approval') return payload.questions
 
-  const { detail, key: questionKey } =
-    requestUserInputApprovalDescription(payload)
+  const { detail, key: questionKey } = requestUserInputApprovalDescription(payload)
 
   return [
     {
@@ -598,13 +503,9 @@ function localizeApprovalQuestions(
       question: t(questionKey, {
         detail: detail || t('request_user_input.approval_no_detail'),
       }),
-      options: (payload.questions?.[0]?.options ?? []).map((option) => {
+      options: (payload.questions?.[0]?.options ?? []).map(option => {
         const value = option.label?.trim() ?? ''
-        const localized = localizeApprovalOption(
-          value,
-          option.description ?? '',
-          t,
-        )
+        const localized = localizeApprovalOption(value, option.description ?? '', t)
         return {
           value,
           label: localized.label,
@@ -618,15 +519,12 @@ function localizeApprovalQuestions(
 function localizeApprovalOption(
   value: string,
   detail: string,
-  t: ReturnType<typeof useConversationTranslation>['t'],
+  t: ReturnType<typeof useConversationTranslation>['t']
 ): { label: string; description: string } {
   if (value === 'allow_execpolicy' || value.startsWith('allow_execpolicy:')) {
     return {
       label: t('request_user_input.approval_allow_execpolicy'),
-      description: t(
-        'request_user_input.approval_allow_execpolicy_description',
-        { detail },
-      ),
+      description: t('request_user_input.approval_allow_execpolicy_description', { detail }),
     }
   }
   if (value.startsWith('apply_network_policy:')) {
@@ -651,20 +549,15 @@ function localizeApprovalOption(
 function responseAnswers(
   questions: ReturnType<typeof normalizeQuestions>,
   selectedAnswers: Record<string, string>,
-  activeQuestionId: string | null,
+  activeQuestionId: string | null
 ): RequestUserInputResponse['answers'] {
   if (!isImplementationPlanQuestions(questions)) {
     return Object.fromEntries(
-      questions.map((question) => [
-        question.id,
-        { answers: [selectedAnswers[question.id] ?? ''] },
-      ]),
+      questions.map(question => [question.id, { answers: [selectedAnswers[question.id] ?? ''] }])
     )
   }
 
-  const activeQuestion = questions.find(
-    (question) => question.id === activeQuestionId,
-  )
+  const activeQuestion = questions.find(question => question.id === activeQuestionId)
   if (activeQuestion?.allowCustom) {
     return {
       [activeQuestion.id]: {
@@ -678,64 +571,54 @@ function responseAnswers(
 
   return {
     [implementQuestion.id]: {
-      answers: [
-        selectedAnswers[implementQuestion.id] ??
-          implementQuestion.options[0]?.value ??
-          '',
-      ],
+      answers: [selectedAnswers[implementQuestion.id] ?? implementQuestion.options[0]?.value ?? ''],
     },
   }
 }
 
 function emptyCustomAnswersForImplementationPlan(
-  questions: ReturnType<typeof normalizeQuestions>,
+  questions: ReturnType<typeof normalizeQuestions>
 ): Record<string, string> {
   if (!isImplementationPlanQuestions(questions)) return {}
 
   return Object.fromEntries(
     questions
-      .filter(
-        (question) => question.allowCustom && question.options.length === 0,
-      )
-      .map((question) => [question.id, '']),
+      .filter(question => question.allowCustom && question.options.length === 0)
+      .map(question => [question.id, ''])
   )
 }
 
 function shouldSubmitOnOptionSelect(
   question: ReturnType<typeof normalizeQuestions>[number],
   option: RequestUserInputOption,
-  questions: ReturnType<typeof normalizeQuestions>,
+  questions: ReturnType<typeof normalizeQuestions>
 ): boolean {
   if (questions.length === 1) return true
   if (question.id === 'implement') return true
   return hasImplementationPlanText(option.label)
 }
 
-function isImplementationPlanQuestions(
-  questions: ReturnType<typeof normalizeQuestions>,
-): boolean {
+function isImplementationPlanQuestions(questions: ReturnType<typeof normalizeQuestions>): boolean {
   return Boolean(implementationPlanOptionQuestion(questions))
 }
 
 function implementationPlanOptionQuestion(
-  questions: ReturnType<typeof normalizeQuestions>,
+  questions: ReturnType<typeof normalizeQuestions>
 ): ReturnType<typeof normalizeQuestions>[number] | undefined {
-  return questions.find((question) => {
+  return questions.find(question => {
     if (question.id.trim().toLowerCase() === 'implement') return true
     if (hasImplementationPlanText(question.question)) return true
-    return question.options.some((option) =>
-      hasImplementationPlanText(option.label),
-    )
+    return question.options.some(option => hasImplementationPlanText(option.label))
   })
 }
 
 function responseAnswerText(
   response: RequestUserInputResponse | undefined,
-  questionId: string,
+  questionId: string
 ): string {
   return (
     response?.answers?.[questionId]?.answers
-      ?.map((answer) => answer.trim())
+      ?.map(answer => answer.trim())
       .filter(Boolean)
       .join('\n') ?? ''
   )

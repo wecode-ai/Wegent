@@ -1,7 +1,7 @@
 import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Search, X } from 'lucide-react'
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { forwardRef, useCallback, useImperativeHandle, useRef, useState } from 'react'
 
 const MARKETPLACE_SEARCH_DEBOUNCE_MS = 200
 
@@ -63,13 +63,23 @@ export const MarketplaceSearchInput = forwardRef<
 
   useImperativeHandle(forwardedRef, () => ({ clear: clearQuery }), [clearQuery])
 
-  useEffect(() => cancelPendingQuery, [cancelPendingQuery])
+  const attachInput = useCallback(
+    (node: HTMLInputElement | null) => {
+      inputRef.current = node
+      if (!node) return
+      return () => {
+        cancelPendingQuery()
+        inputRef.current = null
+      }
+    },
+    [cancelPendingQuery]
+  )
 
   return (
     <label className="relative min-w-0 flex-1">
       <span className="sr-only">{label}</span>
       <ControlInput
-        ref={inputRef}
+        ref={attachInput}
         value={inputValue}
         onChange={event => {
           const nextQuery = event.target.value

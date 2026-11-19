@@ -28,6 +28,7 @@ export function AutomationListPane({
   selectedAutomationId,
   locale,
   loading,
+  loadFailed = false,
   error,
   detailOpen,
   mobileDetailOpen,
@@ -47,6 +48,7 @@ export function AutomationListPane({
   locale: string
   loading: boolean
   error: string | null
+  loadFailed?: boolean
   detailOpen: boolean
   mobileDetailOpen: boolean
   onQueryChange: (query: string) => void
@@ -138,7 +140,7 @@ export function AutomationListPane({
               />
             ))}
           </section>
-        ) : (
+        ) : !loadFailed ? (
           <p className="py-12 text-center text-sm text-text-secondary">
             {t(
               calendar
@@ -148,7 +150,7 @@ export function AutomationListPane({
                 : 'todo.automations_no_results'
             )}
           </p>
-        )}
+        ) : null}
         {onReviewTemplate ? (
           <Button
             variant="ghost"

@@ -1,12 +1,12 @@
+import { useTranslation } from '@/hooks/useTranslation'
 import {
-  SortableRoot,
-  SortableItem,
-  SortableHandle,
   SortableDragArea,
+  SortableHandle,
+  SortableItem,
+  SortableRoot,
   type SortableChangeDetails,
 } from '@wegent/collaboration/controls/Sortable'
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { useTranslation } from '@/hooks/useTranslation'
+import { useMemo, useRef, useState, type ReactNode } from 'react'
 import { isSidebarDragActivatorTarget } from './sidebarDragActivator'
 import { useSidebarSortablePaneDrag } from './useSidebarSortablePaneDrag'
 import type { WorkbenchSidebarPaneDragData } from './workbenchPaneDrag'
@@ -37,7 +37,6 @@ export function SidebarSortableList<T>({
   accessibleLabel,
 }: SidebarSortableListProps<T>) {
   const { t } = useTranslation('common')
-  const list = useRef<HTMLDivElement>(null)
   const sourceIds = useMemo(() => items.map(getId), [getId, items])
   const sourceSignature = sourceIds.join('\0')
   const itemById = useMemo(
@@ -51,20 +50,11 @@ export function SidebarSortableList<T>({
   const orderedIds =
     optimisticOrder?.sourceSignature === sourceSignature ? optimisticOrder.ids : sourceIds
   const revision = useRef(0)
-  const mounted = useRef(false)
-  const paneDrag = useSidebarSortablePaneDrag(list)
-  useEffect(() => {
-    mounted.current = true
-    return () => {
-      mounted.current = false
-    }
-  }, [])
-  useEffect(() => {
-    revision.current++
-  }, [sourceSignature])
+  const { bindList, sortingSuppressed, prepare, start, suppressCommit, end } =
+    useSidebarSortablePaneDrag()
   const commit = (ids: string[], details: SortableChangeDetails) => {
     const moved = itemById.get(details.key)
-    if (paneDrag.suppressCommit(details.event) || !moved || !canDrag(moved)) {
+    if (suppressCommit(details.event) || !moved || !canDrag(moved)) {
       details.cancel()
       return
     }
@@ -75,13 +65,16 @@ export function SidebarSortableList<T>({
     void Promise.resolve()
       .then(() => onMove(moved, before))
       .catch(() => {
-        if (mounted.current && revision.current === request)
-          setOptimisticOrder({ sourceSignature, ids: previous })
+        setOptimisticOrder(current =>
+          revision.current === request && current?.sourceSignature === sourceSignature
+            ? { sourceSignature, ids: previous }
+            : current
+        )
       })
   }
   return (
     <SortableRoot
-      ref={list}
+      ref={bindList}
       value={orderedIds}
       autoScroll={!getExternalDragData}
       aria-label={accessibleLabel}
@@ -91,48 +84,46 @@ export function SidebarSortableList<T>({
         if (!event.isPrimary || event.button !== 0 || !isSidebarDragActivatorTarget(event.target))
           return false
         const item = itemById.get(key)
-        if (item && getExternalDragData) paneDrag.prepare(key, getExternalDragData(item), event)
+        if (item && getExternalDragData) prepare(key, getExternalDragData(item), event)
         return true
       }}
       onValueChange={commit}
       onMoveStart={(key, event) => {
         const item = itemById.get(key)
-        if (item && getExternalDragData) paneDrag.start(key, getExternalDragData(item), event)
+        if (item && getExternalDragData) start(key, getExternalDragData(item), event)
       }}
-      onMoveEnd={key => paneDrag.end(key)}
+      onMoveEnd={key => end(key)}
     >
       {state =>
-        (paneDrag.sortingSuppressed ? state.value : (state.moving?.order ?? state.value)).map(
-          id => {
-            const item = itemById.get(id)
-            if (!item) return null
-            const reorderable = canDrag(item)
-            return (
-              <div
-                key={id}
-                data-sidebar-sortable-id={id}
-                data-dragging={state.moving?.key === id ? 'true' : undefined}
-                className="relative"
+        (sortingSuppressed ? state.value : (state.moving?.order ?? state.value)).map(id => {
+          const item = itemById.get(id)
+          if (!item) return null
+          const reorderable = canDrag(item)
+          return (
+            <div
+              key={id}
+              data-sidebar-sortable-id={id}
+              data-dragging={state.moving?.key === id ? 'true' : undefined}
+              className="relative"
+            >
+              <SortableItem
+                value={id}
+                label={getLabel(item)}
+                disabled={!reorderable && !getExternalDragData?.(item)}
+                className="rounded-lg has-[>[data-slot=sortable-handle]:focus-visible]:outline has-[>[data-slot=sortable-handle]:focus-visible]:outline-2 has-[>[data-slot=sortable-handle]:focus-visible]:-outline-offset-2 has-[>[data-slot=sortable-handle]:focus-visible]:outline-focus"
               >
-                <SortableItem
-                  value={id}
-                  label={getLabel(item)}
-                  disabled={!reorderable && !getExternalDragData?.(item)}
-                  className="rounded-lg has-[>[data-slot=sortable-handle]:focus-visible]:outline has-[>[data-slot=sortable-handle]:focus-visible]:outline-2 has-[>[data-slot=sortable-handle]:focus-visible]:-outline-offset-2 has-[>[data-slot=sortable-handle]:focus-visible]:outline-focus"
-                >
-                  {reorderable && (
-                    <SortableHandle
-                      aria-label={t('workbench.reorder_item', { name: getLabel(item) })}
-                      data-testid={`${testId}-handle-${id}`}
-                      className="sr-only pointer-events-none"
-                    />
-                  )}
-                  <SortableDragArea className="touch-none">{renderItem(item)}</SortableDragArea>
-                </SortableItem>
-              </div>
-            )
-          }
-        )
+                {reorderable && (
+                  <SortableHandle
+                    aria-label={t('workbench.reorder_item', { name: getLabel(item) })}
+                    data-testid={`${testId}-handle-${id}`}
+                    className="sr-only pointer-events-none"
+                  />
+                )}
+                <SortableDragArea className="touch-none">{renderItem(item)}</SortableDragArea>
+              </SortableItem>
+            </div>
+          )
+        })
       }
     </SortableRoot>
   )

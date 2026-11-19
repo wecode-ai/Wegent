@@ -1,8 +1,3 @@
-import {
-  CollapsibleRoot,
-  CollapsibleTrigger,
-  CollapsiblePanel,
-} from '@wegent/collaboration/controls/Collapsible'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { DialogForm } from '@/components/common/DialogForm'
 import {
@@ -15,6 +10,11 @@ import {
 } from '@/features/model-settings/providerPresets'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
+import {
+  CollapsiblePanel,
+  CollapsibleRoot,
+  CollapsibleTrigger,
+} from '@wegent/collaboration/controls/Collapsible'
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import {
   SelectContent,
@@ -26,7 +26,7 @@ import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue
 import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Eye, EyeOff, Loader2, Plus, X } from 'lucide-react'
-import { useEffect, useRef, useState, type FormEvent } from 'react'
+import { useRef, useState, type FormEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { ProviderConnectionTestButton } from './ProviderConnectionTestButton'
 import { ProviderModelFields } from './ProviderModelFields'
@@ -77,12 +77,6 @@ export function ProviderEditor({
   const [error, setError] = useState<string | null>(null)
   const [discard, setDiscard] = useState(false)
   const dirty = JSON.stringify(draft) !== JSON.stringify(initial)
-  useEffect(
-    () => () => {
-      discoverySequence.current += 1
-    },
-    []
-  )
   /** Update draft fields and invalidate discovery results when connection settings change. */
   const patch = (value: Partial<ProviderDraft>) => {
     if (

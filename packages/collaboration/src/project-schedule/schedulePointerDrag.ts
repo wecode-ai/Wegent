@@ -1,17 +1,5 @@
-import {
-  bindDrag,
-  bindDragPreview,
-  createAutoScroll,
-  type DragPreview,
-} from '@ui-sdk/core'
-import {
-  createContext,
-  useContext,
-  useEffect,
-  useRef,
-  useState,
-  type PointerEvent,
-} from 'react'
+import { bindDrag, bindDragPreview, createAutoScroll, type DragPreview } from '@ui-sdk/core'
+import { createContext, useContext, useCallback, useRef, type PointerEvent } from 'react'
 import { useCollaborationPortalTheme } from '../theme'
 import { applyCollaborationPortalTheme } from '../theme/applyPortalTheme'
 
@@ -22,17 +10,10 @@ export interface SchedulePointerController {
   activeId: string | null
   delta: { x: number; y: number }
 }
-export const SchedulePointerContext =
-  createContext<SchedulePointerController | null>(null)
+export const SchedulePointerContext = createContext<SchedulePointerController | null>(null)
 
-function dateTarget(
-  node: HTMLElement,
-  event: globalThis.PointerEvent,
-): string | null {
-  for (const hit of node.ownerDocument.elementsFromPoint(
-    event.clientX,
-    event.clientY,
-  )) {
+function dateTarget(node: HTMLElement, event: globalThis.PointerEvent): string | null {
+  for (const hit of node.ownerDocument.elementsFromPoint(event.clientX, event.clientY)) {
     const zone = hit.closest<HTMLElement>('[data-schedule-drop-id]')
     if (zone?.dataset.scheduleDropId) return zone.dataset.scheduleDropId
   }
@@ -50,13 +31,21 @@ export function useSchedulePointerDrag({
 }) {
   const context = useContext(SchedulePointerContext)
   const theme = useCollaborationPortalTheme()
-  const [node, setElement] = useState<HTMLElement | null>(null)
-  const latest = useRef({ context, disabled, theme })
   const cleanup = useRef<(() => void) | null>(null)
-  useEffect(() => {
-    latest.current = { context, disabled, theme }
-  }, [context, disabled, theme])
-  useEffect(() => () => cleanup.current?.(), [])
+  const startDrag = context?.start
+  const moveDrag = context?.move
+  const endDrag = context?.end
+  const setElement = useCallback(
+    (node: HTMLElement | null) => {
+      if (!node || disabled || !startDrag || !moveDrag || !endDrag) return
+      return () => {
+        const cancel = cleanup.current
+        cleanup.current = null
+        cancel?.()
+      }
+    },
+    [disabled, endDrag, moveDrag, startDrag]
+  )
   const dragging = context?.activeId === id
   return {
     setElement,
@@ -68,13 +57,15 @@ export function useSchedulePointerDrag({
           'aria-pressed': dragging,
           onPointerDown: (event: PointerEvent<HTMLButtonElement>) => {
             if (
-              !node ||
-              !context ||
+              !startDrag ||
+              !moveDrag ||
+              !endDrag ||
               event.button !== 0 ||
               event.isPrimary === false
             )
               return
             cleanup.current?.()
+            const node = event.currentTarget
             const down = event.nativeEvent
             let started = false
             let last = down
@@ -82,13 +73,13 @@ export function useSchedulePointerDrag({
             const update = (move: globalThis.PointerEvent) => {
               last = move
               copy?.move(move.clientX, move.clientY)
-              latest.current.context?.move(
+              moveDrag(
                 id,
                 {
                   x: move.clientX - down.clientX,
                   y: move.clientY - down.clientY,
                 },
-                dateTarget(node, move),
+                dateTarget(node, move)
               )
             }
             const scroll = createAutoScroll({
@@ -99,9 +90,8 @@ export function useSchedulePointerDrag({
               threshold: 6,
               cancelOnEscape: true,
               onStart: () => {
-                if (latest.current.disabled) return false
                 started = true
-                latest.current.context?.start(id)
+                startDrag(id)
                 if (preview) {
                   copy = bindDragPreview(node, {
                     x: down.clientX,
@@ -109,16 +99,12 @@ export function useSchedulePointerDrag({
                   })
                   for (const child of copy.el.querySelectorAll('[data-testid]'))
                     child.removeAttribute('data-testid')
-                  copy.el.setAttribute(
-                    'data-testid',
-                    'collaboration-schedule-undated-drag-overlay',
-                  )
-                  const currentTheme = latest.current.theme
-                  applyCollaborationPortalTheme(copy.el, currentTheme)
+                  copy.el.setAttribute('data-testid', 'collaboration-schedule-undated-drag-overlay')
+                  applyCollaborationPortalTheme(copy.el, theme)
                   copy.el.classList.add('cursor-grabbing', 'shadow-sm')
                 }
               },
-              onMove: (sample) => {
+              onMove: sample => {
                 update(sample.event)
                 scroll.update(sample.x, sample.y)
               },
@@ -126,19 +112,14 @@ export function useSchedulePointerDrag({
                 scroll.stop()
                 copy?.remove()
                 cleanup.current = null
-                if (started)
-                  latest.current.context?.end(
-                    id,
-                    dateTarget(node, up),
-                    canceled || latest.current.disabled,
-                  )
+                if (started) endDrag(id, dateTarget(node, up), canceled)
               },
             })
             cleanup.current = () => {
               stop()
               scroll.stop()
               copy?.remove()
-              if (started) latest.current.context?.end(id, null, true)
+              if (started) endDrag(id, null, true)
             }
           },
         },

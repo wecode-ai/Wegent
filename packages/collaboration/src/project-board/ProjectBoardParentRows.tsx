@@ -1,4 +1,4 @@
-import {ProjectBoardTransfer,ProjectBoardTransferOverlay} from './ProjectBoardTransfer'
+import {ProjectBoardTransfer} from './ProjectBoardTransfer'
 import { ArrowRight, ChevronDown, ChevronRight, GitBranch, Plus } from 'lucide-react'
 import { Fragment, useState, type ReactNode } from 'react'
 import type { CollaborationTranslate } from '../i18n'
@@ -215,7 +215,7 @@ export function ProjectBoardParentRows<T>({
           ))}
         </div>
       </div>
-      <ProjectBoardTransferOverlay/>
+
     </ProjectBoardTransfer>
   )
 }

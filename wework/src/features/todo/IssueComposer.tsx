@@ -1,5 +1,3 @@
-import { SearchableSelect } from '@wegent/collaboration/controls/SearchableSelect'
-import { SelectField } from '@wegent/collaboration/controls/SelectField'
 import {
   isDefaultWorkItemProject,
   type CloudLoopItem,
@@ -14,38 +12,28 @@ import { Tooltip } from '@/components/ui/tooltip'
 import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
 import { WorkbenchPaneContext } from '@/features/workbench/useWorkbench'
 import { useTranslation } from '@/hooks/useTranslation'
-import { releaseAttachmentPreview } from '@/lib/attachments'
 import { resolveRuntimeTaskProjects } from '@/lib/runtime-project'
 import { resolveRuntimeTaskWorkspaceBinding } from '@/lib/runtime-task-workspace-binding'
 import { cn } from '@/lib/utils'
-import type {
-  Attachment,
-  ProjectExecutionMode,
-  ProjectWithTasks,
-  RuntimeTaskCreateRequest,
-} from '@/types/api'
+import type { ProjectExecutionMode, ProjectWithTasks, RuntimeTaskCreateRequest } from '@/types/api'
 import { issueDraftFromText } from '@wegent/collaboration'
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { SelectField } from '@wegent/collaboration/controls/SelectField'
 import { TabsList, TabsRoot, TabsTab } from '@wegent/collaboration/controls/Tabs'
 import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { useEscapeKey, useFocusRequest } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
-import {
-  Bot,
-  Check,
-  ChevronDown,
-  CircleUserRound,
-  Flag,
-  Folder,
-  LayoutDashboard,
-  Maximize2,
-  Minimize2,
-  Paperclip,
-  Tag,
-  X,
-} from 'lucide-react'
-import { useContext, useEffect, useRef, useState, type MouseEvent } from 'react'
+import { Bot, Check, Folder, LayoutDashboard, Maximize2, Minimize2, X } from 'lucide-react'
+import { useContext, useRef, useState, useSyncExternalStore, type MouseEvent } from 'react'
 import { collaborationExecutionMode } from './collaborationWorkspacePolicy'
 import { ConnectedIssueProjectWork } from './ConnectedIssueProjectWork'
+import {
+  createIssueComposerDraftSource,
+  hasIssueComposerDraft,
+  issueComposerDraftKey,
+  type IssueComposerDraft,
+} from './issueComposerDraftSource'
+import { IssueComposerFields } from './IssueComposerFields'
 import { TaskDescriptionEditor } from './TaskDescriptionEditor'
 import { WorkItemComposerGuide } from './WorkItemComposerGuide'
 
@@ -76,90 +64,6 @@ interface IssueComposerProps {
   }) => Promise<boolean | void> | boolean | void
 }
 
-interface StagedIssueAttachment {
-  attachment: Attachment
-  file: File
-}
-
-interface IssueComposerDraft {
-  boardKey: string
-  title: string
-  content: string
-  creationMode: 'issue' | 'task'
-  localProjectId: number | null
-  status: CloudLoopItem['status']
-  priority: CloudLoopItem['priority']
-  tags: string[]
-  assigneeUserId: number | null
-}
-
-const issueDraftAttachmentStore = new Map<string, File[]>()
-
-function issueComposerDraftKey(
-  boardKey: string,
-  initialMode: IssueComposerDraft['creationMode']
-): string {
-  return `wework-issue-composer-draft:${boardKey}:${initialMode}`
-}
-
-function readIssueComposerDraft(key: string): IssueComposerDraft | null {
-  try {
-    const raw = localStorage.getItem(key)
-    if (!raw) {
-      issueDraftAttachmentStore.delete(key)
-      return null
-    }
-    const parsed = JSON.parse(raw) as Partial<IssueComposerDraft>
-    if (
-      typeof parsed.boardKey !== 'string' ||
-      typeof parsed.content !== 'string' ||
-      (parsed.creationMode !== 'issue' && parsed.creationMode !== 'task')
-    ) {
-      return null
-    }
-    return {
-      boardKey: parsed.boardKey,
-      title: typeof parsed.title === 'string' ? parsed.title : '',
-      content: parsed.content,
-      creationMode: parsed.creationMode,
-      localProjectId: typeof parsed.localProjectId === 'number' ? parsed.localProjectId : null,
-      status:
-        typeof parsed.status === 'string' ? (parsed.status as CloudLoopItem['status']) : 'inbox',
-      priority:
-        parsed.priority === 'low' ||
-        parsed.priority === 'medium' ||
-        parsed.priority === 'high' ||
-        parsed.priority === 'urgent'
-          ? parsed.priority
-          : 'none',
-      tags: Array.isArray(parsed.tags)
-        ? parsed.tags.filter((tag): tag is string => typeof tag === 'string')
-        : [],
-      assigneeUserId: typeof parsed.assigneeUserId === 'number' ? parsed.assigneeUserId : null,
-    }
-  } catch {
-    return null
-  }
-}
-
-function attachmentFromFile(file: File, id: number): Attachment {
-  const extension = file.name.includes('.') ? (file.name.split('.').pop() ?? '') : ''
-  return {
-    id,
-    filename: file.name,
-    file_size: file.size,
-    mime_type: file.type || 'application/octet-stream',
-    status: 'ready',
-    file_extension: extension,
-    created_at: new Date().toISOString(),
-    ...(file.type.startsWith('image/') &&
-    typeof URL !== 'undefined' &&
-    typeof URL.createObjectURL === 'function'
-      ? { local_preview_url: URL.createObjectURL(file) }
-      : {}),
-  }
-}
-
 export function IssueComposer({
   projects,
   initialBoardKey,
@@ -177,26 +81,8 @@ export function IssueComposer({
   const { t } = useTranslation()
   const workbench = useContext(WorkbenchPaneContext)
   const initialMode = initialStartExecution ? 'task' : 'issue'
-  const draftKey = issueComposerDraftKey(initialBoardKey, initialMode)
-  const [draft] = useState(() => (initialContent.trim() ? null : readIssueComposerDraft(draftKey)))
-  const [restoredFiles] = useState(() =>
-    draft ? (issueDraftAttachmentStore.get(draftKey) ?? []) : []
-  )
-  const [boardKey, setBoardKey] = useState(draft?.boardKey ?? initialBoardKey)
-  const [title, setTitle] = useState(draft?.title ?? '')
-  const [content, setContent] = useState(initialContent || draft?.content || '')
-  const contentRef = useRef(initialContent || draft?.content || '')
-  const [fullScreen, setFullScreen] = useState(false)
-  const fullScreenRef = useRef(false)
   const [continueCreating, setContinueCreating] = useState(false)
-  const [status, setStatus] = useState<CloudLoopItem['status']>(draft?.status ?? 'inbox')
-  const [priority, setPriority] = useState<CloudLoopItem['priority']>(draft?.priority ?? 'none')
-  const [tags, setTags] = useState<string[]>(draft?.tags ?? [])
   const [tagDraft, setTagDraft] = useState('')
-  const [assigneeUserId, setAssigneeUserId] = useState<number | null>(draft?.assigneeUserId ?? null)
-  const [creationMode, setCreationMode] = useState<'issue' | 'task'>(
-    draft?.creationMode ?? initialMode
-  )
   const projectRuntimeWork = workbench?.state?.runtimeWork ?? {
     projects: localProjects.map(project => ({
       project: {
@@ -214,9 +100,39 @@ export function IssueComposer({
     totalTasks: 0,
   }
   const runtimeTaskProjects = resolveRuntimeTaskProjects(localProjects, projectRuntimeWork)
-  const [localProjectId, setLocalProjectId] = useState<number | null>(
-    draft?.localProjectId ?? initialLocalProjectId ?? runtimeTaskProjects[0]?.id ?? null
-  )
+  const makeDraftSource = () =>
+    createIssueComposerDraftSource({
+      initialBoardKey,
+      initialMode,
+      initialContent,
+      initialLocalProjectId: initialLocalProjectId ?? runtimeTaskProjects[0]?.id ?? null,
+    })
+  const [draftSource, setDraftSource] = useState(makeDraftSource)
+  if (draftSource.key !== issueComposerDraftKey(initialBoardKey, initialMode))
+    setDraftSource(makeDraftSource())
+  const draftSnapshot = useSyncExternalStore(draftSource.subscribe, draftSource.getSnapshot)
+  const {
+    boardKey,
+    title,
+    content,
+    creationMode,
+    localProjectId,
+    status,
+    priority,
+    tags,
+    assigneeUserId,
+    fullScreen,
+    stagedAttachments,
+  } = draftSnapshot
+  const setField = <K extends keyof IssueComposerDraft>(
+    field: K,
+    value: IssueComposerDraft[K] | ((current: IssueComposerDraft[K]) => IssueComposerDraft[K])
+  ) => {
+    draftSource.update({
+      [field]: typeof value === 'function' ? value(draftSource.getSnapshot()[field]) : value,
+    })
+  }
+  const setFullScreen = draftSource.setFullScreen
   const [localDeviceWorkspaceId, setLocalDeviceWorkspaceId] = useState<number | null>(null)
   const selectedLocalProject =
     runtimeTaskProjects.find(project => project.id === localProjectId) ?? null
@@ -226,18 +142,18 @@ export function IssueComposer({
     deviceWorkspaceId: localDeviceWorkspaceId,
   })
   const selectLocalProject = (projectId: number | null) => {
-    setLocalProjectId(projectId)
+    setField('localProjectId', projectId)
     setLocalDeviceWorkspaceId(null)
   }
   const selectLocalProjectWorkspace = (projectId: number, deviceWorkspaceId: number | null) => {
-    setLocalProjectId(projectId)
+    setField('localProjectId', projectId)
     setLocalDeviceWorkspaceId(deviceWorkspaceId)
   }
   const selectBoard = (nextBoardKey: string) => {
     if (nextBoardKey === boardKey) return
-    setBoardKey(nextBoardKey)
-    setStatus('inbox')
-    setAssigneeUserId(null)
+    setField('boardKey', nextBoardKey)
+    setField('status', 'inbox')
+    setField('assigneeUserId', null)
   }
   const selectedWorkItemProject =
     projects.find(project => `${project.project_store}:${String(project.id)}` === boardKey) ??
@@ -273,116 +189,29 @@ export function IssueComposer({
       label: project.name,
     })),
   ]
-  const priorityOptions = [
-    { value: 'none', label: t('todo.priority_none', '无优先级') },
-    { value: 'low', label: t('todo.priority_low', '低') },
-    { value: 'medium', label: t('todo.priority_medium', '普通') },
-    { value: 'high', label: t('todo.priority_high', '高') },
-    { value: 'urgent', label: t('todo.priority_urgent', '紧急') },
-  ] as const
-  const [stagedAttachments, setStagedAttachments] = useState<StagedIssueAttachment[]>(() =>
-    restoredFiles.map((file, index) => ({
-      attachment: attachmentFromFile(file, -(index + 1)),
-      file,
-    }))
-  )
-  const stagedAttachmentsRef = useRef(stagedAttachments)
-  const nextAttachmentId = useRef(-(restoredFiles.length + 1))
   const panelRef = useRef<HTMLElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const titleInputRef = useRef<HTMLInputElement | null>(null)
-
-  useEffect(() => {
-    stagedAttachmentsRef.current = stagedAttachments
-  }, [stagedAttachments])
-
-  useEffect(
-    () => () => {
-      stagedAttachmentsRef.current.forEach(item => releaseAttachmentPreview(item.attachment))
+  useEscapeKey(
+    () => {
+      if (draftSource.getSnapshot().fullScreen) setFullScreen(false)
+      else onCancel()
     },
-    []
+    true,
+    panelRef
   )
-
-  const hasDraft =
-    Boolean(title.trim() || content.trim() || tags.length || assigneeUserId) ||
-    status !== 'inbox' ||
-    priority !== 'none' ||
-    stagedAttachments.length > 0
-
-  useEffect(() => {
-    if (!hasDraft) {
-      localStorage.removeItem(draftKey)
-      issueDraftAttachmentStore.delete(draftKey)
-      return
-    }
-    const snapshot: IssueComposerDraft = {
-      boardKey,
-      title,
-      content,
-      creationMode,
-      localProjectId,
-      status,
-      priority,
-      tags,
-      assigneeUserId,
-    }
-    localStorage.setItem(draftKey, JSON.stringify(snapshot))
-    if (stagedAttachments.length > 0) {
-      issueDraftAttachmentStore.set(
-        draftKey,
-        stagedAttachments.map(item => item.file)
-      )
-    } else {
-      issueDraftAttachmentStore.delete(draftKey)
-    }
-  }, [
-    boardKey,
-    content,
-    creationMode,
-    draftKey,
-    hasDraft,
-    localProjectId,
-    priority,
-    stagedAttachments,
-    status,
-    tags,
-    title,
-    assigneeUserId,
-  ])
-
-  const stageFiles = (files: File | File[]) => {
-    const selectedFiles = Array.isArray(files) ? files : [files]
-    setStagedAttachments(current => [
-      ...current,
-      ...selectedFiles.map(file => {
-        const id = nextAttachmentId.current
-        nextAttachmentId.current -= 1
-        return { attachment: attachmentFromFile(file, id), file }
-      }),
-    ])
-  }
-  const removeAttachment = (attachmentId: number) => {
-    setStagedAttachments(current =>
-      current.filter(item => {
-        if (item.attachment.id !== attachmentId) return true
-        releaseAttachmentPreview(item.attachment)
-        return false
-      })
-    )
-  }
+  useFocusRequest(panelRef, presentation, {
+    enabled: presentation === 'popup',
+    animationFrame: true,
+    selector: '[data-testid="workspace-issue-input"]',
+    restoreFocus: true,
+  })
+  const hasDraft = hasIssueComposerDraft(draftSnapshot)
+  const stageFiles = draftSource.stageFiles
+  const removeAttachment = draftSource.removeAttachment
   const clearDraft = () => {
-    stagedAttachments.forEach(item => releaseAttachmentPreview(item.attachment))
-    localStorage.removeItem(draftKey)
-    issueDraftAttachmentStore.delete(draftKey)
-    setTitle('')
-    contentRef.current = ''
-    setContent('')
-    setStatus('inbox')
-    setPriority('none')
-    setTags([])
+    draftSource.clear()
     setTagDraft('')
-    setAssigneeUserId(null)
-    setStagedAttachments([])
   }
   const projectChat: ProjectChatControls = {
     ...(workbench?.projectChat ?? {
@@ -426,6 +255,7 @@ export function IssueComposer({
     const selectedModelOptions =
       projectChat.getSelectedModelOptions?.() ?? projectChat.selectedModelOptions
     const executionModel = selectedModelExecutionFields(selectedModel, selectedModelOptions)
+    const submission = draftSource.captureSubmission()
     const created = await onCreate({
       boardKey,
       ...submittedDraft,
@@ -466,42 +296,38 @@ export function IssueComposer({
       ...(submittedTags.length ? { tags: submittedTags } : {}),
       ...(assigneeUserId ? { assigneeUserId } : {}),
     })
-    if (created !== false) {
-      localStorage.removeItem(draftKey)
-      issueDraftAttachmentStore.delete(draftKey)
-      if (keepOpen) {
-        stagedAttachments.forEach(item => releaseAttachmentPreview(item.attachment))
-        setTitle('')
-        contentRef.current = ''
-        setContent('')
-        setTags(submittedTags)
-        setTagDraft('')
-        setStagedAttachments([])
-        window.requestAnimationFrame(() => titleInputRef.current?.focus())
-      }
+    if (
+      created !== false &&
+      submission.accept(keepOpen, submittedTags) &&
+      keepOpen &&
+      draftSource.hasSubscribers()
+    ) {
+      setTagDraft('')
+      window.requestAnimationFrame(() => {
+        if (draftSource.hasSubscribers()) titleInputRef.current?.focus()
+      })
     }
     return created
   }
   const updateCompactContent = (value: string) => {
-    if (fullScreenRef.current) return
-    contentRef.current = value
-    setContent(value)
+    if (draftSource.getSnapshot().fullScreen) return
+
+    setField('content', value)
   }
   const updateDescription = (value: string) => {
-    contentRef.current = value
-    setContent(value)
+    setField('content', value)
   }
   const applyIssueTemplate = (event: MouseEvent<HTMLButtonElement>) => {
     const value = event.currentTarget.dataset.templateContent ?? ''
-    contentRef.current = value
-    setContent(value)
+
+    setField('content', value)
     window.requestAnimationFrame(() => {
       panelRef.current?.querySelector<HTMLElement>('[data-testid="workspace-issue-input"]')?.focus()
     })
   }
   const commitTagDraft = () => {
     const nextTag = tagDraft.trim().replace(/^#/, '')
-    if (nextTag && !tags.includes(nextTag)) setTags(current => [...current, nextTag])
+    if (nextTag && !tags.includes(nextTag)) setField('tags', current => [...current, nextTag])
     setTagDraft('')
   }
   const openFullScreen = () => {
@@ -517,15 +343,17 @@ export function IssueComposer({
       : renderedContent
     const latestContent = normalizedRenderedContent.trim()
       ? normalizedRenderedContent
-      : contentRef.current
-    contentRef.current = latestContent
-    setContent(latestContent)
-    setTitle(currentTitle => currentTitle.trim() || issueDraftFromText(latestContent).title)
-    fullScreenRef.current = true
+      : draftSource.getSnapshot().content
+
+    setField('content', latestContent)
+    setField(
+      'title',
+      currentTitle => currentTitle.trim() || issueDraftFromText(latestContent).title
+    )
+
     setFullScreen(true)
   }
   const closeFullScreen = () => {
-    fullScreenRef.current = false
     setFullScreen(false)
   }
   const fallbackProjectWork: ProjectWorkControls | undefined =
@@ -762,7 +590,6 @@ export function IssueComposer({
         onClose={() => {
           if (busy) return
           if (fullScreen) {
-            fullScreenRef.current = false
             setFullScreen(false)
           } else onCancel()
         }}
@@ -846,171 +673,28 @@ export function IssueComposer({
                     aria-label={t('todo.issue_title_label', '标题')}
                     value={title}
                     disabled={busy}
-                    onChange={event => setTitle(event.target.value)}
+                    onChange={event => setField('title', event.target.value)}
                     placeholder={t('todo.issue_title_placeholder', 'Issue 标题')}
                     className="block h-11 w-full text-heading-md font-medium leading-8 tracking-normal placeholder:text-text-muted/55 disabled:opacity-60"
                   />
 
-                  <div className="mt-4 flex flex-wrap items-center gap-2">
-                    <SelectField
-                      testId="workspace-issue-project"
-                      accessibleLabel={t('todo.issue_project_label', '项目空间')}
-                      value={boardKey}
-                      options={projectOptions}
-                      onChange={selectBoard}
-                      disabled={busy || projects.length === 0}
-                      triggerContent={
-                        <span className="flex min-w-0 items-center gap-2">
-                          <Folder
-                            className="h-4 w-4 shrink-0 text-text-secondary"
-                            aria-hidden="true"
-                          />
-                          <span className="truncate">
-                            {selectedWorkItemProject?.name ??
-                              t('workbench.default_work_item_board', '我的任务')}
-                          </span>
-                        </span>
-                      }
-                      className="max-w-48"
-                    />
-                    <SelectField
-                      testId="workspace-issue-status"
-                      accessibleLabel={t('todo.status', '状态')}
-                      value={status}
-                      options={statusOptions.map(option => ({
-                        value: option.id,
-                        label: option.name,
-                      }))}
-                      disabled={busy}
-                      onChange={value => setStatus(value as CloudLoopItem['status'])}
-                      triggerContent={
-                        <span className="flex min-w-0 items-center gap-2">
-                          <span className="h-2 w-2 shrink-0 rounded-full bg-text-muted" />
-                          <span className="truncate">
-                            {statusOptions.find(option => option.id === status)?.name ?? status}
-                          </span>
-                        </span>
-                      }
-                    />
-                    <SelectField<CloudLoopItem['priority']>
-                      testId="workspace-issue-priority"
-                      accessibleLabel={t('todo.priority', '优先级')}
-                      value={priority}
-                      options={priorityOptions}
-                      disabled={busy}
-                      onChange={setPriority}
-                      triggerContent={
-                        <span className="flex min-w-0 items-center gap-2">
-                          <Flag
-                            className="h-4 w-4 shrink-0 text-text-secondary"
-                            aria-hidden="true"
-                          />
-                          <span className="truncate">
-                            {priorityOptions.find(option => option.value === priority)?.label}
-                          </span>
-                        </span>
-                      }
-                    />
-                    <SearchableSelect
-                      testId="workspace-issue-assignee"
-                      searchPlaceholder={t('todo.search_assignee')}
-                      emptyLabel={t('todo.no_matching_assignee')}
-                      accessibleLabel={t('todo.assignee', '负责人')}
-                      value={String(assigneeUserId ?? '')}
-                      options={[
-                        { value: '', label: t('todo.unassigned', '未指派') },
-                        ...selectedProjectMembers.map(member => ({
-                          value: String(member.user_id),
-                          label: member.user_name,
-                        })),
-                      ]}
-                      disabled={busy || selectedProjectMembers.length === 0}
-                      onChange={value => setAssigneeUserId(Number(value) || null)}
-                      triggerContent={
-                        <>
-                          <span className="flex min-w-0 items-center gap-2">
-                            <CircleUserRound
-                              className="h-4 w-4 shrink-0 text-text-secondary"
-                              aria-hidden="true"
-                            />
-                            <span className="max-w-32 truncate">
-                              {selectedAssigneeName ?? t('todo.unassigned', '未指派')}
-                            </span>
-                          </span>
-                          <ChevronDown
-                            className="h-4 w-4 shrink-0 text-text-secondary"
-                            aria-hidden="true"
-                          />
-                        </>
-                      }
-                    />
-                    {tags.map(tag => (
-                      <span
-                        key={tag}
-                        data-testid={`workspace-issue-tag-${tag}`}
-                        className="inline-flex h-8 items-center gap-1 rounded-full border border-border px-3 text-sm font-normal text-text-primary"
-                      >
-                        # {tag}
-                        <ControlButton
-                          variant="unstyled"
-                          type="button"
-                          aria-label={t('todo.remove_tag', '移除标签 {{tag}}', { tag })}
-                          onClick={() =>
-                            setTags(current => current.filter(candidate => candidate !== tag))
-                          }
-                          className="flex h-4 w-4 items-center justify-center rounded-full text-text-muted hover:bg-muted hover:text-text-primary"
-                        >
-                          <X className="h-3 w-3" />
-                        </ControlButton>
-                      </span>
-                    ))}
-                    <label className="inline-flex min-h-11 items-center gap-1.5 rounded-full px-2 text-sm font-normal text-text-secondary focus-within:bg-muted md:min-h-8">
-                      <Tag className="h-3.5 w-3.5 text-text-muted" />
-                      <ControlInput
-                        data-testid="workspace-issue-tag-input"
-                        density="compact"
-                        appearance="plain"
-                        value={tagDraft}
-                        disabled={busy}
-                        onChange={event => setTagDraft(event.target.value)}
-                        onBlur={commitTagDraft}
-                        onKeyDown={event => {
-                          if (event.key !== 'Enter' && event.key !== ',') return
-                          event.preventDefault()
-                          commitTagDraft()
-                        }}
-                        placeholder={t('todo.add_tag', '添加标签')}
-                        className="w-20"
-                      />
-                    </label>
-                    <ControlInput
-                      ref={fileInputRef}
-                      data-testid="workspace-issue-file-input"
-                      type="file"
-                      multiple
-                      className="hidden"
-                      onChange={event => {
-                        if (event.target.files) stageFiles(Array.from(event.target.files))
-                        event.target.value = ''
-                      }}
-                    />
-                    <ControlButton
-                      variant="outline"
-                      size="sm"
-                      type="button"
-                      data-testid="workspace-issue-attach"
-                      disabled={busy}
-                      onClick={() => fileInputRef.current?.click()}
-                      className="inline-flex h-8 items-center gap-1.5 rounded-full border border-transparent px-3 text-sm font-normal text-text-secondary transition hover:border-border hover:bg-muted hover:text-text-primary disabled:opacity-50"
-                    >
-                      <Paperclip className="h-4 w-4" />
-                      {stagedAttachments.length > 0
-                        ? t('todo.issue_attachment_count', '{{count}} 个附件', {
-                            count: stagedAttachments.length,
-                          })
-                        : t('todo.add_attachment', '添加附件')}
-                    </ControlButton>
-                  </div>
+                  <IssueComposerFields
+                    draft={draftSnapshot}
+                    projects={projects}
+                    busy={busy}
+                    selectBoard={selectBoard}
+                    statusOptions={statusOptions}
+                    selectedWorkItemProject={selectedWorkItemProject}
+                    selectedAssigneeName={selectedAssigneeName}
+                    selectedProjectMembers={selectedProjectMembers}
+                    setField={setField}
+                    tagDraft={tagDraft}
+                    setTagDraft={setTagDraft}
+                    commitTagDraft={commitTagDraft}
+                    fileInputRef={fileInputRef}
+                    stageFiles={stageFiles}
+                    attachmentCount={stagedAttachments.length}
+                  />
 
                   <section
                     data-testid="workspace-issue-description-region"
@@ -1178,7 +862,7 @@ export function IssueComposer({
               <TabsRoot
                 value={creationMode}
                 onValueChange={next => {
-                  if (next) setCreationMode(next)
+                  if (next) setField('creationMode', next)
                 }}
                 render={<div className="contents" />}
               >

@@ -1,70 +1,37 @@
 import { useTranslation } from '@/hooks/useTranslation'
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
-import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Button } from '@wegent/collaboration/markdown/Button'
 import { Loader2 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
-import {
-  CLOUD_MODEL_CATALOG_SYNC_EVENT,
-  type PendingCloudModelCatalogSync,
-} from './cloudModelCatalogSyncRequest'
+import { cloudModelCatalogSyncQueue } from './cloudModelCatalogSyncRequest'
 
 export function CloudModelCatalogSyncDialogHost() {
   const { t } = useTranslation('common')
-  const [queue, setQueue] = useState<PendingCloudModelCatalogSync[]>([])
-  const [syncing, setSyncing] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const dialogRef = useRef<HTMLDivElement | null>(null)
-  const cancelButtonRef = useRef<HTMLButtonElement | null>(null)
-
-  const current = queue[0] ?? null
-
-  useEffect(() => {
-    const handleRequest = (event: Event) => {
-      const request = (event as CustomEvent<PendingCloudModelCatalogSync>).detail
-      if (!request) return
-      setError(null)
-      setQueue(previous => [...previous, request])
-    }
-    window.addEventListener(CLOUD_MODEL_CATALOG_SYNC_EVENT, handleRequest)
-    return () => window.removeEventListener(CLOUD_MODEL_CATALOG_SYNC_EVENT, handleRequest)
-  }, [])
-
+  const current = useSyncExternalStore(
+    cloudModelCatalogSyncQueue.subscribe,
+    cloudModelCatalogSyncQueue.getSnapshot
+  )
+  const cancel = () => {
+    if (current) cloudModelCatalogSyncQueue.cancel(current.id)
+  }
   if (!current) return null
-
-  const settle = (confirmed: boolean) => {
-    current.resolve(confirmed)
-    setError(null)
-    setQueue(previous => previous.slice(1))
-  }
-
-  const handleSync = async () => {
-    setSyncing(true)
-    setError(null)
-    try {
-      await current.sync()
-      settle(true)
-    } catch (syncError) {
-      setError(
-        syncError instanceof Error
-          ? syncError.message
-          : t('workbench.cloud_model_catalog_sync_failed')
-      )
-    } finally {
-      setSyncing(false)
-    }
-  }
+  const { syncing, failure } = current
+  const error = failure
+    ? failure.cause instanceof Error
+      ? failure.cause.message
+      : t('workbench.cloud_model_catalog_sync_failed')
+    : null
 
   return createPortal(
     <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4">
       <DialogSurface
-        initialFocus={() => cancelButtonRef.current}
         onClose={() => {
-          if (!syncing) (() => settle(false))()
+          if (!syncing) cancel()
         }}
+        initialFocus='[data-testid="cloud-model-catalog-sync-cancel-button"]'
         render={
           <div
-            ref={dialogRef}
             aria-labelledby="cloud-model-catalog-sync-title"
             data-testid="cloud-model-catalog-sync-dialog"
             className="w-full max-w-[420px] rounded-xl border border-border bg-popover p-5 shadow-xl"
@@ -90,29 +57,27 @@ export function CloudModelCatalogSyncDialogHost() {
           </p>
         )}
         <div className="mt-5 flex justify-end gap-2">
-          <ControlButton
-            variant="unstyled"
-            ref={cancelButtonRef}
+          <Button
             type="button"
             data-testid="cloud-model-catalog-sync-cancel-button"
-            onClick={() => settle(false)}
+            onClick={cancel}
             disabled={syncing}
-            className="h-8 rounded-md px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50"
+            variant="ghost"
+            size="sm"
           >
             {t('workbench.cloud_model_catalog_sync_cancel')}
-          </ControlButton>
-          <ControlButton
-            variant="primary"
-            size="sm"
+          </Button>
+          <Button
             type="button"
             data-testid="cloud-model-catalog-sync-confirm-button"
-            onClick={() => void handleSync()}
+            onClick={() => void cloudModelCatalogSyncQueue.confirm(current.id)}
             disabled={syncing}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:opacity-90 disabled:opacity-50"
+            variant="primary"
+            size="sm"
           >
             {syncing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             {t('workbench.cloud_model_catalog_sync_confirm')}
-          </ControlButton>
+          </Button>
         </div>
       </DialogSurface>
     </div>,

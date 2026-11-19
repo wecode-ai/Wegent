@@ -1,11 +1,10 @@
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { useTranslation } from '@/hooks/useTranslation'
 import { Circle, Plug, Plus, Upload } from 'lucide-react'
-import { useEffect, useRef } from 'react'
 
 export function PluginCreateMenu({
   isOpen,
-  onToggle,
+  onOpenChange,
   onCreatePlugin,
   onImportPlugin,
   onAddMarket,
@@ -14,7 +13,7 @@ export function PluginCreateMenu({
   compact = false,
 }: {
   isOpen: boolean
-  onToggle(): void
+  onOpenChange(open: boolean): void
   onCreatePlugin?(): void
   onImportPlugin?(): void
   onAddMarket?(): void
@@ -23,15 +22,6 @@ export function PluginCreateMenu({
   compact?: boolean
 }) {
   const { t } = useTranslation('common')
-  const requestedOpen = useRef(isOpen)
-  useEffect(() => {
-    requestedOpen.current = isOpen
-  }, [isOpen])
-  const changeOpen = (next: boolean) => {
-    if (requestedOpen.current === next) return
-    requestedOpen.current = next
-    onToggle()
-  }
   const options = [
     [
       onCreatePlugin,
@@ -61,7 +51,7 @@ export function PluginCreateMenu({
   return (
     <ActionMenu
       open={isOpen}
-      onOpenChange={changeOpen}
+      onOpenChange={onOpenChange}
       testId={buttonTestId}
       menuTestId="plugins-create-menu"
       ariaLabel={t('workbench.plugins_create', '创建')}
@@ -74,10 +64,7 @@ export function PluginCreateMenu({
                 icon,
                 testId,
                 label,
-                onSelect: () => {
-                  changeOpen(false)
-                  action()
-                },
+                onSelect: action,
               },
             ]
           : []

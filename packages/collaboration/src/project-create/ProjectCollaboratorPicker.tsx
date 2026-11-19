@@ -1,11 +1,18 @@
-import { Bot, Plus, UserRound, UsersRound } from 'lucide-react'
-import { useEffect, useState, type ReactNode } from 'react'
-import { SearchableSelect, type SearchableSelectOption } from '../controls/SearchableSelect'
+import { Button as ControlButton } from '../markdown/Button'
+import { TextField as ControlInput } from '../controls/TextField'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
+import { Popover, PopoverTrigger, PopoverContent } from '../controls/Popover'
+import { Bot, Plus, Search, UserRound, UsersRound } from 'lucide-react'
+import { useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 import {
   CollaborationParticipantsTabs,
   type ParticipantTab,
 } from '../project-manage/ProjectCollaborationParticipants'
-import { runActiveMemberSearch } from '../project-manage/memberSearch'
+import { useCollaborationPortalTheme } from '../theme'
 import type { CollaborationUser } from '../types'
 import type { ProjectCreateLabels, ProjectCreateResourceSetup } from './types'
 
@@ -36,42 +43,43 @@ export function ProjectCollaboratorPicker({
   onSelectGroup(id: string): void
   groupAction?: ReactNode
 }) {
+  const theme = useCollaborationPortalTheme()
   const [query, setQuery] = useState('')
   const [activeTab, setActiveTab] = useState<ParticipantTab>('members')
-  const [response, setResponse] = useState<{
-    query: string
-    searchUsers: typeof searchUsers
-    users: CollaborationUser[]
-    failed: boolean
-  } | null>(null)
-  const current = response?.query === query && response.searchUsers === searchUsers
-  const loading = Boolean(query.trim() && searchUsers && !current)
-  const failed = current && response.failed
-  useEffect(() => {
+  const [previousOpen, setPreviousOpen] = useState(open)
+  if (previousOpen !== open) {
+    setPreviousOpen(open)
     if (!open) {
       setQuery('')
-      setResponse(null)
       setActiveTab('members')
-      return
     }
-    if (activeTab !== 'members' || !query.trim() || !searchUsers) return
-    let active = true
-    const timer = window.setTimeout(() => {
-      void runActiveMemberSearch({
-        query: query.trim(),
-        existingUserIds: new Set<number>(),
-        search: async value => ({ users: await searchUsers(value) }),
-        userId: user => user.id,
-        isActive: () => active,
-        onResults: users => setResponse({ query, searchUsers, users, failed: false }),
-        onError: () => setResponse({ query, searchUsers, users: [], failed: true }),
-      })
-    }, 180)
-    return () => {
-      active = false
-      window.clearTimeout(timer)
-    }
-  }, [open, activeTab, query, searchUsers])
+  }
+  const resource = useMemo(
+    () =>
+      query.trim() && searchUsers
+        ? createAsyncResource(
+            query,
+            async () => {
+              try {
+                return { users: await searchUsers(query.trim()), failed: false }
+              } catch {
+                return { users: [] as CollaborationUser[], failed: true }
+              }
+            },
+            { delayMs: 180, refreshOnSubscribe: true }
+          )
+        : null,
+    [query, searchUsers]
+  )
+  const snapshot = useSyncExternalStore(
+    open && activeTab === 'members' && resource ? resource.subscribe : subscribeIdleResource,
+    resource?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const response = snapshot.data
+  const current = response !== undefined
+  const loading = Boolean(query.trim() && searchUsers && !snapshot.settled)
+  const failed = current && response.failed
   const matches = (...values: (string | null | undefined)[]) =>
     values.some(value => value?.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
   const users = [
@@ -92,53 +100,59 @@ export function ProjectCollaboratorPicker({
         : users.length
           ? `${labels.availablePeople}: ${users.length}`
           : labels.noMatchingCollaborators
-  const options: SearchableSelectOption[] =
-    activeTab === 'members'
-      ? users.map(user => ({
-          value: `user:${user.id}`,
-          label: user.user_name,
-          description: user.email ?? undefined,
-          testId: `collaboration-project-create-member-${user.id}`,
-          icon: <UserRound aria-hidden="true" className="h-4 w-4" />,
-        }))
-      : activeTab === 'agents'
-        ? availableAgents.map(agent => ({
-            value: `agent:${agent.id}`,
-            label: agent.name,
-            testId: `collaboration-project-create-agent-${agent.id}`,
-            icon: <Bot aria-hidden="true" className="h-4 w-4" />,
-          }))
-        : availableGroups.map(group => ({
-            value: `group:${group.id}`,
-            label: group.name,
-            description: labels.importGroupDescription,
-            testId: `collaboration-project-create-group-${group.id}`,
-            icon: <UsersRound aria-hidden="true" className="h-4 w-4" />,
-          }))
+  const empty = (message: string) => (
+    <div className="collaboration-project-create-collaborator-empty">
+      <p>{query.trim() ? labels.noMatchingCollaborators : message}</p>
+      <p>
+        {activeTab === 'members' && !query.trim() && searchUsers
+          ? labels.searchPeopleHint
+          : labels.collaboratorsOptionalHint}
+      </p>
+    </div>
+  )
+  const [trigger, setTrigger] = useState<HTMLButtonElement | null>(null)
+  const modalContainer = trigger?.closest<HTMLElement>(
+    '[role="dialog"][aria-modal="true"], dialog[open]'
+  )
   return (
-    <SearchableSelect
-      value=""
-      options={options}
-      filter={false}
-      query={query}
-      onSearchChange={setQuery}
-      open={open}
-      onOpenChange={onOpenChange}
-      testId="collaboration-project-create-add-collaborator"
-      menuTestId="collaboration-project-create-collaborator-menu"
-      searchTestId="collaboration-project-create-people-search"
-      accessibleLabel={labels.addCollaborator}
-      searchPlaceholder={labels.searchCollaborators}
-      emptyLabel={labels.noMatchingCollaborators}
-      triggerContent={
-        <>
-          <Plus aria-hidden="true" className="h-4 w-4" />
-          <span>{labels.addCollaborator}</span>
-        </>
-      }
-      footer={activeTab === 'groups' ? groupAction : undefined}
-      searchStatus={
-        <>
+    <Popover open={open} onOpenChange={onOpenChange}>
+      <PopoverTrigger
+        render={
+          <button
+            ref={setTrigger}
+            type="button"
+            className="collaboration-project-create-collaborator-trigger"
+            data-testid="collaboration-project-create-add-collaborator"
+            aria-expanded={open}
+          />
+        }
+      >
+        <Plus aria-hidden="true" />
+        <span>{labels.addCollaborator}</span>
+      </PopoverTrigger>
+      <PopoverContent
+        {...theme}
+        container={modalContainer}
+        side="bottom"
+        align="start"
+        sideOffset={6}
+        collisionPadding={8}
+        className={`${theme.className ?? ''} collaboration-project-create-collaborator-menu`}
+        data-testid="collaboration-project-create-collaborator-menu"
+        aria-label={labels.addCollaborator}
+        finalFocus={() => (trigger?.closest('[hidden], [inert]') ? null : trigger)}
+      >
+        <div className="collaboration-project-collaborator-picker">
+          <label className="collaboration-project-collaborator-search">
+            <Search aria-hidden="true" />
+            <ControlInput
+              data-testid="collaboration-project-create-people-search"
+              value={query}
+              aria-label={labels.searchCollaborators}
+              placeholder={labels.searchCollaborators}
+              onChange={event => setQuery(event.target.value)}
+            />
+          </label>
           <p
             role="status"
             aria-live="polite"
@@ -148,53 +162,80 @@ export function ProjectCollaboratorPicker({
           >
             {peopleSearchStatus}
           </p>
-          {activeTab === 'members' && loading && <p aria-hidden="true">{labels.searchingPeople}</p>}
-          {activeTab === 'members' && failed && <p role="alert">{labels.peopleSearchFailed}</p>}
-          {!options.length && !loading && !failed && (
-            <p className="px-3 py-4 text-sm text-text-secondary">
-              {query.trim()
-                ? labels.noMatchingCollaborators
-                : activeTab === 'members'
-                  ? labels.noAvailablePeople
-                  : activeTab === 'agents'
-                    ? labels.noAvailableAgents
-                    : labels.noAvailableGroups}
-            </p>
-          )}
-          {!options.length && !loading && !failed && (
-            <p className="px-3 pb-4 text-xs text-text-secondary">
-              {activeTab === 'members' && !query.trim() && searchUsers
-                ? labels.searchPeopleHint
-                : labels.collaboratorsOptionalHint}
-            </p>
-          )}
-        </>
-      }
-      renderOptions={list => (
-        <CollaborationParticipantsTabs
-          ariaLabel={labels.collaborators}
-          initialTab="members"
-          onTabChange={setActiveTab}
-          tabOrder={['members', 'agents', 'groups']}
-          testIdPrefix="collaboration-project-create-collaborator"
-          membersLabel={labels.availablePeople}
-          agentsLabel={labels.availableAgents}
-          groupsLabel={labels.availableGroups}
-          membersContent={list}
-          agentsContent={list}
-          groupsContent={list}
-        />
-      )}
-      onChange={value => {
-        const separator = value.indexOf(':')
-        const kind = value.slice(0, separator)
-        const id = value.slice(separator + 1)
-        if (kind === 'user') {
-          const user = users.find(user => String(user.id) === id)
-          if (user) onSelectPerson(user)
-        } else if (kind === 'agent') onSelectAgent(id)
-        else if (kind === 'group') onSelectGroup(id)
-      }}
-    />
+          <CollaborationParticipantsTabs
+            ariaLabel={labels.collaborators}
+            initialTab="members"
+            onTabChange={setActiveTab}
+            tabOrder={['members', 'agents', 'groups']}
+            testIdPrefix="collaboration-project-create-collaborator"
+            membersLabel={labels.availablePeople}
+            agentsLabel={labels.availableAgents}
+            groupsLabel={labels.availableGroups}
+            membersContent={
+              <>
+                {loading && <p aria-hidden="true">{labels.searchingPeople}</p>}
+                {failed && <p role="alert">{labels.peopleSearchFailed}</p>}
+                {users.map(user => (
+                  <ControlButton
+                    variant="unstyled"
+                    key={user.id}
+                    type="button"
+                    data-testid={`collaboration-project-create-member-${user.id}`}
+                    onClick={() => onSelectPerson(user)}
+                  >
+                    <UserRound aria-hidden="true" />
+                    <span>
+                      <strong>{user.user_name}</strong>
+                      {user.email && <small>{user.email}</small>}
+                    </span>
+                  </ControlButton>
+                ))}
+                {!users.length && !loading && !failed && empty(labels.noAvailablePeople)}
+              </>
+            }
+            agentsContent={
+              <>
+                {availableAgents.map(agent => (
+                  <ControlButton
+                    variant="unstyled"
+                    key={agent.id}
+                    type="button"
+                    data-testid={`collaboration-project-create-agent-${agent.id}`}
+                    onClick={() => onSelectAgent(agent.id)}
+                  >
+                    <Bot aria-hidden="true" />
+                    <span>
+                      <strong>{agent.name}</strong>
+                    </span>
+                  </ControlButton>
+                ))}
+                {!availableAgents.length && empty(labels.noAvailableAgents)}
+              </>
+            }
+            groupsContent={
+              <>
+                {availableGroups.map(group => (
+                  <ControlButton
+                    variant="unstyled"
+                    key={group.id}
+                    type="button"
+                    data-testid={`collaboration-project-create-group-${group.id}`}
+                    onClick={() => onSelectGroup(group.id)}
+                  >
+                    <UsersRound aria-hidden="true" />
+                    <span>
+                      <strong>{group.name}</strong>
+                      <small>{labels.importGroupDescription}</small>
+                    </span>
+                  </ControlButton>
+                ))}
+                {!availableGroups.length && empty(labels.noAvailableGroups)}
+                {groupAction}
+              </>
+            }
+          />
+        </div>
+      </PopoverContent>
+    </Popover>
   )
 }

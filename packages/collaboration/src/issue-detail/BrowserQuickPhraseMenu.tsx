@@ -2,7 +2,7 @@ import type {
   createQuickPhrasePreferencesStore,
   QuickPhrase,
 } from '@wegent/chat-core/composer-quick-phrases'
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { QuickPhraseMenu } from '../composer/QuickPhraseMenu'
 import { QuickPhrasesEditor } from '../composer/QuickPhrasesEditor'
@@ -26,9 +26,6 @@ export function BrowserQuickPhraseMenu({
   const [manage, setManage] = useState(false)
   const portalTheme = useCollaborationPortalTheme()
   const dialogRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!store.getSnapshot().loaded) void store.load()
-  }, [store])
 
   return (
     <>

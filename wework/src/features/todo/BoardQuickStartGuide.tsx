@@ -1,15 +1,9 @@
 import { useTranslation } from '@/hooks/useTranslation'
+import { useDeadlineExpired } from '@wegent/collaboration/clock'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Check, ChevronDown, ChevronUp, ListChecks } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
-
-interface StoredQuickStartState {
-  started: boolean
-  detailsOpened: boolean
-  collapsed: boolean
-  dismissed: boolean
-  completed: boolean
-}
+import { useMemo, useSyncExternalStore } from 'react'
+import { BoardQuickStartSession } from './boardQuickStartProgress'
 
 interface BoardQuickStartGuideProps {
   storageKey: string
@@ -19,39 +13,6 @@ interface BoardQuickStartGuideProps {
   detailOpened: boolean
   onCreateItem: () => void
   onOpenFirstItem: () => void
-}
-
-const initialQuickStartState: StoredQuickStartState = {
-  started: false,
-  detailsOpened: false,
-  collapsed: false,
-  dismissed: false,
-  completed: false,
-}
-
-function readQuickStartState(storageKey: string): StoredQuickStartState | null {
-  try {
-    const raw = localStorage.getItem(storageKey)
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as Partial<StoredQuickStartState>
-    return {
-      started: parsed.started === true,
-      detailsOpened: parsed.detailsOpened === true,
-      collapsed: parsed.collapsed === true,
-      dismissed: parsed.dismissed === true,
-      completed: parsed.completed === true,
-    }
-  } catch {
-    return null
-  }
-}
-
-function writeQuickStartState(storageKey: string, state: StoredQuickStartState): void {
-  try {
-    localStorage.setItem(storageKey, JSON.stringify(state))
-  } catch {
-    // The guide must never block the board when local storage is unavailable.
-  }
 }
 
 export function BoardQuickStartGuide({
@@ -64,66 +25,29 @@ export function BoardQuickStartGuide({
   onOpenFirstItem,
 }: BoardQuickStartGuideProps) {
   const { t } = useTranslation('common')
-  const [state, setState] = useState<StoredQuickStartState>(() => {
-    const stored = readQuickStartState(storageKey)
-    if (stored) return stored
-    if (hasCreatedItem) return initialQuickStartState
-    const started = { ...initialQuickStartState, started: true }
-    writeQuickStartState(storageKey, started)
-    return started
-  })
-  const [showCompletion, setShowCompletion] = useState(false)
-
-  useEffect(() => {
-    if (!detailOpened || !state.started || state.detailsOpened) return
-    const timeout = window.setTimeout(() => {
-      setState(current => {
-        if (!current.started || current.detailsOpened) return current
-        const next = { ...current, detailsOpened: true }
-        writeQuickStartState(storageKey, next)
-        return next
-      })
-    }, 0)
-    return () => window.clearTimeout(timeout)
-  }, [detailOpened, state.detailsOpened, state.started, storageKey])
-
-  const completedStepCount = useMemo(
-    () => Number(hasCreatedItem) + Number(state.detailsOpened) + Number(hasAdvancedItem),
-    [hasAdvancedItem, hasCreatedItem, state.detailsOpened]
+  const session = useMemo(() => new BoardQuickStartSession(storageKey), [storageKey])
+  const source = useMemo(
+    () => ({
+      getSnapshot: session.getSnapshot,
+      subscribe: (listener: () => void) =>
+        session.observe(listener, { hasCreatedItem, hasAdvancedItem, detailOpened }),
+    }),
+    [session, hasCreatedItem, hasAdvancedItem, detailOpened]
   )
-  const allStepsCompleted = completedStepCount === 3
-
-  useEffect(() => {
-    if (!state.started || state.completed || !allStepsCompleted) return
-    const completionTimeout = window.setTimeout(() => {
-      setState(current => {
-        if (current.completed) return current
-        const next = { ...current, completed: true }
-        writeQuickStartState(storageKey, next)
-        return next
-      })
-      setShowCompletion(true)
-    }, 0)
-    return () => window.clearTimeout(completionTimeout)
-  }, [allStepsCompleted, state.completed, state.started, storageKey])
-
-  useEffect(() => {
-    if (!showCompletion) return
-    const timeout = window.setTimeout(() => setShowCompletion(false), 5000)
-    return () => window.clearTimeout(timeout)
-  }, [showCompletion])
+  const { state, completionUntil } = useSyncExternalStore(
+    source.subscribe,
+    source.getSnapshot,
+    source.getSnapshot
+  )
+  const completionExpired = useDeadlineExpired(completionUntil)
+  const showCompletion = completionUntil !== undefined && !completionExpired
+  const completedStepCount =
+    Number(hasCreatedItem) + Number(state.detailsOpened) + Number(hasAdvancedItem)
 
   if (!state.started || state.dismissed || (state.completed && !showCompletion)) return null
 
   const itemLabel =
     itemKind === 'task' ? t('todo.quick_start_task', '任务') : t('todo.quick_start_issue', 'Issue')
-  const updateState = (patch: Partial<StoredQuickStartState>) => {
-    setState(current => {
-      const next = { ...current, ...patch }
-      writeQuickStartState(storageKey, next)
-      return next
-    })
-  }
 
   if (showCompletion) {
     return (
@@ -162,7 +86,7 @@ export function BoardQuickStartGuide({
           variant="unstyled"
           type="button"
           data-testid="cloud-board-quick-start-dismiss"
-          onClick={() => updateState({ dismissed: true })}
+          onClick={() => session.update({ dismissed: true })}
           className="h-7 rounded-lg px-2 text-xs text-text-muted transition hover:bg-background hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
         >
           {t('todo.quick_start_dismiss', '不再显示')}
@@ -172,7 +96,7 @@ export function BoardQuickStartGuide({
           type="button"
           data-testid="cloud-board-quick-start-toggle"
           aria-expanded={!state.collapsed}
-          onClick={() => updateState({ collapsed: !state.collapsed })}
+          onClick={() => session.update({ collapsed: !state.collapsed })}
           className="flex h-7 items-center gap-1 rounded-lg px-2 text-xs text-text-secondary transition hover:bg-background hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30"
         >
           {state.collapsed

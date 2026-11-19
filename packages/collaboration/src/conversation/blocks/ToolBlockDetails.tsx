@@ -1,13 +1,19 @@
+import { Button as ControlButton } from '../../markdown/Button'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
+import { useMarkdownServices } from '../../markdown/MarkdownServices'
+import { useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useConversationTranslation } from '../ConversationTranslation'
+import { useToolInteractionServices } from '../ToolInteractionServices'
 import { terminalOutputToText } from '@wegent/chat-core/terminal-text'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { ToolBlock } from './types'
 import {
   localMarkdownImagePath,
   resolveDirectMarkdownImageSrc,
 } from '../../markdown/assistantMarkdownLinks'
-import { Button as ControlButton } from '../../markdown/Button'
-import { useMarkdownServices } from '../../markdown/MarkdownServices'
-import { useConversationTranslation } from '../ConversationTranslation'
-import { useToolInteractionServices } from '../ToolInteractionServices'
 import { isWebSearchToolName, unwrapShellCommand } from './toolBlockActivity'
 import {
   getFileInputPath,
@@ -16,16 +22,15 @@ import {
   isCommandToolName,
   isFileCreateToolName,
   isFileEditToolName,
-  isFileReadToolName,
   isGuidanceToolName,
   isImageGenerationToolName,
   isImageViewToolName,
+  isFileReadToolName,
   isNodeReplToolName,
 } from './toolBlockKinds'
-import { truncate } from './toolBlockText'
-import type { ToolBlock } from './types'
-import { getWebSearchActivityItems } from './webSearchActivity'
 import { WebSearchActivityRows } from './WebSearchSources'
+import { getWebSearchActivityItems } from './webSearchActivity'
+import { truncate } from './toolBlockText'
 
 export function renderBlockDetail(block: ToolBlock) {
   const name = block.toolName.toLowerCase()
@@ -191,56 +196,30 @@ function useResolvedImageViewSource(source?: string): {
     if (localPath) return localPath
     return readImageFile && !/^(data:|blob:|https?:|asset:)/i.test(source) ? source : null
   }, [source, readFile, readImageFile])
-  const [localImage, setLocalImage] = useState<{
-    path: string
-    url: string
-    reader: typeof readFile
-  } | null>(null)
-  const [error, setError] = useState<{
-    path: string
-    message: string
-    reader: typeof readFile
-  } | null>(null)
-
-  useEffect(() => {
-    if (!localImagePath || !readFile) return undefined
-
-    let active = true
-    let objectUrl: string | null = null
-    void readFile(localImagePath)
-      .then(blob => {
-        objectUrl = URL.createObjectURL(blob)
-        if (active)
-          setLocalImage({
-            path: localImagePath,
-            url: objectUrl,
-            reader: readFile,
-          })
-        else URL.revokeObjectURL(objectUrl)
-      })
-      .catch((reason: unknown) => {
-        if (active) {
-          setError({
-            path: localImagePath,
-            message: reason instanceof Error ? reason.message : String(reason),
-            reader: readFile,
-          })
-        }
-      })
-
-    return () => {
-      active = false
-      if (objectUrl) URL.revokeObjectURL(objectUrl)
-    }
-  }, [localImagePath, readFile])
-
+  const resource = useMemo(
+    () =>
+      localImagePath && readFile
+        ? createAsyncResource(
+            localImagePath,
+            async () => URL.createObjectURL(await readFile(localImagePath)),
+            { release: url => URL.revokeObjectURL(url) }
+          )
+        : null,
+    [localImagePath, readFile]
+  )
+  const snapshot = useSyncExternalStore(
+    resource?.subscribe ?? subscribeIdleResource,
+    resource?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
   if (localImagePath) {
-    const imageReady = localImage?.path === localImagePath && localImage.reader === readFile
-    const imageFailed = error?.path === localImagePath && error.reader === readFile
+    const failed = snapshot.status === 'error'
     return {
-      url: imageReady ? localImage.url : null,
-      loading: !imageReady && !imageFailed,
-      error: imageFailed ? error.message : null,
+      url: snapshot.data ?? null,
+      loading: snapshot.data === undefined && !failed,
+      error: failed
+        ? String(snapshot.error instanceof Error ? snapshot.error.message : snapshot.error)
+        : null,
     }
   }
   return {
@@ -330,8 +309,7 @@ function BashBlockDetail({ block }: { block: ToolBlock }) {
     <div className="min-w-0 overflow-x-hidden rounded-lg bg-code-bg px-4 py-3">
       <div className="mb-2 flex items-center justify-between">
         <span className="text-xs text-text-muted">Shell</span>
-        <ControlButton
-          variant="unstyled"
+        <ControlButton variant="unstyled"
           type="button"
           onClick={handleCopy}
           className="p-0.5 text-text-muted hover:text-text-secondary"

@@ -4,8 +4,19 @@ import { Button as ControlButton } from '../markdown/Button'
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  useMemo,
+  useSyncExternalStore,
+  useRef,
+  useState,
+} from 'react'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
+import { useFocusRequest } from '../dom-events'
 import { X } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
 
 import { ConfirmationDialog } from '../controls/ConfirmationDialog'
 import { MemberSearchPicker } from '../controls/MemberSearchPicker'
@@ -44,9 +55,7 @@ export function IssueDetailCollaboratorPicker({
   emptyLabel: string
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
-  useEffect(() => {
-    inputRef.current?.focus()
-  }, [])
+  useFocusRequest(inputRef, 'initial-collaborator-focus')
   const memberIds = projectMemberIds ?? new Set(members.map(member => member.user_id))
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<Array<{ id: number; user_name: string }>>([])
@@ -155,46 +164,25 @@ export function useIssuePeopleSearch(
   query: string,
   searchUsers?: (query: string) => Promise<Array<{ id: number; user_name: string }>>
 ) {
-  const [attempt, setAttempt] = useState(0)
-  const [result, setResult] = useState<{
-    query: string
-    search: typeof searchUsers
-    users: Array<{ id: number; user_name: string }>
-    error?: string
-  }>()
-  useEffect(() => {
-    if (!query.trim() || !searchUsers) return
-    let active = true
-    const timer = setTimeout(() => {
-      void searchUsers(query.trim()).then(
-        users => {
-          if (active) setResult({ query, search: searchUsers, users })
-        },
-        cause => {
-          if (active)
-            setResult({
-              query,
-              search: searchUsers,
-              users: [],
-              error: String(cause),
-            })
-        }
-      )
-    }, 250)
-    return () => {
-      active = false
-      clearTimeout(timer)
-    }
-  }, [query, searchUsers, attempt])
-  const current = result?.query === query && result.search === searchUsers ? result : undefined
+  const resource = useMemo(
+    () =>
+      query.trim() && searchUsers
+        ? createAsyncResource(query, () => searchUsers(query.trim()), { delayMs: 250 })
+        : null,
+    [query, searchUsers]
+  )
+  const snapshot = useSyncExternalStore(
+    resource?.subscribe ?? subscribeIdleResource,
+    resource?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
   return {
-    users: current?.users ?? [],
-    error: current?.error,
+    users: snapshot.status === 'ready' ? (snapshot.data ?? []) : [],
+    error: snapshot.status === 'error' ? String(snapshot.error) : undefined,
     retry: () => {
-      setResult(undefined)
-      setAttempt(value => value + 1)
+      void resource?.reload()
     },
-    loading: Boolean(query.trim() && searchUsers && !current),
+    loading: Boolean(resource && snapshot.status !== 'ready' && snapshot.status !== 'error'),
   }
 }
 

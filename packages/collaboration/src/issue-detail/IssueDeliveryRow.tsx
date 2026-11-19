@@ -1,12 +1,17 @@
-import { ChevronRight, Package } from 'lucide-react'
-import { useEffect, useState } from 'react'
-import type { CollaborationTranslate } from '../i18n'
 import { Button as ControlButton } from '../markdown/Button'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
+import { deliveryMessages } from './deliveryMessages'
+import { useMemo, useSyncExternalStore } from 'react'
+import { ChevronRight, Package } from 'lucide-react'
+import type { CollaborationTranslate } from '../i18n'
 import type {
   SharedIssueDetailDelivery,
   SharedIssueDetailDeliveryDetail,
 } from './createSharedIssueDetailPort'
-import { deliveryMessages } from './deliveryMessages'
 import { formatIssueTimestamp } from './issueTimestamp'
 
 export function IssueDeliveryRow({
@@ -22,23 +27,21 @@ export function IssueDeliveryRow({
   onOpen(id: string): void
   translate: CollaborationTranslate
 }) {
-  const [detail, setDetail] = useState<SharedIssueDetailDelivery | null>(null)
-  const [failed, setFailed] = useState(false)
-  useEffect(() => {
-    if (delivery.markdown !== undefined) return
-    let active = true
-    getDelivery(delivery.id)
-      .then(value => {
-        if (active) setDetail(value)
-      })
-      .catch(() => {
-        if (active) setFailed(true)
-      })
-    return () => {
-      active = false
-    }
-  }, [delivery.id, delivery.version, delivery.markdown, getDelivery])
-
+  const { id, version, markdown } = delivery
+  const resource = useMemo(
+    () =>
+      markdown === undefined
+        ? createAsyncResource(JSON.stringify([id, version]), () => getDelivery(id))
+        : null,
+    [id, version, markdown, getDelivery]
+  )
+  const state = useSyncExternalStore(
+    resource?.subscribe ?? subscribeIdleResource,
+    resource?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const detail = state.data ?? null
+  const failed = state.status === 'error'
   const snapshot = delivery.markdown !== undefined ? delivery : detail
   const notePreview =
     delivery.title?.trim() ||
@@ -79,8 +82,7 @@ export function IssueDeliveryRow({
   const at = delivery.delivered_at ?? delivery.created_at
 
   return (
-    <ControlButton
-      variant="unstyled"
+    <ControlButton variant="unstyled"
       type="button"
       data-testid={`todo-detail-open-delivery-${delivery.id}`}
       onClick={() => onOpen(delivery.id)}

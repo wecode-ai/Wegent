@@ -1,22 +1,22 @@
-import { ProgressBar } from '../controls/ProgressBar'
-import { Flag } from 'lucide-react'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { TextField as ControlInput } from '../controls/TextField'
 import { Textarea as ControlTextarea } from '../controls/Textarea'
+import { TextField as ControlInput } from '../controls/TextField'
 import { Button as ControlButton } from '../markdown/Button'
+import './milestones.css'
+import { Flag } from 'lucide-react'
+import { useMemo, useState, type ReactNode } from 'react'
+import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
+import type { CollaborationAssignment, CollaborationIssue, CollaborationProject } from '../types'
 import { canManageCollaborationIssueSecurity } from '../permissions'
 import { useIssueAssignmentsByIssueId } from '../platform/useIssueAssignmentsByIssueId'
-import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
-import type {
-  CollaborationAssignment,
-  CollaborationIssue,
-  CollaborationProject,
-} from '../types'
-import { milestoneMessages } from './messages'
-import './milestones.css'
 import type { Milestone, MilestoneInput } from './types'
-import { milestoneVisibilityScope, useMilestones } from './useMilestones'
+import { milestoneMessages } from './messages'
+import { useMilestones, milestoneVisibilityScope } from './useMilestones'
 import type { MilestoneFilterProps } from './useMilestoneFilter'
+
+const buttonBaseClass =
+  'min-h-11 rounded-md border px-3 text-sm disabled:opacity-50 md:min-h-8 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/40'
+const buttonClass = `${buttonBaseClass} border-border hover:bg-muted`
+const primaryButtonClass = `${buttonBaseClass} border-transparent bg-text-primary text-background hover:bg-text-primary/90`
 
 export function MilestonesPage({
   api,
@@ -39,7 +39,7 @@ export function MilestonesPage({
     issues: CollaborationIssue[],
     assignments: Record<string, CollaborationAssignment[]>,
     emptyLabel: string,
-    milestoneId: string,
+    milestoneId: string
   ): ReactNode
 }) {
   const m = milestoneMessages[locale]
@@ -47,8 +47,8 @@ export function MilestonesPage({
     api.milestones,
     project.id,
     true,
-    issues.map((issue) => `${issue.id}:${issue.version}`).join('|'),
-    milestoneVisibilityScope(project),
+    issues.map(issue => `${issue.id}:${issue.version}`).join('|'),
+    milestoneVisibilityScope(project)
   )
   const [state, setState] = useState<'open' | 'closed'>('open')
   const [selection, setSelection] = useState<string | null>(null)
@@ -62,16 +62,14 @@ export function MilestonesPage({
   const [busy, setBusy] = useState(false)
   const [failed, setFailed] = useState(false)
   const canManage = canManageCollaborationIssueSecurity(project)
-  useEffect(() => {
-    if (!canManage) {
-      setEditing(null)
-      setDeleting(null)
-    }
-  }, [canManage])
-  const active = query.items.find((item) => item.id === selected)
+  if (!canManage && (editing !== null || deleting !== null)) {
+    setEditing(null)
+    setDeleting(null)
+  }
+  const active = query.items.find(item => item.id === selected)
   const linkedIssues = useMemo(
-    () => issues.filter((issue) => issue.milestone_id === selected),
-    [issues, selected],
+    () => issues.filter(issue => issue.milestone_id === selected),
+    [issues, selected]
   )
   const { assignmentsByIssueId } = useIssueAssignmentsByIssueId({
     assignmentsApi: api.assignments,
@@ -101,10 +99,7 @@ export function MilestonesPage({
       data-testid="milestones-page"
       aria-busy={busy}
     >
-      <div
-        className="mx-auto w-full max-w-6xl"
-        data-testid="milestones-content"
-      >
+      <div className="mx-auto w-full max-w-6xl" data-testid="milestones-content">
         <header className="mb-6 space-y-4">
           {active ? (
             <ControlButton
@@ -132,7 +127,7 @@ export function MilestonesPage({
                 role="group"
                 aria-label={m.title}
               >
-                {(['open', 'closed'] as const).map((value) => (
+                {(['open', 'closed'] as const).map(value => (
                   <ControlButton
                     variant="unstyled"
                     type="button"
@@ -147,10 +142,7 @@ export function MilestonesPage({
                   >
                     {m[value]}{' '}
                     <span className="ml-2 text-xs text-text-muted">
-                      {
-                        query.items.filter((item) => item.state === value)
-                          .length
-                      }
+                      {query.items.filter(item => item.state === value).length}
                     </span>
                   </ControlButton>
                 ))}
@@ -160,11 +152,11 @@ export function MilestonesPage({
                   variant="primary"
                   type="button"
                   data-testid="milestone-create"
+                  className={primaryButtonClass}
                   onClick={() => {
                     setEditing('new')
                     setFailed(false)
                   }}
-                  size="sm"
                 >
                   {m.new}
                 </ControlButton>
@@ -178,6 +170,7 @@ export function MilestonesPage({
             <ControlButton
               variant="outline"
               type="button"
+              className={buttonClass}
               data-testid="milestones-retry"
               onClick={() => {
                 setFailed(false)
@@ -185,7 +178,6 @@ export function MilestonesPage({
                 setDeleting(null)
                 query.reload()
               }}
-              size="sm"
             >
               {editing ? m.discardAndRefresh : m.retry}
             </ControlButton>
@@ -199,14 +191,14 @@ export function MilestonesPage({
             messages={m}
             busy={busy}
             onCancel={() => setEditing(null)}
-            onSave={(input) =>
+            onSave={input =>
               void mutate(() =>
                 editing === 'new'
                   ? api.milestones!.create(project.id, input)
                   : api.milestones!.update(project.id, editing.id, {
                       ...input,
                       version: editing.version,
-                    }),
+                    })
               )
             }
           />
@@ -222,28 +214,22 @@ export function MilestonesPage({
             <ControlButton
               variant="destructive"
               type="button"
+              className={buttonClass}
               data-testid="milestone-delete-confirm"
               disabled={busy}
               onClick={() =>
-                void mutate(() =>
-                  api.milestones!.remove(
-                    project.id,
-                    deleting.id,
-                    deleting.version,
-                  ),
-                )
+                void mutate(() => api.milestones!.remove(project.id, deleting.id, deleting.version))
               }
-              size="sm"
             >
               {m.remove}
             </ControlButton>
             <ControlButton
               variant="outline"
               type="button"
+              className={buttonClass}
               data-testid="milestone-delete-cancel"
               disabled={busy}
               onClick={() => setDeleting(null)}
-              size="sm"
             >
               {m.cancel}
             </ControlButton>
@@ -253,15 +239,13 @@ export function MilestonesPage({
         !query.error &&
         !active &&
         !editing &&
-        query.items.filter((item) => item.state === state).length === 0 ? (
+        query.items.filter(item => item.state === state).length === 0 ? (
           <div
             className="flex min-h-64 flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-border px-6 py-12 text-center"
             data-testid="milestones-empty"
           >
             <Flag className="h-6 w-6 text-text-muted" aria-hidden="true" />
-            <h2 className="heading-small">
-              {state === 'closed' ? m.emptyClosed : m.empty}
-            </h2>
+            <h2 className="heading-small">{state === 'closed' ? m.emptyClosed : m.empty}</h2>
             <p className="max-w-md text-sm text-text-muted">
               {state === 'closed' ? m.emptyClosedHint : m.emptyHint}
             </p>
@@ -281,9 +265,9 @@ export function MilestonesPage({
                 <ControlButton
                   variant="outline"
                   type="button"
+                  className={buttonClass}
                   data-testid="milestone-view-archive"
                   onClick={onOpenArchive}
-                  size="sm"
                 >
                   {m.viewArchive}
                 </ControlButton>
@@ -293,17 +277,15 @@ export function MilestonesPage({
               {renderIssues(
                 linkedIssues,
                 assignmentsByIssueId,
-                (active.archived_issues ?? 0) > 0
-                  ? m.noActiveIssues
-                  : m.noIssues,
-                active.id,
+                (active.archived_issues ?? 0) > 0 ? m.noActiveIssues : m.noIssues,
+                active.id
               )}
             </div>
           </>
         ) : (
           query.items
-            .filter((item) => item.state === state)
-            .map((item) => {
+            .filter(item => item.state === state)
+            .map(item => {
               const overdue =
                 item.state === 'open' &&
                 item.due_on &&
@@ -334,16 +316,17 @@ export function MilestonesPage({
                         <ControlButton
                           variant="outline"
                           type="button"
+                          className={buttonClass}
                           data-testid={`milestone-edit-${item.id}`}
                           disabled={busy}
                           onClick={() => setEditing(item)}
-                          size="sm"
                         >
                           {m.edit}
                         </ControlButton>
                         <ControlButton
                           variant="outline"
                           type="button"
+                          className={buttonClass}
                           data-testid={`milestone-state-${item.id}`}
                           disabled={busy}
                           onClick={() =>
@@ -353,22 +336,20 @@ export function MilestonesPage({
                                 description: item.description,
                                 due_on: item.due_on,
                                 version: item.version,
-                                state:
-                                  item.state === 'open' ? 'closed' : 'open',
-                              }),
+                                state: item.state === 'open' ? 'closed' : 'open',
+                              })
                             )
                           }
-                          size="sm"
                         >
                           {item.state === 'open' ? m.close : m.reopen}
                         </ControlButton>
                         <ControlButton
                           variant="destructive-ghost"
                           type="button"
+                          className={buttonClass}
                           data-testid={`milestone-delete-${item.id}`}
                           disabled={busy}
                           onClick={() => setDeleting(item)}
-                          size="sm"
                         >
                           {m.remove}
                         </ControlButton>
@@ -398,9 +379,7 @@ function MilestoneForm({
   onSave,
 }: {
   milestone: Milestone | null
-  messages:
-    | (typeof milestoneMessages)['en']
-    | (typeof milestoneMessages)['zh-CN']
+  messages: (typeof milestoneMessages)['en'] | (typeof milestoneMessages)['zh-CN']
   busy: boolean
   onCancel(): void
   onSave(input: MilestoneInput): void
@@ -409,7 +388,7 @@ function MilestoneForm({
     <form
       data-testid="milestone-form"
       className="milestone-form mb-4 max-w-2xl space-y-3 rounded-md border border-border p-3"
-      onSubmit={(event) => {
+      onSubmit={event => {
         event.preventDefault()
         const form = new FormData(event.currentTarget)
         onSave({
@@ -423,13 +402,12 @@ function MilestoneForm({
       <label className="block text-sm">
         {m.name}
         <ControlInput
-          density="compact"
           data-testid="milestone-title"
           name="title"
           required
           maxLength={255}
           defaultValue={milestone?.title ?? ''}
-          className="milestone-form-field mt-1 w-full"
+          className="milestone-form-field mt-1 min-h-11 w-full rounded-md bg-background px-2 md:min-h-8"
         />
       </label>
       <label className="block text-sm">
@@ -444,12 +422,11 @@ function MilestoneForm({
       <label className="block text-sm">
         {m.due}
         <ControlInput
-          density="compact"
           data-testid="milestone-due"
           name="due_on"
           type="date"
           defaultValue={milestone?.due_on ?? ''}
-          className="milestone-form-field ml-2"
+          className="milestone-form-field ml-2 min-h-11 rounded-md bg-background px-2 md:min-h-8"
         />
       </label>
       <div className="flex gap-2">
@@ -458,7 +435,7 @@ function MilestoneForm({
           type="submit"
           data-testid="milestone-save"
           disabled={busy}
-          size="sm"
+          className={primaryButtonClass}
         >
           {m.save}
         </ControlButton>
@@ -467,8 +444,8 @@ function MilestoneForm({
           type="button"
           data-testid="milestone-cancel"
           disabled={busy}
+          className={buttonClass}
           onClick={onCancel}
-          size="sm"
         >
           {m.cancel}
         </ControlButton>
@@ -482,25 +459,29 @@ function MilestoneProgress({
   messages: m,
 }: {
   item: Milestone
-  messages:
-    | (typeof milestoneMessages)['en']
-    | (typeof milestoneMessages)['zh-CN']
+  messages: (typeof milestoneMessages)['en'] | (typeof milestoneMessages)['zh-CN']
 }) {
   const total = item.open_issues + item.closed_issues
   const progress = total ? Math.round((item.closed_issues * 100) / total) : 0
   return (
     <>
-      <ProgressBar
-        value={progress}
-        label={item.title}
-        indicatorTestId={`milestone-progress-fill-${item.id}`}
-      />
+      <div
+        className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
+        role="progressbar"
+        aria-label={item.title}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={progress}
+      >
+        <span
+          data-testid={`milestone-progress-fill-${item.id}`}
+          className="block h-full rounded-full bg-text-primary"
+          style={{ width: `${progress}%` }}
+        />
+      </div>
       <p className="mt-1 text-xs text-text-muted">
-        {progress}% · {item.closed_issues} {m.completed} · {item.open_issues}{' '}
-        {m.remaining}
-        {(item.archived_issues ?? 0) > 0
-          ? ` · ${item.archived_issues} ${m.archived}`
-          : ''}
+        {progress}% · {item.closed_issues} {m.completed} · {item.open_issues} {m.remaining}
+        {(item.archived_issues ?? 0) > 0 ? ` · ${item.archived_issues} ${m.archived}` : ''}
       </p>
     </>
   )

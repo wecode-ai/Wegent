@@ -1,13 +1,14 @@
 import { ActionMenu } from '../controls/ActionMenu'
 import { Popover, PopoverClose, PopoverContent } from '../controls/Popover'
 import { Archive, ArrowUpRight, Ellipsis, X } from 'lucide-react'
-import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useCallback, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import type { CollaborationTranslate } from '../i18n'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
 import { Tooltip } from '../controls/Tooltip'
 import { Button as ControlButton } from '../markdown/Button'
 import { useCollaborationPortalTheme } from '../theme'
 import { CollaborationIssueCard, type CollaborationIssueCardProps } from './CollaborationIssueCard'
+import { createIssueBoardCardPreview } from './issueBoardCardPreview'
 import { IssueExecutionConfigurationBadge } from './IssueBoardCardContent'
 import { IssueCardGoalSummary } from './IssueCardTaskSummary'
 import { issueNeedsExecutionConfiguration } from './model'
@@ -81,15 +82,8 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
   const dragging = draggingOverride || drag.dragging
   const portalTheme = useCollaborationPortalTheme()
   const needsExecutionConfiguration = issueNeedsExecutionConfiguration(item)
-  const [localPreviewOpen, setLocalPreviewOpen] = useState(false)
-  const requestedPreviewOpen = previewPinned ?? localPreviewOpen
-  const setPreviewOpen = useCallback(
-    (open: boolean) => {
-      setLocalPreviewOpen(open)
-      onPreviewPinnedChange?.(open)
-    },
-    [onPreviewPinnedChange]
-  )
+  const [preview] = useState(createIssueBoardCardPreview)
+  const setPreviewOpen = preview.setOpen
   const popupRef = useRef<HTMLDivElement>(null)
   const cardContainerRef = useRef<HTMLDivElement>(null)
   const [previewAnchor, setPreviewAnchor] = useState<HTMLDivElement | null>(null)
@@ -97,28 +91,32 @@ export function IssueBoardCard<T extends IssueBoardCardTask>({
     cardContainerRef.current = element
     setPreviewAnchor(element)
   }, [])
-  const markReadRef = useRef(onMarkRead)
-  useEffect(() => {
-    markReadRef.current = onMarkRead
-  }, [onMarkRead])
+
   const hasProgress =
     item.can_view_detail !== false && progressTaskBindings.length > 0 && Boolean(renderTaskSummary)
   const previewAvailable = hasProgress && !previewDisabled && !drag.boardDragging && !dragging
-  const previewOpen = previewAvailable && requestedPreviewOpen
   const canOpenItem = item.can_view_detail !== false
   const openItem = canOpenItem ? onOpen : undefined
   const activateCard = previewAvailable ? () => setPreviewOpen(true) : openItem
-  if (!previewAvailable && localPreviewOpen) setLocalPreviewOpen(false)
-  useEffect(() => {
-    if (!previewAvailable && previewPinned) onPreviewPinnedChange?.(false)
-  }, [previewAvailable, previewPinned, onPreviewPinnedChange])
-  const canMarkRead = Boolean(onMarkRead)
   const isUnread = unread ?? Boolean(item.is_unread)
-  useEffect(() => {
-    if (!previewOpen || !isUnread || !canMarkRead) return
-    const timer = window.setTimeout(() => markReadRef.current?.(), 3000)
-    return () => window.clearTimeout(timer)
-  }, [isUnread, canMarkRead, previewOpen])
+  const subscribePreview = useCallback(
+    (listener: () => void) =>
+      preview.subscribe(listener, {
+        itemId: item.id,
+        available: previewAvailable,
+        pinned: previewPinned,
+        unread: isUnread,
+        onPinnedChange: onPreviewPinnedChange,
+        onMarkRead,
+      }),
+    [preview, item.id, previewAvailable, previewPinned, isUnread, onPreviewPinnedChange, onMarkRead]
+  )
+  const observedPreviewOpen = useSyncExternalStore(
+    subscribePreview,
+    preview.getSnapshot,
+    preview.getSnapshot
+  )
+  const previewOpen = previewAvailable && observedPreviewOpen
   const card = (
     <CollaborationIssueCard
       item={item}

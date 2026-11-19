@@ -2,9 +2,9 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { writeWorkspacePathDragData } from '@/lib/workspace-path-transfer'
 import type { WorkspaceFileEntry } from '@/types/workspace-files'
 import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { VirtualTree } from '@wegent/collaboration/controls/VirtualTree'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Folder, FolderOpen, RefreshCw, Search } from 'lucide-react'
-import { VirtualTree } from '@wegent/collaboration/controls/VirtualTree'
 import { useMemo, useState } from 'react'
 import {
   createWorkspaceTreeModel,
@@ -13,8 +13,8 @@ import {
 } from './workspaceFileTreeModel'
 
 import { createFileTreeData, resolveFileTreePath } from './fileTreeData'
-import { WorkspaceFileIcon } from './WorkspaceFileIcon'
 import { useFileTreeExpansion } from './useFileTreeExpansion'
+import { WorkspaceFileIcon } from './WorkspaceFileIcon'
 
 interface WorkspaceFileTreeProps {
   visible?: boolean

@@ -1,14 +1,15 @@
-import type { TurnFileChangeItem } from '@wegent/chat-core/runtime'
-import { ChevronDown, FileDiff } from 'lucide-react'
-import type { CSSProperties } from 'react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { ActivityShimmerText } from '../../issue-card/ActivityShimmerText'
 import { Button as ControlButton } from '../../markdown/Button'
+import { useClock } from '../../clock'
+import { useCallback, useLayoutEffect, useRef, useState } from 'react'
+import type { CSSProperties } from 'react'
+import { ChevronDown, FileDiff } from 'lucide-react'
 import { useConversationTranslation } from '../ConversationTranslation'
-import { InlineDiffPreview, fileDiffPreviewLines } from './ToolInlineDiff'
-import { usePersistentProcessingSelection } from './processingExpansionState'
-import { basename } from './toolBlockText'
+import type { TurnFileChangeItem } from '@wegent/chat-core/runtime'
 import type { ProcessingBlock } from './types'
+import { ActivityShimmerText } from '../../issue-card/ActivityShimmerText'
+import { InlineDiffPreview, fileDiffPreviewLines } from './ToolInlineDiff'
+import { basename } from './toolBlockText'
+import { usePersistentProcessingSelection } from './processingExpansionState'
 
 export function ProcessFileChangesBlockItem({
   block,
@@ -45,9 +46,7 @@ export function ProcessFileChangesBlockItem({
           const editDuration = fileEditDurations?.get(block.id)?.get(file.path)
           return (
             <div key={`${file.old_path ?? ''}:${file.path}`} className="min-w-0">
-              <ControlButton
-                variant="ghost"
-                size="sm"
+              <ControlButton variant="unstyled"
                 type="button"
                 disabled={previewLines.length === 0}
                 aria-expanded={previewLines.length > 0 ? fileExpanded : undefined}
@@ -123,51 +122,46 @@ function FileChangeLineStats({
   isRunning: boolean
   streamId: string
 }) {
-  const [statBlocks, setStatBlocks] = useState<FileChangeStatBlock[]>([])
-  const previousRef = useRef({
+  const [stats, setStats] = useState(() => ({
     streamId,
     additions: file.additions,
     deletions: file.deletions,
-  })
-  const visibleStatBlocks =
-    isRunning && statBlocks.length > 0
-      ? statBlocks
-      : buildStaticFileChangeStatBlocks(file, streamId)
-
-  useEffect(() => {
-    const previous = previousRef.current
-    if (previous.streamId !== streamId) {
-      previousRef.current = {
-        streamId,
-        additions: file.additions,
-        deletions: file.deletions,
-      }
-      setStatBlocks([])
-      return
-    }
-
-    const addedDelta = Math.max(0, file.additions - previous.additions)
-    const deletedDelta = Math.max(0, file.deletions - previous.deletions)
-    previousRef.current = {
+    blocks: [] as FileChangeStatBlock[],
+    sequence: 0,
+  }))
+  if (stats.streamId !== streamId) {
+    setStats({
       streamId,
       additions: file.additions,
       deletions: file.deletions,
-    }
-
-    if (!isRunning || (addedDelta === 0 && deletedDelta === 0)) return
-
-    const now = Date.now()
-    setStatBlocks(current =>
-      [
-        ...current,
-        {
-          id: `${streamId}:${now}:${addedDelta}:${deletedDelta}`,
-          additions: addedDelta,
-          deletions: deletedDelta,
-        },
-      ].slice(-6)
-    )
-  }, [file.additions, file.deletions, isRunning, streamId])
+      blocks: [],
+      sequence: 0,
+    })
+  } else if (stats.additions !== file.additions || stats.deletions !== file.deletions) {
+    const additions = Math.max(0, file.additions - stats.additions)
+    const deletions = Math.max(0, file.deletions - stats.deletions)
+    setStats({
+      ...stats,
+      additions: file.additions,
+      deletions: file.deletions,
+      sequence: stats.sequence + 1,
+      blocks:
+        isRunning && (additions > 0 || deletions > 0)
+          ? [
+              ...stats.blocks,
+              {
+                id: streamId + ':' + (stats.sequence + 1),
+                additions,
+                deletions,
+              },
+            ].slice(-6)
+          : stats.blocks,
+    })
+  }
+  const visibleStatBlocks =
+    isRunning && stats.blocks.length > 0
+      ? stats.blocks
+      : buildStaticFileChangeStatBlocks(file, streamId)
 
   return (
     <span
@@ -214,24 +208,27 @@ function AnimatedChangeNumber({ value, deltaPrefix }: { value: number; deltaPref
   const [delta, setDelta] = useState(0)
   const [animationId, setAnimationId] = useState(0)
 
-  useEffect(() => {
-    if (previousValueRef.current === value) return
-    const deltaValue = Math.abs(value - previousValueRef.current)
-    previousValueRef.current = value
-    setDelta(0)
-    const frame = requestAnimationFrame(() => {
-      setDelta(deltaValue)
-      setAnimationId(current => current + 1)
-    })
-    const timeout = window.setTimeout(() => setDelta(0), 560)
-    return () => {
-      cancelAnimationFrame(frame)
-      window.clearTimeout(timeout)
-    }
-  }, [value])
+  const attachNumber = useCallback(
+    (node: HTMLSpanElement | null) => {
+      if (!node || previousValueRef.current === value) return
+      const deltaValue = Math.abs(value - previousValueRef.current)
+      previousValueRef.current = value
+      setDelta(0)
+      const frame = requestAnimationFrame(() => {
+        setDelta(deltaValue)
+        setAnimationId(current => current + 1)
+      })
+      const timeout = window.setTimeout(() => setDelta(0), 560)
+      return () => {
+        cancelAnimationFrame(frame)
+        window.clearTimeout(timeout)
+      }
+    },
+    [value]
+  )
 
   return (
-    <span className="file-change-delta-number">
+    <span ref={attachNumber} className="file-change-delta-number">
       <span className="file-change-rolling-viewport">
         <span
           key={`${value}-${animationId}`}
@@ -325,21 +322,22 @@ export function ToolDurationText({
 }
 
 function useToolDuration(startedAt: number, fallbackEndAt: number | undefined, isRunning: boolean) {
-  const [now, setNow] = useState(() => Date.now())
+  const now = useClock(isRunning, { resolutionMs: 100 })
   const [anchoredStartedAt] = useState(startedAt)
-  const wasRunning = useRef(isRunning)
-  const [completedAt, setCompletedAt] = useState<number | null>(null)
-
-  useEffect(() => {
-    if (!isRunning) return
-    const timer = window.setInterval(() => setNow(Date.now()), 100)
-    return () => window.clearInterval(timer)
-  }, [isRunning])
-
-  useEffect(() => {
-    if (wasRunning.current && !isRunning) setCompletedAt(Date.now())
-    wasRunning.current = isRunning
-  }, [isRunning])
+  const [phase, setPhase] = useState<{
+    running: boolean
+    completedAt: number | null
+  }>(() => ({
+    running: isRunning,
+    completedAt: null,
+  }))
+  if (phase.running !== isRunning) {
+    setPhase({
+      running: isRunning,
+      completedAt: isRunning ? phase.completedAt : now,
+    })
+  }
+  const completedAt = phase.completedAt
 
   const durationStartedAt = fallbackEndAt === undefined ? anchoredStartedAt : startedAt
   const endedAt = isRunning ? now : (fallbackEndAt ?? completedAt ?? anchoredStartedAt)

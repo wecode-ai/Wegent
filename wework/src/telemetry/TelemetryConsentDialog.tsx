@@ -12,7 +12,6 @@ interface TelemetryConsentDialogProps {
 
 export function TelemetryConsentDialog({ onChoose }: TelemetryConsentDialogProps) {
   const { t } = useTranslation('common')
-  const acceptRef = useRef<HTMLButtonElement>(null)
   const sectionRef = useRef<HTMLElement>(null)
 
   return createPortal(
@@ -21,7 +20,7 @@ export function TelemetryConsentDialog({ onChoose }: TelemetryConsentDialogProps
       className="fixed inset-0 z-system flex items-center justify-center bg-black/40 px-4 backdrop-blur-sm"
     >
       <DialogSurface
-        initialFocus={() => acceptRef.current}
+        initialFocus='[data-testid="telemetry-consent-accept"]'
         render={
           <section
             ref={sectionRef}
@@ -62,7 +61,7 @@ export function TelemetryConsentDialog({ onChoose }: TelemetryConsentDialogProps
             variant="primary"
             size="sm"
             type="button"
-            ref={acceptRef}
+            autoFocus
             data-testid="telemetry-consent-accept"
             onClick={() => onChoose(true)}
             className="h-10 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:opacity-50"

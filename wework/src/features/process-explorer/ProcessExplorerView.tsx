@@ -1,7 +1,9 @@
+import { usePanelResizeDrag } from '@/components/layout/usePanelResizeDrag'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import { usePanelResizeDrag } from '@/components/layout/usePanelResizeDrag'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import type {
   ProcessExplorerClient,
@@ -12,10 +14,10 @@ import type {
 import { Check, ChevronDown, ChevronRight, Copy, Pin, RefreshCw } from 'lucide-react'
 import {
   useCallback,
-  useEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactElement,
   type KeyboardEvent as ReactKeyboardEvent,
   type PointerEvent as ReactPointerEvent,
@@ -76,64 +78,28 @@ export function ProcessExplorerView({
   refreshIntervalMs = DEFAULT_REFRESH_INTERVAL_MS,
 }: ProcessExplorerViewProps) {
   const { t } = useTranslation('common')
-  const [snapshot, setSnapshot] = useState<ProcessSnapshot | null>(null)
-  const [error, setError] = useState<unknown | null>(null)
   const [filter, setFilter] = useState('')
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [collapsedOwners, setCollapsedOwners] = useState<Set<string>>(() => new Set())
   const [columnWidths, setColumnWidths] = useState<number[]>(() => [...DEFAULT_COLUMN_WIDTHS])
-  const loadSequence = useRef(0)
   const tableRef = useRef<HTMLTableElement>(null)
   const { startResize: startPanelResize, stopResize } = usePanelResizeDrag()
 
-  const load = useCallback(async () => {
-    const sequence = ++loadSequence.current
-    const startedAt = Date.now()
-    traceSnapshotLoad('requested', sequence, startedAt)
-    try {
-      const next = await client.snapshot({ waitForSystemProcesses: false })
-      traceSnapshotLoad('received', sequence, startedAt, {
-        accepted: loadSequence.current === sequence,
-        processCount: next.processes.length,
-        degraded: next.degraded.map(item => item.code),
-      })
-      if (loadSequence.current !== sequence) return
-      setSnapshot(next)
-      setError(null)
-    } catch (loadError) {
-      traceSnapshotLoad('failed', sequence, startedAt, {
-        accepted: loadSequence.current === sequence,
-        errorName: loadError instanceof Error ? loadError.name : typeof loadError,
-      })
-      if (loadSequence.current !== sequence) return
-      setError(loadError)
+  const source = useMemo(
+    () => createProcessSnapshotSource(client, refreshIntervalMs),
+    [client, refreshIntervalMs]
+  )
+  const state = useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot)
+  const snapshot = state.data?.snapshot ?? null
+  const error = state.error ?? null
+  const load = source.reload
+  useWindowEvent('keydown', event => {
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'w') {
+      event.preventDefault()
+      window.close()
     }
-  }, [client])
-
-  useEffect(() => {
-    const initial = window.setTimeout(() => void load(), 0)
-    const timer = window.setInterval(() => void load(), refreshIntervalMs)
-    return () => {
-      window.clearTimeout(initial)
-      window.clearInterval(timer)
-    }
-  }, [load, refreshIntervalMs])
-
-  useEffect(() => {
-    document.title = t('process_explorer.title')
-  }, [t])
-
-  useEffect(() => {
-    const closeOnShortcut = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'w') {
-        event.preventDefault()
-        window.close()
-      }
-    }
-    window.addEventListener('keydown', closeOnShortcut)
-    return () => window.removeEventListener('keydown', closeOnShortcut)
-  }, [])
+  })
 
   const groups = useMemo(() => buildRenderGroups(snapshot, filter), [snapshot, filter])
   const totalCpu = groups.reduce((total, group) => total + group.cpuPercent, 0)
@@ -160,6 +126,17 @@ export function ProcessExplorerView({
       return next
     })
   }
+
+  const bindTable = useCallback(
+    (table: HTMLTableElement | null) => {
+      tableRef.current = table
+      return () => {
+        stopResize()
+        tableRef.current = null
+      }
+    },
+    [stopResize]
+  )
 
   const copySelectedDetail = async () => {
     if (!selectedRecord || !selectedDetail) return
@@ -203,6 +180,7 @@ export function ProcessExplorerView({
       data-testid="process-explorer-window"
       className="flex h-screen flex-col bg-background text-text-primary"
     >
+      <title>{t('process_explorer.title')}</title>
       <div className="flex items-center gap-3 border-b border-border px-3 py-2">
         <ControlInput
           density="dense"
@@ -293,7 +271,7 @@ export function ProcessExplorerView({
 
       <div className="min-h-0 flex-1 overflow-auto" data-testid="process-explorer-list">
         <table
-          ref={tableRef}
+          ref={bindTable}
           aria-label={t('process_explorer.title')}
           className="w-full table-fixed border-collapse text-sm"
         >
@@ -455,6 +433,64 @@ export function ProcessExplorerView({
         )}
       </footer>
     </div>
+  )
+}
+
+interface SnapshotRead {
+  snapshot: ProcessSnapshot
+  sequence: number
+  startedAt: number
+}
+interface SnapshotFailure {
+  cause: unknown
+  sequence: number
+  startedAt: number
+}
+let nextSnapshotSequence = 0
+
+function createProcessSnapshotSource(client: ProcessExplorerClient, refreshIntervalMs: number) {
+  return createAsyncResource<SnapshotRead>(
+    'process-explorer-snapshot',
+    async signal => {
+      const sequence = ++nextSnapshotSequence
+      const startedAt = Date.now()
+      traceSnapshotLoad('requested', sequence, startedAt)
+      try {
+        const snapshot = await client.snapshot({ waitForSystemProcesses: false })
+        if (signal.aborted)
+          traceSnapshotLoad('received', sequence, startedAt, {
+            accepted: false,
+            processCount: snapshot.processes.length,
+            degraded: snapshot.degraded.map(item => item.code),
+          })
+        return { snapshot, sequence, startedAt }
+      } catch (cause) {
+        if (signal.aborted)
+          traceSnapshotLoad('failed', sequence, startedAt, {
+            accepted: false,
+            errorName: cause instanceof Error ? cause.name : typeof cause,
+          })
+        throw { cause, sequence, startedAt } satisfies SnapshotFailure
+      }
+    },
+    {
+      refreshIntervalMs,
+      refreshIntervalMode: 'after-settle',
+      success({ snapshot, sequence, startedAt }) {
+        traceSnapshotLoad('received', sequence, startedAt, {
+          accepted: true,
+          processCount: snapshot.processes.length,
+          degraded: snapshot.degraded.map(item => item.code),
+        })
+      },
+      failure(error) {
+        const { cause, sequence, startedAt } = error as SnapshotFailure
+        traceSnapshotLoad('failed', sequence, startedAt, {
+          accepted: true,
+          errorName: cause instanceof Error ? cause.name : typeof cause,
+        })
+      },
+    }
   )
 }
 

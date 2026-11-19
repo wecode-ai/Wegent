@@ -1,9 +1,14 @@
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
 import type { PluginShareGroupSearchItem, PluginShareUserSearchItem } from '@/api/plugins'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { PluginAccessTarget } from '@/types/api'
 import { SearchableSelect } from '@wegent/collaboration/controls/SearchableSelect'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
-import { useEffect, useRef, useState } from 'react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
 
 const SEARCH_DEBOUNCE_MS = 180
 
@@ -21,63 +26,37 @@ export function PluginShareTargetSearch({
   const { t } = useTranslation('common')
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState(true)
-  const [users, setUsers] = useState<PluginShareUserSearchItem[]>([])
-  const [groups, setGroups] = useState<PluginShareGroupSearchItem[]>([])
-  const [searching, setSearching] = useState(false)
-  const requestIdRef = useRef(0)
-  const [error, setError] = useState(false)
-  const [retryRevision, setRetryRevision] = useState(0)
-
-  useEffect(() => {
-    const normalized = query.trim()
-    if (!normalized) return
-
-    const requestId = ++requestIdRef.current
-    const timeoutId = window.setTimeout(() => {
-      void Promise.all([searchUsers(normalized), searchGroups(normalized)])
-        .then(([nextUsers, nextGroups]) => {
-          if (requestIdRef.current !== requestId) return
-          setUsers(nextUsers)
-          setGroups(nextGroups)
-        })
-        .catch(() => {
-          if (requestIdRef.current !== requestId) return
-          setUsers([])
-          setGroups([])
-          setError(true)
-        })
-        .finally(() => {
-          if (requestIdRef.current === requestId) setSearching(false)
-        })
-    }, SEARCH_DEBOUNCE_MS)
-
-    return () => {
-      window.clearTimeout(timeoutId)
-      if (requestIdRef.current === requestId) requestIdRef.current += 1
-    }
-  }, [query, retryRevision, searchGroups, searchUsers])
-
-  const clearSearch = () => {
-    requestIdRef.current += 1
-    setQuery('')
-    setError(false)
-    setUsers([])
-    setGroups([])
-    setSearching(false)
-  }
-
-  const handleQueryChange = (value: string) => {
-    requestIdRef.current += 1
-    setQuery(value)
-    setError(false)
-    setUsers([])
-    setGroups([])
-    setSearching(Boolean(value.trim()))
-  }
+  const normalizedQuery = query.trim()
+  const resource = useMemo(
+    () =>
+      createAsyncResource(
+        normalizedQuery,
+        async () => {
+          const [users, groups] = await Promise.all([
+            searchUsers(normalizedQuery),
+            searchGroups(normalizedQuery),
+          ])
+          return { users, groups }
+        },
+        { delayMs: SEARCH_DEBOUNCE_MS, refreshOnSubscribe: true }
+      ),
+    [normalizedQuery, searchGroups, searchUsers]
+  )
+  const result = useSyncExternalStore(
+    normalizedQuery ? resource.subscribe : subscribeIdleResource,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const users = result.data?.users ?? []
+  const groups = result.data?.groups ?? []
+  const searching = Boolean(
+    normalizedQuery && (result.status === 'idle' || result.status === 'loading')
+  )
+  const error = result.status === 'error'
 
   const selectTarget = (target: PluginAccessTarget) => {
     onSelect(target)
-    clearSearch()
+    setQuery('')
   }
 
   const targets: PluginAccessTarget[] = [
@@ -107,7 +86,7 @@ export function PluginShareTargetSearch({
       open={open}
       value=""
       query={query}
-      onSearchChange={handleQueryChange}
+      onSearchChange={setQuery}
       filter={false}
       options={uniqueTargets.map(target => ({
         value: target.entityType + ':' + target.entityId,
@@ -126,7 +105,7 @@ export function PluginShareTargetSearch({
       }}
       onOpenChange={next => {
         setOpen(next)
-        if (!next) clearSearch()
+        if (!next) setQuery('')
       }}
       searchStatus={
         searching ? (
@@ -139,11 +118,7 @@ export function PluginShareTargetSearch({
             <ControlButton
               variant="ghost"
               data-testid="plugin-share-search-retry"
-              onClick={() => {
-                setError(false)
-                setSearching(true)
-                setRetryRevision(value => value + 1)
-              }}
+              onClick={() => void resource.reload()}
             >
               {t('workbench.retry', '重试')}
             </ControlButton>

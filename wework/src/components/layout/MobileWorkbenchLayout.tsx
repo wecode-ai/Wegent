@@ -44,9 +44,10 @@ import {
   isWorkbenchDeviceOnline,
 } from '@/lib/workbench-device'
 import type { WorkbenchMessage } from '@/types/workbench'
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { ArrowLeftRight, Bot, Menu } from 'lucide-react'
-import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useRef, useState } from 'react'
 import { BufferedChatInput } from './BufferedChatInput'
 import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBanner'
 import { DeviceStatusPrompt } from './DeviceStatusPrompt'
@@ -299,13 +300,9 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     ? undefined
     : composerDisabledReason
 
-  useEffect(() => {
-    const handlePopState = () => {
-      setSettingsOpen(isSettingsRoute(stripAppBasePath(window.location.pathname)))
-    }
-    window.addEventListener('popstate', handlePopState)
-    return () => window.removeEventListener('popstate', handlePopState)
-  }, [])
+  useWindowEvent('popstate', () => {
+    setSettingsOpen(isSettingsRoute(stripAppBasePath(window.location.pathname)))
+  })
 
   if (settingsOpen) {
     return (

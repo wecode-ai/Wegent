@@ -1,189 +1,28 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import type { Dispatch } from 'react'
-import type { ExecutorClient } from '@/api/executorAccess'
-import { canRequestDeviceUpgrade, isWeWorkCompatibleDevice } from '@/lib/device-capabilities'
-import type {
-  DeviceSlotUpdatePayload,
-  DeviceUpgradeState,
-  DeviceUpgradeStatusPayload,
-} from '@/types/device-events'
-import type { WorkbenchState } from '@/types/workbench'
+import { useCallback, useState, useSyncExternalStore } from 'react'
 import {
-  UPGRADE_REFRESH_INTERVAL_MS,
-  UPGRADE_STATE_CLEAR_DELAY_MS,
-  getUpgradeStatusMessage,
-  isTerminalDeviceUpgradeStatus,
-} from './workbenchProviderHelpers'
-import type { WorkbenchAction } from './workbenchReducer'
-import type { WorkbenchServices } from './workbenchServices'
-
-interface UseWorkbenchDeviceUpgradesOptions {
-  state: WorkbenchState
-  dispatch: Dispatch<WorkbenchAction>
-  executorClient: ExecutorClient
-  services: WorkbenchServices
-  refreshDevices: (options?: { useCacheFallback?: boolean }) => Promise<void>
-}
+  createWorkbenchDeviceUpgradeSource,
+  type WorkbenchDeviceUpgradeInput,
+} from './workbenchDeviceUpgradeSource'
 
 export function useWorkbenchDeviceUpgrades({
-  state,
+  state: { devices },
   dispatch,
   executorClient,
   services,
   refreshDevices,
-}: UseWorkbenchDeviceUpgradesOptions) {
-  const [upgradingDevices, setUpgradingDevices] = useState<Record<string, DeviceUpgradeState>>({})
-  const upgradeClearTimersRef = useRef<Record<string, number>>({})
-
-  const clearUpgradeStateTimer = useCallback((deviceId: string) => {
-    const timer = upgradeClearTimersRef.current[deviceId]
-    if (!timer) return
-    window.clearTimeout(timer)
-    delete upgradeClearTimersRef.current[deviceId]
-  }, [])
-
-  const scheduleUpgradeStateClear = useCallback(
-    (deviceId: string) => {
-      clearUpgradeStateTimer(deviceId)
-      upgradeClearTimersRef.current[deviceId] = window.setTimeout(() => {
-        setUpgradingDevices(current => {
-          const next = { ...current }
-          delete next[deviceId]
-          return next
-        })
-        delete upgradeClearTimersRef.current[deviceId]
-      }, UPGRADE_STATE_CLEAR_DELAY_MS)
-    },
-    [clearUpgradeStateTimer]
+}: WorkbenchDeviceUpgradeInput) {
+  const [source] = useState(createWorkbenchDeviceUpgradeSource)
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      source.subscribe(listener, {
+        state: { devices },
+        dispatch,
+        executorClient,
+        services,
+        refreshDevices,
+      }),
+    [source, devices, dispatch, executorClient, services, refreshDevices]
   )
-
-  const setDeviceUpgradeState = useCallback(
-    (deviceId: string, upgradeState: DeviceUpgradeState) => {
-      clearUpgradeStateTimer(deviceId)
-      setUpgradingDevices(current => ({
-        ...current,
-        [deviceId]: upgradeState,
-      }))
-      if (isTerminalDeviceUpgradeStatus(upgradeState.status)) {
-        scheduleUpgradeStateClear(deviceId)
-      }
-    },
-    [clearUpgradeStateTimer, scheduleUpgradeStateClear]
-  )
-
-  const upgradeDevice = useCallback(
-    async (deviceId: string) => {
-      const device = state.devices.find(item => item.device_id === deviceId)
-      if (device && !canRequestDeviceUpgrade(device)) {
-        const message =
-          device.status !== 'online'
-            ? '设备离线，恢复在线后再升级'
-            : '设备正在执行任务，空闲后再升级'
-        setDeviceUpgradeState(deviceId, {
-          status: 'busy',
-          message,
-        })
-        dispatch({ type: 'error_set', error: message })
-        return
-      }
-
-      setDeviceUpgradeState(deviceId, {
-        status: 'pending',
-        message: '正在发送升级指令',
-      })
-
-      try {
-        await executorClient.commands.upgradeDevice(deviceId, {
-          auto_confirm: true,
-        })
-        setDeviceUpgradeState(deviceId, {
-          status: 'checking',
-          message: '升级指令已发送，正在等待设备更新',
-        })
-        void refreshDevices().catch(() => undefined)
-      } catch (error) {
-        const message = error instanceof Error ? error.message : '升级失败'
-        setDeviceUpgradeState(deviceId, {
-          status: 'error',
-          message,
-          error: message,
-        })
-        dispatch({ type: 'error_set', error: message })
-      }
-    },
-    [dispatch, executorClient, refreshDevices, setDeviceUpgradeState, state.devices]
-  )
-
-  useEffect(() => {
-    const refreshDevicesAfterEvent = () => {
-      void refreshDevices({ useCacheFallback: false }).catch(() => undefined)
-    }
-    // Relay events can arrive after discovery has already observed a newer state.
-    // Confirm both online and offline transitions through device discovery.
-    const handleDeviceUpgradeStatus = (payload: DeviceUpgradeStatusPayload) => {
-      setDeviceUpgradeState(payload.device_id, {
-        status: payload.status,
-        message: getUpgradeStatusMessage(payload),
-        progress: payload.progress,
-        error: payload.error,
-      })
-      if (payload.status === 'success' || payload.status === 'skipped') {
-        void refreshDevices()
-      }
-    }
-    const handleDeviceSlotUpdate = (payload: DeviceSlotUpdatePayload) => {
-      dispatch({ type: 'device_slot_updated', payload })
-    }
-
-    return services.chatStream.subscribe({
-      onDeviceOnline: refreshDevicesAfterEvent,
-      onDeviceOffline: refreshDevicesAfterEvent,
-      onDeviceStatus: refreshDevicesAfterEvent,
-      onDeviceSlotUpdate: handleDeviceSlotUpdate,
-      onDeviceUpgradeStatus: handleDeviceUpgradeStatus,
-    })
-  }, [dispatch, refreshDevices, services.chatStream, setDeviceUpgradeState])
-
-  useEffect(() => {
-    return () => {
-      Object.values(upgradeClearTimersRef.current).forEach(timer => {
-        window.clearTimeout(timer)
-      })
-      upgradeClearTimersRef.current = {}
-    }
-  }, [])
-
-  useEffect(() => {
-    const hasActiveUpgrade = Object.values(upgradingDevices).some(
-      upgradeState => !isTerminalDeviceUpgradeStatus(upgradeState.status)
-    )
-    if (!hasActiveUpgrade) return undefined
-
-    const interval = window.setInterval(() => {
-      void refreshDevices().catch(() => undefined)
-    }, UPGRADE_REFRESH_INTERVAL_MS)
-
-    return () => window.clearInterval(interval)
-  }, [refreshDevices, upgradingDevices])
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setUpgradingDevices(current => {
-        let changed = false
-        const next = { ...current }
-        Object.keys(next).forEach(deviceId => {
-          const device = state.devices.find(item => item.device_id === deviceId)
-          if (device && device.status === 'online' && isWeWorkCompatibleDevice(device)) {
-            clearUpgradeStateTimer(deviceId)
-            delete next[deviceId]
-            changed = true
-          }
-        })
-        return changed ? next : current
-      })
-    }, 0)
-    return () => window.clearTimeout(timer)
-  }, [clearUpgradeStateTimer, state.devices])
-
-  return { upgradingDevices, upgradeDevice }
+  const upgradingDevices = useSyncExternalStore(subscribe, source.getSnapshot)
+  return { upgradingDevices, upgradeDevice: source.upgradeDevice }
 }

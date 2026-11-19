@@ -20,3 +20,8 @@ export * from './ComposerPredictionContext'
 export { composerMarkdownText } from './composerMarkdownParser'
 export * from './ComposerProjectSelector'
 export * from './ComposerContextButton'
+
+export {
+  createComposerAutocompleteState,
+  type ComposerAutocompleteState,
+} from './composerAutocompleteState'

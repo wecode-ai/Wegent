@@ -1,7 +1,5 @@
 import { IconButton } from '../controls/IconButton'
 import { Popover, PopoverContent, PopoverTrigger } from '../controls/Popover'
-import { controlPopup } from '../controls/recipes'
-import { useCollaborationPortalTheme } from '../theme'
 import { SelectContent, SelectItem, SelectRoot, SelectTrigger } from '../controls/SelectParts'
 import { normalizeSelectValue } from '../controls/selectValue'
 import { TextField as ControlInput } from '../controls/TextField'
@@ -72,6 +70,8 @@ export function ProjectMembersSection<
 }) {
   const { LockKeyhole, Trash2 } = host.icons
   const {
+    memberPanelRef,
+    memberSearchError,
     members,
     loading,
     loadError,
@@ -91,7 +91,6 @@ export function ProjectMembersSection<
     updateMember,
     updateMemberCapability,
   } = controller
-  const popoverTheme = useCollaborationPortalTheme()
   const busy = savingUserId !== null
   const inherited = members.some(member => member.inherited_role)
   const modeHint =
@@ -106,7 +105,7 @@ export function ProjectMembersSection<
         )
 
   return (
-    <section className={className} data-testid="cloud-project-members-panel">
+    <section ref={memberPanelRef} className={className} data-testid="cloud-project-members-panel">
       <div className={projectSettingsContentClassName}>
         <header className="flex items-start justify-between gap-4">
           <div className="min-w-0">
@@ -142,24 +141,13 @@ export function ProjectMembersSection<
                     />
                   }
                 >
-                  <span aria-hidden="true" className="mr-1">
-                    ＋
-                  </span>
-                  {host.translate('todo.add_project_member', '添加成员')}
+                  <span aria-hidden="true" className="mr-1">＋</span>
+                  {host.translate('todo.add_member', '添加成员')}
                 </PopoverTrigger>
                 {membersOpen && (
-                  <PopoverContent
-                    {...popoverTheme}
-                    align="end"
-                    sideOffset={4}
-                    collisionPadding={8}
-                    initialFocus={() => memberSearchInputRef.current}
-                    id="cloud-project-member-picker"
-                    aria-label={host.translate('todo.add_project_member', '添加成员')}
-                    data-testid="cloud-project-member-picker"
-                    className={popoverTheme.className + ' ' + controlPopup + ' w-72'}
-                  >
+                  <PopoverContent data-testid="cloud-project-member-picker">
                     <MemberSearchPicker
+                      error={memberSearchError}
                       query={memberQuery}
                       onQueryChange={setMemberQuery}
                       users={memberResults}

@@ -1,9 +1,16 @@
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { resolveFileTreePath, type FileTreeData } from './fileTreeData'
 
 export function useFileTreeExpansion(data: FileTreeData, query: string, requested: string[]) {
-  const [expanded, setExpanded] = useState(requested)
-  const previousRequested = useRef(requested)
+  const [expansion, setExpansion] = useState({ requested, expanded: requested })
+  const unchanged =
+    expansion.requested.length === requested.length &&
+    expansion.requested.every((path, index) => path === requested[index])
+  const added = unchanged ? [] : requested.filter(path => !expansion.requested.includes(path))
+  const expanded = added.length
+    ? [...new Set([...expansion.expanded, ...added])]
+    : expansion.expanded
+  if (!unchanged) setExpansion({ requested, expanded })
   const [search, setSearch] = useState<{ query: string; values: string[] }>({
     query: '',
     values: [],
@@ -19,17 +26,11 @@ export function useFileTreeExpansion(data: FileTreeData, query: string, requeste
         .map(path => resolveFileTreePath(data, path))
         .filter((path): path is string => path !== null)
 
-  useEffect(() => {
-    const added = requested.filter(path => !previousRequested.current.includes(path))
-    previousRequested.current = requested
-    if (added.length) setExpanded(current => Array.from(new Set([...current, ...added])))
-  }, [requested])
-
   return {
     values,
     setValues(next: string[]) {
       if (filtered) setSearch({ query, values: next })
-      else setExpanded(next)
+      else setExpansion({ requested, expanded: next })
     },
   }
 }

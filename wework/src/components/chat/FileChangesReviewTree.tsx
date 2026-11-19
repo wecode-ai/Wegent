@@ -1,11 +1,11 @@
 import { useTranslation } from '@/hooks/useTranslation'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
 import { VirtualTree } from '@wegent/collaboration/controls/VirtualTree'
+import { Folder, FolderOpen, Search } from 'lucide-react'
+import { useMemo, useState } from 'react'
 import { createFileTreeData, resolveFileTreePath } from '../layout/workspace-panels/fileTreeData'
 import { useFileTreeExpansion } from '../layout/workspace-panels/useFileTreeExpansion'
 import { WorkspaceFileIcon } from '../layout/workspace-panels/WorkspaceFileIcon'
-import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
-import { Folder, FolderOpen, Search } from 'lucide-react'
-import { useMemo, useState } from 'react'
 import { getDiffFileStatus, type DiffFileSection } from './parseUnifiedDiff'
 
 export function ReviewFileTree({

@@ -1,10 +1,8 @@
-import { setEmbeddedBrowserOcclusion } from '@/lib/embedded-browser'
 import { track } from '@/telemetry/client'
 import type { AnalyticsEventMap } from '@/telemetry/events'
 import { ActionMenu } from '@wegent/collaboration/controls/ActionMenu'
 import { Plus } from 'lucide-react'
-import { useEffect, type ComponentType } from 'react'
-const EMBEDDED_BROWSER_OCCLUSION_ID = 'workspace-add-menu'
+import type { ComponentType } from 'react'
 const WORKSPACE_PANEL_TYPES = new Set(['review', 'terminal', 'browser', 'chat', 'files'] as const)
 function workspacePanelType(id: string) {
   return WORKSPACE_PANEL_TYPES.has(id as never)
@@ -43,7 +41,6 @@ export function WorkspaceAddMenu({
   preferredPlacement = 'below',
   align = 'start',
 }: WorkspaceAddMenuProps) {
-  useEffect(() => () => setEmbeddedBrowserOcclusion(EMBEDDED_BROWSER_OCCLUSION_ID, false), [])
   return (
     <ActionMenu
       ariaLabel={ariaLabel}
@@ -61,7 +58,6 @@ export function WorkspaceAddMenu({
             : 'bottom-start'
       }
       width={240}
-      onOpenChange={open => setEmbeddedBrowserOcclusion(EMBEDDED_BROWSER_OCCLUSION_ID, open)}
       items={items.map(item => ({
         id: item.id,
         testId: item.testId,

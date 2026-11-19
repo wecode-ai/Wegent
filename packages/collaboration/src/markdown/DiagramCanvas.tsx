@@ -1,7 +1,7 @@
+import { Button as ControlButton } from './Button'
 import Panzoom, { type PanzoomObject } from '@panzoom/panzoom'
 import { Minus, Plus, RotateCcw } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
-import { Button as ControlButton } from './Button'
+import { useCallback, useRef, useState } from 'react'
 import type { DiagramArtifact } from './diagramArtifact'
 import { useMarkdownServices } from './MarkdownServices'
 
@@ -17,36 +17,37 @@ export function DiagramCanvas({
   onError: () => void
 }) {
   const { translate: t } = useMarkdownServices()
-  const imageRef = useRef<HTMLImageElement>(null)
   const panzoomRef = useRef<PanzoomObject | null>(null)
   const [scale, setScale] = useState(1)
-  useEffect(() => {
-    const image = imageRef.current
-    const canvas = image?.parentElement
-    if (!image || !canvas) return
-    const panzoom = Panzoom(image, {
-      minScale: 0.4,
-      maxScale: 4,
-      canvas: true,
-      touchAction: fullscreen ? 'none' : 'pan-y',
-    })
-    panzoomRef.current = panzoom
-    const wheel = (event: WheelEvent) => {
-      if (!event.ctrlKey && !event.metaKey) return
-      event.preventDefault()
-      panzoom.zoomWithWheel(event)
-    }
-    const change = (event: Event) =>
-      setScale((event as CustomEvent<{ scale: number }>).detail.scale)
-    canvas.addEventListener('wheel', wheel, { passive: false })
-    image.addEventListener('panzoomzoom', change)
-    return () => {
-      canvas.removeEventListener('wheel', wheel)
-      image.removeEventListener('panzoomzoom', change)
-      panzoom.destroy()
-      panzoomRef.current = null
-    }
-  }, [artifact, fullscreen])
+  const attachImage = useCallback(
+    (image: HTMLImageElement | null) => {
+      const canvas = image?.parentElement
+      if (!image || !canvas) return
+      const panzoom = Panzoom(image, {
+        minScale: 0.4,
+        maxScale: 4,
+        canvas: true,
+        touchAction: fullscreen ? 'none' : 'pan-y',
+      })
+      panzoomRef.current = panzoom
+      const wheel = (event: WheelEvent) => {
+        if (!event.ctrlKey && !event.metaKey) return
+        event.preventDefault()
+        panzoom.zoomWithWheel(event)
+      }
+      const change = (event: Event) =>
+        setScale((event as CustomEvent<{ scale: number }>).detail.scale)
+      canvas.addEventListener('wheel', wheel, { passive: false })
+      image.addEventListener('panzoomzoom', change)
+      return () => {
+        canvas.removeEventListener('wheel', wheel)
+        image.removeEventListener('panzoomzoom', change)
+        panzoom.destroy()
+        panzoomRef.current = null
+      }
+    },
+    [fullscreen]
+  )
   const controls = [
     {
       id: 'out',
@@ -78,7 +79,8 @@ export function DiagramCanvas({
         data-search-excluded
       >
         <img
-          ref={imageRef}
+          key={artifact.src}
+          ref={attachImage}
           data-testid="diagram-image"
           src={artifact.src}
           alt={t('workbench.diagram_preview', '图表预览')}

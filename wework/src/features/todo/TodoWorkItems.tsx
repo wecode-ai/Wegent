@@ -18,19 +18,18 @@ import {
   X,
 } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import type { TodoDetailItem, TodoViewState } from './todoTypes'
 import { todoStateColors } from './todoStateColors'
-import {
-  countActiveTodoFilters,
-  DEFAULT_TODO_FILTERS,
-  type TodoAssigneeFilter,
-  type TodoDisplaySettings,
-  type TodoFilters,
-  type TodoLayout,
-  type TodoOrder,
-  type TodoPriorityFilter,
-  type TodoUpdatedFilter,
+import type { TodoDetailItem, TodoViewState } from './todoTypes'
+import type {
+  TodoAssigneeFilter,
+  TodoDisplaySettings,
+  TodoFilters,
+  TodoLayout,
+  TodoOrder,
+  TodoPriorityFilter,
+  TodoUpdatedFilter,
 } from './todoViewSettings'
+import { countActiveTodoFilters, DEFAULT_TODO_FILTERS } from './todoViewSettings'
 
 interface TodoWorkItemsProps {
   items: TodoDetailItem[]

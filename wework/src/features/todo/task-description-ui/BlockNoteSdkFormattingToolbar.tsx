@@ -1,4 +1,4 @@
-import { useBlockNoteSdkPopupPresence } from './blockNoteSdkPopupPresence'
+import { useBlockNoteSdkPopupRef } from './blockNoteSdkPopupPresence'
 import { FormattingToolbarExtension } from '@blocknote/core/extensions'
 import {
   FormattingToolbar,
@@ -122,7 +122,7 @@ export function BlockNoteSdkFormattingToolbar({ ariaLabel }: { ariaLabel: string
     () => ({ getBoundingClientRect: () => editor.getSelectionBoundingBox() ?? new DOMRect() }),
     [editor]
   )
-  useBlockNoteSdkPopupPresence(Boolean(show && bounds))
+  const popupRef = useBlockNoteSdkPopupRef()
   return (
     <Popover
       open={Boolean(show && bounds)}
@@ -131,6 +131,7 @@ export function BlockNoteSdkFormattingToolbar({ ariaLabel }: { ariaLabel: string
       }}
     >
       <PopoverContent
+        ref={popupRef}
         container={editor.portalElement}
         anchor={anchor}
         side="top"

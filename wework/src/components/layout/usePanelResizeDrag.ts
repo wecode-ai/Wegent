@@ -1,5 +1,5 @@
 import { bindDrag } from '@ui-sdk/core'
-import { useEffect, useRef, type PointerEvent } from 'react'
+import { useRef, type PointerEvent } from 'react'
 import { setPanelResizeShieldActive } from '@/lib/panel-resize-shield'
 
 interface PanelResizeDragOptions {
@@ -11,7 +11,6 @@ interface PanelResizeDragOptions {
 
 export function usePanelResizeDrag() {
   const cleanupRef = useRef<(() => void) | undefined>(undefined)
-  useEffect(() => () => cleanupRef.current?.(), [])
 
   const stopResize = () => cleanupRef.current?.()
   const startResize = <T extends HTMLElement>(
@@ -21,24 +20,31 @@ export function usePanelResizeDrag() {
     if (event.button !== 0) return
     stopResize()
     event.preventDefault()
-    const previousCursor = document.body.style.cursor
-    const previousSelection = document.body.style.userSelect
+    const target = event.currentTarget
+    const owner = target.ownerDocument
+    const previousCursor = owner.body.style.cursor
+    const previousSelection = owner.body.style.userSelect
     let finished = false
     const finish = () => {
       if (finished) return
       finished = true
       stop()
+      attached.disconnect()
       cleanupRef.current = undefined
-      document.body.style.cursor = previousCursor
-      document.body.style.userSelect = previousSelection
+      owner.body.style.cursor = previousCursor
+      owner.body.style.userSelect = previousSelection
       setPanelResizeShieldActive(false)
       onFinish?.()
     }
     cleanupRef.current = finish
-    document.body.style.cursor = cursor
-    document.body.style.userSelect = 'none'
+    owner.body.style.cursor = cursor
+    owner.body.style.userSelect = 'none'
     setPanelResizeShieldActive(true)
-    const stop = bindDrag(event.currentTarget, event.nativeEvent, {
+    const attached = new MutationObserver(() => {
+      if (!target.isConnected) finish()
+    })
+    attached.observe(owner, { childList: true, subtree: true })
+    const stop = bindDrag(target, event.nativeEvent, {
       onMove: position => {
         if (!finished) onMove(position)
       },

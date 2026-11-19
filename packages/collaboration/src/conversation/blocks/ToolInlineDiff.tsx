@@ -1,10 +1,10 @@
-import type { TurnFileChangeItem, TurnFileChangesSummary } from '@wegent/chat-core/runtime'
-import { Copy, CopyCheck } from 'lucide-react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Button as ControlButton } from '../../markdown/Button'
-import { useConversationTranslation } from '../ConversationTranslation'
-import { parseUnifiedDiff } from '../parseUnifiedDiff'
 import { useToolInteractionServices } from '../ToolInteractionServices'
+import { useCallback, useRef, useState } from 'react'
+import { Copy, CopyCheck } from 'lucide-react'
+import { useConversationTranslation } from '../ConversationTranslation'
+import type { TurnFileChangeItem, TurnFileChangesSummary } from '@wegent/chat-core/runtime'
+import { parseUnifiedDiff } from '../parseUnifiedDiff'
 import { basename } from './toolBlockText'
 
 const INLINE_DIFF_MAX_LINES = 96
@@ -18,24 +18,25 @@ export function InlineDiffPreview({
 }) {
   const { t } = useConversationTranslation()
   const interactions = useToolInteractionServices()
-  const previewRef = useLockedMessageContentVisibility()
   const [copied, setCopied] = useState(false)
   const copyResetTimerRef = useRef<number | null>(null)
   const isDisposedRef = useRef(false)
+  const attachPreview = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return
+    isDisposedRef.current = false
+    const article = node.closest<HTMLElement>('[data-message-id]')
+    const previous = article?.style.contentVisibility ?? ''
+    if (article) article.style.contentVisibility = 'visible'
+    return () => {
+      isDisposedRef.current = true
+      if (copyResetTimerRef.current !== null) window.clearTimeout(copyResetTimerRef.current)
+      copyResetTimerRef.current = null
+      if (article) article.style.contentVisibility = previous
+    }
+  }, [])
   const visibleLines = lines.slice(0, INLINE_DIFF_MAX_LINES)
   const truncated = lines.length > INLINE_DIFF_MAX_LINES
   const copyText = formatDiffPreviewCopyText(visibleLines, truncated)
-
-  useEffect(() => {
-    isDisposedRef.current = false
-    return () => {
-      isDisposedRef.current = true
-      if (copyResetTimerRef.current !== null) {
-        window.clearTimeout(copyResetTimerRef.current)
-        copyResetTimerRef.current = null
-      }
-    }
-  }, [])
 
   const handleCopy = async () => {
     await copyCodeText(copyText)
@@ -53,7 +54,7 @@ export function InlineDiffPreview({
 
   return (
     <div
-      ref={previewRef}
+      ref={attachPreview}
       className="mt-2 max-h-[16rem] min-w-0 select-text overflow-auto overscroll-contain rounded-lg border border-border bg-surface font-mono text-xs leading-[18px]"
       data-testid="process-file-change-diff"
       data-message-content-visibility-lock="true"
@@ -80,8 +81,7 @@ export function InlineDiffPreview({
             </span>
           </span>
         </span>
-        <ControlButton
-          variant="unstyled"
+        <ControlButton variant="unstyled"
           type="button"
           data-testid="copy-process-file-change-diff-button"
           aria-label={t('file_changes.copy_code')}
@@ -141,24 +141,6 @@ export function InlineDiffPreview({
       </div>
     </div>
   )
-}
-
-function useLockedMessageContentVisibility() {
-  const previewRef = useRef<HTMLDivElement>(null)
-
-  useLayoutEffect(() => {
-    const article = previewRef.current?.closest<HTMLElement>('[data-message-id]')
-    if (!article) return
-
-    const previousContentVisibility = article.style.contentVisibility
-    article.style.contentVisibility = 'visible'
-
-    return () => {
-      article.style.contentVisibility = previousContentVisibility
-    }
-  }, [])
-
-  return previewRef
 }
 
 interface DiffPreviewLine {

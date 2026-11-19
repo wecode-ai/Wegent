@@ -1,5 +1,5 @@
-import { WorkspaceTitleTab } from '@/components/layout/workspace-panels/WorkspaceTitleTab'
 import { revealWorkspaceTab } from '@/components/layout/workspace-panels/revealWorkspaceTab'
+import { WorkspaceTitleTab } from '@/components/layout/workspace-panels/WorkspaceTitleTab'
 import { useIsDesktop } from '@/hooks/useIsDesktop'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
@@ -23,13 +23,14 @@ import {
 } from '@wegent/collaboration/controls/SelectParts'
 import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
 import { TabsList, TabsRoot } from '@wegent/collaboration/controls/Tabs'
+import { useFocusRequest } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { ArrowLeft, Circle, PanelRightClose, PanelRightOpen, UserRound } from 'lucide-react'
 import {
   useCallback,
-  useEffect,
   useId,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type ReactNode,
@@ -103,22 +104,29 @@ export function WeworkPersonalHome({
   const isDesktop = useIsDesktop(1024)
   const panelId = useId()
   const composerRegion = useRef<HTMLDivElement>(null)
-  const focusComposer = useCallback(() => {
-    const region = composerRegion.current
-    const taskMode = region?.querySelector(
-      '[data-testid="personal-home-new-issue"][aria-selected="true"]'
-    )
-    region
-      ?.querySelector<HTMLElement>(
-        taskMode
-          ? '[data-testid="personal-home-task-content"]'
-          : '[data-testid="collaboration-home-issue-content"]'
-      )
-      ?.focus()
-  }, [])
-  useEffect(() => {
-    if (entryRequestKey) focusComposer()
-  }, [entryRequestKey, focusComposer])
+  const composerFocusTarget = useMemo(
+    () => ({
+      get current() {
+        const region = composerRegion.current
+        const taskMode = region?.querySelector(
+          '[data-testid="personal-home-new-issue"][aria-selected="true"]'
+        )
+        return (
+          region?.querySelector<HTMLElement>(
+            taskMode
+              ? '[data-testid="personal-home-task-content"]'
+              : '[data-testid="collaboration-home-issue-content"]'
+          ) ?? null
+        )
+      },
+    }),
+    []
+  )
+  const focusComposer = useCallback(
+    () => composerFocusTarget.current?.focus(),
+    [composerFocusTarget]
+  )
+  useFocusRequest(composerFocusTarget, entryRequestKey, { enabled: Boolean(entryRequestKey) })
   const [showCompleted, setShowCompleted] = useState(false)
   const [assignedOnly, setAssignedOnly] = useState(true)
   const [order, setOrder] = useState<PersonalHomeIssueOrder>('attention')
@@ -183,7 +191,9 @@ export function WeworkPersonalHome({
     assignedOnly,
     showCompleted,
     localUserIds ?? [userId],
-    order
+    order,
+    undefined,
+    createdIssue ? { key: createdIssue.key, onHandled: onCreatedIssueHandled } : undefined
   )
   const openIssue = (
     issue: CollaborationIssue,
@@ -260,14 +270,6 @@ export function WeworkPersonalHome({
     setExpandedTabs(new Set())
     setActiveTab(id)
   }
-  const creationKey = createdIssue?.key
-  const reloadIssues = state.reload
-  useEffect(() => {
-    if (creationKey) reloadIssues()
-  }, [creationKey, reloadIssues])
-  useEffect(() => {
-    if (creationKey) onCreatedIssueHandled?.(creationKey)
-  }, [creationKey, onCreatedIssueHandled])
   const closeIssue = (id: string) => {
     const index = issueTabs.findIndex(tab => tab.id === id)
     const remaining = issueTabs.filter(tab => tab.id !== id)

@@ -4,24 +4,28 @@ import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { workbenchOwnershipKey } from '@/features/workbench/workbenchOwnership'
 import { useTranslation } from '@/hooks/useTranslation'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
+import type {
+  CollaborationIssue,
+  CollaborationProject,
+  IssueParticipationViewer,
+  SharedWorkspaceApi,
+} from '@wegent/collaboration'
 import {
   canStartWorkOnCollaborationIssue,
   createAssistantConversation,
   createAssistantInteraction,
   createRuntimeAssistantTransport,
-  type CollaborationIssue,
-  type CollaborationProject,
-  type IssueParticipationViewer,
-  type SharedWorkspaceApi,
 } from '@wegent/collaboration'
 import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { useFocusRequest } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { ArrowRight, ChevronRight, Lock, X } from 'lucide-react'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { ExperiencePrivateConversation } from '../model'
+import { experienceAssistantEndpoint } from '../model/assistantEndpoint'
 import { matchesExperienceViewer, projectViewer } from '../model/sourceIdentity'
 import { useExperienceDraftInput } from '../useExperienceDraftInput'
-import { experienceAssistantEndpoint } from '../model/assistantEndpoint'
+import { createPrivateDiscussionView } from './privateDiscussionView'
 import './PrivateExperience.css'
 import { useConclusionPublication } from './useConclusionPublication'
 
@@ -109,37 +113,19 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
   const [history, setHistory] = useState<{ identity: string; available: boolean } | null>(null)
   const historyAvailable =
     sourceScope === 'task' || (history?.identity === identity && history.available)
-  const [preview, setPreview] = useState<{ identity: string; key: string | null }>({
-    identity,
-    key: null,
-  })
-  if (preview.identity !== identity) setPreview({ identity, key: null })
-  const showConclusion =
-    sourceScope === 'task' && preview.identity === identity && preview.key === conclusionKey
+  const view = useMemo(() => createPrivateDiscussionView(identity), [identity])
+  const subscribeView = useCallback(
+    (notify: () => void) => view.subscribe(notify, props.onConclusionViewChange),
+    [view, props.onConclusionViewChange]
+  )
+  const preview = useSyncExternalStore(subscribeView, view.getSnapshot, view.getSnapshot)
+  const showConclusion = sourceScope === 'task' && preview.identity === identity && preview.open
   const reviewButton = useRef<HTMLButtonElement>(null)
   const conclusionInput = useRef<HTMLTextAreaElement>(null)
-  const wasPreview = useRef(false)
-  const mounted = useRef(true)
-  const previewGeneration = useRef(0)
-  const [publishedPreview, setPublishedPreview] = useState<number | null>(null)
-  const { onConclusionViewChange } = props
-  useEffect(() => {
-    mounted.current = true
-    return () => {
-      mounted.current = false
-    }
-  }, [])
-  useEffect(() => {
-    logRuntimeTaskCreateStage('collaboration-exp-preview-commit', { showConclusion }, 'debug')
-    onConclusionViewChange?.(showConclusion)
-    return () => onConclusionViewChange?.(false)
-  }, [onConclusionViewChange, showConclusion])
-  useLayoutEffect(() => {
-    previewGeneration.current += 1
-    if (showConclusion) conclusionInput.current?.focus()
-    else if (wasPreview.current) reviewButton.current?.focus()
-    wasPreview.current = showConclusion
-  }, [showConclusion])
+  useFocusRequest(conclusionInput, preview.generation, { enabled: showConclusion })
+  useFocusRequest(reviewButton, preview.generation, {
+    enabled: !showConclusion && preview.generation > 0,
+  })
   const address = useMemo(() => ({ ...conversation.address }), [conversation.address])
   const assistantInteraction = useMemo(() => {
     const runtime = services.runtimeWorkApi
@@ -204,15 +190,6 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
       showConclusion,
     draft,
   })
-  useEffect(() => {
-    if (
-      publishedPreview === previewGeneration.current &&
-      showConclusion &&
-      !publication.publishing &&
-      !publication.error
-    )
-      setPreview({ identity, key: null })
-  }, [identity, publishedPreview, showConclusion, publication.publishing, publication.error])
   const title = t(
     sourceScope === 'source'
       ? 'private.sourceTitle'
@@ -381,7 +358,7 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
                           },
                           'debug'
                         )
-                        setPreview({ identity, key: conclusionKey })
+                        view.setOpen(true)
                       }}
                     >
                       {t('private.reviewConclusion')}
@@ -398,11 +375,7 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
               data-testid="collaboration-exp-conclusion-form"
               onSubmit={event => {
                 event.preventDefault()
-                const generation = previewGeneration.current
-                void publication.publish().then(published => {
-                  if (published && mounted.current && previewGeneration.current === generation)
-                    setPublishedPreview(generation)
-                })
+                void view.publishConclusion(publication.publish, publication.getOperation)
               }}
             >
               <p className="experience-private-conclusion-eyebrow">{t('private.finalCheck')}</p>
@@ -444,7 +417,7 @@ function PrivateDiscussionContent(props: PrivateDiscussionPaneProps & { accountK
                       },
                       'debug'
                     )
-                    setPreview({ identity, key: null })
+                    view.setOpen(false)
                   }}
                 >
                   {t('private.continueDiscussion')}

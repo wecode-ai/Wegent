@@ -2,8 +2,8 @@ import { useTranslation } from '@/hooks/useTranslation'
 import type { User as UserProfile } from '@/types/api'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { ArrowRight, Bot, CheckCircle2, CircleDot, UserRound } from 'lucide-react'
-import type { TodoDetailItem, TodoViewState } from './todoTypes'
 import { todoStateColors } from './todoStateColors'
+import type { TodoDetailItem, TodoViewState } from './todoTypes'
 
 interface TodoOverviewProps {
   projectName: string

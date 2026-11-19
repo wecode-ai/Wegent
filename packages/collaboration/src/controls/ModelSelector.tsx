@@ -1,15 +1,16 @@
+import { createModelSelectorPopover } from './modelSelectorPopover'
 import { controlOption } from './recipes'
 import { keepFocus } from '@ui-sdk/core'
 import { Popover, PopoverContent } from './Popover'
 import { Check, Cloud } from 'lucide-react'
 import {
   useCallback,
-  useEffect,
   useId,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactNode,
 } from 'react'
 import { ModelSelectorEmptyState } from './ModelSelectorEmptyState'
@@ -64,7 +65,6 @@ import { useModelPresetSelection } from './useModelPresetSelection'
 
 const MAIN_MENU_WIDTH = 320
 const ADVANCED_MENU_FALLBACK_HEIGHT = 316
-type DesktopMenuView = 'simple' | 'advanced'
 
 export type ModelSelectorHostProps = {
   translate: CollaborationTranslate
@@ -113,12 +113,28 @@ export function ModelSelector({
   const menuPanelRef = useRef<HTMLDivElement>(null)
   const simplePanelRef = useRef<HTMLDivElement>(null)
   const advancedPanelRef = useRef<HTMLDivElement>(null)
-  const handledOpenSignalRef = useRef<number | undefined>(undefined)
-  const [open, setOpen] = useState(false)
-  const [closeReason, setCloseReason] =
-    useState<ModelSelectorCloseReason>('dismiss')
-  const [mobileQuery, setMobileQuery] = useState('')
-
+  const [popover] = useState(createModelSelectorPopover)
+  const renderedOpen = popover.getSnapshot().open
+  const subscribePopover = useCallback(
+    (listener: () => void) =>
+      popover.subscribe(listener, {
+        isMobile,
+        disabled,
+        openSignal,
+        renderedOpen,
+        onOpenChange,
+        onFlyoutOpenChange,
+      }),
+    [popover, isMobile, disabled, openSignal, renderedOpen, onOpenChange, onFlyoutOpenChange]
+  )
+  const popoverState = useSyncExternalStore(
+    subscribePopover,
+    popover.getSnapshot,
+    popover.getSnapshot
+  )
+  const { open, mobileQuery, desktopView: desktopMenuView } = popoverState
+  const setMobileQuery = popover.setMobileQuery
+  const setDesktopMenuView = popover.setDesktopView
   const [desktopMenuWidth, setDesktopMenuWidth] = useState(MAIN_MENU_WIDTH)
   const desktopMenuMaxHeight = MODEL_SELECTOR_MAX_HEIGHT
   useLayoutEffect(() => {
@@ -133,22 +149,7 @@ export function ModelSelector({
     )
   }, [getViewportRightBoundary, isMobile, open])
 
-  const [desktopMenuView, setDesktopMenuView] =
-    useState<DesktopMenuView>('simple')
   const [, setPowerSliderInteracting] = useState(false)
-  const reportedOpenRef = useRef(open)
-  const desktopFlyoutOpen = open && !isMobile
-
-  useEffect(() => {
-    onFlyoutOpenChange?.(desktopFlyoutOpen)
-    return () => onFlyoutOpenChange?.(false)
-  }, [desktopFlyoutOpen, onFlyoutOpenChange])
-
-  useEffect(() => {
-    if (reportedOpenRef.current === open) return
-    reportedOpenRef.current = open
-    onOpenChange?.(open, open ? undefined : closeReason)
-  }, [closeReason, onOpenChange, open])
   const familyGroups = useMemo(() => groupModelsByFamily(models), [models])
   const defaultModel = useMemo(() => defaultNewChatModel(models), [models])
   const desktopModels = useMemo(
@@ -184,29 +185,12 @@ export function ModelSelector({
     familyGroups.find((group) => group.config.id === displayedFamilyId) ??
     familyGroups[0]
 
-  useEffect(() => {
-    if (!openSignal || disabled || open) return
-    if (handledOpenSignalRef.current === openSignal) return
-
-    handledOpenSignalRef.current = openSignal
-    buttonRef.current?.click()
-  }, [disabled, open, openSignal])
-
   const closeMenu = useCallback(
     (reason: ModelSelectorCloseReason = 'dismiss') => {
-      setCloseReason(reason)
-      setOpen(false)
-      setMobileQuery('')
-      setDesktopMenuView('simple')
+      popover.close(reason)
       setPowerSliderInteracting(false)
     },
-    [
-      setCloseReason,
-      setMobileQuery,
-      setOpen,
-      setPowerSliderInteracting,
-      setDesktopMenuView,
-    ],
+    [popover],
   )
   const openModelSettings = useCallback(() => {
     closeMenu()
@@ -917,13 +901,12 @@ export function ModelSelector({
               closeMenu()
               return
             }
-            setCloseReason('dismiss')
             // Preserve the panel opened before asynchronous reasoning controls arrive.
             setDesktopMenuView(
               advancedReasoningAvailable ? 'simple' : 'advanced',
             )
             setPowerSliderInteracting(false)
-            setOpen(true)
+            popover.open()
           }}
         />
       </div>

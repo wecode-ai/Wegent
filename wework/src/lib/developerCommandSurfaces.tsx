@@ -2,7 +2,7 @@ import { Listbox, ListboxItem } from '@ui-sdk/react/listbox'
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import { controlOption } from '@wegent/collaboration/controls/recipes'
 import { Button } from '@wegent/collaboration/markdown/Button'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import {
   clearWorkbenchDebugLogs,
   getWorkbenchDebugSnapshot,
@@ -25,15 +25,19 @@ export function DeveloperCommands({
   close(): void
 }) {
   const [commands, setCommands] = useState(getCommands)
-  useEffect(() => {
-    let active = true
-    void refreshStatus(() => {
-      if (active) setCommands(getCommands())
-    })
-    return () => {
-      active = false
-    }
-  }, [getCommands, refreshStatus])
+  const loadStatus = useCallback(
+    (surface: HTMLDivElement | null) => {
+      if (!surface) return
+      let active = true
+      void refreshStatus(() => {
+        if (active) setCommands(getCommands())
+      })
+      return () => {
+        active = false
+      }
+    },
+    [getCommands, refreshStatus]
+  )
   return (
     <div
       className="fixed inset-0 z-system-popover flex items-start justify-center bg-black/20 px-4 pt-[12vh]"
@@ -46,6 +50,7 @@ export function DeveloperCommands({
         initialFocus="[data-command-id]"
         render={
           <div
+            ref={loadStatus}
             aria-label="Developer commands"
             className="w-full max-w-lg rounded-xl border border-border bg-popover p-2 text-text-primary shadow-lg"
           />
@@ -106,13 +111,17 @@ export function DebugPanel({
     height: number
     moved: boolean
   } | null>(null)
-  useEffect(() => {
-    emitVisibility(expanded)
-  }, [expanded, emitVisibility])
+  const emitMountedVisibility = useCallback(
+    (node: HTMLDivElement | null) => {
+      if (node) emitVisibility(expanded)
+    },
+    [expanded, emitVisibility]
+  )
   const refresh = () => setSnapshot(getWorkbenchDebugSnapshot())
   if (!expanded)
     return (
       <div
+        ref={emitMountedVisibility}
         className="electron-titlebar-interactive-region fixed z-system-popover"
         style={position ? { left: position.left, top: position.top } : { right: 16, bottom: 16 }}
       >
@@ -187,6 +196,7 @@ export function DebugPanel({
     )
   return (
     <div
+      ref={emitMountedVisibility}
       className="electron-titlebar-interactive-region fixed inset-0 z-system-popover flex items-stretch justify-center bg-black/30 p-4"
       onMouseDown={event => {
         if (event.target === event.currentTarget) setExpanded(false)

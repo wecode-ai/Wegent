@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { DialogSurface } from '../controls/DialogSurface'
+import { useFocusRequest } from '../dom-events'
 import { collaborationTestIds } from '../testIds'
 
 interface IssueConversationDrawersProps {
@@ -7,6 +8,7 @@ interface IssueConversationDrawersProps {
   label: string
   children: (close: () => void) => ReactNode
   conversation: ReactNode
+  conversationKey?: string
   onClose: () => void
   onCloseConversation: () => void
 }
@@ -17,24 +19,24 @@ export function IssueConversationDrawers({
   label,
   children,
   conversation,
+  conversationKey,
   onClose,
   onCloseConversation,
 }: IssueConversationDrawersProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const trackRef = useRef<HTMLDivElement>(null)
   const viewportRef = useRef<HTMLDivElement>(null)
-  const onCloseRef = useRef(onClose)
   const closeCommittedRef = useRef(false)
   const [retainedConversation, setRetainedConversation] = useState(conversation)
   const [dismissing, setDismissing] = useState(false)
   const hasConversation = Boolean(conversation)
   const requestClose = () => setDismissing(true)
-  onCloseRef.current = onClose
   if (conversation && conversation !== retainedConversation) {
     setRetainedConversation(conversation)
   }
 
   useLayoutEffect(() => {
+    if (dismissing && closeCommittedRef.current) return
     if (!dismissing) {
       closeCommittedRef.current = false
       if (hasConversation) return
@@ -57,14 +59,21 @@ export function IssueConversationDrawers({
       if (dismissing) {
         if (closeCommittedRef.current) return
         closeCommittedRef.current = true
-        onCloseRef.current()
+        onClose()
       } else setRetainedConversation(null)
     }
     void finishExit()
     return () => {
       active = false
     }
-  }, [hasConversation, dismissing])
+  }, [hasConversation, dismissing, onClose])
+  useFocusRequest(containerRef, conversationKey, {
+    enabled: hasConversation,
+    selector: '[data-testid="ai-chat-modal-close"]',
+    preventScroll: true,
+    restoreFocus: true,
+    restoreWithin: '.issue-drawer-conversation',
+  })
 
   return (
     <DialogSurface

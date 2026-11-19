@@ -1,13 +1,19 @@
-import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { WorkItemContextPanel } from '@/features/todo/WorkItemContextPanel'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getWorkbenchDeviceNamesById } from '@/lib/workbench-device'
 import type { RuntimeTaskAddress } from '@/types/api'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
-import { useEffect, useState } from 'react'
+import { useMemo, useSyncExternalStore } from 'react'
 import { weworkIssueScheme, weworkTaskScheme } from './scheme'
 import { openWeworkScheme } from './schemeEvents'
+
+class UnavailableNotificationEntity extends Error {}
 
 /** Load the destination's real records into the existing Issue detail surface. */
 export function NotificationIssueEntity({
@@ -30,36 +36,46 @@ export function NotificationIssueEntity({
   const { state, services } = useWorkbench()
   const { t } = useTranslation('common')
   const api = services.projectSpaceApis?.[store === 'local' ? 'local' : 'cloud']
-  const [result, setResult] = useState<{
-    key: string
-    project?: CloudProject
-    item?: CloudLoopItem
-    error?: string
-  } | null>(null)
-  const [revision, setRevision] = useState(0)
-  useEffect(() => {
-    if (!api || !active) return
-    let current = true
-    void Promise.all([api.listCloudProjects(), api.getLoopItem(issueId)])
-      .then(([projects, item]) => {
-        const project = projects.items.find(project => project.id === projectId)
-        if (!project || item.cloud_project_id !== project.id)
-          throw new Error(t('interactions.entity_unavailable'))
-        if (current) setResult({ key: url, project, item })
-      })
-      .catch(error => {
-        if (current)
-          setResult({ key: url, error: String(error instanceof Error ? error.message : error) })
-      })
-    return () => {
-      current = false
-    }
-  }, [active, api, issueId, projectId, revision, t, url])
-  if (!api || (result?.key === url && result.error))
+  const userId = state.user?.id
+  const resource = useMemo(
+    () =>
+      api
+        ? createAsyncResource(
+            JSON.stringify([store, userId, projectId, issueId]),
+            async () => {
+              const [projects, item] = await Promise.all([
+                api.listCloudProjects(),
+                api.getLoopItem(issueId),
+              ])
+              const project = projects.items.find(project => project.id === projectId)
+              if (!project || item.cloud_project_id !== project.id)
+                throw new UnavailableNotificationEntity()
+              return { project, item }
+            },
+            { refreshOnSubscribe: true }
+          )
+        : null,
+    [api, projectId, issueId, store, userId]
+  )
+  const snapshot = useSyncExternalStore(
+    active && resource ? resource.subscribe : subscribeIdleResource,
+    resource?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const result = snapshot.data
+  const error =
+    snapshot.status === 'error'
+      ? snapshot.error instanceof UnavailableNotificationEntity
+        ? t('interactions.entity_unavailable')
+        : snapshot.error instanceof Error
+          ? snapshot.error.message || t('interactions.entity_unavailable')
+          : String(snapshot.error)
+      : null
+  if (!api || snapshot.status === 'error')
     return (
       <div className="space-y-3 p-5">
         <p role="alert" className="text-sm text-error">
-          {result?.error ?? t('interactions.entity_unavailable')}
+          {error ?? t('interactions.entity_unavailable')}
         </p>
         {api && (
           <ControlButton
@@ -68,17 +84,14 @@ export function NotificationIssueEntity({
             type="button"
             data-testid="notification-entity-retry"
             className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted"
-            onClick={() => {
-              setResult(null)
-              setRevision(value => value + 1)
-            }}
+            onClick={() => void resource?.reload()}
           >
             {t('workbench.retry')}
           </ControlButton>
         )}
       </div>
     )
-  if (result?.key !== url || !result.item || !result.project)
+  if (!result)
     return (
       <p role="status" className="p-5 text-sm text-text-secondary">
         {t('interactions.loading')}
@@ -93,7 +106,7 @@ export function NotificationIssueEntity({
       project={result.project}
       item={result.item}
       currentTask={address}
-      currentUserId={state.user?.id}
+      currentUserId={userId}
       localProjects={state.projects}
       deviceNamesById={getWorkbenchDeviceNamesById(state.devices)}
       focusedCommentId={commentId}

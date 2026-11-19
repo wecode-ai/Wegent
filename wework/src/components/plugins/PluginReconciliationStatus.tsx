@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useClock } from '@wegent/collaboration/clock'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { PluginReconciliationStage } from '@/features/plugins/pluginRefreshReconciliation'
 
@@ -10,11 +10,7 @@ export function PluginReconciliationStatus({
   startedAt: number | null
 }) {
   const { t } = useTranslation('common')
-  const [now, setNow] = useState(Date.now)
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000)
-    return () => window.clearInterval(timer)
-  }, [])
+  const now = useClock(startedAt !== null)
   const labels: Record<PluginReconciliationStage, string> = {
     waiting: t('workbench.plugins_reconciliation_waiting', '等待其他插件操作完成…'),
     reading: t('workbench.plugins_reconciliation_reading', '1/3 读取本机插件…'),

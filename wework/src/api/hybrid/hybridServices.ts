@@ -1,3 +1,4 @@
+import { cloudAutomationTargetsKey, eligibleCloudAutomationDevices } from './cloudAutomationDevices'
 import type { RuntimeTaskArchiveRequest } from '../../../../packages/chat-core/src/runtime-management-types'
 import {
   createLocalDevicePluginApi,
@@ -583,10 +584,13 @@ export function createHybridWorkbenchServices(
     revision: number
   ) => {
     if (revision < rememberedCloudDevicesRevision) return
+    const automationTargetsChanged =
+      cloudAutomationTargetsKey(rememberedCloudDevices) !== cloudAutomationTargetsKey(devices)
     rememberedCloudDevices = devices
     rememberedAppDeviceRegistrations = appDeviceRegistrations
     rememberedCloudDevicesRevision = revision
     observeProjectPluginDevices()
+    if (automationTargetsChanged) notifyWorkbenchAutomationsChanged()
   }
   const rememberLocalRuntimeWorkDevices = (work: RuntimeWorkListResponse) => {
     work.projects.forEach(project => {
@@ -1607,32 +1611,30 @@ export function createHybridWorkbenchServices(
     )
   }
   const refreshCloudAutomationsInBackground = () => {
-    rememberedCloudDevices
-      .filter(device => isUsableDevice(device) && device.device_type !== 'app')
-      .forEach(device => {
-        const deviceId = device.device_id
-        if (cloudAutomationRequests.has(deviceId)) return
-        const request = automationApiForDevice(deviceId)
-          .listAutomations()
-          .then(response => {
-            const previous = rememberedCloudAutomations.get(deviceId) ?? []
-            rememberAutomationRoutes(deviceId, response.items)
-            rememberedCloudAutomations.set(deviceId, response.items)
-            if (!sameAutomationVersions(previous, response.items)) {
-              notifyWorkbenchAutomationsChanged()
-            }
+    eligibleCloudAutomationDevices(rememberedCloudDevices).forEach(device => {
+      const deviceId = device.device_id
+      if (cloudAutomationRequests.has(deviceId)) return
+      const request = automationApiForDevice(deviceId)
+        .listAutomations()
+        .then(response => {
+          const previous = rememberedCloudAutomations.get(deviceId) ?? []
+          rememberAutomationRoutes(deviceId, response.items)
+          rememberedCloudAutomations.set(deviceId, response.items)
+          if (!sameAutomationVersions(previous, response.items)) {
+            notifyWorkbenchAutomationsChanged()
+          }
+        })
+        .catch(error => {
+          console.warn('[Wework] Failed to refresh cloud automations in background', {
+            deviceId,
+            error,
           })
-          .catch(error => {
-            console.warn('[Wework] Failed to refresh cloud automations in background', {
-              deviceId,
-              error,
-            })
-          })
-          .finally(() => {
-            cloudAutomationRequests.delete(deviceId)
-          })
-        cloudAutomationRequests.set(deviceId, request)
-      })
+        })
+        .finally(() => {
+          cloudAutomationRequests.delete(deviceId)
+        })
+      cloudAutomationRequests.set(deviceId, request)
+    })
   }
   const automationMutationDeviceId = (data: { taskRequest?: RuntimeTaskCreateRequest }) => {
     const deviceId = data.taskRequest?.deviceId?.trim()

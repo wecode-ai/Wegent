@@ -1,29 +1,9 @@
-import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
-import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
-import {
-  Check,
-  CircleDot,
-  CornerDownLeft,
-  GitBranch,
-  GitCommit,
-  GitPullRequest,
-  LoaderCircle,
-  Square,
-  Upload,
-  X,
-} from 'lucide-react'
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
-import { Popover, PopoverContent, PopoverTrigger } from '@wegent/collaboration/controls/Popover'
-import { controlPopup } from '@wegent/collaboration/controls/recipes'
-import { useCollaborationPortalTheme } from '@wegent/collaboration/theme'
-
+import { createCommitFeedbackSource } from './commitFeedbackSource'
 import { BranchSelector } from '@/components/common/BranchSelector'
 import { ChangeRequestStatusIcon } from '@/components/common/ChangeRequestStatusIcon'
 import { ResourceObservationStatus } from '@/components/common/ResourceObservationStatus'
-import {
-  WEWORK_HOST_SERVICES,
-  type EnvironmentHostService,
-} from '@/features/dsh-runtime/conversationHostServices'
+import { WEWORK_HOST_SERVICES } from '@/features/dsh-runtime/conversationHostServices'
+import type { EnvironmentHostService } from '@/features/dsh-runtime/conversationHostServices'
 import type { ConversationSummarySurfaceProps } from '@/features/dsh-runtime/conversationSummarySurface'
 import { changeRequestVisualStatus } from '@/features/workbench/changeRequestStatus'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -31,6 +11,27 @@ import { openExternalUrl } from '@/lib/external-links'
 import { navigateTo } from '@/lib/navigation'
 import { cn } from '@/lib/utils'
 import type { EnvironmentInfo } from '@/types/environment'
+import { Popover } from '@wegent/collaboration/controls/Popover'
+import { PopoverContent } from '@wegent/collaboration/controls/Popover'
+import { PopoverTrigger } from '@wegent/collaboration/controls/Popover'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useDocumentEvent } from '@wegent/collaboration/dom-events'
+import { Check } from 'lucide-react'
+import { CircleDot } from 'lucide-react'
+import { CornerDownLeft } from 'lucide-react'
+import { GitBranch } from 'lucide-react'
+import { GitCommit } from 'lucide-react'
+import { GitPullRequest } from 'lucide-react'
+import { LoaderCircle } from 'lucide-react'
+import { Square } from 'lucide-react'
+import { Upload } from 'lucide-react'
+import { X } from 'lucide-react'
+import { useCallback } from 'react'
+import { useRef } from 'react'
+import { useState } from 'react'
+import { useSyncExternalStore } from 'react'
+import type { FormEvent } from 'react'
 
 interface GitEnvironmentSectionProps {
   branchNameSource?: string
@@ -162,12 +163,24 @@ function GitEnvironmentSectionContent({
   const { t } = useTranslation('common')
   const [commitFormOpen, setCommitFormOpen] = useState(false)
   const [commitMessage, setCommitMessage] = useState('')
-  const [commitStatus, setCommitStatus] = useState<'idle' | 'committing' | 'success'>('idle')
-  const [commitProgressLabel, setCommitProgressLabel] = useState('')
-  const [commitError, setCommitError] = useState<string | null>(null)
-  const commitFeedbackTimerRef = useRef<number | null>(null)
-  const commitFeedbackMountedRef = useRef(false)
-  const theme = useCollaborationPortalTheme()
+  const [commitFeedback] = useState(createCommitFeedbackSource)
+  const {
+    status: commitStatus,
+    progress: commitProgressLabel,
+    error: commitError,
+  } = useSyncExternalStore(
+    commitFeedback.subscribe,
+    commitFeedback.getSnapshot,
+    commitFeedback.getSnapshot
+  )
+  const {
+    setStatus: setCommitStatus,
+    setProgress: setCommitProgressLabel,
+    setError: setCommitError,
+    clearTimer: clearCommitFeedbackTimer,
+  } = commitFeedback
+  const commitButtonRef = useRef<HTMLButtonElement>(null)
+  const commitFormRef = useRef<HTMLFormElement>(null)
   const gitRepositoryAvailable = info.isGitRepository !== false
   const hasGitInfo = gitRepositoryAvailable && Boolean(info.branchName?.trim())
   const canShowBranchSelector = Boolean(
@@ -178,21 +191,33 @@ function GitEnvironmentSectionContent({
   const closeCommitForm = useCallback(() => {
     setCommitFormOpen(false)
     setCommitError(null)
-  }, [])
+  }, [setCommitError])
 
-  const clearCommitFeedbackTimer = useCallback(() => {
-    if (commitFeedbackTimerRef.current === null) return
-    window.clearTimeout(commitFeedbackTimerRef.current)
-    commitFeedbackTimerRef.current = null
-  }, [])
-
-  useEffect(() => {
-    commitFeedbackMountedRef.current = true
-    return () => {
-      commitFeedbackMountedRef.current = false
-      clearCommitFeedbackTimer()
-    }
-  }, [clearCommitFeedbackTimer])
+  useDocumentEvent(
+    'pointerdown',
+    event => {
+      const target = event.target
+      if (
+        !(target instanceof Node) ||
+        commitFormRef.current?.contains(target) ||
+        commitButtonRef.current?.contains(target)
+      )
+        return
+      closeCommitForm()
+    },
+    { enabled: commitFormOpen }
+  )
+  useDocumentEvent(
+    'keydown',
+    event => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      closeCommitForm()
+      commitButtonRef.current?.focus()
+    },
+    { enabled: commitFormOpen, capture: true }
+  )
 
   if (!hasDiffStats && !hasGitInfo && !canShowBranchSelector) return null
 
@@ -235,6 +260,7 @@ function GitEnvironmentSectionContent({
     if (action === 'push' && !onPushChanges) return
 
     clearCommitFeedbackTimer()
+    const isCurrentFeedback = commitFeedback.captureOwner()
     setCommitError(null)
     setCommitProgressLabel(getCommitProgressLabel(action, trimmedMessage))
     setCommitStatus('committing')
@@ -243,16 +269,12 @@ function GitEnvironmentSectionContent({
       if (action === 'push') await onPushChanges?.()
       else if (action === 'commit-and-push') await onCommitAndPushChanges?.(trimmedMessage)
       else await onCommitChanges?.(trimmedMessage)
-      if (!commitFeedbackMountedRef.current) return
+      if (!isCurrentFeedback()) return
       setCommitStatus('success')
       if (action !== 'push') setCommitMessage('')
-      commitFeedbackTimerRef.current = window.setTimeout(() => {
-        commitFeedbackTimerRef.current = null
-        setCommitStatus('idle')
-        setCommitProgressLabel('')
-      }, 1600)
+      commitFeedback.scheduleReset()
     } catch (error) {
-      if (!commitFeedbackMountedRef.current) return
+      if (!isCurrentFeedback()) return
       setCommitStatus('idle')
       setCommitProgressLabel('')
       setCommitError(getCommitErrorMessage(error))
@@ -440,14 +462,13 @@ function GitEnvironmentSectionContent({
         <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-600">{commitError}</p>
       ) : null}
       <PopoverContent
-        {...theme}
         render={<form onSubmit={handleSubmitCommit} />}
         data-testid="environment-commit-form"
         aria-label={t('workbench.environment_commit_or_push', '提交或推送')}
         align="end"
         sideOffset={8}
         collisionPadding={16}
-        className={cn(theme.className, controlPopup, 'w-[430px] p-0')}
+        className="w-[430px] p-0"
       >
         <div className="flex h-10 items-center gap-2 px-4 text-sm leading-[18px] text-text-secondary">
           <GitBranch className="h-4 w-4 shrink-0" />

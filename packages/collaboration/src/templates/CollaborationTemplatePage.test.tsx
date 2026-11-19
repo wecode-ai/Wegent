@@ -6,6 +6,7 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { CollaborationTemplatePage } from './CollaborationTemplatePage'
+import { createTemplatePageNavigation, templatePageDetail } from './templatePageNavigation'
 import { CollaborationTemplateStore } from './store'
 import { builtinCollaborationTemplates } from './builtins'
 import type { CollaborationTemplateRemote, TemplateRecord } from './types'
@@ -86,12 +87,12 @@ async function click(testId: string) {
 }
 
 it('browses template details within the existing picker dialog and returns without losing the library', async () => {
-  let detail: { title: string; onBack(): void } | null = null
   const store = new CollaborationTemplateStore({
     scope: 'local:7',
     ownerId: 7,
     persistence: { read: async () => [], write: async () => undefined },
   })
+  const navigation = createTemplatePageNavigation(store)
   await act(async () =>
     root.render(
       <TemplateDialog title="Choose template" closeLabel="Close" onClose={vi.fn()}>
@@ -100,9 +101,7 @@ it('browses template details within the existing picker dialog and returns witho
           store={store}
           locale="en"
           onUse={vi.fn()}
-          onDetailChange={value => {
-            detail = value
-          }}
+          navigation={navigation}
         />
       </TemplateDialog>
     )
@@ -113,7 +112,7 @@ it('browses template details within the existing picker dialog and returns witho
     container.ownerDocument.querySelector('[data-testid="template-inline-detail"]')
   ).not.toBeNull()
   expect(container.ownerDocument.querySelector('[data-testid="template-detail-cancel"]')).toBeNull()
-  await act(async () => detail?.onBack())
+  await act(async () => templatePageDetail(navigation, 'en')?.onBack())
   expect(container.ownerDocument.querySelector('[data-testid="template-inline-detail"]')).toBeNull()
   expect(container.ownerDocument.querySelector('[data-testid="template-search"]')).not.toBeNull()
   expect(container.ownerDocument.querySelectorAll('[role="dialog"][data-open]')).toHaveLength(1)
@@ -234,7 +233,7 @@ it.each(['resolved', 'rejected'] as const)(
   async outcome => {
     vi.useFakeTimers()
     const fixture = pendingRemoteDetail()
-    const onDetailChange = vi.fn()
+    const navigation = createTemplatePageNavigation(fixture.store)
     try {
       await act(async () =>
         root.render(
@@ -242,7 +241,7 @@ it.each(['resolved', 'rejected'] as const)(
             store={fixture.store}
             locale="en"
             embedded
-            onDetailChange={onDetailChange}
+            navigation={navigation}
           />
         )
       )
@@ -268,7 +267,7 @@ it.each(['resolved', 'rejected'] as const)(
         expect(
           container.ownerDocument.querySelector('[data-testid="template-inline-detail"]')
         ).not.toBeNull()
-        await act(async () => onDetailChange.mock.lastCall![0].onBack())
+        await act(async () => templatePageDetail(navigation, 'en')!.onBack())
         expect(
           container.ownerDocument.querySelector('[data-testid="template-inline-detail"]')
         ).toBeNull()
@@ -654,15 +653,10 @@ it('cancels embedded import in place without writing and restores its trigger', 
     remote: backend,
     persistence: { read: async () => [], write },
   })
-  const onDetailChange = vi.fn()
+  const navigation = createTemplatePageNavigation(store)
   await act(async () =>
     root.render(
-      <CollaborationTemplatePage
-        store={store}
-        locale="en"
-        embedded
-        onDetailChange={onDetailChange}
-      />
+      <CollaborationTemplatePage store={store} locale="en" embedded navigation={navigation} />
     )
   )
   const trigger = container.ownerDocument.querySelector<HTMLButtonElement>(
@@ -674,14 +668,14 @@ it('cancels embedded import in place without writing and restores its trigger', 
   expect(
     container.ownerDocument.querySelector('[data-testid="template-import-file"]')
   ).not.toBeNull()
-  expect(onDetailChange.mock.lastCall?.[0].title).toBe('Import collaboration template')
+  expect(templatePageDetail(navigation, 'en')?.title).toBe('Import collaboration template')
   expect(container.ownerDocument.querySelector('[data-testid="template-import-cancel"]')).toBeNull()
-  await act(async () => onDetailChange.mock.lastCall![0].onBack())
+  await act(async () => templatePageDetail(navigation, 'en')!.onBack())
   expect(container.ownerDocument.querySelector('[data-testid="template-import-file"]')).toBeNull()
   expect(document.activeElement).toBe(trigger)
   expect(backend.save).not.toHaveBeenCalled()
   expect(write).not.toHaveBeenCalled()
-  expect(onDetailChange.mock.lastCall?.[0]).toBeNull()
+  expect(templatePageDetail(navigation, 'en')).toBeNull()
 })
 
 it('cancels embedded deletion in place without deleting and restores its trigger', async () => {
@@ -698,15 +692,10 @@ it('cancels embedded deletion in place without deleting and restores its trigger
     remote: backend,
     persistence: { read: async () => [record], write },
   })
-  const onDetailChange = vi.fn()
+  const navigation = createTemplatePageNavigation(store)
   await act(async () =>
     root.render(
-      <CollaborationTemplatePage
-        store={store}
-        locale="en"
-        embedded
-        onDetailChange={onDetailChange}
-      />
+      <CollaborationTemplatePage store={store} locale="en" embedded navigation={navigation} />
     )
   )
   await click('template-tab-mine')
@@ -716,19 +705,19 @@ it('cancels embedded deletion in place without deleting and restores its trigger
   trigger.focus()
   await click('template-delete-owned-template')
   expect(container.ownerDocument.querySelectorAll('[role="dialog"]')).toHaveLength(0)
-  expect(onDetailChange.mock.lastCall?.[0].title).toBe('Delete template')
+  expect(templatePageDetail(navigation, 'en')?.title).toBe('Delete template')
   expect(
     container.ownerDocument.querySelector('[data-testid="template-delete-confirm"]')
   ).not.toBeNull()
   expect(container.ownerDocument.querySelector('[data-testid="template-delete-cancel"]')).toBeNull()
-  await act(async () => onDetailChange.mock.lastCall![0].onBack())
+  await act(async () => templatePageDetail(navigation, 'en')!.onBack())
   expect(
     container.ownerDocument.querySelector('[data-testid="template-delete-confirm"]')
   ).toBeNull()
   expect(document.activeElement).toBe(trigger)
   expect(backend.delete).not.toHaveBeenCalled()
   expect(write).not.toHaveBeenCalled()
-  expect(onDetailChange.mock.lastCall?.[0]).toBeNull()
+  expect(templatePageDetail(navigation, 'en')).toBeNull()
 })
 
 it('keeps embedded deletion open while its write is in progress', async () => {
@@ -751,21 +740,16 @@ it('keeps embedded deletion open while its write is in progress', async () => {
     remote: backend,
     persistence: { read: async () => [record], write: async () => {} },
   })
-  const onDetailChange = vi.fn()
+  const navigation = createTemplatePageNavigation(store)
   await act(async () =>
     root.render(
-      <CollaborationTemplatePage
-        store={store}
-        locale="en"
-        embedded
-        onDetailChange={onDetailChange}
-      />
+      <CollaborationTemplatePage store={store} locale="en" embedded navigation={navigation} />
     )
   )
   await click('template-tab-mine')
   await click('template-delete-owned-template')
   await click('template-delete-confirm')
-  await act(async () => onDetailChange.mock.lastCall![0].onBack())
+  await act(async () => templatePageDetail(navigation, 'en')!.onBack())
   expect(
     container.ownerDocument.querySelector('[data-testid="template-delete-confirm"]')
   ).not.toBeNull()
@@ -903,6 +887,56 @@ it('localizes raw remote detail and download without persisting translated conte
       record.document
     )
     expect(write.mock.calls[0][0][0].document).toEqual(record.document)
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('changes language without repeating discovery or account metadata requests', async () => {
+  vi.useFakeTimers()
+  const backend = remote()
+  const store = new CollaborationTemplateStore({
+    scope: 'backend:locale',
+    ownerId: 7,
+    remote: backend,
+    persistence: { read: async () => [], write: async () => undefined },
+  })
+  try {
+    await act(async () => root.render(<CollaborationTemplatePage store={store} locale="en" />))
+    await act(async () => vi.advanceTimersByTimeAsync(200))
+    await act(async () => root.render(<CollaborationTemplatePage store={store} locale="zh-CN" />))
+    await act(async () => vi.advanceTimersByTimeAsync(200))
+    expect(backend.discover).toHaveBeenCalledTimes(1)
+    expect(backend.list).toHaveBeenCalledTimes(1)
+    expect(container.textContent).toContain('产品全流程')
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('discards pending details when a new store replaces the same library scope', async () => {
+  vi.useFakeTimers()
+  const first = pendingRemoteDetail()
+  const next = new CollaborationTemplateStore({
+    scope: first.store.library.scope,
+    ownerId: 7,
+    remote: remote(),
+    persistence: { read: async () => [], write: async () => undefined },
+  })
+  try {
+    await act(async () =>
+      root.render(<CollaborationTemplatePage embedded store={first.store} locale="en" />)
+    )
+    await act(async () => vi.advanceTimersByTimeAsync(200))
+    await click('template-details-42')
+    await act(async () =>
+      root.render(<CollaborationTemplatePage embedded store={next} locale="en" />)
+    )
+    expect(
+      container.querySelector<HTMLButtonElement>('[data-testid="template-import-open"]')?.disabled
+    ).toBe(false)
+    await act(async () => first.resolve(first.record))
+    expect(container.querySelector('[data-testid="template-inline-detail"]')).toBeNull()
   } finally {
     vi.useRealTimers()
   }

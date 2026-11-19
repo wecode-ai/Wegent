@@ -139,15 +139,19 @@ export function AgentModelFields({
         })
       : []
 
+  const modelValue = chooseAtRuntime
+    ? 'user_select'
+    : routing.model
+      ? runnerModelKey(routing.model)
+      : ''
+
   return (
     <div className="space-y-2">
       <label className="block space-y-1 text-sm">
         <span>{t('workbench.agent_creator_model')}</span>
         <SelectRoot
           disabled={disabled || routing.loading || !environmentSelected}
-          value={normalizeSelectValue(
-            chooseAtRuntime ? 'user_select' : routing.model ? runnerModelKey(routing.model) : ''
-          )}
+          value={normalizeSelectValue(modelValue)}
           onValueChange={selectedValue => {
             if (selectedValue === null) return
             if (selectedValue === 'user_select') {
@@ -170,8 +174,12 @@ export function AgentModelFields({
             )
           }}
         >
-          <SelectTrigger className="w-full disabled:opacity-50" data-testid={`${prefix}-model`} />
-          <SelectContent>
+          <SelectTrigger
+            className="w-full"
+            data-testid={`${prefix}-model`}
+            data-value={modelValue}
+          />
+          <SelectContent data-testid={`${prefix}-model-menu`}>
             <SelectItem value="" disabled>
               {t('workbench.agent_creator_model_placeholder')}
             </SelectItem>

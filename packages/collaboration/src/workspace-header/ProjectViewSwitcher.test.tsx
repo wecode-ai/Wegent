@@ -1,14 +1,17 @@
 import { sdkSelectValue, sdkSelectItems } from '../test/selectControl'
 // @vitest-environment jsdom
 
+import {
+  createProjectViewSelectionMemory,
+  groupedProjectViewMetadata,
+} from './projectViewNavigation'
+
 import { act, useState, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CollaborationTheme } from '../theme'
 import {
   ProjectViewSwitcher,
-  createProjectViewSelectionMemory,
-  groupedProjectViewMetadata,
   type CollaborationProjectView,
   type CollaborationProjectViewOption,
   type ProjectViewSwitcherProps,
@@ -114,6 +117,50 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount())
   container.remove()
+})
+
+describe('project view selection subscriptions', () => {
+  it('publishes only the changed project and releases subscriptions', () => {
+    const memory = createProjectViewSelectionMemory()
+    const first = vi.fn()
+    const second = vi.fn()
+    const unsubscribe = memory.subscribe('first', first)
+    memory.subscribe('second', second)
+    memory.set('first', { planView: 'calendar' })
+    expect(first).toHaveBeenCalledTimes(1)
+    expect(second).not.toHaveBeenCalled()
+    memory.set('second', { planView: 'table' })
+    expect(second).toHaveBeenCalledTimes(1)
+    memory.delete('first')
+    expect(first).toHaveBeenCalledTimes(2)
+    memory.clear()
+    expect(first).toHaveBeenCalledTimes(2)
+    expect(second).toHaveBeenCalledTimes(2)
+    unsubscribe()
+    memory.set('first', { planView: 'gantt' })
+    expect(first).toHaveBeenCalledTimes(2)
+  })
+
+  it('uses externally updated memory without navigating until the user selects a group', async () => {
+    const memory = createProjectViewSelectionMemory()
+    render(<Harness selectionMemory={memory} selectionKey="project" />)
+    act(() => memory.set('project', { planView: 'table' }))
+    expect(change).not.toHaveBeenCalled()
+    await click('collaboration-tab-plan')
+    expect(change).toHaveBeenLastCalledWith('table')
+    await click('view-board')
+    act(() => memory.delete('project'))
+    await click('collaboration-tab-plan')
+    expect(change).toHaveBeenLastCalledWith('gantt')
+    await click('view-board')
+    act(() => memory.set('project', { planView: 'calendar', timelineView: 'calendar' }))
+    await click('collaboration-tab-plan')
+    expect(change).toHaveBeenLastCalledWith('calendar')
+    await click('view-board')
+    act(() => memory.clear())
+    await click('collaboration-tab-plan')
+    expect(change).toHaveBeenLastCalledWith('gantt')
+  })
 })
 
 describe('grouped project navigation', () => {

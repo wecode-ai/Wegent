@@ -1,9 +1,10 @@
-import type { PluginReference } from '@wegent/chat-core/plugin-reference'
-import { useEffect, useRef, useState } from 'react'
-import type { ComposerEditorServices } from '../composer/ComposerEditorServices'
-import { ComposerTextInput } from '../composer/ComposerTextInput'
-import type { ComposerTransferServices } from '../composer/useComposerTransfers'
 import { Button as ControlButton } from '../markdown/Button'
+import { useFocusRequest } from '../dom-events'
+import { useRef, useState } from 'react'
+import type { PluginReference } from '@wegent/chat-core/plugin-reference'
+import { ComposerTextInput } from '../composer/ComposerTextInput'
+import type { ComposerEditorServices } from '../composer/ComposerEditorServices'
+import type { ComposerTransferServices } from '../composer/useComposerTransfers'
 import { useConversationTranslation } from './ConversationTranslation'
 
 export function UserMessageEditForm({
@@ -29,9 +30,7 @@ export function UserMessageEditForm({
   const trimmedDraft = draft.trim()
   const submitDisabled = submitting || trimmedDraft.length === 0
 
-  useEffect(() => {
-    textareaRef.current?.focus()
-  }, [])
+  useFocusRequest(textareaRef)
 
   const submit = () => {
     if (submitDisabled) return
@@ -69,8 +68,7 @@ export function UserMessageEditForm({
         className="max-h-[280px] min-h-24 w-full overflow-y-auto rounded-xl border border-border bg-base px-3 py-2 text-base leading-5 text-text-primary outline-none keyboard:focus:border-primary keyboard:focus:ring-1 keyboard:focus:ring-primary disabled:cursor-wait disabled:opacity-70"
       />
       <div className="mt-2 flex items-center justify-end gap-2">
-        <ControlButton
-          variant="unstyled"
+        <ControlButton variant="ghost"
           type="button"
           data-testid="cancel-edit-user-message-button"
           disabled={submitting}
@@ -79,8 +77,7 @@ export function UserMessageEditForm({
         >
           {t('message_edit.cancel')}
         </ControlButton>
-        <ControlButton
-          variant="unstyled"
+        <ControlButton variant="primary" size="sm"
           type="button"
           data-testid="submit-edit-user-message-button"
           disabled={submitDisabled}

@@ -1,6 +1,7 @@
 import { TitlebarTooltip } from '@/components/topnav/TitlebarTooltip'
 import { Tooltip } from '@/components/ui/tooltip'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
+import { useLocalWorkspaceOpeners } from '@/hooks/useLocalWorkspaceOpeners'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
   supportsCloudSessions,
@@ -16,10 +17,8 @@ import {
 } from '@/lib/keybindings'
 import {
   isLocalTerminalAvailable,
-  listLocalWorkspaceOpeners,
   openLocalWorkspace,
   pickLocalWorkspaceOpenerExe,
-  type LocalWorkspaceOpenerAvailability,
 } from '@/lib/local-terminal'
 import {
   DEFAULT_LOCAL_WORKSPACE_OPENER_ID,
@@ -42,7 +41,7 @@ import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { AlertCircle, Loader2, Maximize2, Minimize2, PanelBottom, PanelRight } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { memo, useEffect, useState } from 'react'
+import { memo, useState } from 'react'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '../DesktopTopBar'
 import { EnvironmentInfoPopover } from '../EnvironmentInfoPopover'
 import { LocalWorkspaceOpenerIcon, LocalWorkspaceOpenerPicker } from './LocalWorkspaceOpenerMenu'
@@ -136,11 +135,6 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   const { t } = useTranslation('common')
   const [ideLoading, setIdeLoading] = useState(false)
   const [ideError, setIdeError] = useState<string | null>(null)
-  const [openerAvailability, setOpenerAvailability] = useState<Record<
-    LocalWorkspaceOpenerId,
-    boolean | undefined
-  > | null>(null)
-  const [openerLabels, setOpenerLabels] = useState<Record<string, string | undefined>>({})
   const showEnvironmentInfo = environmentInfoVisible && (mode === 'all' || mode === 'environment')
   const showPrimaryTarget = mode === 'all' || mode === 'primary-target'
   const showBottomPanelToggle =
@@ -183,37 +177,13 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
       (codeServerDevice && supportsLocalTerminalLaunch(codeServerDevice)))
   )
 
-  const buildAvailabilityMap = (availability: LocalWorkspaceOpenerAvailability[]) =>
-    Object.fromEntries(availability.map(item => [item.id, item.available])) as Record<
-      LocalWorkspaceOpenerId,
-      boolean | undefined
-    >
-  const buildLabelMap = (availability: LocalWorkspaceOpenerAvailability[]) =>
-    Object.fromEntries(availability.map(item => [item.id, item.label])) as Record<
-      string,
-      string | undefined
-    >
-
-  const refreshLocalWorkspaceOpeners = async () => {
-    const availability = await listLocalWorkspaceOpeners()
-    setOpenerAvailability(buildAvailabilityMap(availability))
-    setOpenerLabels(buildLabelMap(availability))
-  }
-
-  useEffect(() => {
-    if (!localWorkspaceEnabled) return
-    let cancelled = false
-    void (async () => {
-      const availability = await listLocalWorkspaceOpeners()
-      if (!cancelled) {
-        setOpenerAvailability(buildAvailabilityMap(availability))
-        setOpenerLabels(buildLabelMap(availability))
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [localWorkspaceEnabled])
+  const openers = useLocalWorkspaceOpeners(localWorkspaceEnabled && showPrimaryTarget)
+  const catalog = openers.status === 'error' ? [] : openers.data
+  const openerAvailability = catalog
+    ? Object.fromEntries(catalog.map(item => [item.id, item.available]))
+    : null
+  const openerLabels = Object.fromEntries((catalog ?? []).map(item => [item.id, item.label]))
+  const refreshLocalWorkspaceOpeners = openers.refresh
 
   const availableOpenerIds = openerAvailability
     ? (Object.keys(openerAvailability) as LocalWorkspaceOpenerId[]).filter(
@@ -231,9 +201,7 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
   const handleChooseOther = async () => {
     const picked = await pickLocalWorkspaceOpenerExe()
     if (picked) {
-      const availability = await listLocalWorkspaceOpeners()
-      setOpenerAvailability(buildAvailabilityMap(availability))
-      setOpenerLabels(buildLabelMap(availability))
+      await refreshLocalWorkspaceOpeners()
     }
   }
 
@@ -441,6 +409,16 @@ export const WorkspacePanelActions = memo(function WorkspacePanelActions({
             )}
           </ControlButton>
         </Tooltip>
+      )}
+      {showPrimaryTarget && localWorkspaceEnabled && openers.status === 'error' && (
+        <p
+          role="alert"
+          data-testid="workspace-opener-load-error"
+          className="max-w-64 truncate text-xs text-destructive"
+          title={String(openers.error)}
+        >
+          {String(openers.error)}
+        </p>
       )}
       {ideError && <CodeServerErrorDialog message={ideError} onClose={() => setIdeError(null)} />}
       {(showBottomPanelToggle || showRightPanelToggle) && (

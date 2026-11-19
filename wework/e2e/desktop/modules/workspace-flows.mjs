@@ -166,9 +166,11 @@ export async function waitForTestIdByText(
 }
 
 export async function selectWhenOptionAvailable(control, selector, value, timeoutMs) {
-  await control.command('waitFor', `${selector} option[value=${JSON.stringify(value)}]`, {
-    timeoutMs,
-  })
+  if ((await control.command('getAttribute', selector, { value: 'role' })) !== 'combobox') {
+    await control.command('waitFor', `${selector} option[value=${JSON.stringify(value)}]`, {
+      timeoutMs,
+    })
+  }
   await control.command('select', selector, { value })
 }
 
@@ -306,17 +308,26 @@ export async function selectCloudAgentModel(
     timeoutMs,
   })
   const selector = '[data-testid="wework-agent-model"]'
-  const modelOptions = `${selector} option:not([value=""]):not([value="user_select"]):not(:disabled)`
-  await control.command('waitFor', `${modelOptions}:checked`, { timeoutMs })
-  assert.equal(
-    await control.command('getAttribute', `${modelOptions}:checked`, { value: 'value' }),
-    await control.command('getAttribute', modelOptions, { value: 'value' }),
-    'The first listed cloud model must be selected before opening runtime settings'
+  await control.command(
+    'waitFor',
+    `${selector}[data-value]:not([data-value=""]):not([data-value="user_select"])`,
+    { timeoutMs }
   )
+  const defaultModel = await control.command('getValue', selector)
   await control.command('waitFor', '[data-testid="wework-agent-resource-create"]:not(:disabled)', {
     timeoutMs,
   })
   await setAgentRuntimeExpanded(control, dialog, true, timeoutMs)
+  await control.command('clickWhenEnabled', selector)
+  const modelOptions =
+    '[data-testid="wework-agent-model-menu"] [role="option"]:not([data-value=""]):not([data-value="user_select"]):not([aria-disabled="true"])'
+  await control.command('waitFor', modelOptions, { timeoutMs })
+  assert.equal(
+    defaultModel,
+    await control.command('getAttribute', modelOptions, { value: 'data-value' }),
+    'The first listed cloud model must be selected before opening runtime settings'
+  )
+  await control.command('nativePress', selector, { key: 'Escape' })
   await selectAgentEnvironment(
     control,
     'wework-agent-environment',

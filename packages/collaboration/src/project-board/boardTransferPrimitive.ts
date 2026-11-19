@@ -16,7 +16,7 @@ interface Options {
   lists: TransferLists
   onCommit(lists: TransferLists, details: Commit): boolean
   recover(itemId: string): HTMLElement | undefined
-  onStart(key: string): void
+  onStart(draft: TransferDraft): void
   onCancel(): void
 }
 
@@ -33,8 +33,8 @@ export const boardTransferPrimitive = definePrimitive({
     lists: options.lists,
     moving: null,
   }),
-  sync: (options) => ({ lists: options.lists }),
-  api: (context) => {
+  sync: options => ({ lists: options.lists }),
+  api: context => {
     let committed = false
     let last: TransferDraft | null = null
     const transfer = createTransfer(context, {
@@ -48,22 +48,22 @@ export const boardTransferPrimitive = definePrimitive({
     context.onDestroy(
       context.store.subscribe(() => {
         const moving = context.store.get().moving
-        if (moving && !last) context.options().onStart(moving.key)
+        if (moving && !last) context.options().onStart(moving)
         if (!moving && last) {
           if (!committed) context.options().onCancel()
           committed = false
         }
         last = moving
-      }),
+      })
     )
     const recovery = createFocusRecovery<{ itemId: string }>({
-      fallback: (lost) => context.options().recover(lost.props.itemId),
+      fallback: lost => context.options().recover(lost.props.itemId),
     })
     return { transfer, recovery }
   },
-  slots: (slot) => ({
+  slots: slot => ({
     root: slot<Record<never, never>, BoardTransferState>({
-      state: (state) => ({ ...state }),
+      state: state => ({ ...state }),
     }),
   }),
 })

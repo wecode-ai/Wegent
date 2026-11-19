@@ -3,7 +3,6 @@ import {
   defaultAppPreferences,
   getAppPreferences,
   updateAppPreferences,
-  type AppPreferences,
   type AppPreferencesPatch,
   type BrowserLinkTarget,
 } from '@/desktop/appPreferences'
@@ -11,6 +10,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { canUseEmbeddedBrowser, clearEmbeddedBrowserData } from '@/lib/embedded-browser'
 import { openNativeDirectoryPicker } from '@/lib/native-directory-picker'
 import { navigateTo } from '@/lib/navigation'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import {
   SelectContent,
   SelectItem,
@@ -18,9 +18,10 @@ import {
   SelectTrigger,
 } from '@wegent/collaboration/controls/SelectParts'
 import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { FolderOpen, History, Loader2, Trash2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useRef, useState, useSyncExternalStore } from 'react'
 import { BrowserHistoryPage } from './BrowserHistoryPage'
 import { ClearBrowserDataDialog } from './ClearBrowserDataDialog'
 import {
@@ -70,45 +71,48 @@ function LinkTargetSelect({
 }
 
 export function BrowserSettingsPage() {
-  const { t } = useTranslation('common')
   const browserAvailable = canUseEmbeddedBrowser()
   const [historyView, setHistoryView] = useState(() => isBrowserHistoryPath())
-  const [preferences, setPreferences] = useState<AppPreferences>(defaultAppPreferences)
-  const [loading, setLoading] = useState(true)
+  useWindowEvent('popstate', () => setHistoryView(isBrowserHistoryPath()))
+  return historyView ? (
+    <BrowserHistoryPage />
+  ) : (
+    <BrowserPreferencesSettings browserAvailable={browserAvailable} />
+  )
+}
+
+function BrowserPreferencesSettings({ browserAvailable }: { browserAvailable: boolean }) {
+  const { t } = useTranslation('common')
+  const [resource] = useState(() =>
+    createAsyncResource('settings/browser-preferences', () => getAppPreferences())
+  )
+  const snapshot = useSyncExternalStore(resource.subscribe, resource.getSnapshot)
+  const preferences = snapshot.data ?? defaultAppPreferences
+  const loading = !snapshot.settled
+  const pending = useRef(false)
   const [saving, setSaving] = useState(false)
   const [clearDialogOpen, setClearDialogOpen] = useState(false)
   const [clearing, setClearing] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    getAppPreferences()
-      .then(nextPreferences => {
-        if (!cancelled) setPreferences(nextPreferences)
-      })
-      .catch(loadError => {
-        console.error('[Wework] Failed to load browser preferences', loadError)
-        if (!cancelled) setError(t('workbench.browser_settings_load_failed'))
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [t])
+  const [actionError, setError] = useState<string | null>(null)
+  const error =
+    actionError ??
+    (snapshot.status === 'error' ? t('workbench.browser_settings_load_failed') : null)
 
   const savePreferences = async (patch: AppPreferencesPatch) => {
+    if (pending.current) return
+    pending.current = true
     setSaving(true)
     setError(null)
     setStatus(null)
     try {
-      setPreferences(await updateAppPreferences(patch))
+      const receipt = await updateAppPreferences(patch)
+      resource.update(() => receipt)
     } catch (saveError) {
       console.error('[Wework] Failed to update browser preferences', saveError)
       setError(t('workbench.browser_settings_save_failed'))
     } finally {
+      pending.current = false
       setSaving(false)
     }
   }
@@ -143,15 +147,6 @@ export function BrowserSettingsPage() {
 
   const controlsDisabled = loading || saving || !browserAvailable
 
-  useEffect(() => {
-    const syncHistoryView = () => setHistoryView(isBrowserHistoryPath())
-    window.addEventListener('popstate', syncHistoryView)
-    return () => window.removeEventListener('popstate', syncHistoryView)
-  }, [])
-
-  if (historyView) {
-    return <BrowserHistoryPage />
-  }
   const downloadLocation =
     preferences.browserDownloadDirectory ?? t('workbench.browser_settings_downloads_system')
 

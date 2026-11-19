@@ -11,6 +11,7 @@ import type {
   RuntimeSupervisorSuggestion,
   UnifiedModel,
 } from '@/types/api'
+import { useClock } from '@wegent/collaboration/clock'
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import {
   SelectContent,
@@ -22,7 +23,7 @@ import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue
 import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { AlertCircle, Check, Loader2, MessageSquareText, Play, ShieldCheck, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { createPortal } from 'react-dom'
 
 export interface TaskSupervisorConfig {
@@ -120,13 +121,7 @@ export function TaskSupervisorStatusButton({
   const nextCheckAt = supervisor.lastEvaluatedAt
     ? supervisor.lastEvaluatedAt + (supervisor.intervalSeconds ?? 30) * 1_000
     : null
-  const [now, setNow] = useState(() => Date.now())
-
-  useEffect(() => {
-    if (!nextCheckAt) return
-    const timer = window.setInterval(() => setNow(Date.now()), 1_000)
-    return () => window.clearInterval(timer)
-  }, [nextCheckAt])
+  const now = useClock(Boolean(nextCheckAt), { until: nextCheckAt ?? undefined })
 
   const nextCheckLabel = nextCheckAt
     ? t('workbench.supervisor_next_check', {

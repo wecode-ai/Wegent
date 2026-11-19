@@ -8,7 +8,10 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { openExternalUrl } from '@/lib/external-links'
 import { cn } from '@/lib/utils'
 import type { ChangeRequest } from '@/types/environment'
+import { Popover, PopoverContent, PopoverTrigger } from '@wegent/collaboration/controls/Popover'
+import { controlPopup } from '@wegent/collaboration/controls/recipes'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useCollaborationPortalTheme } from '@wegent/collaboration/theme'
 import {
   CircleCheck,
   CircleDot,
@@ -21,9 +24,6 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { useState } from 'react'
-import { Popover, PopoverContent, PopoverTrigger } from '@wegent/collaboration/controls/Popover'
-import { controlPopup } from '@wegent/collaboration/controls/recipes'
-import { useCollaborationPortalTheme } from '@wegent/collaboration/theme'
 import { ResourceObservationStatus } from './ResourceObservationStatus'
 
 interface ChangeRequestStatusGlyphConfig {

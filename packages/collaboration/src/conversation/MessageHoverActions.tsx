@@ -1,13 +1,11 @@
-import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
-import { Check, Copy, Pencil } from 'lucide-react'
+import { Button as ControlButton } from '../markdown/Button'
 import {
-  useEffect,
-  useRef,
   useState,
   type MouseEvent as ReactMouseEvent,
   type TransitionEvent as ReactTransitionEvent,
 } from 'react'
-import { Button as ControlButton } from '../markdown/Button'
+import { Check, Copy, Pencil } from 'lucide-react'
+import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
 import { useMarkdownServices } from '../markdown/MarkdownServices'
 import { useConversationTranslation } from './ConversationTranslation'
 
@@ -87,14 +85,14 @@ export function MessageHoverActions({
   const { copyText } = useMarkdownServices()
   const [copied, setCopied] = useState(false)
   const [forking, setForking] = useState(false)
-  const resetCopiedAfterHideRef = useRef(false)
+  const [resetCopiedAfterHide, setResetCopiedAfterHide] = useState(false)
+  const [observed, setObserved] = useState({ visible, copied })
   const time = formatMessageTime(message.createdAt, t)
 
-  useEffect(() => {
-    if (!visible && copied) {
-      resetCopiedAfterHideRef.current = true
-    }
-  }, [copied, visible])
+  if (observed.visible !== visible || observed.copied !== copied) {
+    setObserved({ visible, copied })
+    if (!visible && copied) setResetCopiedAfterHide(true)
+  }
 
   const handleCopy = (event: ReactMouseEvent<HTMLButtonElement>) => {
     if (event.detail > 0) {
@@ -102,13 +100,13 @@ export function MessageHoverActions({
     }
     void copyText(copyContent).then(() => {
       setCopied(true)
-      resetCopiedAfterHideRef.current = false
+      setResetCopiedAfterHide(false)
     })
   }
 
   const handleLeaveActions = () => {
     if (copied) {
-      resetCopiedAfterHideRef.current = true
+      setResetCopiedAfterHide(true)
     }
   }
 
@@ -116,12 +114,12 @@ export function MessageHoverActions({
     if (
       event.target !== event.currentTarget ||
       event.propertyName !== 'opacity' ||
-      !resetCopiedAfterHideRef.current
+      !resetCopiedAfterHide
     ) {
       return
     }
 
-    resetCopiedAfterHideRef.current = false
+    setResetCopiedAfterHide(false)
     setCopied(false)
   }
 
@@ -130,8 +128,7 @@ export function MessageHoverActions({
       data-testid="copy-message-action"
       className="group/copy relative flex h-6 w-6 items-center justify-center"
     >
-      <ControlButton
-        variant="unstyled"
+      <ControlButton variant="unstyled"
         type="button"
         data-testid="copy-message-button"
         onClick={handleCopy}
@@ -164,8 +161,7 @@ export function MessageHoverActions({
       data-testid="edit-message-action"
       className="group/edit relative flex h-6 w-6 items-center justify-center"
     >
-      <ControlButton
-        variant="unstyled"
+      <ControlButton variant="unstyled"
         type="button"
         data-testid="edit-message-button"
         onClick={event => {
@@ -191,8 +187,7 @@ export function MessageHoverActions({
 
   const forkAction = onFork ? (
     <span className="group/fork relative flex h-6 w-6 items-center justify-center">
-      <ControlButton
-        variant="unstyled"
+      <ControlButton variant="unstyled"
         type="button"
         data-testid="fork-message-button"
         onClick={() => {

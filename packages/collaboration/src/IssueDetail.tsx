@@ -268,6 +268,7 @@ function BrowserIssueDetail({
             mode="edit"
             commentBoard={commentBoard}
             item={issue as SharedEditorIssue}
+            taskRefreshKey={issue.version}
             editable={permissions.canEdit}
             project={project as SharedEditorProject}
             allItems={allIssues as SharedEditorIssue[]}

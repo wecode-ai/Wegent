@@ -8,8 +8,9 @@ import {
   recordConversationDiagnostic,
   startConversationDiagnosticCapture,
 } from '@wegent/collaboration/conversation/conversationDiagnostics'
+import { useFocusRequest } from '@wegent/collaboration/dom-events'
 import { ChevronDown, ChevronUp, createLucideIcon, Search, X } from 'lucide-react'
-import { useEffect, useLayoutEffect, useRef } from 'react'
+import { useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { CompositedSpinner } from './CompositedSpinner'
 
@@ -59,24 +60,23 @@ export function ContentFindBar({
     null
   )
 
-  useLayoutEffect(() => {
-    const input = pendingInput.current
-    if (!input || input.queryLength !== query.length) return
-    pendingInput.current = null
-    recordConversationDiagnostic('search-commit', {
-      inputSequence: input.sequence,
-      queryLength: query.length,
-      elapsedMs: performance.now() - input.startedAt,
-    })
-  }, [query])
+  const bindInput = useCallback(
+    (node: HTMLInputElement | null) => {
+      inputRef.current = node
+      if (!node) return
+      const input = pendingInput.current
+      if (!input || input.queryLength !== query.length) return
+      pendingInput.current = null
+      recordConversationDiagnostic('search-commit', {
+        inputSequence: input.sequence,
+        queryLength: query.length,
+        elapsedMs: performance.now() - input.startedAt,
+      })
+    },
+    [query]
+  )
 
-  useEffect(() => {
-    const frame = window.requestAnimationFrame(() => {
-      inputRef.current?.focus()
-      inputRef.current?.select()
-    })
-    return () => window.cancelAnimationFrame(frame)
-  }, [focusRequest])
+  useFocusRequest(inputRef, focusRequest, { selectAll: true, animationFrame: true })
 
   const matches = result?.matches ?? 0
   const countText =
@@ -114,7 +114,7 @@ export function ContentFindBar({
           <ControlInput
             density="dense"
             appearance="plain"
-            ref={inputRef}
+            ref={bindInput}
             id={`${testIdPrefix}-input`}
             data-testid={`${testIdPrefix}-input`}
             type="text"

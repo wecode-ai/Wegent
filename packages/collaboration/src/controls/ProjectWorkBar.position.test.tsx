@@ -161,4 +161,28 @@ describe('project chooser positioning', () => {
         (expectedSide === 'top' ? menu.getBoundingClientRect().height : 0)
     ).toBe(expectedEdge)
   })
+  test('consumes each opening signal once and accepts later signals independently', () => {
+    const close = () =>
+      act(() =>
+        element('project-search-input').dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'Escape',
+            bubbles: true,
+            cancelable: true,
+          })
+        )
+      )
+    render({ projectMenuOpenSignal: 1 })
+    expect(element('project-search-input')).toBe(document.activeElement)
+    close()
+    render({ projectMenuOpenSignal: 1 })
+    expect(document.querySelector('[data-testid="project-work-menu"]')).toBeNull()
+    render({ projectMenuOpenSignal: 1, externalMenuOpenSignal: 1 })
+    expect(element('project-search-input')).toBe(document.activeElement)
+    close()
+    render({ projectMenuOpenSignal: 1, externalMenuOpenSignal: 1 })
+    expect(document.querySelector('[data-testid="project-work-menu"]')).toBeNull()
+    render({ projectMenuOpenSignal: 2, externalMenuOpenSignal: 1 })
+    expect(element('project-work-menu')).not.toBeNull()
+  })
 })

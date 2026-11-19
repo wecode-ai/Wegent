@@ -1,49 +1,21 @@
 import { DialogSurface } from '../controls/DialogSurface'
 import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
-//
 // SPDX-License-Identifier: Apache-2.0
 
 import { X } from 'lucide-react'
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react'
-
-import { ConfirmationDialog } from '../controls/ConfirmationDialog'
+import { useCallback, useMemo, useSyncExternalStore, type ReactNode } from 'react'
+import { useDocumentEvent } from '../dom-events'
 import type { CollaborationTranslate } from '../i18n'
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
-import type { CollaborationOwnedAgent, CollaborationProject } from '../types'
-import {
-  createResourceAgentBindingInput,
-  isSelectableAgentResource,
-  normalizeProjectAgent,
-  type ProjectAgentConfigurationRecord,
-} from './model'
+import type { CollaborationProject } from '../types'
+import type { ProjectAgentConfigurationHost } from './types'
 import styles from './ProjectAgentConfiguration.module.css'
 import { ProjectAgentPicker } from './ProjectAgentPicker'
-import type { ProjectAgentConfigurationHost, ProjectAgentMode } from './types'
+import { ConfirmationDialog } from '../controls/ConfirmationDialog'
+import { createProjectAgentConfigurationState } from './projectAgentConfigurationState'
 
-import { requestFailureMessage as errorMessage } from '../controls/requestFailure'
-
-export function ProjectAgentConfiguration({
-  api,
-  canManage = true,
-  host,
-  project,
-  resourceContext,
-  onError,
-  onAgentsChange,
-  openComposerRequestId,
-  onOpenComposerRequestConsumed,
-  scope = 'project',
-  translate,
-}: {
+type ProjectAgentConfigurationProps = {
   api: SharedWorkspaceApi
   canManage?: boolean
   host?: ProjectAgentConfigurationHost
@@ -64,397 +36,97 @@ export function ProjectAgentConfiguration({
   onOpenComposerRequestConsumed?(requestId: number): void
   scope?: 'project' | 'workspace'
   translate: CollaborationTranslate
-}) {
+}
+
+export function ProjectAgentConfiguration({
+  api,
+  canManage = true,
+  host,
+  project,
+  resourceContext,
+  onError,
+  onAgentsChange,
+  openComposerRequestId,
+  onOpenComposerRequestConsumed,
+  scope = 'project',
+  translate,
+}: ProjectAgentConfigurationProps) {
   const workspaceId = project.workspace_id
-  const [legacySourceAccess, setLegacySourceAccess] = useState<{
-    workspaceId: string
-    allowed: boolean
-  } | null>(null)
-  const canBrowseSources =
-    canManage &&
-    (scope === 'workspace' ||
-      project.project_store === 'local' ||
-      Boolean(project.workspace_access_role) ||
-      (project.workspace_access_role === undefined &&
-        legacySourceAccess?.workspaceId === workspaceId &&
-        legacySourceAccess?.allowed === true))
-  const legacySourceAccessPending =
-    canManage &&
-    scope === 'project' &&
-    project.project_store !== 'local' &&
-    project.workspace_access_role === undefined &&
-    Boolean(workspaceId && api.workspaces) &&
-    legacySourceAccess?.workspaceId !== workspaceId
-  const usesLocalAgentCreator =
-    project.project_store === 'local' && Boolean(host?.renderLocalAgentCreator)
+  const projectId = project.id
+  const projectStore = project.project_store
+  const role = project.workspace_access_role
+  const namespace = resourceContext?.namespace ?? project.namespace ?? 'default'
+  const resource = useMemo(
+    () =>
+      createProjectAgentConfigurationState({
+        api,
+        projectId,
+        workspaceId,
+        projectStore,
+        role,
+        canManage,
+        scope,
+        namespace,
+      }),
+    [api, projectId, workspaceId, projectStore, role, canManage, scope, namespace]
+  )
+  const supportsExistingAgentSelection = host?.supportsExistingAgentSelection ?? true
+  const input = useMemo(
+    () => ({
+      translate,
+      onError,
+      onAgentsChange,
+      supportsExisting: supportsExistingAgentSelection,
+      openComposerRequestId,
+      onOpenComposerRequestConsumed,
+    }),
+    [
+      translate,
+      onError,
+      onAgentsChange,
+      supportsExistingAgentSelection,
+      openComposerRequestId,
+      onOpenComposerRequestConsumed,
+    ]
+  )
+  const subscribe = useCallback(
+    (listener: () => void) => resource.subscribe(listener, input),
+    [resource, input]
+  )
+  const {
+    agents,
+    workspaceAgents,
+    selectedTeamId,
+    mode,
+    loading,
+    loadError,
+    candidateLoading,
+    candidateError,
+    composerOpen,
+    composerVersion,
+    editingVersion,
+    editingAgentId,
+    pendingRemoval,
+    busy,
+    archivingId,
+    error,
+    canBrowseSources,
+  } = useSyncExternalStore(subscribe, resource.getSnapshot, resource.getSnapshot)
+  const usesLocalAgentCreator = projectStore === 'local' && Boolean(host?.renderLocalAgentCreator)
   const usesProjectAgentEditor = Boolean(host?.renderProjectAgentEditor)
   const supportsAgentCreation =
     canBrowseSources && Boolean(usesLocalAgentCreator || host?.renderAgentCreator)
-  const supportsExistingAgentSelection = host?.supportsExistingAgentSelection ?? true
-  const defaultMode: ProjectAgentMode = supportsExistingAgentSelection ? 'existing' : 'create'
-  const [mode, setMode] = useState<ProjectAgentMode>(defaultMode)
-  const [agents, setAgents] = useState<ProjectAgentConfigurationRecord[]>([])
-  const [workspaceAgents, setWorkspaceAgents] = useState<CollaborationOwnedAgent[]>([])
-  const [selectedTeamId, setSelectedTeamId] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [loadError, setLoadError] = useState<string | null>(null)
-  const [loadRevision, setLoadRevision] = useState(0)
-  const [candidateLoading, setCandidateLoading] = useState(true)
-  const [candidateError, setCandidateError] = useState<string | null>(null)
-  const [candidateRevision, setCandidateRevision] = useState(0)
-  const [composerOpen, setComposerOpen] = useState(false)
-  const [editingAgentId, setEditingAgentId] = useState<string | null>(null)
-  const [pendingRemoval, setPendingRemoval] = useState<ProjectAgentConfigurationRecord | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [archivingId, setArchivingId] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const onErrorRef = useRef(onError)
-  const translateRef = useRef(translate)
-  onErrorRef.current = onError
-  translateRef.current = translate
-
-  const agentScope = useMemo(
-    () => ({ api, projectId: project.id, canManage, scope }),
-    [api, project.id, canManage, scope]
-  )
-  const activeAgentScope = useRef<typeof agentScope | null>(null)
-  const agentRequest = useRef(0)
-  useLayoutEffect(() => {
-    activeAgentScope.current = agentScope
-    return () => {
-      activeAgentScope.current = null
-    }
-  }, [agentScope])
-  const isCurrentAgentRequest = useCallback(
-    (request: number) =>
-      activeAgentScope.current === agentScope && agentRequest.current === request,
-    [agentScope]
-  )
-
-  useEffect(() => {
-    if (
-      !canManage ||
-      scope === 'workspace' ||
-      project.project_store === 'local' ||
-      project.workspace_access_role !== undefined ||
-      !workspaceId ||
-      !api.workspaces
-    )
-      return
-    let active = true
-    void api.workspaces
-      .list()
-      .then(workspaces => {
-        if (active)
-          setLegacySourceAccess({
-            workspaceId,
-            allowed: workspaces.some(workspace => workspace.id === workspaceId),
-          })
-      })
-      .catch(cause => {
-        if (!active) return
-        setLegacySourceAccess({ workspaceId, allowed: false })
-        setError(
-          errorMessage(
-            cause,
-            translateRef.current('todo.load_project_agents_failed', '加载项目智能体配置失败')
-          )
-        )
-        onErrorRef.current()
-      })
-    return () => {
-      active = false
-    }
-  }, [api, canManage, scope, project.project_store, project.workspace_access_role, workspaceId])
-
-  useEffect(() => {
-    setAgents([])
-  }, [api, project.id, canManage, scope])
-
-  useEffect(() => {
-    setWorkspaceAgents([])
-    setCandidateError(null)
-    setSelectedTeamId('')
-    setComposerOpen(false)
-    setEditingAgentId(null)
-    setPendingRemoval(null)
-    setError(null)
-    setLoadError(null)
-    let active = true
-    const request = ++agentRequest.current
-    setLoading(true)
-    void api.agents
-      .list(project.id, {
-        includeArchived: canManage && scope === 'project',
-      })
-      .then(nextAgents => {
-        if (!active || !isCurrentAgentRequest(request)) return
-        setAgents(
-          nextAgents
-            .map(normalizeProjectAgent)
-            .filter(agent => canManage || agent.status !== 'archived')
-        )
-      })
-      .catch(cause => {
-        if (!active || !isCurrentAgentRequest(request)) return
-        setLoadError(
-          errorMessage(
-            cause,
-            translateRef.current('todo.load_project_agents_failed', '加载项目智能体配置失败')
-          )
-        )
-        onErrorRef.current()
-      })
-      .finally(() => {
-        if (active && isCurrentAgentRequest(request)) setLoading(false)
-      })
-    return () => {
-      active = false
-    }
-  }, [api, project.id, canManage, scope, loadRevision, isCurrentAgentRequest])
-
-  useEffect(() => {
-    if (
-      !composerOpen ||
-      mode !== 'existing' ||
-      !canBrowseSources ||
-      !supportsExistingAgentSelection
-    )
-      return
-    let active = true
-    setCandidateLoading(true)
-    setCandidateError(null)
-    void Promise.all([
-      api.resources?.list() ?? { agents: [], execution_environments: [] },
-      workspaceId && api.workspaces ? api.workspaces.listAgents(workspaceId) : [],
-    ])
-      .then(([personalResources, nextWorkspaceAgents]) => {
-        if (!active) return
-        const selectable = new Map<string, CollaborationOwnedAgent>()
-        for (const agent of [...personalResources.agents, ...nextWorkspaceAgents]) {
-          const matchesLocation =
-            project.project_store === 'local'
-              ? agent.location === 'local'
-              : agent.location !== 'local'
-          if (
-            matchesLocation &&
-            isSelectableAgentResource(agent) &&
-            (agent.team_id || agent.project_binding_input)
-          )
-            selectable.set(String(agent.team_id ?? agent.id), agent)
-        }
-        setWorkspaceAgents([...selectable.values()])
-      })
-      .catch(cause => {
-        if (!active) return
-        setCandidateError(
-          errorMessage(
-            cause,
-            translateRef.current('todo.load_project_agents_failed', '加载项目智能体配置失败')
-          )
-        )
-        onErrorRef.current()
-      })
-      .finally(() => {
-        if (active) setCandidateLoading(false)
-      })
-    return () => {
-      active = false
-    }
-  }, [
-    api,
-    composerOpen,
-    mode,
-    canBrowseSources,
-    supportsExistingAgentSelection,
-    workspaceId,
-    project.project_store,
-    candidateRevision,
-  ])
-
-  useEffect(() => {
-    if (openComposerRequestId === undefined || legacySourceAccessPending) return
-    if (canBrowseSources) {
-      setMode(defaultMode)
-      setSelectedTeamId('')
-      setCandidateLoading(true)
-      setCandidateError(null)
-      setError(null)
-      setComposerOpen(true)
-    }
-    onOpenComposerRequestConsumed?.(openComposerRequestId)
-  }, [
-    canBrowseSources,
-    defaultMode,
-    legacySourceAccessPending,
-    onOpenComposerRequestConsumed,
-    openComposerRequestId,
-  ])
-
-  useEffect(() => {
-    if (!supportsExistingAgentSelection && mode === 'existing') {
-      setMode('create')
-    }
-  }, [mode, supportsExistingAgentSelection])
-
-  const selectedTeam = useMemo(
-    () =>
-      workspaceAgents.find(
-        candidate => String(candidate.team_id ?? candidate.id) === selectedTeamId
-      ) ?? null,
-    [selectedTeamId, workspaceAgents]
-  )
-
   const editingAgent = useMemo(
-    () => agents.find(candidate => candidate.id === editingAgentId) ?? null,
+    () => agents.find(agent => agent.id === editingAgentId) ?? null,
     [agents, editingAgentId]
   )
-
-  async function addAgent(input: Record<string, unknown>, options: { rethrow?: boolean } = {}) {
-    setBusy(true)
-    setError(null)
-    try {
-      const created = await api.agents.create(project.id, input)
-      setAgents(current => [...current, normalizeProjectAgent(created)])
-      onAgentsChange?.()
-      return true
-    } catch (cause) {
-      setError(
-        errorMessage(cause, translate('todo.create_project_agent_failed', '创建项目智能体失败'))
-      )
-      onError()
-      if (options.rethrow) throw cause
-      return false
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function addExistingAgent() {
-    if (
-      !selectedTeam ||
-      agents.some(
-        agent => selectedTeam.team_id != null && agent.wegentTeamId === selectedTeam.team_id
-      )
-    )
-      return
-    if (await addAgent(createResourceAgentBindingInput(selectedTeam))) {
-      setSelectedTeamId('')
-      setComposerOpen(false)
-    }
-  }
-
-  async function createAndAddAgent(agent: { name: string; teamId: number }) {
-    if (
-      await addAgent(
-        {
-          name: agent.name,
-          runtime: 'wegent',
-          wegentTeamId: agent.teamId,
-          shareWithWorkspace: true,
-        },
-        { rethrow: true }
-      )
-    ) {
-      setMode(defaultMode)
-      setComposerOpen(false)
-    }
-  }
-
-  async function reloadAgents(onFailure?: (cause: unknown) => void) {
-    if (activeAgentScope.current !== agentScope) return
-    const request = ++agentRequest.current
-    try {
-      const nextAgents = await api.agents.list(project.id, {
-        includeArchived: canManage && scope === 'project',
-      })
-      if (!isCurrentAgentRequest(request)) return
-      setLoadError(null)
-      setAgents(
-        nextAgents
-          .map(normalizeProjectAgent)
-          .filter(item => canManage || item.status !== 'archived')
-      )
-    } catch (cause) {
-      if (!isCurrentAgentRequest(request)) return
-      if (onFailure) onFailure(cause)
-      else throw cause
-    } finally {
-      if (isCurrentAgentRequest(request)) setLoading(false)
-    }
-  }
-
-  async function finishLocalAgentCreation() {
-    setError(null)
-    try {
-      await reloadAgents()
-      setMode(defaultMode)
-      setComposerOpen(false)
-      onAgentsChange?.()
-    } catch (cause) {
-      setError(
-        errorMessage(cause, translate('todo.load_project_agents_failed', '加载项目智能体配置失败'))
-      )
-      onError()
-      throw cause
-    }
-  }
-
-  async function archiveAgent(agent: ProjectAgentConfigurationRecord) {
-    setArchivingId(agent.id)
-    setError(null)
-    try {
-      await api.agents.update(project.id, agent.id, {
-        version: agent.version,
-        status: 'archived',
-      })
-      await reloadAgents()
-      onAgentsChange?.()
-    } catch (cause) {
-      setError(
-        errorMessage(cause, translate('todo.archive_project_agent_failed', '停用项目智能体失败'))
-      )
-      onError()
-    } finally {
-      setArchivingId(null)
-    }
-  }
-
-  async function finishAgentChange() {
-    if (activeAgentScope.current !== agentScope) return
-    setEditingAgentId(null)
-    onAgentsChange?.()
-    await reloadAgents(cause => {
-      setLoadError(
-        errorMessage(cause, translate('todo.load_project_agents_failed', '加载项目智能体配置失败'))
-      )
-      onError()
-    })
-  }
-
-  async function saveEditedAgent(saved: { name: string; teamId: number }) {
-    const agent = editingAgent
-    if (!agent) return
-    setError(null)
-    try {
-      // Project rows refresh their materialized Agent configuration after the
-      // backing resource changes; workspace rows derive it on read.
-      if (scope === 'project') {
-        await api.agents.update(project.id, agent.id, {
-          version: agent.version,
-          ...(saved.name ? { name: saved.name } : {}),
-        })
-      }
-      await finishAgentChange()
-    } catch (cause) {
-      setError(
-        errorMessage(cause, translate('todo.update_project_agent_failed', '更新项目智能体失败'))
-      )
-      onError()
-      throw cause
-    }
-  }
-
+  useDocumentEvent(
+    'keydown',
+    event => {
+      if (event.key === 'Escape' && !busy) resource.closeComposer()
+    },
+    { enabled: composerOpen && !host }
+  )
   const dialogTitle = translate('todo.add_project_agent', '添加智能体')
   const dialogDescription =
     scope === 'workspace'
@@ -469,7 +141,7 @@ export function ProjectAgentConfiguration({
         children,
         closeLabel,
         description: dialogDescription,
-        onClose: () => setComposerOpen(false),
+        onClose: () => resource.closeComposer(composerVersion),
         testIds: {
           backdrop: 'project-agent-dialog-backdrop',
           close: 'project-agent-dialog-close',
@@ -484,18 +156,15 @@ export function ProjectAgentConfiguration({
         data-testid="project-agent-dialog-backdrop"
         onMouseDown={event => {
           if (event.target === event.currentTarget && !busy) {
-            setComposerOpen(false)
+            resource.closeComposer(composerVersion)
           }
         }}
       >
         <DialogSurface
-          onClose={() => {
-            if (!busy) setComposerOpen(false)
-          }}
+          onClose={busy ? undefined : () => resource.closeComposer(composerVersion)}
           render={
             <section
               aria-labelledby="project-agent-dialog-title"
-              aria-modal="true"
               className={styles.modal}
               data-testid="project-agent-dialog"
             />
@@ -512,7 +181,7 @@ export function ProjectAgentConfiguration({
               className={styles.closeButton}
               data-testid="project-agent-dialog-close"
               disabled={busy}
-              onClick={() => setComposerOpen(false)}
+              onClick={() => resource.closeComposer(composerVersion)}
               type="button"
             >
               <X aria-hidden="true" />
@@ -533,13 +202,12 @@ export function ProjectAgentConfiguration({
   function renderCustomAgentCreator() {
     if (mode !== 'create') return null
     const onClose = () => {
-      setMode(defaultMode)
-      setComposerOpen(false)
+      resource.cancelCreation(composerVersion)
     }
     if (usesLocalAgentCreator && host?.renderLocalAgentCreator) {
       return host.renderLocalAgentCreator({
         onClose,
-        onCreated: finishLocalAgentCreation,
+        onCreated: () => resource.finishLocalAgentCreation(composerVersion),
         projectId: agentProjectId,
       })
     }
@@ -547,7 +215,7 @@ export function ProjectAgentConfiguration({
       projectId: scope === 'project' ? project.id : undefined,
       namespace: creatorContext.namespace,
       onClose,
-      onCreated: createAndAddAgent,
+      onCreated: agent => resource.createAndAddAgent(agent, composerVersion),
       workspaceName: creatorContext.name,
     })
   }
@@ -584,14 +252,7 @@ export function ProjectAgentConfiguration({
             className={styles.addButton}
             data-testid="project-agent-add"
             disabled={loading || loadError !== null}
-            onClick={() => {
-              setMode(defaultMode)
-              setSelectedTeamId('')
-              setCandidateLoading(true)
-              setCandidateError(null)
-              setError(null)
-              setComposerOpen(true)
-            }}
+            onClick={resource.openComposer}
             type="button"
           >
             {translate('todo.add_project_agent', '添加智能体')}
@@ -607,7 +268,7 @@ export function ProjectAgentConfiguration({
             type="button"
             className={styles.retryButton}
             data-testid="project-agent-config-retry"
-            onClick={() => setLoadRevision(value => value + 1)}
+            onClick={resource.retryList}
           >
             {translate('common.retry', '重试')}
           </ControlButton>
@@ -687,31 +348,7 @@ export function ProjectAgentConfiguration({
                           type="button"
                           data-testid={`project-agent-reactivate-${agent.id}`}
                           disabled={archivingId === agent.id}
-                          onClick={() => {
-                            setArchivingId(agent.id)
-                            setError(null)
-                            void api.agents
-                              .update(project.id, agent.id, {
-                                version: agent.version,
-                                status: 'active',
-                                shareWithWorkspace: true,
-                              })
-                              .then(() => reloadAgents())
-                              .then(() => onAgentsChange?.())
-                              .catch(cause => {
-                                setError(
-                                  errorMessage(
-                                    cause,
-                                    translate(
-                                      'todo.update_project_agent_failed',
-                                      '更新项目智能体失败'
-                                    )
-                                  )
-                                )
-                                onError()
-                              })
-                              .finally(() => setArchivingId(null))
-                          }}
+                          onClick={() => void resource.archiveAgent(agent, true)}
                         >
                           {translate('todo.agent_reactivate_share', '授权并重新启用')}
                         </ControlButton>
@@ -726,7 +363,7 @@ export function ProjectAgentConfiguration({
                           className={styles.archiveButton}
                           data-testid={`project-agent-edit-${agent.id}`}
                           disabled={archivingId === agent.id}
-                          onClick={() => setEditingAgentId(agent.id)}
+                          onClick={() => resource.editAgent(agent.id)}
                           type="button"
                         >
                           {translate('todo.edit_project_agent', '编辑')}
@@ -738,7 +375,7 @@ export function ProjectAgentConfiguration({
                           className={styles.archiveButton}
                           data-testid={`project-agent-archive-${agent.id}`}
                           disabled={archivingId === agent.id}
-                          onClick={() => void archiveAgent(agent)}
+                          onClick={() => void resource.archiveAgent(agent)}
                           type="button"
                         >
                           {archivingId === agent.id
@@ -755,7 +392,7 @@ export function ProjectAgentConfiguration({
                           className={styles.archiveButton}
                           data-testid={`project-agent-delete-${agent.id}`}
                           disabled={archivingId === agent.id}
-                          onClick={() => setPendingRemoval(agent)}
+                          onClick={() => resource.requestRemoval(agent)}
                         >
                           {translate('todo.delete_project_agent', '删除')}
                         </ControlButton>
@@ -790,33 +427,8 @@ export function ProjectAgentConfiguration({
                 failed: translate('todo.delete_project_agent_failed', '删除项目智能体失败'),
               }}
               testIdPrefix="project-agent-delete"
-              onClose={() => setPendingRemoval(null)}
-              onConfirm={async () => {
-                try {
-                  await api.agents.remove(project.id, pendingRemoval.id, pendingRemoval.version)
-                  if (activeAgentScope.current === agentScope) {
-                    setAgents(current => current.filter(agent => agent.id !== pendingRemoval.id))
-                  }
-                  await finishAgentChange()
-                } catch (cause) {
-                  const message = errorMessage(cause, '')
-                  if (message.includes('PROJECT_AGENT_IN_USE'))
-                    throw new Error(
-                      translate(
-                        'todo.project_agent_in_use',
-                        '该智能体仍被协作小组引用，请先在小组中替换或移除，再删除。'
-                      )
-                    )
-                  if (message.includes('PROJECT_AGENT_MANAGED'))
-                    throw new Error(
-                      translate(
-                        'todo.project_agent_managed',
-                        '当前设备智能体由系统管理，不能删除。'
-                      )
-                    )
-                  throw cause
-                }
-              }}
+              onClose={() => resource.cancelRemoval(pendingRemoval)}
+              onConfirm={() => resource.removeAgent(pendingRemoval)}
             />
           )}
           {composerOpen
@@ -838,11 +450,11 @@ export function ProjectAgentConfiguration({
                   busy={busy}
                   scope={scope}
                   translate={translate}
-                  onSelect={setSelectedTeamId}
-                  onRetry={() => setCandidateRevision(value => value + 1)}
-                  onCreate={supportsAgentCreation ? () => setMode('create') : undefined}
-                  onClose={() => setComposerOpen(false)}
-                  onAdd={() => void addExistingAgent()}
+                  onSelect={resource.selectTeam}
+                  onRetry={resource.retryCandidates}
+                  onCreate={supportsAgentCreation ? resource.createAgent : undefined}
+                  onClose={() => resource.closeComposer(composerVersion)}
+                  onAdd={() => void resource.addExistingAgent(composerVersion)}
                 />
               ))
             : null}
@@ -854,8 +466,12 @@ export function ProjectAgentConfiguration({
             ? host.renderProjectAgentEditor({
                 projectId: agentProjectId,
                 resourceId: editingAgent.id,
-                onClose: () => setEditingAgentId(null),
-                onSaved: finishAgentChange,
+                onClose: () => resource.closeEditor(editingVersion),
+                onSaved: () =>
+                  resource.finishAgentChange({
+                    id: editingAgent.id,
+                    version: editingVersion,
+                  }),
               })
             : editingAgent &&
                 editingAgent.definitionSource === 'shared_agent' &&
@@ -865,8 +481,12 @@ export function ProjectAgentConfiguration({
                   projectId: scope === 'project' ? String(project.id) : undefined,
                   agent: { teamId: editingAgent.wegentTeamId },
                   namespace: creatorContext.namespace,
-                  onClose: () => setEditingAgentId(null),
-                  onSaved: saveEditedAgent,
+                  onClose: () => resource.closeEditor(editingVersion),
+                  onSaved: saved =>
+                    resource.saveEditedAgent(saved, {
+                      id: editingAgent.id,
+                      version: editingVersion,
+                    }),
                   workspaceName: creatorContext.name,
                 })
               : null}

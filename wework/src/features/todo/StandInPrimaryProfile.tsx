@@ -1,23 +1,20 @@
-import {
-  connectionChangeEnablesIdentity,
-  newStandInRole,
-  type PersonalStandInSettings,
-} from '@/api/personalStandIn'
+import type { PersonalStandInSettings } from '@/api/personalStandIn'
+import { connectionChangeEnablesIdentity, newStandInRole } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { DeviceInfo } from '@/types/api'
 import type { CollaborationProject } from '@wegent/collaboration'
+import { createTagDraft } from '@wegent/collaboration'
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
 import { dequal } from 'dequal'
-import { useCallback, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from 'react'
+import type { ReactNode, Ref } from 'react'
+import { useCallback, useImperativeHandle, useRef, useState, useSyncExternalStore } from 'react'
 import { StandInComposer } from './StandInComposer'
-import {
-  StandInConnectionSettings,
-  type StandInConnectionNavigationHandle,
-} from './StandInConnectionSettings'
+import type { StandInConnectionNavigationHandle } from './StandInConnectionSettings'
+import { StandInConnectionSettings } from './StandInConnectionSettings'
 import { StandInDeviceSelect } from './StandInDeviceSelect'
 import {
   StandInSettingsActions,
@@ -112,7 +109,32 @@ export function StandInPrimaryProfile({
     settings.executionDeviceId
   )
   const [scheduleDirty, setScheduleDirty] = useState(false)
-  const [connectionDraftDirty, setConnectionDraftDirty] = useState(false)
+  const [tagOwner, setTagOwner] = useState(() => ({
+    api,
+    userId: settings.userId,
+    deviceId: settings.executionDeviceId,
+    store: createTagDraft(),
+  }))
+  if (
+    tagOwner.api !== api ||
+    tagOwner.userId !== settings.userId ||
+    tagOwner.deviceId !== settings.executionDeviceId
+  ) {
+    setDraft(original)
+    setBaseline(original)
+    setTagOwner({
+      api,
+      userId: settings.userId,
+      deviceId: settings.executionDeviceId,
+      store: createTagDraft(),
+    })
+  }
+  const tagDraft = tagOwner.store
+  const connectionDraftDirty = useSyncExternalStore(
+    tagDraft.subscribe,
+    tagDraft.getDirtySnapshot,
+    tagDraft.getDirtySnapshot
+  )
   const dirty = !dequal(original, draft) || scheduleDirty || connectionDraftDirty
 
   const role = {
@@ -248,7 +270,7 @@ export function StandInPrimaryProfile({
             }}
             scheduling={{ userId: settings.userId, roleId: '@primary' }}
             onScheduleDirtyChange={setScheduleDirty}
-            onDraftDirtyChange={setConnectionDraftDirty}
+            tagDraft={tagDraft}
             projects={projects}
             api={api}
             deviceId={settings.executionDeviceId}

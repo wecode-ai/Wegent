@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { ConfirmationDialog } from './ConfirmationDialog'
 import { TextInputDialog } from './TextInputDialog'
 
@@ -35,7 +35,8 @@ export function useDialogRequests(translate: (key: string, fallback: string) => 
       }),
     [enqueue]
   )
-  useEffect(() => {
+  const attach = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return
     mounted.current = true
     const requests = pending.current
     return () => {
@@ -91,5 +92,5 @@ export function useDialogRequests(translate: (key: string, fallback: string) => 
         onSubmit={value => settle(request, value)}
       />
     ) : null
-  return { confirm, prompt, dialogs }
+  return { confirm, prompt, dialogs: <div className="contents" ref={attach}>{dialogs}</div> }
 }

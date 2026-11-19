@@ -24,7 +24,6 @@ export function AddMarketDialog({
   onSubmit: (event: FormEvent) => void
 }) {
   const { t } = useTranslation('common')
-  const dialogRef = useRef<HTMLDivElement>(null)
   const sourceInputRef = useRef<HTMLInputElement>(null)
   const sourceIsValid = isMarketplaceSourceValid(formData.source)
   const sourceError = Boolean(formData.source.trim()) && !sourceIsValid
@@ -49,12 +48,14 @@ export function AddMarketDialog({
     >
       <DialogSurface
         initialFocus={() => sourceInputRef.current}
+        finalFocus={() =>
+          document.querySelector<HTMLElement>('[data-testid="plugins-create-button"]')
+        }
         onClose={() => {
           if (!isSubmitting) onClose()
         }}
         render={
           <div
-            ref={dialogRef}
             aria-labelledby="plugins-marketplace-dialog-title"
             tabIndex={-1}
             data-testid="plugins-marketplace-dialog"

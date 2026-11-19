@@ -3,7 +3,13 @@ import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useRef, type ReactNode, type Ref } from 'react'
+import {
+  useCallback,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+  type Ref,
+} from 'react'
 import { FlatProjectViewSwitcher } from './FlatProjectViewSwitcher'
 import { ProjectViewLabel } from './ProjectViewLabel'
 import { ProjectViewMenu } from './ProjectViewMenu'
@@ -17,7 +23,7 @@ import {
   type ProjectViewSelectionMemory,
 } from './projectViewNavigation'
 
-export * from './projectViewNavigation'
+export type * from './projectViewNavigation'
 
 export interface ProjectViewSwitcherProps<
   View extends CollaborationProjectView = CollaborationProjectView,
@@ -56,8 +62,8 @@ function GroupedProjectViewSwitcher<View extends CollaborationProjectView>({
   selectionMemory,
   value,
 }: ProjectViewSwitcherProps<View>) {
-  const localMemory = useRef(createProjectViewSelectionMemory())
-  const memory = selectionMemory ?? localMemory.current
+  const [localMemory] = useState(createProjectViewSelectionMemory)
+  const memory = selectionMemory ?? localMemory
   const messages = projectViewMessages[locale]
   const groups = buildProjectViewNavigation(options)
   const primaryLabel = groups.map(group => messages[group.id]).join(' / ')
@@ -77,24 +83,30 @@ function GroupedProjectViewSwitcher<View extends CollaborationProjectView>({
         entry.segments?.some(segment => segment.id === resolvedView)
     ) ?? selectedGroup.entries[0]
 
-  useEffect(() => {
-    // Rendering a deep link must never navigate; it only updates this session's plan choice.
-    if (selectedGroup.id !== 'plan' || resolvedView !== value) return
-    const previous = memory.get(selectionKey)
-    memory.set(selectionKey, {
-      planView: value,
-      timelineView: selectedEntry.id === 'timeline' ? value : previous?.timelineView,
-    })
-  }, [memory, selectionKey, selectedGroup.id, selectedEntry.id, resolvedView, value])
+  const remembersPlan = selectedGroup.id === 'plan' && resolvedView === value
+  const remembersTimeline = selectedEntry.id === 'timeline'
+  const subscribeSelection = useCallback(
+    (listener: () => void) =>
+      memory.subscribe(
+        selectionKey,
+        listener,
+        remembersPlan
+          ? { planView: value, timelineView: remembersTimeline ? value : undefined }
+          : undefined
+      ),
+    [memory, selectionKey, remembersPlan, remembersTimeline, value]
+  )
+  const readSelection = useCallback(() => memory.get(selectionKey), [memory, selectionKey])
+  const rememberedSelection = useSyncExternalStore(subscribeSelection, readSelection, readSelection)
 
   const targetView = (entry: typeof selectedEntry) => {
     if (entry.segments?.some(segment => segment.id === resolvedView)) return resolvedView as View
-    const timeline = memory.get(selectionKey)?.timelineView
+    const timeline = rememberedSelection?.timelineView
     return entry.segments?.find(segment => segment.id === timeline)?.id ?? entry.option.id
   }
   const selectGroup = (group: typeof selectedGroup) => {
     if (group.id === selectedGroup.id) return
-    const remembered = group.id === 'plan' ? memory.get(selectionKey)?.planView : undefined
+    const remembered = group.id === 'plan' ? rememberedSelection?.planView : undefined
     const available = group.entries.flatMap(entry => entry.segments ?? [entry.option])
     onChange(available.find(option => option.id === remembered)?.id ?? group.entries[0].option.id)
   }

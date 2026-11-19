@@ -1,16 +1,9 @@
+import { useDOMEvent } from '../dom-events'
 import { TransferContext, type Item } from './projectBoardTransferContext'
 import { useCollaborationPortalTheme } from '../theme'
 import { applyCollaborationPortalTheme } from '../theme/applyPortalTheme'
 import { usePart, usePrimitive } from '@ui-sdk/react/primitive'
-import {
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react'
+import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react'
 import { keepFocus, type TransferLists } from '@ui-sdk/core'
 import { boardTransferPrimitive } from './boardTransferPrimitive'
 import type { ProjectBoardDrop, ProjectBoardDragItem } from './projectBoardDnd'
@@ -28,16 +21,15 @@ export function ProjectBoardTransfer({
   onDrop,
   onDragCancel,
 }: ProjectBoardTransferEvents & { children?: ReactNode }) {
+  const theme = useCollaborationPortalTheme()
   const destinationRef = useRef<{ itemId: string; list: string } | null>(null)
   const release = useRef<globalThis.PointerEvent | null>(null)
   const [items, setItems] = useState<ReadonlyMap<string, Item>>(() => new Map())
-  const [containers, setContainers] = useState<
-    ReadonlyMap<string, HTMLElement>
-  >(() => new Map())
+  const [containers, setContainers] = useState<ReadonlyMap<string, HTMLElement>>(() => new Map())
   const registerItem = useCallback((key: string, item: Item) => {
-    setItems((current) => new Map(current).set(key, item))
+    setItems(current => new Map(current).set(key, item))
     return () =>
-      setItems((current) => {
+      setItems(current => {
         const next = new Map(current)
         next.delete(key)
         return next
@@ -45,10 +37,10 @@ export function ProjectBoardTransfer({
   }, [])
   const registerList = useCallback((key: string, node: HTMLElement) => {
     node.dataset.issueBoardTransferList = key
-    setContainers((current) => new Map(current).set(key, node))
+    setContainers(current => new Map(current).set(key, node))
     return () => {
       delete node.dataset.issueBoardTransferList
-      setContainers((current) => {
+      setContainers(current => {
         const next = new Map(current)
         next.delete(key)
         return next
@@ -59,14 +51,10 @@ export function ProjectBoardTransfer({
     const next: TransferLists = {}
     for (const key of containers.keys()) next[key] = []
     const ordered = Array.from(items).sort(([, a], [, b]) =>
-      a.node.compareDocumentPosition(b.node) & Node.DOCUMENT_POSITION_FOLLOWING
-        ? -1
-        : 1,
+      a.node.compareDocumentPosition(b.node) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1
     )
     for (const [key, item] of ordered) {
-      const container = item.node.closest<HTMLElement>(
-        '[data-issue-board-transfer-list]',
-      )
+      const container = item.node.closest<HTMLElement>('[data-issue-board-transfer-list]')
       const list = container?.dataset.issueBoardTransferList
       if (list && next[list]) next[list].push(key)
     }
@@ -78,20 +66,33 @@ export function ProjectBoardTransfer({
   })
   const handle = usePrimitive(boardTransferPrimitive, {
     lists,
-    onStart: (key) => {
+    onStart: ({ key, pointer }) => {
       release.current = null
+      if (pointer) {
+        const source = items.get(key)?.node
+        // Transfer appends its preview after the synchronous start notification.
+        queueMicrotask(() => {
+          const previews =
+            source?.ownerDocument.querySelectorAll<HTMLElement>('[data-drag-preview]')
+          const copy = previews?.[previews.length - 1]
+          if (!copy) return
+          for (const node of copy.querySelectorAll('[data-testid]'))
+            node.removeAttribute('data-testid')
+          copy.setAttribute('data-testid', 'project-board-drag-overlay')
+          applyCollaborationPortalTheme(copy, theme)
+        })
+      }
       onDragStart?.(active(key))
     },
     onCancel: () => onDragCancel?.(),
-    recover: (itemId) => {
+    recover: itemId => {
       const destination = destinationRef.current
       if (!destination || destination.itemId !== itemId) return undefined
       return (
         containers
           .get(destination.list)
-          ?.querySelector<HTMLElement>(
-            `[data-board-transfer-item="${CSS.escape(itemId)}"]`,
-          ) ?? undefined
+          ?.querySelector<HTMLElement>(`[data-board-transfer-item="${CSS.escape(itemId)}"]`) ??
+        undefined
       )
     },
     onCommit: (nextLists, details) => {
@@ -109,21 +110,17 @@ export function ProjectBoardTransfer({
         )
           return false
       }
-      const destination = (nextLists[details.to] ?? []).filter(
-        (key) => key !== details.key,
-      )
+      const destination = (nextLists[details.to] ?? []).filter(key => key !== details.key)
       const before = destination[details.index]
       const source = items.get(details.key)
       const itemId = source?.data.itemId
-      const followsFocus = Boolean(
-        source?.node.contains(source.node.ownerDocument.activeElement),
-      )
+      const followsFocus = Boolean(source?.node.contains(source.node.ownerDocument.activeElement))
       destinationRef.current = itemId ? { itemId, list: details.to } : null
       onDrop(
         projectBoardDrop({
           source: active(details.key),
           target: before ? active(before) : { id: details.to },
-        }),
+        })
       )
       if (followsFocus && itemId) {
         // React replaces the card across columns. Follow its interactive target,
@@ -132,26 +129,22 @@ export function ProjectBoardTransfer({
           () =>
             containers
               .get(details.to)
-              ?.querySelector<HTMLElement>(
-                `[data-board-transfer-item="${CSS.escape(itemId)}"]`,
-              ) ?? undefined,
+              ?.querySelector<HTMLElement>(`[data-board-transfer-item="${CSS.escape(itemId)}"]`) ??
+            undefined
         )
       }
       return true
     },
   })
-  const ownerWindow = items.values().next().value?.node
-    .ownerDocument.defaultView
-  useEffect(() => {
-    if (!ownerWindow) return
-    // SDK Transfer's commit event is optional. Record only the final release
-    // for the board's outside-drop rule; SDK still owns the gesture and hit testing.
-    const remember = (event: globalThis.PointerEvent) => {
+  const ownerWindow = items.values().next().value?.node.ownerDocument.defaultView
+  useDOMEvent<globalThis.PointerEvent>(
+    ownerWindow ?? null,
+    'pointerup',
+    event => {
       if (handle.instance.get().moving?.pointer) release.current = event
-    }
-    ownerWindow.addEventListener('pointerup', remember, true)
-    return () => ownerWindow.removeEventListener('pointerup', remember, true)
-  }, [handle.instance, ownerWindow])
+    },
+    { capture: true }
+  )
   return usePart(
     handle,
     'root',
@@ -170,23 +163,6 @@ export function ProjectBoardTransfer({
           {children}
         </TransferContext.Provider>
       ),
-    },
+    }
   )
-}
-
-// createTransfer owns the floating copy; callers do not render a second preview.
-export function ProjectBoardTransferOverlay() {
-  const context = useContext(TransferContext)
-  const theme = useCollaborationPortalTheme()
-  const key = context?.moving?.pointer ? context.moving.key : null
-  useEffect(() => {
-    if (!key) return
-    const copy = document.querySelector<HTMLElement>('[data-drag-preview]')
-    if (!copy) return
-    for (const node of copy.querySelectorAll('[data-testid]'))
-      node.removeAttribute('data-testid')
-    copy.setAttribute('data-testid', 'project-board-drag-overlay')
-    applyCollaborationPortalTheme(copy, theme)
-  }, [key, theme])
-  return null
 }

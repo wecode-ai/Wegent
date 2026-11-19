@@ -1,6 +1,6 @@
 import { Popover, PopoverContent } from '@wegent/collaboration/controls/Popover'
-import { useEffect, useRef, type ReactNode, type Ref } from 'react'
 import { useCollaborationPortalTheme } from '@wegent/collaboration/theme'
+import { useCallback, useRef, type ReactNode, type Ref } from 'react'
 
 const OPEN_POPOVER_BODY_ATTRIBUTE = 'data-wework-anchor-popover-open'
 
@@ -36,17 +36,17 @@ export function AnchorPopover({
   const popoverRef = useRef<HTMLDivElement>(null)
   const theme = useCollaborationPortalTheme()
 
-  useEffect(() => {
-    if (!anchor) return
+  const attachPopover = useCallback((node: HTMLDivElement | null) => {
+    popoverRef.current = node
+    if (!node) return
     openPopoverCount += 1
     document.body.setAttribute(OPEN_POPOVER_BODY_ATTRIBUTE, '')
     return () => {
+      popoverRef.current = null
       openPopoverCount = Math.max(0, openPopoverCount - 1)
-      if (openPopoverCount === 0) {
-        document.body.removeAttribute(OPEN_POPOVER_BODY_ATTRIBUTE)
-      }
+      if (openPopoverCount === 0) document.body.removeAttribute(OPEN_POPOVER_BODY_ATTRIBUTE)
     }
-  }, [anchor])
+  }, [])
 
   if (!anchor) return null
 
@@ -63,7 +63,7 @@ export function AnchorPopover({
     >
       <PopoverContent
         {...theme}
-        ref={popoverRef}
+        ref={attachPopover}
         anchor={anchor}
         side="top"
         sideOffset={8}

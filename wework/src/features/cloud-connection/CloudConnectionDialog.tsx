@@ -1,18 +1,18 @@
-import {
-  CollapsibleRoot,
-  CollapsibleTrigger,
-  CollapsiblePanel,
-} from '@wegent/collaboration/controls/Collapsible'
 import { getRuntimeConfig } from '@/config/runtime'
-import { useEmbeddedBrowserOcclusion } from '@/hooks/useEmbeddedBrowserOcclusion'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
+import { setEmbeddedBrowserOcclusion } from '@/lib/embedded-browser'
+import {
+  CollapsiblePanel,
+  CollapsibleRoot,
+  CollapsibleTrigger,
+} from '@wegent/collaboration/controls/Collapsible'
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { AlertCircle, Cloud, Loader2, LogOut, Plus, Server, Settings, X } from 'lucide-react'
 import type { FormEvent } from 'react'
-import { useId, useRef, useState } from 'react'
+import { useCallback, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { normalizeCloudBackendUrl } from './cloudConnectionStorage'
 import { useOptionalCloudConnection } from './useCloudConnection'
@@ -47,7 +47,11 @@ export function CloudConnectionDialog({
 }: CloudConnectionDialogProps) {
   const { t } = useTranslation('common')
   const cloud = useOptionalCloudConnection()
-  useEmbeddedBrowserOcclusion('cloud-connection-dialog', open)
+  const bindOverlay = useCallback((element: HTMLDivElement | null) => {
+    if (!element) return
+    setEmbeddedBrowserOcclusion('cloud-connection-dialog', true)
+    return () => setEmbeddedBrowserOcclusion('cloud-connection-dialog', false)
+  }, [])
   const [backendUrl, setBackendUrl] = useState(
     () => cloud.backendUrl || getRuntimeConfig().wegentBackendUrl
   )
@@ -91,6 +95,7 @@ export function CloudConnectionDialog({
 
   return createPortal(
     <div
+      ref={bindOverlay}
       className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4"
       onClick={event => {
         if (!submitting && event.target === event.currentTarget) onClose()

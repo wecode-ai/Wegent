@@ -1,5 +1,5 @@
 import { X } from 'lucide-react'
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react'
+import { useRef, useState, useSyncExternalStore, type KeyboardEvent } from 'react'
 import {
   Combobox,
   ComboboxContent,
@@ -11,6 +11,7 @@ import {
 import { controlInput, controlOption, controlPopup } from '../controls/recipes'
 import { useCollaborationPortalTheme } from '../theme'
 import { Button as ControlButton } from '../markdown/Button'
+import { createTagDraft, type TagDraftStore } from './tagDraft'
 import { isTagNameTooLong } from '../tagging'
 function cn(...values: Array<string | false | null | undefined>): string {
   return values.filter(Boolean).join(' ')
@@ -19,7 +20,7 @@ function cn(...values: Array<string | false | null | undefined>): string {
 interface TagEditorProps {
   tags: string[]
   onChange: (tags: string[]) => void
-  onDraftDirtyChange?: (dirty: boolean) => void
+  draftStore?: TagDraftStore
   disabled?: boolean
   placeholder?: string
   removeLabel?: (tag: string) => string
@@ -36,7 +37,7 @@ interface TagEditorProps {
 export function TagEditor({
   tags,
   onChange,
-  onDraftDirtyChange,
+  draftStore,
   disabled = false,
   placeholder = '添加标签',
   removeLabel = (tag) => `移除标签 ${tag}`,
@@ -45,19 +46,16 @@ export function TagEditor({
   suggestions = [],
   testIdPrefix,
 }: TagEditorProps) {
-  const [draft, setDraft] = useState('')
+  const [ownedDraft] = useState(createTagDraft)
+  const source = draftStore ?? ownedDraft
+  const draft = useSyncExternalStore(source.subscribeEditor, source.getSnapshot, source.getSnapshot)
+  const setDraft = source.set
   const [open, setOpen] = useState(false)
   const [combobox] = useState(() => createComboboxController<string, true>())
   const portalTheme = useCollaborationPortalTheme()
   const inputRef = useRef<HTMLInputElement>(null)
   const containerRef = useRef<HTMLSpanElement>(null)
   const composingRef = useRef(false)
-  const draftDirty = Boolean(draft.trim())
-  useEffect(() => {
-    onDraftDirtyChange?.(draftDirty)
-  }, [draftDirty, onDraftDirtyChange])
-  useEffect(() => () => onDraftDirtyChange?.(false), [onDraftDirtyChange])
-
   const normalizedDraft = draft.trim().toLowerCase()
   const tooLong = isTagNameTooLong(draft.replace(/,/g, ''))
   const exceedsLimit = (tag: string) =>

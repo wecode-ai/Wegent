@@ -1,4 +1,4 @@
-import { useBlockNoteSdkPopupPresence } from './blockNoteSdkPopupPresence'
+import { useBlockNoteSdkPopupRef } from './blockNoteSdkPopupPresence'
 import { getNodeById } from '@blocknote/core'
 import { TableHandlesExtension } from '@blocknote/core/extensions'
 import {
@@ -17,7 +17,9 @@ export function BlockNoteSdkTableHandles() {
   const extension = useExtension(TableHandlesExtension)
   const state = useExtensionState(TableHandlesExtension)
   const [only, setOnly] = useState<string>()
-  useBlockNoteSdkPopupPresence(Boolean(state?.show))
+  const rowPopup = useBlockNoteSdkPopupRef()
+  const columnPopup = useBlockNoteSdkPopupRef()
+  const cellPopup = useBlockNoteSdkPopupRef()
   if (!state) return null
   const node = getNodeById(state.block.id, editor.prosemirrorState.doc)
   if (!node) return null
@@ -72,6 +74,7 @@ export function BlockNoteSdkTableHandles() {
       <Popover open={visible('row', state.rowIndex !== undefined)} onOpenChange={onOpenChange}>
         <PopoverContent
           container={editor.portalElement}
+          ref={rowPopup}
           anchor={row}
           side="left"
           sideOffset={-10}
@@ -86,6 +89,7 @@ export function BlockNoteSdkTableHandles() {
       <Popover open={visible('column', state.colIndex !== undefined)} onOpenChange={onOpenChange}>
         <PopoverContent
           container={editor.portalElement}
+          ref={columnPopup}
           anchor={column}
           side="top"
           sideOffset={-12}
@@ -100,6 +104,7 @@ export function BlockNoteSdkTableHandles() {
       <Popover open={visible('cell', Boolean(cell))} onOpenChange={onOpenChange}>
         <PopoverContent
           container={editor.portalElement}
+          ref={cellPopup}
           anchor={cell}
           side="top"
           align="end"

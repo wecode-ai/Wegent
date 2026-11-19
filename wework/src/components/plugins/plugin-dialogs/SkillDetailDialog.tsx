@@ -1,8 +1,8 @@
+import { useRef } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { BookOpenText, Boxes, Loader2 } from 'lucide-react'
-import { useEffect, useRef } from 'react'
 
 export interface SkillDetailTarget {
   name: string
@@ -32,12 +32,9 @@ export function SkillDetailDialog({
   onToggle,
 }: SkillDetailDialogProps) {
   const { t } = useTranslation('common')
-  const closeRef = useRef<HTMLButtonElement>(null)
   const logo = skill.pluginLogoUrl?.trim() || ''
 
-  useEffect(() => {
-    closeRef.current?.focus()
-  }, [])
+  const closeRef = useRef<HTMLButtonElement>(null)
 
   return (
     <div
@@ -46,6 +43,7 @@ export function SkillDetailDialog({
     >
       <DialogSurface
         onClose={onClose}
+        initialFocus={() => closeRef.current}
         render={
           <section
             aria-labelledby="skill-detail-dialog-title"

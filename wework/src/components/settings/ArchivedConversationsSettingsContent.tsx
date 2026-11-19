@@ -1,21 +1,21 @@
-import { DeleteIconButton } from '@wegent/collaboration/controls/DeleteIconButton'
-import {
-  Menu,
-  MenuContent,
-  MenuTrigger,
-  MenuRadioGroup,
-  MenuRadioItem,
-  MenuSeparator as UiMenuSeparator,
-  MenuGroupLabel,
-} from '@wegent/collaboration/controls/MenuParts'
-import { controlTrigger, controlPopup, controlOption } from '@wegent/collaboration/controls/recipes'
-import { useCollaborationPortalTheme } from '@wegent/collaboration/theme'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { ArchivedConversationItem, ArchivedConversationsListRequest } from '@/types/api'
+import { DeleteIconButton } from '@wegent/collaboration/controls/DeleteIconButton'
+import {
+  Menu,
+  MenuContent,
+  MenuGroupLabel,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuTrigger,
+  MenuSeparator as UiMenuSeparator,
+} from '@wegent/collaboration/controls/MenuParts'
+import { controlOption, controlPopup, controlTrigger } from '@wegent/collaboration/controls/recipes'
 import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useCollaborationPortalTheme } from '@wegent/collaboration/theme'
 import { Check, ChevronDown, Folder, ListFilter, Loader2, Search, Trash2 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useState } from 'react'
@@ -48,6 +48,7 @@ interface ArchivedConversationsFiltersProps {
 }
 
 interface ArchivedConversationGroupsProps {
+  allowProjectDelete?: boolean
   groups: ArchivedProjectGroup[]
   showHeaders: boolean
   busyKey: string | null
@@ -285,6 +286,7 @@ export function ArchivedConversationsFilters({
 }
 
 export function ArchivedConversationGroups({
+  allowProjectDelete = true,
   groups,
   showHeaders,
   busyKey,
@@ -321,7 +323,7 @@ export function ArchivedConversationGroups({
                       label: t('workbench.archived_delete_project', '删除此项目中的全部任务'),
                       icon: Trash2,
                       danger: true,
-                      disabled: busyKey !== null,
+                      disabled: busyKey !== null || !allowProjectDelete,
                       testId: `archived-delete-project-${sanitizeTestId(group.key)}`,
                       onSelect: () => onDeleteProject(group),
                     },

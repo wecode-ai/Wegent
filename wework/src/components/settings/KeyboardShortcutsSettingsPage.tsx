@@ -1,4 +1,3 @@
-import { DeleteIconButton } from '@wegent/collaboration/controls/DeleteIconButton'
 import { createLocalAppServices } from '@/api/local/localServices'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
@@ -21,12 +20,15 @@ import {
   TOGGLE_PRIORITY_FILTER_COMMAND,
   TOGGLE_SIDE_PANEL_COMMAND,
   TOGGLE_SIDEBAR_COMMAND,
-  type KeybindingOverride,
 } from '@/lib/keybindings'
+import { isImeComposingEvent } from '@wegent/chat-core/ime'
+import { DeleteIconButton } from '@wegent/collaboration/controls/DeleteIconButton'
 import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { CornerDownLeft, Loader2, RotateCcw, Search } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
+import { createKeyboardShortcutsResource } from './keyboardShortcutsResource'
 import { SettingsPage, SettingsPageHeader } from './settings-ui'
 
 const COMMAND_LABELS: Record<string, { label: string; description: string }> = {
@@ -142,12 +144,24 @@ function KeybindingPart({ value }: { value: string }) {
 
 export function KeyboardShortcutsSettingsPage() {
   const { t } = useTranslation('common')
-  const [overrides, setOverrides] = useState<KeybindingOverride[]>([])
-  const [loading, setLoading] = useState(true)
-  const [savingCommand, setSavingCommand] = useState<string | null>(null)
+  const [resource] = useState(() => {
+    const available = shortcutsAvailable()
+    return createKeyboardShortcutsResource(
+      () => createLocalAppServices().runtimeWorkApi,
+      available,
+      () => window.dispatchEvent(new CustomEvent(KEYBINDINGS_CHANGED_EVENT))
+    )
+  })
+  const state = useSyncExternalStore(resource.subscribe, resource.getSnapshot, resource.getSnapshot)
+  const { overrides, loading } = state
   const [recordingCommand, setRecordingCommand] = useState<string | null>(null)
   const [query, setQuery] = useState('')
-  const [error, setError] = useState<string | null>(null)
+  const error =
+    state.error === 'save'
+      ? t('workbench.keyboard_shortcuts_save_failed', '快捷键保存失败')
+      : state.error === 'load'
+        ? t('workbench.keyboard_shortcuts_load_failed', '快捷键加载失败')
+        : null
 
   const defaultBindings = useMemo(() => getDefaultKeybindings(), [])
   const bindings = useMemo(() => mergeKeybindings(overrides), [overrides])
@@ -169,82 +183,27 @@ export function KeyboardShortcutsSettingsPage() {
     })
   }, [query, t, defaultBindings])
 
-  const saveOverride = useCallback(
-    async (command: string, key: string | null) => {
-      const nextOverrides = [
-        ...overrides.filter(item => item.command !== command),
-        { command, key },
-      ].filter(
-        item =>
-          normalizeKeybinding(item.key ?? '') !==
-          normalizeKeybinding(
-            defaultBindings.find(base => base.command === item.command)?.defaultKey ?? ''
-          )
-      )
-
-      setSavingCommand(command)
-      setError(null)
-      try {
-        const response = await createLocalAppServices().runtimeWorkApi?.updateKeybindings({
-          keybindings: nextOverrides,
-        })
-        setOverrides(response?.keybindings ?? nextOverrides)
-        setRecordingCommand(null)
-        window.dispatchEvent(new CustomEvent(KEYBINDINGS_CHANGED_EVENT))
-      } catch (saveError) {
-        console.error('[Wework] Failed to save keybindings:', saveError)
-        setError(t('workbench.keyboard_shortcuts_save_failed', '快捷键保存失败'))
-      } finally {
-        setSavingCommand(null)
-      }
-    },
-    [defaultBindings, overrides, t]
-  )
-
-  useEffect(() => {
-    let active = true
-    const load = async () => {
-      if (!shortcutsAvailable()) {
-        setLoading(false)
-        return
-      }
-      try {
-        setError(null)
-        const response = await createLocalAppServices().runtimeWorkApi?.getKeybindings()
-        if (active) setOverrides(response?.keybindings ?? [])
-      } catch (loadError) {
-        console.error('[Wework] Failed to load keybindings:', loadError)
-        if (active) setError(t('workbench.keyboard_shortcuts_load_failed', '快捷键加载失败'))
-      } finally {
-        if (active) setLoading(false)
-      }
-    }
-
-    void load()
-    return () => {
-      active = false
-    }
-  }, [t])
-
-  useEffect(() => {
-    if (!recordingCommand) return undefined
-
-    const handleKeyDown = (event: KeyboardEvent) => {
+  const saveOverride = async (command: string, key: string | null) => {
+    if (await resource.save(command, key))
+      setRecordingCommand(current => (current === command ? null : current))
+  }
+  useWindowEvent(
+    'keydown',
+    event => {
+      if (!recordingCommand || isImeComposingEvent(event)) return
       event.preventDefault()
       event.stopPropagation()
       if (event.key === 'Escape') {
         setRecordingCommand(null)
         return
       }
-
+      if (resource.getSnapshot().saving.has(recordingCommand)) return
       const key = normalizeKeybinding(keybindingFromKeyboardEvent(event))
       if (!key || !key.includes('+')) return
       void saveOverride(recordingCommand, key)
-    }
-
-    window.addEventListener('keydown', handleKeyDown, true)
-    return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [recordingCommand, saveOverride])
+    },
+    { capture: true, enabled: recordingCommand !== null }
+  )
 
   return (
     <SettingsPage data-testid="keyboard-shortcuts-settings-page">
@@ -282,7 +241,7 @@ export function KeyboardShortcutsSettingsPage() {
           {filteredCommands.map(item => {
             const labels = COMMAND_LABELS[item.command]
             const currentKey = bindings[item.command]
-            const saving = savingCommand === item.command
+            const saving = state.saving.has(item.command)
             const recording = recordingCommand === item.command
             return (
               <div

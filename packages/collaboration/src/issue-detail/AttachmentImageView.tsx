@@ -1,3 +1,22 @@
+import { DialogSurface } from '../controls/DialogSurface'
+import { Button as ControlButton } from '../markdown/Button'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
+import { useFocusRequest, useIntersectionEvent, useWindowEvent } from '../dom-events'
+import { useCollaborationPortalTheme } from '../theme'
+import {
+  useCallback,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type SyntheticEvent,
+} from 'react'
+import { createPortal } from 'react-dom'
 import {
   ChevronLeft,
   ChevronRight,
@@ -8,19 +27,6 @@ import {
   Plus,
   X,
 } from 'lucide-react'
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type SyntheticEvent,
-} from 'react'
-import { createPortal } from 'react-dom'
-import { DialogSurface } from '../controls/DialogSurface'
-import { Button as ControlButton } from '../markdown/Button'
-import { useCollaborationPortalTheme } from '../theme'
 export interface ImageAttachment {
   filename: string
   image_width?: number | null
@@ -65,9 +71,7 @@ function clampIndex(value: number, length: number): number {
   return Math.min(length - 1, Math.max(0, value))
 }
 
-function attachmentAspectRatio(
-  attachment: ImageAttachment,
-): number | undefined {
+function attachmentAspectRatio(attachment: ImageAttachment): number | undefined {
   const width = attachment.image_width
   const height = attachment.image_height
   if (
@@ -83,7 +87,25 @@ function attachmentAspectRatio(
   return width / height
 }
 
-export function AttachmentImageView<T extends ImageAttachment>({
+export function AttachmentImageView<T extends ImageAttachment>(props: AttachmentImageViewProps<T>) {
+  const immediate = Boolean(
+    props.services.loadImmediately || typeof IntersectionObserver === 'undefined'
+  )
+  const key = JSON.stringify([props.services.identity(props.attachment), immediate])
+  return <AttachmentImageContent key={key} {...props} />
+}
+
+function createAttachmentImageResource<T extends ImageAttachment>(
+  services: AttachmentImageServices<T>,
+  attachment: T
+) {
+  return createAsyncResource(services.identity(attachment), () => services.load(attachment), {
+    release: image => image.release?.(),
+    failure: () => services.onError?.(attachment),
+  })
+}
+
+function AttachmentImageContent<T extends ImageAttachment>({
   services,
   attachment,
   buttonTestId,
@@ -100,215 +122,153 @@ export function AttachmentImageView<T extends ImageAttachment>({
   hideOnError = false,
 }: AttachmentImageViewProps<T>) {
   const portalTheme = useCollaborationPortalTheme()
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
-  const [hasError, setHasError] = useState(false)
   const [isLightboxOpen, setIsLightboxOpen] = useState(false)
   const [lightboxIndex, setLightboxIndex] = useState(galleryIndex)
-  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null)
-  const [isLightboxLoading, setIsLightboxLoading] = useState(false)
-  const [hasLightboxError, setHasLightboxError] = useState(false)
   const [zoom, setZoom] = useState(1)
-  const loadsPreviewImmediately =
-    services.loadImmediately || typeof IntersectionObserver === 'undefined'
-  const [shouldLoadPreview, setShouldLoadPreview] = useState(
-    loadsPreviewImmediately,
+  const [previewFailed, setPreviewFailed] = useState(false)
+  const [lightboxFailed, setLightboxFailed] = useState(false)
+  const [preview, setPreview] = useState(() => ({
+    services,
+    load: Boolean(services.loadImmediately || typeof IntersectionObserver === 'undefined'),
+    resource: createAttachmentImageResource(services, attachment),
+  }))
+  if (preview.services !== services) {
+    setPreview({
+      services,
+      load: preview.load,
+      resource: createAttachmentImageResource(services, attachment),
+    })
+    setPreviewFailed(false)
+    setIsLightboxOpen(false)
+  }
+  const previewSnapshot = useSyncExternalStore(
+    preview.load ? preview.resource.subscribe : subscribeIdleResource,
+    preview.resource.getSnapshot,
+    getIdleResourceSnapshot
   )
+  const hasError = previewFailed || previewSnapshot.status === 'error'
+  const previewUrl = hasError ? null : (previewSnapshot.data?.url ?? null)
+  const previewIdentity = services.identity(attachment)
   const previewContainerRef = useRef<HTMLElement | null>(null)
   const previewUrlRef = useRef(previewUrl)
-  const lightboxUrlRef = useRef(lightboxUrl)
-  const previewIdentity = services.identity(attachment)
   const previewAspectRatio = attachmentAspectRatio(attachment)
   const previewContainerStyle =
-    previewAspectRatio === undefined
-      ? undefined
-      : { aspectRatio: previewAspectRatio }
-  const attachmentRef = useRef(attachment)
+    previewAspectRatio === undefined ? undefined : { aspectRatio: previewAspectRatio }
   const setPreviewContainerRef = useCallback((element: HTMLElement | null) => {
     previewContainerRef.current = element
   }, [])
-  useEffect(() => {
-    attachmentRef.current = attachment
-  }, [attachment])
-  useLayoutEffect(() => {
-    previewUrlRef.current = previewUrl
-    lightboxUrlRef.current = lightboxUrl
-  }, [lightboxUrl, previewUrl])
+  const revealPreview = useCallback(
+    (entries: IntersectionObserverEntry[]) => {
+      if (!entries.some(entry => entry.isIntersecting || entry.intersectionRatio > 0)) return
+      setPreview(current =>
+        current.load || current.services !== services
+          ? current
+          : { services, load: true, resource: createAttachmentImageResource(services, attachment) }
+      )
+    },
+    [services, attachment]
+  )
+  useIntersectionEvent(previewContainerRef, revealPreview, {
+    enabled: !preview.load,
+    rootMargin: '320px 0px',
+  })
   const gallery = useMemo(
     () => (galleryAttachments?.length ? galleryAttachments : [attachment]),
-    [attachment, galleryAttachments],
+    [attachment, galleryAttachments]
   )
   const currentLightboxIndex = clampIndex(lightboxIndex, gallery.length)
   const currentLightboxAttachment = gallery[currentLightboxIndex] ?? attachment
   const canNavigateLightbox = gallery.length > 1
   const previewLocalPath = services.localPath?.(attachment)
   const lightboxLocalPath = services.localPath?.(currentLightboxAttachment)
-
-  /* eslint-disable react-hooks/set-state-in-effect -- Attachment identity changes must clear stale preview UI before loading the next image. */
-  useEffect(() => {
-    setShouldLoadPreview(loadsPreviewImmediately)
-    setPreviewUrl(null)
-    setHasError(false)
-    setIsLightboxOpen(false)
-    setLightboxUrl(null)
+  const lightboxRequest = useMemo(() => {
+    if (!isLightboxOpen || disableLightbox || !previewUrl)
+      return { resource: null, reusedUrl: null }
+    const selected = gallery[clampIndex(lightboxIndex, gallery.length)]!
+    if (services.identity(selected) === previewIdentity)
+      return { resource: null, reusedUrl: previewUrl }
+    return { resource: createAttachmentImageResource(services, selected), reusedUrl: null }
+  }, [
+    isLightboxOpen,
+    disableLightbox,
+    previewUrl,
+    gallery,
+    lightboxIndex,
+    services,
+    previewIdentity,
+  ])
+  const [previousLightboxRequest, setPreviousLightboxRequest] = useState(lightboxRequest)
+  if (previousLightboxRequest !== lightboxRequest) {
+    setPreviousLightboxRequest(lightboxRequest)
+    setLightboxFailed(false)
     setZoom(1)
-  }, [loadsPreviewImmediately, previewIdentity])
-  /* eslint-enable react-hooks/set-state-in-effect */
-
-  useEffect(() => {
-    if (shouldLoadPreview) return undefined
-
-    const element = previewContainerRef.current
-    if (!element) return undefined
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (
-          entries.some(
-            (entry) => entry.isIntersecting || entry.intersectionRatio > 0,
-          )
-        ) {
-          setShouldLoadPreview(true)
-          observer.disconnect()
-        }
-      },
-      { root: null, rootMargin: '320px 0px' },
-    )
-    observer.observe(element)
-    return () => observer.disconnect()
-  }, [previewIdentity, shouldLoadPreview])
-
-  useEffect(() => {
-    if (!shouldLoadPreview) return undefined
-
-    let isMounted = true
-    let releasePreview: (() => void) | null = null
-    const targetAttachment = attachmentRef.current
-
-    async function loadPreview() {
-      setPreviewUrl(null)
-      setHasError(false)
-      setIsLightboxOpen(false)
-      setLightboxUrl(null)
-      setZoom(1)
-
-      try {
-        const loaded = await services.load(targetAttachment)
-        releasePreview = loaded.release
-        if (isMounted) {
-          setPreviewUrl(loaded.url)
-        } else {
-          releasePreview?.()
-        }
-      } catch {
-        if (isMounted) {
-          services.onError?.(targetAttachment)
-          setHasError(true)
-        }
-      }
-    }
-
-    void loadPreview()
-
-    return () => {
-      isMounted = false
-      releasePreview?.()
-    }
-  }, [services, previewIdentity, shouldLoadPreview])
-
-  useEffect(() => {
-    if (!isLightboxOpen || disableLightbox) return
-
-    let isMounted = true
-    let releaseLightboxPreview: (() => void) | null = null
-    const nextIndex = clampIndex(lightboxIndex, gallery.length)
-    const currentAttachment = attachmentRef.current
-    const selectedAttachment = gallery[nextIndex] ?? currentAttachment
-    const reusablePreviewUrl =
-      services.identity(selectedAttachment) ===
-      services.identity(currentAttachment)
-        ? previewUrl
-        : null
-
-    async function loadLightboxImage() {
-      setZoom(1)
-      setHasLightboxError(false)
-
-      if (reusablePreviewUrl) {
-        setIsLightboxLoading(false)
-        setLightboxUrl(reusablePreviewUrl)
+  }
+  const lightboxSnapshot = useSyncExternalStore(
+    lightboxRequest.resource?.subscribe ?? subscribeIdleResource,
+    lightboxRequest.resource?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const hasLightboxError = lightboxFailed || lightboxSnapshot.status === 'error'
+  const lightboxUrl = hasLightboxError
+    ? null
+    : (lightboxRequest.reusedUrl ?? lightboxSnapshot.data?.url ?? null)
+  const isLightboxLoading =
+    Boolean(lightboxRequest.resource) &&
+    (lightboxSnapshot.status === 'idle' || lightboxSnapshot.status === 'loading')
+  const lightboxUrlRef = useRef(lightboxUrl)
+  useLayoutEffect(() => {
+    previewUrlRef.current = previewUrl
+    lightboxUrlRef.current = lightboxUrl
+  }, [lightboxUrl, previewUrl])
+  useWindowEvent(
+    'keydown',
+    event => {
+      if (event.key === 'Escape') {
+        setIsLightboxOpen(false)
         return
       }
-
-      setIsLightboxLoading(true)
-      setLightboxUrl(null)
-
-      try {
-        const loaded = await services.load(selectedAttachment)
-        releaseLightboxPreview = loaded.release
-        if (isMounted) {
-          setLightboxUrl(loaded.url)
-          setIsLightboxLoading(false)
-        } else {
-          releaseLightboxPreview?.()
-        }
-      } catch {
-        if (isMounted) {
-          services.onError?.(selectedAttachment)
-          setIsLightboxLoading(false)
-          setHasLightboxError(true)
-        }
+      if (event.key === 'ArrowLeft' && canNavigateLightbox) {
+        event.preventDefault()
+        setLightboxIndex(current => (current <= 0 ? gallery.length - 1 : current - 1))
       }
-    }
-
-    void loadLightboxImage()
-
-    return () => {
-      isMounted = false
-      releaseLightboxPreview?.()
-    }
-  }, [
-    disableLightbox,
-    services,
-    gallery,
-    isLightboxOpen,
-    lightboxIndex,
-    previewIdentity,
-    previewUrl,
-  ])
-
+      if (event.key === 'ArrowRight' && canNavigateLightbox) {
+        event.preventDefault()
+        setLightboxIndex(current => (current >= gallery.length - 1 ? 0 : current + 1))
+      }
+    },
+    { enabled: isLightboxOpen && !disableLightbox }
+  )
+  const lightboxRef = useRef<HTMLDivElement>(null)
+  useFocusRequest(lightboxRef, undefined, {
+    enabled: isLightboxOpen && !disableLightbox,
+    selector: '[data-testid="attachment-image-lightbox-close"]',
+    restoreFocus: true,
+  })
   const openLightbox = () => {
     setLightboxIndex(clampIndex(galleryIndex, gallery.length))
-    setLightboxUrl(null)
-    setHasLightboxError(false)
+    setLightboxFailed(false)
     setIsLightboxOpen(true)
   }
 
   const goToPreviousImage = () => {
-    setLightboxIndex((current) =>
-      current <= 0 ? gallery.length - 1 : current - 1,
-    )
+    setLightboxIndex(current => (current <= 0 ? gallery.length - 1 : current - 1))
   }
 
   const goToNextImage = () => {
-    setLightboxIndex((current) =>
-      current >= gallery.length - 1 ? 0 : current + 1,
-    )
+    setLightboxIndex(current => (current >= gallery.length - 1 ? 0 : current + 1))
   }
 
   const handlePreviewError = (event: SyntheticEvent<HTMLImageElement>) => {
     const failedUrl = event.currentTarget.currentSrc || event.currentTarget.src
     if (!(previewUrlRef.current && failedUrl === previewUrlRef.current)) return
     services.onError?.(attachment)
-    setPreviewUrl(null)
-    setHasError(true)
+    setPreviewFailed(true)
   }
 
   const handleLightboxError = (event: SyntheticEvent<HTMLImageElement>) => {
     const failedUrl = event.currentTarget.currentSrc || event.currentTarget.src
-    if (!(lightboxUrlRef.current && failedUrl === lightboxUrlRef.current))
-      return
-    setLightboxUrl(null)
-    setHasLightboxError(true)
+    if (!(lightboxUrlRef.current && failedUrl === lightboxUrlRef.current)) return
+    setLightboxFailed(true)
   }
 
   if (previewUrl) {
@@ -317,55 +277,28 @@ export function AttachmentImageView<T extends ImageAttachment>({
         ? createPortal(
             <DialogSurface
               onClose={() => setIsLightboxOpen(false)}
+              initialFocus='[data-testid="attachment-image-lightbox-close"]'
               render={
-                <div
-                  {...portalTheme}
-                  data-testid="attachment-image-lightbox"
-                  onKeyDown={(event) => {
-                    if (
-                      event.altKey ||
-                      event.ctrlKey ||
-                      event.metaKey ||
-                      event.nativeEvent.isComposing ||
-                      !canNavigateLightbox
-                    )
-                      return
-                    if (
-                      event.target instanceof HTMLElement &&
-                      event.target.closest(
-                        'input, textarea, [contenteditable="true"]',
-                      )
-                    )
-                      return
-                    if (event.key === 'ArrowLeft') {
-                      event.preventDefault()
-                      goToPreviousImage()
-                    } else if (event.key === 'ArrowRight') {
-                      event.preventDefault()
-                      goToNextImage()
-                    }
-                  }}
-                  aria-label={currentLightboxAttachment.filename}
-                  className={`${portalTheme.className} fixed inset-0 z-modal flex h-dvh w-dvw items-center justify-center overflow-hidden bg-black/90 p-0`}
-                  onClick={() => setIsLightboxOpen(false)}
-                  onWheel={(event) => {
-                    event.stopPropagation()
-                    setZoom((current) =>
-                      clampZoom(
-                        current + (event.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP),
-                      ),
-                    )
-                  }}
-                />
+            <div
+              {...portalTheme}
+              ref={lightboxRef}
+              data-testid="attachment-image-lightbox"
+              aria-label={currentLightboxAttachment.filename}
+              className={`${portalTheme.className} fixed inset-0 z-modal flex h-dvh w-dvw items-center justify-center overflow-hidden bg-black/90 p-0`}
+              onClick={() => setIsLightboxOpen(false)}
+              onWheel={event => {
+                event.stopPropagation()
+                setZoom(current => clampZoom(current + (event.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP)))
+              }}
+            />
               }
             >
               <div className="absolute right-4 top-4 z-20 flex items-center gap-2.5">
-                <ControlButton
-                  variant="unstyled"
+                <ControlButton variant="unstyled"
                   type="button"
                   data-testid="attachment-image-download"
                   className="flex h-12 w-12 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 disabled:cursor-not-allowed disabled:opacity-50"
-                  onClick={(event) => {
+                  onClick={event => {
                     event.stopPropagation()
                     if (lightboxUrl) {
                       void services.download(
@@ -373,8 +306,8 @@ export function AttachmentImageView<T extends ImageAttachment>({
                         lightboxUrl,
                         resolveDownloadFilename?.(
                           currentLightboxAttachment,
-                          currentLightboxIndex,
-                        ) ?? currentLightboxAttachment.filename,
+                          currentLightboxIndex
+                        ) ?? currentLightboxAttachment.filename
                       )
                     }
                   }}
@@ -383,12 +316,11 @@ export function AttachmentImageView<T extends ImageAttachment>({
                 >
                   <Download className="h-5 w-5" />
                 </ControlButton>
-                <ControlButton
-                  variant="unstyled"
+                <ControlButton variant="unstyled"
                   type="button"
                   data-testid="attachment-image-lightbox-close"
                   className="flex h-12 w-12 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-                  onClick={(event) => {
+                  onClick={event => {
                     event.stopPropagation()
                     setIsLightboxOpen(false)
                   }}
@@ -399,12 +331,11 @@ export function AttachmentImageView<T extends ImageAttachment>({
               </div>
               {canNavigateLightbox && (
                 <>
-                  <ControlButton
-                    variant="unstyled"
+                  <ControlButton variant="unstyled"
                     type="button"
                     data-testid="attachment-image-previous"
                     className="absolute left-5 top-1/2 z-20 flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-                    onClick={(event) => {
+                    onClick={event => {
                       event.stopPropagation()
                       goToPreviousImage()
                     }}
@@ -412,12 +343,11 @@ export function AttachmentImageView<T extends ImageAttachment>({
                   >
                     <ChevronLeft className="h-7 w-7" />
                   </ControlButton>
-                  <ControlButton
-                    variant="unstyled"
+                  <ControlButton variant="unstyled"
                     type="button"
                     data-testid="attachment-image-next"
                     className="absolute right-5 top-1/2 z-20 flex h-12 w-12 -translate-y-1/2 items-center justify-center rounded-full bg-white/15 text-white transition-colors hover:bg-white/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-                    onClick={(event) => {
+                    onClick={event => {
                       event.stopPropagation()
                       goToNextImage()
                     }}
@@ -430,16 +360,13 @@ export function AttachmentImageView<T extends ImageAttachment>({
               <div
                 data-testid="attachment-image-zoom-controls"
                 className="absolute bottom-6 left-1/2 z-20 flex h-11 -translate-x-1/2 items-center gap-2.5 rounded-full bg-white/15 px-1.5 text-white shadow-[0_12px_36px_rgba(0,0,0,0.35)]"
-                onClick={(event) => event.stopPropagation()}
+                onClick={event => event.stopPropagation()}
               >
-                <ControlButton
-                  variant="unstyled"
+                <ControlButton variant="unstyled"
                   type="button"
                   data-testid="attachment-image-zoom-out"
                   className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white transition-colors hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-40"
-                  onClick={() =>
-                    setZoom((current) => clampZoom(current - ZOOM_STEP))
-                  }
+                  onClick={() => setZoom(current => clampZoom(current - ZOOM_STEP))}
                   disabled={zoom <= MIN_ZOOM}
                   aria-label="Zoom out"
                 >
@@ -451,14 +378,11 @@ export function AttachmentImageView<T extends ImageAttachment>({
                 >
                   {Math.round(zoom * 100)}%
                 </span>
-                <ControlButton
-                  variant="unstyled"
+                <ControlButton variant="unstyled"
                   type="button"
                   data-testid="attachment-image-zoom-in"
                   className="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white transition-colors hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-40"
-                  onClick={() =>
-                    setZoom((current) => clampZoom(current + ZOOM_STEP))
-                  }
+                  onClick={() => setZoom(current => clampZoom(current + ZOOM_STEP))}
                   disabled={zoom >= MAX_ZOOM}
                   aria-label="Zoom in"
                 >
@@ -470,13 +394,11 @@ export function AttachmentImageView<T extends ImageAttachment>({
                   data-testid="attachment-image-lightbox-image"
                   src={lightboxUrl}
                   alt={currentLightboxAttachment.filename}
-                  data-context-image-filename={
-                    currentLightboxAttachment.filename
-                  }
+                  data-context-image-filename={currentLightboxAttachment.filename}
                   data-context-image-local-path={lightboxLocalPath ?? undefined}
                   className="max-h-[calc(100dvh-9rem)] max-w-[calc(100dvw-8rem)] rounded-2xl object-contain transition-transform duration-150 ease-out"
                   style={{ transform: `scale(${zoom})` }}
-                  onClick={(event) => event.stopPropagation()}
+                  onClick={event => event.stopPropagation()}
                   onError={handleLightboxError}
                 />
               ) : (
@@ -487,7 +409,7 @@ export function AttachmentImageView<T extends ImageAttachment>({
                       : 'attachment-image-lightbox-loading'
                   }
                   className="flex h-36 w-36 items-center justify-center rounded-2xl bg-white/10 text-white"
-                  onClick={(event) => event.stopPropagation()}
+                  onClick={event => event.stopPropagation()}
                 >
                   {isLightboxLoading ? (
                     <Loader2 className="h-7 w-7 animate-spin" />
@@ -497,7 +419,7 @@ export function AttachmentImageView<T extends ImageAttachment>({
                 </div>
               )}
             </DialogSurface>,
-            document.body,
+            document.body
           )
         : null
 
@@ -526,8 +448,7 @@ export function AttachmentImageView<T extends ImageAttachment>({
 
     return (
       <>
-        <ControlButton
-          variant="unstyled"
+        <ControlButton variant="unstyled"
           ref={setPreviewContainerRef}
           type="button"
           data-testid={buttonTestId}
@@ -564,11 +485,7 @@ export function AttachmentImageView<T extends ImageAttachment>({
       style={previewContainerStyle}
       aria-label={attachment.filename}
     >
-      {hasError ? (
-        <FileText className="h-5 w-5" />
-      ) : (
-        <Loader2 className="h-5 w-5 animate-spin" />
-      )}
+      {hasError ? <FileText className="h-5 w-5" /> : <Loader2 className="h-5 w-5 animate-spin" />}
     </div>
   )
 }

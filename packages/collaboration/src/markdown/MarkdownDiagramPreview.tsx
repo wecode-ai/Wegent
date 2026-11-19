@@ -30,8 +30,6 @@ export function MarkdownDiagramPreview({
   const resolvedTheme = theme === 'system' ? (portalTheme['data-theme'] ?? documentTheme) : theme
   const containerRef = useRef<HTMLElement>(null)
   const renderViewer = useDiagramViewport(containerRef)
-  const fullscreenDialogRef = useRef<HTMLDivElement>(null)
-  const fullscreenExitButtonRef = useRef<HTMLButtonElement>(null)
   const fullscreenTriggerRef = useRef<HTMLButtonElement>(null)
 
   const [fullscreen, setFullscreen] = useState(false)
@@ -65,6 +63,8 @@ export function MarkdownDiagramPreview({
   })
 
   const closeFullscreen = () => setFullscreen(false)
+  const fullscreenExitButtonRef = useRef<HTMLButtonElement>(null)
+  const fullscreenDialogRef = useRef<HTMLDivElement>(null)
   const openFullscreen = () => {
     setFullscreen(true)
   }
@@ -136,7 +136,7 @@ export function MarkdownDiagramPreview({
           filename={`${diagramType}-diagram.png`}
           theme={resolvedTheme}
           fullscreen={fullscreen}
-          fullscreenButtonRef={fullscreen ? fullscreenExitButtonRef : fullscreenTriggerRef}
+          fullscreenButtonRef={fullscreen ? undefined : fullscreenTriggerRef}
           onToggleFullscreen={fullscreen ? closeFullscreen : openFullscreen}
         />
       )}

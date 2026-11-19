@@ -1,3 +1,4 @@
+import { useFocusRequest } from '../dom-events'
 import { truncateRuntimeTaskTitle } from '@wegent/chat-core/runtime-task-title'
 import {
   AlertCircle,
@@ -10,7 +11,7 @@ import {
   Square,
   X,
 } from 'lucide-react'
-import { useState, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { DialogSurface } from '../controls/DialogSurface'
 import type { CollaborationTranslate } from '../i18n'
@@ -39,7 +40,46 @@ export interface RuntimeExecutionDetailsProps {
 }
 
 /** One execution dialog; hosts supply the authoritative session and runtime actions. */
-export function RuntimeExecutionDetails({
+export function RuntimeExecutionDetails(props: RuntimeExecutionDetailsProps) {
+  const { onClose, translate } = props
+  const portalTheme = useCollaborationPortalTheme()
+  const overlay = useRef<HTMLDivElement>(null)
+  useFocusRequest(overlay, undefined, {
+    selector: '[data-testid="runtime-execution-detail-close"]',
+    restoreFocus: true,
+  })
+  useFocusRequest(overlay, props.runId, {
+    selector: '[data-testid="runtime-execution-detail-close"]',
+  })
+  return createPortal(
+    <DialogSurface
+      initialFocus='[data-testid="runtime-execution-detail-close"]'
+      onClose={() => {
+        if (!overlay.current?.querySelector('dialog[open]')) onClose()
+      }}
+      render={
+        <div
+          {...portalTheme}
+          ref={overlay}
+          className={cn(
+            portalTheme.className,
+            'fixed inset-0 z-modal flex items-center justify-center bg-black/10 p-6'
+          )}
+          aria-label={translate('activity.task_activity_execution_details')}
+          data-testid="runtime-execution-detail-overlay"
+          onMouseDown={event => {
+            if (event.target === event.currentTarget) onClose()
+          }}
+        />
+      }
+    >
+      <ExecutionDetailsContent key={props.runId} {...props} />
+    </DialogSurface>,
+    document.body
+  )
+}
+
+function ExecutionDetailsContent({
   senderName,
   taskTitle,
   runId: resolvedRunId,
@@ -56,14 +96,15 @@ export function RuntimeExecutionDetails({
   translate: t,
   children,
 }: RuntimeExecutionDetailsProps) {
-  const portalTheme = useCollaborationPortalTheme()
+  const stopRequest = useRef(false)
   const [stopping, setStopping] = useState(false)
   const [stopError, setStopError] = useState<string | null>(null)
   const displayStatus = executionDisplayStatus(runStatus) ?? 'unknown'
   const cancellable =
     executionRunning !== false && Boolean(onStop) && isExecutionCancellable(displayStatus)
   const handleStop = async () => {
-    if (stopping || !onStop) return
+    if (stopRequest.current || !onStop) return
+    stopRequest.current = true
     setStopping(true)
     setStopError(null)
     try {
@@ -71,6 +112,7 @@ export function RuntimeExecutionDetails({
     } catch (cause) {
       setStopError(cause instanceof Error ? cause.message : t('activity.task_activity_stop_failed'))
     } finally {
+      stopRequest.current = false
       setStopping(false)
     }
   }
@@ -127,25 +169,7 @@ export function RuntimeExecutionDetails({
 
   const statusClassName = 'bg-muted text-text-secondary'
 
-  return createPortal(
-    <DialogSurface
-      initialFocus='[data-testid="runtime-execution-detail-close"]'
-      onClose={onClose}
-      render={
-        <div
-          {...portalTheme}
-          className={cn(
-            portalTheme.className,
-            'fixed inset-0 z-modal flex items-center justify-center bg-black/10 p-6'
-          )}
-          aria-label={t('activity.task_activity_execution_details')}
-          data-testid="runtime-execution-detail-overlay"
-          onMouseDown={event => {
-            if (event.target === event.currentTarget) onClose()
-          }}
-        />
-      }
-    >
+  return (
       <div className="flex h-[min(620px,84vh)] w-[min(780px,92vw)] flex-col overflow-hidden rounded-[20px] border border-border/50 bg-background shadow-[0_16px_44px_rgba(0,0,0,0.12)]">
         <header className="flex flex-none items-start gap-3 px-6 pb-4 pt-5">
           <span className="flex h-9 w-9 flex-none items-center justify-center rounded-full bg-violet-600 text-background">
@@ -300,7 +324,5 @@ export function RuntimeExecutionDetails({
           </ControlButton>
         </footer>
       </div>
-    </DialogSurface>,
-    document.body
   )
 }

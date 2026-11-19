@@ -1,37 +1,25 @@
-import { CollapsibleRoot, CollapsibleTrigger, CollapsiblePanel } from '../controls/Collapsible'
-import { SelectContent, SelectItem, SelectRoot, SelectTrigger } from '../controls/SelectParts'
-import { normalizeSelectValue } from '../controls/selectValue'
 import { TextField as ControlInput } from '../controls/TextField'
+import { SelectContent, SelectItem, SelectRoot, SelectTrigger } from '../controls/SelectParts'
+import { CollapsibleRoot, CollapsibleTrigger, CollapsiblePanel } from '../controls/Collapsible'
 import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
+import { useCallback, useId, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { X } from 'lucide-react'
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
-import type { RunnerModelIdentity } from '../agent-form/runnerRouting'
+import type { CollaborationGroupMember } from '../types'
 import type { CollaborationLocale } from '../i18n'
 import type { ProjectCreateCollaborationGroupDraft } from '../project-create/types'
-import type { CollaborationGroupMember } from '../types'
-import {
-  templateAgentBindings,
-  templateAgentId,
-  templateAgentReferences,
-  templateRoutingResolver,
-} from './agents'
-import { PartialTemplateApplyError, TemplateConfigurationError } from './apply'
-import { bindTemplate } from './document'
+import type { CollaborationTemplate } from './types'
+import { createTemplateBindingsDraft } from './templateBindingsDraft'
+import { templateAgentId, templateAgentReferences, templateRoutingResolver } from './agents'
+import { TemplateModelSelection, type TemplateModelConfiguration } from './TemplateModelSelection'
+import { sameTemplateModelScope } from './templateModelScope'
+import type { RunnerModelIdentity } from '../agent-form/runnerRouting'
+import type { TemplateRoutingResolver } from './types'
 import { templateFailureMessage, templateMessages } from './messages'
 import { TemplateDialog } from './TemplateDialog'
-import {
-  sameTemplateModelScope,
-  TemplateModelSelection,
-  type TemplateModelConfiguration,
-} from './TemplateModelSelection'
-import type {
-  TemplateRoleAssignments as Bindings,
-  CollaborationTemplate,
-  TemplateRoutingResolver,
-} from './types'
+import { PartialTemplateApplyError, TemplateConfigurationError } from './apply'
 
 export interface TemplateParticipant extends CollaborationGroupMember {
   label: string
@@ -59,106 +47,16 @@ export function TemplateBindings({
 }) {
   const m = templateMessages[locale]
   const bindingErrorId = useId()
-  const [bindings, setBindings] = useState<Bindings>(() =>
-    Object.fromEntries(
-      document.spec.resources.collaboration.groups.map(group => {
-        const kind = group.roles.find(role => role.key === group.leaderRole)?.defaultKind ?? 'agent'
-        const current =
-          (kind === 'human' &&
-            candidates.find(
-              candidate => candidate.kind === 'human' && candidate.id === String(currentUserId)
-            )) ||
-          candidates.find(candidate => candidate.kind === kind)
-        const embedded = templateAgentBindings(document)[group.key]
-        return [group.key, { ...(current ? { [group.leaderRole]: current } : {}), ...embedded }]
-      })
-    )
+  const [source] = useState(() => createTemplateBindingsDraft(document, candidates, currentUserId))
+  const subscribe = useCallback(
+    (notify: () => void) => source.subscribe(notify, onChange, document, candidates, currentUserId),
+    [source, onChange, document, candidates, currentUserId]
   )
-  const [names, setNames] = useState<Record<string, string>>({})
-  const [removed, setRemoved] = useState<Record<string, string[]>>({})
-  const [customizing, setCustomizing] = useState<Record<string, boolean>>({})
-  const configured = useMemo(
-    () => ({
-      ...document,
-      spec: {
-        ...document.spec,
-        resources: {
-          collaboration: {
-            ...document.spec.resources.collaboration,
-            groups: document.spec.resources.collaboration.groups.map(group => ({
-              ...group,
-              name: names[group.key] ?? group.name,
-              roles: group.roles.filter(role => !removed[group.key]?.includes(role.key)),
-              stages: group.stages.filter(
-                stage => !stage.ownerRole || !removed[group.key]?.includes(stage.ownerRole)
-              ),
-            })),
-          },
-        },
-      },
-    }),
-    [document, names, removed]
+  const { configured, bindings, unboundRoles, validation, customizing } = useSyncExternalStore(
+    subscribe,
+    source.getSnapshot,
+    source.getSnapshot
   )
-  const changed = useRef(onChange)
-  useEffect(() => {
-    changed.current = onChange
-  }, [onChange])
-  const candidateKey = candidates
-    .map(candidate => `${candidate.kind}:${candidate.id}`)
-    .sort()
-    .join('|')
-  const available = useMemo(
-    () =>
-      new Set([
-        ...candidateKey.split('|'),
-        ...(document.spec.resources.collaboration.agents ?? []).map(
-          agent => `agent:${templateAgentId(agent.key)}`
-        ),
-      ]),
-    [candidateKey, document]
-  )
-  const unboundRoles = useMemo(
-    () =>
-      Object.fromEntries(
-        configured.spec.resources.collaboration.groups.map(group => [
-          group.key,
-          new Set(
-            group.roles
-              .filter(role => {
-                const member = bindings[group.key]?.[role.key]
-                return !member || !available.has(`${member.kind}:${member.id}`)
-              })
-              .map(role => role.key)
-          ),
-        ])
-      ),
-    [configured, bindings, available]
-  )
-  const validation = useMemo(() => {
-    try {
-      if (Object.values(unboundRoles).some(roles => roles.size > 0))
-        throw new Error('unbound_roles')
-      return { drafts: bindTemplate(configured, bindings), error: null }
-    } catch (error) {
-      return {
-        drafts: null,
-        error: error instanceof Error ? error.message : '',
-      }
-    }
-  }, [configured, bindings, unboundRoles])
-  useEffect(() => {
-    setCustomizing(current => {
-      const missing = Object.entries(unboundRoles).filter(
-        ([key, roles]) => roles.size > 0 && !current[key]
-      )
-      return missing.length
-        ? { ...current, ...Object.fromEntries(missing.map(([key]) => [key, true])) }
-        : current
-    })
-  }, [unboundRoles])
-  useEffect(() => {
-    changed.current(validation.drafts, configured)
-  }, [validation, configured])
   const removeButton = (groupKey: string, roleKey: string, name: string, leader: boolean) => (
     <ControlButton
       variant="unstyled"
@@ -168,17 +66,7 @@ export function TemplateBindings({
       disabled={disabled || leader}
       aria-label={leader ? m.keepLeader : m.removeRole.replace('{name}', name)}
       title={leader ? m.keepLeader : m.removeRole.replace('{name}', name)}
-      onClick={() => {
-        setRemoved(current => ({
-          ...current,
-          [groupKey]: [...(current[groupKey] ?? []), roleKey],
-        }))
-        setBindings(current => {
-          const roles = { ...current[groupKey] }
-          delete roles[roleKey]
-          return { ...current, [groupKey]: roles }
-        })
-      }}
+      onClick={() => source.removeRole(groupKey, roleKey)}
     >
       <X size={16} aria-hidden="true" />
     </ControlButton>
@@ -211,10 +99,7 @@ export function TemplateBindings({
               disabled={disabled}
               data-testid={`template-group-name-${group.key}`}
               value={group.name}
-              onChange={event => {
-                const name = event.target.value
-                setNames(current => ({ ...current, [group.key]: name }))
-              }}
+              onChange={event => source.rename(group.key, event.target.value)}
             />
           </label>
           {unboundRoles[group.key].size > 0 && (
@@ -252,12 +137,7 @@ export function TemplateBindings({
             )}
           <CollapsibleRoot
             open={group.roles.every(role => !!role.agentKey) ? !!customizing[group.key] : true}
-            onOpenChange={nextOpen => {
-              const open = nextOpen
-              setCustomizing(current =>
-                current[group.key] === open ? current : { ...current, [group.key]: open }
-              )
-            }}
+            onOpenChange={open => source.customize(group.key, open)}
           >
             <CollapsibleTrigger data-testid={`template-customize-${group.key}`}>
               {m.customizeMembers}
@@ -282,29 +162,18 @@ export function TemplateBindings({
                       <span className="sr-only">{role.name}</span>
                       <SelectRoot
                         disabled={disabled}
-                        value={normalizeSelectValue(
+                        value={String(
                           bindings[group.key]?.[role.key]
                             ? `${bindings[group.key][role.key].kind}:${bindings[group.key][role.key].id}`
                             : ''
                         )}
                         onValueChange={selectedValue => {
                           if (selectedValue === null) return
-                          const candidate = [
-                            ...candidates,
-                            ...Object.values(templateAgentBindings(document)[group.key]),
-                          ].find(candidate => `${candidate.kind}:${candidate.id}` === selectedValue)
-                          const next = {
-                            ...bindings,
-                            [group.key]: { ...bindings[group.key] },
-                          }
-                          if (candidate) next[group.key][role.key] = candidate
-                          else delete next[group.key][role.key]
-                          setBindings(next)
+                          return source.assign(group.key, role.key, selectedValue)
                         }}
                       >
                         <SelectTrigger
                           data-testid={`template-role-${group.key}-${role.key}`}
-                          aria-label={role.name}
                           data-value={
                             bindings[group.key]?.[role.key]
                               ? `${bindings[group.key][role.key].kind}:${bindings[group.key][role.key].id}`
@@ -319,7 +188,7 @@ export function TemplateBindings({
                         />
                         <SelectContent>
                           {role.agentKey && (
-                            <SelectItem value={String(`agent:${templateAgentId(role.agentKey)}`)}>
+                            <SelectItem value={`agent:${templateAgentId(role.agentKey)}`}>
                               {m.autoCreate} ·{' '}
                               {
                                 document.spec.resources.collaboration.agents?.find(
@@ -332,7 +201,7 @@ export function TemplateBindings({
                           {candidates.map(candidate => (
                             <SelectItem
                               key={`${candidate.kind}:${candidate.id}`}
-                              value={String(`${candidate.kind}:${candidate.id}`)}
+                              value={`${candidate.kind}:${candidate.id}`}
                             >
                               {candidate.label}
                             </SelectItem>
@@ -500,8 +369,8 @@ export function TemplateBindingsDialog({
         <CollapsibleRoot
           className="collaboration-runtime-disclosure"
           data-testid="template-runtime-configuration"
-          onOpenChange={nextOpen => {
-            if (nextOpen) setConfigurationMounted(true)
+          onOpenChange={open => {
+            if (open) setConfigurationMounted(true)
           }}
         >
           <CollapsibleTrigger data-testid="template-bindings-toggle">

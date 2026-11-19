@@ -1,72 +1,68 @@
-import {
-  CollapsibleRoot,
-  CollapsibleTrigger,
-  CollapsiblePanel,
-} from '@wegent/collaboration/controls/Collapsible'
 import { testProviderConnection } from '@/features/model-settings/providerConnectionTest'
 import type {
   ModelProvider,
   PublicModelProvider,
 } from '@/features/model-settings/providerModelConfiguration'
 import { useTranslation } from '@/hooks/useTranslation'
+import {
+  CollapsiblePanel,
+  CollapsibleRoot,
+  CollapsibleTrigger,
+} from '@wegent/collaboration/controls/Collapsible'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Check, Loader2 } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 
-/** Test the current editor draft without persisting it. */
-export function ProviderConnectionTestButton({
-  provider,
-  disabled = false,
-  testId,
-}: {
+interface ProviderConnectionTestButtonProps {
   provider: ModelProvider | PublicModelProvider
   disabled?: boolean
   testId: string
-}) {
+}
+
+/** Test the current editor draft without persisting it. */
+export function ProviderConnectionTestButton(props: ProviderConnectionTestButtonProps) {
+  return <ScopedProviderConnectionTestButton key={JSON.stringify(props.provider)} {...props} />
+}
+
+function ScopedProviderConnectionTestButton({
+  provider,
+  disabled = false,
+  testId,
+}: ProviderConnectionTestButtonProps) {
   const { t } = useTranslation('modelConnections')
-  const key = JSON.stringify(provider)
-  const sequence = useRef(0)
-  const [status, setStatus] = useState<{
-    key: string
+  const pending = useRef(false)
+  const [current, setStatus] = useState<{
     pending: boolean
     message?: string
     failed?: boolean
   } | null>(null)
-  useEffect(
-    () => () => {
-      sequence.current += 1
-    },
-    [key]
-  )
-  const current = status?.key === key ? status : null
   async function test() {
-    const request = ++sequence.current
-    setStatus({ key, pending: true })
+    if (pending.current) return
+    pending.current = true
+    setStatus({ pending: true })
     try {
       const results = await testProviderConnection(provider)
       const failures = results.filter(result => result.error)
-      if (request === sequence.current)
-        setStatus({
-          key,
-          pending: false,
-          failed: failures.length > 0,
-          message: failures.length
-            ? failures
-                .map(
-                  result =>
-                    `${result.model}: ${result.error === 'connection_test_failed' ? t('testFailed') : result.error}`
-                )
-                .join('\n')
-            : t('testSuccess'),
-        })
+      setStatus({
+        pending: false,
+        failed: failures.length > 0,
+        message: failures.length
+          ? failures
+              .map(
+                result =>
+                  `${result.model}: ${result.error === 'connection_test_failed' ? t('testFailed') : result.error}`
+              )
+              .join('\n')
+          : t('testSuccess'),
+      })
     } catch (error) {
-      if (request === sequence.current)
-        setStatus({
-          key,
-          pending: false,
-          failed: true,
-          message: error instanceof Error ? error.message : t('failed'),
-        })
+      setStatus({
+        pending: false,
+        failed: true,
+        message: error instanceof Error ? error.message : t('failed'),
+      })
+    } finally {
+      pending.current = false
     }
   }
   return (

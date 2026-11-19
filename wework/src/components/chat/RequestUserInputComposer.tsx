@@ -5,9 +5,10 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimeTaskAddress } from '@/types/api'
 import type { RequestUserInputPayload } from '@wegent/chat-core/runtime'
+import { useFocusRequest } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { ChevronDown } from 'lucide-react'
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { useId, useRef, useState, type ReactNode } from 'react'
 
 /** Keep unanswered business questions recoverable beside the ordinary composer. */
 export function RequestUserInputComposer({
@@ -43,10 +44,8 @@ export function RequestUserInputComposer({
   const expand = useRef<HTMLButtonElement>(null)
   const canCollapse = payload && canDiscussQuestion(payload)
   const hidden = state.key === key && state.collapsed
-  useEffect(() => {
-    if (hidden) expand.current?.focus({ preventScroll: true })
-    else panel.current?.querySelector<HTMLElement>('form')?.focus({ preventScroll: true })
-  }, [hidden])
+  useFocusRequest(expand, undefined, { enabled: hidden, preventScroll: true })
+  useFocusRequest(panel, undefined, { enabled: !hidden, selector: 'form', preventScroll: true })
   return (
     <>
       {payload && (

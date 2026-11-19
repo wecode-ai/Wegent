@@ -39,6 +39,8 @@ cannot be enabled or disabled separately from the plugin management page.
 <a id="settings-controls"></a>
 
 <!-- ui-source: src/components/settings/GeneralSettingsPage.tsx -->
+
+If General shows a preference loading error, choose Retry at the bottom. With experimental features enabled, a failed Smart app list for Fixed tabs has its own Retry; other general controls remain available. Cloud quota issues do not prevent saving local preferences.
 <!-- ui-source: src/components/settings/RuntimeConcurrencySettings.tsx -->
 
 Open **bottom-left account menu → Settings → Personal → General**. The page groups basic preferences, runtime, AI assistance, privacy and the popout window. Most switches save immediately; check the page for save errors.
@@ -111,6 +113,8 @@ and per-process resource changes around that time.
 <!-- ui-source: src/components/settings/ArchivedConversationsSettingsPage.tsx -->
 <!-- ui-source: src/components/settings/WorktreesSettingsPage.tsx -->
 
+Local and remote archives load independently, so records appear as each source returns, with a loading indicator for pending sources. If one source fails, available records remain visible and you can retry. Delete all and delete project become available after the complete list loads successfully; individual records remain actionable. Switching API sources closes the previous deletion confirmation. If the device refuses a restore or deletion, the record remains visible with an error; deletion can be retried in the confirmation dialog.
+
 1. Open **Settings → Archived → Archived tasks** and search for a conversation by title.
 2. Restore it to continue, or delete it after reviewing the confirmation. Deletion, unlike archival, starts device-side cleanup.
 3. Open **Settings → Coding → Worktrees**, select the device and inspect each repository's worktrees and linked tasks.
@@ -152,6 +156,8 @@ The status badge shows the saved mode, while **Current connection** shows the co
 that mode. After saving a change, restart Codex when prompted. Running tasks are not interrupted
 immediately; new chats use the new network settings. Local device proxy settings stay on the current
 device and are not synced to cloud.
+
+Local and cloud proxies load independently; local settings stay editable when cloud reads are slow or fail. Retry beside a failed local connection resolution only rereads it, without saving or restarting Codex. Failed saves retain the input and saved configuration. Cloud account changes retain local drafts while resetting cloud input and results. Saving new local proxy settings during a restart keeps the restart prompt visible after the earlier restart completes.
 
 ## Node.js execution environment
 
@@ -238,6 +244,8 @@ harness. Under **Settings → Coding → Coding tools** (experimental), you can:
 - Choose Claude Code's default, plan, or bypass permission mode. Bypass mode passes
   `--dangerously-skip-permissions` and should be used only in a controlled environment where its
   risks are understood.
+
+Changes save automatically. Retry beside a detection error to detect again. If saving fails, the draft remains; use Retry beside the save error or edit again to save. Failed writes do not repeat automatically. Edits made during a write are retained when its earlier result arrives.
 
 After entering a task in a local project or development worktree, open the runtime selector in
 the composer to launch a harness. Wework passes the complete prompt according to the selected
@@ -423,6 +431,8 @@ Open **Settings → Personal → Context**:
 | Hook row                             | Enable/disable, edit, delete, reveal its folder or test and inspect the last result                                              | Testing actually executes the command, rather than merely validating syntax |
 
 In the Runtime creation form, **Device** identifies where the task runs and **Model** selects the model it uses.
+
+Runtime profiles, project defaults, and devices load independently; models load when you open the create dialog. Use Retry beside a failed section to reload that data while retaining other sections and form drafts. A successful save closes the create dialog; if the following list refresh fails, retrying only reloads data and does not create another Runtime.
 
 Choose `PostToolUse`, `TurnStarted`, `TurnCompleted` or `ExecutionCompleted`. Tool events match tool names; lifecycle events match status, with `.*` accepting every status. Lifecycle commands always run in the background without making the main agent wait.
 

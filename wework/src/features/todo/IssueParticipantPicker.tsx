@@ -1,11 +1,16 @@
 import type { PersonalIssuesApi } from '@/api/personalIssues'
 import { useTranslation } from '@/hooks/useTranslation'
-import { TabsList, TabsPanel, TabsRoot, TabsTab } from '@wegent/collaboration/controls/Tabs'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
 import type { SharedWorkspaceApi } from '@wegent/collaboration'
 import { SearchableSelect } from '@wegent/collaboration/controls/SearchableSelect'
+import { TabsList, TabsPanel, TabsRoot, TabsTab } from '@wegent/collaboration/controls/Tabs'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Bot, Plus, UserRound, Users, X } from 'lucide-react'
-import { useEffect, useId, useRef, useState } from 'react'
+import { useId, useMemo, useState, useSyncExternalStore } from 'react'
 
 import {
   participantLabel,
@@ -37,29 +42,13 @@ export function IssueParticipantPicker({
   const directoryQuery = tab === 'human' ? searchQuery : ''
   const [revision, setRevision] = useState(0)
   const requestKey = JSON.stringify([tab, directoryQuery, revision])
-  const [response, setResponse] = useState<{
-    key: string
-    api?: PersonalIssuesApi
-    collaborationApi?: SharedWorkspaceApi
-    userId?: number
-    items: IssueParticipant[]
-    error: string
-  }>({ key: '', items: [], error: '' })
-  const currentResponse =
-    response.key === requestKey &&
-    response.api === api &&
-    response.collaborationApi === collaborationApi &&
-    response.userId === userId
-  const results = currentResponse ? response.items : []
-  const error = currentResponse ? response.error : ''
-  const busy = open && !currentResponse
-  const generation = useRef(0)
-  useEffect(() => {
-    if (!open) return
-    const current = ++generation.current
-    const timer = setTimeout(
-      () => {
-        const load = async (): Promise<IssueParticipant[]> => {
+  const resource = useMemo(
+    () =>
+      createAsyncResource<IssueParticipant[]>(
+        requestKey,
+        async (signal): Promise<IssueParticipant[]> => {
+          await Promise.resolve()
+          signal.throwIfAborted()
           if (tab === 'human') {
             if (!directoryQuery) return []
             const page = await api.searchUsers(directoryQuery)
@@ -107,39 +96,24 @@ export function IssueParticipantPicker({
               ])
             ).values(),
           ]
-        }
-        void load().then(
-          rows => {
-            if (current === generation.current)
-              setResponse({
-                key: requestKey,
-                api,
-                collaborationApi,
-                userId,
-                items: rows,
-                error: '',
-              })
-          },
-          reason => {
-            if (current === generation.current)
-              setResponse({
-                key: requestKey,
-                api,
-                collaborationApi,
-                userId,
-                items: [],
-                error: reason instanceof Error ? reason.message : String(reason),
-              })
-          }
-        )
-      },
-      tab === 'human' ? 200 : 0
-    )
-    return () => {
-      clearTimeout(timer)
-      generation.current = current + 1
-    }
-  }, [api, collaborationApi, open, directoryQuery, tab, userId, requestKey])
+        },
+        { delayMs: tab === 'human' ? 200 : 0, refreshOnSubscribe: true }
+      ),
+    [api, collaborationApi, directoryQuery, tab, userId, requestKey]
+  )
+  const response = useSyncExternalStore(
+    open ? resource.subscribe : subscribeIdleResource,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const results = response.data ?? []
+  const error =
+    response.status === 'error'
+      ? response.error instanceof Error
+        ? response.error.message
+        : String(response.error)
+      : ''
+  const busy = open && !response.settled
   const icon = (kind: IssueParticipant['kind']) =>
     kind === 'agent' ? Bot : kind === 'group' ? Users : UserRound
   const candidates = results.filter(

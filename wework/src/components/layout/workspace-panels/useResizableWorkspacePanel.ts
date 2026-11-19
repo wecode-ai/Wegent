@@ -1,13 +1,16 @@
+import { DEFAULT_CODE_FONT_SIZE } from '@/features/appearance/typography'
+import { usePanelResizeDrag } from '../usePanelResizeDrag'
+import { useDOMEvent, useWindowEvent } from '@wegent/collaboration/dom-events'
 import {
-  useEffect,
+  useCallback,
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type PointerEvent,
   type RefObject,
 } from 'react'
-import { DEFAULT_CODE_FONT_SIZE } from '@/features/appearance/typography'
-import { usePanelResizeDrag } from '../usePanelResizeDrag'
+import { createRightSplitResizeState } from './rightSplitResizeState'
 
 const RIGHT_SPLIT_CHAT_DEFAULT_WIDTH = 420
 export const RIGHT_WORKSPACE_COMPACT_PANEL_DEFAULT_WIDTH = 420
@@ -112,11 +115,14 @@ export function useResizableRightSplitChat({
   onCollapse,
   defaultPanelWidth,
 }: ResizableRightSplitChatOptions = {}) {
-  const [width, setWidth] = useState(RIGHT_SPLIT_CHAT_DEFAULT_WIDTH)
-  const [resizing, setResizing] = useState(false)
-  const collapseFrameRef = useRef<number | null>(null)
+  const [resizeState] = useState(() => createRightSplitResizeState(RIGHT_SPLIT_CHAT_DEFAULT_WIDTH))
+  const { width, resizing } = useSyncExternalStore(
+    resizeState.subscribe,
+    resizeState.getSnapshot,
+    resizeState.getSnapshot
+  )
+  const { setWidth, setResizing } = resizeState
   const { startResize, stopResize } = usePanelResizeDrag()
-  const resizingRef = useRef(false)
   const panelWidthRatioRef = useRef<number | undefined>(readStoredRightWorkspacePanelWidthRatio())
 
   useLayoutEffect(() => {
@@ -124,7 +130,7 @@ export function useResizableRightSplitChat({
     if (!container) return
 
     const applyDefaultWidth = () => {
-      if (resizingRef.current) return
+      if (resizeState.getSnapshot().resizing) return
       const containerWidth = container.getBoundingClientRect().width
       setWidth(
         defaultPanelWidth !== undefined || panelWidthRatioRef.current === undefined
@@ -139,46 +145,24 @@ export function useResizableRightSplitChat({
     const observer = new ResizeObserver(applyDefaultWidth)
     observer.observe(container)
     return () => observer.disconnect()
-  }, [containerRef, defaultPanelWidth])
+  }, [containerRef, defaultPanelWidth, resizeState, setWidth])
 
-  useEffect(() => {
-    const handleStoredPanelWidthRatioChange = (event: Event) => {
-      if (defaultPanelWidth !== undefined) return
-
-      const detail = (event as CustomEvent<{ ratio?: number }>).detail
-      const ratio = detail?.ratio ?? readStoredRightWorkspacePanelWidthRatio()
-      if (ratio === undefined) return
-
-      panelWidthRatioRef.current = ratio
-      const containerWidth = containerRef?.current?.getBoundingClientRect().width ?? 0
-      setWidth(getRightSplitChatWidthFromPanelRatio(containerWidth, ratio))
-    }
-
-    window.addEventListener(
-      RIGHT_WORKSPACE_PANEL_WIDTH_RATIO_EVENT,
-      handleStoredPanelWidthRatioChange
-    )
-    window.addEventListener('storage', handleStoredPanelWidthRatioChange)
-    return () => {
-      window.removeEventListener(
-        RIGHT_WORKSPACE_PANEL_WIDTH_RATIO_EVENT,
-        handleStoredPanelWidthRatioChange
-      )
-      window.removeEventListener('storage', handleStoredPanelWidthRatioChange)
-    }
-  }, [containerRef, defaultPanelWidth])
-
-  useEffect(() => {
-    return () => {
-      if (collapseFrameRef.current === null) return
-      window.cancelAnimationFrame(collapseFrameRef.current)
-    }
-  }, [])
+  const handleStoredPanelWidthRatioChange = (event: Event) => {
+    if (defaultPanelWidth !== undefined) return
+    const detail = (event as CustomEvent<{ ratio?: number }>).detail
+    const ratio = detail?.ratio ?? readStoredRightWorkspacePanelWidthRatio()
+    if (ratio === undefined) return
+    panelWidthRatioRef.current = ratio
+    const containerWidth = containerRef?.current?.getBoundingClientRect().width ?? 0
+    setWidth(getRightSplitChatWidthFromPanelRatio(containerWidth, ratio))
+  }
+  useDOMEvent('window', RIGHT_WORKSPACE_PANEL_WIDTH_RATIO_EVENT, handleStoredPanelWidthRatioChange)
+  useWindowEvent('storage', handleStoredPanelWidthRatioChange)
 
   const handleResizeStart = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return
     stopResize()
-
+    resizeState.cancelResize()
     const startX = event.clientX
     const startWidth = width
     const containerWidth = containerRef?.current?.getBoundingClientRect().width ?? 0
@@ -186,11 +170,9 @@ export function useResizableRightSplitChat({
     let resizedPanelWidth = Math.max(RIGHT_SPLIT_PANEL_MIN_WIDTH, containerWidth - startWidth)
     let resized = false
     let collapsed = false
-    resizingRef.current = true
 
     function finishResize() {
       setResizing(false)
-      resizingRef.current = false
     }
 
     function collapsePanel() {
@@ -198,11 +180,11 @@ export function useResizableRightSplitChat({
 
       collapsed = true
       stopResize()
-      if (collapseFrameRef.current !== null) {
-        window.cancelAnimationFrame(collapseFrameRef.current)
+      if (resizeState.getCollapseFrame() !== null) {
+        window.cancelAnimationFrame(resizeState.getCollapseFrame()!)
       }
       const applyCollapse = () => {
-        collapseFrameRef.current = null
+        resizeState.setCollapseFrame(null)
         setWidth(
           defaultPanelWidth !== undefined || panelWidthRatioRef.current === undefined
             ? getRightSplitChatDefaultWidth(containerWidth, defaultPanelWidth)
@@ -212,7 +194,7 @@ export function useResizableRightSplitChat({
       }
 
       if (typeof window.requestAnimationFrame === 'function') {
-        collapseFrameRef.current = window.requestAnimationFrame(applyCollapse)
+        resizeState.setCollapseFrame(window.requestAnimationFrame(applyCollapse))
         return
       }
 
@@ -269,38 +251,32 @@ function getBottomPanelMinHeight(codeFontSize: number) {
 export function useResizableBottomPanel(codeFontSize = DEFAULT_CODE_FONT_SIZE) {
   const [height, setHeight] = useState(BOTTOM_DEFAULT_HEIGHT)
   const [resizing, setResizing] = useState(false)
-  const panelRef = useRef<HTMLElement | null>(null)
-  const { startResize, stopResize } = usePanelResizeDrag()
+  const panelElementRef = useRef<HTMLElement | null>(null)
   const minimumHeight = getBottomPanelMinHeight(codeFontSize)
   const resolvedHeight = Math.max(height, minimumHeight)
+  const { startResize, stopResize } = usePanelResizeDrag()
+
+  const panelRef = useCallback((panel: HTMLElement | null) => {
+    panelElementRef.current = panel
+  }, [])
 
   const handleResizeStart = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return
     stopResize()
-
     const startY = event.clientY
-    const startHeight = resolvedHeight
-    let nextHeight = startHeight
-
-    const applyHeight = () => {
-      if (panelRef.current) {
-        panelRef.current.style.flexBasis = `${nextHeight}px`
-        panelRef.current.style.height = `${nextHeight}px`
-      }
-    }
-
+    let nextHeight = resolvedHeight
     setResizing(true)
     startResize(event, {
       cursor: 'row-resize',
       onMove: ({ y }) => {
-        nextHeight = clamp(startHeight + startY - y, minimumHeight, BOTTOM_MAX_HEIGHT)
-        applyHeight()
+        nextHeight = clamp(resolvedHeight + startY - y, minimumHeight, BOTTOM_MAX_HEIGHT)
+        if (panelElementRef.current) {
+          panelElementRef.current.style.flexBasis = `${nextHeight}px`
+          panelElementRef.current.style.height = `${nextHeight}px`
+        }
       },
       onFinish: () => setResizing(false),
-      onEnd: () => {
-        applyHeight()
-        setHeight(nextHeight)
-      },
+      onEnd: () => setHeight(nextHeight),
     })
   }
 

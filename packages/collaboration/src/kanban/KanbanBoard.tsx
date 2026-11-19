@@ -1,6 +1,5 @@
 import {
   ProjectBoardTransfer,
-  ProjectBoardTransferOverlay,
   type ProjectBoardTransferEvents,
 } from '../project-board/ProjectBoardTransfer'
 import { useProjectBoardDropTarget } from '../project-board/projectBoardTransferContext'
@@ -242,7 +241,7 @@ export function KanbanBoard<TColumn, TItem>({
           />
         ))}
       </div>
-      <ProjectBoardTransferOverlay />
+
     </ProjectBoardTransfer>
   )
 }

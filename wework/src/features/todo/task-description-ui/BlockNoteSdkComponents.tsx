@@ -1,4 +1,4 @@
-import { BlockNoteSdkPopupContext, useBlockNoteSdkPopupPresence } from './blockNoteSdkPopupPresence'
+import { BlockNoteSdkPopupContext, useBlockNoteSdkPopupRef } from './blockNoteSdkPopupPresence'
 import {
   ComponentsContext,
   BlockNoteViewRaw,
@@ -66,14 +66,11 @@ function MenuRoot({
   children,
 }: ComponentProps['Generic']['Menu']['Root']) {
   const editor = useBlockNoteEditor()
-  const [open, setOpen] = useState(false)
-  useBlockNoteSdkPopupPresence(open)
   const Root = sub ? MenuSub : Menu
   return (
     <Placement.Provider value={{ position, container: editor.portalElement }}>
       <Root
         onOpenChange={next => {
-          setOpen(next)
           onOpenChange?.(next)
         }}
       >
@@ -85,8 +82,10 @@ function MenuRoot({
 function MenuDropdown({ sub, className, children }: ComponentProps['Generic']['Menu']['Dropdown']) {
   const { position, container } = useContext(Placement)
   const Content = sub ? MenuSubContent : MenuContent
+  const popupRef = useBlockNoteSdkPopupRef()
   return (
     <Content
+      ref={popupRef}
       container={container}
       {...placement(position ?? (sub ? 'right-start' : 'bottom-start'))}
       className={className}
@@ -167,8 +166,6 @@ function PopoverRoot({
   children,
 }: ComponentProps['Generic']['Popover']['Root']) {
   const editor = useBlockNoteEditor()
-  const [internalOpen, setInternalOpen] = useState(false)
-  useBlockNoteSdkPopupPresence(open ?? internalOpen)
   return (
     <Placement.Provider
       value={{ position, container: portalRoot !== undefined ? portalRoot : editor.portalElement }}
@@ -176,7 +173,6 @@ function PopoverRoot({
       <Popover
         open={open}
         onOpenChange={next => {
-          setInternalOpen(next)
           onOpenChange?.(next)
         }}
       >
@@ -187,8 +183,14 @@ function PopoverRoot({
 }
 function PopoverBody({ className, children }: ComponentProps['Generic']['Popover']['Content']) {
   const { position, container } = useContext(Placement)
+  const popupRef = useBlockNoteSdkPopupRef()
   return (
-    <PopoverContent {...placement(position)} container={container} className={cn('p-2', className)}>
+    <PopoverContent
+      ref={popupRef}
+      {...placement(position)}
+      container={container}
+      className={cn('p-2', className)}
+    >
       {children}
     </PopoverContent>
   )

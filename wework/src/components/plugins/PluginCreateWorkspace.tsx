@@ -1,5 +1,6 @@
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
-import { ChatInput, type ProjectWorkControls } from '@/components/chat/ChatInput'
+import type { ProjectWorkControls } from '@/components/chat/ChatInput'
+import { ChatInput } from '@/components/chat/ChatInput'
 import { ComposerSkillIcon } from '@/components/chat/composer/ComposerSkillIcon'
 import { DesktopEmptyTaskLauncher } from '@/components/layout/DesktopEmptyTaskLauncher'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
@@ -13,7 +14,8 @@ import { resolveProjectRuntimeWorkspaceTarget } from '@/lib/workspace-target'
 import { beginOperation } from '@/telemetry/operationBus'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { X } from 'lucide-react'
-import { type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { linkedCloudPluginId } from './installedPluginMerge'
 import { toInstalledPluginItem } from './installedPluginPresentation'
 import { createdPluginSlugFromKey, findPackableCreatedPlugin } from './pluginOwnerLocalPackage'
@@ -158,10 +160,12 @@ export function PluginCreateWorkspace({ topBarLeftActions }: PluginCreateWorkspa
     navigateTo('/')
   }
 
-  useEffect(() => {
-    focusComposerAtEnd(
-      workspaceRef.current?.querySelector<HTMLElement>('[data-testid="plugin-create-prompt-input"]')
-    )
+  const attachWorkspace = useCallback((node: HTMLElement | null) => {
+    workspaceRef.current = node
+    if (node)
+      focusComposerAtEnd(
+        node.querySelector<HTMLElement>('[data-testid="plugin-create-prompt-input"]')
+      )
   }, [])
 
   const submit = async (valueOverride?: string) => {
@@ -263,7 +267,7 @@ export function PluginCreateWorkspace({ topBarLeftActions }: PluginCreateWorkspa
 
   return (
     <main
-      ref={workspaceRef}
+      ref={attachWorkspace}
       data-testid="plugin-create-workspace"
       className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background text-text-primary"
     >

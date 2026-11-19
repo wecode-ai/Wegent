@@ -1,7 +1,12 @@
-import { ChevronRight, File, FileText, Loader2, ScanText, X } from 'lucide-react'
-import { useEffect, useState, type ReactNode } from 'react'
-import { canRestorePastedText, isPastedTextFile } from '../composer/pastedTextAttachment'
 import { Button as ControlButton } from '../markdown/Button'
+import { ChevronRight, File, FileText, Loader2, ScanText, X } from 'lucide-react'
+import { useMemo, useSyncExternalStore, type ReactNode } from 'react'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
+import { canRestorePastedText, isPastedTextFile } from '../composer/pastedTextAttachment'
 import {
   AttachmentImageView,
   type AttachmentImageServices,
@@ -52,14 +57,19 @@ function AttachmentTileBorder() {
 }
 
 function PendingImageAttachment({ file, previewUrl }: { file: File; previewUrl?: string }) {
-  const [loaded, setLoaded] = useState<{ file: File; url: string } | null>(null)
-  useEffect(() => {
-    if (previewUrl) return
-    const url = URL.createObjectURL(file)
-    setLoaded({ file, url })
-    return () => URL.revokeObjectURL(url)
-  }, [file, previewUrl])
-  const src = previewUrl ?? (loaded?.file === file ? loaded.url : undefined)
+  const resource = useMemo(
+    () =>
+      createAsyncResource(file.name, async () => URL.createObjectURL(file), {
+        release: url => URL.revokeObjectURL(url),
+      }),
+    [file]
+  )
+  const query = useSyncExternalStore(
+    previewUrl ? subscribeIdleResource : resource.subscribe,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const src = previewUrl ?? query.data
   return (
     <div
       data-testid="pending-image-attachment"
@@ -244,20 +254,20 @@ function PendingTextAttachment({
   file: File
   labels: ComposerAttachmentBadgesProps<ComposerAttachment>['labels']
 }) {
-  const [preview, setPreview] = useState('')
-  useEffect(() => {
-    let active = true
-    void file
-      .slice(0, 512)
-      .text()
-      .then(text => {
-        if (active) setPreview(text.trim().split(/\r?\n/, 1)[0])
-      })
-      .catch(() => {})
-    return () => {
-      active = false
-    }
-  }, [file])
+  const resource = useMemo(
+    () =>
+      createAsyncResource(
+        file.name,
+        async () => (await file.slice(0, 512).text()).trim().split(/\r?\n/, 1)[0]
+      ),
+    [file]
+  )
+  const query = useSyncExternalStore(
+    resource.subscribe,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const preview = query.data ?? ''
   return <TextAttachmentCard preview={preview} pending labels={labels} />
 }
 

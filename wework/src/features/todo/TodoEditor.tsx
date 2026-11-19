@@ -9,35 +9,41 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { saveBlobToDownloads } from '@/lib/blobDownload'
 import type { ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
 import type { WorkspaceAttachmentPreviewSource } from '@/types/workspace-files'
+import { subscribeIdleResource } from '@wegent/chat-core/async-resource'
+import type {
+  CollaborationAssignment,
+  CollaborationAttachment,
+  SharedEditorIssue,
+  SharedEditorProject,
+  SharedIssueDetailCreateInput,
+  SharedIssueDetailExtensions,
+  SharedIssueDetailTaskBinding,
+  SharedIssueDetailTaskExecutionState,
+  SharedIssueDetailWorkspaceApi,
+} from '@wegent/collaboration'
 import {
   createCollaborationTranslator,
   createSharedIssueDetailPort,
   formatIssueAttachmentSize,
   IssueMarkdownProvider,
   TodoEditor as SharedIssueDetailEditor,
-  type CollaborationAssignment,
-  type CollaborationAttachment,
-  type SharedEditorIssue,
-  type SharedEditorProject,
-  type SharedIssueDetailCreateInput,
-  type SharedIssueDetailExtensions,
-  type SharedIssueDetailTaskBinding,
-  type SharedIssueDetailTaskExecutionState,
-  type SharedIssueDetailWorkspaceApi,
 } from '@wegent/collaboration'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Send } from 'lucide-react'
-import { useCallback, useMemo, useState, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import { AITableTaskFields } from './AITableTaskFields'
 import { AssignmentChainPopover } from './AssignmentChainPopover'
 import { CloudFilePreviewDialog } from './CloudFilePreviewDialog'
 import { isLoopItemExecutionActive } from './cloudMyWorkModel'
 import {
-  IssueAssignmentReceipts,
-  type IssueAssignmentReceiptState,
-} from './IssueAssignmentReceipts'
+  createIssueAssignmentReceiptObservation,
+  getEmptyAssignmentReceiptSnapshot,
+} from './issueAssignmentReceiptObservation'
+import { IssueAssignmentReceipts } from './IssueAssignmentReceipts'
 import { issueAssignmentRevision } from './issueAssignmentReceiptScope'
-import { IssueExistingTaskAction, type ExistingIssueTaskSource } from './IssueExistingTaskAction'
+import type { ExistingIssueTaskSource } from './IssueExistingTaskAction'
+import { IssueExistingTaskAction } from './IssueExistingTaskAction'
 import { IssueWebLinkButton } from './IssueWebLinkButton'
 import { canEditProjectSpaceIssue } from './projectSpaceSelection'
 import { StatusHistoryPopover } from './StatusHistoryPopover'
@@ -179,9 +185,6 @@ export function TodoEditor(props: TodoEditorProps) {
       },
     }
   }, [props.api, props.projectChatAgentApi, props.sharedApi])
-  const [assignmentReceipts, setAssignmentReceipts] = useState<IssueAssignmentReceiptState | null>(
-    null
-  )
   const receiptApi = useMemo(
     () =>
       workspaceApi.assignmentReceipts
@@ -192,6 +195,15 @@ export function TodoEditor(props: TodoEditorProps) {
           }
         : undefined,
     [workspaceApi]
+  )
+  const receiptObservation = useMemo(
+    () => (receiptApi ? createIssueAssignmentReceiptObservation(receiptApi) : null),
+    [receiptApi]
+  )
+  const assignmentReceipts = useSyncExternalStore(
+    receiptObservation?.subscribe ?? subscribeIdleResource,
+    receiptObservation?.getSnapshot ?? getEmptyAssignmentReceiptSnapshot,
+    getEmptyAssignmentReceiptSnapshot
   )
   const attachmentProjectId = props.project ? String(props.project.id) : undefined
   const attachmentIssueId = props.mode === 'edit' ? props.item.id : undefined
@@ -344,7 +356,7 @@ export function TodoEditor(props: TodoEditorProps) {
           assignmentRevision={issueAssignmentRevision(item)}
           currentUserId={props.currentUserId}
           assigneeUserId={item.assignee_user_id}
-          onStateChange={setAssignmentReceipts}
+          observation={receiptObservation ?? undefined}
         />
       ) : null,
     renderAssignmentHistory: context => (

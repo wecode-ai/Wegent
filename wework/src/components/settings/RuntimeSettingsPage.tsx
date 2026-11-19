@@ -1,12 +1,15 @@
-import { Field, FieldLabel } from '@wegent/collaboration/controls/Field'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
 import { DeleteIconButton } from '@wegent/collaboration/controls/DeleteIconButton'
+import { Field, FieldLabel } from '@wegent/collaboration/controls/Field'
 import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { LoaderCircle, Plus } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useRef, useState, useSyncExternalStore } from 'react'
 
-import type { CloudProject } from '@/api/deliveries'
-import type { RuntimeProfile } from '@/api/runtimeProfiles'
 import { MenuSelect } from '@/components/common/MenuSelect'
 import { CloudTodoModal } from '@/features/todo/CloudTodoModal'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
@@ -25,166 +28,54 @@ interface RuntimeSettingsPageProps {
   modelApi?: Pick<NonNullable<WorkbenchServices['modelApi']>, 'listModels'>
 }
 
-export function RuntimeSettingsPage({
+function createRuntimeSettingsResources({
   runtimeProfileApi,
   deliveryApi,
   deviceApi,
   modelApi,
-}: RuntimeSettingsPageProps) {
+}: RuntimeSettingsPageProps & {
+  runtimeProfileApi: NonNullable<RuntimeSettingsPageProps['runtimeProfileApi']>
+}) {
+  return {
+    profiles: createAsyncResource('settings/runtime-profiles', () => runtimeProfileApi.list()),
+    projects: createAsyncResource('settings/runtime-project-defaults', async signal => {
+      const response = await (deliveryApi?.listCloudProjects() ?? Promise.resolve({ items: [] }))
+      signal.throwIfAborted()
+      const projects = response.items.filter(project => project.task_provider === 'local')
+      const defaults = await Promise.all(
+        projects.map(project =>
+          runtimeProfileApi
+            .getProjectDefault(project.id)
+            .then(value => [String(project.id), value.runtimeProfileId ?? ''] as const)
+        )
+      )
+      return { projects, projectDefaults: Object.fromEntries(defaults) }
+    }),
+    devices: createAsyncResource(
+      'settings/runtime-devices',
+      () => deviceApi?.listDevices() ?? Promise.resolve([])
+    ),
+    models: createAsyncResource('settings/runtime-models', async () => {
+      const response = await (modelApi?.listModels() ?? Promise.resolve({ data: [] }))
+      return response.data
+        .filter(isSupportedModelFamily)
+        .map(item => ({ name: item.name, type: item.type }))
+    }),
+  }
+}
+
+export function RuntimeSettingsPage(props: RuntimeSettingsPageProps) {
   const { t } = useTranslation('common')
-  const [profiles, setProfiles] = useState<RuntimeProfile[]>([])
-  const [projects, setProjects] = useState<CloudProject[]>([])
-  const [projectDefaults, setProjectDefaults] = useState<Record<string, string>>({})
-  const [devices, setDevices] = useState<
-    Array<{ device_id: string; device_type?: string; status?: string; name?: string }>
-  >([])
-  const [models, setModels] = useState<Array<{ name: string; type?: string }>>([])
-  const [creating, setCreating] = useState(false)
-  const [busyKey, setBusyKey] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [name, setName] = useState('')
-  const [deviceId, setDeviceId] = useState('')
-  const [model, setModel] = useState('')
-
-  const [loading, setLoading] = useState(Boolean(runtimeProfileApi))
-  const [hasLoadedProfiles, setHasLoadedProfiles] = useState(false)
-  const [loadError, setLoadError] = useState<string | null>(null)
-  const [metadataErrors, setMetadataErrors] = useState<Record<string, string>>({})
-  const [metadataPending, setMetadataPending] = useState<Record<string, boolean>>({})
-  const requests = useRef({ profiles: 0, metadata: 0 })
-  const load = useCallback(async () => {
-    if (!runtimeProfileApi) return
-    const request = ++requests.current.profiles
-    setLoading(true)
-    setLoadError(null)
-    try {
-      const next = await runtimeProfileApi.list()
-      if (request === requests.current.profiles) {
-        setProfiles(next)
-        setHasLoadedProfiles(true)
-      }
-    } catch (cause) {
-      if (request === requests.current.profiles)
-        setLoadError(cause instanceof Error ? cause.message : String(cause))
-      throw cause
-    } finally {
-      if (request === requests.current.profiles) setLoading(false)
-    }
-  }, [runtimeProfileApi])
-  const loadMetadata = useCallback(() => {
-    if (!runtimeProfileApi) return
-    const request = ++requests.current.metadata
-    setMetadataErrors({})
-    setMetadataPending({})
-    const run = <T,>(key: string, operation: () => Promise<T>, accept: (value: T) => void) => {
-      setMetadataPending(current => ({ ...current, [key]: true }))
-      void Promise.resolve()
-        .then(operation)
-        .then(value => {
-          if (request === requests.current.metadata) accept(value)
-        })
-        .catch(cause => {
-          if (request === requests.current.metadata)
-            setMetadataErrors(current => ({
-              ...current,
-              [key]: cause instanceof Error ? cause.message : String(cause),
-            }))
-        })
-        .finally(() => {
-          if (request === requests.current.metadata)
-            setMetadataPending(current => ({ ...current, [key]: false }))
-        })
-    }
-    if (deviceApi) run('device', () => deviceApi.listDevices(), setDevices)
-    if (modelApi)
-      run(
-        'model',
-        () => modelApi.listModels(),
-        response =>
-          setModels(
-            response.data
-              .filter(isSupportedModelFamily)
-              .map(item => ({ name: item.name, type: item.type }))
-          )
-      )
-    if (deliveryApi)
-      run(
-        'projects',
-        () => deliveryApi.listCloudProjects(),
-        response => {
-          const available = response.items.filter(project => project.task_provider === 'local')
-          setProjects(available)
-          for (const project of available)
-            if (runtimeProfileApi)
-              run(
-                'default:' + project.id,
-                () => runtimeProfileApi.getProjectDefault(project.id),
-                value => {
-                  setProjectDefaults(current => ({
-                    ...current,
-                    [String(project.id)]: value.runtimeProfileId ?? '',
-                  }))
-                }
-              )
-        }
-      )
-  }, [deliveryApi, deviceApi, modelApi, runtimeProfileApi])
-  useEffect(() => {
-    const requestState = requests.current
-    const timer = window.setTimeout(() => {
-      void load().catch(() => undefined)
-      loadMetadata()
-    }, 0)
-    return () => {
-      window.clearTimeout(timer)
-      requestState.profiles++
-      requestState.metadata++
-    }
-  }, [load, loadMetadata])
-
-  const selectedDevice = devices.find(device => device.device_id === deviceId)
-  const environment =
-    selectedDevice?.device_type === 'cloud' || selectedDevice?.device_type === 'remote'
-      ? 'cloud'
-      : 'local'
-  const modelOptions = useMemo(
-    () =>
-      models
-        .filter(candidate => environment === 'local' || candidate.type !== 'runtime')
-        .map(candidate => ({ value: candidate.name, label: candidate.name })),
-    [environment, models]
-  )
-  const profileOptions = profiles.map(profile => ({ value: profile.id, label: profile.name }))
-
-  const openCreate = () => {
-    setError(null)
-    setName('')
-    setDeviceId(devices[0]?.device_id ?? '')
-    setModel(models[0]?.name ?? '')
-    setCreating(true)
+  const [source, setSource] = useState({ ...props, revision: 0 })
+  if (
+    source.runtimeProfileApi !== props.runtimeProfileApi ||
+    source.deliveryApi !== props.deliveryApi ||
+    source.deviceApi !== props.deviceApi ||
+    source.modelApi !== props.modelApi
+  ) {
+    setSource({ ...props, revision: source.revision + 1 })
   }
-
-  const create = async () => {
-    if (!runtimeProfileApi || !name.trim() || !deviceId || busyKey) return
-    setBusyKey('create')
-    setError(null)
-    try {
-      await runtimeProfileApi.create({
-        name: name.trim(),
-        executionEnvironment: environment,
-        executionDeviceId: deviceId,
-        model,
-      })
-      setCreating(false)
-      void load().catch(() => undefined)
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    } finally {
-      setBusyKey(null)
-    }
-  }
-
-  if (!runtimeProfileApi) {
+  if (!props.runtimeProfileApi)
     return (
       <SettingsPage data-testid="runtime-settings-page">
         <SettingsPageHeader
@@ -193,7 +84,127 @@ export function RuntimeSettingsPage({
         />
       </SettingsPage>
     )
+  return (
+    <RuntimeSettingsContent
+      key={source.revision}
+      {...props}
+      runtimeProfileApi={props.runtimeProfileApi}
+    />
+  )
+}
+
+function RuntimeSettingsContent(
+  props: RuntimeSettingsPageProps & {
+    runtimeProfileApi: NonNullable<RuntimeSettingsPageProps['runtimeProfileApi']>
   }
+) {
+  const { runtimeProfileApi } = props
+  const { t } = useTranslation('common')
+  const [resources] = useState(() => createRuntimeSettingsResources(props))
+  const [creating, setCreating] = useState(false)
+  const snapshot = useSyncExternalStore(
+    resources.profiles.subscribe,
+    resources.profiles.getSnapshot
+  )
+  const projectSnapshot = useSyncExternalStore(
+    resources.projects.subscribe,
+    resources.projects.getSnapshot
+  )
+  const deviceSnapshot = useSyncExternalStore(
+    resources.devices.subscribe,
+    resources.devices.getSnapshot
+  )
+  const modelSnapshot = useSyncExternalStore(
+    creating ? resources.models.subscribe : subscribeIdleResource,
+    creating ? resources.models.getSnapshot : getIdleResourceSnapshot
+  )
+  const profiles = snapshot.data ?? []
+  const { projects = [], projectDefaults = {} } = projectSnapshot.data ?? {}
+  const devices = deviceSnapshot.data ?? []
+  const models = modelSnapshot.data ?? []
+  const [busyKey, setBusyKey] = useState<string | null>(null)
+  const pending = useRef(false)
+  const [actionError, setError] = useState<string | null>(null)
+  const error = actionError
+  const [name, setName] = useState('')
+  const [deviceDraft, setDeviceId] = useState<string | null>(null)
+  const deviceId = deviceDraft ?? devices[0]?.device_id ?? ''
+  const [modelDraft, setModel] = useState<string | null>(null)
+
+  const perform = async (key: string, action: () => Promise<unknown>) => {
+    if (pending.current) return
+    pending.current = true
+    setBusyKey(key)
+    setError(null)
+    try {
+      await action()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause))
+    } finally {
+      pending.current = false
+      setBusyKey(null)
+    }
+  }
+
+  const selectedDevice = devices.find(device => device.device_id === deviceId)
+  const environment =
+    selectedDevice?.device_type === 'cloud' || selectedDevice?.device_type === 'remote'
+      ? 'cloud'
+      : 'local'
+  const modelOptions = models
+    .filter(candidate => environment === 'local' || candidate.type !== 'runtime')
+    .map(candidate => ({ value: candidate.name, label: candidate.name }))
+  const model = modelDraft ?? modelOptions[0]?.value ?? ''
+  const profileOptions = profiles.map(profile => ({ value: profile.id, label: profile.name }))
+
+  const openCreate = () => {
+    setError(null)
+    setName('')
+    setDeviceId(null)
+    setModel(null)
+    setCreating(true)
+  }
+
+  const create = async () => {
+    if (!name.trim() || !deviceId) return
+    await perform('create', async () => {
+      await runtimeProfileApi.create({
+        name: name.trim(),
+        executionEnvironment: environment,
+        executionDeviceId: deviceId,
+        model,
+      })
+      if (!resources.profiles.hasSubscribers()) return
+      setCreating(false)
+      await Promise.all([resources.profiles.reload(), resources.projects.reload()])
+    })
+  }
+
+  const failures = (
+    [
+      ['profiles', resources.profiles, snapshot],
+      ['projects', resources.projects, projectSnapshot],
+      ['devices', resources.devices, deviceSnapshot],
+      ['models', resources.models, modelSnapshot],
+    ] as const
+  ).map(([name, resource, state]) =>
+    state.status === 'error' ? (
+      <div key={name} className="mb-3 text-xs text-destructive" role="alert">
+        <p>{state.error instanceof Error ? state.error.message : String(state.error)}</p>
+        <ControlButton
+          variant="unstyled"
+          type="button"
+          data-testid={
+            name === 'profiles' ? 'runtime-settings-retry' : `runtime-settings-${name}-retry`
+          }
+          onClick={() => void resource.reload()}
+          className="mt-2 min-h-11 rounded-lg border border-border px-3 text-sm md:min-h-8"
+        >
+          {t('common.retry')}
+        </ControlButton>
+      </div>
+    ) : null
+  )
 
   return (
     <SettingsPage data-testid="runtime-settings-page">
@@ -214,58 +225,14 @@ export function RuntimeSettingsPage({
         }
       />
 
-      {error && !creating ? (
-        <p role="alert" className="mb-3 text-sm text-destructive">
-          {error}
-        </p>
-      ) : null}
-      {loading || (!hasLoadedProfiles && !loadError) ? (
-        <p
-          role="status"
-          data-testid="runtime-profiles-loading"
-          className="mb-3 text-sm text-text-secondary"
-        >
-          {t('common.loading')}
-        </p>
-      ) : null}
-      {loadError ? (
-        <div
-          role="alert"
-          data-testid="runtime-profiles-load-error"
-          className="mb-3 space-y-2 text-sm text-destructive"
-        >
-          <p>{loadError}</p>
-          <ControlButton
-            variant="outline"
-            data-testid="runtime-profiles-retry"
-            onClick={() => {
-              void load().catch(() => undefined)
-            }}
-          >
-            {t('common.retry', '重试')}
-          </ControlButton>
-        </div>
-      ) : null}
-      {Object.keys(metadataErrors).length > 0 ? (
-        <div
-          role="alert"
-          data-testid="runtime-metadata-error"
-          className="mb-3 space-y-2 text-sm text-destructive"
-        >
-          {[...new Set(Object.values(metadataErrors))].map(message => (
-            <p key={message}>{message}</p>
-          ))}
-          <ControlButton
-            variant="outline"
-            data-testid="runtime-metadata-retry"
-            onClick={loadMetadata}
-          >
-            {t('common.retry', '重试')}
-          </ControlButton>
-        </div>
-      ) : null}
+      {error && !creating ? <p className="mb-3 text-xs text-destructive">{error}</p> : null}
+      {!creating && failures}
       <SettingsGroup>
-        {profiles.length === 0 && hasLoadedProfiles && !loading && !loadError ? (
+        {!snapshot.settled ? (
+          <p role="status" className="px-4 py-8 text-sm text-text-muted">
+            {t('common.loading')}
+          </p>
+        ) : snapshot.data === undefined ? null : profiles.length === 0 ? (
           <div className="px-4 py-8 text-center text-sm text-text-muted">
             {t('workbench.runtime_profiles_empty')}
           </div>
@@ -286,15 +253,14 @@ export function RuntimeSettingsPage({
                   data-testid={`runtime-profile-delete-${profile.id}`}
                   disabled={busyKey !== null}
                   onClick={() => {
-                    setBusyKey(`delete:${profile.id}`)
-                    setError(null)
-                    void runtimeProfileApi
-                      .delete(profile.id)
-                      .then(load)
-                      .catch(cause =>
-                        setError(cause instanceof Error ? cause.message : String(cause))
-                      )
-                      .finally(() => setBusyKey(null))
+                    void perform(`delete:${profile.id}`, async () => {
+                      await runtimeProfileApi.delete(profile.id)
+                      if (resources.profiles.hasSubscribers())
+                        await Promise.all([
+                          resources.profiles.reload(),
+                          resources.projects.reload(),
+                        ])
+                    })
                   }}
                   aria-label={t('workbench.runtime_profile_delete')}
                   pending={busyKey === `delete:${profile.id}`}
@@ -324,20 +290,22 @@ export function RuntimeSettingsPage({
                     accessibleLabel={project.name}
                     value={projectDefaults[String(project.id)] ?? ''}
                     onChange={profileId => {
-                      setBusyKey(`default:${project.id}`)
-                      setError(null)
-                      void runtimeProfileApi
-                        .setProjectDefault(project.id, profileId)
-                        .then(() =>
-                          setProjectDefaults(current => ({
-                            ...current,
-                            [String(project.id)]: profileId,
-                          }))
+                      void perform(`default:${project.id}`, async () => {
+                        const receipt = await runtimeProfileApi.setProjectDefault(
+                          project.id,
+                          profileId
                         )
-                        .catch(cause =>
-                          setError(cause instanceof Error ? cause.message : String(cause))
+                        resources.projects.update(
+                          current =>
+                            current && {
+                              ...current,
+                              projectDefaults: {
+                                ...current.projectDefaults,
+                                [String(project.id)]: receipt.runtimeProfileId ?? '',
+                              },
+                            }
                         )
-                        .finally(() => setBusyKey(null))
+                      })
                     }}
                     options={profileOptions}
                     disabled={busyKey !== null}
@@ -373,8 +341,8 @@ export function RuntimeSettingsPage({
               testId="runtime-profile-device"
               field
               label={t('workbench.task_activity_execution_device')}
-              description={metadataPending.device ? t('common.loading') : undefined}
-              error={metadataErrors.device}
+              description={!deviceSnapshot.settled ? t('common.loading') : undefined}
+              error={deviceSnapshot.error ? String(deviceSnapshot.error) : undefined}
               value={deviceId}
               onChange={setDeviceId}
               options={devices.map(device => ({
@@ -388,26 +356,14 @@ export function RuntimeSettingsPage({
               testId="runtime-profile-model"
               field
               label={t('workbench.task_activity_execution_model')}
-              description={metadataPending.model ? t('common.loading') : undefined}
-              error={metadataErrors.model}
+              description={!modelSnapshot.settled ? t('common.loading') : undefined}
+              error={modelSnapshot.error ? String(modelSnapshot.error) : undefined}
               value={model}
               onChange={setModel}
               options={modelOptions}
             />
-            {metadataErrors.device || metadataErrors.model ? (
-              <ControlButton
-                variant="outline"
-                data-testid="runtime-profile-metadata-retry"
-                onClick={loadMetadata}
-              >
-                {t('common.retry', '重试')}
-              </ControlButton>
-            ) : null}
-            {error ? (
-              <p role="alert" className="text-sm text-destructive">
-                {error}
-              </p>
-            ) : null}
+            {error ? <p className="text-xs text-destructive">{error}</p> : null}
+            {failures}
             <div className="flex justify-end gap-2">
               <ControlButton
                 variant="unstyled"

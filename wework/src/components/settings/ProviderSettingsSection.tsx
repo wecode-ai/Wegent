@@ -1,18 +1,17 @@
+import { useTranslation } from '@/hooks/useTranslation'
 import {
+  CollapsiblePanel,
   CollapsibleRoot,
   CollapsibleTrigger,
-  CollapsiblePanel,
 } from '@wegent/collaboration/controls/Collapsible'
-import { useTranslation } from '@/hooks/useTranslation'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Plus } from 'lucide-react'
-import { useEffect, useState, useSyncExternalStore } from 'react'
+import { useState, useSyncExternalStore } from 'react'
 import { ProviderEditor } from './ProviderEditor'
 
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import {
   getProviderConfigurationState,
-  initializeProviderModelConfiguration,
   reloadProviderConfiguration,
   saveProviderConfiguration,
   subscribeProviderConfiguration,
@@ -47,10 +46,6 @@ export function ProviderSettingsSection() {
     run: () => Promise<void>
   } | null>(null)
   const available = isElectronRuntime()
-
-  useEffect(() => {
-    if (available) void initializeProviderModelConfiguration()
-  }, [available])
 
   if (!available) return null
 

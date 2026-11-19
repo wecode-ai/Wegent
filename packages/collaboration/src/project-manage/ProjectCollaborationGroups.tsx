@@ -3,20 +3,21 @@ import { Button as ControlButton } from '../markdown/Button'
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
 
-import { requestFailureMessage } from '../controls/requestFailure'
-import { createCollaborationTranslator } from '../i18n'
-import { WorkspaceCollaborationGroupsConfiguration } from '../platform/WorkspaceResourceConfiguration'
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
+import type { CollaborationAgent, CollaborationGroup, CollaborationMember } from '../types'
+import { WorkspaceCollaborationGroupsConfiguration } from '../platform/WorkspaceResourceConfiguration'
 import type { ProjectAgentConfigurationHost } from '../project-agent-config/types'
 import { readTemplateAgents, templateRoutingResolver } from '../templates/agents'
-import { templateMessages } from '../templates/messages'
 import { applyProjectTemplate } from '../templates/projectConfiguration'
-import type { CollaborationAgent, CollaborationGroup, CollaborationMember } from '../types'
+import { templateMessages } from '../templates/messages'
+import { createCollaborationTranslator } from '../i18n'
+import { requestFailureMessage } from '../controls/requestFailure'
 import {
-  ProjectSettingsRefreshFeedback,
   useProjectSettingsRefresh,
+  ProjectSettingsRefreshFeedback,
 } from './useProjectSettingsRefresh'
 
 function ScopedProjectCollaborationGroups({
@@ -49,93 +50,105 @@ function ScopedProjectCollaborationGroups({
     namespace: string
   }
 }) {
-  const [groups, setGroups] = useState<CollaborationGroup[]>([])
-  const [workspaceGroups, setWorkspaceGroups] = useState<CollaborationGroup[]>([])
-  const [availableAgents, setAvailableAgents] = useState<CollaborationAgent[]>(agents)
-  const [availableMembers, setAvailableMembers] = useState<CollaborationMember[]>(members)
-  const [membersError, setMembersError] = useState<string | null>(null)
-  const [membersRevision, setMembersRevision] = useState(0)
-  const [groupsError, setGroupsError] = useState<string | null>(null)
-  const [collectionState, setCollectionState] = useState<'loading' | 'ready' | 'error'>('loading')
+  const collectionResource = useMemo(
+    () =>
+      createAsyncResource(
+        'project-groups:' + projectId,
+        async () => {
+          if (!api.projects.listCollaborationGroups)
+            throw new Error('Project collaboration group API is unavailable')
+          const [workspaceGroups, groups, agents] = await Promise.all([
+            workspaceId && api.workspaces?.listCollaborationGroups
+              ? api.workspaces.listCollaborationGroups(workspaceId)
+              : Promise.resolve([]),
+            api.projects.listCollaborationGroups(projectId),
+            api.agents.list(projectId),
+          ])
+          return { workspaceGroups, groups, agents }
+        },
+        { refreshOnSubscribe: true }
+      ),
+    [api, projectId, workspaceId]
+  )
+  const reloadRevision = useRef(0)
+  const subscribeCollection = useCallback(
+    (listener: () => void) => {
+      if (!collectionResource.hasSubscribers()) reloadRevision.current++
+      return collectionResource.subscribe(listener)
+    },
+    [collectionResource]
+  )
+  const collection = useSyncExternalStore(
+    subscribeCollection,
+    collectionResource.getSnapshot,
+    collectionResource.getSnapshot
+  )
+  const [initialMembers] = useState(members)
+  const membersResource = useMemo(
+    () =>
+      createAsyncResource('group-members:' + projectId, () => api.members.list(projectId), {
+        initialData: initialMembers,
+        refreshOnSubscribe: true,
+      }),
+    [api, projectId, initialMembers]
+  )
+  const memberSnapshot = useSyncExternalStore(
+    membersResource.subscribe,
+    membersResource.getSnapshot,
+    membersResource.getSnapshot
+  )
+  const availableMembers = memberSnapshot.data ?? initialMembers
+  const membersError =
+    memberSnapshot.status === 'error'
+      ? String(
+          memberSnapshot.error instanceof Error
+            ? memberSnapshot.error.message
+            : memberSnapshot.error
+        )
+      : null
+  const groups = collection.data?.groups ?? []
+  const workspaceGroups = collection.data?.workspaceGroups ?? []
+  const collectionState =
+    collection.status === 'ready' ? 'ready' : collection.status === 'error' ? 'error' : 'loading'
+  const groupsError =
+    collection.status === 'error'
+      ? String(collection.error instanceof Error ? collection.error.message : collection.error)
+      : null
+  const [agentCatalog, setAgentCatalog] = useState({
+    data: collection.data,
+    source: agents,
+    value: agents,
+  })
+  if (agentCatalog.data !== collection.data) {
+    setAgentCatalog({
+      data: collection.data,
+      source: agents,
+      value: collection.data?.agents ?? agents,
+    })
+  } else if (agentCatalog.source !== agents) {
+    setAgentCatalog({ ...agentCatalog, source: agents, value: agents })
+  }
+  const availableAgents = agentCatalog.value
   const projectRefresh = useProjectSettingsRefresh(api, projectId, onProjectChanged)
   const translate = createCollaborationTranslator(locale)
-
-  const active = useRef(false)
-  const reloadRevision = useRef(0)
-
   const requireActive = () => {
-    if (!active.current) {
+    if (!collectionResource.hasSubscribers())
       throw new Error('Collaboration group scope is no longer active')
-    }
   }
-
   const reload = useCallback(async () => {
-    if (!active.current || !api.projects.listCollaborationGroups) return []
+    if (!collectionResource.hasSubscribers()) return []
     const revision = ++reloadRevision.current
-    setCollectionState('loading')
-    const isCurrent = () => active.current && revision === reloadRevision.current
-    try {
-      const [available, projectGroups, projectAgents] = await Promise.all([
-        workspaceId && api.workspaces?.listCollaborationGroups
-          ? api.workspaces.listCollaborationGroups(workspaceId)
-          : Promise.resolve([]),
-        api.projects.listCollaborationGroups(projectId),
-        api.agents.list(projectId),
-      ])
-      if (!isCurrent()) return []
-      setWorkspaceGroups(available)
-      setGroups(projectGroups)
-      setCollectionState('ready')
-      setAvailableAgents(projectAgents)
-      setGroupsError(null)
-      return projectAgents
-    } catch (error) {
-      if (isCurrent()) {
-        setCollectionState('error')
-        setGroupsError(error instanceof Error ? error.message : String(error))
-        throw error
-      }
-      return []
-    }
-  }, [api, projectId, workspaceId])
-
-  useEffect(() => {
-    active.current = true
-    void reload().catch(() => {
-      // Reload owns the scoped error state; the initial load has no caller.
-    })
-    return () => {
-      active.current = false
-      reloadRevision.current++
-    }
-  }, [reload])
-
+    await collectionResource.reload()
+    if (!collectionResource.hasSubscribers() || revision !== reloadRevision.current) return []
+    const snapshot = collectionResource.getSnapshot()
+    if (snapshot.status === 'error') throw snapshot.error
+    return snapshot.data?.agents ?? []
+  }, [collectionResource])
   async function reloadAfterMutation() {
+    if (!collectionResource.hasSubscribers()) return
     await projectRefresh.refresh()
-    await reload()
+    if (collectionResource.hasSubscribers()) await reload()
   }
-
-  useEffect(() => {
-    let active = true
-    setMembersError(null)
-    void api.members.list(projectId).then(
-      projectMembers => {
-        if (!active) return
-        setAvailableMembers(projectMembers)
-      },
-      (error: unknown) => {
-        if (!active) return
-        setMembersError(error instanceof Error ? error.message : String(error))
-      }
-    )
-    return () => {
-      active = false
-    }
-  }, [api, projectId, membersRevision])
-
-  useEffect(() => {
-    setAvailableAgents(agents)
-  }, [agents])
 
   const projectGroupIds = new Set(groups.map(group => group.id))
   const agentActions =
@@ -226,8 +239,7 @@ function ScopedProjectCollaborationGroups({
             groupsError,
             translate('todo.settings_connection_failed', '无法连接服务，请检查连接后重试。')
           )}
-          <ControlButton
-            variant="unstyled"
+          <ControlButton variant="unstyled"
             type="button"
             className="collaboration-link-button"
             data-testid="project-groups-load-retry"
@@ -244,11 +256,10 @@ function ScopedProjectCollaborationGroups({
             membersError,
             translate('todo.settings_connection_failed', '无法连接服务，请检查连接后重试。')
           )}
-          <ControlButton
-            variant="unstyled"
+          <ControlButton variant="unstyled"
             className="collaboration-link-button"
             data-testid="project-group-members-retry"
-            onClick={() => setMembersRevision(revision => revision + 1)}
+            onClick={() => void membersResource.reload()}
             type="button"
           >
             {locale === 'zh-CN' ? '重试' : 'Retry'}

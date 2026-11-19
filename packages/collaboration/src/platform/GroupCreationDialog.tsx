@@ -62,8 +62,6 @@ export function GroupCreationDialog({ model }: { model: GroupConfigurationModel 
           if (saving) return
           setFormOpen(false)
           setError(null)
-          setCreateMembers([])
-          setLeader('')
         }}
         render={
           <DialogForm
@@ -104,6 +102,7 @@ export function GroupCreationDialog({ model }: { model: GroupConfigurationModel 
                   executionRequirements: { requiredTags: [] },
                 })
                 .then(created => {
+                  if (!dialogRef.current?.isConnected) return
                   setName('')
                   setDescription('')
                   setLeader('')
@@ -181,6 +180,7 @@ export function GroupCreationDialog({ model }: { model: GroupConfigurationModel 
                             }),
                           templateMessages[locale].partial
                         )
+                    if (!dialogRef.current?.isConnected) return
                     setFormOpen(false)
                     setSelectedGroupId(created.at(-1)?.id ?? null)
                   }}

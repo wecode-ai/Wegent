@@ -1,15 +1,15 @@
 import { DialogForm } from '@/components/common/DialogForm'
 import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/automation'
-import { CloudDeviceRestartProgress } from '@/features/cloud-devices/WorkbenchCloudDeviceRestarts'
 import { useWorkbenchCloudDeviceRestarts } from '@/features/cloud-devices/useWorkbenchCloudDeviceRestarts'
+import { CloudDeviceRestartProgress } from '@/features/cloud-devices/WorkbenchCloudDeviceRestarts'
 import { useTranslation } from '@/hooks/useTranslation'
 import {
-  WEWORK_MIN_EXECUTOR_VERSION,
   canRequestDeviceUpgrade,
   canUseForProjectCreation,
   isClaudeCodeDevice,
   isCloudDevice,
   isDeviceBelowWeWorkVersion,
+  WEWORK_MIN_EXECUTOR_VERSION,
 } from '@/lib/device-capabilities'
 import { openNativeProjectDirectoryPicker } from '@/lib/native-directory-picker'
 import type {
@@ -29,14 +29,11 @@ import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { ArrowUpCircle, Folder, FolderPlus, Loader2, RotateCcw, X } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import {
-  DeviceFolderPicker,
-  type DeviceFolderPickerMode,
-  type DeviceFolderPickerResult,
-} from './DeviceFolderPicker'
 import { basename } from './device-folder-path'
+import type { DeviceFolderPickerMode, DeviceFolderPickerResult } from './DeviceFolderPicker'
+import { DeviceFolderPicker } from './DeviceFolderPicker'
 
 type ProjectCreateMode = 'scratch' | 'existing' | 'git'
 type ProjectWorkspaceKind = 'worktree' | 'workspace'
@@ -204,8 +201,17 @@ function ProjectCreateDialogContent({
   const cloudRestarts = useWorkbenchCloudDeviceRestarts()
   const isEditing = Boolean(project)
   const incomingProjectDevices = useMemo(() => getProjectDevices(devices), [devices])
-  const [deviceSnapshot, setDeviceSnapshot] = useState<DeviceInfo[]>(incomingProjectDevices)
-  const allProjectDevices = deviceSnapshot
+  const [deviceSnapshot, setDeviceSnapshot] = useState({
+    source: incomingProjectDevices,
+    items: incomingProjectDevices,
+  })
+  if (incomingProjectDevices.length > 0 && deviceSnapshot.source !== incomingProjectDevices) {
+    setDeviceSnapshot({
+      source: incomingProjectDevices,
+      items: mergeDialogDevices(deviceSnapshot.items, incomingProjectDevices),
+    })
+  }
+  const allProjectDevices = deviceSnapshot.items
   const existingMappings = useMemo(() => mappingsByDeviceId(deviceWorkspaces), [deviceWorkspaces])
   const [activeDeviceId, setActiveDeviceId] = useState(() =>
     getInitialActiveDeviceId(allProjectDevices, deviceWorkspaces, preferredDeviceId, isEditing)
@@ -218,19 +224,6 @@ function ProjectCreateDialogContent({
   const [workspaceKind, setWorkspaceKind] = useState<ProjectWorkspaceKind>('worktree')
   const [projectCreateError, setProjectCreateError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
-
-  useEffect(() => {
-    if (incomingProjectDevices.length === 0) return
-    let cancelled = false
-    queueMicrotask(() => {
-      if (!cancelled) {
-        setDeviceSnapshot(current => mergeDialogDevices(current, incomingProjectDevices))
-      }
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [incomingProjectDevices])
 
   const getDeviceFolder = (deviceId: string) => {
     const draft = folderDrafts[deviceId]

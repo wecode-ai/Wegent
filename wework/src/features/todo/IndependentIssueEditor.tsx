@@ -1,18 +1,18 @@
-import {
-  CollapsibleRoot,
-  CollapsibleTrigger,
-  CollapsiblePanel,
-} from '@wegent/collaboration/controls/Collapsible'
-import {
-  independentIssueInput,
-  type IndependentIssue,
-  type IndependentIssueInput,
-  type PersonalIssuesApi,
+import type {
+  IndependentIssue,
+  IndependentIssueInput,
+  PersonalIssuesApi,
 } from '@/api/personalIssues'
 import { DialogForm } from '@/components/common/DialogForm'
 import { DefaultRunnerSetting } from '@/components/settings/DefaultRunnerSetting'
 import { useTranslation } from '@/hooks/useTranslation'
-import { SearchableSelect, type SharedWorkspaceApi } from '@wegent/collaboration'
+import type { SharedWorkspaceApi } from '@wegent/collaboration'
+import { SearchableSelect } from '@wegent/collaboration'
+import {
+  CollapsiblePanel,
+  CollapsibleRoot,
+  CollapsibleTrigger,
+} from '@wegent/collaboration/controls/Collapsible'
 import {
   SelectContent,
   SelectItem,
@@ -20,22 +20,24 @@ import {
   SelectTrigger,
 } from '@wegent/collaboration/controls/SelectParts'
 import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
-import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
 import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { usePanelData } from '@wegent/collaboration/platform'
 import { ChevronDown, Folder } from 'lucide-react'
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
+import { useCallback, useState, useSyncExternalStore } from 'react'
+import { createIndependentIssueDraft } from './independentIssueDraft'
 import { IssueParticipantPicker } from './IssueParticipantPicker'
-import { IssueProjectEnvironmentPicker } from './IssueProjectEnvironmentPicker'
-import { IssueProjectSelect } from './IssueProjectSelect'
+import type { IssueParticipant } from './issueParticipants'
 import {
   participantKey,
   participantLabel,
   participantNeedsIdentifier,
   resourceInvitations,
-  type IssueParticipant,
 } from './issueParticipants'
+import { IssueProjectEnvironmentPicker } from './IssueProjectEnvironmentPicker'
+import { IssueProjectSelect } from './IssueProjectSelect'
 
 export interface IssueCreationInput extends IndependentIssueInput {
   project_id?: string
@@ -67,48 +69,32 @@ export function IndependentIssueEditor({
 }) {
   const { t } = useTranslation('common')
   const canSelectProject = allowProjectSelection ?? !issue
-  const [draft, setDraft] = useState<IndependentIssueInput>(() =>
-    issue
-      ? independentIssueInput(issue)
-      : {
-          title: '',
-          description: '',
-          status: 'pending',
-          priority: 'medium',
-          assignee_id: userId,
-          participants: [],
-          resource_participants: [],
-          archived: false,
-          due_at: null,
-        }
+  const [draftOwner, setDraftOwner] = useState(() => ({
+    api,
+    userId,
+    issueId: issue?.id,
+    model: createIndependentIssueDraft(issue, userId),
+  }))
+  if (draftOwner.api !== api || draftOwner.userId !== userId || draftOwner.issueId !== issue?.id)
+    setDraftOwner({
+      api,
+      userId,
+      issueId: issue?.id,
+      model: createIndependentIssueDraft(issue, userId),
+    })
+  const model = draftOwner.model
+  const subscribe = useCallback(
+    (listener: () => void) => model.subscribe(listener, onDirtyChange),
+    [model, onDirtyChange]
   )
+  const { draft, people, projectId, projectStatus } = useSyncExternalStore(
+    subscribe,
+    model.getSnapshot,
+    model.getSnapshot
+  )
+  const { setDraft, setPeople, setProjectId, setProjectStatus } = model
   const owner = issue?.creator_id ?? userId
-  const [baseline] = useState(() => JSON.stringify(draft))
-  const [people, setPeople] = useState<IssueParticipant[]>(() => [
-    {
-      key: `human:${owner}`,
-      kind: 'human',
-      id: owner,
-      name: issue?.people[owner] ?? `#${owner}`,
-    },
-    ...(issue?.metadata.direct_participants ?? issue?.metadata.participants ?? [])
-      .filter(id => id !== owner)
-      .map(id => ({
-        key: `human:${id}`,
-        kind: 'human' as const,
-        id,
-        name: issue?.people[id] ?? `#${id}`,
-      })),
-    ...(issue?.metadata.resource_participants ?? []).map(resource => ({
-      key: participantKey(resource),
-      kind: resource.kind,
-      id: resource.id,
-      name: resource.name,
-    })),
-  ])
-  const [projectId, setProjectId] = useState('')
-  const [projectStatus, setProjectStatus] = useState('')
-  const loadProjects = useCallback(() => api.projects(), [api])
+  const loadProjects = useCallback(() => draftOwner.api.projects(), [draftOwner])
   const {
     data: projectPage,
     error: projectError,
@@ -119,9 +105,6 @@ export function IndependentIssueEditor({
     project =>
       ['local', 'backend'].includes(project.task_provider) && project.access_role !== 'Viewer'
   )
-  useEffect(() => {
-    onDirtyChange?.(JSON.stringify(draft) !== baseline || Boolean(projectId))
-  }, [draft, baseline, projectId, onDirtyChange])
   const project = projects.find(row => String(row.id) === projectId)
   const statuses = project?.board_config?.statuses ?? []
   const set = <K extends keyof IndependentIssueInput>(key: K, value: IndependentIssueInput[K]) =>

@@ -589,6 +589,18 @@
     "./controls/Sortable": {
       "types": "./src/controls/Sortable.tsx",
       "import": "./src/controls/Sortable.tsx"
+    },
+    "./clock": {
+      "types": "./src/clock.ts",
+      "import": "./src/clock.ts"
+    },
+    "./dom-events": {
+      "types": "./src/dom-events.ts",
+      "import": "./src/dom-events.ts"
+    },
+    "./media-query": {
+      "types": "./src/media-query.ts",
+      "import": "./src/media-query.ts"
     }
   },
   "scripts": {

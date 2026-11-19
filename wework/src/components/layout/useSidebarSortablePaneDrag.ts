@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type RefObject } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import {
   dispatchWorkbenchSidebarPaneDragCancel,
   dispatchWorkbenchSidebarPaneDragEnd,
@@ -45,9 +45,9 @@ function horizontalBounds(element: HTMLElement | null) {
   }
 }
 
-export function useSidebarSortablePaneDrag(list: RefObject<HTMLDivElement | null>) {
+export function useSidebarSortablePaneDrag() {
+  const list = useRef<HTMLDivElement | null>(null)
   const current = useRef<PaneDragSession | null>(null)
-  const mounted = useRef(false)
   const [sortingSuppressed, setSortingSuppressed] = useState(false)
   const finish = useCallback((session: PaneDragSession) => {
     if (session.finished) return session.suppressCommit
@@ -68,20 +68,24 @@ export function useSidebarSortablePaneDrag(list: RefObject<HTMLDivElement | null
       dispatchWorkbenchSidebarPaneDragCancel()
       session.suppressCommit = true
     }
-    if (mounted.current) setSortingSuppressed(false)
+    if (list.current) setSortingSuppressed(false)
     return session.suppressCommit
   }, [])
-  useEffect(() => {
-    mounted.current = true
-    return () => {
-      mounted.current = false
-      const session = current.current
-      if (session && !session.finished) {
-        session.outcome = 'cancel'
-        finish(session)
+  const bindList = useCallback(
+    (node: HTMLDivElement | null) => {
+      list.current = node
+      if (!node) return
+      return () => {
+        list.current = null
+        const session = current.current
+        if (session && !session.finished) {
+          session.outcome = 'cancel'
+          finish(session)
+        }
       }
-    }
-  }, [finish])
+    },
+    [finish]
+  )
   const prepare = useCallback(
     (key: string, data: WorkbenchSidebarPaneDragData, event?: Event) => {
       const coordinates = coordinatesOf(event)
@@ -191,5 +195,5 @@ export function useSidebarSortablePaneDrag(list: RefObject<HTMLDivElement | null
     },
     [finish]
   )
-  return { sortingSuppressed, prepare, start, suppressCommit, end }
+  return { bindList, sortingSuppressed, prepare, start, suppressCommit, end }
 }

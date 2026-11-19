@@ -1,19 +1,19 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { DialogSurface } from '../controls/DialogSurface'
-import { createCollaborationTranslator } from '../i18n'
 import { Button as ControlButton } from '../markdown/Button'
-import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
-import { ProjectExecutionEnvironments } from '../project-manage/ProjectExecutionEnvironments'
-import { ProjectRuntimeSettings } from '../project-manage/ProjectRuntimeSettings'
-import type { CollaborationExecution, CollaborationIssue, CollaborationProject } from '../types'
 import {
-  ExecutionRuntimeConfigurationContext,
   RuntimeConfigurationContext,
   RuntimeConfigurationRevisionContext,
   RuntimeProfilePickerContext,
-  type Configured,
+  ExecutionRuntimeConfigurationContext,
   type ProfileConfigurationTarget,
+  type Configured,
 } from './context'
+import { useMemo, useState, type ReactNode } from 'react'
+import { createCollaborationTranslator } from '../i18n'
+import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
+import type { CollaborationProject, CollaborationIssue, CollaborationExecution } from '../types'
+import { ProjectRuntimeSettings } from '../project-manage/ProjectRuntimeSettings'
+import { ProjectExecutionEnvironments } from '../project-manage/ProjectExecutionEnvironments'
 
 export function RuntimeConfigurationProvider({
   api,
@@ -34,10 +34,14 @@ export function RuntimeConfigurationProvider({
     onConfigured?: Configured
     target?: ProfileConfigurationTarget
   } | null>(null)
+  const [renderedProjectId, setRenderedProjectId] = useState(project?.id)
+  if (renderedProjectId !== project?.id) {
+    setRenderedProjectId(project?.id)
+    setRequest(null)
+  }
   const [environments, setEnvironments] = useState(false)
   const [revision, setRevision] = useState(0)
   const [saving, setSaving] = useState(false)
-  const dialog = useRef<HTMLDivElement>(null)
   const t = useMemo(
     () => createCollaborationTranslator(locale === 'zh-CN' ? 'zh-CN' : 'en'),
     [locale]
@@ -89,10 +93,7 @@ export function RuntimeConfigurationProvider({
           })
         }
       : null
-  const close = () => {
-    setRequest(null)
-  }
-  useEffect(() => setRequest(null), [project?.id])
+  const close = () => setRequest(null)
 
   return (
     <RuntimeConfigurationContext.Provider value={open}>
@@ -103,12 +104,9 @@ export function RuntimeConfigurationProvider({
             {visible && api && project ? (
               <DialogSurface
                 inline={false}
-                onClose={() => {
-                  if (!saving) setRequest(null)
-                }}
+                onClose={saving ? undefined : close}
                 render={
                   <div
-                    ref={dialog}
                     className="collaboration-dialog m-auto max-h-[85dvh] w-full max-w-2xl overflow-y-auto rounded-xl border border-border bg-background p-6 text-text-primary backdrop:bg-black/50"
                     aria-label={request?.target?.title ?? t('runtimeSettings.title')}
                     data-testid="runtime-configuration-dialog"

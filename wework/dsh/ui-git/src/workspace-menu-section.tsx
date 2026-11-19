@@ -2,7 +2,7 @@ import { SearchableSelect } from '@wegent/collaboration/controls/SearchableSelec
 import { SelectField } from '@wegent/collaboration/controls/SelectField'
 import { Button } from '@wegent/collaboration/markdown/Button'
 import { GitBranch, Workflow } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isGitWorkspaceProject } from '@/lib/projectClassification'
 import type { ProjectWorktreeAvailability } from '@/lib/worktree-availability'
@@ -41,12 +41,12 @@ export default function GitWorkspaceMenuSection({
   const [checkoutError, setCheckoutError] = useState<string | null>(null)
   const [checkingOut, setCheckingOut] = useState(false)
   const request = useRef(0)
-  useEffect(
-    () => () => {
+  const attachMenu = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return
+    return () => {
       request.current += 1
-    },
-    []
-  )
+    }
+  }, [])
   const branchName = context.worktreeBranch ?? context.branchName ?? ''
   const projectSupportsWorktrees = Boolean(
     context.currentProject && isGitWorkspaceProject(context.currentProject)
@@ -114,7 +114,7 @@ export default function GitWorkspaceMenuSection({
   }
 
   return (
-    <div className="space-y-2 px-1">
+    <div ref={attachMenu} className="space-y-2 px-1">
       <SelectField
         accessibleLabel={t('workbench.popout_workspace_menu_launch_mode')}
         testId="popout-workspace-launch-mode-button"

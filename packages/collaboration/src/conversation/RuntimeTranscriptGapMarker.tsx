@@ -1,9 +1,10 @@
-import { useEffect, useRef } from 'react'
 import { Button as ControlButton } from '../markdown/Button'
+import { useIntersectionEvent } from '../dom-events'
+import { useMemo, useRef } from 'react'
 
 import type { RefObject } from 'react'
-import { activityClassNames as cn } from '../issue-detail/activityClassNames'
 import { useConversationTranslation } from './ConversationTranslation'
+import { activityClassNames as cn } from '../issue-detail/activityClassNames'
 
 import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
 
@@ -22,28 +23,27 @@ export function RuntimeTranscriptGapMarker({
   const { t } = useConversationTranslation()
   const markerRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    if (loading || !onLoad) return
-    const marker = markerRef.current
-    const scroller = scrollRef.current
-    if (!marker || !scroller || typeof IntersectionObserver === 'undefined') return
-
+  const onIntersection = useMemo(() => {
     let triggered = false
-    const observer = new IntersectionObserver(
-      entries => {
-        if (triggered || !entries.some(entry => entry.isIntersecting)) return
-        triggered = true
-        void onLoad(gap, 'visible')
-      },
-      {
-        root: scroller,
-        rootMargin: '160px 0px',
-        threshold: 0.01,
-      }
-    )
-    observer.observe(marker)
-    return () => observer.disconnect()
+    return (entries: IntersectionObserverEntry[]) => {
+      if (
+        loading ||
+        !onLoad ||
+        !scrollRef.current ||
+        triggered ||
+        !entries.some(entry => entry.isIntersecting)
+      )
+        return
+      triggered = true
+      void onLoad(gap, 'visible')
+    }
   }, [gap, loading, onLoad, scrollRef])
+  useIntersectionEvent(markerRef, onIntersection, {
+    enabled: !loading && Boolean(onLoad),
+    root: scrollRef,
+    rootMargin: '160px 0px',
+    threshold: 0.01,
+  })
 
   return (
     <div
@@ -52,9 +52,7 @@ export function RuntimeTranscriptGapMarker({
       data-runtime-transcript-gap={`${gap.start}:${gap.end}`}
       data-testid="runtime-transcript-gap-marker"
     >
-      <ControlButton
-        variant="outline"
-        size="sm"
+      <ControlButton variant="outline"
         type="button"
         disabled={loading || !onLoad}
         onClick={() => void onLoad?.(gap, 'click')}

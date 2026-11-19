@@ -5,51 +5,55 @@ import {
   type CodexPersonality,
 } from '@/features/model-settings/localCodexSettings'
 import { useTranslation } from '@/hooks/useTranslation'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import { SelectField } from '@wegent/collaboration/controls/SelectField'
+import { useDocumentEvent } from '@wegent/collaboration/dom-events'
 import { Button } from '@wegent/collaboration/markdown/Button'
-import { useEffect, useState } from 'react'
+import { useRef, useState, useSyncExternalStore } from 'react'
 import { SettingsGroup, SettingsRow } from './settings-ui'
 
 const PERSONALITIES: CodexPersonality[] = ['friendly', 'pragmatic']
 export function CodexPersonalitySettings() {
   const { t } = useTranslation('common')
-  const [personality, setPersonality] = useState<CodexPersonality>(DEFAULT_CODEX_PERSONALITY)
-  const [loading, setLoading] = useState(true)
+  const [resource] = useState(() =>
+    createAsyncResource('codex/personality', getLocalCodexPersonality, {
+      failure: error => console.error('[Wework] Failed to read Codex personality', error),
+    })
+  )
+  const snapshot = useSyncExternalStore(resource.subscribe, resource.getSnapshot)
+  const [selection, setSelection] = useState<CodexPersonality | null>(null)
+  const personality = selection ?? snapshot.data ?? DEFAULT_CODEX_PERSONALITY
+  const loading = !snapshot.settled
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [revision, setRevision] = useState(0)
-  useEffect(() => {
-    let active = true
-    void getLocalCodexPersonality()
-      .then(value => {
-        if (active) setPersonality(value)
-      })
-      .catch(cause => {
-        if (active)
-          setError(
-            cause instanceof Error ? cause.message : t('workbench.codex_personality_read_failed')
-          )
-      })
-      .finally(() => {
-        if (active) setLoading(false)
-      })
-    return () => {
-      active = false
-    }
-  }, [revision, t])
-  const selectPersonality = async (next: CodexPersonality) => {
-    const previous = personality
-    setPersonality(next)
+  const [writeError, setError] = useState<string | null>(null)
+  const error = writeError ?? (snapshot.error ? t('workbench.codex_personality_read_failed') : null)
+  const pending = useRef(false)
+  const [open, setOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+  useDocumentEvent(
+    'mousedown',
+    event => {
+      if (!menuRef.current?.contains(event.target as Node)) setOpen(false)
+    },
+    { enabled: open }
+  )
+
+  const selectPersonality = async (nextPersonality: CodexPersonality) => {
+    if (pending.current) return
+    pending.current = true
+    setSelection(nextPersonality)
+    setOpen(false)
     setSaving(true)
     setError(null)
     try {
-      setPersonality(await saveLocalCodexPersonality(next))
-    } catch (cause) {
-      setPersonality(previous)
-      setError(
-        cause instanceof Error ? cause.message : t('workbench.codex_personality_save_failed')
-      )
+      const receipt = await saveLocalCodexPersonality(nextPersonality)
+      resource.update(() => receipt)
+    } catch (error) {
+      console.error('[Wework] Failed to write Codex personality', error)
+      setError(t('workbench.codex_personality_save_failed'))
     } finally {
+      pending.current = false
+      setSelection(null)
       setSaving(false)
     }
   }
@@ -79,9 +83,8 @@ export function CodexPersonalitySettings() {
             disabled={loading || saving}
             data-testid="codex-personality-retry"
             onClick={() => {
-              setLoading(true)
               setError(null)
-              setRevision(value => value + 1)
+              void resource.reload()
             }}
           >
             {t('workbench.retry')}

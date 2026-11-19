@@ -1,10 +1,12 @@
+import { useMediaQuery } from '../media-query'
+import { useIssueMentionCandidates } from './useIssueMentionCandidates'
+import { useMemo } from 'react'
 import type { ProjectChatClient, ProjectChatMessage } from '@wegent/chat-core'
 import type { Attachment } from '@wegent/chat-core/runtime'
 import {
   RUNTIME_PERMISSION_MODE_OPTION,
   runtimePermissionMode,
 } from '@wegent/chat-core/runtime-permission'
-import { useEffect, useMemo, useState } from 'react'
 import { ModelSelector } from '../controls/ModelSelector'
 import { PermissionModeSelector } from '../controls/PermissionModeSelector'
 import { ProjectWorkBar } from '../controls/ProjectWorkBar'
@@ -28,7 +30,6 @@ import { ComposerAttachmentBadges } from './ComposerAttachmentBadges'
 import type { IssueMentionOption } from './issueCommentMentions'
 import { IssueMainCommentComposer } from './IssueMainCommentComposer'
 import { issueCommentBody } from './useIssueCommentAttachments'
-import { useIssueMentionCandidates } from './useIssueMentionCandidates'
 
 type CommentApi = Pick<SharedWorkspaceApi, 'attachments' | 'taskBindings' | 'issues'>
 
@@ -74,14 +75,8 @@ export function BrowserIssueCommentComposer({
   const draft = useBrowserTaskDraft(`issue:${project.id}:${issue.id}`)
   const execution = useBrowserIssueExecution()
   const serverExecution = project.project_store === 'backend' && client.executeTaskComment
-  const [isMobile, setIsMobile] = useState(false)
-  useEffect(() => {
-    const media = window.matchMedia('(max-width: 767px)')
-    const update = () => setIsMobile(media.matches)
-    update()
-    media.addEventListener('change', update)
-    return () => media.removeEventListener('change', update)
-  }, [])
+  const isMobile = useMediaQuery('(max-width: 767px)')
+
   const agent = agents.find(
     agent => agent.id === issue.assignee_agent_id && agent.status === 'active'
   )

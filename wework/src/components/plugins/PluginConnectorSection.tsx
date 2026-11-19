@@ -54,12 +54,12 @@ function ConnectorSourceDialog({
 }) {
   const { t } = useTranslation()
   const dialog = useRef<HTMLDivElement>(null)
-  const [slug, setSlug] = useState(
-    () =>
-      group.connectors.find(item => authBySlug?.[item.slug] === 'connected')?.slug ||
-      group.connectors[0].slug
-  )
-  const connector = group.connectors.find(item => item.slug === slug)!
+  const [selectedSlug, setSelectedSlug] = useState<string | null>(null)
+  const connector =
+    group.connectors.find(item => item.slug === selectedSlug) ??
+    group.connectors.find(item => authBySlug?.[item.slug] === 'connected') ??
+    group.connectors[0]
+  const slug = connector.slug
   const connected = authBySlug?.[slug] === 'connected'
 
   return (
@@ -84,7 +84,7 @@ function ConnectorSourceDialog({
       <SelectRoot
         value={normalizeSelectValue(slug)}
         onValueChange={selectedValue => {
-          if (selectedValue !== null) return setSlug(selectedValue)
+          if (selectedValue !== null) return setSelectedSlug(selectedValue)
         }}
       >
         <SelectTrigger
@@ -145,8 +145,10 @@ export function PluginConnectorSection({
   onManage,
 }: Props) {
   const { t } = useTranslation()
-  const [selectedGroup, setSelectedGroup] = useState<Group | null>(null)
+  const [selectedGroupKey, setSelectedGroupKey] = useState<string | null>(null)
   const groups = groupConnectors(connectors)
+  const selectedGroup = groups.find(group => group.key === selectedGroupKey)
+  if (selectedGroupKey && !selectedGroup) setSelectedGroupKey(null)
   const manage = (slug: string) => (onManage ? onManage(slug) : navigateTo('/settings/connections'))
   if (!groups.length) return null
   return (
@@ -193,7 +195,7 @@ export function PluginConnectorSection({
                 aria-busy={group.connectors.some(item => item.slug === busySlug)}
                 data-testid={`plugin-connection-manage-${group.key}`}
                 className="h-11 rounded-lg bg-surface px-3 text-xs font-medium hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50 md:h-8"
-                onClick={() => (grouped ? setSelectedGroup(group) : manage(connector.slug))}
+                onClick={() => (grouped ? setSelectedGroupKey(group.key) : manage(connector.slug))}
               >
                 {group.connectors.some(item => item.slug === busySlug)
                   ? t('common.loading', '加载中…')
@@ -215,7 +217,7 @@ export function PluginConnectorSection({
         <ConnectorSourceDialog
           group={selectedGroup}
           authBySlug={authBySlug}
-          onClose={() => setSelectedGroup(null)}
+          onClose={() => setSelectedGroupKey(null)}
           onManage={manage}
         />
       )}

@@ -1,9 +1,11 @@
-import { createToaster } from '@wegent/collaboration/controls/toaster'
 import { useTranslation } from '@/hooks/useTranslation'
-import { position } from '@ui-sdk/core'
 import { Toast, ToastAction, ToastRegion, ToastTitle } from '@wegent/collaboration/controls/Toast'
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import { createToaster } from '@wegent/collaboration/controls/toaster'
+import { useElementGeometry } from '@wegent/collaboration/dom-events'
+import { useCallback, useMemo, useState, useSyncExternalStore, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
+
+const idleSnapshot = () => null
 
 interface TransientNoticeProps {
   message: string | null
@@ -23,9 +25,8 @@ function ActiveNotice({
 }: Omit<TransientNoticeProps, 'visible'>) {
   const { t } = useTranslation('common')
   const [toaster] = useState(createToaster)
-  const region = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
+  const subscribe = useCallback(() => {
     let active = true
     const id = toaster(message ?? '', {
       type: tone,
@@ -43,38 +44,26 @@ function ActiveNotice({
     }
   }, [action, message, onClear, toaster, tone])
 
-  useLayoutEffect(() => {
-    if (!horizontalAnchorRef || !region.current) return
-    return position(
-      {
-        getBoundingClientRect: () => {
-          const rect = horizontalAnchorRef.current?.getBoundingClientRect()
-          return new DOMRect(
-            (rect?.left ?? 0) + 16,
-            112,
-            Math.max(0, (rect?.width ?? window.innerWidth) - 32),
-            0
-          )
-        },
-      },
-      region.current,
-      { side: 'bottom', sideOffset: 0, align: 'center', collisionPadding: 16 }
-    )
-  }, [horizontalAnchorRef])
+  useSyncExternalStore(subscribe, idleSnapshot, idleSnapshot)
+  const targets = useMemo(
+    () => (horizontalAnchorRef ? [horizontalAnchorRef] : []),
+    [horizontalAnchorRef]
+  )
+  const anchor = useElementGeometry(targets, Boolean(horizontalAnchorRef))?.elements[0]
 
   const notice = (
     <ToastRegion
-      ref={region}
       toaster={toaster}
+      style={
+        anchor
+          ? { left: anchor.left + anchor.width / 2, maxWidth: Math.max(0, anchor.width - 32) }
+          : undefined
+      }
       aria-label={t('notifications.title')}
       side="top"
       align="center"
       shortcut={null}
-      className={
-        horizontalAnchorRef
-          ? 'fixed z-system w-max max-w-[min(var(--anchor-width),calc(100vw-2rem))]'
-          : 'fixed left-1/2 top-28 z-system w-max max-w-[calc(100vw-2rem)] -translate-x-1/2'
-      }
+      className="top-28 z-system w-max max-w-[calc(100vw-2rem)]"
     >
       {() => (
         <Toast data-testid="transient-notice" data-embedded-browser-occlusion>

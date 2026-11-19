@@ -9,7 +9,7 @@ import {
 } from '@ui-sdk/react/tree'
 import { ChevronRight } from 'lucide-react'
 import {
-  useEffect,
+  useCallback,
   useLayoutEffect,
   useMemo,
   useState,
@@ -86,15 +86,21 @@ export function VirtualTree({
     target && target !== position.target
       ? Math.max(0, Math.min(desiredOffset, rows.length * rowHeight - height))
       : position.offset
-  useEffect(() => {
-    if (viewport && target) viewport.scrollTo({ top: scrollTop, behavior: 'instant' })
-  }, [viewport, target, scrollTop])
+  const requestedOffset = target && target !== position.target ? scrollTop : null
+  const attachViewport = useCallback(
+    (node: HTMLDivElement | null) => {
+      setViewport(node)
+      if (node && requestedOffset !== null)
+        node.scrollTo({ top: requestedOffset, behavior: 'instant' })
+    },
+    [requestedOffset]
+  )
 
   const start = Math.max(0, Math.floor(scrollTop / rowHeight) - 4)
   const end = Math.min(rows.length, Math.ceil((scrollTop + height) / rowHeight) + 4)
   return (
     <div
-      ref={setViewport}
+      ref={attachViewport}
       data-testid={props['data-testid'] ? `${props['data-testid']}-viewport` : undefined}
       className={cn('relative min-h-0 min-w-0 overflow-auto', viewportClassName)}
       onScroll={event => setPosition({ offset: event.currentTarget.scrollTop, target })}

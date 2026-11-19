@@ -9,7 +9,7 @@ import { Button as ControlButton } from '../markdown/Button'
 // SPDX-License-Identifier: Apache-2.0
 
 import { CalendarClock } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { WorkdayOnlyField } from './WorkdayOnlyField'
 
 import type { AutomationEventType } from '../automation/types'
@@ -65,11 +65,15 @@ export function AutomaticProcessingTriggerFields({
   if (cronExpansion.error !== cronError) {
     setCronExpansion({ error: cronError, open: cronError ? true : cronExpansion.open })
   }
-  useEffect(() => {
-    if (!cronError) return
-    cronInput.current?.focus()
-    cronInput.current?.scrollIntoView({ block: 'center', inline: 'nearest' })
-  }, [cronError])
+  const attachCronInput = useCallback(
+    (input: HTMLInputElement | null) => {
+      cronInput.current = input
+      if (!input || !cronError) return
+      cronInput.current?.focus()
+      cronInput.current?.scrollIntoView({ block: 'center', inline: 'nearest' })
+    },
+    [cronError]
+  )
   const schedule = parseSchedule(draft.cronExpression)
   const selectedHook = hooks.find(hook => hook.id === draft.hookId)
   const externalEventTypes = selectedHook ? eventTypesForHook(selectedHook) : []
@@ -348,7 +352,7 @@ export function AutomaticProcessingTriggerFields({
                       {translate('todo.schedule_expression', 'Cron 表达式')}
                     </label>
                     <ControlInput
-                      ref={cronInput}
+                      ref={attachCronInput}
                       aria-invalid={cronError ? true : undefined}
                       aria-describedby={cronError ? 'automatic-processing-cron-error' : undefined}
                       className="h-9 w-full font-mono"

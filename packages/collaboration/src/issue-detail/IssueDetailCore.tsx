@@ -5,14 +5,15 @@ import { Button as ControlButton } from '../markdown/Button'
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  useEffect,
-  useRef,
   useState,
+  useSyncExternalStore,
   type ChangeEvent,
   type DragEvent,
   type KeyboardEvent,
   type ReactNode,
 } from 'react'
+
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
 
 function classes(...values: Array<string | false | null | undefined>): string {
   return values.filter(Boolean).join(' ')
@@ -145,12 +146,6 @@ export interface IssueDetailAttachmentsProps {
   onRemove: (attachment: IssueDetailAttachment) => Promise<void>
 }
 
-export function formatIssueAttachmentSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
 function isImageAttachment(attachment: IssueDetailAttachment): boolean {
   if (attachment.contentType?.startsWith('image/')) return true
   return /\.(avif|bmp|gif|heic|heif|jpe?g|png|svg|webp)$/i.test(attachment.displayName)
@@ -165,47 +160,57 @@ function IssueDetailAttachmentPreview({
   fallback: ReactNode
   loadPreview?: (attachmentId: string) => Promise<Blob>
 }) {
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
-  const imageAttachment = isImageAttachment(attachment)
-  const loadPreviewRef = useRef(loadPreview)
-  const canLoadPreview = Boolean(loadPreview)
+  return loadPreview && isImageAttachment(attachment) ? (
+    <IssueDetailImagePreview
+      key={attachment.id}
+      attachmentId={attachment.id}
+      fallback={fallback}
+      loadPreview={loadPreview}
+    />
+  ) : (
+    <span className="issue-detail-attachment-fallback">{fallback}</span>
+  )
+}
 
-  useEffect(() => {
-    loadPreviewRef.current = loadPreview
-  }, [loadPreview])
-
-  useEffect(() => {
-    if (!canLoadPreview || !imageAttachment) return undefined
-
-    let active = true
-    let objectUrl: string | null = null
-    const loadPreviewForAttachment = loadPreviewRef.current
-    if (!loadPreviewForAttachment) return undefined
-    setPreviewUrl(null)
-    void loadPreviewForAttachment(attachment.id)
-      .then(blob => {
-        if (!active) return
-        objectUrl = URL.createObjectURL(blob)
-        setPreviewUrl(objectUrl)
-      })
-      .catch(() => {
-        if (active) setPreviewUrl(null)
-      })
-
-    return () => {
-      active = false
-      if (objectUrl) URL.revokeObjectURL(objectUrl)
-    }
-  }, [attachment.id, canLoadPreview, imageAttachment])
+function IssueDetailImagePreview({
+  attachmentId,
+  fallback,
+  loadPreview,
+}: {
+  attachmentId: string
+  fallback: ReactNode
+  loadPreview: (attachmentId: string) => Promise<Blob>
+}) {
+  // Loader closures may change on parent renders without changing the attachment identity.
+  const [resource] = useState(() =>
+    createAsyncResource(
+      attachmentId,
+      async signal => {
+        const blob = await loadPreview(attachmentId)
+        signal.throwIfAborted()
+        return URL.createObjectURL(blob)
+      },
+      {
+        release: url => URL.revokeObjectURL(url),
+      }
+    )
+  )
+  const snapshot = useSyncExternalStore(
+    resource.subscribe,
+    resource.getSnapshot,
+    resource.getSnapshot
+  )
+  const [failed, setFailed] = useState(false)
+  const previewUrl = failed ? null : snapshot.data
 
   return previewUrl ? (
     <img
-      data-testid={`issue-detail-attachment-thumbnail-${attachment.id}`}
+      data-testid={'issue-detail-attachment-thumbnail-' + attachmentId}
       className="issue-detail-attachment-thumbnail"
       src={previewUrl}
       alt=""
       loading="lazy"
-      onError={() => setPreviewUrl(null)}
+      onError={() => setFailed(true)}
     />
   ) : (
     <span className="issue-detail-attachment-fallback">{fallback}</span>

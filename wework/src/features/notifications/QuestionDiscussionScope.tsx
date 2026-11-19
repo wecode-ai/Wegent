@@ -14,23 +14,17 @@ import {
   SelectTrigger,
 } from '@wegent/collaboration/controls/SelectParts'
 import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import type { RequestUserInputCardProps } from '@wegent/collaboration/conversation'
 import {
   ToolInteractionServicesProvider,
   useToolInteractionServices,
-  type RequestUserInputCardProps,
 } from '@wegent/collaboration/conversation'
+import { useFocusRequest } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { X } from 'lucide-react'
-import {
-  useCallback,
-  useContext,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react'
+import type { ReactNode } from 'react'
+import { useCallback, useContext, useId, useMemo, useRef, useState } from 'react'
+import type { QuestionDiscussionSession, QuestionDiscussionTab } from './questionDiscussion'
 import {
   canDiscussQuestion,
   pendingDiscussionQuestion,
@@ -39,8 +33,6 @@ import {
   questionDiscussionKey,
   questionDiscussionPrompt,
   QuestionDiscussionStoreContext,
-  type QuestionDiscussionSession,
-  type QuestionDiscussionTab,
 } from './questionDiscussion'
 
 const renderUserInput = (props: RequestUserInputCardProps) => <RequestUserInputCard {...props} />
@@ -106,10 +98,6 @@ export function QuestionDiscussionTabPanel({
 }) {
   const store = useContext(QuestionDiscussionStoreContext)
   const discussion = useContext(QuestionDiscussionContext)
-  const activeRef = useRef(active)
-  useEffect(() => {
-    activeRef.current = active
-  }, [active])
   const key = tab.slice('discussion:'.length)
   const session = store?.sessions[key]
   if (!session) return null
@@ -121,7 +109,7 @@ export function QuestionDiscussionTabPanel({
         session={session}
         open={active}
         onClose={() => {
-          if (activeRef.current) discussion?.restoreFocus?.(key)
+          if (active) discussion?.restoreFocus?.(key)
           onClose()
         }}
       />
@@ -169,9 +157,7 @@ function QuestionDiscussionPanel({
   const [checking, setChecking] = useState(false)
   const panelRef = useRef<HTMLDivElement>(null)
   const closeCurrentTab = useStableEvent(onClose)
-  useEffect(() => {
-    if (open) panelRef.current?.focus({ preventScroll: true })
-  }, [open])
+  useFocusRequest(panelRef, undefined, { enabled: open, preventScroll: true })
   const [initialAddress] = useState(session.address)
   const checkingRef = useRef(false)
   const onAddressChange = useCallback(

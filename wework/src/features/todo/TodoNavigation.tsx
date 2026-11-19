@@ -21,8 +21,8 @@ import {
   UserRound,
 } from 'lucide-react'
 import { useState } from 'react'
-import type { TodoDetailItem } from './todoTypes'
 import { projectColor } from './todoProject'
+import type { TodoDetailItem } from './todoTypes'
 
 export type TodoProjectView = 'overview' | 'work-items'
 

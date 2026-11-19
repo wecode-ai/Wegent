@@ -2,29 +2,29 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
   defaultProjectBoardSort,
   type ProjectBoardColumnSorts,
   type ProjectBoardSort,
-} from "./projectBoardSorting";
+} from './projectBoardSorting'
 import {
-  boardSortStorageChanged,
-  loadBoardSortPreferences,
-  saveBoardSortPreference,
-} from "./projectBoardPreferences";
+  createBoardSortPreferences,
+  createBoardFocusPreference,
+  createBoardGroupPreference,
+} from './projectBoardPreferences'
 
-export type ProjectBoardGroupBy = "status" | "priority" | "assignee" | "tag";
+export type ProjectBoardGroupBy = 'status' | 'priority' | 'assignee' | 'tag'
 
 export interface ProjectBoardStateOptions {
-  fixedGroupBy?: ProjectBoardGroupBy;
-  defaultGroupBy: ProjectBoardGroupBy;
-  defaultSort?: ProjectBoardSort;
-  defaultColumnSorts?: ProjectBoardColumnSorts;
-  viewScope?: string;
-  focusStorageKey: string | null;
-  personalGroupStorageKey: string | null;
-  personalSortStorageKey?: string | null;
+  fixedGroupBy?: ProjectBoardGroupBy
+  defaultGroupBy: ProjectBoardGroupBy
+  defaultSort?: ProjectBoardSort
+  defaultColumnSorts?: ProjectBoardColumnSorts
+  viewScope?: string
+  focusStorageKey: string | null
+  personalGroupStorageKey: string | null
+  personalSortStorageKey?: string | null
 }
 
 export function useProjectBoardState({
@@ -37,126 +37,82 @@ export function useProjectBoardState({
   personalGroupStorageKey,
   personalSortStorageKey = null,
 }: ProjectBoardStateOptions) {
-  const [selectedGroupBy, setGroupBy] = useState<ProjectBoardGroupBy>("status");
-  const groupBy = fixedGroupBy ?? selectedGroupBy;
-  const [groupFilter, setGroupFilter] = useState("");
-  const [query, setQuery] = useState("");
-  const [columnSorts, setColumnSorts] = useState<ProjectBoardColumnSorts>({});
-  const [focusExecutionColumns, setFocusExecutionColumns] = useState(false);
-  const [quickCreateStatus, setQuickCreateStatus] = useState<string | null>(
-    null,
-  );
-  const [externalGroupFilter, setExternalGroupFilter] = useState("");
-  const [externalQuery, setExternalQuery] = useState("");
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const groupScope = JSON.stringify([
+    defaultGroupBy,
+    fixedGroupBy,
+    personalGroupStorageKey,
+    viewScope,
+  ])
+  const group = useMemo(
+    () =>
+      createBoardGroupPreference(
+        groupScope,
+        fixedGroupBy ? null : personalGroupStorageKey,
+        fixedGroupBy ?? defaultGroupBy
+      ),
+    [groupScope, fixedGroupBy, personalGroupStorageKey, defaultGroupBy]
+  )
+  const selectedGroupBy = useSyncExternalStore(
+    group.subscribe,
+    group.getSnapshot,
+    group.getServerSnapshot
+  )
+  const groupBy = fixedGroupBy ?? selectedGroupBy
+  const [previousScope, setPreviousScope] = useState(group.scope)
+  const [groupFilter, setGroupFilter] = useState('')
+  const [query, setQuery] = useState('')
+  const sorts = useMemo(
+    () => createBoardSortPreferences(personalSortStorageKey),
+    [personalSortStorageKey]
+  )
+  const columnSorts = useSyncExternalStore(
+    sorts.subscribe,
+    sorts.getSnapshot,
+    sorts.getServerSnapshot
+  )
+  const focus = useMemo(() => createBoardFocusPreference(focusStorageKey), [focusStorageKey])
+  const focusExecutionColumns = useSyncExternalStore(
+    focus.subscribe,
+    focus.getSnapshot,
+    focus.getServerSnapshot
+  )
+  const [quickCreateStatus, setQuickCreateStatus] = useState<string | null>(null)
+  const [externalGroupFilter, setExternalGroupFilter] = useState('')
+  const [externalQuery, setExternalQuery] = useState('')
+  const scrollRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    const personalGroup =
-      personalGroupStorageKey && !fixedGroupBy
-        ? localStorage.getItem(personalGroupStorageKey)
-        : null;
-    setGroupBy(
-      personalGroup === "status" ||
-        personalGroup === "priority" ||
-        personalGroup === "assignee" ||
-        personalGroup === "tag"
-        ? personalGroup
-        : defaultGroupBy,
-    );
-    setGroupFilter("");
-    setQuery("");
-    setQuickCreateStatus(null);
-  }, [defaultGroupBy, fixedGroupBy, personalGroupStorageKey, viewScope]);
-
-  useEffect(() => {
-    const refresh = () =>
-      setColumnSorts(
-        personalSortStorageKey
-          ? loadBoardSortPreferences(personalSortStorageKey)
-          : {},
-      );
-    refresh();
-    const onStorage = (event: StorageEvent) => {
-      if (
-        event.key === null ||
-        event.key?.startsWith(`${personalSortStorageKey}:`)
-      )
-        refresh();
-    };
-    const onLocalChange = (event: Event) => {
-      if ((event as CustomEvent<string>).detail === personalSortStorageKey)
-        refresh();
-    };
-    window.addEventListener("storage", onStorage);
-    window.addEventListener(boardSortStorageChanged, onLocalChange);
-    return () => {
-      window.removeEventListener("storage", onStorage);
-      window.removeEventListener(boardSortStorageChanged, onLocalChange);
-    };
-  }, [personalSortStorageKey]);
+  if (previousScope !== group.scope) {
+    setPreviousScope(group.scope)
+    setGroupFilter('')
+    setQuery('')
+    setQuickCreateStatus(null)
+  }
 
   const getColumnSort = useCallback(
     (columnKey: string): ProjectBoardSort =>
       columnSorts[JSON.stringify([groupBy, columnKey])] ??
       defaultColumnSorts?.[columnKey] ??
       defaultSort,
-    [columnSorts, defaultColumnSorts, defaultSort, groupBy],
-  );
+    [columnSorts, defaultColumnSorts, defaultSort, groupBy]
+  )
 
   const selectColumnSort = useCallback(
-    (columnKey: string, value: ProjectBoardSort) => {
-      const lane = JSON.stringify([groupBy, columnKey]);
-      if (personalSortStorageKey) {
-        saveBoardSortPreference(personalSortStorageKey, lane, value);
-        return;
-      }
-      setColumnSorts((current) => {
-        const next = {
-          ...current,
-          [lane]: value,
-        };
-        return next;
-      });
-    },
-    [groupBy, personalSortStorageKey],
-  );
-
-  useEffect(() => {
-    setFocusExecutionColumns(
-      focusStorageKey
-        ? localStorage.getItem(focusStorageKey) === "true"
-        : false,
-    );
-  }, [focusStorageKey]);
+    (columnKey: string, value: ProjectBoardSort) =>
+      sorts.select(JSON.stringify([groupBy, columnKey]), value),
+    [groupBy, sorts]
+  )
 
   const selectGroupBy = useCallback(
     (nextGroupBy: ProjectBoardGroupBy) => {
-      if (fixedGroupBy) return;
+      if (fixedGroupBy) return
       if (groupBy !== nextGroupBy && scrollRef.current) {
-        scrollRef.current.scrollLeft = 0;
+        scrollRef.current.scrollLeft = 0
       }
-      setGroupBy(nextGroupBy);
-      setGroupFilter("");
-      if (personalGroupStorageKey) {
-        localStorage.setItem(personalGroupStorageKey, nextGroupBy);
-      }
+      group.select(nextGroupBy)
+      setGroupFilter('')
     },
-    [fixedGroupBy, groupBy, personalGroupStorageKey],
-  );
-
-  const toggleFocusExecutionColumns = useCallback(() => {
-    setFocusExecutionColumns((current) => {
-      const next = !current;
-      if (focusStorageKey) {
-        if (next) {
-          localStorage.setItem(focusStorageKey, "true");
-        } else {
-          localStorage.removeItem(focusStorageKey);
-        }
-      }
-      return next;
-    });
-  }, [focusStorageKey]);
+    [fixedGroupBy, groupBy, group]
+  )
 
   return {
     externalGroupFilter,
@@ -175,6 +131,6 @@ export function useProjectBoardState({
     setGroupFilter,
     setQuery,
     setQuickCreateStatus,
-    toggleFocusExecutionColumns,
-  };
+    toggleFocusExecutionColumns: focus.toggle,
+  }
 }

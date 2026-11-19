@@ -1,36 +1,33 @@
+import { useMemo, useState, useSyncExternalStore, type Ref, type ReactNode } from 'react'
 import type { Attachment } from '@wegent/chat-core/runtime'
-import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from 'react'
-import {
-  ComposerToolbar,
-  ComposerProjectSelector,
-  ProjectComposerBody,
-  type ComposerInputHandle,
-} from '../composer'
-import { ComposerAutocompleteInput } from '../composer/ComposerAutocompleteInput'
-import { ComposerErrorBanner } from '../composer/ComposerErrorBanner'
+import { ComposerProjectSelector } from '../composer/ComposerProjectSelector'
 import type { ComposerExternalMentionCandidate } from '../composer/composerAutocompleteInputTypes'
-import { parseComposerMentions } from '../composer/composerMentions'
-import type { CollaborationTranslate } from '../i18n'
+import { ProjectComposerBody, ComposerToolbar, type ComposerInputHandle } from '../composer'
+import { ComposerAutocompleteInput } from '../composer/ComposerAutocompleteInput'
+import { ComposerAttachmentBadges } from '../issue-detail/ComposerAttachmentBadges'
 import type { AttachmentImageServices } from '../issue-detail/AttachmentImageView'
-import {
-  ComposerAttachmentBadges,
-  type ComposerAttachment,
-} from '../issue-detail/ComposerAttachmentBadges'
-import type { WorkspaceProjectAgent } from '../ports/SharedWorkspaceApi'
+import { ComposerErrorBanner } from '../composer/ComposerErrorBanner'
+import type { CollaborationTranslate } from '../i18n'
 import type {
-  CollaborationGroup,
-  CollaborationIssue,
   CollaborationMember,
   CollaborationProject,
   CollaborationWorkspace,
+  CollaborationIssue,
 } from '../types'
+import { parseComposerMentions } from '../composer/composerMentions'
 import { IssueOwnerPicker } from './IssueOwnerPicker'
+import {
+  createIssueHomeAttachmentDraft,
+  type IssueHomePendingFile,
+} from './issueHomeAttachmentDraft'
 import { issueHomeOwners, type IssueHomeOwner } from './issueHomeOwners'
+import type { CollaborationGroup } from '../types'
+import type { WorkspaceProjectAgent } from '../ports/SharedWorkspaceApi'
 
 const emptyAgents: WorkspaceProjectAgent[] = []
 const emptyGroups: CollaborationGroup[] = []
 
-type PendingFile = Attachment & ComposerAttachment & { id: number; file: File }
+type PendingFile = IssueHomePendingFile
 export interface IssueHomeTaskComposerProps {
   active?: boolean
   projects: CollaborationProject[]
@@ -127,21 +124,19 @@ export function IssueHomeComposer({
   environmentNotice?: ReactNode
   renderTaskComposer?(props: IssueHomeTaskComposerProps): ReactNode
 }) {
-  const [files, setFiles] = useState<PendingFile[]>([])
+  const [attachmentDraft] = useState(createIssueHomeAttachmentDraft)
+  const files = useSyncExternalStore(
+    attachmentDraft.subscribe,
+    attachmentDraft.getSnapshot,
+    attachmentDraft.getSnapshot
+  )
   const [referenceError, setReferenceError] = useState(false)
-  const [automaticOwner, setAutomaticOwner] = useState<string | null>(null)
+  const [draft, setDraft] = useState({ external: value, value })
+  if (draft.external !== value) setDraft({ external: value, value })
   const [ownerOverride, setOwnerOverride] = useState<{
     projectId: string
     id: string | null
   } | null>(null)
-  const nextId = useRef(0)
-  const previews = useRef(new Set<string>())
-  useEffect(
-    () => () => {
-      for (const url of previews.current) URL.revokeObjectURL(url)
-    },
-    []
-  )
   const candidates = useMemo(
     () =>
       issueHomeOwners(projectId, members, agents, groups, translate).map(candidate =>
@@ -154,38 +149,15 @@ export function IssueHomeComposer({
       ),
     [members, agents, groups, projectId, translate, currentUserId]
   )
-  const addFiles = (input: File | File[]) => {
-    const batch = (Array.isArray(input) ? input : [input]).map(file => {
-      const preview = file.type.startsWith('image/') ? URL.createObjectURL(file) : undefined
-      if (preview) previews.current.add(preview)
-      return {
-        id: ++nextId.current,
-        file,
-        filename: file.name,
-        mime_type: file.type,
-        file_extension: file.name.includes('.') ? `.${file.name.split('.').pop()}` : '',
-        file_size: file.size,
-        status: 'ready' as const,
-        created_at: new Date().toISOString(),
-        local_preview_url: preview,
-      }
-    })
-    setFiles(current => [...current, ...batch])
-  }
-  const removeFiles = (matches: (item: PendingFile) => boolean) => {
-    for (const item of files.filter(matches)) {
-      if (item.local_preview_url && previews.current.delete(item.local_preview_url))
-        URL.revokeObjectURL(item.local_preview_url)
-    }
-    setFiles(current => current.filter(item => !matches(item)))
-  }
+  const addFiles = attachmentDraft.add
+  const removeFiles = attachmentDraft.remove
   const removeFile = (id: number | string) => removeFiles(item => item.id === id)
   const issueCandidates = issues.map(issue => ({
     id: `issue-${issue.id}`,
     type: 'issue' as const,
     title: `#${issue.sequence_number} ${issue.title}`,
     metaLabel: 'Issue',
-    reference: `[$#${issue.sequence_number} ${issue.title.replace(/[\[\]\n]/g, '')}](wework-issue://${encodeURIComponent(projectId)}/${encodeURIComponent(issue.id)})`,
+    reference: `[$#${issue.sequence_number} ${issue.title.replace(/[[\]\n]/g, '')}](wework-issue://${encodeURIComponent(projectId)}/${encodeURIComponent(issue.id)})`,
     testId: `collaboration-home-mention-issue-${issue.id}`,
     searchAliases: [issue.title, String(issue.sequence_number)],
   }))
@@ -196,11 +168,11 @@ export function IssueHomeComposer({
     }
     return null
   }
-  const draftChanged = (draft: string) => setAutomaticOwner(firstMentionedMember(draft))
+  const draftChanged = (nextValue: string) => setDraft({ external: value, value: nextValue })
+  const automaticOwner = firstMentionedMember(draft.external === value ? draft.value : value)
   const ownerId = ownerOverride?.projectId === projectId ? ownerOverride.id : automaticOwner
   const ownerControl = (
     <IssueOwnerPicker
-      density="dense"
       showLabel={Boolean(renderTaskComposer)}
       owners={candidates}
       value={ownerId}
@@ -209,9 +181,6 @@ export function IssueHomeComposer({
       onChange={id => setOwnerOverride({ projectId, id })}
     />
   )
-  useEffect(() => {
-    setAutomaticOwner(firstMentionedMember(value))
-  }, [value, projectId, candidates])
   const submit = async (draft: string, standInDeviceId?: string, standInId?: string) => {
     const mentions = parseComposerMentions(draft)
     if (
@@ -252,11 +221,9 @@ export function IssueHomeComposer({
     return accepted
   }
   const resetDraft = () => {
-    removeFiles(() => true)
+    attachmentDraft.reset()
     setOwnerOverride(null)
-    setAutomaticOwner(null)
-    for (const url of previews.current) URL.revokeObjectURL(url)
-    previews.current.clear()
+    setDraft({ external: value, value: '' })
   }
   const projectSelector = (
     <ComposerProjectSelector
@@ -266,10 +233,7 @@ export function IssueHomeComposer({
       value={projectId}
       disabled={pending}
       onChange={onSelectProject}
-      options={projects.map(project => ({
-        value: String(project.id),
-        label: project.name,
-      }))}
+      options={projects.map(project => ({ value: String(project.id), label: project.name }))}
     />
   )
   if (renderTaskComposer)
@@ -311,6 +275,7 @@ export function IssueHomeComposer({
       <ComposerErrorBanner error={error} />
       {environmentNotice}
       <ProjectComposerBody
+        workBar={projectSelector}
         ref={ref}
         translate={translate}
         value={value}
@@ -322,7 +287,6 @@ export function IssueHomeComposer({
         disabled={pending}
         requireText
         isModelSelectionReady
-        hasToolbarLeadingContext
         placeholder={placeholder}
         inputTestId="collaboration-home-issue-content"
         attachments={[]}
@@ -369,12 +333,7 @@ export function IssueHomeComposer({
             onSelectModelOption={() => {}}
             onFileSelect={addFiles}
             sendButtonTestId="collaboration-home-create-issue"
-            leadingContext={
-              <>
-                {projectSelector}
-                {ownerControl}
-              </>
-            }
+            leadingContext={ownerControl}
           />
         )}
       />

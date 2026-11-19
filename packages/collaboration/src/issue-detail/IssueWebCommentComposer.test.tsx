@@ -21,12 +21,14 @@ describe('Web adapter for the desktop main composer', () => {
       configurable: true,
       value: () => new DOMRect(),
     })
+    vi.stubGlobal('requestAnimationFrame', () => 0)
+    vi.stubGlobal('cancelAnimationFrame', () => {})
     vi.stubGlobal(
       'ResizeObserver',
       class {
         observe() {}
         disconnect() {}
-      },
+      }
     )
     container = document.createElement('div')
     document.body.append(container)
@@ -43,22 +45,30 @@ describe('Web adapter for the desktop main composer', () => {
 
   const editor = () =>
     container.querySelector<HTMLElement & { value: string }>(
-      '[data-testid="collaboration-issue-comment"]',
+      '[data-testid="collaboration-issue-comment"]'
     )!
   async function render(
     upload: SharedWorkspaceAttachmentsApi['upload'],
     send = vi.fn().mockResolvedValue(undefined),
     assignment?: Parameters<typeof IssueWebCommentComposer>[0]['assignment'],
+    options: Partial<
+      Pick<
+        Parameters<typeof IssueWebCommentComposer>[0],
+        'issueId' | 'attachmentApi' | 'onSent' | 'onError'
+      >
+    > = {}
   ) {
-    const api = {
-      upload,
-      remove: vi.fn().mockResolvedValue(undefined),
-    } as unknown as SharedWorkspaceAttachmentsApi
+    const api =
+      options.attachmentApi ??
+      ({
+        upload,
+        remove: vi.fn().mockResolvedValue(undefined),
+      } as unknown as SharedWorkspaceAttachmentsApi)
     await act(async () =>
       root.render(
         <IssueWebCommentComposer
           assignment={assignment}
-          issueId="issue"
+          issueId={options.issueId ?? 'issue'}
           canComment
           canAttach
           loading={false}
@@ -67,32 +77,27 @@ describe('Web adapter for the desktop main composer', () => {
           attachmentApi={api}
           translate={createCollaborationTranslator('zh-CN')}
           send={send}
-          onSent={vi.fn()}
-          onError={vi.fn()}
+          onSent={options.onSent ?? vi.fn()}
+          onError={options.onError ?? vi.fn()}
           settings={
-            <span data-testid="comment-execution-settings">
-              Comment execution settings
-            </span>
+            <span data-testid="comment-execution-settings">Comment execution settings</span>
           }
-        />,
-      ),
+        />
+      )
     )
-    return { send }
+    return { send, api }
   }
   function write(text: string) {
     const input = editor()
     act(() => {
       input.value = text
-      input.dispatchEvent(
-        new KeyboardEvent('keyup', { key: text.at(-1) ?? '', bubbles: true }),
-      )
+      input.dispatchEvent(new KeyboardEvent('keyup', { key: text.at(-1) ?? '', bubbles: true }))
     })
     return input
   }
   async function select(file: File) {
     await act(async () => {
-      const picker =
-        container.querySelector<HTMLInputElement>('input[type=file]')!
+      const picker = container.querySelector<HTMLInputElement>('input[type=file]')!
       Object.defineProperty(picker, 'files', {
         value: [file],
         configurable: true,
@@ -116,13 +121,11 @@ describe('Web adapter for the desktop main composer', () => {
       assign,
     })
     const selector = container.querySelector<HTMLButtonElement>(
-      '[data-testid="collaboration-issue-comment-form-assignee"]',
+      '[data-testid="collaboration-issue-comment-form-assignee"]'
     )!
     await act(async () => selector.click())
     const option = document.querySelector<HTMLButtonElement>(
-      '[data-testid="collaboration-issue-comment-form-assignee-option-' +
-        target +
-        '"]',
+      '[data-testid="collaboration-issue-comment-form-assignee-option-' + target + '"]'
     )!
     expect(option).not.toBeNull()
     await act(async () => option.click())
@@ -130,10 +133,8 @@ describe('Web adapter for the desktop main composer', () => {
     expect(assign).not.toHaveBeenCalled()
     await act(async () =>
       document
-        .querySelector<HTMLButtonElement>(
-          '[data-testid="collaboration-issue-comment-submit"]',
-        )!
-        .click(),
+        .querySelector<HTMLButtonElement>('[data-testid="collaboration-issue-comment-submit"]')!
+        .click()
     )
     expect(assign).toHaveBeenCalledWith(target)
   })
@@ -144,7 +145,7 @@ describe('Web adapter for the desktop main composer', () => {
       () =>
         new Promise((_resolve, reject) => {
           rejectSend = reject
-        }),
+        })
     )
     const assign = vi.fn().mockResolvedValue(undefined)
     await render(vi.fn(), send, {
@@ -154,10 +155,8 @@ describe('Web adapter for the desktop main composer', () => {
     write('[$@bob](wework-member://8) Please review')
     await act(async () =>
       container
-        .querySelector<HTMLButtonElement>(
-          '[data-testid="collaboration-issue-comment-submit"]',
-        )!
-        .click(),
+        .querySelector<HTMLButtonElement>('[data-testid="collaboration-issue-comment-submit"]')!
+        .click()
     )
     expect(send).toHaveBeenCalledOnce()
     act(() => root.unmount())

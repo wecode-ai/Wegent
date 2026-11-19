@@ -1,6 +1,5 @@
 import { Checkbox } from '../controls/Checkbox'
 import { SelectContent, SelectItem, SelectRoot, SelectTrigger } from '../controls/SelectParts'
-import { normalizeSelectValue } from '../controls/selectValue'
 import { TextField as ControlInput } from '../controls/TextField'
 import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
@@ -8,7 +7,7 @@ import { Button as ControlButton } from '../markdown/Button'
 // SPDX-License-Identifier: Apache-2.0
 
 import { Archive, ArrowDown, ArrowUp, ArrowUpDown, ChevronDown, Search } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 
 import { canEditCollaborationIssue } from '../permissions'
 import type { CollaborationAssignment, CollaborationIssue } from '../types'
@@ -29,43 +28,7 @@ type IssueTableSort = {
   direction: 'asc' | 'desc'
 }
 
-export function ProjectIssueTable({
-  issues,
-  assignmentsByIssueId,
-  emptyLabel,
-  issueLabel,
-  statusLabel,
-  assignmentsLabel,
-  executionLabel,
-  updatedLabel,
-  startAtLabel = 'Start',
-  dueAtLabel = 'End',
-  projectKey,
-  showIssueKey = false,
-  searchPlaceholder,
-  createLabel,
-  allLabel = 'All',
-  tagLabel = 'Tags',
-  actionsLabel,
-  deleteLabel,
-  selectAllLabel = 'Select all visible issues',
-  selectIssueLabel = 'Select issue',
-  selectedLabel = 'selected',
-  batchStatusLabel = 'Change status',
-  batchApplyLabel = 'Apply',
-  batchDeleteLabel = 'Archive selected',
-  batchFailedLabel = 'Status update failed',
-  availableStatuses,
-  statusName = status => status,
-  onCreate,
-  canDelete = () => true,
-  onDelete,
-  renderBulkActions,
-  toolbarAction,
-  onBulkStatusChange,
-  onBulkDelete,
-  onOpen,
-}: {
+type ProjectIssueTableProps = {
   issues: CollaborationIssue[]
   assignmentsByIssueId: Record<string, CollaborationAssignment[]>
   emptyLabel: string
@@ -101,7 +64,49 @@ export function ProjectIssueTable({
   onBulkStatusChange?(issues: CollaborationIssue[], status: string): Promise<IssueStatusFailure[]>
   onBulkDelete?(issues: CollaborationIssue[]): void
   onOpen(issue: CollaborationIssue): void
-}) {
+}
+
+export function ProjectIssueTable(props: ProjectIssueTableProps) {
+  return <ProjectIssueTableContent key={props.projectKey} {...props} />
+}
+
+function ProjectIssueTableContent({
+  issues,
+  assignmentsByIssueId,
+  emptyLabel,
+  issueLabel,
+  statusLabel,
+  assignmentsLabel,
+  executionLabel,
+  updatedLabel,
+  startAtLabel = 'Start',
+  dueAtLabel = 'End',
+  projectKey,
+  showIssueKey = false,
+  searchPlaceholder,
+  createLabel,
+  allLabel = 'All',
+  tagLabel = 'Tags',
+  actionsLabel,
+  deleteLabel,
+  selectAllLabel = 'Select all visible issues',
+  selectIssueLabel = 'Select issue',
+  selectedLabel = 'selected',
+  batchStatusLabel = 'Change status',
+  batchApplyLabel = 'Apply',
+  batchDeleteLabel = 'Archive selected',
+  batchFailedLabel = 'Status update failed',
+  availableStatuses,
+  statusName = status => status,
+  onCreate,
+  canDelete = () => true,
+  onDelete,
+  renderBulkActions,
+  toolbarAction,
+  onBulkStatusChange,
+  onBulkDelete,
+  onOpen,
+}: ProjectIssueTableProps) {
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [assigneeFilter, setAssigneeFilter] = useState('')
@@ -111,8 +116,6 @@ export function ProjectIssueTable({
   const [batchStatus, setBatchStatus] = useState('')
   const [batchBusy, setBatchBusy] = useState(false)
   const [batchFailures, setBatchFailures] = useState<IssueStatusFailure[]>([])
-  const batchScope = useRef({})
-  const selectAllRef = useRef<HTMLInputElement>(null)
   const currentAssignmentByIssueId = useMemo(
     () =>
       Object.fromEntries(
@@ -143,32 +146,16 @@ export function ProjectIssueTable({
     }),
     [availableStatuses, currentAssignmentByIssueId, issues]
   )
-  useEffect(() => {
-    batchScope.current = {}
-    setQuery('')
+  if (statusFilter && !filterOptions.statuses.includes(statusFilter)) {
     setStatusFilter('')
+  }
+  if (assigneeFilter && !filterOptions.assignees.some(([id]) => id === assigneeFilter)) {
     setAssigneeFilter('')
+  }
+  if (tagFilter && !filterOptions.tags.includes(tagFilter)) {
     setTagFilter('')
-    setSort(null)
-    setSelectedIssueIds(new Set())
-    setBatchStatus('')
-    setBatchFailures([])
-    setBatchBusy(false)
-    return () => {
-      batchScope.current = {}
-    }
-  }, [projectKey])
-  useEffect(() => {
-    if (statusFilter && !filterOptions.statuses.includes(statusFilter)) {
-      setStatusFilter('')
-    }
-    if (assigneeFilter && !filterOptions.assignees.some(([id]) => id === assigneeFilter)) {
-      setAssigneeFilter('')
-    }
-    if (tagFilter && !filterOptions.tags.includes(tagFilter)) {
-      setTagFilter('')
-    }
-  }, [assigneeFilter, filterOptions, statusFilter, tagFilter])
+  }
+
   const visibleIssues = useMemo(() => {
     const normalized = query.trim().toLocaleLowerCase()
     const filteredIssues = issues.filter(issue => {
@@ -243,21 +230,11 @@ export function ProjectIssueTable({
     selectableVisibleIssues.length > 0 &&
     selectableVisibleIssues.every(issue => selectedIssueIds.has(issue.id))
   const someVisibleSelected = selectableVisibleIssues.some(issue => selectedIssueIds.has(issue.id))
-  useEffect(() => {
-    setSelectedIssueIds(
-      current =>
-        new Set(
-          [...current].filter(id =>
-            issues.some(issue => issue.id === id && canEditCollaborationIssue(issue))
-          )
-        )
-    )
-  }, [issues])
-  useEffect(() => {
-    if (selectAllRef.current) {
-      selectAllRef.current.indeterminate = someVisibleSelected && !allVisibleSelected
-    }
-  }, [allVisibleSelected, someVisibleSelected])
+  const validSelection = useMemo(() => {
+    const editableIds = new Set(issues.filter(canEditCollaborationIssue).map(issue => issue.id))
+    return new Set([...selectedIssueIds].filter(id => editableIds.has(id)))
+  }, [issues, selectedIssueIds])
+  if (validSelection.size !== selectedIssueIds.size) setSelectedIssueIds(validSelection)
 
   const toggleAllVisible = () => {
     setSelectedIssueIds(current => {
@@ -284,15 +261,12 @@ export function ProjectIssueTable({
     }
     setBatchBusy(true)
     setBatchFailures([])
-    const scope = batchScope.current
     try {
       const failures = await onBulkStatusChange(selectedIssues, batchStatus)
-      if (batchScope.current !== scope) return
       setBatchFailures(failures)
       setSelectedIssueIds(new Set(failures.map(failure => failure.issueId)))
       if (failures.length === 0) setBatchStatus('')
     } catch (error) {
-      if (batchScope.current !== scope) return
       setBatchFailures(
         selectedIssues.map(issue => ({
           issueId: issue.id,
@@ -300,7 +274,7 @@ export function ProjectIssueTable({
         }))
       )
     } finally {
-      if (batchScope.current === scope) setBatchBusy(false)
+      setBatchBusy(false)
     }
   }
   const toggleSort = (key: IssueTableSortKey) => {
@@ -376,11 +350,12 @@ export function ProjectIssueTable({
             {onBulkStatusChange ? (
               <div className="collaboration-issue-table-batch-group">
                 <SelectRoot
-                  value={normalizeSelectValue(batchStatus)}
-                  onValueChange={selectedValue => {
-                    if (selectedValue !== null) return setBatchStatus(selectedValue)
-                  }}
                   disabled={batchBusy}
+                  value={String(batchStatus)}
+                  onValueChange={selectedValue => {
+                    if (selectedValue === null) return
+                    return setBatchStatus(selectedValue)
+                  }}
                 >
                   <SelectTrigger
                     aria-label={batchStatusLabel}
@@ -481,9 +456,10 @@ export function ProjectIssueTable({
                   >
                     <ChevronDown aria-hidden="true" />
                     <SelectRoot
-                      value={normalizeSelectValue(statusFilter)}
+                      value={String(statusFilter)}
                       onValueChange={selectedValue => {
-                        if (selectedValue !== null) return setStatusFilter(selectedValue)
+                        if (selectedValue === null) return
+                        return setStatusFilter(selectedValue)
                       }}
                     >
                       <SelectTrigger
@@ -514,9 +490,10 @@ export function ProjectIssueTable({
                   >
                     <ChevronDown aria-hidden="true" />
                     <SelectRoot
-                      value={normalizeSelectValue(assigneeFilter)}
+                      value={String(assigneeFilter)}
                       onValueChange={selectedValue => {
-                        if (selectedValue !== null) return setAssigneeFilter(selectedValue)
+                        if (selectedValue === null) return
+                        return setAssigneeFilter(selectedValue)
                       }}
                     >
                       <SelectTrigger
@@ -547,9 +524,10 @@ export function ProjectIssueTable({
                   >
                     <ChevronDown aria-hidden="true" />
                     <SelectRoot
-                      value={normalizeSelectValue(tagFilter)}
+                      value={String(tagFilter)}
                       onValueChange={selectedValue => {
-                        if (selectedValue !== null) return setTagFilter(selectedValue)
+                        if (selectedValue === null) return
+                        return setTagFilter(selectedValue)
                       }}
                     >
                       <SelectTrigger

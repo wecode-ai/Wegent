@@ -1,4 +1,4 @@
-import { useBlockNoteSdkPopupPresence } from './blockNoteSdkPopupPresence'
+import { useBlockNoteSdkPopupRef } from './blockNoteSdkPopupPresence'
 import { FilePanelExtension, SideMenuExtension } from '@blocknote/core/extensions'
 import {
   FilePanel,
@@ -16,7 +16,7 @@ export function BlockNoteSdkSideMenu() {
   const anchor = state?.block
     ? editor.domElement?.querySelector<HTMLElement>(`[data-id="${CSS.escape(state.block.id)}"]`)
     : null
-  useBlockNoteSdkPopupPresence(Boolean(state?.show && anchor))
+  const popupRef = useBlockNoteSdkPopupRef()
   return (
     <Popover
       open={Boolean(state?.show && anchor)}
@@ -25,6 +25,7 @@ export function BlockNoteSdkSideMenu() {
       }}
     >
       <PopoverContent
+        ref={popupRef}
         container={editor.portalElement}
         anchor={anchor}
         side="left"
@@ -48,7 +49,7 @@ export function BlockNoteSdkFilePanel() {
   const anchor = blockId
     ? editor.domElement?.querySelector<HTMLElement>(`[data-id="${CSS.escape(blockId)}"]`)
     : null
-  useBlockNoteSdkPopupPresence(Boolean(blockId && anchor))
+  const popupRef = useBlockNoteSdkPopupRef()
   return (
     <Popover
       open={Boolean(blockId && anchor)}
@@ -57,6 +58,7 @@ export function BlockNoteSdkFilePanel() {
       }}
     >
       <PopoverContent
+        ref={popupRef}
         container={editor.portalElement}
         anchor={anchor}
         side="bottom"

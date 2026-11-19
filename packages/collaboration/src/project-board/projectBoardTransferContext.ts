@@ -1,8 +1,7 @@
 import {
   createContext,
   useContext,
-  useEffect,
-  useState,
+  useCallback,
   type KeyboardEvent,
   type PointerEvent,
 } from 'react'
@@ -26,18 +25,20 @@ export const TransferContext = createContext<Context | null>(null)
 
 export function useProjectBoardDropTarget({ id }: { id: string }) {
   const context = useContext(TransferContext)
-  const [node, setElement] = useState<HTMLElement | null>(null)
   const register = context?.registerList
   const transfer = context?.handle.api.transfer
-  useEffect(() => {
-    if (!node || !register || !transfer) return
-    const unregister = register(id, node)
-    const unbind = transfer.bindList(node, id)
-    return () => {
-      unbind()
-      unregister()
-    }
-  }, [id, node, register, transfer])
+  const setElement = useCallback(
+    (node: HTMLElement | null) => {
+      if (!node || !register || !transfer) return
+      const unregister = register(id, node)
+      const unbind = transfer.bindList(node, id)
+      return () => {
+        unbind()
+        unregister()
+      }
+    },
+    [id, register, transfer]
+  )
   return {
     setElement,
     isOver: Boolean(context?.moving?.lists[id]?.includes(context.moving.key)),
@@ -47,40 +48,38 @@ export function useProjectBoardDropTarget({ id }: { id: string }) {
 export function useProjectBoardCardTransfer(
   key: string,
   data: ProjectBoardDragMetadata,
-  enabled: boolean,
+  enabled: boolean
 ) {
   const context = useContext(TransferContext)
-  const [node, setElement] = useState<HTMLElement | null>(null)
   const register = context?.registerItem
   const transfer = context?.handle.api.transfer
   const recovery = context?.handle.api.recovery
-  useEffect(() => {
-    if (!node || !register || !transfer || !enabled) return
-    const unregister = register(key, { node, data })
-    const unbind = transfer.bindItem(node, key)
-    const focusTarget = node.matches('[data-board-transfer-item]')
-      ? node
-      : node.querySelector<HTMLElement>('[data-board-transfer-item]')
-    const recover = focusTarget
-      ? recovery?.bind(focusTarget, {
-          key,
-          props: { itemId: data.itemId ?? key },
-        })
-      : undefined
-    return () => {
-      recover?.()
-      unbind()
-      unregister()
-    }
-  }, [data, enabled, key, node, register, transfer, recovery])
+  const setElement = useCallback(
+    (node: HTMLElement | null) => {
+      if (!node || !register || !transfer || !enabled) return
+      const unregister = register(key, { node, data })
+      const unbind = transfer.bindItem(node, key)
+      const focusTarget = node.matches('[data-board-transfer-item]')
+        ? node
+        : node.querySelector<HTMLElement>('[data-board-transfer-item]')
+      const recover = focusTarget
+        ? recovery?.bind(focusTarget, {
+            key,
+            props: { itemId: data.itemId ?? key },
+          })
+        : undefined
+      return () => {
+        recover?.()
+        unbind()
+        unregister()
+      }
+    },
+    [data, enabled, key, register, transfer, recovery]
+  )
   const moving = context?.moving
-  const targetList =
-    moving &&
-    Object.values(moving.lists).find((list) => list.includes(moving.key))
+  const targetList = moving && Object.values(moving.lists).find(list => list.includes(moving.key))
   const afterMoving =
-    targetList && moving
-      ? targetList[targetList.indexOf(moving.key) + 1]
-      : undefined
+    targetList && moving ? targetList[targetList.indexOf(moving.key) + 1] : undefined
   return {
     setElement,
     style: {},

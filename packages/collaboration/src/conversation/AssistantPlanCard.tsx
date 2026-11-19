@@ -1,6 +1,7 @@
 import { Copy, Download, ListChecks, Maximize2 } from 'lucide-react'
 import type { MouseEvent as ReactMouseEvent } from 'react'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+import { useDeadlineExpired } from '../clock'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
 import { AssistantMarkdown } from '../markdown/AssistantMarkdown'
 import { Button as ControlButton } from '../markdown/Button'
@@ -123,15 +124,12 @@ function PlanCardActions({
   onExpand?: () => void
 }) {
   const { t } = useConversationTranslation()
-  const [copied, setCopied] = useState(false)
-  useEffect(() => {
-    if (!copied) return
-    const timer = window.setTimeout(() => setCopied(false), 1400)
-    return () => window.clearTimeout(timer)
-  }, [copied])
+  const [copiedUntil, setCopiedUntil] = useState<number>()
+  const expired = useDeadlineExpired(copiedUntil)
+  const copied = copiedUntil !== undefined && !expired
 
   const handleCopy = () => {
-    void copyText(content).then(() => setCopied(true))
+    void copyText(content).then(() => setCopiedUntil(Date.now() + 1500))
   }
 
   const actions = [

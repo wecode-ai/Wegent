@@ -1,11 +1,12 @@
 import { ApiError } from '@/api/http'
 import type { Site, SiteAnalytics, SiteAnalyticsRange, SitesApi } from '@/api/sites'
 import { useTranslation } from '@/hooks/useTranslation'
+import { createAsyncResource, getIdleResourceSnapshot } from '@wegent/chat-core/async-resource'
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Loader2, X } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { analyticsToday, recentAnalyticsRange, validAnalyticsRange } from './siteAnalyticsDates'
 
@@ -32,41 +33,23 @@ export function SiteAnalyticsDialog({ api, site, onClose }: SiteAnalyticsDialogP
   const { t } = useTranslation('sites')
   const [draft, setDraft] = useState<SiteAnalyticsRange>(() => recentAnalyticsRange(7))
   const [request, setRequest] = useState(() => ({ range: draft, revision: 0 }))
-  const [settled, setSettled] = useState<{
-    request: typeof request
-    api: SitesApi
-    siteid: string
-    data: SiteAnalytics | null
-    error: string | null
-  } | null>(null)
-  const current =
-    settled?.request === request && settled.api === api && settled.siteid === site.siteid
-      ? settled
-      : null
-  const loading = current === null
-  const data = current?.data ?? null
-  const error = current?.error ?? null
-  const dialogRef = useRef<HTMLDivElement>(null)
+  const siteid = site.siteid
+  const resource = useMemo(
+    () => createAsyncResource(siteid, () => api.getSiteAnalytics(siteid, request.range)),
+    [api, siteid, request]
+  )
+  const snapshot = useSyncExternalStore(
+    resource.subscribe,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const loading = !snapshot.settled
+  const data = snapshot.data ?? null
+  const error = snapshot.status === 'error' ? errorKey(snapshot.error) : null
   const today = analyticsToday()
   const valid = validAnalyticsRange(draft, today)
   const changed =
     draft.start_date !== request.range.start_date || draft.end_date !== request.range.end_date
-
-  useEffect(() => {
-    let active = true
-    void api
-      .getSiteAnalytics(site.siteid, request.range)
-      .then(result => {
-        if (active) setSettled({ request, api, siteid: site.siteid, data: result, error: null })
-      })
-      .catch(failure => {
-        if (active)
-          setSettled({ request, api, siteid: site.siteid, data: null, error: errorKey(failure) })
-      })
-    return () => {
-      active = false
-    }
-  }, [api, site.siteid, request])
 
   function query(range = draft) {
     if (!validAnalyticsRange(range)) return
@@ -80,7 +63,6 @@ export function SiteAnalyticsDialog({ api, site, onClose }: SiteAnalyticsDialogP
         onClose={onClose}
         render={
           <div
-            ref={dialogRef}
             aria-labelledby="site-analytics-title"
             data-testid="site-analytics-dialog"
             tabIndex={-1}

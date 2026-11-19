@@ -1,6 +1,5 @@
 import { bindLayer, createFocusRecovery } from '@ui-sdk/core'
 import {
-  useEffectEvent,
   useId,
   useImperativeHandle,
   useLayoutEffect,
@@ -46,7 +45,10 @@ export function InlinePanel({
     })
   )
   useImperativeHandle(ref, () => element.current!)
-  const dismiss = useEffectEvent(onEscape)
+  const dismiss = useRef(onEscape)
+  useLayoutEffect(() => {
+    dismiss.current = onEscape
+  }, [onEscape])
   useLayoutEffect(() => {
     const panel = element.current
     if (!active || !panel) return
@@ -61,7 +63,7 @@ export function InlinePanel({
       onDismiss: (reason, event) => {
         if (reason !== 'escape-key') return
         event.preventDefault()
-        dismiss()
+        dismiss.current()
       },
     })
     panel.focus({ preventScroll: true })

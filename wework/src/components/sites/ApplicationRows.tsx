@@ -1,6 +1,5 @@
 import type { ApplicationCapability, MiniProgram, Site } from '@/api/sites'
 import { useTranslation } from '@/hooks/useTranslation'
-import { copyTextToClipboard } from '@/lib/clipboard'
 import { openExternalUrl } from '@/lib/external-links'
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
@@ -17,7 +16,8 @@ import {
   Upload,
   X,
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
+import { createMiniProgramLinkCopy } from './miniProgramLinkCopy'
 import { createQrCodeModules, qrCodeOffset, qrCodeViewBox } from './qrCodeSvg'
 import { SiteActionsMenu } from './SiteActionsMenu'
 
@@ -192,7 +192,6 @@ function QrCodeDialog({
   onClose: () => void
 }) {
   const { t } = useTranslation('sites')
-  const closeButtonRef = useRef<HTMLButtonElement>(null)
   const modules = useMemo(() => {
     try {
       return createQrCodeModules(url)
@@ -203,10 +202,6 @@ function QrCodeDialog({
   }, [url])
   const offset = qrCodeOffset()
 
-  useEffect(() => {
-    closeButtonRef.current?.focus()
-  }, [])
-
   return (
     <div
       className="fixed inset-0 z-modal flex items-center justify-center bg-black/40 px-4"
@@ -216,6 +211,7 @@ function QrCodeDialog({
     >
       <DialogSurface
         onClose={onClose}
+        initialFocus={'[data-testid="mini-program-qrcode-close"]'}
         render={
           <div
             aria-labelledby="mini-program-qrcode-title"
@@ -238,7 +234,6 @@ function QrCodeDialog({
           <ControlButton
             variant="outline"
             size="sm"
-            ref={closeButtonRef}
             type="button"
             data-testid="mini-program-qrcode-close"
             onClick={onClose}
@@ -308,8 +303,6 @@ export function MiniProgramApplicationRow({
 }) {
   const { t } = useTranslation('sites')
   const [qrCodeOpen, setQrCodeOpen] = useState(false)
-  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
-  const copyStateResetTimeoutRef = useRef<number | null>(null)
   const updatedAt = new Intl.DateTimeFormat(undefined, {
     year: 'numeric',
     month: 'short',
@@ -318,32 +311,9 @@ export function MiniProgramApplicationRow({
   const experienceUrl = program.experience_url ?? ''
   const canUseExperienceUrl = capabilities.has('open_experience') && experienceUrl
 
-  useEffect(
-    () => () => {
-      if (copyStateResetTimeoutRef.current !== null) {
-        window.clearTimeout(copyStateResetTimeoutRef.current)
-      }
-    },
-    []
-  )
-
-  const copyExperienceUrl = async () => {
-    if (!experienceUrl) return
-    try {
-      await copyTextToClipboard(experienceUrl)
-      setCopyState('copied')
-      if (copyStateResetTimeoutRef.current !== null) {
-        window.clearTimeout(copyStateResetTimeoutRef.current)
-      }
-      copyStateResetTimeoutRef.current = window.setTimeout(() => {
-        copyStateResetTimeoutRef.current = null
-        setCopyState('idle')
-      }, 1500)
-    } catch (error) {
-      console.error('Failed to copy mini program URL:', error)
-      setCopyState('failed')
-    }
-  }
+  const copy = useMemo(() => createMiniProgramLinkCopy(experienceUrl), [experienceUrl])
+  const copyState = useSyncExternalStore(copy.subscribe, copy.getSnapshot, copy.getSnapshot)
+  const copyExperienceUrl = copy.copy
 
   return (
     <article

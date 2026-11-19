@@ -1,4 +1,4 @@
-import { useBlockNoteSdkPopupPresence } from './blockNoteSdkPopupPresence'
+import { useBlockNoteSdkPopupRef } from './blockNoteSdkPopupPresence'
 import { SuggestionMenu, filterSuggestionItems } from '@blocknote/core/extensions'
 import {
   getDefaultReactEmojiPickerItems,
@@ -12,10 +12,11 @@ import {
 import { useTranslation } from '@/hooks/useTranslation'
 import { spatialMove } from '@ui-sdk/core'
 import { createParts, usePart, usePrimitive } from '@ui-sdk/react/primitive'
+import { useDOMEvent } from '@wegent/collaboration/dom-events'
 import { Popover, PopoverContent } from '@wegent/collaboration/controls/Popover'
 import { controlOption } from '@wegent/collaboration/controls/recipes'
 import { ProgressRing } from '@wegent/collaboration/controls/ProgressBar'
-import { useCallback, useEffect, useId, useState, type ReactNode } from 'react'
+import { useCallback, useId, useState, type ReactNode } from 'react'
 
 import { blockNoteSuggestionList } from './blockNoteSuggestionList'
 
@@ -78,22 +79,43 @@ function SuggestionResults({
     items: items.map((item, index) => ({ value: String(index), label: item.label })),
     onChoose: choose,
   })
-  useEffect(() => {
-    handle.api.list.move('first')
-  }, [handle.api, items, query])
-  useEffect(() => {
-    if (!editorElement || !menuElement) return
-    const prior = new Map(
-      ['aria-expanded', 'aria-controls', 'aria-activedescendant'].map(name => [
-        name,
-        editorElement.getAttribute(name),
-      ])
-    )
-    editorElement.setAttribute('aria-expanded', 'true')
-    editorElement.setAttribute('aria-controls', id)
-    const activeId = handle.api.list.activeId(handle.state)
-    if (activeId) editorElement.setAttribute('aria-activedescendant', activeId)
-    const keydown = (event: KeyboardEvent) => {
+  const bindList = useCallback(
+    (element: HTMLDivElement | null) => {
+      setMenuElement(element)
+      if (!editorElement || !element) return
+      handle.api.list.move('first')
+      const prior = new Map(
+        ['aria-expanded', 'aria-controls', 'aria-activedescendant'].map(name => [
+          name,
+          editorElement.getAttribute(name),
+        ])
+      )
+      editorElement.setAttribute('aria-expanded', 'true')
+      editorElement.setAttribute('aria-controls', id)
+      const syncActiveOption = () => {
+        const activeId = handle.api.list.activeId(handle.instance.get())
+        if (activeId) editorElement.setAttribute('aria-activedescendant', activeId)
+        else editorElement.removeAttribute('aria-activedescendant')
+      }
+      syncActiveOption()
+      const unsubscribe = handle.instance.subscribe(syncActiveOption)
+      return () => {
+        unsubscribe()
+        for (const [name, value] of prior) {
+          if (value === null) editorElement.removeAttribute(name)
+          else editorElement.setAttribute(name, value)
+        }
+      }
+    },
+    [editorElement, handle.api, handle.instance, id, items, query]
+  )
+
+  // The editor keeps DOM focus; SDK owns option navigation and activation.
+  useDOMEvent<KeyboardEvent>(
+    editorElement ?? null,
+    'keydown',
+    event => {
+      if (!menuElement) return
       if (event.isComposing || event.keyCode === 229) return
       if (
         ![
@@ -125,24 +147,16 @@ function SuggestionResults({
         }
       }
       handle.api.keydown(event)
-    }
-    // The editor keeps DOM focus; SDK owns option navigation and activation.
-    editorElement.addEventListener('keydown', keydown, true)
-    return () => {
-      editorElement.removeEventListener('keydown', keydown, true)
-      for (const [name, value] of prior) {
-        if (value === null) editorElement.removeAttribute(name)
-        else editorElement.setAttribute(name, value)
-      }
-    }
-  }, [editorElement, emoji, handle.api, handle.state, id, menuElement])
+    },
+    { capture: true, enabled: Boolean(menuElement) }
+  )
   return usePart(
     handle,
     'root',
     {},
     {
       id,
-      ref: setMenuElement,
+      ref: bindList,
       'aria-label': emoji ? ':' : '/',
       className: emoji
         ? 'grid w-[30rem] max-w-full grid-cols-[repeat(auto-fit,minmax(2.75rem,1fr))] gap-1 md:grid-cols-10'
@@ -184,53 +198,61 @@ export function BlockNoteSdkSuggestions({ emoji = false }: { emoji?: boolean }) 
   const extension = useExtension(SuggestionMenu)
   const state = useExtensionState(SuggestionMenu)
   const triggerCharacter = emoji ? ':' : '/'
-  useEffect(() => {
-    extension.addSuggestionMenu({
-      triggerCharacter,
-      shouldOpen: emoji
-        ? undefined
-        : state => !state.selection.$from.parent.type.isInGroup('tableContent'),
-    })
-    return () => extension.removeSuggestionMenu(triggerCharacter)
-  }, [emoji, extension, triggerCharacter])
+  const bindExtension = useCallback(
+    (node: HTMLSpanElement | null) => {
+      if (!node) return
+      extension.addSuggestionMenu({
+        triggerCharacter,
+        shouldOpen: emoji
+          ? undefined
+          : state => !state.selection.$from.parent.type.isInGroup('tableContent'),
+      })
+      return () => extension.removeSuggestionMenu(triggerCharacter)
+    },
+    [emoji, extension, triggerCharacter]
+  )
   const eligible =
     state?.show &&
     state.triggerCharacter === triggerCharacter &&
     (!emoji || state.ignoreQueryLength || (!state.query.startsWith(' ') && state.query.length >= 2))
-  useBlockNoteSdkPopupPresence(Boolean(eligible))
+  const popupRef = useBlockNoteSdkPopupRef()
   const anchor = {
     contextElement: editor.domElement?.firstElementChild ?? undefined,
     getBoundingClientRect: () => state?.referencePos ?? new DOMRect(),
   }
   return (
-    <Popover
-      open={Boolean(eligible)}
-      onOpenChange={open => {
-        if (!open) extension.closeMenu()
-      }}
-    >
-      <PopoverContent
-        container={editor.portalElement}
-        anchor={anchor}
-        side="bottom"
-        align="start"
-        sideOffset={10}
-        initialFocus="none"
-        finalFocus="none"
-        onMouseDownCapture={event => event.preventDefault()}
-        className="max-h-80 w-max max-w-[calc(100vw-1rem)] overflow-y-auto p-1"
-        data-testid={`task-description-${emoji ? 'emoji' : 'slash'}-menu`}
-        aria-label={triggerCharacter}
+    <>
+      <span hidden ref={bindExtension} />
+      <Popover
+        open={Boolean(eligible)}
+        onOpenChange={open => {
+          if (!open) extension.closeMenu()
+        }}
       >
-        {eligible && state && (
-          <SuggestionResults
-            query={state.query}
-            emoji={emoji}
-            close={extension.closeMenu}
-            clear={extension.clearQuery}
-          />
-        )}
-      </PopoverContent>
-    </Popover>
+        <PopoverContent
+          ref={popupRef}
+          container={editor.portalElement}
+          anchor={anchor}
+          side="bottom"
+          align="start"
+          sideOffset={10}
+          initialFocus="none"
+          finalFocus="none"
+          onMouseDownCapture={event => event.preventDefault()}
+          className="max-h-80 w-max max-w-[calc(100vw-1rem)] overflow-y-auto p-1"
+          data-testid={`task-description-${emoji ? 'emoji' : 'slash'}-menu`}
+          aria-label={triggerCharacter}
+        >
+          {eligible && state && (
+            <SuggestionResults
+              query={state.query}
+              emoji={emoji}
+              close={extension.closeMenu}
+              clear={extension.clearQuery}
+            />
+          )}
+        </PopoverContent>
+      </Popover>
+    </>
   )
 }

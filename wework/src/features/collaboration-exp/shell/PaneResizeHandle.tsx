@@ -1,5 +1,5 @@
-import { ResizableHandle } from '@wegent/collaboration/controls/Resizable'
 import { useTranslation } from '@/hooks/useTranslation'
+import { ResizableHandle } from '@wegent/collaboration/controls/Resizable'
 
 export interface PaneResizeHandleProps {
   id: string

@@ -1,27 +1,27 @@
-import {
-  Field,
-  FieldLabel,
-  FieldDescription,
-  FieldError,
-} from '@wegent/collaboration/controls/Field'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
-import { SelectField } from '@wegent/collaboration/controls/SelectField'
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldLabel,
+} from '@wegent/collaboration/controls/Field'
 import {
   Menu,
-  MenuTrigger,
-  MenuContent,
   MenuCheckboxItem,
+  MenuContent,
+  MenuItemIndicator,
   MenuRadioGroup,
   MenuRadioItem,
-  MenuItemIndicator,
+  MenuTrigger,
 } from '@wegent/collaboration/controls/MenuParts'
 import {
-  controlTrigger,
   controlFieldAppearance,
   controlFieldDensity,
+  controlTrigger,
 } from '@wegent/collaboration/controls/recipes'
+import { SelectField } from '@wegent/collaboration/controls/SelectField'
 import { Check, ChevronDown } from 'lucide-react'
 import type { ReactNode } from 'react'
 

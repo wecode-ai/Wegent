@@ -1,25 +1,24 @@
 import { createHttpClient } from '@/api/http'
-import {
-  createNotificationsApi,
-  type WeworkInbox,
-  type WeworkNotification,
-  type WeworkNotificationCategory,
-  type WeworkNotificationChannel,
-  type WeworkNotificationPayload,
-  type WeworkNotificationPreferenceCategory,
-  type WeworkNotificationPreferences,
+import type {
+  WeworkInbox,
+  WeworkNotification,
+  WeworkNotificationCategory,
+  WeworkNotificationChannel,
+  WeworkNotificationPayload,
+  WeworkNotificationPreferenceCategory,
+  WeworkNotificationPreferences,
 } from '@/api/notifications'
+import { createNotificationsApi } from '@/api/notifications'
 import { createRuntimeWorkApi } from '@/api/runtimeWork'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '@/components/layout/DesktopTopBar'
 import { SettingsSwitch } from '@/components/settings/settings-ui'
 import { Tooltip } from '@/components/ui/tooltip'
-import { syncNotificationUnreadCount } from '@/desktop/trayNavigation'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 import { AnchorPopover } from '@/features/todo/AnchorPopover'
 import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
 import { useTranslation } from '@/hooks/useTranslation'
-import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import { cn } from '@/lib/utils'
+import { useDOMEvent } from '@wegent/collaboration/dom-events'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
   ArrowLeft,
@@ -30,31 +29,27 @@ import {
   Settings2,
   UsersRound,
 } from 'lucide-react'
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useContext, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { requestIssueDispatch } from './issueDispatch'
-import { NotificationFeedRow, type NotificationFeedRowProps } from './NotificationFeedRow'
+import { createNotificationCenterFeed } from './notificationCenterFeed'
+import { createNotificationCenterSummary, taskTimestamp } from './notificationCenterSummary'
+import type { NotificationFeedRowProps } from './NotificationFeedRow'
+import { NotificationFeedRow } from './NotificationFeedRow'
 import {
-  cacheNotificationPreferences,
   mergeNotificationPreferences,
-  migrateLegacyTaskSystemNotification,
   OPEN_NOTIFICATION_SETTINGS_EVENT,
-  readCachedNotificationPreferences,
 } from './notificationPreferences'
-import {
-  useNotificationTaskSource,
-  type IssueDispatchPersonalTaskAction,
-} from './NotificationTaskSourceContext'
+import type { IssueDispatchPersonalTaskAction } from './NotificationTaskSourceContext'
+import { useNotificationTaskSource } from './NotificationTaskSourceContext'
 import { formatNotificationTime } from './notificationTime'
 import { useRuntimeInteractions } from './RuntimeInteractionsContext'
 import { weworkIssueScheme, weworkTaskScheme } from './scheme'
 import { openWeworkScheme } from './schemeEvents'
 import { StandInNotificationProcessing } from './StandInNotificationProcessing'
-import { standInOrigin, type StandInNotification } from './standInNotifications'
-import { useStandInAssignmentNotifications } from './useStandInAssignmentNotifications'
+import type { StandInNotification } from './standInNotifications'
 import { useStandInNotifications } from './useStandInNotifications'
 
 type InboxCategory = 'tasks' | WeworkNotificationCategory
-const CLOUD_CATEGORIES: WeworkNotificationCategory[] = ['collaboration', 'general']
 
 /**
  * The preview line a category entry shows for its latest cloud notification.
@@ -206,13 +201,6 @@ export function NotificationCenter() {
   )
 }
 
-function taskTimestamp(item: RuntimeTaskReminderItem): number {
-  const value = item.task.completedAt ?? item.task.updatedAt ?? item.task.createdAt
-  if (value == null) return 0
-  const timestamp = new Date(value).getTime()
-  return Number.isFinite(timestamp) ? timestamp : 0
-}
-
 function cloudTimestamp(value: string): number {
   // The inbox API currently serializes UTC datetimes without a timezone suffix.
   const normalized = /(?:Z|[+-]\d{2}:\d{2})$/i.test(value) ? value : `${value}Z`
@@ -274,160 +262,52 @@ function ConnectedNotificationCenter({
   const [category, setCategory] = useState<InboxCategory | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const accountKey = `${baseUrl ?? 'local'}:${userId ?? 'anonymous'}`
-  const [preferences, setPreferences] = useState<WeworkNotificationPreferences>(() =>
-    readCachedNotificationPreferences(accountKey)
+  const [feed] = useState(() => createNotificationCenterFeed(accountKey))
+  const subscribeFeed = useCallback(
+    (listener: () => void) =>
+      feed.subscribe(listener, { api, runtimeApi, paused: Boolean(anchor) }),
+    [feed, api, runtimeApi, anchor]
   )
-  const [inboxes, setInboxes] = useState<Record<WeworkNotificationCategory, WeworkInbox | null>>({
-    collaboration: null,
-    general: null,
-  })
-  const [error, setError] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-  const requestId = useRef(0)
-  const preferenceRequestId = useRef(0)
-  const refreshPreferences = useCallback(async () => {
-    const id = ++preferenceRequestId.current
-    try {
-      await migrateLegacyTaskSystemNotification(accountKey, async () => {
-        if (api) {
-          await api.updatePreferences({
-            category: 'tasks',
-            channel: 'system',
-            enabled: true,
-          })
-        }
-        if (id !== preferenceRequestId.current) {
-          throw new Error('Stale notification preference migration')
-        }
-        const current = readCachedNotificationPreferences(accountKey)
-        const migrated = {
-          ...current,
-          tasks: { ...current.tasks, system: true },
-        }
-        cacheNotificationPreferences(accountKey, migrated)
-        setPreferences(migrated)
-      })
-    } catch (cause) {
-      if (id !== preferenceRequestId.current) return
-      console.error('[Wework] Failed to migrate legacy task notification setting', cause)
-    }
-    if (!api || !runtimeApi || id !== preferenceRequestId.current) return
-
-    const next = await api.getPreferences()
-    let taskIm: boolean | null | undefined
-    try {
-      const imSettings = await runtimeApi.getImNotificationSettings()
-      taskIm = imSettings.global.enabled
-    } catch (cause) {
-      console.error('[Wework] Failed to load task IM notification settings', cause)
-    }
-    if (id !== preferenceRequestId.current) return
-    setPreferences(current => {
-      const merged = {
-        ...mergeNotificationPreferences({ ...next, stand_in: next.stand_in ?? current.stand_in }),
-        tasks: {
-          ...next.tasks,
-          im: taskIm === undefined ? current.tasks.im : taskIm,
-        },
-      }
-      cacheNotificationPreferences(accountKey, merged)
-      return merged
-    })
-  }, [accountKey, api, runtimeApi])
+  const { preferences, inboxes, error, busy } = useSyncExternalStore(
+    subscribeFeed,
+    feed.getSnapshot
+  )
+  const { setPreferences, setInboxes, setError, setBusy, refresh, refreshPreferences } = feed
   const openSettings = useCallback(() => {
     if (!buttonRef.current) return
     setAnchor(buttonRef.current)
     setCategory(null)
     setSettingsOpen(true)
-    void refreshPreferences().catch(cause => {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    })
+    void refreshPreferences()
   }, [refreshPreferences])
-  const refresh = useCallback(() => {
-    if (!api) return Promise.resolve()
-    const id = ++requestId.current
-    return Promise.all(CLOUD_CATEGORIES.map(cloudCategory => api.list(0, cloudCategory))).then(
-      ([collaboration, general]) => {
-        if (id !== requestId.current) return
-        setInboxes({ collaboration, general })
-        setError(null)
-      },
-      cause => {
-        if (id === requestId.current)
-          setError(cause instanceof Error ? cause.message : String(cause))
-      }
-    )
-  }, [api])
-
-  useEffect(() => {
-    const requests = requestId
+  useDOMEvent('window', 'focus', () => {
+    if (!anchor) void refresh()
+  })
+  useDOMEvent('window', 'wework-notifications-changed', () => {
     void refresh()
-    const timer = window.setInterval(() => {
-      if (!anchor) void refresh()
-    }, 15000)
-    const onFocus = () => {
-      if (!anchor) void refresh()
-    }
-    window.addEventListener('focus', onFocus)
-    const onNotification = () => void refresh()
-    window.addEventListener('wework-notifications-changed', onNotification)
-    return () => {
-      requests.current++
-      window.clearInterval(timer)
-      window.removeEventListener('focus', onFocus)
-      window.removeEventListener('wework-notifications-changed', onNotification)
-    }
-  }, [refresh, anchor])
-
-  useEffect(() => {
-    cacheNotificationPreferences(accountKey, readCachedNotificationPreferences(accountKey))
-  }, [accountKey])
-
-  useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void refreshPreferences().catch(cause => {
-        setError(cause instanceof Error ? cause.message : String(cause))
-      })
-    }, 0)
-    return () => window.clearTimeout(timer)
-  }, [refreshPreferences])
-
-  useEffect(() => {
-    window.addEventListener(OPEN_NOTIFICATION_SETTINGS_EVENT, openSettings)
-    return () => window.removeEventListener(OPEN_NOTIFICATION_SETTINGS_EVENT, openSettings)
-  }, [openSettings])
-
-  useStandInAssignmentNotifications(inboxes.collaboration, taskSource, accountKey, userId)
+  })
+  useDOMEvent('window', OPEN_NOTIFICATION_SETTINGS_EVENT, openSettings)
 
   const collaboration = useStandInNotifications(
     inboxes.collaboration,
     taskSource,
     accountKey,
     preferences.collaboration.in_app,
-    preferences.collaboration.system === true
+    preferences.collaboration.system === true,
+    userId
   )
-  const unreadTasks = useMemo(
-    () =>
-      taskSource?.items.filter(
-        item => !standInOrigin(item) && taskSource.unreadTaskKeys.has(item.key)
-      ) ?? [],
-    [taskSource]
+  const [summary] = useState(createNotificationCenterSummary)
+  const subscribeSummary = useCallback(
+    (listener: () => void) =>
+      summary.subscribe(listener, {
+        taskSource,
+        collaborationUnreadCount: collaboration.unreadCount,
+        generalInbox: inboxes.general,
+      }),
+    [summary, taskSource, collaboration.unreadCount, inboxes.general]
   )
-  const cloudUnreadCount = collaboration.unreadCount + (inboxes.general?.unread_count ?? 0)
-  const taskUnreadCount = unreadTasks.reduce(
-    (total, item) => total + (taskSource?.unreadMessageCounts?.get(item.key) ?? 1),
-    0
-  )
-  const unreadCount = taskUnreadCount + cloudUnreadCount
-  useEffect(() => {
-    if (getDesktopWindowLabel() !== 'main') return
-    syncNotificationUnreadCount(unreadCount)
-    return () => syncNotificationUnreadCount(0)
-  }, [unreadCount])
-  const sortedTasks = useMemo(
-    () => [...unreadTasks].sort((a, b) => taskTimestamp(b) - taskTimestamp(a)),
-    [unreadTasks]
-  )
+  const { unreadTasks, sortedTasks, cloudUnreadCount, taskUnreadCount, unreadCount } =
+    useSyncExternalStore(subscribeSummary, summary.getSnapshot)
 
   const close = useCallback(() => {
     anchor?.focus()
@@ -437,7 +317,7 @@ function ConnectedNotificationCenter({
   }, [anchor])
   const mutate = async (action: () => Promise<void>) => {
     if (busy) return
-    requestId.current++
+    feed.invalidateRequests()
     setBusy(true)
     setError(null)
     try {
@@ -582,7 +462,7 @@ function ConnectedNotificationCenter({
     enabled: boolean
   ) =>
     void mutate(async () => {
-      preferenceRequestId.current++
+      feed.invalidatePreferences()
       if (preferenceCategory === 'tasks' && channel === 'im') {
         if (!runtimeApi) throw new Error(t('notifications.im_requires_cloud'))
         const settings = await runtimeApi.updateGlobalImNotification({
@@ -593,7 +473,7 @@ function ConnectedNotificationCenter({
           tasks: { ...preferences.tasks, im: settings.global.enabled },
         }
         setPreferences(next)
-        cacheNotificationPreferences(accountKey, next)
+        feed.cachePreferences(next)
         return
       }
       if ((preferenceCategory === 'tasks' || preferenceCategory === 'stand_in') && !api) {
@@ -602,7 +482,7 @@ function ConnectedNotificationCenter({
           [preferenceCategory]: { ...preferences[preferenceCategory], [channel]: enabled },
         }
         setPreferences(next)
-        cacheNotificationPreferences(accountKey, next)
+        feed.cachePreferences(next)
         return
       }
       if (!api) return
@@ -619,7 +499,7 @@ function ConnectedNotificationCenter({
         tasks: { ...updated.tasks, im: preferences.tasks.im },
       }
       setPreferences(next)
-      cacheNotificationPreferences(accountKey, next)
+      feed.cachePreferences(next)
       await refresh()
     })
 

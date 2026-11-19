@@ -19,7 +19,7 @@ import { controlOption, controlPopup } from '@wegent/collaboration/controls/reci
 import { useCollaborationPortalTheme } from '@wegent/collaboration/theme'
 import type { TFunction } from 'i18next'
 import { ChevronDown, Code2, Folder, Monitor, Plus, SquareTerminal } from 'lucide-react'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 
 interface LocalWorkspaceOpenerPickerProps {
   ariaLabel: string
@@ -60,13 +60,6 @@ export function LocalWorkspaceOpenerPicker({
   const [error, setError] = useState<string | null>(null)
   const request = useRef(0)
   const theme = useCollaborationPortalTheme()
-
-  useEffect(
-    () => () => {
-      request.current += 1
-    },
-    []
-  )
 
   const prepareMenu = async () => {
     const revision = ++request.current

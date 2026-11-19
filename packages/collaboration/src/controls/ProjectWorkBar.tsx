@@ -23,7 +23,6 @@ import {
 } from 'lucide-react'
 import {
   useCallback,
-  useEffect,
   useMemo,
   useRef,
   useState,
@@ -31,6 +30,7 @@ import {
   type ReactElement,
 } from 'react'
 import { ComposerContextButton } from '../composer/ComposerContextButton'
+import { useFocusRequest } from '../dom-events'
 import type { CollaborationTranslate } from '../i18n'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
 import { Button as ControlButton } from '../markdown/Button'
@@ -141,8 +141,7 @@ export function ProjectWorkBar({
   const [containerElement, setContainerElement] = useState<HTMLDivElement | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const [triggerElement, setTriggerElement] = useState<HTMLButtonElement | null>(null)
-  const handledProjectMenuOpenSignalRef = useRef<number | undefined>(undefined)
-  const handledExternalMenuOpenSignalRef = useRef<number | undefined>(undefined)
+  const [handledOpenSignals, setHandledOpenSignals] = useState<{project?: number; external?: number}>({})
 
   const searchInputRef = useRef<HTMLInputElement>(null)
   const [open, setOpen] = useState(false)
@@ -278,23 +277,22 @@ export function ProjectWorkBar({
     : projectWorkTriggerLabel
   const projectWorkTriggerAriaLabel = selectedProjectLabel
 
-  useEffect(() => {
-    if (!projectMenuOpenSignal) return
-    if (handledProjectMenuOpenSignalRef.current === projectMenuOpenSignal) return
-
-    handledProjectMenuOpenSignalRef.current = projectMenuOpenSignal
-    setExternalMenuAnchorElement(isMobile ? null : projectMenuAnchorElement)
+  const projectOpenRequested =
+    Boolean(projectMenuOpenSignal) && handledOpenSignals.project !== projectMenuOpenSignal
+  const externalOpenRequested =
+    Boolean(externalMenuOpenSignal) && handledOpenSignals.external !== externalMenuOpenSignal
+  if (projectOpenRequested || externalOpenRequested) {
+    setHandledOpenSignals({
+      project: projectOpenRequested ? projectMenuOpenSignal : handledOpenSignals.project,
+      external: externalOpenRequested ? externalMenuOpenSignal : handledOpenSignals.external,
+    })
+    setExternalMenuAnchorElement(externalOpenRequested || isMobile ? null : projectMenuAnchorElement)
     setOpen(true)
-  }, [isMobile, projectMenuAnchorElement, projectMenuOpenSignal])
+  }
 
-  useEffect(() => {
-    if (!externalMenuOpenSignal) return
-    if (handledExternalMenuOpenSignalRef.current === externalMenuOpenSignal) return
-
-    handledExternalMenuOpenSignalRef.current = externalMenuOpenSignal
-    setExternalMenuAnchorElement(null)
-    setOpen(true)
-  }, [externalMenuOpenSignal])
+  useFocusRequest(searchInputRef, projectMenuOpenSignal ?? externalMenuOpenSignal, {
+    enabled: open && !isMobile && Boolean(handledOpenSignals.project || handledOpenSignals.external),
+  })
 
   const handleSelectProject = (projectId: number) => {
     const option = projectWorkspaceOptionByProjectId.get(projectId)

@@ -1,9 +1,9 @@
-import { ChevronDown, Flag } from 'lucide-react'
-import { useEffect, useState } from 'react'
 import { SearchableSelect } from '../controls/SearchableSelect'
-import { Tooltip } from "../controls/Tooltip"
+import { Tooltip } from '../controls/Tooltip'
 import { Button as ControlButton } from '../markdown/Button'
-import './milestones.css'
+import { Flag, ChevronDown } from 'lucide-react'
+import { useCallback, useState, useSyncExternalStore } from 'react'
+import { getIdleResourceSnapshot } from '@wegent/chat-core/async-resource'
 import type { MilestonesApi } from './types'
 import { useMilestones } from './useMilestones'
 
@@ -47,17 +47,19 @@ export function MilestonePicker({
   testId?: string
 }) {
   const ownedQuery = useMilestones(api, projectId, providedQuery === undefined)
-  const query = providedQuery ?? ownedQuery
-  useEffect(() => {
-    if (
-      !query.loading &&
-      !query.error &&
-      value &&
-      value !== 'all' &&
-      !query.items.some(item => item.id === value)
-    )
-      onMissingValue?.()
-  }, [onMissingValue, query.error, query.items, query.loading, value])
+  const source = providedQuery ?? ownedQuery
+  const { observeSelection } = source
+  const subscribe = useCallback(
+    (listener: () => void) => observeSelection(listener, value, onMissingValue),
+    [observeSelection, value, onMissingValue]
+  )
+  const snapshot = useSyncExternalStore(subscribe, source.getSnapshot, getIdleResourceSnapshot)
+  const query = {
+    items: snapshot.data ?? [],
+    loading: source.enabled && (snapshot.status === 'idle' || snapshot.status === 'loading'),
+    error: snapshot.status === 'error',
+    reload: source.reload,
+  }
   const selectedTitle =
     query.items.find(item => item.id === value)?.title ??
     (value === 'all' ? allLabel : value === undefined ? placeholder : value ? label : noneLabel) ??

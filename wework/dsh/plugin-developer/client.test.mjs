@@ -54,10 +54,12 @@ test('registers translated plugin development actions through the Wework service
       createElement(type, props, ...children) {
         return { type, props: { ...props, children } }
       },
-      useCallback(callback) {
-        return callback
+      useMemo(create) {
+        return create()
       },
-      useEffect() {},
+      useSyncExternalStore(_subscribe, getSnapshot) {
+        return getSnapshot()
+      },
       useState,
     }
   })
