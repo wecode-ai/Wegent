@@ -202,7 +202,13 @@ function acceptWebSocket(request, socket, head, onMessage) {
 
 export function attachCodexModelWebSocket(
   server,
-  { modelServerUrl, onForegroundRequest, isVerificationComplete }
+  {
+    modelServerUrl,
+    onForegroundRequest,
+    isVerificationComplete,
+    paths = ['/v1/responses', '/responses'],
+    modelEvents,
+  }
 ) {
   const sockets = new Set()
   let closing = false
@@ -220,7 +226,7 @@ export function attachCodexModelWebSocket(
       socket.destroy()
     })
     const url = new URL(request.url ?? '/', modelServerUrl)
-    if (!['/v1/responses', '/responses'].includes(url.pathname)) {
+    if (!paths.includes(url.pathname)) {
       socket.destroy()
       return
     }
@@ -232,13 +238,15 @@ export function attachCodexModelWebSocket(
       const isWarmup = body.generate === false
       const isPrediction = isReplyPredictionRequest(body)
       auxiliaryRequest = isWarmup || isPrediction
-      if (!auxiliaryRequest) onForegroundRequest(body)
-      const events = isWarmup
-        ? warmupResponseEvents(responseId)
-        : responseEvents(
-            responseId,
-            isPrediction ? JSON.stringify({ suggestion: null }) : COMPLETION
-          )
+      if (!auxiliaryRequest) onForegroundRequest?.(body)
+      const events =
+        modelEvents?.(request, body, { isWarmup, isPrediction }) ??
+        (isWarmup
+          ? warmupResponseEvents(responseId)
+          : responseEvents(
+              responseId,
+              isPrediction ? JSON.stringify({ suggestion: null }) : COMPLETION
+            ))
       if (!socket.destroyed) {
         socket.write(Buffer.concat(events.map(event => websocketFrame(JSON.stringify(event)))))
       }

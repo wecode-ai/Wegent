@@ -645,20 +645,23 @@ abort 'Native setup must preserve repository trust and installer failures' if se
 source_setup = 'install -m 644 .github/ci/wework-native-test-ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources'
 abort 'Native setup must use the signed Ubuntu archives before installing missing tools' unless setup_commands.include?(source_setup) && setup_commands.index(source_setup) < setup_commands.index(installations.first)
 abort 'Native Ubuntu archive suites must match the existing image' unless image.lines.first.strip == 'FROM ubuntu:24.04'
+desktop_mirror = image[%r{http://(mirrors\.edge\.kernel\.org)/ubuntu}, 1]
+abort 'Desktop image must retain its established Ubuntu mirror' unless desktop_mirror
 archives = File.read(ARGV[3]).split(/\n\s*\n/).map do |stanza|
   stanza.lines.map { |line| line.strip.split(/:\s*/, 2) }.to_h
 end
 archive_common = {
   'Types' => 'deb',
+  'URIs' => "https://#{desktop_mirror}/ubuntu/",
   'Components' => 'main universe restricted multiverse',
   'By-Hash' => 'force',
   'Signed-By' => '/usr/share/keyrings/ubuntu-archive-keyring.gpg'
 }
 expected_archives = [
-  archive_common.merge('URIs' => 'https://archive.ubuntu.com/ubuntu/', 'Suites' => 'noble noble-updates noble-backports'),
-  archive_common.merge('URIs' => 'https://security.ubuntu.com/ubuntu/', 'Suites' => 'noble-security')
+  archive_common.merge('Suites' => 'noble noble-updates noble-backports'),
+  archive_common.merge('Suites' => 'noble-security')
 ]
-abort 'Native setup must preserve Ubuntu suites, components and the distribution signing keyring' unless archives == expected_archives
+abort 'Native setup must preserve the image mirror, Ubuntu suites, components and the distribution signing keyring' unless archives == expected_archives
 %w[dbus-run-session gnome-keyring-daemon gdbus secret-tool xdotool].each do |binary|
   abort "Native setup must verify #{binary}" unless setup_commands.include?(binary)
 end

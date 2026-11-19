@@ -198,57 +198,6 @@ enum LocalEndpointRole {
     Client,
     Owner,
 }
-const RUNTIME_AUTH_STATUS_SCRIPT: &str = r#"
-import hashlib
-import json
-import os
-from datetime import datetime, timezone
-from pathlib import Path
-
-
-def iso_mtime(path_stat):
-    return datetime.fromtimestamp(path_stat.st_mtime, timezone.utc).isoformat()
-
-
-configured_home = os.environ.get("WEGENT_CODEX_HOME", "").strip()
-if configured_home:
-    codex_home = Path(configured_home)
-else:
-    executor_home = os.environ.get("WEGENT_EXECUTOR_HOME", "").strip()
-    workbench = os.environ.get("WEGENT_WORKBENCH_HOME", "").strip()
-    base = Path(executor_home).expanduser() if executor_home else (Path(workbench) if workbench else Path.home() / ".wegent/workbench") / "executor"
-    codex_home = base / "codex"
-target = codex_home / "auth.json"
-result = {
-    "runtime": "codex",
-    "target_path": str(target),
-    "exists": target.exists(),
-    "updated_at": None,
-    "sha256": None,
-    "size_bytes": None,
-    "error": None,
-}
-
-if target.exists() and target.is_file():
-    try:
-        target_stat = target.stat()
-        digest = hashlib.sha256()
-        with target.open("rb") as auth_file:
-            for chunk in iter(lambda: auth_file.read(1024 * 1024), b""):
-                digest.update(chunk)
-        result.update(
-            {
-                "updated_at": iso_mtime(target_stat),
-                "sha256": digest.hexdigest(),
-                "size_bytes": target_stat.st_size,
-            }
-        )
-    except OSError as exc:
-        result["error"] = str(exc)
-
-print(json.dumps(result, ensure_ascii=False))
-"#;
-
 pub use wegent_execution_contracts::ipc::{
     AppIpcError, BackendConnectionHandler, RuntimeWorkHandler,
 };
@@ -1852,8 +1801,7 @@ impl AppIpcServer {
             .map_err(|error| AppIpcError::new("internal_error", error.to_string()));
         }
 
-        if let Some((result, post_processor)) =
-            handle_builtin_device_command(command_key, &params).await
+        if let Some((result, post_processor)) = handle_builtin_device_command(command_key, &params)
         {
             return serde_json::to_value(apply_post_processor(result, post_processor))
                 .map_err(|error| AppIpcError::new("internal_error", error.to_string()));
@@ -3328,12 +3276,12 @@ fn task_runtime_error(error: crate::task_runtime::TaskRuntimeError) -> AppIpcErr
     AppIpcError::new(code, error.to_string())
 }
 
-#[cfg(windows)]
-async fn handle_builtin_device_command(
+fn handle_builtin_device_command(
     command_key: &str,
     params: &Value,
 ) -> Option<(CommandResult, Option<PostProcessor>)> {
     match command_key {
+        #[cfg(windows)]
         "mkdir_p" => {
             let args = string_list(params.get("args")).ok()?;
             let path = args.first()?;
@@ -3349,6 +3297,7 @@ async fn handle_builtin_device_command(
                 None,
             ))
         }
+        #[cfg(windows)]
         "path_exists" => {
             let args = string_list(params.get("args")).ok()?;
             let path = args.first()?;
@@ -3357,62 +3306,10 @@ async fn handle_builtin_device_command(
                 None,
             ))
         }
-        "runtime_auth_status" => {
-            let codex_home = crate::agents::wework_codex_home();
-            let target = codex_home.join("auth.json");
-            let mut result = json!({
-                "runtime": "codex",
-                "target_path": target.display().to_string(),
-                "exists": target.exists() && target.is_file(),
-                "updated_at": Value::Null,
-                "sha256": Value::Null,
-                "size_bytes": Value::Null,
-                "error": Value::Null,
-            });
-            if target.exists() && target.is_file() {
-                match std::fs::metadata(&target) {
-                    Ok(metadata) => {
-                        if let Ok(updated_at) = metadata.modified() {
-                            let datetime = chrono::DateTime::<chrono::Utc>::from(updated_at);
-                            result["updated_at"] = Value::String(datetime.to_rfc3339());
-                        }
-                        result["size_bytes"] = Value::Number(metadata.len().into());
-                        match std::fs::read(&target) {
-                            Ok(content) => {
-                                use sha2::{Digest, Sha256};
-                                let hash = Sha256::digest(&content);
-                                result["sha256"] = Value::String(format!("{hash:x}"));
-                            }
-                            Err(error) => {
-                                result["error"] = Value::String(error.to_string());
-                            }
-                        }
-                    }
-                    Err(error) => {
-                        result["error"] = Value::String(error.to_string());
-                    }
-                }
-            }
-            Some((
-                CommandResult::ok(result.to_string()),
-                Some(PostProcessor::Json),
-            ))
-        }
-        "git_is_worktree" => {
-            let args = string_list(params.get("args")).ok()?;
-            let path = args.first()?;
-            Some((git_worktree_probe_result(path), None))
-        }
-        _ => None,
-    }
-}
-
-#[cfg(not(windows))]
-async fn handle_builtin_device_command(
-    command_key: &str,
-    params: &Value,
-) -> Option<(CommandResult, Option<PostProcessor>)> {
-    match command_key {
+        "runtime_auth_status" => Some((
+            CommandResult::ok(crate::runtime_work::read_codex_auth_status().to_string()),
+            Some(PostProcessor::Json),
+        )),
         "git_is_worktree" => {
             let args = string_list(params.get("args")).ok()?;
             let path = args.first()?;
@@ -3704,11 +3601,6 @@ fn local_app_command(command_key: &str) -> Option<LocalAppCommandDefinition> {
             "ls -a -p",
             &["ls", "-a", "-p"],
             Some(PostProcessor::DirectoryList),
-        )),
-        "runtime_auth_status" => Some(command_definition(
-            "python3 -c <runtime_auth_status>",
-            &["python3", "-c", RUNTIME_AUTH_STATUS_SCRIPT],
-            Some(PostProcessor::Json),
         )),
         "mkdir_p" => Some(command_definition("mkdir -p", &["mkdir", "-p"], None)),
         "path_exists" => Some(command_definition("test -e", &["test", "-e"], None)),

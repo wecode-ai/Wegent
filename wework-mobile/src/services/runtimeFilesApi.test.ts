@@ -257,6 +257,73 @@ describe('RuntimeApi file protocols', () => {
     expect(fetchMock.mock.calls[0]![0]).toContain('/devices/app-record-11/commands')
   })
 
+  it('reads an APP task worktree through the scoped Runtime protocol', async () => {
+    const request = vi.fn().mockResolvedValue({
+      success: true,
+      stdout: { path: '/worktree', entries: [] },
+    })
+    const executeCommand = vi.fn()
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const api = new RuntimeApi(config, undefined, undefined, {
+      request,
+      executeCommand,
+      isAppDevice: (deviceId: string) => deviceId === 'app-record-11',
+    } as never)
+    await expect(
+      api.listWorkspaceDirectory('app-record-11', '/worktree', '/worktree', 'task-1')
+    ).resolves.toEqual({ path: '/worktree', entries: [] })
+    expect(request).toHaveBeenCalledWith(
+      'runtime.workspace.read',
+      expect.objectContaining({
+        root: '/worktree',
+        path: '/worktree',
+        taskId: 'task-1',
+        commandKey: 'workspace_tree',
+      }),
+      'app-record-11',
+      expect.any(Number),
+      expect.any(Object)
+    )
+    expect(executeCommand).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('passes the current task when reviewing a worktree artifact', async () => {
+    const request = vi.fn().mockResolvedValue({
+      success: true,
+      stdout: { success: true, diff: 'diff --git a/a.ts b/a.ts' },
+    })
+    const api = new RuntimeApi(config, undefined, undefined, {
+      request,
+      executeCommand: vi.fn(),
+      isAppDevice: (deviceId: string) => deviceId === 'app-record-11',
+    } as never)
+    await expect(
+      api.readFileChangesDiff(
+        {
+          ...artifact,
+          device_id: 'app-record-11',
+          artifact_id: 'turn-file-changes/codex/turn-1',
+        },
+        'task-1'
+      )
+    ).resolves.toBe('diff --git a/a.ts b/a.ts')
+    expect(request).toHaveBeenCalledWith(
+      'runtime.workspace.read',
+      expect.objectContaining({
+        root: '/original/worktree',
+        path: '/original/worktree',
+        taskId: 'task-1',
+        commandKey: 'turn_file_changes_review',
+        args: ['turn-file-changes/codex/turn-1'],
+      }),
+      'app-record-11',
+      expect.any(Number),
+      expect.any(Object)
+    )
+  })
+
   it('passes search identity and cancellation through unchanged and validates results', async () => {
     const result = {
       files: [

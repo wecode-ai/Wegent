@@ -101,5 +101,8 @@ async fn verify_compaction_context(native: bool, loaded: bool) {
         }
     );
     assert_eq!(provider["requires_openai_auth"], native);
-    assert_eq!(provider["supports_websockets"], native);
+    assert_eq!(
+        provider["supports_websockets"], false,
+        "restored inference context must use HTTP Responses"
+    );
 }

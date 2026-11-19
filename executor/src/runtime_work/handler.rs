@@ -132,6 +132,7 @@ mod background_terminals;
 mod bounded_history;
 mod claude_turns;
 mod codex_accounts;
+pub(crate) use codex_accounts::read_codex_auth_status;
 mod codex_config;
 mod collection;
 mod command_items;
@@ -221,6 +222,7 @@ mod transcript_read_link;
 mod transcript_search;
 mod transcript_sync;
 mod turns;
+mod workspace_read;
 mod workspaces;
 
 use super::{
