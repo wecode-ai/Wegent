@@ -1020,7 +1020,12 @@ export function createCollaborationWorkspaceControllerCommands({
     const isCurrent = () =>
       revision === projectLoadRevision && (options?.isCurrent?.() ?? true);
     const mutationGeneration = projectMutationGeneration(projectId);
-    if (showLoading) dispatch({ type: "loading", value: true });
+    const hasCurrentSnapshot =
+      getExternalBoardState().project?.id === projectId &&
+      getProjectSnapshot(projectId) !== null;
+    // Refreshing a loaded project must not unmount its editors or pending exit animations.
+    if (showLoading && !hasCurrentSnapshot)
+      dispatch({ type: "loading", value: true });
     try {
       const project =
         catalogProjects.find((item) => item.id === projectId) ??
