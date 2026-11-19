@@ -55,7 +55,9 @@ class MarkdownQualityEvaluator:
                 density,
             )
 
-        if text_length < policy.min_markdown_chars:
+        # Extraction format does not determine validity. Refresh can accept short
+        # bodies, including PDF/text, after shell, density and repetition checks.
+        if text_length < policy.min_markdown_chars and not policy.allow_short_content:
             return self._reject(
                 "too_short",
                 quality_level,

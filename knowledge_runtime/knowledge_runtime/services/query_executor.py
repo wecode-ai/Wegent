@@ -198,6 +198,7 @@ class QueryExecutor:
             config.retrieval_config,
             config.index_owner_user_id,
             document_ids=config.scoped_document_ids,
+            published_versions=config.published_versions,
             query_plan={
                 "dense_query": plan.dense_query,
                 "sparse_query": plan.sparse_query,

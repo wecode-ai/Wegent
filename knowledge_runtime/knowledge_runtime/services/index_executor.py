@@ -59,6 +59,11 @@ class IndexExecutor:
             user_id=request.user_id,
             document_id=request.document_id,
             authorized=request.authorized_resources,
+            **(
+                {"index_generation": request.index_generation}
+                if request.index_generation is not None
+                else {}
+            ),
         )
 
         # Fetch content from the content reference
@@ -103,6 +108,7 @@ class IndexExecutor:
                 file_extension=file_extension,
                 user_id=config.index_owner_user_id,
                 document_id=request.document_id,
+                index_generation=request.index_generation,
                 splitter_config=config.splitter_config,
             ),
         )

@@ -1,4 +1,7 @@
+from types import SimpleNamespace
 from typing import Any
+
+import pytest
 
 from app.services.web_scraper.models import InternalScrapeResult, SourcePart
 from app.services.web_scraper.policy import ScrapePolicy
@@ -54,6 +57,25 @@ class RecordingPlaywrightStrategy(PlaywrightFrameExtractionStrategy):
     ) -> InternalScrapeResult:
         self.attempts.append(use_proxy)
         return self.results.pop(0)
+
+
+@pytest.mark.parametrize("structured", [True, False])
+async def test_refresh_retains_short_frames_after_quality_checks(structured):
+    strategy = PlaywrightFrameExtractionStrategy()
+    body = "营业时间：周一至周五9点至18点，周末及节假日均休息。"
+    frame = FakeFrame(html=f"<p>{body}</p>" if structured else "", text=body)
+    blocked = FakeFrame(html="<p>Access denied</p>", text="Access denied")
+    private = FakeFrame(html=f"<p>{body}</p>", text=body, url="http://127.0.0.1/frame")
+    page = SimpleNamespace(frames=[frame, frame, blocked, private])
+    guard = WebScraperUrlGuard()
+    policy = ScrapePolicy(allow_short_content=True)
+
+    parts = await strategy._extract_source_parts(page, policy, guard)
+
+    assert len(parts) == 1
+    assert parts[0].markdown == body
+    assert parts[0].quality_level == ("structured" if structured else "degraded")
+    assert await strategy._extract_source_parts(page, ScrapePolicy(), guard) == []
 
 
 async def test_playwright_frame_prefers_html_markdown() -> None:

@@ -15,6 +15,8 @@ jest.mock('@/hooks/useTranslation', () => ({
 
 jest.mock('@/apis/knowledge', () => ({
   getKnowledgeBase: jest.fn(),
+  getWebAutoUpdate: jest.fn(async () => ({ enabled: false })),
+  setWebAutoUpdate: jest.fn(async (_id: number, enabled: boolean) => ({ enabled })),
 }))
 
 jest.mock('@/features/knowledge/document/components/KnowledgeBaseForm', () => ({

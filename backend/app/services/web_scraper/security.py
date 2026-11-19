@@ -4,7 +4,43 @@
 
 """URL safety guard for web scraping."""
 
+from collections.abc import Awaitable, Callable
+from contextvars import ContextVar
 from urllib.parse import ParseResult, urljoin, urlparse, urlunparse
+
+fetch_domain_admission: ContextVar[Callable[[str], Awaitable[None]] | None] = (
+    ContextVar("web_fetch_domain_admission", default=None)
+)
+
+
+async def admit_fetch_domain(url: str) -> None:
+    admission = fetch_domain_admission.get()
+    if admission is not None:
+        await admission(url)
+
+
+async def install_page_domain_admission(page, context=None, **kwargs):
+    """Per-page routing avoids leaking one crawl's domain leases into another."""
+    admission = fetch_domain_admission.get()
+    if admission is not None:
+
+        async def admit_route(route, request):
+            if request.resource_type == "document":
+                if not WebScraperUrlGuard().is_allowed_fetch_url(request.url):
+                    await route.abort()
+                    return
+                try:
+                    await admission(request.url)
+                except Exception:
+                    # The admission owner records the failure; abort promptly
+                    # instead of leaving browser navigation waiting on a route.
+                    await route.abort()
+                    return
+            await route.continue_()
+
+        await page.route("**/*", admit_route)
+    return page
+
 
 from app.services.url_metadata import _validate_url_for_ssrf
 from app.services.web_scraper.models import ERROR_INVALID_URL, ERROR_SSRF_BLOCKED

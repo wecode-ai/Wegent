@@ -143,6 +143,7 @@ class RemoteIndexRequest(KnowledgeRuntimeProtocolModel):
     source_file: str | None = None
     file_extension: str | None = None
     content_ref: ContentRef
+    index_generation: int | None = Field(default=None, gt=0)
     authorized_resources: RemoteAuthorizedRetrievalResources | None = None
     trace_context: dict[str, Any] | None = None
     extensions: dict[str, Any] | None = None

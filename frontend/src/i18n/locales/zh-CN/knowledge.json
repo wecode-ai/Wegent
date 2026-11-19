@@ -77,6 +77,11 @@
     "document": "文档知识"
   },
   "document": {
+    "webAutoUpdate": {
+      "label": "网页定时刷新",
+      "description": "每天检查网页内容，成功建立新索引后更新。默认关闭，更改立即生效。",
+      "retry": "读取或保存失败，重试"
+    },
     "dingtalkAutoSync": {
       "label": "自动更新钉钉文档",
       "description": "每天检查已导入的钉钉文档，有更新时同步到知识库。"

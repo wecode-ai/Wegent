@@ -5,6 +5,7 @@
 """Bound native Milvus upserts after LlamaIndex has serialized complete rows."""
 
 import logging
+from functools import partial
 from typing import Any, Iterator
 
 from pymilvus import MilvusClient
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 class MilvusWriteClient:
-    """Bound native row writes while delegating reads and lifecycle operations."""
+    """Bound row writes and optionally fence searches of published versions."""
 
     def __init__(
         self,
@@ -30,14 +31,20 @@ class MilvusWriteClient:
         max_batch_bytes: int,
         batch_headroom_bytes: int,
         max_rows: int,
+        read_consistency: str | None = None,
     ) -> None:
         validate_batch_limits(max_batch_bytes, batch_headroom_bytes, max_rows)
         self._client = client
         self._budget = max_batch_bytes - batch_headroom_bytes
         self._max_rows = max_rows
+        self._read_consistency = read_consistency
 
     def __getattr__(self, name: str) -> Any:
-        return getattr(self._client, name)
+        method = getattr(self._client, name)
+        if self._read_consistency and name in {"search", "hybrid_search"}:
+            # LlamaIndex does not forward consistency kwargs from query().
+            return partial(method, consistency_level=self._read_consistency)
+        return method
 
     def _size(
         self,

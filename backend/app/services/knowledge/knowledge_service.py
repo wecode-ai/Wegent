@@ -2074,6 +2074,11 @@ class KnowledgeService:
         if not doc:
             return None
 
+        if data.status is not None and doc.source_type == DocumentSourceType.WEB.value:
+            doc = KnowledgeService._lock_document_row(db, document_id)
+            if doc is None:
+                return None
+
         assert_user_content_is_mutable(getattr(doc, "origin", ContentOrigin.USER.value))
 
         # Check permission for knowledge base
@@ -2119,6 +2124,12 @@ class KnowledgeService:
                 # document whose later re-index failed keeps valid content.
                 raise ValueError("Document content is not ready and cannot be enabled")
             doc.status = DocumentStatus(data.status.value)
+            if doc.source_type == DocumentSourceType.WEB.value:
+                # Distinguish an explicit choice from the initial disabled default.
+                doc.source_config = {
+                    **(doc.source_config or {}),
+                    "web_user_status": data.status.value,
+                }
 
         if data.splitter_config is not None:
             doc.splitter_config = data.splitter_config.model_dump(exclude_none=True)

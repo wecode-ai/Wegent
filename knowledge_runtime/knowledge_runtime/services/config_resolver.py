@@ -68,6 +68,7 @@ class QueryConfig:
     user_name: str | None = None
     qa_pair_count: int = 0
     scoped_document_ids: list[int] | None = None
+    published_versions: dict[int, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -77,6 +78,7 @@ class AdminResolvedConfig:
     index_owner_user_id: int
     retriever_config: RuntimeRetrieverConfig
     document_ids: list[int] = field(default_factory=list)
+    published_versions: dict[int, int] = field(default_factory=dict)
 
 
 class ConfigResolutionError(ValueError):
@@ -98,6 +100,7 @@ class ConfigResolver:
         user_id: int,
         document_id: int | None = None,
         authorized: RemoteAuthorizedRetrievalResources | None = None,
+        index_generation: int | None = None,
     ) -> IndexConfig:
         """Resolve all configs needed for document indexing.
 
@@ -144,6 +147,56 @@ class ConfigResolver:
         splitter_config: dict[str, Any] = {}
         if document_id is not None:
             splitter_config = self._get_splitter_config(db, document_id)
+
+        if index_generation is not None:
+            from shared.knowledge_module.publication import publication_fingerprint
+
+            document = (
+                db.query(KnowledgeDocument)
+                .filter(KnowledgeDocument.id == document_id)
+                .first()
+            )
+            candidate = (
+                (document.source_config or {}).get("_web_refresh") if document else None
+            )
+            retriever = self._get_retriever_kind(
+                db,
+                user_id=index_owner_user_id,
+                name=authorized.retriever.name,
+                namespace=authorized.retriever.namespace,
+            )
+            resources = {
+                "retriever": (
+                    {
+                        "id": retriever.id,
+                        "hash": publication_fingerprint(retriever.json),
+                    }
+                    if retriever
+                    else None
+                ),
+                "embedding": {
+                    "id": embedding_kind.id,
+                    "hash": publication_fingerprint(embedding_kind.json),
+                },
+            }
+            fingerprint = publication_fingerprint(
+                {
+                    "retrieval": (kb.json or {}).get("spec", {}).get("retrievalConfig"),
+                    "splitter": document.splitter_config if document else None,
+                    "resources": resources,
+                }
+            )
+            if (
+                not candidate
+                or candidate.get("generation") != index_generation
+                or document.index_generation != index_generation
+                or document.kind_id != knowledge_base_id
+                or document.index_status != "indexing"
+                or candidate.get("config_fingerprint") != fingerprint
+            ):
+                raise ConfigResolutionError(
+                    "config_invalid", "Web candidate inputs were superseded"
+                )
 
         return IndexConfig(
             index_owner_user_id=index_owner_user_id,
@@ -257,6 +310,7 @@ class ConfigResolver:
             user_name=user_name,
             qa_pair_count=qa_pair_count,
             scoped_document_ids=scoped_document_ids,
+            published_versions=self._published_versions(db, scoped_document_ids),
         )
 
     def _authorized_retriever_config(
@@ -361,6 +415,19 @@ class ConfigResolver:
             ),
         )
 
+    @staticmethod
+    def _published_versions(db: Session, document_ids: list[int]) -> dict[int, int]:
+        return {
+            document_id: version
+            for document_id, config in db.query(
+                KnowledgeDocument.id, KnowledgeDocument.source_config
+            )
+            .filter(KnowledgeDocument.id.in_(document_ids))
+            .all()
+            if isinstance(version := (config or {}).get("published_generation"), int)
+            and version > 0
+        }
+
     def _resolve_query_document_metadata(
         self,
         db: Session,
@@ -415,7 +482,18 @@ class ConfigResolver:
             )
         except KnowledgeConfigError as error:
             raise ConfigResolutionError("config_invalid", str(error)) from error
+        visible_ids = (
+            [
+                document_id
+                for (document_id,) in db.query(KnowledgeDocument.id)
+                .filter(KnowledgeDocument.kind_id == knowledge_base_id)
+                .all()
+            ]
+            if operation == "list_chunks"
+            else []
+        )
         return AdminResolvedConfig(
+            published_versions=self._published_versions(db, visible_ids),
             index_owner_user_id=authorized.index_owner_user_id,
             retriever_config=self._build_resolved_retriever_config(
                 db=db,
@@ -423,16 +501,7 @@ class ConfigResolver:
                 name=resource.name,
                 namespace=resource.namespace,
             ),
-            document_ids=(
-                [
-                    document_id
-                    for (document_id,) in db.query(KnowledgeDocument.id)
-                    .filter(KnowledgeDocument.kind_id == knowledge_base_id)
-                    .all()
-                ]
-                if operation == "list_chunks"
-                else []
-            ),
+            document_ids=visible_ids,
         )
 
     # --- Private methods ---

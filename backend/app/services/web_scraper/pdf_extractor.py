@@ -15,6 +15,7 @@ from app.services.web_scraper.proxy import ProxyPlan
 from app.services.web_scraper.security import (
     WebScraperSecurityError,
     WebScraperUrlGuard,
+    admit_fetch_domain,
     redact_url_for_logging,
 )
 from shared.telemetry.decorators import trace_async
@@ -147,6 +148,7 @@ class PdfExtractor:
         ) as client:
             current_url = pdf_url
             for _ in range(PDF_MAX_REDIRECTS + 1):
+                await admit_fetch_domain(current_url)
                 response = await client.get(current_url)
                 if response.status_code not in REDIRECT_STATUS_CODES:
                     guard.validate_final_url(pdf_url, str(response.url))

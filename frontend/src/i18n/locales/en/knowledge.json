@@ -77,6 +77,11 @@
     "document": "Document Knowledge"
   },
   "document": {
+    "webAutoUpdate": {
+      "label": "Scheduled web refresh",
+      "description": "Check web content daily and publish after indexing succeeds. Off by default. Changes take effect immediately.",
+      "retry": "Could not load or save. Retry"
+    },
     "dingtalkAutoSync": {
       "label": "Automatically update DingTalk documents",
       "description": "Check imported DingTalk documents daily and sync changes to the knowledge base."

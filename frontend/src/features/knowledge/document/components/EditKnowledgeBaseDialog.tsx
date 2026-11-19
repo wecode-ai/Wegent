@@ -21,6 +21,7 @@ import { GenerationStrategySelect } from '@/features/knowledge/code-wiki/Generat
 import { ScheduledUpdateDialog } from '@/features/knowledge/code-wiki/ScheduledUpdateDialog'
 import { KnowledgeBaseForm } from './KnowledgeBaseForm'
 import { DingtalkAutoSyncSetting } from './DingtalkAutoSyncSetting'
+import { WebAutoUpdateSetting } from './WebAutoUpdateSetting'
 import { useMultimodalKBConfig } from '@/features/knowledge/multimodal/hooks/useMultimodalKBConfig'
 import { useMultimodalFeatureEnabled } from '@/features/knowledge/multimodal/hooks/useMultimodalFeatureEnabled'
 import { ConvertKnowledgeBaseTypeDialog } from './ConvertKnowledgeBaseTypeDialog'
@@ -487,10 +488,18 @@ export function EditKnowledgeBaseDialog({
                         />
                       </>
                     ) : (
-                      <DingtalkAutoSyncSetting
-                        checked={dingtalkAutoSyncEnabled}
-                        onCheckedChange={setDingtalkAutoSyncEnabled}
-                      />
+                      <>
+                        <DingtalkAutoSyncSetting
+                          checked={dingtalkAutoSyncEnabled}
+                          onCheckedChange={setDingtalkAutoSyncEnabled}
+                        />
+                        {open && knowledgeBase && (
+                          <WebAutoUpdateSetting
+                            key={knowledgeBase.id}
+                            knowledgeBaseId={knowledgeBase.id}
+                          />
+                        )}
+                      </>
                     )
                   }
                   name={name}

@@ -14,18 +14,11 @@
 use std::sync::Arc;
 
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::http_compat::FastApiError;
 use crate::knowledge_documents_content::access;
 use crate::state::AppState;
-
-/// `PUT /api/knowledge-bases/{id}/web-auto-update`.
-#[derive(Debug, PartialEq, Eq)]
-#[allow(dead_code)]
-struct WebAutoUpdateRequest {
-    enabled: bool,
-}
 
 /// Response body for both GET and PUT.
 #[derive(Debug, Serialize)]
@@ -41,10 +34,7 @@ async fn set_web_auto_update(
     kb_id: i64,
     body: Value,
 ) -> Result<WebAutoUpdateResponse, FastApiError> {
-    let enabled = body
-        .get("enabled")
-        .and_then(Value::as_bool)
-        .ok_or_else(|| FastApiError::unhandled())?;
+    let enabled = enabled_from_body(&body)?;
     let user_id = i64::from(user.id);
     require_manage(state, kb_id, user_id).await?;
     let json_bool = if enabled { "true" } else { "false" };
@@ -59,6 +49,15 @@ async fn set_web_auto_update(
     Ok(WebAutoUpdateResponse { enabled })
 }
 
+fn enabled_from_body(body: &Value) -> Result<bool, FastApiError> {
+    body.get("enabled").and_then(Value::as_bool).ok_or_else(|| {
+        FastApiError::detail(
+            brz_http_server::StatusCode::UNPROCESSABLE_ENTITY,
+            "enabled must be a boolean",
+        )
+    })
+}
+
 /// GET /api/knowledge-bases/{kb_id}/web-auto-update.
 #[brz_http_server::get("/api/knowledge-bases/:kb_id/web-auto-update")]
 async fn get_web_auto_update(
@@ -71,7 +70,7 @@ async fn get_web_auto_update(
         .await
         .map_err(|_| FastApiError::unhandled())?
     else {
-        return Err(FastApiError::unhandled());
+        return Err(FastApiError::not_found("Knowledge base not found"));
     };
     let has_access = access::knowledge_base_access(
         &state.mysql,
@@ -83,7 +82,7 @@ async fn get_web_auto_update(
     .await
     .map_err(|_| FastApiError::unhandled())?;
     if !has_access {
-        return Err(FastApiError::unhandled());
+        return Err(FastApiError::forbidden("Access denied"));
     }
     let enabled = kb
         .kinds_json
@@ -94,16 +93,12 @@ async fn get_web_auto_update(
     Ok(WebAutoUpdateResponse { enabled })
 }
 
-async fn require_manage(
-    state: &AppState,
-    kb_id: i64,
-    user_id: i64,
-) -> Result<(), FastApiError> {
+async fn require_manage(state: &AppState, kb_id: i64, user_id: i64) -> Result<(), FastApiError> {
     let Some(kb) = access::knowledge_base_record(&state.mysql, kb_id)
         .await
         .map_err(|_| FastApiError::unhandled())?
     else {
-        return Err(FastApiError::unhandled());
+        return Err(FastApiError::not_found("Knowledge base not found"));
     };
     let has_access = access::knowledge_base_access(
         &state.mysql,
@@ -115,19 +110,56 @@ async fn require_manage(
     .await
     .map_err(|_| FastApiError::unhandled())?;
     if !has_access {
-        return Err(FastApiError::unhandled());
+        return Err(FastApiError::forbidden("Access denied"));
     }
-    let can_manage = access::can_manage_knowledge_base_documents(
+    // P1-5: require Maintainer or Creator to change KB-level settings
+    // (Developer is insufficient). Reuse the shared permission resolver.
+    let facts = access::resolve_permission_facts(
         &state.mysql,
         state.redis.as_ref(),
         &state.entity_resolvers,
-        kb_id,
+        &kb,
         user_id,
     )
     .await
     .map_err(|_| FastApiError::unhandled())?;
+    let can_manage = facts.has_access
+        && (facts.is_creator
+            || facts
+                .role
+                .as_deref()
+                .is_some_and(|role| access::has_permission(role, "Maintainer")));
     if !can_manage {
-        return Err(FastApiError::unhandled());
+        return Err(FastApiError::forbidden("Access denied"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn switch_requires_an_explicit_json_boolean() {
+        for enabled in [false, true] {
+            assert_eq!(
+                enabled_from_body(&json!({"enabled": enabled})).unwrap(),
+                enabled
+            );
+        }
+        for body in [
+            json!({}),
+            json!({"enabled": "false"}),
+            json!({"enabled": 0}),
+            json!({"enabled": null}),
+            json!([]),
+            Value::Null,
+        ] {
+            assert_eq!(
+                enabled_from_body(&body).unwrap_err().status(),
+                brz_http_server::StatusCode::UNPROCESSABLE_ENTITY
+            );
+        }
+    }
 }

@@ -3,8 +3,7 @@
 
 //! Cursor-based external synchronization and source-health probes.
 use super::{
-    cleanup,
-    import,
+    cleanup, import,
     index::enabled,
     sources::{self, SourceError},
     store,
@@ -18,7 +17,6 @@ use brz_mysql::{FromMysqlRow, Json, MysqlTransaction};
 use brz_redis::{Redis, cmd};
 use brz_schedule::{HandlerOptions, JobContext};
 use chrono::Utc;
-use sha2::Digest;
 use serde_json::{Map, Value, json};
 use std::{
     sync::Arc,
@@ -157,43 +155,52 @@ pub fn register(registry: &mut BackgroundJobRegistry, state: Arc<AppState>) -> R
     if enabled("WEB_AUTO_UPDATE_SCHEDULE_ENABLED", false) {
         registry.cron(WEB_SCAN, "0 4 * * *", "UTC")?;
     }
-    let web_refresh_state = state.clone();
-    registry.register(WEB_REFRESH, move |_, value| {
-        let state = web_refresh_state.clone();
-        async move {
-            let id = value["document_id"]
-                .as_i64()
-                .context("document_id is required")?;
-            let generation = value["expected_generation"]
-                .as_i64()
-                .context("expected_generation is required")?;
-            Ok(json!(refresh_web_document(&state, id, generation).await?))
-        }
-    })?;
-    registry.max_failures(WEB_REFRESH, 1)?;
     Ok(())
 }
 
 /// Cursor-based scan of web documents whose knowledge base has auto-update enabled.
 async fn scan_web_documents(state: &Arc<AppState>, context: &JobContext) -> Result<Value> {
-    let mut cursor: i64 = 0;
+    let redis = state
+        .redis
+        .as_ref()
+        .context("Web scan cursor Redis is unavailable")?;
+    let key = "web-auto-update:scan-cursor";
+    let raw: Option<String> = redis.get(key).await?;
+    let mut cursor = raw
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or_default()
+        .max(0);
+    let maximum = super::state::seconds("EXTERNAL_DOC_SYNC_RUN_MAX_DOCUMENTS", 10000) as u64;
+    let started = Instant::now();
+    let budget = Duration::from_secs(super::state::seconds(
+        "EXTERNAL_DOC_SYNC_TIME_BUDGET_SECONDS",
+        2700,
+    ) as u64);
     let mut dispatched: u64 = 0;
-    let skipped_locked: u64 = 0;
-    loop {
+    let mut scanned: u64 = 0;
+    while scanned < maximum && started.elapsed() < budget {
         if context.cancellation.is_cancelled() {
             bail!("Web auto-update scan cancelled");
         }
         let rows: Vec<Candidate> = state.mysql.fetch_all(
-            "SELECT d.id, d.index_generation FROM knowledge_documents d              JOIN kinds k ON k.id = d.kind_id              WHERE d.id > ?              AND d.source_type = 'web'              AND d.is_active = true              AND d.index_status NOT IN ('queued','pending_conversion','converting','indexing')              AND k.kind = 'KnowledgeBase'              AND k.is_active = true              AND JSON_EXTRACT(k.json, '$.spec.webAutoUpdateEnabled') = true              ORDER BY d.id LIMIT 100",
+            "SELECT d.id, d.index_generation FROM knowledge_documents d              JOIN kinds k ON k.id = d.kind_id              WHERE d.id > ?              AND d.source_type = 'web'              AND d.is_active = true AND d.status = 'enabled'              AND d.index_status NOT IN ('queued','pending_conversion','converting','indexing')              AND k.kind = 'KnowledgeBase'              AND k.is_active = true              AND JSON_EXTRACT(k.json, '$.spec.webAutoUpdateEnabled') = true              ORDER BY d.id LIMIT 100",
             (cursor,),
         ).await?;
         if rows.is_empty() {
+            cursor = 0;
             break;
         }
         for row in rows {
+            if scanned >= maximum
+                || started.elapsed() >= budget
+                || context.cancellation.is_cancelled()
+            {
+                break;
+            }
             cursor = row.id;
+            scanned += 1;
             let value = json!({"document_id": row.id, "expected_generation": row.index_generation});
-            match submit(state, WEB_REFRESH, value, Some(86400)).await {
+            match submit_python(state, WEB_REFRESH, value, Some(86400)).await {
                 Ok(()) => dispatched += 1,
                 Err(dispatch_error) => {
                     tracing::warn!(document_id = row.id, %dispatch_error, "Web auto-update refresh dispatch failed");
@@ -201,161 +208,8 @@ async fn scan_web_documents(state: &Arc<AppState>, context: &JobContext) -> Resu
             }
         }
     }
-    Ok(json!({"status":"completed","dispatched":dispatched,"skipped_locked":skipped_locked}))
-}
-
-/// Refresh a single web document: scrape, hash-compare, and reindex if changed.
-async fn refresh_web_document(state: &Arc<AppState>, id: i64, generation: i64) -> Result<bool> {
-    // Load the document row and verify generation / index status.
-    #[derive(FromMysqlRow)]
-    struct WebDocument {
-        kind_id: i64,
-        index_generation: i64,
-        index_status: String,
-        source_config: Json<Map<String, Value>>,
-    }
-    let row: Option<WebDocument> = state.mysql.fetch_optional(
-        "SELECT kind_id, index_generation, index_status,          COALESCE(NULLIF(source_config, CAST('null' AS JSON)), JSON_OBJECT()) AS source_config          FROM knowledge_documents WHERE id = ? AND is_active = true",
-        (id,),
-    ).await?;
-    let Some(doc) = row else { return Ok(false) };
-    if doc.index_generation != generation {
-        return Ok(false);
-    }
-    if super::state::ACTIVE.contains(&doc.index_status.as_str()) {
-        return Ok(false);
-    }
-
-    // Verify the KB still has auto-update enabled.
-    #[derive(FromMysqlRow)]
-    struct KbSpec {
-        json: Json<Value>,
-    }
-    let kb: Option<KbSpec> = state.mysql.fetch_optional(
-        "SELECT json FROM kinds WHERE id = ? AND kind = 'KnowledgeBase' AND is_active = true",
-        (doc.kind_id,),
-    ).await?;
-    let Some(kb) = kb else { return Ok(false) };
-    if kb.json.0.pointer("/spec/webAutoUpdateEnabled").and_then(Value::as_bool) != Some(true) {
-        return Ok(false);
-    }
-
-    // Extract the URL from source_config.
-    let url = doc
-        .source_config
-        .0
-        .get("url")
-        .and_then(Value::as_str)
-        .context("Web document has no URL in source_config")?
-        .to_string();
-
-    // Fetch the page content (scrape exception or content abnormality both leave the old content in place).
-    let outcome = crate::web_scraper::fetch_url_content(&url).await;
-    let now = Utc::now().to_rfc3339();
-    let mut source_config = doc.source_config.0.clone();
-    let web_update = source_config
-        .entry("webAutoUpdate".to_string())
-        .or_insert_with(|| json!({}));
-    if let Some(obj) = web_update.as_object_mut() {
-        obj.insert("last_checked_at".to_string(), json!(now));
-    }
-    match outcome.content {
-        None => {
-            // Scrape exception or content abnormality: record the check time, do not replace.
-            let _ = state.mysql.execute(
-                "UPDATE knowledge_documents SET source_config = ?, updated_at = NOW() WHERE id = ? AND index_generation = ?",
-                (Json(&source_config), id, generation),
-            ).await;
-            return Ok(false);
-        }
-        Some(text) => {
-            let hash = format!("sha256:{:x}", sha2::Sha256::digest(text.as_bytes()));
-            let previous_hash = Value::Object(doc.source_config.0.clone())
-                .pointer("/webAutoUpdate/content_hash")
-                .and_then(Value::as_str)
-                .map(str::to_string);
-            if previous_hash.as_deref() == Some(hash.as_str()) {
-                // Unchanged content: only update last_checked_at.
-                let _ = state.mysql.execute(
-                    "UPDATE knowledge_documents SET source_config = ?, updated_at = NOW() WHERE id = ? AND index_generation = ?",
-                    (Json(&source_config), id, generation),
-                ).await;
-                return Ok(false);
-            }
-            // Content changed: prepare the document for refresh, replace the
-            // attachment, and submit the index task.
-            if let Some(obj) = source_config.get_mut("webAutoUpdate").and_then(Value::as_object_mut) {
-                obj.insert("content_hash".to_string(), json!(hash));
-            }
-            // 1. Prepare the document (increment generation, mark as processing).
-            let prepared = store::enqueue(&state.mysql, id, Some(generation), false, false).await?;
-            let was_success = prepared.previous_status.as_deref() == Some("success");
-            let Some(document) = prepared.document.filter(|_| prepared.accepted) else {
-                return Ok(false);
-            };
-            cleanup::cleanup_replaced(state, document.user_id, prepared.cleanup).await;
-
-            // 2. Upload the new content as an attachment.
-            let user_id = document.user_id;
-            let attachment = match crate::attachments::upload::upload_attachment_context(
-                state, user_id, &format!("{id}.md"), text.as_bytes(), 0, None,
-            ).await {
-                Ok(attachment) => attachment,
-                Err(upload_error) => {
-                    let public = super::state::processing_error(
-                        "web_refresh",
-                        "web_attachment_upload_failed",
-                        "The web document content could not be stored.",
-                        document.generation,
-                        Utc::now(),
-                    );
-                    let failure = store::fail(&state.mysql, id, document.generation, public, true, false).await?;
-                    cleanup::cleanup_replaced(state, user_id, failure.cleanup).await;
-                    tracing::warn!(document_id = id, error = ?upload_error, "Web auto-update attachment upload failed");
-                    return Ok(false);
-                }
-            };
-
-            // 3. Update the document's attachment and hash.
-            if let Err(update_error) = state.mysql.execute(
-                "UPDATE knowledge_documents SET attachment_id = ?, file_extension = 'md', file_size = ?, source_config = ?, updated_at = NOW() WHERE id = ? AND index_generation = ?",
-                (attachment, text.len() as i64, Json(&source_config), id, document.generation),
-            ).await {
-                let public = super::state::processing_error(
-                    "web_refresh",
-                    "web_attachment_update_failed",
-                    "The web document could not be updated.",
-                    document.generation,
-                    Utc::now(),
-                );
-                let failure = store::fail(&state.mysql, id, document.generation, public, true, false).await?;
-                cleanup::cleanup_replaced(state, user_id, failure.cleanup).await;
-                tracing::warn!(document_id = id, %update_error, "Web auto-update document update failed");
-                return Err(anyhow::anyhow!(update_error.to_string()));
-            }
-
-            // 4. Submit the index task.
-            if let Err(dispatch_error) = submit(
-                state,
-                super::index::NAME,
-                json!({"document_id": id, "expected_generation": document.generation}),
-                None,
-            ).await {
-                let public = super::state::processing_error(
-                    "dispatch",
-                    "web_index_dispatch_failed",
-                    "The web document index task could not be queued.",
-                    document.generation,
-                    Utc::now(),
-                );
-                let failure = store::fail(&state.mysql, id, document.generation, public, true, false).await?;
-                cleanup::cleanup_replaced(state, user_id, failure.cleanup).await;
-                tracing::warn!(document_id = id, %dispatch_error, "Web auto-update index dispatch failed");
-                return Ok(false);
-            }
-            return Ok(true);
-        }
-    }
+    store_cursor(redis, key, cursor).await?;
+    Ok(json!({"status":"completed","scanned":scanned,"dispatched":dispatched,"next_cursor":cursor}))
 }
 
 #[derive(FromMysqlRow)]
@@ -563,6 +417,7 @@ async fn scan_dingtalk(
         }
         let rows:Vec<Candidate>=state.mysql.fetch_all("SELECT d.id,d.index_generation FROM knowledge_documents d JOIN knowledge_document_external_sources e ON e.document_id=d.id JOIN kinds k ON k.id=d.kind_id WHERE d.id>? AND e.external_provider='dingtalk' AND d.index_status NOT IN ('queued','pending_conversion','converting','indexing') AND k.kind='KnowledgeBase' AND k.is_active=true AND JSON_EXTRACT(k.json,'$.spec.dingtalkAutoSyncEnabled')=true AND (? IS NULL OR d.kind_id=?) ORDER BY d.id LIMIT 100",(cursor,kb,kb)).await?;
         if rows.is_empty() {
+            cursor = 0;
             break;
         }
         for row in rows {
@@ -793,6 +648,35 @@ pub(super) async fn invalidate_refresh(
     }).await
 }
 
+pub(super) async fn submit_python(
+    state: &AppState,
+    name: &str,
+    value: Value,
+    expires: Option<i64>,
+) -> Result<()> {
+    let redis = state
+        .redis
+        .as_ref()
+        .context("External document task broker is unavailable")?;
+    let id = super::super::client::random_id()?;
+    state
+        .celery
+        .dispatch(
+            redis,
+            &crate::celery_broker::CeleryTask {
+                task_name: name,
+                queue: "wegent_online",
+                task_id: &id,
+                kwargs: value
+                    .as_object()
+                    .context("External job payload is invalid")?,
+                expires_at: expires.map(|seconds| Utc::now() + chrono::Duration::seconds(seconds)),
+            },
+        )
+        .await?;
+    Ok(())
+}
+
 async fn submit(state: &AppState, name: &str, value: Value, expires: Option<i64>) -> Result<()> {
     if state.background_jobs.is_enabled(name) {
         // Scan refreshes carry the source's one-day execution deadline.
@@ -987,75 +871,5 @@ mod tests {
             wiki_action(&json!({"indexed_version":"v2"}), "success", 7, &json!("v2")),
             Action::Unchanged
         );
-    }
-}
-
-#[cfg(test)]
-mod web_auto_update_tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn web_scan_selects_only_active_web_documents_with_kb_switch_enabled() {
-        // This test validates the SQL shape. The real query is exercised in
-        // mysql_tests.rs with a live database; here we assert the constant
-        // and the handler registration names match.
-        assert_eq!(
-            WEB_SCAN,
-            "app.tasks.web_auto_update_tasks.scan_web_documents"
-        );
-        assert_eq!(
-            WEB_REFRESH,
-            "app.tasks.web_auto_update_tasks.refresh_web_document"
-        );
-    }
-
-    #[test]
-    fn unchanged_content_hash_short_circuits_before_reindex() {
-        let stored = json!({"webAutoUpdate": {"content_hash": "sha256:abc123"}});
-        let new_hash = "sha256:abc123";
-        let previous = stored
-            .pointer("/webAutoUpdate/content_hash")
-            .and_then(Value::as_str)
-            .map(str::to_string);
-        assert_eq!(previous.as_deref(), Some(new_hash));
-    }
-
-    #[test]
-    fn changed_content_hash_triggers_refresh() {
-        let stored = json!({"webAutoUpdate": {"content_hash": "sha256:old"}});
-        let new_hash = "sha256:new";
-        let previous = stored
-            .pointer("/webAutoUpdate/content_hash")
-            .and_then(Value::as_str)
-            .map(str::to_string);
-        assert_ne!(previous.as_deref(), Some(new_hash));
-    }
-
-    #[test]
-    fn missing_content_hash_is_treated_as_changed() {
-        let stored = json!({"webAutoUpdate": {}});
-        let previous = stored
-            .pointer("/webAutoUpdate/content_hash")
-            .and_then(Value::as_str);
-        assert!(previous.is_none());
-    }
-
-    #[test]
-    fn kb_switch_missing_means_disabled() {
-        let kb_json = json!({"spec": {}});
-        let enabled = kb_json
-            .pointer("/spec/webAutoUpdateEnabled")
-            .and_then(Value::as_bool);
-        assert_ne!(enabled, Some(true));
-    }
-
-    #[test]
-    fn kb_switch_enabled_passes() {
-        let kb_json = json!({"spec": {"webAutoUpdateEnabled": true}});
-        let enabled = kb_json
-            .pointer("/spec/webAutoUpdateEnabled")
-            .and_then(Value::as_bool);
-        assert_eq!(enabled, Some(true));
     }
 }

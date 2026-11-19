@@ -5,6 +5,8 @@
 """Tests for knowledge Celery tasks."""
 
 from contextlib import ExitStack, contextmanager, nullcontext
+from datetime import datetime, timedelta, timezone
+from heapq import heappop, heappush
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -62,6 +64,214 @@ def _session_factory():
         return nullcontext(MagicMock())
 
     return _open_session
+
+
+@pytest.mark.parametrize("exhausted", [False, True])
+def test_web_busy_retry_is_bounded_without_changing_publication(
+    test_db, test_user, monkeypatch, exhausted
+):
+    from celery.exceptions import Retry
+
+    from app.models.knowledge import KnowledgeDocument
+    from app.services.knowledge.web_refresh import WebRefreshBusy
+    from app.tasks.web_auto_update_tasks import refresh_web_document_task
+
+    monkeypatch.setattr(settings, "WEB_AUTO_UPDATE_SCHEDULE_ENABLED", True)
+    document = KnowledgeDocument(
+        kind_id=1,
+        user_id=test_user.id,
+        name="web.md",
+        file_extension="md",
+        file_size=8,
+        source_type="web",
+        is_active=True,
+        status="enabled",
+        index_status="success",
+        index_generation=3,
+        source_config={"published_generation": 2},
+    )
+    test_db.add(document)
+    test_db.commit()
+    monkeypatch.setattr(
+        "app.tasks.web_auto_update_tasks.SessionLocal", lambda: nullcontext(test_db)
+    )
+    busy = WebRefreshBusy("Domain is busy")
+    busy.generation = 3
+    monkeypatch.setattr(
+        "app.tasks.web_auto_update_tasks.refresh_web_document",
+        AsyncMock(side_effect=busy),
+    )
+    retry = MagicMock(side_effect=Retry())
+    monkeypatch.setattr(refresh_web_document_task, "retry", retry)
+    refresh_web_document_task.push_request(
+        retries=refresh_web_document_task.max_retries if exhausted else 0
+    )
+    try:
+        if exhausted:
+            result = refresh_web_document_task.run(document.id, 3)
+            assert result == {"status": "skipped", "reason": "busy_retry_exhausted"}
+            retry.assert_not_called()
+        else:
+            with pytest.raises(Retry):
+                refresh_web_document_task.run(document.id, 3)
+            assert (
+                retry.call_args.kwargs["countdown"]
+                == settings.KNOWLEDGE_INDEX_LOCK_RETRY_DELAY_SECONDS
+            )
+    finally:
+        refresh_web_document_task.pop_request()
+    test_db.refresh(document)
+    assert document.source_config["published_generation"] == 2
+    assert document.index_status == DocumentIndexStatus.SUCCESS
+    assert document.is_active and document.status == "enabled"
+
+
+@pytest.mark.parametrize("expires_soon", [False, True])
+def test_web_domain_wait_preserves_deadline_and_allows_batch_progress(
+    test_db, test_user, monkeypatch, expires_soon
+):
+    from celery.exceptions import Retry
+
+    from app.models.kind import Kind
+    from app.models.knowledge import KnowledgeDocument
+    from app.services.knowledge import web_refresh
+    from app.services.knowledge.web_publication import config_fingerprint, content_hash
+    from app.services.web_scraper import ScrapedContent
+    from app.tasks import web_auto_update_tasks as tasks
+    from tests.utils.retrieval_resources import embedding_model_kind, retriever_kind
+
+    start = datetime(2026, 11, 19, tzinfo=timezone.utc)
+    clock = {"seconds": 0.0, "busy_until": 30.0}
+    deadline = start + timedelta(seconds=10 if expires_soon else 600)
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return start + timedelta(seconds=clock["seconds"])
+
+    lease = SimpleNamespace(owned=lambda: True)
+    monkeypatch.setattr(
+        web_refresh.distributed_lock,
+        "owned_watchdog_context",
+        lambda name, **kw: nullcontext(
+            None
+            if name.startswith("web-fetch:") and clock["seconds"] < clock["busy_until"]
+            else lease
+        ),
+    )
+    redis = MagicMock()
+    redis.time.side_effect = lambda: (clock["seconds"], 0)
+    redis.get.return_value = None
+    monkeypatch.setattr(web_refresh.distributed_lock, "_redis_client", redis)
+
+    async def scrape(url, **kwargs):
+        # Another worker can occupy the domain for longer than the first retry.
+        clock["busy_until"] = clock["seconds"] + 30
+        return ScrapedContent(url=url, content="Open 9am-6pm.")
+
+    monkeypatch.setattr(
+        "app.services.web_scraper.get_web_scraper_service",
+        lambda: SimpleNamespace(scrape_url=scrape),
+    )
+
+    monkeypatch.setattr(tasks, "datetime", Clock)
+    monkeypatch.setattr(tasks, "uniform", lambda a, b: 0)
+    monkeypatch.setattr(tasks.settings, "WEB_AUTO_UPDATE_SCHEDULE_ENABLED", True)
+    monkeypatch.setattr(tasks, "SessionLocal", lambda: nullcontext(test_db))
+    # Retain Celery's real retry/signature construction; replace only transport.
+    monkeypatch.setattr(tasks.refresh_web_document_task, "apply_async", MagicMock())
+    kb = Kind(
+        user_id=test_user.id,
+        kind="KnowledgeBase",
+        name="domain-batch",
+        namespace="default",
+        is_active=True,
+        json={
+            "spec": {
+                "webAutoUpdateEnabled": True,
+                "retrievalConfig": {
+                    "retriever_name": "store",
+                    "embedding_config": {"model_name": "embed"},
+                },
+            }
+        },
+    )
+    test_db.add_all(
+        [
+            kb,
+            retriever_kind(test_user.id, "store"),
+            embedding_model_kind(test_user.id, "embed"),
+        ]
+    )
+    test_db.commit()
+    documents = [
+        KnowledgeDocument(
+            kind_id=kb.id,
+            user_id=test_user.id,
+            name=f"web-{i}.md",
+            file_extension="md",
+            file_size=8,
+            source_type="web",
+            is_active=True,
+            status="enabled",
+            index_status=DocumentIndexStatus.SUCCESS,
+            index_generation=3,
+            source_config={
+                "url": "https://example.com/hours",
+                "published_generation": 2,
+                "webAutoUpdate": {"content_hash": content_hash("Open 9am-6pm.")},
+            },
+        )
+        for i in range(3)
+    ]
+    test_db.add_all(documents)
+    test_db.commit()
+    for document in documents:
+        document.source_config = {
+            **document.source_config,
+            "published_index_fingerprint": config_fingerprint(kb, document, test_db),
+        }
+    test_db.commit()
+    pending = [(0, document.id, 0, 3) for document in documents]
+    completed, expired = [], []
+    while pending:
+        when, document_id, retries, expected_generation = heappop(pending)
+        clock["seconds"] = when
+        task = tasks.refresh_web_document_task
+        task.push_request(
+            id=f"web-{document_id}",
+            retries=retries,
+            called_directly=False,
+            expires=deadline.isoformat(),
+            args=(),
+            kwargs={},
+        )
+        try:
+            try:
+                result = task.run(document_id, expected_generation)
+            except Retry as retry:
+                assert retry.sig.options["expires"] == deadline
+                generation = retry.sig.kwargs["expected_generation"]
+                assert generation == expected_generation + 1
+                heappush(
+                    pending, (when + retry.when, document_id, retries + 1, generation)
+                )
+            else:
+                if expires_soon:
+                    assert result["reason"] == "domain_wait_expired"
+                    expired.append(document_id)
+                else:
+                    assert result["status"] == "accepted"
+                    assert retries > settings.KNOWLEDGE_INDEX_LOCK_MAX_RETRIES
+                    completed.append(document_id)
+        finally:
+            task.pop_request()
+    assert (expired if expires_soon else completed) == [d.id for d in documents]
+    for document in documents:
+        test_db.refresh(document)
+        assert document.source_config["published_generation"] == 2
+        assert document.index_status == DocumentIndexStatus.SUCCESS
+        assert document.is_active and document.status == "enabled"
 
 
 @pytest.mark.parametrize(
@@ -428,6 +638,55 @@ def test_index_document_task_deletes_late_index_after_document_deletion():
 
     cleanup_mock.assert_called_once()
     assert result["reason"] == "stale_or_already_finalized"
+
+
+@pytest.mark.parametrize("outcome", ["lost_lease", "superseded", "deleted"])
+def test_web_index_invalidations_never_use_logical_document_compensation(outcome):
+    """Old versioned workers cannot change another owner's state or index."""
+    lease = MagicMock()
+    lease.owned.return_value = outcome != "lost_lease"
+    with ExitStack() as stack:
+        for target, replacement in {
+            "app.tasks.knowledge_tasks.distributed_lock.owned_watchdog_context": MagicMock(
+                return_value=nullcontext(lease)
+            ),
+            "app.tasks.knowledge_tasks.SessionLocal": MagicMock(
+                side_effect=_session_factory()
+            ),
+            "app.services.knowledge.index_state_machine.mark_document_index_started": MagicMock(
+                return_value=SimpleNamespace(
+                    should_execute=outcome != "deleted", reason="document_not_found"
+                )
+            ),
+            "app.services.knowledge.indexing.run_document_indexing": MagicMock(
+                return_value={
+                    "status": "skipped" if outcome == "lost_lease" else "success"
+                }
+            ),
+            "app.services.knowledge.web_publication.publish_candidate": MagicMock(
+                return_value=False
+            ),
+            "app.services.knowledge.index_state_machine.mark_document_index_failed": MagicMock(
+                side_effect=AssertionError("Lost owner must not fail the candidate")
+            ),
+            "app.tasks.knowledge_tasks._cleanup_late_index_or_retry": MagicMock(
+                side_effect=AssertionError(
+                    "Version cleanup must use its persisted ledger"
+                )
+            ),
+        }.items():
+            stack.enter_context(patch(target, replacement))
+        result = index_document_task.run(**_task_kwargs(), publication_generation=5)
+
+    assert result["status"] == "skipped"
+    assert (
+        result["reason"]
+        == {
+            "lost_lease": "lease_lost",
+            "superseded": "stale_or_already_finalized",
+            "deleted": "document_not_found",
+        }[outcome]
+    )
 
 
 def test_index_document_task_compensates_a_late_index_after_a_failed_write():

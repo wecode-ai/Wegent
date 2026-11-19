@@ -113,7 +113,14 @@ class QueryExecutor:
         return await self._merge_hierarchical_records(
             knowledge_id=knowledge_id,
             result=result,
-            kwargs=kwargs,
+            kwargs={
+                **kwargs,
+                **(
+                    {"versioned_read": True}
+                    if resolved_scope and resolved_scope.published_versions
+                    else {}
+                ),
+            },
         )
 
     @staticmethod

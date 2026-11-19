@@ -177,6 +177,53 @@ async def run_query(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["vector", "keyword", "hybrid"])
+async def test_query_uses_persisted_publication_and_returns_logical_identity(
+    qa_query_db, mode
+):
+    document = qa_query_db.get(KnowledgeDocument, 11)
+    document.source_config = {
+        "published_generation": 2,
+        "_web_refresh": {"generation": 3},
+    }
+    qa_query_db.commit()
+    stored = [
+        {
+            "content": ref,
+            "score": 0.9,
+            "metadata": {"knowledge_id": "1", "doc_ref": ref},
+        }
+        for ref in ["11@3", "11@2", "11"]
+    ]
+    storage = MagicMock()
+    storage.supports_retrieval_scope = True
+    storage.retrieve.side_effect = lambda **kwargs: {
+        "records": [
+            item
+            for item in stored
+            if item["metadata"]["doc_ref"] in kwargs["scope"].document_refs()
+        ][:1]
+    }
+    request = RemoteQueryRequest(
+        knowledge_base_ids=[1],
+        user_id=42,
+        query="body",
+        scope=RetrievalScope(document_ids=[11], published_versions={11: 3}),
+    )
+    before, _ = await run_query(qa_query_db, request, mode, storage)
+    assert [(record.document_id, record.content) for record in before.records] == [
+        (11, "11@2")
+    ]
+    document = qa_query_db.get(KnowledgeDocument, 11)
+    document.source_config = {"published_generation": 3}
+    qa_query_db.commit()
+    after, _ = await run_query(qa_query_db, request, mode, storage)
+    assert [(record.document_id, record.content) for record in after.records] == [
+        (11, "11@3")
+    ]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "document_ids",
     [None, [10], [10, 11]],

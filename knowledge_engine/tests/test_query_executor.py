@@ -322,11 +322,13 @@ async def test_query_executor_keeps_vector_when_qa_pair_hybrid_is_not_supported(
 
 
 @pytest.mark.asyncio
-async def test_query_executor_merges_hierarchical_child_hits_into_parent_content() -> (
-    None
-):
+@pytest.mark.parametrize("versioned", [False, True])
+async def test_query_executor_merges_hierarchical_child_hits_into_parent_content(
+    versioned,
+) -> None:
     from knowledge_engine.query import QueryExecutor
 
+    doc_ref = "1@2" if versioned else "doc_1"
     storage_backend = MagicMock()
     storage_backend.retrieve.return_value = {
         "records": [
@@ -338,7 +340,7 @@ async def test_query_executor_merges_hierarchical_child_hits_into_parent_content
                     "knowledge_id": "1",
                     "chunk_strategy": "hierarchical",
                     "parent_node_id": "parent-1",
-                    "doc_ref": "doc_1",
+                    "doc_ref": doc_ref,
                 },
             }
         ]
@@ -350,7 +352,7 @@ async def test_query_executor_merges_hierarchical_child_hits_into_parent_content
             "metadata": {
                 "knowledge_id": "1",
                 "chunk_strategy": "hierarchical",
-                "doc_ref": "doc_1",
+                "doc_ref": doc_ref,
             },
         }
     }
@@ -360,6 +362,9 @@ async def test_query_executor_merges_hierarchical_child_hits_into_parent_content
         knowledge_id="1",
         query="parent question",
         retrieval_config={"top_k": 5, "retrieval_mode": "vector"},
+        scope=RetrievalScope(
+            document_ids=[1], published_versions={1: 2} if versioned else {}
+        ),
     )
 
     assert result == {
@@ -371,7 +376,7 @@ async def test_query_executor_merges_hierarchical_child_hits_into_parent_content
                 "metadata": {
                     "knowledge_id": "1",
                     "chunk_strategy": "hierarchical",
-                    "doc_ref": "doc_1",
+                    "doc_ref": doc_ref,
                     "parent_node_id": "parent-1",
                 },
             }
@@ -380,6 +385,7 @@ async def test_query_executor_merges_hierarchical_child_hits_into_parent_content
     storage_backend.get_parent_nodes.assert_called_once_with(
         knowledge_id="1",
         parent_node_ids=["parent-1"],
+        **({"versioned_read": True} if versioned else {}),
     )
 
 

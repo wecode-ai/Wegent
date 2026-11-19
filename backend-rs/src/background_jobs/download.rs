@@ -42,7 +42,7 @@ pub async fn get_with_headers(
                 .map_err(|_| anyhow::anyhow!("Download host could not be resolved"))?
                 .collect::<Vec<_>>(),
         };
-        if addresses.is_empty() || addresses.iter().any(|address| !is_public_ip(address.ip())) {
+        if addresses.is_empty() || addresses.iter().any(|address| !public(address.ip())) {
             bail!("Download host is not public")
         }
         let http = brz_http::Client::builder()
@@ -98,7 +98,7 @@ pub async fn get_with_headers(
     unreachable!("bounded redirects")
 }
 
-pub(crate) fn is_public_ip(ip: IpAddr) -> bool {
+fn public(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ip) => {
             let value = u32::from(ip);
@@ -157,9 +157,9 @@ mod tests {
             "::1",
             "2001:db8::1",
         ] {
-            assert!(!is_public_ip(raw.parse().unwrap()), "{raw}");
+            assert!(!public(raw.parse().unwrap()), "{raw}");
         }
-        assert!(is_public_ip("8.8.8.8".parse().unwrap()));
-        assert!(is_public_ip("2606:4700:4700::1111".parse().unwrap()));
+        assert!(public("8.8.8.8".parse().unwrap()));
+        assert!(public("2606:4700:4700::1111".parse().unwrap()));
     }
 }

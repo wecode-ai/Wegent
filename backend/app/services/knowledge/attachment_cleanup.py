@@ -180,6 +180,19 @@ def delete_attachment_best_effort(
     from app.services.context.context_service import context_service
 
     try:
+        attachment = db.get(SubtaskContext, attachment_id)
+        if (
+            isinstance(attachment, SubtaskContext)
+            and isinstance(attachment.type_data, dict)
+            and isinstance(attachment.type_data.get("web_index_version"), dict)
+        ):
+            # Retain both the body and exact index identity until the version
+            # reaper has checked readers, writers and the publication pointer.
+            from app.services.knowledge.web_publication import retire_attachment
+
+            retire_attachment(db, attachment_id)
+            db.commit()
+            return
         if retry_orphan_cleanup:
             mark_attachments_for_orphan_cleanup(db, {attachment_id})
             db.commit()

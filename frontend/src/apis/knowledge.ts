@@ -33,6 +33,14 @@ import type {
   WebScrapeResponse,
 } from '@/types/knowledge'
 
+export function getWebAutoUpdate(id: number): Promise<{ enabled: boolean }> {
+  return apiClient.get(`/knowledge-bases/${id}/web-auto-update`)
+}
+
+export function setWebAutoUpdate(id: number, enabled: boolean): Promise<{ enabled: boolean }> {
+  return apiClient.put(`/knowledge-bases/${id}/web-auto-update`, { enabled })
+}
+
 // ============== Knowledge Base APIs ==============
 
 /**

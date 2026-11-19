@@ -18,6 +18,7 @@ from app.services.web_scraper.quality import MarkdownQualityEvaluator
 from app.services.web_scraper.security import (
     WebScraperSecurityError,
     WebScraperUrlGuard,
+    admit_fetch_domain,
     redact_url_for_logging,
 )
 
@@ -243,6 +244,12 @@ class PlaywrightFrameExtractionStrategy:
     ) -> None:
         async def guard_route(route: Any, request: Any) -> None:
             if guard.is_allowed_fetch_url(request.url):
+                if getattr(request, "resource_type", None) == "document":
+                    try:
+                        await admit_fetch_domain(request.url)
+                    except Exception:
+                        await route.abort()
+                        return
                 await route.continue_()
             else:
                 await route.abort()
@@ -269,7 +276,10 @@ class PlaywrightFrameExtractionStrategy:
                 continue
 
             normalized = " ".join(part.markdown.split())
-            if len(normalized) < MIN_FRAME_TEXT_LENGTH or normalized in seen:
+            if (
+                len(normalized) < MIN_FRAME_TEXT_LENGTH
+                and not policy.allow_short_content
+            ) or normalized in seen:
                 continue
             seen.add(normalized)
             parts.append(part)

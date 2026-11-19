@@ -220,6 +220,14 @@ def _prepare_document_index_enqueue(
             False, decision.generation, decision.reason, current_status
         )
 
+    # Web candidates have not changed the served body. A stale takeover must
+    # inherit its terminal index state, never the superseded "indexing" stage.
+    if document.source_type == "web" and current_status in ACTIVE_INDEX_STATUSES:
+        from app.services.knowledge.web_publication import abandon_candidate
+
+        if abandon_candidate(document, document.index_generation):
+            current_status = document.index_status
+
     superseded_attachment_ids = None
     previous_snapshot_status = current_status
     if decision.reason == "scheduled_after_stale_recovery" and capture_refresh_snapshot:
@@ -350,6 +358,15 @@ def mark_document_index_started(
     current_status = (
         (document.index_status or DocumentIndexStatus.NOT_INDEXED) if document else None
     )
+    if document is not None and current_status == DocumentIndexStatus.INDEXING:
+        from app.services.knowledge.web_publication import candidate_for
+
+        if candidate_for(document, generation):
+            # An expired lease does not prove that the previous Runtime write
+            # stopped. Recover through a new generation, never concurrent writes
+            # into the same candidate. The existing stale scanner releases it.
+            db.rollback()
+            return IndexExecutionDecision(False, "already_in_progress")
     decision = decide_index_transition(
         _index_snapshot(document), event="start", generation=generation
     )
@@ -474,7 +491,13 @@ def mark_document_index_succeeded(
     )
     document.index_status = DocumentIndexStatus(decision.next_status)
     document.is_active = True
-    document.status = DocumentStatus.ENABLED
+    document.status = (
+        DocumentStatus(
+            (document.source_config or {}).get("web_user_status") or "enabled"
+        )
+        if document.source_type == "web"
+        else DocumentStatus.ENABLED
+    )
     if chunk_storage_enabled:
         document.chunks = chunks
     else:
@@ -630,6 +653,12 @@ def mark_document_index_failed(
         generation=generation,
         stage=DocumentProcessingStage.SYSTEM,
     )
+    from app.services.knowledge.web_publication import abandon_candidate
+
+    if abandon_candidate(document, generation):
+        _persist_attempt_failure(document, generation, candidate)
+        db.commit()
+        return True
     cleanup_attachment_ids = restore_external_refresh_snapshot(
         document,
         generation=generation,

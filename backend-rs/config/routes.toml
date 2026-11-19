@@ -1226,8 +1226,6 @@ path = "/api/v1/cloud-projects/:project_id/import-local"
 methods = ["GET"]
 path = "/api/v1/personal-issues/:issue_id/resources/:kind/:resource_id"
 
-# The web-auto-update handlers are registered via brz_http_server macros;
-# no routes.toml entry needed (the inventory registration is sufficient).
-#[[routes]]
-#methods = ["GET", "PUT"]
-#path = "/api/knowledge-bases/:kb_id/web-auto-update"
+[[routes]]
+methods = ["GET", "PUT"]
+path = "/api/knowledge-bases/:kb_id/web-auto-update"

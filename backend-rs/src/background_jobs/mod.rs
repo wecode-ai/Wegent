@@ -6,7 +6,7 @@ pub(crate) use configuration::client_from_env;
 pub(crate) use wegent_job_runtime::client;
 pub use wegent_job_runtime::config;
 mod device;
-pub(crate) mod download;
+mod download;
 pub(crate) mod execution;
 pub(crate) mod git_credentials;
 mod runtime_observations;
