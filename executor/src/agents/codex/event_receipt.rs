@@ -46,6 +46,10 @@ fn read_rows(
         .as_str()
         .filter(|id| !id.is_empty())
         .ok_or("Native event item identity is missing")?;
+    // Older executors persisted the same digest without the Responses prefix.
+    let legacy_id = id
+        .strip_prefix("msg_")
+        .filter(|id| id.starts_with("wework_event_"));
     let mut receipt = EventReceipt::default();
     let mut scoped = false;
     let mut line = String::new();
@@ -72,7 +76,10 @@ fn read_rows(
             continue;
         }
         let payload = &row["payload"];
-        if row["type"] == "response_item" && payload["id"] == id {
+        let recorded_id = payload["id"].as_str();
+        if row["type"] == "response_item"
+            && (recorded_id == Some(id) || legacy_id.is_some_and(|id| recorded_id == Some(id)))
+        {
             if receipt.injected
                 || ["type", "role", "content"]
                     .iter()
@@ -163,6 +170,29 @@ mod tests {
                 expected
             );
         }
+    }
+
+    #[test]
+    fn native_event_receipt_recognizes_legacy_injection_without_permitting_a_duplicate() {
+        let mut current = item();
+        current["id"] = json!("msg_wework_event_4af404a14e6a5e37428a4d00a0ab1a45");
+        let mut legacy = current.clone();
+        legacy["id"] = json!("wework_event_4af404a14e6a5e37428a4d00a0ab1a45");
+        let legacy = json!({"type":"response_item","payload":legacy});
+        let receipt = read_rows(
+            rows(std::slice::from_ref(&legacy)).as_bytes(),
+            "thread-original",
+            &current,
+        )
+        .unwrap();
+        assert!(receipt.injected);
+        let matching = json!({"type":"response_item","payload":current});
+        assert!(read_rows(
+            rows(&[legacy, matching]).as_bytes(),
+            "thread-original",
+            &current
+        )
+        .is_err());
     }
 
     #[test]

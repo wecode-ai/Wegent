@@ -280,6 +280,8 @@ async function readNativeUiObservers(journalPath) {
   try {
     const database = new DatabaseSync(journalPath, { readOnly: true })
     try {
+      // Match the native event store's lock budget during concurrent WAL recovery.
+      database.exec('PRAGMA busy_timeout = 250')
       return database
         .prepare("SELECT id,value FROM records WHERE section='observers'")
         .all()
@@ -291,8 +293,12 @@ async function readNativeUiObservers(journalPath) {
     } finally {
       database.close()
     }
-  } catch {
-    throw new Error('The native change-request observer journal could not be read')
+  } catch (error) {
+    // Keep diagnostic codes without exposing journal contents or native error text.
+    throw Object.assign(new Error('The native change-request observer journal could not be read'), {
+      code: error.code,
+      sqliteCode: error.errcode,
+    })
   }
 }
 

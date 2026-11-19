@@ -71,7 +71,7 @@ async fn unbound_discovery_fetches_backend_data_only_on_explicit_tool_call() {
     let projects = result_value(
         call_tool_with_runtime_context(&runtime, "list_spaces", json!({}), &context).await,
     );
-    // Discovery includes local projects and sorts by space identity.
+    // Local spaces can precede backend spaces when a device identity is available.
     let backend_projects = projects["items"]
         .as_array()
         .unwrap()

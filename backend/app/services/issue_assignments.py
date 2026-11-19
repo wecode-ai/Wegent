@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from hashlib import sha256
 
 from fastapi import HTTPException, status
@@ -185,6 +185,7 @@ class IssueAssignmentService:
             for previous in current.values():
                 if previous.workflow_step:
                     continue
+                self._cancel_dispatch(previous, "superseded")
                 db.add(
                     LoopItemComment(
                         cloud_project_id=str(project_id),
@@ -233,6 +234,35 @@ class IssueAssignmentService:
         else:
             comment.metadata_json = metadata
         db.flush()
+        if (
+            normalized_type == "human"
+            and notify
+            and not workflow_step
+            and trigger != "collaboration_round"
+        ):
+            from app.services.collaboration_human_assignments import (
+                direct_human_assignment_id,
+            )
+
+            metadata = {
+                **metadata,
+                "dispatch_receipt": {
+                    "projectId": str(project_id),
+                    "issueId": issue_id,
+                    "humanAssignmentId": direct_human_assignment_id(
+                        issue_id=issue_id, assignment_id=str(comment.id)
+                    ),
+                    "ownerUserId": int(normalized_id),
+                    "state": "queued",
+                    "reasonCode": "awaiting_device_ack",
+                    "runtimeTaskId": None,
+                    "deliveryId": None,
+                    "updatedAt": datetime.now(timezone.utc).isoformat(),
+                },
+            }
+            comment.metadata_json = metadata
+            # Index refresh reloads comments with populate_existing.
+            db.flush()
         event = AssignmentEvent(comment=comment, metadata=metadata)
         if initial_assignment:
             self._insert_active_index(db, issue_id, [event])
@@ -270,6 +300,7 @@ class IssueAssignmentService:
         )
         if assignment is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Assignment not found")
+        self._cancel_dispatch(assignment, "assignment_cancelled")
         metadata = {
             "event_type": ASSIGNMENT_EVENT_TYPE,
             "action": "unassign",
@@ -383,6 +414,22 @@ class IssueAssignmentService:
         return "agent", agent.id
 
     @staticmethod
+    def _cancel_dispatch(assignment: AssignmentEvent, reason: str) -> None:
+        receipt = assignment.metadata.get("dispatch_receipt")
+        if not isinstance(receipt, dict):
+            return
+        metadata = {
+            **assignment.metadata,
+            "dispatch_receipt": {
+                **receipt,
+                "state": "cancelled",
+                "reasonCode": reason,
+                "updatedAt": datetime.now(timezone.utc).isoformat(),
+            },
+        }
+        assignment.comment.metadata_json = metadata
+
+    @staticmethod
     def response_values(db: Session, assignment: AssignmentEvent) -> dict[str, object]:
         creator = db.get(User, assignment.assigned_by_user_id)
         return {
@@ -397,6 +444,11 @@ class IssueAssignmentService:
             "created_by_user_id": assignment.assigned_by_user_id,
             "created_by_user_name": creator.user_name if creator is not None else None,
             "automation": assignment.metadata.get("automation"),
+            **(
+                {"dispatch_receipt": assignment.metadata["dispatch_receipt"]}
+                if "dispatch_receipt" in assignment.metadata
+                else {}
+            ),
             "status": "active",
             "created_at": database_datetime_as_utc(db, assignment.created_at),
             "updated_at": database_datetime_as_utc(db, assignment.updated_at),
