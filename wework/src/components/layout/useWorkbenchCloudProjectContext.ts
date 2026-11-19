@@ -1,3 +1,5 @@
+import { runtimeTasksShareOwner } from '@/lib/workbench-device'
+import { useRuntimeTaskOwnerKey } from '@/features/workbench/useRuntimeTaskOwnerKey'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ComposerCloudMentionCandidate } from '@/components/chat/composer/composerMentionCandidates'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
@@ -30,6 +32,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import type {
+  DeviceInfo,
   RuntimeAdditionalContext,
   RuntimeProjectSpaceRef,
   RuntimeTaskAddress,
@@ -65,6 +68,7 @@ interface CloudSubmissionContext {
 interface UseWorkbenchCloudProjectContextOptions {
   active: boolean
   currentRuntimeTask: RuntimeTaskAddress | null
+  devices?: DeviceInfo[]
   currentProjectId?: number
   defaultProjectSpace: RuntimeProjectSpaceRef | null
   paneKey: string
@@ -291,6 +295,7 @@ function projectHasModelContext(
 export function useWorkbenchCloudProjectContext({
   active: contextActive,
   currentRuntimeTask,
+  devices = [],
   currentProjectId,
   defaultProjectSpace,
   paneKey,
@@ -330,6 +335,8 @@ export function useWorkbenchCloudProjectContext({
       ),
     [localProjectSpaceApi, workspaceRuntimePort]
   )
+  const taskOwnerKey = useRuntimeTaskOwnerKey(currentRuntimeTask, devices)
+  const contextLookupOwnerKeyRef = useRef<string | null>(null)
   const currentRuntimeDeviceId = currentRuntimeTask?.deviceId
   const currentRuntimeTaskId = currentRuntimeTask?.taskId
   const contextSessionProjectId = currentRuntimeTask?.projectSession?.projectId
@@ -399,7 +406,7 @@ export function useWorkbenchCloudProjectContext({
   const ownedBoundContext =
     contextRuntimeTask &&
     boundContext &&
-    runtimeTaskKey(boundContext.task) === runtimeTaskKey(contextRuntimeTask)
+    runtimeTasksShareOwner(boundContext.task, contextRuntimeTask, devices)
       ? boundContext
       : null
   const boundCloudProject = ownedBoundContext?.project ?? null
@@ -540,6 +547,7 @@ export function useWorkbenchCloudProjectContext({
     contextLookupGenerationRef.current = lookupGeneration
     if (!contextRuntimeTask) {
       contextLookupTaskKeyRef.current = null
+      contextLookupOwnerKeyRef.current = null
       queueMicrotask(() => {
         if (!active) return
         setBoundContext(null)
@@ -552,8 +560,9 @@ export function useWorkbenchCloudProjectContext({
       }
     }
     const contextTaskKey = `${contextRuntimeTask.deviceId}:${contextRuntimeTask.taskId}`
-    if (contextLookupTaskKeyRef.current !== contextTaskKey) {
-      contextLookupTaskKeyRef.current = contextTaskKey
+    contextLookupTaskKeyRef.current = contextTaskKey
+    if (contextLookupOwnerKeyRef.current !== taskOwnerKey) {
+      contextLookupOwnerKeyRef.current = taskOwnerKey
       setBoundContext(null)
       setBoundRuntimeTaskAddress(null)
       setDeliveryItem(null)
@@ -670,6 +679,7 @@ export function useWorkbenchCloudProjectContext({
     contextActive,
     contextRefreshKey,
     contextRuntimeTask,
+    taskOwnerKey,
     findContextForTask,
     paneKey,
     setPendingCloudContext,
@@ -1265,7 +1275,12 @@ export function useWorkbenchCloudProjectContext({
     activeDeliveryItem,
     boundCloudItem,
     boundCloudProject,
-    boundRuntimeTaskAddress,
+    boundRuntimeTaskAddress:
+      currentRuntimeTask &&
+      boundRuntimeTaskAddress &&
+      runtimeTasksShareOwner(boundRuntimeTaskAddress, currentRuntimeTask, devices)
+        ? { ...boundRuntimeTaskAddress, deviceId: currentRuntimeTask.deviceId }
+        : null,
     boundProjectSpaceApi,
     clearCloudActionNotice,
     clearPendingProjectContext,

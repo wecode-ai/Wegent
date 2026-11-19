@@ -14,6 +14,8 @@ pub(super) fn git_output_vec(
     env: Option<&BTreeMap<String, String>>,
     input: Option<&[u8]>,
 ) -> Result<Vec<u8>, String> {
+    let operation = args.first().cloned().unwrap_or_default();
+    let started = std::time::Instant::now();
     let run = git_output_async(
         Path::new("git"),
         workspace,
@@ -22,7 +24,18 @@ pub(super) fn git_output_vec(
         input,
         GIT_CAPTURE_TIMEOUT,
     );
-    wait_for_capture(run)
+    let result = wait_for_capture(run);
+    if let Err(error) = &result {
+        crate::logging::log_executor_event(
+            "file change Git capture failed",
+            &[
+                ("operation", operation),
+                ("elapsed_ms", started.elapsed().as_millis().to_string()),
+                ("error", error.clone()),
+            ],
+        );
+    }
+    result
 }
 
 fn wait_for_capture(
