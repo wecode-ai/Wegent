@@ -4,6 +4,7 @@ import { waitForBoardValue } from '../modules/collaboration-board-flows.mjs'
 import {
   inCollaborationSidebar,
   revealCollaborationSidebarElement,
+  waitForNativeCollaborationPlatform,
 } from '../modules/workspace-flows.mjs'
 
 // Delay only delivery of an actual Backend snapshot. No API payload is mocked.
@@ -74,6 +75,10 @@ export function createDesktopScenario({ uiTimeoutMs }) {
       // Hold the batched personal-work page while the sidebar independently opens A.
       // Releasing that old page must not replace the project's newer assignment.
       await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-board"]')
+      await waitForNativeCollaborationPlatform(
+        control,
+        '[data-workspace-tab-content][aria-hidden="false"]'
+      )
       await control.command(
         'clickWhenEnabled',
         inCollaborationSidebar('[data-testid="collaboration-primary-home"]')
