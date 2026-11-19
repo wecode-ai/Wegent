@@ -3644,7 +3644,11 @@ describe('PluginsWorkspace', () => {
         remoteReads += 1
         return remoteReads === 1
           ? Promise.reject(new Error('403 Forbidden <html>Cloudflare challenge-secret</html>'))
-          : Promise.resolve({ marketplaces: [] })
+          : Promise.resolve({
+              marketplaces: [
+                { name: 'openai-curated-remote', path: 'openai-curated-remote', plugins: [] },
+              ],
+            })
       }
       return previousInvoke(command, args)
     })
@@ -7366,7 +7370,9 @@ describe('PluginsWorkspace', () => {
       ],
     })
     await createLocalCodexPluginApi().readRemoteCatalog({
-      accountScope: pluginMarketplaceCacheKey('/api', 'cloud-token'),
+      accountScope: JSON.stringify(['/api', null]),
+      forceRefetch: false,
+      onCached: () => {},
     })
 
     let resolveInstalled: ((value: unknown) => void) | null = null

@@ -283,7 +283,7 @@ mod tests {
     fn public_catalog_is_local_without_replacing_the_native_account_manager() {
         let _lock = crate::test_env::lock();
         let selected = profile_for_test(&process_overrides());
-        assert_eq!(selected["supports_websockets"], true);
+        assert_eq!(selected["supports_websockets"], false);
         assert_eq!(selected["supports_standalone_web_search"], false);
         assert_eq!(selected["name"], "OpenAI");
         assert_eq!(selected["requires_openai_auth"], true);
@@ -298,7 +298,7 @@ mod tests {
         );
         let home = tempfile::tempdir().unwrap();
         let thread = profile_for_test(&overrides(home.path(), "openai").unwrap());
-        assert_eq!(thread["supports_websockets"], true);
+        assert_eq!(thread["supports_websockets"], false);
         assert_eq!(thread["supports_standalone_web_search"], true);
         assert!(thread.get("experimental_bearer_token").is_none());
         assert!(thread.get("model_catalog_url").is_none());
