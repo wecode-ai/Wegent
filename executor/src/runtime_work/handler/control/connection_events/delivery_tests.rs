@@ -39,11 +39,19 @@ fn received_event_enters_the_message_queue_while_the_conversation_is_busy() {
     });
 }
 
-#[tokio::test]
-async fn already_failed_pr_status_starts_one_turn_in_the_original_conversation() {
+#[test]
+fn already_failed_pr_status_starts_one_turn_in_the_original_conversation() {
+    let _lock = crate::test_env::lock();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(verify_preexisting_pr_failure_delivery());
+}
+
+async fn verify_preexisting_pr_failure_delivery() {
     use crate::runtime_work::handler::tests::install_native_history;
     use std::fs;
-    let _lock = crate::test_env::lock();
     let root = tempfile::tempdir().unwrap();
     let _env = EnvGuard::home(root.path().to_str().unwrap());
     let sha = "a".repeat(40);
