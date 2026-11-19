@@ -4849,6 +4849,10 @@ describe('CollaborationPlatformApp real component flow', () => {
         const leader = group.roles.find(role => role.key === group.leaderRole)!
         leader.defaultKind = 'human'
         delete leader.agentKey
+        // One bound agent per group exercises the same three create requests.
+        const contributor = group.roles.find(role => role.key !== group.leaderRole)!
+        group.roles = [leader, contributor]
+        group.stages = group.stages.filter(stage => stage.ownerRole === contributor.key)
       }
       await templateStore.save(document, member.user_id)
       const { api } = createApi({

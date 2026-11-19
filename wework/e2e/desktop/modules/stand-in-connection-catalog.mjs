@@ -48,7 +48,10 @@ export async function verifyStandInConnectionCatalog(control, uiTimeoutMs, captu
     'Restoring the original intake setting must clear the unsaved draft'
   )
   if (!enabled) {
-    await control.command('waitFor', '[data-testid="stand-in-all-projects"]:checked:disabled')
+    await control.command(
+      'waitFor',
+      '[data-testid="stand-in-all-projects"][aria-checked="true"]:disabled'
+    )
   }
   await control.command('click', receive)
   await control.command('waitFor', '[data-testid="stand-in-connections-pending"]')

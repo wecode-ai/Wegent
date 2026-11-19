@@ -194,7 +194,7 @@ export function DesktopWorkbenchConversationView({
       }
     >
       <>
-        <div className="grid min-h-full w-full shrink-0 grid-cols-[minmax(0,1fr)_auto]">
+        <div className="grid w-full flex-1 grid-cols-[minmax(0,1fr)_auto]">
           {isBootstrapping ? (
             <div className="flex min-w-0 flex-1" data-testid="desktop-workbench-loading" />
           ) : activeLocalHarnessSession ? (
@@ -240,7 +240,7 @@ export function DesktopWorkbenchConversationView({
           ) : hasConversation ? (
             <div
               ref={conversationSurfaceRef}
-              className="relative flex min-h-full min-w-0 shrink-0 flex-col"
+              className="relative flex min-w-0 flex-col"
               onClick={focusComposerFromConversationClick}
             >
               <ScrollableMessageArea
@@ -274,12 +274,12 @@ export function DesktopWorkbenchConversationView({
                     ? `${currentRuntimeTask.deviceId}:${currentRuntimeTask.taskId}`
                     : null
                 }
-                className="min-h-full"
+                className="flex flex-col"
                 scrollTestId="desktop-chat-scroll"
                 externalScrollRef={workbenchScrollRef}
                 externalScrollInteractionRef={workbenchScrollbarRef}
                 turnNavigationPortalTarget={turnNavigationPortalTarget}
-                scrollerClassName="min-h-full overflow-visible"
+                scrollerClassName="h-auto flex-1 overflow-visible"
                 contentClassName={rightPanelExpanded ? 'invisible' : undefined}
                 messageListClassName={cn(
                   DESKTOP_MESSAGE_LIST_CLASS,

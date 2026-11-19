@@ -41,18 +41,19 @@ export function TaskDetailScrollArea({
         ref={viewportRef}
         data-testid="desktop-workbench-content"
         data-scroll-origin="top"
+        tabIndex={hasConversation ? 0 : undefined}
         data-embedded-browser-label={defaultEmbeddedBrowserLabel}
         style={{ overflowX: 'hidden', overflowY: hasConversation ? 'auto' : 'hidden' }}
         className={cn(
-          'relative h-full min-w-0 flex-1 scrollbar-none [overflow-anchor:none]',
-          !hasConversation && 'flex',
+          'relative flex h-full min-w-0 flex-1 scrollbar-none [overflow-anchor:none]',
+          hasConversation && 'flex-col',
           showPageTopBar && 'pt-11'
         )}
       >
         <ScrollAreaContent
           className={cn(
             'relative flex min-h-full min-w-0 p-0',
-            hasConversation ? 'flex-col' : 'h-full flex-1'
+            hasConversation ? 'flex-1 shrink-0 flex-col' : 'h-full flex-1'
           )}
         >
           {children}

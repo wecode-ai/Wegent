@@ -1631,7 +1631,7 @@ async function selectE2EModel(
     )
   } else if (selectionSnapshot.testIds.includes('model-selector-menu')) {
     await waitForE2EModelOptionSelected(control, targetSelector)
-    await control.command('press', targetSelector, { key: 'Escape' })
+    await control.command('press', '[data-model-selector-layer="true"]', { key: 'Escape' })
     await waitForSnapshot(
       control,
       snapshot => !snapshot.testIds.includes('model-selector-menu'),

@@ -445,6 +445,28 @@ export function createDesktopScenario({
         text: SWITCH_COMPLETION,
         timeoutMs: uiTimeoutMs,
       })
+      const shortConversationComposer = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-floating-composer-card"] [data-testid="project-chat-composer"]`
+      await control.command('waitFor', shortConversationComposer, {
+        stableMs: 100,
+        timeoutMs: uiTimeoutMs,
+      })
+      const [composer] = JSON.parse(
+        await control.command('getElementMetrics', shortConversationComposer)
+      )
+      const [viewport] = JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-workbench-content"]`
+        )
+      )
+      assert.ok(
+        composer && viewport,
+        'The short conversation composer and viewport must be measurable'
+      )
+      assert.ok(
+        viewport.bottom - composer.bottom >= 0 && viewport.bottom - composer.bottom <= 8,
+        `The short conversation composer must stay at the viewport bottom: ${JSON.stringify({ composer, viewport })}`
+      )
       const switchTaskRowTestId = await waitForNewTaskRow(control, rowsAfterFirstTask, uiTimeoutMs)
       const switchTaskId = switchTaskRowTestId.replace('runtime-local-task-row-', '')
       const switchTaskRow = `[data-testid="${switchTaskRowTestId}"]`
