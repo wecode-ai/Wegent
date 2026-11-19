@@ -10,6 +10,20 @@ fn metadata(value: serde_json::Value) -> ItemMetadata {
 }
 
 #[test]
+fn history_actions_use_the_server_resolved_user_name() {
+    let mut rows = vec![json!({"by_user_id":7,"to_type":"user","to_id":"8"})];
+    enrich_history_names(
+        &mut rows,
+        &std::collections::HashMap::from([
+            (7, "jiangyang7".to_string()),
+            (8, "target-user".to_string()),
+        ]),
+    );
+    assert_eq!(rows[0]["by_user_name"], "jiangyang7");
+    assert_eq!(rows[0]["to_name"], "target-user");
+}
+
+#[test]
 fn owner_permissions_match_the_source_hierarchy() {
     let permissions = issue_permissions("Owner", false);
     assert!(permissions.edit_content);

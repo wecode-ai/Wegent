@@ -319,7 +319,7 @@ impl RecoveryJournal {
                     store
                         .plugin_runtime_targets(spec)
                         .iter()
-                        .any(|(runtime, _)| *runtime == linked)
+                        .any(|(runtime, _)| shared_packages::same_entry(runtime, &linked))
                 });
             if !original_matches && !runtime_matches && !market_matches {
                 return Err(CapabilitySyncError::invalid_payload(

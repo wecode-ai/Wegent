@@ -157,6 +157,14 @@ export function getRuntimeConfig(): RuntimeConfig {
 
   return {
     appBasePath,
+    featureFlags: {
+      'collab.humanAssignmentReceipts.v1':
+        overrides.featureFlags?.['collab.humanAssignmentReceipts.v1'] ?? true,
+      'collab.projectSurfaces.v1':
+        overrides.featureFlags?.['collab.projectSurfaces.v1'] ??
+        import.meta.env.VITE_COLLAB_PROJECT_SURFACES_V1 === 'true',
+      ...overrides.featureFlags,
+    },
     desktopWindowLabel: runtimeString(overrides, 'desktopWindowLabel') || 'main',
     desktopHost: runtimeString(overrides, 'desktopHost') === 'electron' ? 'electron' : 'browser',
     apiBaseUrl: trimTrailingSlash(apiBaseUrl),
@@ -177,9 +185,6 @@ export function getRuntimeConfig(): RuntimeConfig {
       runtimeString(overrides, 'cloudDeviceScalingWikiUrl') ||
       import.meta.env.VITE_CLOUD_DEVICE_SCALING_WIKI_URL ||
       '',
-    ...(overrides.featureFlags && Object.keys(overrides.featureFlags).length > 0
-      ? { featureFlags: overrides.featureFlags }
-      : {}),
   }
 }
 

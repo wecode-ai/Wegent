@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { Bell, CircleAlert } from 'lucide-react'
+import { ChevronRight, CircleAlert, Radio } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { connectionEventCondition } from '@/lib/connection-event-condition'
 import { connectionEventSubscriptions } from '@/lib/runtime-connection-events'
@@ -116,7 +116,7 @@ export function ConnectionEventStatus({
         const executionFailed = ['error', 'needs_attention'].includes(item.status)
         const observing = item.status === 'armed'
         const failed = setupFailed || executionFailed || (observing && Boolean(observation.error))
-        const Icon = failed ? CircleAlert : Bell
+        const Icon = failed ? CircleAlert : Radio
         const label = setupFailed
           ? observation.state === 'auth_required'
             ? t('workbench.observation_auth_required', '连接需要重新授权')
@@ -205,12 +205,17 @@ const EventCondition = memo(function EventCondition({ match }: { match: unknown 
   const { t } = useTranslation('common')
   const condition = useMemo(() => connectionEventCondition(match, t), [match, t])
   return (
-    <span
-      className="order-last basis-full min-w-0 truncate pb-1 pl-5 text-text-secondary"
-      data-testid="connection-event-condition"
-      title={condition}
-    >
-      {t('workbench.event_condition_label', '等待条件')}: {condition}
-    </span>
+    <details className="group order-last w-full min-w-0 pl-5">
+      <summary
+        className="flex min-h-11 w-fit cursor-pointer items-center gap-1 hover:text-text-primary md:min-h-7"
+        data-testid="connection-event-condition-toggle"
+      >
+        <ChevronRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 group-open:rotate-90" />
+        {t('workbench.event_condition_label', '等待条件')}
+      </summary>
+      <p className="whitespace-pre-wrap break-words pb-1" data-testid="connection-event-condition">
+        {condition}
+      </p>
+    </details>
   )
 })

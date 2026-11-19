@@ -341,6 +341,8 @@ async fn project_terminal_update(
 
 /// `emit(PROJECT_CHAT_CREATED_EVENT, message, room=project_chat_room(...))`.
 async fn emit_project_message(state: &AppState, runtime: &Arc<SocketRuntime>, message: &Value) {
+    let shared = super::project_chat_messages::shared_message_payload(message);
+    let message = &shared;
     let project_id = message
         .get("projectId")
         .and_then(Value::as_str)
