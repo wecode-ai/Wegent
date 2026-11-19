@@ -7,8 +7,9 @@ const acceptanceHeading = /^(验收依据|验收标准|acceptance criteria|accep
 
 function inlineText(nodes: readonly PhrasingContent[]): string {
   return nodes
-    .map(node =>
-      node.type === 'html'
+    .map(node => {
+      if (node.type === 'break') return ' '
+      return node.type === 'html'
         ? ''
         : 'alt' in node
           ? (node.alt ?? '')
@@ -17,7 +18,7 @@ function inlineText(nodes: readonly PhrasingContent[]): string {
             : 'children' in node
               ? inlineText(node.children)
               : ''
-    )
+    })
     .join('')
 }
 

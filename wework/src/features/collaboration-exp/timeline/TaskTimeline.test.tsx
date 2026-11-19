@@ -51,7 +51,7 @@ it.each([
 it('presents the current reader question before progress and retains the expanded background across filters', () => {
   const props = fixture()
   props.data.issue.description =
-    'Review **scope** and [spec](wegent://attachments/design).\n\nFull background details'
+    'Review **scope** and  \n[spec](wegent://attachments/design).\n\nFull background details'
   props.data.issue.human_requests = [
     experienceHumanRequestFixture({
       id: 'another-person',

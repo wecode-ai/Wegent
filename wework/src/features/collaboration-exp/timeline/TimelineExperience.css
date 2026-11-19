@@ -8,25 +8,28 @@
   background: rgb(var(--color-bg-base));
 }
 
-[data-testid='collaboration-exp-pane-header-timeline']:has(.experience-matter-heading) {
-  flex: 0 0 auto;
-  align-items: flex-start;
-  height: auto;
-  padding-block: 12px 0;
-}
-
-.experience-matter-heading {
-  white-space: normal;
+.experience-matter-heading > h1 {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .experience-matter-breadcrumb {
   display: flex;
-  flex-wrap: wrap;
   gap: 8px;
-  margin-bottom: 4px;
   color: rgb(var(--color-text-muted));
   font-size: var(--text-xs);
+  line-height: var(--text-xs-line);
   font-weight: 400;
+}
+
+.experience-matter-breadcrumb > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.experience-matter-breadcrumb > [aria-hidden] {
+  flex-shrink: 0;
 }
 
 [data-testid='collaboration-exp-app'] .experience-matter-context {
@@ -481,6 +484,21 @@
 }
 
 @media (width <= 767px) {
+  [data-testid='collaboration-exp-pane-header-timeline']:has(.experience-matter-heading) {
+    flex-basis: auto;
+    height: auto;
+    min-height: var(--experience-header-height);
+    padding-block: 8px;
+  }
+
+  .experience-matter-heading > h1 {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+
   [data-testid='collaboration-exp-app'] .experience-task-timeline {
     --experience-row-inset: 16px;
   }

@@ -464,7 +464,9 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
               </>
             ) : null}
           </div>
-          <h1 className="heading-medium">{detail.data.issue.title}</h1>
+          <h1 className="heading-medium" title={detail.data.issue.title}>
+            {detail.data.issue.title}
+          </h1>
         </div>
       ) : (
         t('timeline.title')
