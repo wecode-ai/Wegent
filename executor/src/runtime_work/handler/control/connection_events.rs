@@ -189,6 +189,16 @@ impl RuntimeWorkRpcHandler {
             .with_file_name("conversation-event-subscriptions.sqlite")
     }
 
+    async fn remove_queued_event_continuation(&self, record: &Value) -> Result<(), AppIpcError> {
+        if let (Some(task), Some(operation)) =
+            (record["task_id"].as_str(), record["operation_id"].as_str())
+        {
+            self.remove_queued_turn_for_command(task, Some(operation))
+                .await?;
+        }
+        Ok(())
+    }
+
     fn subscription_id(&self, task: &str, key: &str) -> String {
         format!(
             "{:x}",
@@ -288,12 +298,22 @@ impl RuntimeWorkRpcHandler {
         }
         let id = self.subscription_id(task, key);
         if operation == "cancel_connection_event_subscription" {
-            let mut record = records
-                .get(&id)
-                .cloned()
-                .ok_or_else(|| invalid("Subscription not found in this conversation"))?;
+            let goal_gate = self.task_send_gate(&format!("goal-status:{task}"));
+            let goal_guard = goal_gate.lock().await;
+            let mut record = event_store::read(
+                &self.event_subscription_path(),
+                event_store::Scope::Row("operations", &id),
+                |state| {
+                    state["operations"]
+                        .get(&id)
+                        .cloned()
+                        .ok_or_else(|| invalid("Subscription not found in this conversation"))
+                },
+            )?;
             record["status"] = json!("cancelled");
             self.save_event_subscription(&id, &record)?;
+            self.remove_queued_event_continuation(&record).await?;
+            drop(goal_guard);
             // Local cancellation is durable even while the cloud is unavailable.
             let _ = self
                 .finish_cloud_connection_cancellation(&id, &mut record)

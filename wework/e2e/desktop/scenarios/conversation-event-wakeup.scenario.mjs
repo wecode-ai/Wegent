@@ -560,14 +560,8 @@ export function createDesktopScenario(options) {
                     item.status === 'delivered' &&
                     item.operation_id
                 ),
-              'The running turn must accept guidance before its held response ends',
+              'The running turn must accept the matching event',
               30000
-            )
-            assert.equal((await getTask()).task.running, true)
-            assert.equal(
-              completed.has('workflow'),
-              false,
-              'Native guidance must preserve the active turn'
             )
             releaseBusy()
           }

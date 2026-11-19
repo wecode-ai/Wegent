@@ -69,6 +69,9 @@ impl RuntimeWorkRpcHandler {
         let Some((id, mut record)) = found else {
             return Ok(None);
         };
+        if record["status"] == "cancelled" {
+            return Err(CODEX_APP_SERVER_TURN_CANCELLED.into());
+        }
         if record["status"] == "delivered"
             && record["native_event_phase"] == "activated"
             && (request.extra.contains_key(quota_recovery::MARKER)

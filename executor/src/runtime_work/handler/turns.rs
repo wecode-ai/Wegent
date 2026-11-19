@@ -2141,10 +2141,19 @@ impl RuntimeWorkRpcHandler {
         &self,
         local_task_id: &str,
     ) -> Result<bool, AppIpcError> {
+        self.remove_queued_turn_for_command(local_task_id, None)
+            .await
+    }
+
+    pub(super) async fn remove_queued_turn_for_command(
+        &self,
+        local_task_id: &str,
+        command_id: Option<&str>,
+    ) -> Result<bool, AppIpcError> {
         let _operation = self.turn_queue_operation.lock().await;
         // Cancellation and queue-to-preparation admission share this transaction.
         // A checking turn must not repark after cancellation found no queued turn.
-        if self.cancel_preparing_turn(local_task_id) {
+        if command_id.is_none() && self.cancel_preparing_turn(local_task_id) {
             self.request_active_turn_stop(local_task_id);
         }
         let (previous, remaining_turns) = {
@@ -2152,11 +2161,16 @@ impl RuntimeWorkRpcHandler {
                 .turn_scheduler
                 .lock()
                 .expect("runtime turn scheduler lock should not be poisoned");
-            let Some(position) = scheduler
-                .queued_turns
-                .iter()
-                .position(|turn| turn.local_task_id == local_task_id)
-            else {
+            let Some(position) = scheduler.queued_turns.iter().position(|turn| {
+                turn.local_task_id == local_task_id
+                    && command_id.map_or(true, |id| {
+                        turn.request
+                            .extra
+                            .get("runtime_command_id")
+                            .and_then(Value::as_str)
+                            == Some(id)
+                    })
+            }) else {
                 return Ok(false);
             };
             let previous = scheduler.clone();
