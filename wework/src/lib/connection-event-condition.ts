@@ -45,6 +45,7 @@ export function connectionEventCondition(match: unknown, t: Translate): string {
     cancelled: t('workbench.event_condition_cancelled', '已取消'),
     'tracked.status': t('workbench.event_condition_change', '资源状态变化'),
     'tracked.workflow_run': t('workbench.event_condition_workflow', '工作流状态变化'),
+    'tracked.workflow_run_pr_conflict': t('workbench.event_condition_conflicts', '合并冲突'),
   }
   const describe = (fields: Record<string, unknown>): string =>
     Object.entries(fields)

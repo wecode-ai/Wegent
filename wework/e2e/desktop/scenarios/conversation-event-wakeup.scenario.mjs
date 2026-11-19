@@ -6,6 +6,7 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 import {
   createConversationEventModel,
   findEventFact as find,
+  WORKFLOW_CONFLICT_TOPIC,
 } from '../modules/conversation-event-model.mjs'
 import { modelRequestTexts } from '../modules/model-tool-output.mjs'
 import { waitForBundledMarketplaceRegistration } from '../modules/plugin-flows.mjs'
@@ -45,7 +46,7 @@ function latestWaitingSubscriptions(body) {
 }
 
 export function createDesktopScenario(options) {
-  const base = createBridgeScenario(options)
+  const base = createBridgeScenario(options, { versionedEventTypes: ['git.event'] })
   const {
     resultDir,
     electronUserDataDirectory,
@@ -94,9 +95,13 @@ export function createDesktopScenario(options) {
         ['archive-record', 'long-archive-record'].map(id => ({ id, value: JSON.stringify(events) }))
       )
     )
-  const event = (id, text, topicId = 'release-document') => ({
+  const event = (
     id,
-    eventType: 'message.received',
+    text,
+    topicId = phase === 'workflow_conflict' ? WORKFLOW_CONFLICT_TOPIC : 'release-document'
+  ) => ({
+    id,
+    eventType: phase === 'workflow_conflict' ? 'git.event' : 'message.received',
     topicId,
     text,
     at: new Date().toISOString(),
@@ -112,7 +117,17 @@ export function createDesktopScenario(options) {
             },
           },
         }
-      : {}),
+      : phase === 'workflow_conflict'
+        ? {
+            objectId: WORKFLOW_CONFLICT_TOPIC,
+            version: id,
+            external: {
+              eventType: 'tracked.workflow_run_pr_conflict',
+              url: 'https://github.com/org/repo/pull/17',
+              payload: { id: 44231414768, head_sha: 'a'.repeat(40), run_attempt: 1 },
+            },
+          }
+        : {}),
   })
 
   return {
@@ -201,10 +216,18 @@ export function createDesktopScenario(options) {
       active = true
       let originalAddress
       try {
-        for (const story of ['ordinary', 'workflow', 'goal', 'human', 'cancel', 'pause']) {
+        for (const story of [
+          'ordinary',
+          'workflow',
+          'workflow_conflict',
+          'goal',
+          'human',
+          'cancel',
+          'pause',
+        ]) {
           phase = story
           await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
-            value: `${MARKER}_${phase} ${['ordinary', 'workflow'].includes(phase) ? '' : '请创建持续目标，'}请订阅文档变化并在变化后继续。`,
+            value: `${MARKER}_${phase} ${['ordinary', 'workflow', 'workflow_conflict'].includes(phase) ? '' : '请创建持续目标，'}请订阅文档变化并在变化后继续。`,
           })
           await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, { enabled: true })
           await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
@@ -233,6 +256,11 @@ export function createDesktopScenario(options) {
           if (phase === 'workflow') {
             await control.command('waitFor', '[data-testid="connection-event-condition"]', {
               text: '或',
+            })
+          }
+          if (phase === 'workflow_conflict') {
+            await control.command('waitFor', '[data-testid="connection-event-condition"]', {
+              text: '合并冲突',
             })
           }
           const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
@@ -410,6 +438,11 @@ export function createDesktopScenario(options) {
           // A negative observation window verifies that unrelated events and a
           // user pause never start model turns. This is not a UI readiness delay.
           events.push(event(`${phase}-ignored`, 'Unrelated document signal', 'unrelated-document'))
+          if (phase === 'workflow_conflict') {
+            const stale = event('workflow-conflict-stale', 'Conflict on a stale head')
+            stale.external.payload.head_sha = 'b'.repeat(40)
+            events.push(stale)
+          }
           if (phase === 'workflow') {
             for (const patch of [
               { id: 9 },
@@ -426,7 +459,7 @@ export function createDesktopScenario(options) {
             }
           }
           await saveEvents()
-          if (phase === 'workflow') {
+          if (phase === 'workflow' || phase === 'workflow_conflict') {
             const savedAt = Date.now()
             await waitForValue(
               getTask,
