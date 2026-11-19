@@ -502,7 +502,9 @@ export function DesktopWorkbenchConversationView({
                                       experimentalFeaturesEnabled && Boolean(services?.deliveryApi)
                                     }
                                     onSelectCloudProject={handleSelectCloudProject}
-                                    contextHeader={projectSpaceContext}
+                                    contextHeader={
+                                      paneSession.transcriptLoading ? null : projectSpaceContext
+                                    }
                                     isStreaming={paneIsBusy}
                                     onPause={pauseCurrentResponse}
                                     onCompactContext={
