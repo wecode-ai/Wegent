@@ -13,6 +13,7 @@ from chat_shell.agents.graph_builder import (
     _has_unexecuted_tool_calls,
 )
 from chat_shell.tools.base import ToolRegistry
+from chat_shell.tools.builtin.load_skill import LoadSkillTool
 from chat_shell.tools.mcp.client import wrap_tool_with_protection
 
 
@@ -82,8 +83,9 @@ class _DirectMcpModel(BaseChatModel):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", [None, "connection", "validation"])
+@pytest.mark.parametrize("deferred", [False, True])
 async def test_direct_mcp_failures_continue_the_real_agent_graph(
-    failure: str | None, caplog: pytest.LogCaptureFixture
+    failure: str | None, deferred: bool, caplog: pytest.LogCaptureFixture
 ) -> None:
     def direct(value: str) -> str:
         """Run a direct-return MCP operation."""
@@ -99,11 +101,28 @@ async def test_direct_mcp_failures_continue_the_real_agent_graph(
         )
     )
     registry = ToolRegistry()
-    registry.register(direct_tool)
+    load_skill_tool = LoadSkillTool(
+        user_id=1,
+        skill_names=["direct_skill"],
+        skill_metadata={"direct_skill": {"prompt": "Use the direct MCP tool."}},
+    )
+    if deferred:
+
+        async def load_direct_tools() -> list:
+            return [direct_tool]
+
+        load_skill_tool.register_skill_tool_loader("direct_skill", load_direct_tools)
+        registry.register(load_skill_tool)
+    else:
+        registry.register(direct_tool)
     registry.register(healthy)
     model = _DirectMcpModel(invalid_arguments=failure == "validation")
     builder = LangGraphAgentBuilder(model, tool_registry=registry)
     graph = builder._build_agent()
+    if deferred:
+        # Deferred MCP metadata becomes available only after graph construction.
+        await load_skill_tool.ensure_skill_tools_loaded("direct_skill")
+        load_skill_tool._run("direct_skill")
     state = await graph.ainvoke(
         {
             "messages": [

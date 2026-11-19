@@ -3,6 +3,7 @@
 
 """Keep failed optional MCP calls out of the ReAct termination route."""
 
+from collections.abc import Callable
 from typing import Any
 
 from langchain_core.messages import ToolMessage
@@ -12,28 +13,36 @@ from langgraph.graph.state import CompiledStateGraph
 
 
 def configure_mcp_result_routing(
-    agent: CompiledStateGraph, tools: list[BaseTool]
+    agent: CompiledStateGraph,
+    tools: list[BaseTool],
+    tool_resolver: Callable[[str], BaseTool | None] | None = None,
 ) -> CompiledStateGraph:
     """Preserve successful direct returns while continuing after MCP failures."""
-    direct_tools = {tool.name: tool for tool in tools if tool.return_direct}
-    if not any(
-        getattr(tool, "_wegent_tool_protocol", None) == "mcp_call"
-        for tool in direct_tools.values()
+    registered_tools = {tool.name: tool for tool in tools}
+    if tool_resolver is None and not any(
+        tool.return_direct
+        and getattr(tool, "_wegent_tool_protocol", None) == "mcp_call"
+        for tool in tools
     ):
         return agent
 
     # The prebuilt ReAct route treats every direct tool result as terminal,
     # including errors. Recompile its graph with the capability-aware route.
     workflow = agent.builder
-    workflow.branches["tools"].pop("route_tool_responses")
     entrypoint = "pre_model_hook" if "pre_model_hook" in workflow.nodes else "agent"
+    workflow.branches["tools"].pop("route_tool_responses", None)
+    # Without initial direct tools, ReAct installs an unconditional return edge.
+    workflow.edges.discard(("tools", entrypoint))
 
     def route_mcp_results(state: dict[str, Any]) -> str:
         for message in reversed(state["messages"]):
             if not isinstance(message, ToolMessage):
                 break
-            tool = direct_tools.get(message.name)
-            if tool is None:
+            tool = (
+                tool_resolver(message.name) if tool_resolver and message.name else None
+            )
+            tool = tool or registered_tools.get(message.name)
+            if tool is None or not tool.return_direct:
                 continue
             if getattr(tool, "_wegent_tool_protocol", None) != "mcp_call":
                 return END

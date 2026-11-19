@@ -21,6 +21,7 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from chat_shell.agents.graph_builder import LangGraphAgentBuilder
 from chat_shell.services.context import ChatContext
 from chat_shell.tools.base import ToolRegistry
+from chat_shell.tools.builtin.load_skill import LoadSkillTool
 from chat_shell.tools.skill_factory import _apply_skill_runtime_tool_policies
 from shared.models.execution import ExecutionRequest
 
@@ -161,6 +162,52 @@ class ChatMcpFaultIsolation(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(direct._wegent_mcp_unavailable.is_set())
         self.assertEqual((self.path / "failing").read_text().splitlines(), ["called"])
         self.assertEqual((self.path / "healthy").read_text().splitlines(), ["called"])
+
+    async def test_deferred_direct_mcp_keeps_success_and_failure_routes(self) -> None:
+        _, tools = await self._connect({"independent": self._server("healthy")})
+        healthy = tools[0]
+        for role in ("failing", "healthy"):
+            with self.subTest(role=role):
+                load_skill = LoadSkillTool(
+                    user_id=1,
+                    skill_names=[role],
+                    skill_metadata={role: {"prompt": "Use the skill MCP."}},
+                )
+
+                async def load_tools() -> list:
+                    _, loaded = await self._connect({role: self._server(role)})
+                    loaded[0].return_direct = True
+                    return loaded
+
+                load_skill.register_skill_tool_loader(role, load_tools)
+                model, graph = self._graph([load_skill, healthy], [])
+                deferred = (await load_skill.ensure_skill_tools_loaded(role))[0]
+                load_skill._run(role)
+                model.tool_names = [deferred.name]
+                if role == "failing":
+                    model.tool_names.append(healthy.name)
+                state = await asyncio.wait_for(
+                    graph.ainvoke(
+                        {"messages": [HumanMessage(content="Use available MCPs.")]},
+                        config={"configurable": {"thread_id": f"deferred-{role}"}},
+                    ),
+                    15,
+                )
+                if role == "failing":
+                    self.assertTrue(deferred._wegent_mcp_unavailable.is_set())
+                    self.assertEqual(model.calls, 3)
+                    self.assertEqual(
+                        state["messages"][-1].content, "continued with healthy MCP"
+                    )
+                else:
+                    self.assertEqual(model.calls, 1)
+                    self.assertEqual(
+                        state["messages"][-1].content[0]["text"], "HEALTHY_MCP_RESULT"
+                    )
+        self.assertEqual((self.path / "failing").read_text().splitlines(), ["called"])
+        self.assertEqual(
+            (self.path / "healthy").read_text().splitlines(), ["called", "called"]
+        )
 
     async def test_task_cancellation_remains_cancellation(self) -> None:
         _, tools = await self._connect(

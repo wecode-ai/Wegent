@@ -1386,7 +1386,14 @@ class LangGraphAgentBuilder:
             )
         from ..tools.mcp.routing import configure_mcp_result_routing
 
-        self._agent = configure_mcp_result_routing(self._agent, all_tools)
+        tool_resolver = (
+            load_skill_tool.find_registered_tool
+            if load_skill_tool and load_skill_tool.has_deferred_tool_loaders()
+            else None
+        )
+        self._agent = configure_mcp_result_routing(
+            self._agent, all_tools, tool_resolver=tool_resolver
+        )
         add_span_event("react_agent_created")
 
         return self._agent
