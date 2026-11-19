@@ -6,6 +6,10 @@ use regex::Regex;
 use serde_json::{Map, Value};
 use std::{collections::BTreeMap, sync::OnceLock};
 
+pub const AVAILABILITY_INSTRUCTIONS: &str = "Connector availability: If an MCP is omitted, fails to initialize, times out, or returns an error, skip only that service and continue independent task work with available tools. Briefly explain any affected work to the user in their language. Do not repeat a failed business operation or claim that unavailable work succeeded. Preserve native approvals, connector authentication, and access boundaries.";
+
+pub const UNAVAILABLE_HINT: &str = "Some connectors are temporarily unavailable; their MCP capabilities have been skipped for this execution. Continue with available tools and briefly explain affected work to the user in their language.";
+
 fn task_reference() -> &'static Regex {
     static REFERENCE: OnceLock<Regex> = OnceLock::new();
     REFERENCE.get_or_init(|| Regex::new(r"\$\{\{\s*([^{}]+?)\s*\}\}").unwrap())

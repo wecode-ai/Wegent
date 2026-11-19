@@ -1,6 +1,17 @@
+use serde_json::json;
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
 use super::*;
+
+#[test]
+fn deferred_proxy_reads_native_inline_mcp_configuration() {
+    let config =
+        json!({"mcpServers":{"healthy":{"type":"http", "url":"${WEGENT_MCP_MANAGED_abc}"}}});
+    let spec = CommandSpec::new("claude")
+        .arg("--mcp-config")
+        .arg(config.to_string());
+    assert_eq!(mcp_servers_from_spec(&spec), Some(config));
+}
 
 fn env_lock() -> MutexGuard<'static, ()> {
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();

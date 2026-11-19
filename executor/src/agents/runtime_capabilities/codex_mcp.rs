@@ -18,7 +18,7 @@ pub(super) fn prepare(
     home: &Path,
     request: &ExecutionRequest,
     thread_config: &mut Map<String, Value>,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     let path = home.join("config.toml");
     if fs::symlink_metadata(&path).is_ok_and(|meta| !meta.is_file()) {
         return Err("Codex MCP config must be a regular file".to_owned());
@@ -50,6 +50,12 @@ pub(super) fn prepare(
     });
     let previous = servers.clone();
     let mut incoming = extract_claude_mcp_templates(request, &BTreeMap::new());
+    let configured_names = servers
+        .keys()
+        .chain(incoming.keys())
+        .filter(|name| !is_managed_server(name))
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
     super::preserve_explicit_mcp_approval_modes(request, &mut incoming);
     // An unavailable replacement must also remove its previously saved definition.
     for name in incoming.keys() {
@@ -81,7 +87,10 @@ pub(super) fn prepare(
         ("config_changed", config_changed.to_string()),
     ]);
     crate::logging::log_executor_event("codex MCP config merged", &fields);
-    Ok(())
+    Ok(!valid_table
+        || configured_names
+            .iter()
+            .any(|name| !servers.contains_key(name)))
 }
 
 /// Convert incoming templates without changing previously saved native settings.
@@ -100,12 +109,13 @@ fn normalize_templates(
 ) -> Result<(), String> {
     remove_managed_servers(servers);
     retain_available_servers(servers, request, "native_configuration", |name, server| {
-        let mut candidate = BTreeMap::from([(name.to_owned(), server.clone())]);
+        let native = native_definition(server.clone())?;
+        let mut candidate = BTreeMap::from([(name.to_owned(), native)]);
         super::mcp_environment::prepare_context(&mut candidate, request)?;
         let Some(available) = candidate.remove(name) else {
             return Ok(false);
         };
-        *server = native_definition(available)?;
+        *server = available;
         toml_edit::ser::to_document(server).map_err(|_| "Cannot encode Codex MCP definition")?;
         Ok(true)
     });
@@ -114,14 +124,17 @@ fn normalize_templates(
 
 fn remove_managed_servers(servers: &mut BTreeMap<String, Value>) {
     // These grants remain authoritative per execution, not accumulated agent settings.
-    for name in [
-        crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME,
-        crate::task_runtime::mcp::NOTIFICATIONS_MCP_SERVER_NAME,
-        crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME,
-        crate::workbench_control::SERVER_NAME,
-    ] {
-        servers.remove(name);
-    }
+    servers.retain(|name, _| !is_managed_server(name));
+}
+
+fn is_managed_server(name: &str) -> bool {
+    matches!(
+        name,
+        crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME
+            | crate::task_runtime::mcp::NOTIFICATIONS_MCP_SERVER_NAME
+            | crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME
+            | crate::workbench_control::SERVER_NAME
+    )
 }
 
 /// Share binding across every Home and send resolved values only through stdin.
@@ -131,6 +144,10 @@ fn prepare_runtime(
     thread_config: &mut Map<String, Value>,
 ) -> Result<(), String> {
     remove_managed_servers(servers);
+    retain_available_servers(servers, request, "transport_configuration", |_, server| {
+        remove_inactive_transport_fields(server)?;
+        Ok(true)
+    });
     let mut environment = BTreeMap::new();
     bind_available_context(servers, request, &mut environment);
     let mut runtime = Map::new();
@@ -141,7 +158,7 @@ fn prepare_runtime(
         |name, definition| {
             let mut resolved = definition.clone();
             resolve_context(&mut resolved, &environment)?;
-            native_definition(resolved.clone())?;
+            resolved = native_definition(resolved)?;
             crate::mcp_utils::validate_mcp_server_definition(&resolved)?;
             // A connector is a capability, never a prerequisite for the whole turn.
             resolved["required"] = json!(false);
@@ -174,22 +191,11 @@ fn native_definition(server: Value) -> Result<Value, String> {
             native.entry(to.to_owned()).or_insert(value);
         }
     }
-    native.remove("type");
     native.remove("timeout");
-    for key in if stdio {
-        &[
-            "url",
-            "http_headers",
-            "env_http_headers",
-            "bearer_token_env_var",
-            "oauth_client_id",
-            "oauth_resource",
-        ][..]
-    } else {
-        &["command", "args", "env", "env_vars"][..]
-    } {
-        native.remove(*key);
-    }
+    let mut result = Value::Object(native);
+    remove_inactive_transport_fields(&mut result)?;
+    let native = result.as_object_mut().ok_or("Invalid MCP definition")?;
+    native.remove("type");
     let transport_key = if stdio { "command" } else { "url" };
     if !native
         .get(transport_key)
@@ -198,10 +204,49 @@ fn native_definition(server: Value) -> Result<Value, String> {
     {
         return Err(format!("MCP definition requires {transport_key}"));
     }
+    let transport = native[transport_key].as_str().unwrap().trim().to_owned();
+    native.insert(transport_key.to_owned(), json!(transport));
+    if stdio {
+        if let Some(args) = native.get_mut("args").and_then(Value::as_array_mut) {
+            *args = args
+                .iter()
+                .filter_map(|value| match value {
+                    Value::String(_) => Some(value.clone()),
+                    Value::Number(_) | Value::Bool(_) => Some(json!(value.to_string())),
+                    _ => None,
+                })
+                .collect();
+        }
+    }
     native
         .entry("default_tools_approval_mode".to_owned())
         .or_insert(json!("approve"));
-    Ok(Value::Object(native))
+    Ok(result)
+}
+
+fn remove_inactive_transport_fields(server: &mut Value) -> Result<(), String> {
+    let stdio = crate::mcp_utils::is_stdio_mcp_server(server);
+    let native = server.as_object_mut().ok_or("Invalid MCP definition")?;
+    for key in if stdio {
+        &[
+            "url",
+            "base_url",
+            "headers",
+            "http_headers",
+            "env_http_headers",
+            "bearer_token_env_var",
+            "bearerTokenEnvVar",
+            "oauth_client_id",
+            "oauthClientId",
+            "oauth_resource",
+            "oauthResource",
+        ][..]
+    } else {
+        &["command", "args", "env", "env_vars"][..]
+    } {
+        native.remove(*key);
+    }
+    Ok(())
 }
 
 fn update_servers(

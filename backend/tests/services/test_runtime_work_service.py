@@ -5642,13 +5642,22 @@ async def test_send_runtime_request_user_input_response_omits_execution_request(
 
 
 @pytest.mark.parametrize("local_task_id", [None, "runtime-local-1"])
+@pytest.mark.parametrize(
+    "backend_url", ["", " \t\n", "https://backend.example/deployment/api/"]
+)
 def test_build_runtime_execution_request_v2_without_team_uses_direct_wework_path(
     test_db,
     test_user,
     local_task_id,
+    backend_url,
+    monkeypatch,
 ):
     from app.schemas.runtime_work import RuntimeTaskCreateRequest
     from app.services import runtime_work_service
+
+    monkeypatch.setattr(
+        runtime_work_service.settings, "BACKEND_INTERNAL_URL", backend_url
+    )
 
     _codex_provider_model(
         test_db,
@@ -5680,6 +5689,12 @@ def test_build_runtime_execution_request_v2_without_team_uses_direct_wework_path
     )
 
     assert execution_request.team_id == 0
+    assert execution_request.backend_url == backend_url
+    monkeypatch.setattr(
+        runtime_work_service.settings,
+        "BACKEND_INTERNAL_URL",
+        "https://next.example/api/",
+    )
     followup = runtime_work_service._build_runtime_execution_request(
         db=test_db,
         user_id=test_user.id,
@@ -5690,6 +5705,7 @@ def test_build_runtime_execution_request_v2_without_team_uses_direct_wework_path
         ),
     )
     assert followup.task_id == execution_request.task_id
+    assert followup.backend_url == "https://next.example/api/"
     assert followup.subtask_id != execution_request.subtask_id
     assert followup.subtask_id > 0
     assert execution_request.subtask_id > 0

@@ -263,6 +263,7 @@ pub fn execution_system_prompt(
             launch.additional_instructions,
             Some(launch.artifact_instructions),
             launch.control_instructions,
+            Some(wegent_mcp_runtime::mcp_environment::AVAILABILITY_INSTRUCTIONS),
         ]
         .into_iter()
         .flatten()
@@ -294,6 +295,10 @@ mod instruction_tests {
                 ),
                 None => "Task rules\n\nArtifact routing\n\nPersonal control routing".into(),
             };
+            let expected = format!(
+                "{expected}\n\n{}",
+                wegent_mcp_runtime::mcp_environment::AVAILABILITY_INSTRUCTIONS
+            );
             assert_eq!(execution_system_prompt(&request, &launch), Some(expected));
 
             request.extra.insert("enable_tools".into(), json!(false));

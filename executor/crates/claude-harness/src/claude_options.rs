@@ -213,7 +213,7 @@ fn preserve_existing_mcp_timeout(existing: &Value, incoming: &mut Value) {
     incoming_object.insert("timeout".to_owned(), existing_timeout);
 }
 
-fn normalize_mcp_server_for_claude(server: &Value) -> Value {
+pub fn normalize_mcp_server_for_claude(server: &Value) -> Value {
     let Some(config) = server.as_object() else {
         return server.clone();
     };
@@ -221,7 +221,7 @@ fn normalize_mcp_server_for_claude(server: &Value) -> Value {
         .get("type")
         .and_then(Value::as_str)
         .map(|value| {
-            if value == "streamable-http" {
+            if matches!(value, "streamable-http" | "streamable_http") {
                 "http"
             } else {
                 value

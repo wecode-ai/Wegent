@@ -9,7 +9,7 @@ use crate::protocol::ExecutionRequest;
 pub fn is_stdio_mcp_server(server: &Value) -> bool {
     match server.get("type").and_then(Value::as_str) {
         Some("stdio") => true,
-        Some("http" | "streamable-http" | "sse") => false,
+        Some("http" | "streamable-http" | "streamable_http" | "sse") => false,
         _ => server
             .get("command")
             .and_then(Value::as_str)
@@ -19,6 +19,18 @@ pub fn is_stdio_mcp_server(server: &Value) -> bool {
 
 pub fn validate_mcp_server_definition(server: &Value) -> Result<(), String> {
     let object = server.as_object().ok_or("Invalid MCP definition")?;
+    if object
+        .get("type")
+        .filter(|value| !value.is_null())
+        .is_some_and(|value| {
+            !matches!(
+                value.as_str(),
+                Some("stdio" | "http" | "sse" | "streamable-http" | "streamable_http")
+            )
+        })
+    {
+        return Err("Invalid MCP transport".to_owned());
+    }
     let transport = if is_stdio_mcp_server(server) {
         "command"
     } else {
@@ -45,6 +57,20 @@ pub fn validate_mcp_server_definition(server: &Value) -> Result<(), String> {
             .as_array()
             .is_some_and(|items| items.iter().all(valid_mcp_env_variable))
     })?;
+    validate_mcp_fields(
+        object,
+        &[
+            "bearer_token_env_var",
+            "bearerTokenEnvVar",
+            "oauth_client_id",
+            "oauthClientId",
+            "oauth_resource",
+            "oauthResource",
+            "default_tools_approval_mode",
+            "defaultToolsApprovalMode",
+        ],
+        Value::is_string,
+    )?;
     validate_mcp_fields(
         object,
         &["headers", "http_headers", "env_http_headers", "env"],

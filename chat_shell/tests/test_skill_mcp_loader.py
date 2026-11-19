@@ -129,8 +129,8 @@ class TestLoadSkillMcpTools:
             assert clients[0] == mock_client
 
     @pytest.mark.asyncio
-    async def test_mcp_connection_failure_returns_empty(self):
-        """Test that connection failure returns empty dict and list gracefully."""
+    async def test_mcp_connection_failure_retains_availability(self, caplog):
+        """Unavailable skills expose their status while releasing resources."""
         mcp_configs = {
             "test_skill_server1": {
                 "type": "stdio",
@@ -138,24 +138,27 @@ class TestLoadSkillMcpTools:
             }
         }
 
-        mock_client = MagicMock()
-        mock_client.is_connected = False
-        mock_client.connect = AsyncMock()
-        mock_client.disconnect = AsyncMock()
-
-        with patch("chat_shell.tools.mcp.MCPClient", return_value=mock_client):
+        sdk_client = MagicMock()
+        sdk_client.get_tools = AsyncMock(
+            side_effect=ConnectionError("synthetic-private-credential")
+        )
+        with patch(
+            "chat_shell.tools.mcp.client.MultiServerMCPClient",
+            return_value=sdk_client,
+        ):
             tools_with_server, clients = await _load_skill_mcp_tools(
                 mcp_configs, task_id=1
             )
 
             assert tools_with_server == {}
-            assert clients == []
-            # Verify disconnect was called for cleanup
-            mock_client.disconnect.assert_called_once()
+            assert len(clients) == 1
+            assert clients[0].unavailable_servers == ["test_skill_server1"]
+            assert clients[0].is_connected is False
+            assert "synthetic-private-credential" not in caplog.text
 
     @pytest.mark.asyncio
-    async def test_mcp_connection_timeout_returns_empty(self):
-        """Test that connection timeout returns empty dict and list gracefully."""
+    async def test_mcp_connection_timeout_retains_availability(self):
+        """Timeouts expose their status while releasing resources."""
         import asyncio
 
         mcp_configs = {
@@ -175,7 +178,7 @@ class TestLoadSkillMcpTools:
             )
 
             assert tools_with_server == {}
-            assert clients == []
+            assert clients == [mock_client]
             # Verify disconnect was called for cleanup
             mock_client.disconnect.assert_called_once()
 
@@ -199,7 +202,7 @@ class TestLoadSkillMcpTools:
             )
 
             assert tools_with_server == {}
-            assert clients == []
+            assert clients == [mock_client]
             # Verify disconnect was called for cleanup
             mock_client.disconnect.assert_called_once()
 

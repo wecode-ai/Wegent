@@ -582,11 +582,33 @@ async fn claude_runtime_writes_mcp_config_and_passes_it_to_process() {
         outcome
     );
     let args = read_arguments(&log_path);
-    assert!(args
+    let inline = args
         .as_array()
         .unwrap()
         .windows(2)
-        .any(|pair| pair[0] == "--mcp-config" && pair[1] == r#"{"mcpServers":{}}"#));
+        .find(|pair| pair[0] == "--mcp-config")
+        .unwrap()[1]
+        .as_str()
+        .unwrap();
+    let inline: Value = serde_json::from_str(inline).unwrap();
+    assert_eq!(
+        inline["mcpServers"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .collect::<Vec<_>>(),
+        vec!["wework_space"]
+    );
+    assert!(inline["mcpServers"]["wework_space"]["url"]
+        .as_str()
+        .unwrap()
+        .starts_with("${WEGENT_MCP_MANAGED_"));
+    assert!(
+        inline["mcpServers"]["wework_space"]["headers"]["Authorization"]
+            .as_str()
+            .unwrap()
+            .starts_with("${WEGENT_MCP_MANAGED_")
+    );
     assert_eq!(
         fs::read_to_string(execution_home(&agent_home, "7788").join("mcp.json")).unwrap(),
         "{broken"

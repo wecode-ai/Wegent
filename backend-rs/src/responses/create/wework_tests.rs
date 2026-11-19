@@ -173,60 +173,30 @@ fn assembles_the_runtime_create_payload_top_level() {
         .expect("options"),
         from_persisted: false,
     };
-    let user = crate::auth::UserRow {
-        id: 7,
-        user_name: "test-user".into(),
-        users_password_hash: String::new(),
-        email: None,
-        git_info: brz_mysql::Json(serde_json::from_value(json!({})).expect("git metadata")),
-        is_active: 1,
-        role: "user".into(),
-        auth_source: "local".into(),
-        preferences: "{}".into(),
-        created_at: Default::default(),
-        updated_at: Default::default(),
-    };
-    for backend_url in ["", " \t\n", "https://backend.example/deployment/api/"] {
-        let execution = assemble_execution_request(RuntimeExecutionInput {
-            user: &user,
-            user_id: 7,
-            task_id: "task-1",
-            device_id: "device-1",
-            message: "测试",
-            title: "12312",
-            client_user_message_id: "message-1",
-            model_config: json!({}),
-            auth_token: "test-task-token".into(),
-            skill_identity_token: "test-skill-token".into(),
-            backend_url: backend_url.into(),
-        });
-        assert_eq!(execution["backend_url"], backend_url);
-        let payload = assemble_create_payload(
-            execution,
-            "测试",
-            "12312",
-            "task-1",
-            "message-1",
-            &selection,
-        );
-        let object = payload.as_object().expect("payload");
-        let keys: Vec<&str> = object.keys().map(String::as_str).collect();
-        assert!(keys.contains(&"executionRequest"));
-        assert_eq!(payload["runtime"], "codex");
-        assert_eq!(payload["message"], "测试");
-        assert_eq!(payload["title"], "12312");
-        assert_eq!(payload["taskId"], "task-1");
-        assert_eq!(payload["clientUserMessageId"], "message-1");
-        assert_eq!(payload["standaloneChatWorkspace"], true);
-        assert_eq!(payload["modelId"], "example-claude");
-        assert_eq!(payload["modelType"], "public");
-        assert_eq!(payload["modelSelection"]["modelName"], "example-claude");
-        assert_eq!(
-            payload["modelSelection"]["options"]["weworkCloudModelNamespace"],
-            "default"
-        );
-        assert_eq!(payload["executionRequest"]["backend_url"], backend_url);
-    }
+    let payload = assemble_create_payload(
+        json!({"prompt": "测试"}),
+        "测试",
+        "12312",
+        "task-1",
+        "message-1",
+        &selection,
+    );
+    let object = payload.as_object().expect("payload");
+    let keys: Vec<&str> = object.keys().map(String::as_str).collect();
+    assert!(keys.contains(&"executionRequest"));
+    assert_eq!(payload["runtime"], "codex");
+    assert_eq!(payload["message"], "测试");
+    assert_eq!(payload["title"], "12312");
+    assert_eq!(payload["taskId"], "task-1");
+    assert_eq!(payload["clientUserMessageId"], "message-1");
+    assert_eq!(payload["standaloneChatWorkspace"], true);
+    assert_eq!(payload["modelId"], "example-claude");
+    assert_eq!(payload["modelType"], "public");
+    assert_eq!(payload["modelSelection"]["modelName"], "example-claude");
+    assert_eq!(
+        payload["modelSelection"]["options"]["weworkCloudModelNamespace"],
+        "default"
+    );
 }
 
 #[test]

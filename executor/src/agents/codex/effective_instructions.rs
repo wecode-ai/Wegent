@@ -28,6 +28,10 @@ pub(super) fn text(request: &ExecutionRequest, launch_config: &CodexLaunchConfig
             })
             .collect();
         contributions.sort_by_key(|(key, _)| *key);
+        if launch_config.mcp_unavailable {
+            instructions.push_str("\n\n");
+            instructions.push_str(runtime_capabilities::mcp_environment::UNAVAILABLE_HINT);
+        }
         for (key, entry) in contributions {
             instructions.push_str(&format!(
                 "\n\nWework runtime policy contribution {}:\n{}",

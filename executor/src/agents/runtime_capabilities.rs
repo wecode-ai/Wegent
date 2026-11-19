@@ -515,14 +515,16 @@ fn inject_managed_wework_mcps(
     Ok(())
 }
 
+/// Returns whether any optional MCP was skipped, for the execution's user hint.
 pub fn configure_request_mcps(
     request: &ExecutionRequest,
     thread_config: &mut Map<String, Value>,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     if let Some(home) = super::instance_home::request_home(request) {
         return codex_mcp::prepare(&home, request, thread_config);
     }
     let mut mcp_servers = collect_request_mcp_servers(request);
+    let configured_count = mcp_servers.len();
     configure_codex_mcp_servers(&mut mcp_servers, request, thread_config)?;
     let server_names = mcp_servers.keys().cloned().collect::<Vec<_>>().join(",");
     let stdio_count = mcp_servers
@@ -555,7 +557,7 @@ pub fn configure_request_mcps(
         ),
     ]);
     log_executor_event("codex MCP request config compiled", &fields);
-    Ok(())
+    Ok(configured_count != mcp_servers.len())
 }
 
 async fn deploy_request_skills(

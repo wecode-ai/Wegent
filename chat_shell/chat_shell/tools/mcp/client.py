@@ -23,6 +23,7 @@ import asyncio
 import concurrent.futures
 import inspect
 import logging
+import threading
 from typing import Any, Optional
 
 from langchain_core.tools.base import BaseTool
@@ -47,10 +48,13 @@ Connection = SSEConnection | StdioConnection | StreamableHttpConnection
 
 # Default timeout for MCP tool execution (180 seconds)
 DEFAULT_TOOL_TIMEOUT = 180.0
+DEFAULT_STARTUP_TIMEOUT = 30.0
 
 
 def wrap_tool_with_protection(
-    tool: BaseTool, timeout: float = DEFAULT_TOOL_TIMEOUT
+    tool: BaseTool,
+    timeout: float = DEFAULT_TOOL_TIMEOUT,
+    unavailable: threading.Event | None = None,
 ) -> BaseTool:
     """Wrap an MCP tool with timeout and exception protection.
 
@@ -68,6 +72,7 @@ def wrap_tool_with_protection(
     """
     original_run = tool._run if hasattr(tool, "_run") else None
     original_arun = tool._arun if hasattr(tool, "_arun") else None
+    unavailable = unavailable if unavailable is not None else threading.Event()
 
     # Check tool signatures to see if they accept 'config'
     run_accepts_config = False
@@ -101,6 +106,10 @@ def wrap_tool_with_protection(
 
     def protected_run(*args, **kwargs):
         """Synchronous tool execution with protection."""
+        if unavailable.is_set():
+            return _format_error(
+                f"MCP tool '{tool.name}' is unavailable. Continue with other tools."
+            )
         try:
             if original_run:
                 if run_accepts_config and "config" not in kwargs:
@@ -112,16 +121,18 @@ def wrap_tool_with_protection(
                     try:
                         return future.result(timeout=timeout)
                     except concurrent.futures.TimeoutError:
+                        unavailable.set()
                         error_msg = f"MCP tool '{tool.name}' timed out after {timeout}s"
-                        logger.error("[MCP] %s", error_msg)
-                        return _format_error(error_msg)
+                        logger.warning("[MCP] %s", error_msg)
+                        return _format_error(error_msg + " Continue with other tools.")
                 finally:
                     executor.shutdown(wait=False, cancel_futures=True)
 
             return _format_error(
                 f"Error: Tool {tool.name} has no synchronous implementation"
             )
-        except Exception as e:
+        except (Exception, asyncio.CancelledError) as e:
+            unavailable.set()
             logger.warning(
                 "[MCP] Tool unavailable: tool=%s error_type=%s",
                 tool.name,
@@ -133,6 +144,10 @@ def wrap_tool_with_protection(
 
     async def protected_arun(*args, **kwargs):
         """Asynchronous tool execution with timeout and exception protection."""
+        if unavailable.is_set():
+            return _format_error(
+                f"MCP tool '{tool.name}' is unavailable. Continue with other tools."
+            )
         try:
             if original_arun:
                 if arun_accepts_config and "config" not in kwargs:
@@ -143,10 +158,16 @@ def wrap_tool_with_protection(
                 )
             return _format_error(f"Error: Tool {tool.name} has no async implementation")
         except asyncio.TimeoutError:
+            unavailable.set()
             error_msg = f"MCP tool '{tool.name}' timed out after {timeout}s"
-            logger.error("[MCP] %s", error_msg)
-            return _format_error(error_msg)
-        except Exception as e:
+            logger.warning("[MCP] %s", error_msg)
+            return _format_error(error_msg + " Continue with other tools.")
+        except (Exception, asyncio.CancelledError) as e:
+            if isinstance(e, asyncio.CancelledError):
+                task = asyncio.current_task()
+                if task is not None and task.cancelling():
+                    raise
+            unavailable.set()
             logger.warning(
                 "[MCP] Tool unavailable: tool=%s error_type=%s",
                 tool.name,
@@ -160,6 +181,8 @@ def wrap_tool_with_protection(
         tool._run = protected_run
     if original_arun:
         tool._arun = protected_arun
+    setattr(tool, "_wegent_tool_protocol", "mcp_call")
+    setattr(tool, "_wegent_mcp_unavailable", unavailable)
 
     return tool
 
@@ -213,7 +236,7 @@ def _build_connection(cfg: dict[str, Any]) -> Connection:
             args=cfg.get("args", []),
             env=cfg.get("env"),
         )
-    if server_type == "streamable-http":
+    if server_type in ("http", "streamable-http", "streamable_http"):
         return StreamableHttpConnection(
             transport="streamable_http", url=cfg["url"], headers=headers
         )
@@ -304,10 +327,16 @@ class MCPClient:
                     connections={server_name: self.connections[server_name]},
                     tool_name_prefix=True,
                 )
-                tools = await client.get_tools(server_name=server_name)
-                protected_tools = [wrap_tool_with_protection(tool) for tool in tools]
+                tools = await asyncio.wait_for(
+                    client.get_tools(server_name=server_name),
+                    timeout=DEFAULT_STARTUP_TIMEOUT,
+                )
+                unavailable = threading.Event()
+                protected_tools = [
+                    wrap_tool_with_protection(tool, unavailable=unavailable)
+                    for tool in tools
+                ]
                 for tool in protected_tools:
-                    setattr(tool, "_wegent_tool_protocol", "mcp_call")
                     setattr(tool, "_wegent_mcp_server_label", server_name)
                 self._clients[server_name] = client
                 return (server_name, protected_tools, None)
@@ -321,7 +350,7 @@ class MCPClient:
         )
 
         for result in results:
-            if isinstance(result, Exception):
+            if isinstance(result, BaseException):
                 # This shouldn't happen since we catch exceptions in load_server_tools
                 logger.warning(
                     "[MCP] Unexpected tool loading error: error_type=%s",
@@ -427,6 +456,11 @@ class MCPClient:
             Dict mapping server_name to tool count
         """
         return {server_name: len(tools) for server_name, tools in self._tools.items()}
+
+    @property
+    def unavailable_servers(self) -> list[str]:
+        """Configured capabilities omitted during this initialization."""
+        return [name for name in self.config if name not in self._tools]
 
     @property
     def is_connected(self) -> bool:

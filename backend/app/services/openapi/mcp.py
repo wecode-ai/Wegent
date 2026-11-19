@@ -70,7 +70,7 @@ async def load_server_mcp_tools(
         # Create MCP client with server configuration
         client = MCPClient(backend_servers)
         try:
-            await asyncio.wait_for(client.connect(), timeout=30.0)
+            await client.connect()
             logger.info(
                 f"[OPENAPI_MCP] Loaded {len(client.get_tools())} server-side MCP tools "
                 f"from {len(backend_servers)} servers for task {task_id}"
@@ -148,7 +148,7 @@ async def load_bot_mcp_tools(
         # Create MCP client with bot configuration
         client = MCPClient(bot_servers)
         try:
-            await asyncio.wait_for(client.connect(), timeout=30.0)
+            await client.connect()
             logger.info(
                 f"[OPENAPI_MCP] Loaded {len(client.get_tools())} bot MCP tools "
                 f"from {len(bot_servers)} servers for task {task_id} (bot={bot_namespace}/{bot_name})"
@@ -266,6 +266,11 @@ async def load_custom_mcp_tools(task_id: int, mcp_servers: Dict[str, Any]) -> An
         # Convert to MCPClient expected format: {"server_name": {"url": "...", "headers": {...}}}
         servers_config = {}
         for name, config in mcp_servers.items():
+            if not isinstance(config, dict):
+                logger.warning(
+                    "[OPENAPI_MCP] Skipping invalid MCP configuration: server=%s", name
+                )
+                continue
             url = config.get("url", "")
             if not url:
                 logger.warning(
@@ -291,7 +296,7 @@ async def load_custom_mcp_tools(task_id: int, mcp_servers: Dict[str, Any]) -> An
         # Create MCP client with custom configuration
         client = MCPClient(servers_config)
         try:
-            await asyncio.wait_for(client.connect(), timeout=30.0)
+            await client.connect()
             logger.info(
                 f"[OPENAPI_MCP] Loaded {len(client.get_tools())} custom MCP tools "
                 f"from {len(servers_config)} servers for task {task_id}"

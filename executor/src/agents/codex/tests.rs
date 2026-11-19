@@ -32,12 +32,23 @@ fn global_mcps_without_backend_context_do_not_enter_native_configuration() {
         super::mcp_config::configure_task_mcp(&request, &mut launch).unwrap();
         assert!(!launch.thread_config.contains_key("mcp_servers.web"));
         assert!(!launch.thread_config.contains_key("mcp_servers.connector"));
+        assert!(launch.mcp_unavailable);
+        for params in [
+            thread_start_params(&request, &launch),
+            thread_resume_params("thread", &request, &launch),
+            thread_fork_params("thread", None, &request, &launch),
+        ] {
+            assert!(params["developerInstructions"]
+                .as_str()
+                .unwrap()
+                .contains(runtime_capabilities::mcp_environment::UNAVAILABLE_HINT));
+        }
         let request = ExecutionRequest {
             mcp_servers: Vec::new(),
             ..request
         };
         let mut runtime = Map::new();
-        configure_global_mcps(&request, &mut runtime).unwrap();
+        assert!(configure_global_mcps(&request, &mut runtime).unwrap());
         assert_eq!(
             runtime["mcp_servers.web"]["url"],
             "https://example.test/mcp"
@@ -3921,6 +3932,42 @@ fn control_mcp_deadline_overrides_the_default_for_start_resume_and_fork() {
             params["config"]["mcp_servers.wework_space.tool_timeout_sec"],
             60
         );
+    }
+}
+
+#[test]
+fn unavailable_managed_mcps_are_omitted_instead_of_creating_invalid_transports() {
+    let mut environment = environment::LaunchEnvironment::new();
+    environment.without_browser_bridge();
+    let request = ExecutionRequest {
+        task_id: "42".into(),
+        ..Default::default()
+    };
+    let configs = runtime_capabilities::managed_mcp_configs(&request).unwrap();
+    assert!(
+        configs.len() < 4,
+        "the request must contain an unavailable managed service"
+    );
+    let launch = build_codex_launch_config(&request).unwrap();
+    for name in [
+        crate::workbench_control::SERVER_NAME,
+        crate::task_runtime::mcp::NOTIFICATIONS_MCP_SERVER_NAME,
+        crate::task_runtime::mcp::STAND_IN_MCP_SERVER_NAME,
+        crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME,
+    ] {
+        if configs.contains_key(name) {
+            continue;
+        }
+        for params in [
+            thread_start_params(&request, &launch),
+            thread_resume_params("thread", &request, &launch),
+            thread_fork_params("thread", None, &request, &launch),
+        ] {
+            let config = params["config"].as_object().unwrap();
+            assert!(!config
+                .keys()
+                .any(|key| key.starts_with(&format!("mcp_servers.{name}."))));
+        }
     }
 }
 

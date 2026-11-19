@@ -52,7 +52,13 @@ def filter_backend_dependent_mcp_servers(
     """Skip unavailable backend integrations before resolving their credentials."""
     configured: dict[str, dict[str, Any]] = {}
     for name, server in servers.items():
-        if path := _missing_backend_context(server, task_data):
+        fields = ("url", "headers")
+        if server.get("type") == "stdio":
+            fields = ("command", "args", "env")
+        elif server.get("type") == "sse":
+            fields = ("url", "headers", "timeout")
+        consumed = {key: server[key] for key in fields if key in server}
+        if path := _missing_backend_context(consumed, task_data):
             logger.info("Unconfigured MCP skipped: server=%s context=%s", name, path)
         else:
             configured[name] = server

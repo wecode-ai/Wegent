@@ -696,7 +696,13 @@ fn mcp_servers_from_spec(spec: &CommandSpec) -> Option<Value> {
     }
     spec.args()
         .windows(2)
-        .find_map(|window| (window[0] == "--mcp-config").then(|| read_json_file(&window[1])))
+        .find_map(|window| {
+            (window[0] == "--mcp-config").then(|| {
+                serde_json::from_str::<Value>(&window[1])
+                    .ok()
+                    .or_else(|| read_json_file(&window[1]))
+            })
+        })
         .flatten()
 }
 

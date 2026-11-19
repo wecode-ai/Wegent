@@ -95,51 +95,6 @@ pub(super) async fn execution_request(
         FastApiError::internal()
     })?;
     let model_config = cloud_model_config(state, user_id, selection).await?;
-    Ok(assemble_execution_request(RuntimeExecutionInput {
-        user: &user,
-        user_id,
-        task_id,
-        device_id,
-        message,
-        title,
-        client_user_message_id,
-        model_config,
-        auth_token,
-        skill_identity_token,
-        backend_url: crate::config::optional_env_or_dotenv("BACKEND_INTERNAL_URL")
-            .unwrap_or_default(),
-    }))
-}
-
-pub(super) struct RuntimeExecutionInput<'a> {
-    pub user: &'a UserRow,
-    pub user_id: i64,
-    pub task_id: &'a str,
-    pub device_id: &'a str,
-    pub message: &'a str,
-    pub title: &'a str,
-    pub client_user_message_id: &'a str,
-    pub model_config: Value,
-    pub auth_token: String,
-    pub skill_identity_token: String,
-    pub backend_url: String,
-}
-
-/// Assemble the execution context shared by new conversations and follow-up turns.
-pub(super) fn assemble_execution_request(input: RuntimeExecutionInput<'_>) -> Value {
-    let RuntimeExecutionInput {
-        user,
-        user_id,
-        task_id,
-        device_id,
-        message,
-        title,
-        client_user_message_id,
-        model_config,
-        auth_token,
-        skill_identity_token,
-        backend_url,
-    } = input;
     let (generated_task_id, subtask_id) = runtime_execution_ids();
     let task_id_value = if task_id.is_empty() {
         generated_task_id.to_string()
@@ -236,7 +191,7 @@ pub(super) fn assemble_execution_request(input: RuntimeExecutionInput<'_>) -> Va
         "interactive_form_answer" => json!(null),
         "auth_token" => json!(auth_token),
         "skill_identity_token" => json!(skill_identity_token),
-        "backend_url" => json!(backend_url),
+        "backend_url" => json!(""),
         "attachments" => json!([]),
         "is_subscription" => json!(false),
         "system_mcp_config" => json!(null),
@@ -265,7 +220,7 @@ pub(super) fn assemble_execution_request(input: RuntimeExecutionInput<'_>) -> Va
         "updated_at" => json!(null),
         "trace_context" => json!(null),
     }
-    Value::Object(object)
+    Ok(Value::Object(object))
 }
 
 /// `_runtime_task_create_payload` for the direct Wework path.

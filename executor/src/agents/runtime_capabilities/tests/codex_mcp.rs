@@ -19,7 +19,7 @@ fn unconfigured_mcps_are_removed_from_runtime_and_persisted_config() {
         ..Default::default()
     };
     let mut runtime = Map::new();
-    prepare(home.path(), &request, &mut runtime).unwrap();
+    assert!(prepare(home.path(), &request, &mut runtime).unwrap());
     assert!(runtime.contains_key("mcp_servers.web"));
     assert!(!runtime.contains_key("mcp_servers.custom-example"));
     assert!(!runtime.contains_key("mcp_servers.connector"));
@@ -49,7 +49,7 @@ fn unconfigured_mcps_are_removed_from_runtime_and_persisted_config() {
     request.backend_url = None;
     request.mcp_servers.clear();
     let mut runtime = Map::new();
-    prepare(home.path(), &request, &mut runtime).unwrap();
+    assert!(prepare(home.path(), &request, &mut runtime).unwrap());
     assert!(!runtime.contains_key("mcp_servers.custom-example"));
     assert!(!runtime.contains_key("mcp_servers.connector"));
     assert!(runtime.contains_key("mcp_servers.web"));
@@ -79,7 +79,13 @@ fn unconfigured_mcps_are_removed_from_runtime_and_persisted_config() {
 #[test]
 fn remote_mcp_with_empty_command_connects_by_url() {
     for command in [json!(""), json!(" \t"), Value::Null] {
-        for server_type in [None, Some("http"), Some("streamable-http"), Some("sse")] {
+        for server_type in [
+            None,
+            Some("http"),
+            Some("streamable-http"),
+            Some("streamable_http"),
+            Some("sse"),
+        ] {
             let home = tempfile::tempdir().unwrap();
             let mut server = json!({
                 "name": "remote", "command": command, "args": [], "env": {},
@@ -131,6 +137,35 @@ fn explicit_transport_is_authoritative_and_invalid_stdio_is_rejected() {
             "MCP definition requires url"
         );
     }
+}
+
+#[test]
+fn native_transports_normalize_consumed_values_before_context_binding() {
+    let home = tempfile::tempdir().unwrap();
+    let request = ExecutionRequest {
+        mcp_servers: vec![
+            json!({"name":"http", "type":"http", "command":"unused",
+                "args":["${{backend_api_url}}"], "url":" https://example.test/mcp "}),
+            json!({"name":"stdio", "type":"stdio", "command":" node ",
+                "args":["run.js", 42, true, null, [], {"unused":"${{backend_url}}"}],
+                "url":"${{backend_api_url}}/unused"}),
+        ],
+        ..Default::default()
+    };
+    let mut runtime = Map::new();
+    prepare(home.path(), &request, &mut runtime).unwrap();
+    assert_eq!(
+        runtime["mcp_servers.http"]["url"],
+        "https://example.test/mcp"
+    );
+    assert_eq!(runtime["mcp_servers.stdio"]["command"], "node");
+    assert_eq!(
+        runtime["mcp_servers.stdio"]["args"],
+        json!(["run.js", "42", "true"])
+    );
+    let mut resumed = Map::new();
+    prepare(home.path(), &ExecutionRequest::default(), &mut resumed).unwrap();
+    assert_eq!(resumed, runtime);
 }
 
 #[test]
@@ -228,11 +263,10 @@ fn same_name_replaces_transport_and_keeps_other_settings_including_inline_tables
 fn invalid_config_or_request_is_not_overwritten() {
     let home = tempfile::tempdir().unwrap();
     let path = home.path().join("config.toml");
-    for content in ["[broken"] {
-        fs::write(&path, content).unwrap();
-        assert!(prepare(home.path(), &ExecutionRequest::default(), &mut Map::new()).is_err());
-        assert_eq!(fs::read_to_string(&path).unwrap(), content);
-    }
+    let content = "[broken";
+    fs::write(&path, content).unwrap();
+    assert!(prepare(home.path(), &ExecutionRequest::default(), &mut Map::new()).is_err());
+    assert_eq!(fs::read_to_string(&path).unwrap(), content);
     fs::write(&path, "model = 'keep'\nmcp_servers = 42").unwrap();
     let mut runtime = Map::new();
     let request = ExecutionRequest {

@@ -309,6 +309,23 @@ fn response_decision_retries_invalid_form_without_leaking_input() {
 }
 
 #[test]
+fn structured_tool_errors_skip_the_service_without_requesting_new_input() {
+    let mut result = invalid_form_proxy_result("tool-error");
+    result.is_error = true;
+    result.output_text = "private-response-body".to_owned();
+    let decision = deferred_proxy_response_decision(&result, "tool_deferred", json!({}), 0, 2);
+    assert_eq!(
+        decision.action,
+        DeferredMcpResponseAction::ContinueWithoutServer
+    );
+    let query = decision.retry_query.unwrap().to_string();
+    assert!(query.contains("mcp_unavailable"));
+    assert!(!query.contains("Call interactive_form_question again"));
+    assert!(!query.contains("private-response-body"));
+    assert!(decision.done.is_none());
+}
+
+#[test]
 fn response_decision_reports_simple_error_after_deferred_retries() {
     let decision = deferred_proxy_response_decision(
         &invalid_form_proxy_result("tool-4"),

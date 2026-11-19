@@ -238,6 +238,16 @@ pub fn deferred_proxy_response_decision(
     deferred_mcp_retry_count: usize,
     max_deferred_mcp_retries: usize,
 ) -> DeferredMcpResponseDecision {
+    if proxy_result.is_error {
+        return deferred_proxy_unavailable(
+            &DeferredToolUse {
+                id: proxy_result.tool_use_id.clone(),
+                name: proxy_result.tool_name.clone(),
+                input: Value::Null,
+            },
+            "tool_error",
+        );
+    }
     let tool_start = Some(tool_start_event(
         &proxy_result.tool_use_id,
         &proxy_result.tool_name,

@@ -11,7 +11,7 @@ pub(super) fn configure_task_mcp(
     // Prevent their unbound or malformed table from being loaded at child startup.
     launch.config_overrides.push("mcp_servers={}".to_owned());
     if super::super::instance_home::request_home(request).is_none() {
-        configure_global_mcps(request, &mut launch.thread_config)?;
+        launch.mcp_unavailable = configure_global_mcps(request, &mut launch.thread_config)?;
     }
     launch
         .config_overrides
@@ -23,7 +23,8 @@ pub(super) fn configure_task_mcp(
         launch.config_overrides.extend(overrides);
         launch.env.extend(environment);
     }
-    runtime_capabilities::configure_request_mcps(request, &mut launch.thread_config)?;
+    launch.mcp_unavailable |=
+        runtime_capabilities::configure_request_mcps(request, &mut launch.thread_config)?;
     if crate::runtime_work::stand_in_requires_confirmation(request)
         && !external_work::applies(request)
     {

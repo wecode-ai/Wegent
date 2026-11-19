@@ -21,35 +21,25 @@ pub(super) fn prepare(
     home: &Path,
     request: &ExecutionRequest,
     global_mcps: &BTreeMap<String, Value>,
-    spec: CommandSpec,
-) -> Result<CommandSpec, String> {
-    crate::task_runtime::mcp::has_bound_issue_context(request)?;
-    match prepare_configuration(home, request, global_mcps, spec.clone()) {
-        Ok(prepared) => Ok(prepared),
-        Err(_) => {
-            super::mcp_environment::log_server_unavailable(
-                request,
-                "claude_mcps",
-                "configuration_file",
-            );
-            // Do not pass an unreadable or unsafe MCP file to the native child.
-            Ok(spec.arg("--mcp-config").arg(r#"{"mcpServers":{}}"#))
-        }
-    }
-}
-
-fn prepare_configuration(
-    home: &Path,
-    request: &ExecutionRequest,
-    global_mcps: &BTreeMap<String, Value>,
     mut spec: CommandSpec,
 ) -> Result<CommandSpec, String> {
+    crate::task_runtime::mcp::has_bound_issue_context(request)?;
     let path = home.join("mcp.json");
-    if fs::symlink_metadata(&path).is_ok_and(|meta| !meta.is_file()) {
-        return Err("Claude MCP config must be a regular file".to_owned());
-    }
-    let mut servers =
-        merge_claude_mcp_servers(&path, extract_claude_mcp_templates(request, global_mcps))?;
+    let incoming = extract_claude_mcp_templates(request, global_mcps);
+    let saved = if fs::symlink_metadata(&path).is_ok_and(|meta| !meta.is_file()) {
+        Err("Claude MCP config must be a regular file".to_owned())
+    } else {
+        merge_claude_mcp_servers(&path, incoming.clone())
+    };
+    let persistable = saved.is_ok();
+    let mut servers = saved.unwrap_or_else(|_| {
+        super::mcp_environment::log_server_unavailable(
+            request,
+            "claude_mcps",
+            "configuration_file",
+        );
+        incoming
+    });
     // Executor-managed endpoints and grants are authoritative for this execution.
     for name in [
         crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME,
@@ -59,6 +49,7 @@ fn prepare_configuration(
     ] {
         servers.remove(name);
     }
+    let configured = servers.keys().cloned().collect::<Vec<_>>();
     let mut environment = BTreeMap::new();
     retain_available_servers(&mut servers, request, "configuration", |_, server| {
         crate::mcp_utils::validate_mcp_server_definition(server)?;
@@ -68,39 +59,96 @@ fn prepare_configuration(
     let mut managed = BTreeMap::new();
     super::inject_managed_wework_mcps(request, &mut managed)?;
     for (name, server) in &mut managed {
-        for field in ["url", "headers"] {
-            let Some(value) = server.get_mut(field) else {
-                continue;
-            };
-            let mut index = 0;
-            visit_strings(value, &mut |text| {
-                use sha2::{Digest, Sha256};
-                let variable = format!(
-                    "WEGENT_MCP_MANAGED_{:x}",
-                    Sha256::digest(format!("{name}:{field}:{index}").as_bytes())
-                );
-                index += 1;
-                environment.insert(variable.clone(), text.clone());
-                *text = format!("${{{variable}}}");
-                Ok(())
-            })?;
-        }
+        bind_transport_environment(name, server, &["url", "headers"], &mut environment)?;
     }
     servers.extend(managed);
     let config = json!({"mcpServers": servers});
-    let previous = fs::read(&path)
-        .ok()
-        .and_then(|content| serde_json::from_slice::<Value>(&content).ok());
-    if previous.as_ref() != Some(&config) {
-        super::write_json_file(&path, &config)?;
+    let persisted = persistable && {
+        let previous = fs::read(&path)
+            .ok()
+            .and_then(|content| serde_json::from_slice::<Value>(&content).ok());
+        previous.as_ref() == Some(&config) || super::write_json_file(&path, &config).is_ok()
+    };
+    if !persisted {
+        super::mcp_environment::log_server_unavailable(
+            request,
+            "claude_mcps",
+            "configuration_write",
+        );
+        // Native JSON input retains independent services when persistence fails.
+        // Keep every transport value in the child environment, never in argv.
+        retain_available_servers(
+            &mut servers,
+            request,
+            "inline_configuration",
+            |name, server| {
+                *server = crate::agents::claude_options::normalize_mcp_server_for_claude(server);
+                bind_transport_environment(
+                    &format!("inline:{name}"),
+                    server,
+                    &["command", "args", "env", "url", "headers"],
+                    &mut environment,
+                )?;
+                Ok(true)
+            },
+        );
+        spec = spec
+            .arg("--mcp-config")
+            .arg(json!({"mcpServers": servers}).to_string());
+    } else {
+        spec = spec
+            .arg("--mcp-config")
+            .arg(path.display().to_string())
+            .env("WEGENT_MCP_CONFIG_PATH", path.display().to_string());
     }
     for (key, value) in environment {
         spec = spec.env(key, value);
     }
-    Ok(spec
-        .arg("--mcp-config")
-        .arg(path.display().to_string())
-        .env("WEGENT_MCP_CONFIG_PATH", path.display().to_string()))
+    if request.extra.get("enable_tools").and_then(Value::as_bool) != Some(false)
+        && configured.iter().any(|name| !servers.contains_key(name))
+    {
+        let hint = super::mcp_environment::UNAVAILABLE_HINT;
+        if let Some(index) = spec
+            .args()
+            .windows(2)
+            .position(|args| args[0] == "--append-system-prompt")
+        {
+            let prompt = format!("{}\n\n{hint}", spec.args()[index + 1]);
+            spec.replace_arg(index + 1, prompt);
+        } else {
+            spec = spec.arg("--append-system-prompt").arg(hint);
+        }
+    }
+    Ok(spec)
+}
+
+fn bind_transport_environment(
+    name: &str,
+    server: &mut Value,
+    fields: &[&str],
+    environment: &mut BTreeMap<String, String>,
+) -> Result<(), String> {
+    let mut bindings = BTreeMap::new();
+    for field in fields {
+        let Some(value) = server.get_mut(*field) else {
+            continue;
+        };
+        super::mcp_environment::resolve_context(value, environment)?;
+        let mut index = 0;
+        visit_strings(value, &mut |text| {
+            use sha2::{Digest, Sha256};
+            let variable = format!(
+                "WEGENT_MCP_MANAGED_{:x}",
+                Sha256::digest(format!("{name}:{field}:{index}").as_bytes())
+            );
+            index += 1;
+            bindings.insert(variable.clone(), text.clone());
+            *text = format!("${{{variable}}}");
+            Ok(())
+        })?;
+    }
+    environment.extend(bindings);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -126,13 +174,20 @@ mod tests {
             "enabled": true, "credentials": {"url": "https://example.test/table?token=synthetic-secret"}
         }}}}});
         // A fresh request without credentials must still prepare the web service.
-        prepare(
+        let spec = prepare(
             home.path(),
             &request,
             &BTreeMap::new(),
-            CommandSpec::new("claude"),
+            CommandSpec::new("claude")
+                .arg("--append-system-prompt")
+                .arg("Existing task instructions"),
         )
         .unwrap();
+        assert!(spec.args().windows(2).any(|args| {
+            args[0] == "--append-system-prompt"
+                && args[1].starts_with("Existing task instructions\n\n")
+                && args[1].contains(super::super::mcp_environment::UNAVAILABLE_HINT)
+        }));
         let path = home.path().join("mcp.json");
         let config: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         assert!(config["mcpServers"].get("custom-example").is_none());
@@ -307,11 +362,7 @@ mod tests {
             CommandSpec::new("claude"),
         )
         .unwrap();
-        assert!(spec
-            .args()
-            .windows(2)
-            .any(|args| args[0] == "--mcp-config" && args[1] == r#"{"mcpServers":{}}"#));
-        assert!(spec.envs().is_empty());
+        assert_inline_replacement(&spec);
         assert_eq!(fs::read_to_string(&path).unwrap(), "{broken");
         #[cfg(unix)]
         {
@@ -326,12 +377,65 @@ mod tests {
                 CommandSpec::new("claude"),
             )
             .unwrap();
-            assert!(spec.args().iter().any(|arg| arg == r#"{"mcpServers":{}}"#));
+            assert_inline_replacement(&spec);
             assert_eq!(
                 fs::read_to_string(external).unwrap(),
                 "protected configuration"
             );
         }
+    }
+
+    fn assert_inline_replacement(spec: &CommandSpec) {
+        let input = spec
+            .args()
+            .windows(2)
+            .find(|args| args[0] == "--mcp-config")
+            .unwrap();
+        let mut config: Value = serde_json::from_str(&input[1]).unwrap();
+        assert!(!spec.envs().contains_key("WEGENT_MCP_CONFIG_PATH"));
+        super::super::mcp_environment::resolve_context(&mut config, spec.envs()).unwrap();
+        assert_eq!(config["mcpServers"]["replace"]["command"], "new");
+        assert!(config["mcpServers"].get("keep").is_none());
+        assert!(input[1].contains("${WEGENT_MCP_MANAGED_"));
+    }
+
+    #[test]
+    fn inline_configuration_keeps_credentials_out_of_arguments() {
+        let home = tempfile::tempdir().unwrap();
+        fs::write(home.path().join("mcp.json"), "{broken").unwrap();
+        let request = ExecutionRequest {
+            mcp_servers: vec![json!({"name":"healthy", "type":"http",
+                "url":"https://example.test/mcp?token=synthetic-private",
+                "headers":{"Authorization":"Bearer synthetic-private"}})],
+            ..Default::default()
+        };
+        let spec = prepare(
+            home.path(),
+            &request,
+            &BTreeMap::new(),
+            CommandSpec::new("claude"),
+        )
+        .unwrap();
+        assert!(!spec.args().join(" ").contains("synthetic-private"));
+        let input = spec
+            .args()
+            .windows(2)
+            .find(|args| args[0] == "--mcp-config")
+            .unwrap();
+        let mut config: Value = serde_json::from_str(&input[1]).unwrap();
+        super::super::mcp_environment::resolve_context(&mut config, spec.envs()).unwrap();
+        assert_eq!(
+            config["mcpServers"]["healthy"]["headers"]["Authorization"],
+            "Bearer synthetic-private"
+        );
+        assert_eq!(
+            config["mcpServers"]["healthy"]["url"],
+            "https://example.test/mcp?token=synthetic-private"
+        );
+        assert_eq!(
+            fs::read_to_string(home.path().join("mcp.json")).unwrap(),
+            "{broken"
+        );
     }
 
     #[test]

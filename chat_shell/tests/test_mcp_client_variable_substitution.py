@@ -77,6 +77,24 @@ class TestBuildConnectionsVariableSubstitution:
         conn = connections["my-server"]
         assert conn["headers"] == {"X-User": "zhangsan"}
 
+    def test_unused_transport_fields_do_not_require_backend_context(self) -> None:
+        config = {
+            "http": {
+                "type": "http",
+                "url": "https://example.test/mcp",
+                "args": ["${{backend_api_url}}"],
+                "timeout": "${{backend_url}}",
+                "env": {"UNUSED": "${{backend_url}}"},
+            },
+            "stdio": {
+                "type": "stdio",
+                "command": "tool",
+                "url": "${{backend_api_url}}/mcp",
+                "headers": {"UNUSED": "${{backend_url}}"},
+            },
+        }
+        assert set(build_connections(config, ExecutionRequest())) == {"http", "stdio"}
+
     def test_streamable_http_headers_placeholder_replaced(self) -> None:
         """${{user.name}} in streamable-http headers should be replaced."""
         config = {
@@ -178,6 +196,112 @@ class TestMCPClientToolNamePrefix:
     """Tests that MCPClient uses the adapter's official server-name prefix."""
 
     @pytest.mark.asyncio
+    async def test_tool_cancellation_isolated_from_user_cancellation(self) -> None:
+        started = asyncio.Event()
+        stopped = asyncio.Event()
+
+        async def call(fail: bool) -> str:
+            """Separate service cancellation from cancellation of the caller."""
+            if fail:
+                raise asyncio.CancelledError()
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                stopped.set()
+            return "response"
+
+        unavailable = wrap_tool_with_protection(
+            StructuredTool.from_function(
+                coroutine=call, name="cancelled", description="Cancelled service"
+            )
+        )
+        assert "unavailable" in await unavailable.ainvoke({"fail": True})
+        assert unavailable._wegent_mcp_unavailable.is_set()
+        active = wrap_tool_with_protection(
+            StructuredTool.from_function(
+                coroutine=call, name="active", description="Active service"
+            )
+        )
+        task = asyncio.create_task(active.ainvoke({"fail": False}))
+        await asyncio.wait_for(started.wait(), timeout=2.0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert stopped.is_set()
+        assert not active._wegent_mcp_unavailable.is_set()
+
+    @pytest.mark.asyncio
+    async def test_startup_timeout_and_service_cancellation_preserve_healthy_tools(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        stopped = asyncio.Event()
+
+        class FakeClient:
+            def __init__(self, **_kwargs):
+                pass
+
+            async def get_tools(self, *, server_name):
+                if server_name == "cancelled":
+                    raise asyncio.CancelledError()
+                if server_name == "blocked":
+                    try:
+                        await asyncio.Event().wait()
+                    finally:
+                        stopped.set()
+                return [
+                    StructuredTool.from_function(
+                        func=lambda: "healthy",
+                        name="healthy",
+                        description="Healthy service",
+                    )
+                ]
+
+        monkeypatch.setattr("chat_shell.tools.mcp.client.DEFAULT_STARTUP_TIMEOUT", 0.01)
+        monkeypatch.setattr(
+            "chat_shell.tools.mcp.client.MultiServerMCPClient", FakeClient
+        )
+        client = MCPClient(
+            {
+                name: {"url": "https://example.test/mcp"}
+                for name in ["blocked", "cancelled", "healthy"]
+            }
+        )
+        await asyncio.wait_for(client.connect(), timeout=2.0)
+        assert stopped.is_set()
+        assert await client.get_tools()[0].ainvoke({}) == "healthy"
+        assert set(client.unavailable_servers) == {"blocked", "cancelled"}
+
+    @pytest.mark.asyncio
+    async def test_parent_cancellation_is_preserved(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        started = asyncio.Event()
+        stopped = asyncio.Event()
+
+        class FakeClient:
+            def __init__(self, **_kwargs):
+                pass
+
+            async def get_tools(self, **_kwargs):
+                started.set()
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    stopped.set()
+
+        monkeypatch.setattr(
+            "chat_shell.tools.mcp.client.MultiServerMCPClient", FakeClient
+        )
+        client = MCPClient({"blocked": {"url": "https://example.test/mcp"}})
+        task = asyncio.create_task(client.connect())
+        await asyncio.wait_for(started.wait(), timeout=2.0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert stopped.is_set()
+
+    @pytest.mark.asyncio
     async def test_sync_timeout_returns_while_call_is_still_blocked(self) -> None:
         release = threading.Event()
         started = threading.Event()
@@ -264,7 +388,8 @@ class TestMCPClientToolNamePrefix:
 
         assert [tool.name for tool in client.get_tools()] == ["filesystem_list_files"]
         tool = client.get_tools()[0]
+        assert await tool.ainvoke({"fail": False}) == "[]"
         assert "unavailable" in await tool.ainvoke({"fail": True})
         assert "unavailable" in tool.invoke({"fail": True})
-        assert await tool.ainvoke({"fail": False}) == "[]"
+        assert "unavailable" in await tool.ainvoke({"fail": False})
         assert "private-credential-and-response-body" not in caplog.text

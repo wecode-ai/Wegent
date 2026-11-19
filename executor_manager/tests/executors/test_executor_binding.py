@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import pytest
+
 from executor_manager.clients import executor_binding
 from executor_manager.executors.docker.executor import DockerExecutor
 from executor_manager.routers.routers import app, openai_responses
@@ -65,6 +66,7 @@ def test_ready_container_requires_binding_before_dispatch(status):
     ("authorization", "expected"),
     [(f"WegentExecutorBinding {TOKEN}", TOKEN), ("Bearer dummy", None)],
 )
+@pytest.mark.asyncio
 async def test_enqueue_accepts_binding_credential_only_from_dispatch_header(
     authorization, expected
 ):
@@ -105,6 +107,7 @@ async def test_enqueue_accepts_binding_credential_only_from_dispatch_header(
         {"backend_url": "https://backend.example/deployment/api/"},
     ],
 )
+@pytest.mark.asyncio
 async def test_responses_preserve_optional_backend_context_for_each_queue(
     request_id: str, backend_context: dict[str, object]
 ) -> None:
