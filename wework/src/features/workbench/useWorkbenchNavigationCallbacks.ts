@@ -362,7 +362,6 @@ export function useOpenStandaloneWorkspace({
             name: response.name,
           })
         )
-        await refreshWorkLists()
         dispatch({
           type: 'project_workspace_selected',
           project: runtimeProjectToProject({
@@ -390,6 +389,9 @@ export function useOpenStandaloneWorkspace({
             launchOwner(response.deviceId, launchOptions)
           )
         navigateTo('/')
+        void refreshWorkLists().catch(error => {
+          console.error('[Wework] Failed to refresh work lists after creating project', error)
+        })
         return
       }
 
