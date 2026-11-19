@@ -159,6 +159,12 @@ export function createGuidedReplies({
         ]) {
           await control.command('waitFor', `[data-testid="${card}"]`, { text, timeoutMs })
         }
+        const secondRoot = secondCard.slice('cloud-task-activity-card-'.length)
+        const secondReplies = await control.command(
+          'getText',
+          `[data-testid="cloud-task-activity-replies-${secondRoot}"]`
+        )
+        assert.ok(!secondReplies.includes('已完成'), 'B 楼的引导回执不应显示成一条已完成执行')
       } finally {
         releaseList()
         releaseAnswerA()

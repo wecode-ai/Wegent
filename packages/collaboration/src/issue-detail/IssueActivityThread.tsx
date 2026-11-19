@@ -20,11 +20,17 @@ export function groupIssueTimelineThreads(
     results.add(message.content);
     publishedResults.set(activity, results);
   }
-  const timeline = messages.map((message) =>
-    publishedResults.get(message.messageId)?.has(message.content)
-      ? { ...message, content: "" }
-      : message,
-  );
+  const timeline = messages
+    .filter(
+      (message) =>
+        message.type !== "agent_status" ||
+        message.metadata.collaboration_guidance !== true,
+    )
+    .map((message) =>
+      publishedResults.get(message.messageId)?.has(message.content)
+        ? { ...message, content: "" }
+        : message,
+    );
   return groupIssueActivityThreads(timeline).flatMap((thread) => {
     if (thread.root.sender.type !== "user") return [thread];
     const discussion = {

@@ -345,6 +345,7 @@ async fn guide_active_comment(
             "SELECT id FROM project_chat_messages
          WHERE project_id=? AND task_id=? AND runtime_task_id=? AND sender_type='agent'
          AND status='streaming'
+         AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.collaboration_guidance')), 'false') <> 'true'
          AND (deleted_at IS NULL OR deleted_at IN ('1970-01-01 00:00:00','1970-01-01 00:00:01'))
          LIMIT 1",
             (

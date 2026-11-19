@@ -29,6 +29,11 @@ async def guide_collaboration_comment(
             sender_type="agent",
             status="streaming",
         )
+        .filter(
+            ProjectChatMessage.metadata_json["collaboration_guidance"]
+            .as_boolean()
+            .is_not(True)
+        )
         .first()
     )
     if active is None:
