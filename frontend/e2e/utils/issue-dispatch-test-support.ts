@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { expect, type APIRequestContext, type Locator, type Page } from '@playwright/test'
+import { expect, type APIRequestContext, type Page } from '@playwright/test'
 import type { DeviceListResponse } from '../../src/apis/devices'
 import { ADMIN_USER } from '../config/test-users'
 import { createApiClient } from './api-client'
@@ -45,16 +45,6 @@ interface ProjectAgent {
 
 function encoded(value: string): string {
   return encodeURIComponent(value)
-}
-
-async function firstVisibleOption(locator: Locator): Promise<Locator> {
-  await expect(locator.first()).toBeVisible({ timeout: 5_000 })
-  const count = await locator.count()
-  for (let index = 0; index < count; index += 1) {
-    const candidate = locator.nth(index)
-    if (await candidate.isVisible()) return candidate
-  }
-  throw new Error('Expected at least one visible option')
 }
 
 export async function createIssueDispatchMockModel(
@@ -203,14 +193,15 @@ export async function addProjectMember(page: Page, userName: string): Promise<st
   await chooseCollaborationOption(page, page.getByTestId('cloud-member-role'), {
     value: 'Developer',
   })
-  const result = await firstVisibleOption(page.locator('[data-testid^="cloud-member-result-"]'))
+  const result = page
+    .locator('[data-testid^="cloud-member-result-"]')
+    .filter({ has: page.getByText(userName, { exact: true }) })
+  await expect(result).toBeVisible()
   const resultTestId = await result.getAttribute('data-testid')
   const userId = resultTestId?.replace('cloud-member-result-', '')
   if (!userId) throw new Error(`Member search result for ${userName} did not expose a user ID`)
   await result.click()
-  await expect(
-    page.locator('[data-testid^="cloud-project-member-"]').filter({ hasText: userName })
-  ).toBeVisible()
+  await expect(page.getByTestId(`cloud-project-member-${userId}`)).toBeVisible()
   return userId
 }
 

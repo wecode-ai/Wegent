@@ -94,6 +94,7 @@ export async function chooseCollaborationOption(
           .and(page.locator(`[data-value=${JSON.stringify(option.value)}]`))
       : listbox.getByRole('option', { name: option.label, exact: true })
   await choice.click()
+  await expect(listbox).toBeHidden()
 }
 
 export async function selectCollaborationProjectView(

@@ -140,7 +140,8 @@ export async function assertCollaboratorSearchLayout() {
             label: label.getBoundingClientRect().toJSON(), popup: popup.getBoundingClientRect().toJSON(),
             focused: document.activeElement === input && label.matches(':focus-within'),
             outline: style.outlineStyle, outlineWidth: parseFloat(style.outlineWidth), outlineOffset: parseFloat(style.outlineOffset),
-            inputOutline: inputStyle.outlineStyle, inputShadow: inputStyle.boxShadow,
+            inputOutline: inputStyle.outlineStyle, inputOutlineColor: inputStyle.outlineColor,
+            inputOutlineWidth: parseFloat(inputStyle.outlineWidth), inputShadow: inputStyle.boxShadow,
             inputBorders: ['borderTopWidth','borderRightWidth','borderBottomWidth','borderLeftWidth'].map(key => parseFloat(inputStyle[key])) }
         })()`,
       },
@@ -154,7 +155,13 @@ export async function assertCollaboratorSearchLayout() {
   assert.ok(icon.left >= label.left && input.right <= label.right)
   assert.equal(metrics.outline, 'solid')
   assert.ok(metrics.outlineWidth >= 2)
-  assert.equal(metrics.inputOutline, 'none', 'Only the composite search should draw focus')
+  // Tailwind's outline-none can leave a transparent outline for forced-colors support.
+  assert.ok(
+    metrics.inputOutline === 'none' ||
+      metrics.inputOutlineWidth === 0 ||
+      metrics.inputOutlineColor === 'rgba(0, 0, 0, 0)',
+    `Only the composite search should draw focus: ${JSON.stringify(metrics)}`
+  )
   assert.equal(metrics.inputShadow, 'none', 'The search input must not draw a second focus frame')
   assert.ok(
     metrics.inputBorders.every(width => width === 0),
