@@ -103,15 +103,27 @@ impl RuntimeWorkRpcHandler {
             .local_task_link(&task_id(user))
             .is_some_and(|link| waits_for_user(&link)));
         state["taskId"] = json!(task_id(user));
+        let actions = store
+            .recent_stand_in_actions(user, 30)
+            .map_err(settings_error)?;
         if state["error"].is_null() {
-            if let Some(link) = self
+            if let Some(action) = actions
+                .iter()
+                .find(|action| action["kind"] == "assess")
+                .filter(|action| {
+                    action["status"] == "failed"
+                        && action["error"]["code"] == "coordination_stopped"
+                })
+            {
+                state["error"] = action["error"].clone();
+            } else if let Some(link) = self
                 .local_task_link(&task_id(user))
                 .filter(|link| link.status == "failed")
             {
                 state["error"] = json!({"code":"coordinator_failed","message":link.runtime_handle["lastError"].as_str().unwrap_or("The background coordinator failed. Review the handling history and try again.")});
             }
         }
-        state["actions"] = json!(store.recent_stand_in_actions(user, 30).map_err(settings_error)?.into_iter().map(|action| json!({"id":action["id"],"kind":action["kind"],"status":action["status"],"error":action["error"],"result":action["result"],"createdAt":action["createdAt"]})).collect::<Vec<_>>());
+        state["actions"] = json!(actions.into_iter().map(|action| json!({"id":action["id"],"kind":action["kind"],"status":action["status"],"error":action["error"],"result":action["result"],"createdAt":action["createdAt"]})).collect::<Vec<_>>());
         Ok(state)
     }
 

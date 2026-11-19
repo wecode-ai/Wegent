@@ -2,6 +2,8 @@
 use super::*;
 use sha2::{Digest, Sha256};
 
+pub(super) type VerifiedStandInOwner = ([u8; 32], i64);
+
 fn connection_owner_key(connection: &ConnectionConfig) -> [u8; 32] {
     let mut hash = Sha256::new();
     hash.update(connection.backend_url.as_bytes());

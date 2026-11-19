@@ -607,7 +607,7 @@ pub struct RuntimeWorkRpcHandler {
     /// carry credentials, so turns fill them from here before launching the
     /// project-space MCP server.
     backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
-    verified_stand_in_owner: Arc<Mutex<Option<([u8; 32], i64)>>>,
+    verified_stand_in_owner: Arc<Mutex<Option<runtime_owner::VerifiedStandInOwner>>>,
     backend_device_route: Option<Arc<Mutex<Option<String>>>>,
     cloud_connection_observations: Arc<AtomicBool>,
     connection_scheduler_started: Arc<AtomicBool>,

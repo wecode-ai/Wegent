@@ -53,6 +53,12 @@ export function createEventFailureIsolation({ executorHome, uiTimeoutMs, modelRe
       assert.equal((await issue('GET')).status, 404, 'The stale Issue must really return 404')
 
       const original = await rpc('runtime.stand_in.personal.get', { userId })
+      const primary = {
+        ...original.primary,
+        enabled: original.primary?.enabled ?? false,
+        prompt: original.primary?.prompt ?? '',
+        preferences: original.primary?.preferences ?? '',
+      }
       const catalog = await rpc('runtime.runner.catalog', {})
       const model = catalog.models.find(item => item.runtime === 'codex' && item.is_default)
       assert.ok(model, 'Use the configured native E2E model')
@@ -68,7 +74,7 @@ export function createEventFailureIsolation({ executorHome, uiTimeoutMs, modelRe
         userId,
         settings: {
           ...original,
-          primary: { ...original.primary, enabled: true },
+          primary: { ...primary, enabled: true },
           roles: [
             ...original.roles.filter(role => role.id !== roleId),
             {
@@ -76,6 +82,7 @@ export function createEventFailureIsolation({ executorHome, uiTimeoutMs, modelRe
               id: roleId,
               name: MESSAGE,
               enabled: true,
+              executionDeviceId: original.executionDeviceId,
               model,
               prompt: MESSAGE,
               connections: [source],
@@ -148,7 +155,11 @@ export function createEventFailureIsolation({ executorHome, uiTimeoutMs, modelRe
         database.close()
         await rpc('runtime.stand_in.personal.save', {
           userId,
-          settings: { ...original, version: settings.version },
+          settings: {
+            ...original,
+            primary,
+            version: settings.version,
+          },
         })
       }
     },
