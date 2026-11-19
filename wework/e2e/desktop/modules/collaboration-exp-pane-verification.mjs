@@ -21,7 +21,9 @@ export async function assertDesktopPanes(
       `The ${pane} pane must retain its own real header`
     )
   for (const header of headers) assert.equal(header.height, 60)
-  const separators = visible(await metrics(`${APP} [role="separator"][data-separator]`))
+  const separators = visible(
+    await metrics(`${APP} [role="separator"][data-slot="resizable-handle"]`)
+  )
   assert.ok(separators.length >= 2, 'Desktop pane boundaries must remain resizable')
   for (const boundary of ['tasks-timeline', 'timeline-discussion'])
     assert.equal(

@@ -12,6 +12,40 @@ import { Switch } from './Switch'
 import { TextField } from './TextField'
 
 const agent = createAgent()
+
+it('lets an unselected combobox commit an explicit empty-value option', async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+  const container = document.createElement('div')
+  document.body.append(container)
+  const root = createRoot(container)
+  const change = vi.fn()
+  try {
+    await act(async () =>
+      root.render(
+        <SearchableSelect
+          accessibleLabel="Milestone"
+          testId="milestone-choice"
+          value={null}
+          onChange={change}
+          searchPlaceholder="Search milestones"
+          emptyLabel="No milestones"
+          options={[{ value: '', label: 'Unlink milestone' }]}
+        />
+      )
+    )
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="milestone-choice"]')!.click()
+    )
+    const unlink = document.querySelector<HTMLElement>('[data-testid="milestone-choice-option-empty"]')!
+    expect(unlink.getAttribute('aria-selected')).toBe('false')
+    await act(async () => unlink.click())
+    expect(change).toHaveBeenCalledExactlyOnceWith('')
+  } finally {
+    await act(async () => root.unmount())
+    container.remove()
+  }
+})
+
 function CatalogForm() {
   const [name, setName] = useState('Example')
   const [project, setProject] = useState('one')

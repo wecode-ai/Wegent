@@ -85,10 +85,14 @@ export async function verifyCollaborationSettingsUx(control, { scoped, request, 
 
   await control.command('click', find('collaboration-project-settings-sharing'))
   await control.command('clickWhenEnabled', find('project-template-import'))
+  const templateDialog = '[data-testid="collaboration-template-dialog"][role="dialog"][data-open]'
+  await control.command('waitFor', templateDialog, { visible: true })
   await control.command('clickWhenEnabled', find('template-details-product-lifecycle'))
-  await control.command('waitFor', find('template-inline-detail'), { visible: true })
+  await control.command('waitFor', `${templateDialog} [data-testid="template-inline-detail"]`, {
+    visible: true,
+  })
   assert.equal(
-    Number(await control.command('getElementCount', scoped('dialog[open]'))),
+    Number(await control.command('getElementCount', '[role="dialog"][data-open]')),
     1,
     'Template details must reuse the existing dialog'
   )
@@ -125,13 +129,20 @@ async function verifyAgentDialogKeyboard(control, scoped) {
   assert.ok(editId, 'The scenario must have an editable project Agent')
   await control.command('focusMainWindow', 'body')
   await control.command('nativePress', find(editId), { key: 'Enter' })
-  await control.command('waitFor', find('cloud-project-chat-agent-editor'), { visible: true })
-  const save = find('cloud-project-chat-agent-save')
+  const editor = '[data-testid="cloud-project-chat-agent-editor"][role="dialog"]'
+  await control.command('waitFor', editor, { visible: true })
+  const save = `${editor} [data-testid="cloud-project-chat-agent-save"]`
   await control.command('waitFor', save + ':not(:disabled)', { visible: true })
   await control.command('nativePress', save, { key: 'Tab' })
   await assertKeyboardFocus(control, 'cloud-project-chat-agent-cancel')
-  await control.command('nativePress', find('cloud-project-chat-agent-cancel'), { key: 'Escape' })
-  await control.command('waitFor', find('cloud-project-chat-agent-editor'), { visible: false })
+  await control.command(
+    'nativePress',
+    `${editor} [data-testid="cloud-project-chat-agent-cancel"]`,
+    {
+      key: 'Escape',
+    }
+  )
+  await control.command('waitFor', editor, { visible: false })
   await assertKeyboardFocus(control, editId)
 }
 

@@ -78,7 +78,7 @@ export function MilestonePicker({
           accessibleLabel={label}
           appearance={appearance === 'property' && compact ? 'property' : 'outline'}
           density={compact ? 'dense' : 'default'}
-          value={value ?? ''}
+          value={value === undefined ? null : (value ?? '')}
           disabled={disabled || busy || query.loading || query.error}
           searchPlaceholder={searchLabel}
           emptyLabel={emptyLabel}

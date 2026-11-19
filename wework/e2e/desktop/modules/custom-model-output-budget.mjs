@@ -80,8 +80,14 @@ async function verifyOutputBudgetAndConnection(control, baseUrl) {
   await control.command('clickWhenEnabled', '[data-testid="provider-editor-test"]')
   await control.command('waitFor', '[data-testid="provider-editor-test-result"][role="alert"]')
   await control.command('click', '[data-testid="provider-editor-test-error-details"]')
-  await control.command('waitFor', '[data-testid="provider-editor-test-result"][open]', {
+  await control.command(
+    'waitFor',
+    '[data-testid="provider-editor-test-error-details"][aria-expanded="true"]',
+    { visible: true }
+  )
+  await control.command('waitFor', '[data-testid="provider-editor-test-result"] p', {
     text: '连接失败',
+    visible: true,
   })
   await control.command('fill', '[data-testid="provider-api-key"]', { value: 'model-test-key' })
   await control.command('clickWhenEnabled', '[data-testid="provider-editor-test"]')

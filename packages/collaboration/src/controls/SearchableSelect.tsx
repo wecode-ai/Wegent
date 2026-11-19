@@ -86,7 +86,7 @@ export type SearchableSelectProps<T extends string> = SearchableSelectCommonProp
   (
     | {
         multiple?: false
-        value: T
+        value: T | null
         activateSelected?: boolean
         onChange(value: T): void
       }
@@ -166,7 +166,7 @@ export function SearchableSelect<T extends string>(props: SearchableSelectProps<
     setInternalQuery(next)
     onSearchChange?.(next)
   }
-  const values: T[] = Array.isArray(value) ? value : [value]
+  const values: T[] = Array.isArray(value) ? value : value === null ? [] : [value]
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set())
   const selected = options.find(option => values.includes(option.value))
   const normalized = query.trim().toLocaleLowerCase()
