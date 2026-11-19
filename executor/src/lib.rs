@@ -31,6 +31,7 @@ pub mod plugin_python;
 pub mod plugin_workspace_cli;
 pub use wegent_claude_harness::process;
 pub mod process_environment;
+pub mod process_tree_supervisor;
 pub use wegent_multimodal::prompt_enrichment;
 mod prompt_mentions;
 pub(crate) mod python_runtime;

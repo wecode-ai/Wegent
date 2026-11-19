@@ -1,3 +1,4 @@
+import { spawnSupervisedWindowsProcess } from '../windows-process-supervisor.mjs'
 import { captureOutputOwnership, inspectOutputOwners } from '../process-output-ownership.mjs'
 import { writeFailureHeap } from './failure-heap-diagnostics.mjs'
 import {
@@ -1651,18 +1652,36 @@ async function main() {
     }
     let activeAppEnvironment = appEnvironment
     const startDesktopAppProcess = async () => {
-      const child = spawn(appBinary, electronLaunchArguments, {
+      const launchOptions = {
         cwd: launchWorkingDirectory,
         env: activeAppEnvironment,
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
-      })
+      }
+      const child =
+        process.platform === 'win32'
+          ? await spawnSupervisedWindowsProcess(
+              executorBinary,
+              appBinary,
+              electronLaunchArguments,
+              launchOptions,
+              {
+                errorLogPath: errorCollector.path,
+                observeSupervisor: supervisor =>
+                  appendChildProcessOutput(supervisor, join(resultDir, 'app-supervisor.log')),
+              }
+            )
+          : spawn(appBinary, electronLaunchArguments, launchOptions)
       const nativeInspector = usesNativeCloudInspector ? readInspectorEndpoint(child) : null
       nativeInspector?.catch(() => undefined)
       const scenarioStartup = desktopScenario?.appProcessStarted?.(child)
       // Observe early failure now; the await below still propagates it after log setup.
       scenarioStartup?.catch(() => undefined)
-      const processState = { pid: child.pid, launchedAt: new Date().toISOString() }
+      const processState = {
+        pid: child.pid,
+        supervisorPid: child.supervisorPid,
+        launchedAt: new Date().toISOString(),
+      }
       applicationProcessHistory.push(processState)
       child.once('error', error => {
         processState.error = error.message

@@ -15,6 +15,10 @@ for (const language of ['en', 'zh-CN']) {
   await mkdir(resolve(root, 'dist/locales'), { recursive: true })
   await writeFile(resolve(root, `dist/locales/${language}.json`), JSON.stringify(copy))
 }
+for (const path of ['host/e2e-error-journal.mjs', 'runtime/log-redaction.mjs']) {
+  await mkdir(dirname(resolve(root, 'dist', path)), { recursive: true })
+  await cp(resolve(root, 'src', path), resolve(root, 'dist', path))
+}
 await mkdir(resolve(root, 'dist/runtime'), { recursive: true })
 await cp(
   resolve(root, 'src/runtime/legacy-release-layout.mjs'),

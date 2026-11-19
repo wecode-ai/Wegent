@@ -656,6 +656,7 @@ jobs:
           cargo test --all-features --lib claude_execution_home_publishes_runtime_selection_beyond_windows_max_path
           cargo test --manifest-path ../shared/rust/Cargo.toml -p wegent-filesystem --lib json_file::tests
           cargo test -p wegent-subprocess --lib line_reader::tests
+          cargo test -p wegent-executor --all-features --lib process_tree_supervisor
           cargo test --all-features --lib effective_instructions_tests
           cargo test -p wegent-executor --all-features --lib side_source
           cargo test --manifest-path ../shared/rust/Cargo.toml -p wegent-filesystem atomic_file::tests

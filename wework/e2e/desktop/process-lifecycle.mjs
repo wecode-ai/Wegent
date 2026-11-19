@@ -457,6 +457,16 @@ export async function crashOwnedProcessTree(child, snapshot) {
 }
 
 export async function stopWindowsProcessTree(child, { launch = spawn } = {}) {
+  if (typeof child.stopOwnedProcessTree === 'function') {
+    const result = await child.stopOwnedProcessTree()
+    console.log('[desktop-e2e] Owned Windows process job terminated', {
+      processId: child.pid,
+      supervisorPid: child.supervisorPid,
+      collection: child.supervisorCollection,
+      ...result,
+    })
+    return
+  }
   if (child.exitCode !== null || child.signalCode !== null || !Number.isInteger(child.pid)) return
   const killer = launch('taskkill', windowsTaskkillArguments(child.pid), {
     stdio: ['ignore', 'pipe', 'pipe'],
