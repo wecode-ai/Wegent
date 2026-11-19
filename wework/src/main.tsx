@@ -6,8 +6,6 @@ import 'prosemirror-view/style/prosemirror.css'
 import '@xyflow/react/dist/style.css'
 import '@wegent/collaboration/styles.css'
 import './styles/globals.css'
-import { RendererCrashProbe } from './e2e/RendererCrashProbe'
-import { getDesktopE2ERuntimeConfig } from './e2e/runtime-config'
 import App from './App.tsx'
 import { FeedbackDialogHost } from '@/features/feedback/FeedbackDialogHost'
 import { WorkbenchErrorBoundary } from '@/components/common/WorkbenchErrorBoundary'
@@ -91,7 +89,6 @@ async function mountApp(container: HTMLElement, context: Context | null): Promis
           available when the workbench itself fails to render. */}
       <FeedbackDialogHost />
       <WorkbenchErrorBoundary onError={reportRendererFailure}>
-        {getDesktopE2ERuntimeConfig().controlUrl && <RendererCrashProbe />}
         <DshClientContextProvider context={context}>
           {performanceDiagnostics ? (
             <Profiler id="wework-root" onRender={recordReactCommit}>

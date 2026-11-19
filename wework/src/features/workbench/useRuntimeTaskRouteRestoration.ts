@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react'
 import { stripAppBasePath } from '@/config/runtime'
 import { parseRuntimeTaskRoute } from '@/lib/navigation'
 import { resolveWorkbenchDeviceId } from '@/lib/workbench-device'
@@ -35,6 +35,7 @@ export function useRuntimeTaskRouteRestoration(enabled = true) {
       ? { ...parsed, deviceId: resolveWorkbenchDeviceId(state.devices, parsed.deviceId)! }
       : null
   }, [enabled, runtimeTaskLocation, state.isBootstrapping, state.devices])
+  const settledRouteRef = useRef<string | null>(null)
   const runtimeTask = resolveTask(route)
   const routeRuntimeTask = useMemo(() => {
     const current = state.currentRuntimeTask
@@ -57,9 +58,20 @@ export function useRuntimeTaskRouteRestoration(enabled = true) {
   }, [route, runtimeTask, state.currentRuntimeTask, state.devices])
 
   useEffect(() => {
-    if (!routeRuntimeTask || getNavigationSnapshot() !== runtimeTaskLocation) return
+    if (!enabled || !route) {
+      settledRouteRef.current = null
+      return
+    }
+    if (getNavigationSnapshot() !== runtimeTaskLocation) return
+    if (settledRouteRef.current === runtimeTaskLocation) return
+    settledRouteRef.current = null
+    if (!routeRuntimeTask) {
+      // Discovery refreshes must not replay an already resolved URL through an older alias.
+      settledRouteRef.current = runtimeTaskLocation
+      return
+    }
     void openRuntimeTask(routeRuntimeTask)
-  }, [openRuntimeTask, routeRuntimeTask, runtimeTaskLocation])
+  }, [enabled, openRuntimeTask, route, routeRuntimeTask, runtimeTaskLocation])
 
   return routeRuntimeTask
 }
