@@ -111,10 +111,12 @@ test.describe('Collaboration group Executor coordination', () => {
         await page.getByTestId('template-details-product-lifecycle').click()
         await page.getByTestId('template-use').click()
         await page.getByTestId(`template-project-${fixture.projectId}`).click()
-        await page.getByTestId('template-runtime-configuration').locator('summary').click()
+        await page.getByTestId('template-bindings-toggle').click()
         const environment = page.getByTestId('template-project-environment-select')
+        const environmentValue = environment.locator('[data-value]')
         await expect(environment).toBeEnabled()
-        await expect(environment).toHaveValue(
+        await expect(environmentValue).toHaveAttribute(
+          'data-value',
           deviceSetup === 'authorized' ? String(appDevice.id) : ''
         )
         const groupName = `Imported project team ${Date.now()}`
@@ -132,7 +134,7 @@ test.describe('Collaboration group Executor coordination', () => {
         }
         await page.getByTestId('template-project-environment-refresh').click()
         await expect(environment).toBeEnabled()
-        await expect(environment).toHaveValue(String(appDevice.id))
+        await expect(environmentValue).toHaveAttribute('data-value', String(appDevice.id))
         await expect(name).toHaveValue(groupName)
         await expect(page.getByTestId('template-project-environment-settings')).toHaveAttribute(
           'href',

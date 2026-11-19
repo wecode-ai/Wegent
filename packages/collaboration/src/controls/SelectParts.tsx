@@ -45,7 +45,17 @@ export function SelectTrigger({
       {...props}
       className={cn(selectionTriggerClasses(appearance, density), className)}
     >
-      {children ?? <SelectValue className="min-w-0 flex-1 truncate" />}
+      {children ?? (
+        <SelectValue
+          className="min-w-0 flex-1 truncate"
+          render={(valueProps, state) => (
+            <span
+              {...valueProps}
+              data-value={typeof state.value === 'string' ? state.value : undefined}
+            />
+          )}
+        />
+      )}
       <ChevronDown aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />
     </UiSelectTrigger>
   )

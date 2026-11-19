@@ -10,6 +10,7 @@ import {
   dragCollaborationIssueToColumn,
   enableLegacyBoardGrouping,
   openBlankProjectCreation,
+  chooseCollaborationOption,
   selectCollaborationProjectView,
   webApi,
   writeSharedComposer,
@@ -889,7 +890,9 @@ test.describe('Collaboration cloud capabilities', () => {
       await page.getByTestId('collaboration-project-settings-members').click()
       await page.getByTestId('cloud-project-members-toggle').click()
       await page.getByTestId('cloud-member-search').fill(REGULAR_USER.username)
-      await page.getByTestId('cloud-member-role').selectOption('Developer')
+      await chooseCollaborationOption(page, page.getByTestId('cloud-member-role'), {
+        value: 'Developer',
+      })
       await page.getByTestId(`cloud-member-result-${member.id}`).click()
       await expect(page.getByTestId(`cloud-project-member-${member.id}`)).toBeVisible()
       await expect
@@ -1094,11 +1097,17 @@ test.describe('Collaboration cloud capabilities', () => {
       await page.goto(collaborationProjectPath(workspace.id, project.id, { view: 'manage' }))
       await page.getByTestId('collaboration-project-settings-project').click()
       await page.getByTestId('cloud-project-manage-visibility-public').click()
-      await expect(page.getByTestId('cloud-project-public-access-role')).toHaveValue('Viewer')
+      await expect(
+        page.getByTestId('cloud-project-public-access-role').locator('[data-value]')
+      ).toHaveAttribute('data-value', 'Viewer')
       await expect(
         page.getByTestId('cloud-project-public-access-role').locator('option[value="Developer"]')
       ).toHaveCount(0)
-      await page.getByTestId('cloud-project-default-issue-security').selectOption('related')
+      await chooseCollaborationOption(
+        page,
+        page.getByTestId('cloud-project-default-issue-security'),
+        { value: 'related' }
+      )
       await expect
         .poll(async () => {
           const updated = await webApi<

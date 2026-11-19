@@ -56,6 +56,8 @@ export function DefaultModal({ title, closeLabel, children, onClose }: ProjectCr
             type="button"
             onClick={onClose}
             aria-label={closeLabel}
+            title={closeLabel}
+            showTooltip={false}
             data-testid="collaboration-project-create-close"
           >
             <X aria-hidden="true" />

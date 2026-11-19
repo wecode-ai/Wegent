@@ -58,8 +58,9 @@ async function registeredSelection(element: HTMLElement) {
 
 function selectionValue(element: HTMLElement, ref: string): unknown {
   if (element instanceof HTMLSelectElement) return element.value
-  const declared = element.getAttribute('data-value')
-  if (declared !== null) return declared
+  const declared =
+    element.getAttribute('data-value') ?? element.firstElementChild?.getAttribute('data-value')
+  if (declared != null) return declared
   return selectionAgent.snapshot().find(candidate => candidate.ref === ref)?.value
 }
 

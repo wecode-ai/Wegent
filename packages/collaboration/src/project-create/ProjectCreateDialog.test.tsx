@@ -331,7 +331,7 @@ it.each(['zh-CN', 'en'] as const)(
   }
 )
 
-it.each(['Escape', 'close', 'cancel'])(
+it.each(['Escape', 'Escape on close', 'close', 'cancel'])(
   'protects a project draft when leaving through %s, then explicitly discards it',
   async action => {
     const onClose = vi.fn(() => root.render(null))
@@ -356,9 +356,11 @@ it.each(['Escape', 'close', 'cancel'])(
       name.dispatchEvent(new Event('input', { bubbles: true }))
     })
     const leave = async () => {
-      if (action === 'Escape')
+      if (action === 'Escape' || action === 'Escape on close') {
+        const target = action === 'Escape' ? name : get('collaboration-project-create-close')
+        await act(async () => target.focus())
         await act(async () =>
-          name.dispatchEvent(
+          target.dispatchEvent(
             new KeyboardEvent('keydown', {
               key: 'Escape',
               bubbles: true,
@@ -366,7 +368,7 @@ it.each(['Escape', 'close', 'cancel'])(
             })
           )
         )
-      else
+      } else
         await click(
           action === 'close'
             ? 'collaboration-project-create-close'
@@ -375,6 +377,7 @@ it.each(['Escape', 'close', 'cancel'])(
     }
     await leave()
     const confirmation = get('collaboration-project-create-discard')
+    expect(confirmation).not.toBeNull()
     const keep = confirmation.querySelector<HTMLButtonElement>(
       '[data-testid="collaboration-project-create-configuration-back"]'
     )!

@@ -43,10 +43,11 @@ export interface ButtonProps
     React.ButtonHTMLAttributes<HTMLButtonElement>,
     VariantProps<typeof buttonVariants> {
   asChild?: boolean
+  showTooltip?: boolean
 }
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild = false, ...props }, ref) => {
+  ({ className, variant, size, asChild = false, showTooltip = true, ...props }, ref) => {
     const { children, onClick, ...nativeProps } = props
     const hasTooltip = React.useContext(TooltipContext)
     const button = (
@@ -71,7 +72,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         {asChild ? undefined : children}
       </UiButton>
     )
-    return props['aria-label'] && !hasTooltip ? (
+    return showTooltip && props['aria-label'] && !hasTooltip ? (
       <Tooltip label={props['aria-label']} disabled={props.disabled}>
         {button}
       </Tooltip>

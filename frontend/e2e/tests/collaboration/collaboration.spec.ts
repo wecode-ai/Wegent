@@ -4,6 +4,7 @@
 
 import { expect, test, type APIRequestContext, type Page, type TestInfo } from '@playwright/test'
 import {
+  chooseCollaborationOption,
   openBlankProjectCreation,
   selectCollaborationProjectView,
   writeSharedComposer,
@@ -206,7 +207,9 @@ test.describe('Collaboration module', () => {
         response.request().postDataJSON()?.status === 'pending' &&
         response.ok()
     )
-    await page.getByTestId('cloud-todo-detail-status').selectOption('pending')
+    await chooseCollaborationOption(page, page.getByTestId('cloud-todo-detail-status'), {
+      value: 'pending',
+    })
     expect((await (await statusSaved).json()).status).toBe('pending')
     await expect(page.getByTestId('cloud-todo-save')).toHaveCount(0)
 

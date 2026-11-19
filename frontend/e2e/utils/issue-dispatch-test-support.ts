@@ -8,6 +8,7 @@ import { ADMIN_USER } from '../config/test-users'
 import { createApiClient } from './api-client'
 import {
   openBlankProjectCreation,
+  chooseCollaborationOption,
   selectCollaborationProjectView,
   webApi,
 } from './collaboration-test-support'
@@ -199,7 +200,9 @@ export async function addProjectMember(page: Page, userName: string): Promise<st
   await page.getByTestId('collaboration-project-settings-members').click()
   await page.getByTestId('cloud-project-members-toggle').click()
   await page.getByTestId('cloud-member-search').fill(userName)
-  await page.getByTestId('cloud-member-role').selectOption('Developer')
+  await chooseCollaborationOption(page, page.getByTestId('cloud-member-role'), {
+    value: 'Developer',
+  })
   const result = await firstVisibleOption(page.locator('[data-testid^="cloud-member-result-"]'))
   const resultTestId = await result.getAttribute('data-testid')
   const userId = resultTestId?.replace('cloud-member-result-', '')
@@ -230,7 +233,7 @@ export async function createProjectAgent(
   await page.getByTestId('project-agent-mode-create').click()
   await expect(page.getByTestId('web-agent-resource-creator')).toBeVisible()
   await page.getByTestId('web-agent-display-name').fill(name)
-  await page.getByTestId('web-agent-model').selectOption({ label: modelName })
+  await chooseCollaborationOption(page, page.getByTestId('web-agent-model'), { label: modelName })
   await page
     .getByTestId('web-agent-system-prompt')
     .fill('Execute only the assigned dispatch task and submit evidence through Delivery.')

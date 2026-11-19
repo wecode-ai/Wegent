@@ -122,7 +122,7 @@ async function createCloudProjectFixture(control, workspacePath) {
   await control.command('waitFor', '[data-testid="standalone-remote-device-select"]', {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+  await control.command('select', '[data-testid="standalone-remote-device-select"]', {
     value: CLOUD_DEVICE_ID,
   })
   await control.command('clickWhenEnabled', '[data-testid="remote-project-source-existing"]', {
@@ -207,7 +207,7 @@ async function verifyCloudProjectCreationSources(
     await control.command('click', '[data-testid="projects-create-button"]')
     await control.command('click', '[data-testid="project-create-remote-option"]')
     await control.command('waitFor', '[data-testid="standalone-remote-device-select"]')
-    await control.command('fill', '[data-testid="standalone-remote-device-select"]', {
+    await control.command('select', '[data-testid="standalone-remote-device-select"]', {
       value: CLOUD_DEVICE_ID,
     })
     await control.command('clickWhenEnabled', `[data-testid="${sourceTestId}"]`, {

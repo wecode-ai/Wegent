@@ -78,6 +78,24 @@ export async function dragCollaborationIssueToColumn(
   return response
 }
 
+export async function chooseCollaborationOption(
+  page: Page,
+  trigger: Locator,
+  option: { value: string } | { label: string }
+): Promise<void> {
+  await trigger.click()
+  await expect(trigger).toHaveAttribute('aria-controls', /.+/)
+  const id = await trigger.getAttribute('aria-controls')
+  const listbox = page.locator(`[id=${JSON.stringify(id)}]`)
+  const choice =
+    'value' in option
+      ? listbox
+          .getByRole('option')
+          .and(page.locator(`[data-value=${JSON.stringify(option.value)}]`))
+      : listbox.getByRole('option', { name: option.label, exact: true })
+  await choice.click()
+}
+
 export async function selectCollaborationProjectView(
   page: Page,
   view: CollaborationView
@@ -86,7 +104,7 @@ export async function selectCollaborationProjectView(
   const tab = page.getByTestId(`collaboration-tab-${view}`)
   await expect(compact.or(tab)).toBeVisible()
   if (await compact.isVisible()) {
-    await compact.selectOption(view)
+    await chooseCollaborationOption(page, compact, { value: view })
   } else {
     await tab.click()
   }

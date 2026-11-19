@@ -197,7 +197,7 @@ export async function selectAgentEnvironment(
     assert.equal(
       await control.command(
         'getAttribute',
-        `[data-testid="${testId}-menu"] [role="listbox"] > div:nth-child(2) > [role="option"]`,
+        `[data-testid="${testId}-menu"] [role="listbox"] > :nth-child(2 of [role="option"])`,
         { value: 'data-testid' }
       ),
       `${testId}-option-policy:user_select`,
@@ -243,8 +243,11 @@ export async function selectProjectRunnerModel(control, timeoutMs) {
   const environmentId = optionId.slice(`${prefix}-environment-option-`.length)
   assert.ok(environmentId, 'The isolated execution environment must be available')
   await control.command('clickWhenEnabled', firstDevice, { timeoutMs })
-  await control.command('waitFor', `${model} option[value='${identity}']`, { timeoutMs })
-  await selectWhenOptionAvailable(control, model, identity, timeoutMs)
+  const modelMenu = `[data-testid="${prefix}-model-menu"]`
+  const nativeOption = `${modelMenu} [role="option"][data-value='${identity}']`
+  await control.command('clickWhenEnabled', model, { timeoutMs })
+  await control.command('waitFor', nativeOption, { timeoutMs, visible: true })
+  await control.command('clickWhenEnabled', nativeOption, { timeoutMs })
   await selectAgentEnvironment(
     control,
     `${prefix}-environment`,
@@ -252,25 +255,22 @@ export async function selectProjectRunnerModel(control, timeoutMs) {
     timeoutMs,
     true
   )
+  await control.command('clickWhenEnabled', model, { timeoutMs })
+  await control.command('waitFor', modelMenu, { timeoutMs, visible: true })
   assert.equal(
-    Number(
-      await control.command(
-        'getElementCount',
-        `${model} option[value='${identity}']:not(:disabled)`
-      )
-    ),
+    Number(await control.command('getElementCount', `${nativeOption}:not([aria-disabled="true"])`)),
     0,
     'Automatic environment routing must not expose native models'
   )
+  await control.command('press', model, { key: 'Escape' })
   await selectAgentEnvironment(control, `${prefix}-environment`, environmentId, timeoutMs)
-  await control.command('waitFor', `${model} option[value='${identity}']`, { timeoutMs })
+  await control.command('clickWhenEnabled', model, { timeoutMs })
+  await control.command('waitFor', nativeOption, { timeoutMs, visible: true })
   await control.command('select', model, { value: 'user_select' })
-  await control.command('waitFor', `${model} option[value="user_select"]:checked`, { timeoutMs })
+  await control.command('waitFor', `${model}[data-value="user_select"]`, { timeoutMs })
   assert.equal(
-    Number(
-      await control.command('getElementCount', `${model} option[value="user_select"]:checked`)
-    ),
-    1,
+    await control.command('getValue', model),
+    'user_select',
     'The model selector must support choosing a model at run time'
   )
   await control.command('select', model, { value: identity })
