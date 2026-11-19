@@ -534,6 +534,8 @@ export function createWebSharedWorkspaceApi(
   return {
     templateImports: sharedHttpApi.templateImports,
     workspaces: sharedHttpApi.workspaces,
+    metrics: sharedHttpApi.metrics,
+    milestones: sharedHttpApi.milestones,
     resources: sharedHttpApi.resources,
     gitRepositories: sharedHttpApi.gitRepositories,
     projects: {

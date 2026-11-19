@@ -118,6 +118,8 @@ const IMAGE_MIME_TYPES: &[&str] = &[
     "image/bmp",
 ];
 
+#[cfg(test)]
+mod cloud_config_error_tests;
 #[path = "codex/debug_stdout.rs"]
 mod debug_stdout;
 mod external_work;
@@ -136,6 +138,7 @@ mod diagnostics;
 mod home;
 mod memory_review;
 mod native_provider;
+mod plugin_cache;
 mod provider_migration;
 mod stand_in_approval;
 mod stand_in_plugin_cli;
@@ -199,7 +202,8 @@ mod native_turn;
 use native_activity::{CodexNativeActivity, CodexNativeRequest};
 pub(crate) use native_turn::completed_native_codex_turn;
 pub use wegent_execution_contracts::notification::{CodexNotification, CodexNotificationSender};
-pub type CodexThreadStartedCallback = Box<dyn FnOnce(String) + Send + 'static>;
+pub type CodexThreadStartedCallback =
+    Box<dyn FnOnce(String, Option<String>, Option<String>) + Send + 'static>;
 pub type CodexActiveTurnCallback = Box<dyn Fn(String, String) + Send + 'static>;
 pub type CodexActiveTurnFinishedCallback = Box<dyn Fn() + Send + 'static>;
 pub type CodexInputAdmission = Box<dyn Fn() -> Result<(), String> + Send + Sync + 'static>;
@@ -2421,8 +2425,17 @@ async fn run_codex_app_server_turn_on_shared_client(
             }
             CodexThreadStart::Direct(_) => None,
         };
+        let mut resolved_model = (None, None);
         let thread_id = match thread_plan.start {
             CodexThreadStart::Direct(thread_id) => {
+                if let Some(process) = client.state.lock().await.process.as_ref() {
+                    resolved_model = process
+                        .notifications
+                        .native_activity
+                        .lock()
+                        .expect("native model registry lock")
+                        .model_identity(&thread_id);
+                }
                 let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
                 thread_fields.push(("operation", "thread/direct".to_owned()));
                 thread_fields.push(("thread_id", thread_id.clone()));
@@ -2461,6 +2474,7 @@ async fn run_codex_app_server_turn_on_shared_client(
                     &response,
                     launch_config.model_provider.as_deref(),
                 )?;
+                resolved_model = native_activity::model_identity(&response);
                 thread_fields.push(("thread_id", thread_id.clone()));
                 log_executor_event("codex shared thread request finished", &thread_fields);
                 thread_id
@@ -2506,7 +2520,12 @@ async fn run_codex_app_server_turn_on_shared_client(
             }
         };
         if let Some(callback) = thread_started {
-            callback(thread_id.clone());
+            let resolved_model = native_activity::reporting_model_identity(
+                resolved_model,
+                codex_request_model(request),
+                launch_config.inference_model_provider.as_deref(),
+            );
+            callback(thread_id.clone(), resolved_model.0, resolved_model.1);
         }
         notify_thread_started(notifications.as_ref(), &thread_id);
         if thread_plan.fork_requested && request.ephemeral {
@@ -2933,6 +2952,7 @@ async fn run_codex_app_server_turn_with_runtime(
             bind_local_proxy_thread(&launch_config, thread_id)?;
             state.set_root_thread_id(thread_id.to_owned());
         }
+        let mut resolved_model = (None, None);
         let thread_id = match thread_plan.start {
             CodexThreadStart::Direct(thread_id) => {
                 let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
@@ -2956,6 +2976,7 @@ async fn run_codex_app_server_turn_with_runtime(
                     &response,
                     launch_config.model_provider.as_deref(),
                 )?;
+                resolved_model = native_activity::model_identity(&response);
                 thread_fields.push(("thread_id", thread_id.clone()));
                 log_executor_event("codex thread request finished", &thread_fields);
                 thread_id
@@ -2977,7 +2998,12 @@ async fn run_codex_app_server_turn_with_runtime(
             Some(&local_notifications.sender),
         );
         if let Some(callback) = thread_started {
-            callback(thread_id.clone());
+            let resolved_model = native_activity::reporting_model_identity(
+                resolved_model,
+                codex_request_model(request),
+                launch_config.inference_model_provider.as_deref(),
+            );
+            callback(thread_id.clone(), resolved_model.0, resolved_model.1);
         }
         notify_thread_started(notifications.as_ref(), &thread_id);
         if thread_plan.fork_requested && request.ephemeral {
@@ -4606,6 +4632,7 @@ struct CodexLaunchConfig {
     config_overrides: Vec<String>,
     thread_config: Map<String, Value>,
     model_provider: Option<String>,
+    inference_model_provider: Option<String>,
     auth_mode: Option<CodexAuthMode>,
     env: BTreeMap<String, String>,
     user_developer_instructions: String,
@@ -7438,11 +7465,19 @@ fn response_id(message: &Value) -> Option<u64> {
 
 fn response_result(message: Value) -> Result<Value, String> {
     if let Some(error) = message.get("error") {
-        return Err(error
+        let message = error
             .get("message")
             .and_then(Value::as_str)
             .map(str::to_owned)
-            .unwrap_or_else(|| error.to_string()));
+            .unwrap_or_else(|| error.to_string());
+        // Startup failures can replace the bundle wording with an auth error.
+        // Keep the native failure reason visible to the existing recovery gate.
+        if error.pointer("/data/reason").and_then(Value::as_str) == Some("cloudConfigBundle")
+            && !is_codex_cloud_config_error(&message)
+        {
+            return Err(format!("cloud config bundle: {message}"));
+        }
+        return Err(message);
     }
     Ok(message.get("result").cloned().unwrap_or_else(|| json!({})))
 }

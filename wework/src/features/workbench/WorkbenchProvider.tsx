@@ -20,6 +20,7 @@ import {
   installMainRuntimeWorkChangedListener,
   notifyMainRuntimeWorkChanged,
 } from '@/desktop/runtimeWorkSync'
+import { isMainWindowFocused, subscribeMainWindowFocus } from '@/desktop/windowFocus'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { CoreDshModelSync } from '@/features/dsh-models/CoreDshModelSyncBridge'
 import { CODEX_OFFICIAL_UNAVAILABLE_MODEL_NAME } from '@/features/model-settings/codexOfficialModels'
@@ -385,6 +386,10 @@ function OwnedWorkbenchProvider({
   useLayoutEffect(() => {
     lifecycleStore.setCurrentTask(state.currentRuntimeTask)
   }, [lifecycleStore, state.currentRuntimeTask, syncRuntimeTaskLifecycle])
+  useEffect(() => {
+    lifecycleStore.setWindowFocused(isMainWindowFocused())
+    return subscribeMainWindowFocus(focused => lifecycleStore.setWindowFocused(focused))
+  }, [lifecycleStore])
   const runtimeTaskReminders = useRuntimeTaskReminders({
     runtimeWork: state.runtimeWork,
     lifecycleStore,

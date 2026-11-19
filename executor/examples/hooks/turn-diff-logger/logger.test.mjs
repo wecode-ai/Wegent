@@ -22,7 +22,7 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
 import { handleEvent } from './logger.mjs'
-import { BUFFER_BYTES, git as runGit } from './git.mjs'
+import { BUFFER_BYTES, git as runGit, gitStream } from './git.mjs'
 import { processQueue } from './worker.mjs'
 import { digest, readJson, writeJson } from './storage.mjs'
 
@@ -115,6 +115,33 @@ test('verbose Git warnings are drained while metadata stdout remains bounded', a
   await writeFile(join(f.workspace, 'large.txt'), 'x'.repeat(BUFFER_BYTES + 1))
   const blob = git(f.workspace, 'hash-object', '-w', 'large.txt')
   await assert.rejects(runGit(f.workspace, ['cat-file', 'blob', blob]), /exceeds 64 KiB/)
+  let size = 0
+  const hash = createHash('sha256')
+  for await (const bytes of gitStream(f.workspace, ['cat-file', 'blob', blob])) {
+    hash.update(bytes)
+    size += bytes.length
+  }
+  assert.equal(size, BUFFER_BYTES + 1)
+  assert.equal(hash.digest('hex'), createHash('sha256').update('x'.repeat(size)).digest('hex'))
+  const output = []
+  for await (const bytes of gitStream(f.workspace, ['hash-object', '--stdin'], { input: 'stdin' }))
+    output.push(bytes)
+  assert.equal(
+    Buffer.concat(output).toString().trim(),
+    await runGit(f.workspace, ['hash-object', '--stdin'], { input: 'stdin' })
+  )
+  await assert.rejects(
+    async () => {
+      for await (const _bytes of gitStream(f.workspace, [
+        'rev-parse',
+        '--verify',
+        'refs/missing',
+      ])) {
+        assert.fail('A missing reference produced output')
+      }
+    },
+    { gitExitCode: 128 }
+  )
 })
 
 test('failed metadata writes and syncs remove their temporary files', async t => {
@@ -122,12 +149,13 @@ test('failed metadata writes and syncs remove their temporary files', async t =>
   const probe = await open(join(f.root, 'probe'), 'w')
   const prototype = Object.getPrototypeOf(probe)
   await probe.close()
-  for (const method of ['writeFile', 'sync']) {
+  const modifiedAt = Date.now() - 86400000
+  for (const method of ['writeFile', 'utimes', 'sync']) {
     const fault = t.mock.method(prototype, method, async function () {
       throw new Error('injected metadata failure')
     })
     try {
-      await assert.rejects(writeJson(join(f.root, 'metadata.json'), {}), /injected/)
+      await assert.rejects(writeJson(join(f.root, 'metadata.json'), {}, { modifiedAt }), /injected/)
     } finally {
       fault.mock.restore()
     }
@@ -135,6 +163,13 @@ test('failed metadata writes and syncs remove their temporary files', async t =>
       (await readdir(f.root)).some(name => name.startsWith('metadata.json')),
       false
     )
+  }
+  await writeJson(join(f.root, 'metadata.json'), {}, { modifiedAt })
+  const file = await open(join(f.root, 'metadata.json'), 'r')
+  try {
+    assert.ok(Math.abs((await file.stat()).mtimeMs - modifiedAt) < 1)
+  } finally {
+    await file.close()
   }
 })
 
@@ -540,5 +575,47 @@ test('normal callbacks launch detached workers and release accepted snapshot ref
     }
     assert.ok(Date.now() < deadline, 'Detached workers did not drain the queue')
     await delay(25)
+  }
+})
+
+test('custom processors and archive callbacks retain jobs until consumption succeeds', async t => {
+  for (const mode of ['stream', 'archive']) {
+    const f = await fixture(t)
+    const { queue_path: root } = await f.invoke(f.event(0, 'TurnStarted'))
+    await writeFile(join(f.workspace, 'source.txt'), 'consumer payload\n')
+    const event = f.event(1)
+    await f.invoke(event)
+    await f.invoke(f.event(2, 'ExecutionCompleted'))
+    const pending = join(root, 'pending', digest(event.event_id) + '.json')
+    const expected = await readJson(pending)
+    let calls = 0
+    const errors = []
+    const consume = async value => {
+      assert.deepEqual(await readJson(pending), expected)
+      for (const reference of expected.references)
+        assert.ok(git(f.workspace, 'rev-parse', '--verify', reference))
+      if (mode === 'stream') {
+        assert.deepEqual(value, expected)
+        const chunks = []
+        for await (const bytes of gitStream(f.workspace, ['diff', value.before, value.after]))
+          chunks.push(bytes)
+        assert.match(Buffer.concat(chunks).toString(), /\+consumer payload/)
+      } else {
+        assert.equal((await readJson(join(value, 'record.json'))).event.event_id, event.event_id)
+      }
+      if (++calls === 1) throw new Error('consumer unavailable')
+    }
+    await processQueue(root, {
+      ...(mode === 'stream' ? { processJob: consume } : { onArchive: consume }),
+      onError: (...fields) => errors.push(fields.at(-1)),
+    })
+    assert.equal(calls, 2)
+    assert.deepEqual(errors, ['consumer unavailable'])
+    assert.deepEqual(await readdir(join(root, 'pending')), [])
+    assert.equal((await records(f.logs)).length, mode === 'stream' ? 0 : 1)
+    assert.equal(
+      git(f.workspace, 'for-each-ref', '--format=%(refname)', 'refs/wegent/turn-diff'),
+      ''
+    )
   }
 })
