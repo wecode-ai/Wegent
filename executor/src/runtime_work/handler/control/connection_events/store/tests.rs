@@ -217,3 +217,49 @@ fn failed_projection_rolls_back_subscription_and_collector_reference() {
         2
     );
 }
+
+#[test]
+fn renewal_waits_for_an_in_process_collection_transaction() {
+    use std::sync::mpsc;
+    use std::thread;
+
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("events.sqlite");
+    let (collecting, collection_started) = mpsc::channel();
+    let (commit, release_collection) = mpsc::channel();
+    let (renewing, renewal_started) = mpsc::channel();
+    let (renewed, renewal_finished) = mpsc::channel();
+
+    let path = path.as_path();
+    thread::scope(|scope| {
+        let collection = scope.spawn(move || {
+            update(path, Scope::Row("observations", "source"), |state| {
+                state["observations"]["source"] = json!({"sequence":1});
+                collecting.send(()).unwrap();
+                release_collection.recv().unwrap();
+                Ok(())
+            })
+        });
+        collection_started.recv().unwrap();
+        let renewal = scope.spawn(move || {
+            renewing.send(()).unwrap();
+            renewed
+                .send(update(path, Scope::Row("observers", "ui"), |state| {
+                    state["observers"]["ui"] = json!({"expires_at": 90_000});
+                    Ok(())
+                }))
+                .unwrap();
+        });
+        renewal_started.recv().unwrap();
+        let while_collecting = renewal_finished.recv_timeout(Duration::from_millis(750));
+        commit.send(()).unwrap();
+        collection.join().unwrap().unwrap();
+        renewal.join().unwrap();
+
+        assert!(matches!(
+            while_collecting,
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        renewal_finished.recv().unwrap().unwrap();
+    });
+}
