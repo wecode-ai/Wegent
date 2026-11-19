@@ -44,7 +44,14 @@ export function issueTaskSummaryForMessage<
     message.metadata.dispatch_id.trim() &&
     (activityType === "member_execution" ||
       activityType === "manager_execution")
-      ? () => onOpenProjectExecution(address)
+      ? () =>
+          onOpenProjectExecution({
+            ...address,
+            projectSession: {
+              projectId: message.projectId,
+              issueId: message.taskId,
+            },
+          })
       : undefined;
   return {
     title: taskTitle,

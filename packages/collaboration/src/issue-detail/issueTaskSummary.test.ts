@@ -40,7 +40,13 @@ describe("issueTaskSummaryForMessage", () => {
 
     summary?.onOpen?.();
 
-    expect(open).toHaveBeenCalledExactlyOnceWith(address);
+    expect(open).toHaveBeenCalledExactlyOnceWith({
+      ...address,
+      projectSession: {
+        projectId: activity.projectId,
+        issueId: activity.taskId,
+      },
+    });
     expect(
       issueTaskSummaryForMessage(
         { ...activity, metadata: { workflow_task_title: "Personal task" } },

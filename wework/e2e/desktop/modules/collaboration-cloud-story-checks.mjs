@@ -186,3 +186,50 @@ export function runtimeDeviceId(execution) {
 export function terminalExecution(execution) {
   return ['completed', 'succeeded'].includes(execution.status)
 }
+
+export async function verifyRecordedMemberTranscript({
+  request,
+  backendUrl,
+  projectId,
+  issueId,
+  memberBinding,
+  timeoutMs,
+}) {
+  const userName = 'collaboration-viewer-' + process.pid
+  const password = 'isolated-collaboration-viewer-password'
+  const viewer = await request('/api/admin/users', {
+    method: 'POST',
+    body: JSON.stringify({ user_name: userName, password, role: 'user', auth_source: 'password' }),
+  })
+  await request('/api/v1/cloud-projects/' + projectId + '/members', {
+    method: 'POST',
+    body: JSON.stringify({ user_id: viewer.id, role: 'Viewer' }),
+  })
+  const login = await request('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ user_name: userName, password }),
+  })
+  const read = (path, options, deferTranscriptBusy) =>
+    requestJson(backendUrl, login.access_token, path, options, deferTranscriptBusy)
+  const bindings = await read('/api/v1/loop-items/' + issueId + '/tasks')
+  assert.deepEqual(bindings, [], '查看者不应拥有 Executor 的个人会话绑定')
+  const address = { deviceId: memberBinding.device_id, taskId: memberBinding.task_id }
+  const transcript = await waitForValue(
+    () =>
+      read(
+        '/api/runtime-work/transcript',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            ...address,
+            projectSession: { projectId: String(projectId), issueId },
+          }),
+        },
+        true
+      ),
+    Boolean,
+    '项目查看者无法读取 Issue 内登记的成员会话',
+    timeoutMs
+  )
+  assert.equal(transcript.taskId, address.taskId)
+}

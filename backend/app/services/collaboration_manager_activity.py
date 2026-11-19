@@ -128,6 +128,7 @@ def project_collaboration_manager_activity(
             }
         ],
         user_id=dispatch.assigner_user_id,
+        manager=manager,
     )
     db.commit()
     publish_loop_item_changed(

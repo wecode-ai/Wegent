@@ -26,6 +26,7 @@ import { selectCollaborationProjectView } from '../modules/collaboration-project
 import { createGuidedReplies } from '../modules/collaboration-guided-replies.mjs'
 import {
   assertManagerComment,
+  verifyRecordedMemberTranscript,
   assignStoryGroup,
   issueExecution,
   runtimeDeviceId,
@@ -899,15 +900,14 @@ export async function createDesktopScenario({
       const memberTaskId = `${dispatch.runtimeTaskId}-member-${MARKER}-round-1-${MARKER}-assignment-1`
       const memberBinding = bindingsAfterReply.find(binding => binding.task_id === memberTaskId)
       assert.ok(memberBinding, '成员动态没有绑定实际成员会话')
-      const memberTranscript = await request('/api/runtime-work/transcript', {
-        method: 'POST',
-        body: JSON.stringify({
-          deviceId: memberBinding.device_id,
-          taskId: memberTaskId,
-          projectSession: { projectId: String(project.id), issueId: rootIssue.id },
-        }),
+      await verifyRecordedMemberTranscript({
+        request,
+        backendUrl,
+        projectId: project.id,
+        issueId: rootIssue.id,
+        memberBinding,
+        timeoutMs: uiTimeoutMs,
       })
-      assert.equal(memberTranscript.taskId, memberTaskId, '成员详情指向了其他会话')
       const memberLink = scoped(`[data-testid="cloud-task-activity-open-task-${memberMessageId}"]`)
       await control.command('scrollIntoView', scoped(`[data-testid="${memberCard}"]`))
       await control.command('clickWhenEnabled', memberLink, { timeoutMs: uiTimeoutMs })
