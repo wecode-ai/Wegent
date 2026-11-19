@@ -101,7 +101,7 @@ import { executeVerificationControlCommand } from './verification-control'
 import { verifyConnectorAuthorizationIsolation } from './connector-authorization-isolation'
 import { captureEmbeddedBrowserSnapshot, evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
 import {
-  desktopControlElementEnabled,
+  desktopControlElementEnabled as desktopControlChoiceEnabled,
   desktopControlSelectionValue,
   chooseDesktopControlChoice,
   selectDesktopControlChoice,
@@ -1217,6 +1217,11 @@ function loadDesktopControlScreenshot(snapshot: string): Promise<HTMLImageElemen
   })
 }
 
+function desktopControlElementEnabled(element: HTMLElement): boolean {
+  if (element.getAttribute('aria-disabled') === 'true') return false
+  return !('disabled' in element) || !(element as HTMLButtonElement).disabled
+}
+
 function desktopControlElementRendered(element: HTMLElement): boolean {
   let current: HTMLElement | null = element
   while (current) {
@@ -1269,7 +1274,7 @@ async function waitForDesktopControlTick(): Promise<void> {
   await new Promise<void>(resolve => window.setTimeout(resolve, 16))
 }
 
-function desktopControlEventOptions(element: HTMLElement): MouseEventInit & PointerEventInit {
+function desktopControlEventOptions(element: HTMLElement) {
   const rect = element.getBoundingClientRect()
   const clientX = Math.max(0, Math.floor(rect.left + rect.width / 2))
   const clientY = Math.max(0, Math.floor(rect.top + rect.height / 2))
@@ -1291,10 +1296,9 @@ function dispatchDesktopControlPointerEvent(
   options: MouseEventInit & PointerEventInit
 ) {
   if (typeof PointerEvent === 'function' && type.startsWith('pointer')) {
-    element.dispatchEvent(new PointerEvent(type, options))
-    return
+    return element.dispatchEvent(new PointerEvent(type, options))
   }
-  element.dispatchEvent(new MouseEvent(type.replace(/^pointer/, 'mouse'), options))
+  return element.dispatchEvent(new MouseEvent(type.replace(/^pointer/, 'mouse'), options))
 }
 
 function hoverDesktopControlElement(selector: string): string {
@@ -1516,7 +1520,21 @@ async function startDesktopControlDrag(command: DesktopControlCommand): Promise<
   }
   const startOptions = { ...desktopControlEventOptions(element), buttons: 1 }
   const endOptions = { ...desktopControlEventOptions(target), buttons: 1 }
-  dispatchDesktopControlPointerEvent(element, 'pointerdown', startOptions)
+  const hit = element.ownerDocument.elementFromPoint(startOptions.clientX, startOptions.clientY)
+  const pressed = dispatchDesktopControlPointerEvent(element, 'pointerdown', startOptions)
+  console.warn(
+    `[desktop-e2e-drag-start] ${JSON.stringify({
+      source: command.selector,
+      target: command.target,
+      start: [startOptions.clientX, startOptions.clientY],
+      end: [endOptions.clientX, endOptions.clientY],
+      sourceConnected: element.isConnected,
+      targetConnected: target.isConnected,
+      hitSource: hit !== null && element.contains(hit),
+      hitId: hit?.closest('[data-testid]')?.getAttribute('data-testid'),
+      defaultPrevented: !pressed,
+    })}`
+  )
   await waitForDesktopControlTick()
   dispatchDesktopControlPointerEvent(document, 'pointermove', endOptions)
   dispatchDesktopControlPointerEvent(element, 'pointermove', endOptions)
@@ -1767,7 +1785,8 @@ async function desktopControlElementValue(element: HTMLElement): Promise<string>
 
 async function waitForDesktopControlElement(
   command: DesktopControlCommand,
-  onMatch?: (element: HTMLElement) => string | Promise<string>
+  onMatch?: (element: HTMLElement) => string | Promise<string>,
+  isEnabled = desktopControlElementEnabled
 ): Promise<string> {
   const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
   const startedAt = Date.now()
@@ -1792,9 +1811,7 @@ async function waitForDesktopControlElement(
       : elements
     const text = matchingElements.map(element => element.textContent?.trim() ?? '').join('\n')
     const hasExpectedText = !command.text || text.includes(command.text)
-    const matchedElement = matchingElements.find(
-      element => !command.enabled || desktopControlElementEnabled(element)
-    )
+    const matchedElement = matchingElements.find(element => !command.enabled || isEnabled(element))
     if (matchedElement && hasExpectedText) {
       matchedAt ??= Date.now()
       if (Date.now() - matchedAt >= (command.stableMs ?? 0)) {
@@ -1812,7 +1829,7 @@ async function waitForDesktopControlElement(
       dataPresentation: element.dataset.presentation ?? null,
       hidden: element.hidden,
       ariaHidden: element.getAttribute('aria-hidden'),
-      enabled: desktopControlElementEnabled(element),
+      enabled: isEnabled(element),
       state: { ...element.dataset },
       rendered: desktopControlElementRendered(element),
       visible: desktopControlElementVisible(element),
@@ -3499,12 +3516,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       })
     }
     case 'chooseWhenEnabled': {
-      return waitForDesktopControlElement({ ...command, enabled: true, visible: true }, element =>
-        chooseDesktopControlChoice(
-          element,
-          command.value ?? '',
-          command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
-        )
+      return waitForDesktopControlElement(
+        { ...command, enabled: true, visible: true },
+        element =>
+          chooseDesktopControlChoice(
+            element,
+            command.value ?? '',
+            command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
+          ),
+        desktopControlChoiceEnabled
       )
     }
     case 'setExpanded': {
