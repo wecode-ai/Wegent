@@ -2156,8 +2156,7 @@ fn ensure_object<'a>(object: &'a mut Map<String, Value>, key: &str) -> &'a mut M
 }
 
 pub(super) fn collect_request_mcp_servers(request: &ExecutionRequest) -> BTreeMap<String, Value> {
-    let mut servers =
-        super::claude_options::extract_claude_mcp_templates(request, &BTreeMap::new());
+    let mut servers = super::claude_options::extract_codex_mcp_templates(request, &BTreeMap::new());
     servers.remove(crate::workbench_control::SERVER_NAME);
     preserve_explicit_mcp_approval_modes(request, &mut servers);
     servers

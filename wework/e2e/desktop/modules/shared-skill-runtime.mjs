@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url'
 
 import { CLOUD_DEVICE_ID, CLOUD_PUBLIC_MODEL_NAME, CLOUD_PUBLIC_MODEL_OPTIONS } from './shared.mjs'
 import { createZipFixture } from './zip-fixtures.mjs'
+import { startEmptyCommandHttpMcp } from './empty-command-http-mcp.mjs'
 
 const { parse } = createRequire(join(import.meta.dirname, '../../../electron/package.json'))(
   process.env.WEWORK_E2E_YAML_PARSER || 'yaml'
@@ -28,6 +29,7 @@ export function createSharedSkillRuntime({
   const promptPrefix = isCodex ? 'WEWORK_CODEX_SHARED_SKILL' : 'WEWORK_SHARED_SKILL'
   let turn = null
   let completed = false
+  let faultServer
 
   function handleModel(body, response) {
     const serialized = JSON.stringify(body)
@@ -60,6 +62,35 @@ export function createSharedSkillRuntime({
         JSON.stringify(output).includes(turn.content),
         'Claude read the wrong skill version'
       )
+      if (turn.index === 1 && faultServer) {
+        const failureId = `${turn.callId}-failure`
+        const failed = (body.input ?? []).find(
+          item => item.type === 'function_call_output' && item.call_id === failureId
+        )
+        if (failed) {
+          assert.ok(
+            JSON.stringify(failed).includes('MCP_ISOLATION_CALL_FAILED'),
+            'The real failed MCP result was not returned to Claude'
+          )
+        } else {
+          const searchId = `${failureId}-search`
+          const search = (body.input ?? []).find(
+            item => item.type === 'function_call_output' && item.call_id === searchId
+          )
+          const name =
+            body.tools?.find(tool => tool.name?.endsWith('__fail_operation'))?.name ??
+            JSON.stringify(search ?? {}).match(/mcp__[A-Za-z0-9_-]+__fail_operation/)?.[0]
+          if (name) writeToolCall(response, failureId, failureId, name, {})
+          else {
+            assert.ok(!search, 'Native search did not discover the real failing MCP tool')
+            writeToolCall(response, searchId, searchId, 'ToolSearch', {
+              query: 'fail_operation',
+              max_results: 1,
+            })
+          }
+          return true
+        }
+      }
       if (turn.bindShells) {
         const frontmatter = output.output.match(/^---\r?\n([\s\S]*?)\r?\n---/m)?.[1]
         assert.ok(frontmatter, 'Claude did not read the skill frontmatter')
@@ -112,6 +143,8 @@ export function createSharedSkillRuntime({
 
   async function verify(cloud) {
     assert.equal(new URL(cloud.backendUrl).hostname, '127.0.0.1')
+    if (!isCodex)
+      faultServer = await startEmptyCommandHttpMcp(join(resultDir, 'claude-fault-mcp.json'))
     const request = async (path, method = 'GET', body) => {
       const form = body instanceof FormData
       const response = await fetch(`${cloud.backendUrl}/api/${path}`, {
@@ -148,6 +181,18 @@ export function createSharedSkillRuntime({
               },
             }
           : {}
+      if (!isCodex && version === 'V1') {
+        Object.assign(mcps, {
+          'missing-context': {
+            type: 'http',
+            url: '${{task_data.user_mcps.absent.services.docs.credentials.url}}',
+          },
+          'bad-config': { type: 'stdio', command: process.execPath, env: { INVALID: 42 } },
+          'bad-authorization': { type: 'http', ...faultServer.failureConfigs.unauthorized },
+          'bad-startup': { type: 'http', ...faultServer.failureConfigs.startup },
+          'failed-invocation': { type: 'http', ...faultServer.failureConfigs.invocation },
+        })
+      }
       await createZipFixture(archivePath, {
         [`${NAME}/SKILL.md`]: `---\nname: ${NAME}\ndescription: Shared skill ${version}\nbindShells: [${bindShells.join(', ')}]\nmcpServers: ${JSON.stringify(mcps)}\n---\nWEWORK_SHARED_SKILL_${version}\n`,
       })
@@ -268,6 +313,7 @@ export function createSharedSkillRuntime({
     }
 
     await runTurn('V1', 1)
+    if (faultServer) faultServer.verifyFailures()
     assert.equal(cloud.remoteExecutorEnv.WEGENT_WORKBENCH_HOME, undefined)
     const workbench = join(cloud.remoteExecutorEnv.HOME, '.wegent', 'workbench')
     await assert.rejects(lstat(join(cloud.remoteExecutorEnv.WEGENT_EXECUTOR_HOME, 'workbench')), {
@@ -386,6 +432,7 @@ export function createSharedSkillRuntime({
       await assertLayout(chatBound)
       chatBoundPackage = packagePath(chatBound)
     }
+    if (faultServer) faultServer.verifyFailures()
     await writeFile(
       join(resultDir, isCodex ? 'codex-shared-skill-runtime.json' : 'shared-skill-runtime.json'),
       JSON.stringify(
@@ -417,5 +464,5 @@ export function createSharedSkillRuntime({
     )
   }
 
-  return { handleModel, verify }
+  return { handleModel, verify, cleanup: () => faultServer?.close() }
 }

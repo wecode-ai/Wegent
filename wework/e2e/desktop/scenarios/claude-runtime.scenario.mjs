@@ -630,6 +630,7 @@ export async function createDesktopScenario({
 
     async cleanup() {
       concurrentHomes.cleanup()
+      await sharedSkills.cleanup()
       await rm(localClaudeAlias, {
         force: true,
         maxRetries: process.platform === 'win32' ? 20 : 0,

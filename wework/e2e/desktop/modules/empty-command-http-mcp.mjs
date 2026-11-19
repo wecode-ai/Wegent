@@ -7,9 +7,28 @@ import { readRequestBody } from './response-protocol.mjs'
 export async function startEmptyCommandHttpMcp(probePath) {
   let failure
   let calls = 0
+  const failures = { unauthorized: 0, startup: 0, invocation: 0 }
   const server = createServer(async (request, response) => {
     try {
-      assert.equal(request.url, '/mcp')
+      if (
+        (request.method === 'GET' && request.url.startsWith('/.well-known/')) ||
+        (request.method === 'POST' && request.url === '/register')
+      ) {
+        // Native OAuth discovery and registration are unavailable after a real 401.
+        response.writeHead(404).end()
+        return
+      }
+      if (request.url === '/unauthorized' || request.url === '/startup-error') {
+        const unauthorized = request.url === '/unauthorized'
+        failures[unauthorized ? 'unauthorized' : 'startup']++
+        response.writeHead(unauthorized ? 401 : 503).end()
+        return
+      }
+      assert.ok(
+        ['/mcp', '/failed-call'].includes(request.url),
+        `Unexpected MCP request path: ${request.url}`
+      )
+      const failedCall = request.url === '/failed-call'
       if (request.method === 'GET') {
         response.writeHead(405).end()
         return
@@ -25,7 +44,7 @@ export async function startEmptyCommandHttpMcp(probePath) {
         return
       }
       const token = request.headers['x-test-token']
-      assert.match(token, /^synthetic-mcp-secret-\d+$/)
+      if (!failedCall) assert.match(token, /^synthetic-mcp-secret-\d+$/)
       let result
       switch (message.method) {
         case 'initialize':
@@ -39,7 +58,7 @@ export async function startEmptyCommandHttpMcp(probePath) {
           result = {
             tools: [
               {
-                name: 'probe_environment',
+                name: failedCall ? 'fail_operation' : 'probe_environment',
                 description: 'Read the current synthetic MCP context',
                 inputSchema: { type: 'object', properties: {} },
               },
@@ -47,6 +66,15 @@ export async function startEmptyCommandHttpMcp(probePath) {
           }
           break
         case 'tools/call':
+          if (failedCall) {
+            assert.equal(message.params.name, 'fail_operation')
+            failures.invocation++
+            result = {
+              isError: true,
+              content: [{ type: 'text', text: 'MCP_ISOLATION_CALL_FAILED' }],
+            }
+            break
+          }
           assert.equal(message.params.name, 'probe_environment')
           await writeFile(probePath, JSON.stringify({ token, pid: process.pid }), { mode: 0o600 })
           calls++
@@ -61,6 +89,16 @@ export async function startEmptyCommandHttpMcp(probePath) {
         case 'ping':
           result = {}
           break
+        case 'server/discover':
+          response.writeHead(200, { 'content-type': 'application/json' })
+          response.end(
+            JSON.stringify({
+              jsonrpc: '2.0',
+              id: message.id,
+              error: { code: -32601, message: 'Method not found' },
+            })
+          )
+          return
         default:
           throw new Error(`Unexpected MCP method: ${message.method}`)
       }
@@ -72,7 +110,19 @@ export async function startEmptyCommandHttpMcp(probePath) {
     }
   })
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  const base = `http://127.0.0.1:${server.address().port}`
   return {
+    failureConfigs: {
+      unauthorized: { url: `${base}/unauthorized`, required: true },
+      startup: { url: `${base}/startup-error`, required: true },
+      invocation: { url: `${base}/failed-call`, headers: { 'X-Test-Token': '${{auth_token}}' } },
+    },
+    verifyFailures() {
+      if (failure) throw failure
+      assert.ok(failures.unauthorized > 0, 'The real authorization failure was not exercised')
+      assert.ok(failures.startup > 0, 'The real startup failure was not exercised')
+      assert.equal(failures.invocation, 1, 'Failed business operations must not be replayed')
+    },
     config: {
       command: '',
       args: [],

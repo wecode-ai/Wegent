@@ -6,11 +6,13 @@ use std::{collections::BTreeMap, fs, path::Path};
 use serde_json::{json, Map, Value};
 use toml_edit::{DocumentMut, Item, Table};
 
-use crate::{agents::claude_options::extract_claude_mcp_templates, protocol::ExecutionRequest};
+use crate::{agents::claude_options::extract_codex_mcp_templates, protocol::ExecutionRequest};
 
 use super::mcp_environment::{
     append_stdio_environment, bind_available_context, resolve_context, retain_available_servers,
 };
+
+mod validation;
 
 /// Called while holding the named Home execution lease. Store definitions once;
 /// bind task values through native thread RPC, never through disk or argv.
@@ -49,7 +51,7 @@ pub(super) fn prepare(
         BTreeMap::new()
     });
     let previous = servers.clone();
-    let mut incoming = extract_claude_mcp_templates(request, &BTreeMap::new());
+    let mut incoming = extract_codex_mcp_templates(request, &BTreeMap::new());
     let configured_names = servers
         .keys()
         .chain(incoming.keys())
@@ -164,6 +166,7 @@ fn prepare_runtime(
             resolve_context(&mut resolved, &environment)?;
             resolved = native_definition(resolved)?;
             crate::mcp_utils::validate_mcp_server_definition(&resolved)?;
+            validation::validate(&resolved)?;
             // A connector is a capability, never a prerequisite for the whole turn.
             resolved["required"] = json!(false);
             let mut staged = Map::new();
@@ -238,15 +241,19 @@ fn remove_inactive_transport_fields(server: &mut Value) -> Result<(), String> {
             "headers",
             "http_headers",
             "env_http_headers",
+            "http_headers_helper",
+            "bearer_token",
             "bearer_token_env_var",
             "bearerTokenEnvVar",
             "oauth_client_id",
             "oauthClientId",
             "oauth_resource",
             "oauthResource",
+            "oauth",
+            "auth",
         ][..]
     } else {
-        &["command", "args", "env", "env_vars"][..]
+        &["command", "args", "env", "env_vars", "cwd"][..]
     } {
         native.remove(*key);
     }

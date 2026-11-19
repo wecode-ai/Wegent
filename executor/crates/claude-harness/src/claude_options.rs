@@ -52,6 +52,21 @@ pub fn extract_claude_mcp_templates(
     request: &ExecutionRequest,
     global_mcps: &BTreeMap<String, Value>,
 ) -> BTreeMap<String, Value> {
+    extract_mcp_templates(request, global_mcps, normalize_mcp_server_for_claude)
+}
+
+pub fn extract_codex_mcp_templates(
+    request: &ExecutionRequest,
+    global_mcps: &BTreeMap<String, Value>,
+) -> BTreeMap<String, Value> {
+    extract_mcp_templates(request, global_mcps, Value::clone)
+}
+
+fn extract_mcp_templates(
+    request: &ExecutionRequest,
+    global_mcps: &BTreeMap<String, Value>,
+    normalize: fn(&Value) -> Value,
+) -> BTreeMap<String, Value> {
     let mut servers = collect_mcp_servers_for_claude(request, primary_bot(request), global_mcps);
     for server in &mut servers {
         // Resolve routing metadata before indexing and transport normalization.
@@ -62,7 +77,7 @@ pub fn extract_claude_mcp_templates(
             }
         }
     }
-    convert_mcp_servers_to_dict(&Value::Array(servers))
+    convert_mcp_servers_to_dict_with(&Value::Array(servers), normalize)
 }
 
 pub fn extract_claude_options(
@@ -144,16 +159,19 @@ fn append_mcp_servers(target: &mut Vec<Value>, mcp_servers: Option<&Value>) {
 }
 
 fn convert_mcp_servers_to_dict(mcp_servers: &Value) -> BTreeMap<String, Value> {
+    convert_mcp_servers_to_dict_with(mcp_servers, normalize_mcp_server_for_claude)
+}
+
+fn convert_mcp_servers_to_dict_with(
+    mcp_servers: &Value,
+    normalize: fn(&Value) -> Value,
+) -> BTreeMap<String, Value> {
     match mcp_servers {
         Value::Object(object) => {
             let mut normalized = BTreeMap::new();
             for (name, config) in object {
                 if config.as_object().is_some() {
-                    merge_mcp_server(
-                        &mut normalized,
-                        name.clone(),
-                        normalize_mcp_server_for_claude(config),
-                    );
+                    merge_mcp_server(&mut normalized, name.clone(), normalize(config));
                 }
             }
             normalized
@@ -172,7 +190,7 @@ fn convert_mcp_servers_to_dict(mcp_servers: &Value) -> BTreeMap<String, Value> {
                 merge_mcp_server(
                     &mut normalized,
                     name.to_owned(),
-                    normalize_mcp_server_for_claude(&Value::Object(object)),
+                    normalize(&Value::Object(object)),
                 );
             }
             normalized

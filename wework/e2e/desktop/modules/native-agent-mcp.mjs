@@ -62,24 +62,22 @@ export async function verifyNativeAgentMcp({
         'Single-agent execution unexpectedly injected a legacy coordinate role'
       )
       const id = `native-mcp-${active.index}`
+      if (emptyCommandHttp && active.index === 4) {
+        response.writeHead(200, { 'content-type': 'text/event-stream' })
+        response.write(createSse([responseCreated(id)]))
+        active.modelRequested = true
+        return
+      }
+      const failurePhase = emptyCommandHttp && active.index === 1 && !active.failedCalled
+      const toolName = failurePhase ? 'fail_operation' : 'probe_environment'
+      const operationId = failurePhase ? `${id}-failure` : id
       let events
-      if (requestContainsToolOutput(body, `${id}-call`)) {
+      if (!active.failedCalled && requestContainsToolOutput(body, `${id}-failure-call`)) {
         const result = body.input.find(
-          item => item.call_id === `${id}-call` && item.type?.endsWith('_call_output')
+          item => item.call_id === `${id}-failure-call` && item.type?.endsWith('_call_output')
         )
-        assert.ok(JSON.stringify(result).includes(`MCP_CONTEXT:${active.token}`))
-        active.called = true
-        const message = assistantMessage(active.completion)
-        events = [message, responseCompleted(id, [message.item])]
-      } else if (requestContainsToolOutput(body, `${id}-search`)) {
-        const namespace = requestToolSearchResults(body).find(
-          tool =>
-            tool.type === 'namespace' && tool.tools?.some(item => item.name === 'probe_environment')
-        )
-        assert.ok(namespace, 'Retained MCP was not found by native tool search')
-        const tool = selectMcpTool(body, namespace.name, 'probe_environment', {})
-        events = [...selectedToolCall(`${id}-call`, tool), responseCompleted(id)]
-      } else {
+        assert.ok(JSON.stringify(result).includes('MCP_ISOLATION_CALL_FAILED'))
+        active.failedCalled = true
         events = [
           ...mcpToolRequestEvents(body, {
             toolName: 'probe_environment',
@@ -87,6 +85,34 @@ export async function verifyNativeAgentMcp({
             directToolName: 'mcp__retained__probe_environment',
             searchCallId: `${id}-search`,
             toolCallId: `${id}-call`,
+          }).events,
+          responseCompleted(id),
+        ]
+      } else if (requestContainsToolOutput(body, `${id}-call`)) {
+        const result = body.input.find(
+          item => item.call_id === `${id}-call` && item.type?.endsWith('_call_output')
+        )
+        assert.ok(JSON.stringify(result).includes(`MCP_CONTEXT:${active.token}`))
+        active.called = true
+        const message = assistantMessage(active.completion)
+        events = [message, responseCompleted(id, [message.item])]
+      } else if (requestContainsToolOutput(body, `${operationId}-search`)) {
+        const namespace = requestToolSearchResults(body).find(
+          tool => tool.type === 'namespace' && tool.tools?.some(item => item.name === toolName)
+        )
+        assert.ok(namespace, 'Retained MCP was not found by native tool search')
+        const tool = selectMcpTool(body, namespace.name, toolName, {})
+        events = [...selectedToolCall(`${operationId}-call`, tool), responseCompleted(id)]
+      } else {
+        events = [
+          ...mcpToolRequestEvents(body, {
+            toolName,
+            argumentsValue: {},
+            directToolName: failurePhase
+              ? 'mcp__failed_invocation__fail_operation'
+              : 'mcp__retained__probe_environment',
+            searchCallId: `${operationId}-search`,
+            toolCallId: `${operationId}-call`,
           }).events,
           responseCompleted(id),
         ]
@@ -151,6 +177,14 @@ export async function verifyNativeAgentMcp({
   }
   await new Promise(resolve => model.listen(0, '127.0.0.1', resolve))
   const modelUrl = `http://127.0.0.1:${model.address().port}`
+  if (emptyCommandHttp) {
+    await mkdir(agentHome, { recursive: true, mode: 0o700 })
+    await writeFile(
+      join(agentHome, 'config.toml'),
+      `[mcp_servers.saved_invalid_cwd]\ncommand = ${JSON.stringify(process.execPath)}\ncwd = 42\n`,
+      { mode: 0o600 }
+    )
+  }
   const child = spawn(process.env.WEWORK_E2E_EXECUTOR_BIN, [], {
     cwd: fixture.workspace,
     env,
@@ -184,7 +218,7 @@ export async function verifyNativeAgentMcp({
     remoteMcp = emptyCommandHttp ? await startEmptyCommandHttpMcp(probePath) : null
     await waitFor(() => /listening on 127\.0\.0\.1:\d+/.test(output), 'Executor did not start')
     const port = output.match(/listening on 127\.0\.0\.1:(\d+)/)[1]
-    for (let index = 1; index <= 3; index++) {
+    for (let index = 1; index <= (emptyCommandHttp ? 4 : 3); index++) {
       const subtask = String(61000 + index)
       active = {
         index,
@@ -210,6 +244,23 @@ export async function verifyNativeAgentMcp({
               },
             }
           : {}
+      if (emptyCommandHttp && index === 1) {
+        Object.assign(mcp, {
+          missing_context: { url: '${{backend_api_url}}/mcp/connectors/sse' },
+          invalid_native: { url: remoteMcp.config.url, oauth: { callback_port: 65536 } },
+          invalid_cwd: { command: process.execPath, cwd: 42 },
+          missing_credentials: {
+            url: '${{task_data.user_mcps.absent.services.docs.credentials.url}}',
+          },
+          failed_authorization: {
+            ...remoteMcp.failureConfigs.unauthorized,
+            startup_timeout_sec: 1,
+          },
+          failed_startup: { ...remoteMcp.failureConfigs.startup, startup_timeout_sec: 1 },
+          failed_spawn: { command: join(root, 'missing-executable'), required: true },
+          failed_invocation: remoteMcp.failureConfigs.invocation,
+        })
+      }
       const response = await fetch(`http://127.0.0.1:${port}/v1/responses`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -232,7 +283,7 @@ export async function verifyNativeAgentMcp({
             team_owner: { kind: 'user', id: 61, name: 'synthetic' },
             user_id: 61,
             user_name: 'synthetic',
-            backend_url: modelUrl,
+            ...(!(emptyCommandHttp && index === 1) ? { backend_url: modelUrl } : {}),
             auth_token: active.token,
             mode: 'single',
             bot: [{ id: 611, shell_type: 'Codex', mcp_servers: mcp }],
@@ -245,6 +296,31 @@ export async function verifyNativeAgentMcp({
       })
       assert.equal(response.status, 200)
       assert.equal((await response.json()).status, 'queued')
+      if (emptyCommandHttp && index === 4) {
+        await waitFor(
+          () => active.modelRequested,
+          'Cancellation turn did not reach the real model transport'
+        )
+        const cancelled = await fetch(
+          `http://127.0.0.1:${port}/api/tasks/cancel?task_id=61000&subtask_id=${subtask}`,
+          { method: 'POST', signal: AbortSignal.timeout(10_000) }
+        )
+        assert.equal(cancelled.status, 200)
+        await waitFor(
+          () =>
+            output
+              .split('\n')
+              .some(
+                line =>
+                  line.includes('task execution stop confirmed') &&
+                  line.includes(`subtask_id=${subtask}`) &&
+                  line.includes('abort_result=cancelled')
+              ),
+          'Task cancellation was swallowed as an optional MCP failure'
+        )
+        assert.equal(active.called, false)
+        continue
+      }
       let finished
       await waitFor(() => {
         finished = output
@@ -257,6 +333,32 @@ export async function verifyNativeAgentMcp({
       }, `Native turn ${index} did not finish`)
       assert.ok(finished.includes('outcome=completed'), finished)
       assert.equal(active.called, true)
+      if (emptyCommandHttp && index === 1) {
+        assert.equal(
+          active.failedCalled,
+          true,
+          'A failed tool must be followed by healthy MCP work'
+        )
+        for (const name of [
+          'missing_context',
+          'invalid_native',
+          'invalid_cwd',
+          'missing_credentials',
+          'saved_invalid_cwd',
+        ]) {
+          assert.ok(
+            output
+              .split('\n')
+              .some(
+                line =>
+                  line.includes(`server_name=${name}`) &&
+                  (line.includes('unconfigured MCP skipped') ||
+                    line.includes('MCP unavailable; execution continues'))
+              ),
+            `Missing isolated failure diagnostic for ${name}`
+          )
+        }
+      }
       const nativeEvents = (
         await readFile(join(root, `wegent-codex-stdout-61000-${subtask}.jsonl`), 'utf8')
       )
@@ -271,7 +373,8 @@ export async function verifyNativeAgentMcp({
         false,
         'Real Codex rejected the generated agent configuration'
       )
-      assert.ok(nativeEvents.some(event => event.result?.codexHome === agentHome))
+      const nativeHome = nativeEvents.find(event => event.result?.codexHome)?.result.codexHome
+      assert.equal(await realpath(nativeHome), await realpath(agentHome))
       await assert.rejects(stat(join(executorHome, 'workbench')), { code: 'ENOENT' })
       if (explicitWorkbench) {
         await assert.rejects(stat(join(home, '.wegent/workbench')), { code: 'ENOENT' })
@@ -350,8 +453,9 @@ export async function verifyNativeAgentMcp({
       const content = await readFile(path, 'utf8')
       assert.ok(content.includes('[mcp_servers.retained]'))
       if (emptyCommandHttp) {
-        assert.ok(content.includes(remoteMcp.config.url))
-        assert.ok(!/^command\s*=/m.test(content), 'Remote MCP must not persist a stdio command')
+        const retained = content.split('[mcp_servers.retained]')[1].split(/\n\[/)[0]
+        assert.ok(retained.includes(remoteMcp.config.url))
+        assert.ok(!/^command\s*=/m.test(retained), 'Remote MCP must not persist a stdio command')
       }
       assert.ok(!content.includes('synthetic-mcp-secret-'))
       const metadata = await stat(path, { bigint: true })
@@ -368,6 +472,7 @@ export async function verifyNativeAgentMcp({
       }
     }
     remoteMcp?.verify()
+    if (emptyCommandHttp) remoteMcp.verifyFailures()
     const evidence = {
       passed: true,
       home: agentHome,
@@ -385,6 +490,8 @@ export async function verifyNativeAgentMcp({
       executorHomeIndependent: true,
       singleAgentConfigurationAccepted: true,
       emptyCommandHttp,
+      faultIsolation: emptyCommandHttp,
+      cancellationPreserved: emptyCommandHttp,
     }
     await writeFile(join(root, 'evidence.json'), `${JSON.stringify(evidence, null, 2)}\n`)
     return evidence

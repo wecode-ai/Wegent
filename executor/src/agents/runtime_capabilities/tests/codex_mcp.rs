@@ -406,6 +406,86 @@ fn invalid_mcp_approval_modes_preserve_healthy_native_services() {
 }
 
 #[test]
+fn invalid_native_fields_isolate_incoming_and_saved_services() {
+    for (field, value, stdio) in [
+        ("cwd", json!(42), true),
+        ("name", json!(42), true),
+        ("environment_id", json!(42), true),
+        ("startup_timeout_ms", json!(-1), true),
+        ("startup_timeout_ms", json!(1.5), true),
+        ("startup_readiness", json!("invalid"), true),
+        ("tool_input_schema_max_bytes", json!(0), true),
+        ("omit_tools_from", json!(["invalid"]), true),
+        (
+            "env_vars",
+            json!([{ "name": "PATH", "source": "invalid" }]),
+            true,
+        ),
+        (
+            "env_vars",
+            json!([{ "name": "PATH", "unexpected": true }]),
+            true,
+        ),
+        ("tools", json!({"read": {"output_token_limit": -1}}), true),
+        ("auth", json!("invalid"), false),
+        ("http_headers_helper", json!(42), false),
+        ("http_headers_helper", json!(" "), false),
+        ("bearer_token", json!("unsupported"), false),
+        ("oauth", json!(42), false),
+        ("oauth", json!({"callback_port": 65536}), false),
+        ("oauth", json!({"callback_url": 42}), false),
+        ("oauth", json!({"client_id": 42}), false),
+        (
+            "oauth",
+            json!({"token_endpoint_auth_method": "invalid"}),
+            false,
+        ),
+        (
+            "oauth",
+            json!({"authorization_server_issuer": "https://issuer.example"}),
+            false,
+        ),
+    ] {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().join("config.toml");
+        let mut bad = if stdio {
+            json!({"command": "node"})
+        } else {
+            json!({"url": "https://example.test/mcp"})
+        };
+        bad[field] = value;
+        fs::write(
+            &path,
+            toml_edit::ser::to_document(
+                &json!({"model": "keep", "mcp_servers": {"saved-bad": bad}}),
+            )
+            .unwrap()
+            .to_string(),
+        )
+        .unwrap();
+        let mut incoming = bad;
+        incoming["name"] = json!("incoming-bad");
+        let request = ExecutionRequest {
+            mcp_servers: vec![incoming, json!({"name": "healthy", "command": "node"})],
+            ..Default::default()
+        };
+        let mut runtime = Map::new();
+        assert!(
+            prepare(home.path(), &request, &mut runtime).unwrap(),
+            "{field}"
+        );
+        assert!(!runtime.contains_key("mcp_servers.saved-bad"), "{field}");
+        if field != "name" {
+            assert!(!runtime.contains_key("mcp_servers.incoming-bad"), "{field}");
+        }
+        assert_eq!(runtime["mcp_servers.healthy"]["command"], "node");
+        let saved: Value = toml_edit::de::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(saved["model"], "keep");
+        assert!(saved["mcp_servers"].get("saved-bad").is_none(), "{field}");
+    }
+}
+
+#[test]
 fn managed_grants_are_not_persisted_and_agent_homes_do_not_share_servers() {
     let first = tempfile::tempdir().unwrap();
     let second = tempfile::tempdir().unwrap();
