@@ -202,20 +202,20 @@ describe('useCollaborationWorkspaceController location effects', () => {
       issueId: null as string | null,
       view: 'board' as const,
     }
-    renderController(api, location)
+    RenderControllerFixture(api, location)
     await vi.waitFor(() =>
-      expect(renderController(api, location).state.project?.id).toBe(projectA.id)
+      expect(RenderControllerFixture(api, location).state.project?.id).toBe(projectA.id)
     )
     const reads = vi.mocked(api.issues.getBoardSnapshot).mock.calls.length
     const opened = { ...location, issueId: issueA.id }
-    renderController(api, opened)
+    RenderControllerFixture(api, opened)
     await vi.waitFor(() =>
-      expect(renderController(api, opened).state.selectedIssue?.id).toBe(issueA.id)
+      expect(RenderControllerFixture(api, opened).state.selectedIssue?.id).toBe(issueA.id)
     )
-    expect(renderController(api, opened).state.loading).toBe(false)
-    renderController(api, location)
-    await vi.waitFor(() => expect(renderController(api, location).state.selectedIssue).toBeNull())
-    expect(renderController(api, location).state.loading).toBe(false)
+    expect(RenderControllerFixture(api, opened).state.loading).toBe(false)
+    RenderControllerFixture(api, location)
+    await vi.waitFor(() => expect(RenderControllerFixture(api, location).state.selectedIssue).toBeNull())
+    expect(RenderControllerFixture(api, location).state.loading).toBe(false)
     expect(api.issues.getBoardSnapshot).toHaveBeenCalledTimes(reads)
   })
 
@@ -228,13 +228,13 @@ describe('useCollaborationWorkspaceController location effects', () => {
       issueId: issueA.id,
       view: 'board' as const,
     }
-    renderController(api, location)
-    await vi.waitFor(() => expect(renderController(api, location).state.loading).toBe(false))
-    expect(renderController(api, location).state.selectedIssue).toEqual(invited)
+    RenderControllerFixture(api, location)
+    await vi.waitFor(() => expect(RenderControllerFixture(api, location).state.loading).toBe(false))
+    expect(RenderControllerFixture(api, location).state.selectedIssue).toEqual(invited)
     expect(api.projects.get).not.toHaveBeenCalled()
     expect(api.projects.list).not.toHaveBeenCalled()
     expect(api.issues.getBoardSnapshot).not.toHaveBeenCalled()
-    expect(renderController(api, location).state.error).toBeNull()
+    expect(RenderControllerFixture(api, location).state.error).toBeNull()
   })
 
   it('keeps a host-managed project catalog loaded when switching between board and settings', async () => {
@@ -286,15 +286,15 @@ describe('useCollaborationWorkspaceController location effects', () => {
       issueId: issueA.id,
       view: 'manage' as const,
     }
-    renderController(api, location)
+    RenderControllerFixture(api, location)
     await vi.waitFor(() =>
-      expect(renderController(api, location).state.selectedIssue?.id).toBe(issueA.id)
+      expect(RenderControllerFixture(api, location).state.selectedIssue?.id).toBe(issueA.id)
     )
     resolveProject(projectA)
     await vi.waitFor(() =>
-      expect(renderController(api, location).state.project?.id).toBe(projectA.id)
+      expect(RenderControllerFixture(api, location).state.project?.id).toBe(projectA.id)
     )
-    expect(renderController(api, location).state.selectedIssue?.id).toBe(issueA.id)
+    expect(RenderControllerFixture(api, location).state.selectedIssue?.id).toBe(issueA.id)
   })
 
   it('defaults My Work closed and falls an old root location back to home', async () => {

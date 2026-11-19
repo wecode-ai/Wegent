@@ -49,7 +49,7 @@ export function createModelSelectorPopover() {
   }
   const open = () => {
     if (input?.disabled) return
-    update({ ...state, open: true, closeReason: 'dismiss', desktopView: 'simple' })
+    update({ ...state, open: true, closeReason: 'dismiss' })
   }
   return {
     getSnapshot: () => state,

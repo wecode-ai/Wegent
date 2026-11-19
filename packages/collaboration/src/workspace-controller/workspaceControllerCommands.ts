@@ -200,10 +200,12 @@ export function createCollaborationWorkspaceControllerCommands(
     const isCurrent = () =>
       ownerIsCurrent() && revision === projectLoadRevision && (options?.isCurrent?.() ?? true)
     const mutationGeneration = projectMutationGeneration(projectId)
-    if (showLoading) dispatch({ type: 'loading', value: true })
+    const cachedProject = catalogProjects.find(item => item.id === projectId)
+    // Cached settings metadata commits synchronously and must retain its mounted shell.
+    if (showLoading && (options?.loadSnapshot !== false || !cachedProject))
+      dispatch({ type: 'loading', value: true })
     try {
-      const project =
-        catalogProjects.find(item => item.id === projectId) ?? (await api.projects.get(projectId))
+      const project = cachedProject ?? (await api.projects.get(projectId))
       if (!isCurrent() || mutationGeneration !== projectMutationGeneration(projectId)) return
       if (!catalogProjects.some(item => item.id === project.id)) {
         catalogProjects = [...catalogProjects, project]

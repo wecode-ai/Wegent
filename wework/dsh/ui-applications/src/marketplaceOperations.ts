@@ -630,7 +630,7 @@ export function createMarketplaceOperations({
       notifyHarnessAppInstallationsChanged({ type: 'removed', installationId })
       setPendingDelete(null)
       await harnessAppsApi.delete(installationId)
-      if (!isCurrent()) return
+      // Device-owned completion refreshes the catalog's current account owner.
       await refresh()
     } catch (deleteError) {
       notifyHarnessAppInstallationsChanged({

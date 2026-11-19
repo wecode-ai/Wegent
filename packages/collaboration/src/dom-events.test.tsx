@@ -303,7 +303,6 @@ test('scroll requests target the selected descendant and run only when navigatio
     expect(scroll).toHaveBeenCalledTimes(2)
     expect(scroll).toHaveBeenLastCalledWith({
       block: 'nearest',
-      inline: 'nearest',
     })
   } finally {
     HTMLElement.prototype.scrollIntoView = previous
@@ -563,7 +562,7 @@ test('deferred scroll requests cancel superseded and detached navigation frames'
     }
     expect(scroll).toHaveBeenCalledTimes(1)
     expect(scroll.mock.contexts[0].textContent).toBe('current')
-    expect(scroll).toHaveBeenCalledWith({ block: 'start', inline: 'nearest', behavior: 'instant' })
+    expect(scroll).toHaveBeenCalledWith({ block: 'start', behavior: 'instant' })
     act(() => root.render(<DeferredScroll request={{ path: 'removed' }} />))
     act(() => root.render(null))
     expect(frames.size).toBe(0)

@@ -159,9 +159,11 @@ export function useEscapeKey(
     }
 
     document.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('keydown', handleKeyDown)
     return () => {
       if (scope) layers.delete(scope)
       document.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keydown', handleKeyDown)
     }
   }, [enabled, scope])
 }

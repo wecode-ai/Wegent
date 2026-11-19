@@ -35,7 +35,10 @@ export function createIssueActivityScrollController() {
     const bounds = viewport.getBoundingClientRect()
     const rect = card.getBoundingClientRect()
     if (rect.bottom > bounds.bottom)
-      viewport.scrollTo({ top: viewport.scrollTop + rect.bottom - bounds.bottom + 12, behavior })
+      viewport.scrollTo({
+        top: viewport.scrollTop + rect.bottom - bounds.bottom + 12,
+        behavior,
+      })
   }
   const scrollTaskCommentsToBottom = (behavior: ScrollBehavior = 'auto') => {
     const viewport = scroller()
@@ -139,14 +142,12 @@ export function createIssueActivityScrollController() {
       readState.sequence = Math.max(readState.sequence, sequence)
       schedule(true, true)
       return () => {
-        if (node === list && input === next) node = null
-        queueMicrotask(() => {
-          if (node) return
-          cancelAnimationFrame(frame)
-          frame = 0
-          initializeRequested = false
-          followRequested = false
-        })
+        if (node !== list || input !== next) return
+        node = null
+        cancelAnimationFrame(frame)
+        frame = 0
+        initializeRequested = false
+        followRequested = false
       }
     },
     onScroll(event: Event) {

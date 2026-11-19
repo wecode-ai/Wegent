@@ -170,7 +170,7 @@ export function createCollaborationPlatformSource(
       }))
       const publishStandaloneNavigation = (collections: NavigationCollections) => {
         if (!isCurrent()) return
-        const projects = mergeByKey([[project], collections.projects], item => item.id)
+        const projects = mergeByKey([collections.projects, [project]], item => item.id)
         navigation.cache = {
           workspaces: collections.workspaces,
           projects,
