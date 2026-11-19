@@ -1659,7 +1659,7 @@ async function main() {
         detached: process.platform !== 'win32',
       }
       const child =
-        process.platform === 'win32'
+        process.platform === 'win32' && !usesReleasePackageRuntimeAssets
           ? await spawnSupervisedWindowsProcess(
               executorBinary,
               appBinary,
