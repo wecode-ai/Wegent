@@ -329,7 +329,9 @@ Regular PRs, scheduled runs, and manual runs do not trigger memory E2E.
 
 Linux desktop E2E shards get their native test tools from the shared image.
 Platform E2E prepares its dependencies and services while the Rust backend builds,
-then waits for the backend artifact from the same CI run before using it. The
+then waits for the backend artifact from the same CI run before using it. PRs
+from the same repository can reuse Linux desktop packages with identical build
+inputs from earlier runs of that PR. The
 macOS desktop checks on ordinary PRs build the local app and Executor. Use a
 `ci:all` run when you need the complete macOS build or native backend artifact
 from a PR.

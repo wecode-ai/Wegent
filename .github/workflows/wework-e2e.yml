@@ -265,6 +265,10 @@ jobs:
     if: (needs.changes.outputs.wework_desktop_core_e2e == 'true' || needs.changes.outputs.wework_desktop_cloud_e2e == 'true' || needs.changes.outputs.wework_desktop_other_e2e == 'true') && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    permissions:
+      actions: read
+      contents: read
+      packages: write
     env:
       HOME: /root
     container:
@@ -305,6 +309,7 @@ jobs:
       - name: Resolve shared Wework desktop E2E build
         id: shared-build
         env:
+          CACHE_PR_NUMBER: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.number || '' }}
           DESKTOP_IMAGE: ${{ needs.changes.outputs.desktop_image }}
           EXECUTOR_IMAGE: ${{ needs.changes.outputs.executor_image }}
           BACKEND_RS_IMAGE: ${{ needs.changes.outputs.backend_rs_image }}
@@ -319,12 +324,17 @@ jobs:
             "$BACKEND_RS_IMAGE"
           reference="$(sed -n 's/^reference=//p' "$reference_output")"
           test -n "$reference"
-          echo "reference=$reference" >> "$GITHUB_OUTPUT"
+          references=("$reference")
+          if [[ -n "$CACHE_PR_NUMBER" ]]; then
+            pr_reference="$reference-pr-$CACHE_PR_NUMBER"
+            references+=("$pr_reference")
+            echo "pr-reference=$pr_reference" >> "$GITHUB_OUTPUT"
+          fi
 
           set +e
           .github/scripts/restore-wework-core-e2e-build-oci.sh \
             .ci-artifacts/wework-core-e2e-build.tar.zst \
-            "$reference"
+            "${references[@]}"
           restore_status=$?
           set -e
           case "$restore_status" in
@@ -348,6 +358,14 @@ jobs:
           sha256sum "$archive"
           zstd --version
           zstd -t "$archive"
+
+      - name: Publish PR-scoped Wework desktop build cache
+        if: steps.shared-build.outputs.cache-hit != 'true' && steps.shared-build.outputs.pr-reference != ''
+        env:
+          REFERENCE: ${{ steps.shared-build.outputs.pr-reference }}
+        run: |
+          .github/scripts/publish-wework-core-e2e-build-oci.sh \
+            .ci-artifacts/wework-core-e2e-build.tar.zst "$REFERENCE"
 
       - name: Upload Wework desktop Core E2E build
         uses: actions/upload-artifact@v4
