@@ -23,7 +23,7 @@ import {
   runtimeProjectUiId,
   standaloneRuntimeProjectKey,
 } from '@/lib/runtime-project'
-import { workbenchDeviceMatchesId } from '@/lib/workbench-device'
+import { findWorkbenchDevice, workbenchDeviceMatchesId } from '@/lib/workbench-device'
 import {
   findRuntimeTaskProjectWork,
   getDefaultProjectDeviceWorkspaceId,
@@ -726,7 +726,7 @@ function removeOptimisticRuntimeTask(
 function findRuntimeTaskAddressByTaskId(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   taskId: string,
-  deviceId?: string
+  deviceId: string
 ): RuntimeTaskAddress | null {
   if (!runtimeWork) return null
 
@@ -737,7 +737,7 @@ function findRuntimeTaskAddressByTaskId(
   ]
 
   for (const workspace of workspaces) {
-    if (deviceId && workspace.deviceId !== deviceId) continue
+    if (workspace.deviceId !== deviceId) continue
     const task = workspace.tasks.find(task => task.taskId === taskId)
     if (!task) continue
 
@@ -749,9 +749,6 @@ function findRuntimeTaskAddressByTaskId(
       ...(task.taskId ? { taskId: task.taskId } : {}),
       ...(task.threadId ? { threadId: task.threadId } : {}),
       ...(task.runtimeHandle ? { runtimeHandle: task.runtimeHandle } : {}),
-    }
-    if (match && match.deviceId !== address.deviceId) {
-      return null
     }
     match = address
   }
@@ -765,34 +762,29 @@ function reconcileCurrentRuntimeTaskAddress(
   runtimeWork: RuntimeWorkListResponse | null | undefined
 ): RuntimeTaskAddress | null {
   if (!currentRuntimeTask) return null
-  const hydratedCurrentDeviceTask = findRuntimeTaskAddressByTaskId(
+  const deviceId =
+    findWorkbenchDevice(devices, currentRuntimeTask.deviceId)?.device_id ??
+    currentRuntimeTask.deviceId
+  const hydratedTask = findRuntimeTaskAddressByTaskId(
     runtimeWork,
     currentRuntimeTask.taskId,
-    currentRuntimeTask.deviceId
+    deviceId
   )
-  if (hydratedCurrentDeviceTask) {
-    const runtimeHandle = mergeRuntimeTaskHandles(
-      currentRuntimeTask.runtimeHandle,
-      hydratedCurrentDeviceTask.runtimeHandle
-    )
-    return {
-      ...currentRuntimeTask,
-      workspacePath: hydratedCurrentDeviceTask.workspacePath,
-      ...(hydratedCurrentDeviceTask.threadId
-        ? { threadId: hydratedCurrentDeviceTask.threadId }
-        : {}),
-      ...(hydratedCurrentDeviceTask.workspacePath
-        ? { workspacePath: hydratedCurrentDeviceTask.workspacePath }
-        : {}),
-      ...(runtimeHandle ? { runtimeHandle } : {}),
-    }
-  }
-  if (devices.some(device => device.device_id === currentRuntimeTask.deviceId)) {
-    return currentRuntimeTask
-  }
-  return (
-    findRuntimeTaskAddressByTaskId(runtimeWork, currentRuntimeTask.taskId) ?? currentRuntimeTask
+  if (!hydratedTask) return currentRuntimeTask
+  const runtimeHandle = mergeRuntimeTaskHandles(
+    currentRuntimeTask.runtimeHandle,
+    hydratedTask.runtimeHandle
   )
+  return {
+    ...currentRuntimeTask,
+    ...(!currentRuntimeTask.runtime && hydratedTask.runtime
+      ? { runtime: hydratedTask.runtime }
+      : {}),
+    deviceId,
+    workspacePath: hydratedTask.workspacePath,
+    ...(hydratedTask.threadId ? { threadId: hydratedTask.threadId } : {}),
+    ...(runtimeHandle ? { runtimeHandle } : {}),
+  }
 }
 
 function resolveCurrentProjectAfterRefresh(

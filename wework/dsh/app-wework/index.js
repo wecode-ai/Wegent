@@ -260,6 +260,10 @@ export function runtimeConfigScript(environment = process.env, windowLabel = 'ma
       'WEWORK_E2E_SEED_LOCAL_MODELS',
       'VITE_WEWORK_E2E_SEED_LOCAL_MODELS'
     ),
+    conversationCacheIdleTtlMs: environmentPositiveInteger(
+      environment,
+      'WEWORK_E2E_CONVERSATION_CACHE_IDLE_TTL_MS'
+    ),
     transcriptPageSize: environmentPositiveInteger(
       environment,
       'WEWORK_E2E_TRANSCRIPT_PAGE_SIZE',

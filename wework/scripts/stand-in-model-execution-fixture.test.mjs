@@ -67,11 +67,23 @@ describe('stand-in catalog delivery diagnostics', () => {
     responseCompleted: true,
   }
 
-  test('retains the existing delivery predicate and reads one control snapshot', async () => {
-    const control = { command: vi.fn(async () => JSON.stringify(snapshot)) }
-    const proxy = { requests: [{ ...delivered, status: 500 }, delivered] }
-    await expect(waitForDeliveredCloudCatalog(control, proxy, 1)).resolves.toBe(delivered)
-    expect(control.command).toHaveBeenCalledExactlyOnceWith('getWorkbenchDebugSnapshot', 'body')
+  test('matches the exact response despite the observed one-millisecond clock skew', async () => {
+    vi.useFakeTimers()
+    try {
+      const control = { command: vi.fn(async () => JSON.stringify(snapshot)) }
+      const matching = {
+        ...delivered,
+        receivedAt: new Date(1009).toISOString(),
+        responseTimingId: 'forbidden-server-description',
+      }
+      const proxy = { requests: [{ ...matching, status: 500 }, matching] }
+      const outcome = waitForDeliveredCloudCatalog(control, proxy, 1).catch(error => error)
+      await vi.runAllTimersAsync()
+      expect(await outcome).toBe(matching)
+      expect(control.command).toHaveBeenCalledExactlyOnceWith('getWorkbenchDebugSnapshot', 'body')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   test('logs only safe request fields and renderer evidence once on timeout', async () => {
@@ -80,7 +92,7 @@ describe('stand-in catalog delivery diagnostics', () => {
     try {
       const request = {
         ...delivered,
-        receivedAt: new Date(2000).toISOString(),
+        responseTimingId: 'forbidden-unrelated-response',
         headers: { authorization: 'forbidden-header' },
         body: 'forbidden-body',
         query: 'forbidden-query',

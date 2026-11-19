@@ -115,7 +115,27 @@ describe('useRuntimeTaskRouteRestoration', () => {
     }
     rerender()
     expect(result.current).toBeNull()
+    workbenchState.currentRuntimeTask = {
+      deviceId: 'electron-local',
+      taskId: 'task-a',
+      workspacePath: '/known',
+    }
+    // A local-only refresh precedes the cloud record that supplies the route alias.
+    workbenchState.devices = workbenchState.devices.map(device => ({
+      ...device,
+      app_device_id: undefined,
+      socket_device_id: undefined,
+    }))
+    rerender()
     expect(openRuntimeTaskMock).not.toHaveBeenCalled()
+    act(() => {
+      window.history.pushState({}, '', '/runtime-tasks?deviceId=other-device&taskId=task-a')
+      window.dispatchEvent(new PopStateEvent('popstate'))
+    })
+    expect(openRuntimeTaskMock).toHaveBeenCalledExactlyOnceWith({
+      deviceId: 'other-device',
+      taskId: 'task-a',
+    })
   })
 
   test('restores a newly created task after bootstrap before the work list loads', async () => {

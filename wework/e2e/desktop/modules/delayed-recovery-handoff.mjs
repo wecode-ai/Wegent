@@ -34,8 +34,8 @@ export async function assertDelayedRecoveryHandoffs(options) {
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     const log = join(options.resultDir, `delayed-recovery-${nativeRecovery}.log`)
-    appendProcessOutput(child.stdout, log)
-    appendProcessOutput(child.stderr, log)
+    appendProcessOutput(child.stdout, log, child)
+    appendProcessOutput(child.stderr, log, child)
     let handedOff = false
     try {
       const port = await routeUpgradeRequests(child, options.origin, log, { followHandoffs: true })
