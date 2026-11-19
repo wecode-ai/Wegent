@@ -234,7 +234,7 @@ export function createPaneQueueGoalCommands(sessionOwner: PaneCommandContext) {
       resetAttachments,
     } = sessionOwner.frame
     const { setCodeCommentContexts } = sessionOwner.actions
-    const { interruptAndSendQueuedMessage, replaceInput, setInput } = sessionOwner.commands
+    const { interruptAndSendQueuedMessage, replaceInputForScope, setInput } = sessionOwner.commands
 
     const queuedMessage = queuedMessages.find(message => message.id === id)
     if (!queuedMessage || queuedMessage.runtimeQueued) return
@@ -259,13 +259,13 @@ export function createPaneQueueGoalCommands(sessionOwner: PaneCommandContext) {
     const sent = await interruptAndSendQueuedMessage(combinedMessage)
     if (sent) return
     if (
-      sessionOwner.live.activeInputScope === inputScopeKey &&
-      sessionOwner.live.inputRevision === submittedInputRevision &&
+      (sessionOwner.live.activeInputScope !== inputScopeKey ||
+        sessionOwner.live.inputRevision === submittedInputRevision) &&
       getInputRevisionForScope(inputScopeKey) === submittedSharedInputRevision &&
       (sessionOwner.live.draftEditVersions.get(sessionOwner.frame.inputScopeKey) ?? 0) ===
         submittedDraftEditVersion
     ) {
-      replaceInput(combinedMessage.displayContent ?? combinedMessage.content)
+      replaceInputForScope(inputScopeKey, combinedMessage.displayContent ?? combinedMessage.content)
     }
     combinedMessage.attachments?.forEach(addExistingAttachment)
     if (combinedMessage.codeComments && combinedMessage.codeComments.length > 0) {

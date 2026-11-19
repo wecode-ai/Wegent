@@ -4,6 +4,9 @@ import { listLocalWorkspaceOpeners } from '@/lib/local-terminal'
 
 const resource = createAsyncResource('local-workspace-openers', () => listLocalWorkspaceOpeners(), {
   refreshOnSubscribe: true,
+  failure(error) {
+    console.error('[Wework] Failed to discover workspace openers:', error)
+  },
 })
 
 export function useLocalWorkspaceOpeners(enabled: boolean) {

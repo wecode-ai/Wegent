@@ -1190,25 +1190,27 @@ function mockSystemSkillsFetch(
         syncDeviceCalls += 1
         const installedPluginId =
           /\/installed\/(\d+)\/sync-device$/.exec(requestUrl.pathname)?.[1] ?? '101'
+        // An absent account package has no install failure to reproduce during removal.
+        const syncSucceeds = !cloudMarketplacePluginInstalled || deviceAutoSyncSucceeds
         const response = {
           ok: true,
           status: 200,
           json: () =>
             Promise.resolve({
               deviceId: requestUrl.searchParams.get('device_id') || fixtureDeviceId,
-              pendingCount: 1,
+              pendingCount: syncSucceeds ? 0 : 1,
               reconciled: requestUrl.searchParams.get('reconcile') === 'true',
               sync: {
-                success: deviceAutoSyncSucceeds,
+                success: syncSucceeds,
                 device_id: fixtureDeviceId,
                 mode: 'replace',
                 skills: [],
-                plugins: deviceAutoSyncSucceeds
+                plugins: syncSucceeds
                   ? [
                       {
                         id: installedPluginId,
                         name: `plugin-${installedPluginId}`,
-                        status: 'synced',
+                        status: cloudMarketplacePluginInstalled ? 'synced' : 'removed',
                       },
                     ]
                   : [
@@ -1223,20 +1225,21 @@ function mockSystemSkillsFetch(
                     ],
                 mcps: [],
                 errors: [],
-                synced: deviceAutoSyncSucceeds ? 1 : 0,
-                failed: deviceAutoSyncSucceeds ? 0 : 1,
+                synced: syncSucceeds ? 1 : 0,
+                failed: syncSucceeds ? 0 : 1,
                 skipped: 0,
                 results: [
                   {
                     device_id: fixtureDeviceId,
-                    success: deviceAutoSyncSucceeds,
+                    success: syncSucceeds,
+                    errors: [],
                   },
                 ],
               },
             }),
         }
         const completeSync = () => {
-          if (deviceAutoSyncSucceeds) {
+          if (syncSucceeds) {
             marketplaceDeviceState = 'installed'
           }
           return response
@@ -4325,7 +4328,7 @@ describe('PluginsWorkspace', () => {
     }
   )
 
-  test('disables an open install dialog until a pending reconciliation settles', async () => {
+  test('keeps an open install dialog usable with complete inventory during reconciliation', async () => {
     window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'electron' }
     mockSystemSkillsFetch()
     mockCodexAppServerInvoke({ deviceId: 'current-device' })
@@ -4372,12 +4375,11 @@ describe('PluginsWorkspace', () => {
         'data-reconciling',
         'true'
       )
-      expect(confirm).toBeDisabled()
+      expect(confirm).toBeEnabled()
       expect(screen.getByTestId('plugins-reconciliation-status')).toHaveAttribute(
         'data-stage',
         'syncing'
       )
-      await userEvent.click(confirm)
       expect(screen.getByTestId('install-plugin-dialog')).toBeInTheDocument()
       expect(
         vi
@@ -4938,6 +4940,7 @@ describe('PluginsWorkspace', () => {
       await userEvent.click(screen.getByTestId('plugin-marketplace-uninstall-101'))
       await userEvent.click(screen.getByTestId('plugin-uninstall-confirm-button'))
       await screen.findByTestId('plugin-marketplace-install-101')
+      const syncCallsBeforeReinstall = marketplace.getSyncDeviceCalls()
       marketplace.setMarketplaceInstallation(false, 'uninstalling')
       await installPluginFromMarketCard('plugin-marketplace-install-101')
       await waitFor(() => expect(receiptReads).toBeGreaterThan(0))
@@ -4947,7 +4950,7 @@ describe('PluginsWorkspace', () => {
       expect(screen.queryByTestId('plugin-operation-notice')).not.toHaveTextContent(
         'Documents 已安装'
       )
-      expect(marketplace.getSyncDeviceCalls()).toBe(0)
+      expect(marketplace.getSyncDeviceCalls()).toBe(syncCallsBeforeReinstall)
       marketplace.setMarketplaceInstallation(true, 'installed')
       await act(async () => finishReceipt())
       await screen.findByTestId('plugin-marketplace-actions-101')
@@ -7619,6 +7622,7 @@ describe('PluginsWorkspace', () => {
       const preflightGate = new Promise<void>(resolve => {
         finishPreflight = resolve
       })
+      let initialInventoryCompleted = false
       let finishInitialInventory!: () => void
       const initialInventoryGate = new Promise<void>(resolve => {
         finishInitialInventory = resolve
@@ -7631,6 +7635,7 @@ describe('PluginsWorkspace', () => {
           path.searchParams.has('device_id')
         ) {
           await initialInventoryGate
+          initialInventoryCompleted = true
         }
         if (armPreflight && path.pathname === '/api/plugins/installed' && !path.search) {
           armPreflight = false
@@ -7706,16 +7711,15 @@ describe('PluginsWorkspace', () => {
           expect(screen.getByTestId('plugin-marketplace-install-101')).toHaveTextContent('重试安装')
         )
         if (outcome === 'delayed-inventory') {
-          // The retry action can paint before the device-scoped inventory is applied.
-          expect(getPluginMarketplaceCache('/api|cloud-token')?.deviceId).toBe('')
+          // Native identity is available while the device-scoped cloud inventory is held.
+          expect(initialInventoryCompleted).toBe(false)
+          expect(getPluginMarketplaceCache('/api|cloud-token')?.deviceId).toBe('current-device')
           expect(
             getPluginMarketplaceCache('/api|cloud-token')?.installedPlugins.find(
               plugin => plugin.spec.pluginId === 101
             )
-          ).toEqual(
-            expect.objectContaining({ metadata: expect.objectContaining({ labels: { id: 75 } }) })
-          )
-          expect(screen.getByTestId('plugins-installed-strip-item-75')).toBeInTheDocument()
+          ).toBeUndefined()
+          expect(screen.queryByTestId('plugins-installed-strip-item-75')).not.toBeInTheDocument()
           await act(async () => finishInitialInventory())
         }
         await waitFor(() => {
@@ -7781,7 +7785,12 @@ describe('PluginsWorkspace', () => {
         const deletes = vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'DELETE')
         expect(deletes).toEqual(
           outcome === 'current' || outcome === 'delayed-inventory'
-            ? [['/api/plugins/installed/208', expect.objectContaining({ method: 'DELETE' })]]
+            ? [
+                [
+                  '/api/plugins/installed/208?device_id=current-device&source_device_id=current-device',
+                  expect.objectContaining({ method: 'DELETE' }),
+                ],
+              ]
             : []
         )
         expect(logout).not.toHaveBeenCalled()
@@ -7880,7 +7889,7 @@ describe('PluginsWorkspace', () => {
 
     await waitFor(() =>
       expect(fetch).toHaveBeenCalledWith(
-        '/api/plugins/installed/101',
+        '/api/plugins/installed/101?device_id=current-device&source_device_id=current-device',
         expect.objectContaining({ method: 'DELETE' })
       )
     )
@@ -8628,7 +8637,10 @@ describe('PluginsWorkspace', () => {
         }
         const deletes = vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === 'DELETE')
         expect(deletes).toHaveLength(outcome === 'current' ? 1 : 0)
-        if (outcome === 'current') expect(String(deletes[0][0])).toBe('/api/plugins/installed/208')
+        if (outcome === 'current')
+          expect(String(deletes[0][0])).toBe(
+            '/api/plugins/installed/208?device_id=current-device&source_device_id=current-device'
+          )
       } finally {
         finish(Response.json({ items: [] }))
         view.unmount()
@@ -10311,7 +10323,10 @@ describe('PluginsWorkspace', () => {
         const notice = await screen.findByTestId('plugin-operation-notice')
         await waitFor(() => expect(notice).toHaveTextContent('已卸载'))
         expect(notice).toHaveAttribute('data-notice-kind', 'success')
-        expectFetchRequest('/api/plugins/installed/101', 'DELETE')
+        expectFetchRequest(
+          '/api/plugins/installed/101?device_id=current-device&source_device_id=current-device',
+          'DELETE'
+        )
         const key = pluginMarketplaceCacheKey('/api', 'cloud-token')
         expect(getPluginMarketplaceCache(key)?.installedPlugins).toEqual([])
         await act(async () => held.release())
@@ -10519,7 +10534,7 @@ describe('PluginsWorkspace', () => {
     await userEvent.click(screen.getByTestId('plugin-uninstall-confirm-button'))
 
     expect(fetch).toHaveBeenCalledWith(
-      '/api/plugins/installed/101',
+      '/api/plugins/installed/101?device_id=current-device&source_device_id=current-device',
       expect.objectContaining({ method: 'DELETE' })
     )
     expect(screen.queryByTestId('plugin-detail-actions-101')).not.toBeInTheDocument()

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { TaskDescriptionEditor } from '../../src/features/todo/TaskDescriptionEditor'
 import { sendNativeKeyAndWait } from '../../src/e2e/native-key-acknowledgement'
@@ -40,21 +40,25 @@ window.insertEditorBatch = async text => {
 
 export function Fixture() {
   const [value, setValue] = useState('seed')
-  useEffect(() => {
-    window.resetEditor = () => {
-      markdown = 'seed'
-      setValue('seed')
-    }
-  }, [])
   return (
-    <TaskDescriptionEditor
-      testId="native-description"
-      value={value}
-      onChange={next => {
-        markdown = next
-        setValue(next)
+    <div
+      ref={element => {
+        if (!element) return
+        window.resetEditor = () => {
+          markdown = 'seed'
+          setValue('seed')
+        }
       }}
-    />
+    >
+      <TaskDescriptionEditor
+        testId="native-description"
+        value={value}
+        onChange={next => {
+          markdown = next
+          setValue(next)
+        }}
+      />
+    </div>
   )
 }
 

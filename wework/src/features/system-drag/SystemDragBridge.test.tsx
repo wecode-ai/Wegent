@@ -125,6 +125,8 @@ describe('SystemDragBridge', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     mocks.invoke.mockImplementation(command => {
       if (command === 'systemDrag.takePending') return Promise.resolve(mocks.pending.splice(0))
+      if (command === 'systemDrag.showPanel') return Promise.resolve(1)
+      if (command === 'systemDrag.getContext') return Promise.resolve({ presentationId: 1 })
       if (command === 'systemDrag.dismissPanel') return Promise.reject(error)
       return Promise.resolve(undefined)
     })
@@ -187,6 +189,8 @@ describe('SystemDragBridge', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     mocks.invoke.mockImplementation(command => {
       if (command === 'systemDrag.takePending') return Promise.resolve(mocks.pending.splice(0))
+      if (command === 'systemDrag.showPanel') return Promise.resolve(1)
+      if (command === 'systemDrag.getContext') return Promise.resolve({ presentationId: 1 })
       if (command === 'systemDrag.dismissPanel') return Promise.reject(error)
       return Promise.resolve(undefined)
     })

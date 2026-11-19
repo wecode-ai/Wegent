@@ -283,7 +283,7 @@ export function usePluginWorkspaceConnectors({
             return
           }
           action = localQrManageActionFromHealth(health)
-          connectorHealth.remember(slug, 'disconnected')
+          connectorHealth.remember(slug, action === 'logout' ? 'connected' : 'disconnected')
         } catch (error) {
           if (!detailIsCurrent()) return
           if (isPythonRuntimeUnavailableError(error)) {

@@ -79,7 +79,7 @@ describe('ArchivedConversationsSettingsPage', () => {
       projectGroups: [],
       total: 1,
     })
-    deleteArchivedConversation.mockReset().mockResolvedValue({})
+    deleteArchivedConversation.mockReset().mockResolvedValue({ accepted: true })
     deleteArchivedConversationsBulk.mockReset().mockResolvedValue({ results: [] })
     unarchiveConversation.mockReset().mockResolvedValue({})
     deleteArchivedLocalHarnessSessionMock.mockReset().mockResolvedValue(undefined)
