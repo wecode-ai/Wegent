@@ -76,6 +76,7 @@ export function usePluginsWorkspaceController({
   cloudMarketplaceAvailable = true,
   cloudApiBaseUrl,
   cloudToken,
+  cloudUserId,
   pluginReference = null,
 }: PluginsWorkspaceProps) {
   const { t } = useTranslation('common')
@@ -209,7 +210,10 @@ export function usePluginsWorkspaceController({
   } = filters
   const openAiCatalog = useOpenAiPluginCatalog({
     cacheKey: marketplaceCacheKeyValue,
+    accountScope: JSON.stringify([cloudApiBaseUrl ?? '', cloudUserId ?? null]),
+    deviceId: knownExecutorDeviceId,
     enabled: selectedDistributionTab === 'official' && !marketplaceSourceFilterKey,
+    restoreForAll: selectedDistributionTab === 'all' && !marketplaceSourceFilterKey,
     readCatalog: localPluginApi.readRemoteCatalog,
   })
   const isOpenAiOfficialViewLoading =

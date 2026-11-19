@@ -11,6 +11,7 @@ const copy: Record<ChatErrorType, readonly [string, string]> = {
   context_length_exceeded: ['对话内容过长', '请切换到支持更长上下文的模型，或开始新对话。'],
   quota_exceeded: ['模型额度已用尽', '请切换可用模型，或在额度恢复后继续。'],
   rate_limit: ['请求过于频繁', '请稍后重试，或切换其他可用模型。'],
+  server_overloaded: ['服务暂时繁忙', '请稍后重试。'],
   payload_too_large: ['内容超出限制', '请减少附件或对话内容后重试。'],
   model_service_connection_error: ['无法连接模型服务', '请检查网络或 VPN 连接后重试。'],
   network_error: ['连接未完成', '请检查网络连接，稍后重试。'],

@@ -10,7 +10,7 @@ use crate::runtime_work::remote_control_is_enabled;
 
 use super::runtime_rpc::Route;
 
-const PERSONAL_TASK_METHODS: [&str; 22] = [
+const PERSONAL_TASK_METHODS: [&str; 23] = [
     "runtime.tasks.create",
     "runtime.tasks.list",
     "runtime.tasks.search",
@@ -23,6 +23,7 @@ const PERSONAL_TASK_METHODS: [&str; 22] = [
     "runtime.tasks.goal.set",
     "runtime.worktrees.capabilities",
     "runtime.worktrees.preflight",
+    "runtime.workspace.read",
     "runtime.projects.upsert_local",
     "runtime.workspaces.rename",
     "runtime.workspaces.remove",

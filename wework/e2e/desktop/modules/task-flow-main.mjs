@@ -2271,6 +2271,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           blockingNetworkProxy,
           codexHome,
           control,
+          electronUserDataDirectory,
           marketplacePath: marketplacePluginPath,
           restartDesktopApp,
           workspacePath,

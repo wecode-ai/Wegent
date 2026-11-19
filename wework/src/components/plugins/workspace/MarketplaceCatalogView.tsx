@@ -1,5 +1,4 @@
 import { Button } from '@/components/ui/button'
-import type { remoteCatalogErrorKind } from '@/features/plugins/remotePluginError'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { PluginMarketplaceItem } from '@/types/api'
 import { SegmentedControl } from '@wegent/collaboration/controls/SegmentedControl'
@@ -20,6 +19,7 @@ import {
 } from './marketplaceWorkspaceHelpers'
 import { PluginMarketplaceLoadingSkeleton } from './PluginMarketplaceLoadingSkeleton'
 import { PluginMarketplaceRevealButton } from './PluginMarketplaceRevealButton'
+import type { OpenAiPluginCatalogError } from '@/features/plugins/useOpenAiPluginCatalog'
 import type { PluginMarketplaceRowAction, PluginMarketplaceRowLabels } from './PluginMarketplaceRow'
 
 export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
@@ -82,7 +82,7 @@ export const MarketplaceCatalogView = memo(function MarketplaceCatalogView({
   isMarketplaceRefreshing: boolean
   isMarketplaceSearchUpdating: boolean
   isOpenAiOfficialViewLoading: boolean
-  openAiCatalogError?: ReturnType<typeof remoteCatalogErrorKind> | null
+  openAiCatalogError?: OpenAiPluginCatalogError | null
   isOpenAiCatalogRefreshing?: boolean
   normalizedQuery: string
   visibleMarketplaceItems: PluginMarketplaceItem[]
