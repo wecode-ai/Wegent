@@ -226,6 +226,41 @@
     "tooltip_preserved": "Executor is preserved and will not be cleaned up",
     "tooltip_not_preserved": "Click to preserve executor from cleanup"
   },
+  "timing": {
+    "action": "Timing analysis",
+    "title": "Timing analysis",
+    "subtitle": "Task execution time triage",
+    "close": "Close timing analysis",
+    "loading": {
+      "title": "Loading timing data",
+      "description": "Timing comes only from observed execution spans."
+    },
+    "empty": {
+      "title": "No timing data",
+      "description": "This task has no observed timing spans yet."
+    },
+    "error": {
+      "title": "Failed to load timing",
+      "retry": "Retry"
+    },
+    "errors": {
+      "load_failed": "Timing data could not be loaded."
+    },
+    "summary": {
+      "title": "Triage",
+      "wall_time": "Wall time {{duration}}"
+    },
+    "suspects": {
+      "title": "Top suspects",
+      "empty": "No dominant timing suspects were found.",
+      "meta": "{{category}} · {{status}}"
+    },
+    "timeline": {
+      "title": "Timeline details",
+      "empty": "No spans",
+      "span_meta": "{{kind}} · Turn {{turn}} · {{duration}}"
+    }
+  },
   "preview": {
     "title": "Subscription Preview",
     "task_name": "Task Name",

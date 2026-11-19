@@ -222,6 +222,41 @@
     "tooltip_preserved": "执行环境已保留，不会被清理",
     "tooltip_not_preserved": "点击保留执行环境，防止被清理"
   },
+  "timing": {
+    "action": "耗时分析",
+    "title": "耗时分析",
+    "subtitle": "任务执行耗时归因",
+    "close": "关闭耗时分析",
+    "loading": {
+      "title": "正在加载耗时数据",
+      "description": "耗时仅来自实际观测到的执行 Span。"
+    },
+    "empty": {
+      "title": "暂无耗时数据",
+      "description": "该任务还没有观测到的耗时 Span。"
+    },
+    "error": {
+      "title": "耗时数据加载失败",
+      "retry": "重试"
+    },
+    "errors": {
+      "load_failed": "耗时数据加载失败。"
+    },
+    "summary": {
+      "title": "耗时归因",
+      "wall_time": "总耗时 {{duration}}"
+    },
+    "suspects": {
+      "title": "主要耗时点",
+      "empty": "未发现明显耗时瓶颈。",
+      "meta": "{{category}} · {{status}}"
+    },
+    "timeline": {
+      "title": "时间线详情",
+      "empty": "暂无 Span",
+      "span_meta": "{{kind}} · 轮次 {{turn}} · {{duration}}"
+    }
+  },
   "preview": {
     "title": "订阅任务预览",
     "task_name": "任务名称",

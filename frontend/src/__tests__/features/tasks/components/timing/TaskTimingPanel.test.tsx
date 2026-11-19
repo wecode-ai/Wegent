@@ -1,0 +1,199 @@
+import '@testing-library/jest-dom'
+import { render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+
+import {
+  registerTaskTimingPanel,
+  TaskTimingPanel,
+} from '@/features/tasks/components/timing/TaskTimingPanel'
+import type { TaskTimingResponse } from '@/apis/tasks'
+
+const mockGetTaskTiming = jest.fn()
+const mockTranslate = (key: string, options?: Record<string, string>) =>
+  options ? `${key}:${Object.values(options).join(',')}` : key
+
+jest.mock('@/apis/tasks', () => ({
+  taskApis: {
+    getTaskTiming: (taskId: number) => mockGetTaskTiming(taskId),
+  },
+}))
+
+jest.mock('@/hooks/useTranslation', () => ({
+  useTranslation: () => ({ t: mockTranslate }),
+}))
+
+registerTaskTimingPanel()
+
+const timingResponse: TaskTimingResponse = {
+  task_id: 42,
+  owner_user_id: 7,
+  wall_time_ms: 17_000,
+  triage: [
+    { kind: 'agent', label: 'Agent/模型', duration_ms: 12_000 },
+    { kind: 'tool', label: '命令/工具', duration_ms: 4_000 },
+    { kind: 'gap', label: '未观测', duration_ms: 1_000 },
+  ],
+  coverage: [
+    { kind: 'agent', label: 'Agent active', duration_ms: 12_000 },
+    { kind: 'tool', label: 'Tool busy', duration_ms: 4_000 },
+  ],
+  top_suspects: [
+    {
+      span_id: 'agent-1',
+      label: 'Agent execution',
+      category: 'agent',
+      duration_ms: 12_000,
+      status: 'completed',
+      suggestion: '查看模型/编排耗时',
+    },
+    {
+      span_id: 'tool-1',
+      label: 'pnpm test',
+      category: 'tool',
+      duration_ms: 4_000,
+      status: 'completed',
+      suggestion: '检查 registry/mirror 或网络',
+    },
+  ],
+  spans: [
+    {
+      id: 1,
+      subtask_id: 11,
+      turn_id: '11',
+      parent_span_id: '',
+      span_id: 'agent-1',
+      kind: 'agent',
+      actor_id: 'agent',
+      actor_type: 'runtime',
+      actor_label: 'Agent execution',
+      status: 'completed',
+      start_at_ms: 5_000,
+      end_at_ms: 17_000,
+      duration_ms: 12_000,
+      clock: 'executor-manager',
+      source: 'executor',
+      metadata: {},
+    },
+    {
+      id: 2,
+      subtask_id: 11,
+      turn_id: '11',
+      parent_span_id: '',
+      span_id: 'tool-1',
+      kind: 'tool',
+      actor_id: 'tool',
+      actor_type: 'runtime',
+      actor_label: 'pnpm test',
+      status: 'completed',
+      start_at_ms: 5_000,
+      end_at_ms: 9_000,
+      duration_ms: 4_000,
+      clock: 'executor-manager',
+      source: 'executor',
+      metadata: {},
+    },
+  ],
+}
+
+const emptyResponse: TaskTimingResponse = {
+  task_id: 42,
+  owner_user_id: 7,
+  wall_time_ms: null,
+  triage: [],
+  coverage: [],
+  top_suspects: [],
+  spans: [],
+}
+
+function renderPanel() {
+  return render(
+    <TaskTimingPanel panelProps={{ taskId: 42 }} onClose={jest.fn()} embedded={false} />
+  )
+}
+
+describe('TaskTimingPanel', () => {
+  beforeEach(() => {
+    mockGetTaskTiming.mockReset()
+  })
+
+  it('renders triage and top suspects from observed timing data', async () => {
+    mockGetTaskTiming.mockResolvedValue(timingResponse)
+    renderPanel()
+
+    expect(mockGetTaskTiming).toHaveBeenCalledWith(42)
+    expect(await screen.findByTestId('task-timing-triage')).toBeInTheDocument()
+    expect(screen.getAllByTestId('task-timing-triage-item')).toHaveLength(3)
+    expect(screen.getByText('Agent/模型')).toBeInTheDocument()
+    expect(screen.getAllByText('12s')).toHaveLength(2)
+    expect(screen.getAllByTestId('task-timing-suspect')).toHaveLength(2)
+    expect(screen.getByText('pnpm test')).toBeInTheDocument()
+    expect(screen.getByText('检查 registry/mirror 或网络')).toBeInTheDocument()
+    expect(screen.getByText('timing.summary.wall_time:17s')).toBeInTheDocument()
+  })
+
+  it('shows loading, empty, and error states without inventing timing', async () => {
+    const pending = new Promise<TaskTimingResponse>(() => {})
+    mockGetTaskTiming.mockReturnValueOnce(pending)
+    const { rerender } = renderPanel()
+    expect(screen.getByTestId('task-timing-loading')).toBeInTheDocument()
+    expect(screen.queryByTestId('task-timing-triage')).not.toBeInTheDocument()
+
+    mockGetTaskTiming.mockResolvedValueOnce(emptyResponse)
+    rerender(<TaskTimingPanel panelProps={{ taskId: 43 }} onClose={jest.fn()} embedded={false} />)
+    expect(await screen.findByTestId('task-timing-empty')).toBeInTheDocument()
+    expect(screen.queryByTestId('task-timing-triage')).not.toBeInTheDocument()
+
+    mockGetTaskTiming.mockRejectedValueOnce(new Error('timing unavailable'))
+    rerender(<TaskTimingPanel panelProps={{ taskId: 44 }} onClose={jest.fn()} embedded={false} />)
+    expect(await screen.findByTestId('task-timing-error')).toBeInTheDocument()
+    expect(screen.getByText('timing unavailable')).toBeInTheDocument()
+    expect(screen.queryByTestId('task-timing-triage')).not.toBeInTheDocument()
+  })
+
+  it('retries after a timing request fails', async () => {
+    const user = userEvent.setup()
+    mockGetTaskTiming
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockResolvedValueOnce(timingResponse)
+    renderPanel()
+
+    await screen.findByTestId('task-timing-error')
+    await user.click(screen.getByTestId('task-timing-retry'))
+
+    expect(await screen.findByTestId('task-timing-triage')).toBeInTheDocument()
+    expect(mockGetTaskTiming).toHaveBeenCalledTimes(2)
+  })
+
+  it('reveals timeline spans with a common wall-clock scale', async () => {
+    const user = userEvent.setup()
+    mockGetTaskTiming.mockResolvedValue(timingResponse)
+    renderPanel()
+
+    await screen.findByTestId('task-timing-triage')
+    expect(screen.queryByTestId('task-timing-timeline-details')).not.toBeInTheDocument()
+    await user.click(screen.getByTestId('task-timing-timeline-toggle'))
+
+    const details = screen.getByTestId('task-timing-timeline-details')
+    expect(screen.getAllByTestId('task-timing-span')).toHaveLength(2)
+    const bars = screen.getAllByTestId('task-timing-span-bar')
+    expect(bars[0]).toHaveStyle({ left: '0%', width: '100%' })
+    expect(bars[1].style.left).toBe('0%')
+    expect(Number.parseFloat(bars[1].style.width)).toBeCloseTo(100 / 3, 10)
+    expect(within(details).getByText('Agent execution')).toBeInTheDocument()
+    expect(within(details).getByText('pnpm test')).toBeInTheDocument()
+  })
+
+  it('uses semantic theme classes and a responsive layout', async () => {
+    mockGetTaskTiming.mockResolvedValue(timingResponse)
+    const { container } = renderPanel()
+
+    expect(await screen.findByTestId('task-timing-panel')).toHaveClass(
+      'bg-base',
+      'text-text-primary'
+    )
+    const suspect = screen.getAllByTestId('task-timing-suspect')[0]
+    expect(suspect).toHaveClass('border-border', 'bg-surface')
+    expect(suspect.firstChild).toHaveClass('flex-col', 'sm:flex-row')
+    expect(container.querySelector('.bg-muted')).toBeInTheDocument()
+  })
+})

@@ -223,6 +223,50 @@ export interface TaskSkillsResponse {
   preload_skills: string[]
 }
 
+export interface TaskTimingCategory {
+  kind: string
+  label: string
+  duration_ms: number
+}
+
+export interface TaskTimingTopSuspect {
+  span_id: string
+  label: string
+  category: string
+  duration_ms: number
+  status: string
+  suggestion: string
+}
+
+export interface TaskTimingSpan {
+  id: number
+  subtask_id?: number | null
+  turn_id: string
+  parent_span_id: string
+  span_id: string
+  kind: string
+  actor_id: string
+  actor_type: string
+  actor_label: string
+  status: string
+  start_at_ms?: number | null
+  end_at_ms?: number | null
+  duration_ms?: number | null
+  clock: string
+  source: string
+  metadata: Record<string, unknown>
+}
+
+export interface TaskTimingResponse {
+  task_id: number
+  owner_user_id: number
+  wall_time_ms?: number | null
+  triage: TaskTimingCategory[]
+  coverage: TaskTimingCategory[]
+  top_suspects: TaskTimingTopSuspect[]
+  spans: TaskTimingSpan[]
+}
+
 export interface GeneratePromptDraftRequest {
   model?: string
   source?: string
@@ -465,6 +509,14 @@ export const taskApis = {
    */
   getTaskSkills: async (taskId: number): Promise<TaskSkillsResponse> => {
     return apiClient.get(`/tasks/${taskId}/skills`)
+  },
+
+  /**
+   * Get task timing triage and detailed spans
+   * @param taskId - Task ID
+   */
+  getTaskTiming: async (taskId: number): Promise<TaskTimingResponse> => {
+    return apiClient.get(`/tasks/${taskId}/timing`)
   },
 
   generatePromptDraft: async (

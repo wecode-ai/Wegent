@@ -61,7 +61,6 @@ import { SmartLink, SmartImage, SmartTextLine } from '@/components/common/SmartU
 import { formatDateTime } from '@/utils/dateTime'
 import { getTeamDisplayName } from '@/utils/team'
 import { ErrorCard } from './ErrorCard'
-import { TaskTimingOverview } from './TaskTimingOverview'
 export interface Message {
   type: 'user' | 'ai'
   content: string
@@ -1156,7 +1155,6 @@ const MessageBubble = memo(
                   )}
                 </div>
               )}
-              {!isUserTypeMessage && <TaskTimingOverview timing={msg.result?.timing} />}
               {/* Show reasoning display for DeepSeek R1 and similar models */}
               {!isUserTypeMessage && displayReasoningContent && (
                 <ReasoningDisplay
