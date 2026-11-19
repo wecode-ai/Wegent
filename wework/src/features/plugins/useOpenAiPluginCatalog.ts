@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { LocalCodexPluginApi } from '@/api/local/codexPlugins'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import {
   openAiRemoteCatalog,
   RemotePluginCatalogIdentityChanged,
@@ -74,10 +75,11 @@ export function useOpenAiPluginCatalog({
   }, [cacheKey])
 
   useEffect(() => {
-    if (!enabled && !(restoreForAll && openAiRemoteCatalog.hasSnapshotOrRefresh())) return
+    if (!enabled && !(restoreForAll && isElectronRuntime())) return
     let cancelled = false
     const isCurrent = () => !cancelled && getPluginMarketplaceAccountEpoch() === authRevision
     void Promise.resolve().then(async () => {
+      if (!enabled && !(await openAiRemoteCatalog.hasSnapshotOrRefresh())) return
       if (!isCurrent()) return
       const force = enabled && revision > admittedRefresh.current
       if (enabled) setState({ cacheKey, loading: true, error: null })

@@ -308,6 +308,10 @@ const cachedOfficialMarketplaceId = 'openai-curated-remote'
 const cachedOfficialPluginId = `cached-documents@${cachedOfficialMarketplaceId}`
 const cachedOfficialCard = `[data-testid="plugin-marketplace-row-${cachedOfficialPluginId}"]`
 
+function officialCatalogPath(userDataDirectory) {
+  return join(userDataDirectory, 'plugin-cache', 'openai-official-catalog.json')
+}
+
 async function seedOfficialCatalog({ accountScope, deviceId, userDataDirectory }) {
   const authScope = createHash('sha256')
     .update(JSON.stringify(['chatgpt', catalogTestCodexWorkspace, catalogTestCodexUser]))
@@ -315,9 +319,7 @@ async function seedOfficialCatalog({ accountScope, deviceId, userDataDirectory }
   const scope = createHash('sha256')
     .update(JSON.stringify([deviceId, authScope, accountScope]))
     .digest('hex')
-  const storagePath = join(userDataDirectory, 'renderer-local-storage.json')
-  const storage = JSON.parse(await readFile(storagePath, 'utf8'))
-  storage.entries[officialCatalogStorageKey] = JSON.stringify({
+  const snapshot = {
     version: 1,
     scope,
     fetchedAt: Date.now() - 31 * 60_000,
@@ -349,8 +351,9 @@ async function seedOfficialCatalog({ accountScope, deviceId, userDataDirectory }
         },
       },
     ],
-  })
-  await writeFile(storagePath, `${JSON.stringify(storage)}\n`, 'utf8')
+  }
+  await mkdir(join(userDataDirectory, 'plugin-cache'), { recursive: true })
+  await writeFile(officialCatalogPath(userDataDirectory), `${JSON.stringify(snapshot)}\n`, 'utf8')
 }
 
 async function assertPrimaryComposerPlugin(control, pluginName) {
@@ -441,6 +444,12 @@ async function verifyComposerPluginNetworkIsolation({
       '',
       'The official catalog must stay outside Chromium localStorage after restart'
     )
+    const sharedStorage = JSON.parse(
+      await readFile(join(electronUserDataDirectory, 'renderer-local-storage.json'), 'utf8')
+    )
+    assert.ok(!Object.hasOwn(sharedStorage.entries, officialCatalogStorageKey))
+    const catalogPath = officialCatalogPath(electronUserDataDirectory)
+    const savedCatalog = await readFile(catalogPath, 'utf8')
     const pluginName = 'composer-network-isolation-plugin'
     // Runtime-owned composer catalogs no longer initiate remote app/list reads.
     // Hold that real RPC explicitly before opening the local inventory.
@@ -533,6 +542,7 @@ async function verifyComposerPluginNetworkIsolation({
     )
     assert.ok(catalogError.length < 500, 'Catalog error exposed a raw response body')
     assert.doesNotMatch(catalogError, /<html|<svg|<style/i)
+    assert.equal(await readFile(catalogPath, 'utf8'), savedCatalog)
     await assertPrimaryComposerPlugin(control, pluginName)
     await control.command('navigate', 'body', { value: '/' })
     await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR)
@@ -548,7 +558,7 @@ async function verifyComposerPluginNetworkIsolation({
     for (const cleanup of [
       () => blockingNetworkProxy.release(),
       () => rm(join(codexHome, 'auth.json'), { force: true }),
-      () => control.command('removeLocalStorageItem', 'body', { value: officialCatalogStorageKey }),
+      () => rm(officialCatalogPath(electronUserDataDirectory), { force: true }),
       () => control.command('setLocalProxyUrl', 'body', { value: '' }),
       () =>
         control.command('deleteLocalPluginPackage', 'body', {

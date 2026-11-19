@@ -1,10 +1,9 @@
 import { Blob as NodeBlob } from 'node:buffer'
 import { createHash, webcrypto } from 'node:crypto'
-import { mkdir, mkdtemp, rm, rmdir } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { compressToUTF16 } from 'lz-string'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   clearPluginMarketplaceCache,
@@ -21,13 +20,8 @@ import {
 } from '@/features/cloud-connection/cloudConnectionStorage'
 import { switchLocalCodexAccount } from './codexAuth'
 import { createLocalCodexPluginApi } from './codexPlugins'
-import {
-  commitLocalStorageValue,
-  flushDesktopLocalStoragePersistence,
-  readOpenAiCatalogStorage,
-  REMOTE_PLUGIN_CATALOG_STORAGE_KEY,
-} from '@/desktop/localStoragePersistence'
 import { getLocalCodexAuthStatus } from './runtimeAuthStatus'
+import { OpenAiCatalogStore } from '../../../electron/src/host/openai-catalog-store'
 import { RendererStorageStore } from '../../../electron/src/host/renderer-storage-store'
 
 const mocks = vi.hoisted(() => ({
@@ -91,15 +85,13 @@ describe('OpenAI official catalog persistence', () => {
     ],
   }
 
-  async function seed(fetchedAt: number, compact = false) {
+  let storedCatalog: string | null
+
+  function seed(fetchedAt: number) {
     const scope = createHash('sha256')
       .update(JSON.stringify([mocks.deviceId, mocks.authScope, cacheKey]))
       .digest('hex')
-    const snapshot = JSON.stringify({ version: 1, scope, fetchedAt, items: [catalogItem] })
-    await commitLocalStorageValue(
-      REMOTE_PLUGIN_CATALOG_STORAGE_KEY,
-      compact ? 'lz:' + compressToUTF16(snapshot) : snapshot
-    )
+    storedCatalog = JSON.stringify({ version: 1, scope, fetchedAt, items: [catalogItem] })
   }
 
   function holdCatalogRequest() {
@@ -114,50 +106,61 @@ describe('OpenAI official catalog persistence', () => {
   }
 
   beforeEach(() => {
-    clearPluginMarketplaceCache()
     mocks.deviceId = 'device-a'
     mocks.runtimeInstanceId = 'runtime-restarted'
     mocks.authScope = 'codex-account-a'
     mocks.authFingerprint = 'old-credentials'
     mocks.startCodex.mockClear()
     mocks.request.mockReset().mockResolvedValue(liveResponse)
-    mocks.invokeHost.mockReset().mockResolvedValue({ persisted: true })
+    storedCatalog = null
+    mocks.invokeHost.mockReset().mockImplementation(async (method, params) => {
+      switch (method) {
+        case 'pluginCatalog.readOpenAi':
+          return storedCatalog
+        case 'pluginCatalog.writeOpenAi':
+          storedCatalog = params.snapshot
+          return
+        case 'pluginCatalog.clearOpenAi':
+          storedCatalog = null
+          return
+      }
+      throw new Error(`Unexpected host capability ${method}`)
+    })
     vi.stubGlobal('Blob', NodeBlob)
     vi.stubGlobal('crypto', webcrypto)
     vi.spyOn(Date, 'now').mockReturnValue(now)
   })
 
   afterEach(async () => {
-    mocks.invokeHost.mockReset().mockResolvedValue({ persisted: true })
+    mocks.invokeHost.mockReset().mockResolvedValue(undefined)
     clearPluginMarketplaceCache()
     clearStoredCloudConnection()
-    await flushDesktopLocalStoragePersistence()
+    await vi.waitFor(() =>
+      expect(mocks.invokeHost).toHaveBeenCalledWith('pluginCatalog.clearOpenAi')
+    )
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
 
-  test.each([false, true])(
-    'uses the persisted snapshot after restart and renewal (compressed=%s)',
-    async compact => {
-      const fetchedAt = now - 29 * 60_000 - 59_000
-      await seed(fetchedAt, compact)
-      mocks.authFingerprint = 'renewed-credentials'
-      const onCached = vi.fn()
-      const result = await createLocalCodexPluginApi().readRemoteCatalog({
-        accountScope: cacheKey,
-        forceRefetch: false,
-        onCached,
-      })
-      expect(result.snapshot).toMatchObject({ fetchedAt, items: [catalogItem] })
-      expect(onCached).toHaveBeenCalledWith(result.snapshot, 'device-a')
-      expect(mocks.startCodex).not.toHaveBeenCalled()
-      expect(mocks.request).not.toHaveBeenCalled()
-    }
-  )
+  test('uses the persisted snapshot after restart and renewal', async () => {
+    const fetchedAt = now - 29 * 60_000 - 59_000
+    seed(fetchedAt)
+    mocks.authFingerprint = 'renewed-credentials'
+    const onCached = vi.fn()
+    const result = await createLocalCodexPluginApi().readRemoteCatalog({
+      accountScope: cacheKey,
+      forceRefetch: false,
+      onCached,
+    })
+    expect(result.snapshot).toMatchObject({ fetchedAt, items: [catalogItem] })
+    expect(onCached).toHaveBeenCalledWith(result.snapshot, 'device-a')
+    expect(mocks.startCodex).not.toHaveBeenCalled()
+    expect(mocks.request).not.toHaveBeenCalled()
+  })
 
   test('restores stale rows for the All tab without starting a remote refresh', async () => {
     const fetchedAt = now - 31 * 60_000
-    await seed(fetchedAt)
+    seed(fetchedAt)
     const onCached = vi.fn()
     const result = await createLocalCodexPluginApi().readRemoteCatalog({
       accountScope: cacheKey,
@@ -171,8 +174,51 @@ describe('OpenAI official catalog persistence', () => {
     expect(mocks.request).not.toHaveBeenCalled()
   })
 
+  test('recovers a fresh file after a transient host read failure', async () => {
+    seed(now - 1000)
+    mocks.invokeHost.mockRejectedValueOnce(new Error('Disk unavailable'))
+    mocks.request.mockRejectedValueOnce(new Error('Network unavailable'))
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const options = { accountScope: cacheKey, forceRefetch: false, onCached: vi.fn() }
+    const api = createLocalCodexPluginApi()
+
+    await expect(api.readRemoteCatalog(options)).rejects.toThrow('Network unavailable')
+    await expect(api.readRemoteCatalog(options)).resolves.toMatchObject({
+      snapshot: { fetchedAt: now - 1000, items: [catalogItem] },
+    })
+    expect(mocks.request).toHaveBeenCalledOnce()
+  })
+
+  test('only reads the disk when All is opened and skips the identity check for a missing file', async () => {
+    const probe = vi.mocked(getLocalCodexAuthStatus)
+    probe.mockClear()
+    const readCatalog = vi.fn(createLocalCodexPluginApi().readRemoteCatalog)
+    const opened = renderHook(
+      ({ restoreForAll }) =>
+        useOpenAiPluginCatalog({
+          cacheKey,
+          accountScope: cacheKey,
+          deviceId: mocks.deviceId,
+          enabled: false,
+          restoreForAll,
+          readCatalog,
+        }),
+      { initialProps: { restoreForAll: false } }
+    )
+    try {
+      await act(async () => {})
+      expect(mocks.invokeHost).not.toHaveBeenCalled()
+      await act(async () => opened.rerender({ restoreForAll: true }))
+      expect(mocks.invokeHost).toHaveBeenCalledExactlyOnceWith('pluginCatalog.readOpenAi')
+      expect(probe).not.toHaveBeenCalled()
+      expect(readCatalog).not.toHaveBeenCalled()
+    } finally {
+      opened.unmount()
+    }
+  })
+
   test('publishes stale rows at the 30-minute boundary and joins a concurrent manual refresh', async () => {
-    await seed(now - 30 * 60_000)
+    seed(now - 30 * 60_000)
     const complete = holdCatalogRequest()
     const onCached = vi.fn()
     const api = createLocalCodexPluginApi()
@@ -207,15 +253,15 @@ describe('OpenAI official catalog persistence', () => {
       method: 'plugin/list',
       params: { cwds: null, forceRefetch: true },
     })
-    expect(JSON.parse(readOpenAiCatalogStorage()!)).toMatchObject({
+    expect(JSON.parse(storedCatalog!)).toMatchObject({
       fetchedAt: now,
       items: [{ id: listing.id, installed: false }],
     })
   })
 
   test('keeps the previous snapshot on network and incomplete-directory errors, then retries manually', async () => {
-    await seed(now - 1000)
-    const previous = readOpenAiCatalogStorage()
+    seed(now - 1000)
+    const previous = storedCatalog
     mocks.request.mockRejectedValueOnce(new Error('Network unavailable'))
     mocks.request.mockResolvedValueOnce({ marketplaces: [] })
     mocks.request.mockResolvedValueOnce({
@@ -226,11 +272,11 @@ describe('OpenAI official catalog persistence', () => {
     const api = createLocalCodexPluginApi()
     const options = { accountScope: cacheKey, forceRefetch: true, onCached }
     await expect(api.readRemoteCatalog(options)).rejects.toThrow('Network unavailable')
-    expect(readOpenAiCatalogStorage()).toBe(previous)
+    expect(storedCatalog).toBe(previous)
     await expect(api.readRemoteCatalog(options)).rejects.toThrow('Incomplete remote plugin catalog')
-    expect(readOpenAiCatalogStorage()).toBe(previous)
+    expect(storedCatalog).toBe(previous)
     await expect(api.readRemoteCatalog(options)).rejects.toThrow('Incomplete remote plugin catalog')
-    expect(readOpenAiCatalogStorage()).toBe(previous)
+    expect(storedCatalog).toBe(previous)
     expect(onCached).toHaveBeenCalledTimes(3)
     await expect(api.readRemoteCatalog(options)).resolves.toMatchObject({
       snapshot: { fetchedAt: now },
@@ -238,7 +284,7 @@ describe('OpenAI official catalog persistence', () => {
   })
 
   test('publishes official rows when an unrelated marketplace fails', async () => {
-    await seed(now - 31 * 60_000)
+    seed(now - 31 * 60_000)
     mocks.request.mockResolvedValueOnce({
       ...liveResponse,
       marketplaceLoadErrors: [
@@ -270,10 +316,10 @@ describe('OpenAI official catalog persistence', () => {
 
   test('retains the last official directory when a known official marketplace path fails', async () => {
     const officialRoot = '/official'
-    await seed(now - 31 * 60_000)
-    const stored = JSON.parse(readOpenAiCatalogStorage()!)
+    seed(now - 31 * 60_000)
+    const stored = JSON.parse(storedCatalog!)
     stored.items[0].manifest.marketplacePath = officialRoot
-    await commitLocalStorageValue(REMOTE_PLUGIN_CATALOG_STORAGE_KEY, JSON.stringify(stored))
+    storedCatalog = JSON.stringify(stored)
     mocks.request.mockResolvedValueOnce({
       ...liveResponse,
       marketplaceLoadErrors: [
@@ -290,7 +336,7 @@ describe('OpenAI official catalog persistence', () => {
         onCached: vi.fn(),
       })
     ).rejects.toThrow('Incomplete remote plugin catalog')
-    expect(JSON.parse(readOpenAiCatalogStorage()!)).toEqual(stored)
+    expect(JSON.parse(storedCatalog!)).toEqual(stored)
   })
 
   test.each([
@@ -301,10 +347,10 @@ describe('OpenAI official catalog persistence', () => {
     { components: { ...catalogItem.components, hooks: undefined } },
     { currentDeviceInstallation: { state: 'uninstalling' } },
   ])('rebuilds a parseable cache with an invalid summary %#', async fields => {
-    await seed(now - 1000)
-    const stored = JSON.parse(readOpenAiCatalogStorage()!)
+    seed(now - 1000)
+    const stored = JSON.parse(storedCatalog!)
     stored.items[0] = { ...stored.items[0], ...fields }
-    await commitLocalStorageValue(REMOTE_PLUGIN_CATALOG_STORAGE_KEY, JSON.stringify(stored))
+    storedCatalog = JSON.stringify(stored)
     const onCached = vi.fn()
     const result = await createLocalCodexPluginApi().readRemoteCatalog({
       accountScope: cacheKey,
@@ -356,8 +402,8 @@ describe('OpenAI official catalog persistence', () => {
       user: { id: 1, user_name: 'test', email: 'test@example.test' },
       connectedAt: new Date(now).toISOString(),
     })
-    await seed(now - 31 * 60_000)
-    const previous = readOpenAiCatalogStorage()
+    seed(now - 31 * 60_000)
+    const previous = storedCatalog
     const complete = holdCatalogRequest()
     const refreshing = createLocalCodexPluginApi().readRemoteCatalog({
       accountScope: cacheKey,
@@ -369,7 +415,7 @@ describe('OpenAI official catalog persistence', () => {
     clearStoredCloudConnection()
     complete()
     await rejected
-    expect(readOpenAiCatalogStorage()).toBe(previous)
+    expect(storedCatalog).toBe(previous)
   })
 
   test('times out a hung local auth probe and never admits its late result', async () => {
@@ -398,17 +444,18 @@ describe('OpenAI official catalog persistence', () => {
 
   test('reports a failed disk write and restores the retried catalog after restart', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-official-catalog-'))
-    const store = new RendererStorageStore(root)
+    const store = new OpenAiCatalogStore(root)
+    const shared = new RendererStorageStore(root)
     try {
-      await seed(now - 1000)
-      const previous = readOpenAiCatalogStorage()!
-      await store.initialize({ [REMOTE_PLUGIN_CATALOG_STORAGE_KEY]: previous, appearance: 'dark' })
-      const blocked = join(root, `renderer-local-storage.json.${process.pid}.tmp`)
-      await mkdir(blocked)
-      mocks.invokeHost.mockImplementation(async (method, update) => {
-        expect(method).toBe('rendererStorage.update')
-        await store.update(update)
-        return { persisted: true }
+      seed(now - 1000)
+      const previous = storedCatalog!
+      await store.write(previous)
+      await shared.initialize({ appearance: 'dark', 'wework.plugins.inventory.v2': 'inventory' })
+      const write = vi.spyOn(store, 'write').mockRejectedValueOnce(new Error('Disk unavailable'))
+      mocks.invokeHost.mockImplementation(async (method, params) => {
+        if (method === 'pluginCatalog.readOpenAi') return store.read()
+        expect(method).toBe('pluginCatalog.writeOpenAi')
+        await store.write(params.snapshot)
       })
       vi.spyOn(console, 'warn').mockImplementation(() => {})
       const readCatalog = createLocalCodexPluginApi().readRemoteCatalog
@@ -427,24 +474,24 @@ describe('OpenAI official catalog persistence', () => {
         act(() => opened.result.current.refresh())
         await waitFor(() => expect(opened.result.current.error).toBe('storage'))
         expect(getPluginMarketplaceCache(cacheKey)?.marketplaceItems).toHaveLength(1)
-        expect(readOpenAiCatalogStorage()).toBe(previous)
-        expect((await store.read())[REMOTE_PLUGIN_CATALOG_STORAGE_KEY]).toBe(previous)
+        expect(await store.read()).toBe(previous)
 
-        await rmdir(blocked)
         act(() => opened.result.current.refresh())
         await waitFor(() => {
           expect(opened.result.current.error).toBeNull()
           expect(opened.result.current.loading).toBe(false)
         })
         expect(mocks.request).toHaveBeenCalledTimes(2)
+        expect(write).toHaveBeenCalledTimes(2)
       } finally {
         opened.unmount()
-        await store.close()
       }
 
-      const entries = await new RendererStorageStore(root).initialize({})
-      expect(entries.appearance).toBe('dark')
-      expect(JSON.parse(entries[REMOTE_PLUGIN_CATALOG_STORAGE_KEY])).toMatchObject({
+      expect(await shared.read()).toEqual({
+        appearance: 'dark',
+        'wework.plugins.inventory.v2': 'inventory',
+      })
+      expect(JSON.parse((await new OpenAiCatalogStore(root).read())!)).toMatchObject({
         fetchedAt: now,
         items: [{ id: listing.id }],
       })
@@ -454,7 +501,7 @@ describe('OpenAI official catalog persistence', () => {
   })
 
   test('keeps the file while detaching cards and requiring verification when reopening the market', async () => {
-    await seed(now - 1000)
+    seed(now - 1000)
     const readCatalog = createLocalCodexPluginApi().readRemoteCatalog
     const renderCatalog = () =>
       renderHook(() =>
@@ -473,7 +520,7 @@ describe('OpenAI official catalog persistence', () => {
     )
     opened.unmount()
     expect(getPluginMarketplaceCache(cacheKey)?.marketplaceItems).toEqual([])
-    expect(readOpenAiCatalogStorage()).not.toBeNull()
+    expect(storedCatalog).not.toBeNull()
 
     vi.mocked(getLocalCodexAuthStatus).mockRejectedValueOnce(new Error('auth status unavailable'))
     const reopened = renderCatalog()
@@ -487,7 +534,7 @@ describe('OpenAI official catalog persistence', () => {
   })
 
   test('keeps manual refresh pending when the tab changes during the identity probe', async () => {
-    await seed(now - 1000)
+    seed(now - 1000)
     const readCatalog = createLocalCodexPluginApi().readRemoteCatalog
     const opened = renderHook(
       ({ enabled }) =>
@@ -520,7 +567,7 @@ describe('OpenAI official catalog persistence', () => {
       await waitFor(() => {
         expect(opened.result.current.loading).toBe(false)
         expect(mocks.request).toHaveBeenCalledTimes(1)
-        expect(JSON.parse(readOpenAiCatalogStorage()!).fetchedAt).toBe(now)
+        expect(JSON.parse(storedCatalog!).fetchedAt).toBe(now)
       })
     } finally {
       held.resolve(status)
@@ -528,8 +575,44 @@ describe('OpenAI official catalog persistence', () => {
     }
   })
 
+  test('does not admit a remote refresh after leaving the tab during the disk read', async () => {
+    seed(now - 31 * 60_000)
+    const readStarted = Promise.withResolvers<void>()
+    const file = Promise.withResolvers<string | null>()
+    mocks.invokeHost.mockImplementationOnce(method => {
+      expect(method).toBe('pluginCatalog.readOpenAi')
+      readStarted.resolve()
+      return file.promise
+    })
+    const readCatalog = createLocalCodexPluginApi().readRemoteCatalog
+    const opened = renderHook(
+      ({ enabled }) =>
+        useOpenAiPluginCatalog({
+          cacheKey,
+          accountScope: cacheKey,
+          deviceId: mocks.deviceId,
+          enabled,
+          restoreForAll: !enabled,
+          readCatalog,
+        }),
+      { initialProps: { enabled: true } }
+    )
+    try {
+      await readStarted.promise
+      await act(async () => opened.rerender({ enabled: false }))
+      await act(async () => file.resolve(storedCatalog))
+      await waitFor(() =>
+        expect(getPluginMarketplaceCache(cacheKey)?.marketplaceItems).toHaveLength(1)
+      )
+      expect(mocks.request).not.toHaveBeenCalled()
+    } finally {
+      file.resolve(storedCatalog)
+      opened.unmount()
+    }
+  })
+
   test('invalidates the cache and rejects in-flight results when switching accounts without a market open', async () => {
-    await seed(now - 31 * 60_000)
+    seed(now - 31 * 60_000)
     const complete = holdCatalogRequest()
     const refreshing = createLocalCodexPluginApi().readRemoteCatalog({
       accountScope: cacheKey,
@@ -540,14 +623,14 @@ describe('OpenAI official catalog persistence', () => {
     await vi.waitFor(() => expect(mocks.request).toHaveBeenCalledTimes(1))
     mocks.request.mockResolvedValueOnce({ activeAccountId: 'codex-account-b' })
     await switchLocalCodexAccount('codex-account-b')
-    expect(readOpenAiCatalogStorage()).toBeNull()
+    await vi.waitFor(() => expect(storedCatalog).toBeNull())
     complete()
     await rejected
-    expect(readOpenAiCatalogStorage()).toBeNull()
+    expect(storedCatalog).toBeNull()
   })
 
   test('finishes a valid background refresh without reattaching cards after leaving the market', async () => {
-    await seed(now - 31 * 60_000)
+    seed(now - 31 * 60_000)
     const readCatalog = createLocalCodexPluginApi().readRemoteCatalog
     const complete = holdCatalogRequest()
     const opened = renderHook(() =>
@@ -564,7 +647,7 @@ describe('OpenAI official catalog persistence', () => {
     opened.unmount()
     complete()
     await vi.waitFor(() =>
-      expect(JSON.parse(readOpenAiCatalogStorage()!)).toMatchObject({
+      expect(JSON.parse(storedCatalog!)).toMatchObject({
         fetchedAt: now,
         items: [{ id: listing.id }],
       })
@@ -573,7 +656,7 @@ describe('OpenAI official catalog persistence', () => {
   })
 
   test('hides a projected directory and reloads after a confirmed native identity change', async () => {
-    await seed(now - 31 * 60_000)
+    seed(now - 31 * 60_000)
     const readCatalog = createLocalCodexPluginApi().readRemoteCatalog
     const completeOld = holdCatalogRequest()
     const completeNew = holdCatalogRequest()
@@ -606,11 +689,10 @@ describe('OpenAI official catalog persistence', () => {
   test.each(['damaged', 'another account'])(
     'rebuilds an entry for %s and discards a response after a Codex account change',
     async state => {
-      await seed(now - 1000)
-      if (state === 'damaged')
-        await commitLocalStorageValue(REMOTE_PLUGIN_CATALOG_STORAGE_KEY, '{invalid')
+      seed(now - 1000)
+      if (state === 'damaged') storedCatalog = '{invalid'
       else mocks.authScope = 'codex-account-b'
-      const initial = readOpenAiCatalogStorage()
+      const initial = storedCatalog
       const complete = holdCatalogRequest()
       const onCached = vi.fn()
       const api = createLocalCodexPluginApi()
@@ -622,7 +704,7 @@ describe('OpenAI official catalog persistence', () => {
       mocks.authScope = 'codex-account-c'
       complete()
       await rejected
-      expect(readOpenAiCatalogStorage()).toBe(initial)
+      expect(storedCatalog).toBe(initial)
       await expect(api.readRemoteCatalog(options)).resolves.toMatchObject({
         snapshot: { fetchedAt: now, items: [{ id: listing.id }] },
       })

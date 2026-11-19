@@ -1,7 +1,7 @@
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 
-export const REMOTE_PLUGIN_CATALOG_STORAGE_KEY = 'wework.plugins.openAiCatalog.v1'
+const RETIRED_OPENAI_CATALOG_KEY = 'wework.plugins.openAiCatalog.v1'
 
 interface PendingStorageUpdate {
   clear: boolean
@@ -16,8 +16,6 @@ interface StorageMethods {
 
 const STORAGE_METHODS = Symbol.for('wework.desktop.localStoragePersistence.methods')
 
-// The catalog shares the host file but never consumes Chromium storage quota.
-let openAiCatalogValue: string | null = null
 let installed = false
 let pending: PendingStorageUpdate = {
   clear: false,
@@ -39,9 +37,10 @@ export async function initializeDesktopLocalStoragePersistence(): Promise<void> 
       entries: storageEntries(localStorage),
     }
   )
-  const { [REMOTE_PLUGIN_CATALOG_STORAGE_KEY]: catalog, ...browserEntries } = durableEntries
+  const { [RETIRED_OPENAI_CATALOG_KEY]: retiredCatalog, ...browserEntries } = durableEntries
   replaceStorage(localStorage, browserEntries)
-  openAiCatalogValue = catalog ?? null
+  // Discard the rebuildable catalog from builds that stored it in the shared file.
+  if (retiredCatalog !== undefined) queueChange(RETIRED_OPENAI_CATALOG_KEY, null)
   installPersistence(localStorage)
   installed = true
 }
@@ -63,29 +62,14 @@ export async function readCommittedLocalStorageValue(key: string): Promise<strin
   return Object.hasOwn(entries, key) ? entries[key] : null
 }
 
-export function readOpenAiCatalogStorage(): string | null {
-  return openAiCatalogValue
-}
-
-export function clearOpenAiCatalogStorage(): void {
-  if (!isElectronRuntime()) return
-  openAiCatalogValue = null
-  queueChange(REMOTE_PLUGIN_CATALOG_STORAGE_KEY, null)
-}
-
 /** Publish the value only after the owning host has committed it. */
-export async function commitLocalStorageValue(
-  key: string,
-  value: string,
-  options?: { assertCurrent?: () => void }
-): Promise<void> {
+export async function commitLocalStorageValue(key: string, value: string): Promise<void> {
   if (!isElectronRuntime()) {
     localStorage.setItem(key, value)
     return
   }
   if (flushScheduled) flushPendingChanges()
   const commit = writeQueue.then(async () => {
-    options?.assertCurrent?.()
     const update = { clear: false, changes: new Map([[key, value]]) }
     const persisted = retryUpdate ? mergeUpdates(retryUpdate, update) : update
     await invokeDesktopHost('rendererStorage.update', {
@@ -94,11 +78,6 @@ export async function commitLocalStorageValue(
     })
     retryUpdate = null
     writeFailure = null
-    options?.assertCurrent?.()
-    if (key === REMOTE_PLUGIN_CATALOG_STORAGE_KEY) {
-      openAiCatalogValue = value
-      return
-    }
     try {
       const storage = window.localStorage
       const prototype = storagePrototype(storage)
@@ -180,7 +159,6 @@ function queueChange(key: string, value: string | null): void {
 }
 
 function queueClear(): void {
-  openAiCatalogValue = null
   pending = {
     clear: true,
     changes: new Map(),

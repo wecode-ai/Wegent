@@ -1,17 +1,11 @@
 import { emptyComponents } from '@wegent/chat-core/codex-installed-plugins'
-import { decompressFromUTF16 } from 'lz-string'
-import {
-  clearOpenAiCatalogStorage,
-  commitLocalStorageValue,
-  readOpenAiCatalogStorage,
-  REMOTE_PLUGIN_CATALOG_STORAGE_KEY,
-} from '@/desktop/localStoragePersistence'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import type { PluginInterface, PluginMarketplaceItem } from '@/types/api'
 import { isOpenAiOfficialRemoteMarketplaceId } from '@/features/plugins/marketplaceIdentity'
 import { raceWithTimeout } from '@/lib/promise-timeout'
 
 export const REMOTE_PLUGIN_CATALOG_FRESH_MS = 30 * 60_000
-const COMPACT_CATALOG_PREFIX = 'lz:'
 
 export interface RemotePluginCatalogSnapshot {
   items: PluginMarketplaceItem[]
@@ -113,18 +107,14 @@ function isCatalogItem(value: unknown): value is PluginMarketplaceItem {
   )
 }
 
-function readPersistedCatalog(scope: string): PersistedCatalog | undefined {
+async function readPersistedCatalog(): Promise<PersistedCatalog | undefined> {
+  const raw = await invokeDesktopHost<string | null>('pluginCatalog.readOpenAi')
+  if (!raw) return
   try {
-    const raw = readOpenAiCatalogStorage()
-    if (!raw) return
-    const serialized = raw.startsWith(COMPACT_CATALOG_PREFIX)
-      ? decompressFromUTF16(raw.slice(COMPACT_CATALOG_PREFIX.length))
-      : raw
-    if (!serialized) return
-    const value = JSON.parse(serialized) as Partial<PersistedCatalog> | null
+    const value = JSON.parse(raw) as Partial<PersistedCatalog> | null
     if (
       value?.version === 1 &&
-      value.scope === scope &&
+      typeof value.scope === 'string' &&
       typeof value.fetchedAt === 'number' &&
       Number.isFinite(value.fetchedAt) &&
       value.fetchedAt > 0 &&
@@ -139,33 +129,55 @@ function readPersistedCatalog(scope: string): PersistedCatalog | undefined {
   }
 }
 
-async function persistCatalog(
-  snapshot: PersistedCatalog,
-  assertCurrent: () => void
-): Promise<void> {
-  try {
-    await commitLocalStorageValue(REMOTE_PLUGIN_CATALOG_STORAGE_KEY, JSON.stringify(snapshot), {
-      assertCurrent,
-    })
-  } catch (error) {
-    if (error instanceof RemotePluginCatalogIdentityChanged) throw error
-    console.warn('[Wework] Failed to persist OpenAI plugin catalog', {
-      errorType: error instanceof Error ? error.name : typeof error,
-    })
-    throw new RemotePluginCatalogStorageError(error)
-  }
-}
-
 /** Catalog freshness survives renderer and runtime restarts. */
 export function createSharedRemotePluginCatalog() {
   let active: { identity: string; pending?: Promise<RemotePluginCatalogSnapshot> } | undefined
-  let latest: PersistedCatalog | undefined
+  let stored: Promise<PersistedCatalog | undefined> | undefined
+  let diskMutations = Promise.resolve()
 
-  function hasSnapshotOrRefresh(): boolean {
-    return Boolean(latest || active?.pending || readOpenAiCatalogStorage())
+  function mutateDisk(operation: () => Promise<void>): Promise<void> {
+    const result = diskMutations.then(operation)
+    diskMutations = result.catch(() => {})
+    return result
   }
 
-  function read({
+  function readStored(): Promise<PersistedCatalog | undefined> {
+    // A new account must wait for any queued invalidation before reading the file.
+    if (stored) return stored
+    const read = diskMutations.then(readPersistedCatalog).catch(error => {
+      if (stored === read) stored = undefined
+      console.warn('[Wework] Failed to read OpenAI plugin catalog', {
+        errorType: error instanceof Error ? error.name : typeof error,
+      })
+      return undefined
+    })
+    stored = read
+    return read
+  }
+
+  async function persistCatalog(snapshot: PersistedCatalog, assertCurrent: () => void) {
+    await mutateDisk(async () => {
+      assertCurrent()
+      try {
+        await invokeDesktopHost('pluginCatalog.writeOpenAi', {
+          snapshot: JSON.stringify(snapshot),
+        })
+      } catch (error) {
+        console.warn('[Wework] Failed to persist OpenAI plugin catalog', {
+          errorType: error instanceof Error ? error.name : typeof error,
+        })
+        throw new RemotePluginCatalogStorageError(error)
+      }
+      assertCurrent()
+      stored = Promise.resolve(snapshot)
+    })
+  }
+
+  async function hasSnapshotOrRefresh(): Promise<boolean> {
+    return Boolean(active?.pending || (await readStored()))
+  }
+
+  async function read({
     scope,
     requestIdentity,
     force,
@@ -173,6 +185,7 @@ export function createSharedRemotePluginCatalog() {
     onCached,
     load,
     isAccountCurrent,
+    canStart,
   }: {
     scope: string
     requestIdentity: string
@@ -181,6 +194,7 @@ export function createSharedRemotePluginCatalog() {
     onCached: (snapshot: RemotePluginCatalogSnapshot | undefined) => void
     load: (cached: RemotePluginCatalogSnapshot | undefined) => Promise<PluginMarketplaceItem[]>
     isAccountCurrent?: () => boolean
+    canStart?: () => boolean
   }): Promise<RemotePluginCatalogSnapshot | undefined> {
     const requestScope =
       active?.identity === requestIdentity ? active : { identity: requestIdentity }
@@ -189,15 +203,15 @@ export function createSharedRemotePluginCatalog() {
         throw new RemotePluginCatalogIdentityChanged()
     }
     active = requestScope
-    if (latest?.scope !== scope) {
-      latest = readPersistedCatalog(scope)
-    }
-    const cached = latest
+    const snapshot = await readStored()
+    assertCurrent()
+    if (canStart?.() === false) throw new RemotePluginCatalogIdentityChanged()
+    const cached = snapshot?.scope === scope ? snapshot : undefined
     onCached(cached)
     if (requestScope.pending) return requestScope.pending
-    if (cacheOnly) return Promise.resolve(cached)
+    if (cacheOnly) return cached
     if (!force && cached && Date.now() - cached.fetchedAt < REMOTE_PLUGIN_CATALOG_FRESH_MS) {
-      return Promise.resolve(cached)
+      return cached
     }
     const request = raceWithTimeout(
       Promise.resolve().then(() => load(cached)),
@@ -210,7 +224,6 @@ export function createSharedRemotePluginCatalog() {
       const result: PersistedCatalog = { version: 1, scope, fetchedAt: Date.now(), items }
       await persistCatalog(result, assertCurrent)
       assertCurrent()
-      latest = result
       return result
     })
     requestScope.pending = request
@@ -223,8 +236,14 @@ export function createSharedRemotePluginCatalog() {
 
   function clear() {
     active = undefined
-    latest = undefined
-    clearOpenAiCatalogStorage()
+    stored = undefined
+    if (isElectronRuntime()) {
+      void mutateDisk(() => invokeDesktopHost('pluginCatalog.clearOpenAi')).catch(error => {
+        console.warn('[Wework] Failed to clear OpenAI plugin catalog', {
+          errorType: error instanceof Error ? error.name : typeof error,
+        })
+      })
+    }
   }
 
   return { read, clear, hasSnapshotOrRefresh }

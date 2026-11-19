@@ -2962,6 +2962,7 @@ const readRemoteCatalog: LocalCodexPluginApi['readRemoteCatalog'] = async option
     requestIdentity: JSON.stringify([scope, runtimeInstanceId, accountEpoch]),
     force: options.forceRefetch,
     isAccountCurrent: requestAccountIsCurrent,
+    canStart: options.canStart,
     cacheOnly: options.cacheOnly === true,
     onCached: snapshot => options.onCached(snapshot, deviceId),
     load: async cached => {

@@ -52,8 +52,6 @@ test.each(['success', 'seed failure'])('the CI plugin flow handles %s', async ou
   })
   const control = {
     command: vi.fn(async (action: string, _selector?: string, options?: { value?: string }) => {
-      if (outcome === 'seed failure' && action === 'removeLocalStorageItem')
-        throw new Error('Renderer unavailable after restart failed')
       if (action === 'previewPluginImport') return JSON.stringify({ valid: true })
       if (action === 'getWorkbenchDebugSnapshot')
         return JSON.stringify({ workbench: { currentProject: { id: 'project' } } })
@@ -72,6 +70,7 @@ test.each(['success', 'seed failure'])('the CI plugin flow handles %s', async ou
   }
   try {
     const storagePath = join(root, 'renderer-local-storage.json')
+    const catalogPath = join(root, 'plugin-cache', 'openai-official-catalog.json')
     await writeFile(storagePath, JSON.stringify({ version: 1, entries: {} }))
     const verification = verifyComposerPluginNetworkIsolation({
       blockingNetworkProxy: proxy,
@@ -82,6 +81,10 @@ test.each(['success', 'seed failure'])('the CI plugin flow handles %s', async ou
       restartDesktopApp: async (afterStop: () => Promise<void>) => {
         if (outcome === 'seed failure') throw seedFailure
         await afterStop()
+        expect(JSON.parse(await readFile(catalogPath, 'utf8'))).toMatchObject({
+          version: 1,
+          items: [{ id: 'cached-documents@openai-curated-remote' }],
+        })
       },
       workspacePath: root,
     })
@@ -93,10 +96,8 @@ test.each(['success', 'seed failure'])('the CI plugin flow handles %s', async ou
     }
     await verification
     const storage = JSON.parse(await readFile(storagePath, 'utf8'))
-    expect(JSON.parse(storage.entries['wework.plugins.openAiCatalog.v1'])).toMatchObject({
-      version: 1,
-      items: [{ id: 'cached-documents@openai-curated-remote' }],
-    })
+    expect(storage.entries).toEqual({})
+    await expect(readFile(catalogPath)).rejects.toMatchObject({ code: 'ENOENT' })
     expect(openComposerPluginPicker).toHaveBeenCalledTimes(2)
     expect(control.command).toHaveBeenCalledWith('navigate', 'body', { value: '/' })
     expect(control.command).toHaveBeenCalledWith(

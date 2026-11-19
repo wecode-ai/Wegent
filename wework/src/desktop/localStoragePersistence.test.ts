@@ -195,49 +195,30 @@ describe('committed localStorage commands', () => {
     ).toHaveLength(1)
   })
 
-  it('restores the official catalog alongside concurrent browser writes at restart', async () => {
+  it('drops the retired official catalog key while preserving the shared inventory', async () => {
     const root = await mkdtemp(join(tmpdir(), 'wework-renderer-storage-quota-'))
-    let store = new RendererStorageStore(root)
+    const store = new RendererStorageStore(root)
     const browserStorage = new BoundedStorage(1000)
     const browser = vi.spyOn(window, 'localStorage', 'get').mockReturnValue(browserStorage)
     const persistence = await loadPersistence()
-    const catalogKey = persistence.REMOTE_PLUGIN_CATALOG_STORAGE_KEY
+    const retiredKey = 'wework.plugins.openAiCatalog.v1'
     const inventoryKey = 'wework.plugins.inventory.v2'
-    const catalog = 'a'.repeat(600)
     const inventory = 'b'.repeat(600)
-    const began = Promise.withResolvers<void>()
-    const resume = Promise.withResolvers<void>()
     mocks.invokeDesktopHost.mockImplementation(async (method: string, params) => {
       if (method === 'rendererStorage.initialize') return store.initialize(params.entries)
-      if (Object.hasOwn(params.changes, catalogKey)) {
-        began.resolve()
-        await resume.promise
-      }
       await store.update(params)
       return { persisted: true }
     })
     try {
-      await store.initialize({ [catalogKey]: 'old catalog', appearance: 'dark' })
+      await store.initialize({ [retiredKey]: 'a'.repeat(600), [inventoryKey]: inventory })
       await persistence.initializeDesktopLocalStoragePersistence()
-
-      const refresh = persistence.commitLocalStorageValue(catalogKey, catalog)
-      await began.promise
-      expect(persistence.readOpenAiCatalogStorage()).toBe('old catalog')
-      browserStorage.setItem(inventoryKey, inventory)
-      resume.resolve()
-      await refresh
+      browserStorage.setItem('appearance', 'dark')
       await persistence.flushDesktopLocalStoragePersistence()
-      await store.close()
 
-      store = new RendererStorageStore(root)
-      const restarted = await loadPersistence()
-      await restarted.initializeDesktopLocalStoragePersistence()
       expect(browserStorage.getItem(inventoryKey)).toBe(inventory)
-      expect(browserStorage.getItem('appearance')).toBe('dark')
-      expect(browserStorage.getItem(catalogKey)).toBeNull()
-      expect(restarted.readOpenAiCatalogStorage()).toBe(catalog)
+      expect(browserStorage.getItem(retiredKey)).toBeNull()
+      expect(await store.read()).toEqual({ [inventoryKey]: inventory, appearance: 'dark' })
     } finally {
-      resume.resolve()
       browser.mockRestore()
       await store.close()
       await rm(root, { recursive: true, force: true })
