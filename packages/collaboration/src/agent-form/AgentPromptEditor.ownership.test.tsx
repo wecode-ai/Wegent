@@ -61,8 +61,8 @@ const element = (id: string) => container.querySelector<HTMLElement>(`[data-test
 async function type(value: string) {
   const editor = element('agent-prompt') as HTMLElement & { value: string }
   await act(async () => {
-    editor.value = value
     editor.focus()
+    editor.value = value
     editor.dispatchEvent(new KeyboardEvent('keyup', { key: value.at(-1), bubbles: true }))
   })
   return editor
