@@ -384,10 +384,14 @@ export function RuntimeInteractionsPage({
                               {entry.projectItem ? entry.question : entry.title || entry.question}
                             </span>
                             <span className="shrink-0 tabular-nums">
-                              <InteractionTime
-                                timestamp={entry.timestamp}
-                                testId="interaction-list-time"
-                              />
+                              {!history && entry.source === 'project' && entry.waitingSince ? (
+                                <IssueWaitingTime since={entry.waitingSince} />
+                              ) : (
+                                <InteractionTime
+                                  timestamp={entry.timestamp}
+                                  testId="interaction-list-time"
+                                />
+                              )}
                             </span>
                           </span>
                           {entry.title && entry.question && entry.title !== entry.question && (
@@ -493,11 +497,7 @@ export function RuntimeInteractionsPage({
                   >
                     {row.projectItem ? row.question : row.title || row.question}
                   </h2>
-                  {!history && row.source === 'project' && row.waitingSince ? (
-                    <IssueWaitingTime since={row.waitingSince} />
-                  ) : (
-                    <InteractionTime timestamp={row.timestamp} testId="interaction-detail-time" />
-                  )}
+                  <InteractionTime timestamp={row.timestamp} testId="interaction-detail-time" />
                 </div>
                 {discussion && liveQuestion && canDiscussQuestion(liveQuestion.payload) && (
                   <ControlButton
