@@ -692,6 +692,8 @@ jobs:
           CARGO_TARGET_DIR: ${{ runner.temp }}/executor-target
         run: |
           cargo test --all-features --lib local::plugin_import::hash_tests
+          cargo test -p wegent-executor --all-features --lib \
+            local::backend::connection_controller::local_sync::recovery::tests::dropping_an_owner
           cargo test --all-features --lib runtime_rpc_dispatch_fits_a_bounded_worker_stack
           cargo test --all-features --lib agents::codex::tests::stopping_
           cargo test --all-features --lib codex_app_server_starts_beyond_windows_max_path

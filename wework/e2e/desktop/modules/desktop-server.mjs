@@ -5902,6 +5902,7 @@ class DesktopE2EServer {
 
 export {
   DesktopE2EServer,
+  findNestedString,
   hasUserReplyAfterToolOutput,
   inputUserMessageTexts,
   requestContainsSkillLocator,

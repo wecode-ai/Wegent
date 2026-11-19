@@ -13,6 +13,7 @@ import { createSocketClient } from '@wegent/chat-core'
 import { runCurrentDevicePluginAutoUpdate } from './pluginAutoUpdate'
 import { createLocalDevicePluginApi, resolveLocalPluginDeviceRouteId } from './pluginDeviceApi'
 import { createPluginBackgroundPass } from './pluginBackgroundPass'
+import { hasPendingPluginRecovery, PLUGIN_LOCAL_RECOVERY_REQUESTED } from './pluginLocalSync'
 
 export const PLUGIN_RELEASE_AVAILABLE_EVENT = 'plugin:release_available'
 export const PLUGIN_AUTO_UPDATE_COMPLETED_EVENT = 'wework:plugin-auto-update-completed'
@@ -210,23 +211,60 @@ export function PluginAutoUpdateCoordinator() {
         track('operation_failed', { operation: 'plugin_auto_update' })
       },
     })
+    let recovering = false
+    let recoveryAttempts = 0
+    const retryRecovery = async () => {
+      if (disposed || !navigator.onLine || recoveryAttempts >= 8) return false
+      const delay = Math.min(500 * 2 ** recoveryAttempts++, 5_000)
+      await new Promise(resolve => window.setTimeout(resolve, delay))
+      return !disposed && navigator.onLine
+    }
     const reconciliation = localSyncAvailable
       ? createPluginBackgroundPass({
           id: 'plugins.account-reconcile',
           isCurrent: () => !disposed,
           detached: true,
           run: async () => {
-            const result = await cloudPluginApi.syncInstalledPluginsToDevice('', true)
-            if (result.localChanged) publishLocalChange()
-            return false
+            try {
+              const result = await cloudPluginApi.syncInstalledPluginsToDevice('', true)
+              if (disposed) return false
+              if (result.localChanged) publishLocalChange()
+              if (result.pendingCount > 0) {
+                recovering = true
+                return retryRecovery()
+              }
+              recovering = false
+              recoveryAttempts = 0
+              return false
+            } catch (error) {
+              if (hasPendingPluginRecovery(error)) recovering = true
+              if (
+                recovering &&
+                (hasPendingPluginRecovery(error) ||
+                  (error &&
+                    typeof error === 'object' &&
+                    'code' in error &&
+                    error.code === 'plugin_local_sync_busy'))
+              ) {
+                return retryRecovery()
+              }
+              throw error
+            }
           },
           onError: error => console.warn('[Plugins] Account plugin reconciliation deferred', error),
         })
       : null
     const requestUpdatePass = () => {
+      recoveryAttempts = 0
       reconciliation?.request()
       updates.request()
     }
+    const requestRecovery = () => {
+      recovering = true
+      recoveryAttempts = 0
+      reconciliation?.request()
+    }
+    window.addEventListener(PLUGIN_LOCAL_RECOVERY_REQUESTED, requestRecovery)
     const handleConnect = () => {
       connectedTriggerSeen = true
       requestUpdatePass()
@@ -264,6 +302,7 @@ export function PluginAutoUpdateCoordinator() {
       disposed = true
       window.clearInterval(poll)
       window.removeEventListener('online', resume)
+      window.removeEventListener(PLUGIN_LOCAL_RECOVERY_REQUESTED, requestRecovery)
       document.removeEventListener('visibilitychange', resume)
       waiting.abort()
       updates.dispose()

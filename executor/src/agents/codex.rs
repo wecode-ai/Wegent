@@ -119,6 +119,8 @@ const IMAGE_MIME_TYPES: &[&str] = &[
     "image/bmp",
 ];
 
+#[cfg(test)]
+mod cloud_config_error_tests;
 #[path = "codex/debug_stdout.rs"]
 mod debug_stdout;
 mod external_work;

@@ -24,11 +24,17 @@ pub(super) fn response_result(
         ));
     }
     if let Some(error) = message.get("error") {
-        return Err(error
+        let reason = error
             .get("message")
             .and_then(Value::as_str)
             .map(str::to_owned)
-            .unwrap_or_else(|| raw_log_preview(error)));
+            .unwrap_or_else(|| raw_log_preview(error));
+        if error.pointer("/data/reason").and_then(Value::as_str) == Some("cloudConfigBundle")
+            && !super::is_codex_cloud_config_error(&reason)
+        {
+            return Err(format!("cloud config bundle: {reason}"));
+        }
+        return Err(reason);
     }
     Ok(message.get("result").cloned().unwrap_or_else(|| json!({})))
 }
