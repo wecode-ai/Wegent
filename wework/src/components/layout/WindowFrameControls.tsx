@@ -1,5 +1,5 @@
 import { Minus, Square, Copy, X } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useMemo, useSyncExternalStore } from 'react'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -11,26 +11,13 @@ const WEWORK_NEUTRAL_FRAME_COLORS = 'wework:hover:bg-black/[0.08] wework:active:
 
 export function WindowFrameControls({ className }: { className?: string }) {
   const { t } = useTranslation('common')
-  const [isMaximized, setIsMaximized] = useState(false)
-
-  const updateMaximized = useCallback(async () => {
-    try {
-      const state = await invokeDesktopHost<{ maximized: boolean }>('window.getState')
-      setIsMaximized(state.maximized)
-    } catch {
-      // Ignore if the window API is unavailable
-    }
-  }, [])
-
-  useEffect(() => {
-    const handleResize = () => void updateMaximized()
-    const initialUpdateFrame = requestAnimationFrame(() => void updateMaximized())
-    window.addEventListener('resize', handleResize)
-    return () => {
-      cancelAnimationFrame(initialUpdateFrame)
-      window.removeEventListener('resize', handleResize)
-    }
-  }, [updateMaximized])
+  const windowState = useMemo(() => createWindowFrameState(), [])
+  const isMaximized = useSyncExternalStore(
+    windowState.subscribe,
+    windowState.getSnapshot,
+    () => false
+  )
+  const updateMaximized = windowState.refresh
 
   const handleMinimize = useCallback(async () => {
     try {
@@ -100,4 +87,42 @@ export function WindowFrameControls({ className }: { className?: string }) {
       </button>
     </div>
   )
+}
+
+function createWindowFrameState() {
+  let maximized = false
+  let revision = 0
+  let frame = 0
+  const listeners = new Set<() => void>()
+  const refresh = async () => {
+    if (!listeners.size) return
+    const request = ++revision
+    try {
+      const state = await invokeDesktopHost<{ maximized: boolean }>('window.getState')
+      if (request !== revision || !listeners.size || state.maximized === maximized) return
+      maximized = state.maximized
+      listeners.forEach(listener => listener())
+    } catch {
+      // Native window state is unavailable outside a desktop host.
+    }
+  }
+  return {
+    refresh,
+    getSnapshot: () => maximized,
+    subscribe(listener: () => void) {
+      listeners.add(listener)
+      if (listeners.size === 1) {
+        frame = requestAnimationFrame(() => void refresh())
+        window.addEventListener('resize', refresh)
+      }
+      return () => {
+        listeners.delete(listener)
+        if (!listeners.size) {
+          revision++
+          cancelAnimationFrame(frame)
+          window.removeEventListener('resize', refresh)
+        }
+      }
+    },
+  }
 }

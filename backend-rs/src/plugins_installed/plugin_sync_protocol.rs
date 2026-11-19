@@ -35,50 +35,11 @@ const PLUGIN_SYNC_STATE_NAMESPACE: &str = "plugin-sync";
 /// `PLUGIN_SYNC_STATE_NAME`.
 const PLUGIN_SYNC_STATE_NAME: &str = "account";
 
-pub(super) async fn with_sync_write_budget<T, E>(
-    write: impl std::future::Future<Output = Result<T, E>>,
-) -> Result<T, E>
-where
-    E: From<brz_mysql::MysqlError>,
-{
-    tokio::time::timeout(std::time::Duration::from_secs(20), write)
-        .await
-        .unwrap_or_else(|_| Err(coordination_error("plugin_write_busy").into()))
-}
-
-/// Replay only optimistic database work, within one shared time budget.
-pub(super) async fn retry_sync_write<F, Fut, T>(mut write: F) -> MysqlResult<T>
-where
-    F: FnMut() -> Fut,
-    Fut: std::future::Future<Output = MysqlResult<T>>,
-{
-    with_sync_write_budget(async {
-        let mut backoff = 10;
-        loop {
-            let outcome = write().await;
-            if wait_on_metadata_conflict(outcome.as_ref().err(), &mut backoff).await {
-                continue;
-            }
-            return outcome;
-        }
-    })
-    .await
-}
-
-/// Back off after rollback, without holding a connection or a plugin lease.
-async fn wait_on_metadata_conflict(
-    error: Option<&brz_mysql::MysqlError>,
-    backoff_ms: &mut u64,
-) -> bool {
-    if !error.is_some_and(|error| {
-        super::write_coordination::plugin_write_error_code(error) == Some("plugin_write_conflict")
-    }) {
-        return false;
-    }
-    tokio::time::sleep(std::time::Duration::from_millis(*backoff_ms)).await;
-    *backoff_ms = (*backoff_ms + 10).min(250);
-    true
-}
+mod retry;
+use retry::wait_on_metadata_conflict;
+pub(super) use retry::{
+    WRITE_BUDGET, retry_plugin_receipt, retry_sync_write, with_sync_write_budget,
+};
 
 /// `_sync_state`'s optimistic read over one active account state row.
 fn sync_state_statement() -> String {
@@ -246,6 +207,58 @@ pub(crate) fn plugin_snapshot_watermark(
         .and_then(Value::as_object)
         .and_then(|plugins| plugins.get(&installed_id.to_string()));
     complete.max(generation_value(plugin))
+}
+
+/// Merge an issued receipt against the live row at the flush boundary.
+/// Unrelated plugins can advance the account revision without invalidating
+/// this receipt. A newer dispatch for this target still requires revalidation.
+pub(super) async fn merge_local_receipt_watermark<Q: PluginQuery>(
+    query: &mut Q,
+    user_id: i64,
+    state: &PluginSyncState,
+    device_id: &str,
+    installed_id: i64,
+    generation: i64,
+) -> MysqlResult<()> {
+    let id = state
+        .id
+        .ok_or_else(|| coordination_error("plugin_write_conflict"))?;
+    let row: InstalledKindRow = query
+        .fetch_optional(
+            format!(
+                "SELECT {KIND_COLUMNS} FROM kinds WHERE id=? AND user_id=?
+                 AND kind='PluginSyncState' AND namespace='plugin-sync' AND name='account'
+                 AND is_active=1 FOR UPDATE"
+            ),
+            (id, user_id),
+        )
+        .await?
+        .ok_or_else(|| coordination_error("plugin_write_conflict"))?;
+    let current = PluginSyncState {
+        id: Some(row.id),
+        json: row.json.0.to_value(),
+    };
+    if generation > generation_value(current.json["spec"].get("generation"))
+        || plugin_snapshot_watermark(&current.json, device_id, installed_id)
+            != plugin_snapshot_watermark(&state.json, device_id, installed_id)
+    {
+        tracing::debug!(
+            user_id,
+            installed_id,
+            "Local plugin receipt watermark changed"
+        );
+        return Err(coordination_error("plugin_write_conflict"));
+    }
+    let mut document = current.json.clone();
+    advance_plugin_snapshot_watermark(&mut document, device_id, generation, false, &[installed_id]);
+    write_sync_state_document(
+        query,
+        current.id,
+        user_id,
+        &python_json_value(&document),
+        true,
+    )
+    .await
 }
 
 /// One device's state entry, if the document carries one.

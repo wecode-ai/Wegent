@@ -1,16 +1,10 @@
-import { FitAddon } from '@xterm/addon-fit'
-import { Terminal } from '@xterm/xterm'
 import '@xterm/xterm/css/xterm.css'
-import { useEffect, useRef } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { unwrapShellCommand } from '@/components/chat/blocks/toolBlockActivity'
 import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { NativeTerminalElement } from '@/e2e/native-terminal-diagnostics'
-import { applyTerminalTheme, getTerminalTheme, observeTerminalTheme } from '@/lib/xterm-theme'
 import type { BackgroundTerminal } from '../backgroundTerminals'
-import { createXtermWebLinksAddon } from './xtermLinks'
-import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
-import { registerNativeTerminalViewport } from '@/e2e/native-key-observation'
+import { createBackgroundTerminalBinding } from './backgroundTerminalView'
 
 export function BackgroundTerminalPanel({
   terminal,
@@ -21,105 +15,29 @@ export function BackgroundTerminalPanel({
 }) {
   const { t } = useTranslation('common')
   const appearance = useOptionalAppearance()?.appearance ?? defaultAppearance
-  const containerRef = useRef<HTMLDivElement>(null)
-  const resourceRef = useRef<{ terminal: Terminal; fit: FitAddon; output: string } | null>(null)
   const output = typeof terminal?.block.toolOutput === 'string' ? terminal.block.toolOutput : ''
+  const terminalId = terminal?.id
+  const scopeKey = JSON.stringify([terminal?.tabId, terminalId])
   const hasOutput = output.length > 0
-
-  useEffect(() => {
-    const container = containerRef.current as NativeTerminalElement | null
-    if (!container || !hasOutput) return
-    const xterm = new Terminal({
-      disableStdin: true,
-      screenReaderMode: true,
-      cursorBlink: false,
-      cursorInactiveStyle: 'none',
-      convertEol: true,
-      fontFamily: appearance.codeFont,
-      fontSize: appearance.codeFontSize,
-      lineHeight: 1.2,
-      theme: getTerminalTheme(),
-      scrollback: 5000,
-    })
-    const fit = new FitAddon()
-    xterm.loadAddon(fit)
-    xterm.loadAddon(createXtermWebLinksAddon())
-    xterm.open(container)
-    applyTerminalTheme(xterm, container)
-    const disposeViewport =
-      import.meta.env.VITE_WEWORK_E2E === 'true'
-        ? registerNativeTerminalViewport(container, () => xterm.buffer.active.viewportY + 1)
-        : null
-    let lastHistoryKeyAt = 0
-    const logViewport = (stage: string) =>
-      logRuntimeTaskCreateStage(stage, {
-        terminalId: terminal?.id,
-        viewportY: xterm.buffer.active.viewportY,
-        baseY: xterm.buffer.active.baseY,
-      })
-    const scrollDiagnostic =
-      import.meta.env.VITE_WEWORK_E2E === 'true'
-        ? xterm.onScroll(() => {
-            if (Date.now() - lastHistoryKeyAt < 2000) logViewport('background-terminal-scroll')
-          })
-        : null
-    if (import.meta.env.VITE_WEWORK_E2E === 'true') {
-      container.__weworkViewportForE2E = () => ({
-        viewportY: xterm.buffer.active.viewportY,
-        baseY: xterm.buffer.active.baseY,
-        length: xterm.buffer.active.length,
-        rows: xterm.rows,
-      })
-      xterm.attachCustomKeyEventHandler(event => {
-        if (event.type === 'keydown' && ['PageUp', 'PageDown'].includes(event.key)) {
-          lastHistoryKeyAt = Date.now()
-          logViewport(`background-terminal-${event.key}`)
-        }
-        return true
-      })
-    }
-    const disposeTheme = observeTerminalTheme(theme => applyTerminalTheme(xterm, container, theme))
-    resourceRef.current = { terminal: xterm, fit, output: '' }
-    const observer = new ResizeObserver(() => {
-      if (container.clientWidth > 0 && container.clientHeight > 0) fit.fit()
-    })
-    observer.observe(container)
-    return () => {
-      observer.disconnect()
-      scrollDiagnostic?.dispose()
-      disposeViewport?.()
-      disposeTheme()
-      resourceRef.current = null
-      delete container.__weworkViewportForE2E
-      xterm.dispose()
-    }
-  }, [hasOutput, terminal?.id, appearance.codeFont, appearance.codeFontSize])
-
-  useEffect(() => {
-    const resource = resourceRef.current
-    if (!resource) return
-    if (output.startsWith(resource.output)) {
-      const delta = output.slice(resource.output.length)
-      if (delta.length > 0) resource.terminal.write(delta)
-    } else {
-      if (import.meta.env.VITE_WEWORK_E2E === 'true') {
-        logRuntimeTaskCreateStage('background-terminal-output-reset', {
-          terminalId: terminal?.id,
-          previousLength: resource.output.length,
-          nextLength: output.length,
-          viewportY: resource.terminal.buffer.active.viewportY,
-          baseY: resource.terminal.buffer.active.baseY,
+  const [binding] = useState(createBackgroundTerminalBinding)
+  const viewportRef = useMemo(
+    () => (node: HTMLElement | null) => {
+      if (node)
+        binding.updateViewport(node, {
+          scopeKey,
+          terminalId,
+          output,
+          active,
+          fontFamily: appearance.codeFont,
+          fontSize: appearance.codeFontSize,
         })
-      }
-      resource.terminal.reset()
-      resource.terminal.write(output)
-    }
-    resource.output = output
-    if (active && containerRef.current?.clientWidth) resource.fit.fit()
-  }, [output, active, terminal?.id, appearance.codeFont, appearance.codeFontSize])
-
+    },
+    [binding, scopeKey, terminalId, output, active, appearance.codeFont, appearance.codeFontSize]
+  )
+  const containerRef = useCallback((node: HTMLDivElement | null) => binding.attach(node), [binding])
   return (
     <section
+      ref={viewportRef}
       data-testid="background-terminal-output-panel"
       className="relative h-full min-h-0 flex-1 bg-background"
     >

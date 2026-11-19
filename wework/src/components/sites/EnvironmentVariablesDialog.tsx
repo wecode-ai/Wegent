@@ -1,6 +1,18 @@
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  type AsyncResourceSnapshot,
+} from '@wegent/chat-core/async-resource'
 import { DialogForm } from '@/components/common/DialogForm'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type SetStateAction,
+} from 'react'
 import { AlertCircle, KeyRound, Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { ApiError } from '@/api/http'
 import type { EnvironmentSnapshot, Site, SitesApi } from '@/api/sites'
@@ -30,66 +42,94 @@ function messageForValidation(code: string | null, t: ReturnType<typeof useTrans
   return null
 }
 
+type EnvironmentResource = ReturnType<typeof createAsyncResource<EnvironmentSnapshot>>
+interface EnvironmentForm {
+  resource: EnvironmentResource
+  source: AsyncResourceSnapshot<EnvironmentSnapshot>
+  snapshot: EnvironmentSnapshot | null
+  rows: EnvironmentVariableDraft[]
+  saving: boolean
+  error: string | null
+  saved: boolean
+}
+function createForm(
+  resource: EnvironmentResource,
+  source: AsyncResourceSnapshot<EnvironmentSnapshot>
+): EnvironmentForm {
+  return {
+    resource,
+    source,
+    snapshot: null,
+    rows: [],
+    saving: false,
+    error: null,
+    saved: false,
+  }
+}
+
 export function EnvironmentVariablesDialog({
   api,
   site,
   onClose,
 }: EnvironmentVariablesDialogProps) {
   const { t } = useTranslation('sites')
-  const [snapshot, setSnapshot] = useState<EnvironmentSnapshot | null>(null)
-  const [rows, setRows] = useState<EnvironmentVariableDraft[]>([])
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [saved, setSaved] = useState(false)
+  const siteid = site.siteid
+  const resource = useMemo(
+    () => createAsyncResource(siteid, () => api.getEnvironmentVariables(siteid)),
+    [api, siteid]
+  )
+  const query = useSyncExternalStore(
+    resource.subscribe,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const [form, setForm] = useState(() => createForm(resource, query))
+  if (form.resource !== resource) setForm(createForm(resource, query))
+  else if (query.status === 'ready' && form.source !== query) {
+    const latest = query.data ?? null
+    setForm({
+      ...form,
+      source: query,
+      snapshot: latest,
+      rows: latest ? createEnvironmentDraft(latest) : [],
+      error: null,
+      saved: false,
+    })
+  }
+  const patchForm = useCallback(
+    (
+      change: Partial<EnvironmentForm> | ((current: EnvironmentForm) => Partial<EnvironmentForm>)
+    ) => {
+      setForm(current =>
+        current.resource !== resource
+          ? current
+          : { ...current, ...(typeof change === 'function' ? change(current) : change) }
+      )
+    },
+    [resource]
+  )
+  const setRows = (next: SetStateAction<EnvironmentVariableDraft[]>) =>
+    patchForm(current => ({ rows: typeof next === 'function' ? next(current.rows) : next }))
+  const setSaved = (saved: boolean) => patchForm({ saved })
+  const setSaving = (saving: boolean) => patchForm({ saving })
+  const setError = (error: string | null) => patchForm({ error })
+  const { snapshot, rows, saving, saved } = form
+  const loading = query.status === 'idle' || query.status === 'loading'
+  const error =
+    form.error ??
+    (!saving && query.status === 'error'
+      ? query.error instanceof Error
+        ? query.error.message
+        : t('environment_load_failed', '环境变量加载失败')
+      : null)
   const nextId = useRef(0)
   const dialogRef = useDialogKeyboard<HTMLFormElement>(() => {
     if (!saving) onClose()
   })
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    setSaved(false)
-    try {
-      const latest = await api.getEnvironmentVariables(site.siteid)
-      setSnapshot(latest)
-      setRows(createEnvironmentDraft(latest))
-    } catch (loadError) {
-      setError(
-        loadError instanceof Error
-          ? loadError.message
-          : t('environment_load_failed', '环境变量加载失败')
-      )
-    } finally {
-      setLoading(false)
-    }
-  }, [api, site.siteid, t])
-
-  useEffect(() => {
-    let active = true
-    void api
-      .getEnvironmentVariables(site.siteid)
-      .then(latest => {
-        if (!active) return
-        setSnapshot(latest)
-        setRows(createEnvironmentDraft(latest))
-      })
-      .catch(loadError => {
-        if (!active) return
-        setError(
-          loadError instanceof Error
-            ? loadError.message
-            : t('environment_load_failed', '环境变量加载失败')
-        )
-      })
-      .finally(() => {
-        if (active) setLoading(false)
-      })
-    return () => {
-      active = false
-    }
-  }, [api, site.siteid, t])
+  const load = useCallback(() => {
+    patchForm({ error: null, saved: false })
+    return resource.reload()
+  }, [resource, patchForm])
 
   const updateRow = (id: string, patch: Partial<EnvironmentVariableDraft>) => {
     setSaved(false)
@@ -120,9 +160,13 @@ export function EnvironmentVariablesDialog({
         revision_number: revision.revision_number,
         items: revision.variables,
       }
-      setSnapshot(latest)
-      setRows(createEnvironmentDraft(latest))
-      setSaved(true)
+      resource.update(() => latest)
+      patchForm({
+        source: resource.getSnapshot(),
+        snapshot: latest,
+        rows: createEnvironmentDraft(latest),
+        saved: true,
+      })
     } catch (saveError) {
       const conflict =
         saveError instanceof ApiError && saveError.errorCode === 'ENVIRONMENT_REVISION_CONFLICT'

@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { fetchJson, resultDir } from './shared.mjs'
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 import { cleanupPluginUpgradeFixtures } from './plugin-upgrade-fixture-cleanup.mjs'
+import { waitForValue } from './workspace-agent-setup.mjs'
 
 const pluginKey = 'desktop-e2e-upgrade'
 const oldVersion = '0.1.1'
@@ -256,7 +257,6 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
   await control.command('waitFor', `[data-testid="plugin-detail-uninstall-${installedId}"]`)
   await control.command('click', `[data-testid="plugin-detail-uninstall-${installedId}"]`)
   await control.command('click', '[data-testid="plugin-uninstall-confirm-button"]')
-  await new Promise(resolve => setTimeout(resolve, 3000))
   await control.command('waitFor', '[data-testid^="plugin-detail-toggle-"]', { text: '安装插件' })
   const uninstalled = await capture('05-after-uninstall')
   assert.ok(
@@ -269,7 +269,12 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
     false,
     'Uninstall left the cloud install active'
   )
-  assert.equal((await readCapabilities()).plugins[managedKey], undefined)
+  await waitForValue(
+    readCapabilities,
+    capabilities => capabilities.plugins[managedKey] === undefined,
+    'Uninstall did not remove the managed plugin from the local capability manifest',
+    PLUGIN_SYNC_TIMEOUT_MS
+  )
   // Immutable packages remain available to running agents; Codex owns its cache.
   await access(removedEntry.store_path)
   setPhase('plugin-refresh-cleans-cloud-uninstall-residue')

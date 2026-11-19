@@ -1,5 +1,10 @@
 import { Check, ChevronLeft, Folder, FolderPlus, Loader2 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useState, useSyncExternalStore } from 'react'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isImeEnterEvent } from '@/lib/ime'
 import type { DeviceInfo } from '@/types/api'
@@ -10,6 +15,15 @@ import {
   joinPath,
   normalizePath,
 } from './device-folder-path'
+
+const EMPTY_DIRECTORIES: string[] = []
+
+interface FolderNavigation {
+  currentPath: string
+  pathInput: string
+  directoryQuery: string
+  selectedPath: string
+}
 
 export type DeviceFolderPickerMode = 'select' | 'create'
 
@@ -49,88 +63,93 @@ export function DeviceFolderPicker({
   const { t } = useTranslation('common')
   const remoteLayout = variant === 'remote'
   const pickerDisabled = disabled || !device.device_id
-  const [currentPath, setCurrentPath] = useState('')
-  const [pathInput, setPathInput] = useState('')
-  const [directoryQuery, setDirectoryQuery] = useState('')
-  const [selectedPath, setSelectedPath] = useState('')
-  const [directories, setDirectories] = useState<string[]>([])
+  const deviceId = device.device_id
+  const scope = JSON.stringify([deviceId, initialPath])
+  const [navigation, setNavigation] = useState<{ scope: string; value: FolderNavigation | null }>({
+    scope,
+    value: null,
+  })
   const [showHiddenDirectories, setShowHiddenDirectories] = useState(false)
-  const [loadingDirectories, setLoadingDirectories] = useState(false)
   const [folderName, setFolderName] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const pathInputEditedRef = useRef(false)
-
-  useEffect(() => {
-    pathInputEditedRef.current = false
-  }, [device.device_id, initialPath])
-
-  useEffect(() => {
-    if (pickerDisabled) return
-    let cancelled = false
-
-    async function resolveInitialPath() {
-      try {
-        const resolved = initialPath || (await onGetDeviceHomeDirectory(device.device_id))
-        const nextPath = normalizePath(resolved) || '/'
-        if (!cancelled && !pathInputEditedRef.current) {
-          setCurrentPath(nextPath)
-          setPathInput(nextPath)
-          setSelectedPath(nextPath)
-          setDirectoryQuery('')
-        }
-      } catch (loadError) {
-        if (!cancelled && !pathInputEditedRef.current) {
-          setCurrentPath('')
-          setPathInput('')
-          setSelectedPath('')
-          setDirectoryQuery('')
-          setError(
-            loadError instanceof Error
-              ? loadError.message
-              : t('workbench.project_home_directory_load_failed', '无法读取 home 目录')
-          )
-        }
-      }
-    }
-
-    void resolveInitialPath()
-    return () => {
-      cancelled = true
-    }
-  }, [device.device_id, initialPath, onGetDeviceHomeDirectory, pickerDisabled, t])
-
-  useEffect(() => {
-    if (pickerDisabled || !currentPath) return
-    let cancelled = false
-
-    async function loadDirectories() {
-      setLoadingDirectories(true)
-      setError(null)
-      try {
-        const items = await onListDeviceDirectories(device.device_id, currentPath)
-        if (!cancelled) {
-          setDirectories([...items].sort((left, right) => left.localeCompare(right)))
-        }
-      } catch (loadError) {
-        if (!cancelled) {
-          setDirectories([])
-          setError(
-            loadError instanceof Error
-              ? loadError.message
-              : t('workbench.project_directory_load_failed', '目录加载失败')
-          )
-        }
-      } finally {
-        if (!cancelled) setLoadingDirectories(false)
-      }
-    }
-
-    void loadDirectories()
-    return () => {
-      cancelled = true
-    }
-  }, [currentPath, device.device_id, onListDeviceDirectories, pickerDisabled, t])
+  const [actionError, setError] = useState<string | null>(null)
+  const home = useMemo(
+    () =>
+      createAsyncResource(
+        scope,
+        async signal => {
+          await Promise.resolve()
+          signal.throwIfAborted()
+          const resolved = initialPath || (await onGetDeviceHomeDirectory(deviceId))
+          return normalizePath(resolved) || '/'
+        },
+        { refreshOnSubscribe: true }
+      ),
+    [scope, initialPath, deviceId, onGetDeviceHomeDirectory]
+  )
+  const homeSnapshot = useSyncExternalStore(
+    pickerDisabled ? subscribeIdleResource : home.subscribe,
+    home.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  if (navigation.scope !== scope) {
+    setNavigation({ scope, value: null })
+    setError(null)
+  }
+  const defaultPath = homeSnapshot.data ?? ''
+  const defaultNavigation: FolderNavigation = {
+    currentPath: defaultPath,
+    pathInput: defaultPath,
+    selectedPath: defaultPath,
+    directoryQuery: '',
+  }
+  const manualNavigation = navigation.scope === scope ? navigation.value : null
+  const { currentPath, pathInput, directoryQuery, selectedPath } =
+    manualNavigation ?? defaultNavigation
+  const listing = useMemo(
+    () =>
+      createAsyncResource(
+        JSON.stringify([deviceId, currentPath]),
+        async signal => {
+          await Promise.resolve()
+          signal.throwIfAborted()
+          const items = await onListDeviceDirectories(deviceId, currentPath)
+          return [...items].sort((left, right) => left.localeCompare(right))
+        },
+        { refreshOnSubscribe: true }
+      ),
+    [deviceId, currentPath, onListDeviceDirectories]
+  )
+  const listEnabled = !pickerDisabled && Boolean(currentPath)
+  const listSnapshot = useSyncExternalStore(
+    listEnabled ? listing.subscribe : subscribeIdleResource,
+    listing.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const directories = listSnapshot.data ?? EMPTY_DIRECTORIES
+  const loadingDirectories =
+    listEnabled && (listSnapshot.status === 'idle' || listSnapshot.status === 'loading')
+  const homeFailure = !manualNavigation && homeSnapshot.status === 'error'
+  const directoryFailure = listSnapshot.status === 'error'
+  const cause = homeFailure ? homeSnapshot.error : directoryFailure ? listSnapshot.error : undefined
+  const error =
+    actionError ??
+    (homeFailure || directoryFailure
+      ? cause instanceof Error
+        ? cause.message
+        : homeFailure
+          ? t('workbench.project_home_directory_load_failed', '无法读取 home 目录')
+          : t('workbench.project_directory_load_failed', '目录加载失败')
+      : null)
+  const updateNavigation = (patch: Partial<FolderNavigation>) => {
+    setNavigation(current => ({
+      scope,
+      value: {
+        ...((current.scope === scope ? current.value : null) ?? defaultNavigation),
+        ...patch,
+      },
+    }))
+  }
 
   const visibleDirectories = useMemo(
     () =>
@@ -145,12 +164,13 @@ export function DeviceFolderPicker({
   )
 
   const browsePath = (path: string) => {
-    pathInputEditedRef.current = true
     const normalized = normalizePath(path) || '/'
-    setCurrentPath(normalized)
-    setPathInput(normalized)
-    setDirectoryQuery('')
-    setSelectedPath(normalized)
+    updateNavigation({
+      currentPath: normalized,
+      pathInput: normalized,
+      directoryQuery: '',
+      selectedPath: normalized,
+    })
     setError(null)
   }
 
@@ -173,9 +193,7 @@ export function DeviceFolderPicker({
     }
 
     if (query) {
-      setCurrentPath(parentPath)
-      setDirectoryQuery(query)
-      setSelectedPath(normalized)
+      updateNavigation({ currentPath: parentPath, directoryQuery: query, selectedPath: normalized })
       setError(null)
       return
     }
@@ -284,9 +302,7 @@ export function DeviceFolderPicker({
             value={pathInput}
             disabled={pickerDisabled || submitting}
             onChange={event => {
-              pathInputEditedRef.current = true
-              setPathInput(event.target.value)
-              setSelectedPath('')
+              updateNavigation({ pathInput: event.target.value, selectedPath: '' })
               setError(null)
             }}
             onBlur={confirmPathInput}
@@ -390,7 +406,7 @@ export function DeviceFolderPicker({
                 key={childPath}
                 type="button"
                 data-testid="device-folder-entry-button"
-                onClick={() => setSelectedPath(childPath)}
+                onClick={() => updateNavigation({ selectedPath: childPath })}
                 onDoubleClick={() => browsePath(childPath)}
                 className={[
                   'flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-sm',

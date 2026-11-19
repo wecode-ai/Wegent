@@ -21,6 +21,7 @@ import {
   sessionExecutorHome,
 } from './ai-verify-auth-cleanup.mjs'
 import { readRolloutHeader, seedAiVerifyRollout } from './ai-verify-rollout.mjs'
+import { VerifyVideoRecorder } from './ai-verify-video.mjs'
 import { WindowCommandQueue } from './desktop-control-queue.mjs'
 import { wrapWindowsScriptCommand } from './child-process-command.mjs'
 import { processIsAlive, windowsTaskkillArguments } from '../e2e/desktop/process-lifecycle.mjs'
@@ -150,8 +151,13 @@ const SELECTOR_OPTIONAL_COMMANDS = new Set([
 
 function usage() {
   console.error(`Usage:
+  pnpm --filter wework ai:verify bombadil --base origin/main --plan true
+  pnpm --filter wework ai:verify bombadil --suite workbench --seconds 30
   pnpm --filter wework ai:verify start
   pnpm --filter wework ai:verify start --packaged true
+  pnpm --filter wework ai:verify start --record true
+  pnpm --filter wework ai:verify record-start --session PATH
+  pnpm --filter wework ai:verify record-stop --session PATH
   pnpm --filter wework ai:verify devtools --session PATH --value '{"action":"targets"}'
   pnpm --filter wework ai:verify devtools --session PATH --value '{"action":"command","target":ID,"method":"Network.enable"}'
   pnpm --filter wework ai:verify performance-start --session PATH --target ID
@@ -164,6 +170,7 @@ Options:
   --executor-home PATH      Use an explicitly selected existing executor home
   --device-id ID            Preserve that existing home's device identity
   --packaged true           Launch the packaged app instead of Electron source mode
+  --record true             Record the main window and save MP4 in the session directory
   --rollout PATH            Copy a real JSONL history into the isolated Rollout replay project
   --selector CSS_SELECTOR   Target selector (required by click, fill, press and wait-for)
   --window LABEL            Target window label (defaults to main)
@@ -228,6 +235,9 @@ export function validateStartOptions(options) {
     'executor-home',
     'device-id',
     'packaged',
+    'bombadil',
+    'prepared',
+    'record',
     'timeout',
     'rollout',
   ])
@@ -236,6 +246,11 @@ export function validateStartOptions(options) {
     throw new Error(`Unexpected option for start: --${unexpectedOption}`)
   }
   resolveOptionalBoolean(options.packaged, 'packaged')
+  resolveOptionalBoolean(options.bombadil, 'bombadil')
+  resolveOptionalBoolean(options.prepared, 'prepared')
+  if (options.bombadil === 'true' && options['executor-home'])
+    throw new Error('Bombadil requires a new isolated executor home')
+  resolveOptionalBoolean(options.record, 'record')
   if (options['device-id'] !== undefined) {
     if (!options['executor-home']) {
       throw new Error('--device-id requires --executor-home')
@@ -408,19 +423,23 @@ export function resolveElectronAppBinary(platform = process.platform, arch = pro
 export function resolveElectronLaunch({
   packaged,
   sourceBinary,
+  bombadil = false,
   platform = process.platform,
   arch = process.arch,
 }) {
+  const debugArgs = bombadil
+    ? ['--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0']
+    : []
   if (packaged) {
     return {
       command: resolveElectronAppBinary(platform, arch),
-      args: [],
+      args: debugArgs,
       cwd: weworkDir,
     }
   }
   return {
     command: sourceBinary,
-    args: ['.'],
+    args: ['.', ...debugArgs],
     cwd: electronDir,
   }
 }
@@ -532,10 +551,12 @@ async function runServer(sessionPath, token) {
     await updateSessionState(sessionPath, observeSessionAuthOwnership)
   }
   const queue = new WindowCommandQueue(corsHeaders)
+  const recorder = new VerifyVideoRecorder(session.directory)
   const pending = new Map()
   let ready = null
   let app = null
   let appExit = null
+  let closing = false
   let shutdownPromise = null
   const server = createServer((request, response) => {
     void (async () => {
@@ -622,11 +643,22 @@ async function runServer(sessionPath, token) {
         }
       }
       if (request.method === 'POST' && url.pathname === '/shutdown') {
-        response.once('finish', () => {
+        if (closing) return json(response, 409, { error: 'Wework session is stopping' })
+        closing = true
+        response.once('close', () => {
           void shutdown(0)
         })
-        json(response, 200, { ok: true })
-        return
+        return json(response, 200, { ok: true, video: await recorder.stop() })
+      }
+      if (request.method === 'POST' && url.pathname === '/record-start') {
+        if (closing || appExit || !queue.windowClients.main)
+          return json(response, 409, { error: 'Wework main window is not available for recording' })
+        return json(response, 200, await recorder.start())
+      }
+      if (request.method === 'POST' && url.pathname === '/record-stop') {
+        const video = await recorder.stop()
+        if (!video) return json(response, 409, { error: 'No video recording is active' })
+        return json(response, 200, { video })
       }
       json(response, 404, { error: 'Not found' })
     })().catch(error => json(response, 500, { error: String(error.message ?? error) }))
@@ -642,8 +674,14 @@ async function runServer(sessionPath, token) {
   })
   const shutdown = exitCode => {
     if (shutdownPromise) return shutdownPromise
+    closing = true
     queue.close()
-    shutdownPromise = stopOwnedSessionProcesses({ launcherPid: app?.pid })
+    shutdownPromise = recorder
+      .stop()
+      .catch(() => {
+        // Explicit stop reports recording errors before triggering process cleanup.
+      })
+      .then(() => stopOwnedSessionProcesses({ launcherPid: app?.pid }))
       .then(() => removeSessionAuthLink(session, sessionPath))
       .finally(() => {
         server.close(() => process.exit(exitCode))
@@ -679,6 +717,7 @@ async function runServer(sessionPath, token) {
     session.launchMode === 'source' ? await buildSourceRuntimeEnvironment() : {}
   const launch = resolveElectronLaunch({
     packaged: session.launchMode === 'packaged',
+    bombadil: session.bombadil,
     sourceBinary: session.launchMode === 'source' ? await resolveSourceElectronBinary() : undefined,
   })
   app = spawn(launch.command, launch.args, {
@@ -741,13 +780,15 @@ export async function waitForFreshControlClient(
 
 async function main() {
   const { command, options } = parseArgs(process.argv.slice(2))
+  if (command === 'bombadil') return (await import('./ai-verify-bombadil.mjs')).runBombadil(options)
   if (command === 'serve') return runServer(options.session, options.token)
   if (command === 'start') {
     validateStartOptions(options)
     const rolloutSource = options.rollout ? resolve(options.rollout) : undefined
     if (rolloutSource) await readRolloutHeader(rolloutSource)
     const packaged = resolveOptionalBoolean(options.packaged, 'packaged') ?? false
-    await prepareElectronApp({ packaged })
+    const record = resolveOptionalBoolean(options.record, 'record') ?? false
+    if (options.prepared !== 'true') await prepareElectronApp({ packaged })
     const launch = resolveElectronLaunch({
       packaged,
       sourceBinary: packaged ? undefined : await resolveSourceElectronBinary(),
@@ -775,6 +816,7 @@ async function main() {
           token,
           status: 'starting',
           launchMode: packaged ? 'packaged' : 'source',
+          bombadil: options.bombadil === 'true',
           executorHomeOverride: options['executor-home']?.trim(),
           verifyCodexHomeInitialization: options['codex-home-initialization'] === 'true',
           rolloutReplay,
@@ -826,22 +868,25 @@ async function main() {
           try {
             lastStatus = null
             lastStatus = await request(session, token, '/status')
-            if (lastStatus.ready) {
-              console.log(
-                JSON.stringify(
-                  { session: sessionPath, controlUrl: session.controlUrl, rolloutReplay },
-                  null,
-                  2
-                )
-              )
-              return
-            }
             if (lastStatus.appExited) {
               throw new Error(startupFailureMessage(lastStatus, startupTimeout))
             }
           } catch (error) {
             if (lastStatus?.appExited) throw error
             // The controller can be briefly unavailable while its process starts.
+          }
+          if (lastStatus?.ready && (!record || lastStatus.windowClients.main)) {
+            const recording = record
+              ? await request(session, token, '/record-start', 'POST')
+              : undefined
+            console.log(
+              JSON.stringify(
+                { session: sessionPath, controlUrl: session.controlUrl, rolloutReplay, recording },
+                null,
+                2
+              )
+            )
+            return
           }
         }
         await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
@@ -855,9 +900,15 @@ async function main() {
   if (!options.session) throw new Error('--session is required')
   const session = JSON.parse(await readFile(options.session, 'utf8'))
   if (command === 'stop') {
-    await request(session, session.token, '/shutdown', 'POST')
+    const { video } = await request(session, session.token, '/shutdown', 'POST')
     await stopOwnedSessionProcesses(session)
     await removeSessionAuthLink(session, options.session)
+    if (video) console.log(video)
+    return
+  }
+  if (command === 'record-start' || command === 'record-stop') {
+    const result = await request(session, session.token, `/${command}`, 'POST')
+    console.log(command === 'record-start' ? JSON.stringify(result, null, 2) : result.video)
     return
   }
   if (command === 'status') {

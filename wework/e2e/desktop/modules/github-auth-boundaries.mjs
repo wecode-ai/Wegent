@@ -314,7 +314,9 @@ export function createGithubAuthBoundaries({
         await openDetail(control)
         await waitManage(control, '退出登录')
         protocol.state.apiFailure = true
-        await focus(control, '[data-testid="plugin-detail-action-error"]')
+        await focus(control, '[data-testid="plugin-detail-action-error"]', {
+          text: '无法验证 GitHub CLI 登录状态',
+        })
         assert.match(
           await control.command('getText', '[data-testid="plugin-detail-action-error"]'),
           /无法验证 GitHub CLI 登录状态/

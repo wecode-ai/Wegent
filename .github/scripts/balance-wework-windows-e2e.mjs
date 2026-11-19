@@ -9,7 +9,7 @@ const measurements = JSON.parse(
 )
 
 const preparationGroups = {
-  'local-harness': ['claude-runtime', 'local-harness', 'workbench-mode', 'native-window-startup'],
+  'local-harness': ['claude-runtime', 'local-harness', 'workbench-mode', 'startup-fault-isolation'],
   'object-storage': ['collaboration-issue-mcp-comments', 'collaboration-delivery-editing'],
   'dingtalk-protocol-fixture': ['stand-in-identities', 'stand-in-connections', 'stand-in-cli'],
 }

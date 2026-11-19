@@ -1,8 +1,9 @@
+// @vitest-environment jsdom
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { updateBoardViewTag } from '../project-board/projectTags'
 
 import type {
@@ -14,99 +15,30 @@ import type {
   ProjectManageUser,
 } from './types'
 
-type Effect = () => void | (() => void)
+import { act, createRef, useImperativeHandle } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
 
-const hookRuntime = vi.hoisted(() => {
-  let hookIndex = 0
-  let hooks: Array<Record<string, unknown>> = []
-  let pendingEffects: Array<{ effect: Effect; index: number }> = []
+let root: Root | undefined
+let container: HTMLDivElement | undefined
+const committedView = createRef<ReturnType<typeof ProjectManageView>>()
 
-  const dependenciesChanged = (previous: unknown[] | undefined, next: unknown[]) =>
-    !previous ||
-    previous.length !== next.length ||
-    previous.some((value, index) => !Object.is(value, next[index]))
+function resetView() {
+  if (root) act(() => root!.unmount())
+  root = undefined
+  container?.remove()
+  container = undefined
+}
 
-  return {
-    reset() {
-      hookIndex = 0
-      hooks = []
-      pendingEffects = []
-    },
-    beginRender() {
-      hookIndex = 0
-      pendingEffects = []
-    },
-    flushEffects() {
-      for (const { effect, index } of pendingEffects) {
-        const hook = hooks[index]
-        const cleanup = hook.cleanup
-        if (typeof cleanup === 'function') cleanup()
-        hook.cleanup = effect()
-      }
-      pendingEffects = []
-    },
-    useCallback<T>(callback: T, dependencies: unknown[]) {
-      const index = hookIndex++
-      const hook = hooks[index] ?? {}
-      hooks[index] = hook
-      const previous = hook.dependencies as unknown[] | undefined
-      if (dependenciesChanged(previous, dependencies)) {
-        hook.dependencies = dependencies
-        hook.value = callback
-      }
-      return hook.value as T
-    },
-    useEffect(effect: Effect, dependencies: unknown[]) {
-      const index = hookIndex++
-      const hook = hooks[index] ?? {}
-      hooks[index] = hook
-      const previous = hook.dependencies as unknown[] | undefined
-      if (dependenciesChanged(previous, dependencies)) {
-        hook.dependencies = dependencies
-        pendingEffects.push({ effect, index })
-      }
-    },
-    useMemo<T>(factory: () => T, dependencies: unknown[]) {
-      const index = hookIndex++
-      const hook = hooks[index] ?? {}
-      hooks[index] = hook
-      const previous = hook.dependencies as unknown[] | undefined
-      if (dependenciesChanged(previous, dependencies)) {
-        hook.dependencies = dependencies
-        hook.value = factory()
-      }
-      return hook.value as T
-    },
-    useRef<T>(initialValue: T) {
-      const index = hookIndex++
-      const hook = hooks[index] ?? { current: initialValue }
-      hooks[index] = hook
-      return hook as { current: T }
-    },
-    useState<T>(initialValue: T | (() => T)) {
-      const index = hookIndex++
-      const hook = hooks[index] ?? {
-        value: typeof initialValue === 'function' ? (initialValue as () => T)() : initialValue,
-      }
-      hooks[index] = hook
-      const setValue = (next: T | ((current: T) => T)) => {
-        hook.value =
-          typeof next === 'function' ? (next as (current: T) => T)(hook.value as T) : next
-      }
-      return [hook.value as T, setValue] as const
-    },
-  }
+afterEach(resetView)
+beforeEach(() => {
+  globalThis.IS_REACT_ACT_ENVIRONMENT = true
 })
 
-vi.mock('react', async () => ({
-  ...(await vi.importActual<typeof import('react')>('react')),
-  useCallback: hookRuntime.useCallback,
-  useEffect: hookRuntime.useEffect,
-  useLayoutEffect: hookRuntime.useEffect,
-  useMemo: hookRuntime.useMemo,
-  useRef: hookRuntime.useRef,
-  useState: hookRuntime.useState,
-}))
+function CommittedProjectManageView(props: Parameters<typeof ProjectManageView>[0]) {
+  const tree = ProjectManageView(props)
+  useImperativeHandle(committedView, () => tree, [tree])
+  return tree
+}
 
 import { createCollaborationTranslator } from '../i18n'
 import { MemberSearchPicker } from '../controls/MemberSearchPicker'
@@ -196,8 +128,12 @@ function renderView(
   },
   section?: 'all' | 'overview' | 'members' | 'agents' | 'board'
 ) {
-  hookRuntime.beginRender()
-  const tree = ProjectManageView({
+  if (!root) {
+    container = document.createElement('div')
+    document.body.append(container)
+    root = createRoot(container)
+  }
+  const props = {
     api,
     section,
     host,
@@ -205,12 +141,25 @@ function renderView(
     onProjectUpdated,
     openMembersRequestId: quickAdd?.requestId,
     onOpenMembersRequestConsumed: quickAdd?.onConsumed,
-  })
-  hookRuntime.flushEffects()
-  return tree
+  }
+  act(() => root!.render(<CommittedProjectManageView {...props} />))
+  return committedView.current
 }
 
-function findByTestId(node: unknown, testId: string): any {
+type InspectedElement = {
+  type?: unknown
+  props: {
+    [key: string]: unknown
+    children: unknown
+    onBlur(...args: unknown[]): unknown
+    onChange(...args: unknown[]): unknown
+    onClick(...args: unknown[]): unknown
+    onKeyDown(...args: unknown[]): unknown
+    onToggle(...args: unknown[]): unknown
+  }
+}
+
+function findByTestId(node: unknown, testId: string): InspectedElement | null {
   if (Array.isArray(node)) {
     for (const child of node) {
       const match = findByTestId(child, testId)
@@ -219,20 +168,49 @@ function findByTestId(node: unknown, testId: string): any {
     return null
   }
   if (!node || typeof node !== 'object') return null
-  const component = node as { type?: unknown; props?: any }
+  const component = node as { type?: unknown; props?: unknown }
   if (component.type === ProjectMembersSection) {
-    return findByTestId(ProjectMembersSection(component.props), testId)
+    return findByTestId(
+      ProjectMembersSection(component.props as Parameters<typeof ProjectMembersSection>[0]),
+      testId
+    )
   }
   if (component.type === MemberSearchPicker) {
-    return findByTestId(MemberSearchPicker(component.props), testId)
+    return findByTestId(
+      MemberSearchPicker(component.props as Parameters<typeof MemberSearchPicker>[0]),
+      testId
+    )
   }
   if (component.type === ProjectTagsSection) {
-    return findByTestId(ProjectTagsSection(component.props), testId)
+    return findByTestId(
+      ProjectTagsSection(component.props as Parameters<typeof ProjectTagsSection>[0]),
+      testId
+    )
   }
   const element = node as {
     props?: { children?: unknown; 'data-testid'?: string }
   }
-  if (element.props?.['data-testid'] === testId) return element
+  if (element.props?.['data-testid'] === testId)
+    return {
+      ...element,
+      props: new Proxy(
+        { ...element.props },
+        {
+          get(props, key) {
+            const value = Reflect.get(props, key)
+            if (typeof key !== 'string' || !key.startsWith('on') || typeof value !== 'function')
+              return value
+            return (...args: unknown[]) => {
+              let result: unknown
+              act(() => {
+                result = value(...args)
+              })
+              return result
+            }
+          },
+        }
+      ) as InspectedElement['props'],
+    }
   const children = element.props?.children
   for (const child of Array.isArray(children) ? children : [children]) {
     const match = findByTestId(child, testId)
@@ -242,12 +220,11 @@ function findByTestId(node: unknown, testId: string): any {
 }
 
 async function flushPromises() {
-  await Promise.resolve()
-  await Promise.resolve()
+  await act(async () => {})
 }
 
 describe('project tag view integration', () => {
-  beforeEach(() => hookRuntime.reset())
+  beforeEach(() => resetView())
   const boardViews: ProjectBoardViews = {
     schema_version: 1,
     views: [
@@ -287,7 +264,7 @@ describe('project tag view integration', () => {
         version: values.version + 1,
       }))
       let tree = renderView(api, host, current, onUpdated)
-      findByTestId(tree, 'cloud-project-manage-tags').props.onToggle({
+      findByTestId(tree, 'cloud-project-manage-tags')!.props.onToggle({
         currentTarget: { open: true },
       })
       renderView(api, host, current, onUpdated)
@@ -301,15 +278,19 @@ describe('project tag view integration', () => {
         .mock.calls.flatMap(([options]) => options.items)
         .find(item => item.testId === `cloud-project-tag-${action}-测试`)!
       if (action === 'rename') {
-        menu.onSelect()
+        act(() => {
+          void menu.onSelect()
+        })
         tree = renderView(api, host, current, onUpdated)
-        findByTestId(tree, 'cloud-project-tag-rename-input-测试').props.onChange({
+        findByTestId(tree, 'cloud-project-tag-rename-input-测试')!.props.onChange({
           target: { value: '验证' },
         })
         tree = renderView(api, host, current, onUpdated)
-        findByTestId(tree, 'cloud-project-tag-rename-input-测试').props.onKeyDown({ key: 'Enter' })
+        findByTestId(tree, 'cloud-project-tag-rename-input-测试')!.props.onKeyDown({ key: 'Enter' })
       } else {
-        await menu.onSelect()
+        await act(async () => {
+          await menu.onSelect()
+        })
       }
       await vi.waitFor(() => expect(onUpdated).toHaveBeenCalledOnce())
       expect(api.updateProject).toHaveBeenCalledWith('project-a', {
@@ -324,7 +305,7 @@ describe('project tag view integration', () => {
 })
 
 describe('project tag change failures', () => {
-  beforeEach(() => hookRuntime.reset())
+  beforeEach(() => resetView())
   it.each(['rename', 'delete'] as const)(
     'keeps the catalog and Issues unchanged when %s conflicts',
     async action => {
@@ -338,7 +319,7 @@ describe('project tag change failures', () => {
       vi.mocked(api.updateProject).mockRejectedValue(new Error('Project changed'))
       const onUpdated = vi.fn()
       let tree = renderView(api, host, current, onUpdated)
-      findByTestId(tree, 'cloud-project-manage-tags').props.onToggle({
+      findByTestId(tree, 'cloud-project-manage-tags')!.props.onToggle({
         currentTarget: { open: true },
       })
       renderView(api, host, current, onUpdated)
@@ -350,18 +331,23 @@ describe('project tag change failures', () => {
         .mock.calls.flatMap(([options]) => options.items)
         .find(item => item.testId === `cloud-project-tag-${action}-old`)!
       if (action === 'rename') {
-        menu.onSelect()
+        act(() => {
+          void menu.onSelect()
+        })
         tree = renderView(api, host, current, onUpdated)
-        findByTestId(tree, 'cloud-project-tag-rename-input-old').props.onChange({
+        findByTestId(tree, 'cloud-project-tag-rename-input-old')!.props.onChange({
           target: { value: 'new' },
         })
         tree = renderView(api, host, current, onUpdated)
-        findByTestId(tree, 'cloud-project-tag-rename-input-old').props.onKeyDown({ key: 'Enter' })
-      } else await menu.onSelect()
+        findByTestId(tree, 'cloud-project-tag-rename-input-old')!.props.onKeyDown({ key: 'Enter' })
+      } else
+        await act(async () => {
+          await menu.onSelect()
+        })
       await vi.waitFor(() => expect(api.updateProject).toHaveBeenCalledOnce())
       await flushPromises()
       tree = renderView(api, host, current, onUpdated)
-      expect(findByTestId(tree, 'cloud-project-manage-error').props.children).toBe(
+      expect(findByTestId(tree, 'cloud-project-manage-error')!.props.children).toBe(
         'Project changed'
       )
       expect(findByTestId(tree, 'cloud-project-tag-old')).not.toBeNull()
@@ -378,7 +364,7 @@ describe('project tag change failures', () => {
 
 describe('ProjectManageView project scope', () => {
   beforeEach(() => {
-    hookRuntime.reset()
+    resetView()
   })
 
   it('opens and consumes a host-requested member action', () => {
@@ -398,7 +384,6 @@ describe('ProjectManageView project scope', () => {
 
   it.each([false, true])('reloads members after adding, with initial failure: %s', async failed => {
     vi.useFakeTimers()
-    vi.stubGlobal('window', globalThis)
     const api = createApi()
     const host = createHost()
     const owner = {
@@ -439,9 +424,9 @@ describe('ProjectManageView project scope', () => {
 
       expect(Boolean(findByTestId(tree, 'cloud-project-members-error'))).toBe(failed)
 
-      findByTestId(tree, 'cloud-project-members-toggle').props.onClick()
+      findByTestId(tree, 'cloud-project-members-toggle')!.props.onClick()
       tree = renderView(api, host, currentProject, vi.fn())
-      findByTestId(tree, 'cloud-member-search').props.onChange({
+      findByTestId(tree, 'cloud-member-search')!.props.onChange({
         target: { value: 'member' },
       })
       renderView(api, host, currentProject, vi.fn())
@@ -449,11 +434,11 @@ describe('ProjectManageView project scope', () => {
       await flushPromises()
       tree = renderView(api, host, currentProject, vi.fn())
 
-      findByTestId(tree, 'cloud-member-role').props.onChange({
+      findByTestId(tree, 'cloud-member-role')!.props.onChange({
         target: { value: 'Viewer' },
       })
       tree = renderView(api, host, currentProject, vi.fn())
-      findByTestId(tree, 'cloud-member-result-2').props.onClick()
+      findByTestId(tree, 'cloud-member-result-2')!.props.onClick()
       await flushPromises()
       tree = renderView(api, host, currentProject, vi.fn())
 
@@ -462,7 +447,6 @@ describe('ProjectManageView project scope', () => {
       expect(findByTestId(tree, 'cloud-project-member-2')).toBeTruthy()
       expect(findByTestId(tree, 'cloud-project-members-error')).toBeNull()
     } finally {
-      vi.unstubAllGlobals()
       vi.useRealTimers()
     }
   })
@@ -485,10 +469,10 @@ describe('ProjectManageView project scope', () => {
     })
     const currentProject = project('project-a', 'private')
 
-    let tree = renderView(api, host, currentProject, vi.fn())
+    renderView(api, host, currentProject, vi.fn())
     await flushPromises()
-    tree = renderView(api, host, currentProject, vi.fn())
-    findByTestId(tree, 'cloud-project-members-toggle').props.onClick()
+    let tree = renderView(api, host, currentProject, vi.fn())
+    findByTestId(tree, 'cloud-project-members-toggle')!.props.onClick()
     tree = renderView(api, host, currentProject, vi.fn())
 
     const capability = findByTestId(tree, 'cloud-project-member-capability-2')
@@ -531,7 +515,7 @@ describe('ProjectManageView project scope', () => {
     renderView(api, host, projectA, onProjectUpdated)
     await flushPromises()
     const tree = renderView(api, host, projectA, onProjectUpdated)
-    findByTestId(tree, 'cloud-project-member-role-2').props.onChange({
+    findByTestId(tree, 'cloud-project-member-role-2')!.props.onChange({
       target: { value: 'Viewer' },
     })
     await flushPromises()
@@ -555,14 +539,14 @@ describe('ProjectManageView project scope', () => {
     const projectB = project('project-b', 'private')
 
     let tree = renderView(api, host, projectA, onProjectUpdated)
-    findByTestId(tree, 'cloud-project-manage-visibility-public').props.onClick()
+    findByTestId(tree, 'cloud-project-manage-visibility-public')!.props.onClick()
     await flushPromises()
 
     renderView(api, host, projectB, onProjectUpdated)
     tree = renderView(api, host, projectB, onProjectUpdated)
-    expect(findByTestId(tree, 'cloud-project-manage-visibility-private').props.className).toContain(
-      'bg-background'
-    )
+    expect(
+      findByTestId(tree, 'cloud-project-manage-visibility-private')!.props.className
+    ).toContain('bg-background')
 
     updateA.resolve(project('project-a', 'public', 2))
     await flushPromises()
@@ -573,11 +557,11 @@ describe('ProjectManageView project scope', () => {
       visibility: 'public',
     })
     expect(onProjectUpdated).not.toHaveBeenCalled()
-    expect(findByTestId(tree, 'cloud-project-manage-visibility-private').props.className).toContain(
-      'bg-background'
-    )
     expect(
-      findByTestId(tree, 'cloud-project-manage-visibility-public').props.className
+      findByTestId(tree, 'cloud-project-manage-visibility-private')!.props.className
+    ).toContain('bg-background')
+    expect(
+      findByTestId(tree, 'cloud-project-manage-visibility-public')!.props.className
     ).not.toContain('bg-background')
   })
 
@@ -587,7 +571,7 @@ describe('ProjectManageView project scope', () => {
     vi.mocked(api.updateProject).mockResolvedValue(project('project-a', 'public', 2))
 
     let tree = renderView(api, host, project('project-a', 'private'), vi.fn())
-    findByTestId(tree, 'cloud-project-manage-visibility-public').props.onClick()
+    findByTestId(tree, 'cloud-project-manage-visibility-public')!.props.onClick()
     await flushPromises()
     tree = renderView(api, host, project('project-a', 'public', 2), vi.fn())
 
@@ -595,7 +579,7 @@ describe('ProjectManageView project scope', () => {
       version: 1,
       visibility: 'public',
     })
-    expect(findByTestId(tree, 'cloud-project-manage-visibility-public').props.className).toContain(
+    expect(findByTestId(tree, 'cloud-project-manage-visibility-public')!.props.className).toContain(
       'bg-background'
     )
     expect(findByTestId(tree, 'cloud-project-public-access-role')).not.toBeNull()
@@ -628,7 +612,7 @@ describe('ProjectManageView project scope', () => {
 })
 
 it('CP08 keeps inherited roles read-only and exposes the parent source', async () => {
-  hookRuntime.reset()
+  resetView()
   const api = createApi()
   const host = createHost()
   const current = project('inherited-project', 'private')
@@ -653,7 +637,7 @@ it('CP08 keeps inherited roles read-only and exposes the parent source', async (
 })
 
 it('CP03 saves restricted membership with the current project version', async () => {
-  hookRuntime.reset()
+  resetView()
   const api = createApi()
   const host = createHost()
   const current = project('restricted-project', 'private')
@@ -663,7 +647,7 @@ it('CP03 saves restricted membership with the current project version', async ()
     version: current.version + 1,
   })
   const tree = renderView(api, host, current, vi.fn())
-  findByTestId(tree, 'cloud-project-membership-mode').props.onChange({
+  findByTestId(tree, 'cloud-project-membership-mode')!.props.onChange({
     target: { value: 'restricted' },
   })
   await flushPromises()
@@ -674,7 +658,7 @@ it('CP03 saves restricted membership with the current project version', async ()
 })
 
 it('does not offer membership mode when the old backend omits that capability', () => {
-  hookRuntime.reset()
+  resetView()
   const api = createApi()
   const current = {
     ...project('legacy-project', 'private'),
@@ -686,7 +670,7 @@ it('does not offer membership mode when the old backend omits that capability', 
 })
 
 it('keeps member responses scoped to the project where editing started', async () => {
-  hookRuntime.reset()
+  resetView()
   const api = createApi()
   const host = createHost()
   const delayed = deferred<ProjectManageMember>()
@@ -708,7 +692,7 @@ it('keeps member responses scoped to the project where editing started', async (
   renderView(api, host, a, vi.fn())
   await flushPromises()
   let tree = renderView(api, host, a, vi.fn())
-  findByTestId(tree, 'cloud-project-member-capability-2').props.onBlur({
+  findByTestId(tree, 'cloud-project-member-capability-2')!.props.onBlur({
     target: { value: 'Changed A' },
   })
   renderView(api, host, b, vi.fn())
@@ -716,14 +700,14 @@ it('keeps member responses scoped to the project where editing started', async (
   delayed.resolve({ ...member, capability_description: 'Changed A' })
   await flushPromises()
   tree = renderView(api, host, b, vi.fn())
-  expect(findByTestId(tree, 'cloud-project-member-capability-2').props.defaultValue).toBe(
+  expect(findByTestId(tree, 'cloud-project-member-capability-2')!.props.defaultValue).toBe(
     'Original B'
   )
-  expect(findByTestId(tree, 'cloud-project-member-capability-2').props.disabled).toBe(false)
+  expect(findByTestId(tree, 'cloud-project-member-capability-2')!.props.disabled).toBe(false)
 })
 
 it('retains the existing role and releases saving controls after a rejected change', async () => {
-  hookRuntime.reset()
+  resetView()
   const api = createApi()
   const host = createHost()
   const member = {
@@ -738,13 +722,13 @@ it('retains the existing role and releases saving controls after a rejected chan
   renderView(api, host, current, vi.fn())
   await flushPromises()
   let tree = renderView(api, host, current, vi.fn())
-  findByTestId(tree, 'cloud-project-member-role-2').props.onChange({
+  findByTestId(tree, 'cloud-project-member-role-2')!.props.onChange({
     target: { value: 'Maintainer' },
   })
   await flushPromises()
   tree = renderView(api, host, current, vi.fn())
-  expect(findByTestId(tree, 'cloud-project-member-role-2').props.value).toBe('Developer')
-  expect(findByTestId(tree, 'cloud-project-member-role-2').props.disabled).toBe(false)
+  expect(findByTestId(tree, 'cloud-project-member-role-2')!.props.value).toBe('Developer')
+  expect(findByTestId(tree, 'cloud-project-member-role-2')!.props.disabled).toBe(false)
   expect(host.trackFailed).toHaveBeenCalledOnce()
 })
 
@@ -764,7 +748,7 @@ it('loads only resources needed by the selected settings section', async () => {
   await flushPromises()
   expect(api.listItems).not.toHaveBeenCalled()
   const tree = renderView(api, host, current, vi.fn(), undefined, 'overview')
-  findByTestId(tree, 'cloud-project-manage-tags').props.onToggle({
+  findByTestId(tree, 'cloud-project-manage-tags')!.props.onToggle({
     currentTarget: { open: true },
   })
   renderView(api, host, current, vi.fn(), undefined, 'overview')
@@ -786,17 +770,17 @@ it.each(['en', 'zh-CN'] as const)(
         items: [{ id: 'item-1', version: 1, tags: ['task-only-tag'] }],
       })
     let tree = renderView(api, host, current, vi.fn(), undefined, 'overview')
-    findByTestId(tree, 'cloud-project-manage-tags').props.onToggle({
+    findByTestId(tree, 'cloud-project-manage-tags')!.props.onToggle({
       currentTarget: { open: true },
     })
     renderView(api, host, current, vi.fn(), undefined, 'overview')
     await flushPromises()
     tree = renderView(api, host, current, vi.fn(), undefined, 'overview')
-    expect(findByTestId(tree, 'cloud-project-manage-tags-error').props.children[0]).toBe(
-      locale === 'en' ? 'Failed to load tag catalog' : '加载标签目录失败'
-    )
+    expect(
+      (findByTestId(tree, 'cloud-project-manage-tags-error')!.props.children as unknown[])[0]
+    ).toBe(locale === 'en' ? 'Failed to load tag catalog' : '加载标签目录失败')
     expect(findByTestId(tree, 'cloud-project-tag-task-only-tag')).toBeNull()
-    findByTestId(tree, 'cloud-project-manage-tags-retry').props.onClick()
+    findByTestId(tree, 'cloud-project-manage-tags-retry')!.props.onClick()
     renderView(api, host, current, vi.fn(), undefined, 'overview')
     await flushPromises()
     tree = renderView(api, host, current, vi.fn(), undefined, 'overview')
@@ -822,7 +806,7 @@ it('discards late tag discovery after switching projects and leaves the next ove
       })
   )
   let tree = renderView(api, host, first, vi.fn(), undefined, 'overview')
-  findByTestId(tree, 'cloud-project-manage-tags').props.onToggle({
+  findByTestId(tree, 'cloud-project-manage-tags')!.props.onToggle({
     currentTarget: { open: true },
   })
   renderView(api, host, first, vi.fn(), undefined, 'overview')
@@ -847,11 +831,13 @@ it('isolates a member load failure and retries only the member list', async () =
   render()
   await flushPromises()
   let tree = render()
-  const failure = findByTestId(tree, 'cloud-project-members-error')
-  expect(failure.props.children[0].props.children).toBe('加载协作数据失败')
+  const failure = findByTestId(tree, 'cloud-project-members-error')!
+  expect((failure.props.children as Array<{ props: { children: string } }>)[0].props.children).toBe(
+    '加载协作数据失败'
+  )
   expect(findByTestId(tree, 'cloud-project-manage-error')).toBeNull()
   expect(findByTestId(tree, 'cloud-project-members-empty')).toBeNull()
-  findByTestId(tree, 'cloud-project-members-retry').props.onClick()
+  findByTestId(tree, 'cloud-project-members-retry')!.props.onClick()
   render()
   await flushPromises()
   tree = render()
@@ -881,8 +867,8 @@ it('keeps tag creation and renaming local until IME composition finishes', () =>
     renameTag,
     deleteTag: vi.fn(),
   })
-  const create = findByTestId(tree, 'cloud-project-tag-create-input').props.onKeyDown
-  const rename = findByTestId(tree, 'cloud-project-tag-rename-input-old').props.onKeyDown
+  const create = findByTestId(tree, 'cloud-project-tag-create-input')!.props.onKeyDown
+  const rename = findByTestId(tree, 'cloud-project-tag-rename-input-old')!.props.onKeyDown
   for (const event of [
     { key: 'Enter', nativeEvent: { isComposing: true } },
     { key: 'Enter', nativeEvent: { keyCode: 229 } },
@@ -896,4 +882,104 @@ it('keeps tag creation and renaming local until IME composition finishes', () =>
   rename({ key: 'Enter' })
   expect(createTag).toHaveBeenCalledOnce()
   expect(renameTag).toHaveBeenCalledExactlyOnceWith('old')
+})
+
+it('isolates late member searches, clears an empty query and preserves IME Escape', async () => {
+  vi.useFakeTimers()
+  const api = createApi()
+  const host = createHost()
+  const current = project('project-a', 'private')
+  const old = deferred<{ users: ProjectManageUser[] }>()
+  const user = { id: 2, user_name: 'Current result', email: 'current@example.test' }
+  vi.mocked(api.searchUsers).mockImplementation(query =>
+    query === 'old' ? old.promise : Promise.resolve({ users: [user] })
+  )
+  try {
+    let tree = renderView(api, host, current, vi.fn(), undefined, 'members')
+    await flushPromises()
+    tree = renderView(api, host, current, vi.fn(), undefined, 'members')
+    findByTestId(tree, 'cloud-project-members-toggle')!.props.onClick()
+    tree = renderView(api, host, current, vi.fn(), undefined, 'members')
+    findByTestId(tree, 'cloud-member-search')!.props.onChange({ target: { value: 'old' } })
+    await act(async () => vi.advanceTimersByTimeAsync(250))
+    tree = renderView(api, host, current, vi.fn(), undefined, 'members')
+    findByTestId(tree, 'cloud-member-search')!.props.onChange({ target: { value: 'current' } })
+    await act(async () => vi.advanceTimersByTimeAsync(250))
+    await act(async () => old.resolve({ users: [{ ...user, id: 3, user_name: 'Obsolete' }] }))
+    tree = renderView(api, host, current, vi.fn(), undefined, 'members')
+    expect(findByTestId(tree, 'cloud-member-result-2')).toBeTruthy()
+    expect(findByTestId(tree, 'cloud-member-result-3')).toBeNull()
+    act(() =>
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', isComposing: true }))
+    )
+    expect(container!.querySelector('[data-testid="cloud-project-member-picker"]')).not.toBeNull()
+    findByTestId(tree, 'cloud-member-search')!.props.onChange({ target: { value: ' ' } })
+    tree = renderView(api, host, current, vi.fn(), undefined, 'members')
+    expect(findByTestId(tree, 'cloud-member-result-2')).toBeNull()
+    act(() =>
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }))
+    )
+    expect(container!.querySelector('[data-testid="cloud-project-member-picker"]')).toBeNull()
+    expect(api.searchUsers).toHaveBeenCalledTimes(2)
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('consumes a read-only member request once without exposing invitation controls', () => {
+  const api = createApi()
+  const host = createHost()
+  const current = { ...project('project-a', 'private'), access_role: 'Viewer' as const }
+  const onConsumed = vi.fn()
+  renderView(api, host, current, vi.fn(), { requestId: 25, onConsumed }, 'members')
+  const replacement = vi.fn()
+  const tree = renderView(
+    api,
+    host,
+    current,
+    vi.fn(),
+    { requestId: 25, onConsumed: replacement },
+    'members'
+  )
+  expect(onConsumed).toHaveBeenCalledExactlyOnceWith(25)
+  expect(replacement).not.toHaveBeenCalled()
+  expect(findByTestId(tree, 'cloud-project-members-toggle')).toBeNull()
+  expect(findByTestId(tree, 'cloud-member-search')).toBeNull()
+  expect(api.addMember).not.toHaveBeenCalled()
+})
+
+it('does not publish an old self-role refresh when the API source changes for the same project id', async () => {
+  const api = createApi()
+  const nextApi = createApi()
+  const host = createHost()
+  const member: ProjectManageMember = {
+    user_id: 2,
+    user_name: 'member',
+    email: null,
+    role: 'Maintainer',
+    direct_role: 'Maintainer',
+    inherited_role: 'Developer',
+  }
+  vi.mocked(api.listMembers).mockResolvedValue([member])
+  vi.mocked(nextApi.listMembers).mockResolvedValue([member])
+  vi.mocked(api.updateMember).mockResolvedValue({
+    ...member,
+    role: 'Viewer',
+    direct_role: 'Viewer',
+  })
+  const refresh = deferred<ProjectManageProject>()
+  vi.mocked(api.getProject).mockReturnValue(refresh.promise)
+  const current = { ...project('project-a', 'private'), current_user_id: 2 }
+  const onUpdated = vi.fn()
+  renderView(api, host, current, onUpdated, undefined, 'members')
+  await flushPromises()
+  let tree = renderView(api, host, current, onUpdated, undefined, 'members')
+  findByTestId(tree, 'cloud-project-member-role-2')!.props.onChange({ target: { value: 'Viewer' } })
+  await flushPromises()
+  expect(api.getProject).toHaveBeenCalledExactlyOnceWith('project-a')
+  renderView(nextApi, host, current, onUpdated, undefined, 'members')
+  await act(async () => refresh.resolve({ ...current, access_role: 'Viewer' }))
+  tree = renderView(nextApi, host, current, onUpdated, undefined, 'members')
+  expect(onUpdated).not.toHaveBeenCalled()
+  expect(findByTestId(tree, 'cloud-project-member-role-2')!.props.value).toBe('Maintainer')
 })

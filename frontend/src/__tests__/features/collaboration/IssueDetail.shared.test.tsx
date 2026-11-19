@@ -846,7 +846,7 @@ describe('shared IssueDetail', () => {
     })
     await waitFor(() => expect(upload).toHaveBeenCalledTimes(1))
 
-    rerender(detailView({ ...api }))
+    rerender(detailView(api, { issue: { ...issue, version: issue.version + 1 } }))
     await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
     await act(async () => {
       resolveUpload(uploaded)

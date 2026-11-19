@@ -1,4 +1,10 @@
-import { useEffect, useId, useState } from 'react'
+import { useId, useMemo, useState, useSyncExternalStore } from 'react'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+  type AsyncResourceSnapshot,
+} from '@wegent/chat-core/async-resource'
 import { FolderOpen, Loader2 } from 'lucide-react'
 import {
   GitAccountConfigurationButton,
@@ -56,46 +62,58 @@ export function StandaloneGitProjectForm({
     deviceId: string
     message: string
   } | null>(null)
-  const error = validationError?.deviceId === deviceId ? validationError.message : null
-  const setError = (message: string | null) =>
+  const [dismissedHomeError, setDismissedHomeError] =
+    useState<AsyncResourceSnapshot<string> | null>(null)
+  const setError = (message: string | null) => {
     setValidationError(message === null ? null : { deviceId, message })
+    if (message === null) setDismissedHomeError(homeSnapshot)
+  }
   const { operation, deviceRecovery, submitting, canConfigure, submit, reset } = useGitCloneProject(
     {
       device,
       clone: onCloneGitRepository,
       open: onOpenStandaloneWorkspace,
       refreshDevices: onRefreshDevices,
+      onSubmittingChange,
     }
   )
   const parentPath =
     directory.deviceId === deviceId || deviceRecovery || !device ? directory.path : ''
   const setParentPath = (path: string) => setDirectory({ deviceId, path })
-  useEffect(() => {
-    onSubmittingChange(submitting)
-  }, [onSubmittingChange, submitting])
-  useEffect(() => {
-    let cancelled = false
-    if (!deviceId) return
-    onGetDeviceHomeDirectory(deviceId)
-      .then(path => {
-        if (!cancelled)
-          setDirectory(current =>
-            current.path && (current.deviceId === deviceId || deviceRecovery)
-              ? { deviceId, path: current.path }
-              : { deviceId, path }
-          )
-      })
-      .catch(error => {
-        if (!cancelled)
-          setValidationError({
-            deviceId,
-            message: error instanceof Error ? error.message : String(error),
-          })
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [deviceId, deviceRecovery, onGetDeviceHomeDirectory])
+  const home = useMemo(
+    () =>
+      createAsyncResource(
+        deviceId,
+        async signal => {
+          await Promise.resolve()
+          signal.throwIfAborted()
+          return onGetDeviceHomeDirectory(deviceId)
+        },
+        {
+          success(path) {
+            setDirectory(current =>
+              current.path && (current.deviceId === deviceId || deviceRecovery)
+                ? { deviceId, path: current.path }
+                : { deviceId, path }
+            )
+          },
+        }
+      ),
+    [deviceId, deviceRecovery, onGetDeviceHomeDirectory]
+  )
+  const homeSnapshot = useSyncExternalStore(
+    deviceId ? home.subscribe : subscribeIdleResource,
+    home.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const error =
+    validationError?.deviceId === deviceId
+      ? validationError.message
+      : homeSnapshot.status === 'error' && homeSnapshot !== dismissedHomeError
+        ? homeSnapshot.error instanceof Error
+          ? homeSnapshot.error.message
+          : String(homeSnapshot.error)
+        : null
 
   const repositoryName = getGitRepositoryName(url)
   const domain = gitRepositoryDomain(url)

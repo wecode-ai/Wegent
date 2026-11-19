@@ -10,7 +10,14 @@ export interface WorkbenchWorkspaceLaunchOptions {
   }
 }
 
+export interface WorkbenchWorkspaceLaunchOwner {
+  ownershipKey: string
+  workspaceTabId?: string
+  paneKey: string
+}
+
 interface PendingWorkbenchWorkspaceLaunch {
+  owner?: WorkbenchWorkspaceLaunchOwner
   deviceId: string
   workspacePath: string
   options: WorkbenchWorkspaceLaunchOptions
@@ -37,9 +44,11 @@ function notifyLaunchChanged() {
 export function queueWorkbenchWorkspaceLaunch(
   deviceId: string,
   workspacePath: string,
-  options: WorkbenchWorkspaceLaunchOptions
+  options: WorkbenchWorkspaceLaunchOptions,
+  owner?: WorkbenchWorkspaceLaunchOwner
 ) {
   pendingLaunch = {
+    owner,
     deviceId: deviceId.trim(),
     workspacePath: normalizeRuntimeWorkspacePath(workspacePath),
     options,
@@ -50,10 +59,15 @@ export function queueWorkbenchWorkspaceLaunch(
 export function consumeWorkbenchWorkspaceLaunch(
   deviceId: string,
   workspacePath: string,
-  taskId?: string
+  taskId?: string,
+  owner?: WorkbenchWorkspaceLaunchOwner
 ): WorkbenchWorkspaceLaunchOptions | null {
   if (
     !pendingLaunch ||
+    (pendingLaunch.owner !== undefined &&
+      (pendingLaunch.owner.ownershipKey !== owner?.ownershipKey ||
+        pendingLaunch.owner.workspaceTabId !== owner?.workspaceTabId ||
+        pendingLaunch.owner.paneKey !== owner?.paneKey)) ||
     pendingLaunch.deviceId !== deviceId.trim() ||
     pendingLaunch.workspacePath !== normalizeRuntimeWorkspacePath(workspacePath) ||
     (pendingLaunch.options.taskId !== undefined && pendingLaunch.options.taskId !== taskId)

@@ -6,7 +6,11 @@ import { RuntimeInteractionsProvider } from './RuntimeInteractionsProvider'
 import { RuntimeInteractionNotice } from './RuntimeInteractionNotice'
 import { RuntimeInteractionsPage } from './RuntimeInteractionsPage'
 import { useRuntimeInteractions } from './RuntimeInteractionsContext'
-import { InteractionProbe, UnrelatedForm } from './RuntimeInteractionTestComponents'
+import {
+  InteractionProbe,
+  UnrelatedForm,
+  type InteractionProbeHandle,
+} from './RuntimeInteractionTestComponents'
 import {
   interactionQuestion,
   interactionTask,
@@ -71,10 +75,10 @@ vi.mock('@/api/dsh/desktopHost', () => ({
 }))
 
 export let context: ReturnType<typeof useRuntimeInteractions>
-const captureContext = (value: ReturnType<typeof useRuntimeInteractions>) => {
-  context = value
+const captureContext = (handle: InteractionProbeHandle | null) => {
+  if (handle) context = handle.value
 }
-export const probe = <InteractionProbe onChange={captureContext} />
+export const probe = <InteractionProbe ref={captureContext} />
 export const unrelatedForm = <UnrelatedForm />
 
 export function view(
@@ -103,7 +107,7 @@ export function view(
     refresh: harness.refresh,
   }
   const tree = (taskSource: TaskSource, accountKey = 'test:1') => (
-    <NotificationTaskContext.Provider value={{ taskSource, registerTaskSource: () => {} }}>
+    <NotificationTaskContext.Provider value={{ taskSource }}>
       <RuntimeInteractionsProvider accountKey={accountKey}>
         {probe}
         <RuntimeInteractionNotice />

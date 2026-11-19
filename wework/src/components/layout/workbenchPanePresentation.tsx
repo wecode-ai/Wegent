@@ -1,11 +1,11 @@
 /* eslint-disable react-refresh/only-export-components -- Pane presentation hooks share this context. */
+import { createE2ELifecycleTrace } from '@/e2e/lifecycleTrace'
 import {
   createContext,
   memo,
   useContext,
-  useLayoutEffect,
+  useCallback,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from 'react'
@@ -104,18 +104,21 @@ export function SingleWorkbenchPane({
 }
 
 export function WorkbenchPaneHost({ host }: { host: HTMLDivElement }) {
-  const slotRef = useRef<HTMLDivElement>(null)
+  const bindSlot = useCallback(
+    (slot: HTMLDivElement | null) => {
+      if (!slot || host.parentElement === slot) return
+      slot.append(host)
+      const trace = createE2ELifecycleTrace('SplitWorkbenchPaneStack')
+      trace.update({ paneKey: host.dataset.workbenchPaneHost, nativeHostAttached: true })
+      return () => {
+        trace.dispose()
+        if (host.parentElement === slot) host.remove()
+      }
+    },
+    [host]
+  )
 
-  useLayoutEffect(() => {
-    const slot = slotRef.current
-    if (!slot || host.parentElement === slot) return
-    slot.append(host)
-    return () => {
-      if (host.parentElement === slot) host.remove()
-    }
-  }, [host])
-
-  return <div ref={slotRef} className="h-full min-h-0 min-w-0" />
+  return <div ref={bindSlot} className="h-full min-h-0 min-w-0" />
 }
 
 export function WorkbenchPanePortal({

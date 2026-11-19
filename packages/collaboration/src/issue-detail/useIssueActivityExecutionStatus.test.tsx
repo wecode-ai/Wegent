@@ -124,10 +124,16 @@ describe('shared Issue execution facts', () => {
     single = true,
     persistedStatus,
     strict = false,
+    activityKey = 'activity',
   } = {}) {
     const view = (
       <RuntimeConversationScope key={issue} runtime={runtime}>
-        <Activity selected={selected} single={single} persistedStatus={persistedStatus} />
+        <Activity
+          key={activityKey}
+          selected={selected}
+          single={single}
+          persistedStatus={persistedStatus}
+        />
         {open && <Viewer selected={selected} single={single} />}
       </RuntimeConversationScope>
     )
@@ -244,6 +250,63 @@ describe('shared Issue execution facts', () => {
     await act(async () => finish?.(unsubscribe))
     expect(unsubscribe).toHaveBeenCalledTimes(1)
     expect(runtime.getTranscript).not.toHaveBeenCalled()
+  })
+
+  it('does not reuse an activity binding across project sessions with the same task and message IDs', async () => {
+    vi.mocked(runtime.getTranscript).mockResolvedValueOnce(transcript({ running: false }))
+    await render({
+      open: true,
+      selected: {
+        ...message,
+        runtimeAddress: {
+          ...address,
+          projectSession: { projectId: 'project', issueId: 'first' },
+        },
+      },
+    })
+    expect(status()).toBe('done')
+    const current = transcript()
+    const currentTurn = { ...current.turns![0], id: 'turn-2' }
+    vi.mocked(runtime.getTranscript).mockResolvedValueOnce({
+      ...current,
+      turns: [{ ...currentTurn, id: 'turn-1', status: 'completed', items: [] }, currentTurn],
+    })
+    await render({
+      open: true,
+      selected: {
+        ...message,
+        runtimeAddress: {
+          ...address,
+          projectSession: { projectId: 'project', issueId: 'second' },
+        },
+      },
+    })
+    expect(status()).toBe('streaming')
+    expect(status('viewer')).toBe('streaming')
+  })
+
+  it('retains a verified legacy turn when the activity remounts after a newer run starts', async () => {
+    vi.mocked(runtime.getTranscript).mockResolvedValue(transcript({ identified: false }))
+    await render({ open: true })
+    await render()
+    await act(async () =>
+      handlers.onMessageAction?.({
+        type: 'assistant_done',
+        subtaskId: 'turn-1',
+        itemId: 'answer',
+        content: 'Final',
+      })
+    )
+    await act(async () =>
+      handlers.onMessageAction?.({
+        type: 'assistant_started',
+        subtaskId: 'turn-2',
+      })
+    )
+    await render({ activityKey: 'remounted' })
+    expect(status()).toBe('done')
+    expect(runtime.getTranscript).toHaveBeenCalledTimes(1)
+    expect(runtime.subscribe).toHaveBeenCalledTimes(1)
   })
 
   it('survives StrictMode cleanup without losing live updates', async () => {

@@ -194,7 +194,7 @@ This page indexes locations; linked topic guides own detailed procedures to avoi
 
 Composer controls, project menus and account menus still require manual code-review checks. Automated tests cannot prove that every button is documented or that the running layout matches. See repository `wework/AGENTS.md` for maintenance rules. Builds copy both documentation trees into bundled wework-docs; repository edits do not instantly update older installed versions.
 
-For recovery-center and local-service notices during launch, see [Startup recovery](./getting-started.md#startup-recovery).
+For recovery-center and local-service notices during launch, see [Startup recovery](./getting-started.md#startup-recovery). **Check Codex configuration → Retry** appears while configuration reading is pending or has failed, and reads the status again.
 
 Independent and project Issues are available from **Collaboration → My issues → Needs my action / Created by me / Participating**. Start an independent Issue from **Collaboration → My issues → New Issue**. Existing catalogs are under **Collaboration → Collaboration management → Execution devices / Templates / Agents / Teams**. See [Independent Issues and My issues](./projects.md#independent-issues). The collaboration Home retains its existing composer, Issue list and assistant workspace.
 

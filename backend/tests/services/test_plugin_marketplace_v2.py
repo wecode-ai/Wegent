@@ -3279,9 +3279,17 @@ async def test_uninstall_returns_before_device_sync_and_retains_failed_cleanup(
     monkeypatch.setattr(
         plugin_removal_sync, "get_db_session", plugin_write_operations.get_db_session
     )
+    monkeypatch.setattr(
+        plugin_removal_sync.runtime_route_resolver,
+        "resolve",
+        AsyncMock(return_value=Mock(online_info={})),
+    )
     sync = AsyncMock(
         return_value=DeviceCapabilitySyncResult(
-            device_id="current-device", success=False, error="device rejected sync"
+            device_id="current-device",
+            success=False,
+            acknowledged=True,
+            error="device rejected sync",
         )
     )
 

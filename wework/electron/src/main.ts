@@ -74,7 +74,6 @@ import { StartupTelemetryLifecycle, StartupTelemetrySuccessGate } from './host/s
 import { requiresMacosQuitWorkaround } from './host/macos-quit-workaround.mjs'
 import { RendererHealthService } from './host/renderer-health.js'
 import { RendererStartupLoader } from './host/renderer-startup-loader.js'
-import { installStartupNetworkFault } from './host/e2e-startup-network-fault.js'
 import { SmartAppManager, type SmartAppRuntimeHost } from './host/smart-app-manager.js'
 import { resolveDownloadsDirectory } from './host/downloads-directory.js'
 import { SystemSleepController } from './host/system-sleep-controller.js'
@@ -427,6 +426,15 @@ const desktopAppearance = new DesktopAppearanceController({
 })
 let popoutShortcut: GlobalShortcutController | null = null
 let systemDragContext: { conversationTitle: string | null } = { conversationTitle: null }
+let systemDragPresentationSequence = 0
+let systemDragPresentationId: number | null = null
+let systemDragPresentationRequested = false
+const currentSystemDragContext = () => ({
+  ...systemDragContext,
+  presentationId: systemDragPresentationId,
+})
+const publishSystemDragContext = () =>
+  desktopHostEvents.publish('systemDrag.context', currentSystemDragContext())
 let pendingSystemDrops: Array<{
   action: 'new-chat' | 'follow-up' | 'stash'
   text: string | null
@@ -1093,25 +1101,16 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
       if (sourceRoot) targetUrl.searchParams.set('weworkDevWorktree', sourceRoot)
     }
     startupProgress.report('renderer')
-    const disposeFault =
-      process.env.VITE_WEWORK_E2E === 'true' &&
-      process.env.WEWORK_E2E_STARTUP_NETWORK_CHANGE === '1'
-        ? installStartupNetworkFault(contents.session, targetUrl.origin)
-        : undefined
-    try {
-      await rendererStartupLoader.load({
-        webContentsId: contents.id,
-        url: targetUrl.toString(),
-        load: () =>
-          contents.loadURL(targetUrl.toString(), {
-            extraHeaders: 'X-Wework-Window-Label: main',
-          }),
-        onRecovery: () =>
-          console.warn('[startup-network-recovery] reloading interrupted entry modules'),
-      })
-    } finally {
-      disposeFault?.()
-    }
+    await rendererStartupLoader.load({
+      webContentsId: contents.id,
+      url: targetUrl.toString(),
+      load: () =>
+        contents.loadURL(targetUrl.toString(), {
+          extraHeaders: 'X-Wework-Window-Label: main',
+        }),
+      onRecovery: () =>
+        console.warn('[startup-network-recovery] reloading interrupted entry modules'),
+    })
     primaryDshLoaded = true
     runtimeError = null
     rendererHealth.ready()
@@ -1463,8 +1462,24 @@ function resizePopoutWindow(previousMode: PopoutWindowMode, mode: PopoutWindowMo
   target.setBounds(popoutWindowBounds(current, workArea, previousMode, mode))
 }
 
-async function showSystemDragPanel(): Promise<void> {
-  const target = await ensureAuxiliaryWindow('system-drag-panel')
+async function showSystemDragPanel(): Promise<number> {
+  const presentationId = ++systemDragPresentationSequence
+  systemDragPresentationId = presentationId
+  systemDragPresentationRequested = true
+  publishSystemDragContext()
+  let target: BrowserWindow
+  try {
+    target = await ensureAuxiliaryWindow('system-drag-panel')
+  } catch (error) {
+    if (systemDragPresentationId === presentationId) {
+      systemDragPresentationId = null
+      publishSystemDragContext()
+    }
+    throw error
+  }
+  if (systemDragPresentationId !== presentationId || !systemDragPresentationRequested) {
+    return presentationId
+  }
   const owner = BrowserWindow.getFocusedWindow() ?? mainWindow
   if (owner && owner !== target && target.getParentWindow() !== owner) {
     target.setParentWindow(owner)
@@ -1481,6 +1496,7 @@ async function showSystemDragPanel(): Promise<void> {
   target.setPosition(x, display.workArea.y + 8)
   target.showInactive()
   target.moveTop()
+  return presentationId
 }
 
 async function showPopoutWindow(): Promise<void> {
@@ -2821,13 +2837,25 @@ async function configureDesktopRuntime(): Promise<void> {
             await popoutWindowReadyPromise
             return captureWebContentsDataUrl(target.webContents)
           },
-          completeSystemDragDrop: async payload => {
+          completeSystemDragDrop: async (payload, presentationId) => {
+            // Direct native actions bind the current presentation synchronously at host entry.
+            const owner = presentationId ?? systemDragPresentationId
+            if (owner !== systemDragPresentationId) return false
             pendingSystemDrops.push(payload)
             await showPopoutWindow()
+            return owner === systemDragPresentationId
           },
           dismissPopout: () => popoutWindow?.hide(),
-          dismissSystemDragPanel: () => systemDragWindow?.hide(),
-          getSystemDragContext: () => systemDragContext,
+          dismissSystemDragPanel: presentationId => {
+            if (presentationId === null || presentationId !== systemDragPresentationId) return false
+            // Native dragend may hide before the matching drop request reaches the host.
+            // Keep its identity valid for that drop, while cancelling any pending show.
+            systemDragPresentationRequested = false
+            systemDragWindow?.hide()
+            publishSystemDragContext()
+            return true
+          },
+          getSystemDragContext: currentSystemDragContext,
           runtimeDiagnostics: () => ({
             ...(desktopRuntime?.diagnostics() ?? {
               coreDshPid: null,
@@ -2849,6 +2877,7 @@ async function configureDesktopRuntime(): Promise<void> {
           scheduleCoreDshRestart,
           setSystemDragContext: context => {
             systemDragContext = context
+            publishSystemDragContext()
           },
           setPopoutMode: mode => {
             const previousMode = popoutWindowMode
@@ -2858,10 +2887,7 @@ async function configureDesktopRuntime(): Promise<void> {
           setSystemSleepEnabled: enabled => systemSleep.setEnabled(enabled),
           setSystemSleepTaskActive: (source, active) => systemSleep.setTaskActive(source, active),
           showPopout: showPopoutWindow,
-          showSystemDragPanel: () =>
-            showSystemDragPanel().catch(error => {
-              console.error('Failed to show system drag panel:', error)
-            }),
+          showSystemDragPanel,
           systemDragPanelVisible: () =>
             Boolean(
               systemDragWindow && !systemDragWindow.isDestroyed() && systemDragWindow.isVisible()

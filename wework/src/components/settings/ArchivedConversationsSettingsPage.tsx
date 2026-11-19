@@ -1,5 +1,8 @@
 import { Loader2, Trash2 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useDOMEvent } from '@wegent/collaboration/dom-events'
+import { createArchivedConversationsResource } from './archivedConversationsResource'
+import { itemAddressKey, localHarnessSessionId } from './archivedConversationItems'
 import { createPortal } from 'react-dom'
 import { createLocalAppServices } from '@/api/local/localServices'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
@@ -16,9 +19,7 @@ import {
   hasArchivedBulkDeletedKey,
   notifyArchivedBulkDeleteDeleted,
   setArchivedBulkDeleteProgress,
-  subscribeArchivedBulkDeleteDeleted,
   subscribeArchivedBulkDeleteProgress,
-  type ArchivedBulkDeleteProgress,
 } from './archivedConversationsSettingsState'
 import {
   ArchivedConversationGroups,
@@ -33,10 +34,8 @@ import { track } from '@/telemetry/client'
 import { deleteReplyPredictions } from '@/features/reply-predictions/replyPredictionService'
 import {
   deleteArchivedLocalHarnessSession,
-  listArchivedLocalHarnessSessions,
   notifyLocalHarnessSessionsChanged,
   unarchiveLocalHarnessSession,
-  type LocalHarnessSessionDescriptor,
 } from '@/lib/local-terminal'
 
 type PendingDelete =
@@ -60,6 +59,7 @@ interface DeleteArchivedConversationDialogProps {
   pendingDelete: PendingDelete
   submitting: boolean
   progress?: { completed: number; total: number } | null
+  error?: string | null
   onCancel: () => void
   onConfirm: () => void
 }
@@ -70,10 +70,6 @@ function createSettingsRuntimeWorkApi() {
     throw new Error('Local runtime work API is unavailable')
   }
   return api
-}
-
-function itemAddressKey(item: ArchivedConversationItem) {
-  return `${item.deviceId}\0${item.workspacePath}\0${item.taskId}`
 }
 
 function itemProjectKey(item: ArchivedConversationItem) {
@@ -96,45 +92,6 @@ function archivedConversationAddress(item: ArchivedConversationItem) {
     taskId: item.taskId,
     ...(item.threadId ? { threadId: item.threadId } : {}),
     ...(item.runtimeHandle ? { runtimeHandle: item.runtimeHandle } : {}),
-  }
-}
-
-function localHarnessSessionId(item: ArchivedConversationItem): string | null {
-  const handle = item.runtimeHandle
-  if (!handle || handle.kind !== 'local_harness_session' || typeof handle.sessionId !== 'string') {
-    return null
-  }
-  return handle.sessionId
-}
-
-function localHarnessArchivedItem(
-  session: LocalHarnessSessionDescriptor
-): ArchivedConversationItem {
-  const normalizedPath = session.cwd.replace(/[\\/]+$/, '')
-  const projectName = normalizedPath.split(/[\\/]/).filter(Boolean).at(-1) || session.cwd
-  return {
-    id: `local-harness:${session.session_id}`,
-    taskId: session.session_id,
-    title: session.title,
-    projectId: session.project_id,
-    projectKey:
-      session.project_id === null
-        ? `local-harness-workspace:${session.cwd}`
-        : `project:${session.project_id}`,
-    projectName,
-    workspacePath: session.cwd,
-    workspaceKind: 'chat',
-    runtimeHandle: {
-      kind: 'local_harness_session',
-      sessionId: session.session_id,
-      harnessId: session.harness_id,
-    },
-    deviceId: 'local-harness',
-    deviceName: 'OpenCode',
-    source: 'local',
-    runtime: session.harness_id,
-    createdAt: new Date(session.created_at).toISOString(),
-    updatedAt: new Date(session.archived_at ?? session.created_at).toISOString(),
   }
 }
 
@@ -219,6 +176,7 @@ function DeleteArchivedConversationDialog({
   pendingDelete,
   submitting,
   progress,
+  error,
   onCancel,
   onConfirm,
 }: DeleteArchivedConversationDialogProps) {
@@ -273,6 +231,15 @@ function DeleteArchivedConversationDialog({
           {title}
         </h2>
         <p className="mt-5 text-sm leading-6 text-text-secondary">{description}</p>
+        {error && (
+          <p
+            role="alert"
+            data-testid="archived-delete-operation-error"
+            className="mt-3 text-sm text-destructive"
+          >
+            {error}
+          </p>
+        )}
         {isBulkDelete && progress && (
           <div
             data-testid="archived-bulk-delete-progress"
@@ -313,14 +280,36 @@ function DeleteArchivedConversationDialog({
 
 export function ArchivedConversationsSettingsPage({
   api: injectedApi,
+  ...props
+}: ArchivedConversationsSettingsPageProps = {}) {
+  const api = useMemo(() => injectedApi ?? createSettingsRuntimeWorkApi(), [injectedApi])
+  const [owner, setOwner] = useState({ api, revision: 0 })
+  if (owner.api !== api) setOwner({ api, revision: owner.revision + 1 })
+  return <ArchivedConversationsSettingsContent key={owner.revision} {...props} api={api} />
+}
+
+function ArchivedConversationsSettingsContent({
+  api,
   onOpenRuntimeTask,
   onRefreshWorkLists,
   onLeaveSettings,
-}: ArchivedConversationsSettingsPageProps = {}) {
+}: Omit<ArchivedConversationsSettingsPageProps, 'api'> & { api: RuntimeWorkApi }) {
   const { t } = useTranslation('common')
-  const [items, setItems] = useState<ArchivedConversationItem[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [resource] = useState(() => createArchivedConversationsResource(api))
+  const snapshot = useSyncExternalStore(resource.subscribe, resource.getSnapshot)
+  const { items, loading } = snapshot
+  const [actionError, setError] = useState<string | null>(null)
+  const loadMessage = snapshot.failure?.cause instanceof Error ? snapshot.failure.cause.message : ''
+  const loadError = snapshot.failure
+    ? loadMessage
+      ? t(
+          'workbench.archived_conversations_load_failed_detail',
+          '加载已归档任务失败：{{message}}',
+          { message: loadMessage }
+        )
+      : t('workbench.archived_conversations_load_failed', '加载已归档任务失败')
+    : null
+  const error = actionError ?? loadError
   const [search, setSearch] = useState('')
   const [source, setSource] = useState<ArchivedSourceFilter>('all')
   const [sort, setSort] = useState<ArchivedSortFilter>('updated')
@@ -328,80 +317,16 @@ export function ArchivedConversationsSettingsPage({
   const [busyKey, setBusyKey] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null)
   const [operationError, setOperationError] = useState<string | null>(null)
-  const [cleanupError, setCleanupError] = useState(getArchivedCleanupError)
-  const [bulkDeleteProgress, setBulkDeleteProgress] = useState<ArchivedBulkDeleteProgress | null>(
-    getArchivedBulkDeleteProgress()
+
+  const cleanupError = useSyncExternalStore(subscribeArchivedCleanupError, getArchivedCleanupError)
+  const bulkDeleteProgress = useSyncExternalStore(
+    subscribeArchivedBulkDeleteProgress,
+    getArchivedBulkDeleteProgress
   )
   const [lastUnarchived, setLastUnarchived] = useState<ArchivedConversationItem | null>(null)
-
-  const api = useMemo(() => injectedApi ?? createSettingsRuntimeWorkApi(), [injectedApi])
-
-  const fetchArchivedConversations = useCallback(async () => {
-    const [response, localHarnessSessions] = await Promise.all([
-      api.listArchivedConversations(),
-      listArchivedLocalHarnessSessions(),
-    ])
-    return [...response.items, ...localHarnessSessions.map(localHarnessArchivedItem)]
-  }, [api])
-
-  const loadArchivedConversations = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const archivedItems = await fetchArchivedConversations()
-      setItems(archivedItems.filter(item => !hasArchivedBulkDeletedKey(itemAddressKey(item))))
-    } catch (loadError) {
-      const message = loadError instanceof Error ? loadError.message : ''
-      setError(
-        message
-          ? t(
-              'workbench.archived_conversations_load_failed_detail',
-              '加载已归档任务失败：{{message}}',
-              { message }
-            )
-          : t('workbench.archived_conversations_load_failed', '加载已归档任务失败')
-      )
-    } finally {
-      setLoading(false)
-    }
-  }, [fetchArchivedConversations, t])
-
-  useEffect(() => {
-    const loadTimer = window.setTimeout(() => {
-      void loadArchivedConversations()
-    }, 0)
-    return () => window.clearTimeout(loadTimer)
-  }, [loadArchivedConversations])
-
-  useEffect(() => {
-    const handleCloudArchivesChanged = () => {
-      void loadArchivedConversations()
-    }
-    window.addEventListener(WORKBENCH_CLOUD_ARCHIVES_CHANGED_EVENT, handleCloudArchivesChanged)
-    return () =>
-      window.removeEventListener(WORKBENCH_CLOUD_ARCHIVES_CHANGED_EVENT, handleCloudArchivesChanged)
-  }, [loadArchivedConversations])
-
-  useEffect(() => subscribeArchivedBulkDeleteProgress(setBulkDeleteProgress), [])
-
-  useEffect(
-    () =>
-      subscribeArchivedCleanupError(error => {
-        setCleanupError(error)
-        if (error) void loadArchivedConversations()
-      }),
-    [loadArchivedConversations]
-  )
-
-  useEffect(
-    () =>
-      subscribeArchivedBulkDeleteDeleted(deletedKeys => {
-        setItems(currentItems =>
-          currentItems.filter(item => !deletedKeys.has(itemAddressKey(item)))
-        )
-      }),
-    []
-  )
+  const operation = useRef(false)
+  const loadArchivedConversations = resource.reload
+  useDOMEvent('window', WORKBENCH_CLOUD_ARCHIVES_CHANGED_EVENT, () => void resource.reload())
 
   const filteredItemsBeforeProject = useMemo(() => {
     return items.filter(item => {
@@ -452,6 +377,8 @@ export function ArchivedConversationsSettingsPage({
   const bulkDeleteRunning = bulkDeleteProgress?.running === true
 
   const handleUnarchive = async (item: ArchivedConversationItem) => {
+    if (operation.current || !resource.isActive()) return
+    operation.current = true
     const key = `unarchive:${item.id}`
     setBusyKey(key)
     setError(null)
@@ -460,15 +387,19 @@ export function ArchivedConversationsSettingsPage({
       if (harnessSessionId) {
         await unarchiveLocalHarnessSession(harnessSessionId)
         notifyLocalHarnessSessionsChanged()
+        if (!resource.isActive()) return
       } else {
         const address = archivedConversationAddress(item)
-        await api.unarchiveConversation(address)
+        const receipt = await api.unarchiveConversation(address)
+        if (!receipt.accepted) throw new Error(receipt.error ?? '')
         unmarkRuntimeConversationArchived(address)
+        if (!resource.isActive()) return
         await onRefreshWorkLists?.({ unarchivedTasks: [address] })
       }
       if (harnessSessionId) {
         await onRefreshWorkLists?.()
       }
+      if (!resource.isActive()) return
       setLastUnarchived(item)
       await loadArchivedConversations()
       track('feature_action_completed', {
@@ -484,12 +415,14 @@ export function ArchivedConversationsSettingsPage({
           : t('workbench.archived_unarchive_failed')
       )
     } finally {
+      operation.current = false
       setBusyKey(null)
     }
   }
 
   const openLastUnarchived = async () => {
-    if (!lastUnarchived) return
+    if (!lastUnarchived || operation.current || !resource.isActive()) return
+    operation.current = true
     setBusyKey(`open:${lastUnarchived.id}`)
     setError(null)
     try {
@@ -501,8 +434,9 @@ export function ArchivedConversationsSettingsPage({
       }
       if (!onOpenRuntimeTask) return
       await onRefreshWorkLists?.()
+      if (!resource.isActive()) return
       await onOpenRuntimeTask(archivedConversationAddress(lastUnarchived))
-      onLeaveSettings?.()
+      if (resource.isActive()) onLeaveSettings?.()
     } catch (openError) {
       const message = openError instanceof Error ? openError.message : ''
       setError(
@@ -511,17 +445,20 @@ export function ArchivedConversationsSettingsPage({
           : t('workbench.archived_open_failed')
       )
     } finally {
+      operation.current = false
       setBusyKey(null)
     }
   }
 
   const handleDelete = (item: ArchivedConversationItem) => {
+    setOperationError(null)
     setPendingDelete({ type: 'single', item })
   }
 
   const confirmDelete = async () => {
-    if (!pendingDelete) return
+    if (!pendingDelete || operation.current || !resource.isActive()) return
     if (pendingDelete.type !== 'single' && pendingDelete.items.length === 0) return
+    if (pendingDelete.type !== 'single' && getArchivedBulkDeleteProgress()?.running) return
     setOperationError(null)
     beginArchivedCleanup(
       (pendingDelete.type === 'single' ? [pendingDelete.item] : pendingDelete.items).map(
@@ -588,11 +525,12 @@ export function ArchivedConversationsSettingsPage({
             })
           }
 
-          const refreshedItems = await fetchArchivedConversations()
+          const verified = await resource.fetchAll()
+          const refreshedItems = verified.items
           const remainingItems = refreshedItems.filter(
             item => !hasArchivedBulkDeletedKey(itemAddressKey(item))
           )
-          setItems(remainingItems)
+          resource.applyVerifiedItems(remainingItems, verified)
           const remainingTargetItems = remainingItems.filter(
             item =>
               targetKeys.has(itemAddressKey(item)) &&
@@ -642,6 +580,7 @@ export function ArchivedConversationsSettingsPage({
       return
     }
 
+    operation.current = true
     const { item } = pendingDelete
     const key = `delete:${item.id}`
     setBusyKey(key)
@@ -652,7 +591,8 @@ export function ArchivedConversationsSettingsPage({
         deleteReplyPredictions(archivedConversationAddress(item))
       } else {
         const response = await api.deleteArchivedConversation(archivedConversationAddress(item))
-        if (response.accepted) deleteReplyPredictions(archivedConversationAddress(item))
+        if (!response.accepted) throw new Error(response.error ?? '')
+        deleteReplyPredictions(archivedConversationAddress(item))
         const cleanupText = cleanupErrorsFromResults([
           response as unknown as Record<string, unknown>,
         ])
@@ -665,7 +605,7 @@ export function ArchivedConversationsSettingsPage({
         }
       }
       if (!hasArchivedCleanupFailedKey(itemAddressKey(item))) {
-        setItems(currentItems => currentItems.filter(currentItem => currentItem.id !== item.id))
+        resource.removeItem(item)
       }
       setPendingDelete(null)
       track('feature_action_completed', {
@@ -674,22 +614,54 @@ export function ArchivedConversationsSettingsPage({
       })
     } catch (deleteError) {
       track('operation_failed', { operation: 'archived_conversation_action' })
-      throw deleteError
+      const message = deleteError instanceof Error ? deleteError.message : ''
+      setOperationError(
+        message
+          ? t('workbench.archived_bulk_delete_failed_detail', '删除已归档任务失败：{{message}}', {
+              message,
+            })
+          : t('workbench.archived_bulk_delete_failed', '删除已归档任务失败')
+      )
     } finally {
+      operation.current = false
       setBusyKey(null)
     }
   }
 
   const handleBulkDelete = () => {
-    if (items.length === 0) return
-    setPendingDelete({ type: 'all', items })
+    const current = resource.getSnapshot()
+    if (current.loading || current.failure || current.items.length === 0) return
+    setOperationError(null)
+    setPendingDelete({ type: 'all', items: current.items })
   }
 
   const handleProjectDelete = (group: ArchivedProjectGroup) => {
-    const projectItems = items.filter(item => itemProjectKey(item) === group.key)
+    const current = resource.getSnapshot()
+    if (current.loading || current.failure) return
+    const projectItems = current.items.filter(item => itemProjectKey(item) === group.key)
     if (projectItems.length === 0) return
+    setOperationError(null)
     setPendingDelete({ type: 'project', projectName: group.name, items: projectItems })
   }
+
+  const loadingIndicator = (
+    <div
+      data-testid="archived-loading"
+      className="flex min-h-11 items-center justify-center text-text-secondary"
+    >
+      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+      {t('workbench.loading', '加载中...')}
+    </div>
+  )
+  const errorIndicator = (
+    <div
+      data-testid="archived-error"
+      role="alert"
+      className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive wework:border-red-200 wework:bg-red-50 wework:text-red-600"
+    >
+      {error}
+    </div>
+  )
 
   return (
     <SettingsPage data-testid="archived-conversations-settings-page">
@@ -701,7 +673,7 @@ export function ArchivedConversationsSettingsPage({
               type="button"
               data-testid="archived-bulk-delete-button"
               onClick={handleBulkDelete}
-              disabled={bulkDeleteRunning}
+              disabled={bulkDeleteRunning || loading || !!snapshot.failure}
               className="flex h-8 items-center gap-1.5 rounded-md bg-destructive/10 px-2.5 text-sm text-destructive hover:bg-destructive/15 disabled:cursor-not-allowed disabled:opacity-45 max-md:h-11 wework:bg-red-500/10 wework:text-red-500 wework:hover:bg-red-500/15"
             >
               {bulkDeleteRunning ? (
@@ -774,14 +746,14 @@ export function ArchivedConversationsSettingsPage({
         </div>
       )}
 
-      {(cleanupError || operationError) && (
+      {(cleanupError || (operationError && !pendingDelete)) && (
         <div
           data-testid="archived-operation-error"
           role="alert"
           className="mt-4 rounded-lg border border-destructive/20 bg-destructive/10 px-4 py-3 text-sm text-destructive wework:border-red-500/20 wework:bg-red-500/10 wework:text-red-600"
         >
           {cleanupError && <div>{cleanupError}</div>}
-          {operationError && <div>{operationError}</div>}
+          {operationError && !pendingDelete && <div>{operationError}</div>}
         </div>
       )}
 
@@ -799,22 +771,23 @@ export function ArchivedConversationsSettingsPage({
         />
       )}
 
+      {error && (visibleItems.length > 0 || loading) && errorIndicator}
+      {loading && visibleItems.length > 0 && loadingIndicator}
+      {loadError && (
+        <button
+          type="button"
+          data-testid="archived-retry"
+          onClick={() => void resource.reload()}
+          className="mt-2 min-h-11 rounded-md border border-border px-3 text-sm md:min-h-8"
+        >
+          {t('common.retry')}
+        </button>
+      )}
       <div className="mt-3">
-        {loading ? (
-          <div
-            data-testid="archived-loading"
-            className="flex h-40 items-center justify-center text-text-secondary"
-          >
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            {t('workbench.loading', '加载中...')}
-          </div>
-        ) : error ? (
-          <div
-            data-testid="archived-error"
-            className="rounded-md border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive wework:border-red-200 wework:bg-red-50 wework:text-red-600"
-          >
-            {error}
-          </div>
+        {loading && visibleItems.length === 0 ? (
+          loadingIndicator
+        ) : error && visibleItems.length === 0 ? (
+          errorIndicator
         ) : visibleItems.length === 0 ? (
           <div
             data-testid="archived-empty"
@@ -829,6 +802,7 @@ export function ArchivedConversationsSettingsPage({
             groups={groupedItems}
             showHeaders={projectKey === 'all'}
             busyKey={busyKey}
+            allowProjectDelete={!loading && !snapshot.failure}
             onDelete={handleDelete}
             onDeleteProject={handleProjectDelete}
             onUnarchive={item => void handleUnarchive(item)}
@@ -839,6 +813,7 @@ export function ArchivedConversationsSettingsPage({
         <DeleteArchivedConversationDialog
           pendingDelete={pendingDelete}
           submitting={busyKey !== null}
+          error={operationError}
           progress={pendingDelete.type !== 'single' ? bulkDeleteProgress : null}
           onCancel={() => {
             if (busyKey === null) setPendingDelete(null)

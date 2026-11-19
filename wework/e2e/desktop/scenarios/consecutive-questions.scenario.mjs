@@ -48,11 +48,20 @@ export function createDesktopScenario({
   restartDesktopApp,
 }) {
   let active = false
+  let releaseFirst
+  const firstReady = new Promise(resolve => {
+    releaseFirst = resolve
+  })
   let releaseSecond
   const secondReady = new Promise(resolve => {
     releaseSecond = resolve
   })
   return {
+    cleanup() {
+      active = false
+      releaseFirst()
+      releaseSecond()
+    },
     async handleHttp(request, response, url) {
       if (
         !active ||
@@ -70,6 +79,7 @@ export function createDesktopScenario({
       const id = `consecutive-${Date.now()}`
       let events
       if (!requestContainsToolOutput(body, 'consecutive-first')) {
+        await firstReady
         const tool = selectTool(body, 'request_user_input_async', {
           questions: [{ title: FIRST }],
         })
@@ -122,8 +132,31 @@ export function createDesktopScenario({
         'waitFor',
         `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="send-message-button"]:not(:disabled)`
       )
-      await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
       try {
+        await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+        const firstTask = await waitForWorkbenchDebugState(
+          control,
+          snapshot => snapshot.workbench?.currentRuntimeTask?.taskId,
+          'The first question must belong to a real runtime task',
+          workbenchReadyTimeoutMs
+        )
+        const firstTaskId = firstTask.workbench.currentRuntimeTask.taskId
+        // A question already visible in the focused pane intentionally creates no notice.
+        await control.command('click', '[data-testid="new-chat-button"]')
+        await waitForWorkbenchDebugState(
+          control,
+          snapshot => snapshot.workbench?.currentRuntimeTask === null,
+          'The question-producing task must be offscreen before its response is released',
+          workbenchReadyTimeoutMs
+        )
+        releaseFirst()
+        await control.command('waitFor', '[data-testid="runtime-interaction-notice"]', {
+          visible: true,
+        })
+        await control.command(
+          'clickWhenEnabled',
+          `[data-testid="runtime-local-task-row-${firstTaskId}"]`
+        )
         await control.command('waitFor', CARD, { text: FIRST, visible: true })
         await control.command('waitFor', '[data-testid="runtime-interaction-notice"]', {
           visible: true,
@@ -276,6 +309,7 @@ export function createDesktopScenario({
         await verifyNativeReplyRecoveryAfterReload(control, recovery, restartDesktopApp)
       } finally {
         active = false
+        releaseFirst()
         releaseSecond()
       }
     },

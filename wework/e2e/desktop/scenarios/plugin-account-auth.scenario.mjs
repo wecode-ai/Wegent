@@ -26,7 +26,6 @@ import {
   waitForPythonRuntimeEvent,
 } from '../modules/managed-python.mjs'
 import { verifyResponsesApiGateway } from './responses-api-gateway.scenario.mjs'
-import { DESKTOP_CHECKPOINT_CI_HOSTS } from '../checkpoints.mjs'
 import {
   createConversationAuthModelFixture,
   sendOrdinaryChat,
@@ -268,7 +267,7 @@ export async function createDesktopScenario({
         false,
         'Plugin account auth scenario must not start background reply predictions'
       )
-      if (checkpoint === DESKTOP_CHECKPOINT_CI_HOSTS.get('responses-api-gateway')) {
+      if (checkpoint === 'plugin-account-auth-dws') {
         await verifyResponsesApiGateway(control, cloud, {
           checkpoint,
           resultDir,

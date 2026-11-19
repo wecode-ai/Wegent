@@ -138,8 +138,8 @@ async function startMysqlServer(logPath) {
     detached: process.platform !== 'win32',
   })
   await Promise.all([
-    appendProcessOutput(server.stdout, logPath),
-    appendProcessOutput(server.stderr, logPath),
+    appendProcessOutput(server.stdout, logPath, server),
+    appendProcessOutput(server.stderr, logPath, server),
   ])
   const connectionOptions = {
     host: '127.0.0.1',
@@ -258,8 +258,8 @@ async function startRedisServer(
       { stdio: ['ignore', 'pipe', 'pipe'] }
     )
     await Promise.all([
-      appendProcessOutput(redis.stdout, logPath),
-      appendProcessOutput(redis.stderr, logPath),
+      appendProcessOutput(redis.stdout, logPath, redis),
+      appendProcessOutput(redis.stderr, logPath, redis),
     ])
     try {
       await waitForRedisReady(redis, logPath, fromOffset)
@@ -583,8 +583,8 @@ class RealCloudEnvironment {
       }
     )
     await Promise.all([
-      appendProcessOutput(this.pythonBackend.stdout, this.backendLogPath),
-      appendProcessOutput(this.pythonBackend.stderr, this.backendLogPath),
+      appendProcessOutput(this.pythonBackend.stdout, this.backendLogPath, this.pythonBackend),
+      appendProcessOutput(this.pythonBackend.stderr, this.backendLogPath, this.pythonBackend),
     ])
     await this.observePreparation('python-backend-ready', () =>
       waitForProcessUrl(
@@ -612,8 +612,8 @@ class RealCloudEnvironment {
       detached: process.platform !== 'win32',
     })
     await Promise.all([
-      appendProcessOutput(this.rustBackend.stdout, this.backendLogPath),
-      appendProcessOutput(this.rustBackend.stderr, this.backendLogPath),
+      appendProcessOutput(this.rustBackend.stdout, this.backendLogPath, this.rustBackend),
+      appendProcessOutput(this.rustBackend.stderr, this.backendLogPath, this.rustBackend),
     ])
     await this.observePreparation('rust-gateway-ready', () =>
       waitForProcessUrl(
@@ -1232,8 +1232,8 @@ class RealCloudEnvironment {
       void appendFile(logPath, `Executor exited: code=${code}, signal=${signal}\n`)
     })
     await Promise.all([
-      appendProcessOutput(executor.stdout, logPath),
-      appendProcessOutput(executor.stderr, logPath),
+      appendProcessOutput(executor.stdout, logPath, executor),
+      appendProcessOutput(executor.stderr, logPath, executor),
     ])
     return executor
   }
@@ -1347,8 +1347,8 @@ class RealCloudEnvironment {
     })
     this.generatedRemoteExecutors.push(executor)
     await Promise.all([
-      appendProcessOutput(executor.stdout, logPath),
-      appendProcessOutput(executor.stderr, logPath),
+      appendProcessOutput(executor.stdout, logPath, executor),
+      appendProcessOutput(executor.stderr, logPath, executor),
     ])
     return { executor, logPath }
   }
@@ -1608,8 +1608,8 @@ class RealCloudEnvironment {
     })
     this.generatedRemoteExecutors.push(executor)
     await Promise.all([
-      appendProcessOutput(executor.stdout, logPath),
-      appendProcessOutput(executor.stderr, logPath),
+      appendProcessOutput(executor.stdout, logPath, executor),
+      appendProcessOutput(executor.stderr, logPath, executor),
     ])
     await this.waitForDevice(deviceId, logPath)
     return { home, logPath, executor }

@@ -1,6 +1,7 @@
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
 import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComposer'
 import { ArrowLeftRight, Bot, Menu } from 'lucide-react'
-import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import { memo, useCallback, useRef, useState } from 'react'
 import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { CloudConnectorAuthCard, ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
@@ -298,13 +299,9 @@ const MobileWorkbenchPane = memo(function MobileWorkbenchPane({
     ? undefined
     : composerDisabledReason
 
-  useEffect(() => {
-    const handlePopState = () => {
-      setSettingsOpen(isSettingsRoute(stripAppBasePath(window.location.pathname)))
-    }
-    window.addEventListener('popstate', handlePopState)
-    return () => window.removeEventListener('popstate', handlePopState)
-  }, [])
+  useWindowEvent('popstate', () => {
+    setSettingsOpen(isSettingsRoute(stripAppBasePath(window.location.pathname)))
+  })
 
   if (settingsOpen) {
     return (

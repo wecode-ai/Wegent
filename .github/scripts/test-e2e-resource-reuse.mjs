@@ -633,7 +633,7 @@ test("Windows desktop shards consume packaged dependencies without reinstalling 
   );
   assert.equal(
     pnpm.if,
-    "contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')",
+    "contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'startup-fault-isolation')",
   );
   assert(
     steps.some(

@@ -21,7 +21,7 @@ import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { DialogForm } from '@/components/common/DialogForm'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { ProjectWithTasks } from '@/types/api'
-import type { TodoViewState } from './TodoDetailPanel'
+import type { TodoViewState } from './todoViewTypes'
 
 export interface TodoCreateValues {
   projectId: number

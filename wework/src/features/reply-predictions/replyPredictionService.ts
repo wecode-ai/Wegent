@@ -145,6 +145,14 @@ export class ReplyPredictionService {
     )
   }
 
+  getPendingScopes(): ReadonlySet<string> {
+    const scopes = new Set<string>()
+    for (const [key, entry] of this.entries) {
+      if (!entry.settled && !entry.controller.signal.aborted) scopes.add(key.split('\u0000')[0]!)
+    }
+    return scopes
+  }
+
   hasError(scope: string) {
     return this.failedScopes.has(scope)
   }
