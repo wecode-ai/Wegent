@@ -1,11 +1,12 @@
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 import { useState } from 'react'
-import type { CollaborationGroup } from '../types'
 import type { CollaborationLocale } from '../i18n'
+import type { CollaborationGroup } from '../types'
 import { useCollaborationTemplateStore } from './context'
-import { templateFromProject, downloadTemplate } from './document'
+import { downloadTemplate, templateFromProject } from './document'
 import { templateFailureMessage, templateMessages } from './messages'
 import { TemplateSaveDialog } from './TemplateSaveDialog'
 import type { CollaborationTemplate } from './types'
@@ -56,7 +57,8 @@ export function GroupTemplateActions({
         </p>
       ) : null}
       {error && <p role="alert">{error}</p>}
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         className="collaboration-template-choice"
         data-testid="group-template-save"
@@ -74,10 +76,11 @@ export function GroupTemplateActions({
         }}
       >
         {m.saveTitle}
-      </button>
+      </ControlButton>
       <section className="space-y-2 border-t border-border pt-3">
         <p className="text-text-secondary">{m.exportHint}</p>
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           className="collaboration-template-choice"
           data-testid="group-template-export"
@@ -95,7 +98,7 @@ export function GroupTemplateActions({
           }}
         >
           {m.export}
-        </button>
+        </ControlButton>
       </section>
       {saving && (
         <TemplateSaveDialog

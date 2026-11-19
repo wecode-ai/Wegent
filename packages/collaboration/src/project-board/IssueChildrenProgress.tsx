@@ -1,4 +1,5 @@
 import type { CollaborationTranslate } from '../i18n'
+import { Button as ControlButton } from '../markdown/Button'
 import type { CollaborationIssue } from '../types'
 
 interface ChildrenProgress {
@@ -49,7 +50,8 @@ export function IssueChildrenProgress({
     total,
   })
   return (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid={`collaboration-issue-children-${itemId}`}
       aria-label={hint}
@@ -81,6 +83,6 @@ export function IssueChildrenProgress({
       <span className="tabular-nums text-xs">
         {t('todo.card_children_progress', undefined, { completed, total })}
       </span>
-    </button>
+    </ControlButton>
   )
 }

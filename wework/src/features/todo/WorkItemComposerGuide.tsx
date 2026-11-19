@@ -1,10 +1,11 @@
-import { ArrowUpRight, ChevronDown, LayoutDashboard, ListChecks } from 'lucide-react'
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { Button } from '@/components/ui/button'
 import { projectKey, type ProjectSpaceApi } from '@/features/todo/projectSpaceSelection'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimeTaskAddress } from '@/types/api'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ArrowUpRight, ChevronDown, LayoutDashboard, ListChecks } from 'lucide-react'
+import { useCallback, useEffect, useId, useState } from 'react'
 import { ProjectSpacePickerMenu } from './ProjectSpacePickerMenu'
 
 type TaskBinding = Awaited<ReturnType<ProjectSpaceApi['listTaskBindings']>>[number]
@@ -53,8 +54,7 @@ function WorkItemComposerGuideContent({
   onOpenBoard,
 }: WorkItemComposerGuideProps) {
   const { t } = useTranslation('common')
-  const containerRef = useRef<HTMLDivElement>(null)
-  const triggerRef = useRef<HTMLButtonElement>(null)
+  const [trigger, setTrigger] = useState<HTMLButtonElement | null>(null)
   const [open, setOpen] = useState(false)
   const traceId = useId()
   const [bindingRetry, setBindingRetry] = useState(0)
@@ -168,8 +168,7 @@ function WorkItemComposerGuideContent({
       key={project ? projectKey(project) : 'none'}
       projects={projects}
       project={project}
-      triggerRef={triggerRef}
-      containerRef={containerRef}
+      anchor={trigger}
       onClose={closeMenu}
       onSelect={option => onSelectProject?.(option)}
       onRemoveProject={onRemoveProject}
@@ -179,7 +178,6 @@ function WorkItemComposerGuideContent({
   if (resolvedItem) {
     return (
       <div
-        ref={containerRef}
         className={toolbar ? 'relative min-w-0 max-w-[12rem] shrink' : 'relative min-w-0 flex-1'}
       >
         <div
@@ -190,7 +188,8 @@ function WorkItemComposerGuideContent({
             toolbar ? 'h-8 rounded-lg px-2' : 'h-9 px-2',
           ].join(' ')}
         >
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="work-item-guide-open-summary"
             onClick={() => {
@@ -224,7 +223,7 @@ function WorkItemComposerGuideContent({
                 · {taskSummary}
               </span>
             ) : null}
-          </button>
+          </ControlButton>
           {ownedBindings?.failed ? (
             <Button
               variant="ghost"
@@ -238,7 +237,8 @@ function WorkItemComposerGuideContent({
             </Button>
           ) : null}
           {onOpen ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="work-item-open-details"
               onClick={() => {
@@ -250,10 +250,11 @@ function WorkItemComposerGuideContent({
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-muted transition hover:bg-background/70 hover:text-text-primary"
             >
               <ListChecks className="h-3.5 w-3.5" />
-            </button>
+            </ControlButton>
           ) : null}
           {onOpenBoard ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="work-item-open-board-menu"
               onClick={() => {
@@ -265,11 +266,12 @@ function WorkItemComposerGuideContent({
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-muted transition hover:bg-background/70 hover:text-text-primary"
             >
               <ArrowUpRight className="h-3.5 w-3.5" />
-            </button>
+            </ControlButton>
           ) : null}
           {canChangeProject ? (
-            <button
-              ref={triggerRef}
+            <ControlButton
+              variant="unstyled"
+              ref={setTrigger}
               type="button"
               data-testid="work-item-change-board"
               onClick={() => setOpen(current => !current)}
@@ -280,7 +282,7 @@ function WorkItemComposerGuideContent({
               className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-muted transition hover:bg-background/70 hover:text-text-primary"
             >
               <ChevronDown className="h-3.5 w-3.5" />
-            </button>
+            </ControlButton>
           ) : null}
         </div>
         {projectMenu}
@@ -328,13 +330,11 @@ function WorkItemComposerGuideContent({
   )
 
   return (
-    <div
-      ref={containerRef}
-      className={toolbar ? 'relative min-w-0 max-w-[12rem] shrink' : 'relative min-w-0 flex-1'}
-    >
+    <div className={toolbar ? 'relative min-w-0 max-w-[12rem] shrink' : 'relative min-w-0 flex-1'}>
       {canChangeProject ? (
-        <button
-          ref={triggerRef}
+        <ControlButton
+          variant="unstyled"
+          ref={setTrigger}
           type="button"
           data-testid="project-space-context-pill"
           onClick={() => setOpen(current => !current)}
@@ -344,7 +344,7 @@ function WorkItemComposerGuideContent({
           title={title}
         >
           {projectContextContent}
-        </button>
+        </ControlButton>
       ) : (
         <div
           data-testid="project-space-context-pill"

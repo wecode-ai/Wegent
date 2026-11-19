@@ -60,11 +60,6 @@ vi.mock("./platform", async (importOriginal) => ({
   useIssueAssignmentsByIssueId: collaborationAppMocks.useAssignments,
 }));
 
-vi.mock("./project-board/projectBoardDnd", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./project-board/projectBoardDnd")>()),
-  useProjectBoardSensors: () => [],
-}));
-
 import { CollaborationApp } from "./CollaborationApp";
 import { IssueDetail } from "./IssueDetail";
 import { CollaborationSettings } from "./CollaborationSettings";

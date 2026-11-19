@@ -1,4 +1,5 @@
 import { useTranslation } from '@/hooks/useTranslation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { X } from 'lucide-react'
 import { issueReplyCopy, type IssueReplyContextKind } from './issueReplyCopy'
 
@@ -23,7 +24,8 @@ export function IssueReplyContext({
         <span className="min-w-0 flex-1 truncate" title={label}>
           {label}
         </span>
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-surface-hover hover:text-text-primary md:h-7 md:w-7"
           data-testid="issue-reply-cancel"
@@ -31,7 +33,7 @@ export function IssueReplyContext({
           onClick={onCancel}
         >
           <X aria-hidden="true" className="h-4 w-4" />
-        </button>
+        </ControlButton>
       </div>
       {taskTitle ? (
         <p className="min-h-6 pb-1.5 leading-5" data-testid="issue-reply-starts-task-hint">

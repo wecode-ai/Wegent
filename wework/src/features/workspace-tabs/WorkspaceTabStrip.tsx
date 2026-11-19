@@ -1,3 +1,32 @@
+import { harnessAppsApi, type HarnessAppInstallation } from '@/api/local/harnessApps'
+import {
+  getAppPreferences,
+  type AppPreferences,
+  type FixedWorkspaceTabPreference,
+} from '@/desktop/appPreferences'
+import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { COLLABORATION_EXP_PATH } from '@/features/collaboration-exp/collaborationExpFeature'
+import { DshIcon } from '@/features/dsh-runtime/DshIcon'
+import { resolveDshRoute } from '@/features/dsh-runtime/dshRoutes'
+import { dshWorkspaceTabRoute, dshWorkspaceTabs } from '@/features/dsh-runtime/dshWorkspaceTabs'
+import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
+import { useAppPreferenceFeatureState } from '@/features/experimental-features/useAppPreferenceFeatureState'
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
+import { harnessAppRoute } from '@/features/harness-apps/harnessAppTabs'
+import {
+  INTERACTIONS_PATH,
+  useRuntimeInteractions,
+} from '@/features/notifications/RuntimeInteractionsContext'
+import { openRuntimeInteractionsTab } from '@/features/notifications/runtimeInteractionsNavigation'
+import { useTranslation } from '@/hooks/useTranslation'
+import { navigateTo } from '@/lib/navigation'
+import { getDesktopWindowLabel } from '@/lib/runtime-environment'
+import { cn } from '@/lib/utils'
+import { ActionMenu } from '@wegent/collaboration/controls/ActionMenu'
+import { TabsList, TabsRoot, TabsTab } from '@wegent/collaboration/controls/Tabs'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Bot, Boxes, CheckSquare2, CloudOff, Columns3, Pin, Plus, X } from 'lucide-react'
 import {
   useEffect,
@@ -8,47 +37,19 @@ import {
   useSyncExternalStore,
   type CSSProperties,
   type DragEvent,
-  type RefObject,
 } from 'react'
-import { createPortal } from 'react-dom'
-import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
-import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
-import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
-import { useAppPreferenceFeatureState } from '@/features/experimental-features/useAppPreferenceFeatureState'
-import { COLLABORATION_EXP_PATH } from '@/features/collaboration-exp/collaborationExpFeature'
-import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
-import { useTranslation } from '@/hooks/useTranslation'
-import {
-  INTERACTIONS_PATH,
-  useRuntimeInteractions,
-} from '@/features/notifications/RuntimeInteractionsContext'
-import { openRuntimeInteractionsTab } from '@/features/notifications/runtimeInteractionsNavigation'
-import { navigateTo } from '@/lib/navigation'
-import { getDesktopWindowLabel } from '@/lib/runtime-environment'
-import {
-  getAppPreferences,
-  type AppPreferences,
-  type FixedWorkspaceTabPreference,
-} from '@/desktop/appPreferences'
-import { cn } from '@/lib/utils'
-import {
-  closeEmptyWorkspaceWindow,
-  openWorkspaceTabWindow,
-  returnWorkspaceTabToMain,
-} from './workspaceWindow'
-import { useWorkspaceTabs } from './workspaceTabsContextValue'
-import type { WorkspaceTab, WorkspaceTabKind } from './workspaceTabs'
-import { harnessAppsApi, type HarnessAppInstallation } from '@/api/local/harnessApps'
-import { harnessAppRoute } from '@/features/harness-apps/harnessAppTabs'
-import { dshWorkspaceTabs, dshWorkspaceTabRoute } from '@/features/dsh-runtime/dshWorkspaceTabs'
-import { DshIcon } from '@/features/dsh-runtime/DshIcon'
-import { resolveDshRoute } from '@/features/dsh-runtime/dshRoutes'
 import {
   fixedWorkspaceTabPreference,
   fixedWorkspaceWindowLabel,
   saveFixedWorkspaceTabs,
 } from './fixedWorkspaceTabs'
+import type { WorkspaceTab, WorkspaceTabKind } from './workspaceTabs'
+import { useWorkspaceTabs } from './workspaceTabsContextValue'
+import {
+  closeEmptyWorkspaceWindow,
+  openWorkspaceTabWindow,
+  returnWorkspaceTabToMain,
+} from './workspaceWindow'
 
 type MenuPosition = CSSProperties & {
   left: number
@@ -99,32 +100,9 @@ function clampMenuPosition(position: MenuPosition, width: number, height: number
   }
 }
 
-function useOutsideMenu(
-  open: boolean,
-  menuRef: RefObject<HTMLDivElement | null>,
-  close: () => void
-) {
-  useEffect(() => {
-    if (!open) return
-    const handlePointerDown = (event: PointerEvent) => {
-      if (event.target instanceof Node && !menuRef.current?.contains(event.target)) close()
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') close()
-    }
-    document.addEventListener('pointerdown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [close, menuRef, open])
-}
-
 function WorkspaceTabButton({
   tab,
   active,
-  tabIndex,
   draggedTabId,
   onDragStartTab,
   onDragEndTab,
@@ -135,7 +113,6 @@ function WorkspaceTabButton({
 }: {
   tab: WorkspaceTab
   active: boolean
-  tabIndex: number
   draggedTabId: string | null
   onDragStartTab: (tabId: string) => void
   onDragEndTab: () => void
@@ -195,13 +172,11 @@ function WorkspaceTabButton({
         draggedTabId === tab.id && 'opacity-55'
       )}
     >
-      <button
+      <TabsTab
+        value={tab.id}
         type="button"
-        role="tab"
         id={`workspace-tab-select-${tab.id}`}
         aria-controls={`workspace-tab-content-${tab.id}`}
-        aria-selected={active}
-        tabIndex={tabIndex}
         data-tab-id={tab.id}
         data-testid={`workspace-tab-select-${tab.id}`}
         data-pending-question-count={pendingTab ? interactions?.pending.length : undefined}
@@ -225,13 +200,6 @@ function WorkspaceTabButton({
         }
         data-tab-kind={tab.kind}
         data-unavailable={unavailable || undefined}
-        onClick={() => {
-          if (unavailable) {
-            onUnavailableAgent()
-            return
-          }
-          selectTab(tab.id)
-        }}
         onContextMenu={event => {
           event.preventDefault()
           onContextMenu(
@@ -250,6 +218,11 @@ function WorkspaceTabButton({
         }}
         className="flex h-full min-w-11 flex-1 items-center gap-1.5 px-2.5 text-left outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-focus md:min-w-0 wework:keyboard:focus-visible:ring-blue-500"
         title={tabTitle}
+        onClick={() => {
+          if (!active) return
+          if (unavailable) onUnavailableAgent()
+          else selectTab(tab.id)
+        }}
       >
         {tabKindIcon(tab, unavailable)}
         <span className={cn('flex min-w-0 items-center', active && 'font-medium')}>
@@ -269,9 +242,10 @@ function WorkspaceTabButton({
             className="ml-auto h-3 w-3 shrink-0 opacity-55"
           />
         ) : null}
-      </button>
+      </TabsTab>
       {!tab.fixed ? (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid={`workspace-tab-close-${tab.id}`}
           tabIndex={active ? 0 : -1}
@@ -289,7 +263,7 @@ function WorkspaceTabButton({
           title={closeLabel}
         >
           <X aria-hidden="true" className="h-3 w-3" />
-        </button>
+        </ControlButton>
       ) : null}
     </div>
   )
@@ -315,11 +289,9 @@ export function WorkspaceTabStrip({
     restoreClosedTab,
     moveTab,
   } = useWorkspaceTabs()
-  const addButtonRef = useRef<HTMLButtonElement>(null)
+  const [addButton, setAddButton] = useState<HTMLButtonElement | null>(null)
   const tabStripRef = useRef<HTMLDivElement>(null)
   const [focusedTabId, setFocusedTabId] = useState<string | null>(null)
-  const addMenuRef = useRef<HTMLDivElement>(null)
-  const contextMenuRef = useRef<HTMLDivElement>(null)
   const [addMenuPosition, setAddMenuPosition] = useState<MenuPosition | null>(null)
   const [contextMenu, setContextMenu] = useState<TabContextMenuState | null>(null)
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null)
@@ -364,8 +336,6 @@ export function WorkspaceTabStrip({
     observer.observe(strip.parentElement!)
     return () => observer.disconnect()
   }, [visibleActiveTabId, visibleTabs, rovingTabId])
-  useOutsideMenu(Boolean(addMenuPosition), addMenuRef, () => setAddMenuPosition(null))
-  useOutsideMenu(Boolean(contextMenu), contextMenuRef, () => setContextMenu(null))
 
   useEffect(() => {
     if (!addMenuPosition || !experimentalFeaturesEnabled) return
@@ -555,77 +525,77 @@ export function WorkspaceTabStrip({
         data-testid="workspace-tab-strip-container"
         className={cn('flex h-full min-w-0 flex-1 items-center px-2', className)}
       >
-        <div
-          ref={tabStripRef}
-          role="tablist"
-          data-testid="workspace-tab-strip"
-          aria-label={t('workbench.workspace_tabs', '工作区标签页')}
-          className="workspace-tab-strip-scrollbar flex h-full min-w-0 max-w-[calc(100%-3rem)] flex-none items-center gap-0.5 overflow-x-auto overflow-y-hidden md:max-w-[calc(100%-2rem)]"
-          onFocusCapture={event => {
-            if (
-              event.target instanceof HTMLElement &&
-              event.target.getAttribute('role') === 'tab'
-            ) {
-              setFocusedTabId(event.target.dataset.tabId ?? null)
+        <TabsRoot
+          value={visibleActiveTabId}
+          activation="manual"
+          onValueChange={(next, details) => {
+            if (!next) return
+            const tab = visibleTabs.find(tab => tab.id === next)
+            if (tab?.kind === 'agent' && !agentAvailable) {
+              details.cancel()
+              setCloudConnectionOpen(true)
+              return
             }
+            selectTab(next)
           }}
-          onBlurCapture={event => {
-            if (!event.currentTarget.contains(event.relatedTarget)) setFocusedTabId(null)
-          }}
-          onKeyDown={event => {
-            if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
-            const tabs = Array.from(
-              event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')
-            )
-            const index = tabs.indexOf(document.activeElement as HTMLButtonElement)
-            if (index < 0 || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
-            event.preventDefault()
-            const target =
-              event.key === 'Home'
-                ? 0
-                : event.key === 'End'
-                  ? tabs.length - 1
-                  : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
-            tabs[target]?.focus()
-          }}
+          render={<div className="contents" />}
         >
-          {visibleTabs.map((tab, index) => (
-            <div
-              key={tab.id}
-              className={cn(
-                'flex h-full items-center',
-                index > 0 &&
-                  !tab.fixed &&
-                  visibleTabs[index - 1]?.fixed &&
-                  'ml-1 border-l border-border/70 pl-1'
-              )}
-            >
-              <WorkspaceTabButton
-                tab={tab}
-                active={tab.id === visibleActiveTabId}
-                tabIndex={tab.id === rovingTabId ? 0 : -1}
-                draggedTabId={draggedTabId}
-                onDragStartTab={setDraggedTabId}
-                onDragEndTab={() => setDraggedTabId(null)}
-                onDragOverTab={targetId => {
-                  if (draggedTabId) moveTab(draggedTabId, targetId)
-                }}
-                onContextMenu={(position, tabId) => {
-                  setAddMenuPosition(null)
-                  setContextMenu({ tabId, ...position })
-                }}
-                agentAvailable={agentAvailable}
-                onUnavailableAgent={() => setCloudConnectionOpen(true)}
-              />
-            </div>
-          ))}
-        </div>
-        <button
-          ref={addButtonRef}
+          <TabsList
+            render={<div />}
+            ref={tabStripRef}
+            data-testid="workspace-tab-strip"
+            aria-label={t('workbench.workspace_tabs', '工作区标签页')}
+            className="workspace-tab-strip-scrollbar flex h-full min-w-0 max-w-[calc(100%-3rem)] flex-none items-center gap-0.5 overflow-x-auto overflow-y-hidden md:max-w-[calc(100%-2rem)]"
+            onFocusCapture={event => {
+              if (
+                event.target instanceof HTMLElement &&
+                event.target.getAttribute('role') === 'tab'
+              ) {
+                setFocusedTabId(event.target.dataset.tabId ?? null)
+              }
+            }}
+            onBlurCapture={event => {
+              if (!event.currentTarget.contains(event.relatedTarget)) setFocusedTabId(null)
+            }}
+          >
+            {visibleTabs.map((tab, index) => (
+              <div
+                key={tab.id}
+                className={cn(
+                  'flex h-full items-center',
+                  index > 0 &&
+                    !tab.fixed &&
+                    visibleTabs[index - 1]?.fixed &&
+                    'ml-1 border-l border-border/70 pl-1'
+                )}
+              >
+                <WorkspaceTabButton
+                  tab={tab}
+                  active={tab.id === visibleActiveTabId}
+                  draggedTabId={draggedTabId}
+                  onDragStartTab={setDraggedTabId}
+                  onDragEndTab={() => setDraggedTabId(null)}
+                  onDragOverTab={targetId => {
+                    if (draggedTabId) moveTab(draggedTabId, targetId)
+                  }}
+                  onContextMenu={(position, tabId) => {
+                    setAddMenuPosition(null)
+                    setContextMenu({ tabId, ...position })
+                  }}
+                  agentAvailable={agentAvailable}
+                  onUnavailableAgent={() => setCloudConnectionOpen(true)}
+                />
+              </div>
+            ))}
+          </TabsList>
+        </TabsRoot>
+        <ControlButton
+          variant="unstyled"
+          ref={setAddButton}
           type="button"
           data-testid="workspace-tab-add"
           onClick={() => {
-            const trigger = addButtonRef.current
+            const trigger = addButton
             if (!trigger) return
             setContextMenu(null)
             setAddMenuPosition(current => (current ? null : menuPosition(trigger, 220)))
@@ -635,203 +605,156 @@ export function WorkspaceTabStrip({
           title={t('workbench.workspace_tab_new', '新建标签页')}
         >
           <Plus aria-hidden="true" className="h-4 w-4" />
-        </button>
+        </ControlButton>
         <div className="electron-titlebar-drag-region min-w-0 flex-1 self-stretch" />
       </div>
-      {addMenuPosition
-        ? createPortal(
-            <div
-              ref={addMenuRef}
-              role="menu"
-              data-testid="workspace-tab-add-menu"
-              className="fixed z-system-popover max-h-[70vh] w-[220px] overflow-y-auto rounded-xl border border-border/70 bg-popover/95 p-1 text-text-primary shadow-lg backdrop-blur-md"
-              style={addMenuPosition}
-            >
-              {addMenuKinds.map(([kind, Icon, label]) => (
-                <button
-                  key={kind}
-                  type="button"
-                  role="menuitem"
-                  data-testid={`workspace-tab-add-${kind}`}
-                  onClick={() => {
-                    if (kind === 'agent' && !agentAvailable) {
+      {
+        <ActionMenu
+          hideTrigger
+          anchor={addButton}
+          open={Boolean(addMenuPosition)}
+          onOpenChange={next => {
+            if (!next) setAddMenuPosition(null)
+          }}
+          ariaLabel={t('workbench.workspace_tab_new', '新建标签页')}
+          menuTestId="workspace-tab-add-menu"
+          placement="bottom-start"
+          width={220}
+          items={[
+            ...addMenuKinds.map(([kind, Icon, label]) => ({
+              testId: `workspace-tab-add-${kind}`,
+              label,
+              icon: kind === 'agent' && !agentAvailable ? CloudOff : Icon,
+              onSelect: () => {
+                if (kind === 'agent' && !agentAvailable) {
+                  setAddMenuPosition(null)
+                  setCloudConnectionOpen(true)
+                  return
+                }
+                openNewTab(kind)
+              },
+            })),
+            ...(availableKindSet.has('auxiliary')
+              ? [
+                  {
+                    testId: 'workspace-tab-add-pending-interactions',
+                    label: t('interactions.title', '待你处理'),
+                    icon: CheckSquare2,
+                    onSelect: () => {
+                      openRuntimeInteractionsTab(
+                        { tabs, selectTab, openTab },
+                        t('interactions.title', '待你处理')
+                      )
                       setAddMenuPosition(null)
-                      setCloudConnectionOpen(true)
-                      return
-                    }
-                    openNewTab(kind)
-                  }}
-                  className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted md:h-8 wework:hover:bg-black/[0.04]"
-                >
-                  {kind === 'agent' && !agentAvailable ? (
-                    <CloudOff aria-hidden="true" className="h-4 w-4 text-text-muted" />
-                  ) : (
-                    <Icon aria-hidden="true" className="h-4 w-4 text-text-secondary" />
-                  )}
-                  {label}
-                </button>
-              ))}
-              {availableKindSet.has('auxiliary') ? (
-                <button
-                  type="button"
-                  role="menuitem"
-                  data-testid="workspace-tab-add-pending-interactions"
-                  onClick={() => {
-                    openRuntimeInteractionsTab(
-                      { tabs, selectTab, openTab },
-                      t('interactions.title', '待你处理')
-                    )
-                    setAddMenuPosition(null)
-                  }}
-                  className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted md:h-8 wework:hover:bg-black/[0.04]"
-                >
-                  <CheckSquare2 aria-hidden="true" className="h-4 w-4 text-text-secondary" />
-                  {t('interactions.title', '待你处理')}
-                </button>
-              ) : null}
-              {availableKindSet.has('auxiliary') && collaborationExperience.enabled ? (
-                <button
-                  type="button"
-                  role="menuitem"
-                  data-testid="workspace-tab-add-collaboration-exp"
-                  onClick={() => {
-                    openTab('auxiliary', {
-                      contentRoute: COLLABORATION_EXP_PATH,
-                      title: t('workbench.workspace_tab_collaboration_exp', '协作 exp'),
-                    })
-                    setAddMenuPosition(null)
-                  }}
-                  className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted md:h-8 wework:hover:bg-black/[0.04]"
-                >
-                  <Columns3 aria-hidden="true" className="h-4 w-4 text-text-secondary" />
-                  {t('workbench.workspace_tab_collaboration_exp', '协作 exp')}
-                </button>
-              ) : null}
-              {availableKindSet.has('auxiliary') && experimentalFeaturesEnabled ? (
-                <>
-                  {installedSmartApps.map(installation => (
-                    <button
-                      key={installation.id}
-                      type="button"
-                      role="menuitem"
-                      data-testid={`workspace-tab-add-smart-app-${installation.id}`}
-                      onClick={() => openInstalledSmartApp(installation)}
-                      className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted md:h-8 wework:hover:bg-black/[0.04]"
-                    >
-                      <Boxes aria-hidden="true" className="h-4 w-4 shrink-0 text-text-secondary" />
-                      <span className="truncate">{installation.manifest.displayName}</span>
-                    </button>
-                  ))}
-                  <button
-                    type="button"
-                    role="menuitem"
-                    data-testid="workspace-tab-add-smart-app"
-                    onClick={openSmartApps}
-                    className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted md:h-8 wework:hover:bg-black/[0.04]"
-                  >
-                    <Boxes aria-hidden="true" className="h-4 w-4 text-text-secondary" />
-                    {t('workbench.smart_apps_manage', '管理智能工作台')}
-                    <ExperimentalBadge
-                      testId="workspace-tab-add-smart-app-experimental-badge"
-                      className="ml-auto"
-                    />
-                  </button>
-                </>
-              ) : null}
-              {availableKindSet.has('auxiliary')
-                ? [...registeredDshTabs]
-                    .sort((left, right) => (left.order ?? 100) - (right.order ?? 100))
-                    .map(descriptor => (
-                      <button
-                        key={descriptor.id}
-                        type="button"
-                        role="menuitem"
-                        data-testid={`workspace-tab-add-dsh-${descriptor.id}`}
-                        onClick={() => openDshWorkspaceTab(descriptor.id, descriptor.title)}
-                        className="flex h-11 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted md:h-8 wework:hover:bg-black/[0.04]"
-                      >
-                        <Boxes
-                          aria-hidden="true"
-                          className="h-4 w-4 shrink-0 text-text-secondary"
+                    },
+                  },
+                ]
+              : []),
+            ...(availableKindSet.has('auxiliary') && collaborationExperience.enabled
+              ? [
+                  {
+                    testId: 'workspace-tab-add-collaboration-exp',
+                    label: t('workbench.workspace_tab_collaboration_exp', '协作 exp'),
+                    icon: Columns3,
+                    onSelect: () => {
+                      openTab('auxiliary', {
+                        contentRoute: COLLABORATION_EXP_PATH,
+                        title: t('workbench.workspace_tab_collaboration_exp', '协作 exp'),
+                      })
+                      setAddMenuPosition(null)
+                    },
+                  },
+                ]
+              : []),
+            ...(availableKindSet.has('auxiliary') && experimentalFeaturesEnabled
+              ? [
+                  ...installedSmartApps.map(installation => ({
+                    testId: `workspace-tab-add-smart-app-${installation.id}`,
+                    label: installation.manifest.displayName,
+                    icon: Boxes,
+                    onSelect: () => openInstalledSmartApp(installation),
+                  })),
+                  {
+                    testId: 'workspace-tab-add-smart-app',
+                    label: (
+                      <>
+                        {t('workbench.smart_apps_manage', '管理智能工作台')}
+                        <ExperimentalBadge
+                          testId="workspace-tab-add-smart-app-experimental-badge"
+                          className="ml-auto"
                         />
-                        <span className="truncate">{descriptor.title}</span>
-                      </button>
-                    ))
-                : null}
-            </div>,
-            document.body
-          )
-        : null}
-      {contextMenu && contextTab
-        ? createPortal(
-            <div
-              ref={contextMenuRef}
-              role="menu"
-              data-testid="workspace-tab-context-menu"
-              className="fixed z-system-popover w-[196px] rounded-xl border border-border/70 bg-popover/95 p-1 text-text-primary shadow-lg backdrop-blur-md"
-              style={{ left: contextMenu.left, top: contextMenu.top }}
-            >
-              {contextTab.fixed ? (
-                <button
-                  type="button"
-                  role="menuitem"
-                  data-testid="workspace-tab-unpin"
-                  disabled={!appPreferences?.loaded}
-                  onClick={() => void unpinContextTab()}
-                  className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted disabled:opacity-50"
-                >
-                  <Pin aria-hidden="true" className="h-4 w-4 text-text-secondary" />
-                  {t('workbench.workspace_tab_unpin', '取消固定标签页')}
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  role="menuitem"
-                  data-testid="workspace-tab-pin"
-                  disabled={!appPreferences?.loaded}
-                  onClick={() => void pinContextTab()}
-                  className="flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted disabled:opacity-50"
-                >
-                  <Pin aria-hidden="true" className="h-4 w-4 text-text-secondary" />
-                  {t('workbench.workspace_tab_pin', '固定标签页')}
-                </button>
-              )}
-              <button
-                type="button"
-                role="menuitem"
-                data-testid="workspace-tab-open-new-window"
-                onClick={() => void openContextTabInNewWindow()}
-                className="flex h-8 w-full items-center rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted"
-              >
-                {t('workbench.workspace_tab_open_new_window', '在新窗口中打开')}
-              </button>
-              {detachedWindow ? (
-                <button
-                  type="button"
-                  role="menuitem"
-                  data-testid="workspace-tab-return-to-main"
-                  onClick={() => void returnContextTabToMain()}
-                  className="flex h-8 w-full items-center rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted"
-                >
-                  {t('workbench.workspace_tab_return_to_main', '移回主窗口')}
-                </button>
-              ) : null}
-              <button
-                type="button"
-                role="menuitem"
-                data-testid="workspace-tab-close-others"
-                onClick={() => {
-                  closeOtherTabs(contextTab.id)
-                  setContextMenu(null)
-                }}
-                className="flex h-8 w-full items-center rounded-lg px-2 text-left text-sm text-text-primary hover:bg-muted"
-              >
-                {t('workbench.workspace_tab_close_others', '关闭其他标签页')}
-              </button>
-            </div>,
-            document.body
-          )
-        : null}
+                      </>
+                    ),
+                    icon: Boxes,
+                    onSelect: openSmartApps,
+                  },
+                ]
+              : []),
+            ...(availableKindSet.has('auxiliary')
+              ? [...registeredDshTabs]
+                  .sort((a, b) => (a.order ?? 100) - (b.order ?? 100))
+                  .map(descriptor => ({
+                    testId: `workspace-tab-add-dsh-${descriptor.id}`,
+                    label: descriptor.title,
+                    icon: Boxes,
+                    onSelect: () => openDshWorkspaceTab(descriptor.id, descriptor.title),
+                  }))
+              : []),
+          ]}
+        />
+      }
+      {
+        <ActionMenu
+          hideTrigger
+          contextMenuPosition={contextMenu && contextTab ? contextMenu : null}
+          onContextMenuClose={() => setContextMenu(null)}
+          ariaLabel={contextTab?.title ?? t('workbench.workspace_tabs', '工作区标签页')}
+          menuTestId="workspace-tab-context-menu"
+          width={196}
+          items={
+            contextTab
+              ? [
+                  {
+                    testId: contextTab.fixed ? 'workspace-tab-unpin' : 'workspace-tab-pin',
+                    label: t(
+                      contextTab.fixed
+                        ? 'workbench.workspace_tab_unpin'
+                        : 'workbench.workspace_tab_pin'
+                    ),
+                    icon: Pin,
+                    disabled: !appPreferences?.loaded,
+                    onSelect: () => {
+                      if (contextTab.fixed) void unpinContextTab()
+                      else void pinContextTab()
+                    },
+                  },
+                  {
+                    testId: 'workspace-tab-open-new-window',
+                    label: t('workbench.workspace_tab_open_new_window', '在新窗口中打开'),
+                    onSelect: () => void openContextTabInNewWindow(),
+                  },
+                  ...(detachedWindow
+                    ? [
+                        {
+                          testId: 'workspace-tab-return-to-main',
+                          label: t('workbench.workspace_tab_return_to_main', '移回主窗口'),
+                          onSelect: () => void returnContextTabToMain(),
+                        },
+                      ]
+                    : []),
+                  {
+                    testId: 'workspace-tab-close-others',
+                    label: t('workbench.workspace_tab_close_others', '关闭其他标签页'),
+                    onSelect: () => {
+                      closeOtherTabs(contextTab.id)
+                      setContextMenu(null)
+                    },
+                  },
+                ]
+              : []
+          }
+        />
+      }
       <CloudConnectionDialog
         open={cloudConnectionOpen}
         onlineCloudDeviceCount={0}

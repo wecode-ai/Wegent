@@ -464,7 +464,7 @@ describe('SmartAppsMarketplacePage', () => {
     render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
 
     fireEvent.click(await screen.findByTestId(`smart-app-actions-${importedInstallation.id}`))
-    fireEvent.pointerDown(screen.getByTestId(`smart-app-export-package-${importedInstallation.id}`))
+    fireEvent.click(screen.getByTestId(`smart-app-export-package-${importedInstallation.id}`))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('发布包导出失败。')
     expect(
@@ -498,7 +498,7 @@ describe('SmartAppsMarketplacePage', () => {
       const model = await screen.findByTestId('harness-app-model-research-desk')
 
       fireEvent.click(screen.getByTestId('smart-app-actions-running-app'))
-      fireEvent.pointerDown(screen.getByTestId('smart-app-stop-menu-running-app'))
+      fireEvent.click(screen.getByTestId('smart-app-stop-menu-running-app'))
       await waitFor(() => expect(smartAppsApi.listOwned).toHaveBeenCalledTimes(2))
 
       expect(screen.getByTestId('harness-app-model-research-desk')).toBe(model)
@@ -584,7 +584,7 @@ describe('SmartAppsMarketplacePage', () => {
       render(<SmartAppsMarketplacePage api={smartAppsApi} mode="owned" />)
 
       const selector = await screen.findByTestId('harness-app-model-research-desk')
-      expect(selector).toHaveValue(modelKey)
+      expect(selector).toHaveAttribute('data-value', modelKey)
       expect(screen.getByTestId('harness-app-start-research-desk')).toBeEnabled()
       if (cloudState === 'failed') {
         expect(await screen.findByRole('alert')).toHaveTextContent('云目录不可用')
@@ -599,7 +599,7 @@ describe('SmartAppsMarketplacePage', () => {
         )
         expect(screen.queryByRole('alert')).not.toBeInTheDocument()
         expect(screen.getByTestId('harness-app-model-research-desk')).toBe(selector)
-        expect(selector).toHaveValue(modelKey)
+        expect(selector).toHaveAttribute('data-value', modelKey)
       } else {
         expect(screen.queryByText('正在加载')).not.toBeInTheDocument()
         await act(async () => finishCatalog({ items: [item()] }))
@@ -681,7 +681,7 @@ describe('SmartAppsMarketplacePage', () => {
       const submit = await screen.findByTestId('harness-app-install-confirm')
       const model = screen.getByTestId('harness-app-model-select')
       const modelKey = localHarnessModelOptionKey(harnessModel)
-      expect(model).toHaveValue(modelKey)
+      expect(model).toHaveAttribute('data-value', modelKey)
       let finishLocal!: (value: (typeof importedInstallation)[]) => void
       listInstalled.mockImplementationOnce(() =>
         discoveryState === 'failed'
@@ -701,7 +701,7 @@ describe('SmartAppsMarketplacePage', () => {
       fireEvent.click(submit)
       expect(installPackage).not.toHaveBeenCalled()
       expect(screen.getByTestId('harness-app-model-select')).toBe(model)
-      expect(model).toHaveValue(modelKey)
+      expect(model).toHaveAttribute('data-value', modelKey)
 
       if (discoveryState === 'failed') {
         fireEvent.click(screen.getByTestId('smart-apps-load-retry'))
@@ -728,15 +728,16 @@ describe('SmartAppsMarketplacePage', () => {
       })
     )
 
-    fireEvent.change(selector, { target: { value: modelKey } })
+    fireEvent.click(selector)
+    fireEvent.click(await screen.findByRole('option', { name: /Local Model/ }))
 
     await waitFor(() => expect(updateInstalled).toHaveBeenCalledWith('research-desk', { modelKey }))
-    await waitFor(() => expect(selector).toHaveValue(modelKey))
+    await waitFor(() => expect(selector).toHaveAttribute('data-value', modelKey))
     await waitFor(() => expect(selector).toBeEnabled())
     expect(screen.getByTestId('harness-app-start-research-desk')).toBeEnabled()
     await act(async () => finishCloud({ items: [item()] }))
     expect(screen.getByTestId('harness-app-model-research-desk')).toBe(selector)
-    expect(selector).toHaveValue(modelKey)
+    expect(selector).toHaveAttribute('data-value', modelKey)
   })
 
   test.each(['pending', 'failed'])(
@@ -752,9 +753,9 @@ describe('SmartAppsMarketplacePage', () => {
       render(<SmartAppsMarketplacePage api={api()} mode="owned" />)
       const model = await screen.findByTestId(`harness-app-model-${installation.id}`)
       fireEvent.click(screen.getByTestId(`smart-app-actions-${installation.id}`))
-      fireEvent.pointerDown(screen.getByTestId(`smart-app-remove-local-${installation.id}`))
+      fireEvent.click(screen.getByTestId(`smart-app-remove-local-${installation.id}`))
       let submit = screen.getByTestId('smart-app-remove-local-confirm')
-      const dialog = screen.getByRole('dialog')
+      const dialog = screen.getByRole('alertdialog')
       let finishLocal!: (value: (typeof installation)[]) => void
       listInstalled.mockImplementationOnce(() =>
         discoveryState === 'failed'
@@ -778,10 +779,11 @@ describe('SmartAppsMarketplacePage', () => {
         expect(dialog).toHaveAccessibleDescription(/正在重新确认本机安装状态/)
       }
       expect(screen.getByTestId(`harness-app-model-${installation.id}`)).toBe(model)
-      expect(model).toHaveValue(installation.modelKey)
+      expect(model).toHaveAttribute('data-value', installation.modelKey)
       expect(model).toBeDisabled()
       expect(submit).toBeDisabled()
-      fireEvent.change(model, { target: { value: localHarnessModelOptionKey(harnessModel) } })
+      fireEvent.click(model)
+      expect(model).not.toHaveAttribute('aria-expanded', 'true')
       fireEvent.click(submit)
       expect(updateInstalled).not.toHaveBeenCalled()
       expect(deleteInstalled).not.toHaveBeenCalled()
@@ -789,19 +791,19 @@ describe('SmartAppsMarketplacePage', () => {
 
       if (discoveryState === 'failed') {
         fireEvent.click(within(dialog).getByRole('button', { name: '取消', exact: true }))
-        expect(screen.queryByRole('dialog')).toBeNull()
+        expect(screen.queryByRole('alertdialog')).toBeNull()
         expect(screen.getByRole('alert')).toHaveTextContent('本机列表不可用')
         fireEvent.click(screen.getByTestId('smart-apps-load-retry'))
         await waitFor(() => expect(model).toBeEnabled())
         fireEvent.click(screen.getByTestId(`smart-app-actions-${installation.id}`))
-        fireEvent.pointerDown(screen.getByTestId(`smart-app-remove-local-${installation.id}`))
+        fireEvent.click(screen.getByTestId(`smart-app-remove-local-${installation.id}`))
         submit = screen.getByTestId('smart-app-remove-local-confirm')
       } else {
         await act(async () => finishLocal([installation]))
       }
       await waitFor(() => expect(submit).toBeEnabled())
       expect(model).toBeEnabled()
-      expect(model).toHaveValue(installation.modelKey)
+      expect(model).toHaveAttribute('data-value', installation.modelKey)
       fireEvent.click(submit)
       await waitFor(() => expect(deleteInstalled).toHaveBeenCalledWith(installation.id))
     }
@@ -826,7 +828,7 @@ describe('SmartAppsMarketplacePage', () => {
 
       expect(screen.getByRole('alert')).toHaveTextContent('刷新失败')
       expect(screen.getByTestId('harness-app-model-research-desk')).toBe(selector)
-      expect(selector).toHaveValue('original-model')
+      expect(selector).toHaveAttribute('data-value', 'original-model')
 
       await act(async () => window.dispatchEvent(new PopStateEvent('popstate')))
 
@@ -952,9 +954,9 @@ describe('SmartAppsMarketplacePage', () => {
     const { rerender } = render(<SmartAppsMarketplacePage api={initialApi} mode="owned" />)
 
     fireEvent.click(await screen.findByTestId(`smart-app-actions-${publishedImport.id}`))
-    fireEvent.pointerDown(screen.getByTestId(`smart-app-remove-local-${publishedImport.id}`))
+    fireEvent.click(screen.getByTestId(`smart-app-remove-local-${publishedImport.id}`))
 
-    expect(screen.getByRole('dialog', { name: '从本机移除工作台？' })).toHaveTextContent(
+    expect(screen.getByRole('alertdialog', { name: '从本机移除工作台？' })).toHaveTextContent(
       '已发布版本和分享范围不会受到影响'
     )
     fireEvent.click(screen.getByTestId('smart-app-remove-local-confirm'))
@@ -1221,7 +1223,7 @@ describe('SmartAppsMarketplacePage', () => {
     render(<SmartAppsMarketplacePage api={api([])} mode="owned" />)
 
     fireEvent.click(await screen.findByTestId(`smart-app-actions-${importedInstallation.id}`))
-    fireEvent.pointerDown(screen.getByTestId(`smart-app-open-directory-${importedInstallation.id}`))
+    fireEvent.click(screen.getByTestId(`smart-app-open-directory-${importedInstallation.id}`))
 
     expect(await screen.findByText('打开工作台文件夹失败。')).toBeInTheDocument()
     expect(revealLocalFile).toHaveBeenCalledWith(importedInstallation.packagePath)

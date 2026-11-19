@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react'
-import { MessageSquarePlus, CornerDownRight, Archive, Check, AlertCircle, X } from 'lucide-react'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
-import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { readWorkspacePathDragData } from '@/lib/workspace-path-transfer'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { AlertCircle, Archive, Check, CornerDownRight, MessageSquarePlus, X } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState, type DragEvent } from 'react'
 
 type DropAction = 'new-chat' | 'follow-up' | 'stash'
 type DropStatus = { kind: 'success' | 'error'; action: DropAction } | null
@@ -173,7 +174,8 @@ export function SystemDragPanel() {
               dismiss()
             }}
           >
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="system-drag-close-button"
               aria-label={t('common.close', '关闭')}
@@ -181,7 +183,7 @@ export function SystemDragPanel() {
               className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-muted hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring"
             >
               <X className="h-3.5 w-3.5" aria-hidden="true" />
-            </button>
+            </ControlButton>
           </div>
         </div>
       </section>

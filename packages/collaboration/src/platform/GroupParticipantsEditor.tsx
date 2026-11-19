@@ -1,83 +1,61 @@
+import { SearchableSelect } from '../controls/SearchableSelect'
+import { TextField as ControlInput } from '../controls/TextField'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useState } from "react";
-import { isImeComposingEvent } from "@wegent/chat-core/ime";
-import * as Popover from "@radix-ui/react-popover";
-import { Bot, UserRound, Plus, Check, Copy, X } from "lucide-react";
-import type { CollaborationGroup } from "../types";
-import { CollaborationGroupRoster } from "./CollaborationGroupRoster";
+import { Bot, Copy, Plus, UserRound, X } from 'lucide-react'
+import type { CollaborationGroup } from '../types'
+import { CollaborationGroupRoster } from './CollaborationGroupRoster'
 
 export type GroupCandidate = {
-  value: string;
-  kind: "human" | "agent";
-  id: string;
-  name: string;
-};
+  value: string
+  kind: 'human' | 'agent'
+  id: string
+  name: string
+}
 
 export type GroupAgentAction = {
-  id: "create" | "copy";
-  label: string;
-  description: string;
-  onSelect(): void;
-};
+  id: 'create' | 'copy'
+  label: string
+  description: string
+  onSelect(): void
+}
 
 const copy = {
-  "zh-CN": {
-    leader: "负责人",
-    makeLeader: "设为负责人",
-    members: "协作小组成员",
-    add: "添加成员",
-    memberHint: "负责人接收任务并协调推进，可在成员行切换。",
-    empty: "尚未添加其他成员",
-    responsibility: "职责（选填）",
-    responsibilityPlaceholder: "在小组中负责什么（可选）",
-    search: "搜索成员或智能体",
-    noResults: "没有匹配的成员或智能体",
-    remove: "移除",
-    human: "成员",
-    agent: "智能体",
-    agentActions: "添加智能体",
+  'zh-CN': {
+    leader: '负责人',
+    makeLeader: '设为负责人',
+    members: '协作小组成员',
+    add: '添加成员',
+    memberHint: '负责人接收任务并协调推进，可在成员行切换。',
+    empty: '尚未添加其他成员',
+    responsibility: '职责（选填）',
+    responsibilityPlaceholder: '在小组中负责什么（可选）',
+    search: '搜索成员或智能体',
+    noResults: '没有匹配的成员或智能体',
+    remove: '移除',
+    human: '成员',
+    agent: '智能体',
+    agentActions: '添加智能体',
   },
   en: {
-    leader: "Leader",
-    makeLeader: "Make leader",
-    members: "Team members",
-    add: "Add members",
-    memberHint:
-      "The leader receives work and coordinates progress. Change it from any member row.",
-    empty: "No additional members yet",
-    responsibility: "Responsibility (optional)",
-    responsibilityPlaceholder: "What will they own? (Optional)",
-    search: "Search people or agents",
-    noResults: "No matching people or agents",
-    remove: "Remove",
-    human: "Person",
-    agent: "Agent",
-    agentActions: "Add an agent",
+    leader: 'Leader',
+    makeLeader: 'Make leader',
+    members: 'Team members',
+    add: 'Add members',
+    memberHint: 'The leader receives work and coordinates progress. Change it from any member row.',
+    empty: 'No additional members yet',
+    responsibility: 'Responsibility (optional)',
+    responsibilityPlaceholder: 'What will they own? (Optional)',
+    search: 'Search people or agents',
+    noResults: 'No matching people or agents',
+    remove: 'Remove',
+    human: 'Person',
+    agent: 'Agent',
+    agentActions: 'Add an agent',
   },
-};
-
-function Identity({
-  candidate,
-  locale,
-}: {
-  candidate: GroupCandidate;
-  locale: keyof typeof copy;
-}) {
-  const Icon = candidate.kind === "agent" ? Bot : UserRound;
-  return (
-    <span className="collaboration-group-person">
-      <span className="collaboration-group-person-icon">
-        <Icon size={18} aria-hidden="true" />
-      </span>
-      <span>
-        <strong>{candidate.name}</strong>
-        <small>{copy[locale][candidate.kind]}</small>
-      </span>
-    </span>
-  );
 }
 
 function ParticipantPicker({
@@ -87,132 +65,60 @@ function ParticipantPicker({
   onSelect,
   agentActions = [],
 }: {
-  candidates: GroupCandidate[];
-  selected: string[];
-  locale: keyof typeof copy;
-  onSelect(candidate: GroupCandidate, selected: boolean): void;
-  agentActions?: GroupAgentAction[];
+  candidates: GroupCandidate[]
+  selected: string[]
+  locale: keyof typeof copy
+  onSelect(candidate: GroupCandidate, selected: boolean): void
+  agentActions?: GroupAgentAction[]
 }) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const messages = copy[locale];
-  const label = messages.add;
-  const visible = candidates.filter((candidate) =>
-    candidate.name
-      .toLocaleLowerCase()
-      .includes(query.trim().toLocaleLowerCase()),
-  );
-  const changeOpen = (next: boolean) => {
-    setOpen(next);
-    setQuery("");
-  };
+  const messages = copy[locale]
   return (
-    <Popover.Root open={open} onOpenChange={changeOpen}>
-      <Popover.Trigger asChild>
-        <button
-          type="button"
-          className="collaboration-group-people-action"
-          data-testid="collaboration-group-create-add-members"
-        >
+    <SearchableSelect
+      multiple
+      value={selected}
+      testId="collaboration-group-create-add-members"
+      searchTestId="collaboration-group-members-search"
+      accessibleLabel={messages.add}
+      searchPlaceholder={messages.search}
+      emptyLabel={messages.noResults}
+      triggerContent={
+        <>
           <Plus size={16} aria-hidden="true" />
-          {label}
-        </button>
-      </Popover.Trigger>
-      <Popover.Content
-        className="collaboration-group-people-picker"
-        align="end"
-        side="bottom"
-        sideOffset={6}
-        avoidCollisions={false}
-        collisionPadding={12}
-        aria-label={messages.add}
-        onEscapeKeyDown={(event) => {
-          event.preventDefault();
-          event.stopPropagation();
-          if (!isImeComposingEvent(event)) changeOpen(false);
-        }}
-        onKeyDown={(event) => {
-          if (!["ArrowDown", "ArrowUp"].includes(event.key)) return;
-          const items = Array.from(
-            event.currentTarget.querySelectorAll<HTMLButtonElement>(
-              "[data-candidate]",
-            ),
-          );
-          const index = items.indexOf(
-            document.activeElement as HTMLButtonElement,
-          );
-          if (!items.length) return;
-          items[
-            index < 0
-              ? event.key === "ArrowDown"
-                ? 0
-                : items.length - 1
-              : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) %
-                items.length
-          ]?.focus();
-          event.preventDefault();
-        }}
-      >
-        <input
-          data-testid="collaboration-group-members-search"
-          aria-label={messages.search}
-          placeholder={messages.search}
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-        />
-        <div
-          className="collaboration-group-people-options"
-          role="group"
-          aria-label={label}
-        >
-          {visible.map((candidate) => {
-            const checked = selected.includes(candidate.value);
-            return (
-              <button
-                type="button"
-                key={candidate.value}
-                data-candidate
-                aria-pressed={checked}
-                data-testid={`collaboration-group-create-member-${candidate.kind}-${candidate.id}`}
-                onClick={() => {
-                  onSelect(candidate, !checked);
-                }}
-              >
-                <Identity candidate={candidate} locale={locale} />
-                {checked && <Check size={16} aria-hidden="true" />}
-              </button>
-            );
-          })}
-          {!visible.length && <p>{messages.noResults}</p>}
-        </div>
-        {agentActions.length > 0 ? (
-          <div className="collaboration-group-agent-actions">
-            <span>{messages.agentActions}</span>
-            {agentActions.map((action) => {
-              const Icon = action.id === "copy" ? Copy : Bot;
-              return (
-                <button
-                  type="button"
-                  key={action.id}
-                  data-testid={`collaboration-group-agent-action-${action.id}`}
-                  onClick={() => {
-                    setOpen(false);
-                    action.onSelect();
-                  }}
-                >
-                  <Icon size={16} aria-hidden="true" />
-                  <span>
-                    <strong>{action.label}</strong>
-                    <small>{action.description}</small>
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        ) : null}
-      </Popover.Content>
-    </Popover.Root>
-  );
+          {messages.add}
+        </>
+      }
+      options={candidates.map(candidate => ({
+        value: candidate.value,
+        label: candidate.name,
+        group: messages[candidate.kind],
+        testId: `collaboration-group-create-member-${candidate.kind}-${candidate.id}`,
+        icon:
+          candidate.kind === 'agent' ? (
+            <Bot aria-hidden="true" className="h-4 w-4" />
+          ) : (
+            <UserRound aria-hidden="true" className="h-4 w-4" />
+          ),
+      }))}
+      onChange={next => {
+        for (const candidate of candidates) {
+          const wasSelected = selected.includes(candidate.value)
+          const isSelected = next.includes(candidate.value)
+          if (wasSelected !== isSelected) onSelect(candidate, isSelected)
+        }
+      }}
+      actions={agentActions.map(action => ({
+        label: action.label,
+        icon:
+          action.id === 'copy' ? (
+            <Copy aria-hidden="true" className="h-4 w-4" />
+          ) : (
+            <Bot aria-hidden="true" className="h-4 w-4" />
+          ),
+        testId: `collaboration-group-agent-action-${action.id}`,
+        onSelect: action.onSelect,
+      }))}
+    />
+  )
 }
 
 export function GroupParticipantsEditor({
@@ -228,78 +134,64 @@ export function GroupParticipantsEditor({
   onResponsibilityChange,
   agentActions,
 }: {
-  candidates: GroupCandidate[];
-  leader: string;
-  members: CollaborationGroup["members"];
-  locale: keyof typeof copy;
-  compact?: boolean;
-  inline?: boolean;
-  readOnly?: boolean;
-  onLeaderChange(candidate: GroupCandidate): void;
-  onMemberChange(candidate: GroupCandidate, selected: boolean): void;
-  onResponsibilityChange(
-    candidate: GroupCandidate,
-    responsibility: string,
-  ): void;
-  agentActions?: GroupAgentAction[];
+  candidates: GroupCandidate[]
+  leader: string
+  members: CollaborationGroup['members']
+  locale: keyof typeof copy
+  compact?: boolean
+  inline?: boolean
+  readOnly?: boolean
+  onLeaderChange(candidate: GroupCandidate): void
+  onMemberChange(candidate: GroupCandidate, selected: boolean): void
+  onResponsibilityChange(candidate: GroupCandidate, responsibility: string): void
+  agentActions?: GroupAgentAction[]
 }) {
-  const messages = copy[locale];
+  const messages = copy[locale]
   const selectedParticipants = candidates
     .filter(
-      (candidate) =>
+      candidate =>
         candidate.value === leader ||
-        members.some(
-          (member) => `${member.kind}:${member.id}` === candidate.value,
-        ),
+        members.some(member => `${member.kind}:${member.id}` === candidate.value)
     )
     .sort((left, right) => {
-      if (left.value === leader) return -1;
-      if (right.value === leader) return 1;
-      return 0;
-    });
-  const selectedMembers = selectedParticipants.filter(
-    (candidate) => candidate.value !== leader,
-  );
-  const selectedValues = selectedMembers.map((candidate) => candidate.value);
+      if (left.value === leader) return -1
+      if (right.value === leader) return 1
+      return 0
+    })
+  const selectedMembers = selectedParticipants.filter(candidate => candidate.value !== leader)
+  const selectedValues = selectedMembers.map(candidate => candidate.value)
   const responsibility = (candidate: GroupCandidate) => (
     <label className="collaboration-group-person-responsibility">
       <span>{messages.responsibility}</span>
-      <input
+      <ControlInput
         data-testid={`collaboration-group-create-responsibility-${candidate.kind}-${candidate.id}`}
         aria-label={`${candidate.name} ${messages.responsibility}`}
         disabled={readOnly}
         value={
-          members.find(
-            (member) => `${member.kind}:${member.id}` === candidate.value,
-          )?.responsibility ?? ""
+          members.find(member => `${member.kind}:${member.id}` === candidate.value)
+            ?.responsibility ?? ''
         }
         placeholder={messages.responsibilityPlaceholder}
-        onChange={(event) =>
-          onResponsibilityChange(candidate, event.target.value)
-        }
+        onChange={event => onResponsibilityChange(candidate, event.target.value)}
       />
     </label>
-  );
+  )
   return (
     <div
-      className={`collaboration-group-people-editor${compact ? " is-compact" : ""}${inline ? " is-inline" : ""}`}
+      className={`collaboration-group-people-editor${compact ? ' is-compact' : ''}${inline ? ' is-inline' : ''}`}
     >
       <section aria-label={messages.members}>
         <div className="collaboration-group-people-heading">
           <div>
             <h4>
               {messages.members}
-              {selectedParticipants.length > 0 && (
-                <small>{selectedParticipants.length}</small>
-              )}
+              {selectedParticipants.length > 0 && <small>{selectedParticipants.length}</small>}
             </h4>
             <p>{messages.memberHint}</p>
           </div>
           {!readOnly ? (
             <ParticipantPicker
-              candidates={candidates.filter(
-                (candidate) => candidate.value !== leader,
-              )}
+              candidates={candidates.filter(candidate => candidate.value !== leader)}
               selected={selectedValues}
               locale={locale}
               onSelect={onMemberChange}
@@ -310,18 +202,19 @@ export function GroupParticipantsEditor({
         <div className="collaboration-group-selected-people">
           <CollaborationGroupRoster
             locale={locale}
-            participants={selectedParticipants.map((candidate) => ({
+            participants={selectedParticipants.map(candidate => ({
               ...candidate,
               leader: candidate.value === leader,
-              className: "collaboration-group-person-card",
+              className: 'collaboration-group-person-card',
             }))}
-            renderResponsibility={(candidate) =>
+            renderResponsibility={candidate =>
               candidate.leader ? null : responsibility(candidate)
             }
-            renderActions={(candidate) =>
+            renderActions={candidate =>
               candidate.leader || readOnly ? null : (
                 <span className="collaboration-group-person-actions">
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     className="collaboration-group-people-action collaboration-group-make-leader"
                     aria-label={`${messages.makeLeader} ${messages[candidate.kind]} ${candidate.name}`}
@@ -329,13 +222,11 @@ export function GroupParticipantsEditor({
                     data-testid={`collaboration-group-leader-${candidate.kind}-${candidate.id}`}
                     onClick={() => onLeaderChange(candidate)}
                   >
-                    <span
-                      className="collaboration-group-leader-indicator"
-                      aria-hidden="true"
-                    />
+                    <span className="collaboration-group-leader-indicator" aria-hidden="true" />
                     {messages.leader}
-                  </button>
-                  <button
+                  </ControlButton>
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     className="collaboration-group-people-action"
                     aria-label={`${messages.remove} ${messages[candidate.kind]} ${candidate.name}`}
@@ -344,7 +235,7 @@ export function GroupParticipantsEditor({
                     onClick={() => onMemberChange(candidate, false)}
                   >
                     <X size={16} aria-hidden="true" />
-                  </button>
+                  </ControlButton>
                 </span>
               )
             }
@@ -355,5 +246,5 @@ export function GroupParticipantsEditor({
         </div>
       </section>
     </div>
-  );
+  )
 }

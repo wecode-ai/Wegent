@@ -1,6 +1,7 @@
-import * as ScrollArea from '@radix-ui/react-scroll-area'
-import { forwardRef } from 'react'
+import { ScrollAreaScrollbar, ScrollAreaThumb } from '@wegent/collaboration/controls/ScrollArea'
+
 import { cn } from '@/lib/utils'
+import { forwardRef } from 'react'
 
 interface WorkbenchScrollbarProps {
   orientation: 'horizontal' | 'vertical'
@@ -16,7 +17,7 @@ export const WorkbenchScrollbar = forwardRef<HTMLDivElement, WorkbenchScrollbarP
     ref
   ) {
     return (
-      <ScrollArea.Scrollbar
+      <ScrollAreaScrollbar
         ref={ref}
         orientation={orientation}
         data-testid={testId}
@@ -26,11 +27,11 @@ export const WorkbenchScrollbar = forwardRef<HTMLDivElement, WorkbenchScrollbarP
           className
         )}
       >
-        <ScrollArea.Thumb
+        <ScrollAreaThumb
           data-testid={thumbTestId}
           className={cn('workbench-scrollbar-thumb relative flex-1 rounded-full', thumbClassName)}
         />
-      </ScrollArea.Scrollbar>
+      </ScrollAreaScrollbar>
     )
   }
 )

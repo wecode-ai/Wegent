@@ -1,7 +1,15 @@
-import { useState } from 'react'
 import type { IndependentIssue, PersonalIssuesApi } from '@/api/personalIssues'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useTranslation } from '@/hooks/useTranslation'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useState } from 'react'
 
 export function IndependentIssueTaskButton({
   api,
@@ -61,25 +69,33 @@ export function IndependentIssueTaskButton({
   return (
     <div className="flex flex-wrap items-center gap-2">
       {resources.length > 0 && (
-        <select
-          aria-label={t('issue_creation.process_with')}
-          data-testid="independent-issue-processing-agent"
+        <SelectRoot
           disabled={pending}
-          value={selected}
-          onChange={event => setSelected(event.target.value)}
-          className="min-h-11 rounded-md border border-border bg-background px-2 text-sm md:min-h-8"
+          value={normalizeSelectValue(selected)}
+          onValueChange={selectedValue => {
+            if (selectedValue !== null) return setSelected(selectedValue)
+          }}
         >
-          {resources.map(resource => (
-            <option
-              key={resource.kind + ':' + resource.id}
-              value={resource.kind + ':' + resource.id}
-            >
-              {resource.name}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger
+            density="compact"
+            aria-label={t('issue_creation.process_with')}
+            data-testid="independent-issue-processing-agent"
+          />
+          <SelectContent>
+            {resources.map(resource => (
+              <SelectItem
+                key={resource.kind + ':' + resource.id}
+                value={String(resource.kind + ':' + resource.id)}
+              >
+                {resource.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </SelectRoot>
       )}
-      <button
+      <ControlButton
+        variant="outline"
+        size="sm"
         type="button"
         data-testid="independent-issue-create-task"
         disabled={pending}
@@ -87,7 +103,7 @@ export function IndependentIssueTaskButton({
         className="min-h-11 rounded-md border border-border px-3 text-sm hover:bg-muted disabled:opacity-50 md:min-h-8"
       >
         {t('independentIssues.createTask')}
-      </button>
+      </ControlButton>
     </div>
   )
 }

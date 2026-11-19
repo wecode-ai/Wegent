@@ -156,6 +156,7 @@ beforeEach(() => {
   vi.stubEnv('WEWORK_RELEASE_SUPERVISED', '')
   vi.stubEnv('WEWORK_RELEASE_RECOVERY', '')
   vi.stubEnv('WEWORK_STARTUP_RECOVERY', '')
+  vi.stubEnv('WEWORK_APP_HOT_RELOAD', '')
   for (const name of [
     'WEWORK_HARNESS_RUNTIME_ROOT',
     'WEWORK_ACTIVE_RELEASE_ID',
@@ -169,6 +170,18 @@ afterEach(() => {
   if (resourcesPathDescriptor)
     Object.defineProperty(process, 'resourcesPath', resourcesPathDescriptor)
   else Reflect.deleteProperty(process, 'resourcesPath')
+})
+
+test('a renamed hot-reload development app opens main without entering release startup', async () => {
+  vi.stubEnv('WEWORK_APP_HOT_RELOAD', '1')
+  startup.acquireStartup.mockRejectedValue(new Error('spawn wework-launcher ENOENT'))
+
+  await import('./bootstrap.js')
+
+  expect(startup.main).toHaveBeenCalledOnce()
+  expect(startup.showRecovery).not.toHaveBeenCalled()
+  expect(startup.acquireStartup).not.toHaveBeenCalled()
+  expect(startup.roots).toEqual([])
 })
 
 test('a concurrent recovery entry waits before reading or restoring the shared transaction', async () => {

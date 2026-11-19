@@ -1,7 +1,8 @@
-import type { ReactNode } from 'react'
 import { ChevronRight, MessageCircle } from 'lucide-react'
+import type { ReactNode } from 'react'
 import type { CollaborationTranslate } from '../i18n'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
+import { Button as ControlButton } from '../markdown/Button'
 import { DESKTOP_CHAT_CONTENT_WIDTH_CLASS } from './conversationLayout'
 
 /** Native side-conversation layout. Hosts supply the shared message and composer adapters. */
@@ -64,14 +65,15 @@ export function TemporaryConversationLayout({
               : loadError}
           </p>
           {onRetry ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="temporary-conversation-retry"
               onClick={onRetry}
               className="min-h-11 rounded-md px-3 py-2 hover:bg-muted md:min-h-8"
             >
               {t('activity.retry')}
-            </button>
+            </ControlButton>
           ) : null}
         </div>
       ) : (
@@ -97,7 +99,9 @@ export function TemporaryConversationLayout({
         )}
       >
         {expanded && onRestoreConversation ? (
-          <button
+          <ControlButton
+            variant="outline"
+            size="sm"
             type="button"
             data-testid="restore-conversation-from-expanded-workspace-button"
             className="mb-1 flex h-8 w-full items-center justify-between rounded-xl border border-border/45 bg-background/95 px-4 text-xs text-text-secondary shadow-sm hover:bg-muted hover:text-text-primary"
@@ -105,7 +109,7 @@ export function TemporaryConversationLayout({
           >
             <span>{t('workbench.latest_conversation_turn')}</span>
             <ChevronRight className="h-4 w-4" aria-hidden="true" />
-          </button>
+          </ControlButton>
         ) : null}
         <div
           data-testid="side-chat-composer-layout"

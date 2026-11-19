@@ -1,3 +1,4 @@
+import { DialogSurface } from '../controls/DialogSurface'
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -130,7 +131,12 @@ it.each(['result', 'failure', 'result-back', 'failure-back'])(
           name: 'Review group',
           description: '',
           instructions: 'Review responsibilities',
-          leader: { kind: 'human', id: '7', name: 'Me', responsibility: 'Coordinate work' },
+          leader: {
+            kind: 'human',
+            id: '7',
+            name: 'Me',
+            responsibility: 'Coordinate work',
+          },
           members: [
             {
               kind: 'agent',
@@ -347,7 +353,11 @@ it.each(['Escape', 'close', 'cancel'])(
       if (action === 'Escape')
         await act(async () =>
           name.dispatchEvent(
-            new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+            new KeyboardEvent('keydown', {
+              key: 'Escape',
+              bubbles: true,
+              cancelable: true,
+            })
           )
         )
       else
@@ -368,7 +378,11 @@ it.each(['Escape', 'close', 'cancel'])(
     expect(document.activeElement).toBe(keep)
     await act(async () =>
       keep.dispatchEvent(
-        new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+        new KeyboardEvent('keydown', {
+          key: 'Escape',
+          bubbles: true,
+          cancelable: true,
+        })
       )
     )
     expect(
@@ -552,20 +566,32 @@ it('contains keyboard focus, respects a child dialog and restores the opener on 
   )
   expect(document.activeElement).toBe(last)
 
-  const child = document.createElement('dialog')
-  child.setAttribute('open', '')
-  get('collaboration-project-create-dialog').append(child)
-  const nativeEscape = new KeyboardEvent('keydown', {
+  const childContainer = document.createElement('div')
+  get('collaboration-project-create-dialog').append(childContainer)
+  const childRoot = createRoot(childContainer)
+  const closeChild = vi.fn(() => childRoot.render(null))
+  await act(async () =>
+    childRoot.render(
+      <DialogSurface
+        onClose={closeChild}
+        render={<section aria-label="Child dialog" data-testid="child-dialog" />}
+      >
+        <button type="button">Child action</button>
+      </DialogSurface>
+    )
+  )
+  const childEscape = new KeyboardEvent('keydown', {
     key: 'Escape',
     bubbles: true,
     cancelable: true,
   })
-  await act(async () => {
-    child.dispatchEvent(nativeEscape)
-  })
+  await act(async () => get('child-dialog').dispatchEvent(childEscape))
+  expect(closeChild).toHaveBeenCalledOnce()
   expect(onClose).not.toHaveBeenCalled()
-  expect(nativeEscape.defaultPrevented).toBe(false)
-  child.remove()
+  expect(childEscape.defaultPrevented).toBe(true)
+  expect(get<HTMLInputElement>('cloud-project-name').value).toBe('')
+  await act(async () => childRoot.unmount())
+  childContainer.remove()
   await act(async () =>
     last.dispatchEvent(
       new KeyboardEvent('keydown', {

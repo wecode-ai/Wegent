@@ -1,5 +1,6 @@
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import type { ExperienceProjectData } from '../model'
 import { TeamRelay } from './TeamRelay'
 import { useExperienceTeamState } from './useExperienceTeamState'
@@ -45,14 +46,15 @@ export function AssistantTeamRelay({ active, projects, compact }: AssistantTeamR
       {error && (
         <div role="alert" className="px-4 py-2 text-sm text-error">
           {error}
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="collaboration-exp-team-relay-retry"
             onClick={refresh}
             className="ml-2 min-h-11 underline md:min-h-7"
           >
             {t('assistant.retry')}
-          </button>
+          </ControlButton>
         </div>
       )}
     </div>

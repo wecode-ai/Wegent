@@ -1,11 +1,21 @@
-import { DialogForm } from '@/components/common/DialogForm'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertCircle, KeyRound, Loader2, Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { DeleteIconButton } from '@wegent/collaboration/controls/DeleteIconButton'
 import { ApiError } from '@/api/http'
 import type { EnvironmentSnapshot, Site, SitesApi } from '@/api/sites'
+import { DialogForm } from '@/components/common/DialogForm'
 import { useTranslation } from '@/hooks/useTranslation'
 import { createRequestId } from '@/lib/request-id'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { AlertCircle, KeyRound, Loader2, Plus, RefreshCw } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   buildEnvironmentPatchOperations,
   createEmptyEnvironmentDraft,
@@ -43,9 +53,7 @@ export function EnvironmentVariablesDialog({
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
   const nextId = useRef(0)
-  const dialogRef = useDialogKeyboard<HTMLFormElement>(() => {
-    if (!saving) onClose()
-  })
+  const dialogRef = useRef<HTMLFormElement>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -149,17 +157,22 @@ export function EnvironmentVariablesDialog({
         if (!saving && event.target === event.currentTarget) onClose()
       }}
     >
-      <DialogForm
-        onSubmit={event => {
-          event.preventDefault()
-          if (canSave) void save()
+      <DialogSurface
+        onClose={() => {
+          if (!saving) onClose()
         }}
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="environment-variables-dialog-title"
-        data-testid="environment-variables-dialog"
-        className="flex max-h-[82vh] w-full max-w-[760px] flex-col rounded-xl border border-border bg-popover shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
+        render={
+          <DialogForm
+            onSubmit={event => {
+              event.preventDefault()
+              if (canSave) void save()
+            }}
+            ref={dialogRef}
+            aria-labelledby="environment-variables-dialog-title"
+            data-testid="environment-variables-dialog"
+            className="flex max-h-[82vh] w-full max-w-[760px] flex-col rounded-xl border border-border bg-popover shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
+          />
+        }
       >
         <header className="flex items-start gap-3 border-b border-border px-5 py-4">
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-surface text-text-secondary">
@@ -176,7 +189,8 @@ export function EnvironmentVariablesDialog({
               {site.name} · {t('environment_next_deployment', '保存后将在下一次部署生效')}
             </p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="environment-reload-button"
             disabled={loading || saving}
@@ -185,7 +199,7 @@ export function EnvironmentVariablesDialog({
           >
             <RefreshCw className={loading ? 'h-3.5 w-3.5 animate-spin' : 'h-3.5 w-3.5'} />
             {t('environment_reload', '重新加载')}
-          </button>
+          </ControlButton>
         </header>
 
         <div className="min-h-40 flex-1 overflow-y-auto px-5 py-4">
@@ -210,7 +224,7 @@ export function EnvironmentVariablesDialog({
                   key={row.id}
                   className="grid gap-2 rounded-lg border border-border p-3 md:grid-cols-[1.25fr_110px_1.5fr_32px]"
                 >
-                  <input
+                  <ControlInput
                     aria-label={t('environment_key', '变量名')}
                     data-testid={`environment-key-${row.id}`}
                     value={row.key}
@@ -218,14 +232,14 @@ export function EnvironmentVariablesDialog({
                     maxLength={128}
                     placeholder="API_BASE_URL"
                     onChange={event => updateRow(row.id, { key: event.target.value.toUpperCase() })}
-                    className="h-9 rounded-md border border-border bg-background px-3 font-mono text-xs text-text-primary outline-none keyboard:focus:border-focus"
+                    className="h-9 font-mono text-xs"
                   />
-                  <select
-                    aria-label={t('environment_type', '类型')}
-                    value={row.type}
+                  <SelectRoot
+                    value={normalizeSelectValue(row.type)}
                     disabled={saving}
-                    onChange={event => {
-                      const type = event.target.value === 'secret' ? 'secret' : 'plain'
+                    onValueChange={selectedValue => {
+                      if (selectedValue === null) return
+                      const type = selectedValue === 'secret' ? 'secret' : 'plain'
                       updateRow(row.id, {
                         type,
                         value: '',
@@ -234,12 +248,17 @@ export function EnvironmentVariablesDialog({
                           type === 'secret' && row.type === 'secret' && row.secretConfigured,
                       })
                     }}
-                    className="h-9 rounded-md border border-border bg-background px-2 text-xs text-text-primary outline-none keyboard:focus:border-focus"
                   >
-                    <option value="plain">Plain</option>
-                    <option value="secret">Secret</option>
-                  </select>
-                  <input
+                    <SelectTrigger
+                      aria-label={t('environment_type', '类型')}
+                      className="h-9 text-xs"
+                    />
+                    <SelectContent>
+                      <SelectItem value="plain">Plain</SelectItem>
+                      <SelectItem value="secret">Secret</SelectItem>
+                    </SelectContent>
+                  </SelectRoot>
+                  <ControlInput
                     aria-label={t('environment_value', '值')}
                     data-testid={`environment-value-${row.id}`}
                     type={row.type === 'secret' ? 'password' : 'text'}
@@ -254,20 +273,20 @@ export function EnvironmentVariablesDialog({
                     onChange={event =>
                       updateRow(row.id, { value: event.target.value, valueChanged: true })
                     }
-                    className="h-9 min-w-0 rounded-md border border-border bg-background px-3 text-xs text-text-primary outline-none keyboard:focus:border-focus"
+                    className="h-9 min-w-0 text-xs"
                   />
-                  <button
+                  <DeleteIconButton
                     type="button"
                     aria-label={t('environment_remove', '删除变量')}
                     disabled={saving}
                     onClick={() => setRows(current => current.filter(item => item.id !== row.id))}
-                    className="flex h-9 w-8 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-danger disabled:opacity-50"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
+                    data-testid={`environment-variable-remove-${row.id}`}
+                  />
                 </div>
               ))}
-              <button
+              <ControlButton
+                variant="outline"
+                size="sm"
                 type="button"
                 data-testid="environment-add-button"
                 disabled={saving}
@@ -283,7 +302,7 @@ export function EnvironmentVariablesDialog({
               >
                 <Plus className="h-3.5 w-3.5" />
                 {t('environment_add', '添加变量')}
-              </button>
+              </ControlButton>
             </div>
           )}
           {(error || messageForValidation(validationCode, t)) && (
@@ -308,7 +327,8 @@ export function EnvironmentVariablesDialog({
               : ''}
           </span>
           <div className="flex gap-2">
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="environment-close-button"
               onClick={onClose}
@@ -316,8 +336,10 @@ export function EnvironmentVariablesDialog({
               className="h-8 rounded-md px-3 text-sm text-text-secondary hover:bg-muted disabled:opacity-50"
             >
               {t('close', '关闭')}
-            </button>
-            <button
+            </ControlButton>
+            <ControlButton
+              variant="primary"
+              size="sm"
               type="submit"
               data-testid="environment-save-button"
               disabled={!canSave}
@@ -325,10 +347,10 @@ export function EnvironmentVariablesDialog({
             >
               {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               {saving ? t('saving', '保存中') : t('save', '保存')}
-            </button>
+            </ControlButton>
           </div>
         </footer>
-      </DialogForm>
+      </DialogSurface>
     </div>
   )
 }

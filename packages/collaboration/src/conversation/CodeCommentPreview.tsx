@@ -1,21 +1,25 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
-import type { ReactNode } from "react";
-import { useConversationTranslation } from "./ConversationTranslation";
-import { useCollaborationPortalTheme } from "../theme/CollaborationTheme";
-import { useEscapeKey } from "../markdown/useEscapeKey";
-import type { CodeCommentContext } from "@wegent/chat-core/code-comment";
+import { TooltipContext } from "../controls/tooltipContext"
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from '../controls/HoverCard'
+import { useMemo, useState, type ReactNode } from 'react'
+import { controlPopup } from '../controls/recipes'
+import { useConversationTranslation } from './ConversationTranslation'
+import { useCollaborationPortalTheme } from '../theme/CollaborationTheme'
+import type { CodeCommentContext } from '@wegent/chat-core/code-comment'
 
 export interface CodeCommentPreviewProps {
-  getRightBoundary?: () => number;
-  comments: CodeCommentContext[];
-  testId: string;
-  children: ReactNode;
+  getRightBoundary?: () => number
+  comments: CodeCommentContext[]
+  testId: string
+  children: ReactNode
 }
 
-const COMMENT_TEXT_LIMIT = 240;
-const TARGET_TEXT_LIMIT = 120;
-const VALUE_LIMIT = 80;
+const COMMENT_TEXT_LIMIT = 240
+const TARGET_TEXT_LIMIT = 120
+const VALUE_LIMIT = 80
 
 export function CodeCommentPreview({
   comments,
@@ -23,132 +27,88 @@ export function CodeCommentPreview({
   children,
   getRightBoundary,
 }: CodeCommentPreviewProps) {
-  const triggerRef = useRef<HTMLDivElement | null>(null);
-  const contentRef = useRef<HTMLDivElement | null>(null);
-  const closeTimerRef = useRef<number | null>(null);
-  const [open, setOpen] = useState(false);
-  const [position, setPosition] = useState({ left: 8, top: 8 });
-
-  const clearCloseTimer = () => {
-    if (closeTimerRef.current === null) return;
-    window.clearTimeout(closeTimerRef.current);
-    closeTimerRef.current = null;
-  };
-
-  const show = () => {
-    clearCloseTimer();
-    setOpen(true);
-  };
-
-  useLayoutEffect(() => {
-    if (!open) return;
-    const triggerRect = triggerRef.current?.getBoundingClientRect();
-    const contentRect = contentRef.current?.getBoundingClientRect();
-    if (!triggerRect || !contentRect) return;
-    const rightBoundary = getRightBoundary?.() ?? window.innerWidth - 8;
-    let left = triggerRect.left;
-    if (left + contentRect.width > rightBoundary) {
-      left = rightBoundary - contentRect.width;
-    }
-    left = Math.max(8, left);
-    let top = triggerRect.top - contentRect.height - 4;
-    if (top < 8) {
-      top = triggerRect.bottom + 4;
-    }
-    setPosition((previous) =>
-      previous.left === left && previous.top === top ? previous : { left, top },
-    );
-  }, [open, comments, getRightBoundary]);
-
-  const scheduleClose = () => {
-    clearCloseTimer();
-    closeTimerRef.current = window.setTimeout(() => {
-      setOpen(false);
-      closeTimerRef.current = null;
-    }, 120);
-  };
-
-  useEffect(
-    () => () => {
-      clearCloseTimer();
-    },
-    [],
-  );
-
-  useEscapeKey(() => setOpen(false), open, contentRef);
-
+  const [trigger, setTrigger] = useState<HTMLElement | null>(null)
+  const [rightBoundary, setRightBoundary] = useState<number>()
+  const theme = useCollaborationPortalTheme()
+  const anchor = useMemo(
+    () =>
+      getRightBoundary && trigger
+        ? {
+            getBoundingClientRect() {
+              const rect = trigger.getBoundingClientRect()
+              return {
+                x: Math.min(rect.right, getRightBoundary()),
+                y: rect.y,
+                width: 0,
+                height: rect.height,
+              }
+            },
+          }
+        : undefined,
+    [getRightBoundary, trigger],
+  )
   return (
-    <>
-      <div
-        ref={triggerRef}
-        className="inline-flex"
-        onPointerEnter={show}
-        onPointerLeave={scheduleClose}
-        onFocus={show}
-        onBlur={scheduleClose}
-      >
-        {children}
-      </div>
-      {open &&
-        createPortal(
-          <CodeCommentPreviewContent
-            contentRef={contentRef}
-            comments={comments}
-            position={position}
-            testId={testId}
-            onPointerEnter={clearCloseTimer}
-            onPointerLeave={scheduleClose}
-          />,
-          document.body,
-        )}
-    </>
-  );
-}
-
-function CodeCommentPreviewContent({
-  contentRef,
-  comments,
-  position,
-  testId,
-  onPointerEnter,
-  onPointerLeave,
-}: {
-  contentRef: React.RefObject<HTMLDivElement | null>;
-  comments: CodeCommentContext[];
-  position: { left: number; top: number };
-  testId: string;
-  onPointerEnter: () => void;
-  onPointerLeave: () => void;
-}) {
-  const portalTheme = useCollaborationPortalTheme();
-  return (
-    <div
-      {...portalTheme}
-      ref={contentRef}
-      data-testid={testId}
-      className={`fixed z-popover max-h-[min(360px,calc(100vh-16px))] w-fit min-w-[280px] max-w-[min(420px,calc(100vw-16px))] overflow-y-auto rounded-xl border border-border bg-popover p-1 shadow-lg ${portalTheme.className}`}
-      style={{ ...portalTheme.style, ...position }}
-      onPointerEnter={onPointerEnter}
-      onPointerLeave={onPointerLeave}
+    <HoverCard
+      delay={0}
+      closeDelay={120}
+      onOpenChange={(next) => {
+        if (next) setRightBoundary(getRightBoundary?.())
+      }}
     >
-      <div className="divide-y divide-border">
-        {comments.map((comment) => (
-          <CodeCommentPreviewItem key={comment.id} comment={comment} />
-        ))}
-      </div>
-    </div>
-  );
+      <HoverCardTrigger
+        render={<div />}
+        ref={setTrigger}
+        className="inline-flex"
+      >
+        <TooltipContext.Provider value={true}>
+          {children}
+        </TooltipContext.Provider>
+      </HoverCardTrigger>
+      <HoverCardContent
+        {...theme}
+        anchor={anchor}
+        side="top"
+        align={getRightBoundary ? 'end' : 'start'}
+        sideOffset={4}
+        collisionPadding={8}
+        data-testid={testId}
+        style={{
+          ...theme.style,
+          maxWidth:
+            rightBoundary === undefined
+              ? undefined
+              : `min(420px, calc(100vw - 16px), ${Math.max(0, rightBoundary - 8)}px)`,
+          minWidth:
+            rightBoundary === undefined
+              ? undefined
+              : `min(280px, ${Math.max(0, rightBoundary - 8)}px)`,
+        }}
+        className={
+          theme.className +
+          ' ' +
+          controlPopup +
+          ' w-fit min-w-[min(280px,calc(100vw-1rem))] max-w-[min(420px,calc(100vw-1rem))]'
+        }
+      >
+        <div className="divide-y divide-border">
+          {comments.map((comment) => (
+            <CodeCommentPreviewItem key={comment.id} comment={comment} />
+          ))}
+        </div>
+      </HoverCardContent>
+    </HoverCard>
+  )
 }
 
 function CodeCommentPreviewItem({ comment }: { comment: CodeCommentContext }) {
-  const { t } = useConversationTranslation();
-  const target = comment.browserAnnotation?.target;
-  const adjustments = comment.adjustments ?? [];
-  const codeLabel = `${comment.fileName}:${comment.startLine === comment.endLine ? comment.startLine : `${comment.startLine}-${comment.endLine}`}`;
+  const { t } = useConversationTranslation()
+  const target = comment.browserAnnotation?.target
+  const adjustments = comment.adjustments ?? []
+  const codeLabel = `${comment.fileName}:${comment.startLine === comment.endLine ? comment.startLine : `${comment.startLine}-${comment.endLine}`}`
   const targetText =
     target?.isSimpleText && target.text
       ? truncate(target.text, TARGET_TEXT_LIMIT)
-      : "";
+      : ''
 
   return (
     <div className="px-2 py-1.5 text-sm text-text-primary">
@@ -172,7 +132,7 @@ function CodeCommentPreviewItem({ comment }: { comment: CodeCommentContext }) {
       </div>
       {!target && (
         <PreviewLine
-          label={t("workbench.code_comment_selected_text")}
+          label={t('workbench.code_comment_selected_text')}
           value={comment.selectedText}
         />
       )}
@@ -195,13 +155,13 @@ function CodeCommentPreviewItem({ comment }: { comment: CodeCommentContext }) {
       ))}
       {adjustments.length > 3 && (
         <p className="mt-1 text-xs leading-4 text-text-tertiary">
-          {t("workbench.browser_annotation_more_adjustments", {
+          {t('workbench.browser_annotation_more_adjustments', {
             count: adjustments.length - 3,
           })}
         </p>
       )}
     </div>
-  );
+  )
 }
 
 function PreviewLine({ label, value }: { label: string; value: string }) {
@@ -213,9 +173,9 @@ function PreviewLine({ label, value }: { label: string; value: string }) {
       <span className="text-text-tertiary">{label}: </span>
       {truncate(value, COMMENT_TEXT_LIMIT)}
     </p>
-  );
+  )
 }
 
 function truncate(value: string, limit: number): string {
-  return value.length > limit ? `${value.slice(0, limit)}...` : value;
+  return value.length > limit ? `${value.slice(0, limit)}...` : value
 }

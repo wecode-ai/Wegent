@@ -1,11 +1,18 @@
 import {
   elementScroll,
+  measureElement,
   observeElementOffset,
   useVirtualizer,
   type Virtualizer,
   type VirtualizerOptions,
 } from '@tanstack/react-virtual'
-import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type RefObject,
+} from 'react'
 import {
   CONVERSATION_SCROLL_WRITE_SOURCE,
   observeConversationScrollWrites,
@@ -41,9 +48,11 @@ export function useConversationVirtualizer({
   ...options
 }: Options) {
   const [prefix, setPrefix] = useState(0)
-  const readOffsetRef = useRef<((offset: number, scrolling: boolean) => void) | null>(null)
+  const readOffsetRef = useRef<
+    ((offset: number, scrolling: boolean) => void) | null
+  >(null)
   const [viewportReady, setViewportReady] = useState(
-    () => (scrollElementRef?.current?.clientHeight ?? 0) > 0
+    () => (scrollElementRef?.current?.clientHeight ?? 0) > 0,
   )
   // A hidden pane has no scroll range and cannot establish an initial offset.
   const enabled = options.enabled && viewportReady
@@ -54,12 +63,25 @@ export function useConversationVirtualizer({
     scrollMargin: prefix,
     paddingEnd: (options.paddingEnd ?? 0) + scrollTailHeight,
     getScrollElement: () => scrollElementRef?.current ?? null,
+    measureElement: (element, entry, instance) => {
+      const viewport = instance.scrollElement
+      // External scroll writes can precede native event delivery and row measurements.
+      if (viewport && viewport.scrollTop !== instance.scrollOffset)
+        readOffsetRef.current?.(viewport.scrollTop, false)
+      return (options.measureElement ?? measureElement)(
+        element,
+        entry,
+        instance,
+      )
+    },
     observeElementOffset: (instance, callback) => {
       readOffsetRef.current = callback
       const dispose = observeElementOffset(instance, callback)
       const element = instance.scrollElement
       const stopObservingWrites = element
-        ? observeConversationScrollWrites(element, offset => callback(offset, false))
+        ? observeConversationScrollWrites(element, (offset) =>
+            callback(offset, false),
+          )
         : undefined
       return () => {
         readOffsetRef.current = null
@@ -70,15 +92,18 @@ export function useConversationVirtualizer({
     initialOffset: () =>
       Math.max(
         0,
-        Array.from({ length: options.count }, (_, index) => options.estimateSize(index)).reduce(
+        Array.from({ length: options.count }, (_, index) =>
+          options.estimateSize(index),
+        ).reduce(
           (sum, size) => sum + size,
-          (options.paddingStart ?? 0) + Math.max(0, options.count - 1) * (options.gap ?? 0)
+          (options.paddingStart ?? 0) +
+            Math.max(0, options.count - 1) * (options.gap ?? 0),
         ) +
           (options.paddingEnd ?? 0) +
           scrollTailHeight +
           prefix -
           (scrollElementRef?.current?.clientHeight ?? 0) -
-          initialDistanceFromBottomPx
+          initialDistanceFromBottomPx,
       ),
     scrollToFn: (offset, settings, instance) => {
       const element = instance.scrollElement
@@ -88,12 +113,13 @@ export function useConversationVirtualizer({
           element,
           CONVERSATION_SCROLL_WRITE_SOURCE.virtualizerOffset,
           offset + (settings.adjustments ?? 0),
-          () => elementScroll(offset, settings, instance)
+          () => elementScroll(offset, settings, instance),
         )
       const after = element?.scrollTop ?? before
       // Instant writes have already landed. A native scroll event can be delayed
       // or absent, so acknowledge the actual offset before the next commit.
-      if (element && settings.behavior !== 'smooth') readOffsetRef.current?.(after, false)
+      if (element && settings.behavior !== 'smooth')
+        readOffsetRef.current?.(after, false)
       onScrollAdjustment?.(after - before)
     },
   })
@@ -109,15 +135,18 @@ export function useConversationVirtualizer({
   useEffect(() => {
     const list = listRef.current
     const viewport = scrollElementRef?.current
-    if (!list || !viewport || !viewport.contains(list) || !options.enabled) return
+    if (!list || !viewport || !viewport.contains(list) || !options.enabled)
+      return
     const update = () => {
       const rect = list.getBoundingClientRect()
       const prefix = Math.max(
         0,
-        Math.round(rect.top - viewport.getBoundingClientRect().top + viewport.scrollTop)
+        Math.round(
+          rect.top - viewport.getBoundingClientRect().top + viewport.scrollTop,
+        ),
       )
       setPrefix(prefix)
-      setViewportReady(ready => ready || viewport.clientHeight > 0)
+      setViewportReady((ready) => ready || viewport.clientHeight > 0)
     }
     update()
     const observer = new ResizeObserver(update)

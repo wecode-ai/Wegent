@@ -1,6 +1,7 @@
-import { Check, Cloud, Copy, Server } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { remoteDeviceOnboardingExtension } from '@extensions/remote-device-onboarding'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Check, Cloud, Copy, Server } from 'lucide-react'
 import {
   deviceOnboardingScope,
   useDeviceOnboarding,
@@ -57,7 +58,9 @@ function DeviceOnboardingPanel(props: DeviceOnboardingProps) {
                   : t('workbench.add_device_cloud_description')}
               </p>
             </div>
-            <button
+            <ControlButton
+              variant="primary"
+              size="sm"
               type="button"
               data-testid="add-cloud-device-confirm"
               onClick={handleCreate}
@@ -69,7 +72,7 @@ function DeviceOnboardingPanel(props: DeviceOnboardingProps) {
                 : hasCloudDevice
                   ? t('workbench.add_device_cloud_created')
                   : t('workbench.add_device_cloud_create')}
-            </button>
+            </ControlButton>
           </div>
         </div>
       </div>
@@ -88,7 +91,8 @@ function DeviceOnboardingPanel(props: DeviceOnboardingProps) {
                 {t('workbench.remote_docker_description')}
               </p>
             </div>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="add-remote-docker-button"
               onClick={handleCreateRemoteDocker}
@@ -98,7 +102,7 @@ function DeviceOnboardingPanel(props: DeviceOnboardingProps) {
               {remoteLoading
                 ? t('workbench.remote_docker_generating')
                 : t('workbench.remote_docker_generate')}
-            </button>
+            </ControlButton>
           </div>
 
           <remoteDeviceOnboardingExtension.Notice />
@@ -109,7 +113,8 @@ function DeviceOnboardingPanel(props: DeviceOnboardingProps) {
                 <span className="text-xs font-semibold text-text-secondary">
                   {t('workbench.remote_docker_command_title')}
                 </span>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="copy-remote-docker-command"
                   onClick={handleCopyRemoteCommand}
@@ -117,7 +122,7 @@ function DeviceOnboardingPanel(props: DeviceOnboardingProps) {
                 >
                   {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
                   {copied ? t('workbench.remote_docker_copied') : t('workbench.remote_docker_copy')}
-                </button>
+                </ControlButton>
               </div>
               <pre
                 data-testid="remote-docker-command"
@@ -142,14 +147,15 @@ function DeviceOnboardingPanel(props: DeviceOnboardingProps) {
             {t(`workbench.device_onboarding_${remoteStatus}`)}
           </span>
           {(remoteStatus === 'connection_failed' || remoteStatus === 'version_mismatch') && (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="retry-device-onboarding"
               onClick={retryConnection}
               className="h-8 shrink-0 rounded-md px-3 hover:bg-muted"
             >
               {t('workbench.connection_upgrade_refresh')}
-            </button>
+            </ControlButton>
           )}
         </div>
       )}

@@ -1,12 +1,26 @@
-import { useEffect, useImperativeHandle, useState, type FormEvent, type Ref } from 'react'
-import { Mail, Plus, X } from 'lucide-react'
+import {
+  CollapsibleRoot,
+  CollapsibleTrigger,
+  CollapsiblePanel,
+} from '@wegent/collaboration/controls/Collapsible'
 import type { StandInRole } from '@/api/personalStandIn'
-import { useTranslation } from '@/hooks/useTranslation'
-import { getDshExtensionHost } from '@/features/dsh-runtime/dshExtensions'
-import { StandInConnectionHeader } from './StandInConnectionHeader'
-import { StandInProcessingSettings } from './StandInProcessingSettings'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import type { AutomationNavigationHandle } from '@/features/automations/AutomationsPage'
+import { getDshExtensionHost } from '@/features/dsh-runtime/dshExtensions'
+import { useTranslation } from '@/hooks/useTranslation'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Mail, Plus, X } from 'lucide-react'
+import { useEffect, useImperativeHandle, useState, type FormEvent, type Ref } from 'react'
+import { StandInConnectionHeader } from './StandInConnectionHeader'
+import { StandInProcessingSettings } from './StandInProcessingSettings'
 
 export const EMAIL_PROVIDER = '@wegent/dsh-connection-runtime/email'
 type Server = { host: string; port: number; secure: boolean }
@@ -167,7 +181,8 @@ export function StandInEmailConnections({
       {rows.map(row => (
         <div key={row.profile} className="flex items-center gap-2 border-b border-border py-2">
           <span className="min-w-0 flex-1 truncate text-sm">{row.name}</span>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`stand-in-email-remove-${row.profile}`}
             disabled={disabled || busy}
@@ -181,14 +196,15 @@ export function StandInEmailConnections({
             }
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </div>
       ))}
       {local &&
         accounts
           .filter(account => !rows.some(row => row.profile === account.id))
           .map(account => (
-            <button
+            <ControlButton
+              variant="unstyled"
               key={account.id}
               type="button"
               data-testid={`stand-in-email-connect-${account.id}`}
@@ -198,50 +214,55 @@ export function StandInEmailConnections({
             >
               <span>{account.email}</span>
               <span>{t('standIn.workspace.add')}</span>
-            </button>
+            </ControlButton>
           ))}
       {local && accounts.length > 0 && (
-        <details className="space-y-2">
-          <summary
+        <CollapsibleRoot className="space-y-2">
+          <CollapsibleTrigger
             data-testid="stand-in-email-manage"
             className="min-h-11 cursor-pointer text-sm text-text-secondary md:min-h-9"
           >
             {t('standIn.email.manage')}
-          </summary>
-          {accounts.map(account => (
-            <div key={account.id} className="flex flex-wrap items-center gap-2 py-1 text-sm">
-              <span className="min-w-0 flex-1 truncate">{account.email}</span>
-              <button
-                type="button"
-                disabled={disabled || busy}
-                data-testid={`stand-in-email-edit-${account.id}`}
-                className="min-h-9 underline"
-                onClick={() =>
-                  requestLeave(() => {
-                    setForm({ ...account, password: '' })
-                    setBaseline({ ...account, password: '' })
-                    setAdding(true)
-                    setSaved(null)
-                  })
-                }
-              >
-                {t('standIn.email.update')}
-              </button>
-              <button
-                type="button"
-                disabled={disabled || busy}
-                data-testid={`stand-in-email-delete-${account.id}`}
-                className="min-h-9 text-error underline"
-                onClick={() => setRemoving(account)}
-              >
-                {t('standIn.email.remove_account')}
-              </button>
-            </div>
-          ))}
-        </details>
+          </CollapsibleTrigger>
+          <CollapsiblePanel>
+            {accounts.map(account => (
+              <div key={account.id} className="flex flex-wrap items-center gap-2 py-1 text-sm">
+                <span className="min-w-0 flex-1 truncate">{account.email}</span>
+                <ControlButton
+                  variant="unstyled"
+                  type="button"
+                  disabled={disabled || busy}
+                  data-testid={`stand-in-email-edit-${account.id}`}
+                  className="min-h-9 underline"
+                  onClick={() =>
+                    requestLeave(() => {
+                      setForm({ ...account, password: '' })
+                      setBaseline({ ...account, password: '' })
+                      setAdding(true)
+                      setSaved(null)
+                    })
+                  }
+                >
+                  {t('standIn.email.update')}
+                </ControlButton>
+                <ControlButton
+                  variant="unstyled"
+                  type="button"
+                  disabled={disabled || busy}
+                  data-testid={`stand-in-email-delete-${account.id}`}
+                  className="min-h-9 text-error underline"
+                  onClick={() => setRemoving(account)}
+                >
+                  {t('standIn.email.remove_account')}
+                </ControlButton>
+              </div>
+            ))}
+          </CollapsiblePanel>
+        </CollapsibleRoot>
       )}
       {local && (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="stand-in-email-add"
           disabled={disabled || busy}
@@ -258,7 +279,7 @@ export function StandInEmailConnections({
         >
           {adding ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
           {t(adding ? 'standIn.email.cancel_edit' : 'standIn.email.add_account')}
-        </button>
+        </ControlButton>
       )}
       {adding && (
         <form
@@ -270,7 +291,7 @@ export function StandInEmailConnections({
             {(['email', 'username', 'password'] as const).map(key => (
               <label key={key} className="block space-y-1 text-sm">
                 <span>{t(`standIn.email.${key}`)}</span>
-                <input
+                <ControlInput
                   data-testid={`stand-in-email-${key}`}
                   type={key === 'password' ? 'password' : key === 'email' ? 'email' : 'text'}
                   required={key !== 'username'}
@@ -279,7 +300,7 @@ export function StandInEmailConnections({
                   autoComplete={key === 'password' ? 'new-password' : 'off'}
                   value={form[key]}
                   onChange={event => setForm(value => ({ ...value, [key]: event.target.value }))}
-                  className="min-h-11 w-full rounded-md border border-border bg-background px-3 md:min-h-9"
+                  className="min-h-11 w-full md:min-h-9"
                 />
               </label>
             ))}
@@ -299,7 +320,7 @@ export function StandInEmailConnections({
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_6rem_8rem]">
                   <label className="space-y-1 text-sm">
                     <span>{t('standIn.email.host')}</span>
-                    <input
+                    <ControlInput
                       required
                       maxLength={253}
                       data-testid={`stand-in-email-${protocol}-host`}
@@ -310,12 +331,12 @@ export function StandInEmailConnections({
                           [protocol]: { ...value[protocol], host: event.target.value },
                         }))
                       }
-                      className="min-h-11 w-full rounded-md border border-border bg-background px-3 md:min-h-9"
+                      className="min-h-11 w-full md:min-h-9"
                     />
                   </label>
                   <label className="space-y-1 text-sm">
                     <span>{t('standIn.email.port')}</span>
-                    <input
+                    <ControlInput
                       required
                       type="number"
                       min={1}
@@ -328,41 +349,48 @@ export function StandInEmailConnections({
                           [protocol]: { ...value[protocol], port: Number(event.target.value) },
                         }))
                       }
-                      className="min-h-11 w-full rounded-md border border-border bg-background px-3 md:min-h-9"
+                      className="min-h-11 w-full md:min-h-9"
                     />
                   </label>
                   <label className="space-y-1 text-sm">
                     <span>{t('standIn.email.encryption')}</span>
-                    <select
-                      data-testid={`stand-in-email-${protocol}-tls`}
-                      value={form[protocol].secure ? 'tls' : 'starttls'}
-                      onChange={event =>
-                        setForm(value => ({
-                          ...value,
-                          [protocol]: {
-                            ...value[protocol],
-                            secure: event.target.value === 'tls',
-                            port:
-                              protocol === 'imap'
-                                ? event.target.value === 'tls'
-                                  ? 993
-                                  : 143
-                                : event.target.value === 'tls'
-                                  ? 465
-                                  : 587,
-                          },
-                        }))
-                      }
-                      className="min-h-11 w-full rounded-md border border-border bg-background px-2 md:min-h-9"
+                    <SelectRoot
+                      value={normalizeSelectValue(form[protocol].secure ? 'tls' : 'starttls')}
+                      onValueChange={selectedValue => {
+                        if (selectedValue !== null)
+                          return setForm(value => ({
+                            ...value,
+                            [protocol]: {
+                              ...value[protocol],
+                              secure: selectedValue === 'tls',
+                              port:
+                                protocol === 'imap'
+                                  ? selectedValue === 'tls'
+                                    ? 993
+                                    : 143
+                                  : selectedValue === 'tls'
+                                    ? 465
+                                    : 587,
+                            },
+                          }))
+                      }}
                     >
-                      <option value="tls">TLS</option>
-                      <option value="starttls">STARTTLS</option>
-                    </select>
+                      <SelectTrigger
+                        data-testid={`stand-in-email-${protocol}-tls`}
+                        className="min-h-11 w-full md:min-h-9"
+                      />
+                      <SelectContent>
+                        <SelectItem value="tls">TLS</SelectItem>
+                        <SelectItem value="starttls">STARTTLS</SelectItem>
+                      </SelectContent>
+                    </SelectRoot>
                   </label>
                 </div>
               </fieldset>
             ))}
-            <button
+            <ControlButton
+              variant="primary"
+              size="sm"
               type="submit"
               data-testid="stand-in-email-save"
               className="min-h-9 rounded-md bg-text-primary px-3 text-sm text-background disabled:opacity-40"
@@ -374,7 +402,7 @@ export function StandInEmailConnections({
                     ? 'standIn.email.verify_update'
                     : 'standIn.email.verify_connect'
               )}
-            </button>
+            </ControlButton>
           </fieldset>
         </form>
       )}
@@ -387,7 +415,8 @@ export function StandInEmailConnections({
         <div role="alert" className="space-y-2 text-sm text-error">
           <p>{t(`standIn.email.${error}`)}</p>
           {error === 'email_unavailable' && (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="stand-in-email-retry"
               disabled={busy}
@@ -398,7 +427,7 @@ export function StandInEmailConnections({
               }}
             >
               {t('standIn.workspace.connection_retry')}
-            </button>
+            </ControlButton>
           )}
         </div>
       )}

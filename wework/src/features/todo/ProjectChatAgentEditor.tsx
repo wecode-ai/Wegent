@@ -1,10 +1,9 @@
-import { useAgentRouting } from '@/features/collaboration/useAgentRouting'
 import {
   AgentEnvironmentFields,
   AgentModelFields,
 } from '@/features/collaboration/AgentRoutingFields'
+import { useAgentRouting } from '@/features/collaboration/useAgentRouting'
 import { useAgentRuntimeSettings } from '@/features/collaboration/useAgentRuntimeSettings'
-import { useEffect, useMemo, useState } from 'react'
 import {
   AgentCapabilitiesSelector,
   AgentCapabilityModeSelector,
@@ -15,6 +14,9 @@ import {
   resolveAgentPromptCapabilityReferences,
   type UnifiedAgentCapabilityMode,
 } from '@wegent/collaboration'
+import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useEffect, useMemo, useState } from 'react'
 
 import type { UnifiedAgentDefinition, UnifiedAgentPluginRef } from '@/api/agentDefinition'
 import type { createAgentResourceApi } from '@/api/agentResources'
@@ -24,8 +26,8 @@ import type {
   LocalProjectChatAgentModel,
   createLocalProjectChatAgentApi,
 } from '@/api/local/localDelivery'
-import { isDefaultLocalAgentName } from '@/features/collaboration/defaultLocalAgent'
 import { parseAgentMcpServers } from '@/features/collaboration/agentFormModel'
+import { isDefaultLocalAgentName } from '@/features/collaboration/defaultLocalAgent'
 import { useCurrentAgentDevice } from '@/features/collaboration/useCurrentAgentDevice'
 import type {
   ProjectPluginCatalogApi,
@@ -626,17 +628,16 @@ export function ProjectChatAgentEditor({
                     className="flex min-h-9 items-center gap-2 rounded-md px-2 text-sm text-text-primary hover:bg-muted"
                     key={key}
                   >
-                    <input
+                    <Checkbox
                       checked={selectedAllowedModelKeys.has(key)}
                       data-testid={`cloud-project-chat-agent-model-${candidate.name}`}
-                      onChange={event =>
+                      onCheckedChange={checked =>
                         setAllowedModels(current =>
-                          event.target.checked
+                          checked === true
                             ? [...current, value]
                             : current.filter(item => modelKey(item) !== key)
                         )
                       }
-                      type="checkbox"
                     />
                     <span>{candidate.displayName || candidate.name}</span>
                   </label>
@@ -654,7 +655,8 @@ export function ProjectChatAgentEditor({
                       {candidate.name}
                       {t('workbench.project_chat_agent_model_unavailable', '（当前不可用）')}
                     </span>
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       aria-label={`${t(
                         'workbench.project_chat_agent_remove_model',
                         '移除模型'
@@ -667,7 +669,7 @@ export function ProjectChatAgentEditor({
                       type="button"
                     >
                       {t('workbench.agent_creator_remove', '移除')}
-                    </button>
+                    </ControlButton>
                   </div>
                 )
               })}

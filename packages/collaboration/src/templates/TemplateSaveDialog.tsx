@@ -1,13 +1,16 @@
+import { Textarea as ControlTextarea } from '../controls/Textarea'
+import { TextField as ControlInput } from '../controls/TextField'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 import { useState } from 'react'
 import type { CollaborationLocale } from '../i18n'
-import type { CollaborationTemplate, TemplateRecord } from './types'
-import type { CollaborationTemplateStore } from './store'
 import { templateMessages } from './messages'
+import type { CollaborationTemplateStore } from './store'
 import { TemplateDialog } from './TemplateDialog'
 import { TemplatePreview } from './TemplatePreview'
+import type { CollaborationTemplate, TemplateRecord } from './types'
 
 export function TemplateSaveDialog({
   document,
@@ -39,11 +42,18 @@ export function TemplateSaveDialog({
       onClose={onClose}
       footer={
         <>
-          <button type="button" data-testid="template-save-close" disabled={busy} onClick={onClose}>
+          <ControlButton
+            variant="unstyled"
+            type="button"
+            data-testid="template-save-close"
+            disabled={busy}
+            onClick={onClose}
+          >
             {m.close}
-          </button>
+          </ControlButton>
           {!saved ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               className="collaboration-primary-button"
               data-testid="template-save-confirm"
@@ -77,10 +87,11 @@ export function TemplateSaveDialog({
               }}
             >
               {busy ? m.saving : m.save}
-            </button>
+            </ControlButton>
           ) : (
             !published && (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 className="collaboration-primary-button"
                 data-testid="template-publish"
@@ -103,7 +114,7 @@ export function TemplateSaveDialog({
                 }}
               >
                 {publishing ? m.publishConfirm : m.publish}
-              </button>
+              </ControlButton>
             )
           )}
         </>
@@ -113,7 +124,7 @@ export function TemplateSaveDialog({
         <>
           <label className="collaboration-template-field">
             <span>{m.saveName}</span>
-            <input
+            <ControlInput
               data-testid="template-save-name"
               disabled={busy}
               value={name}
@@ -122,7 +133,7 @@ export function TemplateSaveDialog({
           </label>
           <label className="collaboration-template-field">
             <span>{m.descriptionLabel}</span>
-            <textarea
+            <ControlTextarea
               data-testid="template-save-description"
               disabled={busy}
               value={description}

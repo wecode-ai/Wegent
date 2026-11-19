@@ -1,11 +1,12 @@
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import * as Popover from '@radix-ui/react-popover'
+import { Popover, PopoverContent, PopoverTrigger } from '../controls/Popover'
 import { ArrowDown, ArrowDownWideNarrow, ArrowUp, Check, ChevronDown, Plus, X } from 'lucide-react'
 import { useId, useState, type ComponentType } from 'react'
-import { Tooltip } from '../issue-detail/Tooltip'
+import { Tooltip } from "../controls/Tooltip"
 import { useCollaborationPortalTheme } from '../theme'
 import {
   projectBoardSortField,
@@ -33,33 +34,31 @@ function RulePicker({
 }) {
   const [open, setOpen] = useState(false)
   return (
-    <Popover.Root open={open} onOpenChange={setOpen}>
-      <Popover.Trigger asChild>
-        <button
-          type="button"
-          data-testid={testId}
-          className={`flex min-h-11 min-w-0 flex-1 items-center justify-between gap-2 rounded-md border border-border px-2 text-left text-sm hover:bg-muted md:min-h-8 ${focusStyle}`}
-        >
-          <span className="truncate">{labels[rule]}</span>
-          <ChevronDown className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
-        </button>
-      </Popover.Trigger>
-      <Popover.Content
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        render={
+          <button
+            type="button"
+            data-testid={testId}
+            className={`flex min-h-11 min-w-0 flex-1 items-center justify-between gap-2 rounded-md border border-border px-2 text-left text-sm hover:bg-muted md:min-h-8 ${focusStyle}`}
+          />
+        }
+      >
+        <span className="truncate">{labels[rule]}</span>
+        <ChevronDown className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
+      </PopoverTrigger>
+      <PopoverContent
         align="start"
         sideOffset={4}
         collisionPadding={12}
         aria-label={labels.label}
         data-testid={`${testId}-options`}
         className="z-system-popover w-56 rounded-xl border border-border bg-popover p-1 text-text-primary shadow-xl outline-none"
-        onOpenAutoFocus={event => {
-          event.preventDefault()
-          if (event.target instanceof HTMLElement) {
-            event.target.querySelector<HTMLButtonElement>('[aria-pressed="true"]')?.focus()
-          }
-        }}
+        initialFocus="auto"
       >
         {available.map(mode => (
-          <button
+          <ControlButton
+            variant="unstyled"
             key={mode}
             type="button"
             data-testid={`${testId}-${mode}`}
@@ -72,10 +71,10 @@ function RulePicker({
           >
             <span className="flex-1">{labels[mode]}</span>
             {mode === rule ? <Check className="h-4 w-4" aria-hidden="true" /> : null}
-          </button>
+          </ControlButton>
         ))}
-      </Popover.Content>
-    </Popover.Root>
+      </PopoverContent>
+    </Popover>
   )
 }
 
@@ -94,7 +93,8 @@ function RuleAction({
 }) {
   return (
     <Tooltip label={label}>
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         aria-label={label}
         data-testid={testId}
@@ -103,7 +103,7 @@ function RuleAction({
         onClick={onClick}
       >
         <Icon className="h-4 w-4" aria-hidden="true" />
-      </button>
+      </ControlButton>
     </Tooltip>
   )
 }
@@ -139,30 +139,33 @@ export function ProjectBoardColumnSortPicker({
   }
 
   return (
-    <Popover.Root>
+    <Popover>
       <Tooltip label={`${label}: ${summary}`} side="bottom" align="end">
-        <Popover.Trigger asChild>
-          <button
-            type="button"
-            data-testid={testId}
-            aria-label={label}
-            data-sort-rules={value.join(',') || 'manual'}
-            className={`${iconButtonStyle} relative data-[state=open]:bg-muted data-[state=open]:text-text-primary`}
-          >
-            <ArrowDownWideNarrow className="h-4 w-4" aria-hidden="true" />
-            {value.length > 1 ? (
-              <span
-                aria-hidden="true"
-                className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-text-primary px-1 text-xs text-background"
-              >
-                {value.length}
-              </span>
-            ) : null}
-          </button>
-        </Popover.Trigger>
+        <PopoverTrigger
+          render={
+            <button
+              type="button"
+              data-testid={testId}
+              aria-label={label}
+              data-sort-rules={value.join(',') || 'manual'}
+              className={`${iconButtonStyle} relative data-[open]:bg-muted data-[open]:text-text-primary`}
+            />
+          }
+        >
+          <ArrowDownWideNarrow className="h-4 w-4" aria-hidden="true" />
+          {value.length > 1 ? (
+            <span
+              aria-hidden="true"
+              className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-text-primary px-1 text-xs text-background"
+            >
+              {value.length}
+            </span>
+          ) : null}
+        </PopoverTrigger>
       </Tooltip>
-      <Popover.Portal container={portalContainer}>
-        <Popover.Content
+      <>
+        <PopoverContent
+          container={portalContainer}
           {...portalTheme}
           align="end"
           sideOffset={6}
@@ -234,7 +237,8 @@ export function ProjectBoardColumnSortPicker({
             ))}
           </ol>
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-border pt-2">
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid={`${testId}-add`}
               disabled={!unusedModes.length}
@@ -245,8 +249,9 @@ export function ProjectBoardColumnSortPicker({
             >
               <Plus className="h-4 w-4" aria-hidden="true" />
               {labels.add}
-            </button>
-            <button
+            </ControlButton>
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid={`${testId}-manual`}
               aria-pressed={!value.length}
@@ -255,10 +260,10 @@ export function ProjectBoardColumnSortPicker({
             >
               {!value.length ? <Check className="h-4 w-4" aria-hidden="true" /> : null}
               {labels.manual}
-            </button>
+            </ControlButton>
           </div>
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
+        </PopoverContent>
+      </>
+    </Popover>
   )
 }

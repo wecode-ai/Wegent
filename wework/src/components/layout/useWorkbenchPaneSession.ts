@@ -1,3 +1,4 @@
+import { reorderLocalQueuedMessages } from '@wegent/chat-core/conversation-queue'
 import { SupersededConversationRead } from '@/features/workbench/runtimeConversationSynchronization'
 import { useWorkbenchDeviceReconnect } from '@/features/workbench/useWorkbenchDeviceReconnect'
 import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
@@ -2534,21 +2535,7 @@ export function useWorkbenchPaneSession({
 
   const reorderQueuedMessages = useCallback(
     (sourceId: string, targetId: string) => {
-      setQueuedMessages(messages => {
-        const sourceIndex = messages.findIndex(message => message.id === sourceId)
-        const targetIndex = messages.findIndex(message => message.id === targetId)
-        if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) return messages
-
-        const source = messages[sourceIndex]
-        const target = messages[targetIndex]
-        if (source.status !== 'queued' || target.status !== 'queued') return messages
-
-        const reordered = [...messages]
-        reordered.splice(sourceIndex, 1)
-        const insertIndex = sourceIndex < targetIndex ? targetIndex - 1 : targetIndex
-        reordered.splice(insertIndex, 0, source)
-        return reordered
-      })
+      setQueuedMessages(messages => reorderLocalQueuedMessages(messages, sourceId, targetId))
     },
     [setQueuedMessages]
   )

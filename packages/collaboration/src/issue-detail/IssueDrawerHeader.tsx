@@ -1,5 +1,6 @@
-import { ArrowLeft, X } from "lucide-react";
-import type { ReactNode } from "react";
+import { ArrowLeft, X } from 'lucide-react'
+import type { ReactNode } from 'react'
+import { Button as ControlButton } from '../markdown/Button'
 
 export function IssueDrawerHeader({
   title,
@@ -9,16 +10,17 @@ export function IssueDrawerHeader({
   backLabel,
   closeLabel,
 }: {
-  title: ReactNode;
-  actions?: ReactNode;
-  onBack: () => void;
-  onClose: () => void;
-  backLabel: string;
-  closeLabel: string;
+  title: ReactNode
+  actions?: ReactNode
+  onBack: () => void
+  onClose: () => void
+  backLabel: string
+  closeLabel: string
 }) {
   return (
     <header className="task-detail-workspace-header flex shrink-0 items-center">
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="ai-chat-modal-back"
         onClick={onBack}
@@ -26,12 +28,11 @@ export function IssueDrawerHeader({
         className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
       >
         <ArrowLeft className="h-4 w-4" />
-      </button>
-      <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
-        {title}
-      </span>
+      </ControlButton>
+      <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">{title}</span>
       {actions}
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="ai-chat-modal-close"
         onClick={onClose}
@@ -39,7 +40,7 @@ export function IssueDrawerHeader({
         className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
       >
         <X className="h-4 w-4" />
-      </button>
+      </ControlButton>
     </header>
-  );
+  )
 }

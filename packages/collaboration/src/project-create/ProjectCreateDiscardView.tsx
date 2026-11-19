@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '../markdown/Button'
 import { ProjectCreateConfigurationView } from './ProjectCreateConfigurationView'
 import type { ProjectCreateLabels } from './types'
 
@@ -18,14 +19,15 @@ export function ProjectCreateDiscardView({
       onBack={onKeepEditing}
       backLabel={labels.keepEditing}
       footer={
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           className="collaboration-primary-button"
           data-testid="collaboration-project-create-discard-confirm"
           onClick={onDiscard}
         >
           {labels.discardDraft}
-        </button>
+        </ControlButton>
       }
     >
       <p className="collaboration-project-create-discard-description">

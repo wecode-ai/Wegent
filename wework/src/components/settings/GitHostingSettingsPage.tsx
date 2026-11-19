@@ -1,16 +1,17 @@
-import { Check, Copy, ExternalLink, GitBranch, Loader2, RefreshCw } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { LOCAL_CONNECTOR_AUTH_CHANGED_EVENT } from '@/api/local/localConnectorAuthEvents'
 import {
   getGitHostingCliStatus,
   type GitHostingCliProvider,
   type GitHostingCliStatus,
 } from '@/api/gitHostingCli'
+import { LOCAL_CONNECTOR_AUTH_CHANGED_EVENT } from '@/api/local/localConnectorAuthEvents'
+import { updateAppPreferences } from '@/desktop/appPreferences'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
 import { openExternalUrl } from '@/lib/external-links'
-import { updateAppPreferences } from '@/desktop/appPreferences'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Check, Copy, ExternalLink, GitBranch, Loader2, RefreshCw } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   SettingsGroup,
   SettingsPage,
@@ -129,7 +130,8 @@ export function GitHostingSettingsPage() {
           '检测当前设备上的 GitHub CLI 或 GitLab CLI，并配置 PR / MR 状态显示。'
         )}
         actions={
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="git-hosting-cli-refresh"
             onClick={() => void detect()}
@@ -142,7 +144,7 @@ export function GitHostingSettingsPage() {
               <RefreshCw className="h-4 w-4" />
             )}
             {t('workbench.git_hosting_cli_refresh', '重新检测')}
-          </button>
+          </ControlButton>
         }
       />
 
@@ -154,7 +156,7 @@ export function GitHostingSettingsPage() {
             'workbench.git_hosting_status_switch_description',
             '开启后，任务与 Issue 列表会自动更新 PR / MR 状态。关闭后不再为这些视图更新状态；本页仍会检测 CLI 的可用性，AI 已设置的事件等待不受影响。'
           )}
-          control={
+          children={
             <SettingsSwitch
               data-testid="change-request-status-switch"
               checked={enabled}
@@ -229,7 +231,8 @@ export function GitHostingSettingsPage() {
               {!providerLoading && status && !status.detectionError && !ready ? (
                 <div className="mt-4 flex flex-wrap gap-2 pl-8">
                   {!status.installed ? (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       data-testid={`git-hosting-cli-${provider}-install`}
                       onClick={() => void openExternalUrl(config.installUrl)}
@@ -237,10 +240,11 @@ export function GitHostingSettingsPage() {
                     >
                       <ExternalLink className="h-4 w-4" />
                       {t('workbench.git_hosting_cli_install', '安装指引')}
-                    </button>
+                    </ControlButton>
                   ) : null}
                   {status.installed && !status.authenticated ? (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       data-testid={`git-hosting-cli-${provider}-copy-login`}
                       onClick={() => void copyLoginCommand(provider)}
@@ -257,7 +261,7 @@ export function GitHostingSettingsPage() {
                             command: config.loginCommand,
                             defaultValue: `复制 ${config.loginCommand}`,
                           })}
-                    </button>
+                    </ControlButton>
                   ) : null}
                 </div>
               ) : null}

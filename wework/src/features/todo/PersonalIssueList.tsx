@@ -1,6 +1,5 @@
-import { composerMarkdownText } from '@wegent/collaboration/composer'
-import { useLayoutEffect, useRef, type ReactNode } from 'react'
-import { Bell, FolderOpen } from 'lucide-react'
+import { useSidebarRelativeTimeRefresh } from '@/components/layout/runtimeSidebarTime'
+import { useTranslation } from '@/hooks/useTranslation'
 import type {
   CollaborationProject,
   WorkspaceMyWorkItem,
@@ -13,11 +12,13 @@ import {
   issueNeedsUser,
   pendingIssueHumanRequests,
 } from '@wegent/collaboration'
-import { useTranslation } from '@/hooks/useTranslation'
-import { useSidebarRelativeTimeRefresh } from '@/components/layout/runtimeSidebarTime'
+import { composerMarkdownText } from '@wegent/collaboration/composer'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Bell, FolderOpen } from 'lucide-react'
+import { useLayoutEffect, useRef, type ReactNode } from 'react'
 import { PersonalHomeIssueActivity } from './PersonalHomeIssueActivity'
 import { personalHomeAssignmentAt, personalHomeAssignmentDuration } from './personalHomeAssignment'
-import type { usePersonalHomeIssues, PersonalHomeIssueOrder } from './usePersonalHomeIssues'
+import type { PersonalHomeIssueOrder, usePersonalHomeIssues } from './usePersonalHomeIssues'
 
 export function PersonalIssueList({
   userId,
@@ -155,14 +156,15 @@ export function PersonalIssueList({
           <h3 className="mb-1 flex items-center gap-2 text-base font-medium text-text-secondary">
             <FolderOpen aria-hidden="true" className="h-4 w-4 text-text-muted" />
             {onOpenProject ? (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid={`personal-issues-project-${project.id}`}
                 className="min-h-11 min-w-11 truncate text-left hover:underline md:min-h-0 md:min-w-0"
                 onClick={() => onOpenProject(project)}
               >
                 {project.name}
-              </button>
+              </ControlButton>
             ) : (
               project.name
             )}

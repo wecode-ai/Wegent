@@ -1,7 +1,9 @@
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Loader2 } from 'lucide-react'
 import type { ReactNode } from 'react'
+import { useRef } from 'react'
 import { createPortal } from 'react-dom'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 
 interface ConfirmDialogProps {
   open: boolean
@@ -36,13 +38,7 @@ export function ConfirmDialog({
   onClose,
   onConfirm,
 }: ConfirmDialogProps) {
-  const dialogRef = useDialogKeyboard<HTMLDivElement>(
-    () => {
-      if (!pending) onClose()
-    },
-    open,
-    destructive ? 'button:first-of-type' : 'button:last-of-type'
-  )
+  const dialogRef = useRef<HTMLDivElement>(null)
 
   if (!open) return null
 
@@ -50,14 +46,22 @@ export function ConfirmDialog({
     <div
       className={`fixed inset-0 flex items-center justify-center bg-black/35 p-4 ${overlayClassName}`}
     >
-      <div
-        ref={dialogRef}
-        data-testid={dialogTestId}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={`${confirmTestId}-title`}
-        aria-describedby={`${confirmTestId}-description`}
-        className="flex max-h-[calc(100dvh-2rem)] w-full max-w-[420px] flex-col rounded-[20px] border border-border bg-popover p-5 text-text-primary shadow-lg"
+      <DialogSurface
+        kind="alertdialog"
+        onClose={() => {
+          if (!pending) onClose()
+        }}
+        active={open}
+        initialFocus={destructive ? 'button:first-of-type' : 'button:last-of-type'}
+        render={
+          <div
+            ref={dialogRef}
+            data-testid={dialogTestId}
+            aria-labelledby={`${confirmTestId}-title`}
+            aria-describedby={`${confirmTestId}-description`}
+            className="flex max-h-[calc(100dvh-2rem)] w-full max-w-[420px] flex-col rounded-[20px] border border-border bg-popover p-5 text-text-primary shadow-lg"
+          />
+        }
       >
         <h2 id={`${confirmTestId}-title`} className="shrink-0 break-words text-lg font-medium">
           {title}
@@ -69,7 +73,9 @@ export function ConfirmDialog({
           {description}
         </p>
         <div className="mt-6 flex shrink-0 flex-wrap justify-end gap-2">
-          <button
+          <ControlButton
+            variant="outline"
+            size="sm"
             type="button"
             data-testid={cancelTestId ?? `${confirmTestId}-cancel-button`}
             disabled={pending}
@@ -77,8 +83,9 @@ export function ConfirmDialog({
             className="min-h-11 rounded-lg border border-border px-3 text-sm text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-45 md:min-h-8"
           >
             {cancelLabel}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={confirmTestId}
             disabled={pending || confirmDisabled}
@@ -98,9 +105,9 @@ export function ConfirmDialog({
               ) : null}
               {confirmLabel}
             </span>
-          </button>
+          </ControlButton>
         </div>
-      </div>
+      </DialogSurface>
     </div>,
     document.body
   )

@@ -1,7 +1,4 @@
-import { Loader2, ScanLine } from 'lucide-react'
-import { useEffect, useState } from 'react'
 import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
-import { useTranslation } from '@/hooks/useTranslation'
 import {
   defaultAppPreferences,
   getAppPreferences,
@@ -13,6 +10,10 @@ import {
   type AppshotPermission,
   type AppshotsStatus,
 } from '@/desktop/appshots'
+import { useTranslation } from '@/hooks/useTranslation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Loader2, ScanLine } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import {
   SettingsGroup,
   SettingsPage,
@@ -82,14 +83,15 @@ export function AppshotsSettingsPage() {
         {t('workbench.appshots_permission_granted', '已允许')}
       </span>
     ) : (
-      <button
+      <ControlButton
+        variant="outline"
+        size="sm"
         type="button"
         data-testid={testId}
         onClick={() => openPermissionSettings(permission)}
-        className="h-8 rounded-md border border-border px-2.5 text-xs font-medium text-text-primary hover:bg-muted"
       >
         {t('workbench.appshots_open_permission_settings', '打开系统设置')}
-      </button>
+      </ControlButton>
     )
 
   return (
@@ -143,7 +145,7 @@ export function AppshotsSettingsPage() {
                     )
                   : t('workbench.appshots_macos_only', '应用快照目前仅支持 macOS。')
           }
-          control={
+          children={
             loading ? (
               <Loader2 className="h-4 w-4 animate-spin text-text-muted" />
             ) : (
@@ -163,7 +165,7 @@ export function AppshotsSettingsPage() {
             'workbench.appshots_screen_capture_permission_description',
             '用于截取最前面的应用窗口'
           )}
-          control={permissionControl(
+          children={permissionControl(
             'screenCapture',
             status?.screenCapturePermissionGranted,
             'appshots-open-screen-capture-settings-button'
@@ -175,7 +177,7 @@ export function AppshotsSettingsPage() {
             'workbench.appshots_accessibility_permission_description_short',
             '用于读取窗口可用文本，包括滚动区域外文本'
           )}
-          control={permissionControl(
+          children={permissionControl(
             'accessibility',
             status?.accessibilityPermissionGranted,
             'appshots-open-accessibility-settings-button'
@@ -187,7 +189,7 @@ export function AppshotsSettingsPage() {
             'workbench.appshots_target_description',
             '快照会自动添加到当前 Wework 输入框'
           )}
-          control={
+          children={
             <span className="rounded-md border border-border bg-background px-2.5 py-1 text-xs font-medium text-text-secondary">
               {t('workbench.appshots_target_auto', '自动')}
             </span>
@@ -196,7 +198,7 @@ export function AppshotsSettingsPage() {
         <SettingsRow
           label={t('workbench.appshots_play_sound', '播放声音')}
           description={t('workbench.appshots_play_sound_description', '成功截取窗口时播放系统声音')}
-          control={
+          children={
             <SettingsSwitch
               data-testid="appshots-play-sound-toggle"
               checked={playSound}

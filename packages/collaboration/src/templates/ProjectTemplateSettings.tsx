@@ -1,20 +1,21 @@
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
-import type { CollaborationGroup, CollaborationProject } from '../types'
 import type { CollaborationLocale } from '../i18n'
+import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
+import { ProjectSettingsPage } from '../project-manage/ProjectSettingsPage'
+import type { CollaborationGroup, CollaborationProject } from '../types'
+import { readTemplateAgents } from './agents'
+import { CollaborationTemplatePage } from './CollaborationTemplatePage'
 import { useCollaborationTemplateStore } from './context'
 import { downloadTemplate, templateFromProject } from './document'
 import { templateFailureMessage, templateMessages } from './messages'
-import { TemplateDialog } from './TemplateDialog'
-import { CollaborationTemplatePage } from './CollaborationTemplatePage'
 import { ProjectTemplateApplyDialog } from './ProjectTemplateApplyDialog'
+import { TemplateDialog } from './TemplateDialog'
 import { TemplateSaveDialog } from './TemplateSaveDialog'
 import type { CollaborationTemplate } from './types'
-import { readTemplateAgents } from './agents'
-import { ProjectSettingsPage } from '../project-manage/ProjectSettingsPage'
 
 export function ProjectTemplateSettings({
   api,
@@ -96,9 +97,14 @@ export function ProjectTemplateSettings({
       {error && (
         <p role="alert">
           {error}{' '}
-          <button type="button" data-testid="project-template-retry" onClick={() => void reload()}>
+          <ControlButton
+            variant="unstyled"
+            type="button"
+            data-testid="project-template-retry"
+            onClick={() => void reload()}
+          >
             {m.retry}
-          </button>
+          </ControlButton>
         </p>
       )}
       {canManage && api.projects.createCollaborationGroup && (
@@ -107,7 +113,8 @@ export function ProjectTemplateSettings({
             <h2 className="text-base font-medium">{m.importProject}</h2>
             <p className="mt-1 text-sm text-text-secondary">{m.importProjectHint}</p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             className="collaboration-template-choice"
             data-testid="project-template-import"
@@ -115,7 +122,7 @@ export function ProjectTemplateSettings({
             onClick={() => setChoosing(true)}
           >
             {m.chooseTemplate}
-          </button>
+          </ControlButton>
         </section>
       )}
       <section className="flex flex-wrap items-start justify-between gap-4 border-b border-border py-5">
@@ -123,7 +130,8 @@ export function ProjectTemplateSettings({
           <h2 className="text-base font-medium">{m.saveTitle}</h2>
           <p className="mt-1 text-sm text-text-secondary">{m.saveHint}</p>
         </div>
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           className="collaboration-template-choice"
           data-testid="project-template-save"
@@ -141,14 +149,15 @@ export function ProjectTemplateSettings({
           }}
         >
           {m.save}
-        </button>
+        </ControlButton>
       </section>
       <section className="flex flex-wrap items-start justify-between gap-4 border-b border-border py-5">
         <div className="min-w-0 flex-1">
           <h2 className="text-base font-medium">{m.export}</h2>
           <p className="mt-1 text-sm text-text-secondary">{m.exportHint}</p>
         </div>
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           className="collaboration-template-choice"
           data-testid="project-template-export"
@@ -166,7 +175,7 @@ export function ProjectTemplateSettings({
           }}
         >
           {m.export}
-        </button>
+        </ControlButton>
       </section>
       {choosing && (
         <TemplateDialog

@@ -1,9 +1,4 @@
-import { useEffect, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { Button } from '@/components/ui/button'
-import { useEscapeKey } from '@/hooks/useEscapeKey'
-import { useTranslation } from '@/hooks/useTranslation'
-import { isDesktopRuntime } from '@/lib/runtime-environment'
 import { disposeDesktopListener } from '@/desktop/disposeDesktopListener'
 import {
   cancelMainWindowClose,
@@ -11,6 +6,11 @@ import {
   installRuntimeTaskCloseGuard,
   quitApplication,
 } from '@/desktop/runtimeTaskCloseGuard'
+import { useTranslation } from '@/hooks/useTranslation'
+import { isDesktopRuntime } from '@/lib/runtime-environment'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 export function RuntimeTaskCloseGuard() {
   const { t } = useTranslation('common')
@@ -110,10 +110,6 @@ function RuntimeTaskCloseConfirmDialog({
   onQuit,
   onKeepInBackground,
 }: RuntimeTaskCloseConfirmDialogProps) {
-  useEscapeKey(() => {
-    if (!closing) void onDismiss()
-  }, open && !closing)
-
   if (!open) return null
 
   return createPortal(
@@ -121,11 +117,19 @@ function RuntimeTaskCloseConfirmDialog({
       data-testid="runtime-task-close-confirm-overlay"
       className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4"
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="runtime-task-close-confirm-title"
-        className="w-full max-w-[420px] rounded-lg border border-border bg-base p-5 shadow-2xl"
+      <DialogSurface
+        onClose={() => {
+          if (open && !closing)
+            (() => {
+              if (!closing) void onDismiss()
+            })()
+        }}
+        render={
+          <div
+            aria-labelledby="runtime-task-close-confirm-title"
+            className="w-full max-w-[420px] rounded-lg border border-border bg-base p-5 shadow-2xl"
+          />
+        }
       >
         <h2
           id="runtime-task-close-confirm-title"
@@ -158,7 +162,7 @@ function RuntimeTaskCloseConfirmDialog({
             {backgroundLabel}
           </Button>
         </div>
-      </div>
+      </DialogSurface>
     </div>,
     document.body
   )

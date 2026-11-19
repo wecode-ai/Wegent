@@ -1,36 +1,36 @@
-import { IssueCommentChildAction } from './IssueCommentChildAction'
-import { BrowserIssueExecution } from './BrowserIssueExecution'
+import { isSingleActivityExecution } from '@wegent/chat-core/activity-execution-turn'
+import type { RuntimeTaskAddress } from '@wegent/chat-core/runtime'
+import { Button as ControlButton } from '../markdown/Button'
 import { BrowserIssueActivityTools } from './BrowserIssueActivityTools'
-import { useIssueActivityScroll } from './useIssueActivityScroll'
-import { BrowserIssueReplies } from './BrowserIssueReplies'
 import { BrowserIssueCommentComposer } from './BrowserIssueCommentComposer'
-import { issueTaskSummaryForMessage } from './issueTaskSummary'
+import { BrowserIssueExecution } from './BrowserIssueExecution'
+import { BrowserIssueReplies } from './BrowserIssueReplies'
 import type { SharedIssueDetailTaskBinding } from './createSharedIssueDetailPort'
+import { IssueActivityContent } from './IssueActivityContent'
+import { IssueActivityFeed } from './IssueActivityFeed'
+import { IssueActivityMarkdown } from './IssueActivityMarkdown'
+import { groupIssueTimelineThreads } from './IssueActivityThread'
+import { IssueCommentChildAction } from './IssueCommentChildAction'
+import { IssueMarkdownProvider } from './IssueMarkdownProvider'
+import { IssueProjectChatThread } from './IssueProjectChatThread'
+import { issueTaskSummaryForMessage } from './issueTaskSummary'
+import { compareIssueTimestamps, issueThreadActivityTimestamp } from './issueTimestamp'
+import { IssueWebCommentComposer } from './IssueWebCommentComposer'
 import {
   executionRuntimeAddress,
   messageRuntimeExecutionTarget,
   type RuntimeExecutionTarget,
 } from './runtimeExecutionTarget'
-import { isSingleActivityExecution } from '@wegent/chat-core/activity-execution-turn'
-import { IssueActivityFeed } from './IssueActivityFeed'
-import { IssueMarkdownProvider } from './IssueMarkdownProvider'
-import { IssueWebCommentComposer } from './IssueWebCommentComposer'
-import { groupIssueTimelineThreads } from './IssueActivityThread'
-import { IssueActivityContent } from './IssueActivityContent'
-import { compareIssueTimestamps, issueThreadActivityTimestamp } from './issueTimestamp'
-import { IssueActivityMarkdown } from './IssueActivityMarkdown'
-import { IssueProjectChatThread } from './IssueProjectChatThread'
-import { useIssueProjectChat } from './useIssueProjectChat'
+import { useIssueActivityScroll } from './useIssueActivityScroll'
 import { useIssueExecutionCancellation } from './useIssueExecutionCancellation'
-import type { RuntimeTaskAddress } from '@wegent/chat-core/runtime'
+import { useIssueProjectChat } from './useIssueProjectChat'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { IssueActivityCard, IssueActivityMessage } from './IssueActivityPresentation'
 import { useCallback, useMemo, useRef } from 'react'
+import { IssueActivityCard, IssueActivityMessage } from './IssueActivityPresentation'
 
-import { executionStatusLabel } from './executionStatusLabel'
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type {
   CollaborationAgent,
@@ -38,12 +38,13 @@ import type {
   CollaborationComment,
   CollaborationExecution,
   CollaborationIssue,
-  CollaborationProject,
   CollaborationMember,
+  CollaborationProject,
 } from '../types'
+import { executionStatusLabel } from './executionStatusLabel'
 
-import { issueActivityEntries } from './issueActivityEntries'
 import { activityDisplayBody } from './activityDisplayBody'
+import { issueActivityEntries } from './issueActivityEntries'
 
 export function IssueActivityPanel({
   commentActions,
@@ -148,7 +149,11 @@ export function IssueActivityPanel({
     [api.activity, assignments, comments, executions]
   )
   const content = (
-    <IssueMarkdownProvider attachments={api.attachments} issueId={issue.id} projectId={issue.cloud_project_id}>
+    <IssueMarkdownProvider
+      attachments={api.attachments}
+      issueId={issue.id}
+      projectId={issue.cloud_project_id}
+    >
       <IssueActivityFeed
         testId="collaboration-issue-activity"
         listTestId="collaboration-comments"
@@ -356,7 +361,8 @@ export function IssueActivityPanel({
                     {entry.kind === 'run' ? (
                       <>
                         <div className="task-detail-thread-task-link">
-                          <button
+                          <ControlButton
+                            variant="unstyled"
                             type="button"
                             className="task-detail-ai-run-open-task"
                             data-testid={`collaboration-open-task-${entry.run.id}`}
@@ -366,8 +372,9 @@ export function IssueActivityPanel({
                             disabled={!boundTask || !onOpenTaskConversation}
                           >
                             {entry.run.task_title}
-                          </button>
-                          <button
+                          </ControlButton>
+                          <ControlButton
+                            variant="unstyled"
                             type="button"
                             className="task-detail-ai-run-open-task"
                             data-testid={`collaboration-open-execution-${entry.run.id}`}
@@ -385,7 +392,7 @@ export function IssueActivityPanel({
                             }}
                           >
                             {executionStatusLabel(entry.run.display_state, translate)}
-                          </button>
+                          </ControlButton>
                         </div>
                         {entry.run.error_message ? (
                           <p
@@ -418,7 +425,10 @@ export function IssueActivityPanel({
                       translate={translate}
                       onComment={async text => {
                         const saved = await api.comments.create(issue.id, text)
-                        const next = [...latestComments.current.filter(comment => comment.id !== saved.id), saved]
+                        const next = [
+                          ...latestComments.current.filter(comment => comment.id !== saved.id),
+                          saved,
+                        ]
                         latestComments.current = next
                         onCommentsChange(next)
                       }}

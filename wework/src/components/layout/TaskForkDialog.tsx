@@ -1,8 +1,5 @@
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
-import { useMemo, useState } from 'react'
-import { ArrowLeftRight, Check, FolderPlus, HardDrive, Loader2, X } from 'lucide-react'
-import { Button } from '@/components/ui/button'
 import { ProjectCreateDialog } from '@/components/projects/ProjectCreateDialog'
+import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { runtimeProjectToProject, runtimeProjectUiId } from '@/lib/runtime-project'
 import { cn } from '@/lib/utils'
@@ -18,6 +15,11 @@ import type {
   RuntimeTaskForkTarget,
   RuntimeWorkListResponse,
 } from '@/types/api'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Radio, RadioGroup } from '@wegent/collaboration/controls/RadioGroup'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ArrowLeftRight, Check, FolderPlus, HardDrive, Loader2, X } from 'lucide-react'
+import { useMemo, useRef, useState } from 'react'
 
 interface TargetOption {
   key: string
@@ -185,13 +187,7 @@ export function TaskForkDialog({
   const projectForBinding: ProjectWithTasks | null =
     currentProject ?? (sourceProjectWork ? runtimeProjectToProject(sourceProjectWork) : null)
 
-  const dialogRef = useDialogKeyboard<HTMLElement>(
-    () => {
-      if (!submitting) onOpenChange(false)
-    },
-    open && Boolean(source),
-    '[data-testid="task-fork-confirm-button"]:not([disabled])'
-  )
+  const dialogRef = useRef<HTMLElement>(null)
 
   if (!open || !source) return null
 
@@ -243,14 +239,21 @@ export function TaskForkDialog({
           if (!submitting) onOpenChange(false)
         }}
       >
-        <section
-          ref={dialogRef}
-          data-testid="task-fork-dialog"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="task-fork-dialog-title"
-          className="w-full max-w-[460px] rounded-lg border border-border bg-background p-4 shadow-[0_18px_54px_rgba(0,0,0,0.18)]"
-          onMouseDown={event => event.stopPropagation()}
+        <DialogSurface
+          onClose={() => {
+            if (!submitting) onOpenChange(false)
+          }}
+          active={open && Boolean(source)}
+          initialFocus={'[data-testid="task-fork-confirm-button"]:not([disabled])'}
+          render={
+            <section
+              ref={dialogRef}
+              data-testid="task-fork-dialog"
+              aria-labelledby="task-fork-dialog-title"
+              className="w-full max-w-[460px] rounded-lg border border-border bg-background p-4 shadow-[0_18px_54px_rgba(0,0,0,0.18)]"
+              onMouseDown={event => event.stopPropagation()}
+            />
+          }
         >
           <div className="flex items-center gap-3">
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface text-text-primary">
@@ -262,7 +265,8 @@ export function TaskForkDialog({
               </h2>
               <p className="truncate text-xs text-text-muted">{source.taskId}</p>
             </div>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="task-fork-close-button"
               disabled={submitting}
@@ -271,7 +275,7 @@ export function TaskForkDialog({
               aria-label={t('workbench.close_dialog', '关闭')}
             >
               <X className="h-4 w-4" />
-            </button>
+            </ControlButton>
           </div>
 
           {requiresStop && (
@@ -290,19 +294,41 @@ export function TaskForkDialog({
             )}
           </p>
 
-          <div className="mt-4 space-y-2" role="radiogroup">
+          <RadioGroup
+            value={
+              bindingDialogDeviceId
+                ? JSON.stringify(['bind', bindingDialogDeviceId])
+                : selectedOption
+                  ? JSON.stringify(['target', selectedOption.key])
+                  : null
+            }
+            onValueChange={next => {
+              if (submitting) return
+              const option = options.find(option => JSON.stringify(['target', option.key]) === next)
+              if (option && !option.disabled) {
+                setSelectedKey(option.key)
+                setBindingDialogDeviceId(null)
+                return
+              }
+              const device = bindableDevices.find(
+                device => JSON.stringify(['bind', device.device_id]) === next
+              )
+              if (device && targetProjectId && onPrepareDeviceWorkspace) {
+                setSelectedKey(null)
+                setBindingDialogDeviceId(device.device_id)
+              }
+            }}
+            aria-label={t('workbench.task_fork_title', '复制任务')}
+            className="mt-4 space-y-2"
+          >
             {options.map(option => {
               const selected = selectedOption?.key === option.key
               return (
-                <button
+                <Radio
+                  value={JSON.stringify(['target', option.key])}
                   key={option.key}
-                  type="button"
                   data-testid={`task-fork-target-${option.target.deviceId}`}
                   disabled={option.disabled || submitting}
-                  onClick={() => {
-                    setSelectedKey(option.key)
-                    setBindingDialogDeviceId(null)
-                  }}
                   className={cn(
                     'flex min-h-[52px] w-full items-center gap-3 rounded-lg border px-3 text-left transition-colors',
                     selected
@@ -310,8 +336,6 @@ export function TaskForkDialog({
                       : 'border-border bg-background text-text-primary hover:bg-surface',
                     option.disabled && 'cursor-not-allowed opacity-50 hover:bg-background'
                   )}
-                  aria-checked={selected}
-                  role="radio"
                 >
                   <HardDrive className="h-4 w-4 shrink-0 text-text-muted" />
                   <span className="min-w-0 flex-1">
@@ -319,7 +343,7 @@ export function TaskForkDialog({
                     <span className="block truncate text-xs text-text-muted">{option.meta}</span>
                   </span>
                   {selected && <Check className="h-4 w-4 shrink-0" />}
-                </button>
+                </Radio>
               )
             })}
             {targetProjectId &&
@@ -327,23 +351,17 @@ export function TaskForkDialog({
               bindableDevices.map(device => {
                 const selected = bindingDialogDeviceId === device.device_id
                 return (
-                  <button
+                  <Radio
+                    value={JSON.stringify(['bind', device.device_id])}
                     key={device.device_id}
-                    type="button"
                     data-testid={`task-fork-bind-device-${device.device_id}`}
                     disabled={submitting}
-                    onClick={() => {
-                      setSelectedKey(null)
-                      setBindingDialogDeviceId(device.device_id)
-                    }}
                     className={cn(
                       'flex min-h-[52px] w-full items-center gap-3 rounded-lg border px-3 text-left transition-colors',
                       selected
                         ? 'border-text-primary bg-surface text-text-primary'
                         : 'border-border bg-background text-text-primary hover:bg-surface'
                     )}
-                    aria-checked={selected}
-                    role="radio"
                   >
                     <FolderPlus className="h-4 w-4 shrink-0 text-text-muted" />
                     <span className="min-w-0 flex-1">
@@ -355,10 +373,10 @@ export function TaskForkDialog({
                       </span>
                     </span>
                     {selected && <Check className="h-4 w-4 shrink-0" />}
-                  </button>
+                  </Radio>
                 )
               })}
-          </div>
+          </RadioGroup>
 
           {options.length === 0 && bindableDevices.length === 0 && (
             <div className="mt-4 rounded-md border border-border bg-surface px-3 py-2 text-xs text-text-muted">
@@ -398,7 +416,7 @@ export function TaskForkDialog({
                 : t('workbench.task_fork_confirm', '复制')}
             </Button>
           </div>
-        </section>
+        </DialogSurface>
       </div>
       {projectForBinding && bindingDialogDeviceId && onPrepareDeviceWorkspace && (
         <ProjectCreateDialog

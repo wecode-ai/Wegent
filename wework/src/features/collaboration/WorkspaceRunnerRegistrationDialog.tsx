@@ -1,7 +1,8 @@
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
-import { useState } from 'react'
-import { useTranslation } from '@/hooks/useTranslation'
 import { Button } from '@/components/ui/button'
+import { useTranslation } from '@/hooks/useTranslation'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { useRef, useState } from 'react'
 
 interface Registration {
   environment_id: string
@@ -24,12 +25,7 @@ export function WorkspaceRunnerRegistrationDialog({
   const [registration, setRegistration] = useState<Registration | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const dialogRef = useDialogKeyboard<HTMLElement>(() => {
-    if (!busy) {
-      if (registration) void onDone()
-      else onClose()
-    }
-  })
+  const dialogRef = useRef<HTMLElement>(null)
   const submit = async () => {
     setBusy(true)
     setError(null)
@@ -43,13 +39,21 @@ export function WorkspaceRunnerRegistrationDialog({
   }
   return (
     <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 p-4">
-      <section
-        ref={dialogRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="runner-register-title"
-        className="w-full max-w-lg space-y-4 rounded-lg border border-border bg-popover p-5 shadow-lg"
-        data-testid="workspace-runner-registration"
+      <DialogSurface
+        onClose={() => {
+          if (!busy) {
+            if (registration) void onDone()
+            else onClose()
+          }
+        }}
+        render={
+          <section
+            ref={dialogRef}
+            aria-labelledby="runner-register-title"
+            className="w-full max-w-lg space-y-4 rounded-lg border border-border bg-popover p-5 shadow-lg"
+            data-testid="workspace-runner-registration"
+          />
+        }
       >
         <h2 id="runner-register-title" className="text-sm font-semibold">
           {t('workbench.runner_register')}
@@ -59,18 +63,18 @@ export function WorkspaceRunnerRegistrationDialog({
             <p className="text-sm text-text-secondary">{t('workbench.runner_registration_hint')}</p>
             <label className="block space-y-1 text-sm">
               DEVICE_ID
-              <input
+              <ControlInput
                 readOnly
-                className="w-full rounded border border-border bg-background p-2"
+                className="w-full"
                 data-testid="workspace-runner-device-id"
                 value={registration.device_id}
               />
             </label>
             <label className="block space-y-1 text-sm">
               WEGENT_AUTH_TOKEN
-              <input
+              <ControlInput
                 readOnly
-                className="w-full rounded border border-border bg-background p-2"
+                className="w-full"
                 data-testid="workspace-runner-token"
                 value={registration.token}
               />
@@ -80,9 +84,9 @@ export function WorkspaceRunnerRegistrationDialog({
         ) : (
           <label className="block space-y-1 text-sm">
             {t('workbench.runner_environment')}
-            <input
+            <ControlInput
               autoFocus
-              className="w-full rounded border border-border bg-background p-2"
+              className="w-full"
               data-testid="workspace-runner-name"
               value={name}
               onChange={event => setName(event.target.value)}
@@ -120,7 +124,7 @@ export function WorkspaceRunnerRegistrationDialog({
             </>
           )}
         </div>
-      </section>
+      </DialogSurface>
     </div>
   )
 }

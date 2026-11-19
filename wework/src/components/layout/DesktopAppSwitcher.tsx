@@ -1,22 +1,24 @@
-import { ChevronDown, CloudOff, Settings } from 'lucide-react'
-import {
-  useCallback,
-  useContext,
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react'
-import { createPortal } from 'react-dom'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
-import { useTranslation } from '@/hooks/useTranslation'
-import { dispatchOpenSettingsShortcut } from '@/lib/keybindings'
-import { cn } from '@/lib/utils'
 import type { WeworkDshApp } from '@/features/dsh-runtime/dshApps'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
+import { useTranslation } from '@/hooks/useTranslation'
+import { dispatchOpenSettingsShortcut } from '@/lib/keybindings'
+import { cn } from '@/lib/utils'
+import {
+  Menu,
+  MenuContent,
+  MenuItem,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuSeparator,
+  MenuTrigger,
+} from '@wegent/collaboration/controls/MenuParts'
+import { controlOption, controlPopup } from '@wegent/collaboration/controls/recipes'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useCollaborationPortalTheme } from '@wegent/collaboration/theme'
+import { Check, ChevronDown, CloudOff, Settings } from 'lucide-react'
+import { useContext, useMemo, useState } from 'react'
 
 export type DesktopAppKey = string
 
@@ -36,75 +38,6 @@ interface AppOption {
   disabled?: boolean
 }
 
-interface MenuPosition {
-  left: number
-  top: number
-  originY: number
-}
-
-interface RollingLabel {
-  from: string
-  to: string
-  direction: 'up' | 'down'
-}
-
-interface TooltipPosition {
-  left: number
-  top: number
-}
-
-const MENU_WIDTH = 304
-const MENU_ROW_STEP = 42
-const MENU_VIEWPORT_PADDING = 8
-const MENU_TRANSITION_MS = 160
-const SUFFIX_TRANSITION_MS = 260
-
-function AvailabilityTooltip({ label, testId }: { label: string; testId: string }) {
-  const tooltipId = useId()
-  const triggerRef = useRef<HTMLSpanElement>(null)
-  const [position, setPosition] = useState<TooltipPosition | null>(null)
-
-  const showTooltip = () => {
-    const rect = triggerRef.current?.getBoundingClientRect()
-    if (!rect) return
-    setPosition({ left: rect.right + 8, top: rect.top + rect.height / 2 })
-  }
-
-  return (
-    <>
-      <span
-        ref={triggerRef}
-        tabIndex={0}
-        role="img"
-        data-testid={testId}
-        aria-label={label}
-        aria-describedby={tooltipId}
-        onMouseEnter={showTooltip}
-        onMouseLeave={() => setPosition(null)}
-        onFocus={showTooltip}
-        onBlur={() => setPosition(null)}
-        className="inline-flex shrink-0 rounded-sm text-text-muted outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus"
-      >
-        <CloudOff aria-hidden="true" className="h-3.5 w-3.5" />
-      </span>
-      {position
-        ? createPortal(
-            <span
-              id={tooltipId}
-              role="tooltip"
-              data-testid={`${testId}-tooltip`}
-              className="pointer-events-none fixed z-system-popover -translate-y-1/2 whitespace-nowrap rounded-lg border border-border bg-popover/95 px-2.5 py-1.5 text-xs font-medium text-text-primary shadow-[0_8px_24px_rgba(0,0,0,0.24)] ring-1 ring-border backdrop-blur-md"
-              style={{ left: position.left, top: position.top }}
-            >
-              {label}
-            </span>,
-            document.body
-          )
-        : null}
-    </>
-  )
-}
-
 export function DesktopAppSwitcher({
   activeApp,
   onNavigate,
@@ -114,19 +47,9 @@ export function DesktopAppSwitcher({
 }: DesktopAppSwitcherProps) {
   const { t } = useTranslation('common')
   const cloudConnection = useContext(CloudConnectionContext)
-  const triggerRef = useRef<HTMLButtonElement>(null)
-  const menuRef = useRef<HTMLDivElement>(null)
-  const timerRef = useRef<number | null>(null)
-  const blurTimerRef = useRef<number | null>(null)
-  const animationFrameRef = useRef<number | null>(null)
-  const [menuMounted, setMenuMounted] = useState(false)
-  const [open, setOpen] = useState(false)
-  const [menuPosition, setMenuPosition] = useState<MenuPosition | null>(null)
-  const [displayedKey, setDisplayedKey] = useState<DesktopAppKey>(activeApp)
-  const [rollingLabel, setRollingLabel] = useState<RollingLabel | null>(null)
-  const [menuBlurred, setMenuBlurred] = useState(false)
   const registeredApps = useDshSlotEntries<WeworkDshApp>(WEWORK_DSH_SLOTS.app)
-
+  const [open, setOpen] = useState(false)
+  const theme = useCollaborationPortalTheme()
   const options = useMemo<AppOption[]>(() => {
     return registeredApps
       .filter(app => !app.hiddenInSwitcher)
@@ -142,140 +65,9 @@ export function DesktopAppSwitcher({
           Boolean(app.requiresCloud) && !cloudConnection?.isConnected && activeApp !== app.id,
       }))
   }, [activeApp, cloudConnection?.isConnected, registeredApps, t])
-  const displayedAppKey = rollingLabel ? displayedKey : activeApp
-  const selected = options.find(option => option.key === displayedAppKey) ??
-    options.find(option => option.key === 'wework') ??
-    options[0] ?? {
-      key: activeApp,
-      label: activeApp,
-      description: '',
-      disabled: true,
-    }
-  const selectedIndex = options.findIndex(option => option.key === selected.key)
-  const triggerTestId = testIds?.[selected.key] ?? `chrome-tab-${selected.key}`
-
-  const clearTimer = useCallback(() => {
-    if (timerRef.current !== null) window.clearTimeout(timerRef.current)
-    timerRef.current = null
-  }, [])
-
-  const clearBlurTimer = useCallback(() => {
-    if (blurTimerRef.current !== null) window.clearTimeout(blurTimerRef.current)
-    blurTimerRef.current = null
-  }, [])
-
-  const clearAnimationFrame = useCallback(() => {
-    if (animationFrameRef.current !== null) window.cancelAnimationFrame(animationFrameRef.current)
-    animationFrameRef.current = null
-  }, [])
-
-  useEffect(
-    () => () => {
-      clearAnimationFrame()
-      clearTimer()
-      clearBlurTimer()
-    },
-    [clearAnimationFrame, clearBlurTimer, clearTimer]
-  )
-
-  const closeMenu = useCallback(() => {
-    setOpen(false)
-    setMenuBlurred(false)
-    clearAnimationFrame()
-    clearBlurTimer()
-    clearTimer()
-    timerRef.current = window.setTimeout(() => {
-      setMenuMounted(false)
-      setMenuPosition(null)
-    }, MENU_TRANSITION_MS)
-  }, [clearAnimationFrame, clearBlurTimer, clearTimer])
-
-  const openMenu = () => {
-    clearAnimationFrame()
-    clearTimer()
-    clearBlurTimer()
-    setMenuBlurred(false)
-    setMenuMounted(true)
-    animationFrameRef.current = window.requestAnimationFrame(() => {
-      animationFrameRef.current = null
-      setOpen(true)
-      blurTimerRef.current = window.setTimeout(() => {
-        setMenuBlurred(true)
-        blurTimerRef.current = null
-      }, MENU_TRANSITION_MS)
-    })
-  }
-
-  useLayoutEffect(() => {
-    if (!menuMounted) return
-
-    const updatePosition = () => {
-      const trigger = triggerRef.current
-      if (!trigger) return
-      const rect = trigger.getBoundingClientRect()
-      const menuHeight = options.length * MENU_ROW_STEP + 8
-      const desiredTop = rect.top - 5
-      const maxTop = Math.max(
-        MENU_VIEWPORT_PADDING,
-        window.innerHeight - menuHeight - MENU_VIEWPORT_PADDING
-      )
-      const top = Math.max(MENU_VIEWPORT_PADDING, Math.min(desiredTop, maxTop))
-      const left = Math.max(
-        MENU_VIEWPORT_PADDING,
-        Math.min(rect.left, window.innerWidth - MENU_WIDTH - MENU_VIEWPORT_PADDING)
-      )
-      setMenuPosition({ left, top, originY: rect.top - top + rect.height / 2 })
-    }
-
-    updatePosition()
-    window.addEventListener('resize', updatePosition)
-    return () => window.removeEventListener('resize', updatePosition)
-  }, [menuMounted, options.length])
-
-  useEffect(() => {
-    if (!menuMounted) return
-
-    const handlePointerDown = (event: PointerEvent) => {
-      const target = event.target
-      if (!(target instanceof Node)) return
-      if (!triggerRef.current?.contains(target) && !menuRef.current?.contains(target)) closeMenu()
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') closeMenu()
-    }
-
-    document.addEventListener('pointerdown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [closeMenu, menuMounted])
-
-  const selectApp = (option: AppOption) => {
-    if (option.disabled) return
-    if (option.key === selected.key) {
-      closeMenu()
-      return
-    }
-
-    const nextIndex = options.findIndex(item => item.key === option.key)
-    setRollingLabel({
-      from: selected.label,
-      to: option.label,
-      direction: nextIndex > selectedIndex ? 'up' : 'down',
-    })
-    setDisplayedKey(option.key)
-    closeMenu()
-    clearTimer()
-    timerRef.current = window.setTimeout(() => {
-      setRollingLabel(null)
-      setMenuMounted(false)
-      setMenuPosition(null)
-      onNavigate(option.key)
-    }, SUFFIX_TRANSITION_MS)
-  }
-
+  const selected = options.find(option => option.key === activeApp)
+  const triggerTestId = testIds?.[activeApp] ?? 'chrome-tab-' + activeApp
+  const navigationLabel = t('workbench.app_navigation', '应用导航')
   if (variant === 'tabs') {
     return (
       <nav
@@ -288,7 +80,8 @@ export function DesktopAppSwitcher({
           const optionTestId = testIds?.[option.key] ?? `chrome-tab-${option.key}`
 
           return (
-            <button
+            <ControlButton
+              variant="unstyled"
               key={option.key}
               type="button"
               data-testid={optionTestId}
@@ -307,7 +100,7 @@ export function DesktopAppSwitcher({
               )}
             >
               {option.label}
-            </button>
+            </ControlButton>
           )
         })}
       </nav>
@@ -317,170 +110,91 @@ export function DesktopAppSwitcher({
   return (
     <nav
       data-testid="desktop-app-switcher"
-      aria-label={t('workbench.app_navigation', '应用导航')}
-      className={cn('relative flex shrink-0 items-center', className)}
+      aria-label={navigationLabel}
+      className={cn('flex shrink-0 items-center', className)}
     >
-      <button
-        ref={triggerRef}
-        type="button"
-        data-testid={triggerTestId}
-        onClick={() => (open ? closeMenu() : void openMenu())}
-        className={cn(
-          'flex h-8 items-center rounded-lg py-0 pl-1 pr-2 text-sm font-semibold leading-none text-text-primary transition-[color,transform] duration-150 hover:text-text-secondary',
-          open && 'pointer-events-none'
-        )}
-        aria-label={`${selected.label}，${t('workbench.app_navigation', '应用导航')}`}
-        aria-haspopup="menu"
-        aria-expanded={open}
-      >
-        <span className="relative inline-block h-[1em] w-[4em] overflow-hidden align-middle leading-none">
-          {rollingLabel ? (
-            <>
-              <span
-                className={cn(
-                  'absolute inset-y-0 left-0',
-                  rollingLabel.direction === 'up' ? 'suffix-roll-out-up' : 'suffix-roll-out-down'
-                )}
+      <Menu open={open} onOpenChange={setOpen}>
+        <MenuTrigger
+          render={<button type="button" />}
+          data-testid={triggerTestId}
+          aria-label={(selected?.label ?? activeApp) + '，' + navigationLabel}
+          className="flex min-h-11 items-center gap-1 rounded-lg px-2 text-sm font-semibold text-text-primary outline-none hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/40 md:min-h-8"
+        >
+          {selected?.label ?? activeApp}
+          <ChevronDown aria-hidden="true" className="h-4 w-4 text-text-muted" />
+        </MenuTrigger>
+        <MenuContent
+          {...theme}
+          align="start"
+          sideOffset={4}
+          collisionPadding={8}
+          data-testid="desktop-app-switcher-menu"
+          aria-label={navigationLabel}
+          className={cn(controlPopup, 'w-76')}
+        >
+          <MenuRadioGroup
+            value={activeApp}
+            onValueChange={key => {
+              const option = options.find(option => option.key === key)
+              if (!option || option.disabled) return
+              setOpen(false)
+              if (key !== activeApp) onNavigate(key)
+            }}
+          >
+            {options.map(option => (
+              <MenuRadioItem
+                key={option.key}
+                value={option.key}
+                disabled={option.disabled}
+                render={<button type="button" />}
+                data-testid={'app-switcher-option-' + option.key}
+                className={controlOption}
               >
-                {rollingLabel.from}
-              </span>
-              <span
-                className={cn(
-                  'absolute inset-y-0 left-0',
-                  rollingLabel.direction === 'up' ? 'suffix-roll-in-up' : 'suffix-roll-in-down'
-                )}
-              >
-                {rollingLabel.to}
-              </span>
-            </>
-          ) : (
-            selected.label
-          )}
-        </span>
-        <ChevronDown
-          aria-hidden="true"
-          className={cn(
-            'h-3 w-3 text-text-muted transition-[margin,transform]',
-            open ? 'ml-6 rotate-180' : 'ml-1'
-          )}
-        />
-      </button>
-      {menuMounted &&
-        createPortal(
-          <>
-            <div
-              aria-hidden="true"
-              className={cn(
-                'pointer-events-none fixed z-system-popover translate-z-0 bg-white/[0.01] transition-opacity duration-100',
-                menuBlurred ? 'opacity-100' : 'opacity-0'
-              )}
-              style={{
-                left: menuPosition?.left ?? 0,
-                top: (menuPosition?.top ?? 0) + 20,
-                width: MENU_WIDTH,
-                height: Math.max(0, options.length * MENU_ROW_STEP + 8 - 20),
-                visibility: menuPosition ? 'visible' : 'hidden',
-                backdropFilter: 'blur(10px)',
-                WebkitBackdropFilter: 'blur(10px)',
-              }}
-            />
-            <div
-              ref={menuRef}
-              role="menu"
-              data-testid="desktop-app-switcher-menu"
-              style={{
-                left: menuPosition?.left ?? 0,
-                top: menuPosition?.top ?? 0,
-                width: MENU_WIDTH,
-                transformOrigin: `50% ${menuPosition?.originY ?? 16}px`,
-                visibility: menuPosition ? 'visible' : 'hidden',
-              }}
-              className={cn(
-                'fixed z-system-popover isolate flex origin-top flex-col gap-0.5 overflow-hidden rounded-xl border border-border/70 bg-background/95 p-1 text-text-primary shadow-[0_8px_24px_rgba(0,0,0,0.1)] backdrop-blur-md transition-[clip-path,opacity,transform] duration-200 ease-out',
-                open
-                  ? 'translate-y-0 opacity-100 [clip-path:inset(0_0_0_0_round_0.75rem)]'
-                  : 'pointer-events-none -translate-y-1 opacity-0 [clip-path:inset(0_0_100%_0_round_0.75rem)]'
-              )}
-            >
-              {options.map((option, index) => {
-                const active = option.key === selected.key
-                return (
-                  <div
-                    key={option.key}
-                    className={cn(
-                      'relative z-10 flex min-h-10 w-full items-center rounded-lg py-1 pl-2 pr-2 text-left transition-[background-color,opacity,transform] duration-200 ease-out',
-                      active
-                        ? 'bg-muted wework:bg-black/[0.03]'
-                        : 'hover:bg-muted wework:hover:bg-black/[0.035]',
-                      open ? 'translate-y-0 opacity-100' : '-translate-y-2 opacity-0'
-                    )}
-                    style={{ transitionDelay: open ? `${index * 28}ms` : '0ms' }}
-                  >
-                    <button
-                      type="button"
-                      role="menuitemradio"
-                      aria-checked={active}
-                      aria-disabled={option.disabled || undefined}
-                      disabled={option.disabled}
-                      data-testid={`app-switcher-option-${option.key}`}
-                      onClick={() => selectApp(option)}
-                      className={cn(
-                        'relative z-10 grid min-w-0 flex-1 gap-0.5 text-left',
-                        option.disabled && 'cursor-not-allowed'
-                      )}
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate">{option.label}</span>
+                  <span className="block text-xs text-text-secondary">{option.description}</span>
+                  {option.availabilityLabel && (
+                    <span
+                      className="flex items-center gap-1 text-xs text-text-secondary"
+                      data-testid={'app-switcher-unavailable-' + option.key}
                     >
-                      <span
-                        className={cn(
-                          'flex origin-left items-center gap-1.5 text-sm font-medium leading-4 transition-transform duration-200 ease-out',
-                          active && 'font-semibold'
-                        )}
-                      >
-                        <span>{option.label}</span>
-                      </span>
-                      <span className="whitespace-nowrap text-xs leading-4 text-text-muted">
-                        {option.description}
-                      </span>
-                    </button>
-                    {option.availabilityLabel ? (
-                      <AvailabilityTooltip
-                        label={option.availabilityLabel}
-                        testId={`app-switcher-unavailable-${option.key}`}
-                      />
-                    ) : null}
-                    {active ? (
-                      <div className="ml-1 flex shrink-0 items-center gap-1">
-                        <button
-                          type="button"
-                          role="menuitem"
-                          data-testid="app-switcher-settings"
-                          aria-label={t('workbench.settings', '设置')}
-                          onClick={() => {
-                            closeMenu()
-                            dispatchOpenSettingsShortcut()
-                          }}
-                          className="rounded-md p-1 text-text-muted transition-colors hover:bg-muted hover:text-text-primary wework:hover:bg-black/[0.06]"
-                        >
-                          <Settings aria-hidden="true" className="h-3.5 w-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          role="menuitem"
-                          data-testid="app-switcher-collapse"
-                          aria-label={t('workbench.app_navigation', '应用导航')}
-                          onClick={closeMenu}
-                          className="rounded-md p-1 text-text-muted transition-colors hover:bg-muted hover:text-text-primary wework:hover:bg-black/[0.06]"
-                        >
-                          <ChevronDown aria-hidden="true" className="h-3 w-3 rotate-180" />
-                        </button>
-                      </div>
-                    ) : null}
-                  </div>
-                )
-              })}
-            </div>
-          </>,
-          document.body
-        )}
+                      <CloudOff aria-hidden="true" className="h-4 w-4 shrink-0" />
+                      {option.availabilityLabel}
+                    </span>
+                  )}
+                </span>
+                {option.key === activeApp && (
+                  <Check aria-hidden="true" className="h-4 w-4 shrink-0" />
+                )}
+              </MenuRadioItem>
+            ))}
+          </MenuRadioGroup>
+          <MenuSeparator className="my-1 h-px bg-border" />
+          <MenuItem
+            value="settings"
+            render={<button type="button" />}
+            data-testid="app-switcher-settings"
+            className={controlOption}
+            onSelect={() => {
+              setOpen(false)
+              dispatchOpenSettingsShortcut()
+            }}
+          >
+            <Settings aria-hidden="true" className="h-4 w-4" />
+            {t('workbench.settings', '设置')}
+          </MenuItem>
+          <MenuItem
+            value="collapse"
+            render={<button type="button" />}
+            data-testid="app-switcher-collapse"
+            className={controlOption}
+            onSelect={() => setOpen(false)}
+          >
+            <ChevronDown aria-hidden="true" className="h-4 w-4 rotate-180" />
+            {navigationLabel}
+          </MenuItem>
+        </MenuContent>
+      </Menu>
     </nav>
   )
 }

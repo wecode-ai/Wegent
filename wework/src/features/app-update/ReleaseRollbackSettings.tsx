@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
-import { RotateCcw } from 'lucide-react'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isElectronRuntime } from '@/lib/runtime-environment'
-import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { RotateCcw } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 export function ReleaseRollbackSettings({ disabled }: { disabled: boolean }) {
   const { t } = useTranslation('common')
@@ -60,7 +61,8 @@ export function ReleaseRollbackSettings({ disabled }: { disabled: boolean }) {
   return (
     <>
       {previous ? (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="about-rollback-button"
           disabled={disabled || busy}
@@ -69,7 +71,7 @@ export function ReleaseRollbackSettings({ disabled }: { disabled: boolean }) {
         >
           <RotateCcw className="h-4 w-4" />
           {t('workbench.app_update_rollback_action', { version: previous.version })}
-        </button>
+        </ControlButton>
       ) : null}
       {error ? (
         <span

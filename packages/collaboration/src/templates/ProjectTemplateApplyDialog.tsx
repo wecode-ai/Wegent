@@ -1,19 +1,20 @@
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useState } from 'react'
+import type { CollaborationLocale } from '../i18n'
 import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type { ProjectAgentConfigurationHost } from '../project-agent-config/types'
 import type { CollaborationProject } from '../types'
-import type { CollaborationLocale } from '../i18n'
-import type { CollaborationTemplate } from './types'
+import { templateRoutingResolver } from './agents'
+import { PartialTemplateApplyError, TemplateConfigurationError } from './apply'
+import { templateFailureMessage, templateMessages } from './messages'
+import { applyProjectTemplate } from './projectConfiguration'
 import { TemplateBindingsDialog, type TemplateParticipant } from './TemplateBindings'
 import { TemplateDialog } from './TemplateDialog'
-import { templateFailureMessage, templateMessages } from './messages'
-import { templateRoutingResolver } from './agents'
-import { applyProjectTemplate } from './projectConfiguration'
-import { PartialTemplateApplyError, TemplateConfigurationError } from './apply'
 import { TemplateProjectEnvironment } from './TemplateProjectEnvironment'
+import type { CollaborationTemplate } from './types'
 
 export function ProjectTemplateApplyDialog({
   api,
@@ -95,13 +96,14 @@ export function ProjectTemplateApplyDialog({
         {error ? (
           <p role="alert">
             {error}{' '}
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="template-project-retry"
               onClick={() => setAttempt(value => value + 1)}
             >
               {m.retry}
-            </button>
+            </ControlButton>
           </p>
         ) : (
           <p role="status">{m.loading}</p>

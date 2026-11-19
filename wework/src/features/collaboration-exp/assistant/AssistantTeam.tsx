@@ -1,9 +1,11 @@
-import { useState } from 'react'
-import { Settings, Trash2, UserRound } from 'lucide-react'
+import { DeleteIconButton } from '@wegent/collaboration/controls/DeleteIconButton'
 import type { PersonalStandInSettings, StandInRole } from '@/api/personalStandIn'
 import { roleIncludesProject } from '@/api/personalStandIn'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Settings, UserRound } from 'lucide-react'
+import { useState } from 'react'
 import { projectScopeOf, type ExperienceProjectData } from '../model'
 
 export interface AssistantTeamProps {
@@ -32,14 +34,15 @@ export function AssistantTeam({ settings, projects, onConfigure, onDelete }: Ass
     <section data-testid="collaboration-exp-assistant-team">
       <div className="flex items-center justify-between px-4 py-2">
         <h2 className="text-sm font-medium text-text-secondary">{t('assistant.team')}</h2>
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="collaboration-exp-assistant-team-manage"
           onClick={() => onConfigure()}
           className="min-h-11 px-2 text-xs text-text-muted hover:bg-muted md:min-h-8"
         >
           {t('assistant.manage')}
-        </button>
+        </ControlButton>
       </div>
       {rows.map(({ id, name, role }) => (
         <div
@@ -64,7 +67,8 @@ export function AssistantTeam({ settings, projects, onConfigure, onDelete }: Ass
                 : t('assistant.defaultProtected')}
             </p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`collaboration-exp-assistant-configure-${id}`}
             aria-label={t('assistant.configureRole', { name })}
@@ -72,17 +76,14 @@ export function AssistantTeam({ settings, projects, onConfigure, onDelete }: Ass
             className="inline-flex size-11 shrink-0 items-center justify-center text-text-muted hover:bg-muted md:size-8"
           >
             <Settings aria-hidden="true" className="size-4" />
-          </button>
+          </ControlButton>
           {role && (
-            <button
+            <DeleteIconButton
               type="button"
               data-testid={`collaboration-exp-assistant-delete-${id}`}
               aria-label={t('assistant.deleteRole', { name })}
               onClick={() => setDeleting(role)}
-              className="inline-flex size-11 shrink-0 items-center justify-center text-text-muted hover:bg-muted md:size-8"
-            >
-              <Trash2 aria-hidden="true" className="size-4" />
-            </button>
+            />
           )}
         </div>
       ))}

@@ -1,3 +1,4 @@
+import { useDialogRequests } from '../controls/useDialogRequests'
 import { useContext, useEffect, useRef, useState } from 'react'
 import type { ProjectChatMessage } from '@wegent/chat-core'
 import type { CollaborationAgent, CollaborationIssue, CollaborationProject } from '../types'
@@ -37,6 +38,10 @@ export function BrowserIssueActivityTools({
   onTaskUpdated?(issue: CollaborationIssue): void
   translate: CollaborationTranslate
 }) {
+  const { prompt: requestText, dialogs: requestDialogs } = useDialogRequests((key, fallback) =>
+    t(key, fallback)
+  )
+
   const execution = useContext(BrowserIssueExecutionContext)
   const drafts = useContext(BrowserTaskDraftContext)
   const operationScope = `issue:${issue.cloud_project_id}:${issue.id}`
@@ -121,60 +126,66 @@ export function BrowserIssueActivityTools({
   }
   return (
     <>
-      <IssueActivityTools
-        task={issue}
-        assignedAgent={agent}
-        running={busy || drafts?.drafts[operationScope]?.busy === true}
-        translate={t}
-        copyText={text => navigator.clipboard.writeText(text)}
-        canApprove={canApproveIssueExecution(
-          issue.can_approve,
-          agent?.createdByUserId,
-          currentUserId
-        )}
-        onApprove={() =>
-          void perform(
-            () =>
-              update(() => api.issues.approveRun(issue.cloud_project_id, issue.id, issue.version)),
-            'workbench.task_activity_approve_failed'
-          )
-        }
-        onReject={() => {
-          const reason = window.prompt(t('workbench.task_activity_reject_reason_prompt'))
-          if (reason === null) return
-          void perform(
-            () =>
-              update(() =>
-                api.issues.rejectRun(
-                  issue.cloud_project_id,
-                  issue.id,
-                  issue.version,
-                  reason.trim() || undefined
-                )
-              ),
-            'workbench.task_activity_reject_failed'
-          )
-        }}
-        onAccept={() =>
-          void perform(
-            () =>
-              update(() =>
-                api.issues.update(issue.id, { version: issue.version, status: 'completed' })
-              ),
-            'workbench.task_activity_accept_failed'
-          )
-        }
-        onRun={
-          execution && api.runtime && api.activity && api.taskBindings && project
-            ? () => void perform(rerun, 'workbench.project_chat_agent_start_failed')
-            : undefined
-        }
-      />
-      {error ? (
-        <span role="alert" className="text-xs text-red-600">
-          {error}
-        </span>
-      ) : null}
+      {' '}
+      {requestDialogs}{' '}
+      <>
+        <IssueActivityTools
+          task={issue}
+          assignedAgent={agent}
+          running={busy || drafts?.drafts[operationScope]?.busy === true}
+          translate={t}
+          copyText={text => navigator.clipboard.writeText(text)}
+          canApprove={canApproveIssueExecution(
+            issue.can_approve,
+            agent?.createdByUserId,
+            currentUserId
+          )}
+          onApprove={() =>
+            void perform(
+              () =>
+                update(() =>
+                  api.issues.approveRun(issue.cloud_project_id, issue.id, issue.version)
+                ),
+              'workbench.task_activity_approve_failed'
+            )
+          }
+          onReject={async () => {
+            const reason = await requestText(t('workbench.task_activity_reject_reason_prompt'))
+            if (reason === null) return
+            void perform(
+              () =>
+                update(() =>
+                  api.issues.rejectRun(
+                    issue.cloud_project_id,
+                    issue.id,
+                    issue.version,
+                    reason.trim() || undefined
+                  )
+                ),
+              'workbench.task_activity_reject_failed'
+            )
+          }}
+          onAccept={() =>
+            void perform(
+              () =>
+                update(() =>
+                  api.issues.update(issue.id, { version: issue.version, status: 'completed' })
+                ),
+              'workbench.task_activity_accept_failed'
+            )
+          }
+          onRun={
+            execution && api.runtime && api.activity && api.taskBindings && project
+              ? () => void perform(rerun, 'workbench.project_chat_agent_start_failed')
+              : undefined
+          }
+        />
+        {error ? (
+          <span role="alert" className="text-xs text-red-600">
+            {error}
+          </span>
+        ) : null}
+      </>{' '}
     </>
   )
 }

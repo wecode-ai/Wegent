@@ -1,17 +1,4 @@
-import { formatAppUpdateProgress } from '@/features/app-update/app-update-progress-copy'
-import {
-  ChevronDown,
-  Download,
-  Gauge,
-  Info,
-  Loader2,
-  LogIn,
-  LogOut,
-  Settings,
-  TriangleAlert,
-} from 'lucide-react'
-import { useEffect, useState } from 'react'
-import type { ReactNode } from 'react'
+import { ProgressRing } from '@wegent/collaboration/controls/ProgressBar'
 import {
   emptyCodexUsageDisplay,
   formatCodexUsageResetTime,
@@ -25,34 +12,34 @@ import {
   type WegentUsageDisplay,
 } from '@/api/wegentUsage'
 import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
-import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
 import { useLocalCodexSubscriptionEnabled } from '@/features/app-preferences/useLocalCodexSubscriptionEnabled'
+import { useOptionalAppUpdate } from '@/features/app-update/app-update-context'
+import type { AppUpdateError } from '@/features/app-update/app-update-error'
+import { formatAppUpdateErrorSummary } from '@/features/app-update/app-update-error-copy'
 import {
   calculateAppUpdateDownloadPercent,
   formatAppUpdateVersion,
 } from '@/features/app-update/app-update-format'
+import { formatAppUpdateProgress } from '@/features/app-update/app-update-progress-copy'
 import { AppUpdateErrorDetailsDialog } from '@/features/app-update/AppUpdateErrorDetailsDialog'
-import type { AppUpdateError } from '@/features/app-update/app-update-error'
-import { formatAppUpdateErrorSummary } from '@/features/app-update/app-update-error-copy'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import type { User as UserProfile } from '@/types/api'
-
-function UpdateDownloadProgressIcon({ progress }: { progress: number }) {
-  return (
-    <span
-      data-testid="app-update-download-icon-progress"
-      aria-label={`${progress}%`}
-      className="flex h-4 w-4 shrink-0 items-center justify-center rounded-full"
-      style={{
-        background: `conic-gradient(rgb(var(--color-primary)) ${progress}%, rgb(var(--color-border)) 0)`,
-      }}
-    >
-      <span className="h-2 w-2 rounded-full bg-popover" />
-    </span>
-  )
-}
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import {
+  ChevronDown,
+  Download,
+  Gauge,
+  Info,
+  Loader2,
+  LogIn,
+  LogOut,
+  Settings,
+  TriangleAlert,
+} from 'lucide-react'
+import type { ReactNode } from 'react'
+import { useEffect, useState } from 'react'
 
 interface DesktopSettingsMenuProps {
   user: UserProfile | null
@@ -61,7 +48,6 @@ interface DesktopSettingsMenuProps {
   onLogout: () => void
   onLogin?: () => void
   showLogout?: boolean
-  placement?: 'above' | 'below-right'
 }
 
 export function DesktopSettingsMenu({
@@ -70,7 +56,6 @@ export function DesktopSettingsMenu({
   onLogout,
   onLogin,
   showLogout,
-  placement = 'above',
 }: DesktopSettingsMenuProps) {
   const { t } = useTranslation('common')
   const shouldShowLogout = showLogout ?? !isLocalFirstAppRuntime()
@@ -222,14 +207,7 @@ export function DesktopSettingsMenu({
     updateStatus === 'downloading' ? formatAppUpdateProgress(downloadProgress, t) : null
 
   return (
-    <div
-      data-testid="settings-menu"
-      className={
-        placement === 'below-right'
-          ? 'absolute right-0 top-9 z-30 w-72 overflow-hidden rounded-xl border border-border/70 bg-popover/95 p-1 text-text-primary shadow-[0_8px_16px_-4px_rgba(0,0,0,0.18)] ring-1 ring-border/30 backdrop-blur-xl'
-          : 'absolute bottom-[72px] left-1.5 right-1.5 z-30 overflow-hidden rounded-xl border border-border/70 bg-popover/95 p-1 text-text-primary shadow-[0_8px_16px_-4px_rgba(0,0,0,0.18)] ring-1 ring-border/30 backdrop-blur-xl'
-      }
-    >
+    <div data-testid="settings-menu" className="contents">
       {onLogin ? (
         <>
           <SettingsMenuItem
@@ -253,7 +231,11 @@ export function DesktopSettingsMenu({
         testId="check-app-update-button"
         icon={
           updateStatus === 'downloading' && downloadPercent !== null ? (
-            <UpdateDownloadProgressIcon progress={downloadPercent} />
+            <ProgressRing
+              value={downloadPercent}
+              label={t('workbench.app_update_downloading_progress', { progress: downloadPercent })}
+              testId="app-update-download-icon-progress"
+            />
           ) : isUpdateBusy ? (
             <Loader2 className="h-4 w-4 shrink-0 animate-spin text-text-secondary" />
           ) : (
@@ -296,14 +278,15 @@ export function DesktopSettingsMenu({
                 aria-hidden="true"
               />
               <span className="min-w-0 flex-1">{updateErrorSummary}</span>
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="app-update-error-details-button"
                 onClick={() => setSelectedUpdateError(updateError)}
                 className="shrink-0 rounded-sm text-focus underline-offset-2 hover:underline focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/40 wework:text-blue-600 wework:dark:text-blue-300"
               >
                 {t('workbench.app_update_error_details', '查看错误详情')}
-              </button>
+              </ControlButton>
             </div>
           ) : (
             updateMessage
@@ -485,7 +468,8 @@ function SettingsMenuItem({
   onClick,
 }: SettingsMenuItemProps) {
   return (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid={testId}
       onClick={onClick}
@@ -512,6 +496,6 @@ function SettingsMenuItem({
         />
       ) : null}
       {trailing}
-    </button>
+    </ControlButton>
   )
 }

@@ -1,15 +1,16 @@
-import { ChevronDown, ChevronUp, createLucideIcon, Search, X } from 'lucide-react'
-import { useEffect, useLayoutEffect, useRef } from 'react'
-import { createPortal } from 'react-dom'
+import { Button } from '@/components/ui/button'
+import { Tooltip } from '@/components/ui/tooltip'
+import { useTranslation } from '@/hooks/useTranslation'
+import { isImeComposingEvent } from '@/lib/ime'
+import { cn } from '@/lib/utils'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
 import {
   recordConversationDiagnostic,
   startConversationDiagnosticCapture,
 } from '@wegent/collaboration/conversation/conversationDiagnostics'
-import { useTranslation } from '@/hooks/useTranslation'
-import { cn } from '@/lib/utils'
-import { isImeComposingEvent } from '@/lib/ime'
-import { Button } from '@/components/ui/button'
-import { Tooltip } from '@/components/ui/tooltip'
+import { ChevronDown, ChevronUp, createLucideIcon, Search, X } from 'lucide-react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { CompositedSpinner } from './CompositedSpinner'
 
 const FindLoadingIcon = createLucideIcon('FindLoading', [
@@ -110,7 +111,9 @@ export function ContentFindBar({
           <label className="sr-only" htmlFor={`${testIdPrefix}-input`}>
             {inputLabel}
           </label>
-          <input
+          <ControlInput
+            density="dense"
+            appearance="plain"
             ref={inputRef}
             id={`${testIdPrefix}-input`}
             data-testid={`${testIdPrefix}-input`}
@@ -160,7 +163,7 @@ export function ContentFindBar({
               }
             }}
             placeholder={placeholder}
-            className="content-find-input h-6 min-w-0 flex-1 bg-transparent text-base leading-6 text-text-primary placeholder:text-text-muted disabled:cursor-not-allowed disabled:opacity-60"
+            className="content-find-input min-w-0 flex-1 text-base leading-6 placeholder:text-text-muted disabled:cursor-not-allowed disabled:opacity-60"
           />
         </div>
         <div className="col-[2/3] row-[1] flex h-[44px] items-center pe-4">

@@ -1,8 +1,9 @@
+import { Button } from '@/components/ui/button'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { IMPrivateSession } from '@/types/api'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Check, ChevronRight, MessageSquare } from 'lucide-react'
 import { useState } from 'react'
-import { Button } from '@/components/ui/button'
-import type { IMPrivateSession } from '@/types/api'
-import { useTranslation } from '@/hooks/useTranslation'
 import { StandInReviewDialog } from './StandInReviewDialog'
 
 export function StandInImConnectionDialog({
@@ -103,7 +104,8 @@ export function StandInImConnectionDialog({
                     const active = connected(session)
                     const picked = selected?.session_key === session.session_key
                     return (
-                      <button
+                      <ControlButton
+                        variant="unstyled"
                         key={session.session_key}
                         type="button"
                         data-testid={`stand-in-im-connect-${session.session_key}`}
@@ -134,7 +136,7 @@ export function StandInImConnectionDialog({
                         >
                           {picked && <span className="h-2 w-2 rounded-full bg-text-primary" />}
                         </span>
-                      </button>
+                      </ControlButton>
                     )
                   })}
                 </div>
@@ -184,7 +186,8 @@ export function StandInImConnectionDialog({
               </Button>
             </div>
             <div className="text-xs text-text-secondary">
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="stand-in-im-mode-help"
                 aria-expanded={helpOpen}
@@ -196,7 +199,7 @@ export function StandInImConnectionDialog({
                   className={`h-3 w-3 ${helpOpen ? 'rotate-90' : ''}`}
                 />
                 {t('standIn.im.mode_help')}
-              </button>
+              </ControlButton>
               {helpOpen && <p className="mt-2 leading-relaxed">{t('standIn.im.description')}</p>}
             </div>
           </>

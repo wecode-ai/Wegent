@@ -1,5 +1,7 @@
+import { RadioGroup, Radio } from '../controls/RadioGroup'
 import { Bot, Check, Info, Plus, Search, SearchX } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
+import { TextField as ControlInput } from '../controls/TextField'
 import type { CollaborationTranslate } from '../i18n'
 import { Button } from '../markdown/Button'
 import type { CollaborationOwnedAgent } from '../types'
@@ -55,7 +57,8 @@ export function ProjectAgentPicker({
       <div className="flex shrink-0 items-center gap-2 px-5 pb-4 pt-1">
         <label className="flex h-11 min-w-0 flex-1 items-center gap-2 rounded-lg border border-border bg-background px-3 text-text-secondary keyboard:focus-within:ring-2 keyboard:focus-within:ring-focus/20 md:h-9">
           <Search aria-hidden="true" className="h-4 w-4 shrink-0" />
-          <input
+          <ControlInput
+            appearance="plain"
             ref={searchRef}
             type="search"
             data-testid="project-agent-search"
@@ -64,7 +67,7 @@ export function ProjectAgentPicker({
             value={query}
             onChange={event => setQuery(event.target.value)}
             disabled={busy}
-            className="min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-secondary"
+            className="min-w-0 flex-1 placeholder:text-text-secondary"
           />
         </label>
         {onCreate ? (
@@ -138,9 +141,16 @@ export function ProjectAgentPicker({
             </Button>
           </div>
         ) : visibleAgents.length ? (
-          <div
-            role="radiogroup"
+          <RadioGroup
+            value={selectedId}
+            name="project-agent-candidate"
             aria-label={t('todo.agent_picker_list', '选择一个智能体')}
+            onValueChange={next => {
+              const agent = visibleAgents.find(agent => String(agent.team_id ?? agent.id) === next)
+              if (agent && !busy && !alreadyAdded(agent))
+                onSelect(String(agent.team_id ?? agent.id))
+            }}
+            render={<div />}
             data-testid="project-agent-wegent-team"
             className="space-y-1"
           >
@@ -187,21 +197,17 @@ export function ProjectAgentPicker({
                       {checked ? <Check aria-hidden="true" className="h-3 w-3" /> : null}
                     </span>
                   )}
-                  <input
-                    type="radio"
-                    name="project-agent-candidate"
+                  <Radio
                     className="sr-only"
+                    value={id}
                     data-testid={`project-agent-option-${id}`}
                     aria-label={agent.name}
-                    value={id}
-                    checked={checked}
                     disabled={added || busy}
-                    onChange={() => onSelect(id)}
                   />
                 </label>
               )
             })}
-          </div>
+          </RadioGroup>
         ) : (
           <div
             data-testid="project-agent-wegent-empty"

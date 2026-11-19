@@ -134,7 +134,7 @@ describe('WorkspaceTabStrip', () => {
     await user.keyboard('{ArrowRight}')
     expect(tabs[1]).toHaveFocus()
     expect(current).toHaveAttribute('aria-selected', 'true')
-    expect(tabs[1]).toHaveAttribute('tabindex', '0')
+    expect(current).toHaveAttribute('tabindex', '0')
     await user.keyboard('{Enter}')
     expect(tabs[1]).toHaveAttribute('aria-selected', 'true')
     await user.keyboard('{End}')
@@ -186,7 +186,7 @@ describe('WorkspaceTabStrip', () => {
     const addButton = screen.getByTestId('workspace-tab-add')
     expect(screen.getByTestId('workspace-tab-strip-container')).toContainElement(addButton)
     expect(tablist).not.toContainElement(addButton)
-    expect(tablist.nextElementSibling).toBe(addButton)
+    expect(tablist.parentElement?.nextElementSibling).toBe(addButton)
     expect(tablist).not.toHaveClass('max-w-[760px]')
     expect(
       within(tablist)

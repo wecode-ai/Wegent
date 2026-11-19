@@ -1,3 +1,4 @@
+import { sdkSelectValue as selectValue } from '../test/selectControl'
 // @vitest-environment jsdom
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
@@ -48,45 +49,40 @@ it.each([
         <TemplateBindings document={template} locale={locale} candidates={[]} onChange={onChange} />
       )
     )
-    const disclosure = container.querySelector<HTMLDetailsElement>('details')!
-    expect(disclosure.open).toBe(false)
+    const disclosure = container.querySelector<HTMLButtonElement>(
+      `[data-testid="template-customize-${group.key}"]`
+    )!
+    expect(disclosure.getAttribute('aria-expanded')).toBe('false')
     expect(container.querySelector('.collaboration-template-agent-roster')).not.toBeNull()
     expect(container.querySelectorAll('.collaboration-template-binding')).toHaveLength(0)
     await act(async () => {
-      disclosure.open = true
-      disclosure.dispatchEvent(new Event('toggle'))
+      disclosure.click()
     })
-    const select = container.querySelector<HTMLSelectElement>(
+    const select = container.querySelector<HTMLElement>(
       `[data-testid="template-role-${group.key}-${group.leaderRole}"]`
     )!
-    const original = select.value
+    const original = await selectValue(select)
     expect(container.querySelectorAll('.collaboration-template-binding')).toHaveLength(
       group.roles.length
     )
     expect(container.querySelector('.collaboration-template-agent-roster')).toBeNull()
-    const details = select.closest('details')!
-    expect(details.open).toBe(true)
+    const details = select.closest('[data-slot="collapsible"]')!
+    expect(details.hasAttribute('data-open')).toBe(true)
     expect(onChange.mock.lastCall![0]).not.toBeNull()
-    await act(async () => {
-      select.value = ''
-      select.dispatchEvent(new Event('change', { bubbles: true }))
-    })
+    await selectValue(select, '')
     expect(onChange.mock.lastCall![0]).toBeNull()
-    expect(details.open).toBe(true)
+    expect(details.hasAttribute('data-open')).toBe(true)
     expect(select.getAttribute('aria-invalid')).toBe('true')
     const description = document.getElementById(select.getAttribute('aria-describedby')!)!
     expect(description.textContent).toBe(message)
     expect(description.getAttribute('role')).toBe('alert')
     expect(container.querySelectorAll('[aria-invalid="true"]')).toHaveLength(1)
-    await act(async () => {
-      select.value = original
-      select.dispatchEvent(new Event('change', { bubbles: true }))
-    })
+    await selectValue(select, original)
     expect(onChange.mock.lastCall![0]).not.toBeNull()
     expect(select.hasAttribute('aria-invalid')).toBe(false)
     expect(select.hasAttribute('aria-describedby')).toBe(false)
     expect(container.querySelector('[role="alert"]')).toBeNull()
-    expect(details.open).toBe(true)
+    expect(details.hasAttribute('data-open')).toBe(true)
   }
 )
 
@@ -117,7 +113,7 @@ it('identifies a previously selected member that disappears from the available c
   expect(onChange.mock.lastCall![0]).not.toBeNull()
   await render([])
   expect(onChange.mock.lastCall![0]).toBeNull()
-  const select = container.querySelector<HTMLSelectElement>(
+  const select = container.querySelector<HTMLElement>(
     `[data-testid="template-role-${group.key}-${group.leaderRole}"]`
   )!
   expect(select.getAttribute('aria-invalid')).toBe('true')
@@ -132,7 +128,11 @@ it.each([true, false])(
     const template = structuredClone(builtinCollaborationTemplates()[0].document)
     const group = template.spec.resources.collaboration.groups[0]
     const removedRole = group.roles[1]
-    group.stages.push({ ...group.stages[0], key: 'unassigned', ownerRole: null })
+    group.stages.push({
+      ...group.stages[0],
+      key: 'unassigned',
+      ownerRole: null,
+    })
     if (!embedded) delete removedRole.agentKey
     const onChange = vi.fn()
     await act(async () =>

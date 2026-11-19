@@ -1,4 +1,5 @@
 import { app, dialog } from 'electron'
+import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
 import { existsSync } from 'node:fs'
 import { realpath } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
@@ -26,7 +27,7 @@ export async function routeRelease(
   forwardedArguments: () => string[],
   failStartup: (error: unknown) => void
 ): Promise<boolean> {
-  if (!app.isPackaged) return true
+  if (!isEffectivePackagedApplication(app.isPackaged, process.env)) return true
   const dataDirectory =
     process.env.WEWORK_USER_DATA_DIR?.trim() ||
     join(

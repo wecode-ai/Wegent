@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Button as ControlButton } from '../markdown/Button'
 import type { CollaborationIssue } from '../types'
 import { useExecutionRuntimeConfiguration } from './context'
 
@@ -8,11 +9,7 @@ export function ExecutionConfigurationNotice({
 }: {
   issue: Pick<
     CollaborationIssue,
-    | 'id'
-    | 'execution_id'
-    | 'execution_state'
-    | 'assignee_agent_id'
-    | 'assignee_agent_name'
+    'id' | 'execution_id' | 'execution_state' | 'assignee_agent_id' | 'assignee_agent_name'
   >
   translate: (key: string, fallback?: string) => string
 }) {
@@ -29,13 +26,9 @@ export function ExecutionConfigurationNotice({
     setBusy(true)
     setError('')
     try {
-      await configure(issue, (execution) => setConfiguredId(execution.id))
+      await configure(issue, execution => setConfiguredId(execution.id))
     } catch (cause) {
-      setError(
-        cause instanceof Error
-          ? cause.message
-          : t('runtimeSettings.loadFailed'),
-      )
+      setError(cause instanceof Error ? cause.message : t('runtimeSettings.loadFailed'))
     } finally {
       setBusy(false)
     }
@@ -52,7 +45,8 @@ export function ExecutionConfigurationNotice({
         {t('runtimeSettings.executionBlocked')}
       </p>
       {configure && issue.execution_id ? (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           className="collaboration-primary-button mt-2 min-h-11"
           data-testid={`execution-configure-${issue.id}`}
@@ -60,7 +54,7 @@ export function ExecutionConfigurationNotice({
           onClick={() => void open()}
         >
           {busy ? t('common.loading') : t('runtimeSettings.executionConfigure')}
-        </button>
+        </ControlButton>
       ) : (
         <p>{t('runtimeSettings.ownerRequired')}</p>
       )}

@@ -6,7 +6,7 @@ body[data-board-cursor-policy='arrow']
     a[href],
     label,
     select,
-    summary,
+    [data-slot='collapsible-trigger'],
     input[type='button'],
     input[type='submit'],
     input[type='reset'],

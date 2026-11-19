@@ -1,6 +1,7 @@
 import { LogIn, Plus } from 'lucide-react'
 import type { CollaborationTranslate } from '../i18n'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
+import { Button as ControlButton } from '../markdown/Button'
 
 export function ModelSelectorEmptyState({
   translate: t,
@@ -32,7 +33,8 @@ export function ModelSelectorEmptyState({
         </p>
       </div>
       <div className={cn('space-y-1', mobile && 'space-y-2')}>
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="model-selector-add-custom-model"
           onClick={onOpenModelSettings}
@@ -45,9 +47,10 @@ export function ModelSelectorEmptyState({
         >
           <Plus className="h-4 w-4 shrink-0 text-text-secondary" />
           {t('workbench.no_models_add_custom', 'Add custom model')}
-        </button>
+        </ControlButton>
         {onOpenCloudConnections ? (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="model-selector-login-cloud"
             onClick={onOpenCloudConnections}
@@ -62,7 +65,7 @@ export function ModelSelectorEmptyState({
               className={cn('h-4 w-4 shrink-0', mobile ? 'text-background' : 'text-text-secondary')}
             />
             {t('workbench.no_models_login_cloud', 'Sign in and sync cloud models')}
-          </button>
+          </ControlButton>
         ) : null}
       </div>
     </div>

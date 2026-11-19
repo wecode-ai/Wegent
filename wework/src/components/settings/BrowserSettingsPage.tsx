@@ -1,10 +1,4 @@
-import { FolderOpen, History, Loader2, Trash2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
-import { useTranslation } from '@/hooks/useTranslation'
 import { stripAppBasePath } from '@/config/runtime'
-import { canUseEmbeddedBrowser, clearEmbeddedBrowserData } from '@/lib/embedded-browser'
-import { openNativeDirectoryPicker } from '@/lib/native-directory-picker'
-import { navigateTo } from '@/lib/navigation'
 import {
   defaultAppPreferences,
   getAppPreferences,
@@ -13,6 +7,20 @@ import {
   type AppPreferencesPatch,
   type BrowserLinkTarget,
 } from '@/desktop/appPreferences'
+import { useTranslation } from '@/hooks/useTranslation'
+import { canUseEmbeddedBrowser, clearEmbeddedBrowserData } from '@/lib/embedded-browser'
+import { openNativeDirectoryPicker } from '@/lib/native-directory-picker'
+import { navigateTo } from '@/lib/navigation'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { FolderOpen, History, Loader2, Trash2 } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { BrowserHistoryPage } from './BrowserHistoryPage'
 import { ClearBrowserDataDialog } from './ClearBrowserDataDialog'
 import {
@@ -30,11 +38,13 @@ function isBrowserHistoryPath() {
 }
 
 function LinkTargetSelect({
+  label,
   testId,
   value,
   disabled,
   onChange,
 }: {
+  label: string
   testId: string
   value: BrowserLinkTarget
   disabled: boolean
@@ -43,16 +53,19 @@ function LinkTargetSelect({
   const { t } = useTranslation('common')
 
   return (
-    <select
-      data-testid={testId}
-      value={value}
+    <SelectRoot
+      value={normalizeSelectValue(value)}
       disabled={disabled}
-      onChange={event => onChange(event.target.value as BrowserLinkTarget)}
-      className="h-8 min-w-[156px] rounded-md border border-border bg-background px-2.5 text-sm text-text-primary outline-none keyboard:focus:border-primary disabled:cursor-not-allowed disabled:opacity-60"
+      onValueChange={selectedValue => {
+        if (selectedValue !== null) return onChange(selectedValue as BrowserLinkTarget)
+      }}
     >
-      <option value="system">{t('workbench.browser_settings_target_system')}</option>
-      <option value="wework">{t('workbench.browser_settings_target_wework')}</option>
-    </select>
+      <SelectTrigger aria-label={label} data-testid={testId} className="min-w-[156px]" />
+      <SelectContent>
+        <SelectItem value="system">{t('workbench.browser_settings_target_system')}</SelectItem>
+        <SelectItem value="wework">{t('workbench.browser_settings_target_wework')}</SelectItem>
+      </SelectContent>
+    </SelectRoot>
   )
 }
 
@@ -157,7 +170,7 @@ export function BrowserSettingsPage() {
           <SettingsRow
             label={t('workbench.browser_settings_full_control')}
             description={t('workbench.browser_settings_full_control_description')}
-            control={
+            children={
               <SettingsSwitch
                 data-testid="browser-full-control-toggle"
                 checked={preferences.browserFullControl}
@@ -170,8 +183,9 @@ export function BrowserSettingsPage() {
           <SettingsRow
             label={t('workbench.browser_settings_external_links')}
             description={t('workbench.browser_settings_external_links_description')}
-            control={
+            children={
               <LinkTargetSelect
+                label={t('workbench.browser_settings_external_links')}
                 testId="browser-external-link-target"
                 value={preferences.browserExternalLinkTarget}
                 disabled={controlsDisabled}
@@ -182,8 +196,9 @@ export function BrowserSettingsPage() {
           <SettingsRow
             label={t('workbench.browser_settings_local_links')}
             description={t('workbench.browser_settings_local_links_description')}
-            control={
+            children={
               <LinkTargetSelect
+                label={t('workbench.browser_settings_local_links')}
                 testId="browser-local-link-target"
                 value={preferences.browserLocalLinkTarget}
                 disabled={controlsDisabled}
@@ -194,8 +209,9 @@ export function BrowserSettingsPage() {
           <SettingsRow
             label={t('workbench.browser_settings_history')}
             description={t('workbench.browser_settings_history_description')}
-            control={
-              <button
+            children={
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="browser-history-manage-button"
                 disabled={controlsDisabled}
@@ -204,23 +220,24 @@ export function BrowserSettingsPage() {
               >
                 <History className="h-4 w-4" />
                 {t('workbench.browser_settings_history_manage')}
-              </button>
+              </ControlButton>
             }
           />
           <SettingsRow
             label={t('workbench.browser_settings_clear_data')}
             description={t('workbench.browser_settings_clear_data_description')}
-            control={
-              <button
+            children={
+              <ControlButton
                 type="button"
                 data-testid="browser-clear-data-button"
                 disabled={controlsDisabled || clearing}
                 onClick={() => setClearDialogOpen(true)}
-                className="inline-flex h-8 items-center gap-1.5 rounded-md bg-muted px-3 text-sm font-medium text-text-primary hover:bg-hover disabled:cursor-not-allowed disabled:opacity-50"
+                variant="destructive-ghost"
+                size="sm"
               >
                 <Trash2 className="h-4 w-4" />
                 {t('workbench.browser_settings_clear_action')}
-              </button>
+              </ControlButton>
             }
           />
         </SettingsGroup>
@@ -238,10 +255,11 @@ export function BrowserSettingsPage() {
                 {downloadLocation}
               </span>
             }
-            control={
+            children={
               <div className="flex items-center gap-1.5">
                 {preferences.browserDownloadDirectory ? (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid="browser-download-location-reset"
                     disabled={controlsDisabled}
@@ -249,9 +267,10 @@ export function BrowserSettingsPage() {
                     className="h-8 rounded-md px-2.5 text-sm text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50"
                   >
                     {t('workbench.browser_settings_download_reset')}
-                  </button>
+                  </ControlButton>
                 ) : null}
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="browser-download-location-change"
                   disabled={controlsDisabled}
@@ -260,14 +279,14 @@ export function BrowserSettingsPage() {
                 >
                   <FolderOpen className="h-4 w-4" />
                   {t('workbench.browser_settings_download_change')}
-                </button>
+                </ControlButton>
               </div>
             }
           />
           <SettingsRow
             label={t('workbench.browser_settings_ask_download')}
             description={t('workbench.browser_settings_ask_download_description')}
-            control={
+            children={
               <SettingsSwitch
                 data-testid="browser-ask-before-download-toggle"
                 checked={preferences.browserAskBeforeDownload}

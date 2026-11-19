@@ -1,7 +1,8 @@
-import { CircleX, Target } from 'lucide-react'
+import { Switch as UiSwitch } from '@ui-sdk/react/switch'
 import type { LucideIcon } from 'lucide-react'
-import type { KeyboardEvent } from 'react'
+import { CircleX, Target } from 'lucide-react'
 import type { CollaborationTranslate } from '../i18n'
+import { Button as ControlButton } from '../markdown/Button'
 
 export interface ComposerModePillProps {
   translate: CollaborationTranslate
@@ -35,61 +36,92 @@ export function ComposerModePill({
   icon: Icon,
 }: ComposerModePillProps) {
   const interactive = Boolean(onClick)
-  const resolvedRole = role ?? (interactive ? 'button' : undefined)
-  const resolvedCancelLabel = cancelLabel ?? t('workbench.cancel_mode', '取消模式')
+  const resolvedCancelLabel =
+    cancelLabel ?? t('workbench.cancel_mode', '取消模式')
 
-  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (!interactive || disabled) return
-    if (event.key !== 'Enter' && event.key !== ' ') return
-
-    event.preventDefault()
-    onClick?.()
-  }
-
-  return (
-    <div
-      data-testid={testId}
-      role={resolvedRole}
-      aria-checked={resolvedRole === 'switch' ? ariaChecked : undefined}
-      aria-disabled={interactive ? disabled : undefined}
-      tabIndex={interactive && !disabled ? 0 : undefined}
-      onClick={() => {
-        if (!disabled) onClick?.()
-      }}
-      onKeyDown={handleKeyDown}
-      className={[
-        'group relative flex h-7 min-w-8 max-w-full shrink items-center justify-center overflow-hidden rounded-xl border border-border/70 bg-muted px-2.5 text-sm font-semibold leading-[18px] text-text-secondary transition-[background-color,color] hover:bg-muted/80 hover:text-text-primary',
-        interactive && !disabled ? 'cursor-pointer' : '',
-        disabled ? 'cursor-not-allowed opacity-50' : '',
-        className,
-      ]
-        .filter(Boolean)
-        .join(' ')}
-      title={title}
-    >
+  const content = (
+    <>
       {Icon && (
         <Icon
-          data-testid={`${testId}-icon`}
-          className="mr-1.5 h-4 w-4 shrink-0 transition-opacity group-hover:opacity-0"
+          data-testid={testId + '-icon'}
+          className={[
+            'mr-1.5 h-4 w-4 shrink-0 transition-opacity group-hover:opacity-0',
+            onCancel && 'hidden md:inline-flex',
+          ]
+            .filter(Boolean)
+            .join(' ')}
           aria-hidden="true"
         />
       )}
+      <span className="min-w-0 truncate">{label}</span>
+    </>
+  )
+  const actionClass =
+    'flex min-h-11 min-w-8 max-w-full flex-1 items-center justify-center rounded-xl px-2.5 bg-transparent text-sm font-semibold text-inherit outline-none hover:bg-transparent disabled:cursor-not-allowed disabled:opacity-40 data-[disabled]:cursor-not-allowed data-[disabled]:opacity-40 keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/40 md:min-h-7 md:h-7'
+  return (
+    <div
+      data-testid={interactive ? undefined : testId}
+      className={[
+        'group relative flex min-h-11 max-w-full shrink items-center rounded-xl border border-border/70 bg-muted text-text-secondary transition-colors hover:bg-muted/80 hover:text-text-primary md:min-h-7',
+        className,
+      ].join(' ')}
+      title={title}
+    >
+      {interactive ? (
+        role === 'switch' ? (
+          <UiSwitch
+            data-testid={testId}
+            checked={Boolean(ariaChecked)}
+            disabled={disabled}
+            onCheckedChange={() => onClick?.()}
+            aria-label={label}
+            className={[actionClass, onCancel && 'pl-11 md:pl-2.5']
+              .filter(Boolean)
+              .join(' ')}
+          >
+            {content}
+          </UiSwitch>
+        ) : (
+          <ControlButton
+            variant="ghost"
+            size="sm"
+            type="button"
+            data-testid={testId}
+            disabled={disabled}
+            onClick={onClick}
+            className={[actionClass, onCancel && 'pl-11 md:pl-2.5']
+              .filter(Boolean)
+              .join(' ')}
+          >
+            {content}
+          </ControlButton>
+        )
+      ) : (
+        <span
+          className={[actionClass, onCancel && 'pl-11 md:pl-2.5']
+            .filter(Boolean)
+            .join(' ')}
+        >
+          {content}
+        </span>
+      )}
       {onCancel && (
-        <button
+        <ControlButton
+          variant="unstyled"
+          size="icon"
           type="button"
           data-testid={cancelTestId}
-          onClick={event => {
+          onClick={(event) => {
             event.stopPropagation()
             onCancel()
           }}
           disabled={disabled}
-          className="pointer-events-none absolute left-2 flex h-5 w-5 items-center justify-center rounded-full bg-text-muted/15 text-text-muted opacity-0 transition-[opacity,background-color,color] group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-text-muted/30 hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-0"
+          className="pointer-events-auto absolute left-0 flex items-center justify-center rounded-xl bg-muted text-text-secondary opacity-100 transition-opacity md:pointer-events-none md:opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 md:h-7 md:w-7"
           aria-label={resolvedCancelLabel}
         >
-          <CircleX className="h-4 w-4 shrink-0" />
-        </button>
+          <CircleX className="h-4 w-4" />
+        </ControlButton>
       )}
-      <span className="min-w-0 truncate">{label}</span>
     </div>
   )
 }
@@ -100,7 +132,11 @@ export interface GoalDraftPillProps {
   className?: string
 }
 
-export function GoalDraftPill({ translate: t, onCancel, className = '' }: GoalDraftPillProps) {
+export function GoalDraftPill({
+  translate: t,
+  onCancel,
+  className = '',
+}: GoalDraftPillProps) {
   return (
     <ComposerModePill
       translate={t}

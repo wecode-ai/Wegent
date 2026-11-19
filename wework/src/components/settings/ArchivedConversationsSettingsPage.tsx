@@ -1,36 +1,10 @@
-import { Loader2, Trash2 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { createLocalAppServices } from '@/api/local/localServices'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { RefreshWorkLists } from '@/features/workbench/workbenchContextTypes'
-import { WORKBENCH_CLOUD_ARCHIVES_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
-import { unmarkRuntimeConversationArchived } from '@/features/workbench/runtimeConversationCache'
-import { useTranslation } from '@/hooks/useTranslation'
-import {
-  getArchivedBulkDeleteProgress,
-  getArchivedCleanupError,
-  beginArchivedCleanup,
-  hasArchivedCleanupFailedKey,
-  subscribeArchivedCleanupError,
-  hasArchivedBulkDeletedKey,
-  notifyArchivedBulkDeleteDeleted,
-  setArchivedBulkDeleteProgress,
-  subscribeArchivedBulkDeleteDeleted,
-  subscribeArchivedBulkDeleteProgress,
-  type ArchivedBulkDeleteProgress,
-} from './archivedConversationsSettingsState'
-import {
-  ArchivedConversationGroups,
-  ArchivedConversationsFilters,
-  type ArchivedProjectGroup,
-  type ArchivedSortFilter,
-  type ArchivedSourceFilter,
-} from './ArchivedConversationsSettingsContent'
-import { SettingsPage, SettingsPageHeader } from './settings-ui'
-import type { ArchivedConversationItem } from '@/types/api'
-import { track } from '@/telemetry/client'
 import { deleteReplyPredictions } from '@/features/reply-predictions/replyPredictionService'
+import { unmarkRuntimeConversationArchived } from '@/features/workbench/runtimeConversationCache'
+import { WORKBENCH_CLOUD_ARCHIVES_CHANGED_EVENT } from '@/features/workbench/workbenchCloudDataEvents'
+import type { RefreshWorkLists } from '@/features/workbench/workbenchContextTypes'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
 import {
   deleteArchivedLocalHarnessSession,
   listArchivedLocalHarnessSessions,
@@ -38,6 +12,34 @@ import {
   unarchiveLocalHarnessSession,
   type LocalHarnessSessionDescriptor,
 } from '@/lib/local-terminal'
+import { track } from '@/telemetry/client'
+import type { ArchivedConversationItem } from '@/types/api'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Loader2, Trash2 } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
+import {
+  ArchivedConversationGroups,
+  ArchivedConversationsFilters,
+  type ArchivedProjectGroup,
+  type ArchivedSortFilter,
+  type ArchivedSourceFilter,
+} from './ArchivedConversationsSettingsContent'
+import {
+  beginArchivedCleanup,
+  getArchivedBulkDeleteProgress,
+  getArchivedCleanupError,
+  hasArchivedBulkDeletedKey,
+  hasArchivedCleanupFailedKey,
+  notifyArchivedBulkDeleteDeleted,
+  setArchivedBulkDeleteProgress,
+  subscribeArchivedBulkDeleteDeleted,
+  subscribeArchivedBulkDeleteProgress,
+  subscribeArchivedCleanupError,
+  type ArchivedBulkDeleteProgress,
+} from './archivedConversationsSettingsState'
+import { SettingsPage, SettingsPageHeader } from './settings-ui'
 
 type PendingDelete =
   | { type: 'single'; item: ArchivedConversationItem }
@@ -261,13 +263,18 @@ function DeleteArchivedConversationDialog({
         if (!submitting && event.target === event.currentTarget) onCancel()
       }}
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={`${testId}-title`}
-        data-testid={testId}
-        className="w-full max-w-[520px] rounded-[24px] border border-border bg-popover px-8 py-6 text-text-primary shadow-[0_24px_64px_rgba(0,0,0,0.34)]"
-        onClick={event => event.stopPropagation()}
+      <DialogSurface
+        onClose={() => {
+          if (!submitting) onCancel()
+        }}
+        render={
+          <div
+            aria-labelledby={`${testId}-title`}
+            data-testid={testId}
+            className="w-full max-w-[520px] rounded-[24px] border border-border bg-popover px-8 py-6 text-text-primary shadow-[0_24px_64px_rgba(0,0,0,0.34)]"
+            onClick={event => event.stopPropagation()}
+          />
+        }
       >
         <h2 id={`${testId}-title`} className="heading-base tracking-normal">
           {title}
@@ -285,7 +292,8 @@ function DeleteArchivedConversationDialog({
           </div>
         )}
         <div className="mt-6 flex justify-end gap-6">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`${testId}-cancel-button`}
             onClick={onCancel}
@@ -293,19 +301,21 @@ function DeleteArchivedConversationDialog({
             className="h-10 min-w-[84px] rounded-xl px-4 text-sm font-medium text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
           >
             {t('common.cancel', '取消')}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="destructive"
+            size="sm"
             type="button"
             data-testid={`${testId}-confirm-button`}
             onClick={onConfirm}
             disabled={submitting}
-            className="inline-flex h-10 min-w-[104px] items-center justify-center gap-2 rounded-xl bg-destructive/15 px-5 text-sm font-semibold text-destructive hover:bg-destructive/20 disabled:cursor-not-allowed disabled:opacity-60 wework:bg-red-500/15 wework:text-red-500 wework:hover:bg-red-500/20"
+            className="min-w-[104px]"
           >
             {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
             {confirmLabel}
-          </button>
+          </ControlButton>
         </div>
-      </div>
+      </DialogSurface>
     </div>,
     document.body
   )
@@ -697,12 +707,13 @@ export function ArchivedConversationsSettingsPage({
         title={t('workbench.archived_conversations_title', '已归档任务')}
         actions={
           hasArchivedItems ? (
-            <button
+            <ControlButton
               type="button"
               data-testid="archived-bulk-delete-button"
               onClick={handleBulkDelete}
               disabled={bulkDeleteRunning}
-              className="flex h-8 items-center gap-1.5 rounded-md bg-destructive/10 px-2.5 text-sm text-destructive hover:bg-destructive/15 disabled:cursor-not-allowed disabled:opacity-45 max-md:h-11 wework:bg-red-500/10 wework:text-red-500 wework:hover:bg-red-500/15"
+              variant="destructive-ghost"
+              size="sm"
             >
               {bulkDeleteRunning ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -710,7 +721,7 @@ export function ArchivedConversationsSettingsPage({
                 <Trash2 className="h-4 w-4" />
               )}
               {t('workbench.archived_bulk_delete', '删除全部')}
-            </button>
+            </ControlButton>
           ) : undefined
         }
       />
@@ -722,7 +733,8 @@ export function ArchivedConversationsSettingsPage({
         >
           <span>{t('workbench.archived_unarchive_success', { title: lastUnarchived.title })}</span>
           {(onOpenRuntimeTask || localHarnessSessionId(lastUnarchived)) && (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="archived-view-now-button"
               onClick={() => void openLastUnarchived()}
@@ -730,7 +742,7 @@ export function ArchivedConversationsSettingsPage({
               className="h-8 shrink-0 rounded-md px-3 text-sm font-medium text-primary hover:bg-primary/10 disabled:opacity-50"
             >
               {t('workbench.archived_view_now')}
-            </button>
+            </ControlButton>
           )}
         </div>
       )}
@@ -761,14 +773,15 @@ export function ArchivedConversationsSettingsPage({
                   )}
             </span>
             {!bulkDeleteProgress.running && (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="archived-bulk-delete-progress-dismiss-button"
                 onClick={() => setArchivedBulkDeleteProgress(null)}
                 className="h-8 rounded-md px-3 text-sm text-text-primary hover:bg-muted"
               >
                 {t('workbench.archived_bulk_delete_progress_dismiss', '关闭')}
-              </button>
+              </ControlButton>
             )}
           </div>
         </div>

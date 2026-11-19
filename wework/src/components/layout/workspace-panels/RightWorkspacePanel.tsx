@@ -1,17 +1,60 @@
-import { WorkspaceTitleTab } from './WorkspaceTitleTab'
-import { revealWorkspaceTab } from './revealWorkspaceTab'
-import { McpAppPanelSlot } from '@/features/mcp-apps/McpAppPanelSlot'
-import { QuestionDiscussionTabPanel } from '@/features/notifications/QuestionDiscussionScope'
+import { Popover, PopoverContent, PopoverTrigger } from '@wegent/collaboration/controls/Popover'
+import { controlPopup } from '@wegent/collaboration/controls/recipes'
+import { useCollaborationPortalTheme } from '@wegent/collaboration/theme'
+import type { GitPatchAction } from '@/api/environment'
+import type { HarnessAppVerificationReport } from '@/api/local/harnessApps'
+import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
 import {
-  isQuestionDiscussionTab,
-  type QuestionDiscussionTab,
-} from '@/features/notifications/questionDiscussion'
+  FileChangesReviewPanel,
+  type FileChangesReviewViewOption,
+} from '@/components/chat/FileChangesReviewPanel'
+import { unwrapShellCommand } from '@/components/chat/blocks/toolBlockActivity'
+import {
+  getComposerApps,
+  subscribeComposerApps,
+} from '@/components/chat/composer/composerAppsSnapshot'
+import { CentralHarnessTerminal } from '@/components/layout/CentralHarnessTerminal'
+import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
+import type { LocalHarnessWorkbenchSession } from '@/components/layout/localHarnessWorkbench'
+import { TitlebarRightPanelPortal } from '@/components/topnav/TitlebarActionsPortal'
+import {
+  observePluginDevelopmentWorkspace,
+  pluginDevelopmentProjectKind,
+  pluginDevelopmentProjectsRevision,
+  subscribePluginDevelopmentProjects,
+} from '@/features/dsh-plugins/pluginDevelopmentProjects'
+import { SmartAppPluginDialog } from '@/features/harness-apps/SmartAppPluginDialog'
+import { McpAppPanelSlot } from '@/features/mcp-apps/McpAppPanelSlot'
 import {
   getMcpAppPanel,
   isMcpAppPanelTab,
   useMcpAppPanels,
   type McpAppPanelTab,
 } from '@/features/mcp-apps/workspacePanels'
+import { QuestionDiscussionTabPanel } from '@/features/notifications/QuestionDiscussionScope'
+import {
+  isQuestionDiscussionTab,
+  type QuestionDiscussionTab,
+} from '@/features/notifications/questionDiscussion'
+import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
+import { reloadEmbeddedBrowser, type EmbeddedBrowserOpenRequest } from '@/lib/embedded-browser'
+import { getPlatform } from '@/lib/platform'
+import { isDesktopRuntime } from '@/lib/runtime-environment'
+import { localizeSmartAppIssue } from '@/lib/smart-app-error-message'
+import { cn } from '@/lib/utils'
+import type { DeviceInfo, ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
+import type { BrowserAnnotationCommand, BrowserAnnotationScope } from '@/types/browser-annotation'
+import type {
+  CodeCommentContext,
+  WorkspaceFileApi,
+  WorkspaceFileOpenOptions,
+  WorkspaceFileOpenRequest,
+  WorkspaceTarget,
+} from '@/types/workspace-files'
+import { TabsList, TabsRoot } from '@wegent/collaboration/controls/Tabs'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import type { LucideIcon } from 'lucide-react'
 import {
   Bot,
   CheckCircle2,
@@ -29,7 +72,7 @@ import {
   RefreshCw,
   SquareTerminal,
 } from 'lucide-react'
-import type { LucideIcon } from 'lucide-react'
+import type { ComponentType, ReactNode, Ref } from 'react'
 import {
   memo,
   useCallback,
@@ -41,79 +84,41 @@ import {
   useState,
   useSyncExternalStore,
 } from 'react'
-import type { ComponentType, ReactNode, Ref } from 'react'
-import {
-  FileChangesReviewPanel,
-  type FileChangesReviewViewOption,
-} from '@/components/chat/FileChangesReviewPanel'
-import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
-import { unwrapShellCommand } from '@/components/chat/blocks/toolBlockActivity'
-import { CentralHarnessTerminal } from '@/components/layout/CentralHarnessTerminal'
-import type { LocalHarnessWorkbenchSession } from '@/components/layout/localHarnessWorkbench'
-import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
-import { TitlebarRightPanelPortal } from '@/components/topnav/TitlebarActionsPortal'
-import { SmartAppPluginDialog } from '@/features/harness-apps/SmartAppPluginDialog'
-import type { HarnessAppVerificationReport } from '@/api/local/harnessApps'
-import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
-import { useTranslation } from '@/hooks/useTranslation'
-import { localizeSmartAppIssue } from '@/lib/smart-app-error-message'
-import type {
-  CodeCommentContext,
-  WorkspaceFileApi,
-  WorkspaceFileOpenOptions,
-  WorkspaceFileOpenRequest,
-  WorkspaceTarget,
-} from '@/types/workspace-files'
-import type { BrowserAnnotationCommand, BrowserAnnotationScope } from '@/types/browser-annotation'
-import { isDesktopRuntime } from '@/lib/runtime-environment'
-import { getPlatform } from '@/lib/platform'
-import { reloadEmbeddedBrowser, type EmbeddedBrowserOpenRequest } from '@/lib/embedded-browser'
-import { cn } from '@/lib/utils'
-import {
-  observePluginDevelopmentWorkspace,
-  pluginDevelopmentProjectKind,
-  pluginDevelopmentProjectsRevision,
-  subscribePluginDevelopmentProjects,
-} from '@/features/dsh-plugins/pluginDevelopmentProjects'
-import {
-  getComposerApps,
-  subscribeComposerApps,
-} from '@/components/chat/composer/composerAppsSnapshot'
-import type { DeviceInfo, ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
-import type { GitPatchAction } from '@/api/environment'
+import type { BackgroundTerminal } from '../backgroundTerminals'
 import type { DesktopReviewMode } from '../desktopWorkbenchPaneTypes'
+import { BackgroundTerminalPanel } from './BackgroundTerminalPanel'
+import { BrowserAgentCursorIcon } from './BrowserAgentCursorIcon'
+import { DshSidebarExtensionPanel } from './DshSidebarExtensionPanel'
 import {
   FileWorkspacePanel,
   type FileWorkspacePanelHandle,
   type FileWorkspacePanelSelection,
 } from './FileWorkspacePanel'
+import { TemporaryChatPanel } from './TemporaryChatPanel'
+import { WorkspaceAddMenu, type WorkspaceAddMenuItem } from './WorkspaceAddMenu'
+import { WorkspaceBrowserPanel } from './WorkspaceBrowserPanelContainer'
+import { WorkspaceFileIcon } from './WorkspaceFileIcon'
+import { WorkspacePanelCards } from './WorkspacePanelCards'
+import { WorkspaceTitleTab } from './WorkspaceTitleTab'
+import { revealWorkspaceTab } from './revealWorkspaceTab'
+import {
+  isRightWorkspaceExtensionTab,
+  isWeworkWorkspaceSidebarTabAvailable,
+  resolveRightWorkspaceExtensionDescriptor,
+  rightWorkspaceDshSidebar,
+  shouldCloseUnavailableWeworkWorkspaceSidebarTab,
+  titleOfWeworkWorkspaceSidebarTab,
+  type RightWorkspaceExtensionTab,
+  type RightWorkspaceExtensionTabState,
+  type WeworkWorkspaceScope,
+  type WeworkWorkspaceSidebarTabDescriptor,
+} from './rightWorkspaceDshSidebar'
 import {
   isWorkspaceFileTab,
   workspaceFileTabLabel,
   type WorkspaceFileTabId,
   type WorkspaceFileTabs,
 } from './workspaceFileTabs'
-import { WorkspaceAddMenu, type WorkspaceAddMenuItem } from './WorkspaceAddMenu'
-import { WorkspaceBrowserPanel } from './WorkspaceBrowserPanelContainer'
-import { WorkspacePanelCards } from './WorkspacePanelCards'
-import { WorkspaceFileIcon } from './WorkspaceFileIcon'
-import { TemporaryChatPanel } from './TemporaryChatPanel'
-import { BackgroundTerminalPanel } from './BackgroundTerminalPanel'
-import type { BackgroundTerminal } from '../backgroundTerminals'
-import { DshSidebarExtensionPanel } from './DshSidebarExtensionPanel'
-import { BrowserAgentCursorIcon } from './BrowserAgentCursorIcon'
-import {
-  resolveRightWorkspaceExtensionDescriptor,
-  rightWorkspaceDshSidebar,
-  isWeworkWorkspaceSidebarTabAvailable,
-  shouldCloseUnavailableWeworkWorkspaceSidebarTab,
-  isRightWorkspaceExtensionTab,
-  titleOfWeworkWorkspaceSidebarTab,
-  type WeworkWorkspaceScope,
-  type WeworkWorkspaceSidebarTabDescriptor,
-  type RightWorkspaceExtensionTab,
-  type RightWorkspaceExtensionTabState,
-} from './rightWorkspaceDshSidebar'
 
 function getRightWorkspaceShortcuts(platform: ReturnType<typeof getPlatform>) {
   if (platform !== 'mac') {
@@ -464,6 +469,7 @@ function SmartAppDevelopmentVerification({
 }) {
   const { t, i18n } = useTranslation('common')
   const [detailsOpen, setDetailsOpen] = useState(false)
+  const portalTheme = useCollaborationPortalTheme()
   const blockingIssue = preview.verificationReport?.issues.find(issue => issue.blocking)
   const issues = preview.verificationReport?.issues ?? []
   const localizeIssue = (value: string) => {
@@ -490,72 +496,91 @@ function SmartAppDevelopmentVerification({
 
   return (
     <div className="flex min-w-0 items-center gap-2">
-      <div
-        data-testid={`smart-app-development-preview-verification-${preview.verificationStatus}`}
-        className="min-w-0 text-xs text-text-secondary"
-      >
-        <span className="inline-flex items-center gap-1">
-          {preview.verificationStatus === 'running' ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : preview.verificationStatus === 'passed' ? (
-            <CheckCircle2 className="h-3.5 w-3.5" />
-          ) : preview.verificationStatus === 'failed' || preview.verificationStatus === 'stale' ? (
-            <CircleAlert className="h-3.5 w-3.5" />
-          ) : null}
-          {label}
-        </span>
-        {preview.verificationStatus === 'failed' && (blockingIssue || preview.verificationError) ? (
-          <span className="ml-2">
-            {blockingIssue ? (
-              <>
-                {localizeIssue(blockingIssue.message)}
-                {blockingIssue.file ? ` · ${blockingIssue.file}` : ''}
-                {blockingIssue.hint ? ` · ${localizeIssue(blockingIssue.hint)}` : ''}
-              </>
-            ) : (
-              localizeIssue(preview.verificationError ?? '')
-            )}
-          </span>
-        ) : null}
-      </div>
-      {issues.length > 1 ? (
-        <button
-          type="button"
-          data-testid="smart-app-development-preview-verification-details"
-          aria-expanded={detailsOpen}
-          onClick={() => setDetailsOpen(current => !current)}
-          className="shrink-0 rounded px-1.5 py-1 text-xs text-text-secondary hover:bg-muted hover:text-text-primary"
-        >
-          {detailsOpen
-            ? t('workbench.smart_app_preview_verification_hide_details')
-            : t('workbench.smart_app_preview_verification_show_details', { count: issues.length })}
-        </button>
-      ) : null}
-      <button
-        type="button"
-        data-testid="smart-app-development-preview-verify"
-        disabled={disabled || preview.verificationStatus === 'running'}
-        onClick={() => onVerify?.(tab, preview.installationId)}
-        className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-text-primary transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {t('workbench.smart_app_preview_verify')}
-      </button>
-      {detailsOpen && issues.length > 1 ? (
+      <Popover open={detailsOpen} onOpenChange={setDetailsOpen}>
         <div
-          data-testid="smart-app-development-preview-verification-issues"
-          className="absolute right-3 top-12 z-popover w-80 rounded-md border border-border bg-background p-3 shadow-md"
+          data-testid={`smart-app-development-preview-verification-${preview.verificationStatus}`}
+          className="min-w-0 text-xs text-text-secondary"
         >
-          <ul className="space-y-2 text-xs text-text-secondary">
-            {issues.map(issue => (
-              <li key={`${issue.stage}:${issue.code}:${issue.file ?? ''}`}>
-                <div className="font-medium text-text-primary">{issue.code}</div>
-                <div>{issue.file ?? localizeIssue(issue.message)}</div>
-                {issue.hint ? <div>{localizeIssue(issue.hint)}</div> : null}
-              </li>
-            ))}
-          </ul>
+          <span className="inline-flex items-center gap-1">
+            {preview.verificationStatus === 'running' ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : preview.verificationStatus === 'passed' ? (
+              <CheckCircle2 className="h-3.5 w-3.5" />
+            ) : preview.verificationStatus === 'failed' ||
+              preview.verificationStatus === 'stale' ? (
+              <CircleAlert className="h-3.5 w-3.5" />
+            ) : null}
+            {label}
+          </span>
+          {preview.verificationStatus === 'failed' &&
+          (blockingIssue || preview.verificationError) ? (
+            <span className="ml-2">
+              {blockingIssue ? (
+                <>
+                  {localizeIssue(blockingIssue.message)}
+                  {blockingIssue.file ? ` · ${blockingIssue.file}` : ''}
+                  {blockingIssue.hint ? ` · ${localizeIssue(blockingIssue.hint)}` : ''}
+                </>
+              ) : (
+                localizeIssue(preview.verificationError ?? '')
+              )}
+            </span>
+          ) : null}
         </div>
-      ) : null}
+        {issues.length > 1 ? (
+          <PopoverTrigger
+            render={
+              <ControlButton
+                variant="unstyled"
+                type="button"
+                data-testid="smart-app-development-preview-verification-details"
+                aria-expanded={detailsOpen}
+                className="shrink-0 rounded px-1.5 py-1 text-xs text-text-secondary hover:bg-muted hover:text-text-primary"
+              />
+            }
+          >
+            {detailsOpen
+              ? t('workbench.smart_app_preview_verification_hide_details')
+              : t('workbench.smart_app_preview_verification_show_details', {
+                  count: issues.length,
+                })}
+          </PopoverTrigger>
+        ) : null}
+        <ControlButton
+          variant="outline"
+          size="sm"
+          type="button"
+          data-testid="smart-app-development-preview-verify"
+          disabled={disabled || preview.verificationStatus === 'running'}
+          onClick={() => onVerify?.(tab, preview.installationId)}
+          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border bg-background px-2.5 text-xs font-medium text-text-primary transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {t('workbench.smart_app_preview_verify')}
+        </ControlButton>
+        {detailsOpen && issues.length > 1 ? (
+          <PopoverContent
+            {...portalTheme}
+            align="end"
+            sideOffset={8}
+            collisionPadding={8}
+            aria-label={t('workbench.smart_app_preview_verification_show_details', {
+              count: issues.length,
+            })}
+            data-testid="smart-app-development-preview-verification-issues"
+            className={cn(portalTheme.className, controlPopup, 'w-80 p-3')}
+          >
+            <ul className="space-y-2 text-xs text-text-secondary">
+              {issues.map(issue => (
+                <li key={`${issue.stage}:${issue.code}:${issue.file ?? ''}`}>
+                  <div className="font-medium text-text-primary">{issue.code}</div>
+                  <div>{issue.file ?? localizeIssue(issue.message)}</div>
+                  {issue.hint ? <div>{localizeIssue(issue.hint)}</div> : null}
+                </li>
+              ))}
+            </ul>
+          </PopoverContent>
+        ) : null}
+      </Popover>
     </div>
   )
 }
@@ -801,99 +826,109 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
   ]
 
   const tabBar = showTabs ? (
-    <header
-      data-testid="right-workspace-tabbar"
-      role="tablist"
-      className={cn(
-        'electron-titlebar-interactive-region relative z-chrome flex min-w-0 shrink-0 items-center pointer-events-auto',
-        renderTabsInTitlebar
-          ? 'h-[38px] w-full gap-1 bg-transparent pl-4'
-          : cn(
-              'h-10 gap-1.5 px-3',
-              platform === 'win' ? '' : 'border-b border-border',
-              showWorkbenchBackground ? 'bg-transparent' : 'bg-background'
-            )
-      )}
+    <TabsRoot
+      value={activeView === 'launcher' ? null : getRightWorkspaceTabTestId(activeView)}
+      onValueChange={next => {
+        const tab = visibleTabs.find(tab => getRightWorkspaceTabTestId(tab) === next)
+        if (tab) getTabSelectHandler(tab)()
+      }}
+      render={<div className="contents" />}
     >
-      <div
-        ref={tabsViewportRef}
-        data-testid="right-workspace-tabs-viewport"
-        className="flex min-w-0 items-center gap-1.5 overflow-x-auto overflow-y-hidden scrollbar-none"
-      >
-        {visibleTabs.map(tab => (
-          <RightWorkspaceTitleTab
-            key={tab}
-            tab={tab}
-            active={activeView === tab}
-            title={backgroundTerminals.find(terminal => terminal.tabId === tab)?.command}
-            filePath={
-              isWorkspaceFileTab(tab)
-                ? fileTabs[tab]?.path
-                : tab === 'files'
-                  ? primaryFilePath
-                  : undefined
-            }
-            label={getRightWorkspaceTabLabel(
-              tab,
-              t,
-              browserStates,
-              harnessSessionsById,
-              extensionTabs,
-              backgroundTerminals
-            )}
-            icon={
-              isRightWorkspaceBrowserTab(tab) && browserStates[tab]?.developmentPreview
-                ? LayoutDashboard
-                : getRightWorkspaceTabIcon(tab)
-            }
-            extensionState={isRightWorkspaceExtensionTab(tab) ? extensionTabs[tab] : undefined}
-            iconSrc={
-              isRightWorkspaceBrowserTab(tab) && !browserStates[tab]?.developmentPreview
-                ? browserStates[tab]?.faviconUrl
-                : null
-            }
-            loading={
-              isRightWorkspaceBrowserTab(tab) &&
-              (browserStates[tab]?.isLoading ||
-                browserStates[tab]?.developmentPreview?.status === 'starting' ||
-                browserStates[tab]?.developmentPreview?.status === 'reloading')
-            }
-            agentActive={isRightWorkspaceBrowserTab(tab) && browserStates[tab]?.agentActive}
-            onSelect={getTabSelectHandler(tab)}
-            onClose={() => closeTab(tab)}
-          />
-        ))}
-      </div>
-      <div className="relative shrink-0">
-        {visible ? (
-          <WorkspaceAddMenu
-            ariaLabel={t('workbench.workspace_tab_new', '打开新标签页')}
-            buttonTestId="right-workspace-new-tab-button"
-            menuTestId="right-workspace-new-tab-menu"
-            items={getNewTabOptions()}
-            buttonClassName="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-muted hover:text-text-primary pointer-events-auto"
-          />
-        ) : (
-          <button
-            type="button"
-            data-testid="right-workspace-new-tab-button"
-            disabled
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary opacity-50"
-            aria-label={t('workbench.workspace_tab_new', '打开新标签页')}
-          >
-            <Plus className="h-4 w-4" />
-          </button>
+      <TabsList
+        render={<header />}
+        data-testid="right-workspace-tabbar"
+        className={cn(
+          'electron-titlebar-interactive-region relative z-chrome flex min-w-0 shrink-0 items-center pointer-events-auto',
+          renderTabsInTitlebar
+            ? 'h-[38px] w-full gap-1 bg-transparent pl-4'
+            : cn(
+                'h-10 gap-1.5 px-3',
+                platform === 'win' ? '' : 'border-b border-border',
+                showWorkbenchBackground ? 'bg-transparent' : 'bg-background'
+              )
         )}
-      </div>
-      {renderTabsInTitlebar ? (
+      >
         <div
-          data-testid="right-workspace-titlebar-drag-region"
-          className="min-w-0 flex-1 self-stretch"
+          ref={tabsViewportRef}
+          data-testid="right-workspace-tabs-viewport"
+          className="flex min-w-0 items-center gap-1.5 overflow-x-auto overflow-y-hidden scrollbar-none"
         >
-          <MacOSTitleBarDragRegion className="h-full w-full" />
+          {visibleTabs.map(tab => (
+            <RightWorkspaceTitleTab
+              key={tab}
+              tab={tab}
+              active={activeView === tab}
+              title={backgroundTerminals.find(terminal => terminal.tabId === tab)?.command}
+              filePath={
+                isWorkspaceFileTab(tab)
+                  ? fileTabs[tab]?.path
+                  : tab === 'files'
+                    ? primaryFilePath
+                    : undefined
+              }
+              label={getRightWorkspaceTabLabel(
+                tab,
+                t,
+                browserStates,
+                harnessSessionsById,
+                extensionTabs,
+                backgroundTerminals
+              )}
+              icon={
+                isRightWorkspaceBrowserTab(tab) && browserStates[tab]?.developmentPreview
+                  ? LayoutDashboard
+                  : getRightWorkspaceTabIcon(tab)
+              }
+              extensionState={isRightWorkspaceExtensionTab(tab) ? extensionTabs[tab] : undefined}
+              iconSrc={
+                isRightWorkspaceBrowserTab(tab) && !browserStates[tab]?.developmentPreview
+                  ? browserStates[tab]?.faviconUrl
+                  : null
+              }
+              loading={
+                isRightWorkspaceBrowserTab(tab) &&
+                (browserStates[tab]?.isLoading ||
+                  browserStates[tab]?.developmentPreview?.status === 'starting' ||
+                  browserStates[tab]?.developmentPreview?.status === 'reloading')
+              }
+              agentActive={isRightWorkspaceBrowserTab(tab) && browserStates[tab]?.agentActive}
+              onSelect={getTabSelectHandler(tab)}
+              onClose={() => closeTab(tab)}
+            />
+          ))}
         </div>
-      ) : null}
-    </header>
+        <div className="relative shrink-0">
+          {visible ? (
+            <WorkspaceAddMenu
+              ariaLabel={t('workbench.workspace_tab_new', '打开新标签页')}
+              buttonTestId="right-workspace-new-tab-button"
+              menuTestId="right-workspace-new-tab-menu"
+              items={getNewTabOptions()}
+              buttonClassName="flex shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-muted hover:text-text-primary pointer-events-auto"
+            />
+          ) : (
+            <ControlButton
+              variant="unstyled"
+              type="button"
+              data-testid="right-workspace-new-tab-button"
+              disabled
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary opacity-50"
+              aria-label={t('workbench.workspace_tab_new', '打开新标签页')}
+            >
+              <Plus className="h-4 w-4" />
+            </ControlButton>
+          )}
+        </div>
+        {renderTabsInTitlebar ? (
+          <div
+            data-testid="right-workspace-titlebar-drag-region"
+            className="min-w-0 flex-1 self-stretch"
+          >
+            <MacOSTitleBarDragRegion className="h-full w-full" />
+          </div>
+        ) : null}
+      </TabsList>
+    </TabsRoot>
   ) : null
   const chatTabs = allowTemporaryChat ? openTabs.filter(isRightWorkspaceChatTab) : []
 
@@ -1098,7 +1133,8 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
                         tab={tab}
                         onVerify={onVerifySmartAppDevelopmentPreview}
                       />
-                      <button
+                      <ControlButton
+                        variant="unstyled"
                         type="button"
                         data-testid="smart-app-development-preview-add-plugins"
                         disabled={developmentPreview.status !== 'ready'}
@@ -1113,8 +1149,9 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
                       >
                         <Puzzle className="h-3.5 w-3.5" />
                         {t('workbench.smart_app_preview_add_plugins')}
-                      </button>
-                      <button
+                      </ControlButton>
+                      <ControlButton
+                        variant="unstyled"
                         type="button"
                         data-testid="smart-app-development-preview-refresh"
                         disabled={developmentPreview.status !== 'ready'}
@@ -1123,8 +1160,10 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
                       >
                         <RefreshCw className="h-3.5 w-3.5" />
                         {t('workbench.smart_app_preview_refresh')}
-                      </button>
-                      <button
+                      </ControlButton>
+                      <ControlButton
+                        variant="outline"
+                        size="sm"
                         type="button"
                         data-testid="smart-app-development-preview-reload"
                         disabled={
@@ -1148,7 +1187,7 @@ export const RightWorkspacePanel = memo(function RightWorkspacePanel({
                           )}
                         />
                         {t('workbench.smart_app_preview_reload')}
-                      </button>
+                      </ControlButton>
                     </div>
                   </header>
                   {developmentPreview.status === 'ready' ? (
@@ -1505,7 +1544,8 @@ function RightWorkspaceLauncherItem({
   'data-testid': string
 }) {
   return (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid={testId}
       onClick={onClick}
@@ -1524,7 +1564,7 @@ function RightWorkspaceLauncherItem({
           {shortcut}
         </span>
       )}
-    </button>
+    </ControlButton>
   )
 }
 

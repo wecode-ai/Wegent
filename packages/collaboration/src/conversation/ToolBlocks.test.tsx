@@ -137,7 +137,26 @@ describe('shared tool output without a desktop host', () => {
     expect(container.querySelector('[data-testid="web-search-sources-chip"]')?.textContent).toBe(
       'Sources'
     )
-    const link = container.querySelector<HTMLAnchorElement>(
+    vi.useFakeTimers()
+    try {
+      await act(async () => {
+        const trigger = container.querySelector<HTMLButtonElement>(
+          '[data-testid="web-search-sources-chip"]'
+        )!
+        trigger.dispatchEvent(
+          new PointerEvent('pointerenter', {
+            bubbles: true,
+            pointerType: 'mouse',
+          })
+        )
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0)
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+    const link = document.querySelector<HTMLAnchorElement>(
       '[data-testid="web-search-source-popup-row"]'
     )!
     await act(async () => link.click())
@@ -167,7 +186,7 @@ describe('shared tool output without a desktop host', () => {
     expect(ignore).not.toBeNull()
     expect(ignore?.disabled).toBe(true)
   })
-  it('keeps an opened native approval rationale when the conversation remounts', () => {
+  it('keeps a user-opened approval rationale when the conversation remounts', () => {
     const review: ToolBlock = {
       ...block('review-retained-details'),
       toolName: 'auto_approval_review',
@@ -177,18 +196,18 @@ describe('shared tool output without a desktop host', () => {
     const show = () =>
       render(<ToolBlocksDisplay blocks={[review]} isStreaming={false} forceExpanded />)
     show()
-    const details = container.querySelector<HTMLDetailsElement>(
-      '[data-testid="auto-approval-review"]'
+    const details = container.querySelector<HTMLElement>(
+      '[data-testid="auto-approval-review-details"]'
     )!
-    act(() => {
-      details.open = true
-      details.dispatchEvent(new Event('toggle'))
-    })
+    expect(details.getAttribute('aria-expanded')).toBe('false')
+    act(() => details.click())
     render(<div>Other conversation</div>)
     show()
     expect(
-      container.querySelector<HTMLDetailsElement>('[data-testid="auto-approval-review"]')?.open
-    ).toBe(true)
+      container
+        .querySelector<HTMLElement>('[data-testid="auto-approval-review-details"]')
+        ?.getAttribute('aria-expanded')
+    ).toBe('true')
     expect(
       container.querySelector('[data-testid="auto-approval-review-evidence"]')?.textContent
     ).toContain('Private data is outside the task')

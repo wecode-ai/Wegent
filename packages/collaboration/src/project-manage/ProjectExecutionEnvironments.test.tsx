@@ -1,3 +1,4 @@
+import { sdkSelectValue, sdkSelectItems } from '../test/selectControl'
 // @vitest-environment jsdom
 
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
@@ -100,7 +101,9 @@ function element<T extends HTMLElement>(suffix: string): T {
 }
 
 async function change(suffix: string, value: string) {
-  if (element(suffix).closest('details')) await openPreparation()
+  if (element(suffix).closest('[data-testid="' + prefix + '-preparation"]')) await openPreparation()
+  if (element(suffix).getAttribute('role') === 'combobox')
+    return sdkSelectValue(element(suffix), value)
   await act(async () => {
     const control = element<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>(suffix)
     const prototype =
@@ -118,25 +121,31 @@ async function change(suffix: string, value: string) {
   })
 }
 
+async function initializeControl(suffix: string) {
+  const toggle = element('-actions-toggle-' + suffix.slice('-initialize-'.length))
+  if (toggle.getAttribute('aria-expanded') !== 'true') await act(async () => toggle.click())
+  const item = document.querySelector<HTMLElement>('[data-testid="' + prefix + suffix + '"]')
+  if (!item) throw new Error('Missing initialization menu item: ' + suffix)
+  return item
+}
+
+async function initializeDevice(suffix: string) {
+  const item = await initializeControl(suffix)
+  await act(async () => item.click())
+}
+
 async function openPicker() {
   await act(async () => element<HTMLButtonElement>('-add').click())
 }
 
 async function openPreparation() {
-  if (!element<HTMLDetailsElement>('-preparation').open) {
+  if (element('-preparation-toggle').getAttribute('aria-expanded') !== 'true') {
     await togglePreparation(element('-preparation-toggle'))
   }
 }
 
 async function togglePreparation(toggle: HTMLElement) {
-  await act(async () => {
-    // Native details dispatches toggle asynchronously; await the actual event.
-    const toggled = new Promise<void>(resolve => {
-      toggle.closest('details')!.addEventListener('toggle', () => resolve(), { once: true })
-    })
-    toggle.click()
-    await toggled
-  })
+  await act(async () => toggle.click())
 }
 
 async function addRepositoryDraft() {
@@ -380,7 +389,7 @@ describe('ProjectExecutionEnvironments', () => {
     await change('-setup-command-0', 'pnpm install')
     await change('-setup-directory-0', 'wegent')
     await saveConfiguration()
-    await act(async () => element<HTMLButtonElement>('-initialize-21').click())
+    await initializeDevice('-initialize-21')
 
     expect(api.projects.update).toHaveBeenCalledExactlyOnceWith('project-1', {
       version: 1,
@@ -427,17 +436,20 @@ describe('ProjectExecutionEnvironments', () => {
       assigned: [environment(21, 'Assigned online', 'online')],
     })
 
-    const initializeButton = element<HTMLButtonElement>('-initialize-21')
-    const preparation = element<HTMLDetailsElement>('-preparation')
-    expect(preparation.open).toBe(false)
+    expect(element('-actions-toggle-21').getAttribute('aria-expanded')).toBe('false')
+    const initializeButton = await initializeControl('-initialize-21')
+    const preparation = element<HTMLElement>('-preparation')
+    expect(
+      preparation
+        .querySelector('[data-slot=collapsible-trigger]')
+        ?.getAttribute('aria-expanded') === 'true'
+    ).toBe(false)
     expect(
       element('-environments').compareDocumentPosition(preparation) &
         Node.DOCUMENT_POSITION_FOLLOWING
     ).not.toBe(0)
-    expect(element<HTMLDetailsElement>('-actions-21').open).toBe(false)
     expect(container?.textContent).toContain('首次运行时自动准备')
-    await act(async () => element('-actions-toggle-21').click())
-    expect(initializeButton.classList).toContain('collaboration-link-button')
+    expect(initializeButton.getAttribute('role')).toBe('menuitem')
 
     await act(async () => initializeButton.click())
 
@@ -451,9 +463,13 @@ describe('ProjectExecutionEnvironments', () => {
     )
     expect(element('-21').dataset.preparationState).toBe('ready')
 
-    expect(preparation.open).toBe(false)
-    expect(initializeButton.classList).toContain('collaboration-link-button')
-    expect(initializeButton.classList).not.toContain('collaboration-primary-button')
+    expect(
+      preparation
+        .querySelector('[data-slot=collapsible-trigger]')
+        ?.getAttribute('aria-expanded') === 'true'
+    ).toBe(false)
+    expect(initializeButton.getAttribute('role')).toBe('menuitem')
+    expect(initializeButton.getAttribute('aria-disabled')).not.toBe('true')
   })
 
   it('preserves setup drafts when collapsed and requires saving before initialization', async () => {
@@ -468,14 +484,17 @@ describe('ProjectExecutionEnvironments', () => {
     await act(async () => element<HTMLButtonElement>('-add-setup-step').click())
     await change('-setup-command-0', 'mkdir -p generated')
     await change('-workspace-policy', 'project')
-    expect(element<HTMLButtonElement>('-initialize-21').disabled).toBe(true)
+    expect(
+      (await initializeControl('-initialize-21')).getAttribute('aria-disabled') === 'true'
+    ).toBe(true)
     await togglePreparation(element('-preparation-toggle'))
-    expect(element<HTMLDetailsElement>('-preparation').open).toBe(false)
+    expect(element('-preparation-toggle').getAttribute('aria-expanded') === 'true').toBe(false)
     expect(element('-preparation-toggle').textContent).toContain('0 个仓库 · 1 个初始化步骤')
     expect(element('-preparation-toggle').textContent).toContain('未保存')
     await openPreparation()
     expect(element<HTMLInputElement>('-setup-command-0').value).toBe('mkdir -p generated')
-    expect(element<HTMLSelectElement>('-workspace-policy').value).toBe('project')
+    await openPreparation()
+    expect(await sdkSelectValue(element('-workspace-policy'))).toBe('project')
 
     await saveConfiguration()
 
@@ -488,7 +507,9 @@ describe('ProjectExecutionEnvironments', () => {
       },
     })
     expect(element('-configuration-status').textContent).toContain('配置已保存')
-    expect(element<HTMLButtonElement>('-initialize-21').disabled).toBe(false)
+    expect(
+      (await initializeControl('-initialize-21')).getAttribute('aria-disabled') === 'true'
+    ).toBe(false)
     expect(element('-preparation-toggle').textContent).not.toContain('未保存')
     expect(onProjectChange).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'project-1', version: 2 })
@@ -502,7 +523,7 @@ describe('ProjectExecutionEnvironments', () => {
       onProjectChange,
     })
 
-    await act(async () => element<HTMLButtonElement>('-initialize-21').click())
+    await initializeDevice('-initialize-21')
 
     expect(onProjectChange).toHaveBeenCalledWith(
       expect.objectContaining({ id: 'project-1', version: 3 })
@@ -562,7 +583,7 @@ describe('ProjectExecutionEnvironments', () => {
     await change('-repository-url-0', 'https://github.com/wecode-ai/Wegent.git')
     await change('-repository-path-0', 'wegent')
     await saveConfiguration()
-    await act(async () => element<HTMLButtonElement>('-initialize-21').click())
+    await initializeDevice('-initialize-21')
 
     const shown = container?.querySelector(`[data-testid="${prefix}-environment-error"]`)
     expect(api.projects.initializeExecutionEnvironment).toHaveBeenCalledOnce()
@@ -602,7 +623,7 @@ describe('ProjectExecutionEnvironments', () => {
         },
       },
     }))
-    await act(async () => element<HTMLButtonElement>('-initialize-21').click())
+    await initializeDevice('-initialize-21')
     expect(element('-environment-error').textContent).toContain('git.example:8443')
     expect(element('-environment-error').textContent).toContain('Git 账户')
     expect(element('-environment-error').textContent).not.toContain('git-access:')
@@ -643,7 +664,7 @@ describe('ProjectExecutionEnvironments', () => {
           },
         },
       }))
-      await act(async () => element<HTMLButtonElement>('-initialize-21').click())
+      await initializeDevice('-initialize-21')
       const configure = container?.querySelector<HTMLButtonElement>(
         `[data-testid="${prefix}-configure-git"]`
       )
@@ -654,7 +675,7 @@ describe('ProjectExecutionEnvironments', () => {
           'https://cloud.example/settings?tab=integrations&gitDomain=git.example%3A8443#git-accounts'
         )
         expect(element('-environment-error').textContent).not.toContain('git-access:')
-        await act(async () => element<HTMLButtonElement>('-initialize-21').click())
+        await initializeDevice('-initialize-21')
         expect(api.projects.initializeExecutionEnvironment).toHaveBeenCalledTimes(2)
         expect(container?.querySelector(`[data-testid="${prefix}-configure-git"]`)).toBeNull()
       } else {
@@ -694,7 +715,7 @@ describe('ProjectExecutionEnvironments', () => {
       },
     }))
 
-    await act(async () => element<HTMLButtonElement>('-initialize-21').click())
+    await initializeDevice('-initialize-21')
 
     const shown = element('-environment-error')
     expect(shown.textContent).toContain(
@@ -708,20 +729,24 @@ describe('ProjectExecutionEnvironments', () => {
       assigned: [environment(21, 'Assigned online', 'online')],
     })
 
-    const preparation = element<HTMLDetailsElement>('-preparation')
+    const preparation = element<HTMLElement>('-preparation')
     const configuredEnvironment = element('-21')
     const addButton = element<HTMLButtonElement>('-add')
 
     expect(
       configuredEnvironment.compareDocumentPosition(preparation) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
-    expect(preparation.open).toBe(false)
+    expect(
+      preparation
+        .querySelector('[data-slot=collapsible-trigger]')
+        ?.getAttribute('aria-expanded') === 'true'
+    ).toBe(false)
     expect(addButton.textContent).toContain('＋ 添加设备')
     expect(
       addButton.compareDocumentPosition(configuredEnvironment) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy()
     expect(element('-21').textContent).not.toContain('环境未初始化')
-    expect(element<HTMLButtonElement>('-initialize-21').textContent).toContain('提前准备项目目录')
+    expect((await initializeControl('-initialize-21')).textContent).toContain('提前准备项目目录')
     expect(container?.querySelector(`[data-testid="${prefix}-select"]`)).toBeNull()
   })
 
@@ -820,7 +845,7 @@ describe('ProjectExecutionEnvironments', () => {
     await change('-repository-url-0', 'https://github.com/wecode-ai/Wegent.git')
     await change('-repository-path-0', 'wegent')
     await saveConfiguration()
-    await act(async () => element<HTMLButtonElement>('-initialize-1824').click())
+    await initializeDevice('-initialize-1824')
 
     expect(api.projects.initializeExecutionEnvironment).toHaveBeenCalledExactlyOnceWith(
       'project-1',
@@ -855,7 +880,7 @@ describe('ProjectExecutionEnvironments', () => {
       },
     })
     api.projects.initializeExecutionEnvironment.mockImplementationOnce(() => pending)
-    await act(async () => element<HTMLButtonElement>('-initialize-1824').click())
+    await initializeDevice('-initialize-1824')
 
     expect(element('-1824').textContent).toContain('正在准备项目目录')
     expect(element('-1748').dataset.preparationState).toBe('ready')
@@ -891,11 +916,11 @@ describe('ProjectExecutionEnvironments', () => {
     })
 
     expect(element('-1748').dataset.preparationState).toBe('ready')
-    expect(element<HTMLButtonElement>('-initialize-1748').textContent).toContain('提前准备项目目录')
+    expect((await initializeControl('-initialize-1748')).textContent).toContain('提前准备项目目录')
     expect(element('-1824').textContent).toContain('项目准备失败')
-    expect(element<HTMLButtonElement>('-initialize-1824').textContent).toContain('提前准备项目目录')
+    expect((await initializeControl('-initialize-1824')).textContent).toContain('提前准备项目目录')
     expect(element('-21').textContent).not.toContain('环境未初始化')
-    expect(element<HTMLButtonElement>('-initialize-21').textContent).toContain('提前准备项目目录')
+    expect((await initializeControl('-initialize-21')).textContent).toContain('提前准备项目目录')
   })
 
   it('refreshes every device row when the project prop poll delivers new state', async () => {
@@ -962,11 +987,13 @@ describe('ProjectExecutionEnvironments', () => {
       ],
     })
     api.projects.initializeExecutionEnvironment.mockImplementationOnce(() => pending)
+    const initializeCurrent = await initializeControl('-initialize-1748')
     await act(async () => {
-      element<HTMLButtonElement>('-initialize-1748').click()
-      element<HTMLButtonElement>('-initialize-1748').click()
-      element<HTMLButtonElement>('-initialize-1824').click()
+      initializeCurrent.click()
+      initializeCurrent.click()
     })
+    const initializeOther = await initializeControl('-initialize-1824')
+    await act(async () => initializeOther.click())
 
     expect(api.projects.update).not.toHaveBeenCalled()
     expect(api.projects.initializeExecutionEnvironment).toHaveBeenCalledOnce()
@@ -993,9 +1020,13 @@ describe('ProjectExecutionEnvironments', () => {
       'Personal onlineLocal device · Online · My resources'
     )
     expect(element('-picker').textContent).not.toContain('Personal offline')
-    expect(
-      [...element<HTMLSelectElement>('-status-filter').options].map(option => option.textContent)
-    ).toEqual(['All', 'Online', 'Offline', 'Preparing', 'Error'])
+    expect((await sdkSelectItems(element('-status-filter'))).map(option => option.label)).toEqual([
+      'All',
+      'Online',
+      'Offline',
+      'Preparing',
+      'Error',
+    ])
   })
 
   it('keeps the English device menu and project authorization instructions in English', async () => {
@@ -1031,7 +1062,7 @@ describe('ProjectExecutionEnvironments', () => {
     expect(element<HTMLInputElement>('-repository-path-0').value).toBe('wegent')
     expect(listBranches).toHaveBeenCalledWith(repositoryOptions[0])
     // The provider's default branch is preselected.
-    expect(element<HTMLSelectElement>('-repository-ref-0').value).toBe('main')
+    expect(await sdkSelectValue(element('-repository-ref-0'))).toBe('main')
 
     // A customized name survives switching repositories while the derived
     // directory follows the new repository.
@@ -1079,7 +1110,7 @@ describe('ProjectExecutionEnvironments', () => {
     await act(async () => element<HTMLButtonElement>('-repositories-retry').click())
 
     expect(container?.textContent).not.toContain('仓库列表加载失败')
-    expect(element('-repository-url-0')).toBeInstanceOf(HTMLSelectElement)
+    expect(element('-repository-url-0').getAttribute('role')).toBe('combobox')
   })
 
   it('keeps repository details optional and derives the manual URL defaults', async () => {
@@ -1140,11 +1171,9 @@ describe('ProjectExecutionEnvironments', () => {
 
     await openPreparation()
     const urlControl = element<HTMLSelectElement>('-repository-url-0')
-    expect(urlControl).toBeInstanceOf(HTMLSelectElement)
-    expect(urlControl.value).toBe('__custom_repository__')
-    expect(urlControl.selectedOptions[0]?.textContent).toBe(
-      'https://other.example.com/custom/wegent.git'
-    )
+    expect(urlControl.getAttribute('role')).toBe('combobox')
+    expect(await sdkSelectValue(urlControl)).toBe('__custom_repository__')
+    expect(urlControl.textContent).toBe('https://other.example.com/custom/wegent.git')
     // Without a catalog match the ref stays a free-text field.
     expect(element<HTMLInputElement>('-repository-ref-0').value).toBe('release')
   })
@@ -1157,11 +1186,13 @@ describe('ProjectExecutionEnvironments', () => {
     })
 
     expect(list).not.toHaveBeenCalled()
-    expect(workspaceElement<HTMLDetailsElement>('-preparation').open).toBe(false)
+    expect(workspaceElement('-preparation-toggle').getAttribute('aria-expanded') === 'true').toBe(
+      false
+    )
     await togglePreparation(workspaceElement('-preparation-toggle'))
     expect(list).toHaveBeenCalledOnce()
     await act(async () => workspaceElement<HTMLButtonElement>('-add-repository').click())
-    expect(workspaceElement('-repository-url-0')).toBeInstanceOf(HTMLSelectElement)
+    expect(workspaceElement('-repository-url-0').getAttribute('role')).toBe('combobox')
   })
 
   it('keeps free-text inputs for a local workspace without fetching the catalog', async () => {
@@ -1202,7 +1233,7 @@ describe('ProjectExecutionEnvironments', () => {
     })
 
     expect(element('-21').dataset.preparationState).toBe('ready')
-    expect(element<HTMLButtonElement>('-initialize-21').textContent).toContain('提前准备项目目录')
+    expect((await initializeControl('-initialize-21')).textContent).toContain('提前准备项目目录')
   })
 
   it('refreshes saved workspace policy without replacing an unsaved selection', async () => {
@@ -1215,10 +1246,11 @@ describe('ProjectExecutionEnvironments', () => {
       devices: {},
     }
     await rerender(api, { executionEnvironment: configuration })
-    expect(element<HTMLSelectElement>('-workspace-policy').value).toBe('project')
+    await openPreparation()
+    expect(await sdkSelectValue(element('-workspace-policy'))).toBe('project')
     await change('-workspace-policy', 'git_worktree')
     await rerender(api, { executionEnvironment: configuration, version: 3 })
-    expect(element<HTMLSelectElement>('-workspace-policy').value).toBe('git_worktree')
+    expect(await sdkSelectValue(element('-workspace-policy'))).toBe('git_worktree')
   })
 
   it('does not clobber in-progress form edits when the project prop refreshes', async () => {
@@ -1269,7 +1301,7 @@ describe('ProjectExecutionEnvironments', () => {
       ],
     })
     api.projects.initializeExecutionEnvironment.mockImplementationOnce(() => pending)
-    await act(async () => element<HTMLButtonElement>('-initialize-1824').click())
+    await initializeDevice('-initialize-1824')
     expect(element('-1824').textContent).toContain('正在准备项目目录')
 
     // A racing poll arrives while the create owns the status fields; it must

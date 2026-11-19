@@ -1,6 +1,7 @@
-import { Fragment, useCallback, useLayoutEffect, useRef, useState } from 'react'
+import { createResizableController } from '@wegent/collaboration/controls/resizableController'
+import { Fragment, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Group, Panel, type GroupImperativeHandle } from 'react-resizable-panels'
+import { Resizable, ResizablePanel } from '@wegent/collaboration/controls/Resizable'
 import { WorkbenchPaneHost } from '@/components/layout/workbenchPanePresentation'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
@@ -55,7 +56,7 @@ export function ExperiencePanes({
 }: ExperiencePanesProps) {
   const { t } = useTranslation('collaborationExp')
   const container = useRef<HTMLDivElement>(null)
-  const group = useRef<GroupImperativeHandle>(null)
+  const [group] = useState(createResizableController)
   const width = useExperiencePaneWidth(container)
   const mobile = width <= EXPERIENCE_MOBILE_MAX_WIDTH
   const availablePanes = mobile ? panes.filter(pane => !pane.desktopOnly) : panes
@@ -90,10 +91,6 @@ export function ExperiencePanes({
   const hosts = useExperiencePaneHosts(signature)
   const [savedLayouts, setSavedLayouts] = useState<Record<string, Record<string, number>>>({})
   const defaultLayout = createDefaultPaneLayout(visiblePanes, width)
-  const getLayout = useCallback(() => group.current?.getLayout() ?? {}, [])
-  const setLayout = useCallback((layout: Record<string, number>) => {
-    group.current?.setLayout(layout)
-  }, [])
   const lastInteraction = useRef<HTMLElement | null>(null)
   const returnFocus = useRef(new Map<string, HTMLElement>())
   const previousPaneIds = useRef<string[]>([])
@@ -144,13 +141,18 @@ export function ExperiencePanes({
       }}
     >
       {visiblePanes.length ? (
-        <Group
+        <Resizable
           key={visibleSignature}
-          groupRef={group}
+          controller={group}
           orientation="horizontal"
-          defaultLayout={savedLayouts[visibleSignature] ?? defaultLayout}
+          defaultLayout={visiblePanes.map(
+            pane => (savedLayouts[visibleSignature] ?? defaultLayout)[pane.id]
+          )}
           className="experience-pane-group"
-          onLayoutChanged={layout => {
+          onLayoutCommit={sizes => {
+            const layout = Object.fromEntries(
+              visiblePanes.map((pane, index) => [pane.id, sizes[index]])
+            )
             setSavedLayouts(current => {
               const saved = current[visibleSignature]
               if (saved && Object.keys(layout).every(id => saved[id] === layout[id])) return current
@@ -163,12 +165,12 @@ export function ExperiencePanes({
               {index > 0 ? (
                 <PaneResizeHandle
                   id={`${visiblePanes[index - 1].id}-${pane.id}`}
-                  getLayout={getLayout}
-                  setLayout={setLayout}
-                  resetLayout={() => setLayout(defaultLayout)}
+                  resetLayout={() =>
+                    group.setLayout(visiblePanes.map(pane => defaultLayout[pane.id]))
+                  }
                 />
               ) : null}
-              <Panel
+              <ResizablePanel
                 id={pane.id}
                 minSize={`${Math.min(
                   paneMinimumWidth(pane),
@@ -178,10 +180,10 @@ export function ExperiencePanes({
                 style={{ overflow: 'hidden' }}
               >
                 {hosts.has(pane.id) ? <WorkbenchPaneHost host={hosts.get(pane.id)!} /> : null}
-              </Panel>
+              </ResizablePanel>
             </Fragment>
           ))}
-        </Group>
+        </Resizable>
       ) : null}
       {mobileNavigation && mobile && availablePanes.length === 1 ? (
         <div

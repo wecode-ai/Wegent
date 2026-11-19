@@ -1,23 +1,23 @@
-import { dequal } from 'dequal'
-import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
-import { MessageSquare } from 'lucide-react'
-import type { CollaborationProject } from '@wegent/collaboration'
 import type { StandInRole } from '@/api/personalStandIn'
 import type { ConnectionProviderDescriptor, StandInExecutorApi } from '@/api/standIn'
-import { useTranslation } from '@/hooks/useTranslation'
-import { StandInProcessingSettings } from './StandInProcessingSettings'
-import { StandInConnectionHeader } from './StandInConnectionHeader'
-import { StandInConnections, type StandInProjectNavigationHandle } from './StandInConnections'
-import { StandInSourceConnections } from './StandInSourceConnections'
-import { StandInGitConnections, GIT_CONNECTION_PREFIX } from './StandInGitConnections'
-import { StandInEmailConnections, EMAIL_PROVIDER } from './StandInEmailConnections'
 import {
   AutomationsPage,
   type AutomationNavigationHandle,
 } from '@/features/automations/AutomationsPage'
-import { Clock } from 'lucide-react'
+import { useTranslation } from '@/hooks/useTranslation'
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import type { CollaborationProject } from '@wegent/collaboration'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { dequal } from 'dequal'
+import { Clock, MessageSquare } from 'lucide-react'
+import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
 import { StandInConnectionCatalog } from './StandInConnectionCatalog'
+import { StandInConnectionHeader } from './StandInConnectionHeader'
+import { StandInConnections, type StandInProjectNavigationHandle } from './StandInConnections'
+import { EMAIL_PROVIDER, StandInEmailConnections } from './StandInEmailConnections'
+import { GIT_CONNECTION_PREFIX, StandInGitConnections } from './StandInGitConnections'
+import { StandInProcessingSettings } from './StandInProcessingSettings'
+import { StandInSourceConnections } from './StandInSourceConnections'
 
 export interface StandInConnectionNavigationHandle extends AutomationNavigationHandle {
   /** True means the source editor already confirmed discarding unsaved changes. */
@@ -335,19 +335,21 @@ export function StandInConnectionSettings({
       )}
       {loading && <p role="status">{t('standIn.loading')}</p>}
       {view && !['time', 'projects'].includes(view) && !provider && !loading && !visibleError && (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="stand-in-provider-retry"
           className="min-h-11 min-w-11 text-sm underline md:min-h-9"
           onClick={() => setRefresh(value => value + 1)}
         >
           {t('standIn.workspace.connection_retry')}
-        </button>
+        </ControlButton>
       )}
       {visibleError && (
         <div role="alert">
           <p>{visibleError}</p>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             disabled={loading}
             data-testid="stand-in-connections-retry"
@@ -358,7 +360,7 @@ export function StandInConnectionSettings({
             className="min-h-11 min-w-11 text-sm underline md:min-h-9"
           >
             {t('standIn.workspace.connection_retry')}
-          </button>
+          </ControlButton>
         </div>
       )}
     </section>
@@ -387,7 +389,8 @@ function ConnectionProviderStatus({
         </p>
       )}
       {provider.availability.status === 'dependency_missing' && (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid={`stand-in-install-dependencies-${provider.id}`}
           disabled={disabled}
@@ -395,7 +398,7 @@ function ConnectionProviderStatus({
           className="min-h-11 min-w-11 px-2 text-sm underline md:min-h-9"
         >
           {t('standIn.workspace.install_dependencies')}
-        </button>
+        </ControlButton>
       )}
     </>
   )
@@ -430,7 +433,8 @@ function UnavailableSourceConnections({
                 t('standIn.workspace.connection_default_configuration')}
             </span>
           </span>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             disabled={disabled}
             data-testid={`stand-in-disconnect-${source.providerId}-${source.id}`}
@@ -443,7 +447,7 @@ function UnavailableSourceConnections({
             className="min-h-11 shrink-0 px-2 text-sm underline"
           >
             {t('standIn.workspace.remove_connection', { name: source.name })}
-          </button>
+          </ControlButton>
         </div>
       ))}
     </section>

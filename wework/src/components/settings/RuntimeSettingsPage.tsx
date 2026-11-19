@@ -1,5 +1,9 @@
-import { LoaderCircle, Plus, Trash2 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Field, FieldLabel } from '@wegent/collaboration/controls/Field'
+import { DeleteIconButton } from '@wegent/collaboration/controls/DeleteIconButton'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { LoaderCircle, Plus } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { CloudProject } from '@/api/deliveries'
 import type { RuntimeProfile } from '@/api/runtimeProfiles'
@@ -12,10 +16,13 @@ import { isSupportedModelFamily } from '@/lib/model-ui'
 import { SettingsGroup, SettingsPage, SettingsPageHeader, SettingsRow } from './settings-ui'
 
 interface RuntimeSettingsPageProps {
-  runtimeProfileApi?: WorkbenchServices['runtimeProfileApi']
-  deliveryApi?: WorkbenchServices['deliveryApi']
-  deviceApi?: WorkbenchServices['deviceApi']
-  modelApi?: WorkbenchServices['modelApi']
+  runtimeProfileApi?: Pick<
+    NonNullable<WorkbenchServices['runtimeProfileApi']>,
+    'list' | 'create' | 'delete' | 'getProjectDefault' | 'setProjectDefault'
+  >
+  deliveryApi?: Pick<NonNullable<WorkbenchServices['deliveryApi']>, 'listCloudProjects'>
+  deviceApi?: Pick<NonNullable<WorkbenchServices['deviceApi']>, 'listDevices'>
+  modelApi?: Pick<NonNullable<WorkbenchServices['modelApi']>, 'listModels'>
 }
 
 export function RuntimeSettingsPage({
@@ -39,40 +46,101 @@ export function RuntimeSettingsPage({
   const [deviceId, setDeviceId] = useState('')
   const [model, setModel] = useState('')
 
+  const [loading, setLoading] = useState(Boolean(runtimeProfileApi))
+  const [hasLoadedProfiles, setHasLoadedProfiles] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [metadataErrors, setMetadataErrors] = useState<Record<string, string>>({})
+  const [metadataPending, setMetadataPending] = useState<Record<string, boolean>>({})
+  const requests = useRef({ profiles: 0, metadata: 0 })
   const load = useCallback(async () => {
     if (!runtimeProfileApi) return
-    const [nextProfiles, projectResponse, nextDevices, modelResponse] = await Promise.all([
-      runtimeProfileApi.list(),
-      deliveryApi?.listCloudProjects() ?? Promise.resolve({ items: [] }),
-      deviceApi?.listDevices() ?? Promise.resolve([]),
-      modelApi?.listModels() ?? Promise.resolve({ data: [] }),
-    ])
-    const nextProjects = projectResponse.items.filter(project => project.task_provider === 'local')
-    const defaults = await Promise.all(
-      nextProjects.map(project =>
-        runtimeProfileApi
-          .getProjectDefault(project.id)
-          .then(value => [String(project.id), value.runtimeProfileId ?? ''] as const)
+    const request = ++requests.current.profiles
+    setLoading(true)
+    setLoadError(null)
+    try {
+      const next = await runtimeProfileApi.list()
+      if (request === requests.current.profiles) {
+        setProfiles(next)
+        setHasLoadedProfiles(true)
+      }
+    } catch (cause) {
+      if (request === requests.current.profiles)
+        setLoadError(cause instanceof Error ? cause.message : String(cause))
+      throw cause
+    } finally {
+      if (request === requests.current.profiles) setLoading(false)
+    }
+  }, [runtimeProfileApi])
+  const loadMetadata = useCallback(() => {
+    if (!runtimeProfileApi) return
+    const request = ++requests.current.metadata
+    setMetadataErrors({})
+    setMetadataPending({})
+    const run = <T,>(key: string, operation: () => Promise<T>, accept: (value: T) => void) => {
+      setMetadataPending(current => ({ ...current, [key]: true }))
+      void Promise.resolve()
+        .then(operation)
+        .then(value => {
+          if (request === requests.current.metadata) accept(value)
+        })
+        .catch(cause => {
+          if (request === requests.current.metadata)
+            setMetadataErrors(current => ({
+              ...current,
+              [key]: cause instanceof Error ? cause.message : String(cause),
+            }))
+        })
+        .finally(() => {
+          if (request === requests.current.metadata)
+            setMetadataPending(current => ({ ...current, [key]: false }))
+        })
+    }
+    if (deviceApi) run('device', () => deviceApi.listDevices(), setDevices)
+    if (modelApi)
+      run(
+        'model',
+        () => modelApi.listModels(),
+        response =>
+          setModels(
+            response.data
+              .filter(isSupportedModelFamily)
+              .map(item => ({ name: item.name, type: item.type }))
+          )
       )
-    )
-    setProfiles(nextProfiles)
-    setProjects(nextProjects)
-    setProjectDefaults(Object.fromEntries(defaults))
-    setDevices(nextDevices)
-    setModels(
-      modelResponse.data.filter(isSupportedModelFamily).map(item => ({
-        name: item.name,
-        type: item.type,
-      }))
-    )
+    if (deliveryApi)
+      run(
+        'projects',
+        () => deliveryApi.listCloudProjects(),
+        response => {
+          const available = response.items.filter(project => project.task_provider === 'local')
+          setProjects(available)
+          for (const project of available)
+            if (runtimeProfileApi)
+              run(
+                'default:' + project.id,
+                () => runtimeProfileApi.getProjectDefault(project.id),
+                value => {
+                  setProjectDefaults(current => ({
+                    ...current,
+                    [String(project.id)]: value.runtimeProfileId ?? '',
+                  }))
+                }
+              )
+        }
+      )
   }, [deliveryApi, deviceApi, modelApi, runtimeProfileApi])
-
   useEffect(() => {
+    const requestState = requests.current
     const timer = window.setTimeout(() => {
-      void load().catch(cause => setError(cause instanceof Error ? cause.message : String(cause)))
+      void load().catch(() => undefined)
+      loadMetadata()
     }, 0)
-    return () => window.clearTimeout(timer)
-  }, [load])
+    return () => {
+      window.clearTimeout(timer)
+      requestState.profiles++
+      requestState.metadata++
+    }
+  }, [load, loadMetadata])
 
   const selectedDevice = devices.find(device => device.device_id === deviceId)
   const environment =
@@ -107,8 +175,8 @@ export function RuntimeSettingsPage({
         executionDeviceId: deviceId,
         model,
       })
-      await load()
       setCreating(false)
+      void load().catch(() => undefined)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -133,21 +201,71 @@ export function RuntimeSettingsPage({
         title={t('workbench.runtime_profiles_title')}
         description={t('workbench.runtime_profiles_description')}
         actions={
-          <button
+          <ControlButton
+            variant="primary"
+            size="sm"
             type="button"
             data-testid="runtime-profile-create"
             onClick={openCreate}
-            className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-text-primary px-3 text-xs font-medium text-background"
           >
             <Plus className="h-3.5 w-3.5" />
             {t('workbench.runtime_profile_create')}
-          </button>
+          </ControlButton>
         }
       />
 
-      {error && !creating ? <p className="mb-3 text-xs text-destructive">{error}</p> : null}
+      {error && !creating ? (
+        <p role="alert" className="mb-3 text-sm text-destructive">
+          {error}
+        </p>
+      ) : null}
+      {loading || (!hasLoadedProfiles && !loadError) ? (
+        <p
+          role="status"
+          data-testid="runtime-profiles-loading"
+          className="mb-3 text-sm text-text-secondary"
+        >
+          {t('common.loading')}
+        </p>
+      ) : null}
+      {loadError ? (
+        <div
+          role="alert"
+          data-testid="runtime-profiles-load-error"
+          className="mb-3 space-y-2 text-sm text-destructive"
+        >
+          <p>{loadError}</p>
+          <ControlButton
+            variant="outline"
+            data-testid="runtime-profiles-retry"
+            onClick={() => {
+              void load().catch(() => undefined)
+            }}
+          >
+            {t('common.retry', '重试')}
+          </ControlButton>
+        </div>
+      ) : null}
+      {Object.keys(metadataErrors).length > 0 ? (
+        <div
+          role="alert"
+          data-testid="runtime-metadata-error"
+          className="mb-3 space-y-2 text-sm text-destructive"
+        >
+          {[...new Set(Object.values(metadataErrors))].map(message => (
+            <p key={message}>{message}</p>
+          ))}
+          <ControlButton
+            variant="outline"
+            data-testid="runtime-metadata-retry"
+            onClick={loadMetadata}
+          >
+            {t('common.retry', '重试')}
+          </ControlButton>
+        </div>
+      ) : null}
       <SettingsGroup>
-        {profiles.length === 0 ? (
+        {profiles.length === 0 && hasLoadedProfiles && !loading && !loadError ? (
           <div className="px-4 py-8 text-center text-sm text-text-muted">
             {t('workbench.runtime_profiles_empty')}
           </div>
@@ -162,8 +280,8 @@ export function RuntimeSettingsPage({
                   .find(device => device.device_id === profile.executionDeviceId)
                   ?.name?.trim() || t('workbench.environment_device_unknown', '未知设备')
               }`}
-              control={
-                <button
+              children={
+                <DeleteIconButton
                   type="button"
                   data-testid={`runtime-profile-delete-${profile.id}`}
                   disabled={busyKey !== null}
@@ -178,15 +296,9 @@ export function RuntimeSettingsPage({
                       )
                       .finally(() => setBusyKey(null))
                   }}
-                  className="flex h-8 w-8 items-center justify-center rounded-lg text-text-muted hover:bg-muted hover:text-destructive disabled:opacity-40 wework:hover:text-red-600"
                   aria-label={t('workbench.runtime_profile_delete')}
-                >
-                  {busyKey === `delete:${profile.id}` ? (
-                    <LoaderCircle className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Trash2 className="h-4 w-4" />
-                  )}
-                </button>
+                  pending={busyKey === `delete:${profile.id}`}
+                />
               }
             />
           ))
@@ -206,9 +318,10 @@ export function RuntimeSettingsPage({
               <SettingsRow
                 key={project.id}
                 label={project.name}
-                control={
+                children={
                   <MenuSelect
                     testId={`runtime-project-default-${project.id}`}
+                    accessibleLabel={project.name}
                     value={projectDefaults[String(project.id)] ?? ''}
                     onChange={profileId => {
                       setBusyKey(`default:${project.id}`)
@@ -247,17 +360,21 @@ export function RuntimeSettingsPage({
             <p className="rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning wework:bg-amber-500/10 wework:text-amber-700">
               {t('workbench.runtime_profile_stay_on_page')}
             </p>
-            <label className="block text-xs text-text-secondary">
-              {t('workbench.runtime_profile_name')}
-              <input
+            <Field>
+              <FieldLabel>{t('workbench.runtime_profile_name')}</FieldLabel>
+              <ControlInput
                 data-testid="runtime-profile-name"
                 value={name}
                 onChange={event => setName(event.target.value)}
-                className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none keyboard:focus:border-focus"
+                className="w-full"
               />
-            </label>
+            </Field>
             <MenuSelect
               testId="runtime-profile-device"
+              field
+              label={t('workbench.task_activity_execution_device')}
+              description={metadataPending.device ? t('common.loading') : undefined}
+              error={metadataErrors.device}
               value={deviceId}
               onChange={setDeviceId}
               options={devices.map(device => ({
@@ -269,32 +386,51 @@ export function RuntimeSettingsPage({
             />
             <MenuSelect
               testId="runtime-profile-model"
+              field
+              label={t('workbench.task_activity_execution_model')}
+              description={metadataPending.model ? t('common.loading') : undefined}
+              error={metadataErrors.model}
               value={model}
               onChange={setModel}
               options={modelOptions}
             />
-            {error ? <p className="text-xs text-destructive">{error}</p> : null}
+            {metadataErrors.device || metadataErrors.model ? (
+              <ControlButton
+                variant="outline"
+                data-testid="runtime-profile-metadata-retry"
+                onClick={loadMetadata}
+              >
+                {t('common.retry', '重试')}
+              </ControlButton>
+            ) : null}
+            {error ? (
+              <p role="alert" className="text-sm text-destructive">
+                {error}
+              </p>
+            ) : null}
             <div className="flex justify-end gap-2">
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 disabled={busyKey !== null}
                 onClick={() => setCreating(false)}
                 className="h-8 rounded-lg px-3 text-xs text-text-secondary hover:bg-muted disabled:opacity-50"
               >
                 {t('common.cancel')}
-              </button>
-              <button
+              </ControlButton>
+              <ControlButton
+                variant="primary"
+                size="sm"
                 type="button"
                 data-testid="runtime-profile-save"
                 disabled={busyKey !== null || !name.trim() || !deviceId || !model}
                 onClick={() => void create()}
-                className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-text-primary px-3 text-xs font-medium text-background disabled:opacity-40"
               >
                 {busyKey === 'create' ? (
                   <LoaderCircle className="h-3.5 w-3.5 animate-spin" />
                 ) : null}
                 {t('common.save')}
-              </button>
+              </ControlButton>
             </div>
           </div>
         </CloudTodoModal>

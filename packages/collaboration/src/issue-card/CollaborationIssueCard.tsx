@@ -1,11 +1,10 @@
+import { Button as ControlButton } from '../markdown/Button'
 import './issueCard.css'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
 import { Bot, Circle, Clock3, Flag, Ghost, UserRound, UsersRound } from 'lucide-react'
-import { formatIssueTimestamp } from '../issue-detail/issueTimestamp'
-import { issueHumanAssignees, issueParticipation } from '../issueParticipation'
 import {
   useRef,
   type ButtonHTMLAttributes,
@@ -14,6 +13,8 @@ import {
   type ReactNode,
   type Ref,
 } from 'react'
+import { formatIssueTimestamp } from '../issue-detail/issueTimestamp'
+import { issueHumanAssignees, issueParticipation } from '../issueParticipation'
 import {
   createCollaborationIssueCardModel,
   type CollaborationIssueCardDisplay,
@@ -484,7 +485,8 @@ export function CollaborationIssueCard({
       })}
     >
       {menu}
-      <button
+      <ControlButton
+        variant="unstyled"
         {...detailButtonProps}
         onClick={onOpen}
         ref={detailButtonRef}
@@ -525,7 +527,7 @@ export function CollaborationIssueCard({
           }
         />
         {afterContent}
-      </button>
+      </ControlButton>
       <div
         className={classNames(
           variant === 'list' ? 'px-4' : 'px-3.5',

@@ -1,11 +1,12 @@
-import { deliveryMessages } from './deliveryMessages'
-import { useEffect, useState } from 'react'
 import { ChevronRight, Package } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import type { CollaborationTranslate } from '../i18n'
+import { Button as ControlButton } from '../markdown/Button'
 import type {
   SharedIssueDetailDelivery,
   SharedIssueDetailDeliveryDetail,
 } from './createSharedIssueDetailPort'
+import { deliveryMessages } from './deliveryMessages'
 import { formatIssueTimestamp } from './issueTimestamp'
 
 export function IssueDeliveryRow({
@@ -27,7 +28,7 @@ export function IssueDeliveryRow({
     if (delivery.markdown !== undefined) return
     let active = true
     getDelivery(delivery.id)
-      .then((value) => {
+      .then(value => {
         if (active) setDetail(value)
       })
       .catch(() => {
@@ -47,26 +48,25 @@ export function IssueDeliveryRow({
       .replace(/^#{1,6}\s+/, '')
   const messageCount = deliveryMessages(snapshot?.chat).length
   const contents: string[] = []
-  if (snapshot?.markdown?.trim())
-    contents.push(translate('todo.delivery_notes', '交付说明'))
+  if (snapshot?.markdown?.trim()) contents.push(translate('todo.delivery_notes', '交付说明'))
   if (messageCount > 0) {
     contents.push(
       translate('todo.delivery_message_count', '{{count}} 条消息', {
         count: messageCount,
-      }),
+      })
     )
   }
   if (delivery.assets.length)
     contents.push(
       translate('todo.attachment_count', '{{count}} 个附件', {
         count: delivery.assets.length,
-      }),
+      })
     )
   if (!snapshot)
     contents.push(
       failed
         ? translate('todo.delivery_summary_failed', '内容加载失败，点击查看')
-        : translate('todo.delivery_summary_loading', '正在加载内容…'),
+        : translate('todo.delivery_summary_loading', '正在加载内容…')
     )
   if (snapshot && contents.length === 0)
     contents.push(translate('todo.delivery_empty', '无交付内容'))
@@ -79,7 +79,8 @@ export function IssueDeliveryRow({
   const at = delivery.delivered_at ?? delivery.created_at
 
   return (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid={`todo-detail-open-delivery-${delivery.id}`}
       onClick={() => onOpen(delivery.id)}
@@ -95,19 +96,13 @@ export function IssueDeliveryRow({
             {notePreview}
           </span>
         )}
-        <span className="block text-sm text-text-primary">
-          {contents.join(' · ')}
-        </span>
+        <span className="block text-sm text-text-primary">{contents.join(' · ')}</span>
         {delivery.assets.length > 0 && (
           <span
             className="mt-0.5 block truncate text-xs text-text-secondary"
-            title={delivery.assets
-              .map((asset) => asset.relative_path)
-              .join('\n')}
+            title={delivery.assets.map(asset => asset.relative_path).join('\n')}
           >
-            {delivery.assets
-              .map((asset) => asset.display_name || asset.relative_path)
-              .join('、')}
+            {delivery.assets.map(asset => asset.display_name || asset.relative_path).join('、')}
           </span>
         )}
         <span className="mt-0.5 block text-xs text-text-muted">
@@ -116,6 +111,6 @@ export function IssueDeliveryRow({
         </span>
       </span>
       <ChevronRight className="h-4 w-4 shrink-0 text-text-muted" />
-    </button>
+    </ControlButton>
   )
 }

@@ -1,18 +1,25 @@
-import { useState } from "react";
-import { Globe2 } from "lucide-react";
-import { useMarkdownServices } from "../../markdown/MarkdownServices";
-import { useConversationTranslation } from "../ConversationTranslation";
+import { Globe2 } from 'lucide-react'
+import { useState } from 'react'
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from '../../controls/HoverCard'
+import { controlPopup } from '../../controls/recipes'
+import { useCollaborationPortalTheme } from '../../theme'
+import { useMarkdownServices } from '../../markdown/MarkdownServices'
+import { useConversationTranslation } from '../ConversationTranslation'
 import type {
   WebSearchActivityItem,
   WebSearchSourceItem,
-} from "./webSearchActivity";
+} from './webSearchActivity'
 
 export function WebSearchActivityRows({
   items,
 }: {
-  items: WebSearchActivityItem[];
+  items: WebSearchActivityItem[]
 }) {
-  if (items.length === 0) return null;
+  if (items.length === 0) return null
 
   return (
     <div
@@ -34,83 +41,87 @@ export function WebSearchActivityRows({
         </div>
       ))}
     </div>
-  );
+  )
 }
 
 export function WebSearchSourcesChip({
   sources,
 }: {
-  sources: WebSearchSourceItem[];
+  sources: WebSearchSourceItem[]
 }) {
-  const { openExternalUrl } = useMarkdownServices();
-  const { t } = useConversationTranslation();
-  if (sources.length === 0) return null;
+  const theme = useCollaborationPortalTheme()
+  const { openExternalUrl } = useMarkdownServices()
+  const { t } = useConversationTranslation()
+  if (sources.length === 0) return null
 
-  const primarySource = sources[0];
+  const primarySource = sources[0]
 
   return (
     <div className="mt-2 flex min-w-0">
-      <span className="group/web-search-sources relative inline-flex min-w-0">
-        <button
-          type="button"
+      <HoverCard delay={0} closeDelay={120}>
+        <HoverCardTrigger
+          render={<button type="button" />}
           data-testid="web-search-sources-chip"
-          className="inline-flex h-7 min-w-0 items-center gap-1.5 rounded-md border border-border bg-surface px-2 text-xs text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30"
+          className="min-h-11 md:min-h-7 inline-flex h-7 min-w-0 items-center gap-1.5 rounded-md border border-border bg-surface px-2 text-xs text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary/30"
         >
           <WebSearchFavicon
             iconUrl={primarySource.iconUrl}
             domain={primarySource.domain}
           />
-          <span>{t("tool_activity.sources")}</span>
-        </button>
-        <span className="absolute bottom-full left-0 z-popover hidden max-w-[calc(100vw-3rem)] pb-1 group-hover/web-search-sources:block group-focus-within/web-search-sources:block">
-          <span
-            data-testid="web-search-source-popup"
-            className="block w-[min(26rem,calc(100vw-3rem))] rounded-xl border border-border bg-popover p-2 text-left text-text-primary shadow-2xl"
-          >
-            <span className="flex min-w-0 flex-col gap-1">
-              {sources.map((source) => (
-                <a
-                  key={source.id}
-                  href={source.url}
-                  data-testid="web-search-source-popup-row"
-                  className="flex min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-sm leading-5 text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-visible:bg-muted focus-visible:text-text-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-border"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    void Promise.resolve(openExternalUrl(source.url)).catch(
-                      (error) => {
-                        console.error(
-                          "Failed to open web search source:",
-                          error,
-                        );
-                      },
-                    );
-                  }}
-                >
-                  <WebSearchFavicon
-                    iconUrl={source.iconUrl}
-                    domain={source.domain}
-                  />
-                  <span className="min-w-0 flex-1 truncate">
-                    {source.label}
-                  </span>
-                </a>
-              ))}
-            </span>
+          <span>{t('tool_activity.sources')}</span>
+        </HoverCardTrigger>
+        <HoverCardContent
+          {...theme}
+          side="top"
+          align="start"
+          sideOffset={4}
+          collisionPadding={8}
+          data-testid="web-search-source-popup"
+          className={
+            theme.className +
+            ' ' +
+            controlPopup +
+            ' w-[min(26rem,calc(100vw-1rem))] p-2 text-left'
+          }
+        >
+          <span className="flex min-w-0 flex-col gap-1">
+            {sources.map((source) => (
+              <a
+                key={source.id}
+                href={source.url}
+                data-testid="web-search-source-popup-row"
+                className="flex min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-sm leading-5 text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-visible:bg-muted focus-visible:text-text-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-border"
+                onClick={(event) => {
+                  event.preventDefault()
+                  void Promise.resolve(openExternalUrl(source.url)).catch(
+                    (error) => {
+                      console.error('Failed to open web search source:', error)
+                    },
+                  )
+                }}
+              >
+                <WebSearchFavicon
+                  iconUrl={source.iconUrl}
+                  domain={source.domain}
+                />
+                <span className="min-w-0 flex-1 truncate">{source.label}</span>
+              </a>
+            ))}
           </span>
-        </span>
-      </span>
+        </HoverCardContent>
+      </HoverCard>
     </div>
-  );
+  )
 }
 
 function WebSearchFavicon({
   iconUrl,
   domain,
 }: {
-  iconUrl: string;
-  domain?: string;
+  iconUrl: string
+  domain?: string
 }) {
-  const [hasLoadError, setHasLoadError] = useState(false);
+  const [hasLoadError, setHasLoadError] = useState(false)
 
   return (
     <span
@@ -131,5 +142,5 @@ function WebSearchFavicon({
         <Globe2 className="h-3 w-3" strokeWidth={1.8} />
       )}
     </span>
-  );
+  )
 }

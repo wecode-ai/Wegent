@@ -57,11 +57,20 @@ it('starts collapsed and only offers online usable devices while preserving opti
         />
       )
     )
-    expect(container.querySelector('details')!.open).toBe(false)
-    expect(container.querySelectorAll('input')).toHaveLength(1)
+    expect(
+      container
+        .querySelector('[data-testid="template-environment-selection-toggle"]')
+        ?.getAttribute('aria-expanded')
+    ).toBe('false')
+    expect(container.querySelectorAll('[role="checkbox"]')).toHaveLength(1)
     expect(container.textContent).not.toMatch(/Offline Mac|No permission|Starting|默认执行环境/)
     expect(container.textContent).toContain('运行环境（可选）')
-    const checkbox = container.querySelector('input')!
+    await act(async () =>
+      container
+        .querySelector<HTMLElement>('[data-testid="template-environment-selection-toggle"]')!
+        .click()
+    )
+    const checkbox = container.querySelector<HTMLElement>('[role="checkbox"]')!
     expect(checkbox.closest('label')!.textContent).toContain('Online Mac')
     await act(async () => checkbox.click())
     expect(onChange).toHaveBeenCalledWith([1])

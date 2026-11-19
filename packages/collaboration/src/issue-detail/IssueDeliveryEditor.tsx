@@ -1,5 +1,9 @@
 import { useState } from 'react'
+import { Checkbox } from '../controls/Checkbox'
+import { TextField as ControlInput } from '../controls/TextField'
+import { Textarea as ControlTextarea } from '../controls/Textarea'
 import type { CollaborationTranslate } from '../i18n'
+import { Button as ControlButton } from '../markdown/Button'
 import type {
   SharedIssueDetailDeliveryDetail,
   SharedIssueDetailPort,
@@ -28,17 +32,11 @@ export function IssueDeliveryEditor({
   const [title, setTitle] = useState(delivery.title || issueTitle)
   const [markdown, setMarkdown] = useState(delivery.markdown)
   const [messages, setMessages] = useState<unknown[]>(() =>
-    Array.isArray(delivery.chat?.messages) ? delivery.chat.messages : [],
+    Array.isArray(delivery.chat?.messages) ? delivery.chat.messages : []
   )
-  const [selected, setSelected] = useState(() =>
-    messages.map((_, index) => index),
-  )
-  const [retained, setRetained] = useState(() =>
-    delivery.assets.map((asset) => asset.id),
-  )
-  const [files, setFiles] = useState<
-    Array<{ relative_path: string; file: File }>
-  >([])
+  const [selected, setSelected] = useState(() => messages.map((_, index) => index))
+  const [retained, setRetained] = useState(() => delivery.assets.map(asset => asset.id))
+  const [files, setFiles] = useState<Array<{ relative_path: string; file: File }>>([])
   const [busy, setBusy] = useState(false)
   const [loadingMessages, setLoadingMessages] = useState(false)
   const [sourceError, setSourceError] = useState(false)
@@ -50,9 +48,7 @@ export function IssueDeliveryEditor({
     try {
       onSaved(await api.get(delivery.id))
     } catch (cause) {
-      setError(
-        cause instanceof Error ? cause.message : t('delivery.save_failed'),
-      )
+      setError(cause instanceof Error ? cause.message : t('delivery.save_failed'))
     } finally {
       setBusy(false)
     }
@@ -65,36 +61,27 @@ export function IssueDeliveryEditor({
     try {
       const source = await api.loadSourceMessages(delivery)
       const identity = (message: unknown): string | null => {
-        if (!message || typeof message !== 'object' || !('id' in message))
-          return null
+        if (!message || typeof message !== 'object' || !('id' in message)) return null
         return typeof message.id === 'string' || typeof message.id === 'number'
           ? String(message.id)
           : null
       }
       const existing = new Map(
-        messages.flatMap((message) => {
+        messages.flatMap(message => {
           const id = identity(message)
           return id ? [[id, message] as const] : []
-        }),
+        })
       )
-      const included = new Set(
-        messages.filter((_, index) => selected.includes(index)),
-      )
-      const seen = new Set(source.flatMap((message) => identity(message) ?? []))
+      const included = new Set(messages.filter((_, index) => selected.includes(index)))
+      const seen = new Set(source.flatMap(message => identity(message) ?? []))
       const next = [
         ...source
-          .filter(
-            (message) => deliveryMessages({ messages: [message] }).length > 0,
-          )
-          .map((message) => existing.get(identity(message) ?? '') ?? message),
-        ...messages.filter((message) => !seen.has(identity(message) ?? '')),
+          .filter(message => deliveryMessages({ messages: [message] }).length > 0)
+          .map(message => existing.get(identity(message) ?? '') ?? message),
+        ...messages.filter(message => !seen.has(identity(message) ?? '')),
       ]
       setMessages(next)
-      setSelected(
-        next.flatMap((message, index) =>
-          included.has(message) ? [index] : [],
-        ),
-      )
+      setSelected(next.flatMap((message, index) => (included.has(message) ? [index] : [])))
     } catch {
       setSourceError(true)
     } finally {
@@ -132,7 +119,7 @@ export function IssueDeliveryEditor({
           ? t('delivery.conflict')
           : cause instanceof Error
             ? cause.message
-            : t('delivery.save_failed'),
+            : t('delivery.save_failed')
       )
     } finally {
       setBusy(false)
@@ -144,58 +131,52 @@ export function IssueDeliveryEditor({
       data-testid="delivery-edit-form"
       aria-busy={busy}
       className="mt-4 flex flex-col gap-4"
-      onSubmit={(event) => {
+      onSubmit={event => {
         event.preventDefault()
         void save()
       }}
-      onKeyDown={(event) => {
+      onKeyDown={event => {
         if (event.key === 'Escape') {
           event.stopPropagation()
           if (!busy) onCancel()
         }
       }}
     >
-      <fieldset
-        disabled={busy || loadingMessages}
-        className="flex min-w-0 flex-col gap-4"
-      >
+      <fieldset disabled={busy || loadingMessages} className="flex min-w-0 flex-col gap-4">
         <label className="flex flex-col gap-1 text-sm">
           {t('delivery.title_label')}
-          <input
+          <ControlInput
+            density="compact"
             data-testid="delivery-edit-title"
             value={title}
             maxLength={255}
             required
-            onChange={(event) => setTitle(event.target.value)}
-            className="h-8 rounded-md border border-border bg-background px-2"
+            onChange={event => setTitle(event.target.value)}
           />
         </label>
         <label className="flex flex-col gap-1 text-sm">
           {t('delivery.notes_label')}
-          <textarea
+          <ControlTextarea
             data-testid="delivery-edit-notes"
             value={markdown}
-            onChange={(event) => setMarkdown(event.target.value)}
+            onChange={event => setMarkdown(event.target.value)}
             className="min-h-40 rounded-md border border-border bg-background p-2"
           />
         </label>
         <section className="flex flex-col gap-2 text-sm">
           <span>{t('delivery.files_label')}</span>
-          {delivery.assets.map((asset) => (
+          {delivery.assets.map(asset => (
             <div key={asset.id} className="flex flex-wrap items-center gap-2">
               <label className="flex min-w-0 items-center gap-2">
-                <input
-                  type="checkbox"
+                <Checkbox
                   data-testid={`delivery-edit-asset-${asset.id}`}
                   checked={retained.includes(asset.id)}
-                  disabled={files.some(
-                    (file) => file.relative_path === asset.relative_path,
-                  )}
-                  onChange={() =>
-                    setRetained((current) =>
+                  disabled={files.some(file => file.relative_path === asset.relative_path)}
+                  onCheckedChange={() =>
+                    setRetained(current =>
                       current.includes(asset.id)
-                        ? current.filter((id) => id !== asset.id)
-                        : [...current, asset.id],
+                        ? current.filter(id => id !== asset.id)
+                        : [...current, asset.id]
                     )
                   }
                 />
@@ -203,74 +184,62 @@ export function IssueDeliveryEditor({
               </label>
               <label className="cursor-pointer text-text-secondary">
                 {t('delivery.replace_file')}
-                <input
+                <ControlInput
                   type="file"
                   data-testid={`delivery-edit-replace-${asset.id}`}
                   className="sr-only"
-                  onChange={(event) => {
+                  onChange={event => {
                     const file = event.target.files?.[0]
                     if (!file) return
-                    setFiles((current) => [
-                      ...current.filter(
-                        (entry) => entry.relative_path !== asset.relative_path,
-                      ),
+                    setFiles(current => [
+                      ...current.filter(entry => entry.relative_path !== asset.relative_path),
                       { relative_path: asset.relative_path, file },
                     ])
-                    setRetained((current) =>
-                      current.filter((id) => id !== asset.id),
-                    )
+                    setRetained(current => current.filter(id => id !== asset.id))
                     event.target.value = ''
                   }}
                 />
               </label>
             </div>
           ))}
-          {files.map((entry) => (
+          {files.map(entry => (
             <div key={entry.relative_path} className="flex items-center gap-2">
               <span>{entry.relative_path}</span>
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid={`delivery-edit-remove-file-${entry.relative_path}`}
-                onClick={() =>
-                  setFiles((current) =>
-                    current.filter((file) => file !== entry),
-                  )
-                }
+                onClick={() => setFiles(current => current.filter(file => file !== entry))}
               >
                 {t('delivery.remove_file')}
-              </button>
+              </ControlButton>
             </div>
           ))}
-          <input
+          <ControlInput
             type="file"
             multiple
             data-testid="delivery-edit-files"
             aria-label={t('delivery.select_files')}
-            onChange={(event) => {
-              const next = Array.from(event.target.files ?? []).map((file) => ({
+            onChange={event => {
+              const next = Array.from(event.target.files ?? []).map(file => ({
                 relative_path: file.name,
                 file,
               }))
-              setFiles((current) => [
+              setFiles(current => [
                 ...current.filter(
-                  (entry) =>
-                    !next.some(
-                      (file) => file.relative_path === entry.relative_path,
-                    ),
+                  entry => !next.some(file => file.relative_path === entry.relative_path)
                 ),
                 ...next,
               ])
-              setRetained((current) =>
+              setRetained(current =>
                 current.filter(
-                  (id) =>
-                    !next.some((file) =>
+                  id =>
+                    !next.some(file =>
                       delivery.assets.some(
-                        (asset) =>
-                          asset.id === id &&
-                          asset.relative_path === file.relative_path,
-                      ),
-                    ),
-                ),
+                        asset => asset.id === id && asset.relative_path === file.relative_path
+                      )
+                    )
+                )
               )
               event.target.value = ''
             }}
@@ -282,26 +251,24 @@ export function IssueDeliveryEditor({
             const preview = deliveryMessages({ messages: [message] })[0]
             return (
               <label key={index} className="flex items-start gap-2">
-                <input
-                  type="checkbox"
+                <Checkbox
                   data-testid={`delivery-edit-message-${index}`}
                   checked={selected.includes(index)}
-                  onChange={() =>
-                    setSelected((current) =>
+                  onCheckedChange={() =>
+                    setSelected(current =>
                       current.includes(index)
-                        ? current.filter((value) => value !== index)
-                        : [...current, index],
+                        ? current.filter(value => value !== index)
+                        : [...current, index]
                     )
                   }
                 />
-                <span className="line-clamp-3">
-                  {preview?.content ?? JSON.stringify(message)}
-                </span>
+                <span className="line-clamp-3">{preview?.content ?? JSON.stringify(message)}</span>
               </label>
             )
           })}
           {api.loadSourceMessages && delivery.source_task_snapshot ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="delivery-edit-load-messages"
               disabled={loadingMessages}
@@ -309,11 +276,9 @@ export function IssueDeliveryEditor({
               className="self-start text-text-secondary hover:underline"
             >
               {t('delivery.load_source_messages')}
-            </button>
+            </ControlButton>
           ) : (
-            <p className="text-text-muted">
-              {t('delivery.source_unavailable')}
-            </p>
+            <p className="text-text-muted">{t('delivery.source_unavailable')}</p>
           )}
           {sourceError && (
             <p role="alert" className="text-text-muted">
@@ -325,7 +290,8 @@ export function IssueDeliveryEditor({
       {error && (
         <div role="alert" className="text-sm text-red-600">
           <p>{error}</p>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="delivery-edit-reload"
             disabled={busy}
@@ -333,11 +299,12 @@ export function IssueDeliveryEditor({
             className="mt-1 underline"
           >
             {t('delivery.reload')}
-          </button>
+          </ControlButton>
         </div>
       )}
       <div className="flex justify-end gap-2">
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="delivery-edit-cancel"
           onClick={onCancel}
@@ -345,15 +312,17 @@ export function IssueDeliveryEditor({
           className="h-8 rounded-md px-3 text-sm hover:bg-hover"
         >
           {t('common.cancel')}
-        </button>
-        <button
+        </ControlButton>
+        <ControlButton
+          variant="primary"
+          size="sm"
           type="submit"
           data-testid="delivery-edit-save"
           disabled={busy || loadingMessages || !title.trim()}
           className="h-8 rounded-md bg-text-primary px-3 text-sm text-background disabled:opacity-50"
         >
           {busy ? t('delivery.saving') : t('delivery.save')}
-        </button>
+        </ControlButton>
       </div>
     </form>
   )

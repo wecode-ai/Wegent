@@ -1,3 +1,7 @@
+import type {
+  LocalDeviceApp,
+  PluginPathComponent,
+} from '@wegent/chat-core/runtime-composer-catalog'
 import {
   ArrowRight,
   BookOpenText,
@@ -10,11 +14,8 @@ import {
   X,
 } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
-import type {
-  LocalDeviceApp,
-  PluginPathComponent,
-} from '@wegent/chat-core/runtime-composer-catalog'
 import type { CollaborationTranslate } from '../i18n'
+import { Button as ControlButton } from '../markdown/Button'
 
 function pluginTemplateDisplayTitle(
   template: PluginPathComponent,
@@ -109,7 +110,9 @@ export function PluginTrialTemplateStrip({
     const displayTitle = pluginTemplateDisplayTitle(template, t)
 
     return (
-      <button
+      <ControlButton
+        variant="outline"
+        size="sm"
         key={template.path}
         type="button"
         data-testid={
@@ -145,7 +148,7 @@ export function PluginTrialTemplateStrip({
         <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border/30 bg-background text-text-secondary transition-colors group-hover:border-blue-500/60 group-hover:bg-blue-500/[0.1] group-hover:text-blue-600 keyboard:group-focus-visible:border-blue-500/60 group-focus-visible:bg-blue-500/[0.1] group-focus-visible:text-blue-600">
           <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
         </span>
-      </button>
+      </ControlButton>
     )
   }
 
@@ -183,7 +186,8 @@ export function PluginTrialTemplateStrip({
         </div>
         <div className="flex shrink-0 items-center gap-1">
           {onDismiss && (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="plugin-trial-template-dismiss"
               aria-label={t('common.close', '关闭')}
@@ -191,7 +195,7 @@ export function PluginTrialTemplateStrip({
               onClick={onDismiss}
             >
               <X className="h-4 w-4" aria-hidden="true" />
-            </button>
+            </ControlButton>
           )}
         </div>
       </div>
@@ -201,7 +205,9 @@ export function PluginTrialTemplateStrip({
           data-testid={refinedPrompt ? 'plugin-trial-ai-result' : 'plugin-trial-recommendation'}
         >
           {refinedPrompt && (
-            <button
+            <ControlButton
+              variant="outline"
+              size="sm"
               type="button"
               data-testid="plugin-trial-recommendation-apply"
               className="group relative flex min-h-10 max-md:min-h-11 w-full items-center gap-2.5 border-b border-border/15 bg-blue-500/[0.04] px-3 py-1.5 text-left transition-colors hover:bg-blue-500/[0.1] focus-visible:bg-blue-500/[0.1] focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-blue-500"
@@ -227,7 +233,7 @@ export function PluginTrialTemplateStrip({
               <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border/30 bg-background text-text-secondary transition-colors group-hover:border-blue-500/60 group-hover:bg-blue-500/[0.1] group-hover:text-blue-600 keyboard:group-focus-visible:border-blue-500/60 group-focus-visible:bg-blue-500/[0.1] group-focus-visible:text-blue-600">
                 <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
               </span>
-            </button>
+            </ControlButton>
           )}
           {primaryTemplates.map(renderTemplateRow)}
           {showOtherTasks && otherTemplates.length > 0 && (
@@ -238,7 +244,8 @@ export function PluginTrialTemplateStrip({
             </div>
           )}
           {availableTemplates.length === 0 && (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="plugin-trial-recommendation-apply"
               className="group relative flex min-h-10 max-md:min-h-11 w-full items-center gap-2.5 px-3 py-1.5 text-left transition-colors hover:bg-blue-500/[0.08] focus-visible:bg-blue-500/[0.08] focus-visible:outline-none keyboard:focus-visible:ring-1 keyboard:focus-visible:ring-inset keyboard:focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:opacity-40"
@@ -265,7 +272,7 @@ export function PluginTrialTemplateStrip({
               <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-border/30 bg-background text-text-secondary transition-colors group-hover:border-blue-500/60 group-hover:bg-blue-500/[0.1] group-hover:text-blue-600 keyboard:group-focus-visible:border-blue-500/60 group-focus-visible:bg-blue-500/[0.1] group-focus-visible:text-blue-600">
                 <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
               </span>
-            </button>
+            </ControlButton>
           )}
         </div>
         {refineError && (
@@ -275,14 +282,15 @@ export function PluginTrialTemplateStrip({
             data-testid="plugin-trial-ai-error"
           >
             <span>{refineError}</span>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="plugin-trial-ai-retry"
               className="min-h-7 max-md:min-h-11 shrink-0 font-medium hover:underline"
               onClick={() => void refine()}
             >
               {t('workbench.retry', '重试')}
-            </button>
+            </ControlButton>
           </div>
         )}
         <div className="flex flex-wrap items-center justify-between gap-1 px-1 pt-1.5 text-xs leading-4 text-text-muted">
@@ -291,7 +299,8 @@ export function PluginTrialTemplateStrip({
           </span>
           <span className="flex items-center gap-1">
             {otherTemplates.length > 0 && (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="plugin-trial-other-tasks-toggle"
                 aria-expanded={showOtherTasks}
@@ -306,10 +315,11 @@ export function PluginTrialTemplateStrip({
                 ) : (
                   <ChevronDown className="h-3.5 w-3.5" aria-hidden="true" />
                 )}
-              </button>
+              </ControlButton>
             )}
             {onRefinePrompt && (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="plugin-trial-ai-refine"
                 className="inline-flex h-7 max-md:h-11 items-center gap-1.5 rounded-md px-1.5 font-medium text-text-secondary transition-colors hover:bg-surface hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
@@ -332,7 +342,7 @@ export function PluginTrialTemplateStrip({
                 {refining
                   ? t('workbench.plugin_trial_ai_refining', 'AI 正在推荐…')
                   : t('workbench.plugin_trial_ai_other_task', 'AI 推荐其他任务')}
-              </button>
+              </ControlButton>
             )}
           </span>
         </div>

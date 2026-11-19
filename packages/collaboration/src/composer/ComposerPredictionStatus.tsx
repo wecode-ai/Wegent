@@ -1,6 +1,7 @@
+import { LoaderCircle } from 'lucide-react'
 import { useContext } from 'react'
 import { createPortal } from 'react-dom'
-import { LoaderCircle } from 'lucide-react'
+import { Button as ControlButton } from '../markdown/Button'
 import {
   ComposerPredictionContext,
   ComposerPredictionPendingContext,
@@ -33,7 +34,8 @@ export function ComposerPredictionStatus({
       {pending}
     </div>
   ) : prediction ? (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid={`${testId}-prediction-accept`}
       className="flex h-7 items-center gap-2 rounded-md px-2 text-xs text-text-secondary transition-colors hover:bg-muted hover:text-text-primary keyboard:focus-visible:outline keyboard:focus-visible:outline-2 keyboard:focus-visible:outline-ring max-md:min-h-11"
@@ -44,7 +46,7 @@ export function ComposerPredictionStatus({
     >
       {prediction.acceptLabel}
       <kbd className="font-code text-text-muted">Tab ↹</kbd>
-    </button>
+    </ControlButton>
   ) : null
   return target && content ? createPortal(content, target) : content
 }

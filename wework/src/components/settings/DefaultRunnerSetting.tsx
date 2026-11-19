@@ -1,6 +1,14 @@
-import { useContext, useState } from 'react'
 import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import { useTranslation } from '@/hooks/useTranslation'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useContext, useState } from 'react'
 import { SettingsRow } from './settings-ui'
 
 export function DefaultRunnerSetting({
@@ -39,13 +47,12 @@ export function DefaultRunnerSetting({
   const control = (
     <div className="space-y-1">
       <div className="flex flex-wrap items-center gap-2">
-        <select
-          aria-label={t('workbench.runner_personal_default')}
-          className="wework-native-select h-9 min-h-11 md:min-h-9 max-w-64 rounded-md border border-border bg-background px-2 text-sm"
-          value={pendingUnavailable || valueAvailable ? value : ''}
+        <SelectRoot
+          value={normalizeSelectValue(pendingUnavailable || valueAvailable ? value : '')}
           disabled={saving}
-          onChange={event => {
-            const deviceId = event.target.value
+          onValueChange={selectedValue => {
+            if (selectedValue === null) return
+            const deviceId = selectedValue
             if (confirmChanges) {
               setPending({
                 deviceId,
@@ -53,30 +60,38 @@ export function DefaultRunnerSetting({
               })
             } else void save(deviceId)
           }}
-          data-testid="settings-default-runner"
         >
-          <option value="">{t('workbench.runner_choose_environment')}</option>
-          {pendingUnavailable && pending && (
-            <option
-              value={pending.deviceId}
-              data-testid="settings-default-runner-pending-unavailable"
-            >
-              {t('issue_creation.unavailable_runner_option', {
-                name:
-                  allDevices.find(device => device.device_id === pending.deviceId)?.name ??
-                  pending.name,
-              })}
-            </option>
-          )}
-          {devices.map(device => (
-            <option key={device.device_id} value={device.device_id}>
-              {device.name} ·{' '}
-              {t(`workbench.runner_status_${device.status === 'online' ? 'online' : 'offline'}`)}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger
+            aria-label={t('workbench.runner_personal_default')}
+            className="max-w-64"
+            data-testid="settings-default-runner"
+          />
+          <SelectContent>
+            <SelectItem value="">{t('workbench.runner_choose_environment')}</SelectItem>
+            {pendingUnavailable && pending && (
+              <SelectItem
+                value={String(pending.deviceId)}
+                data-testid="settings-default-runner-pending-unavailable"
+              >
+                {t('issue_creation.unavailable_runner_option', {
+                  name:
+                    allDevices.find(device => device.device_id === pending.deviceId)?.name ??
+                    pending.name,
+                })}
+              </SelectItem>
+            )}
+            {devices.map(device => (
+              <SelectItem key={device.device_id} value={String(device.device_id)}>
+                {device.name} ·{' '}
+                {t(`workbench.runner_status_${device.status === 'online' ? 'online' : 'offline'}`)}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </SelectRoot>
         {hasPendingChange && (
-          <button
+          <ControlButton
+            variant="outline"
+            size="sm"
             type="button"
             data-testid="settings-default-runner-save"
             disabled={saving}
@@ -84,13 +99,14 @@ export function DefaultRunnerSetting({
             className="min-h-11 rounded-md border border-border px-3 text-sm text-text-primary hover:bg-muted disabled:opacity-50 md:min-h-8"
           >
             {t(saving ? 'independentIssues.saving' : 'issue_creation.save_personal_runner')}
-          </button>
+          </ControlButton>
         )}
       </div>
       {unavailable && !hasPendingChange && (
         <div className="flex flex-wrap items-center gap-2 text-xs text-text-secondary">
           <span>{t('workbench.runner_default_unavailable')}</span>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             disabled={saving}
             data-testid="settings-default-runner-clear"
@@ -100,7 +116,7 @@ export function DefaultRunnerSetting({
             }
           >
             {t('workbench.runner_clear_default')}
-          </button>
+          </ControlButton>
         </div>
       )}
       {error && (
@@ -116,7 +132,7 @@ export function DefaultRunnerSetting({
     <SettingsRow
       label={t('workbench.runner_personal_default')}
       description={t('workbench.runner_default_hint')}
-      control={control}
+      children={control}
     />
   )
 }

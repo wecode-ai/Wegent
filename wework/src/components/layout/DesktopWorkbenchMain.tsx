@@ -1,170 +1,39 @@
-import { supportsConnectionEvents } from '@/lib/device-capabilities'
+import { useDialogRequests } from '@/components/common/useDialogRequests'
 import { cancelConnectionEventSubscription } from '@/api/connectionEventSubscriptions'
-import {
-  isQuestionDiscussionTab,
-  useQuestionDiscussionWorkspacePanel,
-} from '@/features/notifications/questionDiscussion'
-import { ConversationEventContext } from '@/components/chat/composer/ConversationEventContext'
-import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComposer'
-import {
-  getMcpAppPanel,
-  isMcpAppPanelTab,
-  useMcpAppWorkspacePanels,
-} from '@/features/mcp-apps/workspacePanels'
-import { createMcpAppConversationServices } from '@/features/mcp-apps/conversationServices'
-import { AttachmentPreviewContext } from '@/components/chat/AttachmentPreviewContext'
-import { BackgroundTerminalsSummary } from './BackgroundTerminalsSummary'
-import { useBoundRuntimeTaskReconciliation } from './useBoundRuntimeTaskReconciliation'
-import { conversationTerminals } from './backgroundTerminals'
-import type { BackgroundTerminal } from './backgroundTerminals'
-import {
-  isWorkspaceFileTab,
-  workspaceFileTabId,
-  type WorkspaceFileTabs,
-} from './workspace-panels/workspaceFileTabs'
-import { resolveWorkspaceFilePath } from './workspace-panels/workspaceFilePaths'
-import {
-  memo,
-  type MouseEvent as ReactMouseEvent,
-  useCallback,
-  useEffect,
-  useEffectEvent,
-  useLayoutEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from 'react'
-import {
-  Archive,
-  ArrowLeftRight,
-  Bot,
-  ChevronRight,
-  Loader2,
-  MessageCircle,
-  MessageSquareWarning,
-  X,
-} from 'lucide-react'
-import type { ProjectChatControls } from '@/components/chat/ChatInput'
-import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCard'
-import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
-import { useRuntimeInteractions } from '@/features/notifications/RuntimeInteractionsContext'
-import { CloudConnectorAuthCard, ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
-import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import { PluginWorkspaceConversationResult } from '@/components/plugins/PluginWorkspaceConversationResult'
-import { useLocalConnectorAuthRecovery } from '@/features/plugins/useLocalConnectorAuthRecovery'
-import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
-import {
-  SubagentConversationPanel,
-  SubagentEnvironmentSummary,
-  SubagentOverviewPanel,
-} from '@/components/chat/SubagentConversationPanel'
-import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
-import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
-import { updateAppPreferences } from '@/desktop/appPreferences'
-import { useWorkbench, useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
-import { useRuntimeTaskSummaryResolver } from '@/features/workbench/runtimeTaskLifecycle'
-import { getPopoutComposerPlaceholder } from '@/features/workbench/popoutWorkspaceContext'
-import { DeliveryDialog } from '@/features/delivery/DeliveryDialog'
-import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
-import { useTranslation } from '@/hooks/useTranslation'
-import {
-  findNativeLocalWorkbenchDevice,
-  findWorkbenchDevice,
-  getActiveWorkbenchDeviceId,
-  getWorkbenchDeviceNamesById,
-  getWorkbenchDeviceUnavailableDisplayName,
-  isWorkbenchDeviceOnline,
-  LOCAL_WORKBENCH_DEVICE_ALIAS,
-  resolveLocalWorkbenchDeviceId,
-} from '@/lib/workbench-device'
-import { isAbsoluteWorkspacePath, resolveHomeRelativeWorkspacePath } from '@/lib/workspace-paths'
-import {
-  createLocalAttachmentWorkspaceTarget,
-  createLocalFileWorkspaceTarget,
-  resolveProjectRuntimeWorkspaceTargets,
-} from '@/lib/workspace-target'
-import {
-  WEWORK_MIN_EXECUTOR_VERSION,
-  isClaudeCodeDevice,
-  isCloudDevice,
-  isDeviceBelowWeWorkVersion,
-  isWeWorkCompatibleDevice,
-  isRemoteTaskDevice,
-} from '@/lib/device-capabilities'
-import {
-  applyProjectEnvironmentPatch,
-  type EnvironmentDiffMode,
-  type GitPatchAction,
-} from '@/api/environment'
-import type {
-  WorkspaceFileOpenOptions,
-  WorkspaceFileOpenRequest,
-  WorkspaceTarget,
-} from '@/types/workspace-files'
-import { cn } from '@/lib/utils'
-import { runtimeProjectUiId } from '@/lib/runtime-project'
-import {
-  createFilePreviewTraceId,
-  filePreviewElapsedMs,
-  filePreviewPathMetadata,
-  logFilePreviewDiagnostic,
-  scheduleFilePreviewMainThreadProbe,
-} from '@/lib/file-preview-diagnostics'
-import {
-  defaultAppearance,
-  getWorkbenchBackground,
-  useOptionalAppearance,
-} from '@/features/appearance'
-import { track } from '@/telemetry/client'
-import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
-import {
-  RightWorkspacePanel,
-  type RightWorkspaceBrowserState,
-  type RightWorkspaceBrowserTab,
-  type RightWorkspaceChatTab,
-  type RightWorkspaceHarnessTab,
-  type RightWorkspacePanelTab,
-  type RightWorkspacePanelView,
-  type RightWorkspaceTerminalTab,
-  type RightWorkspacePanelHandle,
-} from './workspace-panels/RightWorkspacePanel'
-import { retainElectronEmbeddedBrowserView } from './workspace-panels/electronEmbeddedBrowserHost'
-import { useRightWorkspaceShortcuts } from './workspace-panels/useRightWorkspaceShortcuts'
-import {
-  attachRightWorkspaceSidebarController,
-  encodeRightWorkspaceExtensionTabId,
-  isRightWorkspaceExtensionTab,
-  rightWorkspaceDshSidebar,
-  titleOfWeworkWorkspaceSidebarTab,
-  type WeworkWorkspaceSidebarOpenTabSeed,
-  type WeworkWorkspaceScope,
-  type WeworkWorkspaceSidebarSnapshot,
-  type RightWorkspaceExtensionTab,
-  type RightWorkspaceExtensionTabState,
-} from './workspace-panels/rightWorkspaceDshSidebar'
-import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
-import { WorkspaceToolbarExtensions } from './workspace-panels/WorkspaceToolbarExtensions'
-import { TaskDetailScrollArea } from './TaskDetailScrollArea'
-import { DshMenuActions } from '@/features/dsh-runtime/DshMenuActions'
-import { WorkItemContextPanel } from '@/features/todo/WorkItemContextPanel'
-import { WorkItemComposerGuide } from '@/features/todo/WorkItemComposerGuide'
-import { TaskBoardAssociationDialog } from '@/features/todo/TaskBoardAssociationDialog'
 import {
   DEFAULT_WORK_ITEM_PROJECT_ID,
   DEFAULT_WORK_ITEM_PROJECT_KEY,
   isDefaultWorkItemProject,
   type CloudProject,
 } from '@/api/deliveries'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import {
-  RIGHT_SPLIT_PANEL_MIN_WIDTH,
-  RIGHT_WORKSPACE_COMPACT_PANEL_DEFAULT_WIDTH,
-  useResizableRightSplitChat,
-} from './workspace-panels/useResizableWorkspacePanel'
-import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBanner'
-import { LocalRuntimeNotice } from '@/features/local-runtime/LocalRuntimeNotice'
-import { DeviceStatusPrompt } from './DeviceStatusPrompt'
+  applyProjectEnvironmentPatch,
+  type EnvironmentDiffMode,
+  type GitPatchAction,
+} from '@/api/environment'
+import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
+import { harnessAppsApi, type HarnessAppVerificationReport } from '@/api/local/harnessApps'
+import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCard'
+import { AttachmentPreviewContext } from '@/components/chat/AttachmentPreviewContext'
+import type { ProjectChatControls } from '@/components/chat/ChatInput'
+import { ConversationEventContext } from '@/components/chat/composer/ConversationEventContext'
+import { CloudConnectorAuthCard, ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
+import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
+import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComposer'
+import {
+  isImplementationPlanConfirmationResponse,
+  isImplementationPlanRequestUserInput,
+  requestUserInputPayloadKey,
+} from '@/components/chat/requestUserInputMessages'
+import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
+import {
+  SubagentConversationPanel,
+  SubagentEnvironmentSummary,
+  SubagentOverviewPanel,
+} from '@/components/chat/SubagentConversationPanel'
+import { TransientNotice } from '@/components/common/TransientNotice'
+import { PluginWorkspaceConversationResult } from '@/components/plugins/PluginWorkspaceConversationResult'
 import {
   TITLEBAR_ACTIONS_PORTAL_ID,
   TITLEBAR_RIGHT_PANEL_PORTAL_ID,
@@ -174,17 +43,116 @@ import {
   WorkbenchPaneHeaderActionsPortal,
 } from '@/components/topnav/TitlebarActionsPortal'
 import { Tooltip } from '@/components/ui/tooltip'
-import { DESKTOP_TOP_BAR_BUTTON_CLASS, DesktopTopBar } from './DesktopTopBar'
-import { DesktopWindowControls } from './DesktopWindowControls'
-import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
+import { updateAppPreferences } from '@/desktop/appPreferences'
+import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 import {
-  getDesktopWindowLabel,
-  isDesktopRuntime,
-  isElectronRuntime,
-} from '@/lib/runtime-environment'
-import { invokeDesktopHost } from '@/api/dsh/desktopHost'
-import { getPlatform } from '@/lib/platform'
-import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
+  defaultAppearance,
+  getWorkbenchBackground,
+  useOptionalAppearance,
+} from '@/features/appearance'
+import {
+  findBrowserTabByPopupParent,
+  isDuplicateBrowserPopupRequest,
+} from '@/features/browser-tabs/browserPopupRouting'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { DeliveryDialog } from '@/features/delivery/DeliveryDialog'
+import { DshMenuActions } from '@/features/dsh-runtime/DshMenuActions'
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
+import {
+  openFeedbackDialog,
+  useRegisteredFeedbackDialogContext,
+  withLatestFeedbackDialogContext,
+  type FeedbackDialogRequest,
+} from '@/features/feedback/feedbackDialogStore'
+import {
+  restartHarnessAppDevelopmentRuntime,
+  startHarnessAppDevelopmentRuntime,
+  stopHarnessAppDevelopmentRuntime,
+} from '@/features/harness-apps/harnessAppDevelopmentRuntime'
+import { consumeSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAppDevelopmentPreview'
+import {
+  listLocalHarnessModelOptions,
+  type LocalHarnessModelOption,
+} from '@/features/local-harness/localHarnessModels'
+import { LocalRuntimeNotice } from '@/features/local-runtime/LocalRuntimeNotice'
+import { createMcpAppConversationServices } from '@/features/mcp-apps/conversationServices'
+import {
+  getMcpAppPanel,
+  isMcpAppPanelTab,
+  useMcpAppWorkspacePanels,
+} from '@/features/mcp-apps/workspacePanels'
+import {
+  isQuestionDiscussionTab,
+  useQuestionDiscussionWorkspacePanel,
+} from '@/features/notifications/questionDiscussion'
+import { useRuntimeInteractions } from '@/features/notifications/RuntimeInteractionsContext'
+import { useLocalConnectorAuthRecovery } from '@/features/plugins/useLocalConnectorAuthRecovery'
+import { usePluginTrialPromptRefinement } from '@/features/plugins/usePluginTrialPromptRefinement'
+import { TaskBoardAssociationDialog } from '@/features/todo/TaskBoardAssociationDialog'
+import { WorkItemComposerGuide } from '@/features/todo/WorkItemComposerGuide'
+import { WorkItemContextPanel } from '@/features/todo/WorkItemContextPanel'
+import { getPopoutComposerPlaceholder } from '@/features/workbench/popoutWorkspaceContext'
+import {
+  resolveAutomaticModel,
+  selectedModelExecutionFields,
+} from '@/features/workbench/runtimeModelSelection'
+import { useRuntimeTaskSummaryResolver } from '@/features/workbench/runtimeTaskLifecycle'
+import { runtimeTaskModelControlOverrides } from '@/features/workbench/runtimeTaskModelControls'
+import { useWorkbench, useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
+import { titleModelForGeneration } from '@/features/workbench/useWorkbenchRuntimeMessaging'
+import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
+import { truncateRuntimeTaskTitle } from '@/features/workbench/workbenchRuntimeHelpers'
+import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
+import {
+  consumeWorkbenchWorkspaceLaunch,
+  getWorkbenchWorkspaceLaunch,
+  subscribeWorkbenchWorkspaceLaunch,
+} from '@/features/workbench/workspaceLaunchRequest'
+import {
+  WORKSPACE_TABS_CLOSED_EVENT,
+  type WorkspaceTabsClosedEventDetail,
+} from '@/features/workspace-tabs/workspaceTabs'
+import { useTranslation } from '@/hooks/useTranslation'
+import {
+  isClaudeCodeDevice,
+  isCloudDevice,
+  isDeviceBelowWeWorkVersion,
+  isRemoteTaskDevice,
+  isWeWorkCompatibleDevice,
+  supportsConnectionEvents,
+  WEWORK_MIN_EXECUTOR_VERSION,
+} from '@/lib/device-capabilities'
+import {
+  closeEmbeddedBrowser,
+  DEFAULT_EMBEDDED_BROWSER_LABEL,
+  listenEmbeddedBrowserOpenRequests,
+  listenEmbeddedBrowserPopupRequests,
+  markEmbeddedBrowserLabelTransferred,
+  migrateEmbeddedBrowserLabelSequence,
+  setEmbeddedBrowserActiveTab,
+  type EmbeddedBrowserOpenRequest,
+} from '@/lib/embedded-browser'
+import { getErrorMessage } from '@/lib/error-message'
+import {
+  createFilePreviewTraceId,
+  filePreviewElapsedMs,
+  filePreviewPathMetadata,
+  logFilePreviewDiagnostic,
+  scheduleFilePreviewMainThreadProbe,
+} from '@/lib/file-preview-diagnostics'
+import {
+  isEditableShortcutTarget,
+  shouldIgnoreWorkbenchShortcut,
+  WEWORK_OPEN_TERMINAL_EVENT,
+} from '@/lib/keybindings'
+import {
+  buildLocalHarnessLaunchArgs,
+  defaultLocalHarnessPreferences,
+  localHarnessLabel,
+  localHarnessPluginRootFromSkillPath,
+  type LocalHarnessId,
+  type LocalHarnessPreference,
+} from '@/lib/local-harness'
 import {
   closeLocalTerminal,
   getLocalPathKind,
@@ -196,96 +164,37 @@ import {
   type LocalHarnessDescriptor,
   type LocalHarnessPluginLocation,
 } from '@/lib/local-terminal'
+import { getPlatform } from '@/lib/platform'
 import {
-  buildLocalHarnessLaunchArgs,
-  defaultLocalHarnessPreferences,
-  localHarnessLabel,
-  localHarnessPluginRootFromSkillPath,
-  type LocalHarnessId,
-  type LocalHarnessPreference,
-} from '@/lib/local-harness'
-import {
-  listLocalHarnessModelOptions,
-  type LocalHarnessModelOption,
-} from '@/features/local-harness/localHarnessModels'
-import { getRuntimeTaskChatScopeKey } from '@/features/workbench/workbenchProviderHelpers'
+  getDesktopWindowLabel,
+  isDesktopRuntime,
+  isElectronRuntime,
+} from '@/lib/runtime-environment'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
+import { cn } from '@/lib/utils'
 import { getWeworkDevInstanceInfo } from '@/lib/wework-dev-instance'
+import {
+  findNativeLocalWorkbenchDevice,
+  findWorkbenchDevice,
+  getActiveWorkbenchDeviceId,
+  getWorkbenchDeviceNamesById,
+  getWorkbenchDeviceUnavailableDisplayName,
+  isWorkbenchDeviceOnline,
+  LOCAL_WORKBENCH_DEVICE_ALIAS,
+  resolveLocalWorkbenchDeviceId,
+} from '@/lib/workbench-device'
 import {
   focusComposerAtEnd,
   requestWorkbenchComposerFocus,
   WORKBENCH_NEW_CHAT_FOCUS_EVENT,
 } from '@/lib/workbenchComposerFocus'
+import { isAbsoluteWorkspacePath, resolveHomeRelativeWorkspacePath } from '@/lib/workspace-paths'
 import {
-  DEFAULT_EMBEDDED_BROWSER_LABEL,
-  closeEmbeddedBrowser,
-  listenEmbeddedBrowserOpenRequests,
-  listenEmbeddedBrowserPopupRequests,
-  markEmbeddedBrowserLabelTransferred,
-  migrateEmbeddedBrowserLabelSequence,
-  setEmbeddedBrowserActiveTab,
-  type EmbeddedBrowserOpenRequest,
-} from '@/lib/embedded-browser'
-import {
-  findBrowserTabByPopupParent,
-  isDuplicateBrowserPopupRequest,
-} from '@/features/browser-tabs/browserPopupRouting'
-import { TaskForkDialog } from './TaskForkDialog'
-import { TransientNotice } from '@/components/common/TransientNotice'
-import {
-  isImplementationPlanConfirmationResponse,
-  isImplementationPlanRequestUserInput,
-  requestUserInputPayloadKey,
-} from '@/components/chat/requestUserInputMessages'
-import {
-  pendingRequestUserInputPayload,
-  pendingRequestUserInputPayloads,
-  pendingRequestUserInputResponses,
-} from './requestUserInputOverlay'
-import { useRequestUserInputExpiryRefresh } from './useRequestUserInputExpiryRefresh'
-import {
-  getRuntimeWorkbenchPaneKeys,
-  getWorkbenchPaneKey,
-  resolveRuntimeWorkbenchPane,
-  type WorkbenchPaneIdentity,
-} from './workbenchPaneIdentity'
-import { SplitWorkbenchPaneStack } from './workbenchPaneStack'
-import styles from './DesktopWorkbenchMain.module.css'
-import { getActiveWorkbenchLayout } from './workbenchSplitGroups'
-import type { WorkbenchSplitGroupsController } from './useWorkbenchSplitGroups'
-import {
-  SingleWorkbenchPane,
-  useWorkbenchPaneActive,
-  useWorkbenchPaneId,
-  useWorkbenchPaneHeaderActionsPortalId,
-  useWorkbenchPaneVisible,
-} from './workbenchPanePresentation'
-import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
-import {
-  formatEnvironmentReviewErrorMessage,
-  type BottomPanelRenderContext,
-  type DesktopReviewMetadata,
-  type DesktopReviewState,
-} from './desktopWorkbenchPaneTypes'
-import { truncateRuntimeTaskTitle } from '@/features/workbench/workbenchRuntimeHelpers'
-import {
-  consumeWorkbenchWorkspaceLaunch,
-  getWorkbenchWorkspaceLaunch,
-  subscribeWorkbenchWorkspaceLaunch,
-} from '@/features/workbench/workspaceLaunchRequest'
-import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
-import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
-import { ConversationHeaderTitle } from './ConversationHeaderTitle'
-import { requestOpenCloudDeviceSettings } from './workbenchShellEvents'
-import {
-  SupervisorSuggestionCards,
-  TaskSupervisorControl,
-  type TaskSupervisorConfig,
-} from './TaskSupervisorControl'
-import {
-  isEditableShortcutTarget,
-  shouldIgnoreWorkbenchShortcut,
-  WEWORK_OPEN_TERMINAL_EVENT,
-} from '@/lib/keybindings'
+  createLocalAttachmentWorkspaceTarget,
+  createLocalFileWorkspaceTarget,
+  resolveProjectRuntimeWorkspaceTargets,
+} from '@/lib/workspace-target'
+import { track } from '@/telemetry/client'
 import type {
   ModelSelectionConfig,
   RuntimeName,
@@ -294,52 +203,145 @@ import type {
   RuntimeTaskAddress,
   RuntimeTaskForkRequest,
 } from '@/types/api'
-import { nestWorkbenchProcessingBlocks, projectWorkbenchSubagentActivity } from '@wegent/chat-core'
 import type { SubagentBlock, WorkbenchMessage } from '@/types/workbench'
+import type {
+  WorkspaceFileOpenOptions,
+  WorkspaceFileOpenRequest,
+  WorkspaceTarget,
+} from '@/types/workspace-files'
+import { nestWorkbenchProcessingBlocks, projectWorkbenchSubagentActivity } from '@wegent/chat-core'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import {
+  Archive,
+  ArrowLeftRight,
+  Bot,
+  ChevronRight,
+  Loader2,
+  MessageCircle,
+  MessageSquareWarning,
+  X,
+} from 'lucide-react'
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type MouseEvent as ReactMouseEvent,
+} from 'react'
+import type { BackgroundTerminal } from './backgroundTerminals'
+import { conversationTerminals } from './backgroundTerminals'
+import { BackgroundTerminalsSummary } from './BackgroundTerminalsSummary'
 import { BufferedChatInput } from './BufferedChatInput'
 import { CentralHarnessTerminal } from './CentralHarnessTerminal'
-import { HarnessSessionPickerDialog } from './HarnessSessionPickerDialog'
-import { DesktopEmptyTaskLauncher } from './DesktopEmptyTaskLauncher'
-import { WorkbenchHarnessModelSelector } from './WorkbenchHarnessModelSelector'
-import { WorkbenchHarnessSelector } from './WorkbenchHarnessSelector'
-import type {
-  LocalHarnessSessionRegistrationOptions,
-  LocalHarnessWorkbenchSession,
-} from './localHarnessWorkbench'
-import type { WorkspaceAddMenuItem } from './workspace-panels/WorkspaceAddMenu'
-import {
-  openFeedbackDialog,
-  useRegisteredFeedbackDialogContext,
-  withLatestFeedbackDialogContext,
-  type FeedbackDialogRequest,
-} from '@/features/feedback/feedbackDialogStore'
-import { usePluginTrialPromptRefinement } from '@/features/plugins/usePluginTrialPromptRefinement'
-import {
-  WORKSPACE_TABS_CLOSED_EVENT,
-  type WorkspaceTabsClosedEventDetail,
-} from '@/features/workspace-tabs/workspaceTabs'
+import { ConversationDeviceOfflineBanner } from './ConversationDeviceOfflineBanner'
+import { ConversationHeaderTitle } from './ConversationHeaderTitle'
 import {
   DESKTOP_CHAT_CONTENT_WIDTH_CLASS,
   DESKTOP_MESSAGE_LIST_CLASS,
   DESKTOP_MESSAGE_LIST_WIDTH_CLASS,
 } from './desktopChatLayout'
+import { DesktopEmptyTaskLauncher } from './DesktopEmptyTaskLauncher'
+import { DESKTOP_TOP_BAR_BUTTON_CLASS, DesktopTopBar } from './DesktopTopBar'
+import { DesktopWindowControls } from './DesktopWindowControls'
+import styles from './DesktopWorkbenchMain.module.css'
+import {
+  formatEnvironmentReviewErrorMessage,
+  type BottomPanelRenderContext,
+  type DesktopReviewMetadata,
+  type DesktopReviewState,
+} from './desktopWorkbenchPaneTypes'
+import { DeviceStatusPrompt } from './DeviceStatusPrompt'
+import { HarnessSessionPickerDialog } from './HarnessSessionPickerDialog'
+import type {
+  LocalHarnessSessionRegistrationOptions,
+  LocalHarnessWorkbenchSession,
+} from './localHarnessWorkbench'
+import { MacOSTitleBarDragRegion } from './MacOSTitleBarDragRegion'
+import {
+  pendingRequestUserInputPayload,
+  pendingRequestUserInputPayloads,
+  pendingRequestUserInputResponses,
+} from './requestUserInputOverlay'
+import { TaskDetailScrollArea } from './TaskDetailScrollArea'
+import { TaskForkDialog } from './TaskForkDialog'
+import {
+  SupervisorSuggestionCards,
+  TaskSupervisorControl,
+  type TaskSupervisorConfig,
+} from './TaskSupervisorControl'
+import { useBoundRuntimeTaskReconciliation } from './useBoundRuntimeTaskReconciliation'
+import { useRequestUserInputExpiryRefresh } from './useRequestUserInputExpiryRefresh'
 import { useWorkbenchCloudProjectContext } from './useWorkbenchCloudProjectContext'
-import { WorktreeCreationStatus } from './WorktreeCreationStatus'
+import { useWorkbenchPaneEnvironment } from './useWorkbenchPaneEnvironment'
+import { useWorkbenchPaneSession } from './useWorkbenchPaneSession'
+import { useWorkbenchProjectWorkControls } from './useWorkbenchProjectWorkControls'
+import type { WorkbenchSplitGroupsController } from './useWorkbenchSplitGroups'
+import { WorkbenchHarnessModelSelector } from './WorkbenchHarnessModelSelector'
+import { WorkbenchHarnessSelector } from './WorkbenchHarnessSelector'
+import {
+  getRuntimeWorkbenchPaneKeys,
+  getWorkbenchPaneKey,
+  resolveRuntimeWorkbenchPane,
+  type WorkbenchPaneIdentity,
+} from './workbenchPaneIdentity'
+import {
+  SingleWorkbenchPane,
+  useWorkbenchPaneActive,
+  useWorkbenchPaneHeaderActionsPortalId,
+  useWorkbenchPaneId,
+  useWorkbenchPaneVisible,
+} from './workbenchPanePresentation'
+import { SplitWorkbenchPaneStack } from './workbenchPaneStack'
+import { requestOpenCloudDeviceSettings } from './workbenchShellEvents'
+import { getActiveWorkbenchLayout } from './workbenchSplitGroups'
+import { BottomWorkspacePanel } from './workspace-panels/BottomWorkspacePanel'
+import { retainElectronEmbeddedBrowserView } from './workspace-panels/electronEmbeddedBrowserHost'
+import {
+  attachRightWorkspaceSidebarController,
+  encodeRightWorkspaceExtensionTabId,
+  isRightWorkspaceExtensionTab,
+  rightWorkspaceDshSidebar,
+  titleOfWeworkWorkspaceSidebarTab,
+  type RightWorkspaceExtensionTab,
+  type RightWorkspaceExtensionTabState,
+  type WeworkWorkspaceScope,
+  type WeworkWorkspaceSidebarOpenTabSeed,
+  type WeworkWorkspaceSidebarSnapshot,
+} from './workspace-panels/rightWorkspaceDshSidebar'
+import {
+  RightWorkspacePanel,
+  type RightWorkspaceBrowserState,
+  type RightWorkspaceBrowserTab,
+  type RightWorkspaceChatTab,
+  type RightWorkspaceHarnessTab,
+  type RightWorkspacePanelHandle,
+  type RightWorkspacePanelTab,
+  type RightWorkspacePanelView,
+  type RightWorkspaceTerminalTab,
+} from './workspace-panels/RightWorkspacePanel'
+import {
+  RIGHT_SPLIT_PANEL_MIN_WIDTH,
+  RIGHT_WORKSPACE_COMPACT_PANEL_DEFAULT_WIDTH,
+  useResizableRightSplitChat,
+} from './workspace-panels/useResizableWorkspacePanel'
+import { useRightWorkspaceShortcuts } from './workspace-panels/useRightWorkspaceShortcuts'
+import type { WorkspaceAddMenuItem } from './workspace-panels/WorkspaceAddMenu'
+import { resolveWorkspaceFilePath } from './workspace-panels/workspaceFilePaths'
+import {
+  isWorkspaceFileTab,
+  workspaceFileTabId,
+  type WorkspaceFileTabs,
+} from './workspace-panels/workspaceFileTabs'
+import { WorkspacePanelActions } from './workspace-panels/WorkspacePanelActions'
+import { WorkspaceToolbarExtensions } from './workspace-panels/WorkspaceToolbarExtensions'
 import { isWorktreeCreationPending } from './worktreeCreationState'
-import {
-  resolveAutomaticModel,
-  selectedModelExecutionFields,
-} from '@/features/workbench/runtimeModelSelection'
-import { runtimeTaskModelControlOverrides } from '@/features/workbench/runtimeTaskModelControls'
-import { titleModelForGeneration } from '@/features/workbench/useWorkbenchRuntimeMessaging'
-import {
-  restartHarnessAppDevelopmentRuntime,
-  startHarnessAppDevelopmentRuntime,
-  stopHarnessAppDevelopmentRuntime,
-} from '@/features/harness-apps/harnessAppDevelopmentRuntime'
-import { consumeSmartAppDevelopmentPreview } from '@/features/harness-apps/smartAppDevelopmentPreview'
-import { harnessAppsApi, type HarnessAppVerificationReport } from '@/api/local/harnessApps'
-import { getErrorMessage } from '@/lib/error-message'
+import { WorktreeCreationStatus } from './WorktreeCreationStatus'
 
 let legacyEmbeddedBrowserOpenRequestSequence = 0
 
@@ -1227,6 +1229,10 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   } = useWorkbench()
   const deviceApi = services?.deviceApi
   const { t } = useTranslation('common')
+  const { confirm: requestConfirmation, dialogs: requestDialogs } = useDialogRequests(
+    (key, fallback) => t(key, fallback)
+  )
+
   const [harnessSessionPickerTarget, setHarnessSessionPickerTarget] = useState<
     'main' | 'right' | null
   >(null)
@@ -4119,7 +4125,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     },
     [openRightPanelTab, setSelectedAssistantPlan]
   )
-  const closeRightPanelTab = (tab: RightWorkspacePanelTab) => {
+  const closeRightPanelTab = async (tab: RightWorkspacePanelTab) => {
     if (isMcpAppPanelTab(tab)) {
       const panel = getMcpAppPanel(tab)
       if (panel) {
@@ -4133,7 +4139,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     const browserState = isRightWorkspaceBrowserTab(tab) ? browserStates[tab] : null
     if (
       browserState?.hasActiveDownload &&
-      !window.confirm(t('workbench.browser_close_browser_with_download_confirm'))
+      !(await requestConfirmation(t('workbench.browser_close_browser_with_download_confirm')))
     ) {
       return
     }
@@ -5080,7 +5086,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
   )
   const forkTaskButton = canForkCurrentRuntimeTask ? (
     <Tooltip label={t('workbench.task_fork_button')} side="bottom" align="end">
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="fork-runtime-task-button"
         className={DESKTOP_TOP_BAR_BUTTON_CLASS}
@@ -5088,7 +5095,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         onClick={() => setForkDialogOpen(true)}
       >
         <ArrowLeftRight />
-      </button>
+      </ControlButton>
     </Tooltip>
   ) : undefined
   const feedbackButton = isDesktop ? (
@@ -5098,7 +5105,8 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       align="end"
       testId="task-feedback-button-tooltip"
     >
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="task-feedback-button"
         className={DESKTOP_TOP_BAR_BUTTON_CLASS}
@@ -5113,13 +5121,14 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         }
       >
         <MessageSquareWarning />
-      </button>
+      </ControlButton>
     </Tooltip>
   ) : undefined
   const closeHarnessButton =
     activeLocalHarnessSession?.harnessId === 'opencode' ? (
       <Tooltip label={t('workbench.archive_harness', '归档编码会话')} side="bottom" align="end">
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid={
             activeLocalHarnessSession.isPrimary
@@ -5133,11 +5142,12 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           }}
         >
           <Archive />
-        </button>
+        </ControlButton>
       </Tooltip>
     ) : activeLocalHarnessSession && !activeLocalHarnessSession.isPrimary ? (
       <Tooltip label={t('workbench.close_harness', '关闭编码工具')} side="bottom" align="end">
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="central-harness-close-button"
           className={DESKTOP_TOP_BAR_BUTTON_CLASS}
@@ -5147,7 +5157,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
           }}
         >
           <X />
-        </button>
+        </ControlButton>
       </Tooltip>
     ) : undefined
   const feedbackInChromeTitlebar = isDesktop
@@ -5535,7 +5545,9 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                               data-testid="desktop-floating-composer-card"
                             >
                               {rightPanelExpanded && (
-                                <button
+                                <ControlButton
+                                  variant="outline"
+                                  size="sm"
                                   type="button"
                                   data-testid="restore-conversation-from-expanded-workspace-button"
                                   className="mb-1 flex h-8 w-full items-center justify-between rounded-xl border border-border/45 bg-background/95 px-4 text-xs text-text-secondary shadow-sm hover:bg-muted hover:text-text-primary"
@@ -5543,7 +5555,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                 >
                                   <span>{t('workbench.latest_conversation_turn')}</span>
                                   <ChevronRight className="h-4 w-4" aria-hidden="true" />
-                                </button>
+                                </ControlButton>
                               )}
                               {connectorAuthCard}
                               {issueExecutionReadOnly ? (
@@ -5561,14 +5573,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                       '此执行属于 Issue，请在 Issue 中追问或补充要求'
                                     )}
                                   </span>
-                                  <button
+                                  <ControlButton
+                                    variant="unstyled"
                                     type="button"
                                     data-testid="project-execution-open-issue"
                                     onClick={openBoundProjectSpaceTask}
                                     className="flex h-8 shrink-0 items-center rounded-lg bg-foreground px-3 text-sm font-medium text-background hover:opacity-90"
                                   >
                                     {t('workbench.back_to_work_item', '返回 Issue')}
-                                  </button>
+                                  </ControlButton>
                                 </div>
                               ) : !rightPanelExpanded || pendingRequestUserInput ? (
                                 <>
@@ -6376,19 +6389,23 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     </main>
   )
   return (
-    <AttachmentPreviewContext.Provider
-      value={source => {
-        setOpenFileRequest(current => ({
-          id: (current?.id ?? 0) + 1,
-          path: source.filename,
-          target: current?.target,
-          attachment: source,
-        }))
-        openRightPanelTab('files')
-      }}
-    >
-      {content}
-    </AttachmentPreviewContext.Provider>
+    <>
+      {' '}
+      {requestDialogs}{' '}
+      <AttachmentPreviewContext.Provider
+        value={source => {
+          setOpenFileRequest(current => ({
+            id: (current?.id ?? 0) + 1,
+            path: source.filename,
+            target: current?.target,
+            attachment: source,
+          }))
+          openRightPanelTab('files')
+        }}
+      >
+        {content}
+      </AttachmentPreviewContext.Provider>{' '}
+    </>
   )
 })
 

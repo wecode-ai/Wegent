@@ -1,11 +1,22 @@
-import { Button } from '@/components/ui/button'
-import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { useEffect, useRef, useState } from 'react'
-import { MessageSquare, Plus, Search, X } from 'lucide-react'
+import { RadioGroup, Radio } from '@wegent/collaboration/controls/RadioGroup'
 import type { StandInRole, StandInSourceConnection } from '@/api/personalStandIn'
-import type { StandInExecutorApi, ConnectionProviderDescriptor } from '@/api/standIn'
+import type { ConnectionProviderDescriptor, StandInExecutorApi } from '@/api/standIn'
 import { LocalConnectorAuthDialog } from '@/components/plugins/LocalConnectorAuthDialog'
+import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { MessageSquare, Plus, Search, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 import { StandInConnectionHeader } from './StandInConnectionHeader'
 import { StandInProcessingSettings } from './StandInProcessingSettings'
 
@@ -287,13 +298,12 @@ export function StandInSourceConnections({
             row.scope !== 'all' && (
               <label className="flex min-h-11 items-center gap-2 text-sm md:min-h-8">
                 {t('standIn.workspace.group_message_scope')}
-                <select
-                  data-testid={`${prefix}-message-scope-${row.id}`}
-                  aria-label={t('standIn.workspace.group_message_scope_for', { name: row.name })}
-                  value={row.collectionKey ?? 'mentions'}
+                <SelectRoot
+                  value={normalizeSelectValue(row.collectionKey ?? 'mentions')}
                   disabled={disabled}
-                  onChange={event => {
-                    const allMessages = event.target.value === 'all-messages'
+                  onValueChange={selectedValue => {
+                    if (selectedValue === null) return
+                    const allMessages = selectedValue === 'all-messages'
                     updateRows(
                       rows.map(value => {
                         if (value !== row) return value
@@ -309,14 +319,26 @@ export function StandInSourceConnections({
                       })
                     )
                   }}
-                  className="min-h-11 rounded-md border border-border bg-background px-2 text-sm text-text-primary md:min-h-8 [&>option]:bg-background [&>option]:text-text-primary"
                 >
-                  <option value="mentions">{t('standIn.workspace.group_mentions')}</option>
-                  <option value="all-messages">{t('standIn.workspace.group_all_messages')}</option>
-                </select>
+                  <SelectTrigger
+                    density="compact"
+                    data-testid={`${prefix}-message-scope-${row.id}`}
+                    aria-label={t('standIn.workspace.group_message_scope_for', { name: row.name })}
+                    className="[&>option]:bg-background [&>option]:text-text-primary"
+                  />
+                  <SelectContent>
+                    <SelectItem value="mentions">
+                      {t('standIn.workspace.group_mentions')}
+                    </SelectItem>
+                    <SelectItem value="all-messages">
+                      {t('standIn.workspace.group_all_messages')}
+                    </SelectItem>
+                  </SelectContent>
+                </SelectRoot>
               </label>
             )}
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`${prefix}-remove-${row.id}`}
             aria-label={t('standIn.workspace.remove_connection', { name: row.name })}
@@ -328,14 +350,15 @@ export function StandInSourceConnections({
             className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
           {provider.id === '@wegent/dsh-connection-dingtalk/dingtalk' && row.scope === 'all' && (
             <div className="w-full space-y-2">
               <p className="text-sm">{t('standIn.workspace.connection_blacklist')}</p>
               {row.excludedResources?.map(resource => (
                 <div key={resource.id} className="flex items-center gap-2 text-sm">
                   <span className="min-w-0 flex-1 truncate">{resource.name}</span>
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid={`${prefix}-blacklist-remove-${row.kind}-${row.profile}-${resource.id}`}
                     aria-label={t('standIn.workspace.blacklist_remove', { name: resource.name })}
@@ -357,10 +380,11 @@ export function StandInSourceConnections({
                     className="flex min-h-11 min-w-11 items-center justify-center rounded-md hover:bg-muted md:min-h-8 md:min-w-8"
                   >
                     <X className="h-4 w-4" />
-                  </button>
+                  </ControlButton>
                 </div>
               ))}
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid={`${prefix}-blacklist-add-${row.kind}-${row.profile}`}
                 disabled={disabled || busy || authorizationRequired}
@@ -380,7 +404,7 @@ export function StandInSourceConnections({
                 className="min-h-11 text-sm underline md:min-h-8"
               >
                 {t('standIn.workspace.blacklist_add')}
-              </button>
+              </ControlButton>
             </div>
           )}
         </div>
@@ -402,7 +426,8 @@ export function StandInSourceConnections({
           {t('standIn.errors.connector_auth_required')}
         </p>
         {provider.authTarget && deviceId === localDeviceId ? (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`${prefix}-connect`}
             disabled={disabled}
@@ -410,7 +435,7 @@ export function StandInSourceConnections({
             className="min-h-9 text-sm underline"
           >
             {t('standIn.workspace.connect_source', { name: provider.displayName })}
-          </button>
+          </ControlButton>
         ) : (
           <p className="text-sm text-text-secondary">
             {t('standIn.workspace.authorize_on_device')}
@@ -433,7 +458,8 @@ export function StandInSourceConnections({
       />
       {connectedScope}
       {!showAdding && (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid={`${prefix}-add`}
           disabled={disabled}
@@ -446,7 +472,7 @@ export function StandInSourceConnections({
         >
           <Plus className="h-4 w-4" />
           {t('standIn.workspace.add_connection')}
-        </button>
+        </ControlButton>
       )}
       {showAdding && (
         <form
@@ -461,43 +487,49 @@ export function StandInSourceConnections({
               <p className="text-sm">
                 {t('standIn.workspace.blacklist_help', { name: excluding.name })}
               </p>
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid={`${prefix}-blacklist-cancel`}
                 onClick={closeExclusionEditor}
                 className="min-h-11 text-sm underline md:min-h-8"
               >
                 {t('standIn.workspace.blacklist_cancel')}
-              </button>
+              </ControlButton>
             </div>
           )}
           <div className="flex flex-wrap gap-2">
             {scope === 'selected' && !excluding && (
-              <select
-                aria-label={t('standIn.workspace.message_kind')}
-                data-testid={`${prefix}-kind`}
-                value={kind}
+              <SelectRoot
+                value={normalizeSelectValue(kind)}
                 disabled={busy}
-                onChange={event => {
+                onValueChange={selectedValue => {
+                  if (selectedValue === null) return
                   searchSequence.current += 1
-                  setKind(event.target.value)
+                  setKind(selectedValue)
                   setScope('selected')
                   setResults([])
                   setNextCursor(undefined)
                   setSearched(false)
                 }}
-                className="min-h-11 rounded-md border border-border bg-background px-2 text-sm md:min-h-9"
               >
-                {provider.resourceKinds.map(resourceKind => (
-                  <option key={resourceKind} value={resourceKind}>
-                    {provider.resourceLabels?.[resourceKind] ?? resourceKind}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger
+                  aria-label={t('standIn.workspace.message_kind')}
+                  data-testid={`${prefix}-kind`}
+                  className="min-h-11 md:min-h-9"
+                />
+                <SelectContent>
+                  {provider.resourceKinds.map(resourceKind => (
+                    <SelectItem key={resourceKind} value={String(resourceKind)}>
+                      {provider.resourceLabels?.[resourceKind] ?? resourceKind}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </SelectRoot>
             )}
             {scope === 'selected' && (
               <>
-                <input
+                <ControlInput
                   aria-label={t('standIn.workspace.search_connections')}
                   data-testid={`${prefix}-query`}
                   value={query}
@@ -508,10 +540,12 @@ export function StandInSourceConnections({
                     setNextCursor(undefined)
                     setSearched(false)
                   }}
-                  className="min-h-11 min-w-0 flex-1 rounded-md border border-border bg-transparent px-3 text-sm md:min-h-9"
+                  className="min-h-11 min-w-0 flex-1 bg-transparent md:min-h-9"
                   placeholder={t('standIn.workspace.search_connections')}
                 />
-                <button
+                <ControlButton
+                  variant="outline"
+                  size="sm"
                   type="submit"
                   data-testid={`${prefix}-search`}
                   disabled={disabled || busy || !query.trim()}
@@ -519,34 +553,38 @@ export function StandInSourceConnections({
                 >
                   <Search className="h-4 w-4" />
                   {t('standIn.workspace.search')}
-                </button>
+                </ControlButton>
               </>
             )}
           </div>
           {!excluding && Boolean(provider.allResourceKinds?.length) && (
-            <fieldset className="flex flex-wrap gap-4" disabled={disabled || busy}>
+            <RadioGroup
+              value={scope}
+              name="connection-scope"
+              aria-label={t('standIn.workspace.connection_scope')}
+              onValueChange={next => {
+                if (next === 'all' || next === 'selected') {
+                  searchSequence.current += 1
+                  setScope(next)
+                  setError(null)
+                }
+              }}
+              render={<fieldset />}
+              className="flex flex-wrap gap-4"
+              disabled={disabled || busy}
+            >
               <legend className="mb-2 w-full text-sm font-medium">
                 {t('standIn.workspace.connection_scope')}
               </legend>
               {(['all', 'selected'] as const).map(value => (
                 <label key={value} className="flex min-h-11 items-center gap-2 text-sm md:min-h-8">
-                  <input
-                    type="radio"
-                    name={`${prefix}-scope`}
-                    data-testid={`${prefix}-scope-${value}`}
-                    checked={scope === value}
-                    onChange={() => {
-                      searchSequence.current += 1
-                      setScope(value)
-                      setError(null)
-                    }}
-                  />
+                  <Radio value={value} data-testid={`${prefix}-scope-${value}`} />
                   {value === 'all'
                     ? (provider.allResourceLabel ?? t('standIn.workspace.all_resources'))
                     : t('standIn.workspace.selected_resources')}
                 </label>
               ))}
-            </fieldset>
+            </RadioGroup>
           )}
           {scope === 'all' && (
             <div className="space-y-3">
@@ -591,7 +629,8 @@ export function StandInSourceConnections({
           {scope === 'selected' && (
             <>
               {results.some(row => !isConnected(row)) && (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`${prefix}-select-results`}
                   disabled={disabled || busy}
@@ -608,29 +647,31 @@ export function StandInSourceConnections({
                   }
                 >
                   {t('standIn.workspace.select_results')}
-                </button>
+                </ControlButton>
               )}
               <div className="max-h-52 overflow-y-auto">
                 {results.map(row => {
                   const connected = isConnected(row)
                   const selected = selection.some(value => identity(value) === identity(row))
                   return (
-                    <button
+                    <label
                       key={identity(row)}
-                      type="button"
-                      role="checkbox"
-                      aria-checked={connected || selected}
-                      data-testid={`${prefix}-result-${row.id}`}
-                      disabled={disabled || connected}
-                      onClick={() =>
-                        setSelection(previous =>
-                          selected
-                            ? previous.filter(value => identity(value) !== identity(row))
-                            : [...previous, row]
-                        )
-                      }
-                      className="flex min-h-9 w-full items-center justify-between gap-3 rounded-md px-2 text-left text-sm hover:bg-muted disabled:text-text-muted"
+                      className="flex min-h-11 w-full items-center gap-3 rounded-lg px-2 text-sm hover:bg-muted"
                     >
+                      <Checkbox
+                        data-testid={`${prefix}-result-${row.id}`}
+                        disabled={disabled || connected}
+                        checked={connected || selected}
+                        onCheckedChange={checked =>
+                          setSelection(previous =>
+                            checked === true
+                              ? previous.some(value => identity(value) === identity(row))
+                                ? previous
+                                : [...previous, row]
+                              : previous.filter(value => identity(value) !== identity(row))
+                          )
+                        }
+                      />
                       <span>{row.name}</span>
                       <span>
                         {t(
@@ -643,12 +684,13 @@ export function StandInSourceConnections({
                               : 'standIn.workspace.select_resource'
                         )}
                       </span>
-                    </button>
+                    </label>
                   )
                 })}
               </div>
               {nextCursor && (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`${prefix}-search-more`}
                   disabled={busy || disabled}
@@ -656,7 +698,7 @@ export function StandInSourceConnections({
                   onClick={() => void search(nextCursor)}
                 >
                   {t('standIn.workspace.load_more')}
-                </button>
+                </ControlButton>
               )}
               {selection.length > 0 && (
                 <div className="flex items-center gap-3">
@@ -670,7 +712,8 @@ export function StandInSourceConnections({
                   >
                     {t('standIn.workspace.add_selected', { count: selection.length })}
                   </Button>
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid={`${prefix}-clear-selection`}
                     disabled={disabled || busy}
@@ -678,7 +721,7 @@ export function StandInSourceConnections({
                     onClick={() => setSelection([])}
                   >
                     {t('standIn.workspace.clear_selection')}
-                  </button>
+                  </ControlButton>
                 </div>
               )}
             </>

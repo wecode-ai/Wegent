@@ -1,3 +1,4 @@
+import '../../../packages/collaboration/src/test/setup'
 import * as matchers from '@testing-library/jest-dom/matchers'
 import { beforeEach, expect, vi } from 'vitest'
 import {

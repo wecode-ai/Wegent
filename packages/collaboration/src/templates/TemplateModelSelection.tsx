@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { runnerModelKey, type RunnerModelIdentity } from '../agent-form/runnerRouting'
-import type { ProjectAgentConfigurationHost } from '../project-agent-config/types'
+import { SelectContent, SelectItem, SelectRoot, SelectTrigger } from '../controls/SelectParts'
+import { normalizeSelectValue } from '../controls/selectValue'
 import type { CollaborationLocale } from '../i18n'
-import { templateMessages } from './messages'
+import { Button as ControlButton } from '../markdown/Button'
 import { usePanelData } from '../platform/usePanelData'
+import type { ProjectAgentConfigurationHost } from '../project-agent-config/types'
+import { templateMessages } from './messages'
 
 export interface TemplateModelConfiguration {
   host: ProjectAgentConfigurationHost
@@ -112,29 +115,32 @@ export function TemplateModelSelection({
             ? `${m.agentModel} · ${runtime === 'codex' ? 'Codex' : 'Claude Code'}`
             : m.agentModel}
         </span>
-        <select
-          data-testid={`template-model-${runtime}`}
-          value={state.data ? selected : ''}
+        <SelectRoot
+          value={normalizeSelectValue(state.data ? selected : '')}
           disabled={disabled || state.loading || error}
-          onChange={event => {
-            setSelected(event.target.value)
-            selection.current = event.target.value
+          onValueChange={selectedValue => {
+            if (selectedValue === null) return
+            setSelected(selectedValue)
+            selection.current = selectedValue
             selectionChosen.current = true
-            onChange(catalog.find(model => runnerModelKey(model) === event.target.value))
+            onChange(catalog.find(model => runnerModelKey(model) === selectedValue))
           }}
         >
-          <option value="">{m.chooseModel}</option>
-          {catalog.map(model => (
-            <option
-              key={runnerModelKey(model)}
-              value={runnerModelKey(model)}
-              disabled={model.source === 'cloud' && (cloud.loading || cloudUnavailable)}
-            >
-              {model.label || model.model_id}
-              {model.account_label ? ` · ${model.account_label}` : ''}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger data-testid={`template-model-${runtime}`} />
+          <SelectContent>
+            <SelectItem value="">{m.chooseModel}</SelectItem>
+            {catalog.map(model => (
+              <SelectItem
+                key={runnerModelKey(model)}
+                value={String(runnerModelKey(model))}
+                disabled={model.source === 'cloud' && (cloud.loading || cloudUnavailable)}
+              >
+                {model.label || model.model_id}
+                {model.account_label ? ` · ${model.account_label}` : ''}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </SelectRoot>
       </label>
       {(state.loading || cloud.loading) && <p role="status">{m.loading}</p>}
       {!state.loading && !cloud.loading && !error && !cloudUnavailable && catalog.length === 0 && (
@@ -144,7 +150,8 @@ export function TemplateModelSelection({
       {!error && !state.loading && cloudUnavailable && (
         <p role="status">{m.cloudModelsUnavailable}</p>
       )}
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid={`template-model-refresh-${runtime}`}
         disabled={disabled || state.loading || cloud.loading}
@@ -154,7 +161,7 @@ export function TemplateModelSelection({
         }}
       >
         {m.refresh}
-      </button>
+      </ControlButton>
     </section>
   )
 }

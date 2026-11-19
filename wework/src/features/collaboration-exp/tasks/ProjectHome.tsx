@@ -1,8 +1,9 @@
-import { ArrowRight, Plus } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ArrowRight, Plus } from 'lucide-react'
 import { selectExperienceTaskState } from '../model'
-import type { ProjectPresentationProps } from './ProjectList'
 import './ProjectExperience.css'
+import type { ProjectPresentationProps } from './ProjectList'
 
 export function ProjectHome({
   projects,
@@ -23,14 +24,15 @@ export function ProjectHome({
       <div className="experience-project-home-heading">
         <h1>{t('tasks.projectHome.title')}</h1>
         {onCreate && (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="collaboration-exp-project-home-create"
             onClick={onCreate}
           >
             <Plus size={16} aria-hidden="true" />
             {t('tasks.projectHome.create')}
-          </button>
+          </ControlButton>
         )}
       </div>
       <p className="experience-project-home-intro">{t('tasks.projectHome.description')}</p>
@@ -48,7 +50,8 @@ export function ProjectHome({
         <h2>{t('tasks.projectHome.highlights')}</h2>
         {highlights.length ? (
           highlights.map(({ project, waiting }) => (
-            <button
+            <ControlButton
+              variant="unstyled"
               key={project.key}
               type="button"
               data-testid={`collaboration-exp-project-highlight-${project.id}`}
@@ -59,7 +62,7 @@ export function ProjectHome({
                 <small>{waiting.title}</small>
               </span>
               <ArrowRight aria-hidden="true" />
-            </button>
+            </ControlButton>
           ))
         ) : (
           <p className="text-sm text-text-muted">{t('tasks.projectHome.empty')}</p>

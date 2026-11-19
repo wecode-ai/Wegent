@@ -1,7 +1,8 @@
-import { SquareTerminal, X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { WorkspaceTarget } from '@/types/workspace-files'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { SquareTerminal, X } from 'lucide-react'
 import { EmbeddedLocalTerminal } from './EmbeddedLocalTerminal'
 import { RemoteTerminal } from './RemoteTerminal'
 import { WorkspaceAddMenu, type WorkspaceAddMenuItem } from './WorkspaceAddMenu'
@@ -66,7 +67,8 @@ export function WorkspaceTerminalWindow({
                   }`}
                   title={sessionLabel}
                 >
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid={testId('workspace-terminal-tab')}
                     onClick={() => onSelectTerminalSession(session.session_id)}
@@ -74,8 +76,10 @@ export function WorkspaceTerminalWindow({
                   >
                     <SquareTerminal className="h-3.5 w-3.5 shrink-0 text-text-secondary" />
                     <span className="truncate">{sessionLabel}</span>
-                  </button>
-                  <button
+                  </ControlButton>
+                  <ControlButton
+                    variant="primary"
+                    size="sm"
                     type="button"
                     data-testid={testId('workspace-terminal-close-button')}
                     onClick={() => onCloseTerminalSession(session.session_id)}
@@ -83,7 +87,7 @@ export function WorkspaceTerminalWindow({
                     aria-label={t('workbench.close_terminal', '关闭终端')}
                   >
                     <X className="h-3 w-3" />
-                  </button>
+                  </ControlButton>
                 </div>
               )
             })}
@@ -93,7 +97,7 @@ export function WorkspaceTerminalWindow({
             buttonTestId={testId('workspace-terminal-new-tab-button')}
             menuTestId={testId('workspace-terminal-new-tab-menu')}
             items={terminalAddMenuItems}
-            buttonClassName="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted disabled:cursor-wait disabled:opacity-50"
+            buttonClassName="flex shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted disabled:cursor-wait disabled:opacity-50"
           />
         </div>
       )}

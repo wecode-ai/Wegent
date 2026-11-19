@@ -1,11 +1,12 @@
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { CircleAlert } from "lucide-react";
+import { CircleAlert } from 'lucide-react'
 
-import type { CollaborationTranslate } from "../i18n";
-import type { ProjectExecutionEnvironmentReadiness } from "./issueEnvironmentReadiness";
+import type { CollaborationTranslate } from '../i18n'
+import type { ProjectExecutionEnvironmentReadiness } from './issueEnvironmentReadiness'
 
 export function IssueExecutionEnvironmentNotice({
   canManage,
@@ -13,36 +14,36 @@ export function IssueExecutionEnvironmentNotice({
   readiness,
   translate,
 }: {
-  canManage: boolean;
-  onOpenEnvironmentSettings(): void;
-  readiness: ProjectExecutionEnvironmentReadiness & { refresh(): void };
-  translate: CollaborationTranslate;
+  canManage: boolean
+  onOpenEnvironmentSettings(): void
+  readiness: ProjectExecutionEnvironmentReadiness & { refresh(): void }
+  translate: CollaborationTranslate
 }) {
   if (
-    readiness.kind === "not_applicable" ||
-    readiness.kind === "loading" ||
-    readiness.kind === "unassigned" ||
-    readiness.kind === "ready"
+    readiness.kind === 'not_applicable' ||
+    readiness.kind === 'loading' ||
+    readiness.kind === 'unassigned' ||
+    readiness.kind === 'ready'
   ) {
-    return null;
+    return null
   }
 
   const description =
-    readiness.kind === "offline"
+    readiness.kind === 'offline'
       ? translate(
-          "todo.issue_environment_notice_offline",
-          "运行设备离线，暂时无法执行 AI 任务。可以继续创建和人工处理 Issue。",
+          'todo.issue_environment_notice_offline',
+          '运行设备离线，暂时无法执行 AI 任务。可以继续创建和人工处理 Issue。'
         )
       : translate(
-          "todo.issue_environment_notice_unknown",
-          "暂时无法检查项目执行环境，不影响创建和人工处理 Issue。",
-        );
+          'todo.issue_environment_notice_unknown',
+          '暂时无法检查项目执行环境，不影响创建和人工处理 Issue。'
+        )
   const actionLabel =
-    readiness.kind === "unknown"
-      ? translate("todo.issue_environment_notice_retry", "重新检查")
+    readiness.kind === 'unknown'
+      ? translate('todo.issue_environment_notice_retry', '重新检查')
       : canManage
-        ? translate("todo.issue_environment_notice_configure", "去配置执行环境")
-        : translate("todo.issue_environment_notice_view", "查看执行环境");
+        ? translate('todo.issue_environment_notice_configure', '去配置执行环境')
+        : translate('todo.issue_environment_notice_view', '查看执行环境')
 
   return (
     <div
@@ -56,27 +57,24 @@ export function IssueExecutionEnvironmentNotice({
       />
       <p className="min-w-0 flex-1 leading-5">
         {description}
-        {!canManage && readiness.kind !== "unknown" ? (
+        {!canManage && readiness.kind !== 'unknown' ? (
           <span className="ml-1">
             {translate(
-              "todo.issue_environment_notice_contact_manager",
-              "如需配置执行环境，请联系项目 Owner 或 Maintainer。",
+              'todo.issue_environment_notice_contact_manager',
+              '如需配置执行环境，请联系项目 Owner 或 Maintainer。'
             )}
           </span>
         ) : null}
       </p>
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         className="min-h-7 shrink-0 rounded-md px-2 text-sm font-medium text-text-primary hover:bg-background focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary"
         data-testid="issue-execution-environment-notice-action"
-        onClick={
-          readiness.kind === "unknown"
-            ? readiness.refresh
-            : onOpenEnvironmentSettings
-        }
+        onClick={readiness.kind === 'unknown' ? readiness.refresh : onOpenEnvironmentSettings}
       >
         {actionLabel}
-      </button>
+      </ControlButton>
     </div>
-  );
+  )
 }

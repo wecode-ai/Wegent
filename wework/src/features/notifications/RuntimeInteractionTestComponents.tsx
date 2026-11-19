@@ -1,3 +1,4 @@
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
 import { useEffect, useState } from 'react'
 import { useRuntimeInteractions } from './RuntimeInteractionsContext'
 
@@ -14,6 +15,10 @@ export function InteractionProbe({
 export function UnrelatedForm() {
   const [value, setValue] = useState('')
   return (
-    <input aria-label="Connection address" value={value} onChange={e => setValue(e.target.value)} />
+    <ControlInput
+      aria-label="Connection address"
+      value={value}
+      onChange={e => setValue(e.target.value)}
+    />
   )
 }

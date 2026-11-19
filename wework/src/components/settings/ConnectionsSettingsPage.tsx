@@ -1,3 +1,59 @@
+import { IconButton } from '@wegent/collaboration/controls/IconButton'
+import { ActionMenu } from '@/components/common/ActionMenu'
+import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
+import { useResizableSidebar } from '@/components/layout/useResizableSidebar'
+import { RemoteTerminal } from '@/components/layout/workspace-panels/RemoteTerminal'
+import { stripAppBasePath } from '@/config/runtime'
+import {
+  defaultAppearance,
+  getWorkbenchBackground,
+  useOptionalAppearance,
+} from '@/features/appearance'
+import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import {
+  cloudDeviceRestartKey,
+  useWorkbenchCloudDeviceRestarts,
+} from '@/features/cloud-devices/useWorkbenchCloudDeviceRestarts'
+import {
+  CloudDeviceRestartProgress,
+  WorkbenchCloudDeviceRestarts,
+} from '@/features/cloud-devices/WorkbenchCloudDeviceRestarts'
+import {
+  resolveDshSettingsPath,
+  type WeworkDshSettingsPage,
+} from '@/features/dsh-runtime/dshSettings'
+import { resolveDshSettingsIcon } from '@/features/dsh-runtime/dshSettingsIcons'
+import { DshSettingsSectionSurface } from '@/features/dsh-runtime/DshSettingsSectionSurface'
+import { DshSettingsSurface } from '@/features/dsh-runtime/DshSettingsSurface'
+import { DshSlotSurface } from '@/features/dsh-runtime/DshSlotSurface'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
+import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
+import type { RefreshWorkLists } from '@/features/workbench/workbenchContextTypes'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
+import {
+  isClaudeCodeDevice,
+  isCloudDevice,
+  isDeviceInteractiveSessionEnabled,
+  isRemoteDevice,
+  supportsCloudLifecycleActions,
+  supportsCloudSessions,
+  supportsDeviceMetrics,
+  supportsRemoteSessions,
+} from '@/lib/device-capabilities'
+import { openExternalUrl } from '@/lib/external-links'
+import { isImeEnterEvent } from '@/lib/ime'
+import { navigateTo } from '@/lib/navigation'
+import { isElectronRuntime } from '@/lib/runtime-environment'
+import { cn } from '@/lib/utils'
+import type { DeviceInfo as RuntimeDeviceInfo, RuntimeTaskAddress, UnifiedModel } from '@/types/api'
+import type { CloudDeviceMetricsResponse, DeviceInfo, DeviceSessionResponse } from '@/types/devices'
+import { deviceSurfaceExtension } from '@extensions/device-surface'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
   AlertCircle,
   ArrowLeft,
@@ -18,72 +74,19 @@ import {
 } from 'lucide-react'
 import type { ComponentType } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { deviceSurfaceExtension } from '@extensions/device-surface'
-import { stripAppBasePath } from '@/config/runtime'
-import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
-import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import { ConnectorConnectionsSection } from './ConnectorConnectionsSection'
-import { ExperimentalBadge } from '@/features/experimental-features/ExperimentalBadge'
-import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
-import { useTranslation } from '@/hooks/useTranslation'
-import { ActionMenu } from '@/components/common/ActionMenu'
-import {
-  CloudDeviceRestartProgress,
-  WorkbenchCloudDeviceRestarts,
-} from '@/features/cloud-devices/WorkbenchCloudDeviceRestarts'
-import {
-  cloudDeviceRestartKey,
-  useWorkbenchCloudDeviceRestarts,
-} from '@/features/cloud-devices/useWorkbenchCloudDeviceRestarts'
-import { SettingsPage, SettingsPageHeader } from './settings-ui'
-import { openExternalUrl } from '@/lib/external-links'
-import { isImeEnterEvent } from '@/lib/ime'
-import { navigateTo } from '@/lib/navigation'
-import { isElectronRuntime } from '@/lib/runtime-environment'
-import { cn } from '@/lib/utils'
-import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
-import { RemoteTerminal } from '@/components/layout/workspace-panels/RemoteTerminal'
-import { useResizableSidebar } from '@/components/layout/useResizableSidebar'
-import {
-  isClaudeCodeDevice,
-  isCloudDevice,
-  isDeviceInteractiveSessionEnabled,
-  isRemoteDevice,
-  supportsCloudLifecycleActions,
-  supportsCloudSessions,
-  supportsDeviceMetrics,
-  supportsRemoteSessions,
-} from '@/lib/device-capabilities'
-import type { DeviceInfo as RuntimeDeviceInfo, RuntimeTaskAddress, UnifiedModel } from '@/types/api'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { CloudDeviceMetricsResponse, DeviceInfo, DeviceSessionResponse } from '@/types/devices'
-import {
-  defaultAppearance,
-  getWorkbenchBackground,
-  useOptionalAppearance,
-} from '@/features/appearance'
 import { AddCloudDeviceDialog } from './AddCloudDeviceDialog'
-import { DeviceVersionBadge } from './DeviceVersionBadge'
-import { DeviceGitSyncSection } from './DeviceGitSyncSection'
-import { RemoteTaskAccessSetting } from './RemoteTaskAccessSetting'
+import { ConnectorConnectionsSection } from './ConnectorConnectionsSection'
 import { DeviceActionButton } from './DeviceActionButton'
+import { DeviceGitSyncSection } from './DeviceGitSyncSection'
+import { DeviceVersionBadge } from './DeviceVersionBadge'
+import { RemoteTaskAccessSetting } from './RemoteTaskAccessSetting'
 import {
   createSettingsDeviceApi,
   createSettingsModelApi,
   createSettingsRemoteTerminalClientFactory,
   type CloudSettingsConnection,
 } from './settings-cloud-api'
-import {
-  resolveDshSettingsPath,
-  type WeworkDshSettingsPage,
-} from '@/features/dsh-runtime/dshSettings'
-import type { RefreshWorkLists } from '@/features/workbench/workbenchContextTypes'
-import { resolveDshSettingsIcon } from '@/features/dsh-runtime/dshSettingsIcons'
-import { DshSettingsSurface } from '@/features/dsh-runtime/DshSettingsSurface'
-import { DshSettingsSectionSurface } from '@/features/dsh-runtime/DshSettingsSectionSurface'
-import { DshSlotSurface } from '@/features/dsh-runtime/DshSlotSurface'
-import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
-import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
+import { SettingsPage, SettingsPageHeader } from './settings-ui'
 
 const DeviceSurfaceDeviceAction = deviceSurfaceExtension.DeviceAction
 const keepConnectionsSettingsOpen = () => undefined
@@ -162,17 +165,17 @@ function DeviceIconActionButton({
   disabled?: boolean
 }) {
   return (
-    <button
+    <IconButton
       type="button"
       data-testid={testId}
       aria-label={label}
       title={label}
       onClick={onClick}
       disabled={disabled}
-      className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+      density="compact"
     >
       <Icon className="h-3.5 w-3.5" />
-    </button>
+    </IconButton>
   )
 }
 
@@ -251,7 +254,8 @@ function ConfirmDeleteDeviceDialog({
           </div>
         </div>
         <div className="mt-5 flex justify-end gap-2">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="cancel-delete-device-button"
             onClick={onCancel}
@@ -259,17 +263,18 @@ function ConfirmDeleteDeviceDialog({
             className="h-8 rounded-md px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
           >
             取消
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="destructive"
+            size="sm"
             type="button"
             data-testid="confirm-delete-device-button"
             onClick={onConfirm}
             disabled={loading}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-destructive px-3 text-sm font-medium text-destructive-contrast hover:bg-destructive/90 disabled:cursor-not-allowed disabled:opacity-50 wework:bg-red-600 wework:text-white wework:hover:bg-red-700"
           >
             {loading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             确认删除
-          </button>
+          </ControlButton>
         </div>
       </div>
     </div>
@@ -364,7 +369,8 @@ function CloudDeviceConnectionInfoDialog({
               <div className="min-w-0 flex-1 truncate font-mono text-xs text-text-primary">
                 {row.value}
               </div>
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid={`copy-connection-info-${row.key}`}
                 onClick={() => copyValue(row.key, row.value)}
@@ -372,28 +378,30 @@ function CloudDeviceConnectionInfoDialog({
               >
                 <Copy className="h-3.5 w-3.5" />
                 <span>{copiedKey === row.key ? '已复制' : '复制'}</span>
-              </button>
+              </ControlButton>
             </div>
           ))}
         </div>
 
         <div className="mt-5 flex justify-end gap-2">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             onClick={onClose}
             className="h-8 rounded-md px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
           >
             关闭
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="primary"
+            size="sm"
             type="button"
             data-testid="copy-connection-info-all"
             onClick={() => copyValue('all', formatCloudDeviceConnectionInfo(info))}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:opacity-90"
           >
             <Copy className="h-3.5 w-3.5" />
             {copiedKey === 'all' ? '已复制' : '复制全部'}
-          </button>
+          </ControlButton>
         </div>
       </div>
     </div>
@@ -606,7 +614,8 @@ function DeviceCard({
           <div className="flex min-w-0 items-center gap-2">
             {editing ? (
               <div className="flex items-center gap-1">
-                <input
+                <ControlInput
+                  density="dense"
                   ref={inputRef}
                   type="text"
                   value={editName}
@@ -617,9 +626,10 @@ function DeviceCard({
                     if (e.key === 'Escape') handleCancelEdit()
                   }}
                   disabled={saving}
-                  className="h-6 w-48 rounded border border-primary bg-background px-1.5 text-sm text-text-primary outline-none"
+                  className="w-48 border-primary"
                 />
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   onClick={handleSaveEdit}
                   disabled={saving}
@@ -627,15 +637,16 @@ function DeviceCard({
                   className="rounded p-0.5 text-primary hover:bg-primary/10"
                 >
                   <Check className="h-3.5 w-3.5" />
-                </button>
-                <button
+                </ControlButton>
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   onClick={handleCancelEdit}
                   aria-label={t('common.cancel')}
                   className="rounded p-0.5 text-text-muted hover:bg-muted hover:text-text-primary"
                 >
                   <X className="h-3.5 w-3.5" />
-                </button>
+                </ControlButton>
               </div>
             ) : (
               <div className="group flex min-w-0 items-center gap-1.5">
@@ -646,14 +657,15 @@ function DeviceCard({
                 >
                   {displayName}
                 </h3>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   onClick={handleStartEdit}
                   aria-label={t('workbench.edit')}
                   className="rounded p-0.5 text-text-muted opacity-0 transition-opacity group-hover:opacity-100 hover:text-text-secondary"
                 >
                   <Pencil className="h-3 w-3" />
-                </button>
+                </ControlButton>
               </div>
             )}
             <DeviceVersionBadge
@@ -720,7 +732,8 @@ function DeviceCard({
                 ariaLabel={t('workbench.connection_more_actions')}
                 placement="bottom-end"
                 disabled={lifecyclePending || deleting}
-                triggerClassName="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-background text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+                density="dense"
+                triggerClassName="inline-flex items-center justify-center rounded-md border border-border bg-background text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
                 items={[
                   {
                     testId: `connection-info-menu-item-${device.device_id}`,
@@ -824,7 +837,8 @@ function DeviceCard({
                 <span className="truncate text-xs text-text-muted">{terminalSession.path}</span>
               )}
             </div>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="settings-device-terminal-close-button"
               onClick={() => setTerminalSession(null)}
@@ -832,7 +846,7 @@ function DeviceCard({
               aria-label="关闭终端"
             >
               <X className="h-4 w-4" />
-            </button>
+            </ControlButton>
           </div>
           <div className="min-h-0 flex-1">
             <RemoteTerminal
@@ -1140,14 +1154,16 @@ export function ConnectionsDeviceSettingsPage({
                   )}
                 </p>
               </div>
-              <button
+              <ControlButton
+                variant="primary"
+                size="sm"
                 type="button"
                 data-testid="settings-cloud-connect-button"
                 onClick={() => setConnectDialogOpen(true)}
-                className="inline-flex h-10 shrink-0 items-center justify-center rounded-md bg-text-primary px-3 text-sm font-medium text-background hover:bg-text-primary/90"
+                className="shrink-0"
               >
                 {t('workbench.cloud_connection_connect_action', '连接云端')}
-              </button>
+              </ControlButton>
             </div>
           </section>
 
@@ -1210,18 +1226,20 @@ export function ConnectionsDeviceSettingsPage({
                 </div>
               </div>
             </div>
-            <button
+            <ControlButton
+              variant="outline"
+              size="sm"
               type="button"
               data-testid="settings-cloud-disconnect-button"
               onClick={() => {
                 cloudConnection.disconnect()
                 setAllDevices([])
               }}
-              className="inline-flex h-9 shrink-0 items-center justify-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted"
+              className="shrink-0"
             >
               <LogOut className="h-4 w-4" />
               {t('workbench.cloud_connection_disconnect', '断开连接')}
-            </button>
+            </ControlButton>
           </div>
         </section>
 
@@ -1242,7 +1260,8 @@ export function ConnectionsDeviceSettingsPage({
                 {t('workbench.connections_authorized_devices', '云端设备')}
               </h2>
               {!loading && (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="connection-add-device-button"
                   onClick={() => setAddDialogOpen(true)}
@@ -1251,7 +1270,7 @@ export function ConnectionsDeviceSettingsPage({
                 >
                   <Plus className="h-4 w-4" />
                   {t('workbench.connection_add', '添加')}
-                </button>
+                </ControlButton>
               )}
             </div>
 
@@ -1409,7 +1428,8 @@ export function ConnectionsSettingsPage({
           testId="settings-sidebar-topbar"
           className="-mx-1.5 mb-1 w-[calc(100%+0.75rem)] shrink-0 bg-transparent pr-2 pl-2"
           left={
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="settings-back-button"
               onClick={onBack}
@@ -1417,7 +1437,7 @@ export function ConnectionsSettingsPage({
             >
               <ArrowLeft className="h-4 w-4" />
               {t('workbench.settings_back_to_app', '返回')}
-            </button>
+            </ControlButton>
           }
         />
 
@@ -1441,7 +1461,8 @@ export function ConnectionsSettingsPage({
                     {t(`workbench.${item.categoryLabelKey}`, item.categoryLabel)}
                   </div>
                 )}
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`settings-nav-${item.id}`}
                   onClick={() => {
@@ -1468,13 +1489,14 @@ export function ConnectionsSettingsPage({
                       testId={`settings-nav-${item.id}-experimental-badge`}
                     />
                   ) : null}
-                </button>
+                </ControlButton>
               </div>
             )
           })}
         </nav>
 
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="settings-sidebar-resize-handle"
           onPointerDown={handleResizeStart}

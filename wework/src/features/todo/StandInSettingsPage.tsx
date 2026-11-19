@@ -1,6 +1,30 @@
-import { useStandInPanelNavigation } from './useStandInPanelNavigation'
+import {
+  connectionChangeEnablesIdentity,
+  disconnectStandInProject,
+  newStandInRole,
+  roleIncludesProject,
+  roleSelectsProject,
+  standInRoleName,
+  type PersonalStandInSettings,
+  type StandInRole,
+} from '@/api/personalStandIn'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { useStableEvent } from '@/features/workbench/useStableEvent'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useStandInOpened } from '@/telemetry/useStandInOpened'
+import type { DeviceInfo } from '@/types/api'
+import type {
+  CollaborationProject,
+  SharedWorkspaceApi,
+  WorkspaceStandInSettings,
+} from '@wegent/collaboration'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { dequal } from 'dequal'
+import { Folder, Plus, Trash2 } from 'lucide-react'
 import {
   useCallback,
   useEffect,
@@ -8,49 +32,27 @@ import {
   useMemo,
   useRef,
   useState,
-  type Ref,
   type ReactNode,
+  type Ref,
 } from 'react'
-import { Folder, Plus, Trash2 } from 'lucide-react'
-import { dequal } from 'dequal'
-import type {
-  CollaborationProject,
-  SharedWorkspaceApi,
-  WorkspaceStandInSettings,
-} from '@wegent/collaboration'
-import {
-  connectionChangeEnablesIdentity,
-  newStandInRole,
-  standInRoleName,
-  roleIncludesProject,
-  roleSelectsProject,
-  disconnectStandInProject,
-  type PersonalStandInSettings,
-  type StandInRole,
-} from '@/api/personalStandIn'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { DeviceInfo } from '@/types/api'
-import { useTranslation } from '@/hooks/useTranslation'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
-import { ConfirmDialog } from '@/components/common/ConfirmDialog'
-import { usePersonalStandIn } from './usePersonalStandIn'
-import { StandInProjectSetup } from './StandInProjectSetup'
+import { saveStandInRoleDevice } from './saveStandInRoleDevice'
+import { StandInComposer } from './StandInComposer'
 import {
   StandInConnectionSettings,
   type StandInConnectionNavigationHandle,
 } from './StandInConnectionSettings'
 import { StandInDeviceSelect } from './StandInDeviceSelect'
+import { StandInProjectSetup } from './StandInProjectSetup'
+import { StandInRequirements } from './StandInRequirements'
 import {
-  StandInSettingsHeader,
   StandInSettingsActions,
   StandInSettingsEntry,
   StandInSettingsError,
+  StandInSettingsHeader,
 } from './StandInSettingsLayout'
-import { StandInRequirements } from './StandInRequirements'
-import { StandInComposer } from './StandInComposer'
+import { usePersonalStandIn } from './usePersonalStandIn'
+import { useStandInPanelNavigation } from './useStandInPanelNavigation'
 import { useStandInRuntimeWork } from './useStandInRuntimeWork'
-import { useStableEvent } from '@/features/workbench/useStableEvent'
-import { saveStandInRoleDevice } from './saveStandInRoleDevice'
 
 type View = 'project' | 'main' | 'connections' | 'advanced' | 'create'
 export interface StandInSettingsHandle {
@@ -226,10 +228,7 @@ function StandInSettingsEditor({
     if (connectionRef.current) connectionRef.current.requestLeave(cancelChanges)
     else cancelChanges()
   }
-  const dialogRef = useDialogKeyboard<HTMLElement>(
-    close,
-    Boolean(initialCreate || initialProfileId) && !confirmDiscard
-  )
+  const dialogRef = useRef<HTMLElement>(null)
   useImperativeHandle(ref, () => ({
     requestClose: closeSettings,
     requestLeave,
@@ -367,10 +366,16 @@ function StandInSettingsEditor({
   )
 
   return (
-    <section
-      ref={dialogRef}
-      className={`min-h-0 px-5 text-base text-text-primary ${calendarOpen ? 'overflow-hidden' : 'overflow-y-auto'} ${initialProject ? '' : 'h-full'}`}
-      data-testid="stand-in-page"
+    <DialogSurface
+      onClose={close}
+      active={Boolean(initialCreate || initialProfileId) && !confirmDiscard}
+      render={
+        <section
+          ref={dialogRef}
+          className={`min-h-0 px-5 text-base text-text-primary ${calendarOpen ? 'overflow-hidden' : 'overflow-y-auto'} ${initialProject ? '' : 'h-full'}`}
+          data-testid="stand-in-page"
+        />
+      }
     >
       <div
         className={
@@ -444,7 +449,8 @@ function StandInSettingsEditor({
           actions={
             view === 'main' &&
             !initialProject && (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="stand-in-list-configure"
                 disabled={saving || loading}
@@ -453,7 +459,7 @@ function StandInSettingsEditor({
               >
                 <Plus className="h-4 w-4" />
                 {t('standIn.personal.add_role')}
-              </button>
+              </ControlButton>
             )
           }
         />
@@ -500,7 +506,7 @@ function StandInSettingsEditor({
                         : 'standIn.personal.role_name'
                     )}
                   </span>
-                  <input
+                  <ControlInput
                     ref={roleNameInput}
                     autoFocus={view === 'create'}
                     data-testid="stand-in-role-name"
@@ -512,7 +518,7 @@ function StandInSettingsEditor({
                       setRoleNameError(false)
                       changeRole({ ...role, name: event.target.value })
                     }}
-                    className="min-h-11 rounded-md border border-border bg-background px-2 placeholder:text-text-secondary md:min-h-9"
+                    className="min-h-11 placeholder:text-text-secondary md:min-h-9"
                     placeholder={
                       view === 'create'
                         ? t('standIn.personal.role_name_placeholder')
@@ -773,16 +779,17 @@ function StandInSettingsEditor({
                   !initialProject &&
                   view === 'main' &&
                   saved?.roles.some(row => row.id === role.id) && (
-                    <button
+                    <ControlButton
                       type="button"
                       data-testid="stand-in-role-delete"
                       disabled={saving || loading}
                       onClick={() => setConfirmDelete(true)}
-                      className="inline-flex min-h-11 items-center gap-2 rounded-md px-2 text-sm text-error hover:bg-muted md:min-h-9"
+                      variant="destructive-ghost"
+                      size="sm"
                     >
                       <Trash2 className="h-4 w-4" />
                       {t('standIn.personal.delete_role')}
-                    </button>
+                    </ControlButton>
                   )}
                 <span className="mr-auto text-xs text-text-secondary">
                   {view === 'connections' ? (
@@ -798,10 +805,18 @@ function StandInSettingsEditor({
               </StandInSettingsActions>
             )}
             {confirmDelete && saved && (
-              <div
-                role="alertdialog"
-                aria-label={t('standIn.personal.delete_role')}
-                className="border-t border-border px-5 py-4"
+              <DialogSurface
+                kind="alertdialog"
+                onClose={() => {
+                  if (!saving) (() => setConfirmDelete(false))()
+                }}
+                modal={false}
+                render={
+                  <div
+                    aria-label={t('standIn.personal.delete_role')}
+                    className="border-t border-border px-5 py-4"
+                  />
+                }
               >
                 <p className="text-sm">
                   {t('standIn.personal.delete_role_help', {
@@ -809,7 +824,8 @@ function StandInSettingsEditor({
                   })}
                 </p>
                 <div className="mt-3 flex justify-end gap-2">
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid="stand-in-role-delete-cancel"
                     disabled={saving}
@@ -817,8 +833,10 @@ function StandInSettingsEditor({
                     className="min-h-11 rounded-md px-3 hover:bg-muted md:min-h-8"
                   >
                     {t('standIn.cancel')}
-                  </button>
-                  <button
+                  </ControlButton>
+                  <ControlButton
+                    variant="destructive"
+                    size="sm"
                     type="button"
                     data-testid="stand-in-role-delete-confirm"
                     disabled={saving}
@@ -833,12 +851,11 @@ function StandInSettingsEditor({
                         onCancel?.()
                       }
                     }}
-                    className="min-h-11 rounded-md bg-text-primary px-3 text-background disabled:opacity-50 md:min-h-8"
                   >
                     {t('standIn.personal.confirm_delete_role')}
-                  </button>
+                  </ControlButton>
                 </div>
-              </div>
+              </DialogSurface>
             )}
           </>
         ) : (
@@ -850,6 +867,6 @@ function StandInSettingsEditor({
           </div>
         )}
       </div>
-    </section>
+    </DialogSurface>
   )
 }

@@ -1,3 +1,5 @@
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { AlertCircle, ChevronDown, Loader2, Pencil, RefreshCw, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
@@ -59,12 +61,17 @@ function LocalModelCatalogRestartDialog({
 
   return createPortal(
     <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4">
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="local-model-catalog-restart-title"
-        data-testid="local-model-catalog-restart-dialog"
-        className="w-full max-w-[420px] rounded-lg border border-border bg-popover p-5 shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
+      <DialogSurface
+        onClose={() => {
+          if (!restarting) onLater()
+        }}
+        render={
+          <div
+            aria-labelledby="local-model-catalog-restart-title"
+            data-testid="local-model-catalog-restart-dialog"
+            className="w-full max-w-[420px] rounded-lg border border-border bg-popover p-5 shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
+          />
+        }
       >
         <h2
           id="local-model-catalog-restart-title"
@@ -76,7 +83,8 @@ function LocalModelCatalogRestartDialog({
           {t('workbench.local_model_catalog_restart_description')}
         </p>
         <div className="mt-5 flex justify-end gap-2">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="local-model-catalog-restart-later-button"
             onClick={onLater}
@@ -84,8 +92,10 @@ function LocalModelCatalogRestartDialog({
             className="h-8 rounded-md px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50"
           >
             {t('workbench.local_model_catalog_restart_later')}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="primary"
+            size="sm"
             type="button"
             data-testid="local-model-catalog-restart-now-button"
             onClick={onRestart}
@@ -94,9 +104,9 @@ function LocalModelCatalogRestartDialog({
           >
             {restarting && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             {t('workbench.local_model_catalog_restart_now')}
-          </button>
+          </ControlButton>
         </div>
-      </div>
+      </DialogSurface>
     </div>,
     document.body
   )
@@ -138,12 +148,17 @@ function CodexCatalogEditorDialog({
   return createPortal(
     <>
       <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4 py-8">
-        <div
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="codex-catalog-editor-title"
-          data-testid="codex-catalog-editor-dialog"
-          className="flex max-h-full w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
+        <DialogSurface
+          onClose={() => {
+            if (!saving) requestClose()
+          }}
+          render={
+            <div
+              aria-labelledby="codex-catalog-editor-title"
+              data-testid="codex-catalog-editor-dialog"
+              className="flex max-h-full w-full max-w-4xl flex-col overflow-hidden rounded-xl border border-border bg-popover shadow-[0_18px_50px_rgba(0,0,0,0.28)]"
+            />
+          }
         >
           <div className="flex items-start justify-between gap-3 border-b border-border px-5 py-4">
             <div className="min-w-0">
@@ -160,7 +175,8 @@ function CodexCatalogEditorDialog({
                 })}
               </p>
             </div>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="codex-catalog-editor-close"
               onClick={requestClose}
@@ -169,7 +185,7 @@ function CodexCatalogEditorDialog({
               aria-label={t('common.close', '关闭')}
             >
               <X className="h-4 w-4" />
-            </button>
+            </ControlButton>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
             <CustomModelCapabilitiesForm
@@ -197,7 +213,9 @@ function CodexCatalogEditorDialog({
             )}
           </div>
           <div className="flex justify-end gap-2 border-t border-border px-5 py-4">
-            <button
+            <ControlButton
+              variant="outline"
+              size="sm"
               type="button"
               data-testid="codex-catalog-editor-cancel"
               onClick={requestClose}
@@ -205,8 +223,10 @@ function CodexCatalogEditorDialog({
               className="inline-flex h-8 items-center rounded-md border border-border bg-background px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50"
             >
               {t('common.cancel', '取消')}
-            </button>
-            <button
+            </ControlButton>
+            <ControlButton
+              variant="primary"
+              size="sm"
               type="button"
               data-testid="codex-catalog-editor-save"
               onClick={() => onSave(entry)}
@@ -215,9 +235,9 @@ function CodexCatalogEditorDialog({
             >
               {saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
               {t('common.save', '保存')}
-            </button>
+            </ControlButton>
           </div>
-        </div>
+        </DialogSurface>
       </div>
       {discardConfirmation && (
         <LocalModelDiscardChangesDialog
@@ -382,7 +402,9 @@ export function CodexOfficialModelsSection({
             {t('workbench.codex_official_models_desc')}
           </p>
         </div>
-        <button
+        <ControlButton
+          variant="outline"
+          size="sm"
           type="button"
           data-testid="codex-official-models-refresh-button"
           onClick={onRefresh}
@@ -396,7 +418,7 @@ export function CodexOfficialModelsSection({
           ) : (
             <RefreshCw className="h-4 w-4" />
           )}
-        </button>
+        </ControlButton>
       </div>
 
       {loading ? (
@@ -421,7 +443,8 @@ export function CodexOfficialModelsSection({
               data-testid={`codex-model-provider-${provider.id}`}
               className="rounded-lg border border-border bg-background"
             >
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid={`codex-model-provider-toggle-${provider.id}`}
                 aria-expanded={expanded}
@@ -456,7 +479,7 @@ export function CodexOfficialModelsSection({
                     }`}
                   />
                 </div>
-              </button>
+              </ControlButton>
 
               {expanded && (
                 <div id={`codex-model-provider-panel-${provider.id}`}>
@@ -514,16 +537,20 @@ export function CodexOfficialModelsSection({
                             </div>
                             <div className="flex items-center gap-2">
                               {catalog?.overridden && (
-                                <button
+                                <ControlButton
+                                  variant="outline"
+                                  size="sm"
                                   type="button"
                                   data-testid={`codex-catalog-restore-${provider.id}-${model.modelId}`}
                                   onClick={() => void restoreCatalog(model.modelId)}
                                   className="inline-flex h-8 items-center rounded-md border border-border bg-background px-3 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
                                 >
                                   {t('workbench.codex_catalog_restore')}
-                                </button>
+                                </ControlButton>
                               )}
-                              <button
+                              <ControlButton
+                                variant="outline"
+                                size="sm"
                                 type="button"
                                 data-testid={`codex-catalog-edit-${provider.id}-${model.modelId}`}
                                 onClick={() => {
@@ -541,7 +568,7 @@ export function CodexOfficialModelsSection({
                               >
                                 <Pencil className="h-3.5 w-3.5" />
                                 {t('workbench.codex_catalog_edit')}
-                              </button>
+                              </ControlButton>
                             </div>
                           </div>
                         )

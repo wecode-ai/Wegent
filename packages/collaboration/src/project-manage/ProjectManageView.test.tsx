@@ -4,6 +4,9 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { updateBoardViewTag } from '../project-board/projectTags'
+import { SelectRoot } from '../controls/SelectParts'
+import { Popover } from '../controls/Popover'
+import { Listbox } from '@ui-sdk/react/listbox'
 
 import type {
   ProjectManageApi,
@@ -108,6 +111,12 @@ vi.mock('react', async () => ({
   useState: hookRuntime.useState,
 }))
 
+// The host-contract harness inspects element trees without mounting React context providers.
+vi.mock('../theme', async () => ({
+  ...(await vi.importActual<typeof import('../theme')>('../theme')),
+  useCollaborationPortalTheme: () => ({}),
+}))
+
 import { createCollaborationTranslator } from '../i18n'
 import { MemberSearchPicker } from '../controls/MemberSearchPicker'
 import { ProjectManageView } from './ProjectManageView'
@@ -177,7 +186,7 @@ function createHost(): ProjectManageHost {
       }
       return value
     },
-    confirm: () => true,
+    confirm: async () => true,
     trackCompleted: vi.fn(),
     trackFailed: vi.fn(),
     renderTooltip: ({ children }) => children,
@@ -210,10 +219,10 @@ function renderView(
   return tree
 }
 
-function findByTestId(node: unknown, testId: string): any {
+function findByTestId(node: unknown, testId: string, ownerType?: unknown): any {
   if (Array.isArray(node)) {
     for (const child of node) {
-      const match = findByTestId(child, testId)
+      const match = findByTestId(child, testId, ownerType)
       if (match) return match
     }
     return null
@@ -221,21 +230,24 @@ function findByTestId(node: unknown, testId: string): any {
   if (!node || typeof node !== 'object') return null
   const component = node as { type?: unknown; props?: any }
   if (component.type === ProjectMembersSection) {
-    return findByTestId(ProjectMembersSection(component.props), testId)
+    return findByTestId(ProjectMembersSection(component.props), testId, ownerType)
   }
   if (component.type === MemberSearchPicker) {
-    return findByTestId(MemberSearchPicker(component.props), testId)
+    return findByTestId(MemberSearchPicker(component.props), testId, ownerType)
   }
   if (component.type === ProjectTagsSection) {
-    return findByTestId(ProjectTagsSection(component.props), testId)
+    return findByTestId(ProjectTagsSection(component.props), testId, ownerType)
   }
   const element = node as {
-    props?: { children?: unknown; 'data-testid'?: string }
+    props?: { children?: unknown; render?: unknown; 'data-testid'?: string }
   }
-  if (element.props?.['data-testid'] === testId) return element
+  if (ownerType && component.type === ownerType && findByTestId(node, testId)) return element
+  if (!ownerType && element.props?.['data-testid'] === testId) return element
+  const rendered = findByTestId(element.props?.render, testId, ownerType)
+  if (rendered) return rendered
   const children = element.props?.children
   for (const child of Array.isArray(children) ? children : [children]) {
-    const match = findByTestId(child, testId)
+    const match = findByTestId(child, testId, ownerType)
     if (match) return match
   }
   return null
@@ -246,8 +258,9 @@ async function flushPromises() {
   await Promise.resolve()
 }
 
+beforeEach(() => hookRuntime.reset())
+
 describe('project tag view integration', () => {
-  beforeEach(() => hookRuntime.reset())
   const boardViews: ProjectBoardViews = {
     schema_version: 1,
     views: [
@@ -287,9 +300,7 @@ describe('project tag view integration', () => {
         version: values.version + 1,
       }))
       let tree = renderView(api, host, current, onUpdated)
-      findByTestId(tree, 'cloud-project-manage-tags').props.onToggle({
-        currentTarget: { open: true },
-      })
+      findByTestId(tree, 'cloud-project-manage-tags').props.onOpenChange(true)
       renderView(api, host, current, onUpdated)
       await flushPromises()
       tree = renderView(api, host, current, onUpdated)
@@ -324,7 +335,6 @@ describe('project tag view integration', () => {
 })
 
 describe('project tag change failures', () => {
-  beforeEach(() => hookRuntime.reset())
   it.each(['rename', 'delete'] as const)(
     'keeps the catalog and Issues unchanged when %s conflicts',
     async action => {
@@ -338,9 +348,7 @@ describe('project tag change failures', () => {
       vi.mocked(api.updateProject).mockRejectedValue(new Error('Project changed'))
       const onUpdated = vi.fn()
       let tree = renderView(api, host, current, onUpdated)
-      findByTestId(tree, 'cloud-project-manage-tags').props.onToggle({
-        currentTarget: { open: true },
-      })
+      findByTestId(tree, 'cloud-project-manage-tags').props.onOpenChange(true)
       renderView(api, host, current, onUpdated)
       await flushPromises()
       tree = renderView(api, host, current, onUpdated)
@@ -377,10 +385,6 @@ describe('project tag change failures', () => {
 })
 
 describe('ProjectManageView project scope', () => {
-  beforeEach(() => {
-    hookRuntime.reset()
-  })
-
   it('opens and consumes a host-requested member action', () => {
     const api = createApi()
     const host = createHost()
@@ -439,21 +443,19 @@ describe('ProjectManageView project scope', () => {
 
       expect(Boolean(findByTestId(tree, 'cloud-project-members-error'))).toBe(failed)
 
-      findByTestId(tree, 'cloud-project-members-toggle').props.onClick()
+      findByTestId(tree, 'cloud-project-members-toggle', Popover).props.onOpenChange(true)
       tree = renderView(api, host, currentProject, vi.fn())
-      findByTestId(tree, 'cloud-member-search').props.onChange({
-        target: { value: 'member' },
-      })
+      findByTestId(tree, 'cloud-member-search').props.onValueChange('member')
       renderView(api, host, currentProject, vi.fn())
       await vi.advanceTimersByTimeAsync(250)
       await flushPromises()
       tree = renderView(api, host, currentProject, vi.fn())
 
-      findByTestId(tree, 'cloud-member-role').props.onChange({
-        target: { value: 'Viewer' },
-      })
+      findByTestId(tree, 'cloud-member-role', SelectRoot).props.onValueChange('Viewer')
       tree = renderView(api, host, currentProject, vi.fn())
-      findByTestId(tree, 'cloud-member-result-2').props.onClick()
+      findByTestId(tree, 'cloud-member-result-2', Listbox).props.onValueChange([2], {
+        cancel: vi.fn(),
+      })
       await flushPromises()
       tree = renderView(api, host, currentProject, vi.fn())
 
@@ -488,7 +490,7 @@ describe('ProjectManageView project scope', () => {
     let tree = renderView(api, host, currentProject, vi.fn())
     await flushPromises()
     tree = renderView(api, host, currentProject, vi.fn())
-    findByTestId(tree, 'cloud-project-members-toggle').props.onClick()
+    findByTestId(tree, 'cloud-project-members-toggle', Popover).props.onOpenChange(true)
     tree = renderView(api, host, currentProject, vi.fn())
 
     const capability = findByTestId(tree, 'cloud-project-member-capability-2')
@@ -531,9 +533,7 @@ describe('ProjectManageView project scope', () => {
     renderView(api, host, projectA, onProjectUpdated)
     await flushPromises()
     const tree = renderView(api, host, projectA, onProjectUpdated)
-    findByTestId(tree, 'cloud-project-member-role-2').props.onChange({
-      target: { value: 'Viewer' },
-    })
+    findByTestId(tree, 'cloud-project-member-role-2', SelectRoot).props.onValueChange('Viewer')
     await flushPromises()
     expect(api.getProject).toHaveBeenCalledWith('project-a')
 
@@ -628,7 +628,6 @@ describe('ProjectManageView project scope', () => {
 })
 
 it('CP08 keeps inherited roles read-only and exposes the parent source', async () => {
-  hookRuntime.reset()
   const api = createApi()
   const host = createHost()
   const current = project('inherited-project', 'private')
@@ -653,7 +652,6 @@ it('CP08 keeps inherited roles read-only and exposes the parent source', async (
 })
 
 it('CP03 saves restricted membership with the current project version', async () => {
-  hookRuntime.reset()
   const api = createApi()
   const host = createHost()
   const current = project('restricted-project', 'private')
@@ -663,9 +661,7 @@ it('CP03 saves restricted membership with the current project version', async ()
     version: current.version + 1,
   })
   const tree = renderView(api, host, current, vi.fn())
-  findByTestId(tree, 'cloud-project-membership-mode').props.onChange({
-    target: { value: 'restricted' },
-  })
+  findByTestId(tree, 'cloud-project-membership-mode', SelectRoot).props.onValueChange('restricted')
   await flushPromises()
   expect(api.updateProject).toHaveBeenCalledWith(current.id, {
     version: current.version,
@@ -674,7 +670,6 @@ it('CP03 saves restricted membership with the current project version', async ()
 })
 
 it('does not offer membership mode when the old backend omits that capability', () => {
-  hookRuntime.reset()
   const api = createApi()
   const current = {
     ...project('legacy-project', 'private'),
@@ -686,7 +681,6 @@ it('does not offer membership mode when the old backend omits that capability', 
 })
 
 it('keeps member responses scoped to the project where editing started', async () => {
-  hookRuntime.reset()
   const api = createApi()
   const host = createHost()
   const delayed = deferred<ProjectManageMember>()
@@ -723,7 +717,6 @@ it('keeps member responses scoped to the project where editing started', async (
 })
 
 it('retains the existing role and releases saving controls after a rejected change', async () => {
-  hookRuntime.reset()
   const api = createApi()
   const host = createHost()
   const member = {
@@ -738,13 +731,13 @@ it('retains the existing role and releases saving controls after a rejected chan
   renderView(api, host, current, vi.fn())
   await flushPromises()
   let tree = renderView(api, host, current, vi.fn())
-  findByTestId(tree, 'cloud-project-member-role-2').props.onChange({
-    target: { value: 'Maintainer' },
-  })
+  findByTestId(tree, 'cloud-project-member-role-2', SelectRoot).props.onValueChange('Maintainer')
   await flushPromises()
   tree = renderView(api, host, current, vi.fn())
-  expect(findByTestId(tree, 'cloud-project-member-role-2').props.value).toBe('Developer')
-  expect(findByTestId(tree, 'cloud-project-member-role-2').props.disabled).toBe(false)
+  expect(findByTestId(tree, 'cloud-project-member-role-2', SelectRoot).props.value).toBe(
+    'Developer'
+  )
+  expect(findByTestId(tree, 'cloud-project-member-role-2', SelectRoot).props.disabled).toBe(false)
   expect(host.trackFailed).toHaveBeenCalledOnce()
 })
 
@@ -764,9 +757,7 @@ it('loads only resources needed by the selected settings section', async () => {
   await flushPromises()
   expect(api.listItems).not.toHaveBeenCalled()
   const tree = renderView(api, host, current, vi.fn(), undefined, 'overview')
-  findByTestId(tree, 'cloud-project-manage-tags').props.onToggle({
-    currentTarget: { open: true },
-  })
+  findByTestId(tree, 'cloud-project-manage-tags').props.onOpenChange(true)
   renderView(api, host, current, vi.fn(), undefined, 'overview')
   await flushPromises()
   expect(api.listItems).toHaveBeenCalledOnce()
@@ -786,9 +777,7 @@ it.each(['en', 'zh-CN'] as const)(
         items: [{ id: 'item-1', version: 1, tags: ['task-only-tag'] }],
       })
     let tree = renderView(api, host, current, vi.fn(), undefined, 'overview')
-    findByTestId(tree, 'cloud-project-manage-tags').props.onToggle({
-      currentTarget: { open: true },
-    })
+    findByTestId(tree, 'cloud-project-manage-tags').props.onOpenChange(true)
     renderView(api, host, current, vi.fn(), undefined, 'overview')
     await flushPromises()
     tree = renderView(api, host, current, vi.fn(), undefined, 'overview')
@@ -822,9 +811,7 @@ it('discards late tag discovery after switching projects and leaves the next ove
       })
   )
   let tree = renderView(api, host, first, vi.fn(), undefined, 'overview')
-  findByTestId(tree, 'cloud-project-manage-tags').props.onToggle({
-    currentTarget: { open: true },
-  })
+  findByTestId(tree, 'cloud-project-manage-tags').props.onOpenChange(true)
   renderView(api, host, first, vi.fn(), undefined, 'overview')
   renderView(api, host, second, vi.fn(), undefined, 'overview')
   resolveTags({

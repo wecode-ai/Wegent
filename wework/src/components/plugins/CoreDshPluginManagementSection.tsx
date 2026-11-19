@@ -1,22 +1,30 @@
-import { type FormEvent, useEffect, useMemo, useState } from 'react'
-import { LoaderCircle, PackagePlus, PlugZap, RefreshCw, RotateCw, Trash2 } from 'lucide-react'
-import { ConfirmDialog } from '@/components/common/ConfirmDialog'
-import { DshSlotSurface } from '@/features/dsh-runtime/DshSlotSurface'
-import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import {
+  CollapsibleRoot,
+  CollapsibleTrigger,
+  CollapsiblePanel,
+} from '@wegent/collaboration/controls/Collapsible'
+import { DeleteIconButton } from '@wegent/collaboration/controls/DeleteIconButton'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import {
+  type CoreDshPlugin,
   installCoreDshPlugin,
   readCoreDshPlugins,
   restartCoreDsh,
   setCoreDshPluginEnabled,
-  type CoreDshPlugin,
   uninstallCoreDshPlugin,
   updateCoreDshPlugin,
 } from '@/features/dsh-plugins/coreDshPlugins'
-import { useTranslation } from '@/hooks/useTranslation'
+import { DshSlotSurface } from '@/features/dsh-runtime/DshSlotSurface'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import {
   MODE_MANAGED_GIT_PLUGIN,
   MODE_MANAGED_HOME_PLUGINS,
 } from '@/features/workbench-mode/workbenchMode'
+import { useTranslation } from '@/hooks/useTranslation'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { LoaderCircle, PackagePlus, PlugZap, RefreshCw, RotateCw } from 'lucide-react'
+import { type FormEvent, useEffect, useMemo, useState } from 'react'
 
 type Operation =
   | 'install'
@@ -118,7 +126,7 @@ export function CoreDshPluginManagementSection({
             {t('workbench.core_dsh_plugins_install_label', '安装 Wework 插件')}
           </label>
           <div className="flex flex-col gap-2 sm:flex-row">
-            <input
+            <ControlInput
               id="core-dsh-plugin-spec"
               value={spec}
               onChange={event => setSpec(event.target.value)}
@@ -126,11 +134,12 @@ export function CoreDshPluginManagementSection({
                 'workbench.core_dsh_plugins_install_placeholder',
                 'package@version / github:owner/plugin / file:/absolute/path'
               )}
-              className="min-h-10 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 text-sm outline-none keyboard:focus:border-primary"
+              className="min-h-10 min-w-0 flex-1"
               data-testid="core-dsh-plugin-spec-input"
               disabled={operation !== null}
             />
-            <button
+            <ControlButton
+              variant="unstyled"
               type="submit"
               className="inline-flex min-h-10 items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50"
               data-testid="core-dsh-plugin-install-button"
@@ -142,7 +151,7 @@ export function CoreDshPluginManagementSection({
                 <PackagePlus className="h-4 w-4" />
               )}
               {t('workbench.core_dsh_plugins_install', '安装')}
-            </button>
+            </ControlButton>
           </div>
         </form>
 
@@ -157,7 +166,8 @@ export function CoreDshPluginManagementSection({
                 '插件配置已更新。你可以继续管理插件，完成后统一重启 Wework 插件运行时。'
               )}
             </span>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               className="inline-flex min-h-9 items-center gap-2 rounded-lg border border-warning/50 px-3 text-sm"
               data-testid="core-dsh-plugin-restart-button"
@@ -166,7 +176,7 @@ export function CoreDshPluginManagementSection({
             >
               <RefreshCw className={`h-4 w-4 ${operation === 'restart' ? 'animate-spin' : ''}`} />
               {t('workbench.core_dsh_plugins_restart', '重启插件运行时')}
-            </button>
+            </ControlButton>
           </div>
         ) : null}
 
@@ -210,16 +220,21 @@ export function CoreDshPluginManagementSection({
               onUninstall={() => setUninstallConfirmation(plugin.name)}
             />
           ))}
-          <details>
-            <summary className="cursor-pointer px-4 py-3 text-sm text-text-secondary">
+          <CollapsibleRoot>
+            <CollapsibleTrigger
+              className="cursor-pointer px-4 py-3 text-sm text-text-secondary"
+              data-testid="core-dsh-plugin-management-section-toggle"
+            >
               {t('workbench.core_dsh_plugins_builtins', '{{count}} 个 Wework 内置插件', {
                 count: builtIns.length,
               })}
-            </summary>
-            {builtIns.map(plugin => (
-              <PluginRow key={plugin.name} plugin={plugin} operation={operation} />
-            ))}
-          </details>
+            </CollapsibleTrigger>
+            <CollapsiblePanel>
+              {builtIns.map(plugin => (
+                <PluginRow key={plugin.name} plugin={plugin} operation={operation} />
+              ))}
+            </CollapsiblePanel>
+          </CollapsibleRoot>
         </div>
       </section>
 
@@ -306,7 +321,9 @@ function PluginRow({
       </div>
       {!plugin.immutable && !modeManaged ? (
         <div className="flex items-center gap-2">
-          <button
+          <ControlButton
+            variant="outline"
+            size="sm"
             type="button"
             className="flex h-11 w-11 items-center justify-center rounded-md border border-border disabled:opacity-50 md:h-8 md:w-8"
             aria-label={t('workbench.core_dsh_plugins_update_named', '更新 {{name}}', {
@@ -317,8 +334,10 @@ function PluginRow({
             onClick={onUpdate}
           >
             <RotateCw className={`h-4 w-4 ${busy ? 'animate-spin' : ''}`} />
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="outline"
+            size="sm"
             type="button"
             className="min-h-11 min-w-11 rounded-md border border-border px-3 text-xs disabled:opacity-50 md:min-h-8 md:min-w-0"
             data-testid={`core-dsh-plugin-toggle-${plugin.name}`}
@@ -328,19 +347,16 @@ function PluginRow({
             {plugin.enabled
               ? t('workbench.core_dsh_plugins_disable', '停用')
               : t('workbench.core_dsh_plugins_enable', '启用')}
-          </button>
-          <button
+          </ControlButton>
+          <DeleteIconButton
             type="button"
-            className="flex h-11 w-11 items-center justify-center rounded-md border border-border disabled:opacity-50 md:h-8 md:w-8"
             aria-label={t('workbench.core_dsh_plugins_uninstall_named', '卸载 {{name}}', {
               name: plugin.displayName,
             })}
             data-testid={`core-dsh-plugin-uninstall-${plugin.name}`}
             disabled={operation !== null || !plugin.canUninstall}
             onClick={onUninstall}
-          >
-            <Trash2 className="h-4 w-4" />
-          </button>
+          />
         </div>
       ) : null}
     </article>

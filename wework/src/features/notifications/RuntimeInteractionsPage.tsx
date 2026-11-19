@@ -1,32 +1,38 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
-import { ArrowLeft, ArrowUpRight, RefreshCw, X } from 'lucide-react'
-import { useTranslation } from '@/hooks/useTranslation'
-import { useIsDesktop } from '@/hooks/useIsDesktop'
-import { useRuntimeInteractions } from './RuntimeInteractionsContext'
-import { NotificationEntitySurface } from './NotificationEntitySurface'
-import { openWeworkScheme } from './schemeEvents'
-import { weworkIssueScheme, weworkTaskScheme } from './scheme'
-import { issueWaitingSince, issueNeedsUser, pendingIssueHumanRequests } from '@wegent/collaboration'
-import { IssueWaitingTime } from './IssueWaitingTime'
-import { usePendingProjectIssues } from './usePendingProjectIssues'
-import { projectIssueAssignedAfter, projectIssueNeedsInput } from './pendingProjectWork'
 import {
-  issueHumanInteraction,
-  issueQuestionIdentity,
-  issueQuestionHandoff,
-  hasRecordedIssueResolution,
-} from './issueHumanInteractions'
+  CollapsibleRoot,
+  CollapsibleTrigger,
+  CollapsiblePanel,
+} from '@wegent/collaboration/controls/Collapsible'
+import { WorkbenchErrorBoundary } from '@/components/common/WorkbenchErrorBoundary'
+import { useIsDesktop } from '@/hooks/useIsDesktop'
+import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
 import type { RuntimeTaskAddress } from '@/types/api'
+import { issueNeedsUser, issueWaitingSince, pendingIssueHumanRequests } from '@wegent/collaboration'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ArrowLeft, ArrowUpRight, RefreshCw, X } from 'lucide-react'
+import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { InteractionDraftRecovery } from './InteractionDraftRecovery'
+import { InteractionTime } from './InteractionTime'
+import {
+  hasRecordedIssueResolution,
+  issueHumanInteraction,
+  issueQuestionHandoff,
+  issueQuestionIdentity,
+} from './issueHumanInteractions'
+import { IssueWaitingTime } from './IssueWaitingTime'
+import { NotificationEntitySurface } from './NotificationEntitySurface'
+import { projectIssueAssignedAfter, projectIssueNeedsInput } from './pendingProjectWork'
+import { canDiscussQuestion, useQuestionDiscussion } from './questionDiscussion'
 import {
   INTERACTION_SOURCES,
   interactionOriginalScheme,
   interactionSource,
 } from './runtimeInteractions'
-import { cn } from '@/lib/utils'
-import { WorkbenchErrorBoundary } from '@/components/common/WorkbenchErrorBoundary'
-import { canDiscussQuestion, useQuestionDiscussion } from './questionDiscussion'
-import { InteractionTime } from './InteractionTime'
-import { InteractionDraftRecovery } from './InteractionDraftRecovery'
+import { useRuntimeInteractions } from './RuntimeInteractionsContext'
+import { weworkIssueScheme, weworkTaskScheme } from './scheme'
+import { openWeworkScheme } from './schemeEvents'
+import { usePendingProjectIssues } from './usePendingProjectIssues'
 
 interface PendingWorkRow {
   id: string
@@ -312,7 +318,8 @@ export function RuntimeInteractionsPage({
             </span>
           </h1>
           {!history && (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="interactions-dismiss-all"
               disabled={dismissing || !rows.length || interactions.busy.size > 0}
@@ -320,9 +327,10 @@ export function RuntimeInteractionsPage({
               onClick={() => void dismissRows(rows)}
             >
               {t('interactions.dismiss_all')}
-            </button>
+            </ControlButton>
           )}
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="interactions-history"
             className="min-h-11 shrink-0 rounded-md px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary md:min-h-8"
@@ -332,8 +340,9 @@ export function RuntimeInteractionsPage({
             }}
           >
             {t(history ? 'interactions.pending' : 'interactions.history')}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="interactions-refresh"
             disabled={loading}
@@ -342,7 +351,7 @@ export function RuntimeInteractionsPage({
             className="flex min-h-11 min-w-11 items-center justify-center rounded-md hover:bg-muted md:min-h-8 md:min-w-8"
           >
             <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
-          </button>
+          </ControlButton>
         </header>
         <div className="flex-1 overflow-y-auto px-2 pb-3">
           <InteractionDraftRecovery />
@@ -369,7 +378,8 @@ export function RuntimeInteractionsPage({
                 </h2>
                 {entries.map(entry => (
                   <div key={entry.id} className="group relative">
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       data-testid="interaction-list-item"
                       data-project-issue={entry.projectItem ? 'true' : undefined}
@@ -406,9 +416,10 @@ export function RuntimeInteractionsPage({
                           testId="interaction-list-time"
                         />
                       </span>
-                    </button>
+                    </ControlButton>
                     {!history && (
-                      <button
+                      <ControlButton
+                        variant="unstyled"
                         type="button"
                         data-testid="interaction-dismiss"
                         aria-label={t('interactions.skip')}
@@ -418,7 +429,7 @@ export function RuntimeInteractionsPage({
                         onClick={() => void dismissRows([entry])}
                       >
                         <X className="h-4 w-4" aria-hidden="true" />
-                      </button>
+                      </ControlButton>
                     )}
                   </div>
                 ))}
@@ -449,8 +460,8 @@ export function RuntimeInteractionsPage({
             Object.entries(projectIssues.errors)
               .filter(([, error]) => error)
               .map(([store, error]) => (
-                <details key={store} className="px-3 py-2 text-sm text-status-error">
-                  <summary
+                <CollapsibleRoot key={store} className="px-3 py-2 text-sm text-status-error">
+                  <CollapsibleTrigger
                     data-testid={`project-work-error-${store}`}
                     className="min-h-11 cursor-pointer md:min-h-8"
                   >
@@ -459,9 +470,11 @@ export function RuntimeInteractionsPage({
                         ? 'issueParticipation.local_load_failed'
                         : 'issueParticipation.cloud_load_failed'
                     )}
-                  </summary>
-                  <p className="mt-2 break-words whitespace-pre-wrap">{error}</p>
-                </details>
+                  </CollapsibleTrigger>
+                  <CollapsiblePanel>
+                    <p className="mt-2 break-words whitespace-pre-wrap">{error}</p>
+                  </CollapsiblePanel>
+                </CollapsibleRoot>
               ))}
         </div>
       </section>
@@ -469,7 +482,8 @@ export function RuntimeInteractionsPage({
         className={cn('flex min-h-0 min-w-0 flex-1 flex-col', !twoPanes && showList && 'hidden')}
       >
         {!twoPanes && (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="interactions-back-to-list"
             className="mx-3 mt-2 flex min-h-11 items-center gap-2 self-start rounded-md px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
@@ -480,7 +494,7 @@ export function RuntimeInteractionsPage({
           >
             <ArrowLeft className="h-4 w-4" aria-hidden="true" />
             {t('interactions.back_to_list')}
-          </button>
+          </ControlButton>
         )}
         {row ? (
           <div className="flex min-h-0 flex-1 flex-col">
@@ -500,7 +514,8 @@ export function RuntimeInteractionsPage({
                 <InteractionTime timestamp={row.timestamp} testId="interaction-detail-time" />
               </div>
               {discussion && liveQuestion && canDiscussQuestion(liveQuestion.payload) && (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="interaction-discuss"
                   disabled={interactions.busy.has(liveQuestion.id)}
@@ -508,9 +523,10 @@ export function RuntimeInteractionsPage({
                   className="min-h-11 shrink-0 rounded-md px-2 text-sm text-text-secondary hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus disabled:opacity-50 md:min-h-7"
                 >
                   {t('question_discussion.open')}
-                </button>
+                </ControlButton>
               )}
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="interaction-open-original"
                 className="flex min-h-11 shrink-0 self-start items-center gap-1 rounded-md px-2 text-sm text-text-secondary hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus sm:self-auto md:min-h-7"
@@ -522,7 +538,7 @@ export function RuntimeInteractionsPage({
               >
                 {t('interactions.open_original')}
                 <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
-              </button>
+              </ControlButton>
             </header>
             <div
               className="flex min-h-0 flex-1 flex-col overflow-hidden"

@@ -1,49 +1,48 @@
-import { useConversationTranslation } from "../ConversationTranslation";
-import type { SubagentBlock } from "./types";
-import { getSubagentName } from "./subagentPresentation";
+import { Button as ControlButton } from '../../markdown/Button'
+import { useConversationTranslation } from '../ConversationTranslation'
+import { getSubagentName } from './subagentPresentation'
+import type { SubagentBlock } from './types'
 
 interface SubagentActivityGroupProps {
-  blocks: SubagentBlock[];
-  onOpenSubagent?: (block: SubagentBlock) => void;
+  blocks: SubagentBlock[]
+  onOpenSubagent?: (block: SubagentBlock) => void
 }
 
-export function SubagentActivityGroup({
-  blocks,
-  onOpenSubagent,
-}: SubagentActivityGroupProps) {
-  const { t } = useConversationTranslation();
+export function SubagentActivityGroup({ blocks, onOpenSubagent }: SubagentActivityGroupProps) {
+  const { t } = useConversationTranslation()
 
-  if (blocks.length === 0) return null;
+  if (blocks.length === 0) return null
 
   return (
     <section
       className="flex min-w-0 flex-wrap items-center gap-2"
-      aria-label={t("subagent.activity")}
+      aria-label={t('subagent.activity')}
       data-testid="subagent-activity-inline-group"
     >
-      {blocks.map((block) => {
-        const name = getSubagentName(block, t);
+      {blocks.map(block => {
+        const name = getSubagentName(block, t)
         const content = (
           <>
             <SubagentAvatar block={block} label={name} className="h-4 w-4" />
             <span className="max-w-56 truncate">{name}</span>
           </>
-        );
+        )
         const className =
-          "inline-flex h-7 max-w-full items-center gap-1.5 rounded-full bg-muted px-2 text-sm text-text-secondary";
+          'inline-flex h-7 max-w-full items-center gap-1.5 rounded-full bg-muted px-2 text-sm text-text-secondary'
 
         return onOpenSubagent ? (
-          <button
+          <ControlButton
+            variant="unstyled"
             key={block.id}
             type="button"
             className={`${className} cursor-pointer hover:text-text-primary focus-visible:outline-2 focus-visible:outline-offset-2`}
-            aria-label={t("subagent.open_agent", { name })}
+            aria-label={t('subagent.open_agent', { name })}
             title={name}
             onClick={() => onOpenSubagent(block)}
             data-testid="subagent-activity-chip"
           >
             {content}
-          </button>
+          </ControlButton>
         ) : (
           <span
             key={block.id}
@@ -53,46 +52,41 @@ export function SubagentActivityGroup({
           >
             {content}
           </span>
-        );
+        )
       })}
-      <span
-        className="text-sm text-text-secondary"
-        data-testid="subagent-activity-status"
-      >
+      <span className="text-sm text-text-secondary" data-testid="subagent-activity-status">
         {getSubagentGroupStatus(blocks, t)}
       </span>
     </section>
-  );
+  )
 }
 
 function getSubagentGroupStatus(
   blocks: SubagentBlock[],
-  t: (key: string, options?: Record<string, string | number>) => string,
+  t: (key: string, options?: Record<string, string | number>) => string
 ): string {
-  if (
-    blocks.some((block) => block.status !== "done" && block.status !== "error")
-  ) {
-    return t("subagent.status_working");
+  if (blocks.some(block => block.status !== 'done' && block.status !== 'error')) {
+    return t('subagent.status_working')
   }
-  if (blocks.some((block) => block.agentStatus === "interrupted")) {
-    return t("subagent.status_interrupted");
+  if (blocks.some(block => block.agentStatus === 'interrupted')) {
+    return t('subagent.status_interrupted')
   }
-  if (blocks.some((block) => block.status === "error")) {
-    return t("subagent.status_failed");
+  if (blocks.some(block => block.status === 'error')) {
+    return t('subagent.status_failed')
   }
-  return t("subagent.status_done");
+  return t('subagent.status_done')
 }
 
 export function SubagentAvatar({
   block,
   label,
-  className = "h-4 w-4",
+  className = 'h-4 w-4',
 }: {
-  block: SubagentBlock;
-  label: string;
-  className?: string;
+  block: SubagentBlock
+  label: string
+  className?: string
 }) {
-  const seed = block.agentThreadId || block.agentId || block.id;
+  const seed = block.agentThreadId || block.agentId || block.id
 
   return (
     <span
@@ -100,7 +94,7 @@ export function SubagentAvatar({
       data-avatar-seed={seed}
       aria-hidden="true"
     >
-      {Array.from(label.trim())[0]?.toUpperCase() || "A"}
+      {Array.from(label.trim())[0]?.toUpperCase() || 'A'}
     </span>
-  );
+  )
 }

@@ -1,13 +1,14 @@
-import { useEffect, useState } from 'react'
 import type {
-  StandInExecutorApi,
-  ProjectCoordinationState,
-  ProjectCoordinationProcessing,
   ProjectCoordinationBinding,
+  ProjectCoordinationProcessing,
+  ProjectCoordinationState,
+  StandInExecutorApi,
 } from '@/api/standIn'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useEffect, useState } from 'react'
 
 export function ProjectCoordinationPanel({
   api,
@@ -120,7 +121,9 @@ export function ProjectCoordinationPanel({
                   })}
         </span>
         {state && (!binding?.enabled || !mine) && state.canEnable && (
-          <button
+          <ControlButton
+            variant="primary"
+            size="sm"
             type="button"
             data-testid="project-coordination-enable"
             disabled={pending}
@@ -132,10 +135,11 @@ export function ProjectCoordinationPanel({
                 ? 'standIn.project_coordinator.takeover'
                 : 'standIn.project_coordinator.enable_coordination'
             )}
-          </button>
+          </ControlButton>
         )}
         {binding?.enabled && state?.canStop && (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="project-coordination-stop"
             disabled={pending}
@@ -143,10 +147,11 @@ export function ProjectCoordinationPanel({
             className="min-h-11 rounded-md px-2 hover:bg-muted disabled:opacity-40 md:min-h-8"
           >
             {t('standIn.project_coordinator.stop_coordination')}
-          </button>
+          </ControlButton>
         )}
         {mine && (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="project-coordination-check"
             disabled={pending}
@@ -164,7 +169,7 @@ export function ProjectCoordinationPanel({
             }}
           >
             {t('standIn.project_coordinator.check_coordination')}
-          </button>
+          </ControlButton>
         )}
       </div>
       <p className="mt-1 text-xs text-text-muted">
@@ -182,28 +187,30 @@ export function ProjectCoordinationPanel({
       {(actionError || error || processing?.error) && (
         <div role="alert" className="mt-2 text-error">
           <p>{actionError ?? error ?? processing?.error}</p>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="project-coordination-retry"
             className="min-h-11 underline md:min-h-8"
             onClick={() => setRevision(value => value + 1)}
           >
             {t('standIn.reload')}
-          </button>
+          </ControlButton>
         </div>
       )}
       {processing &&
         Object.values(processing.questions ?? {}).map(question => (
           <div key={question.issueId} className="mt-2 flex flex-wrap items-center gap-2">
             <p className="min-w-0 flex-1 break-words">{question.question}</p>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid={`project-coordination-question-${question.issueId}`}
               className="min-h-11 underline md:min-h-8"
               onClick={() => onOpenIssue(question.issueId)}
             >
               {t('standIn.project_coordinator.answer_in_issue')}
-            </button>
+            </ControlButton>
           </div>
         ))}
       <ConfirmDialog

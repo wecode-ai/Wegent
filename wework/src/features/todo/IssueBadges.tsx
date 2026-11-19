@@ -1,3 +1,8 @@
+import { Tooltip } from '@/components/ui/tooltip'
+import { useTranslation } from '@/hooks/useTranslation'
+import { openExternalUrl } from '@/lib/external-links'
+import type { CollaborationIssueBadge } from '@wegent/collaboration'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
   Check,
   CircleCheck,
@@ -10,10 +15,6 @@ import {
   Loader2,
   TriangleAlert,
 } from 'lucide-react'
-import type { CollaborationIssueBadge } from '@wegent/collaboration'
-import { Tooltip } from '@/components/ui/tooltip'
-import { useTranslation } from '@/hooks/useTranslation'
-import { openExternalUrl } from '@/lib/external-links'
 
 export function IssueBadges({
   badges,
@@ -75,7 +76,8 @@ function IssueBadgeView({ badge }: { badge: CollaborationIssueBadge }) {
   )
   const className = `inline-flex h-6 items-center gap-1.5 rounded-md bg-muted/40 px-1.5 text-xs ${badgeTones[badge.tone ?? 'neutral']}`
   const view = badge.url ? (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       className={`${className} hover:bg-muted`}
       data-testid={`issue-badge-${badge.id}`}
@@ -87,7 +89,7 @@ function IssueBadgeView({ badge }: { badge: CollaborationIssueBadge }) {
       }}
     >
       {content}
-    </button>
+    </ControlButton>
   ) : (
     <span
       className={className}

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ComponentType, ReactNode } from 'react'
+import type { ControlDensity } from '../controls/recipes'
 
 export type ProjectManageRole = 'Owner' | 'Maintainer' | 'Developer' | 'Viewer'
 export type ProjectManageVisibility = 'private' | 'public'
@@ -148,7 +149,7 @@ export interface ProjectManageHost {
     X: ComponentType<{ className?: string }>
   }
   translate(key: string, fallback: string, options?: Record<string, string | number>): string
-  confirm(message: string): boolean
+  confirm(message: string): Promise<boolean>
   trackCompleted(action: 'update' | 'member_invite' | 'member_role_change' | 'member_remove'): void
   trackFailed(): void
   renderTooltip(options: { label: string; align?: 'end'; children: ReactNode }): ReactNode
@@ -156,6 +157,7 @@ export interface ProjectManageHost {
     ariaLabel: string
     testId: string
     placement: 'bottom-end'
+    density?: ControlDensity
     triggerClassName: string
     items: ProjectManageMenuItem[]
   }): ReactNode

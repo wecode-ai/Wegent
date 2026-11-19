@@ -1,22 +1,30 @@
-import { useEffect, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
-import { Brain, ListTodo, MessageSquare, Send, Settings, X } from 'lucide-react'
+import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
+import { localRuntimeAttachments } from '@/lib/runtime-attachments'
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import type { DeviceInfo, RuntimeTaskAddress } from '@/types/api'
 import type {
   CollaborationGroup,
   CollaborationProject,
   SharedWorkspaceApi,
 } from '@wegent/collaboration'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { DeviceInfo, RuntimeTaskAddress } from '@/types/api'
-import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
-import { useTranslation } from '@/hooks/useTranslation'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
-import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { localRuntimeAttachments } from '@/lib/runtime-attachments'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Brain, ListTodo, MessageSquare, Send, Settings, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { ProjectCoordinationPanel } from './ProjectCoordinationPanel'
+import { ProjectCoordinatorPublication } from './ProjectCoordinatorPublication'
 import { StandInDeviceSelect } from './StandInDeviceSelect'
 import { StandInMemoryPanel } from './StandInMemoryPanel'
-import { ProjectCoordinatorPublication } from './ProjectCoordinatorPublication'
-import { ProjectCoordinationPanel } from './ProjectCoordinationPanel'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 
 export function ProjectCoordinatorConversation({
@@ -59,10 +67,7 @@ export function ProjectCoordinatorConversation({
     setMemory(false)
     setOpen(false)
   }
-  const dialogRef = useDialogKeyboard<HTMLElement>(
-    closeConversation,
-    open && !memory && !publication
-  )
+  const dialogRef = useRef<HTMLElement>(null)
   const leave = (action: () => void) => {
     if (publication) publicationRef.current?.requestLeave(action)
     else if (memory) memoryRef.current?.requestLeave(action)
@@ -101,7 +106,8 @@ export function ProjectCoordinatorConversation({
   }
   return (
     <>
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="project-coordinator-open"
         onClick={() => setOpen(true)}
@@ -110,7 +116,7 @@ export function ProjectCoordinatorConversation({
       >
         <MessageSquare className="h-4 w-4" />
         {t('standIn.project_coordinator.open')}
-      </button>
+      </ControlButton>
       {open &&
         createPortal(
           <div
@@ -122,13 +128,17 @@ export function ProjectCoordinatorConversation({
               }
             }}
           >
-            <section
-              ref={dialogRef}
-              role="dialog"
-              aria-modal="true"
-              aria-label={t('standIn.project_coordinator.title', { project: project.name })}
-              className="flex h-full w-full max-w-5xl min-w-0 flex-col border-l border-border bg-background shadow-xl"
-              data-testid="project-coordinator-dialog"
+            <DialogSurface
+              onClose={closeConversation}
+              active={open && !memory && !publication}
+              render={
+                <section
+                  ref={dialogRef}
+                  aria-label={t('standIn.project_coordinator.title', { project: project.name })}
+                  className="flex h-full w-full max-w-5xl min-w-0 flex-col border-l border-border bg-background shadow-xl"
+                  data-testid="project-coordinator-dialog"
+                />
+              }
             >
               <header className="flex min-h-14 shrink-0 flex-wrap items-center gap-2 border-b border-border px-5 py-3">
                 <div className="min-w-0 flex-1">
@@ -144,7 +154,8 @@ export function ProjectCoordinatorConversation({
                     {t('standIn.project_coordinator.private_context')}
                   </p>
                 </div>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="project-coordinator-work-list"
                   disabled={memory || publication}
@@ -155,8 +166,9 @@ export function ProjectCoordinatorConversation({
                 >
                   <ListTodo className="h-4 w-4" />
                   {t('standIn.workspace.work_list')}
-                </button>
-                <button
+                </ControlButton>
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="project-coordinator-publish"
                   onClick={() => setPublication(true)}
@@ -165,8 +177,9 @@ export function ProjectCoordinatorConversation({
                 >
                   <Send className="h-4 w-4" />
                   {t('standIn.project_coordinator.publish')}
-                </button>
-                <button
+                </ControlButton>
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="project-coordinator-memory"
                   onClick={() => setMemory(true)}
@@ -175,8 +188,9 @@ export function ProjectCoordinatorConversation({
                 >
                   <Brain className="h-4 w-4" />
                   {t('standIn.memory.title')}
-                </button>
-                <button
+                </ControlButton>
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="project-coordinator-settings"
                   disabled={memory || publication}
@@ -185,8 +199,9 @@ export function ProjectCoordinatorConversation({
                 >
                   <Settings className="h-4 w-4" />
                   {t('standIn.settings')}
-                </button>
-                <button
+                </ControlButton>
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="project-coordinator-close"
                   aria-label={t('standIn.close')}
@@ -196,7 +211,7 @@ export function ProjectCoordinatorConversation({
                   className="flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted"
                 >
                   <X className="h-4 w-4" />
-                </button>
+                </ControlButton>
               </header>
               {publication && (
                 <ProjectCoordinatorPublication
@@ -231,20 +246,28 @@ export function ProjectCoordinatorConversation({
                         <span className="shrink-0 text-text-muted">
                           {t('standIn.project_coordinator.group')}
                         </span>
-                        <select
-                          data-testid="project-coordinator-group"
-                          value={selectedGroup}
-                          onChange={event => setSelectedGroup(event.target.value)}
-                          className="min-h-9 min-w-0 flex-1 bg-background outline-none"
+                        <SelectRoot
+                          value={normalizeSelectValue(selectedGroup)}
+                          onValueChange={selectedValue => {
+                            if (selectedValue !== null) return setSelectedGroup(selectedValue)
+                          }}
                         >
-                          <option value="">{t('standIn.project_coordinator.choose_group')}</option>
-                          {groups?.map(row => (
-                            <option key={row.id} value={row.id}>
-                              {row.name}
-                              {row.leader.name ? ` · ${row.leader.name}` : ''}
-                            </option>
-                          ))}
-                        </select>
+                          <SelectTrigger
+                            data-testid="project-coordinator-group"
+                            className="min-h-9 min-w-0 flex-1"
+                          />
+                          <SelectContent>
+                            <SelectItem value="">
+                              {t('standIn.project_coordinator.choose_group')}
+                            </SelectItem>
+                            {groups?.map(row => (
+                              <SelectItem key={row.id} value={String(row.id)}>
+                                {row.name}
+                                {row.leader.name ? ` · ${row.leader.name}` : ''}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </SelectRoot>
                       </label>
                       {localDeviceId && (
                         <StandInDeviceSelect
@@ -275,14 +298,15 @@ export function ProjectCoordinatorConversation({
                     {error ? (
                       <div role="alert" className="p-5 text-sm text-error">
                         <p>{error}</p>
-                        <button
+                        <ControlButton
+                          variant="unstyled"
                           type="button"
                           data-testid="project-coordinator-retry"
                           onClick={() => setRetry(value => value + 1)}
                           className="min-h-9 underline"
                         >
                           {t('standIn.reload')}
-                        </button>
+                        </ControlButton>
                       </div>
                     ) : groups === null ? (
                       <p role="status" className="p-5 text-sm text-text-muted">
@@ -291,14 +315,15 @@ export function ProjectCoordinatorConversation({
                     ) : !groups.length ? (
                       <div className="p-5 text-sm text-text-muted">
                         <p>{t('standIn.project_coordinator.no_group')}</p>
-                        <button
+                        <ControlButton
+                          variant="unstyled"
                           type="button"
                           data-testid="project-coordinator-configure-group"
                           onClick={configure}
                           className="min-h-9 underline"
                         >
                           {t('standIn.project_coordinator.configure')}
-                        </button>
+                        </ControlButton>
                       </div>
                     ) : group?.leader.kind === 'human' ? (
                       <p className="p-5 text-sm text-text-muted">
@@ -323,7 +348,7 @@ export function ProjectCoordinatorConversation({
                   </>
                 )}
               </div>
-            </section>
+            </DialogSurface>
           </div>,
           document.body
         )}
@@ -374,7 +399,8 @@ function ProjectCoordinatorChat({
     return (
       <div role="alert" className="p-5 text-sm text-error">
         <p>{error}</p>
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="project-coordinator-chat-retry"
           onClick={() => {
@@ -385,7 +411,7 @@ function ProjectCoordinatorChat({
           className="min-h-9 underline"
         >
           {t('standIn.reload')}
-        </button>
+        </ControlButton>
       </div>
     )
   if (!initial)

@@ -34,7 +34,7 @@ import { useComposerTransfers } from './useComposerTransfers'
 import { useComposerLinkEditing } from './useComposerLinkEditing'
 import { ComposerErrorBanner } from './ComposerErrorBanner'
 import { useComposerInputEvents } from './useComposerInputEvents'
-import { useOutsideClick } from './useOutsideClick'
+import { ComposerAutocompletePopup } from './ComposerAutocompletePopup'
 import {
   ComposerProseMirrorEditor,
   type ComposerEditorHandle,
@@ -99,7 +99,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   className,
   scrollContainerClassName,
   nativeEmptyCaret = false,
-  skillMenuClassName = 'left-0 w-[min(28rem,calc(100vw-2rem))]',
+  skillMenuClassName = 'w-[min(28rem,calc(100vw-2rem))]',
   disableAutocomplete = false,
   onKeyDown,
   onPasteFiles,
@@ -174,7 +174,7 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
     [compareApps]
   )
   const menuRef = useRef<HTMLDivElement>(null)
-  const modelMenuRef = useRef<HTMLDivElement>(null)
+  const [popupAnchor, setPopupAnchor] = useState<HTMLDivElement | null>(null)
   const editorRef = useRef<ComposerEditorHandle | null>(null)
   const focusRequestExpiresAtRef = useRef(0)
   const valueRef = useRef(value)
@@ -292,7 +292,8 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   // `cloud://projects` capability reference.
   const cloudSpaceDirectReference = `[$${t('workbench.mention_cloud_project_space', '项目空间')}](cloud://projects)`
 
-  const canOpenSlashModelMenu = isModelSelectionReady && Boolean(onOpenModelSelector || (onSelectModel && models.length > 0))
+  const canOpenSlashModelMenu =
+    isModelSelectionReady && Boolean(onOpenModelSelector || (onSelectModel && models.length > 0))
   const openSlashModelMenu = useCallback(() => {
     if (onOpenModelSelector) {
       onOpenModelSelector()
@@ -850,15 +851,6 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
     [closeSlashModelMenu, onSelectModel]
   )
 
-  const outsideClickExceptions = useMemo(() => [textareaRef], [textareaRef])
-  useOutsideClick(
-    menuRef,
-    showSkillMenu || showSlashMenu,
-    closeAutocompleteMenu,
-    outsideClickExceptions
-  )
-  useOutsideClick(modelMenuRef, modelMenuOpen, closeSlashModelMenu, outsideClickExceptions)
-
   const {
     handleCompositionStart,
     handleCompositionEnd,
@@ -918,10 +910,16 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
   })
 
   const predictionHidden =
-    hasDraft || disabled || isStreaming || showSkillMenu || showSlashMenu || modelMenuOpen || modelSelectorOpen
+    hasDraft ||
+    disabled ||
+    isStreaming ||
+    showSkillMenu ||
+    showSlashMenu ||
+    modelMenuOpen ||
+    modelSelectorOpen
 
   return (
-    <div className="relative min-w-0 flex-1 w-full">
+    <div ref={setPopupAnchor} className="relative min-w-0 flex-1 w-full">
       <ComposerErrorBanner error={transferError || actionError} />
       {Bindings && (
         <Bindings
@@ -986,67 +984,82 @@ export function ComposerAutocompleteInput<Project = unknown, Conversation = unkn
           editorRef.current?.focus()
         }}
       />
-      {showSkillMenu && (
-        <ComposerMentionMenu
-          translate={t}
-          menuRef={menuRef}
-          rows={mentionMenuRows}
-          selectedIndex={highlightedIndex}
+      {(showSkillMenu || showSlashMenu || modelMenuOpen) && (
+        <ComposerAutocompletePopup
+          anchor={popupAnchor}
+          editorRef={textareaRef}
+          label={
+            modelMenuOpen ? t('workbench.search_models') : t('workbench.slash_command_menu_title')
+          }
           className={skillMenuClassName}
-          mentionMode={activeMenu?.kind === 'mention'}
-          projectSpaceScope={cloudProjectsOpen || cloudProjectScopeActive}
-          loading={isMentionLoading || workspaceSearch.loading}
-          error={hasMentionLoadError || workspaceSearch.error}
-          canBrowseFiles={canPickNativeWorkspacePaths}
-          onRetry={() => {
-            workspaceSearch.retry()
-            loadLocalMentions({ force: true })
+          onClose={restoreEditor => {
+            if (modelMenuOpen) closeSlashModelMenu(restoreEditor)
+            else closeAutocompleteMenu()
           }}
-          onHighlight={setSelectedIndex}
-          onSelect={handleMentionRowClick}
-        />
-      )}
-      {showSlashMenu && (
-        <div ref={menuRef}>
-          <SlashCommandMenu
-            renderAppIcon={renderAppIcon}
-            commands={filteredSlashCommands}
-            selectedIndex={highlightedIndex}
-            className={skillMenuClassName}
-            title={t('workbench.slash_command_menu_title')}
-            noResultsLabel={t('workbench.no_slash_commands')}
-            loadingSkills={isSlashMentionLoading}
-            skillLoadError={hasSlashMentionLoadError}
-            skillGroupLabel={t('workbench.slash_command_group_skills')}
-            skillLoadingLabel={t('workbench.loading_slash_command_skills')}
-            skillLoadErrorLabel={t('workbench.slash_command_skills_error')}
-            skillRetryLabel={t('workbench.retry_local_skills')}
-            onSelectCommand={command => selectSlashCommand(command, activeMenu?.trigger)}
-            onHighlightCommand={setSelectedIndex}
-            onRetrySkills={() => loadLocalMentions({ force: true })}
-          />
-        </div>
-      )}
-      {modelMenuOpen && (
-        <div ref={modelMenuRef}>
-          <SlashModelMenu
-            translate={t}
-            models={models}
-            selectedModel={selectedModel ?? null}
-            selectedModelOptions={selectedModelOptions}
-            query={modelQuery}
-            selectedIndex={modelSelectedIndex}
-            className={skillMenuClassName}
-            searchPlaceholder={t('workbench.search_models')}
-            noResultsLabel={t('workbench.no_models')}
-            onQueryChange={setModelQuery}
-            onSelectedIndexChange={setModelSelectedIndex}
-            onSelectModel={selectSlashModel}
-            onBlockedModelSelect={onBlockedModelSelect}
-            onClose={() => closeSlashModelMenu(true)}
-            getCompatibilityDisabledMessage={getModelCompatibilityDisabledMessage}
-          />
-        </div>
+        >
+          {showSkillMenu && (
+            <ComposerMentionMenu
+              translate={t}
+              menuRef={menuRef}
+              rows={mentionMenuRows}
+              selectedIndex={highlightedIndex}
+              className=""
+              mentionMode={activeMenu?.kind === 'mention'}
+              projectSpaceScope={cloudProjectsOpen || cloudProjectScopeActive}
+              loading={isMentionLoading || workspaceSearch.loading}
+              error={hasMentionLoadError || workspaceSearch.error}
+              canBrowseFiles={canPickNativeWorkspacePaths}
+              onRetry={() => {
+                workspaceSearch.retry()
+                loadLocalMentions({ force: true })
+              }}
+              onHighlight={setSelectedIndex}
+              onSelect={handleMentionRowClick}
+            />
+          )}
+          {showSlashMenu && (
+            <div ref={menuRef}>
+              <SlashCommandMenu
+                renderAppIcon={renderAppIcon}
+                commands={filteredSlashCommands}
+                selectedIndex={highlightedIndex}
+                className=""
+                title={t('workbench.slash_command_menu_title')}
+                noResultsLabel={t('workbench.no_slash_commands')}
+                loadingSkills={isSlashMentionLoading}
+                skillLoadError={hasSlashMentionLoadError}
+                skillGroupLabel={t('workbench.slash_command_group_skills')}
+                skillLoadingLabel={t('workbench.loading_slash_command_skills')}
+                skillLoadErrorLabel={t('workbench.slash_command_skills_error')}
+                skillRetryLabel={t('workbench.retry_local_skills')}
+                onSelectCommand={command => selectSlashCommand(command, activeMenu?.trigger)}
+                onHighlightCommand={setSelectedIndex}
+                onRetrySkills={() => loadLocalMentions({ force: true })}
+              />
+            </div>
+          )}
+          {modelMenuOpen && (
+            <>
+              <SlashModelMenu
+                translate={t}
+                models={models}
+                selectedModel={selectedModel ?? null}
+                selectedModelOptions={selectedModelOptions}
+                query={modelQuery}
+                selectedIndex={modelSelectedIndex}
+                className=""
+                searchPlaceholder={t('workbench.search_models')}
+                noResultsLabel={t('workbench.no_models')}
+                onQueryChange={setModelQuery}
+                onSelectedIndexChange={setModelSelectedIndex}
+                onSelectModel={selectSlashModel}
+                onBlockedModelSelect={onBlockedModelSelect}
+                onClose={() => closeSlashModelMenu(true)}
+                getCompatibilityDisabledMessage={getModelCompatibilityDisabledMessage}
+              />
+            </>
+          )}
+        </ComposerAutocompletePopup>
       )}
       {editingLink && (
         <LinkEditPopover

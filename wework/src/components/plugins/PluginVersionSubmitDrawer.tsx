@@ -1,9 +1,11 @@
-import { ArrowRight, FileText, LoaderCircle, Users, X } from 'lucide-react'
-import { useId, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { PluginAccessResponse } from '@/types/api'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ArrowRight, FileText, LoaderCircle, Users, X } from 'lucide-react'
+import { useId, useRef, useState } from 'react'
 import { formatPluginVersion } from './plugin-display'
 
 export interface PluginVersionSubmitDrawerProps {
@@ -97,28 +99,28 @@ export function PluginVersionSubmitDrawer({
   const [releaseNotes, setReleaseNotes] = useState(initialReleaseNotes)
   const notesInvalid = releaseNotes.length > 0 && !releaseNotes.trim()
   const canSubmit = Boolean(releaseNotes.trim()) && releaseNotes.length <= RELEASE_NOTES_LIMIT
-  const drawerRef = useDialogKeyboard<HTMLElement>(
-    () => {
-      if (!publishing) onClose()
-    },
-    true,
-    '[data-testid="plugin-version-submit-notes"]:not([disabled])'
-  )
+  const drawerRef = useRef<HTMLElement>(null)
 
   return (
     <div
       data-testid="plugin-version-submit-overlay"
       className="plugin-dialog-overlay fixed inset-0 z-modal flex justify-end"
     >
-      <section
-        ref={drawerRef}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={`${id}-title`}
-        aria-busy={publishing}
-        tabIndex={-1}
-        data-testid="plugin-version-submit-drawer"
-        className="flex h-full w-full max-w-[480px] flex-col border-l border-border/30 bg-background text-text-primary shadow-lg"
+      <DialogSurface
+        onClose={() => {
+          if (!publishing) onClose()
+        }}
+        initialFocus={'[data-testid="plugin-version-submit-notes"]:not([disabled])'}
+        render={
+          <section
+            ref={drawerRef}
+            aria-labelledby={`${id}-title`}
+            aria-busy={publishing}
+            tabIndex={-1}
+            data-testid="plugin-version-submit-drawer"
+            className="flex h-full w-full max-w-[480px] flex-col border-l border-border/30 bg-background text-text-primary shadow-lg"
+          />
+        }
       >
         <header className="flex items-start justify-between gap-4 px-5 py-5">
           <div className="min-w-0">
@@ -157,7 +159,7 @@ export function PluginVersionSubmitDrawer({
                   *
                 </span>
               </label>
-              <textarea
+              <ControlTextarea
                 id={`${id}-notes`}
                 data-testid="plugin-version-submit-notes"
                 className="h-40 w-full resize-none rounded-xl border border-border bg-background px-3 py-3 text-base outline-none keyboard:focus:border-focus/70 keyboard:focus:ring-2 keyboard:focus:ring-focus/15 disabled:opacity-60"
@@ -193,7 +195,8 @@ export function PluginVersionSubmitDrawer({
                 {t('workbench.plugins_version_submit_inherit_scope', '沿用当前分享范围')}
               </h3>
               <PluginVersionAccessSummary access={access} />
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="plugin-version-submit-manage-access"
                 className="min-h-11 rounded-md text-sm text-focus hover:underline keyboard:focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 disabled:pointer-events-none disabled:opacity-50 md:min-h-8"
@@ -201,7 +204,7 @@ export function PluginVersionSubmitDrawer({
                 onClick={() => onManageAccess(releaseNotes)}
               >
                 {t('workbench.plugins_version_submit_manage_scope', '管理分享范围')}
-              </button>
+              </ControlButton>
             </section>
 
             <p
@@ -246,7 +249,7 @@ export function PluginVersionSubmitDrawer({
             </Button>
           </footer>
         </form>
-      </section>
+      </DialogSurface>
     </div>
   )
 }

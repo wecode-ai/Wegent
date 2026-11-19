@@ -1,6 +1,11 @@
-import { useId, type CSSProperties, type ReactNode, type RefObject } from 'react'
+import type { CSSProperties, ReactNode, RefObject } from 'react'
+import {
+  ScrollArea,
+  ScrollAreaContent,
+  ScrollAreaViewport,
+} from '@wegent/collaboration/controls/ScrollArea'
 import { cn } from '@/lib/utils'
-import { TaskDetailScrollbar } from './TaskDetailScrollbar'
+import { WorkbenchScrollbar } from './WorkbenchScrollbar'
 
 interface TaskDetailScrollAreaProps {
   children: ReactNode
@@ -25,33 +30,38 @@ export function TaskDetailScrollArea({
   showPageTopBar,
   viewportRef,
 }: TaskDetailScrollAreaProps) {
-  const viewportId = useId()
   return (
-    <div data-testid="desktop-workbench-scroll-frame" className={frameClassName} style={frameStyle}>
-      <div
-        id={viewportId}
+    <ScrollArea
+      type="auto"
+      data-testid="desktop-workbench-scroll-frame"
+      className={frameClassName}
+      style={frameStyle}
+    >
+      <ScrollAreaViewport
         ref={viewportRef}
         data-testid="desktop-workbench-content"
         data-scroll-origin="top"
         data-embedded-browser-label={defaultEmbeddedBrowserLabel}
+        style={{ overflowX: 'hidden', overflowY: hasConversation ? 'auto' : 'hidden' }}
         className={cn(
-          'relative flex h-full min-w-0 flex-1',
-          hasConversation
-            ? 'scrollbar-none flex-col overflow-x-hidden overflow-y-auto [overflow-anchor:none]'
-            : 'overflow-hidden',
+          'relative h-full min-w-0 flex-1 scrollbar-none [overflow-anchor:none]',
           showPageTopBar && 'pt-11'
         )}
       >
-        {children}
-      </div>
+        <ScrollAreaContent className="relative flex min-h-full min-w-0 flex-col">
+          {children}
+        </ScrollAreaContent>
+      </ScrollAreaViewport>
       {hasConversation ? (
-        <TaskDetailScrollbar
-          viewportRef={viewportRef}
-          scrollbarRef={scrollbarRef}
-          viewportId={viewportId}
+        <WorkbenchScrollbar
+          ref={scrollbarRef}
+          orientation="vertical"
+          testId="desktop-workbench-scrollbar"
+          thumbTestId="desktop-workbench-scrollbar-thumb"
+          className="absolute bottom-[3px] right-[3px] top-[3px] z-critical w-2 p-0"
         />
       ) : null}
       {overlay}
-    </div>
+    </ScrollArea>
   )
 }

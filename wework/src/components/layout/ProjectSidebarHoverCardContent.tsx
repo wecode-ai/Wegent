@@ -1,9 +1,10 @@
-import { ChevronRight, FolderOpen, Pin, Server } from 'lucide-react'
-import type { ReactNode } from 'react'
 import { ProjectFolderIcon } from '@/components/projects/ProjectFolderIcon'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
 import type { ProjectWithTasks } from '@/types/api'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ChevronRight, FolderOpen, Pin, Server } from 'lucide-react'
+import type { ReactNode } from 'react'
 
 export interface ProjectHoverSource {
   id: string
@@ -74,7 +75,8 @@ export function ProjectSidebarHoverCardContent({
             />
           )}
         </span>
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid={`project-hover-rename-${project.id}`}
           onClick={onRename}
@@ -82,8 +84,9 @@ export function ProjectSidebarHoverCardContent({
           aria-label={t('workbench.rename_project')}
         >
           {project.name}
-        </button>
-        <button
+        </ControlButton>
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid={`project-hover-pin-${project.id}`}
           disabled={!canPin}
@@ -96,7 +99,7 @@ export function ProjectSidebarHoverCardContent({
           aria-label={pinned ? t('workbench.unpin_project') : t('workbench.pin_project')}
         >
           <Pin className={cn('h-4 w-4', pinned && 'fill-current')} />
-        </button>
+        </ControlButton>
       </div>
 
       <div className="flex flex-wrap items-center gap-x-1.5 text-xs leading-5 text-text-secondary">
@@ -137,7 +140,8 @@ export function ProjectSidebarHoverCardContent({
               </>
             )
             return source.onOpen ? (
-              <button
+              <ControlButton
+                variant="unstyled"
                 key={source.id}
                 type="button"
                 data-testid={`project-hover-source-${project.id}-${source.kind}`}
@@ -146,7 +150,7 @@ export function ProjectSidebarHoverCardContent({
                 className="group/source flex min-h-7 w-full items-start gap-2 rounded-md px-1 py-1 text-left hover:bg-muted focus-visible:bg-muted focus-visible:outline-none"
               >
                 {content}
-              </button>
+              </ControlButton>
             ) : (
               <div
                 key={source.id}

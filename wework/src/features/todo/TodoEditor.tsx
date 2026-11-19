@@ -1,19 +1,22 @@
+import type { AITableApi } from '@/api/aitable'
+import type { ProjectChatClient } from '@/api/backend/projectChatSocket'
+import type { CloudLoopItem, CloudProject, LoopItemTaskBinding } from '@/api/deliveries'
+import type { createProjectChatAgentApi } from '@/api/projectChatAgents'
+import { AttachmentPreviewContext } from '@/components/chat/AttachmentPreviewContext'
+import { createWeworkDeliverySharedWorkspaceApi } from '@/features/collaboration/weworkSharedWorkspaceApi'
+import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
+import { saveBlobToDownloads } from '@/lib/blobDownload'
+import type { ProjectWithTasks, RuntimeTaskAddress } from '@/types/api'
+import type { WorkspaceAttachmentPreviewSource } from '@/types/workspace-files'
 import {
-  IssueAssignmentReceipts,
-  type IssueAssignmentReceiptState,
-} from './IssueAssignmentReceipts'
-import { issueAssignmentRevision } from './issueAssignmentReceiptScope'
-import { useCallback, useMemo, useState, type ReactNode } from 'react'
-import { Send } from 'lucide-react'
-import { IssueExistingTaskAction, type ExistingIssueTaskSource } from './IssueExistingTaskAction'
-import {
-  TodoEditor as SharedIssueDetailEditor,
-  type CollaborationAssignment,
   createCollaborationTranslator,
   createSharedIssueDetailPort,
-  IssueMarkdownProvider,
-  type CollaborationAttachment,
   formatIssueAttachmentSize,
+  IssueMarkdownProvider,
+  TodoEditor as SharedIssueDetailEditor,
+  type CollaborationAssignment,
+  type CollaborationAttachment,
   type SharedEditorIssue,
   type SharedEditorProject,
   type SharedIssueDetailCreateInput,
@@ -22,29 +25,26 @@ import {
   type SharedIssueDetailTaskExecutionState,
   type SharedIssueDetailWorkspaceApi,
 } from '@wegent/collaboration'
-import type { ProjectChatClient } from '@/api/backend/projectChatSocket'
-import type { createProjectChatAgentApi } from '@/api/projectChatAgents'
-import type { AITableApi } from '@/api/aitable'
-import type { CloudLoopItem, CloudProject, LoopItemTaskBinding } from '@/api/deliveries'
-import type { ProjectWithTasks } from '@/types/api'
-import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
-import type { RuntimeTaskAddress } from '@/types/api'
-import { useTranslation } from '@/hooks/useTranslation'
-import { saveBlobToDownloads } from '@/lib/blobDownload'
-import { AssignmentChainPopover } from './AssignmentChainPopover'
-import { isLoopItemExecutionActive } from './cloudMyWorkModel'
-import { StatusHistoryPopover } from './StatusHistoryPopover'
-import { TaskDescriptionEditor } from './TaskDescriptionEditor'
-import { normalizeTaskDescription } from './taskDescription'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Send } from 'lucide-react'
+import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { AITableTaskFields } from './AITableTaskFields'
-import { TaskActivityView } from './TaskActivityView'
-import type { StartHumanTaskFromReplyInput } from './TaskActivityView'
-import { createWeworkDeliverySharedWorkspaceApi } from '@/features/collaboration/weworkSharedWorkspaceApi'
-import { canEditProjectSpaceIssue } from './projectSpaceSelection'
+import { AssignmentChainPopover } from './AssignmentChainPopover'
 import { CloudFilePreviewDialog } from './CloudFilePreviewDialog'
+import { isLoopItemExecutionActive } from './cloudMyWorkModel'
+import {
+  IssueAssignmentReceipts,
+  type IssueAssignmentReceiptState,
+} from './IssueAssignmentReceipts'
+import { issueAssignmentRevision } from './issueAssignmentReceiptScope'
+import { IssueExistingTaskAction, type ExistingIssueTaskSource } from './IssueExistingTaskAction'
 import { IssueWebLinkButton } from './IssueWebLinkButton'
-import { AttachmentPreviewContext } from '@/components/chat/AttachmentPreviewContext'
-import type { WorkspaceAttachmentPreviewSource } from '@/types/workspace-files'
+import { canEditProjectSpaceIssue } from './projectSpaceSelection'
+import { StatusHistoryPopover } from './StatusHistoryPopover'
+import type { StartHumanTaskFromReplyInput } from './TaskActivityView'
+import { TaskActivityView } from './TaskActivityView'
+import { normalizeTaskDescription } from './taskDescription'
+import { TaskDescriptionEditor } from './TaskDescriptionEditor'
 
 type DeliveryApi = NonNullable<WorkbenchServices['deliveryApi']>
 
@@ -373,7 +373,8 @@ export function TodoEditor(props: TodoEditorProps) {
                 className="task-detail-personal-task"
                 data-testid="cloud-todo-personal-task-action"
               >
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="cloud-todo-personal-task-start"
                   title={`${t('todo.personal_task_title')} · ${t('todo.personal_task_description')}`}
@@ -381,7 +382,7 @@ export function TodoEditor(props: TodoEditorProps) {
                 >
                   <Send aria-hidden="true" size={14} />
                   {t('todo.create_personal_task')}
-                </button>
+                </ControlButton>
               </span>
             )
           }

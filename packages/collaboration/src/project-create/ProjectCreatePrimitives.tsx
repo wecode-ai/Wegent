@@ -1,38 +1,68 @@
+import { useRef } from 'react'
+import { DialogSurface } from '../controls/DialogSurface'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 import { ArrowRight, LoaderCircle, X } from 'lucide-react'
 import { useId, type ReactNode } from 'react'
-import { useDialogKeyboard } from '../controls/useDialogKeyboard'
 import type { ProjectCreateModalProps } from './types'
 
 export function DefaultModal({ title, closeLabel, children, onClose }: ProjectCreateModalProps) {
   const titleId = useId()
-  const dialogRef = useDialogKeyboard<HTMLElement>(onClose)
+  const dialogRef = useRef<HTMLElement>(null)
+  const lastDialogFocus = useRef<HTMLElement | null>(null)
   return (
     <div className="collaboration-dialog-backdrop">
-      <section
-        ref={dialogRef}
-        className="collaboration-dialog collaboration-project-create-dialog"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        tabIndex={-1}
-        data-testid="collaboration-project-create-dialog"
+      <DialogSurface
+        onClose={onClose}
+        initialFocus={() => {
+          const dialog = dialogRef.current
+          const focused = dialog?.ownerDocument.activeElement
+          if (
+            focused instanceof HTMLElement &&
+            focused !== dialog &&
+            dialog?.contains(focused) &&
+            !focused.closest('[hidden], [inert]')
+          )
+            return focused
+          const previous = lastDialogFocus.current
+          if (
+            previous?.isConnected &&
+            dialog?.contains(previous) &&
+            !previous.closest('[hidden], [inert]') &&
+            !previous.matches(':disabled')
+          )
+            return previous
+          return dialog?.querySelector<HTMLElement>('input[required]:not([disabled])') ?? null
+        }}
+        render={
+          <section
+            ref={dialogRef}
+            onFocusCapture={event => {
+              if (event.target instanceof HTMLElement) lastDialogFocus.current = event.target
+            }}
+            className="collaboration-dialog collaboration-project-create-dialog"
+            aria-labelledby={titleId}
+            tabIndex={-1}
+            data-testid="collaboration-project-create-dialog"
+          />
+        }
       >
         <header className="collaboration-project-create-header">
           <h2 id={titleId}>{title}</h2>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             onClick={onClose}
             aria-label={closeLabel}
             data-testid="collaboration-project-create-close"
           >
             <X aria-hidden="true" />
-          </button>
+          </ControlButton>
         </header>
         {children}
-      </section>
+      </DialogSurface>
     </div>
   )
 }
@@ -55,7 +85,8 @@ export function ChoiceButton({
   compact?: boolean
 }) {
   return (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid={testId}
       aria-pressed={selected}
@@ -67,7 +98,7 @@ export function ChoiceButton({
         <strong>{label}</strong>
         <small>{description}</small>
       </span>
-    </button>
+    </ControlButton>
   )
 }
 
@@ -87,9 +118,9 @@ export function CollaboratorToken({
       {icon}
       <span>{label}</span>
       {onRemove ? (
-        <button type="button" onClick={onRemove} aria-label={removeLabel}>
+        <ControlButton variant="unstyled" type="button" onClick={onRemove} aria-label={removeLabel}>
           <X aria-hidden="true" />
-        </button>
+        </ControlButton>
       ) : null}
     </span>
   )

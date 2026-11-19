@@ -22,16 +22,6 @@ html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))
   --bn-colors-shadow: rgb(var(--color-overlay) / 0.2);
   --bn-colors-side-menu: rgb(var(--color-text-muted));
   --bn-font-family: var(--font-ui);
-  --mantine-color-body: rgb(var(--color-popover));
-  --mantine-color-text: rgb(var(--color-text-primary));
-  --mantine-color-dimmed: rgb(var(--color-text-secondary));
-  --mantine-color-default: rgb(var(--color-bg-surface));
-  --mantine-color-default-hover: rgb(var(--color-bg-hover));
-  --mantine-color-default-color: rgb(var(--color-text-primary));
-  --mantine-color-default-border: rgb(var(--color-border));
-  --mantine-color-placeholder: rgb(var(--color-text-muted));
-  --mantine-color-error: rgb(var(--color-destructive));
-  --mantine-color-anchor: rgb(var(--color-link));
 }
 
 html[data-appearance-theme]:not(:where([data-appearance-theme='wework']))

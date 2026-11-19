@@ -1,29 +1,30 @@
-import { useContext, type ComponentProps } from 'react'
-import { MessageCircle } from 'lucide-react'
-import type { RuntimeTaskAddress } from '@/types/api'
-import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import { requestUserInputQuestionTarget } from '@/components/layout/requestUserInputOverlay'
 import {
   canDiscussQuestion,
-  questionDiscussionKey,
   questionDiscussionDrafts,
+  questionDiscussionKey,
   QuestionDiscussionStoreContext,
   useQuestionDiscussion,
 } from '@/features/notifications/questionDiscussion'
-import { requestUserInputQuestionTarget } from '@/components/layout/requestUserInputOverlay'
+import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import { useTranslation } from '@/hooks/useTranslation'
+import { openExternalUrl } from '@/lib/external-links'
+import type { RuntimeTaskAddress } from '@/types/api'
+import type { WorkbenchMessage } from '@/types/workbench'
 import type { RequestUserInputPayload } from '@wegent/chat-core/runtime'
 import {
   RequestUserInputCard as SharedRequestUserInputCard,
   RequestUserInputSummary as SharedRequestUserInputSummary,
   useToolInteractionServices,
 } from '@wegent/collaboration/conversation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { MessageCircle } from 'lucide-react'
+import { useContext, type ComponentProps } from 'react'
 import { DesktopConversationTranslation } from './DesktopConversationTranslation'
-import { openExternalUrl } from '@/lib/external-links'
-import type { WorkbenchMessage } from '@/types/workbench'
-import { useTranslation } from '@/hooks/useTranslation'
 import {
+  isImplementationPlanRequestUserInput,
   isRequestUserInputBlock,
   requestUserInputPayloadKey,
-  isImplementationPlanRequestUserInput,
 } from './requestUserInputMessages'
 export type { RequestUserInputPayload } from '@wegent/chat-core/runtime'
 
@@ -249,7 +250,8 @@ export function RequestUserInputCard({
         }}
         additionalActions={
           canDiscuss ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="request-user-input-discuss"
               disabled={props.disabled}
@@ -258,7 +260,7 @@ export function RequestUserInputCard({
             >
               <MessageCircle className="h-4 w-4" aria-hidden="true" />
               {t('question_discussion.open')}
-            </button>
+            </ControlButton>
           ) : (
             props.additionalActions
           )

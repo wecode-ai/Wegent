@@ -1,5 +1,3 @@
-import { Image, Monitor, Moon, RotateCcw, Sun, Trash2 } from 'lucide-react'
-import { useState } from 'react'
 import {
   SettingsPage,
   SettingsPageHeader,
@@ -8,10 +6,19 @@ import {
 } from '@/components/settings/settings-ui'
 import { useTranslation } from '@/hooks/useTranslation'
 import { track } from '@/telemetry/client'
-import { useAppearance } from './useAppearance'
+import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
+import { RangeSlider } from '@wegent/collaboration/controls/RangeSlider'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Image, Monitor, Moon, RotateCcw, Sun, Trash2 } from 'lucide-react'
+import { useState } from 'react'
+import {
+  removeWorkbenchBackground,
+  selectWorkbenchBackground,
+  type WorkbenchBackgroundSlot,
+} from './backgroundImage'
 import { ThemeSelector } from './ThemeSelector'
 import type { AppearanceMode, WorkbenchBackgroundConfig } from './types'
-import { WorkbenchBackgroundPreview } from './WorkbenchBackgroundPreview'
 import {
   MAX_CODE_FONT_SIZE,
   MAX_UI_FONT_SIZE,
@@ -19,11 +26,8 @@ import {
   MIN_UI_FONT_SIZE,
   normalizeFontSize,
 } from './typography'
-import {
-  removeWorkbenchBackground,
-  selectWorkbenchBackground,
-  type WorkbenchBackgroundSlot,
-} from './backgroundImage'
+import { useAppearance } from './useAppearance'
+import { WorkbenchBackgroundPreview } from './WorkbenchBackgroundPreview'
 
 const themeModes: Array<{
   mode: AppearanceMode
@@ -67,7 +71,8 @@ function FontSizeControl({
 
   return (
     <div className="flex items-center gap-2">
-      <input
+      <ControlInput
+        density="compact"
         key={value}
         data-testid={testId}
         aria-label={ariaLabel}
@@ -82,7 +87,7 @@ function FontSizeControl({
           event.preventDefault()
           commit(event.currentTarget)
         }}
-        className="h-8 w-16 rounded-lg border border-border bg-background px-2 text-right text-sm text-text-primary shadow-sm outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/20 wework:keyboard:focus:border-blue-500 wework:keyboard:focus:ring-blue-500/20"
+        className="w-16 text-right wework:keyboard:focus:border-blue-500 wework:keyboard:focus:ring-blue-500/20"
       />
       <span className="text-sm text-text-secondary">px</span>
     </div>
@@ -217,15 +222,16 @@ export function AppearanceSettingsPage() {
         title={t('workbench.appearance_title', '外观')}
         description={t('workbench.appearance_subtitle', '调整 Wework 的主题、颜色和字体')}
         actions={
-          <button
+          <ControlButton
+            variant="outline"
+            size="sm"
             type="button"
             data-testid="appearance-reset-button"
             onClick={() => void reset()}
-            className="inline-flex h-8 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted"
           >
             <RotateCcw className="h-4 w-4" />
             {t('workbench.appearance_reset', '恢复默认')}
-          </button>
+          </ControlButton>
         }
       />
 
@@ -241,7 +247,8 @@ export function AppearanceSettingsPage() {
             const active = appearance.mode === item.mode
 
             return (
-              <button
+              <ControlButton
+                variant="unstyled"
                 key={item.mode}
                 type="button"
                 data-testid={`appearance-mode-${item.mode}`}
@@ -259,7 +266,7 @@ export function AppearanceSettingsPage() {
               >
                 <Icon className="h-4 w-4" />
                 {t(`workbench.${item.labelKey}`, item.fallback)}
-              </button>
+              </ControlButton>
             )
           })}
         </div>
@@ -280,9 +287,10 @@ export function AppearanceSettingsPage() {
           <div>
             <SettingsRow
               label={t('workbench.appearance_accent', '强调色')}
-              control={
+              children={
                 <label className="flex h-9 items-center gap-2 rounded-md border border-border bg-background px-2">
-                  <input
+                  <ControlInput
+                    appearance="plain"
                     data-testid="appearance-accent-input"
                     type="color"
                     value={appearance.accentColor}
@@ -293,7 +301,7 @@ export function AppearanceSettingsPage() {
                         value: appearance.accentColor,
                       })
                     }
-                    className="h-5 w-5 cursor-pointer rounded border-0 bg-transparent p-0"
+                    className="h-5 w-5 cursor-pointer"
                   />
                   <span className="w-20 font-mono text-xs text-text-secondary">
                     {appearance.accentColor.toUpperCase()}
@@ -303,8 +311,9 @@ export function AppearanceSettingsPage() {
             />
             <SettingsRow
               label={t('workbench.appearance_accent_reset', '恢复配色强调色')}
-              control={
-                <button
+              children={
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="appearance-accent-reset-button"
                   onClick={() =>
@@ -320,12 +329,12 @@ export function AppearanceSettingsPage() {
                   className="inline-flex h-9 items-center rounded-md px-3 text-sm text-text-primary hover:bg-muted disabled:opacity-40"
                 >
                   {t('workbench.appearance_accent_reset_action', '恢复')}
-                </button>
+                </ControlButton>
               }
             />
             <SettingsRow
               label={t('workbench.appearance_sidebar_translucent', '半透明侧边栏')}
-              control={
+              children={
                 <SettingsSwitch
                   data-testid="appearance-sidebar-translucent-toggle"
                   checked={appearance.sidebarTranslucent}
@@ -336,16 +345,17 @@ export function AppearanceSettingsPage() {
             />
             <SettingsRow
               label={t('workbench.appearance_contrast', '对比度')}
-              control={
+              children={
                 <div className="flex items-center gap-3">
-                  <input
-                    data-testid="appearance-contrast-slider"
-                    type="range"
-                    min="0"
-                    max="100"
+                  <RangeSlider
+                    min={0}
+                    max={100}
                     value={appearance.contrast}
-                    onChange={event => setAppearance({ contrast: Number(event.target.value) })}
-                    className="w-36 accent-[rgb(var(--color-text-primary))]"
+                    onChange={value => setAppearance({ contrast: Number(value) })}
+                    label={t('workbench.appearance_contrast', '对比度')}
+                    testId="appearance-contrast-slider"
+                    inputTestId="appearance-contrast-slider"
+                    className="w-36"
                   />
                   <span className="w-8 text-right text-sm text-text-secondary">
                     {appearance.contrast}
@@ -369,7 +379,7 @@ export function AppearanceSettingsPage() {
             'workbench.appearance_background_separate_description',
             '为浅色和暗色主题分别设置背景图片'
           )}
-          control={
+          children={
             <SettingsSwitch
               data-testid="appearance-background-separate-toggle"
               checked={appearance.separateBackgroundsByTheme}
@@ -404,27 +414,29 @@ export function AppearanceSettingsPage() {
                     testIdSuffix={testIdSuffix}
                   />
                   <div className="flex flex-wrap gap-2">
-                    <button
+                    <ControlButton
+                      variant="primary"
+                      size="sm"
                       type="button"
                       data-testid={`appearance-background-select-button${testIdSuffix}`}
                       disabled={backgroundBusy}
                       onClick={() => void selectBackground(editor.slot)}
-                      className="inline-flex h-8 items-center gap-2 rounded-md bg-text-primary px-3 text-sm font-medium text-background disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       <Image className="h-4 w-4" />
                       {t('workbench.appearance_background_select', '选择图片')}
-                    </button>
+                    </ControlButton>
                     {editor.config.imagePath && (
-                      <button
+                      <ControlButton
                         type="button"
                         data-testid={`appearance-background-remove-button${testIdSuffix}`}
                         disabled={backgroundBusy}
                         onClick={() => void removeBackground(editor.slot)}
-                        className="inline-flex h-8 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm font-medium text-text-primary hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
+                        variant="destructive-ghost"
+                        size="sm"
                       >
                         <Trash2 className="h-4 w-4" />
                         {t('workbench.appearance_background_remove', '移除')}
-                      </button>
+                      </ControlButton>
                     )}
                   </div>
                 </div>
@@ -434,19 +446,20 @@ export function AppearanceSettingsPage() {
                       {t('workbench.appearance_background_visibility', '背景可见度')}
                       <span>{editor.config.visibility}</span>
                     </span>
-                    <input
-                      data-testid={`appearance-background-visibility-slider${testIdSuffix}`}
-                      type="range"
-                      min="0"
-                      max="100"
+                    <RangeSlider
+                      min={0}
+                      max={100}
                       value={editor.config.visibility}
                       disabled={!editorHasBackground}
-                      onChange={event =>
+                      onChange={value =>
                         updateBackground(editor.slot, {
-                          visibility: Number(event.target.value),
+                          visibility: Number(value),
                         })
                       }
-                      className="w-full accent-[rgb(var(--color-text-primary))] disabled:opacity-50"
+                      label={t('workbench.appearance_background_visibility', '背景可见度')}
+                      testId={`appearance-background-visibility-slider${testIdSuffix}`}
+                      inputTestId={`appearance-background-visibility-slider${testIdSuffix}`}
+                      className="w-36"
                     />
                   </label>
                   <label className="grid gap-2 text-sm text-text-secondary">
@@ -454,17 +467,16 @@ export function AppearanceSettingsPage() {
                       {t('workbench.appearance_background_blur', '背景模糊')}
                       <span>{editor.config.blur}px</span>
                     </span>
-                    <input
-                      data-testid={`appearance-background-blur-slider${testIdSuffix}`}
-                      type="range"
-                      min="0"
-                      max="20"
+                    <RangeSlider
+                      min={0}
+                      max={20}
                       value={editor.config.blur}
                       disabled={!editorHasBackground}
-                      onChange={event =>
-                        updateBackground(editor.slot, { blur: Number(event.target.value) })
-                      }
-                      className="w-full accent-[rgb(var(--color-text-primary))] disabled:opacity-50"
+                      onChange={value => updateBackground(editor.slot, { blur: Number(value) })}
+                      label={t('workbench.appearance_background_blur', '背景模糊')}
+                      testId={`appearance-background-blur-slider${testIdSuffix}`}
+                      inputTestId={`appearance-background-blur-slider${testIdSuffix}`}
+                      className="w-36"
                     />
                   </label>
                   <fieldset className="grid gap-2">
@@ -498,12 +510,11 @@ export function AppearanceSettingsPage() {
                         key={area.key}
                         className="flex items-center gap-2 text-sm text-text-primary"
                       >
-                        <input
+                        <Checkbox
                           data-testid={`appearance-background-area-${area.key}${testIdSuffix}`}
-                          type="checkbox"
                           checked={area.checked}
                           disabled={!editorHasBackground}
-                          onChange={event => area.update(event.target.checked)}
+                          onCheckedChange={checked => area.update(checked === true)}
                           className="h-4 w-4 accent-[rgb(var(--color-text-primary))]"
                         />
                         {area.label}
@@ -533,23 +544,23 @@ export function AppearanceSettingsPage() {
         </div>
         <SettingsRow
           label={t('workbench.appearance_ui_font', 'UI 字体')}
-          control={
-            <input
+          children={
+            <ControlInput
               data-testid="appearance-ui-font-input"
               value={appearance.uiFont}
               onChange={event => setAppearance({ uiFont: event.target.value })}
-              className="h-9 w-[min(24rem,52vw)] rounded-md border border-border bg-background px-3 text-sm text-text-primary outline-none focus:border-text-primary"
+              className="h-9 w-[min(24rem,52vw)] focus:border-text-primary"
             />
           }
         />
         <SettingsRow
           label={t('workbench.appearance_code_font', '代码字体')}
-          control={
-            <input
+          children={
+            <ControlInput
               data-testid="appearance-code-font-input"
               value={appearance.codeFont}
               onChange={event => setAppearance({ codeFont: event.target.value })}
-              className="h-9 w-[min(24rem,52vw)] rounded-md border border-border bg-background px-3 font-mono text-sm text-text-primary outline-none focus:border-text-primary"
+              className="h-9 w-[min(24rem,52vw)] font-mono focus:border-text-primary"
             />
           }
         />
@@ -559,7 +570,7 @@ export function AppearanceSettingsPage() {
             'workbench.appearance_ui_font_size_description',
             '调整 Wework 界面使用的基础字号'
           )}
-          control={
+          children={
             <FontSizeControl
               testId="appearance-ui-font-size-input"
               ariaLabel={t('workbench.appearance_ui_font_size', 'UI 字号')}
@@ -576,7 +587,7 @@ export function AppearanceSettingsPage() {
             'workbench.appearance_code_font_size_description',
             '调整聊天、diff、编辑器和终端中的代码字号'
           )}
-          control={
+          children={
             <FontSizeControl
               testId="appearance-code-font-size-input"
               ariaLabel={t('workbench.appearance_code_font_size', '代码字号')}

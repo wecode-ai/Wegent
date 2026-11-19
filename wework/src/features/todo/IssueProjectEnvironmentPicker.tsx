@@ -1,14 +1,15 @@
-import { useCallback, useRef, useState } from 'react'
-import { usePanelData } from '@wegent/collaboration/platform'
-import * as Popover from '@radix-ui/react-popover'
-import { ChevronDown, Monitor } from 'lucide-react'
+import { useEscapeKey } from '@/hooks/useEscapeKey'
+import { useTranslation } from '@/hooks/useTranslation'
+import { Popover, PopoverContent, PopoverTrigger } from '@wegent/collaboration/controls/Popover'
 import {
   ProjectExecutionEnvironments,
   createCollaborationTranslator,
   type SharedWorkspaceApi,
 } from '@wegent/collaboration'
-import { useTranslation } from '@/hooks/useTranslation'
-import { useEscapeKey } from '@/hooks/useEscapeKey'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { usePanelData } from '@wegent/collaboration/platform'
+import { ChevronDown, Monitor } from 'lucide-react'
+import { useCallback, useRef, useState } from 'react'
 
 /** Reuse project grants without navigating away from the Issue draft. */
 export function IssueProjectEnvironmentPicker({
@@ -30,7 +31,7 @@ export function IssueProjectEnvironmentPicker({
   const { data: project, error: cause, refresh } = usePanelData(load, open)
   const translate = createCollaborationTranslator(i18n?.language === 'en' ? 'en' : 'zh-CN')
   return (
-    <Popover.Root
+    <Popover
       modal
       open={open}
       onOpenChange={next => {
@@ -42,46 +43,44 @@ export function IssueProjectEnvironmentPicker({
         setOpen(next)
       }}
     >
-      <Popover.Trigger asChild>
-        <button
-          ref={triggerRef}
-          type="button"
-          disabled={disabled}
-          data-testid="issue-environment-picker-trigger"
-          className="inline-flex min-h-11 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm text-text-secondary hover:bg-muted md:min-h-8"
-        >
-          <Monitor aria-hidden="true" className="h-4 w-4" />
-          {t('issue_creation.configure_devices')}
-          <ChevronDown aria-hidden="true" className="h-4 w-4" />
-        </button>
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content
+      <PopoverTrigger
+        render={
+          <button
+            ref={triggerRef}
+            type="button"
+            disabled={disabled}
+            data-testid="issue-environment-picker-trigger"
+            className="inline-flex min-h-11 items-center gap-2 rounded-md border border-border bg-background px-3 text-sm text-text-secondary hover:bg-muted md:min-h-8"
+          />
+        }
+      >
+        <Monitor aria-hidden="true" className="h-4 w-4" />
+        {t('issue_creation.configure_devices')}
+        <ChevronDown aria-hidden="true" className="h-4 w-4" />
+      </PopoverTrigger>
+      <>
+        <PopoverContent
           ref={popoverRef}
           aria-label={t('issue_creation.project_device_settings')}
-          onEscapeKeyDown={event => {
-            event.preventDefault()
-            event.stopPropagation()
-            setOpen(false)
-          }}
           align="start"
           side={side}
           sideOffset={6}
           collisionPadding={8}
           data-testid="issue-environment-picker"
-          className="z-system-popover max-h-[var(--radix-popover-content-available-height)] w-[min(480px,calc(100vw-16px))] overflow-y-auto rounded-xl border border-border bg-popover p-4 text-text-primary shadow-lg"
+          className="z-system-popover max-h-[var(--available-height)] w-[min(480px,calc(100vw-16px))] overflow-y-auto rounded-xl border border-border bg-popover p-4 text-text-primary shadow-lg"
         >
           {cause ? (
             <div role="alert" className="space-y-2 text-sm text-destructive">
               {t('issue_creation.project_devices_load_failed')}
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="issue-environment-retry"
                 className="ml-2 inline-flex min-h-11 min-w-11 items-center justify-center rounded-md underline md:min-h-8"
                 onClick={() => void refresh()}
               >
                 {t('independentIssues.retry')}
-              </button>
+              </ControlButton>
             </div>
           ) : project ? (
             <ProjectExecutionEnvironments
@@ -95,8 +94,8 @@ export function IssueProjectEnvironmentPicker({
               {t('independentIssues.loading')}
             </p>
           )}
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
+        </PopoverContent>
+      </>
+    </Popover>
   )
 }

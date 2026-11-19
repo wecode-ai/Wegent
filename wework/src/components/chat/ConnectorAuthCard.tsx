@@ -1,28 +1,29 @@
-import { ExternalLink, Loader2, QrCode } from 'lucide-react'
-import { useLayoutEffect, useRef, useState } from 'react'
-import { Button } from '@/components/ui/button'
-import { openExternalUrl } from '@/lib/external-links'
-import { githubVerificationUrl, isGithubCliTarget } from '@/api/local/githubCli'
-import { gitlabVerificationUrl, isGitlabCliTarget } from '@/api/local/gitlabCli'
-import { useTranslation } from '@/hooks/useTranslation'
 import {
   authorizeWegentConnector,
   connectorAuthorizationErrorMessage,
   waitForConnectorToolCatalog,
 } from '@/api/cloud/connectorApps'
-import { connectorDisplayName } from '@/components/plugins/connectorDisplayName'
-import { openConnectorAuthorizationWindow } from '@/lib/connector-authorization-window'
-import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
-import {
-  ConnectorSyncAbortedError,
-  waitForLocalConnectorSync,
-} from '@/features/cloud-connection/connectorAppSync'
+import { githubVerificationUrl, isGithubCliTarget } from '@/api/local/githubCli'
+import { gitlabVerificationUrl, isGitlabCliTarget } from '@/api/local/gitlabCli'
 import type {
   LocalConnectorAuthResult,
   LocalConnectorAuthTarget,
   LocalConnectorAuthTransport,
 } from '@/api/local/localConnectorAuth'
+import { connectorDisplayName } from '@/components/plugins/connectorDisplayName'
+import { Button } from '@/components/ui/button'
+import {
+  ConnectorSyncAbortedError,
+  waitForLocalConnectorSync,
+} from '@/features/cloud-connection/connectorAppSync'
 import { useLocalConnectorAuthSession } from '@/features/plugins/useLocalConnectorAuthSession'
+import { useTranslation } from '@/hooks/useTranslation'
+import { openConnectorAuthorizationWindow } from '@/lib/connector-authorization-window'
+import { openExternalUrl } from '@/lib/external-links'
+import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ExternalLink, Loader2, QrCode } from 'lucide-react'
+import { useLayoutEffect, useRef, useState } from 'react'
 
 interface ConnectorAuthCardProps {
   transport?: LocalConnectorAuthTransport
@@ -169,14 +170,15 @@ export function CloudConnectorAuthCard({
       </div>
       {onCancel ? (
         <div className="mt-3 flex justify-end">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted"
             data-testid="cloud-connector-auth-cancel"
             onClick={onCancel}
           >
             {t('workbench.cancel', '取消')}
-          </button>
+          </ControlButton>
         </div>
       ) : null}
     </div>
@@ -352,7 +354,8 @@ function ConnectorAuthCardSession({
       </div>
       <div className="mt-3 flex justify-end gap-2">
         {canRetry ? (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted"
             data-testid="connector-auth-retry"
@@ -361,17 +364,18 @@ function ConnectorAuthCardSession({
             {usesBrowser
               ? t('workbench.plugins_local_browser_retry', '重新授权')
               : t('workbench.retry', '重试')}
-          </button>
+          </ControlButton>
         ) : null}
         {onCancel ? (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             className="rounded-md border px-3 py-1.5 text-sm hover:bg-muted"
             data-testid="connector-auth-cancel"
             onClick={handleCancel}
           >
             {t('common.cancel', '取消')}
-          </button>
+          </ControlButton>
         ) : null}
       </div>
     </div>

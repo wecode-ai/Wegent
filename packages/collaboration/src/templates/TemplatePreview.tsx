@@ -1,3 +1,4 @@
+import { CollapsibleRoot, CollapsibleTrigger, CollapsiblePanel } from '../controls/Collapsible'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -75,18 +76,22 @@ export function TemplatePreview({
               <li key={stage.key}>{stage.name}</li>
             ))}
           </ol>
-          <details>
-            <summary>{m.details}</summary>
-            <p>{group.instructions}</p>
-            {group.stages.map(stage => (
-              <p key={stage.key}>
-                <strong>{stage.name}</strong> ·{' '}
-                {[stage.description, ...stage.deliverables, stage.acceptance]
-                  .filter(Boolean)
-                  .join(' · ')}
-              </p>
-            ))}
-          </details>
+          <CollapsibleRoot>
+            <CollapsibleTrigger data-testid="template-preview-toggle">
+              {m.details}
+            </CollapsibleTrigger>
+            <CollapsiblePanel>
+              <p>{group.instructions}</p>
+              {group.stages.map(stage => (
+                <p key={stage.key}>
+                  <strong>{stage.name}</strong> ·{' '}
+                  {[stage.description, ...stage.deliverables, stage.acceptance]
+                    .filter(Boolean)
+                    .join(' · ')}
+                </p>
+              ))}
+            </CollapsiblePanel>
+          </CollapsibleRoot>
         </section>
       ))}
     </div>

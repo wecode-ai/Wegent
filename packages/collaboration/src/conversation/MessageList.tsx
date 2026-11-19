@@ -1,11 +1,14 @@
-import type { UserMessageServices } from './UserMessage'
-import { MessageListMessage } from './MessageListMessage'
-import { isStandInActivityMessage, isCompletedStandInActivityTrace } from './standInActivity'
+import type { UserMessageServices } from "./UserMessage";
+import { MessageListMessage } from "./MessageListMessage";
+import {
+  isStandInActivityMessage,
+  isCompletedStandInActivityTrace,
+} from "./standInActivity";
 import {
   isCancelledAssistantMessage,
   shouldHideFailedAssistantContent,
   getDisplayProcessingBlocks,
-} from './assistantMessagePresentation'
+} from "./assistantMessagePresentation";
 import {
   Fragment,
   memo,
@@ -15,145 +18,157 @@ import {
   useMemo,
   useRef,
   useState,
-} from 'react'
-import { flushSync } from 'react-dom'
-import { defaultRangeExtractor, type Range as VirtualRange } from '@tanstack/react-virtual'
-import type { CSSProperties, ReactNode, RefObject } from 'react'
-import type { RequestUserInputResponse, TurnFileChangesSummary } from '@wegent/chat-core/runtime'
+} from "react";
+import { flushSync } from "react-dom";
+import {
+  defaultRangeExtractor,
+  type Range as VirtualRange,
+} from "@tanstack/react-virtual";
+import type { CSSProperties, ReactNode, RefObject } from "react";
+import type {
+  RequestUserInputResponse,
+  TurnFileChangesSummary,
+} from "@wegent/chat-core/runtime";
 import type {
   RuntimeConversationTurn,
   SubagentBlock,
   WorkbenchMessage,
-} from '@wegent/chat-core/runtime-conversation'
-import type { MarkdownFileOpenOptions as WorkspaceFileOpenOptions } from '../markdown/MarkdownServices'
-import { stripPluginWorkspaceResultMarkers } from '@wegent/chat-core/plugin-workspace-result'
-import { activityClassNames as cn } from '../issue-detail/activityClassNames'
-import { AssistantThinkingIndicator } from './AssistantThinkingIndicator'
-import type { RequestUserInputPayload } from './RequestUserInputCard'
+} from "@wegent/chat-core/runtime-conversation";
+import type { MarkdownFileOpenOptions as WorkspaceFileOpenOptions } from "../markdown/MarkdownServices";
+import { stripPluginWorkspaceResultMarkers } from "@wegent/chat-core/plugin-workspace-result";
+import { activityClassNames as cn } from "../issue-detail/activityClassNames";
+import { AssistantThinkingIndicator } from "./AssistantThinkingIndicator";
+import type { RequestUserInputPayload } from "./RequestUserInputCard";
 import {
   resolveAsyncRequestUserInputAnswers,
   resolveAsyncRequestUserInputReplies,
-} from '@wegent/chat-core/runtime-user-input'
+} from "@wegent/chat-core/runtime-user-input";
 import {
   getMessagePretextIntrinsicHeight,
   getMessageLayoutSignature,
   readMessageLayoutTypography,
   getMessageFontMetricsRevision,
-} from './messagePretextLayout'
-import type { AssistantPlanOpenRequest } from './AssistantPlanCard'
+} from "./messagePretextLayout";
+import type { AssistantPlanOpenRequest } from "./AssistantPlanCard";
 import {
   cacheConversationVirtualMeasurements,
   getConversationVirtualMeasurements,
-} from './conversationViewportCache'
-import { SelectionActionsPopover } from './SelectionActionsPopover'
+} from "./conversationViewportCache";
+import { SelectionActionsPopover } from "./SelectionActionsPopover";
 import {
   useConversationVirtualizer,
   type ConversationVirtualizer,
-} from './useConversationVirtualizer'
-import { useMessageRowMeasure, useMessageRowMeasurements } from './useMessageRowMeasurements'
+} from "./useConversationVirtualizer";
+import {
+  useMessageRowMeasure,
+  useMessageRowMeasurements,
+} from "./useMessageRowMeasurements";
 import {
   createMarkdownWindowingScope,
   MarkdownWindowingContext,
   MarkdownWindowingDisabledContext,
-} from '../markdown/MarkdownWindowingScope'
+} from "../markdown/MarkdownWindowingScope";
 import {
   getConversationDiagnosticContext,
   isConversationDiagnosticsEnabled,
   recordConversationDiagnostic,
-} from './conversationDiagnostics'
+} from "./conversationDiagnostics";
 
 export interface MessageListProps {
-  assistantMessageStyle?: 'plain' | 'bubble'
-  showProcessingStatus?: boolean
-  userMessageServices: UserMessageServices
-  virtualize?: boolean
-  useContentVisibility?: boolean
-  onVirtualMeasurement?: (details: VirtualMessageMeasurement) => void
+  assistantMessageStyle?: "plain" | "bubble";
+  showProcessingStatus?: boolean;
+  userMessageServices: UserMessageServices;
+  virtualize?: boolean;
+  useContentVisibility?: boolean;
+  onVirtualMeasurement?: (details: VirtualMessageMeasurement) => void;
   renderVisualization?: (
-    part: { file: string; mode?: 'wide'; title?: string },
-    message: WorkbenchMessage
-  ) => ReactNode
-  messages: WorkbenchMessage[]
-  turns?: RuntimeConversationTurn[]
-  scrollElementRef?: RefObject<HTMLDivElement | null>
-  scrollTailHeight?: number
-  initialDistanceFromBottomPx?: number
-  onBeforeUserMessageToggle?: () => void
-  onVirtualLayoutChange?: () => void
-  className?: string
-  conversationKey?: string | number | null
-  isWaitingForAssistant?: boolean
-  disableContentVisibility?: boolean
-  forceVirtualMessageId?: string | null
-  searchMessageId?: string
-  devices?: Array<{ device_id: string; status: string }>
-  onRetryFailedMessage?: (message: WorkbenchMessage) => void
-  onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void
+    part: { file: string; mode?: "wide"; title?: string },
+    message: WorkbenchMessage,
+  ) => ReactNode;
+  messages: WorkbenchMessage[];
+  turns?: RuntimeConversationTurn[];
+  scrollElementRef?: RefObject<HTMLDivElement | null>;
+  scrollTailHeight?: number;
+  initialDistanceFromBottomPx?: number;
+  onBeforeUserMessageToggle?: () => void;
+  onVirtualLayoutChange?: () => void;
+  className?: string;
+  conversationKey?: string | number | null;
+  isWaitingForAssistant?: boolean;
+  disableContentVisibility?: boolean;
+  forceVirtualMessageId?: string | null;
+  searchMessageId?: string;
+  devices?: Array<{ device_id: string; status: string }>;
+  onRetryFailedMessage?: (message: WorkbenchMessage) => void;
+  onSwitchModelForFailedMessage?: (message: WorkbenchMessage) => void;
   onLoadFileChangesDiff?: (
     subtaskId: string,
-    fileChanges?: TurnFileChangesSummary
-  ) => Promise<string>
+    fileChanges?: TurnFileChangesSummary,
+  ) => Promise<string>;
   onRevertFileChanges?: (
     subtaskId: string,
-    fileChanges?: TurnFileChangesSummary
-  ) => Promise<TurnFileChangesSummary>
+    fileChanges?: TurnFileChangesSummary,
+  ) => Promise<TurnFileChangesSummary>;
   onOpenFileChangesReview?: (request: {
-    subtaskId: string
-    loadDiff: () => Promise<string>
-    reviewTitle?: string
-    defaultFileTreeVisible?: boolean
-    focusFilePath?: string
-  }) => void
-  fileChangesDiffPreviewDisabledSubtaskId?: string | null
-  onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
-  onOpenLocalSkillFile?: (path: string) => void
-  onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void
-  onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void
-  onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
-  onOpenSubagent?: (block: SubagentBlock) => void
+    subtaskId: string;
+    loadDiff: () => Promise<string>;
+    reviewTitle?: string;
+    defaultFileTreeVisible?: boolean;
+    focusFilePath?: string;
+  }) => void;
+  fileChangesDiffPreviewDisabledSubtaskId?: string | null;
+  onOpenWorkspaceFile?: (
+    path: string,
+    options?: WorkspaceFileOpenOptions,
+  ) => void;
+  onOpenLocalSkillFile?: (path: string) => void;
+  onRequestUserInputSubmit?: (response: RequestUserInputResponse) => void;
+  onRequestUserInputIgnore?: (payload: RequestUserInputPayload) => void;
+  onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void;
+  onOpenSubagent?: (block: SubagentBlock) => void;
   onEditLastUserMessage?: (
     message: WorkbenchMessage,
-    content: string
-  ) => Promise<boolean | void> | boolean | void
-  canEditLastUserMessage?: boolean
-  onForkMessage?: (message: WorkbenchMessage) => Promise<void> | void
-  hideRequestUserInputBlocks?: boolean
-  hiddenRequestUserInputIds?: ReadonlySet<string>
-  onAddSelectionToConversation?: (text: string) => void
-  onAskSelectionInSidebar?: (text: string) => void
-  onFillSelectionToAnswer?: (text: string) => void
-  virtualScrollAdjustmentEnabled?: boolean
-  virtualAnchor?: 'start' | 'end'
-  virtualAnchorToEnd?: boolean
-  virtualizerRef?: RefObject<ConversationVirtualizer | null>
-  onVirtualScrollAdjustment?: (delta: number) => void
+    content: string,
+  ) => Promise<boolean | void> | boolean | void;
+  canEditLastUserMessage?: boolean;
+  onForkMessage?: (message: WorkbenchMessage) => Promise<void> | void;
+  hideRequestUserInputBlocks?: boolean;
+  hiddenRequestUserInputIds?: ReadonlySet<string>;
+  onAddSelectionToConversation?: (text: string) => void;
+  onAskSelectionInSidebar?: (text: string) => void;
+  onFillSelectionToAnswer?: (text: string) => void;
+  virtualScrollAdjustmentEnabled?: boolean;
+  virtualAnchor?: "start" | "end";
+  virtualAnchorToEnd?: boolean;
+  virtualizerRef?: RefObject<ConversationVirtualizer | null>;
+  onVirtualScrollAdjustment?: (delta: number) => void;
   renderGapAfterMessage?: (
     message: WorkbenchMessage,
-    nextMessage: WorkbenchMessage | undefined
-  ) => ReactNode
+    nextMessage: WorkbenchMessage | undefined,
+  ) => ReactNode;
 }
 
-const EMPTY_TURNS: RuntimeConversationTurn[] = []
-const EMPTY_DEVICES: NonNullable<MessageListProps['devices']> = []
-const SELECTION_ACTION_GAP = 8
-const VIRTUAL_MESSAGE_OVERSCAN = 2
-const VIRTUAL_MESSAGE_FULL_MEASUREMENT_COUNT = VIRTUAL_MESSAGE_OVERSCAN * 2 + 1
-const MESSAGE_LIST_GAP_PX = 16
-const MESSAGE_LIST_PADDING_TOP_PX = 32
-const MESSAGE_LIST_PADDING_BOTTOM_PX = 8
+const EMPTY_TURNS: RuntimeConversationTurn[] = [];
+const EMPTY_DEVICES: NonNullable<MessageListProps["devices"]> = [];
+const SELECTION_ACTION_GAP = 8;
+const VIRTUAL_MESSAGE_OVERSCAN = 2;
+const VIRTUAL_MESSAGE_FULL_MEASUREMENT_COUNT = VIRTUAL_MESSAGE_OVERSCAN * 2 + 1;
+const MESSAGE_LIST_GAP_PX = 16;
+const MESSAGE_LIST_PADDING_TOP_PX = 32;
+const MESSAGE_LIST_PADDING_BOTTOM_PX = 8;
 
 interface MessageTextSelection {
-  text: string
-  left: number
-  top: number
-  conversationKey?: string | number | null
+  text: string;
+  left: number;
+  top: number;
+  conversationKey?: string | number | null;
 }
 export interface VirtualMessageMeasurement {
-  messageId: string | null
-  previousSize: number | null
-  measuredSize: number
-  previousTotalSize: number
-  nextTotalSize: number
+  messageId: string | null;
+  previousSize: number | null;
+  measuredSize: number;
+  previousTotalSize: number;
+  nextTotalSize: number;
 }
 
 export const MessageList = memo(function MessageList({
@@ -199,55 +214,72 @@ export const MessageList = memo(function MessageList({
   onAskSelectionInSidebar,
   onFillSelectionToAnswer,
   virtualAnchorToEnd = true,
-  virtualAnchor = 'end',
+  virtualAnchor = "end",
   virtualScrollAdjustmentEnabled = true,
   virtualizerRef,
   onVirtualScrollAdjustment,
   renderGapAfterMessage,
 }: MessageListProps) {
-  const listRef = useRef<HTMLDivElement>(null)
-  const [isTextSelectionActive, setIsTextSelectionActive] = useState(false)
-  const [textSelection, setTextSelection] = useState<MessageTextSelection | null>(null)
+  const listRef = useRef<HTMLDivElement>(null);
+  const [isTextSelectionActive, setIsTextSelectionActive] = useState(false);
+  const [textSelection, setTextSelection] =
+    useState<MessageTextSelection | null>(null);
   const [layout, setLayout] = useState(() => ({
     width: 0,
     typography: readMessageLayoutTypography(scrollElementRef?.current),
     fontEpoch: getMessageFontMetricsRevision(),
-  }))
-  const layoutWidth = layout.width
+  }));
+  const layoutWidth = layout.width;
   const layoutKey = JSON.stringify([
     layout.width,
     className ?? null,
     layout.typography,
     layout.fontEpoch,
-  ])
-  const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
-  const [submittingEditMessageId, setSubmittingEditMessageId] = useState<string | null>(null)
-  const resolvedMessages = useMemo(() => resolveAsyncRequestUserInputAnswers(messages), [messages])
+  ]);
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [submittingEditMessageId, setSubmittingEditMessageId] = useState<
+    string | null
+  >(null);
+  const resolvedMessages = useMemo(
+    () => resolveAsyncRequestUserInputAnswers(messages),
+    [messages],
+  );
   const replyQuestionsByMessageId = useMemo(
     () => resolveAsyncRequestUserInputReplies(messages),
-    [messages]
-  )
+    [messages],
+  );
   const runtimeTurnsById = useMemo(
-    () => new Map(turns.flatMap(turn => (turn.id ? [[turn.id, turn] as const] : []))),
-    [turns]
-  )
+    () =>
+      new Map(
+        turns.flatMap((turn) => (turn.id ? [[turn.id, turn] as const] : [])),
+      ),
+    [turns],
+  );
   const visibleMessages = useMemo(() => {
     const userTurns = new Set(
       resolvedMessages
-        .filter(message => message.role === 'user' && !isStandInActivityMessage(message))
-        .map(message => message.turnId)
-    )
+        .filter(
+          (message) =>
+            message.role === "user" && !isStandInActivityMessage(message),
+        )
+        .map((message) => message.turnId),
+    );
     const activityTurns = new Set(
       resolvedMessages
         .filter(isStandInActivityMessage)
-        .map(message => message.turnId)
-        .filter(turnId => turnId && !userTurns.has(turnId))
-    )
-    return resolvedMessages.filter(message => {
-      if (isStandInActivityMessage(message)) return false
-      if (message.turnId && activityTurns.has(message.turnId) && message.role === 'assistant') {
-        const turn = runtimeTurnsById.get(message.turnId)
-        if (message.status !== 'done' || (turn && turn.status !== 'done')) return true
+        .map((message) => message.turnId)
+        .filter((turnId) => turnId && !userTurns.has(turnId)),
+    );
+    return resolvedMessages.filter((message) => {
+      if (isStandInActivityMessage(message)) return false;
+      if (
+        message.turnId &&
+        activityTurns.has(message.turnId) &&
+        message.role === "assistant"
+      ) {
+        const turn = runtimeTurnsById.get(message.turnId);
+        if (message.status !== "done" || (turn && turn.status !== "done"))
+          return true;
         if (
           turn?.error ||
           turn?.stoppedNotice ||
@@ -255,117 +287,143 @@ export const MessageList = memo(function MessageList({
           turn?.references?.length ||
           turn?.memoryCitations?.length
         )
-          return true
-        if (isCompletedStandInActivityTrace(message)) return false
+          return true;
+        if (isCompletedStandInActivityTrace(message)) return false;
       }
-      return shouldRenderMessage(message)
-    })
-  }, [resolvedMessages, runtimeTurnsById])
+      return shouldRenderMessage(message);
+    });
+  }, [resolvedMessages, runtimeTurnsById]);
   // Native crash history may retain an open status; only its latest root turn is live.
-  const latestNativeTurnId = turns[findLastIndex(turns, turn => turn.id !== null)]?.id
+  const latestNativeTurnId =
+    turns[findLastIndex(turns, (turn) => turn.id !== null)]?.id;
   const lastAssistantMessageIdByTurn = useMemo(() => {
-    const result = new Map<string, string>()
-    visibleMessages.forEach(message => {
-      if (message.role === 'assistant' && message.turnId) {
-        result.set(message.turnId, message.id)
+    const result = new Map<string, string>();
+    visibleMessages.forEach((message) => {
+      if (message.role === "assistant" && message.turnId) {
+        result.set(message.turnId, message.id);
       }
-    })
-    return result
-  }, [visibleMessages])
+    });
+    return result;
+  }, [visibleMessages]);
   const editableLastUserMessageId = useMemo(
     () =>
       editableLastUserMessage(
         visibleMessages,
-        canEditLastUserMessage && Boolean(onEditLastUserMessage)
+        canEditLastUserMessage && Boolean(onEditLastUserMessage),
       )?.id ?? null,
-    [canEditLastUserMessage, onEditLastUserMessage, visibleMessages]
-  )
+    [canEditLastUserMessage, onEditLastUserMessage, visibleMessages],
+  );
   const activeEditingMessageId =
-    editingMessageId === editableLastUserMessageId ? editingMessageId : null
+    editingMessageId === editableLastUserMessageId ? editingMessageId : null;
   const activeSubmittingEditMessageId =
-    submittingEditMessageId === editableLastUserMessageId ? submittingEditMessageId : null
+    submittingEditMessageId === editableLastUserMessageId
+      ? submittingEditMessageId
+      : null;
   const shouldShowWaitingIndicator =
     isWaitingForAssistant &&
     !resolvedMessages.some(
-      message => message.role === 'assistant' && message.status === 'streaming'
-    )
-  const virtualMessages = virtualize && scrollElementRef !== undefined
-  const hasVisibleContent = visibleMessages.length > 0 || shouldShowWaitingIndicator
+      (message) =>
+        message.role === "assistant" && message.status === "streaming",
+    );
+  const virtualMessages = virtualize && scrollElementRef !== undefined;
+  const hasVisibleContent =
+    visibleMessages.length > 0 || shouldShowWaitingIndicator;
   // Validate the actual column before hydrating sizes or preparing the transcript.
-  const virtualLayoutReady = virtualMessages && layoutWidth > 0
-  const virtualMeasurementKey = conversationKey == null ? null : String(conversationKey)
+  const virtualLayoutReady = virtualMessages && layoutWidth > 0;
+  const virtualMeasurementKey =
+    conversationKey == null ? null : String(conversationKey);
   const measurementLayout = useMemo(
     () => ({
       key: layoutKey,
       messages: new Map(
-        visibleMessages.map(message => [message.id, getMessageLayoutSignature(message)])
+        visibleMessages.map((message) => [
+          message.id,
+          getMessageLayoutSignature(message),
+        ]),
       ),
     }),
-    [layoutKey, visibleMessages]
-  )
+    [layoutKey, visibleMessages],
+  );
   const initialMeasurementsCache = useMemo(
     () =>
       virtualMeasurementKey === null
         ? []
-        : (getConversationVirtualMeasurements(virtualMeasurementKey, measurementLayout) ?? []),
-    [measurementLayout, virtualMeasurementKey]
-  )
+        : (getConversationVirtualMeasurements(
+            virtualMeasurementKey,
+            measurementLayout,
+          ) ?? []),
+    [measurementLayout, virtualMeasurementKey],
+  );
   const messageIntrinsicHeights = useMemo(() => {
-    if (!virtualLayoutReady) return new Map<string, number>()
-    const measuredSizes = new Map(initialMeasurementsCache.map(item => [item.key, item.size]))
+    if (!virtualLayoutReady) return new Map<string, number>();
+    const measuredSizes = new Map(
+      initialMeasurementsCache.map((item) => [item.key, item.size]),
+    );
     return new Map(
-      visibleMessages.map(message => [
+      visibleMessages.map((message) => [
         message.id,
         measuredSizes.get(message.id) ??
-          getMessagePretextIntrinsicHeight(message, layoutWidth, layout.typography),
-      ])
-    )
+          getMessagePretextIntrinsicHeight(
+            message,
+            layoutWidth,
+            layout.typography,
+          ),
+      ]),
+    );
   }, [
     initialMeasurementsCache,
     layoutWidth,
     layout.typography,
     virtualLayoutReady,
     visibleMessages,
-  ])
+  ]);
   const listLayoutClass = className
-    ? 'mx-auto flex min-w-0 shrink-0 flex-col gap-4 pb-2 pt-8'
-    : 'mx-auto flex w-full min-w-0 max-w-3xl shrink-0 flex-col gap-4 px-6 pb-2 pt-8'
+    ? "mx-auto flex min-w-0 shrink-0 flex-col gap-4 pb-2 pt-8"
+    : "mx-auto flex w-full min-w-0 max-w-3xl shrink-0 flex-col gap-4 px-6 pb-2 pt-8";
   const forcedVirtualMessageIndex = useMemo(
     () =>
       forceVirtualMessageId === null
         ? -1
-        : visibleMessages.findIndex(message => message.id === forceVirtualMessageId),
-    [forceVirtualMessageId, visibleMessages]
-  )
+        : visibleMessages.findIndex(
+            (message) => message.id === forceVirtualMessageId,
+          ),
+    [forceVirtualMessageId, visibleMessages],
+  );
   const streamingVirtualMessageIndex = useMemo(
-    () => findLastIndex(visibleMessages, message => message.status === 'streaming'),
-    [visibleMessages]
-  )
+    () =>
+      findLastIndex(
+        visibleMessages,
+        (message) => message.status === "streaming",
+      ),
+    [visibleMessages],
+  );
   const getItemKey = useCallback(
-    (index: number) => visibleMessages[index]?.id ?? 'assistant-waiting',
-    [visibleMessages]
-  )
+    (index: number) => visibleMessages[index]?.id ?? "assistant-waiting",
+    [visibleMessages],
+  );
   const estimateSize = useCallback(
     (index: number) =>
       index === visibleMessages.length
         ? 32
-        : Math.ceil(messageIntrinsicHeights.get(visibleMessages[index].id) ?? 220),
-    [messageIntrinsicHeights, visibleMessages]
-  )
+        : Math.ceil(
+            messageIntrinsicHeights.get(visibleMessages[index].id) ?? 220,
+          ),
+    [messageIntrinsicHeights, visibleMessages],
+  );
   const rangeExtractor = useCallback(
     (range: VirtualRange) => {
       const indexes =
         range.count <= VIRTUAL_MESSAGE_FULL_MEASUREMENT_COUNT
           ? Array.from({ length: range.count }, (_, index) => index)
-          : defaultRangeExtractor(range)
+          : defaultRangeExtractor(range);
       const forcedIndexes = [
         ...new Set([forcedVirtualMessageIndex, streamingVirtualMessageIndex]),
-      ].filter(index => index >= 0 && !indexes.includes(index))
-      return [...indexes, ...forcedIndexes].sort((left, right) => left - right)
+      ].filter((index) => index >= 0 && !indexes.includes(index));
+      return [...indexes, ...forcedIndexes].sort((left, right) => left - right);
     },
-    [forcedVirtualMessageIndex, streamingVirtualMessageIndex]
-  )
-  const measureElement = useMessageRowMeasure(onVirtualMeasurement)
+    [forcedVirtualMessageIndex, streamingVirtualMessageIndex],
+  );
+  const measureElement = useMessageRowMeasure(onVirtualMeasurement);
   const {
     virtualizer: messageVirtualizer,
     tailHeight,
@@ -383,7 +441,7 @@ export const MessageList = memo(function MessageList({
     overscan: VIRTUAL_MESSAGE_OVERSCAN,
     anchorTo: virtualAnchor,
     scrollEndThreshold: virtualAnchorToEnd ? 8 : -1,
-    followOnAppend: virtualAnchorToEnd ? 'auto' : false,
+    followOnAppend: virtualAnchorToEnd ? "auto" : false,
     rangeExtractor,
     initialMeasurementsCache,
     initialDistanceFromBottomPx,
@@ -392,81 +450,94 @@ export const MessageList = memo(function MessageList({
     listRef,
     virtualizerRef,
     onScrollAdjustment: onVirtualScrollAdjustment,
-  })
-  messageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = virtualScrollAdjustmentEnabled
-    ? undefined
-    : () => false
-  const virtualTotalSize = virtualMessages ? messageVirtualizer.getTotalSize() : 0
-  const virtualRows = messageVirtualizer.getVirtualItems()
+  });
+  messageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange =
+    virtualScrollAdjustmentEnabled ? undefined : () => false;
+  const virtualTotalSize = virtualMessages
+    ? messageVirtualizer.getTotalSize()
+    : 0;
+  const virtualRows = messageVirtualizer.getVirtualItems();
   const { measureRow, measureRows } = useMessageRowMeasurements(
     listRef,
     messageVirtualizer,
-    virtualLayoutReady
-  )
-  const markdownLayoutHandlerRef = useRef<(element: HTMLElement) => void>(() => {})
-  const pendingMarkdownLayoutsRef = useRef(new Set<HTMLElement>())
+    virtualLayoutReady,
+  );
+  const markdownLayoutHandlerRef = useRef<(element: HTMLElement) => void>(
+    () => {},
+  );
+  const pendingMarkdownLayoutsRef = useRef(new Set<HTMLElement>());
   const markdownWindowingState = useMemo(
     () => ({
       conversationKey,
       layoutKey,
       scope: createMarkdownWindowingScope(
         scrollElementRef,
-        element => {
-          markdownLayoutHandlerRef.current(element)
+        (element) => {
+          markdownLayoutHandlerRef.current(element);
         },
-        layout.typography.rootFontSize
+        layout.typography.rootFontSize,
       ),
     }),
-    [conversationKey, scrollElementRef, layoutKey, layout.typography.rootFontSize]
-  )
-  markdownLayoutHandlerRef.current = element => {
-    const list = listRef.current
+    [
+      conversationKey,
+      scrollElementRef,
+      layoutKey,
+      layout.typography.rootFontSize,
+    ],
+  );
+  markdownLayoutHandlerRef.current = (element) => {
+    const list = listRef.current;
     if (!list) {
-      pendingMarkdownLayoutsRef.current.add(element)
-      return
+      pendingMarkdownLayoutsRef.current.add(element);
+      return;
     }
-    if (!list.contains(element)) return
+    if (!list.contains(element)) return;
     if (!virtualMessages) {
-      onVirtualLayoutChange?.()
-      return
+      onVirtualLayoutChange?.();
+      return;
     }
-    const row = element.closest<HTMLElement>('[data-message-row][data-index]')
-    if (!row || !list.contains(row)) return
-    measureRow(row)
-  }
+    const row = element.closest<HTMLElement>("[data-message-row][data-index]");
+    if (!row || !list.contains(row)) return;
+    measureRow(row);
+  };
 
   useEffect(() => {
-    const scope = markdownWindowingState.scope
-    const scroller = scope.scrollElementRef?.current
-    if (!scroller) return
+    const scope = markdownWindowingState.scope;
+    const scroller = scope.scrollElementRef?.current;
+    if (!scroller) return;
     const renderPendingChunks = () => {
-      const startedAt = isConversationDiagnosticsEnabled() ? performance.now() : null
-      const renders = scope.getViewportRenders()
-      if (renders.length > 0) flushSync(() => renders.forEach(render => render()))
-      if (startedAt === null) return
-      const elapsedMs = performance.now() - startedAt
+      const startedAt = isConversationDiagnosticsEnabled()
+        ? performance.now()
+        : null;
+      const renders = scope.getViewportRenders();
+      if (renders.length > 0)
+        flushSync(() => renders.forEach((render) => render()));
+      if (startedAt === null) return;
+      const elapsedMs = performance.now() - startedAt;
       if (elapsedMs >= 16) {
-        recordConversationDiagnostic('search-scroll-render', {
+        recordConversationDiagnostic("search-scroll-render", {
           elapsedMs,
           renderedCount: renders.length,
-        })
+        });
       }
-    }
-    scroller.addEventListener('scroll', renderPendingChunks, { passive: true })
-    return () => scroller.removeEventListener('scroll', renderPendingChunks)
-  }, [markdownWindowingState])
+    };
+    scroller.addEventListener("scroll", renderPendingChunks, { passive: true });
+    return () => scroller.removeEventListener("scroll", renderPendingChunks);
+  }, [markdownWindowingState]);
 
   useLayoutEffect(() => {
-    if (virtualMessages && !virtualLayoutReady) return
+    if (virtualMessages && !virtualLayoutReady) return;
     // Child layout effects run before the list's host ref is attached on first mount.
-    const pendingChunks = [...pendingMarkdownLayoutsRef.current]
-    pendingMarkdownLayoutsRef.current.clear()
-    pendingChunks.forEach(chunk => markdownLayoutHandlerRef.current(chunk))
-    if (!virtualMessages) return
-    markdownWindowingState.scope.getViewportRenders().forEach(render => render())
+    const pendingChunks = [...pendingMarkdownLayoutsRef.current];
+    pendingMarkdownLayoutsRef.current.clear();
+    pendingChunks.forEach((chunk) => markdownLayoutHandlerRef.current(chunk));
+    if (!virtualMessages) return;
+    markdownWindowingState.scope
+      .getViewportRenders()
+      .forEach((render) => render());
     if (isConversationDiagnosticsEnabled()) {
-      const scroller = scrollElementRef?.current
-      recordConversationDiagnostic('virtual-range', {
+      const scroller = scrollElementRef?.current;
+      recordConversationDiagnostic("virtual-range", {
         ...getConversationDiagnosticContext(listRef.current),
         rangeStart: messageVirtualizer.range?.startIndex,
         rangeEnd: messageVirtualizer.range?.endIndex,
@@ -477,9 +548,9 @@ export const MessageList = memo(function MessageList({
         clientHeight: scroller?.clientHeight,
         clientWidth: scroller?.clientWidth,
         scrolling: messageVirtualizer.isScrolling,
-      })
+      });
     }
-    onVirtualLayoutChange?.()
+    onVirtualLayoutChange?.();
   }, [
     markdownWindowingState,
     messageVirtualizer,
@@ -489,31 +560,35 @@ export const MessageList = memo(function MessageList({
     virtualLayoutReady,
     virtualRows,
     virtualTotalSize,
-  ])
+  ]);
 
   const snapshotRef = useRef<{
-    layout: typeof measurementLayout
-  } | null>(null)
-  const uncacheableMessageIdsRef = useRef(new Set<string>())
+    layout: typeof measurementLayout;
+  } | null>(null);
+  const uncacheableMessageIdsRef = useRef(new Set<string>());
   useLayoutEffect(() => {
-    if (!virtualLayoutReady) return
+    if (!virtualLayoutReady) return;
     listRef.current
-      ?.querySelectorAll<HTMLElement>('[data-message-row][data-index]')
-      .forEach(row => {
-        const id = row.querySelector<HTMLElement>('[data-message-id]')?.dataset.messageId
-        if (!id) return
+      ?.querySelectorAll<HTMLElement>("[data-message-row][data-index]")
+      .forEach((row) => {
+        const id =
+          row.querySelector<HTMLElement>("[data-message-id]")?.dataset
+            .messageId;
+        if (!id) return;
         if (
-          row.querySelector('[aria-expanded="true"], [data-testid="user-message-editor"]') ||
+          row.querySelector(
+            '[aria-expanded="true"], [data-testid="user-message-editor"]',
+          ) ||
           id === searchMessageId
         )
-          uncacheableMessageIdsRef.current.add(id)
-        else uncacheableMessageIdsRef.current.delete(id)
-      })
-    snapshotRef.current = { layout: measurementLayout }
-  })
+          uncacheableMessageIdsRef.current.add(id);
+        else uncacheableMessageIdsRef.current.delete(id);
+      });
+    snapshotRef.current = { layout: measurementLayout };
+  });
   useEffect(
     () => () => {
-      const snapshot = snapshotRef.current
+      const snapshot = snapshotRef.current;
       if (
         virtualMessages &&
         messageVirtualizer.options.enabled &&
@@ -524,185 +599,203 @@ export const MessageList = memo(function MessageList({
           virtualMeasurementKey,
           messageVirtualizer
             .takeSnapshot()
-            .filter(item => !uncacheableMessageIdsRef.current.has(String(item.key))),
-          snapshot.layout
-        )
+            .filter(
+              (item) => !uncacheableMessageIdsRef.current.has(String(item.key)),
+            ),
+          snapshot.layout,
+        );
     },
-    [messageVirtualizer, virtualMeasurementKey, virtualMessages]
-  )
+    [messageVirtualizer, virtualMeasurementKey, virtualMessages],
+  );
 
   useLayoutEffect(() => {
-    const element = listRef.current
-    if (!element || !virtualMessages) return
-    let active = true
+    const element = listRef.current;
+    if (!element || !virtualMessages) return;
+    let active = true;
     const update = (fontLoaded = false) => {
-      const style = getComputedStyle(element)
+      const style = getComputedStyle(element);
       const width = Math.max(
         0,
         Math.round(
           element.clientWidth -
             (Number.parseFloat(style.paddingLeft) || 0) -
-            (Number.parseFloat(style.paddingRight) || 0)
-        )
-      )
-      const typography = readMessageLayoutTypography(element)
-      setLayout(previous => {
+            (Number.parseFloat(style.paddingRight) || 0),
+        ),
+      );
+      const typography = readMessageLayoutTypography(element);
+      setLayout((previous) => {
         if (
           !fontLoaded &&
           previous.width === width &&
           JSON.stringify(previous.typography) === JSON.stringify(typography)
         )
-          return previous
+          return previous;
         return {
           width,
           typography,
           fontEpoch: getMessageFontMetricsRevision(),
-        }
-      })
-    }
-    update()
-    const observer = new ResizeObserver(() => update())
-    observer.observe(element)
-    const mutation = new MutationObserver(() => update())
+        };
+      });
+    };
+    update();
+    const observer = new ResizeObserver(() => update());
+    observer.observe(element);
+    const mutation = new MutationObserver(() => update());
     mutation.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ['style', 'class'],
-    })
+      attributeFilter: ["style", "class"],
+    });
     const fontsLoaded = () => {
-      if (active) update(true)
-    }
-    document.fonts?.addEventListener('loadingdone', fontsLoaded)
+      if (active) update(true);
+    };
+    document.fonts?.addEventListener("loadingdone", fontsLoaded);
     return () => {
-      active = false
-      observer.disconnect()
-      mutation.disconnect()
-      document.fonts?.removeEventListener('loadingdone', fontsLoaded)
-    }
-  }, [hasVisibleContent, scrollElementRef, virtualMessages])
+      active = false;
+      observer.disconnect();
+      mutation.disconnect();
+      document.fonts?.removeEventListener("loadingdone", fontsLoaded);
+    };
+  }, [hasVisibleContent, scrollElementRef, virtualMessages]);
 
-  const previousLayoutKeyRef = useRef<string | null>(null)
+  const previousLayoutKeyRef = useRef<string | null>(null);
   useLayoutEffect(() => {
-    if (!virtualLayoutReady || previousLayoutKeyRef.current === layoutKey) return
-    const previousKey = previousLayoutKeyRef.current
-    previousLayoutKeyRef.current = layoutKey
-    if (previousKey === null) return
-    messageVirtualizer.measure()
+    if (!virtualLayoutReady || previousLayoutKeyRef.current === layoutKey)
+      return;
+    const previousKey = previousLayoutKeyRef.current;
+    previousLayoutKeyRef.current = layoutKey;
+    if (previousKey === null) return;
+    messageVirtualizer.measure();
     measureRows(
       Array.from(
-        listRef.current?.querySelectorAll<HTMLElement>('[data-message-row][data-index]') ?? []
-      )
-    )
-  }, [layoutKey, measureRows, messageVirtualizer, virtualLayoutReady])
+        listRef.current?.querySelectorAll<HTMLElement>(
+          "[data-message-row][data-index]",
+        ) ?? [],
+      ),
+    );
+  }, [layoutKey, measureRows, messageVirtualizer, virtualLayoutReady]);
 
   const hasSelectionActions = Boolean(
-    onAddSelectionToConversation || onAskSelectionInSidebar || onFillSelectionToAnswer
-  )
+    onAddSelectionToConversation ||
+    onAskSelectionInSidebar ||
+    onFillSelectionToAnswer,
+  );
   useEffect(() => {
-    if (!useContentVisibility && !hasSelectionActions) return
+    if (!useContentVisibility && !hasSelectionActions) return;
 
     const updateSelectionState = (
       preserveCapturedSelection = false,
-      eventTarget?: EventTarget | null
+      eventTarget?: EventTarget | null,
     ) => {
       if (
         isEditableSelectionTarget(eventTarget) ||
         isEditableSelectionTarget(document.activeElement)
       ) {
-        setIsTextSelectionActive(false)
-        setTextSelection(null)
-        return
+        setIsTextSelectionActive(false);
+        setTextSelection(null);
+        return;
       }
-      const selection = document.getSelection?.()
-      const root = listRef.current
-      if (!selection || !root || selection.isCollapsed || selection.rangeCount === 0) {
-        setIsTextSelectionActive(false)
+      const selection = document.getSelection?.();
+      const root = listRef.current;
+      if (
+        !selection ||
+        !root ||
+        selection.isCollapsed ||
+        selection.rangeCount === 0
+      ) {
+        setIsTextSelectionActive(false);
         if (!preserveCapturedSelection) {
-          setTextSelection(null)
+          setTextSelection(null);
         }
-        return
+        return;
       }
 
       const selectionTouchesList =
         isNodeInsideElement(selection.anchorNode, root) ||
-        isNodeInsideElement(selection.focusNode, root)
+        isNodeInsideElement(selection.focusNode, root);
       if (!selectionTouchesList) {
-        setIsTextSelectionActive(false)
-        setTextSelection(null)
-        return
+        setIsTextSelectionActive(false);
+        setTextSelection(null);
+        return;
       }
-      setIsTextSelectionActive(useContentVisibility)
-      if (!hasSelectionActions) return
+      setIsTextSelectionActive(useContentVisibility);
+      if (!hasSelectionActions) return;
 
-      const range = selection.getRangeAt(0)
-      const selectedMessageBodies = selectableMessageBodiesForRange(root, range)
+      const range = selection.getRangeAt(0);
+      const selectedMessageBodies = selectableMessageBodiesForRange(
+        root,
+        range,
+      );
       if (selectedMessageBodies.length !== 1) {
-        setTextSelection(null)
-        return
+        setTextSelection(null);
+        return;
       }
 
-      const text = selection.toString().trim()
+      const text = selection.toString().trim();
       if (!text) {
-        setTextSelection(null)
-        return
+        setTextSelection(null);
+        return;
       }
-      const rect = range.getBoundingClientRect()
+      const rect = range.getBoundingClientRect();
       const nextSelection: MessageTextSelection = {
         text,
-        left: Math.min(Math.max(rect.left + rect.width / 2, 120), window.innerWidth - 120),
+        left: Math.min(
+          Math.max(rect.left + rect.width / 2, 120),
+          window.innerWidth - 120,
+        ),
         top: Math.max(rect.top - SELECTION_ACTION_GAP, 44),
         conversationKey,
-      }
-      setTextSelection(current =>
+      };
+      setTextSelection((current) =>
         current?.text === nextSelection.text &&
         current.left === nextSelection.left &&
         current.top === nextSelection.top &&
         current.conversationKey === nextSelection.conversationKey
           ? current
-          : nextSelection
-      )
-    }
+          : nextSelection,
+      );
+    };
 
     const scheduleSelectionUpdate = () => {
-      window.requestAnimationFrame(() => updateSelectionState(true))
-    }
+      window.requestAnimationFrame(() => updateSelectionState(true));
+    };
 
     const finalizeSelectionUpdate = (event: Event) => {
       if (
         event.target instanceof Element &&
         event.target.closest('[data-testid="message-selection-actions"]')
       ) {
-        return
+        return;
       }
-      updateSelectionState(false, event.target)
-    }
+      updateSelectionState(false, event.target);
+    };
 
     const handleBlur = () => {
-      updateSelectionState()
-    }
+      updateSelectionState();
+    };
 
     const handleScroll = () => {
-      updateSelectionState(true)
-    }
+      updateSelectionState(true);
+    };
 
-    document.addEventListener('pointerup', finalizeSelectionUpdate)
-    document.addEventListener('pointercancel', finalizeSelectionUpdate)
-    document.addEventListener('mouseup', finalizeSelectionUpdate)
-    document.addEventListener('keyup', finalizeSelectionUpdate)
-    document.addEventListener('focusin', finalizeSelectionUpdate)
-    document.addEventListener('selectionchange', scheduleSelectionUpdate)
-    window.addEventListener('scroll', handleScroll, true)
-    window.addEventListener('blur', handleBlur)
+    document.addEventListener("pointerup", finalizeSelectionUpdate);
+    document.addEventListener("pointercancel", finalizeSelectionUpdate);
+    document.addEventListener("mouseup", finalizeSelectionUpdate);
+    document.addEventListener("keyup", finalizeSelectionUpdate);
+    document.addEventListener("focusin", finalizeSelectionUpdate);
+    document.addEventListener("selectionchange", scheduleSelectionUpdate);
+    window.addEventListener("scroll", handleScroll, true);
+    window.addEventListener("blur", handleBlur);
 
     return () => {
-      document.removeEventListener('pointerup', finalizeSelectionUpdate)
-      document.removeEventListener('pointercancel', finalizeSelectionUpdate)
-      document.removeEventListener('mouseup', finalizeSelectionUpdate)
-      document.removeEventListener('keyup', finalizeSelectionUpdate)
-      document.removeEventListener('focusin', finalizeSelectionUpdate)
-      document.removeEventListener('selectionchange', scheduleSelectionUpdate)
-      window.removeEventListener('scroll', handleScroll, true)
-      window.removeEventListener('blur', handleBlur)
-    }
+      document.removeEventListener("pointerup", finalizeSelectionUpdate);
+      document.removeEventListener("pointercancel", finalizeSelectionUpdate);
+      document.removeEventListener("mouseup", finalizeSelectionUpdate);
+      document.removeEventListener("keyup", finalizeSelectionUpdate);
+      document.removeEventListener("focusin", finalizeSelectionUpdate);
+      document.removeEventListener("selectionchange", scheduleSelectionUpdate);
+      window.removeEventListener("scroll", handleScroll, true);
+      window.removeEventListener("blur", handleBlur);
+    };
   }, [
     conversationKey,
     useContentVisibility,
@@ -710,23 +803,27 @@ export const MessageList = memo(function MessageList({
     onAddSelectionToConversation,
     onAskSelectionInSidebar,
     onFillSelectionToAnswer,
-  ])
+  ]);
 
   const applySelectionAction = (action: (text: string) => void) => {
-    if (!textSelection) return
-    action(textSelection.text)
-    document.getSelection()?.removeAllRanges()
-    setTextSelection(null)
-  }
+    if (!textSelection) return;
+    action(textSelection.text);
+    document.getSelection()?.removeAllRanges();
+    setTextSelection(null);
+  };
 
   if (visibleMessages.length === 0 && !shouldShowWaitingIndicator) {
-    return null
+    return null;
   }
 
   const content = (
     <div
       ref={listRef}
-      className={cn(listLayoutClass, className, virtualMessages && 'relative gap-0 pb-0 pt-0')}
+      className={cn(
+        listLayoutClass,
+        className,
+        virtualMessages && "relative gap-0 pb-0 pt-0",
+      )}
       data-conversation-message-list=""
       data-conversation-layout-width={layoutWidth}
       data-conversation-message-count={messages.length}
@@ -735,19 +832,26 @@ export const MessageList = memo(function MessageList({
       data-conversation-viewport-ready={viewportReady}
       data-conversation-virtualizer-enabled={messageVirtualizer.options.enabled}
       data-conversation-virtual-row-count={virtualRows.length}
-      data-conversation-virtual-range={JSON.stringify(messageVirtualizer.range ?? null)}
-      data-conversation-scroll-rect={JSON.stringify(messageVirtualizer.scrollRect ?? null)}
-      data-conversation-scroll-connected={messageVirtualizer.scrollElement?.isConnected ?? false}
+      data-conversation-virtual-range={JSON.stringify(
+        messageVirtualizer.range ?? null,
+      )}
+      data-conversation-scroll-rect={JSON.stringify(
+        messageVirtualizer.scrollRect ?? null,
+      )}
+      data-conversation-scroll-connected={
+        messageVirtualizer.scrollElement?.isConnected ?? false
+      }
       data-conversation-scroll-element={
         messageVirtualizer.scrollElement
-          ? (messageVirtualizer.scrollElement.dataset.testid ?? 'unmarked')
-          : 'none'
+          ? (messageVirtualizer.scrollElement.dataset.testid ?? "unmarked")
+          : "none"
       }
     >
       {hasSelectionActions &&
         textSelection &&
         textSelection.conversationKey === conversationKey && (
           <SelectionActionsPopover
+            onClose={() => setTextSelection(null)}
             position={{ left: textSelection.left, top: textSelection.top }}
             onAddToConversation={
               onAddSelectionToConversation
@@ -774,7 +878,8 @@ export const MessageList = memo(function MessageList({
               flexShrink: 0,
               marginTop: Math.max(
                 0,
-                virtualRow.start - (virtualRows[position - 1]?.end ?? scrollMargin)
+                virtualRow.start -
+                  (virtualRows[position - 1]?.end ?? scrollMargin),
               ),
             } satisfies CSSProperties,
           }))
@@ -783,9 +888,9 @@ export const MessageList = memo(function MessageList({
             key: visibleMessages[index].id,
             style: undefined,
           }))
-      ).map(row => {
-        const { index } = row
-        const message = visibleMessages[index]
+      ).map((row) => {
+        const { index } = row;
+        const message = visibleMessages[index];
         if (!message)
           return (
             <article
@@ -798,21 +903,23 @@ export const MessageList = memo(function MessageList({
             >
               <AssistantThinkingIndicator />
             </article>
-          )
-        const nextMessage = visibleMessages[index + 1]
+          );
+        const nextMessage = visibleMessages[index + 1];
         const isHistoricalTurn = Boolean(
-          message.turnId && latestNativeTurnId && message.turnId !== latestNativeTurnId
-        )
+          message.turnId &&
+          latestNativeTurnId &&
+          message.turnId !== latestNativeTurnId,
+        );
         const article = (
           <article
             className={cn(
-              'min-w-0',
+              "min-w-0",
               useContentVisibility &&
                 !disableContentVisibility &&
                 searchMessageId !== message.id &&
                 !isTextSelectionActive &&
-                '[content-visibility:auto]',
-              message.role === 'user' && 'flex justify-end'
+                "[content-visibility:auto]",
+              message.role === "user" && "flex justify-end",
             )}
             data-message-id={message.id}
             data-testid={`message-${message.role}`}
@@ -820,15 +927,16 @@ export const MessageList = memo(function MessageList({
             <MessageListMessage
               message={message}
               runtimeTurn={
-                message.turnId && lastAssistantMessageIdByTurn.get(message.turnId) === message.id
+                message.turnId &&
+                lastAssistantMessageIdByTurn.get(message.turnId) === message.id
                   ? runtimeTurnsById.get(message.turnId)
                   : undefined
               }
               forceExpanded={searchMessageId === message.id}
               // Waiting for the next assistant must not keep a completed turn's process open.
               isActiveTurn={
-                message.role === 'assistant' &&
-                message.status === 'streaming' &&
+                message.role === "assistant" &&
+                message.status === "streaming" &&
                 !isHistoricalTurn
               }
               isHistoricalTurn={isHistoricalTurn}
@@ -853,7 +961,9 @@ export const MessageList = memo(function MessageList({
               onLoadFileChangesDiff={onLoadFileChangesDiff}
               onRevertFileChanges={onRevertFileChanges}
               onOpenFileChangesReview={onOpenFileChangesReview}
-              fileChangesDiffPreviewDisabledSubtaskId={fileChangesDiffPreviewDisabledSubtaskId}
+              fileChangesDiffPreviewDisabledSubtaskId={
+                fileChangesDiffPreviewDisabledSubtaskId
+              }
               onRequestUserInputSubmit={onRequestUserInputSubmit}
               onRequestUserInputIgnore={onRequestUserInputIgnore}
               onOpenAssistantPlan={onOpenAssistantPlan}
@@ -863,15 +973,22 @@ export const MessageList = memo(function MessageList({
               onForkMessage={onForkMessage}
             />
           </article>
-        )
+        );
         const searchableArticle = (
-          <MarkdownWindowingDisabledContext.Provider value={searchMessageId === message.id}>
+          <MarkdownWindowingDisabledContext.Provider
+            value={searchMessageId === message.id}
+          >
             {article}
           </MarkdownWindowingDisabledContext.Provider>
-        )
-        const gap = renderGapAfterMessage?.(message, nextMessage)
+        );
+        const gap = renderGapAfterMessage?.(message, nextMessage);
         return virtualMessages ? (
-          <div key={row.key} data-index={index} data-message-row style={row.style}>
+          <div
+            key={row.key}
+            data-index={index}
+            data-message-row
+            style={row.style}
+          >
             {searchableArticle}
             {gap}
           </div>
@@ -880,7 +997,7 @@ export const MessageList = memo(function MessageList({
             {searchableArticle}
             {gap}
           </Fragment>
-        )
+        );
       })}
       {virtualMessages && (
         <div
@@ -893,7 +1010,7 @@ export const MessageList = memo(function MessageList({
               virtualTotalSize -
                 tailHeight -
                 (virtualRows.at(-1)?.end ?? scrollMargin) +
-                scrollMargin
+                scrollMargin,
             ),
           }}
         />
@@ -904,42 +1021,47 @@ export const MessageList = memo(function MessageList({
         </article>
       )}
     </div>
-  )
+  );
   return (
     <MarkdownWindowingContext.Provider value={markdownWindowingState.scope}>
       {content}
     </MarkdownWindowingContext.Provider>
-  )
-})
+  );
+});
 
-function selectableMessageBodiesForRange(root: HTMLElement, range: Range): HTMLElement[] {
-  return Array.from(root.querySelectorAll<HTMLElement>('[data-message-selectable-text]')).filter(
-    element => selectedTextWithinElement(range, element).trim().length > 0
-  )
+function selectableMessageBodiesForRange(
+  root: HTMLElement,
+  range: Range,
+): HTMLElement[] {
+  return Array.from(
+    root.querySelectorAll<HTMLElement>("[data-message-selectable-text]"),
+  ).filter(
+    (element) => selectedTextWithinElement(range, element).trim().length > 0,
+  );
 }
 
 function selectedTextWithinElement(range: Range, element: HTMLElement): string {
-  if (!range.intersectsNode(element)) return ''
+  if (!range.intersectsNode(element)) return "";
 
-  const intersection = document.createRange()
-  intersection.selectNodeContents(element)
+  const intersection = document.createRange();
+  intersection.selectNodeContents(element);
   if (intersection.compareBoundaryPoints(Range.START_TO_START, range) < 0) {
-    intersection.setStart(range.startContainer, range.startOffset)
+    intersection.setStart(range.startContainer, range.startOffset);
   }
   if (intersection.compareBoundaryPoints(Range.END_TO_END, range) > 0) {
-    intersection.setEnd(range.endContainer, range.endOffset)
+    intersection.setEnd(range.endContainer, range.endOffset);
   }
-  return intersection.toString()
+  return intersection.toString();
 }
 
 function isNodeInsideElement(node: Node | null, root: HTMLElement): boolean {
-  if (!node) return false
+  if (!node) return false;
 
   if (node.nodeType === Node.ELEMENT_NODE) {
-    return root.contains(node)
+    return root.contains(node);
   }
 
-  return Boolean(node.parentElement && root.contains(node.parentElement))
+  return Boolean(node.parentElement && root.contains(node.parentElement));
 }
 
 function isEditableSelectionTarget(target?: EventTarget | null): boolean {
@@ -947,50 +1069,56 @@ function isEditableSelectionTarget(target?: EventTarget | null): boolean {
     target instanceof Element &&
     Boolean(
       target.closest(
-        'input, textarea, [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"]'
-      )
+        'input, textarea, [contenteditable="true"], [contenteditable=""], [contenteditable="plaintext-only"]',
+      ),
     )
-  )
+  );
 }
 
 function shouldRenderMessage(message: WorkbenchMessage): boolean {
-  if (message.role !== 'assistant') return true
-  if (message.status === 'streaming' || message.status === 'failed') return true
-  if (isCancelledAssistantMessage(message)) return true
-  if (message.fileChanges) return true
+  if (message.role !== "assistant") return true;
+  if (message.status === "streaming" || message.status === "failed")
+    return true;
+  if (isCancelledAssistantMessage(message)) return true;
+  if (message.fileChanges) return true;
   if (message.references?.length || message.memoryCitations?.length) {
-    return true
+    return true;
   }
 
   const visibleContent = shouldHideFailedAssistantContent(message)
-    ? ''
-    : stripPluginWorkspaceResultMarkers(message.content)
-  if (visibleContent.trim()) return true
+    ? ""
+    : stripPluginWorkspaceResultMarkers(message.content);
+  if (visibleContent.trim()) return true;
 
-  return getDisplayProcessingBlocks(message.blocks).length > 0
+  return getDisplayProcessingBlocks(message.blocks).length > 0;
 }
 
 function editableLastUserMessage(
   messages: WorkbenchMessage[],
-  canEdit: boolean
+  canEdit: boolean,
 ): WorkbenchMessage | null {
-  if (!canEdit) return null
+  if (!canEdit) return null;
 
-  const lastUserIndex = findLastIndex(messages, message => message.role === 'user')
-  if (lastUserIndex === -1) return null
+  const lastUserIndex = findLastIndex(
+    messages,
+    (message) => message.role === "user",
+  );
+  if (lastUserIndex === -1) return null;
 
-  const followingMessages = messages.slice(lastUserIndex + 1)
-  if (followingMessages.length === 0) return null
-  if (followingMessages.some(message => message.status === 'streaming')) return null
-  if (!followingMessages.some(message => message.role === 'assistant')) return null
+  const followingMessages = messages.slice(lastUserIndex + 1);
+  if (followingMessages.length === 0) return null;
+  if (followingMessages.some((message) => message.status === "streaming"))
+    return null;
+  if (!followingMessages.some((message) => message.role === "assistant"))
+    return null;
 
-  return messages[lastUserIndex] ?? null
+  return messages[lastUserIndex] ?? null;
 }
 
 function findLastIndex<T>(items: T[], predicate: (item: T) => boolean): number {
   for (let index = items.length - 1; index >= 0; index -= 1) {
-    const item = items[index]
-    if (item !== undefined && predicate(item)) return index
+    const item = items[index];
+    if (item !== undefined && predicate(item)) return index;
   }
-  return -1
+  return -1;
 }

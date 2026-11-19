@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
 import {
   AdminPasswordSetupForm,
-  PasswordLoginForm,
   OUTLINED_LOGIN_BUTTON_CLASS,
+  PasswordLoginForm,
 } from '@/components/auth/LoginForms'
 import { getRuntimeConfig } from '@/config/runtime'
 import { isAdminPasswordSetupRequiredError } from '@/features/auth/adminPasswordSetup'
@@ -10,6 +9,8 @@ import { POST_LOGIN_REDIRECT_KEY, sanitizeRedirectPath } from '@/features/auth/r
 import { useAuth } from '@/features/auth/useAuth'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useEffect, useMemo, useState } from 'react'
 
 function getRedirectTarget(): string {
   const search = new URLSearchParams(window.location.search)
@@ -172,14 +173,15 @@ export function LoginPage() {
           {showOidcLogin &&
             (!showPasswordLogin ||
               (!isResolvingInitialUserState && !adminPasswordSetupRequired)) && (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="oidc-login-button"
                 className={OUTLINED_LOGIN_BUTTON_CLASS}
                 onClick={handleOidcLogin}
               >
                 {config.oidcLoginText || t('workbench.oidc_login')}
-              </button>
+              </ControlButton>
             )}
         </div>
       </div>

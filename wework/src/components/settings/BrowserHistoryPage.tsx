@@ -1,5 +1,3 @@
-import { ChevronDown, Globe, History, Loader2, MoreHorizontal, Search, Trash2 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import { TransientNotice } from '@/components/common/TransientNotice'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -13,6 +11,11 @@ import {
   type EmbeddedBrowserHistoryEntry,
 } from '@/lib/embedded-browser-history'
 import { navigateTo } from '@/lib/navigation'
+import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ChevronDown, Globe, History, Loader2, MoreHorizontal, Search, Trash2 } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ClearBrowserDataDialog } from './ClearBrowserDataDialog'
 
 const SEARCH_DEBOUNCE_MS = 200
@@ -129,13 +132,12 @@ function HistoryEntryRow({
       className="flex items-center gap-3 px-4 py-2 focus-within:bg-muted hover:bg-muted"
     >
       <label className="relative flex shrink-0 items-center" htmlFor={checkboxId}>
-        <input
+        <Checkbox
           id={checkboxId}
-          type="checkbox"
           data-testid={`browser-history-entry-select-${entry.id}`}
           checked={checked}
           disabled={disabled}
-          onChange={event => onSelect(event.target.checked)}
+          onCheckedChange={checked => onSelect(checked === true)}
           className="h-4 w-4 accent-primary disabled:opacity-50"
         />
         <span className="sr-only">{t('workbench.browser_history_select_entry', { title })}</span>
@@ -165,7 +167,8 @@ function HistoryEntryRow({
         placement="bottom-end"
         width={200}
         disabled={disabled}
-        triggerClassName="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-hover hover:text-text-primary disabled:opacity-50"
+        density="dense"
+        triggerClassName="flex shrink-0 items-center justify-center rounded-md text-text-secondary transition-colors hover:bg-hover hover:text-text-primary disabled:opacity-50"
         items={[
           {
             label: t('workbench.browser_history_open_page'),
@@ -364,14 +367,15 @@ export function BrowserHistoryPage() {
         <span className="text-sm text-text-secondary">
           {t('workbench.browser_history_load_error')}
         </span>
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="browser-history-retry-button"
           onClick={reloadFirstPage}
           className="h-8 rounded-md bg-muted px-3 text-sm font-medium text-text-primary hover:bg-hover"
         >
           {t('workbench.browser_history_retry')}
-        </button>
+        </ControlButton>
       </div>
     )
   } else if (groups.length === 0) {
@@ -402,7 +406,8 @@ export function BrowserHistoryPage() {
           const contentId = `browser-history-group-content-${groupIndex}`
           return (
             <div key={group.key} data-testid={`browser-history-group-${group.key}`}>
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 aria-expanded={expanded}
                 aria-controls={contentId}
@@ -415,7 +420,7 @@ export function BrowserHistoryPage() {
                   className={`h-3.5 w-3.5 text-text-secondary transition-transform ${expanded ? '' : '-rotate-90'}`}
                 />
                 {formatGroupDate(group.visitTimeMs, locale)}
-              </button>
+              </ControlButton>
               {expanded ? (
                 <div id={contentId}>
                   {group.entries.map(entry => (
@@ -453,7 +458,8 @@ export function BrowserHistoryPage() {
   return (
     <div data-testid="browser-history-page" className="flex h-full flex-col">
       <div className="mb-4 flex items-center gap-2">
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="browser-history-back-button"
           aria-label={t('common.back', '返回')}
@@ -461,16 +467,17 @@ export function BrowserHistoryPage() {
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary"
         >
           <ChevronDown className="h-4 w-4 rotate-90" />
-        </button>
+        </ControlButton>
         <nav aria-label="breadcrumb" className="flex min-w-0 items-center gap-1.5 text-sm">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="browser-history-breadcrumb-browser"
             onClick={() => navigateTo('/settings/browser')}
             className="shrink-0 text-text-secondary hover:text-text-primary hover:underline"
           >
             {t('workbench.settings_nav_browser', '浏览器')}
-          </button>
+          </ControlButton>
           <span className="text-text-muted">/</span>
           <span className="truncate font-medium text-text-primary">
             {t('workbench.browser_history_title')}
@@ -484,14 +491,14 @@ export function BrowserHistoryPage() {
             aria-hidden="true"
             className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted"
           />
-          <input
+          <ControlInput
             type="search"
             data-testid="browser-history-search"
             value={searchInput}
             aria-label={t('workbench.browser_history_search')}
             placeholder={t('workbench.browser_history_search')}
             onChange={event => setSearchInput(event.target.value)}
-            className="h-9 w-full rounded-md border border-border bg-surface pl-9 pr-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted keyboard:focus:border-primary focus:bg-background"
+            className="h-9 w-full pl-9 pr-3 transition-colors placeholder:text-text-muted focus:bg-background"
           />
         </div>
       </div>
@@ -502,7 +509,8 @@ export function BrowserHistoryPage() {
         </h2>
         <div className="flex items-center gap-2">
           {selectedIds.length > 0 ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="browser-history-remove-selected"
               disabled={removing}
@@ -511,18 +519,19 @@ export function BrowserHistoryPage() {
             >
               {removing ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
               {t('workbench.browser_history_remove_selected')}
-            </button>
+            </ControlButton>
           ) : null}
-          <button
+          <ControlButton
             type="button"
             data-testid="browser-history-clear-data-button"
             disabled={removing || clearing}
             onClick={() => setClearDialogOpen(true)}
-            className="inline-flex h-8 items-center gap-1.5 rounded-md bg-muted px-3 text-sm font-medium text-text-primary hover:bg-hover disabled:opacity-50"
+            variant="destructive-ghost"
+            size="sm"
           >
             <Trash2 className="h-4 w-4" />
             {t('workbench.browser_settings_clear_action')}
-          </button>
+          </ControlButton>
         </div>
       </div>
 
@@ -545,14 +554,15 @@ export function BrowserHistoryPage() {
             <span className="text-sm text-text-secondary">
               {t('workbench.browser_history_pagination_error')}
             </span>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="browser-history-pagination-retry-button"
               onClick={() => void loadNextPage()}
               className="h-8 rounded-md bg-muted px-3 text-sm font-medium text-text-primary hover:bg-hover"
             >
               {t('workbench.browser_history_retry')}
-            </button>
+            </ControlButton>
           </div>
         ) : null}
       </div>

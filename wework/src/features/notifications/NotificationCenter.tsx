@@ -1,11 +1,26 @@
-import { useStandInAssignmentNotifications } from './useStandInAssignmentNotifications'
-import { useStandInNotifications } from './useStandInNotifications'
-import { standInOrigin, type StandInNotification } from './standInNotifications'
-import { NotificationFeedRow, type NotificationFeedRowProps } from './NotificationFeedRow'
-import { formatNotificationTime } from './notificationTime'
-import { StandInNotificationProcessing } from './StandInNotificationProcessing'
-import { useRuntimeInteractions } from './RuntimeInteractionsContext'
-import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
+import { createHttpClient } from '@/api/http'
+import {
+  createNotificationsApi,
+  type WeworkInbox,
+  type WeworkNotification,
+  type WeworkNotificationCategory,
+  type WeworkNotificationChannel,
+  type WeworkNotificationPayload,
+  type WeworkNotificationPreferenceCategory,
+  type WeworkNotificationPreferences,
+} from '@/api/notifications'
+import { createRuntimeWorkApi } from '@/api/runtimeWork'
+import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '@/components/layout/DesktopTopBar'
+import { SettingsSwitch } from '@/components/settings/settings-ui'
+import { Tooltip } from '@/components/ui/tooltip'
+import { syncNotificationUnreadCount } from '@/desktop/trayNavigation'
+import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
+import { AnchorPopover } from '@/features/todo/AnchorPopover'
+import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
+import { useTranslation } from '@/hooks/useTranslation'
+import { getDesktopWindowLabel } from '@/lib/runtime-environment'
+import { cn } from '@/lib/utils'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
   ArrowLeft,
   Bell,
@@ -15,35 +30,9 @@ import {
   Settings2,
   UsersRound,
 } from 'lucide-react'
-import { createHttpClient } from '@/api/http'
-import { createRuntimeWorkApi } from '@/api/runtimeWork'
-import {
-  createNotificationsApi,
-  type WeworkInbox,
-  type WeworkNotification,
-  type WeworkNotificationCategory,
-  type WeworkNotificationChannel,
-  type WeworkNotificationPreferenceCategory,
-  type WeworkNotificationPreferences,
-  type WeworkNotificationPayload,
-} from '@/api/notifications'
-import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
-import { useTranslation } from '@/hooks/useTranslation'
-import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '@/components/layout/DesktopTopBar'
-import { Tooltip } from '@/components/ui/tooltip'
-import { AnchorPopover } from '@/features/todo/AnchorPopover'
-import { syncNotificationUnreadCount } from '@/desktop/trayNavigation'
-import { getDesktopWindowLabel } from '@/lib/runtime-environment'
-import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
-import { cn } from '@/lib/utils'
-import { SettingsSwitch } from '@/components/settings/settings-ui'
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { requestIssueDispatch } from './issueDispatch'
-import {
-  useNotificationTaskSource,
-  type IssueDispatchPersonalTaskAction,
-} from './NotificationTaskSourceContext'
-import { weworkIssueScheme, weworkTaskScheme } from './scheme'
-import { openWeworkScheme } from './schemeEvents'
+import { NotificationFeedRow, type NotificationFeedRowProps } from './NotificationFeedRow'
 import {
   cacheNotificationPreferences,
   mergeNotificationPreferences,
@@ -51,6 +40,18 @@ import {
   OPEN_NOTIFICATION_SETTINGS_EVENT,
   readCachedNotificationPreferences,
 } from './notificationPreferences'
+import {
+  useNotificationTaskSource,
+  type IssueDispatchPersonalTaskAction,
+} from './NotificationTaskSourceContext'
+import { formatNotificationTime } from './notificationTime'
+import { useRuntimeInteractions } from './RuntimeInteractionsContext'
+import { weworkIssueScheme, weworkTaskScheme } from './scheme'
+import { openWeworkScheme } from './schemeEvents'
+import { StandInNotificationProcessing } from './StandInNotificationProcessing'
+import { standInOrigin, type StandInNotification } from './standInNotifications'
+import { useStandInAssignmentNotifications } from './useStandInAssignmentNotifications'
+import { useStandInNotifications } from './useStandInNotifications'
 
 type InboxCategory = 'tasks' | WeworkNotificationCategory
 const CLOUD_CATEGORIES: WeworkNotificationCategory[] = ['collaboration', 'general']
@@ -671,7 +672,8 @@ function ConnectedNotificationCenter({
   return (
     <>
       <Tooltip label={t('notifications.title')} side="bottom">
-        <button
+        <ControlButton
+          variant="unstyled"
           ref={buttonRef}
           type="button"
           data-testid="wework-notifications-button"
@@ -705,7 +707,7 @@ function ConnectedNotificationCenter({
               className="absolute right-0 top-0 h-1.5 w-1.5 rounded-full bg-text-primary"
             />
           )}
-        </button>
+        </ControlButton>
       </Tooltip>
       {anchor && (
         <AnchorPopover
@@ -721,7 +723,8 @@ function ConnectedNotificationCenter({
           header={
             <div className="flex h-12 items-center gap-2 border-b border-border/60 px-2 md:px-3">
               {(category || settingsOpen) && (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="wework-notifications-back"
                   className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus md:h-7 md:w-7"
@@ -732,7 +735,7 @@ function ConnectedNotificationCenter({
                   }}
                 >
                   <ArrowLeft className="h-4 w-4" />
-                </button>
+                </ControlButton>
               )}
               <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
                 <span className="truncate text-base font-semibold">
@@ -749,7 +752,8 @@ function ConnectedNotificationCenter({
                 </span>
               </span>
               {!settingsOpen && (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="wework-notifications-read-all"
                   className="min-h-11 text-xs text-text-secondary hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus disabled:opacity-50 md:min-h-0"
@@ -757,10 +761,12 @@ function ConnectedNotificationCenter({
                   onClick={readAll}
                 >
                   <span className="text-xs">{t('notifications.read_all')}</span>
-                </button>
+                </ControlButton>
               )}
               {!settingsOpen && (
-                <button
+                <ControlButton
+                  variant="outline"
+                  size="sm"
                   type="button"
                   data-testid="wework-notifications-refresh"
                   aria-label={t('notifications.refresh')}
@@ -769,10 +775,11 @@ function ConnectedNotificationCenter({
                   onClick={() => void refresh()}
                 >
                   <RefreshCw className="h-4 w-4" aria-hidden="true" />
-                </button>
+                </ControlButton>
               )}
               {!category && !settingsOpen && (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="wework-notifications-settings"
                   className="flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus md:h-7 md:w-7"
@@ -780,7 +787,7 @@ function ConnectedNotificationCenter({
                   onClick={openSettings}
                 >
                   <Settings2 className="h-4 w-4" />
-                </button>
+                </ControlButton>
               )}
             </div>
           }
@@ -813,7 +820,9 @@ function ConnectedNotificationCenter({
           ) : !category ? (
             <div data-testid="wework-notifications-categories">
               {interactions && (
-                <button
+                <ControlButton
+                  variant="outline"
+                  size="sm"
                   type="button"
                   data-testid="wework-notifications-pending"
                   onClick={() => {
@@ -835,12 +844,14 @@ function ConnectedNotificationCenter({
                     {interactions.pending.length}
                   </span>
                   <ChevronRight className="h-4 w-4" />
-                </button>
+                </ControlButton>
               )}
               {categoryRows.map(row => {
                 const Icon = row.icon
                 return (
-                  <button
+                  <ControlButton
+                    variant="outline"
+                    size="sm"
                     key={row.id}
                     type="button"
                     data-testid={'wework-notifications-category-' + row.id}
@@ -870,7 +881,7 @@ function ConnectedNotificationCenter({
                         <ChevronRight className="h-4 w-4 text-text-secondary" aria-hidden="true" />
                       )}
                     </span>
-                  </button>
+                  </ControlButton>
                 )
               })}
             </div>
@@ -954,7 +965,8 @@ function ConnectedNotificationCenter({
                 )
               })}
               {selectedCloudInbox?.next_offset != null && selectedCloudCategory && (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="wework-notifications-more"
                   className="w-full p-3 text-sm text-text-secondary hover:bg-muted"
@@ -962,7 +974,7 @@ function ConnectedNotificationCenter({
                   onClick={() => loadMore(selectedCloudCategory)}
                 >
                   {t('notifications.more')}
-                </button>
+                </ControlButton>
               )}
             </div>
           )}

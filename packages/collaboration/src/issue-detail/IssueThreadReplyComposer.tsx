@@ -1,46 +1,46 @@
-import { FileText, Loader2, Paperclip, X } from "lucide-react";
-import { useRef, useState, type Ref } from "react";
-import { ComposerAutocompleteInput } from "../composer/ComposerAutocompleteInput";
-import type { ComposerExternalMentionCandidate } from "../composer/composerAutocompleteInputTypes";
-import type { ComposerInputHandle } from "../composer/composerInputTypes";
-import type { CollaborationTranslate } from "../i18n";
-import { IssueInlineCommentComposer } from "./IssueInlineCommentComposer";
-import type { IssueMentionOption } from "./issueCommentMentions";
-import { issueCommentSubmission } from "./issueCommentMentions";
+import { FileText, Loader2, Paperclip, X } from 'lucide-react'
+import { useRef, useState, type Ref } from 'react'
+import { ComposerAutocompleteInput } from '../composer/ComposerAutocompleteInput'
+import type { ComposerExternalMentionCandidate } from '../composer/composerAutocompleteInputTypes'
+import type { ComposerInputHandle } from '../composer/composerInputTypes'
+import { TextField as ControlInput } from '../controls/TextField'
+import type { CollaborationTranslate } from '../i18n'
+import { Button as ControlButton } from '../markdown/Button'
+import { IssueInlineCommentComposer } from './IssueInlineCommentComposer'
+import type { IssueMentionOption } from './issueCommentMentions'
+import { issueCommentSubmission } from './issueCommentMentions'
 
 export interface IssueReplyAttachment {
-  id: string | number;
-  filename: string;
+  id: string | number
+  filename: string
 }
 
-export interface IssueReplyAttachments<
-  T extends IssueReplyAttachment = IssueReplyAttachment,
-> {
-  attachments: T[];
-  uploadingFiles: ReadonlyMap<string, { file: File; progress?: number }>;
-  errors: ReadonlyMap<string, string>;
-  isAttachmentReadyToSend: boolean;
-  handleFileSelect(files: File[]): void | Promise<void>;
-  removeAttachment(id: T["id"]): void | Promise<void>;
-  resetAttachments(): void;
+export interface IssueReplyAttachments<T extends IssueReplyAttachment = IssueReplyAttachment> {
+  attachments: T[]
+  uploadingFiles: ReadonlyMap<string, { file: File; progress?: number }>
+  errors: ReadonlyMap<string, string>
+  isAttachmentReadyToSend: boolean
+  handleFileSelect(files: File[]): void | Promise<void>
+  removeAttachment(id: T['id']): void | Promise<void>
+  resetAttachments(): void
 }
 
 export interface IssueReplyLabels {
-  placeholder: string;
-  send: string;
-  attach: string;
-  removeAttachment: string;
-  uploading: string;
-  sendFailed: string;
+  placeholder: string
+  send: string
+  attach: string
+  removeAttachment: string
+  uploading: string
+  sendFailed: string
 }
 
 export interface IssueReplyTestIds {
-  composer: string;
-  input: string;
-  send: string;
-  attach: string;
-  file: string;
-  error: string;
+  composer: string
+  input: string
+  send: string
+  attach: string
+  file: string
+  error: string
 }
 
 export function issueReplyTestIds(rootId: string): IssueReplyTestIds {
@@ -51,7 +51,7 @@ export function issueReplyTestIds(rootId: string): IssueReplyTestIds {
     attach: `cloud-task-activity-card-attach-${rootId}`,
     file: `cloud-task-activity-card-file-${rootId}`,
     error: `cloud-task-activity-card-error-${rootId}`,
-  };
+  }
 }
 
 /** The desktop reply UI; hosts supply attachment storage and send operations. */
@@ -67,63 +67,59 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
   inputRef,
   testIds = issueReplyTestIds(rootId),
 }: {
-  rootId: string;
-  disabled: boolean;
-  labels: IssueReplyLabels;
-  attachments?: IssueReplyAttachments<T>;
-  aiError?: string | null;
-  onSend(
-    text: string,
-    mentions: IssueMentionOption[],
-  ): Promise<{ ok: boolean; error?: string }>;
-  mentionCandidates?: ComposerExternalMentionCandidate[];
-  translate: CollaborationTranslate;
+  rootId: string
+  disabled: boolean
+  labels: IssueReplyLabels
+  attachments?: IssueReplyAttachments<T>
+  aiError?: string | null
+  onSend(text: string, mentions: IssueMentionOption[]): Promise<{ ok: boolean; error?: string }>
+  mentionCandidates?: ComposerExternalMentionCandidate[]
+  translate: CollaborationTranslate
   /** Lets a host (or a test) drive the editor the draft is written in. */
-  inputRef?: Ref<ComposerInputHandle>;
-  testIds?: IssueReplyTestIds;
+  inputRef?: Ref<ComposerInputHandle>
+  testIds?: IssueReplyTestIds
 }) {
-  const fileInput = useRef<HTMLInputElement>(null);
-  const editorRef = useRef<HTMLElement>(null);
-  const submittingRef = useRef(false);
-  const [draft, setDraft] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const attachmentReady = attachments?.isAttachmentReadyToSend ?? true;
+  const fileInput = useRef<HTMLInputElement>(null)
+  const editorRef = useRef<HTMLElement>(null)
+  const submittingRef = useRef(false)
+  const [draft, setDraft] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const attachmentReady = attachments?.isAttachmentReadyToSend ?? true
 
   async function submit(nextDraft = draft) {
-    const { body, mentions } = issueCommentSubmission(nextDraft);
-    if (!body || disabled || submittingRef.current) return;
+    const { body, mentions } = issueCommentSubmission(nextDraft)
+    if (!body || disabled || submittingRef.current) return
     if (!attachmentReady) {
-      setError(labels.uploading);
-      return;
+      setError(labels.uploading)
+      return
     }
-    submittingRef.current = true;
-    setSubmitting(true);
-    setError(null);
+    submittingRef.current = true
+    setSubmitting(true)
+    setError(null)
     try {
-      const result = await onSend(body, mentions);
+      const result = await onSend(body, mentions)
       if (result.ok) {
-        setDraft("");
-        attachments?.resetAttachments();
-      } else setError(result.error ?? labels.sendFailed);
+        setDraft('')
+        attachments?.resetAttachments()
+      } else setError(result.error ?? labels.sendFailed)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : labels.sendFailed);
+      setError(cause instanceof Error ? cause.message : labels.sendFailed)
     } finally {
-      submittingRef.current = false;
-      setSubmitting(false);
+      submittingRef.current = false
+      setSubmitting(false)
     }
   }
 
   return (
     <div className="task-detail-comment-card-composer">
       {attachments &&
-      (attachments.attachments.length > 0 ||
-        attachments.uploadingFiles.size > 0) ? (
+      (attachments.attachments.length > 0 || attachments.uploadingFiles.size > 0) ? (
         <div
           className="mb-1.5 flex flex-wrap gap-1.5"
           data-testid={`cloud-task-activity-card-attachments-${rootId}`}
         >
-          {attachments.attachments.map((attachment) => (
+          {attachments.attachments.map(attachment => (
             <span
               key={attachment.id}
               data-testid={`cloud-task-activity-card-attachment-${rootId}-${attachment.id}`}
@@ -131,7 +127,8 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
             >
               <FileText className="h-3 w-3 flex-none text-text-muted" />
               <span className="truncate">{attachment.filename}</span>
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid={`cloud-task-activity-card-remove-${rootId}-${attachment.id}`}
                 aria-label={labels.removeAttachment}
@@ -140,7 +137,7 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
                 className="flex h-4 w-4 flex-none items-center justify-center rounded text-text-muted hover:bg-muted hover:text-text-primary"
               >
                 <X className="h-3 w-3" />
-              </button>
+              </ControlButton>
             </span>
           ))}
           {[...attachments.uploadingFiles].map(([key, { file, progress }]) => (
@@ -161,15 +158,14 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
       <IssueInlineCommentComposer
         testId={testIds.composer}
         sendTestId={testIds.send}
-        canSend={
-          !disabled && !submitting && Boolean(draft.trim()) && attachmentReady
-        }
+        canSend={!disabled && !submitting && Boolean(draft.trim()) && attachmentReady}
         onSend={() => void submit()}
         sendLabel={labels.send}
       >
         {attachments ? (
           <>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid={testIds.attach}
               disabled={disabled || submitting}
@@ -178,18 +174,18 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
               className="task-detail-reply-attach"
             >
               <Paperclip className="h-3.5 w-3.5" />
-            </button>
-            <input
+            </ControlButton>
+            <ControlInput
               ref={fileInput}
               type="file"
               multiple
               hidden
               data-testid={testIds.file}
               disabled={disabled || submitting}
-              onChange={(event) => {
-                const files = Array.from(event.target.files ?? []);
-                if (files.length) void attachments.handleFileSelect(files);
-                event.target.value = "";
+              onChange={event => {
+                const files = Array.from(event.target.files ?? [])
+                if (files.length) void attachments.handleFileSelect(files)
+                event.target.value = ''
               }}
             />
           </>
@@ -198,10 +194,8 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
           ref={inputRef}
           value={draft}
           onChange={setDraft}
-          onSubmit={(nextValue) => void submit(nextValue ?? draft)}
-          canSend={
-            !disabled && !submitting && Boolean(draft.trim()) && attachmentReady
-          }
+          onSubmit={nextValue => void submit(nextValue ?? draft)}
+          canSend={!disabled && !submitting && Boolean(draft.trim()) && attachmentReady}
           disabled={disabled || submitting}
           testId={testIds.input}
           translate={translate}
@@ -210,28 +204,20 @@ export function IssueThreadReplyComposer<T extends IssueReplyAttachment>({
           textareaRef={editorRef}
           mentionScope="external"
           externalMentionCandidates={mentionCandidates}
-          onPasteFiles={
-            attachments
-              ? (files) => void attachments.handleFileSelect(files)
-              : undefined
-          }
+          onPasteFiles={attachments ? files => void attachments.handleFileSelect(files) : undefined}
           placeholder={labels.placeholder}
         />
       </IssueInlineCommentComposer>
       {attachments && attachments.errors.size > 0 ? (
         <p role="alert" className="task-detail-comment-inline-error">
-          {[...attachments.errors.values()].join(" · ")}
+          {[...attachments.errors.values()].join(' · ')}
         </p>
       ) : null}
       {(error ?? aiError) ? (
-        <p
-          role="alert"
-          className="task-detail-comment-inline-error"
-          data-testid={testIds.error}
-        >
+        <p role="alert" className="task-detail-comment-inline-error" data-testid={testIds.error}>
           {error ?? aiError}
         </p>
       ) : null}
     </div>
-  );
+  )
 }

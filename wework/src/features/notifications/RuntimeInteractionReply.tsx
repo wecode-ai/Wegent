@@ -1,8 +1,10 @@
-import { useState, type ChangeEvent, type KeyboardEvent } from 'react'
-import { ArrowUp, ArrowUpRight, LoaderCircle } from 'lucide-react'
-import { isImeEnterEvent } from '@wegent/chat-core/ime'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
+import { isImeEnterEvent } from '@wegent/chat-core/ime'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ArrowUp, ArrowUpRight, LoaderCircle } from 'lucide-react'
+import { useState, type ChangeEvent, type KeyboardEvent } from 'react'
 import {
   canReplyToInteraction,
   interactionOriginalScheme,
@@ -60,7 +62,7 @@ export function RuntimeInteractionReply({ item }: { item: RuntimeInteraction }) 
             if (!disabled && draft.trim()) void respond(item, draft.trim())
           }}
         >
-          <input
+          <ControlInput
             data-testid="interaction-reply-input"
             aria-label={t('interactions.reply')}
             placeholder={t('interactions.reply_placeholder')}
@@ -73,7 +75,7 @@ export function RuntimeInteractionReply({ item }: { item: RuntimeInteraction }) 
             onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
               if (isImeEnterEvent(event.nativeEvent)) event.preventDefault()
             }}
-            className="min-h-11 min-w-0 flex-1 rounded-lg border border-border bg-transparent px-3 text-base outline-none focus-visible:ring-2 focus-visible:ring-focus md:min-h-9"
+            className="min-h-11 min-w-0 flex-1 bg-transparent text-base md:min-h-9"
           />
           <Button
             type="submit"
@@ -92,14 +94,15 @@ export function RuntimeInteractionReply({ item }: { item: RuntimeInteraction }) 
           </Button>
         </form>
       ) : question?.is_other || question?.isOther ? (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="interaction-other-answer"
           className="min-h-11 rounded-md text-sm text-text-secondary hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus md:min-h-7"
           onClick={() => setCustom(true)}
         >
           {t('interactions.add_detail')}
-        </button>
+        </ControlButton>
       ) : null}
       {errors[item.id] && (
         <p role="alert" className="text-sm text-status-error">

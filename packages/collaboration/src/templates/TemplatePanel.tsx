@@ -1,9 +1,9 @@
+import { InlinePanel } from '../controls/InlinePanel'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 import type { ComponentProps } from 'react'
 import { createPortal } from 'react-dom'
-import { useDialogKeyboard } from '../controls/useDialogKeyboard'
 import { TemplateDialog } from './TemplateDialog'
 
 /** Reuse the active project dialog for embedded template steps. */
@@ -15,19 +15,13 @@ export function TemplatePanel({
   embedded?: boolean
   footerTarget?: HTMLElement | null
 }) {
-  const ref = useDialogKeyboard<HTMLElement>(
-    () => {
-      if (!props.busy) props.onClose()
-    },
-    embedded,
-    undefined,
-    false
-  )
   if (!embedded) return <TemplateDialog {...props} />
   return (
-    <section
-      ref={ref}
-      tabIndex={-1}
+    <InlinePanel
+      onEscape={() => {
+        if (!props.busy) props.onClose()
+      }}
+      aria-label={props.title}
       className="collaboration-template-detail"
       data-testid="template-inline-detail"
     >
@@ -38,6 +32,6 @@ export function TemplatePanel({
       ) : (
         <footer className="collaboration-template-actions">{props.footer}</footer>
       )}
-    </section>
+    </InlinePanel>
   )
 }

@@ -1,8 +1,17 @@
-import { useRef, useState } from 'react'
-import { ChevronDown, Plus, Search, X } from 'lucide-react'
-import { IssueDetailSearchableSelect } from '@wegent/collaboration'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
+import { SearchableSelect } from '@wegent/collaboration'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ChevronDown, Plus, Search, X } from 'lucide-react'
+import { useRef, useState } from 'react'
 import type { ExperienceProjectScope } from '../model/types'
 import { TaskViewSwitcher } from './TaskViewSwitcher'
 
@@ -56,7 +65,8 @@ export function TaskFilters({
         <div className="experience-task-view-switch">
           <TaskViewSwitcher mode={mode} onChange={onModeChange} />
         </div>
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           className="experience-task-icon-button"
           data-testid="collaboration-exp-search-toggle"
@@ -69,9 +79,10 @@ export function TaskFilters({
           }}
         >
           <Search aria-hidden="true" />
-        </button>
+        </ControlButton>
         {create && (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             className="experience-task-icon-button"
             data-testid="collaboration-exp-task-create"
@@ -79,13 +90,13 @@ export function TaskFilters({
             onClick={create}
           >
             <Plus aria-hidden="true" />
-          </button>
+          </ControlButton>
         )}
       </header>
       {filtersVisible && (
         <div className="experience-task-filter-panel">
           {searchOpen && (
-            <input
+            <ControlInput
               ref={searchInput}
               type="search"
               value={value.search}
@@ -96,19 +107,27 @@ export function TaskFilters({
               onChange={event => onChange({ ...value, search: event.target.value })}
             />
           )}
-          <select
-            data-testid="collaboration-exp-filter-relevance"
-            aria-label={t('tasks.relevance')}
-            value={value.relevance}
-            onChange={event =>
-              onChange({ ...value, relevance: event.target.value as TaskFilterValue['relevance'] })
-            }
-            className="experience-task-relevance"
+          <SelectRoot
+            value={normalizeSelectValue(value.relevance)}
+            onValueChange={selectedValue => {
+              if (selectedValue !== null)
+                return onChange({
+                  ...value,
+                  relevance: selectedValue as TaskFilterValue['relevance'],
+                })
+            }}
           >
-            <option value="related">{t('tasks.related')}</option>
-            <option value="all">{t('tasks.allVisible')}</option>
-          </select>
-          <IssueDetailSearchableSelect
+            <SelectTrigger
+              data-testid="collaboration-exp-filter-relevance"
+              aria-label={t('tasks.relevance')}
+              className="experience-task-relevance"
+            />
+            <SelectContent>
+              <SelectItem value="related">{t('tasks.related')}</SelectItem>
+              <SelectItem value="all">{t('tasks.allVisible')}</SelectItem>
+            </SelectContent>
+          </SelectRoot>
+          <SearchableSelect
             value={value.status}
             options={[{ value: '', label: t('tasks.allStatuses') }, ...statuses]}
             testId="collaboration-exp-filter-status"
@@ -126,7 +145,7 @@ export function TaskFilters({
             }
             onChange={status => onChange({ ...value, status })}
           />
-          <IssueDetailSearchableSelect
+          <SearchableSelect
             value={value.projectKey}
             options={[
               { value: '', label: t('tasks.allProjects') },

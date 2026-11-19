@@ -1,6 +1,7 @@
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { cn } from '@/lib/utils'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 
 type SmartAppsSection = 'marketplace' | 'owned'
 
@@ -42,7 +43,8 @@ export function SmartAppsSectionNav({ active, onNavigate = navigateTo }: SmartAp
             ? t('workbench.smart_apps_marketplace', '市场')
             : t('workbench.smart_apps_owned', '我的')
         return (
-          <button
+          <ControlButton
+            variant="unstyled"
             key={section.id}
             type="button"
             data-testid={section.testId}
@@ -59,7 +61,7 @@ export function SmartAppsSectionNav({ active, onNavigate = navigateTo }: SmartAp
             }}
           >
             {label}
-          </button>
+          </ControlButton>
         )
       })}
     </nav>

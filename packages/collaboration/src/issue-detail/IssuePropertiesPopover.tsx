@@ -1,4 +1,4 @@
-import * as Popover from '@radix-ui/react-popover'
+import { Popover, PopoverContent, PopoverTrigger } from '../controls/Popover'
 import { Ellipsis } from 'lucide-react'
 import { useId, useState, type ReactNode, type Ref } from 'react'
 import { useCollaborationPortalTheme } from '../theme/CollaborationTheme'
@@ -30,20 +30,22 @@ export function IssuePropertiesPopover({
   }
 
   return (
-    <Popover.Root open={open} onOpenChange={changeOpen}>
-      <Popover.Trigger asChild>
-        <button
-          ref={triggerRef}
-          type="button"
-          className="task-detail-more-menu-trigger"
-          aria-label={label}
-          data-testid={testIdPrefix}
-        >
-          <Ellipsis className="h-4 w-4" aria-hidden="true" />
-        </button>
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content
+    <Popover open={open} onOpenChange={changeOpen}>
+      <PopoverTrigger
+        render={
+          <button
+            ref={triggerRef}
+            type="button"
+            className="task-detail-more-menu-trigger"
+            aria-label={label}
+            data-testid={testIdPrefix}
+          />
+        }
+      >
+        <Ellipsis className="h-4 w-4" aria-hidden="true" />
+      </PopoverTrigger>
+      <>
+        <PopoverContent
           {...portalTheme}
           className={`${portalTheme.className} task-detail-more-menu-popover z-system-popover`}
           aria-labelledby={titleId}
@@ -51,14 +53,14 @@ export function IssuePropertiesPopover({
           align="end"
           sideOffset={4}
           collisionPadding={8}
-          onOpenAutoFocus={event => event.preventDefault()}
+          initialFocus={'none'}
         >
           <h3 id={titleId} className="sr-only">
             {label}
           </h3>
           {children}
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
+        </PopoverContent>
+      </>
+    </Popover>
   )
 }

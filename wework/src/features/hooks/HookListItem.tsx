@@ -1,7 +1,9 @@
-import { FolderOpen, Pencil, Play, Trash2 } from 'lucide-react'
-import { useState } from 'react'
+import { DeleteIconButton } from '@wegent/collaboration/controls/DeleteIconButton'
 import { SettingsSwitch } from '@/components/settings/settings-ui'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { FolderOpen, Pencil, Play } from 'lucide-react'
+import { useState } from 'react'
 import { HookTestResult } from './HookTestResult'
 import type { HookRunSummary, ResolvedHookPlugin } from './hooksTypes'
 
@@ -71,25 +73,31 @@ export function HookListItem({
             onCheckedChange={value => void onEnabled(value)}
             aria-label={t('enabled')}
           />
-          <button
+          <ControlButton
+            variant="unstyled"
+            type="submit"
             className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-muted"
             onClick={() => void onReveal()}
             aria-label={t('reveal')}
           >
             <FolderOpen className="h-4 w-4" />
-          </button>
+          </ControlButton>
           {plugin.policy.canEdit && (
-            <button
+            <ControlButton
+              variant="unstyled"
+              type="submit"
               data-testid={`hook-menu-${plugin.manifest.id}`}
               className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-muted"
               onClick={onEdit}
               aria-label={t('edit')}
             >
               <Pencil className="h-4 w-4" />
-            </button>
+            </ControlButton>
           )}
           {plugin.handlers[0] && (
-            <button
+            <ControlButton
+              variant="unstyled"
+              type="submit"
               data-testid="hook-test-run"
               className="flex h-8 w-8 items-center justify-center rounded-lg hover:bg-muted disabled:opacity-40"
               onClick={() => void runTest()}
@@ -97,16 +105,15 @@ export function HookListItem({
               aria-label={t('test')}
             >
               <Play className="h-4 w-4" />
-            </button>
+            </ControlButton>
           )}
           {plugin.policy.canDelete && (
-            <button
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-destructive hover:bg-destructive/10 wework:text-red-500 wework:hover:bg-red-500/10"
+            <DeleteIconButton
+              type="submit"
               onClick={() => void onDelete()}
               aria-label={t('delete')}
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
+              data-testid="hook-delete"
+            />
           )}
         </div>
       </div>

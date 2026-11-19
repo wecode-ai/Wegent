@@ -1,8 +1,11 @@
+import { DeleteIconButton } from "../controls/DeleteIconButton";
+import { DialogSurface } from "../controls/DialogSurface";
+import { TextField as ControlInput } from "../controls/TextField";
+import { Button as ControlButton } from "../markdown/Button";
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Bot,
   Cloud,
@@ -10,12 +13,13 @@ import {
   Plus,
   Search,
   Settings,
-  Trash2,
   UserRound,
   UsersRound,
   X,
 } from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { CollaborationTranslate } from "../i18n";
+import { Tooltip } from "../controls/Tooltip";
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import type {
   CollaborationExecutionEnvironment,
@@ -25,30 +29,29 @@ import type {
   CollaborationWorkspace,
   CollaborationWorkspaceMember,
 } from "../types";
-import type {
-  CollaborationDomain,
-  CollaborationPlatformHostAdapter,
-} from "./types";
-import type { DeviceCatalogState } from "./useDeviceCatalog";
 import { DeviceCatalogFeedback } from "./DeviceCatalogFeedback";
-import { ResourceBindingDialog } from "./ResourceBindingDialog";
-import { DeviceLastSeen, useDeviceLastSeenClock } from "./DeviceLastSeen";
 import { DeviceDeleteDialog } from "./DeviceDeleteDialog";
-import { Tooltip } from "../issue-detail/Tooltip";
+import { DeviceLastSeen, useDeviceLastSeenClock } from "./DeviceLastSeen";
+import { ResourceBindingDialog } from "./ResourceBindingDialog";
 import {
   ResourceDestinationDialog,
   type ResourceDestinationOption,
 } from "./ResourceDestinationDialog";
 import type { PlatformMessages } from "./platformMessages";
 import {
-  runtimeLabel,
-  resourceCatalogCopy,
   canDeleteOfflineDevice,
   isDeviceDeletionProtected,
+  resourceCatalogCopy,
+  runtimeLabel,
   type ResourceCatalogKind,
   type ResourceScope,
   type ResourceSource,
 } from "./resourceCatalogModel";
+import type {
+  CollaborationDomain,
+  CollaborationPlatformHostAdapter,
+} from "./types";
+import type { DeviceCatalogState } from "./useDeviceCatalog";
 
 export function ResourceCatalogPage({
   api,
@@ -522,15 +525,16 @@ export function ResourceCatalogPage({
           <p>{pageCopy.hint}</p>
         </span>
         {canCreate ? (
-          <button
+          <ControlButton
+            variant="primary"
             type="button"
-            className="collaboration-primary-button"
             data-testid={`collaboration-${kind}-create`}
             onClick={startCreate}
+            size="sm"
           >
             <Plus aria-hidden="true" />
             {pageCopy.create}
-          </button>
+          </ControlButton>
         ) : null}
       </header>
 
@@ -550,7 +554,8 @@ export function ResourceCatalogPage({
             aria-label={messages.resourceSource}
           >
             {(["all", "mine", "shared"] as const).map((candidate) => (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 className={scope === candidate ? "active" : undefined}
                 aria-pressed={scope === candidate}
@@ -568,13 +573,13 @@ export function ResourceCatalogPage({
                     ? "—"
                     : scopeCounts[candidate]}
                 </em>
-              </button>
+              </ControlButton>
             ))}
           </div>
         </div>
         <label className="collaboration-resource-catalog-search">
           <Search aria-hidden="true" />
-          <input
+          <ControlInput
             data-testid={`collaboration-${kind}-search`}
             placeholder={pageCopy.search}
             value={query}
@@ -735,9 +740,8 @@ export function ResourceCatalogPage({
                   currentUserId,
                 ) ? (
                   <Tooltip label={messages.deleteDevice}>
-                    <button
+                    <DeleteIconButton
                       type="button"
-                      className="collaboration-resource-settings-button collaboration-resource-delete-button"
                       aria-label={messages.deleteDevice}
                       data-testid={`collaboration-devices-delete-${row.id}`}
                       onClick={() =>
@@ -745,13 +749,12 @@ export function ResourceCatalogPage({
                           environments.find((device) => device.id === row.id)!,
                         )
                       }
-                    >
-                      <Trash2 aria-hidden="true" />
-                    </button>
+                    />
                   </Tooltip>
                 ) : null}
                 {kind !== "teams" && row.source === "cloud" ? (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     className="collaboration-resource-bind-button"
                     data-testid={`collaboration-${kind}-bind-${row.id}`}
@@ -760,10 +763,11 @@ export function ResourceCatalogPage({
                     }}
                   >
                     {messages.addToSpace}
-                  </button>
+                  </ControlButton>
                 ) : null}
                 {
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     className="collaboration-resource-settings-button"
                     aria-label={messages.resourceSettings}
@@ -772,14 +776,13 @@ export function ResourceCatalogPage({
                     onClick={() => onManageResource(kind, row.id, row.source)}
                   >
                     <Settings aria-hidden="true" />
-                  </button>
+                  </ControlButton>
                 }
                 {kind === "agents" &&
                 agents.find((agent) => agent.id === row.id)?.deletable !==
                   false ? (
-                  <button
+                  <DeleteIconButton
                     type="button"
-                    className="collaboration-resource-settings-button"
                     aria-label={messages.deleteAgent}
                     title={messages.deleteAgent}
                     data-testid={`collaboration-agents-delete-${row.id}`}
@@ -789,13 +792,10 @@ export function ResourceCatalogPage({
                         agents.find((agent) => agent.id === row.id) ?? null,
                       );
                     }}
-                  >
-                    <Trash2 aria-hidden="true" />
-                  </button>
+                  />
                 ) : kind === "teams" ? (
-                  <button
+                  <DeleteIconButton
                     type="button"
-                    className="collaboration-resource-settings-button collaboration-resource-delete-button"
                     aria-label={messages.deleteTeam}
                     title={messages.deleteTeam}
                     data-testid={`collaboration-teams-delete-${row.id}`}
@@ -805,9 +805,7 @@ export function ResourceCatalogPage({
                         groups.find((group) => group.id === row.id) ?? null,
                       );
                     }}
-                  >
-                    <Trash2 aria-hidden="true" />
-                  </button>
+                  />
                 ) : null}
               </span>
             </article>
@@ -881,12 +879,17 @@ export function ResourceCatalogPage({
             }
           }}
         >
-          <section
-            className="collaboration-resource-dialog collaboration-delete-agent-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="collaboration-delete-agent-title"
-            data-testid="collaboration-delete-agent-dialog"
+          <DialogSurface
+            onClose={() => {
+              if (!deleteBusy) (() => setDeletingAgent(null))();
+            }}
+            render={
+              <section
+                className="collaboration-resource-dialog collaboration-delete-agent-dialog"
+                aria-labelledby="collaboration-delete-agent-title"
+                data-testid="collaboration-delete-agent-dialog"
+              />
+            }
           >
             <header>
               <div>
@@ -899,7 +902,8 @@ export function ResourceCatalogPage({
                   {messages.deleteAgentConfirm}
                 </p>
               </div>
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 className="collaboration-resource-dialog-close"
                 aria-label={messages.cancel}
@@ -907,23 +911,24 @@ export function ResourceCatalogPage({
                 onClick={() => setDeletingAgent(null)}
               >
                 <X aria-hidden="true" />
-              </button>
+              </ControlButton>
             </header>
             {deleteError ? (
               <p className="collaboration-resource-form-error">{deleteError}</p>
             ) : null}
             <div className="collaboration-resource-form-actions collaboration-delete-agent-actions">
-              <button
+              <ControlButton
+                variant="outline"
                 type="button"
-                className="collaboration-secondary-button"
                 disabled={deleteBusy}
                 onClick={() => setDeletingAgent(null)}
+                size="sm"
               >
                 {messages.cancel}
-              </button>
-              <button
+              </ControlButton>
+              <ControlButton
+                variant="destructive"
                 type="button"
-                className="collaboration-primary-button"
                 data-testid="collaboration-delete-agent-confirm"
                 disabled={deleteBusy}
                 onClick={() => {
@@ -934,11 +939,12 @@ export function ResourceCatalogPage({
                     .catch(() => setDeleteError(messages.deleteFailed))
                     .finally(() => setDeleteBusy(false));
                 }}
+                size="sm"
               >
                 {deleteBusy ? messages.deleting : messages.deleteAgent}
-              </button>
+              </ControlButton>
             </div>
-          </section>
+          </DialogSurface>
         </div>
       ) : null}
       {deletingTeam ? (
@@ -952,12 +958,17 @@ export function ResourceCatalogPage({
             }
           }}
         >
-          <section
-            className="collaboration-resource-dialog collaboration-delete-agent-dialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="collaboration-delete-team-title"
-            data-testid="collaboration-delete-team-dialog"
+          <DialogSurface
+            onClose={() => {
+              if (!deleteBusy) (() => setDeletingTeam(null))();
+            }}
+            render={
+              <section
+                className="collaboration-resource-dialog collaboration-delete-agent-dialog"
+                aria-labelledby="collaboration-delete-team-title"
+                data-testid="collaboration-delete-team-dialog"
+              />
+            }
           >
             <header>
               <div>
@@ -970,7 +981,8 @@ export function ResourceCatalogPage({
                   {messages.deleteTeamConfirm}
                 </p>
               </div>
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 className="collaboration-resource-dialog-close"
                 aria-label={messages.cancel}
@@ -978,23 +990,24 @@ export function ResourceCatalogPage({
                 onClick={() => setDeletingTeam(null)}
               >
                 <X aria-hidden="true" />
-              </button>
+              </ControlButton>
             </header>
             {deleteError ? (
               <p className="collaboration-resource-form-error">{deleteError}</p>
             ) : null}
             <div className="collaboration-resource-form-actions collaboration-delete-agent-actions">
-              <button
+              <ControlButton
+                variant="outline"
                 type="button"
-                className="collaboration-secondary-button"
                 disabled={deleteBusy}
                 onClick={() => setDeletingTeam(null)}
+                size="sm"
               >
                 {messages.cancel}
-              </button>
-              <button
+              </ControlButton>
+              <ControlButton
+                variant="destructive"
                 type="button"
-                className="collaboration-primary-button"
                 data-testid="collaboration-delete-team-confirm"
                 disabled={deleteBusy}
                 onClick={() => {
@@ -1005,11 +1018,12 @@ export function ResourceCatalogPage({
                     .catch(() => setDeleteError(messages.deleteFailed))
                     .finally(() => setDeleteBusy(false));
                 }}
+                size="sm"
               >
                 {deleteBusy ? messages.deleting : messages.deleteTeam}
-              </button>
+              </ControlButton>
             </div>
-          </section>
+          </DialogSurface>
         </div>
       ) : null}
     </div>

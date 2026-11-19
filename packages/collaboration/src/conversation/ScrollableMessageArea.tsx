@@ -1,16 +1,17 @@
 import { ArrowDown } from 'lucide-react'
 import { memo, useCallback, useLayoutEffect, useMemo, useState } from 'react'
+import { Button as ControlButton } from '../markdown/Button'
 
-import { useConversationTranslation } from './ConversationTranslation'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
+import { useConversationTranslation } from './ConversationTranslation'
 
+import { ConversationHistoryBoundary } from './ConversationHistoryBoundary'
 import { MessageList } from './MessageList'
 import { MessageTurnNavigation } from './MessageTurnNavigation'
-import { ConversationHistoryBoundary } from './ConversationHistoryBoundary'
 
+import { getInitialDistanceFromBottomPx } from './conversationScrollGeometry'
 import { getConversationScrollSnapshot } from './conversationViewportCache'
 import type { ScrollableMessageAreaProps } from './scrollableMessageTypes'
-import { getInitialDistanceFromBottomPx } from './conversationScrollGeometry'
 import { useConversationScrollController } from './useConversationScrollController'
 import { useConversationSearchTarget } from './useConversationSearchTarget'
 export const ScrollableMessageArea = memo(function ScrollableMessageArea(
@@ -190,7 +191,8 @@ function ScrollableMessagePaneContent({
     onNavigationFailure: onSearchNavigationFailure,
   })
   const scrollToBottomButton = showScrollButton ? (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid="scroll-to-bottom-button"
       onClick={handleScrollToBottom}
@@ -201,7 +203,7 @@ function ScrollableMessagePaneContent({
       aria-label={t('workbench.scroll_to_bottom')}
     >
       <ArrowDown className="h-4 w-4" />
-    </button>
+    </ControlButton>
   ) : null
 
   return (

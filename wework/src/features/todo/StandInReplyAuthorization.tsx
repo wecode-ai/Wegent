@@ -1,8 +1,8 @@
-import { useState } from 'react'
 import type { StandInHandlingPolicy } from '@/api/personalStandIn'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { SettingsRow, SettingsSwitch } from '@/components/settings/settings-ui'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useState } from 'react'
 
 export function StandInReplyAuthorization({
   name,
@@ -25,7 +25,7 @@ export function StandInReplyAuthorization({
         className="px-0"
         label={t('standIn.authorization.confirm_each')}
         description={!policy.askBeforeAct ? t('standIn.authorization.continuous') : undefined}
-        control={
+        children={
           <SettingsSwitch
             data-testid={`${testId}-confirm-replies`}
             disabled={disabled}

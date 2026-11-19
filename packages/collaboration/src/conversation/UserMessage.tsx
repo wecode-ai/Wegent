@@ -1,10 +1,20 @@
-import { FileReferenceIcon } from '../composer/FileReferenceIcon'
-import { isStandInActivityMessage } from './standInActivity'
-import { MessageHoverActions } from './MessageHoverActions'
-import { useMemo, useState } from 'react'
+import { isIMSource } from '@wegent/chat-core/im-source'
 import {
-  Braces,
+  parsePluginUri,
+  pluginNameInitial,
+  type PluginReference,
+} from '@wegent/chat-core/plugin-reference'
+import type { Attachment } from '@wegent/chat-core/runtime'
+import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
+import type { AsyncRequestUserInputReply } from '@wegent/chat-core/runtime-user-input'
+import { CODEX_IMPLEMENT_PLAN_RESPONSE_LABEL } from '@wegent/chat-core/runtime-user-input'
+import {
+  projectRuntimeUserText,
+  splitRuntimeUserMessage,
+} from '@wegent/chat-core/runtime-user-message'
+import {
   Bell,
+  Braces,
   ChevronDown,
   ChevronUp,
   File as FileIcon,
@@ -19,42 +29,33 @@ import {
   PackageOpen,
   Target,
 } from 'lucide-react'
-import type { Attachment } from '@wegent/chat-core/runtime'
-import { useConversationTranslation } from './ConversationTranslation'
-import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
-import type { MarkdownFileOpenOptions as WorkspaceFileOpenOptions } from '../markdown/MarkdownServices'
+import { useMemo, useState } from 'react'
+import {
+  classifyComposerReference,
+  composerPathReference,
+  composerSkillName,
+} from '../composer/composerMentions'
+import { parseComposerReferences } from '../composer/composerReference'
+import { FileReferenceIcon } from '../composer/FileReferenceIcon'
+import {
+  AttachmentImageView,
+  type AttachmentImageServices,
+} from '../issue-detail/AttachmentImageView'
 import {
   getAttachmentTextPreview,
   getAttachmentTypeLabel,
   isImageAttachment,
   isTextAttachment,
 } from '../issue-detail/attachmentPresentation'
-import {
-  splitRuntimeUserMessage,
-  projectRuntimeUserText,
-} from '@wegent/chat-core/runtime-user-message'
-import { UserMessageEditForm } from './UserMessageEditForm'
-import { isIMSource } from '@wegent/chat-core/im-source'
-import { ImSourceBadge } from './ImSourceBadge'
-import {
-  pluginNameInitial,
-  parsePluginUri,
-  type PluginReference,
-} from '@wegent/chat-core/plugin-reference'
 import { AssistantMarkdown } from '../markdown/AssistantMarkdown'
-import {
-  AttachmentImageView,
-  type AttachmentImageServices,
-} from '../issue-detail/AttachmentImageView'
+import { Button as ControlButton } from '../markdown/Button'
+import type { MarkdownFileOpenOptions as WorkspaceFileOpenOptions } from '../markdown/MarkdownServices'
 import { CodeCommentPreview } from './CodeCommentPreview'
-import { CODEX_IMPLEMENT_PLAN_RESPONSE_LABEL } from '@wegent/chat-core/runtime-user-input'
-import type { AsyncRequestUserInputReply } from '@wegent/chat-core/runtime-user-input'
-import {
-  classifyComposerReference,
-  composerSkillName,
-  composerPathReference,
-} from '../composer/composerMentions'
-import { parseComposerReferences } from '../composer/composerReference'
+import { useConversationTranslation } from './ConversationTranslation'
+import { ImSourceBadge } from './ImSourceBadge'
+import { MessageHoverActions } from './MessageHoverActions'
+import { isStandInActivityMessage } from './standInActivity'
+import { UserMessageEditForm } from './UserMessageEditForm'
 
 import type { ComposerEditorServices } from '../composer/ComposerEditorServices'
 import type { ComposerTransferServices } from '../composer/useComposerTransfers'
@@ -365,7 +366,9 @@ export function UserMessage({
               )}
             </div>
             {shouldCollapse && !forceExpanded && (
-              <button
+              <ControlButton
+                variant="outline"
+                size="sm"
                 type="button"
                 data-testid="toggle-user-message-button"
                 aria-expanded={isExpanded}
@@ -381,7 +384,7 @@ export function UserMessage({
                   <ChevronDown className="h-3.5 w-3.5" />
                 )}
                 {t(isExpanded ? 'user_message.collapse' : 'user_message.expand')}
-              </button>
+              </ControlButton>
             )}
           </div>
         ) : null}
@@ -508,7 +511,9 @@ function MessageCodexFileMention({
     : 'message-codex-file-document-icon'
 
   return (
-    <button
+    <ControlButton
+      variant="outline"
+      size="sm"
       type="button"
       data-testid="message-codex-file-mention"
       className="inline-flex h-10 max-w-[260px] items-center gap-2 rounded-2xl border border-border bg-base px-3 text-left text-sm font-semibold leading-none text-text-primary shadow-sm hover:bg-muted"
@@ -523,7 +528,7 @@ function MessageCodexFileMention({
         strokeWidth={1.8}
       />
       <span className="min-w-0 truncate">{file.filename}</span>
-    </button>
+    </ControlButton>
   )
 }
 
@@ -602,7 +607,8 @@ function MessageTextAttachment({
 
   if (clickable) {
     return (
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="message-text-attachment"
         className={`${className} cursor-pointer hover:bg-surface focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary keyboard:focus-visible:ring-offset-2`}
@@ -614,7 +620,7 @@ function MessageTextAttachment({
         }}
       >
         {content}
-      </button>
+      </ControlButton>
     )
   }
 

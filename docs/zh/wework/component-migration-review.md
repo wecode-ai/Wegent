@@ -1,0 +1,787 @@
+---
+sidebar_position: 31
+---
+
+# Wework 组件迁移评审记录
+
+此记录区分源码审查、Story 运行检查与原生真实页面验收。源码入口迁移、类型检查或成功构建均不等于产品逐界面验收。证据快照截至 2026-11-19；行号与初始结论属于审查时刻，后续源码修复单独标明。
+
+## 范围与状态
+
+静态入口清单扫描 3311 个生产源文件，识别 234 个 source owner：80 个 popup owner、45 个 Page、76 个 dialog/drawer、25 个 panel 和 8 个 registered surface。source owner 是文件级入口归属，不是 234 个独立页面。下方仅逐项覆盖其中 45 个 Page 文件；壳、re-export、委托子组件也保留为独立源码记录。初始清单有12个未解析入口，最新归属核对见下节。
+
+45 页的 `review_status` 均为 `source_reviewed_ui_not_reviewed`；不将其改写为实机通过。初始 34 项源码发现中，33 项记录了源码修复，剩余 HomePage 文案本轮仅接入 i18n。修复状态 `fixed_source_pending_real_ui_review` 表示源码已改，仍待真实 UI。
+
+应用壳 provider 线索为 `WorkbenchProvider`、`AppUpdateProvider`、`CloudConnectionProvider`、`AuthProvider`、`AppearanceProvider`、`AppPreferencesProvider`、`NotificationTaskSourceProvider`、`WorkspaceTabsProvider`、`RuntimeInteractionsProvider`。provider 在壳中存在，不证明隔离 Story 已满足它；下列权限标识也是静态线索，不是权限断言。
+
+## 动态入口与闲置实现核对
+
+本轮追踪了初始清单中12个未解析入口：5个动态路由、1个全局弹层、1个条件插槽、1个hook返回控件、1个仅库示例使用的组件、1个未挂载占位模块，以及2个没有渲染调用的旧实现。未解析入口归属已查清，但动态注册的静态证据不代表实际进入并验收。旧任务创建弹窗和详情面板共1680行已删除；仍被使用的数据类型移至todoTypes.ts，6处类型引用同步调整，不保留兼容转发。
+
+| 源码归属                                                                              | 分类           | 入口或结论                                                                                                 | 证据                                                                                                                                                                                                                      |
+| ------------------------------------------------------------------------------------- | -------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `wework/src/pages/HomePage.tsx`                                                       | 未挂载占位模块 | No production import, JSX consumer, route or dynamic descriptor found                                      | [App.tsx](../../../wework/src/App.tsx) / [HomePage.tsx](../../../wework/src/pages/HomePage.tsx)                                                                                                                           |
+| `wework/src/features/todo/TodoCreateDialog.tsx`                                       | 已删除闲置实现 | No render consumer; retained TodoDetailItem/TodoViewState in todoTypes.ts                                  | [todoTypes.ts](../../../wework/src/features/todo/todoTypes.ts)                                                                                                                                                            |
+| `wework/src/features/todo/TodoDetailPanel.tsx`                                        | 已删除闲置实现 | No render consumer; retained TodoDetailItem/TodoViewState in todoTypes.ts                                  | [todoTypes.ts](../../../wework/src/features/todo/todoTypes.ts)                                                                                                                                                            |
+| `wework/dsh/conversation-export/src/dialog.tsx`                                       | DSH 全局弹层   | conversation-export.open → wework.shell.overlay                                                            | [client.js](../../../wework/dsh/conversation-export/client.js) / [vite.config.ts](../../../wework/vite.config.ts)                                                                                                         |
+| `wework/dsh/ui-applications/src/SitesPage.tsx`                                        | DSH 路由       | /sites                                                                                                     | [client.js](../../../wework/dsh/ui-applications/client.js) / [route.tsx](../../../wework/dsh/ui-applications/src/route.tsx) / [vite.config.ts](../../../wework/vite.config.ts)                                            |
+| `wework/dsh/ui-automations/src/AutomationsPage.tsx`                                   | DSH 路由       | /automations                                                                                               | [client.js](../../../wework/dsh/ui-automations/client.js) / [route.tsx](../../../wework/dsh/ui-automations/src/route.tsx) / [vite.config.ts](../../../wework/vite.config.ts)                                              |
+| `wework/dsh/ui-cloud-work/src/CloudWorkPage.tsx`                                      | DSH 路由       | /cloud-work                                                                                                | [client.js](../../../wework/dsh/ui-cloud-work/client.js) / [route.tsx](../../../wework/dsh/ui-cloud-work/src/route.tsx) / [vite.config.ts](../../../wework/vite.config.ts)                                                |
+| `wework/dsh/ui-git/src/environment-section.tsx`                                       | DSH 插槽       | wework.conversation.summary / git-summary; required wework.environment; workspace.isGitRepository != false | [client.js](../../../wework/dsh/ui-git/client.js) / [vite.config.ts](../../../wework/vite.config.ts)                                                                                                                      |
+| `wework/dsh/ui-plugin-center/src/PluginCreatePage.tsx`                                | DSH 路由       | /plugins/create                                                                                            | [client.js](../../../wework/dsh/ui-plugin-center/client.js) / [create-route.tsx](../../../wework/dsh/ui-plugin-center/src/create-route.tsx) / [vite.config.ts](../../../wework/vite.config.ts)                            |
+| `wework/dsh/ui-plugin-center/src/PluginManagementPage.tsx`                            | DSH 路由       | /plugins/manage                                                                                            | [client.js](../../../wework/dsh/ui-plugin-center/client.js) / [management-route.tsx](../../../wework/dsh/ui-plugin-center/src/management-route.tsx) / [vite.config.ts](../../../wework/vite.config.ts)                    |
+| `packages/collaboration/src/project-assistant-status/ProjectAssistantStatusPanel.tsx` | 组件库示例     | ProjectAssistantStatus.stories.tsx; no production mount found                                              | [index.ts](../../../packages/collaboration/src/project-assistant-status/index.ts) / [ProjectAssistantStatus.stories.tsx](../../../packages/collaboration/src/project-assistant-status/ProjectAssistantStatus.stories.tsx) |
+| `packages/collaboration/src/project-board/useBoardTagFilter.tsx`                      | hook 返回控件  | useBoardTagFilter().control                                                                                | [CloudTodoWorkspace.tsx](../../../wework/src/features/todo/CloudTodoWorkspace.tsx) / [ProjectBoardAdapter.tsx](../../../packages/collaboration/src/web-adapter/ProjectBoardAdapter.tsx)                                   |
+
+## 45 页源码逐项记录
+
+审查维度包括公共控件选型、按钮语义、字段密度、删除颜色、重复普通控件及 SDK CSS 状态契约。未列发现不代表视觉或行为通过。入口仅记录静态可解析调用方；需结合登录、设备、连接与业务权限进入真实状态。
+
+### 1. HomePage
+
+[wework/src/pages/HomePage.tsx](../../../wework/src/pages/HomePage.tsx)
+
+初始源码结论：纯占位展示，无交互控件；硬编码英文副标题需要纳入 i18n，不能视为已完成产品页面。
+
+修复记录：原英文占位副标题改用 `common.homePage.workspaceComingSoon`，中文与英文保持原占位含义；未增加功能承诺。
+
+入口/调用方：未发现生产导入、渲染调用或动态注册；当前为未挂载占位源码，不属于可进入的产品页面。
+
+依赖/委托：无明确 hook/权限线索；仍需解析 host/provider 与数据前提。
+
+### 2. LoginPage
+
+[wework/src/pages/LoginPage.tsx](../../../wework/src/pages/LoginPage.tsx)
+
+初始源码结论：登录与管理员设密委托生产表单，OIDC 按钮显式 type=button；表单字段和错误密度需到两个真实子表单检查。
+
+修复记录：此页无单独确认的源码缺陷；委托边界不算作已验收。
+
+入口/调用方：[wework/src/App.tsx](../../../wework/src/App.tsx)
+
+依赖/委托：hooks: `useAuth`, `useTranslation`；委托：`AdminPasswordSetupForm`, `PasswordLoginForm`
+
+### 3. OidcCallbackPage
+
+[wework/src/pages/OidcCallbackPage.tsx](../../../wework/src/pages/OidcCallbackPage.tsx)
+
+初始源码结论：只显示 OIDC 处理中状态；没有输入或删除操作，认证跳转逻辑不在视觉结论内。
+
+修复记录：此页无单独确认的源码缺陷；委托边界不算作已验收。
+
+入口/调用方：[wework/src/App.tsx](../../../wework/src/App.tsx)
+
+依赖/委托：hooks: `useAuth`, `useTranslation`
+
+### 4. PopoutWorkbenchPage
+
+[wework/src/pages/PopoutWorkbenchPage.tsx](../../../wework/src/pages/PopoutWorkbenchPage.tsx)
+
+初始源码结论：三个标题栏图标按钮均有 aria-label 和 type=button；重复的 h-8/w-8/rounded-lg 可复用 IconButton，但 Electron 拖拽区域属性必须保留。
+
+修复记录：此页无单独确认的源码缺陷；委托边界不算作已验收。
+
+入口/调用方：[wework/src/App.tsx](../../../wework/src/App.tsx)
+
+依赖/委托：hooks: `useWorkbench`, `useTranslation`；委托：`SquarePen`, `DesktopWorkbenchMain`
+
+### 5. ProcessExplorerPage
+
+[wework/src/pages/ProcessExplorerPage.tsx](../../../wework/src/pages/ProcessExplorerPage.tsx)
+
+初始源码结论：页面仅绑定 ProcessExplorerView 与 host ports；按钮、排序及字段实际属于委托视图。
+
+修复记录：此页无单独确认的源码缺陷；委托边界不算作已验收。
+
+入口/调用方：[wework/src/App.tsx](../../../wework/src/App.tsx)
+
+依赖/委托：委托：`ProcessExplorerView`
+
+### 6. WeworkAuthorizePage
+
+[wework/src/pages/WeworkAuthorizePage.tsx](../../../wework/src/pages/WeworkAuthorizePage.tsx)
+
+初始源码结论：成功/失败/过期状态使用语义图标；两个关闭按钮使用 primary 又本地覆盖圆角、颜色与 padding。
+
+修复记录：重复按钮配方（原证据行 115）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。 重复按钮配方（原证据行 137）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。
+
+入口/调用方：[wework/src/App.tsx](../../../wework/src/App.tsx)
+
+依赖/委托：hooks: `useAuth`, `useTranslation`；委托：`CheckCircle2`, `XCircle`, `AlertCircle`
+
+### 7. WorkbenchPage
+
+[wework/src/pages/WorkbenchPage.tsx](../../../wework/src/pages/WorkbenchPage.tsx)
+
+初始源码结论：仅选择桌面/移动布局并绑定运行时；不可把 Page 适配层无控件误判为整个工作台通过。
+
+修复记录：此页无单独确认的源码缺陷；委托边界不算作已验收。
+
+入口/调用方：[wework/dsh/ui-core-apps/src/app-surface.tsx](../../../wework/dsh/ui-core-apps/src/app-surface.tsx)
+
+依赖/委托：hooks: `useWorkbench`；委托：`SystemDragBridge`, `DesktopWorkbenchLayout`, `TaskWorkbenchPage`, `WorkbenchPageLayout`, `MobileWorkbenchLayout`
+
+### 8. WorkbenchErrorPage
+
+[wework/src/components/common/WorkbenchErrorPage.tsx](../../../wework/src/components/common/WorkbenchErrorPage.tsx)
+
+初始源码结论：共享 Button 的重载操作显式 type=button、testid；alert 展示无字段、无删除。
+
+修复记录：此页无单独确认的源码缺陷；委托边界不算作已验收。
+
+入口/调用方：[wework/src/main.tsx](../../../wework/src/main.tsx)；[wework/src/components/common/WorkbenchErrorBoundary.tsx](../../../wework/src/components/common/WorkbenchErrorBoundary.tsx)
+
+依赖/委托：hooks: `useTranslation`
+
+### 9. AboutSettingsPage
+
+[wework/src/components/settings/AboutSettingsPage.tsx](../../../wework/src/components/settings/AboutSettingsPage.tsx)
+
+初始源码结论：设置组和开关已共用；AboutActionButton 重复 primary 视觉配方，AboutLink 也重新指定小字号与间距。
+
+修复记录：重复按钮配方（原证据行 54）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。
+
+入口/调用方：`/settings/about`；[wework/src/components/settings/MobileSettingsPage.tsx](../../../wework/src/components/settings/MobileSettingsPage.tsx)；[wework/dsh/ui-core-settings/src/settings-page.tsx](../../../wework/dsh/ui-core-settings/src/settings-page.tsx)
+
+依赖/委托：hooks: `useTranslation`；委托：`SettingsPage`, `ReleaseRollbackSettings`, `ProgressBar`, `AboutLink`
+
+### 10. AppshotsSettingsPage
+
+[wework/src/components/settings/AppshotsSettingsPage.tsx](../../../wework/src/components/settings/AppshotsSettingsPage.tsx)
+
+初始源码结论：设置行和开关共用；打开系统设置的 outline 按钮重复定义圆角、边框和 text-xs。
+
+修复记录：重复按钮配方（原证据行 86）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。
+
+入口/调用方：`/settings/appshots`；[wework/dsh/ui-core-settings/src/settings-page.tsx](../../../wework/dsh/ui-core-settings/src/settings-page.tsx)
+
+依赖/委托：hooks: `useTranslation`；委托：`SettingsPage`, `SettingsPageHeader`, `ScanLine`, `KeyboardShortcut`
+
+### 11. ArchivedConversationsSettingsPage
+
+[wework/src/components/settings/ArchivedConversationsSettingsPage.tsx](../../../wework/src/components/settings/ArchivedConversationsSettingsPage.tsx)
+
+初始源码结论：归档过滤/分组委托已有组件；删除确认已是 destructive，仍以本地红色和圆角覆盖共享配方。
+
+修复记录：重复按钮配方（原证据行 305）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。
+
+入口/调用方：`/settings/archived-conversations`；[wework/src/components/settings/MobileSettingsPage.tsx](../../../wework/src/components/settings/MobileSettingsPage.tsx)；[wework/dsh/ui-core-settings/src/settings-page.tsx](../../../wework/dsh/ui-core-settings/src/settings-page.tsx)
+
+依赖/委托：hooks: `useTranslation`；委托：`DialogSurface`, `SettingsPage`, `SettingsPageHeader`, `ArchivedConversationsFilters`, `ArchivedConversationGroups`, `DeleteArchivedConversationDialog`
+
+### 12. BrowserHistoryPage
+
+[wework/src/components/settings/BrowserHistoryPage.tsx](../../../wework/src/components/settings/BrowserHistoryPage.tsx)
+
+初始源码结论：搜索字段、勾选和操作菜单共用；重试/删除所选按钮仍用 unstyled+完整灰色按钮样式，删除颜色需与统一策略核对。
+
+修复记录：此页无单独确认的源码缺陷；委托边界不算作已验收。
+
+入口/调用方：[wework/src/components/settings/BrowserSettingsPage.tsx](../../../wework/src/components/settings/BrowserSettingsPage.tsx)
+
+依赖/委托：hooks: `useTranslation`；委托：`Globe`, `HistoryEntryFavicon`, `ActionMenu`, `History`, `ChevronDown`, `HistoryEntryRow`, `ClearBrowserDataDialog`, `TransientNotice`
+
+### 13. BrowserSettingsPage
+
+[wework/src/components/settings/BrowserSettingsPage.tsx](../../../wework/src/components/settings/BrowserSettingsPage.tsx)
+
+初始源码结论：设置行、共享 Select 和 Switch 适用；清除数据已走 destructive-ghost，普通管理/重置按钮仍有重复灰色配方。
+
+修复记录：此页无单独确认的源码缺陷；委托边界不算作已验收。
+
+入口/调用方：`/settings/browser`；[wework/dsh/ui-core-settings/src/settings-page.tsx](../../../wework/dsh/ui-core-settings/src/settings-page.tsx)
+
+依赖/委托：hooks: `useTranslation`；委托：`BrowserHistoryPage`, `SettingsPage`, `SettingsPageHeader`, `History`, `FolderOpen`, `ClearBrowserDataDialog`
+
+### 14. ComputerUseSettingsPage
+
+[wework/src/components/settings/ComputerUseSettingsPage.tsx](../../../wework/src/components/settings/ComputerUseSettingsPage.tsx)
+
+初始源码结论：设置行与开关共用，权限操作 outline 按钮再次声明边框、圆角和小字号。
+
+修复记录：重复按钮配方（原证据行 80）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。
+
+入口/调用方：`/settings/computer-use`；[wework/dsh/ui-core-settings/src/settings-page.tsx](../../../wework/dsh/ui-core-settings/src/settings-page.tsx)
+
+依赖/委托：hooks: `useTranslation`；委托：`SettingsPage`, `SettingsPageHeader`, `MonitorCog`
+
+### 15. ConnectionsSettingsPage
+
+[wework/src/components/settings/ConnectionsSettingsPage.tsx](../../../wework/src/components/settings/ConnectionsSettingsPage.tsx)
+
+初始源码结论：设备操作中普通、主、危险按钮已接共享行为但保留完整局部配方；侧栏 resize 仍用自定义按钮调用 hook，需要与新 Resizable 迁移范围核对。
+
+修复记录：重复按钮配方（原证据行 167）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。 重复按钮配方（原证据行 268）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。 重复按钮配方（原证据行 397）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。 重复按钮配方（原证据行 1159）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。 重复按钮配方（原证据行 1231）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。
+
+入口/调用方：DSH动态路由 `/sites`，由[client.js](../../../wework/dsh/ui-applications/client.js)注册，经[route](../../../wework/dsh/ui-applications/src/route.tsx)挂载；构建映射见[vite.config.ts](../../../wework/vite.config.ts)。
+
+依赖/委托：hooks: `useCloudConnection`, `useTranslation`；权限相关标识（非授权结论）：`isConnected`；委托：`Pencil`, `DeviceVersionBadge`, `StatusPill`, `DeviceSurfaceDeviceAction`, `ActionMenu`, `CloudDeviceRestartProgress`, `AlertCircle`, `Terminal`, `RemoteTerminal`, `ConfirmDeleteDeviceDialog`, `CloudDeviceConnectionInfoDialog`, `DeviceCard`, `Code2`, `SettingsPage`, `SettingsPageHeader`, `RemoteTaskAccessSetting`, `DshSettingsSectionSurface`, `CloudConnectionDialog`, `LogOut`, `CloudModelsSection`, `ConnectorConnectionsSection`, `DeviceSection`, `DeviceGitSyncSection`, `AddCloudDeviceDialog`, `WorkbenchCloudDeviceRestarts`, `DesktopTopBar`, `ArrowLeft`, `ExperimentalBadge`, `DshSettingsSurface`, `DshSlotSurface`
+
+### 16. ContextSettingsPage
+
+[wework/src/components/settings/ContextSettingsPage.tsx](../../../wework/src/components/settings/ContextSettingsPage.tsx)
+
+初始源码结论：两个相同保存按钮重复 primary 配方；文本域重复背景、边框、圆角、focus 样式，普通字段密度须实测。
+
+修复记录：重复按钮配方（原证据行 243）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。 重复按钮配方（原证据行 281）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。
+
+入口/调用方：`/settings/personal/context`；[wework/src/components/settings/MobileSettingsPage.tsx](../../../wework/src/components/settings/MobileSettingsPage.tsx)；[wework/dsh/ui-core-settings/src/settings-page.tsx](../../../wework/dsh/ui-core-settings/src/settings-page.tsx)
+
+依赖/委托：hooks: `useTranslation`；委托：`SettingsPage`, `SettingsPageHeader`, `Terminal`, `CodexPersonalitySettings`, `Save`
+
+### 17. ExecutionEnvironmentsSettingsPage
+
+[wework/src/components/settings/ExecutionEnvironmentsSettingsPage.tsx](../../../wework/src/components/settings/ExecutionEnvironmentsSettingsPage.tsx)
+
+初始源码结论：Node/Python 操作直接使用共享 Button outline/ghost，未发现直接重复视觉配方；状态与权限仍需真实运行时。
+
+修复记录：此页无单独确认的源码缺陷；委托边界不算作已验收。
+
+入口/调用方：`/settings/execution-environments`；[wework/dsh/ui-core-settings/src/settings-page.tsx](../../../wework/dsh/ui-core-settings/src/settings-page.tsx)
+
+依赖/委托：hooks: `useTranslation`；委托：`SettingsPage`, `SettingsPageHeader`, `Box`, `FolderOpen`, `RotateCcw`, `RefreshCw`, `Download`
+
+### 18. GeneralSettingsPage
+
+[wework/src/components/settings/GeneralSettingsPage.tsx](../../../wework/src/components/settings/GeneralSettingsPage.tsx)
+
+初始源码结论：共享设置行、选择和开关已复用；外部导入、快捷键记录和行为选项仍有局部 unstyled 配方，不能仅以标签类型判断正确性。
+
+修复记录：此页无单独确认的源码缺陷；委托边界不算作已验收。
+
+入口/调用方：`/settings`；[wework/src/components/settings/MobileSettingsPage.tsx](../../../wework/src/components/settings/MobileSettingsPage.tsx)；[wework/dsh/ui-core-settings/src/settings-page.tsx](../../../wework/dsh/ui-core-settings/src/settings-page.tsx)
+
+依赖/委托：hooks: `useCloudConnection`, `useWorkbench`, `useTranslation`, `useContext`；权限相关标识（非授权结论）：`isConnected`；委托：`SettingsPage`, `SettingsPageHeader`, `DefaultRunnerSetting`, `SettingsSegmentedControl`, `GeneralFixedWorkspaceTabs`, `DshSettingsSectionSurface`, `RuntimeConcurrencySettings`, `Bell`, `ReplyPredictionSettings`, `TelemetryCollectionNotice`, `KeyboardShortcut`, `Pencil`, `ExternalContentImportDialog`, `ConfirmDialog`
+
+### 19. GitHostingSettingsPage
+
+[wework/src/components/settings/GitHostingSettingsPage.tsx](../../../wework/src/components/settings/GitHostingSettingsPage.tsx)
+
+初始源码结论：Git CLI 刷新、安装、登录复制均有相同 unstyled 灰色按钮配方，可提取共同样式；开关复用 SettingsSwitch。
+
+修复记录：此页无单独确认的源码缺陷；委托边界不算作已验收。
+
+入口/调用方：[wework/dsh/ui-git/src/settings-page.tsx](../../../wework/dsh/ui-git/src/settings-page.tsx)
+
+依赖/委托：hooks: `useTranslation`；委托：`SettingsPage`, `SettingsPageHeader`, `RefreshCw`, `GitBranch`
+
+### 20. HarnessSettingsPage
+
+[wework/src/components/settings/HarnessSettingsPage.tsx](../../../wework/src/components/settings/HarnessSettingsPage.tsx)
+
+初始源码结论：工具展开、启用和权限选择语义分离；可执行文件选择 outline 再写完整配方，重置图标可复用 IconButton。
+
+修复记录：重复按钮配方（原证据行 309）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。
+
+入口/调用方：`/settings/harnesses`；[wework/src/components/settings/MobileSettingsPage.tsx](../../../wework/src/components/settings/MobileSettingsPage.tsx)；[wework/dsh/ui-core-settings/src/settings-page.tsx](../../../wework/dsh/ui-core-settings/src/settings-page.tsx)
+
+依赖/委托：hooks: `useTranslation`；委托：`SettingsPage`, `SettingsPageHeader`, `ExperimentalBadge`, `SquareTerminal`, `ChevronDown`, `FolderOpen`, `RotateCcw`
+
+### 21. KeyboardShortcutsSettingsPage
+
+[wework/src/components/settings/KeyboardShortcutsSettingsPage.tsx](../../../wework/src/components/settings/KeyboardShortcutsSettingsPage.tsx)
+
+初始源码结论：搜索用 compact TextField；快捷键录制和重置为共享行为，清除用 DeleteIconButton；录制按钮 min-h-8 的移动触控目标需实际确认。
+
+修复记录：此页无单独确认的源码缺陷；委托边界不算作已验收。
+
+入口/调用方：`/settings/personal/keyboard-shortcuts`；[wework/dsh/ui-core-settings/src/settings-page.tsx](../../../wework/dsh/ui-core-settings/src/settings-page.tsx)
+
+依赖/委托：hooks: `useTranslation`；委托：`KeybindingPart`, `CornerDownLeft`, `SettingsPage`, `SettingsPageHeader`, `KeybindingPill`, `RotateCcw`
+
+### 22. MobileSettingsPage
+
+[wework/src/components/settings/MobileSettingsPage.tsx](../../../wework/src/components/settings/MobileSettingsPage.tsx)
+
+初始源码结论：移动菜单和返回按钮显式 44px 或 56px，源码尺寸符合移动最低值；大量重复返回/菜单 DOM 可复用统一移动导航组件。
+
+修复记录：此页无单独确认的源码缺陷；委托边界不算作已验收。
+
+入口/调用方：DSH动态路由 `/sites`，由[client.js](../../../wework/dsh/ui-applications/client.js)注册，经[route](../../../wework/dsh/ui-applications/src/route.tsx)挂载；构建映射见[vite.config.ts](../../../wework/vite.config.ts)。
+
+依赖/委托：hooks: `useTranslation`；委托：`ArrowLeft`, `DshSettingsSurface`, `ConnectionsDeviceSettingsPage`, `QuickPhrasesSettingsPage`, `RuntimeSettingsPage`, `GeneralSettingsPage`, `AppearanceSettingsPage`, `ContextSettingsPage`, `AboutSettingsPage`, `ArchivedConversationsSettingsPage`, `ExperimentalBadge`, `HarnessSettingsPage`, `PluginSettingsPage`, `SlidersHorizontal`, `ChevronRight`, `Palette`, `Terminal`, `UserRound`, `Server`, `MessageSquareText`, `ModelSettingsPage`, `Plug`, `Globe2`, `Archive`, `Package`
+
+### 23. ModelSettingsPage
+
+[wework/src/components/settings/ModelSettingsPage.tsx](../../../wework/src/components/settings/ModelSettingsPage.tsx)
+
+初始源码结论：模型选择/切换用统一控件；详情、刷新、同步 outline 按钮重复边框圆角配方；隐藏文件导入不应误报原生表单遗漏。
+
+修复记录：重复按钮配方（原证据行 206）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。 重复按钮配方（原证据行 751）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。 重复按钮配方（原证据行 900）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。
+
+入口/调用方：`/settings/personal/models`；[wework/src/components/settings/MobileSettingsPage.tsx](../../../wework/src/components/settings/MobileSettingsPage.tsx)；[wework/dsh/ui-core-settings/src/settings-page.tsx](../../../wework/dsh/ui-core-settings/src/settings-page.tsx)
+
+依赖/委托：hooks: `useCloudConnection`, `useTranslation`；权限相关标识（非授权结论）：`isConnected`；委托：`CodexOfficialModelsSection`, `LocalCodexModelRow`, `ChevronDown`, `ConfirmDialog`, `SettingsPage`, `SettingsPageHeader`, `CodexAuthSettingsSection`, `LocalCodexSubscriptionToggle`, `DisconnectedCloudCodexSyncSection`, `ProviderSettingsSection`, `CloudModelsSection`, `DisconnectedCloudModelsSection`, `RefreshCw`, `ShieldCheck`, `Upload`, `AlertCircle`
+
+### 24. PluginSettingsPage
+
+[wework/src/components/settings/PluginSettingsPage.tsx](../../../wework/src/components/settings/PluginSettingsPage.tsx)
+
+初始源码结论：页面委托共享 SettingsPage/Group/Row/Switch，无独立普通按钮或删除；加载错误状态需要真实插件端口。
+
+修复记录：此页无单独确认的源码缺陷；委托边界不算作已验收。
+
+入口/调用方：`/settings/plugins`；[wework/src/components/settings/MobileSettingsPage.tsx](../../../wework/src/components/settings/MobileSettingsPage.tsx)；[wework/dsh/ui-core-settings/src/settings-page.tsx](../../../wework/dsh/ui-core-settings/src/settings-page.tsx)
+
+依赖/委托：hooks: `useTranslation`；委托：`SettingsPage`, `SettingsPageHeader`, `Package`, `AlertCircle`
+
+### 25. ProxySettingsPage
+
+[wework/src/components/settings/ProxySettingsPage.tsx](../../../wework/src/components/settings/ProxySettingsPage.tsx)
+
+初始源码结论：代理方式采用 RadioGroup；多个保存/重启 primary 按钮使用 h-8/h-9、text-xs/text-sm 的不同局部配方。
+
+修复记录：重复按钮配方（原证据行 342）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。 重复按钮配方（原证据行 363）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。 重复按钮配方（原证据行 506）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。
+
+入口/调用方：`/settings/personal/proxy`；[wework/dsh/ui-core-settings/src/settings-page.tsx](../../../wework/dsh/ui-core-settings/src/settings-page.tsx)
+
+依赖/委托：hooks: `useCloudConnection`, `useTranslation`；权限相关标识（非授权结论）：`isConnected`；委托：`Laptop`, `RadioGroup`, `Radio`, `AlertCircle`, `SettingsPage`, `SettingsPageHeader`, `Network`, `RefreshCw`, `ShieldCheck`
+
+### 26. QuickPhrasesSettingsPage
+
+[wework/src/components/settings/QuickPhrasesSettingsPage.tsx](../../../wework/src/components/settings/QuickPhrasesSettingsPage.tsx)
+
+初始源码结论：纯 SettingsPage 包装 QuickPhrasesEditor；字段、排序、删除均需在真实编辑器进一步 review。
+
+修复记录：此页无单独确认的源码缺陷；委托边界不算作已验收。
+
+入口/调用方：`/settings/personal/quick-phrases`；[wework/src/components/settings/MobileSettingsPage.tsx](../../../wework/src/components/settings/MobileSettingsPage.tsx)；[wework/dsh/ui-core-settings/src/settings-page.tsx](../../../wework/dsh/ui-core-settings/src/settings-page.tsx)
+
+依赖/委托：hooks: `useTranslation`；委托：`SettingsPage`, `SettingsPageHeader`, `QuickPhrasesEditor`
+
+### 27. RuntimeSettingsPage
+
+[wework/src/components/settings/RuntimeSettingsPage.tsx](../../../wework/src/components/settings/RuntimeSettingsPage.tsx)
+
+初始源码结论：运行配置创建/保存重复圆角和小字号 primary 配方，删除已用 DeleteIconButton；MenuSelect 与输入密度需真实比较。
+
+修复记录：重复按钮配方（原证据行 139）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。 重复按钮配方（原证据行 286）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。
+
+入口/调用方：`/settings/personal/runtimes`；[wework/src/components/settings/MobileSettingsPage.tsx](../../../wework/src/components/settings/MobileSettingsPage.tsx)；[wework/dsh/ui-core-settings/src/settings-page.tsx](../../../wework/dsh/ui-core-settings/src/settings-page.tsx)
+
+依赖/委托：hooks: `useTranslation`；委托：`SettingsPage`, `SettingsPageHeader`, `CloudTodoModal`, `LoaderCircle`
+
+### 28. WorktreesSettingsPage
+
+[wework/src/components/settings/WorktreesSettingsPage.tsx](../../../wework/src/components/settings/WorktreesSettingsPage.tsx)
+
+初始源码结论：分支保留确认与恢复语义；禁用清理的 destructive 确认重新设置红色圆角，工作树行条件式按钮配方仍重复。
+
+修复记录：重复按钮配方（原证据行 607）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。
+
+入口/调用方：[wework/dsh/ui-git/src/settings-page.tsx](../../../wework/dsh/ui-git/src/settings-page.tsx)
+
+依赖/委托：hooks: `useTranslation`；委托：`SettingsPage`, `SettingsPageHeader`, `RefreshCw`, `WorktreeRow`, `CircleCheck`, `ConfirmDialog`, `DialogSurface`
+
+### 29. AppearanceSettingsPage
+
+[wework/src/features/appearance/AppearanceSettingsPage.tsx](../../../wework/src/features/appearance/AppearanceSettingsPage.tsx)
+
+初始源码结论：字体数字字段已 compact、滑块与开关复用；重置和选择背景重复按钮配方，背景移除已 destructive-ghost。
+
+修复记录：重复按钮配方（原证据行 225）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。 重复按钮配方（原证据行 418）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。
+
+入口/调用方：`/settings/appearance`；[wework/src/components/settings/MobileSettingsPage.tsx](../../../wework/src/components/settings/MobileSettingsPage.tsx)；[wework/dsh/ui-core-settings/src/settings-page.tsx](../../../wework/dsh/ui-core-settings/src/settings-page.tsx)
+
+依赖/委托：hooks: `useTranslation`；委托：`SettingsPage`, `SettingsPageHeader`, `RotateCcw`, `RangeSlider`, `WorkbenchBackgroundPreview`, `Image`, `FontSizeControl`
+
+### 30. AutomationsPage
+
+[wework/src/features/automations/AutomationsPage.tsx](../../../wework/src/features/automations/AutomationsPage.tsx)
+
+初始源码结论：页面主要组合列表/详情工作区和统一 ConfirmDialog/MobileDrawer；移动菜单 44px，详情错误重试仍局部样式。
+
+修复记录：此页无单独确认的源码缺陷；委托边界不算作已验收。
+
+入口/调用方：[wework/src/features/todo/StandInConnectionSettings.tsx](../../../wework/src/features/todo/StandInConnectionSettings.tsx)；[wework/src/features/todo/StandInScheduleDialog.tsx](../../../wework/src/features/todo/StandInScheduleDialog.tsx)
+
+依赖/委托：hooks: `useAuth`, `useWorkbench`, `useTranslation`；权限相关标识（非授权结论）：`userId`；委托：`MobileSettingsPage`, `ConnectionsSettingsPage`, `ConfirmDialog`, `DesktopSidebar`, `Menu`, `MobileDrawer`, `DesktopCollapsedSidebarToggle`, `AutomationListPane`, `AutomationDetailWorkspace`, `AutomationEmptyState`, `WorkbenchSearchDialog`
+
+### 31. HooksSettingsPage
+
+[wework/src/features/hooks/HooksSettingsPage.tsx](../../../wework/src/features/hooks/HooksSettingsPage.tsx)
+
+初始源码结论：导入/新增操作功能清楚，新增 primary 又重复完整按钮样式；HookEditorDialog 为字段与删除审查边界。
+
+修复记录：重复按钮配方（原证据行 38）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。
+
+入口/调用方：`/settings/hooks`；[wework/dsh/ui-core-settings/src/settings-page.tsx](../../../wework/dsh/ui-core-settings/src/settings-page.tsx)
+
+依赖/委托：hooks: `useTranslation`；委托：`SettingsPage`, `SettingsPageHeader`, `Upload`, `RefreshCw`, `HookListItem`, `HookEditorDialog`
+
+### 32. RuntimeInteractionsPage
+
+[wework/src/features/notifications/RuntimeInteractionsPage.tsx](../../../wework/src/features/notifications/RuntimeInteractionsPage.tsx)
+
+初始源码结论：列表、清除、查看历史、返回均使用共享行为并有移动 min-h-11；已迁移 Collapsible，真实嵌入通知视图仍需权限与数据。
+
+修复记录：此页无单独确认的源码缺陷；委托边界不算作已验收。
+
+入口/调用方：[wework/src/App.tsx](../../../wework/src/App.tsx)；[wework/src/features/notifications/runtimeInteractionsProvider.fixtures.tsx](../../../wework/src/features/notifications/runtimeInteractionsProvider.fixtures.tsx)
+
+依赖/委托：hooks: `useTranslation`；权限相关标识（非授权结论）：`userId`；委托：`RefreshCw`, `InteractionDraftRecovery`, `IssueWaitingTime`, `InteractionTime`, `CollapsibleRoot`, `CollapsibleTrigger`, `CollapsiblePanel`, `ArrowLeft`, `ArrowUpRight`, `WorkbenchErrorBoundary`, `NotificationEntitySurface`
+
+### 33. StandInOverviewPage
+
+[wework/src/features/todo/StandInOverviewPage.tsx](../../../wework/src/features/todo/StandInOverviewPage.tsx)
+
+初始源码结论：分身角色、配置和详情委托真实业务控件；新增/详情按钮移动 44px、桌面32px；角色切换样式仍由局部 roleTabClass 控制。
+
+修复记录：此页无单独确认的源码缺陷；委托边界不算作已验收。
+
+入口/调用方：[wework/src/features/todo/PersonalStandInWorkspace.tsx](../../../wework/src/features/todo/PersonalStandInWorkspace.tsx)
+
+依赖/委托：hooks: `useTranslation`, `useContext`；权限相关标识（非授权结论）：`userId`, `isConnected`, `readOnly`；委托：`StandInProposalCard`, `StandInSettingsEntry`, `UserRound`, `StandInIcon`, `Tooltip`, `SlidersHorizontal`, `StandInConversation`, `StandInDetailsPopover`, `TemporaryChatPanel`, `StandInScheduleDialog`, `StandInReviewDialog`, `StandInWorkList`, `StandInProcessingNotice`, `DialogSurface`, `StandInMemoryPanel`, `StandInPrimaryProfile`, `StandInSettingsPage`, `StandInOnboarding`
+
+### 34. StandInSettingsPage
+
+[wework/src/features/todo/StandInSettingsPage.tsx](../../../wework/src/features/todo/StandInSettingsPage.tsx)
+
+初始源码结论：分身删除入口用 destructive-ghost，但最终删除确认使用 primary，本地中性色；与统一危险操作规则存在可确认的选型不一致。
+
+修复记录：重复按钮配方（原证据行 837）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。 删除确认变体（原证据行 837）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。
+
+入口/调用方：[wework/src/features/todo/StandInOverviewPage.tsx](../../../wework/src/features/todo/StandInOverviewPage.tsx)；[wework/src/features/todo/StandInPopover.tsx](../../../wework/src/features/todo/StandInPopover.tsx)
+
+依赖/委托：hooks: `useTranslation`；权限相关标识（非授权结论）：`userId`；委托：`StandInSettingsEditor`, `DialogSurface`, `StandInSettingsHeader`, `StandInProjectSetup`, `StandInRequirements`, `StandInSettingsEntry`, `Folder`, `StandInConnectionSettings`, `StandInComposer`, `StandInSettingsError`, `ConfirmDialog`, `StandInSettingsActions`
+
+### 35. SitesPage
+
+[wework/dsh/ui-applications/src/SitesPage.tsx](../../../wework/dsh/ui-applications/src/SitesPage.tsx)
+
+初始源码结论：应用 Sites 壳委托 SitesWorkspace/市场和工作台导航；移动菜单显式44px，内部卡片/编辑器未因壳 review 自动验收。
+
+修复记录：此页无单独确认的源码缺陷；委托边界不算作已验收。
+
+入口/调用方：DSH动态路由 `/sites`，由[client.js](../../../wework/dsh/ui-applications/client.js)注册，经[route](../../../wework/dsh/ui-applications/src/route.tsx)挂载；构建映射见[vite.config.ts](../../../wework/vite.config.ts)。
+
+依赖/委托：hooks: `useAuth`, `useCloudConnection`, `useWorkbench`, `useTranslation`；权限相关标识（非授权结论）：`isConnected`；委托：`MobileSettingsPage`, `ConnectionsSettingsPage`, `DesktopWindowControls`, `DesktopCollapsedSidebarToggle`, `DesktopSidebar`, `Menu`, `MobileDrawer`, `SitesWorkspace`, `SmartAppsMarketplacePage`, `WorkbenchSearchDialog`
+
+### 36. SmartAppsMarketplacePage
+
+[wework/dsh/ui-applications/src/SmartAppsMarketplacePage.tsx](../../../wework/dsh/ui-applications/src/SmartAppsMarketplacePage.tsx)
+
+初始源码结论：导入/安装/发布大多共享 Button 与 Select；卡片可见性 outline 又重写局部配方，访问成功提示内按钮带 success 修饰需检查只限状态语境。
+
+修复记录：重复按钮配方（原证据行 1456）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。 重复按钮配方（原证据行 2070）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。
+
+入口/调用方：DSH动态路由 `/sites`，由[client.js](../../../wework/dsh/ui-applications/client.js)注册，经[route](../../../wework/dsh/ui-applications/src/route.tsx)挂载；构建映射见[vite.config.ts](../../../wework/vite.config.ts)。
+
+依赖/委托：hooks: `useTranslation`；权限相关标识（非授权结论）：`accessRole`；委托：`Upload`, `CirclePlus`, `FolderOpen`, `Download`, `ApplicationContextToolbar`, `SmartAppsSectionNav`, `CheckCircle2`, `EmptyState`, `Box`, `PackageCheck`, `SmartAppCard`, `Play`, `ActionMenu`, `SmartAppDetails`, `HarnessAppInstallDialog`, `SmartAppPublishDialog`, `SmartAppShareDialog`, `SmartAppDevelopmentDialog`, `SmartAppPluginDialog`, `SmartAppRemoveLocalDialog`, `VisibilityIcon`, `Puzzle`, `DialogSurface`, `Boxes`, `ShieldCheck`, `PackageOpen`, `CalendarDays`, `ReactMarkdown`, `TargetPicker`, `SmartAppFilePicker`
+
+### 37. AutomationsPage
+
+[wework/dsh/ui-automations/src/AutomationsPage.tsx](../../../wework/dsh/ui-automations/src/AutomationsPage.tsx)
+
+初始源码结论：只是 re-export 主 AutomationsPage；真实控件审查归对应 feature 页面，不重复宣称 UI 验收。
+
+修复记录：此页无单独确认的源码缺陷；委托边界不算作已验收。
+
+入口/调用方：DSH动态路由 `/automations`，由[client.js](../../../wework/dsh/ui-automations/client.js)注册，经[route](../../../wework/dsh/ui-automations/src/route.tsx)挂载；构建映射见[vite.config.ts](../../../wework/vite.config.ts)。
+
+依赖/委托：无明确 hook/权限线索；仍需解析 host/provider 与数据前提。
+
+### 38. CloudWorkPage
+
+[wework/dsh/ui-cloud-work/src/CloudWorkPage.tsx](../../../wework/dsh/ui-cloud-work/src/CloudWorkPage.tsx)
+
+初始源码结论：云端添加设备主按钮保留旧配方；最低版本 outline 按钮仅增加响应式最小高度，不属于重复视觉配方。
+
+修复记录：重复按钮配方（原证据行 275）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。
+
+入口/调用方：DSH动态路由 `/cloud-work`，由[client.js](../../../wework/dsh/ui-cloud-work/client.js)注册，经[route](../../../wework/dsh/ui-cloud-work/src/route.tsx)挂载；构建映射见[vite.config.ts](../../../wework/vite.config.ts)。
+
+依赖/委托：hooks: `useAuth`, `useWorkbench`, `useTranslation`；委托：`DesktopCollapsedSidebarToggle`, `DesktopSidebar`, `Menu`, `MobileDrawer`, `Settings`, `DeviceSection`, `FolderGit2`, `WorkbenchSearchDialog`
+
+### 39. PluginCreatePage
+
+[wework/dsh/ui-plugin-center/src/PluginCreatePage.tsx](../../../wework/dsh/ui-plugin-center/src/PluginCreatePage.tsx)
+
+初始源码结论：创建插件页面为工作台壳与 PluginCreateWorkspace；移动菜单44px，创建表单由子视图负责。
+
+修复记录：此页无单独确认的源码缺陷；委托边界不算作已验收。
+
+入口/调用方：DSH动态路由 `/plugins/create`，由[client.js](../../../wework/dsh/ui-plugin-center/client.js)注册，经[route](../../../wework/dsh/ui-plugin-center/src/create-route.tsx)挂载；构建映射见[vite.config.ts](../../../wework/vite.config.ts)。
+
+依赖/委托：hooks: `useAuth`, `useWorkbench`, `useTranslation`；委托：`MobileSettingsPage`, `ConnectionsSettingsPage`, `DesktopSidebar`, `Menu`, `MobileDrawer`, `PluginCreateWorkspace`, `DesktopWindowControls`, `WorkbenchSearchDialog`
+
+### 40. PluginManagementPage
+
+[wework/dsh/ui-plugin-center/src/PluginManagementPage.tsx](../../../wework/dsh/ui-plugin-center/src/PluginManagementPage.tsx)
+
+初始源码结论：插件管理页面为工作台壳与 PluginManagementWorkspace；移动菜单44px，管理操作与失败状态需要子视图实际验证。
+
+修复记录：此页无单独确认的源码缺陷；委托边界不算作已验收。
+
+入口/调用方：DSH动态路由 `/plugins/manage`，由[client.js](../../../wework/dsh/ui-plugin-center/client.js)注册，经[route](../../../wework/dsh/ui-plugin-center/src/management-route.tsx)挂载；构建映射见[vite.config.ts](../../../wework/vite.config.ts)。
+
+依赖/委托：hooks: `useAuth`, `useCloudConnection`, `useWorkbench`, `useTranslation`；委托：`MobileSettingsPage`, `ConnectionsSettingsPage`, `DesktopWindowControls`, `DesktopSidebar`, `Menu`, `MobileDrawer`, `PluginManagementWorkspace`, `WorkbenchSearchDialog`
+
+### 41. PluginsPage
+
+[wework/dsh/ui-plugin-center/src/PluginsPage.tsx](../../../wework/dsh/ui-plugin-center/src/PluginsPage.tsx)
+
+初始源码结论：插件首页为可延迟加载 Workspace 的工作台壳；移动菜单44px，Suspense 和错误后恢复属于真实 UI 验证。
+
+修复记录：此页无单独确认的源码缺陷；委托边界不算作已验收。
+
+入口/调用方：[wework/dsh/ui-plugin-center/src/catalog-route.tsx](../../../wework/dsh/ui-plugin-center/src/catalog-route.tsx)
+
+依赖/委托：hooks: `useAuth`, `useCloudConnection`, `useWorkbench`, `useTranslation`；委托：`MobileSettingsPage`, `ConnectionsSettingsPage`, `DesktopCollapsedSidebarToggle`, `DesktopSidebar`, `Menu`, `MobileDrawer`, `Suspense`, `PluginsWorkspaceRouteFallback`, `DesktopWindowControls`, `PluginsWorkspace`, `WorkbenchSearchDialog`
+
+### 42. MilestonesPage
+
+[packages/collaboration/src/milestones/MilestonesPage.tsx](../../../packages/collaboration/src/milestones/MilestonesPage.tsx)
+
+初始源码结论：里程碑表单使用共享 TextField/Textarea，但 buttonClass/primaryButtonClass 保留完整本地按钮配方，删除确认仍为普通 buttonClass。
+
+修复记录：删除确认变体（原证据行 209）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。
+
+入口/调用方：[packages/collaboration/src/CollaborationApp.tsx](../../../packages/collaboration/src/CollaborationApp.tsx)
+
+依赖/委托：权限相关标识（非授权结论）：`canManage`；委托：`MilestoneForm`, `Flag`, `MilestoneProgress`, `ProgressBar`
+
+### 43. ResourceCatalogPage
+
+[packages/collaboration/src/platform/ResourceCatalogPage.tsx](../../../packages/collaboration/src/platform/ResourceCatalogPage.tsx)
+
+初始源码结论：资源目录搜索和删除图标已共用；主体 action 仍依赖 collaboration-primary-button 等 CSS 配方，删除智能体/小组确认沿用 primary 样式，需统一危险操作选型。
+
+修复记录：删除确认变体（原证据行 927）：已复用公共控件配方/变体；业务 handler、权限与 pending 取消归属保留，待真实 UI 复核。
+
+入口/调用方：[packages/collaboration/src/platform/CollaborationPlatformApp.tsx](../../../packages/collaboration/src/platform/CollaborationPlatformApp.tsx)
+
+依赖/委托：权限相关标识（非授权结论）：`currentUserId`；委托：`UserRound`, `UsersRound`, `PageIcon`, `DeviceCatalogFeedback`, `Monitor`, `DeviceLastSeen`, `Tooltip`, `Settings`, `ResourceDestinationDialog`, `ResourceBindingDialog`, `DeviceDeleteDialog`, `DialogSurface`
+
+### 44. ProjectSettingsPage
+
+[packages/collaboration/src/project-manage/ProjectSettingsPage.tsx](../../../packages/collaboration/src/project-manage/ProjectSettingsPage.tsx)
+
+初始源码结论：通用项目设置布局只接收 actions/children，无控件实现；内容宽度是布局职责，不视为字段密度缺陷。
+
+修复记录：此页无单独确认的源码缺陷；委托边界不算作已验收。
+
+入口/调用方：[packages/collaboration/src/project-manage/ProjectAutomaticProcessing.tsx](../../../packages/collaboration/src/project-manage/ProjectAutomaticProcessing.tsx)；[packages/collaboration/src/templates/ProjectTemplateSettings.tsx](../../../packages/collaboration/src/templates/ProjectTemplateSettings.tsx)
+
+依赖/委托：无明确 hook/权限线索；仍需解析 host/provider 与数据前提。
+
+### 45. CollaborationTemplatePage
+
+[packages/collaboration/src/templates/CollaborationTemplatePage.tsx](../../../packages/collaboration/src/templates/CollaborationTemplatePage.tsx)
+
+初始源码结论：模板页面使用共享搜索字段及 Dialog 业务组件；按钮视觉依赖旧 collaboration CSS，危险操作已有 danger class，仍应逐步收敛共享变体。
+
+修复记录：此页无单独确认的源码缺陷；委托边界不算作已验收。
+
+入口/调用方：[packages/collaboration/src/platform/CollaborationPlatformApp.tsx](../../../packages/collaboration/src/platform/CollaborationPlatformApp.tsx)；[packages/collaboration/src/templates/GroupTemplateCreator.tsx](../../../packages/collaboration/src/templates/GroupTemplateCreator.tsx)；[packages/collaboration/src/templates/ProjectTemplateSettings.tsx](../../../packages/collaboration/src/templates/ProjectTemplateSettings.tsx)；[packages/collaboration/src/templates/TemplateCreateSection.tsx](../../../packages/collaboration/src/templates/TemplateCreateSection.tsx)
+
+依赖/委托：权限相关标识（非授权结论）：`isConnected`；委托：`ScopedCollaborationTemplatePage`, `RefreshCw`, `Layers3`, `TemplatePanel`, `TemplatePreview`, `TemplateImportDialog`
+
+## 实际运行记录：24 条
+
+以下来自 Wework 内置浏览器的生产组件 Story 记录，主要环境为 784×526、zh-CN、浅色；视口辅助示例另测 360/768/1280。24 条是观察记录，包含同一 Story 修复前后或不同状态，既不是 24 个独立页面，也不是全 234 owner 的验收。键盘证据中明确标记的 synthetic events 不能替代原生键盘、Tab 或 IME。
+
+### 1. `patterns-composercomparison--three-production-flows`
+
+实测行为：三个可见表单均为 744×98，工具栏控件均为 28px，无水平溢出。记录事项的项目选择通过 End/Enter 提交 example-1，并恢复触发器焦点；提交文本调用本地结果端口，清空草稿后空提交禁用。getAppPreferences 拒绝计数仍为 8，没有新增。
+
+边界/限制：本地目录/提交端口，无原生桌面或真实传输；未截屏，未验证原生 Tab。
+
+### 2. `controls-resizable--controlled-commit`
+
+实测行为：ArrowRight 将 35/65 调整为 36/64 并提交；End 限制为 70/30，Home 限制为 20/80；ARIA 数值与状态一致，面板内容无溢出。
+
+边界/限制：仅共享控件；生产分屏会话与 portal 生命周期未完成浏览器验收。
+
+### 3. `controls-toast--persistent-action-notice`
+
+实测行为：448px 锚定区域内通知宽 416px，两侧各留 16px；scrollWidth 与 clientWidth 均为 414，长文本换行。操作执行一次后通知仍显示，clear 计数为 0，操作保留焦点；SDK anchor-width 为 416px。
+
+边界/限制：测量后将 SDK sideOffset 调为 0 以保留 112px 顶部位置；最终纵向位置仍需重新检查。
+
+### 4. `patterns-inlinepanel--template-inline-step`
+
+实测行为：内嵌步骤打开时仅一个 dialog。Escape 只关闭步骤并恢复其触发器焦点；重开保留草稿；第二次 Escape 关闭父弹层并恢复外部打开按钮焦点。
+
+边界/限制：未记录额外单项限制；仍受 Story 本地数据与非原生验收边界约束。
+
+### 5. `patterns-inlinepanel--pending-step`
+
+实测行为：提交中按 Escape，步骤与父弹层均保留；取消禁用，dialog 数量为 1。
+
+边界/限制：未记录额外单项限制；仍受 Story 本地数据与非原生验收边界约束。
+
+### 6. `pages-runtimesettings--ready / --loading / --delete-pending`
+
+实测行为：通过已有公共服务端口打开创建弹窗，名称提交新增第二行，并恢复 New Runtime 焦点。删除控件为 32×32、透明背景、rgb(220,38,38)，页面无溢出。删除中 aria-busy=true、禁用且显示 spinner；fixture 释放前保留行，释放后删除并返回正确公共结果。初次列表等待误显示空态；创建表单混用 36px 输入和 28px 无标签选择器。
+
+当时发现（后续复测另列）：初次加载/错误反馈与表单字段角色和密度委托 composer_migration 修复，修复前记录不视为通过。
+
+边界/限制：内存端口，无真实执行器或云端变更；该创建弹窗记录早于字段修复。
+
+### 7. `pages-runtimesettings (fresh after Field and loading fix)`
+
+实测行为：Field/加载修复后复测：名称、设备、模型均有标签，均高 36px、宽 480px、1px 边框，784px 视口弹窗无溢出。初始等待显示 role=status Loading，不再显示空态，创建仍可用。首次失败显示独立 alert 与 Retry；真实点击 Retry 后列表恢复并清除错误。
+
+边界/限制：仅公共内存服务端口。
+
+### 8. `patterns-viewportreview--production-surfaces (Runtime ready)`
+
+实测行为：独立 iframe 实测宽度为 360/768/1280px，均无文档水平溢出。真实 DeleteIconButton 在 360px 为 44×44，在 768/1280px 为 32×32，颜色均 rgb(220,38,38)。1280px 居中，360px 标题与行换行。
+
+边界/限制：仅 DOM 几何/状态检查；外层 784px 浏览器会裁切宽画布，不代表原生全窗口视觉排版验收。
+
+### 9. `patterns-viewportreview--production-surfaces (Composer)`
+
+实测行为：独立 360/1280px 视口中三个生产表单尺寸一致：360px 为 320×210；1280px 三列各 392×130，动作尺寸分别为 44px/28px，无水平溢出。768px 同级 iframe 出现动态导入错误，资源响应仍为 200。随后辅助器改为单个存活 iframe，以减少资源并保留切换草稿；新的 768px 检查三表单均为 728×98，无溢出或模块错误。
+
+边界/限制：多 iframe 导入错误的根因未证实；不能据此认定生产组件缺陷，或声称通用缓存修改解决了问题。
+
+### 10. `patterns-viewportreview--production-surfaces`
+
+实测行为：单 iframe 中记录草稿“跨视口保留的草稿”，768→360→1280 调整后内容保持。360px 表单为 320×210、动作 44px；1280px 表单为 392×130、动作 28px；无文档或表单溢出。
+
+边界/限制：本地预览端口，无原生传输或 IME。
+
+### 11. `business-conversationqueue--mixed-ownership`
+
+实测行为：Space、ArrowDown 预览顺序为 sending,two,server,one,failed，保存状态仍为 sending,one,server,two,failed；再次 Space 后才提交预览顺序。焦点保留在源手柄，无文档溢出。
+
+边界/限制：浏览器工具合成键盘事件；未测试指针拖拽。
+
+### 12. `controls-sortable--production-board-states`
+
+实测行为：Space/End 将 Open 预览到末尾；Escape 恢复原顺序与源焦点。再次 Space/End/Space 提交 In progress,Done,Open，焦点仍在 Open，无文档溢出。
+
+边界/限制：仅本地状态保存，无云端保存。
+
+### 13. `business-taskdescriptioneditor--empty`
+
+实测行为：在真实 contenteditable 填入“统一组件说明”，生产编辑器与展开 Markdown 输出均同步更新，无文档溢出。
+
+边界/限制：工具按可打印斜杠未插入字符；直接填入斜杠不能证明按键触发菜单正确。未验原生 IME、选区或剪贴板。
+
+### 14. `business-planningdraganddrop--persist-failure`
+
+实测行为：真实键盘拾取、ArrowRight、放下后显示保存失败“保存失败示例：保留原数据”；卡片状态仍为待开始、所在列仍为 pending，标签保留。
+
+边界/限制：失败 fixture；未执行原生或后端写入。
+
+### 15. `business-branchpicker--retry-directory-failure`
+
+实测行为：打开选择器显示目录失败；Retry 后替换为 3 个选项。ArrowDown/Enter 选中 main，弹层关闭并恢复原触发器焦点，无溢出。
+
+边界/限制：合成键盘事件与本地列表端口。
+
+### 16. `controls-virtualtree--reveal-distant-item`
+
+实测行为：生产静态 Story 定位到 1000 项中的第 900 项，仅挂载 15 个 treeitem；点击选中 src/file-900，ArrowDown 将焦点移动至 901，选择仍为 900，无溢出。
+
+边界/限制：Story 数据；未验证原生文件系统集成。
+
+### 17. `patterns-composercomparison--three-production-flows`
+
+实测行为：正式静态预览 6007 加载三条真实生产链路，三个可见表单均为 744×98，无水平溢出或失败资源响应。Storybook 隐藏错误模板的 display 为 none。
+
+边界/限制：静态构建早于最新 Transfer 焦点和 Platform 源码改动；仅本地端口，不等于原生应用验收。
+
+### 18. 看板跨列焦点闭环
+
+正式静态构建中，拾取与 ArrowRight 后焦点在原卡片按钮，aria-pressed=true；放下后状态保存为“进行中”，焦点仍在同一卡片的新按钮。此前 BODY 失焦已通过 SDK keepFocus 主路径修复，并以浏览器的“状态已保存且焦点相同”条件复核。异步保存期间外部移焦不抢回另有真实 Adapter 契约覆盖；这些不是原生传输验收。
+
+### 19. 看板只读入口
+
+只读示例中 Space、ArrowRight、Space 不改变“待开始”状态，不出现 aria-pressed，也不触发打开回调。本地只读 fixture 不证明服务端权限执行。
+
+### 20. 星期菜单语义
+
+多选菜单暴露 menuitemcheckbox 与 aria-checked；选择周二后结果为1,2，菜单保持打开。Escape 关闭。单选暴露 menuitemradio；选择周二后结果为2，菜单关闭并恢复原触发器焦点；多选值保持1,2。未执行调度持久化。
+
+### 21. 操作菜单桌面密度
+
+正式静态示例在784px视口实测 dense/compact/default 为28×28、32×32、36×36。尺寸由公共 density 配方持有。
+
+### 22. 通知最终位置与暗色
+
+正式静态暗色示例确认通知顶部为112px、宽416px；暗色主题实际生效，背景rgb(33,33,33)、前景rgb(255,255,255)，无文档溢出。此项关闭先前最终纵向位置未复测的限制；不代表全部页面对比度通过。
+
+### 23. 操作菜单移动端密度
+
+实际独立iframe为360px时三种密度均44×44，无水平溢出；同一iframe调整至768px后分别为28×28、32×32、36×36。仅证明公共组件尺寸，不能替代每个业务菜单入口验收。
+
+### 24. 自动化任务选择
+
+真实 AutomationDetailWorkspace 示例显示可用任务与离线不可选任务（aria-disabled=true）。选择可用任务记录设备online、任务ready、代码目录/example/project，关闭菜单并恢复原触发器焦点，无文档溢出。共享工作日复选框移除旧原生输入尺寸覆盖后，桌面命中区域为24×24，并有明确可访问名称。未执行调度保存或真实设备操作。
+
+## 组件目录初始加载检查
+
+正式构建中54个分组各打开一个代表性示例（优先Default），等待Storybook主界面及根节点挂载后读取DOM。784×526浅色视口中，54项均未出现可见Storybook错误或文档横向溢出。此项仅验证初始加载，不表示206个状态、交互、全部页面或原生入口已经通过。
+
+| 分组                               | 初始示例                                              | 可见错误 | 横向溢出 |
+| ---------------------------------- | ----------------------------------------------------- | -------- | -------- |
+| Controls/DeleteIconButton          | `controls-deleteiconbutton--state-matrix`             | 0        | 0        |
+| Controls/Button                    | `controls-button--default`                            | 0        | 0        |
+| Controls/Checkbox                  | `controls-checkbox--default`                          | 0        | 0        |
+| Controls/Feedback                  | `controls-feedback--hint`                             | 0        | 0        |
+| Controls/Field                     | `controls-field--default`                             | 0        | 0        |
+| Controls/IconButton                | `controls-iconbutton--default`                        | 0        | 0        |
+| Controls/MenuChoices               | `controls-menuchoices--default`                       | 0        | 0        |
+| Controls/Menus                     | `controls-menus--selection`                           | 0        | 0        |
+| Controls/OverlayParts              | `controls-overlayparts--arrow-and-shortcut`           | 0        | 0        |
+| Controls/Popover                   | `controls-popover--default`                           | 0        | 0        |
+| Controls/Progress                  | `controls-progress--in-progress`                      | 0        | 0        |
+| Controls/RadioGroup                | `controls-radiogroup--default`                        | 0        | 0        |
+| Controls/RangeSlider               | `controls-rangeslider--default`                       | 0        | 0        |
+| Controls/Resizable                 | `controls-resizable--horizontal`                      | 0        | 0        |
+| Controls/ScrollArea                | `controls-scrollarea--vertical`                       | 0        | 0        |
+| Controls/SearchableSelect          | `controls-searchableselect--default`                  | 0        | 0        |
+| Controls/SegmentedControl          | `controls-segmentedcontrol--default`                  | 0        | 0        |
+| Controls/SelectField               | `controls-selectfield--default`                       | 0        | 0        |
+| Controls/Sortable                  | `controls-sortable--editable-items`                   | 0        | 0        |
+| Controls/Switch                    | `controls-switch--default`                            | 0        | 0        |
+| Controls/Tabs                      | `controls-tabs--default`                              | 0        | 0        |
+| Controls/TextField                 | `controls-textfield--default`                         | 0        | 0        |
+| Controls/Textarea                  | `controls-textarea--default`                          | 0        | 0        |
+| Controls/Toast                     | `controls-toast--success`                             | 0        | 0        |
+| Controls/VirtualTree               | `controls-virtualtree--default`                       | 0        | 0        |
+| Patterns/ComposerComparison        | `patterns-composercomparison--three-production-flows` | 0        | 0        |
+| Patterns/Dialogs                   | `patterns-dialogs--confirmation`                      | 0        | 0        |
+| Patterns/InlinePanel               | `patterns-inlinepanel--template-inline-step`          | 0        | 0        |
+| Patterns/Settings                  | `patterns-settings--group`                            | 0        | 0        |
+| Patterns/ViewportReview            | `patterns-viewportreview--production-surfaces`        | 0        | 0        |
+| Business/AutomationTaskSelection   | `business-automationtaskselection--pinned-tasks`      | 0        | 0        |
+| Business/BoardViewTagPicker        | `business-boardviewtagpicker--default`                | 0        | 0        |
+| Business/BranchPicker              | `business-branchpicker--default`                      | 0        | 0        |
+| Primitives/Collapsible             | `primitives-collapsible--details`                     | 0        | 0        |
+| Business/ComposerProjectSelector   | `business-composerprojectselector--default`           | 0        | 0        |
+| Business/ConversationQueue         | `business-conversationqueue--mixed-ownership`         | 0        | 0        |
+| Business/DeviceSelect              | `business-deviceselect--default`                      | 0        | 0        |
+| Business/GitAccountConfiguration   | `business-gitaccountconfiguration--default`           | 0        | 0        |
+| Business/GroupParticipantsEditor   | `business-groupparticipantseditor--default`           | 0        | 0        |
+| Business/IssueOwnerPicker          | `business-issueownerpicker--default`                  | 0        | 0        |
+| Business/IssueParticipantPicker    | `business-issueparticipantpicker--default`            | 0        | 0        |
+| Business/ContentLayout             | `business-contentlayout--navigation-and-long-notice`  | 0        | 0        |
+| Business/MemberSearchPicker        | `business-membersearchpicker--default`                | 0        | 0        |
+| Business/ModelSelector             | `business-modelselector--default`                     | 0        | 0        |
+| Business/PermissionModeSelector    | `business-permissionmodeselector--default`            | 0        | 0        |
+| Business/PlanningDragAndDrop       | `business-planningdraganddrop--board`                 | 0        | 0        |
+| Business/ProjectAgentPicker        | `business-projectagentpicker--default`                | 0        | 0        |
+| Business/ProjectBoardGroupPicker   | `business-projectboardgrouppicker--default`           | 0        | 0        |
+| Business/ProjectCollaboratorPicker | `business-projectcollaboratorpicker--default`         | 0        | 0        |
+| Business/ProjectSpacePickerMenu    | `business-projectspacepickermenu--default`            | 0        | 0        |
+| Pages/RuntimeSettings              | `pages-runtimesettings--ready`                        | 0        | 0        |
+| Business/TaskDescriptionEditor     | `business-taskdescriptioneditor--editable`            | 0        | 0        |
+| Design/Project Assistant Status    | `design-project-assistant-status--project`            | 0        | 0        |
+| Navigation/ProjectViewSwitcher     | `navigation-projectviewswitcher--grouped-work`        | 0        | 0        |
+
+机械扫描另报告1项border-accent-on-rounded警告；对应WeworkIssueHomeComposer.tsx的TabsTab选中下划线（border-b-2），不是卡片装饰边框，已按实际源码归为误报并保留。检测没有进行原生渲染。
+
+## 仍需真实验收的边界
+
+- 未逐一打开全部 234 个 source owner 或 45 个真实 Page。DSH 动态入口、委托表单、弹出工作台、进程视图、设备/插件/应用工作区仍需登录与原生 host 前提。
+- Story 的本地请求端口不证明云端保存、真实执行器、Git/文件系统、更新回滚、系统权限或连接服务的兼容性。角色、所有者、只读、失联和失败状态需在真实授权场景复核。
+- 原生 IME 组合输入、剪贴板/选区、Tab/Shift+Tab 全流程、指针拖拽与触控尚未形成完整证据；明暗主题、对比度与所有原生窗口尺寸也未完成逐页验收。
+- 通知最终位置已复测；生产分屏/portal 生命周期仍有专项限制。多 iframe 动态导入错误没有被证明是生产组件缺陷，不以减少 iframe 冒充根因修复。
+- 源码 CSS 曾发现模板弹层 `[open]` 与 SDK `data-open` 不符，已修为 `[data-open]`。旧设备操作 `[open]` 规则在该快照无活跃 TSX 引用，只能归为死规则，不能编造视觉失败；业务 `data-state` 不等同于 SDK 状态。
+
+公共导出示例覆盖为 111 项：99 直接示例、5 生产组合、7 非视觉 API（含最新 SortableDragArea 真实组合）。该数字只表示组件目录覆盖，详见[组件库](./component-library.md)，不改变上述页面验收状态。

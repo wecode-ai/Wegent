@@ -1,22 +1,23 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Copy, SquarePen, X } from 'lucide-react'
+import { isLocalStandaloneDevice } from '@/components/chat/composer/project-work-bar-utils'
 import { DesktopWorkbenchMain } from '@/components/layout/DesktopWorkbenchMain'
-import { useWorkbench } from '@/features/workbench/useWorkbench'
-import {
-  findRuntimeTask,
-  truncateRuntimeTaskTitle,
-} from '@/features/workbench/workbenchRuntimeHelpers'
+import type { WorkbenchPaneIdentity } from '@/components/layout/workbenchPaneIdentity'
 import {
   dismissPopoutWindow,
   openPopoutTaskInMain,
   setPopoutWindowMode,
 } from '@/desktop/popoutWindow'
-import { cn } from '@/lib/utils'
+import { useWorkbench } from '@/features/workbench/useWorkbench'
+import {
+  findRuntimeTask,
+  truncateRuntimeTaskTitle,
+} from '@/features/workbench/workbenchRuntimeHelpers'
 import { useTranslation } from '@/hooks/useTranslation'
-import { isLocalStandaloneDevice } from '@/components/chat/composer/project-work-bar-utils'
-import { isOnlineDevice } from '@/lib/device-selection'
 import { isWeWorkExecutorVersionCompatible } from '@/lib/device-capabilities'
-import type { WorkbenchPaneIdentity } from '@/components/layout/workbenchPaneIdentity'
+import { isOnlineDevice } from '@/lib/device-selection'
+import { cn } from '@/lib/utils'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Copy, SquarePen, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import './PopoutWorkbenchPage.css'
 
 const POPOUT_LAST_PROJECT_STORAGE_KEY = 'wework.popout.lastProjectId.v1'
@@ -162,7 +163,8 @@ export function PopoutWorkbenchPage() {
           data-testid="popout-window-header"
           className="relative flex h-11 shrink-0 items-center border-b border-border/40 px-3"
         >
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="popout-window-close-button"
             onClick={closeWindow}
@@ -171,13 +173,14 @@ export function PopoutWorkbenchPage() {
             title={t('workbench.popout_window_close')}
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
           <div className="electron-titlebar-drag-region h-full min-w-0 flex-1" />
           <div className="pointer-events-none absolute inset-x-14 truncate text-center text-base font-medium text-text-primary">
             {title}
           </div>
           <div className="electron-titlebar-interactive-region flex items-center gap-1">
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="popout-window-new-chat-button"
               onClick={startNewChat}
@@ -186,8 +189,9 @@ export function PopoutWorkbenchPage() {
               title={t('workbench.popout_window_new_chat')}
             >
               <SquarePen className="h-4 w-4" />
-            </button>
-            <button
+            </ControlButton>
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="popout-window-open-in-main-button"
               onClick={() => {
@@ -200,7 +204,7 @@ export function PopoutWorkbenchPage() {
               title={t('workbench.popout_window_open_in_main')}
             >
               <Copy className="h-4 w-4" />
-            </button>
+            </ControlButton>
           </div>
         </header>
       ) : null}

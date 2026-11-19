@@ -1,8 +1,6 @@
 import { X } from 'lucide-react'
-import {
-  IssueDetailSearchableSelect,
-  type IssueDetailSearchableSelectOption,
-} from './IssueDetailControls'
+import { SearchableSelect, type SearchableSelectOption } from '../controls/SearchableSelect'
+import { Button as ControlButton } from '../markdown/Button'
 
 /** Selected chips describe pending changes; selection never persists an Issue. */
 export function IssueCommentActionPicker({
@@ -21,7 +19,7 @@ export function IssueCommentActionPicker({
   label: string
   placeholder?: string
   value: string
-  options: IssueDetailSearchableSelectOption[]
+  options: SearchableSelectOption[]
   disabled: boolean
   searchLabel: string
   emptyLabel: string
@@ -31,7 +29,7 @@ export function IssueCommentActionPicker({
   const selected = options.find(option => option.value === value)
   return (
     <span className={`task-detail-comment-action-chip${value ? ' is-selected' : ''}`}>
-      <IssueDetailSearchableSelect
+      <SearchableSelect
         testId={testId}
         accessibleLabel={value ? `${label}: ${selected?.label ?? value}` : placeholder}
         value={value}
@@ -53,7 +51,8 @@ export function IssueCommentActionPicker({
         options={options}
       />
       {value ? (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid={`${testId}-clear`}
           aria-label={clearLabel}
@@ -62,7 +61,7 @@ export function IssueCommentActionPicker({
           onClick={() => onChange('')}
         >
           <X className="h-3.5 w-3.5" />
-        </button>
+        </ControlButton>
       ) : null}
     </span>
   )

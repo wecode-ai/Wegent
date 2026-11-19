@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -59,7 +60,8 @@ export function ProjectSettingsRefreshFeedback({
         'todo.project_settings_refresh_failed',
         '配置已保存，但项目信息刷新失败。请重试刷新。'
       )}{' '}
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         className="collaboration-link-button"
         data-testid={`${testId}-retry`}
@@ -67,7 +69,7 @@ export function ProjectSettingsRefreshFeedback({
         onClick={() => void refresh()}
       >
         {refreshing ? translate('common.loading', '加载中…') : translate('common.retry', '重试')}
-      </button>
+      </ControlButton>
     </div>
   ) : null
 }

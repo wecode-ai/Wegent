@@ -1,6 +1,3 @@
-import { File, FileDiff, Globe2, Loader2, SquareTerminal } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { deviceSurfaceExtension } from '@extensions/device-surface'
 import { getRuntimeConfig } from '@/config/runtime'
 import type { DeviceSurfaceLaunchAction } from '@/extensions/device-surface-contract'
 import type { WorkspaceSessionApi } from '@/features/workbench/workbenchServices'
@@ -22,6 +19,10 @@ import { cn } from '@/lib/utils'
 import { findWorkbenchDevice } from '@/lib/workbench-device'
 import type { DeviceInfo, ProjectWithTasks } from '@/types/api'
 import type { WorkspaceTarget } from '@/types/workspace-files'
+import { deviceSurfaceExtension } from '@extensions/device-surface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { File, FileDiff, Globe2, Loader2, SquareTerminal } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { WorkspaceAddMenuItem } from './WorkspaceAddMenu'
 import { WorkspaceTerminalWindow } from './WorkspaceTerminalWindow'
 import {
@@ -801,7 +802,8 @@ export function WorkspacePanelCards({
           {(showTerminalEntry || deviceSurfaceAvailable) && (
             <div className="grid w-full grid-cols-[repeat(auto-fit,minmax(120px,1fr))] gap-4">
               {showTerminalEntry && (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={
                     activeTerminalSession ? undefined : testId('workspace-terminal-card')
@@ -830,7 +832,7 @@ export function WorkspacePanelCards({
                         ? t('workbench.start_shell', '启动交互式 shell')
                         : t('workbench.project_tool_unavailable', '暂不可用')}
                   </span>
-                </button>
+                </ControlButton>
               )}
               {deviceSurfaceAvailable && activeWorkspaceDeviceId && (
                 <deviceSurfaceExtension.WorkspaceAction

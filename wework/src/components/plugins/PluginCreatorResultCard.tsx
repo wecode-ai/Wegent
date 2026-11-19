@@ -1,5 +1,6 @@
-import { Boxes } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Boxes } from 'lucide-react'
 import { resolvePluginAssetUrl } from './plugin-assets'
 
 export interface PluginCreatorResultCardProps {
@@ -55,24 +56,28 @@ export function PluginCreatorResultCard({
       ) : null}
       <div className="flex justify-end gap-2 px-4 py-3">
         {onViewPlugin && (
-          <button
+          <ControlButton
+            variant="outline"
+            size="sm"
             type="button"
             data-testid="plugin-creator-view-plugin"
             className="h-8 rounded-lg border border-border/30 px-3 text-sm font-medium text-text-primary hover:bg-surface focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20"
             onClick={onViewPlugin}
           >
             {t('workbench.plugins_creator_view_plugin', '查看插件')}
-          </button>
+          </ControlButton>
         )}
         {onPublish && (
-          <button
+          <ControlButton
+            variant="primary"
+            size="sm"
             type="button"
             data-testid="plugin-creator-publish-plugin"
             className="h-8 rounded-lg bg-text-primary px-3 text-sm font-medium text-background hover:bg-text-primary/90 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20"
             onClick={onPublish}
           >
             {t('workbench.plugins_share_and_publish_title', '分享与发布')}
-          </button>
+          </ControlButton>
         )}
       </div>
     </article>

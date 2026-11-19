@@ -1,18 +1,33 @@
-import { DefaultRunnerSetting } from '@/components/settings/DefaultRunnerSetting'
-import { IssueProjectEnvironmentPicker } from './IssueProjectEnvironmentPicker'
-import { useCallback, useEffect, useState, type ReactNode } from 'react'
-import { ChevronDown, ChevronRight, Folder } from 'lucide-react'
-import { IssueDetailSearchableSelect, type SharedWorkspaceApi } from '@wegent/collaboration'
-import { usePanelData } from '@wegent/collaboration/platform'
-import { DialogForm } from '@/components/common/DialogForm'
-import { useTranslation } from '@/hooks/useTranslation'
+import {
+  CollapsibleRoot,
+  CollapsibleTrigger,
+  CollapsiblePanel,
+} from '@wegent/collaboration/controls/Collapsible'
 import {
   independentIssueInput,
   type IndependentIssue,
   type IndependentIssueInput,
   type PersonalIssuesApi,
 } from '@/api/personalIssues'
+import { DialogForm } from '@/components/common/DialogForm'
+import { DefaultRunnerSetting } from '@/components/settings/DefaultRunnerSetting'
+import { useTranslation } from '@/hooks/useTranslation'
+import { SearchableSelect, type SharedWorkspaceApi } from '@wegent/collaboration'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { usePanelData } from '@wegent/collaboration/platform'
+import { ChevronDown, Folder } from 'lucide-react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { IssueParticipantPicker } from './IssueParticipantPicker'
+import { IssueProjectEnvironmentPicker } from './IssueProjectEnvironmentPicker'
 import { IssueProjectSelect } from './IssueProjectSelect'
 import {
   participantKey,
@@ -190,7 +205,8 @@ export function IndependentIssueEditor({
         <fieldset disabled={busy} className="grid min-w-0 gap-3">
           <label className="grid gap-1">
             <span className="text-sm text-text-secondary">{t('independentIssues.title')}</span>
-            <input
+            <ControlInput
+              density="compact"
               autoFocus={autoFocus}
               required
               maxLength={255}
@@ -199,14 +215,14 @@ export function IndependentIssueEditor({
               placeholder={t('issue_creation.title_placeholder')}
               value={draft.title}
               onChange={event => set('title', event.target.value)}
-              className="min-h-11 w-full rounded-lg border border-border bg-background px-3 py-2 text-base font-medium outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring placeholder:text-text-secondary md:min-h-8"
+              className="w-full text-base font-medium keyboard:focus-visible:ring-ring placeholder:text-text-secondary"
             />
           </label>
           <label className="grid gap-1">
             <span className="text-sm text-text-secondary">
               {t('independentIssues.description')}
             </span>
-            <textarea
+            <ControlTextarea
               data-testid="independent-issue-description"
               aria-label={t('independentIssues.description')}
               placeholder={t('issue_creation.description_placeholder')}
@@ -253,14 +269,15 @@ export function IndependentIssueEditor({
                 {projectError !== undefined && (
                   <p role="alert" className="text-sm text-destructive">
                     {t('issue_creation.projects_load_failed')}
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       data-testid="issue-project-retry"
                       className="ml-2 inline-flex min-h-11 min-w-11 items-center justify-center rounded-md underline md:min-h-8"
                       onClick={() => void refreshProjects()}
                     >
                       {t('independentIssues.retry')}
-                    </button>
+                    </ControlButton>
                   </p>
                 )}
               </div>
@@ -278,55 +295,80 @@ export function IndependentIssueEditor({
             {field(
               t('independentIssues.status'),
               projectId && statuses.length ? (
-                <select
-                  data-testid="independent-issue-project-status"
-                  className={control}
-                  value={projectStatus}
-                  onChange={event => setProjectStatus(event.target.value)}
+                <SelectRoot
+                  value={normalizeSelectValue(projectStatus)}
+                  onValueChange={selectedValue => {
+                    if (selectedValue !== null) return setProjectStatus(selectedValue)
+                  }}
                 >
-                  {statuses.map(status => (
-                    <option key={status.id} value={status.id}>
-                      {status.name}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger
+                    density="compact"
+                    appearance="plain"
+                    aria-label={t('independentIssues.status')}
+                    data-testid="independent-issue-project-status"
+                    className="min-w-0 w-full bg-muted/40 keyboard:focus-visible:ring-ring"
+                  />
+                  <SelectContent>
+                    {statuses.map(status => (
+                      <SelectItem key={status.id} value={String(status.id)}>
+                        {status.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </SelectRoot>
               ) : (
-                <select
-                  data-testid="independent-issue-status"
-                  className={control}
-                  value={draft.status}
-                  onChange={event =>
-                    set('status', event.target.value as IndependentIssue['status'])
-                  }
+                <SelectRoot
+                  value={normalizeSelectValue(draft.status)}
+                  onValueChange={selectedValue => {
+                    if (selectedValue !== null)
+                      return set('status', selectedValue as IndependentIssue['status'])
+                  }}
                 >
-                  {(['pending', 'in_progress', 'completed'] as const).map(status => (
-                    <option key={status} value={status}>
-                      {t(`independentIssues.${status}`)}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger
+                    density="compact"
+                    appearance="plain"
+                    aria-label={t('independentIssues.status')}
+                    data-testid="independent-issue-status"
+                    className="min-w-0 w-full bg-muted/40 keyboard:focus-visible:ring-ring"
+                  />
+                  <SelectContent>
+                    {(['pending', 'in_progress', 'completed'] as const).map(status => (
+                      <SelectItem key={status} value={String(status)}>
+                        {t(`independentIssues.${status}`)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </SelectRoot>
               )
             )}
             {field(
               t('independentIssues.priority'),
-              <select
-                data-testid="independent-issue-priority"
-                className={control}
-                value={draft.priority}
-                onChange={event =>
-                  set('priority', event.target.value as IndependentIssue['priority'])
-                }
+              <SelectRoot
+                value={normalizeSelectValue(draft.priority)}
+                onValueChange={selectedValue => {
+                  if (selectedValue !== null)
+                    return set('priority', selectedValue as IndependentIssue['priority'])
+                }}
               >
-                {(['low', 'medium', 'high', 'urgent'] as const).map(priority => (
-                  <option key={priority} value={priority}>
-                    {t(`independentIssues.${priority}`)}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger
+                  density="compact"
+                  appearance="plain"
+                  aria-label={t('independentIssues.priority')}
+                  data-testid="independent-issue-priority"
+                  className="min-w-0 w-full bg-muted/40 keyboard:focus-visible:ring-ring"
+                />
+                <SelectContent>
+                  {(['low', 'medium', 'high', 'urgent'] as const).map(priority => (
+                    <SelectItem key={priority} value={String(priority)}>
+                      {t(`independentIssues.${priority}`)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </SelectRoot>
             )}
             {field(
               t('independentIssues.assignee'),
-              <IssueDetailSearchableSelect
+              <SearchableSelect
                 modal
                 testId="independent-issue-assignee"
                 accessibleLabel={t('independentIssues.assignee')}
@@ -354,53 +396,53 @@ export function IndependentIssueEditor({
             )}
             {field(
               t('independentIssues.due'),
-              <input
+              <ControlInput
+                density="compact"
+                appearance="plain"
                 type="date"
                 data-testid="independent-issue-due"
-                className={control}
+                className="min-w-0 w-full bg-muted/40 keyboard:focus-visible:ring-ring"
                 value={draft.due_at ?? ''}
                 onChange={event => set('due_at', event.target.value || null)}
               />
             )}
           </div>
-          <details className="group min-w-0 border-t border-border pt-2">
-            <summary
+          <CollapsibleRoot className="group min-w-0 border-t border-border pt-2">
+            <CollapsibleTrigger
               data-testid="independent-issue-execution-settings"
               className="flex min-h-11 cursor-pointer list-none items-center gap-1 rounded-md text-sm text-text-secondary hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring md:min-h-8 [&::-webkit-details-marker]:hidden"
             >
-              <ChevronRight
-                className="h-4 w-4 transition-transform group-open:rotate-90 motion-reduce:transition-none"
-                aria-hidden="true"
-              />
               {t('issue_creation.runtime_label')}
-            </summary>
-            <div className="grid min-w-0 gap-2 pt-2">
-              <span className="text-sm text-text-secondary">
-                {t(
-                  projectId
-                    ? 'issue_creation.project_device_settings'
-                    : 'workbench.runner_personal_default'
+            </CollapsibleTrigger>
+            <CollapsiblePanel>
+              <div className="grid min-w-0 gap-2 pt-2">
+                <span className="text-sm text-text-secondary">
+                  {t(
+                    projectId
+                      ? 'issue_creation.project_device_settings'
+                      : 'workbench.runner_personal_default'
+                  )}
+                </span>
+                {projectId && collaborationApi ? (
+                  <IssueProjectEnvironmentPicker
+                    key={projectId}
+                    api={collaborationApi}
+                    projectId={projectId}
+                    disabled={busy}
+                  />
+                ) : (
+                  <DefaultRunnerSetting compact confirmChanges />
                 )}
-              </span>
-              {projectId && collaborationApi ? (
-                <IssueProjectEnvironmentPicker
-                  key={projectId}
-                  api={collaborationApi}
-                  projectId={projectId}
-                  disabled={busy}
-                />
-              ) : (
-                <DefaultRunnerSetting compact confirmChanges />
-              )}
-              <p className="text-xs text-text-secondary">
-                {t(
-                  projectId
-                    ? 'issue_creation.project_device_settings_hint'
-                    : 'issue_creation.personal_runner_hint'
-                )}
-              </p>
-            </div>
-          </details>
+                <p className="text-xs text-text-secondary">
+                  {t(
+                    projectId
+                      ? 'issue_creation.project_device_settings_hint'
+                      : 'issue_creation.personal_runner_hint'
+                  )}
+                </p>
+              </div>
+            </CollapsiblePanel>
+          </CollapsibleRoot>
         </fieldset>
       </div>
       <div
@@ -408,7 +450,8 @@ export function IndependentIssueEditor({
         className="flex shrink-0 items-center justify-end gap-3 border-t border-border bg-popover px-5 py-4"
       >
         <div className="flex gap-2">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             disabled={busy}
             data-testid="independent-issue-editor-cancel"
@@ -416,8 +459,10 @@ export function IndependentIssueEditor({
             className="min-h-11 rounded-md px-3 text-sm hover:bg-muted md:min-h-8"
           >
             {t('independentIssues.cancel')}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="primary"
+            size="sm"
             type="submit"
             disabled={
               busy ||
@@ -434,7 +479,7 @@ export function IndependentIssueEditor({
                   ? 'independentIssues.save'
                   : 'issue_creation.create_issue'
             )}
-          </button>
+          </ControlButton>
         </div>
       </div>
     </DialogForm>

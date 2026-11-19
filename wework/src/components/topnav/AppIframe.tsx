@@ -1,5 +1,3 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Loader2 } from 'lucide-react'
 import { ElectronEmbeddedBrowserView } from '@/components/layout/workspace-panels/ElectronEmbeddedBrowserView'
 import {
   closeEmbeddedBrowser,
@@ -10,6 +8,9 @@ import {
   type EmbeddedBrowserBounds,
 } from '@/lib/embedded-browser'
 import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Loader2 } from 'lucide-react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 interface AppIframeProps {
   active?: boolean
@@ -348,7 +349,8 @@ export function AppIframe({
       {error && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-surface">
           <span className="text-sm text-text-secondary">Failed to load {title}</span>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             onClick={() => {
               setError(false)
@@ -359,7 +361,7 @@ export function AppIframe({
             data-testid={`app-webview-retry-${title.toLowerCase()}`}
           >
             Retry
-          </button>
+          </ControlButton>
         </div>
       )}
       {!native && (

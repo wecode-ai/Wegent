@@ -1,10 +1,12 @@
+import { DialogSurface } from '../controls/DialogSurface'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useLayoutEffect, useRef } from "react";
-import type { CollaborationTranslate } from "../i18n";
-import { collaborationTestIds } from "../testIds";
+import { useRef } from 'react'
+import type { CollaborationTranslate } from '../i18n'
+import { collaborationTestIds } from '../testIds'
 
 export function IssueArchiveDialog({
   busy,
@@ -16,87 +18,68 @@ export function IssueArchiveDialog({
   title,
   translate,
 }: {
-  busy: boolean;
-  count?: number;
-  error: string | null;
-  hasChildren: boolean;
-  onCancel(): void;
-  onConfirm(): void;
-  title?: string;
-  translate: CollaborationTranslate;
+  busy: boolean
+  count?: number
+  error: string | null
+  hasChildren: boolean
+  onCancel(): void
+  onConfirm(): void
+  title?: string
+  translate: CollaborationTranslate
 }) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
-  const cancelRef = useRef<HTMLButtonElement>(null);
-  useLayoutEffect(() => {
-    const previous = document.activeElement;
-    const dialog = dialogRef.current!;
-    dialog.showModal();
-    cancelRef.current?.focus();
-    return () => {
-      dialog.close();
-      if (previous instanceof HTMLElement && previous.isConnected)
-        previous.focus();
-    };
-  }, []);
+  const dialogRef = useRef<HTMLDivElement>(null)
+  const cancelRef = useRef<HTMLButtonElement>(null)
+
   const dialogTitle = translate(
-    count > 1
-      ? "todo.archive_completed_tasks_title"
-      : "todo.archive_issue_title",
-    count > 1 ? "归档已完成任务？" : "归档任务？",
-  );
+    count > 1 ? 'todo.archive_completed_tasks_title' : 'todo.archive_issue_title',
+    count > 1 ? '归档已完成任务？' : '归档任务？'
+  )
 
   return (
-    <dialog
-      ref={dialogRef}
-      aria-label={dialogTitle}
-      aria-modal="true"
-      className="fixed inset-0 z-modal m-0 flex h-full max-h-none w-full max-w-none items-center justify-center border-0 bg-transparent p-6 text-inherit backdrop:bg-black/35"
-      data-testid={collaborationTestIds.issueArchiveDialog}
-      role="dialog"
-      onCancel={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (!busy) onCancel();
+    <DialogSurface
+      inline={false}
+      onClose={() => {
+        if (!busy) onCancel()
       }}
-      onMouseDown={(event) => {
-        if (!busy && event.currentTarget === event.target) onCancel();
-      }}
+      render={
+        <div
+          ref={dialogRef}
+          aria-label={dialogTitle}
+          className="fixed inset-0 z-modal m-0 flex h-full max-h-none w-full max-w-none items-center justify-center border-0 bg-transparent p-6 text-inherit backdrop:bg-black/35"
+          data-testid={collaborationTestIds.issueArchiveDialog}
+          onMouseDown={event => {
+            if (!busy && event.currentTarget === event.target) onCancel()
+          }}
+        />
+      }
     >
       <div className="w-full max-w-[420px] overflow-hidden rounded-2xl border border-border bg-background shadow-2xl">
         <header className="flex h-12 items-center border-b border-border px-5">
-          <h2 className="text-sm font-semibold text-text-primary">
-            {dialogTitle}
-          </h2>
+          <h2 className="text-sm font-semibold text-text-primary">{dialogTitle}</h2>
         </header>
         <div className="px-5 pb-5 pt-4">
           <p className="text-sm leading-5 text-text-secondary">
             {count > 1
               ? translate(
-                  "todo.archive_completed_tasks_description",
-                  "将从看板中归档 {{count}} 个已完成任务。",
-                  { count },
+                  'todo.archive_completed_tasks_description',
+                  '将从看板中归档 {{count}} 个已完成任务。',
+                  { count }
                 )
               : translate(
                   hasChildren
-                    ? "todo.archive_issue_children_description"
-                    : "todo.archive_issue_description",
+                    ? 'todo.archive_issue_children_description'
+                    : 'todo.archive_issue_description',
                   hasChildren
-                    ? "“{{title}}”及其子任务将从看板中归档。"
-                    : "“{{title}}”将从看板中归档。",
-                  { title: title ?? "" },
+                    ? '“{{title}}”及其子任务将从看板中归档。'
+                    : '“{{title}}”将从看板中归档。',
+                  { title: title ?? '' }
                 )}
           </p>
           <p className="mt-2 text-xs leading-5 text-text-muted">
-            {translate(
-              "todo.delete_issue_execution_hint",
-              "该任务正在执行的 AI 运行会被停止。",
-            )}
+            {translate('todo.delete_issue_execution_hint', '该任务正在执行的 AI 运行会被停止。')}
           </p>
           <p className="mt-2 text-xs leading-5 text-text-muted">
-            {translate(
-              "todo.archive_issue_restore_hint",
-              "归档后可从当前项目的归档箱恢复。",
-            )}
+            {translate('todo.archive_issue_restore_hint', '归档后可从当前项目的归档箱恢复。')}
           </p>
           {error ? (
             <p
@@ -108,7 +91,9 @@ export function IssueArchiveDialog({
             </p>
           ) : null}
           <div className="mt-6 flex justify-end gap-2">
-            <button
+            <ControlButton
+              variant="outline"
+              size="sm"
               ref={cancelRef}
               className="h-9 rounded-lg border border-border px-4 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
               data-testid={collaborationTestIds.issueArchiveCancel}
@@ -116,9 +101,11 @@ export function IssueArchiveDialog({
               onClick={onCancel}
               type="button"
             >
-              {translate("common.cancel", "取消")}
-            </button>
-            <button
+              {translate('common.cancel', '取消')}
+            </ControlButton>
+            <ControlButton
+              variant="primary"
+              size="sm"
               className="h-9 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:opacity-50"
               data-testid={collaborationTestIds.issueArchiveConfirm}
               disabled={busy}
@@ -126,12 +113,12 @@ export function IssueArchiveDialog({
               type="button"
             >
               {busy
-                ? translate("todo.archiving", "归档中…")
-                : translate("todo.confirm_archive", "确认归档")}
-            </button>
+                ? translate('todo.archiving', '归档中…')
+                : translate('todo.confirm_archive', '确认归档')}
+            </ControlButton>
           </div>
         </div>
       </div>
-    </dialog>
-  );
+    </DialogSurface>
+  )
 }

@@ -1,19 +1,10 @@
-import { useIssueMentionCandidates } from './useIssueMentionCandidates'
-import { useEffect, useMemo, useState } from 'react'
 import type { ProjectChatClient, ProjectChatMessage } from '@wegent/chat-core'
 import type { Attachment } from '@wegent/chat-core/runtime'
 import {
   RUNTIME_PERMISSION_MODE_OPTION,
   runtimePermissionMode,
 } from '@wegent/chat-core/runtime-permission'
-import type { SharedWorkspaceApi, SharedWorkspaceRuntimeApi } from '../ports/SharedWorkspaceApi'
-import type {
-  CollaborationMember,
-  CollaborationAgent,
-  CollaborationIssue,
-  CollaborationProject,
-} from '../types'
-import type { CollaborationTranslate } from '../i18n'
+import { useEffect, useMemo, useState } from 'react'
 import { ModelSelector } from '../controls/ModelSelector'
 import { PermissionModeSelector } from '../controls/PermissionModeSelector'
 import { ProjectWorkBar } from '../controls/ProjectWorkBar'
@@ -21,13 +12,23 @@ import { resolveAutomaticModel } from '../controls/runtimeModelSelection'
 import { createHttpCommentRuntime } from '../execution/httpCommentRuntime'
 import { refreshTaskAfterComment, startTaskAiRun } from '../execution/taskAiExecution'
 import { commentAgentMentions } from '../execution/taskCardReply'
+import type { CollaborationTranslate } from '../i18n'
+import { Button as ControlButton } from '../markdown/Button'
+import type { SharedWorkspaceApi, SharedWorkspaceRuntimeApi } from '../ports/SharedWorkspaceApi'
+import type {
+  CollaborationAgent,
+  CollaborationIssue,
+  CollaborationMember,
+  CollaborationProject,
+} from '../types'
+import type { AttachmentImageServices } from './AttachmentImageView'
 import { useBrowserIssueExecution } from './browserIssueExecutionContext'
 import { useBrowserTaskDraft } from './browserTaskDraftContext'
-import { IssueMainCommentComposer } from './IssueMainCommentComposer'
 import { ComposerAttachmentBadges } from './ComposerAttachmentBadges'
 import type { IssueMentionOption } from './issueCommentMentions'
-import type { AttachmentImageServices } from './AttachmentImageView'
+import { IssueMainCommentComposer } from './IssueMainCommentComposer'
 import { issueCommentBody } from './useIssueCommentAttachments'
+import { useIssueMentionCandidates } from './useIssueMentionCandidates'
 
 type CommentApi = Pick<SharedWorkspaceApi, 'attachments' | 'taskBindings' | 'issues'>
 
@@ -232,14 +233,15 @@ export function BrowserIssueCommentComposer({
       {!serverExecution && execution.error && (
         <div role="alert" className="mb-2 text-xs text-error">
           {execution.error}
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             className="ml-2 underline"
             data-testid="comment-execution-retry"
             onClick={execution.retry}
           >
             {t('activity.retry')}
-          </button>
+          </ControlButton>
         </div>
       )}
       <IssueMainCommentComposer

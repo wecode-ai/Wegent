@@ -1,13 +1,21 @@
-import { ArrowDown, ArrowUp, Pin, X } from 'lucide-react'
 import type { HarnessAppInstallation } from '@/api/local/harnessApps'
 import type { FixedWorkspaceTabPreference } from '@/desktop/appPreferences'
-import { INTERACTIONS_PATH } from '@/features/notifications/RuntimeInteractionsContext'
 import {
   COLLABORATION_EXP_PATH,
   COLLABORATION_EXP_TAB_ID,
   isCollaborationExpPath,
 } from '@/features/collaboration-exp/collaborationExpFeature'
+import { INTERACTIONS_PATH } from '@/features/notifications/RuntimeInteractionsContext'
 import { useTranslation } from '@/hooks/useTranslation'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ArrowDown, ArrowUp, Pin, X } from 'lucide-react'
 import { SettingsRow } from './settings-ui'
 
 interface GeneralFixedWorkspaceTabsProps {
@@ -57,7 +65,7 @@ export function GeneralFixedWorkspaceTabs({
       )}
       className="py-4"
       labelClassName="font-normal"
-      control={
+      children={
         <div className="w-full space-y-2 md:w-[360px]" data-testid="general-fixed-tabs">
           {visibleFixedWorkspaceTabs.map((tab, index) => {
             const label =
@@ -77,7 +85,8 @@ export function GeneralFixedWorkspaceTabs({
                 data-testid={`general-fixed-tab-${tab.id}`}
                 className="flex min-h-11 items-center gap-1 rounded-lg border border-border bg-background px-2 md:h-9 md:min-h-0"
               >
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`general-fixed-tab-startup-${tab.id}`}
                   disabled={disabled}
@@ -95,9 +104,10 @@ export function GeneralFixedWorkspaceTabs({
                       startupWorkspaceTabId === tab.id ? 'h-3.5 w-3.5 fill-current' : 'h-3.5 w-3.5'
                     }
                   />
-                </button>
+                </ControlButton>
                 <span className="min-w-0 flex-1 truncate text-sm">{label}</span>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`general-fixed-tab-up-${tab.id}`}
                   disabled={disabled || index === 0}
@@ -116,8 +126,9 @@ export function GeneralFixedWorkspaceTabs({
                   aria-label={t('workbench.move_up', '上移')}
                 >
                   <ArrowUp className="h-3.5 w-3.5" />
-                </button>
-                <button
+                </ControlButton>
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`general-fixed-tab-down-${tab.id}`}
                   disabled={disabled || index === visibleFixedWorkspaceTabs.length - 1}
@@ -136,8 +147,9 @@ export function GeneralFixedWorkspaceTabs({
                   aria-label={t('workbench.move_down', '下移')}
                 >
                   <ArrowDown className="h-3.5 w-3.5" />
-                </button>
-                <button
+                </ControlButton>
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`general-fixed-tab-remove-${tab.id}`}
                   disabled={disabled || visibleFixedWorkspaceTabs.length === 1}
@@ -146,16 +158,16 @@ export function GeneralFixedWorkspaceTabs({
                   aria-label={t('workbench.remove', '移除')}
                 >
                   <X className="h-3.5 w-3.5" />
-                </button>
+                </ControlButton>
               </div>
             )
           })}
-          <select
-            data-testid="general-fixed-tab-add"
+          <SelectRoot
             disabled={disabled}
-            value=""
-            onChange={event => {
-              const value = event.target.value
+            value={normalizeSelectValue('')}
+            onValueChange={selectedValue => {
+              if (selectedValue === null) return
+              const value = selectedValue
               if (!value) return
               const builtIn = BUILT_IN_FIXED_TAB_OPTIONS.find(kind => kind === value)
               const smartApp = installedSmartApps.find(app => `smart_app:${app.id}` === value)
@@ -179,37 +191,43 @@ export function GeneralFixedWorkspaceTabs({
                 void onSave([...fixedWorkspaceTabs, nextTab])
               }
             }}
-            className="h-11 w-full rounded-lg border border-dashed border-border bg-background px-2 text-sm text-text-secondary md:h-9"
           >
-            <option value="">
-              {t('workbench.general_settings_add_fixed_workspace_tab', '+ 添加固定标签页')}
-            </option>
-            {BUILT_IN_FIXED_TAB_OPTIONS.filter(
-              kind => !fixedWorkspaceTabs.some(tab => tab.kind === kind)
-            ).map(kind => (
-              <option key={kind} value={kind}>
-                {t(`workbench.general_settings_default_workspace_tab_${kind}`)}
-              </option>
-            ))}
-            {collaborationExperienceEnabled &&
-            !fixedWorkspaceTabs.some(tab => isCollaborationExpPath(tab.contentRoute ?? '')) ? (
-              <option value={COLLABORATION_EXP_TAB_ID}>
-                {t('workbench.workspace_tab_collaboration_exp', '协作 exp')}
-              </option>
-            ) : null}
-            {(experimentalFeaturesEnabled ? installedSmartApps : [])
-              .filter(
-                app =>
-                  !fixedWorkspaceTabs.some(
-                    tab => tab.kind === 'smart_app' && tab.installationId === app.id
-                  )
-              )
-              .map(app => (
-                <option key={app.id} value={`smart_app:${app.id}`}>
-                  {app.manifest.displayName}
-                </option>
+            <SelectTrigger
+              aria-label={t('workbench.general_settings_add_fixed_workspace_tab')}
+              data-testid="general-fixed-tab-add"
+              className="w-full"
+            />
+            <SelectContent>
+              <SelectItem value="">
+                {t('workbench.general_settings_add_fixed_workspace_tab', '+ 添加固定标签页')}
+              </SelectItem>
+              {BUILT_IN_FIXED_TAB_OPTIONS.filter(
+                kind => !fixedWorkspaceTabs.some(tab => tab.kind === kind)
+              ).map(kind => (
+                <SelectItem key={kind} value={String(kind)}>
+                  {t(`workbench.general_settings_default_workspace_tab_${kind}`)}
+                </SelectItem>
               ))}
-          </select>
+              {collaborationExperienceEnabled &&
+              !fixedWorkspaceTabs.some(tab => isCollaborationExpPath(tab.contentRoute ?? '')) ? (
+                <SelectItem value={String(COLLABORATION_EXP_TAB_ID)}>
+                  {t('workbench.workspace_tab_collaboration_exp', '协作 exp')}
+                </SelectItem>
+              ) : null}
+              {(experimentalFeaturesEnabled ? installedSmartApps : [])
+                .filter(
+                  app =>
+                    !fixedWorkspaceTabs.some(
+                      tab => tab.kind === 'smart_app' && tab.installationId === app.id
+                    )
+                )
+                .map(app => (
+                  <SelectItem key={app.id} value={String(`smart_app:${app.id}`)}>
+                    {app.manifest.displayName}
+                  </SelectItem>
+                ))}
+            </SelectContent>
+          </SelectRoot>
         </div>
       }
     />

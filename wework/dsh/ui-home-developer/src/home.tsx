@@ -1,7 +1,8 @@
-import { Bot, ChevronLeft } from 'lucide-react'
-import { useState, type ReactNode, type SVGProps } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Bot, ChevronLeft } from 'lucide-react'
+import { useState, type ReactNode, type SVGProps } from 'react'
 
 export interface TaskSuggestion {
   id: string
@@ -188,7 +189,8 @@ export default function DeveloperHome({
 
       {selectedCategory ? (
         <div className="w-full" data-testid="task-suggestion-list">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="task-suggestions-back-button"
             onClick={() => setSelectedCategoryId(null)}
@@ -196,10 +198,11 @@ export default function DeveloperHome({
           >
             <ChevronLeft className="h-4 w-4" />
             {t('workbench.task_suggestions.back', '返回全部建议')}
-          </button>
+          </ControlButton>
           <div className="grid grid-cols-2 gap-2">
             {selectedCategory.suggestions.map(suggestion => (
-              <button
+              <ControlButton
+                variant="unstyled"
                 key={suggestion.id}
                 type="button"
                 data-testid={`task-suggestion-${selectedCategory.id}-${suggestion.id}`}
@@ -214,7 +217,7 @@ export default function DeveloperHome({
                 )}
               >
                 {t(suggestion.labelKey, suggestion.fallbackLabel)}
-              </button>
+              </ControlButton>
             ))}
           </div>
         </div>
@@ -230,7 +233,8 @@ export default function DeveloperHome({
             {TASK_SUGGESTION_CATEGORIES.map(category => {
               const Icon = CATEGORY_ICONS[category.tone]
               return (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   key={category.id}
                   type="button"
                   data-testid={`task-suggestion-category-${category.id}`}
@@ -246,7 +250,7 @@ export default function DeveloperHome({
                   <span className="text-sm font-medium leading-5 text-text-primary">
                     {t(category.labelKey, category.fallbackLabel)}
                   </span>
-                </button>
+                </ControlButton>
               )
             })}
           </div>

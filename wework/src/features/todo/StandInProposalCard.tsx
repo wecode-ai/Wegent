@@ -1,9 +1,10 @@
-import type { CollaborationProject } from '@wegent/collaboration'
-import { StandInProposalDiff } from './StandInProposalDiff'
-import { dequal } from 'dequal'
 import type { PersonalStandInSettings } from '@/api/personalStandIn'
 import type { StandInProposal } from '@/api/standIn'
 import { useTranslation } from '@/hooks/useTranslation'
+import type { CollaborationProject } from '@wegent/collaboration'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { dequal } from 'dequal'
+import { StandInProposalDiff } from './StandInProposalDiff'
 
 export function StandInProposalCard({
   proposal,
@@ -86,7 +87,8 @@ export function StandInProposalCard({
             {t(stale ? 'standIn.workspace.proposal_stale' : 'standIn.workspace.proposal_help')}
           </p>
           <div className="mt-3 flex justify-end gap-2">
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="stand-in-proposal-reject"
               disabled={busy}
@@ -94,8 +96,10 @@ export function StandInProposalCard({
               className="min-h-8 rounded-md px-3 text-sm hover:bg-muted"
             >
               {t('standIn.workspace.proposal_reject')}
-            </button>
-            <button
+            </ControlButton>
+            <ControlButton
+              variant="primary"
+              size="sm"
               type="button"
               data-testid="stand-in-proposal-accept"
               disabled={busy || stale}
@@ -103,7 +107,7 @@ export function StandInProposalCard({
               className="min-h-8 rounded-md bg-text-primary px-3 text-sm text-background disabled:opacity-50"
             >
               {t('standIn.workspace.proposal_accept')}
-            </button>
+            </ControlButton>
           </div>
         </footer>
       )}

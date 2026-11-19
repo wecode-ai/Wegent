@@ -8,10 +8,10 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { SearchableSelect } from '../controls/SearchableSelect'
 import { CollaborationTheme } from '../theme'
-import { IssueDetailSearchableSelect } from './IssueDetailControls'
 
-describe('IssueDetailSearchableSelect', () => {
+describe('SearchableSelect', () => {
   let container: HTMLDivElement
   let root: Root
 
@@ -31,7 +31,7 @@ describe('IssueDetailSearchableSelect', () => {
     await act(async () => {
       root.render(
         <CollaborationTheme mode="light">
-          <IssueDetailSearchableSelect
+          <SearchableSelect
             value=""
             testId="assignee"
             accessibleLabel="负责人"
@@ -122,18 +122,19 @@ describe('IssueDetailSearchableSelect', () => {
     }
     expect((await press(search, 'Home')).defaultPrevented).toBe(false)
     expect((await press(search, 'Enter')).defaultPrevented).toBe(true)
+    const active = () => document.getElementById(search.getAttribute('aria-activedescendant') ?? '')
     await press(search, 'ArrowDown')
-    expect(document.activeElement).toBe(portalByTestId('assignee-option-empty'))
-    await press(document.activeElement!, 'End')
-    expect(document.activeElement).toBe(portalByTestId('assignee-option-user:1'))
-    await press(document.activeElement!, 'Home')
-    expect(document.activeElement).toBe(portalByTestId('assignee-option-empty'))
-    await press(document.activeElement!, 'ArrowUp')
-    expect(document.activeElement).toBe(portalByTestId('assignee-option-user:1'))
-    await press(document.activeElement!, 'ArrowDown')
-    expect(document.activeElement).toBe(portalByTestId('assignee-option-empty'))
-    const tabbableOptions = document.querySelectorAll('[role="option"][tabindex="0"]')
-    expect(tabbableOptions).toHaveLength(1)
+    expect(document.activeElement).toBe(search)
+    expect(active()).toBe(portalByTestId('assignee-option-empty'))
+    expect((await press(search, 'End')).defaultPrevented).toBe(false)
+    expect((await press(search, 'Home')).defaultPrevented).toBe(false)
+    expect(active()).toBe(portalByTestId('assignee-option-empty'))
+    await press(search, 'ArrowUp')
+    expect(active()).toBe(portalByTestId('assignee-option-user:1'))
+    await press(search, 'ArrowDown')
+    expect(active()).toBe(portalByTestId('assignee-option-empty'))
+    expect(document.activeElement).toBe(search)
+    expect(document.querySelectorAll('[role="option"][tabindex="0"]')).toHaveLength(0)
   })
 
   it.each([

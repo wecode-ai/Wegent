@@ -1,23 +1,24 @@
+import { RadioGroup, Radio } from '../controls/RadioGroup'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { Blocks, Check, Laptop, LoaderCircle } from "lucide-react";
-import type { ReactNode } from "react";
+import { Blocks, Check, Laptop, LoaderCircle } from 'lucide-react'
+import type { ReactNode } from 'react'
 
-import type { UnifiedAgentCapabilityMode } from "./types";
+import type { UnifiedAgentCapabilityMode } from './types'
 
 export interface AgentCapabilityModeLabels {
-  devicePreviewHint: string;
-  devicePreviewTitle: string;
-  devicePreviewUnavailable: string;
-  followDescription: string;
-  followTitle: string;
-  loadingCapabilities: string;
-  manualDescription: string;
-  manualReady: string;
-  manualTitle: string;
-  title: string;
+  devicePreviewHint: string
+  devicePreviewTitle: string
+  devicePreviewUnavailable: string
+  followDescription: string
+  followTitle: string
+  loadingCapabilities: string
+  manualDescription: string
+  manualReady: string
+  manualTitle: string
+  title: string
 }
 
 export function AgentCapabilityModeSelector({
@@ -31,43 +32,50 @@ export function AgentCapabilityModeSelector({
   testIdPrefix,
   value,
 }: {
-  busy: boolean;
-  capabilityItems?: string[];
-  capabilitySummary?: string;
-  currentDevice?: { id: string; name: string } | null;
-  labels: AgentCapabilityModeLabels;
-  loadingCapabilities?: boolean;
-  onChange(value: UnifiedAgentCapabilityMode): void;
-  testIdPrefix: string;
-  value: UnifiedAgentCapabilityMode;
+  busy: boolean
+  capabilityItems?: string[]
+  capabilitySummary?: string
+  currentDevice?: { id: string; name: string } | null
+  labels: AgentCapabilityModeLabels
+  loadingCapabilities?: boolean
+  onChange(value: UnifiedAgentCapabilityMode): void
+  testIdPrefix: string
+  value: UnifiedAgentCapabilityMode
 }) {
   return (
     <section className="space-y-3">
       <SectionHeading>{labels.title}</SectionHeading>
-      <div className="grid gap-3 md:grid-cols-2">
+      <RadioGroup
+        value={value}
+        disabled={busy}
+        name={`${testIdPrefix}-capability-mode`}
+        aria-label={labels.title}
+        onValueChange={next => {
+          if (next === 'follow_device' || next === 'manual') onChange(next)
+        }}
+        className="grid gap-3 md:grid-cols-2"
+      >
         <ModeCard
-          checked={value === "follow_device"}
+          checked={value === 'follow_device'}
           description={labels.followDescription}
           disabled={busy}
-          groupName={`${testIdPrefix}-capability-mode`}
           icon={<Laptop aria-hidden="true" className="h-4 w-4" />}
-          onSelect={() => onChange("follow_device")}
+          value="follow_device"
           testId={`${testIdPrefix}-capability-mode-follow`}
           title={labels.followTitle}
         />
         <ModeCard
-          checked={value === "manual"}
+          checked={value === 'manual'}
           description={labels.manualDescription}
           disabled={busy}
-          groupName={`${testIdPrefix}-capability-mode`}
           icon={<Blocks aria-hidden="true" className="h-4 w-4" />}
-          onSelect={() => onChange("manual")}
+          value="manual"
           testId={`${testIdPrefix}-capability-mode-manual`}
           title={labels.manualTitle}
         />
-      </div>
+      </RadioGroup>
 
-      {value === "follow_device" ? (
+      {value === 'follow_device' ? (
         <div
           className="rounded-xl bg-surface px-4 py-3"
           data-testid={`${testIdPrefix}-device-capability-preview`}
@@ -75,10 +83,7 @@ export function AgentCapabilityModeSelector({
           <div className="flex items-start gap-3">
             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-background text-text-secondary">
               {loadingCapabilities ? (
-                <LoaderCircle
-                  aria-hidden="true"
-                  className="h-4 w-4 animate-spin"
-                />
+                <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" />
               ) : (
                 <Laptop aria-hidden="true" className="h-4 w-4" />
               )}
@@ -98,7 +103,7 @@ export function AgentCapabilityModeSelector({
                 </span>
               ) : capabilityItems.length ? (
                 <span className="mt-2 flex flex-wrap gap-1.5">
-                  {capabilityItems.map((item) => (
+                  {capabilityItems.map(item => (
                     <span
                       className="rounded-md border border-border bg-background px-2 py-1 text-xs text-text-secondary"
                       key={item}
@@ -108,9 +113,7 @@ export function AgentCapabilityModeSelector({
                   ))}
                 </span>
               ) : capabilitySummary ? (
-                <span className="mt-1 block text-xs text-text-secondary">
-                  {capabilitySummary}
-                </span>
+                <span className="mt-1 block text-xs text-text-secondary">{capabilitySummary}</span>
               ) : null}
               <span className="mt-2 block text-xs leading-5 text-text-muted">
                 {labels.devicePreviewHint}
@@ -128,69 +131,55 @@ export function AgentCapabilityModeSelector({
         </div>
       )}
     </section>
-  );
+  )
 }
 
 function ModeCard({
   checked,
   description,
   disabled,
-  groupName,
+  value,
   icon,
-  onSelect,
   testId,
   title,
 }: {
-  checked: boolean;
-  description: string;
-  disabled: boolean;
-  groupName: string;
-  icon: ReactNode;
-  onSelect(): void;
-  testId: string;
-  title: string;
+  checked: boolean
+  description: string
+  disabled: boolean
+  value: UnifiedAgentCapabilityMode
+  icon: ReactNode
+  testId: string
+  title: string
 }) {
   return (
     <label
       className={[
-        "flex min-h-28 cursor-pointer items-start gap-3 rounded-xl border px-4 py-3.5 transition-[border-color,background-color,box-shadow]",
+        'flex min-h-28 cursor-pointer items-start gap-3 rounded-xl border px-4 py-3.5 transition-[border-color,background-color,box-shadow]',
         checked
-          ? "border-focus bg-focus/5 ring-1 ring-focus/15"
-          : "border-border bg-background hover:bg-muted/40",
-        disabled ? "pointer-events-none opacity-50" : undefined,
+          ? 'border-focus bg-focus/5 ring-1 ring-focus/15'
+          : 'border-border bg-background hover:bg-muted/40',
+        disabled ? 'pointer-events-none opacity-50' : undefined,
       ]
         .filter(Boolean)
-        .join(" ")}
+        .join(' ')}
     >
-      <input
-        checked={checked}
-        className="mt-1 h-4 w-4 accent-current"
-        data-testid={testId}
-        disabled={disabled}
-        name={groupName}
-        onChange={onSelect}
-        type="radio"
-      />
+      <Radio value={value} data-testid={testId} disabled={disabled} />
       <span className="min-w-0">
         <span className="flex items-center gap-2 text-sm font-medium text-text-primary">
           <span className="text-text-secondary">{icon}</span>
           {title}
         </span>
-        <span className="mt-1.5 block text-xs leading-5 text-text-secondary">
-          {description}
-        </span>
+        <span className="mt-1.5 block text-xs leading-5 text-text-secondary">{description}</span>
       </span>
     </label>
-  );
+  )
 }
 
 function SectionHeading({ children }: { children: ReactNode }) {
   return (
     <div className="flex items-center gap-3">
-      <h3 className="shrink-0 text-sm font-medium text-text-primary">
-        {children}
-      </h3>
+      <h3 className="shrink-0 text-sm font-medium text-text-primary">{children}</h3>
       <div className="h-px flex-1 bg-border" />
     </div>
-  );
+  )
 }

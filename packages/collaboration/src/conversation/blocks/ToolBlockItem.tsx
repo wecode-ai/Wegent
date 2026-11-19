@@ -1,21 +1,23 @@
-import { useToolInteractionServices } from '../ToolInteractionServices'
+import { CollapsibleRoot, CollapsibleTrigger, CollapsiblePanel } from '../../controls/Collapsible'
+import { isRuntimeRateLimitWaitBlock } from '@wegent/chat-core/runtime-conversation-turns'
 import { useEffect, useLayoutEffect, useState } from 'react'
-import { useConversationTranslation } from '../ConversationTranslation'
-import type { ProcessingBlock, SubagentBlock } from './types'
-import type { MarkdownFileOpenOptions as WorkspaceFileOpenOptions } from '../../markdown/MarkdownServices'
 import { ActivityShimmerText } from '../../issue-card/ActivityShimmerText'
 import { AssistantMarkdown } from '../../markdown/AssistantMarkdown'
+import { Button as ControlButton } from '../../markdown/Button'
+import type { MarkdownFileOpenOptions as WorkspaceFileOpenOptions } from '../../markdown/MarkdownServices'
 import { AssistantPlanCard, type AssistantPlanOpenRequest } from '../AssistantPlanCard'
+import { AutomaticRetryStatus } from '../AutomaticRetryStatus'
+import { useConversationTranslation } from '../ConversationTranslation'
+import { useToolInteractionServices } from '../ToolInteractionServices'
 import { usePersistentProcessingExpansion } from './processingExpansionState'
+import { getWorkspaceFilePath, hasBlockDetail, renderBlockDetail } from './ToolBlockDetails'
+import { getBlockLabel } from './toolBlockLabels'
 import {
   ProcessFileChangesBlockItem,
-  type FileEditDurationsByBlock,
   ToolDurationText,
+  type FileEditDurationsByBlock,
 } from './ToolFileChanges'
-import { getBlockLabel } from './toolBlockLabels'
-import { renderBlockDetail, hasBlockDetail, getWorkspaceFilePath } from './ToolBlockDetails'
-import { isRuntimeRateLimitWaitBlock } from '@wegent/chat-core/runtime-conversation-turns'
-import { AutomaticRetryStatus } from '../AutomaticRetryStatus'
+import type { ProcessingBlock, SubagentBlock } from './types'
 
 const RECONNECTING_DISPLAY_DELAY_MS = 10_000
 
@@ -112,29 +114,31 @@ export function ToolBlockItem({
           : 'tool_activity.review_running'
     )
     return (
-      <details
+      <CollapsibleRoot
         className="min-w-0 py-1 text-sm text-text-muted"
         data-testid="auto-approval-review"
         data-processing-block-id={block.id}
         open={forceExpanded || userExpanded}
-        onToggle={event => {
-          if (event.currentTarget.open !== userExpanded) setUserExpanded(event.currentTarget.open)
+        onOpenChange={nextOpen => {
+          if (nextOpen !== userExpanded) setUserExpanded(nextOpen)
         }}
       >
-        <summary
+        <CollapsibleTrigger
           className="cursor-pointer rounded keyboard:focus-visible:outline keyboard:focus-visible:outline-2"
           data-testid="auto-approval-review-details"
           aria-expanded={forceExpanded || userExpanded}
         >
           {label}
-        </summary>
-        <div
-          className="mt-2 space-y-2 whitespace-pre-wrap break-words"
-          data-testid="auto-approval-review-evidence"
-        >
-          {reviewReason(block.toolOutput) && <p>{reviewReason(block.toolOutput)}</p>}
-        </div>
-      </details>
+        </CollapsibleTrigger>
+        <CollapsiblePanel>
+          <div
+            className="mt-2 space-y-2 whitespace-pre-wrap break-words"
+            data-testid="auto-approval-review-evidence"
+          >
+            {reviewReason(block.toolOutput) && <p>{reviewReason(block.toolOutput)}</p>}
+          </div>
+        </CollapsiblePanel>
+      </CollapsibleRoot>
     )
   }
 
@@ -170,7 +174,8 @@ export function ToolBlockItem({
           role="status"
         >
           <span>{t('tool_activity.chatgpt_network_unavailable')}</span>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="runtime-reconnecting-open-proxy-settings"
             onClick={interactions.openProxySettings}
@@ -178,7 +183,7 @@ export function ToolBlockItem({
             className="font-medium text-blue-600 hover:underline dark:text-blue-300"
           >
             {t('tool_activity.open_proxy_settings')}
-          </button>
+          </ControlButton>
         </div>
       )
     }
@@ -215,7 +220,8 @@ export function ToolBlockItem({
         className={`flex w-full max-w-full items-center gap-1.5 text-text-muted ${compact ? 'min-h-8' : ''}`}
       >
         {workspaceFilePath && onOpenWorkspaceFile ? (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             onClick={() => {
               onOpenWorkspaceFile(workspaceFilePath)
@@ -224,9 +230,10 @@ export function ToolBlockItem({
             className="flex min-w-0 items-center gap-1.5 hover:text-text-primary"
           >
             {labelContent}
-          </button>
+          </ControlButton>
         ) : hasDetail ? (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-tool-detail-toggle
             aria-expanded={expanded}
@@ -234,12 +241,13 @@ export function ToolBlockItem({
             className="flex min-w-0 items-center gap-1.5 hover:text-text-primary"
           >
             {labelContent}
-          </button>
+          </ControlButton>
         ) : (
           <span className="flex min-w-0 items-center gap-1.5">{labelContent}</span>
         )}
         {hasDetail ? (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-tool-detail-toggle
             onClick={() => setUserExpanded(value => !value)}
@@ -256,7 +264,7 @@ export function ToolBlockItem({
             >
               <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
             </svg>
-          </button>
+          </ControlButton>
         ) : null}
         <span
           className="ml-auto shrink-0 pl-2 font-mono text-xs text-text-muted"

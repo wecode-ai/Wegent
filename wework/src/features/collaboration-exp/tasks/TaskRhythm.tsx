@@ -1,5 +1,6 @@
-import { ArrowRight, Circle, LoaderCircle } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ArrowRight, Circle, LoaderCircle } from 'lucide-react'
 import { selectExperienceWorkSnapshot, type ExperienceTaskRow } from '../model'
 import { useTaskDescription } from './taskPresentation'
 import './TasksExperience.css'
@@ -35,7 +36,8 @@ export function TaskRhythm({
         </span>
       </div>
       {current ? (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="collaboration-exp-task-rhythm-current"
           className="experience-task-home-live-work"
@@ -45,7 +47,7 @@ export function TaskRhythm({
           <strong>{current.title}</strong>
           <small>{description}</small>
           <ArrowRight size={16} aria-hidden="true" />
-        </button>
+        </ControlButton>
       ) : (
         <p>{t('tasks.home.emptyRhythm')}</p>
       )}

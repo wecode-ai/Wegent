@@ -1,7 +1,14 @@
+import type { StandInRole } from '@/api/personalStandIn'
+import type { ConnectionProviderDescriptor } from '@/api/standIn'
+import { useTranslation } from '@/hooks/useTranslation'
+import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
+import type { CollaborationProject } from '@wegent/collaboration'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
   Check,
-  Clock,
   ChevronRight,
+  Clock,
   Folder,
   GitBranch,
   Mail,
@@ -10,11 +17,6 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
-import type { CollaborationProject } from '@wegent/collaboration'
-import type { StandInRole } from '@/api/personalStandIn'
-import type { ConnectionProviderDescriptor } from '@/api/standIn'
-import { useTranslation } from '@/hooks/useTranslation'
-import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { EMAIL_PROVIDER } from './StandInEmailConnections'
 import { GIT_CONNECTION_PREFIX } from './StandInGitConnections'
 import { findStandInProject } from './standInProjects'
@@ -192,7 +194,8 @@ export function StandInConnectionCatalog({
           <p className="text-sm text-text-secondary">
             {t('standIn.workspace.connection_catalog_help')}
           </p>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="stand-in-connection-configured-filter"
             aria-pressed={configuredOnly}
@@ -205,18 +208,19 @@ export function StandInConnectionCatalog({
                   count: rows.filter(row => row.configured).length,
                 })}
             <ChevronRight aria-hidden="true" className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </div>
         <label className="flex min-h-11 items-center gap-2 rounded-xl bg-muted px-3 text-text-secondary focus-within:ring-2 focus-within:ring-focus">
           <Search aria-hidden="true" className="h-4 w-4 shrink-0" />
-          <input
+          <ControlInput
+            appearance="plain"
             type="search"
             data-testid="stand-in-connection-search"
             aria-label={t('standIn.workspace.connection_search')}
             placeholder={t('standIn.workspace.connection_search')}
             value={query}
             onChange={event => setQuery(event.target.value)}
-            className="min-w-0 flex-1 appearance-none border-0 bg-transparent py-2 text-base text-text-primary outline-none placeholder:text-text-secondary"
+            className="min-w-0 flex-1 appearance-none text-base placeholder:text-text-secondary"
           />
         </label>
       </div>
@@ -302,7 +306,8 @@ function ConnectionRow({
   onSelect(): void
 }) {
   return (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid={testId}
       disabled={disabled}
@@ -333,6 +338,6 @@ function ConnectionRow({
         {active && <Check aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-success" />}
         {action}
       </span>
-    </button>
+    </ControlButton>
   )
 }

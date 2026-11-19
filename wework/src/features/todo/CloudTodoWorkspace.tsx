@@ -1,43 +1,153 @@
-import { issueRuntimePort } from './issueRuntimePort'
-import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
-import { requireIssueTaskAvailable } from './issueTaskAvailability'
-import { issueDraftFromText, RuntimeConfigurationProvider } from '@wegent/collaboration'
+import type { AITableField } from '@/api/aitable'
+import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
+import type {
+  CloudLoopItem,
+  CloudLoopItemAttachment,
+  CloudProject,
+  CloudProjectMember,
+  PullRequestAutoRepairStatus,
+} from '@/api/deliveries'
+import { isDefaultWorkItemProject } from '@/api/deliveries'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { ApiError } from '@/api/http'
+import { associateLoopItemTags, loopItemLocalProject } from '@/api/localProjectAssociation'
+import type { ProjectChatAgent } from '@/api/projectChatAgents'
+import { ActionMenu } from '@/components/common/ActionMenu'
+import { TransientNotice } from '@/components/common/TransientNotice'
 import {
+  DesktopSidebarAccount,
+  type DesktopSidebarAccountSettingsOptions,
+} from '@/components/layout/DesktopSidebarAccount'
+import { DesktopSidebarHeader } from '@/components/layout/DesktopSidebarPrimitives'
+import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
+import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
+import { Tooltip } from '@/components/ui/tooltip'
+import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
+import { createWeworkProjectAgentConfigurationHost } from '@/features/collaboration/WeworkProjectAgentConfigurationHost'
+import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
+import { useDshSlotAvailable } from '@/features/dsh-runtime/useDshSlotAvailable'
+import {
+  issueDispatchPersonalTaskInput,
+  type IssueTaskDispatchInput,
+} from '@/features/notifications/NotificationTaskSourceContext'
+import { useAssignmentNotificationChoice } from '@/features/notifications/useAssignmentNotificationChoice'
+import { AITableView } from '@/features/todo/AITableView'
+import {
+  AutomationSelectionDialog,
+  type AutomationSelectionCandidate,
+} from '@/features/todo/AutomationSelectionDialog'
+import {
+  getChangeRequestMonitor,
+  runtimeTaskChangeRequestTarget,
+  useTaskChangeRequest,
+  type ChangeRequestMonitor,
+} from '@/features/workbench/changeRequestMonitor'
+import { changeRequestResourceEventKeys } from '@/features/workbench/changeRequestObservations'
+import {
+  autoRepairStatus,
+  buildChangeRequestRepairPrompt,
+  changeRequestRepairEventKey,
+  claimChangeRequestAutoRepair,
+  completeChangeRequestAutoRepair,
+} from '@/features/workbench/changeRequestStatus'
+import { toWorkspaceRuntimeTaskAddress } from '@/features/workbench/projectTaskTracking'
+import { modelSelectionFromRuntimeHandle } from '@/features/workbench/runtimeContextUsage'
+import { runtimeConversationKey } from '@/features/workbench/runtimeConversationCache'
+import {
+  getRuntimeTaskLifecycleKey,
+  type RuntimeTaskLifecycleStoreSnapshot,
+} from '@/features/workbench/runtimeTaskLifecycle'
+import {
+  isRuntimeTaskExecutionRunning,
+  runtimeTaskTrackingExecutionStatus,
+} from '@/features/workbench/runtimeTaskLifecycle/projection'
+import { createRuntimeUserMessage } from '@/features/workbench/runtimeUserMessage'
+import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import type { ArchiveRuntimeConversationsResult } from '@/features/workbench/workbenchContextTypes'
+import {
+  findRuntimeTask,
+  hydrateRuntimeTaskAddress,
+} from '@/features/workbench/workbenchRuntimeHelpers'
+import type { DeliveryApi, WorkbenchServices } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
+import { copyTextToClipboard } from '@/lib/clipboard'
+import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
+import { runtimeTaskProjectUiId } from '@/lib/runtime-task-workspace-binding'
+import { cn } from '@/lib/utils'
+import { getRuntimeWorkDeviceNamesById, resolveWorkbenchDeviceId } from '@/lib/workbench-device'
+import { track } from '@/telemetry/client'
+import type {
+  DeviceInfo,
+  ModelSelectionConfig,
+  ProjectWithTasks,
+  RuntimeGoal,
+  RuntimeProjectSpaceRef,
+  RuntimeTaskAddress,
+  RuntimeTaskCreateRequest,
+  RuntimeTaskSummary,
+  RuntimeWorkListResponse,
+  User as UserProfile,
+} from '@/types/api'
+import type { ProjectBoardDrop } from '@wegent/collaboration/project-board/projectBoardDnd'
+import {
+  BaseBoardStatusMigrationNotice,
+  boardDropHint,
   BoardViewNavigation,
   BoardViewNotice,
-  isExecutionBoardColumn,
+  CollaborationProjectViewShell,
+  CollaborationSettings,
   collectProjectTags,
-  savedBoardColumns,
-  useSavedBoardViews,
   createCollaborationTranslator,
-  boardDropHint,
-  saveProjectBoardViews,
+  createProjectParticipantSections,
   isBaseBoardStatusGroupingEnabled,
+  isExecutionBoardColumn,
+  issueDraftFromText,
+  mergeIssueReadConfirmation,
+  projectAiSettingsGroup,
+  ProjectAutomaticProcessing,
+  ProjectBoardSettingsDialog,
+  ProjectCollaborationGroups,
+  ProjectCreateDialog,
+  projectCreateLabels,
+  ProjectExecutionEnvironments,
+  ProjectIssueTable,
+  ProjectSpaceSidebar,
+  runnerEnvironmentError,
+  RuntimeConfigurationProvider,
+  savedBoardColumns,
+  saveProjectBoardViews,
   useBaseBoardStatusMigration,
-  BaseBoardStatusMigrationNotice,
+  useCollaborationWorkspaceController,
+  useIssueAssignmentsByIssueId,
+  useSavedBoardViews,
+  type CollaborationIssue,
+  type CollaborationProject,
+  type CollaborationProjectView,
+  type ProjectCreateTarget,
+  type SharedIssueDetailTaskExecutionState,
+  type SharedWorkspaceApi,
 } from '@wegent/collaboration'
-import { useAssignmentNotificationChoice } from '@/features/notifications/useAssignmentNotificationChoice'
-import { runtimeTaskBindingAddress } from './runtimeTaskBindingAddress'
-import { createWeworkProjectAgentConfigurationHost } from '@/features/collaboration/WeworkProjectAgentConfigurationHost'
+import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
-  useCallback,
-  useContext,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react'
-import type { DragEndEvent, DragStartEvent } from '@dnd-kit/core'
-import {
-  projectBoardDnd,
-  projectBoardCollisionDetection,
-  projectBoardDrop,
-  projectBoardDragItemId,
-  useProjectBoardSensors,
-} from '@wegent/collaboration/project-board/projectBoardDnd'
-import { ProjectBoardDragOverlay } from '@wegent/collaboration/project-board/ProjectBoardDragOverlay'
+  createProjectBoardSortLabels,
+  createStandardCloudBoardColumns,
+  executeStandardCloudBoardMutation,
+  mergePersistedBoardMove,
+  ProjectBoardBody,
+  ProjectBoardGroupPicker,
+  useBoardTagFilter,
+  useParentIssueBoard,
+  useStandardCloudBoardController,
+  type ProjectBoardColumn,
+  type ProjectBoardGroupBy,
+  type StandardCloudBoardMutation,
+  type StandardCloudBoardMutationUpdate,
+} from '@wegent/collaboration/project-board'
+import { projectBoardDragItemId } from '@wegent/collaboration/project-board/projectBoardDnd'
+import { ProjectSettingsShell } from '@wegent/collaboration/project-manage'
 import {
   Archive,
   ArrowLeft,
@@ -59,194 +169,78 @@ import {
   Search,
   X,
 } from 'lucide-react'
-import type {
-  CloudLoopItem,
-  CloudLoopItemAttachment,
-  CloudProject,
-  CloudProjectMember,
-  PullRequestAutoRepairStatus,
-} from '@/api/deliveries'
-import type { TaskChangeRequestSnapshot } from '@/api/changeRequests'
-import { changeRequestResourceEventKeys } from '@/features/workbench/changeRequestObservations'
-import { isDefaultWorkItemProject } from '@/api/deliveries'
-import type { AITableField } from '@/api/aitable'
-import { ApiError } from '@/api/http'
-import type { ProjectChatAgent } from '@/api/projectChatAgents'
 import {
-  CollaborationSettings,
-  CollaborationProjectViewShell,
-  createProjectParticipantSections,
-  projectAiSettingsGroup,
-  mergeIssueReadConfirmation,
-  runnerEnvironmentError,
-  ProjectAutomaticProcessing,
-  ProjectBoardSettingsDialog,
-  ProjectCollaborationGroups,
-  ProjectExecutionEnvironments,
-  ProjectIssueTable,
-  ProjectCreateDialog,
-  ProjectSpaceSidebar,
-  projectCreateLabels,
-  useCollaborationWorkspaceController,
-  useIssueAssignmentsByIssueId,
-  type CollaborationIssue,
-  type CollaborationProject,
-  type ProjectCreateTarget,
-  type SharedIssueDetailTaskExecutionState,
-  type SharedWorkspaceApi,
-  type CollaborationProjectView,
-} from '@wegent/collaboration'
-import { ProjectSettingsShell } from '@wegent/collaboration/project-manage'
-import { DesktopProjectSettingsPages } from './DesktopProjectSettingsPages'
-import {
-  createStandardCloudBoardColumns,
-  createProjectBoardSortLabels,
-  executeStandardCloudBoardMutation,
-  mergePersistedBoardMove,
-  ProjectBoardBody,
-  ProjectBoardGroupPicker,
-  useStandardCloudBoardController,
-  useBoardTagFilter,
-  type ProjectBoardColumn,
-  type ProjectBoardGroupBy,
-  type StandardCloudBoardMutation,
-  type StandardCloudBoardMutationUpdate,
-} from '@wegent/collaboration/project-board'
-import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
-import {
-  DesktopSidebarAccount,
-  type DesktopSidebarAccountSettingsOptions,
-} from '@/components/layout/DesktopSidebarAccount'
-import { DesktopSidebarHeader } from '@/components/layout/DesktopSidebarPrimitives'
-import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
-import { ActionMenu } from '@/components/common/ActionMenu'
-import { Tooltip } from '@/components/ui/tooltip'
-import type { ArchiveRuntimeConversationsResult } from '@/features/workbench/workbenchContextTypes'
-import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
-import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
-import { useDshSlotAvailable } from '@/features/dsh-runtime/useDshSlotAvailable'
-import {
-  issueDispatchPersonalTaskInput,
-  type IssueTaskDispatchInput,
-} from '@/features/notifications/NotificationTaskSourceContext'
-import { humanTaskDispatchInput, resolveHumanTaskDispatch } from './humanTaskDispatch'
-import { TransientNotice } from '@/components/common/TransientNotice'
-import type { DeliveryApi, WorkbenchServices } from '@/features/workbench/workbenchServices'
-import { useTranslation } from '@/hooks/useTranslation'
-import { copyTextToClipboard } from '@/lib/clipboard'
-import { runtimeTaskProjectUiId } from '@/lib/runtime-task-workspace-binding'
-import { cn } from '@/lib/utils'
-import { track } from '@/telemetry/client'
-import { invokeDesktopHost } from '@/api/dsh/desktopHost'
-import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
-import { getRuntimeWorkDeviceNamesById, resolveWorkbenchDeviceId } from '@/lib/workbench-device'
-import { runtimeConversationKey } from '@/features/workbench/runtimeConversationCache'
-import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
-import {
-  getChangeRequestMonitor,
-  runtimeTaskChangeRequestTarget,
-  useTaskChangeRequest,
-  type ChangeRequestMonitor,
-} from '@/features/workbench/changeRequestMonitor'
-import {
-  autoRepairStatus,
-  buildChangeRequestRepairPrompt,
-  changeRequestRepairEventKey,
-  claimChangeRequestAutoRepair,
-  completeChangeRequestAutoRepair,
-} from '@/features/workbench/changeRequestStatus'
-import {
-  isRuntimeTaskExecutionRunning,
-  runtimeTaskTrackingExecutionStatus,
-} from '@/features/workbench/runtimeTaskLifecycle/projection'
-import { createRuntimeUserMessage } from '@/features/workbench/runtimeUserMessage'
-import {
-  getRuntimeTaskLifecycleKey,
-  type RuntimeTaskLifecycleStoreSnapshot,
-} from '@/features/workbench/runtimeTaskLifecycle'
-import {
-  findRuntimeTask,
-  hydrateRuntimeTaskAddress,
-} from '@/features/workbench/workbenchRuntimeHelpers'
-import { modelSelectionFromRuntimeHandle } from '@/features/workbench/runtimeContextUsage'
-import { AITableView } from '@/features/todo/AITableView'
-import {
-  AutomationSelectionDialog,
-  type AutomationSelectionCandidate,
-} from '@/features/todo/AutomationSelectionDialog'
-import type {
-  DeviceInfo,
-  ModelSelectionConfig,
-  ProjectWithTasks,
-  RuntimeProjectSpaceRef,
-  RuntimeGoal,
-  RuntimeTaskAddress,
-  RuntimeTaskCreateRequest,
-  RuntimeTaskSummary,
-  RuntimeWorkListResponse,
-  User as UserProfile,
-} from '@/types/api'
-import { CloudTodoModal as Modal } from './CloudTodoModal'
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
+import { AiChatModal } from './AiChatModal'
+import { BackgroundTaskStarter } from './BackgroundTaskStarter'
+import { BoardQuickCreate } from './BoardQuickCreate'
+import { BoardQuickStartGuide } from './BoardQuickStartGuide'
+import { CloudFilesView, LocalFilesView } from './CloudFilesView'
+import { CloudProjectManageView } from './CloudProjectManageView'
 import {
   CloudTodoBoardCard,
-  CloudTodoCardContent,
   type BoardCardDisplaySettings,
   type BoardCardProgressDisplay,
   type CloudTodoBoardTaskBinding,
 } from './CloudTodoBoardCard'
-import { CloudProjectManageView } from './CloudProjectManageView'
+import { CloudTodoModal as Modal } from './CloudTodoModal'
+import { DesktopProjectSettingsPages } from './DesktopProjectSettingsPages'
 import { waitForDwsAuthentication } from './dwsAuth'
-import { runtimeTaskConversationStatusesByAddress } from './runtimeTaskConversationStatus'
-import {
-  canEditProjectSpaceIssue,
-  type LocatedProjectSpace,
-  publishProjectSpaceTaskBindingChanged,
-  projectSpaceKey,
-  projectSpaceRef,
-  projectSupportsRobotAutomation,
-  sameProjectSpace,
-  subscribeProjectSpaceTaskBindingChanged,
-  subscribeProjectSpaceTaskContextChanged,
-} from './projectSpaceSelection'
-import { CloudFilesView, LocalFilesView } from './CloudFilesView'
-import { ProjectSpaceChatSidebar } from './ProjectSpaceChatSidebar'
 import { GlobalTodoSearch } from './GlobalTodoSearch'
-import { BoardQuickCreate } from './BoardQuickCreate'
-import { useParentIssueBoard } from '@wegent/collaboration/project-board'
-import { BoardQuickStartGuide } from './BoardQuickStartGuide'
-import { parseDingTalkAITableLink } from './projectProviderConfig'
-import {
-  createLocalWorkspaceApi,
-  projectRuntimeStatusSignature,
-  toWeworkIssueTaskBinding,
-} from './WeworkCollaborationPlatform'
-import { toWorkspaceRuntimeTaskAddress } from '@/features/workbench/projectTaskTracking'
-import { TaskSearchPanel } from './TaskSearchPanel'
-import { TodoEditor } from './TodoEditor'
+import { humanTaskDispatchInput, resolveHumanTaskDispatch } from './humanTaskDispatch'
 import { IssueComposer } from './IssueComposer'
-import { associateLoopItemTags, loopItemLocalProject } from '@/api/localProjectAssociation'
-import { emptyTaskSearchFilters, type TaskSearchFilters } from './taskSearch'
-import { boardStatusColorClasses, columnDotClasses, columns } from './todoShared'
-import { AiChatModal } from './AiChatModal'
-import { BackgroundTaskStarter } from './BackgroundTaskStarter'
+import { issueRuntimePort } from './issueRuntimePort'
+import { requireIssueTaskAvailable } from './issueTaskAvailability'
 import { projectExecutionEnvironmentTaskRequest } from './projectExecutionEnvironmentTaskRequest'
+import { parseDingTalkAITableLink } from './projectProviderConfig'
+import { ProjectSpaceChatSidebar } from './ProjectSpaceChatSidebar'
 import {
   loadProjectSpaceCodeWorkspacePreference,
   saveProjectSpaceCodeWorkspacePreference,
 } from './projectSpaceCodeWorkspacePreference'
 import {
-  shouldPrepareWorkItemTask,
-  workItemComposerReference,
-  workItemAssociationUpdate,
-  prepareIssueStartStatus,
-  workItemTaskInput,
-} from './workItemTaskInput'
+  canEditProjectSpaceIssue,
+  projectSpaceKey,
+  projectSpaceRef,
+  projectSupportsRobotAutomation,
+  publishProjectSpaceTaskBindingChanged,
+  sameProjectSpace,
+  subscribeProjectSpaceTaskBindingChanged,
+  subscribeProjectSpaceTaskContextChanged,
+  type LocatedProjectSpace,
+} from './projectSpaceSelection'
 import {
   isRuntimeMyWorkItem,
   mergeRuntimeMyWorkItems,
   runtimeMyWorkItems,
   runtimeWorkItemReference,
 } from './runtimeMyWork'
+import { runtimeTaskBindingAddress } from './runtimeTaskBindingAddress'
+import { runtimeTaskConversationStatusesByAddress } from './runtimeTaskConversationStatus'
+import { emptyTaskSearchFilters, type TaskSearchFilters } from './taskSearch'
+import { TaskSearchPanel } from './TaskSearchPanel'
+import { TodoEditor } from './TodoEditor'
+import { boardStatusColorClasses, columnDotClasses, columns } from './todoShared'
+import {
+  createLocalWorkspaceApi,
+  projectRuntimeStatusSignature,
+  toWeworkIssueTaskBinding,
+} from './WeworkCollaborationPlatform'
+import {
+  prepareIssueStartStatus,
+  shouldPrepareWorkItemTask,
+  workItemAssociationUpdate,
+  workItemComposerReference,
+  workItemTaskInput,
+} from './workItemTaskInput'
 type ProjectView = Extract<CollaborationProjectView, 'board' | 'table' | 'files' | 'manage'>
 type WeworkStandardBoardUpdate = Omit<StandardCloudBoardMutationUpdate, 'priority'> & {
   priority?: CollaborationIssue['priority']
@@ -983,7 +977,6 @@ export function CloudTodoWorkspace({
   const [localProjectFilter, setLocalProjectFilter] = useState('all')
   const [groupScopeBusy, setGroupScopeBusy] = useState(false)
   const executionFailureByItemRef = useRef(new Map<string, boolean>())
-  const boardSensors = useProjectBoardSensors()
   const [globalSearchOpen, setGlobalSearchOpen] = useState(false)
   const [globalSearchQuery, setGlobalSearchQuery] = useState('')
   const [projectSearchOpen, setProjectSearchOpen] = useState(false)
@@ -3533,9 +3526,9 @@ export function CloudTodoWorkspace({
     }
   }
 
-  function finishBoardDrop(event: DragEndEvent) {
+  function finishBoardDrop(drop: ProjectBoardDrop) {
     setActiveDragItemId(null)
-    standardBoardController.moveDroppedItem(projectBoardDrop(event))
+    standardBoardController.moveDroppedItem(drop)
   }
 
   async function saveGlobalGroupBy() {
@@ -4134,7 +4127,8 @@ export function CloudTodoWorkspace({
                           toggleTestId="cloud-todo-collapse-sidebar"
                         />
                         <Tooltip label={t('workbench.search')} side="bottom" align="end">
-                          <button
+                          <ControlButton
+                            variant="unstyled"
                             type="button"
                             data-testid="cloud-search-toggle"
                             onClick={() => setGlobalSearchOpen(true)}
@@ -4142,7 +4136,7 @@ export function CloudTodoWorkspace({
                             aria-label={t('workbench.search')}
                           >
                             <Search className="h-4 w-4" />
-                          </button>
+                          </ControlButton>
                         </Tooltip>
                       </>
                     }
@@ -4257,14 +4251,16 @@ export function CloudTodoWorkspace({
                 className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-destructive/5 px-4 py-2 text-sm text-destructive"
               >
                 <span>本地项目空间加载失败：{localProjectsError}</span>
-                <button
+                <ControlButton
+                  variant="destructive"
+                  size="sm"
                   type="button"
                   data-testid="local-project-spaces-retry"
                   onClick={retryLocalProjects}
                   className="h-7 shrink-0 rounded-md border border-destructive/30 px-2 text-xs font-medium hover:bg-destructive/10"
                 >
                   {t('common.retry', '重试')}
-                </button>
+                </ControlButton>
               </div>
             ) : null}
             {issueComposerOpen ? (
@@ -4289,14 +4285,16 @@ export function CloudTodoWorkspace({
                 className="flex flex-1 flex-col items-center justify-center gap-3 px-6 text-sm text-destructive"
               >
                 <span>本地项目空间加载失败：{localProjectsError}</span>
-                <button
+                <ControlButton
+                  variant="destructive"
+                  size="sm"
                   type="button"
                   data-testid="local-project-spaces-retry"
                   onClick={retryLocalProjects}
                   className="h-8 rounded-lg border border-destructive/30 px-3 text-sm font-medium hover:bg-destructive/10"
                 >
                   {t('common.retry', '重试')}
-                </button>
+                </ControlButton>
               </div>
             ) : (projectSpaceApis.local ? localProjectsLoading : cloudWorkspace.state.loading) ? (
               <div className="flex flex-1 items-center justify-center text-sm text-text-muted">
@@ -4364,7 +4362,9 @@ export function CloudTodoWorkspace({
                           side="bottom"
                           align="end"
                         >
-                          <button
+                          <ControlButton
+                            variant="outline"
+                            size="sm"
                             ref={actionRefs.search}
                             type="button"
                             data-testid="cloud-project-task-search-toggle"
@@ -4382,7 +4382,7 @@ export function CloudTodoWorkspace({
                                 ? t('todo.search_tasks', '搜索任务')
                                 : t('todo.search_issues', '搜索 Issue')
                               : null}
-                          </button>
+                          </ControlButton>
                         </Tooltip>
                         {canCreateBoardTask ? (
                           <Tooltip
@@ -4394,7 +4394,9 @@ export function CloudTodoWorkspace({
                             side="bottom"
                             align="end"
                           >
-                            <button
+                            <ControlButton
+                              variant="primary"
+                              size="sm"
                               ref={actionRefs.add}
                               type="button"
                               data-testid="cloud-todo-add"
@@ -4414,7 +4416,7 @@ export function CloudTodoWorkspace({
                                   ? t('todo.new_task', '新建任务')
                                   : t('todo.new_issue', '新建 Issue')
                                 : null}
-                            </button>
+                            </ControlButton>
                           </Tooltip>
                         ) : null}
                       </>
@@ -4425,7 +4427,8 @@ export function CloudTodoWorkspace({
                         testId="cloud-project-header-more"
                         icon={Ellipsis}
                         placement="bottom-end"
-                        triggerClassName="electron-titlebar-interactive-region relative z-10 ml-2 flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background text-text-secondary transition hover:bg-muted hover:text-text-primary"
+                        density="compact"
+                        triggerClassName="electron-titlebar-interactive-region relative z-10 ml-2 flex items-center justify-center rounded-lg border border-border bg-background text-text-secondary transition hover:bg-muted hover:text-text-primary"
                         items={[
                           ...(!projectAssistantOpen
                             ? [
@@ -4463,7 +4466,9 @@ export function CloudTodoWorkspace({
                         side="bottom"
                         align="end"
                       >
-                        <button
+                        <ControlButton
+                          variant="primary"
+                          size="sm"
                           ref={actionRefs.add}
                           type="button"
                           data-testid="cloud-todo-add"
@@ -4478,7 +4483,7 @@ export function CloudTodoWorkspace({
                           className="electron-titlebar-interactive-region relative z-10 ml-2 flex h-8 w-8 items-center justify-center rounded-lg bg-text-primary text-background transition hover:opacity-90"
                         >
                           <Plus className="h-3.5 w-3.5" />
-                        </button>
+                        </ControlButton>
                       </Tooltip>
                     ) : null}
                   </>
@@ -4854,19 +4859,12 @@ export function CloudTodoWorkspace({
                       columns={boardColumns as ProjectBoardColumn[]}
                       currentParent={boardParent}
                       currentParentId={boardParentId}
-                      dnd={projectBoardDnd}
-                      dndContextProps={{
-                        sensors: boardSensors,
-                        collisionDetection: projectBoardCollisionDetection,
-                        onDragStart: (event: DragStartEvent) => {
-                          standardBoardController.setActiveSourceColumnKey(
-                            event.active.data.current?.columnKey ?? null
-                          )
-                          setActiveDragItemId(projectBoardDragItemId(event.active))
-                        },
-                        onDragCancel: () => setActiveDragItemId(null),
-                        onDragEnd: finishBoardDrop,
+                      onDragStart={source => {
+                        standardBoardController.setActiveSourceColumnKey(source.columnKey ?? null)
+                        setActiveDragItemId(projectBoardDragItemId(source))
                       }}
+                      onDragCancel={() => setActiveDragItemId(null)}
+                      onDrop={finishBoardDrop}
                       externalGroupLabel={selectedGroupField?.name ?? '记录'}
                       externalGroupValues={aitableGroupValues}
                       externalManagedLabel="数据由钉钉托管 · AI 可直接管理"
@@ -5031,7 +5029,8 @@ export function CloudTodoWorkspace({
                                 side="bottom"
                                 align="end"
                               >
-                                <button
+                                <ControlButton
+                                  variant="unstyled"
                                   type="button"
                                   data-testid="cloud-todo-batch-confirm-review"
                                   disabled={batchConfirmBusy}
@@ -5047,7 +5046,7 @@ export function CloudTodoWorkspace({
                                   )}
                                 >
                                   <CheckCheck className="h-3.5 w-3.5" />
-                                </button>
+                                </ControlButton>
                               </Tooltip>
                             ) : null}
                             {isMyTasksBoard &&
@@ -5060,7 +5059,8 @@ export function CloudTodoWorkspace({
                                 side="bottom"
                                 align="end"
                               >
-                                <button
+                                <ControlButton
+                                  variant="unstyled"
                                   type="button"
                                   data-testid="cloud-my-tasks-archive-completed"
                                   onClick={() => setRuntimeBatchArchiveItems([...columnItems])}
@@ -5071,7 +5071,7 @@ export function CloudTodoWorkspace({
                                   )}
                                 >
                                   <Archive className="h-3.5 w-3.5" />
-                                </button>
+                                </ControlButton>
                               </Tooltip>
                             ) : null}
                             {canCreateBoardTask &&
@@ -5091,7 +5091,8 @@ export function CloudTodoWorkspace({
                                 side="bottom"
                                 align="end"
                               >
-                                <button
+                                <ControlButton
+                                  variant="unstyled"
                                   type="button"
                                   data-testid={`cloud-todo-column-add-${column.key}`}
                                   onClick={open}
@@ -5104,28 +5105,12 @@ export function CloudTodoWorkspace({
                                   )}
                                 >
                                   <Plus className="h-3.5 w-3.5" />
-                                </button>
+                                </ControlButton>
                               </Tooltip>
                             ) : null}
                           </>
                         )
                       }}
-                      renderDragOverlay={() =>
-                        activeDragItemId ? (
-                          <ProjectBoardDragOverlay>
-                            <CloudTodoCardContent
-                              statusNames={Object.fromEntries(
-                                nativeStatuses.map(status => [status.id, status.name])
-                              )}
-                              item={
-                                activeBoardSourceItems.find(item => item.id === activeDragItemId)!
-                              }
-                              display={boardCardDisplay}
-                              agentNames={agentNameById}
-                            />
-                          </ProjectBoardDragOverlay>
-                        ) : null
-                      }
                       renderExternalGroupPicker={() => (
                         <AITableGroupFieldPicker
                           fields={aitableFields}
@@ -5150,7 +5135,9 @@ export function CloudTodoWorkspace({
                       renderBoardSettingsAction={
                         !isMyTasksBoard && (isAITableProject || isExternalGitBoard)
                           ? () => (
-                              <button
+                              <ControlButton
+                                variant="outline"
+                                size="sm"
                                 type="button"
                                 className="h-8 shrink-0 rounded-lg border border-border bg-background px-3 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
                                 data-testid="cloud-board-settings"
@@ -5158,7 +5145,7 @@ export function CloudTodoWorkspace({
                                 onClick={() => setBoardSettingsOpen(true)}
                               >
                                 {t('todo.board_settings', '看板设置')}
-                              </button>
+                              </ControlButton>
                             )
                           : undefined
                       }
@@ -5226,7 +5213,9 @@ export function CloudTodoWorkspace({
                       renderItemsFooter={column =>
                         isExternalGitBoard &&
                         activeExternalPageCursors[column.status as CloudLoopItem['status']] ? (
-                          <button
+                          <ControlButton
+                            variant="outline"
+                            size="sm"
                             type="button"
                             data-testid={`cloud-todo-column-load-more-${column.key}`}
                             disabled={
@@ -5240,7 +5229,7 @@ export function CloudTodoWorkspace({
                             {activeExternalPageLoading[column.status as CloudLoopItem['status']]
                               ? t('todo.loading_more_issues')
                               : t('todo.load_more_issues')}
-                          </button>
+                          </ControlButton>
                         ) : null
                       }
                       renderQuickStart={() =>
@@ -5272,7 +5261,9 @@ export function CloudTodoWorkspace({
                         isAITableProject && dingtalkAuthPrompt ? (
                           <div className="mx-6 mb-2 flex items-center gap-3 rounded-lg border border-border bg-muted px-3 py-2 text-xs text-text-secondary">
                             <span className="flex-1">{t('todo.dingtalk_board_not_connected')}</span>
-                            <button
+                            <ControlButton
+                              variant="outline"
+                              size="sm"
                               type="button"
                               data-testid="aitable-board-dws-login"
                               disabled={dingtalkAuthBusy}
@@ -5282,7 +5273,7 @@ export function CloudTodoWorkspace({
                               {dingtalkAuthBusy
                                 ? t('todo.dingtalk_board_connecting')
                                 : t('todo.dingtalk_board_connect')}
-                            </button>
+                            </ControlButton>
                           </div>
                         ) : baseBoardMigration.error ? (
                           <BaseBoardStatusMigrationNotice
@@ -5354,7 +5345,8 @@ export function CloudTodoWorkspace({
             </ProjectBoardSettingsDialog>
           ) : null}
           {selectedItem && backgroundTaskItemId !== selectedItem.id ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="cloud-todo-detail-dismiss-layer"
               aria-label={taskPanelOpen ? '关闭任务对话' : '关闭 Issue 详情'}
@@ -5374,7 +5366,8 @@ export function CloudTodoWorkspace({
                   className="task-conversation-issue-context flex min-h-0 flex-col bg-background"
                 >
                   <header className="flex h-12 shrink-0 items-center gap-2 border-b border-border px-3">
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       data-testid="cloud-todo-compact-issue-back"
                       onClick={closeTaskPanel}
@@ -5382,11 +5375,12 @@ export function CloudTodoWorkspace({
                       className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
                     >
                       <ArrowLeft className="h-4 w-4" />
-                    </button>
+                    </ControlButton>
                     <span className="min-w-0 flex-1 truncate text-xs font-medium text-text-secondary">
                       {selectedItem.id} · Issue 附件
                     </span>
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       data-testid="cloud-todo-panel-close"
                       onClick={closeIssuePanelStack}
@@ -5394,7 +5388,7 @@ export function CloudTodoWorkspace({
                       className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary transition hover:bg-muted hover:text-text-primary"
                     >
                       <X className="h-4 w-4" />
-                    </button>
+                    </ControlButton>
                   </header>
                   <div className="min-h-0 flex-1 overflow-y-auto py-2">
                     <IssueResourceSection
@@ -5404,7 +5398,8 @@ export function CloudTodoWorkspace({
                       empty={issueResourceAttachmentsLoading ? '正在加载…' : '暂无文件附件'}
                     >
                       {issueResourceAttachments.map(attachment => (
-                        <button
+                        <ControlButton
+                          variant="unstyled"
                           key={attachment.id}
                           type="button"
                           data-testid={`cloud-todo-resource-attachment-${attachment.id}`}
@@ -5427,7 +5422,7 @@ export function CloudTodoWorkspace({
                           <span className="shrink-0 text-xs text-text-muted">
                             {formatCompactFileSize(attachment.size_bytes)}
                           </span>
-                        </button>
+                        </ControlButton>
                       ))}
                     </IssueResourceSection>
 
@@ -5440,7 +5435,8 @@ export function CloudTodoWorkspace({
                       {(activeItemTaskBindings[selectedItem.id] ?? []).map(binding => {
                         const selected = selectedTaskBinding?.id === binding.id
                         return (
-                          <button
+                          <ControlButton
+                            variant="unstyled"
                             key={binding.id}
                             type="button"
                             data-testid={`cloud-todo-resource-conversation-${binding.id}`}
@@ -5466,7 +5462,7 @@ export function CloudTodoWorkspace({
                               {binding.task_title || binding.task_id}
                             </span>
                             <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
-                          </button>
+                          </ControlButton>
                         )
                       })}
                     </IssueResourceSection>
@@ -5483,7 +5479,8 @@ export function CloudTodoWorkspace({
                       {detailAllItems
                         .filter(candidate => candidate.parent_id === selectedItem.id)
                         .map(child => (
-                          <button
+                          <ControlButton
+                            variant="unstyled"
                             key={child.id}
                             type="button"
                             data-testid={`cloud-todo-resource-child-${child.id}`}
@@ -5501,7 +5498,7 @@ export function CloudTodoWorkspace({
                             />
                             <span className="min-w-0 flex-1 truncate">{child.title}</span>
                             <ChevronRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
-                          </button>
+                          </ControlButton>
                         ))}
                     </IssueResourceSection>
                   </div>
@@ -5911,20 +5908,18 @@ export function CloudTodoWorkspace({
                 createTodoProject.location === 'cloud' && !createTodoParent ? (
                   <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm text-text-secondary">
                     <label className="flex cursor-pointer items-center gap-2">
-                      <input
-                        type="checkbox"
+                      <Checkbox
                         data-testid="cloud-todo-create-runtime-option"
                         checked={createTodoStartRuntime}
-                        onChange={event => setCreateTodoStartRuntime(event.target.checked)}
+                        onCheckedChange={checked => setCreateTodoStartRuntime(checked === true)}
                       />
                       {t('todo.create_runtime_task_after_issue', '创建后启动 Runtime 任务')}
                     </label>
                     <label className="flex cursor-pointer items-center gap-2">
-                      <input
-                        type="checkbox"
+                      <Checkbox
                         data-testid="cloud-todo-continue-creating-option"
                         checked={createTodoContinueCreating}
-                        onChange={event => setCreateTodoContinueCreating(event.target.checked)}
+                        onCheckedChange={checked => setCreateTodoContinueCreating(checked === true)}
                       />
                       {t('todo.continue_creating', '继续创建')}
                     </label>
@@ -5967,7 +5962,7 @@ export function CloudTodoWorkspace({
             <div className="px-5 pb-5 pt-4">
               <label className="block text-sm font-medium text-text-secondary">
                 项目名称
-                <input
+                <ControlInput
                   data-testid="cloud-project-rename-input"
                   value={renameProjectName}
                   autoFocus
@@ -5976,7 +5971,7 @@ export function CloudTodoWorkspace({
                     setRenameProjectName(event.target.value)
                     setRenameError(null)
                   }}
-                  className="mt-2 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
+                  className="mt-2 h-9 w-full"
                 />
               </label>
               <p className="mt-2 text-xs text-text-muted">新名称会显示在项目空间和看板侧栏中。</p>
@@ -5984,22 +5979,26 @@ export function CloudTodoWorkspace({
                 <p className="mt-3 text-xs text-destructive wework:text-red-600">{renameError}</p>
               ) : null}
               <div className="mt-6 flex justify-end gap-2">
-                <button
+                <ControlButton
+                  variant="outline"
+                  size="sm"
                   type="button"
                   onClick={() => setRenameProject(null)}
                   disabled={renameBusy}
                   className="h-9 rounded-lg border border-border px-4 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
                 >
                   取消
-                </button>
-                <button
+                </ControlButton>
+                <ControlButton
+                  variant="primary"
+                  size="sm"
                   type="submit"
                   data-testid="cloud-project-rename-confirm"
                   disabled={!renameProjectName.trim() || renameBusy}
                   className="h-9 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:opacity-50"
                 >
                   {renameBusy ? '保存中…' : '保存'}
-                </button>
+                </ControlButton>
               </div>
             </div>
           </Modal>
@@ -6027,7 +6026,9 @@ export function CloudTodoWorkspace({
                 </p>
               ) : null}
               <div className="mt-6 flex justify-end gap-2">
-                <button
+                <ControlButton
+                  variant="outline"
+                  size="sm"
                   type="button"
                   data-testid="cloud-my-tasks-archive-completed-cancel"
                   disabled={archiveBusy}
@@ -6038,8 +6039,10 @@ export function CloudTodoWorkspace({
                   className="h-9 rounded-lg border border-border px-4 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
                 >
                   {t('common.cancel', '取消')}
-                </button>
-                <button
+                </ControlButton>
+                <ControlButton
+                  variant="destructive"
+                  size="sm"
                   type="button"
                   data-testid="cloud-my-tasks-archive-completed-confirm"
                   disabled={archiveBusy}
@@ -6049,7 +6052,7 @@ export function CloudTodoWorkspace({
                   {archiveBusy
                     ? t('todo.archiving', '归档中…')
                     : t('todo.confirm_archive', '确认归档')}
-                </button>
+                </ControlButton>
               </div>
             </div>
           </Modal>
@@ -6078,7 +6081,9 @@ export function CloudTodoWorkspace({
                 </p>
               ) : null}
               <div className="mt-6 flex justify-end gap-2">
-                <button
+                <ControlButton
+                  variant="outline"
+                  size="sm"
                   type="button"
                   data-testid="cloud-todo-batch-confirm-review-cancel"
                   disabled={batchConfirmBusy}
@@ -6090,8 +6095,10 @@ export function CloudTodoWorkspace({
                   className="h-9 rounded-lg border border-border px-4 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
                 >
                   {t('common.cancel', '取消')}
-                </button>
-                <button
+                </ControlButton>
+                <ControlButton
+                  variant="primary"
+                  size="sm"
                   type="button"
                   data-testid="cloud-todo-batch-confirm-review-confirm"
                   disabled={batchConfirmBusy}
@@ -6101,7 +6108,7 @@ export function CloudTodoWorkspace({
                   {batchConfirmBusy
                     ? t('todo.batch_confirming', '确认中…')
                     : t('todo.confirm_complete', '确认完成')}
-                </button>
+                </ControlButton>
               </div>
             </div>
           </Modal>
@@ -6127,7 +6134,9 @@ export function CloudTodoWorkspace({
                 <p className="mt-3 text-xs text-destructive wework:text-red-600">{archiveError}</p>
               ) : null}
               <div className="mt-6 flex justify-end gap-2">
-                <button
+                <ControlButton
+                  variant="outline"
+                  size="sm"
                   type="button"
                   data-testid="cloud-archive-cancel"
                   disabled={archiveBusy}
@@ -6139,8 +6148,10 @@ export function CloudTodoWorkspace({
                   className="h-9 rounded-lg border border-border px-4 text-sm text-text-primary hover:bg-muted disabled:opacity-50"
                 >
                   取消
-                </button>
-                <button
+                </ControlButton>
+                <ControlButton
+                  variant="destructive"
+                  size="sm"
                   type="button"
                   data-testid={
                     archiveProject ? 'cloud-project-archive-confirm' : 'cloud-todo-archive-confirm'
@@ -6152,7 +6163,7 @@ export function CloudTodoWorkspace({
                   className="h-9 rounded-lg bg-destructive px-4 text-sm font-medium text-destructive-contrast hover:bg-destructive/90 disabled:opacity-50 wework:bg-red-600 wework:text-white wework:hover:bg-red-700"
                 >
                   {archiveBusy ? '归档中…' : '确认归档'}
-                </button>
+                </ControlButton>
               </div>
             </div>
           </Modal>

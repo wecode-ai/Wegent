@@ -1,23 +1,15 @@
-import { useMemo, useState } from 'react'
+import { SortableRoot, SortableItem, SortableHandle } from '../controls/Sortable'
 import {
-  closestCenter,
-  DndContext,
-  DragOverlay,
-  PointerSensor,
-  type DragEndEvent,
-  type DragStartEvent,
-  useSensor,
-  useSensors,
-} from '@dnd-kit/core'
-import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
-import { CSS } from '@dnd-kit/utilities'
-import { CornerDownRight, GripVertical, MoreHorizontal, Pencil, Trash2, Zap } from 'lucide-react'
-import { ActionMenu } from '../controls/ActionMenu'
-import type { CollaborationTranslate } from '../i18n'
-import type {
-  GuidanceWorkbenchMessage,
-  QueuedWorkbenchMessage,
+  canReorderQueuedMessage,
+  type GuidanceWorkbenchMessage,
+  type QueuedWorkbenchMessage,
 } from '@wegent/chat-core/conversation-queue'
+import { CornerDownRight, GripVertical, MoreHorizontal, Pencil, Trash2, Zap } from 'lucide-react'
+import { useMemo } from 'react'
+import { ActionMenu } from '../controls/ActionMenu'
+import { controlActionDensity, controlIconActionDensity } from '../controls/recipes'
+import type { CollaborationTranslate } from '../i18n'
+import { Button as ControlButton } from '../markdown/Button'
 
 export interface ConversationQueuePanelProps {
   translate: CollaborationTranslate
@@ -48,17 +40,12 @@ export function ConversationQueuePanel({
   onResumeQueue,
   onCancelGuidanceMessage,
 }: ConversationQueuePanelProps) {
-  const [activeMessageId, setActiveMessageId] = useState<string | null>(null)
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }))
   const visibleQueuedMessages = useMemo(
     () => queuedMessages.filter(message => !message.awaitingGuidanceAcceptance),
     [queuedMessages]
   )
   const queuedMessageIds = useMemo(
-    () =>
-      visibleQueuedMessages
-        .filter(message => message.status === 'queued' && !message.runtimeQueued)
-        .map(message => message.id),
+    () => visibleQueuedMessages.filter(canReorderQueuedMessage).map(message => message.id),
     [visibleQueuedMessages]
   )
   const displayedQueuedMessages = useMemo(
@@ -69,22 +56,8 @@ export function ConversationQueuePanel({
       ),
     [visibleQueuedMessages]
   )
-  const activeMessage =
-    visibleQueuedMessages.find(message => message.id === activeMessageId) ?? null
-
   if (visibleQueuedMessages.length === 0 && guidanceMessages.length === 0) {
     return null
-  }
-
-  const handleDragStart = ({ active }: DragStartEvent) => {
-    setActiveMessageId(String(active.id))
-  }
-
-  const handleDragEnd = ({ active, over }: DragEndEvent) => {
-    if (over && active.id !== over.id) {
-      onReorderQueuedMessages?.(String(active.id), String(over.id))
-    }
-    setActiveMessageId(null)
   }
 
   return (
@@ -92,73 +65,88 @@ export function ConversationQueuePanel({
       data-testid="conversation-queue-panel"
       className="mb-1 rounded-[18px] border border-border bg-base px-2 py-1 shadow-[0_8px_24px_rgba(15,23,42,0.05)]"
     >
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCenter}
-        onDragStart={handleDragStart}
-        onDragCancel={() => setActiveMessageId(null)}
-        onDragEnd={handleDragEnd}
+      <SortableRoot
+        value={queuedMessageIds}
+        aria-label={t('conversation.queue.reorder')}
+        onValueChange={(_ids, details) => {
+          const targetId = queuedMessageIds[details.toIndex]
+          if (!onReorderQueuedMessages || !targetId || details.key === targetId) {
+            details.cancel()
+            return
+          }
+          onReorderQueuedMessages(details.key, targetId)
+        }}
       >
-        <SortableContext items={queuedMessageIds} strategy={verticalListSortingStrategy}>
-          <div className="flex flex-col">
-            {queuePaused && visibleQueuedMessages.length > 0 && (
-              <div className="flex h-8 items-center justify-between gap-2 px-2 text-xs text-text-muted">
-                <span>{t('conversation.queue.paused')}</span>
-                <button
-                  type="button"
-                  data-testid="resume-queue-button"
-                  onClick={onResumeQueue}
-                  className="h-8 rounded-lg px-2 text-xs text-text-secondary hover:bg-muted hover:text-text-primary"
-                >
-                  {t('conversation.queue.resume')}
-                </button>
-              </div>
-            )}
-            {guidanceMessages.map(message => (
-              <QueueRow
-                translate={t}
-                key={message.id}
-                id={message.id}
-                content={message.content}
-                status={message.status}
-                error={message.error}
-                mode="guidance"
-                onCancel={onCancelGuidanceMessage}
-                onInterrupt={onInterruptAndSendQueuedMessage}
-              />
-            ))}
-            {displayedQueuedMessages.map(message => (
-              <QueueRow
-                translate={t}
-                key={message.id}
-                id={message.id}
-                content={message.content}
-                status={message.status}
-                error={message.error}
-                notice={message.notice}
-                deliveryMode={message.deliveryMode}
-                runtimeQueued={message.runtimeQueued}
-                runtimeQueuePosition={message.runtimeQueuePosition}
-                mode="queue"
-                onForceStart={onForceStartQueuedMessage}
-                onGuide={onSendQueuedAsGuidance}
-                onInterrupt={onInterruptAndSendQueuedMessage}
-                onEdit={onEditQueuedMessage}
-                canReorder={
-                  message.status === 'queued' &&
-                  !message.runtimeQueued &&
-                  queuedMessageIds.length > 1 &&
-                  Boolean(onReorderQueuedMessages)
-                }
-                onCancel={onCancelQueuedMessage}
-              />
-            ))}
-          </div>
-        </SortableContext>
-        <DragOverlay dropAnimation={null}>
-          {activeMessage && <QueueDragPreview content={activeMessage.content} />}
-        </DragOverlay>
-      </DndContext>
+        {state => {
+          const draft = state.moving?.order ?? state.value
+          const byId = new Map(displayedQueuedMessages.map(message => [message.id, message]))
+          let next = 0
+          const renderedMessages = displayedQueuedMessages
+            .map(message =>
+              queuedMessageIds.includes(message.id) ? byId.get(draft[next++]) : message
+            )
+            .filter((message): message is (typeof displayedQueuedMessages)[number] =>
+              Boolean(message)
+            )
+          return (
+            <div className="flex flex-col">
+              {queuePaused && visibleQueuedMessages.length > 0 && (
+                <div className="flex h-8 items-center justify-between gap-2 px-2 text-xs text-text-muted">
+                  <span>{t('conversation.queue.paused')}</span>
+                  <ControlButton
+                    variant="unstyled"
+                    type="button"
+                    data-testid="resume-queue-button"
+                    onClick={onResumeQueue}
+                    disabled={!onResumeQueue}
+                    className={`${controlActionDensity.dense} rounded-lg px-2 text-xs text-text-secondary hover:bg-muted hover:text-text-primary`}
+                  >
+                    {t('conversation.queue.resume')}
+                  </ControlButton>
+                </div>
+              )}
+              {guidanceMessages.map(message => (
+                <QueueRow
+                  translate={t}
+                  key={message.id}
+                  id={message.id}
+                  content={message.content}
+                  status={message.status}
+                  error={message.error}
+                  mode="guidance"
+                  onCancel={onCancelGuidanceMessage}
+                  onInterrupt={onInterruptAndSendQueuedMessage}
+                />
+              ))}
+              {renderedMessages.map(message => (
+                <QueueRow
+                  translate={t}
+                  key={message.id}
+                  id={message.id}
+                  content={message.content}
+                  status={message.status}
+                  error={message.error}
+                  notice={message.notice}
+                  deliveryMode={message.deliveryMode}
+                  runtimeQueued={message.runtimeQueued}
+                  runtimeQueuePosition={message.runtimeQueuePosition}
+                  mode="queue"
+                  onForceStart={onForceStartQueuedMessage}
+                  onGuide={onSendQueuedAsGuidance}
+                  onInterrupt={onInterruptAndSendQueuedMessage}
+                  onEdit={onEditQueuedMessage}
+                  canReorder={
+                    canReorderQueuedMessage(message) &&
+                    queuedMessageIds.length > 1 &&
+                    Boolean(onReorderQueuedMessages)
+                  }
+                  onCancel={onCancelQueuedMessage}
+                />
+              ))}
+            </div>
+          )
+        }}
+      </SortableRoot>
     </div>
   )
 }
@@ -206,15 +194,6 @@ function QueueRow({
   canReorder = false,
   onCancel,
 }: QueueRowProps) {
-  const {
-    attributes,
-    listeners,
-    setActivatorNodeRef,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id, disabled: !canReorder })
   const isBusy = status === 'sending'
   const isSendingGuidance = isBusy && deliveryMode === 'guidance'
   const showInlineInterrupt = Boolean(onInterrupt) && !runtimeQueued
@@ -236,28 +215,25 @@ function QueueRow({
             : null
 
   return (
-    <div
-      ref={setNodeRef}
+    <SortableItem
+      value={mode === 'guidance' ? `guidance:${id}` : id}
+      label={content}
+      disabled={!canReorder}
       data-testid={`conversation-queue-row-${id}`}
-      style={{ transform: CSS.Transform.toString(transform), transition }}
       className={[
         'flex min-h-8 items-center gap-2 rounded-xl px-2 text-sm text-text-secondary hover:bg-surface',
-        isDragging ? 'opacity-30' : '',
       ].join(' ')}
     >
       {canReorder && (
-        <button
+        <SortableHandle
           type="button"
-          ref={setActivatorNodeRef}
           data-testid={`queue-drag-handle-${id}`}
-          {...attributes}
-          {...listeners}
-          className="flex h-8 w-4 shrink-0 touch-none cursor-grab items-center justify-center rounded text-text-muted hover:bg-muted active:cursor-grabbing"
+          className="shrink-0 text-text-muted hover:bg-muted"
           aria-label={t('conversation.queue.reorder')}
           title={t('conversation.queue.reorder')}
         >
           <GripVertical className="h-4 w-4" aria-hidden="true" />
-        </button>
+        </SortableHandle>
       )}
       <span className="flex min-w-0 flex-1 items-center gap-2">
         <CornerDownRight className="h-3.5 w-3.5 shrink-0 text-text-muted" />
@@ -275,62 +251,67 @@ function QueueRow({
       </span>
       <div className="flex shrink-0 items-center gap-1">
         {runtimeQueued && onForceStart && (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`queue-force-start-button-${id}`}
             onClick={() => onForceStart(id)}
             disabled={isBusy}
-            className="flex h-11 min-w-[44px] items-center justify-center gap-1.5 rounded-lg px-2 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:min-w-0"
+            className={`${controlActionDensity.dense} inline-flex min-w-11 items-center justify-center gap-1.5 rounded-lg px-2 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50 md:min-w-0`}
             aria-label={t('workbench.runtime_follow_up_force_start')}
           >
             <Zap className="h-3.5 w-3.5" />
             <span>{t('workbench.runtime_follow_up_force_start')}</span>
-          </button>
+          </ControlButton>
         )}
         {mode === 'queue' && !runtimeQueued && !isSendingGuidance && onGuide && (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`queue-guidance-button-${id}`}
             onClick={() => onGuide?.(id)}
             disabled={isBusy}
-            className="flex h-11 min-w-[44px] items-center justify-center gap-1 rounded-lg px-2 text-xs text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:min-w-0"
+            className={`${controlActionDensity.dense} inline-flex min-w-11 items-center justify-center gap-1 rounded-lg px-2 text-xs text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-50 md:min-w-0`}
             aria-label={t('conversation.queue.send_as_guidance')}
           >
             <CornerDownRight className="h-3.5 w-3.5" />
             <span>{t('conversation.queue.guide')}</span>
-          </button>
+          </ControlButton>
         )}
         {showInlineInterrupt && (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`queue-interrupt-button-${id}`}
             onClick={() => onInterrupt?.(id)}
-            className="flex h-11 min-w-[44px] items-center justify-center gap-1.5 rounded-lg px-2 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary sm:h-8 sm:min-w-0"
+            className={`${controlActionDensity.dense} inline-flex min-w-11 items-center justify-center gap-1.5 rounded-lg px-2 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary md:min-w-0`}
             aria-label={t('workbench.interrupt_and_send')}
           >
             <Zap className="h-3.5 w-3.5" />
             <span>{t('workbench.interrupt_and_send_short')}</span>
-          </button>
+          </ControlButton>
         )}
         {!isSendingGuidance && onCancel && (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid={`queue-cancel-button-${id}`}
             onClick={() => onCancel?.(id)}
             disabled={isBusy}
-            className="flex h-11 min-w-[44px] items-center justify-center gap-1 rounded-lg px-2 text-xs text-text-muted hover:bg-muted hover:text-text-secondary disabled:cursor-not-allowed disabled:opacity-50 sm:h-8 sm:min-w-0"
+            className={`${runtimeQueued ? controlActionDensity.dense : controlIconActionDensity.dense} inline-flex min-w-11 items-center justify-center gap-1 rounded-lg px-2 text-xs text-text-muted hover:bg-muted hover:text-text-secondary disabled:cursor-not-allowed disabled:opacity-50 md:min-w-7`}
             aria-label={runtimeQueued ? t('common.cancel') : t('conversation.queue.remove')}
           >
             <Trash2 className="h-3.5 w-3.5" />
             {runtimeQueued && <span>{t('common.cancel')}</span>}
-          </button>
+          </ControlButton>
         )}
         {mode === 'queue' && !runtimeQueued && !isBusy && onEdit && (
           <ActionMenu
+            density="dense"
             ariaLabel={t('conversation.queue.more')}
             testId={`queue-more-button-${id}`}
             icon={MoreHorizontal}
-            triggerClassName="flex h-11 min-w-[44px] items-center justify-center rounded-lg text-text-muted hover:bg-muted hover:text-text-secondary sm:h-8 sm:min-w-0 sm:px-2"
+            triggerClassName="inline-flex items-center justify-center rounded-lg text-text-muted hover:bg-muted hover:text-text-secondary"
             items={[
               {
                 label: t('conversation.queue.edit'),
@@ -342,18 +323,6 @@ function QueueRow({
           />
         )}
       </div>
-    </div>
-  )
-}
-
-function QueueDragPreview({ content }: { content: string }) {
-  return (
-    <div
-      data-testid="queue-drag-overlay"
-      className="flex min-h-8 max-w-[28rem] items-center gap-2 rounded-xl border border-border bg-base px-3 text-sm text-text-secondary shadow-lg"
-    >
-      <GripVertical className="h-4 w-4 shrink-0 text-text-muted" />
-      <span className="truncate">{content}</span>
-    </div>
+    </SortableItem>
   )
 }

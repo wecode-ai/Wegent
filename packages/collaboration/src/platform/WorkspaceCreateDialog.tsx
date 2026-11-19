@@ -1,8 +1,14 @@
+import { DialogSurface } from '../controls/DialogSurface'
+import { SelectContent, SelectItem, SelectRoot, SelectTrigger } from '../controls/SelectParts'
+import { normalizeSelectValue } from '../controls/selectValue'
+import { TextField as ControlInput } from '../controls/TextField'
+import { Textarea as ControlTextarea } from '../controls/Textarea'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useLayoutEffect, useRef, useState } from 'react'
 import { Loader2 } from 'lucide-react'
+import { useRef, useState } from 'react'
 
 interface WorkspaceCreateMessages {
   createWorkspace: string
@@ -34,21 +40,10 @@ export function WorkspaceCreateDialog({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const submittingRef = useRef(false)
-  const dialogRef = useRef<HTMLDialogElement>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
   const effectiveOwnerOptions = ownerOptions ?? [
     { label: messages.personalOwner, namespace: 'default' },
   ]
-
-  useLayoutEffect(() => {
-    const trigger = document.activeElement
-    const dialog = dialogRef.current!
-    dialog.showModal()
-    dialog.querySelector('input')?.focus()
-    return () => {
-      dialog.close()
-      if (trigger instanceof HTMLElement && trigger.isConnected) trigger.focus()
-    }
-  }, [])
 
   async function submit() {
     if (submittingRef.current || !name.trim()) return
@@ -72,24 +67,25 @@ export function WorkspaceCreateDialog({
   }
 
   return (
-    <dialog
-      ref={dialogRef}
-      className="collaboration-dialog collaboration-workspace-create-dialog"
-      role="dialog"
-      aria-modal="true"
-      aria-label={messages.createWorkspace}
-      aria-busy={saving}
-      onCancel={event => {
-        event.preventDefault()
-        event.stopPropagation()
+    <DialogSurface
+      inline={false}
+      onClose={() => {
         if (!submittingRef.current) onClose()
       }}
+      render={
+        <div
+          ref={dialogRef}
+          className="collaboration-dialog collaboration-workspace-create-dialog"
+          aria-label={messages.createWorkspace}
+          aria-busy={saving}
+        />
+      }
     >
       <h2>{messages.createWorkspace}</h2>
       <p className="collaboration-workspace-storage-notice">{messages.cloudStorageNotice}</p>
       <label>
         {messages.name}
-        <input
+        <ControlInput
           data-testid="collaboration-workspace-name-input"
           value={name}
           disabled={saving}
@@ -101,7 +97,7 @@ export function WorkspaceCreateDialog({
       </label>
       <label>
         {messages.description}
-        <textarea
+        <ControlTextarea
           data-testid="collaboration-workspace-description-input"
           value={description}
           disabled={saving}
@@ -113,21 +109,28 @@ export function WorkspaceCreateDialog({
       </label>
       <label>
         {messages.owner}
-        <select
-          data-testid="collaboration-workspace-owner-select"
+        <SelectRoot
           disabled={saving}
-          onChange={event => {
-            setNamespace(event.target.value)
+          onValueChange={selectedValue => {
+            if (selectedValue === null) return
+            setNamespace(selectedValue)
             setError(null)
           }}
-          value={namespace}
+          value={normalizeSelectValue(namespace)}
         >
-          {effectiveOwnerOptions.map(option => (
-            <option key={option.namespace} value={option.namespace}>
-              {option.label}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger
+            data-testid="collaboration-workspace-owner-select"
+            aria-label={messages.owner}
+            data-value={namespace}
+          />
+          <SelectContent>
+            {effectiveOwnerOptions.map(option => (
+              <SelectItem key={option.namespace} value={String(option.namespace)}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </SelectRoot>
         <small>{messages.ownerHint}</small>
       </label>
       {error ? (
@@ -140,15 +143,17 @@ export function WorkspaceCreateDialog({
         </p>
       ) : null}
       <footer>
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="collaboration-workspace-create-cancel"
           disabled={saving}
           onClick={onClose}
         >
           {messages.cancel}
-        </button>
-        <button
+        </ControlButton>
+        <ControlButton
+          variant="unstyled"
           type="button"
           className="collaboration-primary-button"
           data-testid="collaboration-workspace-create-confirm"
@@ -166,8 +171,8 @@ export function WorkspaceCreateDialog({
           ) : (
             messages.createWorkspace
           )}
-        </button>
+        </ControlButton>
       </footer>
-    </dialog>
+    </DialogSurface>
   )
 }

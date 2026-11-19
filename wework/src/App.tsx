@@ -1,165 +1,46 @@
-import { useWorkbenchServiceConnections } from '@/features/workbench/workbenchServiceConnections'
-import { NotificationEventsBridge } from '@/features/notifications/NotificationEventsBridge'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { createHttpClient } from '@/api/http'
+import { listenHarnessAppLaunchProgress } from '@/api/local/harnessApps'
+import { createLocalAppServices } from '@/api/local/localServices'
 import { LOCAL_USER } from '@/api/local/localSession'
-import {
-  NotificationTaskSourceBridge,
-  NotificationTaskSourceProvider,
-} from '@/features/notifications/NotificationTaskSource'
-import { WeworkSchemeBridge } from '@/features/notifications/WeworkSchemeBridge'
-import { RuntimeInteractionsProvider } from '@/features/notifications/RuntimeInteractionsProvider'
-import { RuntimeInteractionsPage } from '@/features/notifications/RuntimeInteractionsPage'
-import { RuntimeInteractionNotice } from '@/features/notifications/RuntimeInteractionNotice'
+import { createRuntimeWorkApi } from '@/api/runtimeWork'
+import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { PluginPythonRuntimeNotice } from '@/components/plugins/PluginPythonRuntimeNotice'
-import { INTERACTIONS_PATH } from '@/features/notifications/RuntimeInteractionsContext'
-import { CollaborationExpRoute } from '@/features/collaboration-exp/CollaborationExpRoute'
-import {
-  COLLABORATION_EXP_PATH,
-  isCollaborationExpPath,
-} from '@/features/collaboration-exp/collaborationExpFeature'
-import {
-  Activity,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  memo,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-  type PointerEvent as ReactPointerEvent,
-  type ReactNode,
-} from 'react'
-import { Check, Copy, Info, Minimize2, PlugZap } from 'lucide-react'
-import { AuthProvider } from '@/features/auth/AuthProvider'
-import { useAuth } from '@/features/auth/useAuth'
-import { WorkbenchProvider } from '@/features/workbench/WorkbenchProvider'
-import { RunnerSelectionHost } from '@/features/collaboration/RunnerSelectionHost'
-import { resolveWorkbenchOwnership } from '@/features/workbench/workbenchOwnership'
-import {
-  registerRuntimeTaskLifecycleAutomation,
-  RuntimeTaskLifecycleStore,
-  RuntimeTaskLifecycleStreamCoordinator,
-} from '@/features/workbench/runtimeTaskLifecycle'
-import {
-  createDefaultWorkbenchServices,
-  type WorkbenchServices,
-} from '@/features/workbench/workbenchServices'
-import { RuntimeTaskCloseGuard } from '@/features/workbench/RuntimeTaskCloseGuard'
-import { RuntimeTaskSystemSleepBridge } from '@/features/workbench/RuntimeTaskSystemSleepBridge'
-import { ReplyPredictionCoordinator } from '@/features/reply-predictions/ReplyPredictionCoordinator'
-import { OidcCallbackPage } from '@/pages/OidcCallbackPage'
-import { LoginPage } from '@/pages/LoginPage'
-import { WeworkAuthorizePage } from '@/pages/WeworkAuthorizePage'
-import { PopoutWorkbenchPage } from '@/pages/PopoutWorkbenchPage'
+import { AppIframe } from '@/components/topnav/AppIframe'
+import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
+import { WorkspaceTabPortalOwner } from '@/components/topnav/TitlebarActionsPortal'
+import { useChromeTabs } from '@/components/topnav/useChromeTabs'
+import { setActiveWorkspaceTabPortalOwner } from '@/components/topnav/workspaceTabPortalOwnership'
 import { stripAppBasePath } from '@/config/runtime'
+import { ApplicationMenuWorkspaceBridge } from '@/desktop/ApplicationMenuWorkspaceBridge'
+import { AppPreferencesProvider } from '@/features/app-preferences/AppPreferencesProvider'
+import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+import { AppUpdateProvider } from '@/features/app-update/AppUpdateProvider'
 import {
   AppearanceProvider,
   getWorkbenchBackground,
   useOptionalAppearance,
 } from '@/features/appearance'
-import { ChromeTitlebar } from '@/components/topnav/ChromeTitlebar'
-import { GlobalIconButtonTooltip } from '@/components/ui/GlobalIconButtonTooltip'
-import { AppIframe } from '@/components/topnav/AppIframe'
-import { listenHarnessAppLaunchProgress } from '@/api/local/harnessApps'
-import { HarnessAppLaunchSurface } from '@/features/harness-apps/HarnessAppLaunchSurface'
-import { ElectronWorkbenchTabBridge } from '@/features/harness-apps/ElectronWorkbenchTabBridge'
-import { ApplicationMenuWorkspaceBridge } from '@/desktop/ApplicationMenuWorkspaceBridge'
-import {
-  clearHarnessAppLaunch,
-  harnessAppInstallationIdFromPath,
-  updateHarnessAppLaunchPhase,
-  useHarnessAppLaunchState,
-} from '@/features/harness-apps/harnessAppLaunchState'
-import { useChromeTabs } from '@/components/topnav/useChromeTabs'
-import {
-  getDesktopWindowLabel,
-  isDesktopRuntime,
-  isElectronRuntime,
-} from '@/lib/runtime-environment'
-import { AppUpdateProvider } from '@/features/app-update/AppUpdateProvider'
-import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
-import { LocalRuntimeNotice } from '@/features/local-runtime/LocalRuntimeNotice'
-import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
-import { CodexHomeInitializer } from '@/features/local-runtime/CodexHomeInitializer'
-import { IdleTaskCoordinator } from '@/features/idle-tasks/IdleTaskCoordinator'
-import { WeworkIdleTasks } from '@/features/idle-tasks/WeworkIdleTasks'
-import { CloudConnectionProvider } from '@/features/cloud-connection/CloudConnectionProvider'
-import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecutorCloudBridge'
-import { PluginAutoUpdateCoordinator } from '@/features/plugins/PluginAutoUpdateCoordinator'
-import { CloudModelCatalogSyncDialogHost } from '@/features/model-settings/cloudModelCatalogSync'
-import { cn } from '@/lib/utils'
-import { isSettingsRoute } from '@/lib/navigation'
-import { createLocalAppServices } from '@/api/local/localServices'
-import { createHttpClient } from '@/api/http'
-import { createRuntimeWorkApi } from '@/api/runtimeWork'
-import { useAwayImNotificationPresence } from '@/features/workbench/awayImNotificationPresence'
-import { applyLanguagePreference } from '@/i18n/languagePreference'
-import {
-  KEYBINDINGS_CHANGED_EVENT,
-  GO_BACK_COMMAND,
-  GO_FORWARD_COMMAND,
-  INCREASE_FONT_SIZE_COMMAND,
-  DECREASE_FONT_SIZE_COMMAND,
-  RESET_FONT_SIZE_COMMAND,
-  OPEN_SETTINGS_COMMAND,
-  OPEN_TERMINAL_COMMAND,
-  TOGGLE_SIDEBAR_COMMAND,
-  TOGGLE_SIDE_PANEL_COMMAND,
-  TOGGLE_MODEL_SELECTOR_COMMAND,
-  dispatchGoBackShortcut,
-  dispatchGoForwardShortcut,
-  dispatchOpenSettingsShortcut,
-  dispatchOpenTerminalShortcut,
-  dispatchToggleSidebarShortcut,
-  dispatchToggleSidePanelShortcut,
-  dispatchToggleModelSelectorShortcut,
-  dispatchStepFontSizeShortcut,
-  dispatchResetFontSizeShortcut,
-  dispatchBuiltinShortcutCommand,
-  shouldIgnoreWorkbenchShortcut,
-  isBuiltinShortcutCommand,
-  keybindingFromKeyboardEvent,
-  mergeKeybindings,
-  setActiveKeybindings,
-  type KeybindingOverride,
-} from '@/lib/keybindings'
-import { getPlatform } from '@/lib/platform'
-import {
-  getWeworkDevInstanceInfo,
-  getWeworkDevInstanceRows,
-  getWeworkDocumentTitle,
-} from '@/lib/wework-dev-instance'
 import { AppshotBridge } from '@/features/appshots/AppshotBridge'
-import { HarnessAppAutoLauncher } from '@/features/harness-apps/HarnessAppAutoLauncher'
-import { SystemDragPanel } from '@/features/system-drag/SystemDragPanel'
-import { SystemDragBridge } from '@/features/system-drag/SystemDragBridge'
-import { ProcessExplorerPage } from '@/pages/ProcessExplorerPage'
-import { installMacOSInputArrowKeyGuard } from '@/lib/macosInputArrowKeyGuard'
-import { useExperimentalFeaturesState } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
-import { useAppPreferenceFeatureState } from '@/features/experimental-features/useAppPreferenceFeatureState'
-import { AppPreferencesProvider } from '@/features/app-preferences/AppPreferencesProvider'
-import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
-import { useTranslation } from '@/hooks/useTranslation'
-import { WorkspaceTabsProvider } from '@/features/workspace-tabs/WorkspaceTabsContext'
-import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
+import { AuthProvider } from '@/features/auth/AuthProvider'
+import { useAuth } from '@/features/auth/useAuth'
+import { CloudConnectionProvider } from '@/features/cloud-connection/CloudConnectionProvider'
+import { LocalExecutorCloudBridge } from '@/features/cloud-connection/LocalExecutorCloudBridge'
+import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { CollaborationExpRoute } from '@/features/collaboration-exp/CollaborationExpRoute'
 import {
-  createWorkspaceTab,
-  inferWorkspaceTabKind,
-  type WorkspaceTab,
-} from '@/features/workspace-tabs/workspaceTabs'
-import { harnessAppRoute, resolveRunningHarnessApp } from '@/features/harness-apps/harnessAppTabs'
-import type { User } from '@/types/api'
-import { TelemetryAgent } from '@/telemetry/TelemetryAgent'
-import { TelemetryBridge } from '@/telemetry/TelemetryBridge'
-import { track } from '@/telemetry/client'
-import { resolveTelemetryRoute } from '@/telemetry/routeRegistry'
-import { telemetryFeatureForLocation } from '@/telemetry/routes'
-import { WorkspaceTabPortalOwner } from '@/components/topnav/TitlebarActionsPortal'
-import { setActiveWorkspaceTabPortalOwner } from '@/components/topnav/workspaceTabPortalOwnership'
+  COLLABORATION_EXP_PATH,
+  isCollaborationExpPath,
+} from '@/features/collaboration-exp/collaborationExpFeature'
+import { RunnerSelectionHost } from '@/features/collaboration/RunnerSelectionHost'
+import { ComputerUseActivityIndicator } from '@/features/computer-use/ComputerUseActivityIndicator'
 import { DshAppSurface } from '@/features/dsh-runtime/DshAppSurface'
-import { DshRouteSurface } from '@/features/dsh-runtime/DshRouteSurface'
 import { useDshClientContext } from '@/features/dsh-runtime/DshClientContext'
+import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
+import { DshRouteSurface } from '@/features/dsh-runtime/DshRouteSurface'
+import { DshSlotSurface } from '@/features/dsh-runtime/DshSlotSurface'
+import { DshWorkspaceTabSurface } from '@/features/dsh-runtime/DshWorkspaceTabSurface'
+import { getDshApps, resolveDshApp, type WeworkDshApp } from '@/features/dsh-runtime/dshApps'
 import {
   executeDshCommand,
   getDshKeybindingDefaults,
@@ -168,17 +49,136 @@ import {
   registerDshContext,
   subscribeDshExtensions,
 } from '@/features/dsh-runtime/dshExtensions'
-import { DshSlotSurface } from '@/features/dsh-runtime/DshSlotSurface'
-import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
-import { DshWorkspaceTabSurface } from '@/features/dsh-runtime/DshWorkspaceTabSurface'
-import { getDshApps, resolveDshApp, type WeworkDshApp } from '@/features/dsh-runtime/dshApps'
 import { resolveDshRoute, type WeworkDshRoute } from '@/features/dsh-runtime/dshRoutes'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
-import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
 import { dshWorkspaceTabIdFromPath } from '@/features/dsh-runtime/dshWorkspaceTabs'
-import { ComputerUseActivityIndicator } from '@/features/computer-use/ComputerUseActivityIndicator'
-import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { useDshSlotEntries } from '@/features/dsh-runtime/useDshSlotEntries'
+import { useAppPreferenceFeatureState } from '@/features/experimental-features/useAppPreferenceFeatureState'
+import { useExperimentalFeaturesState } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
+import { ElectronWorkbenchTabBridge } from '@/features/harness-apps/ElectronWorkbenchTabBridge'
+import { HarnessAppAutoLauncher } from '@/features/harness-apps/HarnessAppAutoLauncher'
+import { HarnessAppLaunchSurface } from '@/features/harness-apps/HarnessAppLaunchSurface'
+import {
+  clearHarnessAppLaunch,
+  harnessAppInstallationIdFromPath,
+  updateHarnessAppLaunchPhase,
+  useHarnessAppLaunchState,
+} from '@/features/harness-apps/harnessAppLaunchState'
+import { harnessAppRoute, resolveRunningHarnessApp } from '@/features/harness-apps/harnessAppTabs'
+import { IdleTaskCoordinator } from '@/features/idle-tasks/IdleTaskCoordinator'
+import { WeworkIdleTasks } from '@/features/idle-tasks/WeworkIdleTasks'
+import { CodexHomeInitializer } from '@/features/local-runtime/CodexHomeInitializer'
+import { LocalRuntimeInitializer } from '@/features/local-runtime/LocalRuntimeInitializer'
+import { LocalRuntimeNotice } from '@/features/local-runtime/LocalRuntimeNotice'
+import { CloudModelCatalogSyncDialogHost } from '@/features/model-settings/cloudModelCatalogSync'
+import { NotificationEventsBridge } from '@/features/notifications/NotificationEventsBridge'
+import {
+  NotificationTaskSourceBridge,
+  NotificationTaskSourceProvider,
+} from '@/features/notifications/NotificationTaskSource'
+import { RuntimeInteractionNotice } from '@/features/notifications/RuntimeInteractionNotice'
+import { INTERACTIONS_PATH } from '@/features/notifications/RuntimeInteractionsContext'
+import { RuntimeInteractionsPage } from '@/features/notifications/RuntimeInteractionsPage'
+import { RuntimeInteractionsProvider } from '@/features/notifications/RuntimeInteractionsProvider'
+import { WeworkSchemeBridge } from '@/features/notifications/WeworkSchemeBridge'
+import { PluginAutoUpdateCoordinator } from '@/features/plugins/PluginAutoUpdateCoordinator'
+import { ReplyPredictionCoordinator } from '@/features/reply-predictions/ReplyPredictionCoordinator'
+import { SystemDragBridge } from '@/features/system-drag/SystemDragBridge'
+import { SystemDragPanel } from '@/features/system-drag/SystemDragPanel'
+import { RuntimeTaskCloseGuard } from '@/features/workbench/RuntimeTaskCloseGuard'
+import { RuntimeTaskSystemSleepBridge } from '@/features/workbench/RuntimeTaskSystemSleepBridge'
+import { WorkbenchProvider } from '@/features/workbench/WorkbenchProvider'
+import { useAwayImNotificationPresence } from '@/features/workbench/awayImNotificationPresence'
+import {
+  registerRuntimeTaskLifecycleAutomation,
+  RuntimeTaskLifecycleStore,
+  RuntimeTaskLifecycleStreamCoordinator,
+} from '@/features/workbench/runtimeTaskLifecycle'
+import { resolveWorkbenchOwnership } from '@/features/workbench/workbenchOwnership'
+import { useWorkbenchServiceConnections } from '@/features/workbench/workbenchServiceConnections'
+import {
+  createDefaultWorkbenchServices,
+  type WorkbenchServices,
+} from '@/features/workbench/workbenchServices'
+import { WorkspaceTabsProvider } from '@/features/workspace-tabs/WorkspaceTabsContext'
+import {
+  createWorkspaceTab,
+  inferWorkspaceTabKind,
+  type WorkspaceTab,
+} from '@/features/workspace-tabs/workspaceTabs'
+import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
+import { useTranslation } from '@/hooks/useTranslation'
+import { applyLanguagePreference } from '@/i18n/languagePreference'
+import {
+  DECREASE_FONT_SIZE_COMMAND,
+  dispatchBuiltinShortcutCommand,
+  dispatchGoBackShortcut,
+  dispatchGoForwardShortcut,
+  dispatchOpenSettingsShortcut,
+  dispatchOpenTerminalShortcut,
+  dispatchResetFontSizeShortcut,
+  dispatchStepFontSizeShortcut,
+  dispatchToggleModelSelectorShortcut,
+  dispatchToggleSidebarShortcut,
+  dispatchToggleSidePanelShortcut,
+  GO_BACK_COMMAND,
+  GO_FORWARD_COMMAND,
+  INCREASE_FONT_SIZE_COMMAND,
+  isBuiltinShortcutCommand,
+  keybindingFromKeyboardEvent,
+  KEYBINDINGS_CHANGED_EVENT,
+  mergeKeybindings,
+  OPEN_SETTINGS_COMMAND,
+  OPEN_TERMINAL_COMMAND,
+  RESET_FONT_SIZE_COMMAND,
+  setActiveKeybindings,
+  shouldIgnoreWorkbenchShortcut,
+  TOGGLE_MODEL_SELECTOR_COMMAND,
+  TOGGLE_SIDE_PANEL_COMMAND,
+  TOGGLE_SIDEBAR_COMMAND,
+  type KeybindingOverride,
+} from '@/lib/keybindings'
+import { installMacOSInputArrowKeyGuard } from '@/lib/macosInputArrowKeyGuard'
+import { isSettingsRoute } from '@/lib/navigation'
+import { getPlatform } from '@/lib/platform'
+import {
+  getDesktopWindowLabel,
+  isDesktopRuntime,
+  isElectronRuntime,
+} from '@/lib/runtime-environment'
+import { cn } from '@/lib/utils'
+import {
+  getWeworkDevInstanceInfo,
+  getWeworkDevInstanceRows,
+  getWeworkDocumentTitle,
+} from '@/lib/wework-dev-instance'
+import { LoginPage } from '@/pages/LoginPage'
+import { OidcCallbackPage } from '@/pages/OidcCallbackPage'
+import { PopoutWorkbenchPage } from '@/pages/PopoutWorkbenchPage'
+import { ProcessExplorerPage } from '@/pages/ProcessExplorerPage'
+import { WeworkAuthorizePage } from '@/pages/WeworkAuthorizePage'
+import { TelemetryAgent } from '@/telemetry/TelemetryAgent'
+import { TelemetryBridge } from '@/telemetry/TelemetryBridge'
+import { track } from '@/telemetry/client'
+import { resolveTelemetryRoute } from '@/telemetry/routeRegistry'
+import { telemetryFeatureForLocation } from '@/telemetry/routes'
+import type { User } from '@/types/api'
 import { deviceSurfaceExtension } from '@extensions/device-surface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Check, Copy, Info, Minimize2, PlugZap } from 'lucide-react'
+import {
+  Activity,
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 
 const POPOUT_WINDOW_LABEL = 'popout-window'
 const COLLABORATION_EXP_TAB_PATHS = [COLLABORATION_EXP_PATH] as const
@@ -878,7 +878,6 @@ export default function App() {
     >
       <DshSlotSurface className="contents" slot={WEWORK_DSH_SLOTS.shellBefore} />
       {content}
-      <GlobalIconButtonTooltip />
       <ComputerUseActivityIndicator />
       <DshSlotSurface className="contents" slot={WEWORK_DSH_SLOTS.shellAfter} />
       <div className="pointer-events-none fixed inset-0 z-system-popover">
@@ -1508,7 +1507,8 @@ function WeworkDevInstanceBadge() {
       style={position}
       className="group pointer-events-auto fixed bottom-3 right-3 z-critical max-w-[min(460px,calc(100vw-1.5rem))]"
     >
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="wework-dev-instance-trigger"
         onClick={handleTriggerClick}
@@ -1526,7 +1526,7 @@ function WeworkDevInstanceBadge() {
         ) : (
           <span className="truncate text-text-primary">{info.title}</span>
         )}
-      </button>
+      </ControlButton>
       <div
         className={cn(
           'pointer-events-none absolute w-[min(460px,calc(100vw-1.5rem))] text-xs opacity-0 transition-opacity group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-hover:pointer-events-auto group-hover:opacity-100',
@@ -1538,7 +1538,8 @@ function WeworkDevInstanceBadge() {
           <div className="mb-1 flex items-center justify-between px-2 py-1">
             <span className="font-medium text-text-primary">Development instance</span>
             {!collapsed && (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="collapse-wework-dev-instance-button"
                 className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary wework:hover:bg-black/[0.04]"
@@ -1547,7 +1548,7 @@ function WeworkDevInstanceBadge() {
                 onClick={() => setCollapsed(true)}
               >
                 <Minimize2 className="h-3.5 w-3.5" />
-              </button>
+              </ControlButton>
             )}
           </div>
           <div className="space-y-1">
@@ -1563,7 +1564,8 @@ function WeworkDevInstanceBadge() {
                 >
                   {row.value}
                 </div>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`copy-wework-dev-${row.key}-button`}
                   className="flex h-7 w-7 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary wework:hover:bg-black/[0.04]"
@@ -1576,7 +1578,7 @@ function WeworkDevInstanceBadge() {
                   ) : (
                     <Copy className="h-3.5 w-3.5" />
                   )}
-                </button>
+                </ControlButton>
               </div>
             ))}
           </div>

@@ -1,11 +1,12 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
-import { CalendarDays, ClipboardList, History, MessageSquare, Sunrise } from 'lucide-react'
 import type { StandInExecutorApi, StandInOnboardingResult } from '@/api/standIn'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { CalendarDays, ClipboardList, History, MessageSquare, Sunrise } from 'lucide-react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 
 import {
   StandInOnboardingSetup,
@@ -78,7 +79,7 @@ export function StandInOnboarding({
     if (setupRef.current) setupRef.current.requestLeave(dismiss)
     else dismiss()
   }
-  const dialogRef = useDialogKeyboard<HTMLElement>(close, open)
+  const dialogRef = useRef<HTMLElement>(null)
   useEffect(() => {
     if (!deviceId || !active || (bypass && !guideOpen)) return
     let current = true
@@ -142,14 +143,18 @@ export function StandInOnboarding({
               if (event.target === event.currentTarget) close()
             }}
           >
-            <section
-              ref={dialogRef}
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby={`${scopeId}-title`}
-              tabIndex={-1}
-              className="max-h-[calc(100dvh-2rem)] w-full max-w-3xl overflow-y-auto rounded-2xl border border-border bg-background p-5 text-text-primary shadow-lg md:p-6"
-              data-testid="stand-in-onboarding"
+            <DialogSurface
+              onClose={close}
+              active={open}
+              render={
+                <section
+                  ref={dialogRef}
+                  aria-labelledby={`${scopeId}-title`}
+                  tabIndex={-1}
+                  className="max-h-[calc(100dvh-2rem)] w-full max-w-3xl overflow-y-auto rounded-2xl border border-border bg-background p-5 text-text-primary shadow-lg md:p-6"
+                  data-testid="stand-in-onboarding"
+                />
+              }
             >
               <div className="flex w-full flex-col gap-5">
                 <div className="flex items-start justify-between gap-3">
@@ -189,7 +194,9 @@ export function StandInOnboarding({
                       </h3>
                       <div className="grid gap-3 md:grid-cols-2">
                         {examples.map(({ id, icon: Icon }) => (
-                          <button
+                          <ControlButton
+                            variant="outline"
+                            size="sm"
                             type="button"
                             key={id}
                             data-testid={`stand-in-onboarding-example-${id}`}
@@ -213,7 +220,7 @@ export function StandInOnboarding({
                                 {t(`standIn.onboarding.examples.${id}.prompt`)}
                               </p>
                             </div>
-                          </button>
+                          </ControlButton>
                         ))}
                       </div>
                       <p className="text-xs leading-relaxed text-text-secondary">
@@ -238,7 +245,7 @@ export function StandInOnboarding({
                   </Button>
                 ) : null}
               </div>
-            </section>
+            </DialogSurface>
           </div>,
           document.body
         )}

@@ -6,7 +6,7 @@ import {
 import { IssueCardGoalSummary } from "./IssueCardTaskSummary";
 import { issueNeedsExecutionConfiguration } from "./model";
 import type { CollaborationTranslate } from "../i18n";
-import { Tooltip } from "../issue-detail/Tooltip";
+import { Tooltip } from "../controls/Tooltip";
 
 export function IssueExecutionConfigurationBadge({
   itemId,

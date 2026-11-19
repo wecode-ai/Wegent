@@ -1,5 +1,16 @@
-import { useEffect, useRef, useState, type ChangeEvent, type KeyboardEvent } from 'react'
+import { Button as UiButton } from '@ui-sdk/react/button'
+import { isImeComposingEvent } from '@wegent/chat-core/ime'
 import { Pencil } from 'lucide-react'
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type KeyboardEvent,
+} from 'react'
+import { Textarea as ControlTextarea } from '../controls/Textarea'
+import { TextField as ControlInput } from '../controls/TextField'
+import { Button as ControlButton } from '../markdown/Button'
 
 export function HoverEditableText({
   value,
@@ -37,7 +48,10 @@ export function HoverEditableText({
       onChange: (event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) =>
         onChange(event.target.value),
       onBlur: () => setEditing(false),
-      onKeyDown: (event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+      onKeyDown: (
+        event: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>,
+      ) => {
+        if (isImeComposingEvent(event)) return
         if (event.key === 'Escape' || (!multiline && event.key === 'Enter')) {
           event.preventDefault()
           event.stopPropagation()
@@ -47,17 +61,17 @@ export function HoverEditableText({
       },
     }
     return multiline ? (
-      <textarea
+      <ControlTextarea
         {...sharedProps}
         className="collaboration-project-create-inline-textarea"
         rows={2}
       />
     ) : (
-      <input {...sharedProps} className="collaboration-project-create-inline-input" />
+      <ControlInput
+        {...sharedProps}
+        className="collaboration-project-create-inline-input"
+      />
     )
-  }
-  const startEditingFromText = () => {
-    if (activateOnTextClick) setEditing(true)
   }
   return (
     <span
@@ -65,34 +79,48 @@ export function HoverEditableText({
         showEditButton ? ' is-edit-affordance-visible' : ''
       }`}
     >
-      <span
-        className={[
-          !value && placeholder ? 'is-placeholder' : '',
-          activateOnTextClick ? 'is-clickable' : '',
-        ]
-          .filter(Boolean)
-          .join(' ')}
-        role={activateOnTextClick ? 'button' : undefined}
-        tabIndex={activateOnTextClick ? 0 : undefined}
-        data-testid={testId}
-        onClick={startEditingFromText}
-        onKeyDown={event => {
-          if (activateOnTextClick && (event.key === 'Enter' || event.key === ' ')) {
-            event.preventDefault()
-            setEditing(true)
+      {activateOnTextClick ? (
+        <UiButton
+          render={
+            <span
+              className={[
+                !value && placeholder ? 'is-placeholder' : '',
+                activateOnTextClick ? 'is-clickable' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+              data-testid={testId}
+            >
+              {value || placeholder}
+            </span>
           }
-        }}
-      >
-        {value || placeholder}
-      </span>
-      <button
+          aria-label={ariaLabel}
+          onClick={() => setEditing(true)}
+        />
+      ) : (
+        <span
+          className={[
+            !value && placeholder ? 'is-placeholder' : '',
+            activateOnTextClick ? 'is-clickable' : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+          data-testid={testId}
+        >
+          {value || placeholder}
+        </span>
+      )}
+      <ControlButton
+        variant="ghost"
+        size="sm"
         ref={editButton}
+        data-testid={(testId ?? 'hover-editable-text') + '-edit'}
         type="button"
         aria-label={ariaLabel}
         onClick={() => setEditing(true)}
       >
         <Pencil aria-hidden="true" />
-      </button>
+      </ControlButton>
     </span>
   )
 }

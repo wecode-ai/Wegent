@@ -1,34 +1,8 @@
-import { DshSettingsSectionSurface } from '@/features/dsh-runtime/DshSettingsSectionSurface'
-import { GeneralFixedWorkspaceTabs } from './GeneralFixedWorkspaceTabs'
-import { TelemetryCollectionNotice } from '@/telemetry/TelemetryCollectionNotice'
-import { saveTelemetryConsent, useSessionTelemetryConsent } from '@/telemetry/sessionConsent'
-import { DefaultRunnerSetting } from './DefaultRunnerSetting'
-import { ReplyPredictionSettings } from './ReplyPredictionSettings'
-import { useContext, useEffect, useState } from 'react'
-import {
-  Activity,
-  Bell,
-  Check,
-  CircleDot,
-  Gauge,
-  Loader2,
-  Pencil,
-  Trash2,
-  type LucideIcon,
-} from 'lucide-react'
-import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
+import { DeleteIconButton } from '@wegent/collaboration/controls/DeleteIconButton'
+import { harnessAppsApi, type HarnessAppInstallation } from '@/api/local/harnessApps'
+import { getWegentUsageDisplay } from '@/api/wegentUsage'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
-import { useTranslation } from '@/hooks/useTranslation'
-import {
-  SettingsGroup,
-  SettingsPage,
-  SettingsPageHeader,
-  SettingsRow,
-  SettingsSegmentedControl,
-  SettingsSwitch,
-} from './settings-ui'
-import { applyLanguagePreference, languagePreferenceOptions } from '@/i18n/languagePreference'
-import { ExternalContentImportDialog } from './ExternalContentImportDialog'
+import { KeyboardShortcut } from '@/components/common/KeyboardShortcut'
 import {
   defaultAppPreferences,
   getAppPreferences,
@@ -39,20 +13,54 @@ import {
   type FixedWorkspaceTabPreference,
   type WorkbenchMode,
 } from '@/desktop/appPreferences'
+import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { DshSettingsSectionSurface } from '@/features/dsh-runtime/DshSettingsSectionSurface'
+import { changeWorkbenchMode } from '@/features/workbench-mode/workbenchMode'
+import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
+import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import {
   fixedWorkspaceTabsPatch,
   saveFixedWorkspaceTabs as persistFixedWorkspaceTabs,
 } from '@/features/workspace-tabs/fixedWorkspaceTabs'
+import { useTranslation } from '@/hooks/useTranslation'
+import { applyLanguagePreference, languagePreferenceOptions } from '@/i18n/languagePreference'
 import { keybindingFromKeyboardEvent, normalizeKeybinding } from '@/lib/keybindings'
-import { getWegentUsageDisplay } from '@/api/wegentUsage'
-import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
-import { WorkbenchContext } from '@/features/workbench/useWorkbench'
-import { selectedModelExecutionFields } from '@/features/workbench/runtimeModelSelection'
-import { harnessAppsApi, type HarnessAppInstallation } from '@/api/local/harnessApps'
-import { changeWorkbenchMode } from '@/features/workbench-mode/workbenchMode'
 import { getPlatform } from '@/lib/platform'
+import { TelemetryCollectionNotice } from '@/telemetry/TelemetryCollectionNotice'
+import { saveTelemetryConsent, useSessionTelemetryConsent } from '@/telemetry/sessionConsent'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import {
+  Activity,
+  Bell,
+  Check,
+  CircleDot,
+  Gauge,
+  Loader2,
+  Pencil,
+  type LucideIcon,
+} from 'lucide-react'
+import { useContext, useEffect, useState } from 'react'
+import { DefaultRunnerSetting } from './DefaultRunnerSetting'
+import { ExternalContentImportDialog } from './ExternalContentImportDialog'
+import { GeneralFixedWorkspaceTabs } from './GeneralFixedWorkspaceTabs'
+import { ReplyPredictionSettings } from './ReplyPredictionSettings'
 import { RuntimeConcurrencySettings } from './RuntimeConcurrencySettings'
+import {
+  SettingsGroup,
+  SettingsPage,
+  SettingsPageHeader,
+  SettingsRow,
+  SettingsSegmentedControl,
+  SettingsSwitch,
+} from './settings-ui'
 
 type BooleanPreferenceKey = {
   [Key in keyof AppPreferencesPatch]-?: AppPreferencesPatch[Key] extends boolean | undefined
@@ -242,7 +250,7 @@ export function GeneralSettingsPage() {
       description={description}
       className={GENERAL_ROW_CLASS_NAME}
       labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
-      control={
+      children={
         <SettingsSwitch
           data-testid={testId}
           checked={
@@ -480,7 +488,7 @@ export function GeneralSettingsPage() {
             description={t('workbench.general_settings_mode_description')}
             className={GENERAL_ROW_CLASS_NAME}
             labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
-            control={
+            children={
               <SettingsSegmentedControl
                 label={t('workbench.general_settings_mode')}
                 value={preferences.workbenchMode}
@@ -502,7 +510,7 @@ export function GeneralSettingsPage() {
             description={t('workbench.general_settings_language_description')}
             className={GENERAL_ROW_CLASS_NAME}
             labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
-            control={
+            children={
               <SettingsSegmentedControl
                 label={t('workbench.general_settings_language_preference')}
                 value={preferences.language}
@@ -522,7 +530,7 @@ export function GeneralSettingsPage() {
             description={t('workbench.general_settings_send_key_description')}
             className={GENERAL_ROW_CLASS_NAME}
             labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
-            control={
+            children={
               <SettingsSegmentedControl
                 label={t('workbench.general_settings_send_key')}
                 value={sendKey}
@@ -548,7 +556,7 @@ export function GeneralSettingsPage() {
             description={t('workbench.general_settings_follow_up_behavior_description')}
             className={GENERAL_ROW_CLASS_NAME}
             labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
-            control={
+            children={
               <SettingsSegmentedControl
                 label={t('workbench.general_settings_follow_up_behavior')}
                 value={followUpBehavior}
@@ -596,15 +604,16 @@ export function GeneralSettingsPage() {
             description={t('workbench.external_import_row_description')}
             className={GENERAL_ROW_CLASS_NAME}
             labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
-            control={
-              <button
+            children={
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="general-external-content-import-button"
                 onClick={() => setShowImportDialog(true)}
                 className="h-11 rounded-md bg-surface px-3 text-sm font-medium text-text-primary hover:bg-muted md:h-8"
               >
                 {t('workbench.external_import_action')}
-              </button>
+              </ControlButton>
             }
           />
         </SettingsGroup>
@@ -652,13 +661,14 @@ export function GeneralSettingsPage() {
             description={t('workbench.general_settings_tray_display_content_description')}
             className={GENERAL_ROW_CLASS_NAME}
             labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
-            control={
+            children={
               <div className="grid w-[420px] max-w-full shrink-0 grid-cols-2 gap-2">
                 {trayDisplayOptions.map(option => {
                   const Icon = option.icon
                   const selected = Boolean(preferences[option.preferenceKey])
                   return (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       key={option.preferenceKey}
                       data-testid={option.testId}
                       type="button"
@@ -689,7 +699,7 @@ export function GeneralSettingsPage() {
                       >
                         {selected && <Check className="h-3 w-3" />}
                       </span>
-                    </button>
+                    </ControlButton>
                   )
                 })}
               </div>
@@ -711,7 +721,7 @@ export function GeneralSettingsPage() {
             )}
             className={GENERAL_ROW_CLASS_NAME}
             labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
-            control={
+            children={
               <SettingsSwitch
                 data-testid="friendly-task-titles-toggle"
                 checked={preferences.friendlyTaskTitlesEnabled}
@@ -741,44 +751,50 @@ export function GeneralSettingsPage() {
                     )}
                   </p>
                 </div>
-                <select
-                  data-testid="friendly-task-title-model-select"
-                  value={friendlyTitleModelKey}
+                <SelectRoot
+                  value={normalizeSelectValue(friendlyTitleModelKey)}
                   disabled={loading || saving}
-                  onChange={event => {
+                  onValueChange={selectedValue => {
+                    if (selectedValue === null) return
                     void saveFriendlyTaskTitles(
                       preferences.friendlyTaskTitlesEnabled,
-                      event.target.value
+                      selectedValue
                     )
                   }}
-                  className="h-11 w-full rounded-md border border-border bg-background px-2 text-sm text-text-primary md:h-8 md:w-[220px]"
                 >
-                  <option value={FRIENDLY_TITLE_TASK_MODEL_VALUE}>
-                    {t('workbench.friendly_task_titles_model_task', '与任务相同')}
-                  </option>
-                  {friendlyTitleModel &&
-                    !friendlyTitleModels.some(
-                      model =>
-                        model.name === friendlyTitleModel.modelName &&
-                        model.type === friendlyTitleModel.modelType
-                    ) && (
-                      <option value={friendlyTitleModelKey}>
-                        {t(
-                          'workbench.friendly_task_titles_model_unavailable',
-                          `${friendlyTitleModel.modelName}（不可用）`,
-                          { modelName: friendlyTitleModel.modelName }
-                        )}
-                      </option>
-                    )}
-                  {friendlyTitleModels.map(model => (
-                    <option
-                      key={`${model.type}:${model.name}`}
-                      value={`${model.type}:${model.name}`}
-                    >
-                      {model.displayName || model.name}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger
+                    aria-label={t('workbench.friendly_task_titles_model')}
+                    data-testid="friendly-task-title-model-select"
+                    className="w-full md:w-[220px]"
+                  />
+                  <SelectContent>
+                    <SelectItem value={String(FRIENDLY_TITLE_TASK_MODEL_VALUE)}>
+                      {t('workbench.friendly_task_titles_model_task', '与任务相同')}
+                    </SelectItem>
+                    {friendlyTitleModel &&
+                      !friendlyTitleModels.some(
+                        model =>
+                          model.name === friendlyTitleModel.modelName &&
+                          model.type === friendlyTitleModel.modelType
+                      ) && (
+                        <SelectItem value={String(friendlyTitleModelKey)}>
+                          {t(
+                            'workbench.friendly_task_titles_model_unavailable',
+                            `${friendlyTitleModel.modelName}（不可用）`,
+                            { modelName: friendlyTitleModel.modelName }
+                          )}
+                        </SelectItem>
+                      )}
+                    {friendlyTitleModels.map(model => (
+                      <SelectItem
+                        key={`${model.type}:${model.name}`}
+                        value={String(`${model.type}:${model.name}`)}
+                      >
+                        {model.displayName || model.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </SelectRoot>
               </div>
             </div>
           )}
@@ -811,9 +827,10 @@ export function GeneralSettingsPage() {
             description={t('workbench.general_settings_popout_shortcut_description')}
             className={GENERAL_ROW_CLASS_NAME}
             labelClassName={GENERAL_ROW_LABEL_CLASS_NAME}
-            control={
+            children={
               <div className="flex min-w-[220px] items-center justify-end gap-1">
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="general-popout-shortcut-record-button"
                   disabled={loading || saving}
@@ -837,18 +854,15 @@ export function GeneralSettingsPage() {
                     <span>{t('workbench.keyboard_shortcuts_unassigned')}</span>
                   )}
                   <Pencil className="h-4 w-4" />
-                </button>
-                <button
+                </ControlButton>
+                <DeleteIconButton
                   type="button"
                   data-testid="general-popout-shortcut-clear-button"
                   disabled={loading || saving || !preferences.popoutWindowShortcut}
                   onClick={() => void savePopoutShortcut(null)}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary disabled:cursor-not-allowed disabled:opacity-40 max-md:h-11 max-md:w-11"
                   aria-label={t('workbench.keyboard_shortcuts_clear')}
                   title={t('workbench.keyboard_shortcuts_clear')}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
+                />
               </div>
             }
           />

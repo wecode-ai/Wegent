@@ -1,12 +1,20 @@
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 import type { UnifiedModel } from '@wegent/chat-core/models'
+import { Bot, LoaderCircle, Sparkles, UserRound } from 'lucide-react'
 import type { Dispatch, RefObject, SetStateAction } from 'react'
 import type { ComposerInputHandle } from '../composer'
+import { ComposerTextInput, ProjectComposerBody } from '../composer'
+import { ModelSelector } from '../controls/ModelSelector'
 import type { CollaborationTranslate } from '../i18n'
 import type { CollaborationGroupRosterParticipant } from '../platform/CollaborationGroupRoster'
+import { CollaborationGroupRoster } from '../platform/CollaborationGroupRoster'
 import type { CollaborationGroupMember, CollaborationOwnedAgent } from '../types'
+import { HoverEditableText } from './HoverEditableText'
+import { ProjectCreateConfigurationView } from './ProjectCreateConfigurationView'
+import { CollaborationGroupWorkflow } from './ProjectCreatePrimitives'
 import type {
   ProjectCreateCollaborationGroupDraft,
   ProjectCreateGenerationModel,
@@ -15,13 +23,6 @@ import type {
   ProjectCreateResourceSetup,
 } from './types'
 import type { useProjectCreateController } from './useProjectCreateController'
-import { Bot, LoaderCircle, Sparkles, UserRound } from 'lucide-react'
-import { ComposerTextInput, ProjectComposerBody } from '../composer'
-import { ModelSelector } from '../controls/ModelSelector'
-import { CollaborationGroupRoster } from '../platform/CollaborationGroupRoster'
-import { HoverEditableText } from './HoverEditableText'
-import { ProjectCreateConfigurationView } from './ProjectCreateConfigurationView'
-import { CollaborationGroupWorkflow } from './ProjectCreatePrimitives'
 
 type Controller = ReturnType<typeof useProjectCreateController>
 
@@ -133,7 +134,8 @@ export function ProjectCreateGroupView({
       restoreFocus='[data-testid="collaboration-project-create-edit-group"], [data-testid="collaboration-project-create-add-collaborator"]'
       footer={
         groupEditorDraft ? (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             className="collaboration-primary-button"
             data-testid="collaboration-project-create-apply-group"
@@ -149,7 +151,7 @@ export function ProjectCreateGroupView({
             }}
           >
             {labels.applyGroup}
-          </button>
+          </ControlButton>
         ) : undefined
       }
     >
@@ -175,7 +177,8 @@ export function ProjectCreateGroupView({
         {generationModelsError ? (
           <p className="collaboration-project-create-inline-error" role="alert">
             {generationModelsError}
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="collaboration-project-create-retry-models"
               className="collaboration-secondary-button min-h-11"
@@ -183,7 +186,7 @@ export function ProjectCreateGroupView({
               disabled={generationModelsLoading}
             >
               {labels.reloadGenerationModels}
-            </button>
+            </ControlButton>
           </p>
         ) : null}
         {groupGenerationError ? (
@@ -280,7 +283,8 @@ export function ProjectCreateGroupView({
                             : labels.noGenerationModels)}
                       </p>
                       {resourceSetup?.loadCollaborationGroupGenerationModels && (
-                        <button
+                        <ControlButton
+                          variant="unstyled"
                           type="button"
                           data-testid="collaboration-project-create-reload-models"
                           className="collaboration-secondary-button min-h-11"
@@ -288,7 +292,7 @@ export function ProjectCreateGroupView({
                           onClick={() => void reloadGenerationModels()}
                         >
                           {labels.reloadGenerationModels}
-                        </button>
+                        </ControlButton>
                       )}
                     </div>
                   }
@@ -326,7 +330,8 @@ export function ProjectCreateGroupView({
                     }))
                   }
                 />
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-composer-primary-action="true"
                   data-testid="collaboration-project-create-generate-group"
@@ -337,7 +342,7 @@ export function ProjectCreateGroupView({
                   aria-label={labels.generateResponsibilities}
                 >
                   {labels.generateResponsibilities}
-                </button>
+                </ControlButton>
               </div>
             )}
           />
@@ -438,13 +443,14 @@ export function ProjectCreateGroupView({
                   participants={visibleGroupParticipants}
                   renderActions={participant =>
                     participant.draftParticipant && !participant.leader ? (
-                      <button
+                      <ControlButton
+                        variant="unstyled"
                         type="button"
                         className="collaboration-project-create-set-leader"
                         onClick={() => setGroupLeader(participant.draftParticipant!)}
                       >
                         {labels.setAsLeader}
-                      </button>
+                      </ControlButton>
                     ) : null
                   }
                   renderResponsibility={participant =>

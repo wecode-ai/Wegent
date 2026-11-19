@@ -1,5 +1,6 @@
-import { SquareTerminal, X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { SquareTerminal, X } from 'lucide-react'
 import { EmbeddedLocalTerminal } from './workspace-panels/EmbeddedLocalTerminal'
 
 interface CentralHarnessTerminalProps {
@@ -35,7 +36,8 @@ export function CentralHarnessTerminal({
             {title}
           </span>
           {onClose && (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="central-harness-close-button"
               onClick={onClose}
@@ -43,7 +45,7 @@ export function CentralHarnessTerminal({
               aria-label={t('workbench.close_harness', '关闭编码工具')}
             >
               <X className="h-4 w-4" />
-            </button>
+            </ControlButton>
           )}
         </header>
       )}

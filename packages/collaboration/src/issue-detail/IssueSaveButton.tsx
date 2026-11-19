@@ -1,6 +1,7 @@
-import type { ReactNode } from 'react'
 import { ChevronDown } from 'lucide-react'
+import type { ReactNode } from 'react'
 import { ActionMenu } from '../controls/ActionMenu'
+import { Button as ControlButton } from '../markdown/Button'
 import './issue-save-button.css'
 
 interface IssueSaveButtonProps {
@@ -29,7 +30,8 @@ export function IssueSaveButton({
   onSave,
 }: IssueSaveButtonProps) {
   const button = (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid={testId}
       disabled={disabled}
@@ -37,7 +39,7 @@ export function IssueSaveButton({
       className={className}
     >
       {notificationAvailable && !saving ? labels.saveAndNotify : children}
-    </button>
+    </ControlButton>
   )
 
   return notificationAvailable ? (

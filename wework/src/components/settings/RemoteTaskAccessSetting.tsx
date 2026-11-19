@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { getRemoteTaskAccess, setRemoteTaskAccess } from '@/desktop/remoteTaskAccess'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { SettingsGroup, SettingsRow, SettingsSwitch } from './settings-ui'
 
 export function RemoteTaskAccessSetting() {
@@ -66,7 +66,7 @@ export function RemoteTaskAccessSetting() {
         <SettingsRow
           label={t('workbench.remote_task_access_title')}
           description={t('workbench.remote_task_access_description')}
-          control={
+          children={
             <SettingsSwitch
               data-testid="remote-task-access-toggle"
               checked={enabled}

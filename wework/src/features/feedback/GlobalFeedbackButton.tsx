@@ -1,7 +1,8 @@
-import { MessageSquareWarning } from 'lucide-react'
 import { DESKTOP_TOP_BAR_BUTTON_CLASS } from '@/components/layout/DesktopTopBar'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { MessageSquareWarning } from 'lucide-react'
 import { openFeedbackDialog } from './feedbackDialogStore'
 
 interface GlobalFeedbackButtonProps {
@@ -20,7 +21,8 @@ export function GlobalFeedbackButton({
       align="end"
       testId={`${testId}-tooltip`}
     >
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid={testId}
         className={DESKTOP_TOP_BAR_BUTTON_CLASS}
@@ -28,7 +30,7 @@ export function GlobalFeedbackButton({
         onClick={() => openFeedbackDialog()}
       >
         <MessageSquareWarning className="h-4 w-4" />
-      </button>
+      </ControlButton>
     </Tooltip>
   )
 }

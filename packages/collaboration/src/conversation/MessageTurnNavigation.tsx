@@ -1,47 +1,48 @@
-import {
-  requestSafeAnimationFrame,
-  cancelSafeAnimationFrame,
-  type SafeAnimationFrameHandle,
-} from '../markdown/safeAnimationFrame'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
+import { Button as ControlButton } from '../markdown/Button'
+import {
+  cancelSafeAnimationFrame,
+  requestSafeAnimationFrame,
+  type SafeAnimationFrameHandle,
+} from '../markdown/safeAnimationFrame'
 import { useCollaborationPortalTheme } from '../theme/CollaborationTheme'
-import {
-  MARKER_HIT_AREA_WIDTH_PX,
-  MARKER_HOVER_ROW_HEIGHT_PX,
-  NAVIGATION_VIEWPORT_PADDING_PX,
-} from './turnNavigationConstants'
-import {
-  buildUserTurnsForNavigation,
-  getUserTurnsSignature,
-  getNavigationHeight,
-  getMarkerTopPx,
-  getMarkerWidthPx,
-  findUnloadedMarkerBetween,
-  getMarkerToneClass,
-  findMessageAnchor,
-  findLoadedNavigationMessageId,
-  getMessageAnchorTargetTop,
-  getScrollMetrics,
-  logTurnNavigation,
-  getMessageAnchorById,
-  getTurnVisibilityBounds,
-  equalStringArrays,
-} from './turnNavigationUtils'
-import type {
-  MessageTurnNavigationProps,
-  MessageTurnMarker,
-  PendingScrollTarget,
-  MeasuredScrollGeometry,
-} from './turnNavigationTypes'
 import {
   getContentPositionForViewportY,
   getScrollViewportBounds,
   isConversationScrollInput,
   scrollToContentPosition,
 } from './conversationViewportScroll'
+import {
+  MARKER_HIT_AREA_WIDTH_PX,
+  MARKER_HOVER_ROW_HEIGHT_PX,
+  NAVIGATION_VIEWPORT_PADDING_PX,
+} from './turnNavigationConstants'
 import { getClampedPreviewTopPx } from './turnNavigationGeometry'
+import type {
+  MeasuredScrollGeometry,
+  MessageTurnMarker,
+  MessageTurnNavigationProps,
+  PendingScrollTarget,
+} from './turnNavigationTypes'
+import {
+  buildUserTurnsForNavigation,
+  equalStringArrays,
+  findLoadedNavigationMessageId,
+  findMessageAnchor,
+  findUnloadedMarkerBetween,
+  getMarkerToneClass,
+  getMarkerTopPx,
+  getMarkerWidthPx,
+  getMessageAnchorById,
+  getMessageAnchorTargetTop,
+  getNavigationHeight,
+  getScrollMetrics,
+  getTurnVisibilityBounds,
+  getUserTurnsSignature,
+  logTurnNavigation,
+} from './turnNavigationUtils'
 
 interface PreviewClampMeasurement {
   markerId: string
@@ -710,7 +711,8 @@ export function MessageTurnNavigation({
                 onMouseEnter={() => setHoveredMarkerId(marker.id)}
                 onMouseLeave={() => setHoveredMarkerId(null)}
               >
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   aria-label={t('conversation.message_navigation.jump_to_message', undefined, {
                     index: marker.turnIndex + 1,
@@ -737,7 +739,7 @@ export function MessageTurnNavigation({
                       width: `${getMarkerWidthPx(hoverDistance, isLoading)}px`,
                     }}
                   />
-                </button>
+                </ControlButton>
               </div>
             )
           })}

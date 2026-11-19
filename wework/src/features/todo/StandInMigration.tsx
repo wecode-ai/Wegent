@@ -1,11 +1,19 @@
-import { useState } from 'react'
-import type { DeviceInfo } from '@/types/api'
 import type { StandInRole } from '@/api/personalStandIn'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { ConfirmDialog } from '@/components/common/ConfirmDialog'
-import { availableStandInDevices } from './standInDevices'
+import type { DeviceInfo } from '@/types/api'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useState } from 'react'
 import { StandInMigrationError } from './migrateStandIn'
+import { availableStandInDevices } from './standInDevices'
 
 /** Migration is available only on the stopped instance surface. */
 export function StandInMigration({
@@ -61,36 +69,52 @@ export function StandInMigration({
       data-testid="stand-in-migration"
     >
       <p className="w-full">{t('standIn.migration.offer')}</p>
-      <select
-        data-testid="stand-in-migration-role"
-        aria-label={t('standIn.migration.profile')}
-        value={roleId}
+      <SelectRoot
+        value={normalizeSelectValue(roleId)}
         disabled={disabled}
-        onChange={event => setRoleId(event.target.value)}
-        className="min-h-11 max-w-full rounded-md border border-border bg-background px-2 md:min-h-8"
+        onValueChange={selectedValue => {
+          if (selectedValue !== null) return setRoleId(selectedValue)
+        }}
       >
-        <option value="@primary">{t('standIn.title')}</option>
-        {roles.map(role => (
-          <option key={role.id} value={role.id}>
-            {role.name || role.id}
-          </option>
-        ))}
-      </select>
-      <select
-        data-testid="stand-in-migration-device"
-        aria-label={t('standIn.device')}
-        value={device?.device_id ?? ''}
+        <SelectTrigger
+          density="compact"
+          data-testid="stand-in-migration-role"
+          aria-label={t('standIn.migration.profile')}
+          className="max-w-full"
+        />
+        <SelectContent>
+          <SelectItem value="@primary">{t('standIn.title')}</SelectItem>
+          {roles.map(role => (
+            <SelectItem key={role.id} value={String(role.id)}>
+              {role.name || role.id}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </SelectRoot>
+      <SelectRoot
+        value={normalizeSelectValue(device?.device_id ?? '')}
         disabled={disabled}
-        onChange={event => setTarget(event.target.value)}
-        className="min-h-11 max-w-full rounded-md border border-border bg-background px-2 md:min-h-8"
+        onValueChange={selectedValue => {
+          if (selectedValue !== null) return setTarget(selectedValue)
+        }}
       >
-        {available.map(value => (
-          <option key={value.device_id} value={value.device_id}>
-            {value.name}
-          </option>
-        ))}
-      </select>
-      <button
+        <SelectTrigger
+          density="compact"
+          data-testid="stand-in-migration-device"
+          aria-label={t('standIn.device')}
+          className="max-w-full"
+        />
+        <SelectContent>
+          {available.map(value => (
+            <SelectItem key={value.device_id} value={String(value.device_id)}>
+              {value.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </SelectRoot>
+      <ControlButton
+        variant="primary"
+        size="sm"
         type="button"
         data-testid="stand-in-migrate-open"
         disabled={disabled || !device}
@@ -98,8 +122,9 @@ export function StandInMigration({
         className="min-h-11 rounded-md bg-text-primary px-3 text-background disabled:opacity-50 md:min-h-8"
       >
         {t('standIn.migration.action')}
-      </button>
-      <button
+      </ControlButton>
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="stand-in-migrate-keep-local"
         disabled={disabled}
@@ -107,7 +132,7 @@ export function StandInMigration({
         className="min-h-11 rounded-md px-3 hover:bg-muted md:min-h-8"
       >
         {t('standIn.migration.keep_local')}
-      </button>
+      </ControlButton>
       {error && (
         <p role="alert" className="w-full text-error">
           {error}

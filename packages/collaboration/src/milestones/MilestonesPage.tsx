@@ -1,22 +1,21 @@
-import "./milestones.css";
+import { ProgressBar } from "../controls/ProgressBar";
 import { Flag } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { TextField as ControlInput } from "../controls/TextField";
+import { Textarea as ControlTextarea } from "../controls/Textarea";
+import { Button as ControlButton } from "../markdown/Button";
+import { canManageCollaborationIssueSecurity } from "../permissions";
+import { useIssueAssignmentsByIssueId } from "../platform/useIssueAssignmentsByIssueId";
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import type {
   CollaborationAssignment,
   CollaborationIssue,
   CollaborationProject,
 } from "../types";
-import { canManageCollaborationIssueSecurity } from "../permissions";
-import { useIssueAssignmentsByIssueId } from "../platform/useIssueAssignmentsByIssueId";
-import type { Milestone, MilestoneInput } from "./types";
 import { milestoneMessages } from "./messages";
-import { useMilestones, milestoneVisibilityScope } from "./useMilestones";
-
-const buttonBaseClass =
-  "min-h-11 rounded-md border px-3 text-sm disabled:opacity-50 md:min-h-8 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus/40";
-const buttonClass = `${buttonBaseClass} border-border hover:bg-muted`;
-const primaryButtonClass = `${buttonBaseClass} border-transparent bg-text-primary text-background hover:bg-text-primary/90`;
+import "./milestones.css";
+import type { Milestone, MilestoneInput } from "./types";
+import { milestoneVisibilityScope, useMilestones } from "./useMilestones";
 
 export function MilestonesPage({
   api,
@@ -100,14 +99,15 @@ export function MilestonesPage({
       >
         <header className="mb-6 space-y-4">
           {active ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               className="min-h-11 text-sm text-text-secondary hover:text-text-primary md:min-h-8"
               data-testid="milestones-back"
               onClick={() => setSelected(null)}
             >
               ← {m.back}
-            </button>
+            </ControlButton>
           ) : (
             <div>
               <h1 className="heading-medium">{m.title}</h1>
@@ -125,7 +125,8 @@ export function MilestonesPage({
                 aria-label={m.title}
               >
                 {(["open", "closed"] as const).map((value) => (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     className="min-h-11 rounded-md px-3 text-sm text-text-secondary aria-pressed:bg-background aria-pressed:text-text-primary aria-pressed:shadow-sm md:min-h-8"
                     data-testid={`milestones-${value}`}
@@ -143,21 +144,22 @@ export function MilestonesPage({
                           .length
                       }
                     </span>
-                  </button>
+                  </ControlButton>
                 ))}
               </div>
               {canManage ? (
-                <button
+                <ControlButton
+                  variant="primary"
                   type="button"
                   data-testid="milestone-create"
-                  className={primaryButtonClass}
                   onClick={() => {
                     setEditing("new");
                     setFailed(false);
                   }}
+                  size="sm"
                 >
                   {m.new}
-                </button>
+                </ControlButton>
               ) : null}
             </div>
           ) : null}
@@ -165,9 +167,9 @@ export function MilestonesPage({
         {query.error || failed ? (
           <p role="alert" className="mb-3 text-sm text-red-600">
             {m.error}{" "}
-            <button
+            <ControlButton
+              variant="outline"
               type="button"
-              className={buttonClass}
               data-testid="milestones-retry"
               onClick={() => {
                 setFailed(false);
@@ -175,9 +177,10 @@ export function MilestonesPage({
                 setDeleting(null);
                 query.reload();
               }}
+              size="sm"
             >
               {editing ? m.discardAndRefresh : m.retry}
-            </button>
+            </ControlButton>
           </p>
         ) : null}
         {query.loading ? <p role="status">{m.loading}</p> : null}
@@ -208,9 +211,9 @@ export function MilestonesPage({
             <span className="min-w-0 max-w-full break-words">
               {deleting.title}: {m.confirm}
             </span>
-            <button
+            <ControlButton
+              variant="destructive"
               type="button"
-              className={buttonClass}
               data-testid="milestone-delete-confirm"
               disabled={busy}
               onClick={() =>
@@ -222,18 +225,20 @@ export function MilestonesPage({
                   ),
                 )
               }
+              size="sm"
             >
               {m.remove}
-            </button>
-            <button
+            </ControlButton>
+            <ControlButton
+              variant="outline"
               type="button"
-              className={buttonClass}
               data-testid="milestone-delete-cancel"
               disabled={busy}
               onClick={() => setDeleting(null)}
+              size="sm"
             >
               {m.cancel}
-            </button>
+            </ControlButton>
           </div>
         ) : null}
         {!query.loading &&
@@ -265,14 +270,15 @@ export function MilestonesPage({
             </div>
             {(active.archived_issues ?? 0) > 0 && onOpenArchive ? (
               <div className="my-3">
-                <button
+                <ControlButton
+                  variant="outline"
                   type="button"
-                  className={buttonClass}
                   data-testid="milestone-view-archive"
                   onClick={onOpenArchive}
+                  size="sm"
                 >
                   {m.viewArchive}
-                </button>
+                </ControlButton>
               </div>
             ) : null}
             <div key={active.id}>
@@ -301,14 +307,15 @@ export function MilestonesPage({
                   data-testid={`milestone-${item.id}`}
                 >
                   <div className="flex flex-wrap items-center gap-2">
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       data-testid={`milestone-open-${item.id}`}
                       onClick={() => setSelected(item.id)}
                       className="min-h-11 min-w-0 max-w-full break-words text-left text-sm font-semibold hover:underline md:min-h-8"
                     >
                       {item.title}
-                    </button>
+                    </ControlButton>
                     {item.due_on ? (
                       <span className="text-xs text-text-muted">
                         {m.due}: {item.due_on} {overdue ? `· ${m.overdue}` : ""}
@@ -316,18 +323,19 @@ export function MilestonesPage({
                     ) : null}
                     {canManage ? (
                       <div className="ml-auto flex gap-2">
-                        <button
+                        <ControlButton
+                          variant="outline"
                           type="button"
-                          className={buttonClass}
                           data-testid={`milestone-edit-${item.id}`}
                           disabled={busy}
                           onClick={() => setEditing(item)}
+                          size="sm"
                         >
                           {m.edit}
-                        </button>
-                        <button
+                        </ControlButton>
+                        <ControlButton
+                          variant="outline"
                           type="button"
-                          className={buttonClass}
                           data-testid={`milestone-state-${item.id}`}
                           disabled={busy}
                           onClick={() =>
@@ -342,18 +350,20 @@ export function MilestonesPage({
                               }),
                             )
                           }
+                          size="sm"
                         >
                           {item.state === "open" ? m.close : m.reopen}
-                        </button>
-                        <button
+                        </ControlButton>
+                        <ControlButton
+                          variant="destructive-ghost"
                           type="button"
-                          className={buttonClass}
                           data-testid={`milestone-delete-${item.id}`}
                           disabled={busy}
                           onClick={() => setDeleting(item)}
+                          size="sm"
                         >
                           {m.remove}
-                        </button>
+                        </ControlButton>
                       </div>
                     ) : null}
                   </div>
@@ -404,18 +414,19 @@ function MilestoneForm({
     >
       <label className="block text-sm">
         {m.name}
-        <input
+        <ControlInput
+          density="compact"
           data-testid="milestone-title"
           name="title"
           required
           maxLength={255}
           defaultValue={milestone?.title ?? ""}
-          className="milestone-form-field mt-1 min-h-11 w-full rounded-md bg-background px-2 md:min-h-8"
+          className="milestone-form-field mt-1 w-full"
         />
       </label>
       <label className="block text-sm">
         {m.description}
-        <textarea
+        <ControlTextarea
           data-testid="milestone-description"
           name="description"
           defaultValue={milestone?.description ?? ""}
@@ -424,32 +435,35 @@ function MilestoneForm({
       </label>
       <label className="block text-sm">
         {m.due}
-        <input
+        <ControlInput
+          density="compact"
           data-testid="milestone-due"
           name="due_on"
           type="date"
           defaultValue={milestone?.due_on ?? ""}
-          className="milestone-form-field ml-2 min-h-11 rounded-md bg-background px-2 md:min-h-8"
+          className="milestone-form-field ml-2"
         />
       </label>
       <div className="flex gap-2">
-        <button
+        <ControlButton
+          variant="primary"
           type="submit"
           data-testid="milestone-save"
           disabled={busy}
-          className={primaryButtonClass}
+          size="sm"
         >
           {m.save}
-        </button>
-        <button
+        </ControlButton>
+        <ControlButton
+          variant="outline"
           type="button"
           data-testid="milestone-cancel"
           disabled={busy}
-          className={buttonClass}
           onClick={onCancel}
+          size="sm"
         >
           {m.cancel}
-        </button>
+        </ControlButton>
       </div>
     </form>
   );
@@ -468,20 +482,11 @@ function MilestoneProgress({
   const progress = total ? Math.round((item.closed_issues * 100) / total) : 0;
   return (
     <>
-      <div
-        className="h-1.5 w-full overflow-hidden rounded-full bg-muted"
-        role="progressbar"
-        aria-label={item.title}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={progress}
-      >
-        <span
-          data-testid={`milestone-progress-fill-${item.id}`}
-          className="block h-full rounded-full bg-text-primary"
-          style={{ width: `${progress}%` }}
-        />
-      </div>
+      <ProgressBar
+        value={progress}
+        label={item.title}
+        indicatorTestId={`milestone-progress-fill-${item.id}`}
+      />
       <p className="mt-1 text-xs text-text-muted">
         {progress}% · {item.closed_issues} {m.completed} · {item.open_issues}{" "}
         {m.remaining}

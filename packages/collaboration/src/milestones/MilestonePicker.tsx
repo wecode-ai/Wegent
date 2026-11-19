@@ -1,10 +1,11 @@
-import { Flag, ChevronDown } from 'lucide-react'
+import { ChevronDown, Flag } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { SearchableSelect } from '../controls/SearchableSelect'
+import { Tooltip } from "../controls/Tooltip"
+import { Button as ControlButton } from '../markdown/Button'
+import './milestones.css'
 import type { MilestonesApi } from './types'
 import { useMilestones } from './useMilestones'
-import { IssueDetailSearchableSelect } from '../issue-detail/IssueDetailControls'
-import { Tooltip } from '../issue-detail/Tooltip'
-import './milestones.css'
 
 export function MilestonePicker({
   api,
@@ -70,7 +71,7 @@ export function MilestonePicker({
         <span className="shrink-0 text-text-secondary">{label}</span>
       ) : null}
       <Tooltip label={selectedTitle} side="bottom" className="min-w-0 max-w-full shrink">
-        <IssueDetailSearchableSelect
+        <SearchableSelect
           testId={testId}
           accessibleLabel={label}
           value={value ?? ''}
@@ -124,14 +125,15 @@ export function MilestonePicker({
         <span role="alert" className="text-destructive">
           {errorLabel}
           {query.error ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid={`${testId}-retry`}
               onClick={query.reload}
               className="ml-2 underline"
             >
               {retryLabel}
-            </button>
+            </ControlButton>
           ) : null}
         </span>
       ) : null}

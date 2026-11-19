@@ -148,26 +148,9 @@
 }
 
 @media (max-width: 767px) {
-  .collaboration-environment-devices :is(button, select, summary) {
+  .collaboration-environment-devices :is(button, select, [data-slot='collapsible-trigger']) {
     min-width: 44px;
     min-height: 44px;
-  }
-
-  .collaboration-environment-device-actions[open] {
-    flex-basis: 100%;
-    min-width: 0;
-  }
-
-  .collaboration-environment-device-actions > div {
-    position: static;
-    max-width: 100%;
-    white-space: normal;
-  }
-
-  .collaboration-environment-device-actions > div > button {
-    max-width: 100%;
-    text-align: left;
-    white-space: normal;
   }
 }
 
@@ -551,9 +534,9 @@
   z-index: var(--z-system-popover, 1000);
   display: flex;
   flex-direction: column;
-  width: var(--radix-popover-trigger-width);
+  width: var(--anchor-width);
   max-width: calc(100vw - 16px);
-  max-height: min(420px, var(--radix-popover-content-available-height));
+  max-height: min(420px, var(--available-height));
   gap: 4px;
   overflow: hidden;
   overscroll-behavior: contain;
@@ -1784,13 +1767,9 @@
   box-shadow: 0 0 0 2px rgb(var(--color-focus, var(--color-primary)) / 0.2);
 }
 
-.automatic-processing-checkbox {
-  accent-color: rgb(var(--color-focus, var(--color-primary)));
-}
-
 @media (max-width: 767px) {
   .collaboration-project-create-dialog button,
-  .collaboration-project-create-dialog summary,
+  .collaboration-project-create-dialog [data-slot='collapsible-trigger'],
   .collaboration-project-create-dialog input:not([type='checkbox']):not([type='radio']),
   .collaboration-project-create-dialog select {
     min-width: 44px;

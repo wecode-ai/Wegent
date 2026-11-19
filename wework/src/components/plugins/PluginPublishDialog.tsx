@@ -1,3 +1,14 @@
+import type { PluginShareGroupSearchItem, PluginShareUserSearchItem } from '@/api/plugins'
+import { Button } from '@/components/ui/button'
+import { useTranslation } from '@/hooks/useTranslation'
+import { cn } from '@/lib/utils'
+import type { PluginAccessResponse, PluginAccessTarget } from '@/types/api'
+import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Radio, RadioGroup } from '@wegent/collaboration/controls/RadioGroup'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
   Building2,
   Check,
@@ -8,20 +19,7 @@ import {
   Users,
   X,
 } from 'lucide-react'
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type Dispatch,
-  type KeyboardEvent as ReactKeyboardEvent,
-  type SetStateAction,
-} from 'react'
-import type { PluginShareGroupSearchItem, PluginShareUserSearchItem } from '@/api/plugins'
-import { Button } from '@/components/ui/button'
-import { useTranslation } from '@/hooks/useTranslation'
-import { cn } from '@/lib/utils'
-import type { PluginAccessResponse, PluginAccessTarget } from '@/types/api'
+import { useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react'
 import { PluginShareTargetSearch } from './PluginShareTargetSearch'
 
 export interface PluginPublicationRiskDeclaration {
@@ -179,15 +177,14 @@ function PluginPublicationRiskStep({
               {t('workbench.plugins_publication_risk_network_hint', '访问企业外部服务或域名')}
             </span>
           </span>
-          <input
-            type="checkbox"
+          <Checkbox
             checked={riskDeclaration.externalNetworkAccess}
             data-testid="plugin-publication-risk-network"
             className="mt-1 h-4 w-4 accent-[rgb(var(--color-text-primary))] wework:accent-neutral-900"
-            onChange={event =>
+            onCheckedChange={checked =>
               setRiskDeclaration(current => ({
                 ...current,
-                externalNetworkAccess: event.target.checked,
+                externalNetworkAccess: checked === true,
               }))
             }
           />
@@ -197,10 +194,10 @@ function PluginPublicationRiskStep({
             <span className="text-xs font-medium text-text-secondary">
               {t('workbench.plugins_publication_external_domains', '外部域名')}
             </span>
-            <input
+            <ControlInput
               value={domainsText}
               data-testid="plugin-publication-external-domains"
-              className="mt-2 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none keyboard:focus:border-focus/70 keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
+              className="mt-2 h-10 w-full"
               placeholder="api.example.com"
               onChange={event => setDomainsText(event.target.value)}
             />
@@ -224,15 +221,14 @@ function PluginPublicationRiskStep({
                     {t('workbench.plugins_publication_risk_' + row.key + '_hint', row.hint)}
                   </span>
                 </span>
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={riskDeclaration[row.key]}
                   data-testid={testId}
                   className="mt-1 h-4 w-4 accent-[rgb(var(--color-text-primary))] wework:accent-neutral-900"
-                  onChange={event =>
+                  onCheckedChange={checked =>
                     setRiskDeclaration(current => ({
                       ...current,
-                      [row.key]: event.target.checked,
+                      [row.key]: checked === true,
                     }))
                   }
                 />
@@ -242,7 +238,7 @@ function PluginPublicationRiskStep({
                   <span className="text-xs font-medium text-text-secondary">
                     {t('workbench.plugins_publication_command_examples', '命令或脚本示例')}
                   </span>
-                  <textarea
+                  <ControlTextarea
                     value={commandExamplesText}
                     rows={3}
                     data-testid="plugin-publication-command-examples"
@@ -268,12 +264,11 @@ function PluginPublicationRiskStep({
                 )}
               </span>
             </span>
-            <input
-              type="checkbox"
+            <Checkbox
               checked={applicationAuthorization}
               data-testid="plugin-publication-risk-application"
               className="mt-1 h-4 w-4 accent-[rgb(var(--color-text-primary))] wework:accent-neutral-900"
-              onChange={event => setApplicationAuthorization(event.target.checked)}
+              onCheckedChange={checked => setApplicationAuthorization(checked === true)}
             />
           </label>
           {applicationAuthorization ? (
@@ -281,7 +276,7 @@ function PluginPublicationRiskStep({
               <span className="text-xs font-medium text-text-secondary">
                 {t('workbench.plugins_publication_application_permissions', '应用与权限列表')}
               </span>
-              <textarea
+              <ControlTextarea
                 value={applicationPermissionsText}
                 rows={3}
                 data-testid="plugin-publication-application-permissions"
@@ -297,7 +292,7 @@ function PluginPublicationRiskStep({
         <span className="text-sm font-medium text-text-primary">
           {t('workbench.plugins_publication_test_notes', '测试说明')}
         </span>
-        <textarea
+        <ControlTextarea
           value={testNotes}
           data-testid="plugin-publication-test-notes"
           rows={5}
@@ -337,7 +332,7 @@ function PluginPublicationRiskStep({
         <span className="text-sm font-medium text-text-primary">
           {t('workbench.plugins_publication_additional_notes', '补充说明')}
         </span>
-        <textarea
+        <ControlTextarea
           value={riskDeclaration.additionalNotes}
           data-testid="plugin-publication-additional-notes"
           rows={3}
@@ -391,18 +386,6 @@ export function PluginPublishDialog({
   const restrictedIntentRef = useRef<HTMLButtonElement>(null)
   const enterpriseIntentRef = useRef<HTMLButtonElement>(null)
 
-  useEffect(() => {
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || publishing) return
-      event.preventDefault()
-      onClose()
-    }
-    document.addEventListener('keydown', handleEscape)
-    return () => {
-      document.removeEventListener('keydown', handleEscape)
-    }
-  }, [onClose, publishing])
-
   const normalizedDomains = useMemo(() => normalizeDomains(domainsText), [domainsText])
   const normalizedCommandExamples = useMemo(
     () => normalizeList(commandExamplesText),
@@ -425,24 +408,6 @@ export function PluginPublishDialog({
         ? current
         : [...current, target]
     )
-  }
-
-  const handleIntentKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
-    if (!['ArrowDown', 'ArrowRight', 'ArrowUp', 'ArrowLeft'].includes(event.key)) return
-    event.preventDefault()
-    const enabledIntents = [
-      { value: 'restricted' as const, ref: restrictedIntentRef },
-      { value: 'enterprise' as const, ref: enterpriseIntentRef },
-    ]
-    const currentIndex = Math.max(
-      0,
-      enabledIntents.findIndex(item => item.value === intent)
-    )
-    const offset = event.key === 'ArrowDown' || event.key === 'ArrowRight' ? 1 : -1
-    const next =
-      enabledIntents[(currentIndex + offset + enabledIntents.length) % enabledIntents.length]
-    setIntent(next.value)
-    next.ref.current?.focus()
   }
 
   const continueFromIntent = () => {
@@ -510,12 +475,17 @@ export function PluginPublishDialog({
           if (!publishing && event.target === event.currentTarget) onClose()
         }}
       >
-        <section
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="plugin-publication-title"
-          data-testid="plugin-publication-drawer"
-          className="flex h-full w-full max-w-[480px] flex-col border-l border-border/30 bg-background shadow-xl"
+        <DialogSurface
+          onClose={() => {
+            if (!publishing) onClose()
+          }}
+          render={
+            <section
+              aria-labelledby="plugin-publication-title"
+              data-testid="plugin-publication-drawer"
+              className="flex h-full w-full max-w-[480px] flex-col border-l border-border/30 bg-background shadow-xl"
+            />
+          }
         >
           <header className="border-b border-border/25 px-5 pb-4 pt-5">
             <div className="flex items-start justify-between gap-4">
@@ -591,7 +561,7 @@ export function PluginPublishDialog({
                   <span className="text-sm font-medium text-text-primary">
                     {t('workbench.plugins_publication_release_notes', '版本说明')}
                   </span>
-                  <textarea
+                  <ControlTextarea
                     value={releaseNotes}
                     data-testid="plugin-publication-release-notes"
                     rows={6}
@@ -712,12 +682,11 @@ export function PluginPublishDialog({
                   </div>
                 ) : null}
                 <label className="flex items-start gap-3 rounded-xl border border-border/30 px-4 py-4">
-                  <input
-                    type="checkbox"
+                  <Checkbox
                     checked={declarationAccepted}
                     data-testid="plugin-publication-declaration"
                     className="mt-1 h-4 w-4 accent-[rgb(var(--color-text-primary))] wework:accent-neutral-900"
-                    onChange={event => setDeclarationAccepted(event.target.checked)}
+                    onCheckedChange={checked => setDeclarationAccepted(checked === true)}
                   />
                   <span className="text-sm leading-5 text-text-secondary">
                     {t(
@@ -804,19 +773,24 @@ export function PluginPublishDialog({
               </Button>
             )}
           </footer>
-        </section>
+        </DialogSurface>
       </div>
     )
   }
 
   return (
     <div className="plugin-dialog-overlay fixed inset-0 z-modal flex items-end justify-center p-0 sm:items-center sm:p-4">
-      <section
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="plugin-share-intent-title"
-        data-testid={screen === 'intent' ? 'plugin-share-intent-dialog' : 'plugin-share-dialog'}
-        className="plugin-dialog-surface w-full max-w-lg rounded-b-none p-5 sm:rounded-b-[20px]"
+      <DialogSurface
+        onClose={() => {
+          if (!publishing) onClose()
+        }}
+        render={
+          <section
+            aria-labelledby="plugin-share-intent-title"
+            data-testid={screen === 'intent' ? 'plugin-share-intent-dialog' : 'plugin-share-dialog'}
+            className="plugin-dialog-surface w-full max-w-lg rounded-b-none p-5 sm:rounded-b-[20px]"
+          />
+        }
       >
         <header className="flex items-start justify-between gap-4">
           <div>
@@ -843,17 +817,17 @@ export function PluginPublishDialog({
         </header>
 
         {screen === 'intent' ? (
-          <div
+          <RadioGroup
+            value={intent}
+            onValueChange={next => {
+              if (next === 'restricted' || next === 'enterprise') setIntent(next)
+            }}
             className="mt-5 space-y-3"
-            role="radiogroup"
             aria-labelledby="plugin-share-intent-title"
           >
-            <button
+            <Radio
+              value={'restricted'}
               ref={restrictedIntentRef}
-              type="button"
-              role="radio"
-              aria-checked={intent === 'restricted'}
-              tabIndex={intent === 'restricted' ? 0 : -1}
               data-testid="plugin-share-intent-restricted"
               className={cn(
                 'flex w-full items-start gap-3 rounded-xl border px-4 py-4 text-left transition-colors',
@@ -861,8 +835,6 @@ export function PluginPublishDialog({
                   ? 'border-focus/50 bg-focus/5 wework:border-blue-500/50 wework:bg-blue-500/5'
                   : 'border-border/30 hover:bg-surface'
               )}
-              onClick={() => setIntent('restricted')}
-              onKeyDown={handleIntentKeyDown}
             >
               <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface text-text-secondary">
                 <Users className="h-4 w-4" />
@@ -894,14 +866,11 @@ export function PluginPublishDialog({
               >
                 {intent === 'restricted' ? <Check className="h-3 w-3" /> : null}
               </span>
-            </button>
+            </Radio>
 
-            <button
+            <Radio
+              value={'enterprise'}
               ref={enterpriseIntentRef}
-              type="button"
-              role="radio"
-              aria-checked={intent === 'enterprise'}
-              tabIndex={intent === 'enterprise' ? 0 : -1}
               data-testid="plugin-share-intent-enterprise"
               className={cn(
                 'flex w-full items-start gap-3 rounded-xl border px-4 py-4 text-left transition-colors',
@@ -909,8 +878,6 @@ export function PluginPublishDialog({
                   ? 'border-focus/50 bg-focus/5 wework:border-blue-500/50 wework:bg-blue-500/5'
                   : 'border-border/30 hover:bg-surface'
               )}
-              onClick={() => setIntent('enterprise')}
-              onKeyDown={handleIntentKeyDown}
             >
               <span className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-surface text-text-secondary">
                 <Globe2 className="h-4 w-4" />
@@ -951,7 +918,7 @@ export function PluginPublishDialog({
               >
                 {intent === 'enterprise' ? <Check className="h-3 w-3" /> : null}
               </span>
-            </button>
+            </Radio>
             {intent === 'enterprise' ? (
               <div
                 data-testid="plugin-share-enterprise-flow"
@@ -990,7 +957,7 @@ export function PluginPublishDialog({
               </div>
             ) : null}
             {errorContent}
-          </div>
+          </RadioGroup>
         ) : (
           <div className="mt-5">
             <PluginShareTargetSearch
@@ -1006,7 +973,8 @@ export function PluginPublishDialog({
                   className="inline-flex h-8 items-center gap-1 rounded-lg bg-surface pl-2.5 pr-1 text-sm"
                 >
                   {target.displayName}
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid={
                       'plugin-share-target-remove-' + target.entityType + '-' + target.entityId
@@ -1024,7 +992,7 @@ export function PluginPublishDialog({
                     }
                   >
                     <X className="h-3.5 w-3.5" />
-                  </button>
+                  </ControlButton>
                 </span>
               ))}
             </div>
@@ -1038,12 +1006,11 @@ export function PluginPublishDialog({
                   {t('workbench.plugins_share_allow_copy_hint', '接收者可创建独立的本地副本')}
                 </small>
               </span>
-              <input
-                type="checkbox"
+              <Checkbox
                 checked={allowCopy}
                 data-testid="plugin-share-allow-copy"
                 className="h-4 w-4 accent-[rgb(var(--color-text-primary))] wework:accent-neutral-900"
-                onChange={event => setAllowCopy(event.target.checked)}
+                onCheckedChange={checked => setAllowCopy(checked === true)}
               />
             </label>
             {targets.length === 0 && initialAccess?.scope === 'restricted' ? (
@@ -1114,7 +1081,7 @@ export function PluginPublishDialog({
             </Button>
           )}
         </footer>
-      </section>
+      </DialogSurface>
     </div>
   )
 }

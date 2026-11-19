@@ -1,5 +1,6 @@
-import { ArrowRight, LoaderCircle } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ArrowRight, LoaderCircle } from 'lucide-react'
 import type { ExperienceWorkSnapshot, ExperienceWorkSnapshotItem } from '../model'
 
 export function AssistantWorkSnapshot({
@@ -40,7 +41,8 @@ export function AssistantWorkSnapshot({
         </span>
       </div>
       {ready && current?.address && (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="collaboration-exp-assistant-current"
           onClick={() => onOpen(current)}
@@ -52,7 +54,7 @@ export function AssistantWorkSnapshot({
           </span>
           <strong className="text-sm">{current.title}</strong>
           <ArrowRight size={16} aria-hidden="true" />
-        </button>
+        </ControlButton>
       )}
       <dl className="assistant-live-metrics">
         {(['waiting', 'running', 'completed'] as const).map(state => (

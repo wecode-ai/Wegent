@@ -1,7 +1,8 @@
+import { cn } from '@/lib/utils'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import type { LucideProps } from 'lucide-react'
 import { ChevronRight } from 'lucide-react'
 import type { ComponentType, MouseEventHandler, ReactNode } from 'react'
-import { cn } from '@/lib/utils'
 
 interface DesktopSidebarHeaderProps {
   actions?: ReactNode
@@ -51,7 +52,9 @@ export function DesktopSidebarNavItem({
   onPointerEnter,
 }: DesktopSidebarNavItemProps) {
   return (
-    <button
+    <ControlButton
+      variant="unstyled"
+      size="sm"
       type="button"
       data-testid={testId}
       aria-current={selected ? 'page' : undefined}
@@ -67,7 +70,7 @@ export function DesktopSidebarNavItem({
       {iconElement ?? (Icon ? <Icon className="h-4 w-4 text-current" /> : null)}
       <span>{label}</span>
       {badge}
-    </button>
+    </ControlButton>
   )
 }
 
@@ -95,7 +98,9 @@ export function DesktopSidebarSectionHeader({
 
   return (
     <div className="group/section relative mb-2 flex h-[30px] items-center px-2.5">
-      <button
+      <ControlButton
+        variant="unstyled"
+        size="sm"
         type="button"
         data-testid={toggleTestId}
         onClick={onToggle}
@@ -113,7 +118,7 @@ export function DesktopSidebarSectionHeader({
             iconVisibilityClass
           )}
         />
-      </button>
+      </ControlButton>
       <div
         data-testid={`${toggleTestId}-actions`}
         className="absolute right-1 top-1/2 z-[70] flex -translate-y-1/2 items-center"

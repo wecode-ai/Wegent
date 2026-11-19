@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ExtraProps } from "streamdown";
 import { Copy, CopyCheck, CircleAlert, Maximize2 } from "lucide-react";
 import { Button } from "./Button";
-import { Tooltip } from "../issue-detail/Tooltip";
+import { Tooltip } from "../controls/Tooltip";
 import { MarkdownTableDialog } from "./MarkdownTableDialog";
 
 export function MarkdownTable({

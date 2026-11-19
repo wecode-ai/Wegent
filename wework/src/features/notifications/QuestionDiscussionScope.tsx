@@ -1,3 +1,26 @@
+import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
+import { requestUserInputQuestionTarget } from '@/components/layout/requestUserInputOverlay'
+import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
+import { useStableEvent } from '@/features/workbench/useStableEvent'
+import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { RuntimeTaskAddress } from '@/types/api'
+import type { RuntimeTaskComposerCreateOptions, WorkbenchMessage } from '@/types/workbench'
+import type { RequestUserInputPayload } from '@wegent/chat-core/runtime'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import {
+  ToolInteractionServicesProvider,
+  useToolInteractionServices,
+  type RequestUserInputCardProps,
+} from '@wegent/collaboration/conversation'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { X } from 'lucide-react'
 import {
   useCallback,
   useContext,
@@ -8,29 +31,14 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { X } from 'lucide-react'
-import {
-  ToolInteractionServicesProvider,
-  useToolInteractionServices,
-  type RequestUserInputCardProps,
-} from '@wegent/collaboration/conversation'
-import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
-import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
-import { useWorkbenchPaneContext } from '@/features/workbench/useWorkbench'
-import { useStableEvent } from '@/features/workbench/useStableEvent'
-import { useTranslation } from '@/hooks/useTranslation'
-import type { WorkbenchMessage, RuntimeTaskComposerCreateOptions } from '@/types/workbench'
-import type { RuntimeTaskAddress } from '@/types/api'
-import type { RequestUserInputPayload } from '@wegent/chat-core/runtime'
-import { requestUserInputQuestionTarget } from '@/components/layout/requestUserInputOverlay'
 import {
   canDiscussQuestion,
+  pendingDiscussionQuestion,
   questionDiscussionAnswerQuestions,
   QuestionDiscussionContext,
-  QuestionDiscussionStoreContext,
   questionDiscussionKey,
   questionDiscussionPrompt,
-  pendingDiscussionQuestion,
+  QuestionDiscussionStoreContext,
   type QuestionDiscussionSession,
   type QuestionDiscussionTab,
 } from './questionDiscussion'
@@ -250,7 +258,8 @@ function QuestionDiscussionPanel({
                 session.payload.questions?.[0]?.question}
             </p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="question-discussion-close"
             aria-label={t('question_discussion.close')}
@@ -258,7 +267,7 @@ function QuestionDiscussionPanel({
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus md:h-8 md:w-8"
           >
             <X className="h-4 w-4" aria-hidden="true" />
-          </button>
+          </ControlButton>
         </header>
         {(answerQuestions.length > 1 || checking || error) && (
           <div className="shrink-0 space-y-2 px-4 pb-2">
@@ -267,20 +276,27 @@ function QuestionDiscussionPanel({
                 <label htmlFor={`${id}-question`} className="block text-sm font-medium">
                   {t('question_discussion.answer_for')}
                 </label>
-                <select
-                  id={`${id}-question`}
-                  data-testid="question-discussion-question"
-                  value={questionId}
-                  onChange={event => setQuestionId(event.target.value)}
+                <SelectRoot
+                  value={normalizeSelectValue(questionId)}
+                  onValueChange={selectedValue => {
+                    if (selectedValue !== null) return setQuestionId(selectedValue)
+                  }}
                   disabled={checking}
-                  className="block min-h-11 w-full min-w-0 max-w-full rounded-lg border border-border bg-background px-2 text-sm md:min-h-8"
                 >
-                  {answerQuestions.map(question => (
-                    <option key={question.id} value={question.id}>
-                      {question.question ?? question.header}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger
+                    density="compact"
+                    id={`${id}-question`}
+                    data-testid="question-discussion-question"
+                    className="block w-full min-w-0 max-w-full"
+                  />
+                  <SelectContent>
+                    {answerQuestions.map(question => (
+                      <SelectItem key={question.id} value={String(question.id)}>
+                        {question.question ?? question.header}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </SelectRoot>
               </>
             )}
             {checking && (

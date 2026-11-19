@@ -1,17 +1,17 @@
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 import { useState } from 'react'
 import type { CollaborationLocale } from '../i18n'
 import type { ProjectCreateCollaborationGroupDraft } from '../project-create/types'
+import { CollaborationTemplatePage } from './CollaborationTemplatePage'
 import { useCollaborationTemplateStore } from './context'
 import { templateMessages } from './messages'
-import { TemplateDialog } from './TemplateDialog'
-import { CollaborationTemplatePage } from './CollaborationTemplatePage'
 import { TemplateBindingsDialog, type TemplateParticipant } from './TemplateBindings'
-import type { CollaborationTemplate } from './types'
+import { TemplateDialog } from './TemplateDialog'
 import type { TemplateModelConfiguration } from './TemplateModelSelection'
-import type { TemplateRoutingResolver } from './types'
+import type { CollaborationTemplate, TemplateRoutingResolver } from './types'
 
 export function GroupTemplateCreator({
   locale,
@@ -41,7 +41,8 @@ export function GroupTemplateCreator({
   if (!store) return null
   return (
     <>
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         className="collaboration-template-choice"
         data-testid="group-template-create"
@@ -49,7 +50,7 @@ export function GroupTemplateCreator({
         onClick={() => setChoosing(true)}
       >
         {m.createFromTemplate}
-      </button>
+      </ControlButton>
       {choosing && (
         <TemplateDialog title={m.title} closeLabel={m.close} onClose={() => setChoosing(false)}>
           <CollaborationTemplatePage

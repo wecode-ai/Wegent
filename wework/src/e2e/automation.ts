@@ -100,7 +100,12 @@ import {
 import { executeVerificationControlCommand } from './verification-control'
 import { verifyConnectorAuthorizationIsolation } from './connector-authorization-isolation'
 import { captureEmbeddedBrowserSnapshot, evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
-import { chooseDesktopControlOption, selectDesktopControlOption } from './desktop-control-select'
+import {
+  desktopControlSelectionValue,
+  chooseDesktopControlChoice,
+  selectDesktopControlChoice,
+  selectDesktopControlOption,
+} from './desktop-control-select'
 import { cloudIdentityFailure } from './cloud-identity-diagnostics'
 import { dispatchDesktopControlWheel } from './desktop-control-wheel'
 import {
@@ -1734,7 +1739,7 @@ async function doubleClickDesktopControlElement(selector: string): Promise<strin
   return secondElement.textContent?.trim() ?? ''
 }
 
-function desktopControlElementValue(element: HTMLElement): string {
+async function desktopControlElementValue(element: HTMLElement): Promise<string> {
   if (
     element instanceof HTMLInputElement ||
     element instanceof HTMLTextAreaElement ||
@@ -1745,6 +1750,8 @@ function desktopControlElementValue(element: HTMLElement): string {
   const declaredValue =
     element.getAttribute('data-value') ?? element.firstElementChild?.getAttribute('data-value')
   if (declaredValue !== null && declaredValue !== undefined) return declaredValue
+  const selectionValue = await desktopControlSelectionValue(element)
+  if (selectionValue !== undefined) return selectionValue
   if (element.isContentEditable) {
     const propertyValue = (element as HTMLElement & { value?: unknown }).value
     if (
@@ -1764,7 +1771,7 @@ function desktopControlElementValue(element: HTMLElement): string {
 
 async function waitForDesktopControlElement(
   command: DesktopControlCommand,
-  onMatch?: (element: HTMLElement) => string
+  onMatch?: (element: HTMLElement) => string | Promise<string>
 ): Promise<string> {
   const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
   const startedAt = Date.now()
@@ -3515,7 +3522,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'chooseWhenEnabled': {
       return waitForDesktopControlElement({ ...command, enabled: true, visible: true }, element =>
-        chooseDesktopControlOption(element, command.value ?? '')
+        chooseDesktopControlChoice(
+          element,
+          command.value ?? '',
+          command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
+        )
       )
     }
     case 'setExpanded': {
@@ -3995,10 +4006,12 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     }
     case 'select': {
       return waitForDesktopControlElement({ ...command, enabled: true }, element => {
-        if (!(element instanceof HTMLSelectElement)) {
-          throw new Error(`Selector "${command.selector}" is not a select element`)
-        }
-        return selectDesktopControlOption(element, command.value ?? '', command.by)
+        return selectDesktopControlChoice(
+          element,
+          command.value ?? '',
+          command.by,
+          command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
+        )
       })
     }
     case 'submit': {

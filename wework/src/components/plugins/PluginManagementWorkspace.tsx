@@ -1,63 +1,67 @@
-import { toInstalledPluginItem } from './installedPluginPresentation'
-import {
-  beginPluginSettingsRequest,
-  ExpiredPluginSettingsRequest,
-  restorePluginComponentState,
-  type PluginSettingsUpdate,
-} from '@/features/plugins/pluginSettingsRequest'
-import {
-  updatePluginInventoryInstallation,
-  hasLoadedPluginInventory,
-  refreshInstalledPluginInventory,
-  commitPluginInventoryInstallation,
-} from '@/features/plugins/pluginInventory'
-import type { KeyboardEvent, ReactNode } from 'react'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { getToken } from '@/api/auth'
 import { createHttpClient } from '@/api/http'
 import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createPluginApi } from '@/api/plugins'
+import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
+import { getRuntimeConfig } from '@/config/runtime'
+import { getKnownLocalExecutorDeviceId } from '@/desktop/localExecutor'
+import { WEWORK_PERSONAL_MARKETPLACE_ID } from '@/features/plugins/builtinPlugins'
+import { logoutLocalConnectorsForPlugin } from '@/features/plugins/logoutLocalQrConnectors'
+import { INTERNAL_DEVICE_MARKETPLACE_ID } from '@/features/plugins/marketplaceIdentity'
 import {
   createLocalDevicePluginApi,
   resolveLocalPluginDeviceRouteId,
 } from '@/features/plugins/pluginDeviceApi'
-import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
-import { trackPluginEvent as track } from '@/telemetry/businessEvents'
-import { installedPluginTelemetryIdentity } from '@/telemetry/pluginIdentity'
-import { observeOperation } from '@/telemetry/observeOperation'
-import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plugins/pluginTrial'
-import { logoutLocalConnectorsForPlugin } from '@/features/plugins/logoutLocalQrConnectors'
 import {
-  getPluginMarketplaceCache,
+  commitPluginInventoryInstallation,
+  hasLoadedPluginInventory,
+  refreshInstalledPluginInventory,
+  updatePluginInventoryInstallation,
+} from '@/features/plugins/pluginInventory'
+import {
   capturePluginMarketplaceScope,
+  getPluginMarketplaceCache,
   pluginMarketplaceCacheKey,
   removePluginMarketplaceInstallation,
   sameInstalledPlugins,
   sameMarketplaceItems,
   subscribePluginMarketplaceCache,
 } from '@/features/plugins/pluginMarketplaceCache'
+import { buildPluginDetailRoute } from '@/features/plugins/pluginNavigation'
+import {
+  beginPluginSettingsRequest,
+  ExpiredPluginSettingsRequest,
+  restorePluginComponentState,
+  type PluginSettingsUpdate,
+} from '@/features/plugins/pluginSettingsRequest'
+import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plugins/pluginTrial'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getErrorMessage } from '@/lib/error-message'
 import { navigateTo } from '@/lib/navigation'
-import { WEWORK_PERSONAL_MARKETPLACE_ID } from '@/features/plugins/builtinPlugins'
-import { INTERNAL_DEVICE_MARKETPLACE_ID } from '@/features/plugins/marketplaceIdentity'
-import { buildPluginDetailRoute } from '@/features/plugins/pluginNavigation'
+import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
+import { trackPluginEvent as track } from '@/telemetry/businessEvents'
+import { observeOperation } from '@/telemetry/observeOperation'
+import { installedPluginTelemetryIdentity } from '@/telemetry/pluginIdentity'
 import type { InstalledPlugin, PluginMarketplaceItem } from '@/types/api'
-import { InstalledPluginRow, type InstalledPluginItem } from './PluginManagementRows'
+import { TabsList, TabsRoot, TabsTab } from '@wegent/collaboration/controls/Tabs'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import type { ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { CoreDshPluginManagementSection } from './CoreDshPluginManagementSection'
+import { findMarketplaceItemForInstalled } from './findMarketplaceItemForInstalled'
 import {
   isCloudManagedInstalledPlugin,
   isWegentManagedStorePlugin,
   linkedCloudInstalledPluginId,
   linkedCloudPluginId,
 } from './installedPluginMerge'
-import {
-  pluginUninstallScope,
-  pluginUninstallWarningDetails,
-  uninstallPluginIdentities,
-  type PluginUninstallScope,
-} from './pluginUninstall'
+import { toInstalledPluginItem } from './installedPluginPresentation'
 import { humanizeMarketplaceUninstallError } from './marketplaceInstallError'
+import { UninstallPluginDialog } from './plugin-dialogs/UninstallPluginDialog'
+import { pluginDetailReadyToTry } from './pluginDetailReadyToTry'
 import { PluginDetailView } from './PluginDetailView'
+import { installedPluginMarketplaceId, marketplaceItemMarketplaceId } from './pluginDistribution'
+import { InstalledPluginRow, type InstalledPluginItem } from './PluginManagementRows'
 import { PluginOperationNotice, type PluginOperationNoticeState } from './PluginOperationNotice'
 import { resolvePluginOwnerActions } from './pluginOwnerActions'
 import {
@@ -66,14 +70,12 @@ import {
   marketplaceItemOwnsLocalCreatedPackage,
   resolveContinueEditingPluginKey,
 } from './pluginOwnerLocalPackage'
-import { UninstallPluginDialog } from './plugin-dialogs/UninstallPluginDialog'
-import { installedPluginMarketplaceId, marketplaceItemMarketplaceId } from './pluginDistribution'
-import { findMarketplaceItemForInstalled } from './findMarketplaceItemForInstalled'
-import { pluginDetailReadyToTry } from './pluginDetailReadyToTry'
-import { getRuntimeConfig } from '@/config/runtime'
-import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
-import { getKnownLocalExecutorDeviceId } from '@/desktop/localExecutor'
-import { CoreDshPluginManagementSection } from './CoreDshPluginManagementSection'
+import {
+  pluginUninstallScope,
+  pluginUninstallWarningDetails,
+  uninstallPluginIdentities,
+  type PluginUninstallScope,
+} from './pluginUninstall'
 
 function tryPluginInChat(plugin: InstalledPlugin) {
   queuePluginTrial(plugin, { openInNewChat: true })
@@ -167,11 +169,6 @@ function PluginManagementWorkspaceContent({
     )
   }, [cloudToken, resolvedCloudApiBaseUrl])
 
-  const selectTab = (tab: PluginManagementTab) => {
-    setActiveTab(tab)
-    document.getElementById(`plugin-management-${tab}-tab`)?.focus()
-  }
-
   useEffect(() => {
     return subscribePluginMarketplaceCache(snapshot => {
       if (
@@ -194,13 +191,6 @@ function PluginManagementWorkspaceContent({
       if (hasLoadedPluginInventory(snapshot)) setIsLoadingPlugins(false)
     })
   }, [marketplaceCacheKeyValue, knownDeviceId])
-
-  const handleTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, tab: PluginManagementTab) => {
-    if (!showCoreDshTab) return
-    if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
-    event.preventDefault()
-    selectTab(tab === 'codex' ? 'core-dsh' : 'codex')
-  }
 
   useEffect(() => {
     let current = true
@@ -695,14 +685,15 @@ function PluginManagementWorkspaceContent({
         left={
           <>
             {topBarLeftActions}
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="plugin-management-back-button"
               className="plugin-route-back-button"
               onClick={() => navigateTo('/plugins')}
             >
               ‹ {t('workbench.plugins_back_to_marketplace', '返回插件市场')}
-            </button>
+            </ControlButton>
           </>
         }
       />
@@ -726,57 +717,56 @@ function PluginManagementWorkspaceContent({
           </div>
         </header>
         {showCoreDshTab ? (
-          <div
-            className="mb-5 flex min-h-11 items-end gap-6 border-b border-border md:min-h-0"
-            role="tablist"
-            aria-label={t('workbench.plugins_management_tabs_label', '插件类型')}
-            data-testid="plugin-management-surface-tabs"
+          <TabsRoot
+            value={activeTab}
+            onValueChange={next => {
+              if (next) setActiveTab(next)
+            }}
+            render={<div className="contents" />}
           >
-            <button
-              type="button"
-              id="plugin-management-codex-tab"
-              role="tab"
-              aria-selected={activeTab === 'codex'}
-              aria-controls="plugin-management-codex-panel"
-              tabIndex={activeTab === 'codex' ? 0 : -1}
-              data-testid="plugin-management-surface-wework"
-              onClick={() => setActiveTab('codex')}
-              onKeyDown={event => handleTabKeyDown(event, 'codex')}
-              className={[
-                'relative flex h-11 items-center px-0.5 text-sm font-medium transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:h-8',
-                activeTab === 'codex'
-                  ? 'text-text-primary'
-                  : 'text-text-muted hover:text-text-secondary',
-              ].join(' ')}
+            <TabsList
+              className="mb-5 flex min-h-11 items-end gap-6 border-b border-border md:min-h-0"
+              aria-label={t('workbench.plugins_management_tabs_label', '插件类型')}
+              data-testid="plugin-management-surface-tabs"
             >
-              {t('workbench.plugins_wework_surface', 'Codex 插件')}
-              {activeTab === 'codex' ? (
-                <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-text-primary" />
-              ) : null}
-            </button>
-            <button
-              type="button"
-              id="plugin-management-core-dsh-tab"
-              role="tab"
-              aria-selected={activeTab === 'core-dsh'}
-              aria-controls="plugin-management-core-dsh-panel"
-              tabIndex={activeTab === 'core-dsh' ? 0 : -1}
-              data-testid="plugin-management-surface-core-dsh"
-              onClick={() => setActiveTab('core-dsh')}
-              onKeyDown={event => handleTabKeyDown(event, 'core-dsh')}
-              className={[
-                'relative flex h-11 items-center px-0.5 text-sm font-medium transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:h-8',
-                activeTab === 'core-dsh'
-                  ? 'text-text-primary'
-                  : 'text-text-muted hover:text-text-secondary',
-              ].join(' ')}
-            >
-              {t('workbench.plugins_core_dsh_surface', 'Wework 插件')}
-              {activeTab === 'core-dsh' ? (
-                <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-text-primary" />
-              ) : null}
-            </button>
-          </div>
+              <TabsTab
+                value={'codex'}
+                type="button"
+                id="plugin-management-codex-tab"
+                aria-controls="plugin-management-codex-panel"
+                data-testid="plugin-management-surface-wework"
+                className={[
+                  'relative flex h-11 items-center px-0.5 text-sm font-medium transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:h-8',
+                  activeTab === 'codex'
+                    ? 'text-text-primary'
+                    : 'text-text-muted hover:text-text-secondary',
+                ].join(' ')}
+              >
+                {t('workbench.plugins_wework_surface', 'Codex 插件')}
+                {activeTab === 'codex' ? (
+                  <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-text-primary" />
+                ) : null}
+              </TabsTab>
+              <TabsTab
+                value={'core-dsh'}
+                type="button"
+                id="plugin-management-core-dsh-tab"
+                aria-controls="plugin-management-core-dsh-panel"
+                data-testid="plugin-management-surface-core-dsh"
+                className={[
+                  'relative flex h-11 items-center px-0.5 text-sm font-medium transition-colors focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:h-8',
+                  activeTab === 'core-dsh'
+                    ? 'text-text-primary'
+                    : 'text-text-muted hover:text-text-secondary',
+                ].join(' ')}
+              >
+                {t('workbench.plugins_core_dsh_surface', 'Wework 插件')}
+                {activeTab === 'core-dsh' ? (
+                  <span className="absolute inset-x-0 bottom-0 h-0.5 rounded-full bg-text-primary" />
+                ) : null}
+              </TabsTab>
+            </TabsList>
+          </TabsRoot>
         ) : null}
         {showCoreDshTab && activeTab === 'core-dsh' ? (
           <div
@@ -874,14 +864,15 @@ function PluginManagementWorkspaceContent({
                     '安装后的插件会集中显示在这里。'
                   )}
                 </p>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="plugin-management-browse-marketplace-button"
                   className="inline-flex h-[31px] items-center rounded-lg bg-surface px-2.5 text-sm font-medium text-text-primary transition-colors hover:bg-muted focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20"
                   onClick={() => navigateTo('/plugins')}
                 >
                   {t('workbench.plugins_browse_marketplace', '浏览插件市场')}
-                </button>
+                </ControlButton>
               </div>
             )}
           </div>

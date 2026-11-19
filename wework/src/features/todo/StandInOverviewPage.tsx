@@ -1,52 +1,54 @@
+import {
+  roleSelectsProject,
+  standInConversationTaskId,
+  standInRoleName,
+  subscribePersonalStandIn,
+  type PersonalStandInSettings,
+} from '@/api/personalStandIn'
+import type { StandInProposal } from '@/api/standIn'
+import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
+import { Tooltip } from '@/components/ui/tooltip'
+import { standInOrigin, standInState } from '@/features/notifications/standInNotifications'
+import { useStableEvent } from '@/features/workbench/useStableEvent'
+import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
+import { useTranslation } from '@/hooks/useTranslation'
 import { WORKSPACE_NAVIGATION_EVENT, type WorkspaceNavigationDetail } from '@/lib/navigation'
+import { isDesktopRuntime } from '@/lib/runtime-environment'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
 import { useStandInOpened } from '@/telemetry/useStandInOpened'
+import type { RuntimeTaskAddress } from '@/types/api'
+import { StandInIcon } from '@wegent/collaboration'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Check, Plus, SlidersHorizontal, UserRound } from 'lucide-react'
 import {
-  useContext,
   useCallback,
+  useContext,
   useEffect,
   useImperativeHandle,
   useRef,
   useState,
   type ComponentProps,
-  type Ref,
   type ReactNode,
+  type Ref,
 } from 'react'
-import { Check, Plus, SlidersHorizontal, UserRound } from 'lucide-react'
-import { StandInSettingsEntry } from './StandInSettingsLayout'
 import { createPortal } from 'react-dom'
-import { StandInIcon } from '@wegent/collaboration'
-import {
-  roleSelectsProject,
-  standInRoleName,
-  subscribePersonalStandIn,
-  standInConversationTaskId,
-  type PersonalStandInSettings,
-} from '@/api/personalStandIn'
-import type { StandInProposal } from '@/api/standIn'
-import { WorkbenchContext } from '@/features/workbench/workbenchContexts'
-import { standInOrigin, standInState } from '@/features/notifications/standInNotifications'
-import type { RuntimeTaskAddress } from '@/types/api'
-import { useTranslation } from '@/hooks/useTranslation'
-import { isDesktopRuntime } from '@/lib/runtime-environment'
-import { usePersonalStandIn } from './usePersonalStandIn'
-import { StandInSettingsPage, type StandInSettingsHandle } from './StandInSettingsPage'
 import { StandInConversation } from './StandInConversation'
-import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
 import { StandInDetailsPopover } from './StandInDetailsPopover'
-import { StandInScheduleDialog } from './StandInScheduleDialog'
-import { Tooltip } from '@/components/ui/tooltip'
-import { StandInWorkList } from './StandInWorkList'
-import { mergeStandInWorkItems, standInWorkRole } from './standInWork'
 import { StandInMemoryPanel } from './StandInMemoryPanel'
+import { StandInOnboarding } from './StandInOnboarding'
 import { StandInPrimaryProfile } from './StandInPrimaryProfile'
 import { StandInProcessingNotice } from './StandInProcessingNotice'
-import { StandInOnboarding } from './StandInOnboarding'
 import { StandInProposalCard } from './StandInProposalCard'
 import { StandInReviewDialog } from './StandInReviewDialog'
-import { useStandInProcessingStatus } from './useStandInProcessingStatus'
-import { useStableEvent } from '@/features/workbench/useStableEvent'
+import { StandInScheduleDialog } from './StandInScheduleDialog'
+import { StandInSettingsEntry } from './StandInSettingsLayout'
+import { StandInSettingsPage, type StandInSettingsHandle } from './StandInSettingsPage'
+import { StandInWorkList } from './StandInWorkList'
+import { mergeStandInWorkItems, standInWorkRole } from './standInWork'
+import { usePersonalStandIn } from './usePersonalStandIn'
 import { useStandInInbox } from './useStandInInbox'
+import { useStandInProcessingStatus } from './useStandInProcessingStatus'
 import type { StandInRoleLocation } from './useStandInRoleDirectory'
 
 type SettingsProps = ComponentProps<typeof StandInSettingsPage>
@@ -418,7 +420,8 @@ export function StandInOverviewPage({
             data-testid="stand-in-role-selector"
           >
             <div className="flex w-max items-center gap-1" data-testid="stand-in-overview-status">
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="stand-in-primary-open"
                 aria-current={!roleId ? 'page' : undefined}
@@ -428,7 +431,7 @@ export function StandInOverviewPage({
                 <UserRound aria-hidden="true" className="h-4 w-4" />
                 {t('standIn.title')}
                 {!roleId && <Check aria-hidden="true" className="h-3.5 w-3.5" />}
-              </button>
+              </ControlButton>
               {roles.map((value, index) => {
                 const projects = props.projects.filter(project =>
                   roleSelectsProject(value, {
@@ -443,7 +446,8 @@ export function StandInOverviewPage({
                 const selected =
                   roleId === value.id && (!roleLocations || value.executionDeviceId === deviceId)
                 return (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     key={`${value.migrationSource ?? value.executionDeviceId}:${value.id}`}
                     type="button"
                     data-testid={`stand-in-overview-role-${value.id}${roles.filter(role => role.id === value.id).length > 1 ? `-${value.executionDeviceId}` : ''}`}
@@ -468,11 +472,12 @@ export function StandInOverviewPage({
                       {t(value.enabled ? 'standIn.auto_on' : 'standIn.auto_off')}
                       {t('standIn.personal.connected_selected', { count: projects.length })}
                     </span>
-                  </button>
+                  </ControlButton>
                 )
               })}
               <Tooltip label={t('standIn.workspace.create_role')} side="bottom">
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="stand-in-create-role"
                   aria-label={t('standIn.workspace.create_role')}
@@ -487,12 +492,13 @@ export function StandInOverviewPage({
                   className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted md:h-8 md:w-8"
                 >
                   <Plus aria-hidden="true" className="h-4 w-4" />
-                </button>
+                </ControlButton>
               </Tooltip>
             </div>
           </nav>
           <Tooltip label={t('standIn.workspace.details_title')} side="bottom" align="end">
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="stand-in-details-open"
               ref={detailsTrigger}
@@ -507,7 +513,7 @@ export function StandInOverviewPage({
               className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-muted md:h-8 md:w-8"
             >
               <SlidersHorizontal aria-hidden="true" className="h-4 w-4" />
-            </button>
+            </ControlButton>
           </Tooltip>
           <p data-testid="stand-in-role-help" className="w-full text-sm text-text-secondary">
             {t('standIn.workspace.role_help')}
@@ -520,14 +526,15 @@ export function StandInOverviewPage({
         ) : state.error && !state.saved ? (
           <div role="alert" className="p-5 text-error">
             <p>{state.error}</p>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="stand-in-overview-retry"
               onClick={reload}
               className="mt-2 min-h-11 min-w-11 underline md:min-h-8"
             >
               {t('standIn.reload')}
-            </button>
+            </ControlButton>
           </div>
         ) : (
           <>
@@ -772,7 +779,8 @@ export function StandInOverviewPage({
           {overviewError && (
             <div role="alert" className="mb-4 flex items-center gap-3 text-sm">
               <span className="min-w-0 flex-1">{overviewError}</span>
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="stand-in-overview-inline-retry"
                 onClick={() => {
@@ -782,7 +790,7 @@ export function StandInOverviewPage({
                 className="min-h-11 shrink-0 rounded-md px-3 hover:bg-muted md:min-h-8"
               >
                 {t('standIn.reload')}
-              </button>
+              </ControlButton>
             </div>
           )}
           <div className="divide-y divide-border">
@@ -797,7 +805,8 @@ export function StandInOverviewPage({
                     {getStandInErrorMessage(value.error)}
                   </p>
                 </div>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`stand-in-source-retry-${value.source.id}`}
                   className="min-h-11 shrink-0 rounded-md px-3 text-sm hover:bg-muted md:min-h-8"
@@ -811,7 +820,7 @@ export function StandInOverviewPage({
                   }}
                 >
                   {t('standIn.reload')}
-                </button>
+                </ControlButton>
               </div>
             ))}
           </div>
@@ -836,18 +845,21 @@ export function StandInOverviewPage({
                 pressedInPanel.current = false
               }}
             >
-              <aside
-                role="dialog"
-                aria-modal="true"
-                aria-label={t(
-                  profile === 'memory'
-                    ? 'standIn.memory.title'
-                    : profile === 'primary'
-                      ? 'standIn.workspace.primary_profile'
-                      : 'standIn.workspace.role_profile'
-                )}
-                data-testid="stand-in-profile-panel"
-                className="absolute inset-y-0 right-0 z-20 w-full overflow-y-auto border-l border-border bg-background shadow-lg md:max-w-lg"
+              <DialogSurface
+                onClose={() => panelRef.current?.requestClose()}
+                render={
+                  <aside
+                    aria-label={t(
+                      profile === 'memory'
+                        ? 'standIn.memory.title'
+                        : profile === 'primary'
+                          ? 'standIn.workspace.primary_profile'
+                          : 'standIn.workspace.role_profile'
+                    )}
+                    data-testid="stand-in-profile-panel"
+                    className="absolute inset-y-0 right-0 z-20 w-full overflow-y-auto border-l border-border bg-background shadow-lg md:max-w-lg"
+                  />
+                }
               >
                 {profile === 'memory' && api && saved ? (
                   <StandInMemoryPanel
@@ -938,7 +950,7 @@ export function StandInOverviewPage({
                     }}
                   />
                 )}
-              </aside>
+              </DialogSurface>
             </div>,
             document.body
           )}

@@ -1,22 +1,23 @@
-import { Cloud, FolderGit2, Menu, Plus, Settings } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
-import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
 import { DesktopCollapsedSidebarToggle } from '@/components/layout/DesktopCollapsedSidebarToggle'
+import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
 import { MobileDrawer } from '@/components/layout/MobileDrawer'
+import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSidebarCollapsed'
 import { WorkbenchSearchDialog } from '@/components/layout/WorkbenchSearchDialog'
 import { requestProjectCreateMode } from '@/components/layout/workbenchShellEvents'
 import { DeviceSection } from '@/components/settings/ConnectionsSettingsPage'
 import { Button } from '@/components/ui/button'
-import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSidebarCollapsed'
-import { isElectronRuntime } from '@/lib/runtime-environment'
 import { useAuth } from '@/features/auth/useAuth'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
+import { isElectronRuntime } from '@/lib/runtime-environment'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
-import type { DeviceInfo as WorkbenchDeviceInfo, RuntimeProjectWork } from '@/types/api'
+import type { RuntimeProjectWork, DeviceInfo as WorkbenchDeviceInfo } from '@/types/api'
 import type { DeviceInfo as ManagedDeviceInfo } from '@/types/devices'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Cloud, FolderGit2, Menu, Plus, Settings } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 
 function toManagedDeviceInfo(device: WorkbenchDeviceInfo): ManagedDeviceInfo | null {
   const deviceType = device.device_type
@@ -194,7 +195,8 @@ export function CloudWorkPage() {
         {isMobile && (
           <>
             <header className="pointer-events-none absolute left-5 top-[max(8px,env(safe-area-inset-top))] z-chrome flex h-11 items-center">
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="open-mobile-drawer-button"
                 onClick={() => setDrawerOpen(true)}
@@ -202,7 +204,7 @@ export function CloudWorkPage() {
                 aria-label={t('workbench.open_menu', '打开菜单')}
               >
                 <Menu className="h-5 w-5" />
-              </button>
+              </ControlButton>
             </header>
             <MobileDrawer
               open={drawerOpen}
@@ -249,7 +251,8 @@ export function CloudWorkPage() {
                   {t('workbench.cloud_work_page_description', '查看云端设备资源状态并进入云端项目')}
                 </p>
               </div>
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="cloud-work-settings-button"
                 onClick={() => navigateTo('/settings/connections')}
@@ -257,7 +260,7 @@ export function CloudWorkPage() {
               >
                 <Settings className="h-4 w-4" />
                 {t('workbench.cloud_work_connection_settings', '连接设置')}
-              </button>
+              </ControlButton>
             </header>
 
             <div className="mt-8 space-y-10">
@@ -269,15 +272,16 @@ export function CloudWorkPage() {
                       {t('workbench.cloud_work_devices', '设备')}
                     </h2>
                   </div>
-                  <button
+                  <ControlButton
+                    variant="primary"
+                    size="sm"
                     type="button"
                     data-testid="cloud-work-add-device-button"
                     onClick={handleAddDevice}
-                    className="flex h-8 items-center gap-1.5 rounded-lg bg-text-primary px-3 text-sm font-medium text-background hover:opacity-80"
                   >
                     <Plus className="h-4 w-4" />
                     {t('workbench.cloud_work_add_device', '添加设备')}
-                  </button>
+                  </ControlButton>
                 </div>
                 {isDesktop && (
                   <div
@@ -324,7 +328,8 @@ export function CloudWorkPage() {
                       {t('workbench.cloud_work_projects', '云端项目')}
                     </h2>
                   </div>
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid="cloud-work-create-project-button"
                     onClick={handleCreateCloudProject}
@@ -333,7 +338,7 @@ export function CloudWorkPage() {
                   >
                     <Plus className="h-4 w-4" />
                     {t('workbench.cloud_work_create_project', '新建项目')}
-                  </button>
+                  </ControlButton>
                 </div>
                 {cloudProjects.length > 0 ? (
                   <div className="space-y-1">
@@ -344,7 +349,8 @@ export function CloudWorkPage() {
                         : null
                       const projectId = runtimeProjectUiId(projectWork.project)
                       return (
-                        <button
+                        <ControlButton
+                          variant="unstyled"
                           key={`${projectWork.project.stateDeviceId ?? ''}:${projectWork.project.key}`}
                           type="button"
                           data-testid={`cloud-work-project-${projectId}`}
@@ -367,7 +373,7 @@ export function CloudWorkPage() {
                               ? t('workbench.cloud_work_project_available', '可用')
                               : t('workbench.cloud_work_project_unavailable', '不可用')}
                           </span>
-                        </button>
+                        </ControlButton>
                       )
                     })}
                   </div>

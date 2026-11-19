@@ -1,28 +1,29 @@
-import { useRef, useState, type ComponentProps, type ReactNode } from 'react'
+import type { StandInRole } from '@/api/personalStandIn'
+import type { StandInInboxWork, StandInSourceError } from '@/api/standIn'
+import { formatScheduleSummary } from '@/features/automations/formatScheduleSummary'
+import { standInState } from '@/features/notifications/standInNotifications'
+import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
+import type { AutomationApi } from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { DeviceInfo, RuntimeTaskAddress } from '@/types/api'
+import type { Automation } from '@/types/automation'
+import type { CollaborationProject } from '@wegent/collaboration'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
   ArrowLeft,
   ArrowUpRight,
   ChevronRight,
-  Clock,
   CircleAlert,
-  Monitor,
+  Clock,
   HelpCircle,
+  Monitor,
   Settings,
 } from 'lucide-react'
-import { useTranslation } from '@/hooks/useTranslation'
-import { standInState } from '@/features/notifications/standInNotifications'
-import type { RuntimeTaskReminderItem } from '@/features/workbench/runtimeTaskReminders'
-import type { AutomationApi } from '@/features/workbench/workbenchServices'
-import type { Automation } from '@/types/automation'
-import { formatScheduleSummary } from '@/features/automations/formatScheduleSummary'
-import { useStandInProfileSchedules } from './useStandInProfileData'
-import type { DeviceInfo, RuntimeTaskAddress } from '@/types/api'
-import type { StandInInboxWork, StandInSourceError } from '@/api/standIn'
+import { useRef, useState, type ComponentProps, type ReactNode } from 'react'
 import { AnchorPopover } from './AnchorPopover'
 import { StandInImConnections } from './StandInImConnections'
-import type { StandInRole } from '@/api/personalStandIn'
-import type { CollaborationProject } from '@wegent/collaboration'
 import { findStandInProject } from './standInProjects'
+import { useStandInProfileSchedules } from './useStandInProfileData'
 
 export function StandInDetailsPopover({
   anchor,
@@ -166,7 +167,8 @@ export function StandInDetailsPopover({
       header={
         selected ? (
           <div className="flex h-12 shrink-0 items-center gap-2 px-2">
-            <button
+            <ControlButton
+              variant="unstyled"
               ref={backButton}
               type="button"
               data-testid="stand-in-details-back"
@@ -175,7 +177,7 @@ export function StandInDetailsPopover({
               className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md hover:bg-muted md:h-8 md:w-8"
             >
               <ArrowLeft aria-hidden="true" className="h-4 w-4" />
-            </button>
+            </ControlButton>
             <h2 className="min-w-0 flex-1 truncate text-sm font-medium">{selected.task.title}</h2>
           </div>
         ) : undefined
@@ -189,7 +191,9 @@ export function StandInDetailsPopover({
           {renderActivity(selected)}
           {onOpenTask && (
             <div className="shrink-0 px-4 pb-3 pt-2">
-              <button
+              <ControlButton
+                variant="primary"
+                size="sm"
                 type="button"
                 data-testid="stand-in-details-open-task"
                 onClick={() => {
@@ -200,7 +204,7 @@ export function StandInDetailsPopover({
               >
                 <ArrowUpRight aria-hidden="true" className="h-4 w-4" />
                 {t('standIn.workspace.details_open_conversation')}
-              </button>
+              </ControlButton>
             </div>
           )}
         </div>
@@ -227,7 +231,8 @@ export function StandInDetailsPopover({
               )}
             </div>
             {onGuide && (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="stand-in-guide-open"
                 aria-label={t('standIn.onboarding.guide')}
@@ -236,13 +241,15 @@ export function StandInDetailsPopover({
                 className="flex h-11 w-11 shrink-0 items-center justify-center self-start rounded-md text-text-muted hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:h-8 md:w-8"
               >
                 <HelpCircle aria-hidden="true" className="h-4 w-4" />
-              </button>
+              </ControlButton>
             )}
           </div>
         </div>
         <div className="space-y-5 px-4 pb-4 pt-4">
           <section aria-label={t('standIn.workspace.work_sources')}>
-            <button
+            <ControlButton
+              variant="outline"
+              size="sm"
               type="button"
               data-testid="stand-in-details-work-sources"
               onClick={onSettings}
@@ -267,7 +274,7 @@ export function StandInDetailsPopover({
                   {t('standIn.workspace.work_sources_count', { count: workSources.length })}
                 </span>
               )}
-            </button>
+            </ControlButton>
           </section>
           {imConnections && (
             <StandInImConnections {...imConnections} name={name} onOpenChange={setImOpen} />
@@ -295,7 +302,8 @@ export function StandInDetailsPopover({
               </div>
             </div>
             {needsAttention && (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="stand-in-status-open"
                 aria-label={t('standIn.workspace.status_details')}
@@ -307,11 +315,12 @@ export function StandInDetailsPopover({
                   {t('standIn.workspace.details_attention')}
                 </span>
                 <ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0 text-text-muted" />
-              </button>
+              </ControlButton>
             )}
           </section>
           {onProposal && (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="stand-in-proposal-open"
               onClick={onProposal}
@@ -319,7 +328,7 @@ export function StandInDetailsPopover({
             >
               {t('standIn.workspace.pending_configuration')}
               <ArrowUpRight aria-hidden="true" className="ml-auto h-4 w-4" />
-            </button>
+            </ControlButton>
           )}
           <section aria-label={t('standIn.workspace.details_activity')}>
             <div className="mb-2 flex items-center justify-between gap-2">
@@ -327,7 +336,8 @@ export function StandInDetailsPopover({
                 {t('standIn.workspace.details_activity')}
               </h3>
               {onAllActivity && (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="stand-in-role-chat"
                   aria-label={t('standIn.workspace.details_all_activity')}
@@ -336,7 +346,7 @@ export function StandInDetailsPopover({
                   className="flex h-11 w-11 items-center justify-center rounded-md text-text-muted hover:bg-muted md:h-8 md:w-8"
                 >
                   <ChevronRight aria-hidden="true" className="h-4 w-4" />
-                </button>
+                </ControlButton>
               )}
             </div>
             {!activity.length && !schedules.loading && !schedules.error && (
@@ -347,7 +357,8 @@ export function StandInDetailsPopover({
             {activity.slice(0, visibleCount).map(entry => {
               if (entry.kind === 'schedule')
                 return (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     key={`schedule:${entry.item.id}`}
                     type="button"
                     data-testid={`stand-in-details-schedule-${entry.item.id}`}
@@ -365,7 +376,7 @@ export function StandInDetailsPopover({
                       </span>
                     </span>
                     <ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0 text-text-muted" />
-                  </button>
+                  </ControlButton>
                 )
               const item = entry.item
               const state = standInState(item)
@@ -376,7 +387,8 @@ export function StandInDetailsPopover({
                   : t(`standIn.personal.activity_${state.status}`)
               return (
                 <div key={item.key}>
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid={`stand-in-details-task-${item.task.taskId}`}
                     disabled={!renderActivity}
@@ -405,7 +417,7 @@ export function StandInDetailsPopover({
                       </span>
                     </span>
                     <ChevronRight aria-hidden="true" className="h-4 w-4 shrink-0 text-text-muted" />
-                  </button>
+                  </ControlButton>
                 </div>
               )
             })}
@@ -417,29 +429,32 @@ export function StandInDetailsPopover({
             {schedules.error && (
               <div role="alert" className="py-2 text-xs text-error">
                 {schedules.error}
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="stand-in-details-schedules-retry"
                   onClick={schedules.retry}
                   className="ml-2 min-h-11 min-w-11 underline md:min-h-8"
                 >
                   {t('standIn.reload')}
-                </button>
+                </ControlButton>
               </div>
             )}
             {activity.length > visibleCount && (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="stand-in-details-more"
                 onClick={() => setVisibleCount(count => count + 4)}
                 className="min-h-11 px-2 text-sm text-text-secondary hover:text-text-primary md:min-h-8"
               >
                 {t('standIn.workspace.details_more_activity')}
-              </button>
+              </ControlButton>
             )}
           </section>
           <div className="border-t border-border pt-2">
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="stand-in-settings-open"
               onClick={onSettings}
@@ -447,7 +462,7 @@ export function StandInDetailsPopover({
             >
               <Settings aria-hidden="true" className="h-4 w-4" />
               {t('standIn.workspace.details_manage')}
-            </button>
+            </ControlButton>
           </div>
         </div>
       </div>

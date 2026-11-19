@@ -1,57 +1,57 @@
-import { PluginTrialTemplateStrip } from '../composer/PluginTrialTemplateStrip'
-import { ComposerPluginIcon } from '../composer/ComposerPluginIcon'
 import {
-  createPluginTrialGuide,
   buildTrialTemplatePrompt,
+  createPluginTrialGuide,
 } from '@wegent/chat-core/composer-plugin-trial'
-import {
-  compareComposerPluginsByUsage,
-  sortComposerPluginsByUsage,
-  readRecentPluginAppIds,
-  RECENT_PLUGIN_APPS_KEY,
-} from '../composer/composerPluginSort'
-import { recordPluginUsageFromInput } from '../composer/pluginUsage'
-import { createRuntimeComposerPluginSource } from '@wegent/chat-core/runtime-composer-plugin-source'
-import type { LocalDeviceApp } from '@wegent/chat-core/runtime-composer-catalog'
-import { createPluginAssetResolver } from '@wegent/chat-core/plugin-assets'
-import { createComposerCatalogStore } from '../composer/createComposerCatalogStore'
-import { PluginPickerMenu } from '../composer/PluginPickerMenu'
-import { appReference, displayAppName } from '../composer/composerMentionCandidates'
-import { registerComposerMentionIcon } from '../composer/composerMentions'
-import { useCollaborationPortalTheme, useDocumentTheme } from '../theme'
-import { createComposerPluginAssetReader } from '../composer/pluginAssetReader'
-import type { createRuntimeConversationSession } from '@wegent/chat-core/runtime-conversation-session'
 import type { RuntimePaneQueuedMessage } from '@wegent/chat-core/conversation-queue'
-import { ConversationQueuePanel } from '../conversation/ConversationQueuePanel'
-import { persistAttachmentReferences } from '../composer/attachmentFiles'
-import { useBrowserTaskConversationQueue } from './useBrowserTaskConversationQueue'
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { useBrowserTaskDraft } from './browserTaskDraftContext'
 import type { UnifiedModel } from '@wegent/chat-core/models'
-import type { RuntimeTaskAddress } from '@wegent/chat-core/runtime'
-import type { RuntimeTaskSummary } from '@wegent/chat-core/runtime-task-api-types'
-import type { SharedWorkspaceRuntimeApi } from '../ports/SharedWorkspaceApi'
-import type { CollaborationTranslate } from '../i18n'
-import type { AttachmentImageServices } from './AttachmentImageView'
-import type { Attachment } from '@wegent/chat-core/runtime'
-import { ComposerAttachmentBadges } from './ComposerAttachmentBadges'
-import { ModelSelector } from '../controls/ModelSelector'
+import { createPluginAssetResolver } from '@wegent/chat-core/plugin-assets'
+import type { Attachment, RuntimeTaskAddress } from '@wegent/chat-core/runtime'
+import type { LocalDeviceApp } from '@wegent/chat-core/runtime-composer-catalog'
+import { createRuntimeComposerPluginSource } from '@wegent/chat-core/runtime-composer-plugin-source'
+import type { createRuntimeConversationSession } from '@wegent/chat-core/runtime-conversation-session'
 import {
   findModelForSelection,
   modelSelectionFromRuntimeHandle,
 } from '@wegent/chat-core/runtime-model-selection'
-import { runtimeContinuationRequest } from '../execution/runtimeContinuationRequest'
+import type { RuntimeTaskSummary } from '@wegent/chat-core/runtime-task-api-types'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import {
-  ProjectComposerBody,
   ComposerErrorBanner,
-  type ComposerInputHandle,
   ComposerToolbar,
+  ProjectComposerBody,
+  type ComposerInputHandle,
   type ComposerSubmitOptions,
 } from '../composer'
-import { ComposerAutocompleteInput } from '../composer/ComposerAutocompleteInput'
-import { ContextUsageIndicator } from '../composer/ContextUsageIndicator'
-import { BrowserQuickPhraseMenu } from './BrowserQuickPhraseMenu'
 import { applyQuickPhrase } from '../composer/applyQuickPhrase'
+import { persistAttachmentReferences } from '../composer/attachmentFiles'
+import { ComposerAutocompleteInput } from '../composer/ComposerAutocompleteInput'
+import { appReference, displayAppName } from '../composer/composerMentionCandidates'
+import { registerComposerMentionIcon } from '../composer/composerMentions'
+import { ComposerPluginIcon } from '../composer/ComposerPluginIcon'
+import {
+  compareComposerPluginsByUsage,
+  readRecentPluginAppIds,
+  RECENT_PLUGIN_APPS_KEY,
+  sortComposerPluginsByUsage,
+} from '../composer/composerPluginSort'
+import { ContextUsageIndicator } from '../composer/ContextUsageIndicator'
+import { createComposerCatalogStore } from '../composer/createComposerCatalogStore'
+import { createComposerPluginAssetReader } from '../composer/pluginAssetReader'
+import { PluginPickerMenu } from '../composer/PluginPickerMenu'
+import { PluginTrialTemplateStrip } from '../composer/PluginTrialTemplateStrip'
+import { recordPluginUsageFromInput } from '../composer/pluginUsage'
+import { ModelSelector } from '../controls/ModelSelector'
+import { ConversationQueuePanel } from '../conversation/ConversationQueuePanel'
+import { runtimeContinuationRequest } from '../execution/runtimeContinuationRequest'
+import type { CollaborationTranslate } from '../i18n'
+import { Button as ControlButton } from '../markdown/Button'
+import type { SharedWorkspaceRuntimeApi } from '../ports/SharedWorkspaceApi'
+import { useCollaborationPortalTheme, useDocumentTheme } from '../theme'
+import type { AttachmentImageServices } from './AttachmentImageView'
+import { BrowserQuickPhraseMenu } from './BrowserQuickPhraseMenu'
+import { useBrowserTaskDraft } from './browserTaskDraftContext'
+import { ComposerAttachmentBadges } from './ComposerAttachmentBadges'
+import { useBrowserTaskConversationQueue } from './useBrowserTaskConversationQueue'
 
 const pluginAssets = createPluginAssetResolver(path => path)
 
@@ -266,14 +266,15 @@ export function BrowserTaskComposer({
         error={error || catalogError}
         action={
           catalogError ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="task-conversation-models-retry"
               onClick={() => setCatalogRevision(value => value + 1)}
               className="ml-2 underline"
             >
               {t('activity.retry')}
-            </button>
+            </ControlButton>
           ) : undefined
         }
       />

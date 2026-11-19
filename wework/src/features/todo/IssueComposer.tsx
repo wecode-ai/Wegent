@@ -1,19 +1,5 @@
-import { type MouseEvent, useContext, useEffect, useRef, useState } from 'react'
-import { issueDraftFromText } from '@wegent/collaboration'
-import {
-  Bot,
-  ChevronDown,
-  Check,
-  CircleUserRound,
-  Flag,
-  Folder,
-  LayoutDashboard,
-  Maximize2,
-  Minimize2,
-  Paperclip,
-  Tag,
-  X,
-} from 'lucide-react'
+import { SearchableSelect } from '@wegent/collaboration/controls/SearchableSelect'
+import { SelectField } from '@wegent/collaboration/controls/SelectField'
 import {
   isDefaultWorkItemProject,
   type CloudLoopItem,
@@ -38,10 +24,30 @@ import type {
   ProjectWithTasks,
   RuntimeTaskCreateRequest,
 } from '@/types/api'
-import { ConnectedIssueProjectWork } from './ConnectedIssueProjectWork'
+import { issueDraftFromText } from '@wegent/collaboration'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { TabsList, TabsRoot, TabsTab } from '@wegent/collaboration/controls/Tabs'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import {
+  Bot,
+  Check,
+  ChevronDown,
+  CircleUserRound,
+  Flag,
+  Folder,
+  LayoutDashboard,
+  Maximize2,
+  Minimize2,
+  Paperclip,
+  Tag,
+  X,
+} from 'lucide-react'
+import { useContext, useEffect, useRef, useState, type MouseEvent } from 'react'
 import { collaborationExecutionMode } from './collaborationWorkspacePolicy'
-import { WorkItemComposerGuide } from './WorkItemComposerGuide'
+import { ConnectedIssueProjectWork } from './ConnectedIssueProjectWork'
 import { TaskDescriptionEditor } from './TaskDescriptionEditor'
+import { WorkItemComposerGuide } from './WorkItemComposerGuide'
 
 interface IssueComposerProps {
   projects: CloudProject[]
@@ -252,6 +258,28 @@ export function IssueComposer({
     { id: 'pending', name: t('todo.status_pending', '待处理') },
     { id: 'in_progress', name: t('todo.status_in_progress', '进行中') },
   ]
+  const projectOptions = [
+    ...(!projects.some(project => project.project_store + ':' + project.id === boardKey) && boardKey
+      ? [
+          {
+            value: boardKey,
+            label:
+              selectedWorkItemProject?.name ?? t('workbench.default_work_item_board', '我的任务'),
+          },
+        ]
+      : []),
+    ...projects.map(project => ({
+      value: project.project_store + ':' + project.id,
+      label: project.name,
+    })),
+  ]
+  const priorityOptions = [
+    { value: 'none', label: t('todo.priority_none', '无优先级') },
+    { value: 'low', label: t('todo.priority_low', '低') },
+    { value: 'medium', label: t('todo.priority_medium', '普通') },
+    { value: 'high', label: t('todo.priority_high', '高') },
+    { value: 'urgent', label: t('todo.priority_urgent', '紧急') },
+  ] as const
   const [stagedAttachments, setStagedAttachments] = useState<StagedIssueAttachment[]>(() =>
     restoredFiles.map((file, index) => ({
       attachment: attachmentFromFile(file, -(index + 1)),
@@ -267,21 +295,6 @@ export function IssueComposer({
   useEffect(() => {
     stagedAttachmentsRef.current = stagedAttachments
   }, [stagedAttachments])
-
-  useEffect(() => {
-    const handleEscape = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      event.preventDefault()
-      if (fullScreen) {
-        fullScreenRef.current = false
-        setFullScreen(false)
-        return
-      }
-      onCancel()
-    }
-    window.addEventListener('keydown', handleEscape)
-    return () => window.removeEventListener('keydown', handleEscape)
-  }, [fullScreen, onCancel])
 
   useEffect(
     () => () => {
@@ -336,21 +349,6 @@ export function IssueComposer({
     title,
     assigneeUserId,
   ])
-
-  useEffect(() => {
-    if (presentation !== 'popup') return
-    const previousFocus = document.activeElement as HTMLElement | null
-    const frame = window.requestAnimationFrame(() => {
-      const focusTarget = panelRef.current?.querySelector<HTMLElement>(
-        '[data-testid="workspace-issue-input"]'
-      )
-      focusTarget?.focus()
-    })
-    return () => {
-      window.cancelAnimationFrame(frame)
-      if (previousFocus?.isConnected) previousFocus.focus()
-    }
-  }, [presentation])
 
   const stageFiles = (files: File | File[]) => {
     const selectedFiles = Array.isArray(files) ? files : [files]
@@ -592,39 +590,27 @@ export function IssueComposer({
           showWorkspaceMenu={false}
           toolbarLeadingContext={
             creationMode === 'issue' ? (
-              <label className="relative flex h-8 min-w-0 max-w-48 cursor-pointer items-center gap-1.5 rounded-lg px-2 text-sm font-normal leading-[18px] text-text-secondary transition-colors hover:bg-muted hover:text-text-primary focus-within:bg-muted focus-within:text-text-primary">
-                <LayoutDashboard className="h-4 w-4 shrink-0" aria-hidden="true" />
-                <span className="min-w-0 truncate">
-                  {selectedWorkItemProject?.name ??
-                    t('workbench.default_work_item_board', '我的任务')}
-                </span>
-                <ChevronDown className="h-4 w-4 shrink-0" aria-hidden="true" />
-                <select
-                  data-testid="workspace-issue-project-compact"
-                  aria-label={t('todo.issue_project_label', '项目空间')}
-                  value={boardKey}
-                  disabled={busy || projects.length === 0}
-                  onChange={event => selectBoard(event.target.value)}
-                  className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
-                >
-                  {!projects.some(
-                    project => `${project.project_store}:${String(project.id)}` === boardKey
-                  ) && boardKey ? (
-                    <option value={boardKey}>
+              <SelectField
+                testId="workspace-issue-project-compact"
+                accessibleLabel={t('todo.issue_project_label', '项目空间')}
+                value={boardKey}
+                options={projectOptions}
+                onChange={selectBoard}
+                disabled={busy || projects.length === 0}
+                triggerContent={
+                  <span className="flex min-w-0 items-center gap-2">
+                    <LayoutDashboard
+                      className="h-4 w-4 shrink-0 text-text-secondary"
+                      aria-hidden="true"
+                    />
+                    <span className="truncate">
                       {selectedWorkItemProject?.name ??
                         t('workbench.default_work_item_board', '我的任务')}
-                    </option>
-                  ) : null}
-                  {projects.map(project => (
-                    <option
-                      key={`${project.project_store}:${String(project.id)}`}
-                      value={`${project.project_store}:${String(project.id)}`}
-                    >
-                      {project.name}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                    </span>
+                  </span>
+                }
+                className="max-w-48"
+              />
             ) : undefined
           }
           projectWorkBarMiddleContext={
@@ -660,7 +646,8 @@ export function IssueComposer({
             align="end"
             className="absolute right-3 top-3 z-10"
           >
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="workspace-issue-expand"
               onClick={openFullScreen}
@@ -668,7 +655,7 @@ export function IssueComposer({
               aria-label={t('todo.expand_issue_editor', '全屏编辑')}
             >
               <Maximize2 className="h-4 w-4" />
-            </button>
+            </ControlButton>
           </Tooltip>
         ) : null}
         {creationMode === 'issue' && !content.trim() ? (
@@ -705,7 +692,9 @@ export function IssueComposer({
                 ),
               },
             ].map(template => (
-              <button
+              <ControlButton
+                variant="primary"
+                size="sm"
                 key={template.key}
                 type="button"
                 data-testid={`workspace-issue-template-${template.key}`}
@@ -715,7 +704,7 @@ export function IssueComposer({
                 className="h-7 rounded-lg bg-muted px-2.5 text-xs text-text-secondary transition hover:bg-text-primary/10 hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 disabled:opacity-40"
               >
                 {template.label}
-              </button>
+              </ControlButton>
             ))}
           </div>
         ) : null}
@@ -725,9 +714,33 @@ export function IssueComposer({
 
   return (
     <div
+      onKeyDown={event => {
+        if (presentation !== 'popup' && !fullScreen && event.key === 'Escape' && !busy) {
+          event.stopPropagation()
+          onCancel()
+          return
+        }
+        if (
+          fullScreen &&
+          event.key === 'Enter' &&
+          (event.metaKey || event.ctrlKey) &&
+          !busy &&
+          boardKey &&
+          title.trim()
+        ) {
+          event.preventDefault()
+          void createIssue(content, title, continueCreating)
+          return
+        }
+      }}
       data-testid="workspace-issue-composer"
       onClick={event => {
-        if (presentation === 'popup' && !fullScreen && event.target === event.currentTarget) {
+        if (
+          !busy &&
+          presentation === 'popup' &&
+          !fullScreen &&
+          event.target === event.currentTarget
+        ) {
           onCancel()
         }
       }}
@@ -739,52 +752,36 @@ export function IssueComposer({
         fullScreen && 'overflow-hidden'
       )}
     >
-      <section
-        ref={panelRef}
-        data-testid="workspace-issue-composer-panel"
-        role={presentation === 'popup' || fullScreen ? 'dialog' : undefined}
-        aria-modal={presentation === 'popup' || fullScreen ? 'true' : undefined}
-        aria-label={presentation === 'popup' || fullScreen ? newLightweightItemLabel : undefined}
-        onKeyDown={event => {
-          if (
-            fullScreen &&
-            event.key === 'Enter' &&
-            (event.metaKey || event.ctrlKey) &&
-            !busy &&
-            boardKey &&
-            title.trim()
-          ) {
-            event.preventDefault()
-            void createIssue(content, title, continueCreating)
-            return
-          }
-          if (event.defaultPrevented) return
-          if ((presentation !== 'popup' && !fullScreen) || event.key !== 'Tab') return
-          const focusable = Array.from(
-            panelRef.current?.querySelectorAll<HTMLElement>(
-              'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [contenteditable="true"], [tabindex]:not([tabindex="-1"])'
-            ) ?? []
-          )
-          if (focusable.length === 0) return
-          const currentIndex = focusable.indexOf(document.activeElement as HTMLElement)
-          const nextIndex = event.shiftKey
-            ? currentIndex <= 0
-              ? focusable.length - 1
-              : currentIndex - 1
-            : currentIndex === focusable.length - 1
-              ? 0
-              : currentIndex + 1
-          event.preventDefault()
-          focusable[nextIndex]?.focus()
+      <DialogSurface
+        active={presentation === 'popup' || fullScreen}
+        initialFocus={() =>
+          panelRef.current?.querySelector<HTMLElement>('[data-testid="workspace-issue-input"]') ??
+          null
+        }
+        onClose={() => {
+          if (busy) return
+          if (fullScreen) {
+            fullScreenRef.current = false
+            setFullScreen(false)
+          } else onCancel()
         }}
-        className={cn(
-          'w-full max-w-[736px]',
-          presentation === 'popup' &&
-            !fullScreen &&
-            'max-h-full overflow-y-auto rounded-2xl border border-border bg-background p-6 shadow-xl',
-          fullScreen &&
-            'fixed bottom-4 left-4 right-4 top-[54px] z-modal flex w-auto max-h-none max-w-none flex-col overflow-hidden rounded-2xl border border-border bg-background p-0 shadow-xl'
-        )}
+        render={
+          <section
+            ref={panelRef}
+            data-testid="workspace-issue-composer-panel"
+            aria-label={
+              presentation === 'popup' || fullScreen ? newLightweightItemLabel : undefined
+            }
+            className={cn(
+              'w-full max-w-[736px]',
+              presentation === 'popup' &&
+                !fullScreen &&
+                'max-h-full overflow-y-auto rounded-2xl border border-border bg-background p-6 shadow-xl',
+              fullScreen &&
+                'fixed bottom-4 left-4 right-4 top-[54px] z-modal flex w-auto max-h-none max-w-none flex-col overflow-hidden rounded-2xl border border-border bg-background p-0 shadow-xl'
+            )}
+          />
+        }
       >
         {fullScreen ? (
           <>
@@ -801,7 +798,8 @@ export function IssueComposer({
                 data-testid="workspace-issue-header-actions"
                 className="ml-auto flex items-center gap-1"
               >
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="workspace-issue-collapse"
                   onClick={closeFullScreen}
@@ -809,8 +807,9 @@ export function IssueComposer({
                   aria-label={t('todo.collapse_issue_editor', '收起编辑器')}
                 >
                   <Minimize2 className="h-4 w-4" />
-                </button>
-                <button
+                </ControlButton>
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="workspace-issue-close"
                   onClick={onCancel}
@@ -818,7 +817,7 @@ export function IssueComposer({
                   aria-label={t('common.close', '关闭')}
                 >
                   <X className="h-4 w-4" />
-                </button>
+                </ControlButton>
               </div>
             </header>
             <div
@@ -837,7 +836,8 @@ export function IssueComposer({
             >
               <div className="min-h-0 flex-1 overflow-y-auto">
                 <main className="mx-auto flex min-h-full w-full max-w-[860px] flex-col pb-6 pt-6">
-                  <input
+                  <ControlInput
+                    appearance="plain"
                     ref={titleInputRef}
                     autoFocus
                     maxLength={255}
@@ -847,117 +847,102 @@ export function IssueComposer({
                     disabled={busy}
                     onChange={event => setTitle(event.target.value)}
                     placeholder={t('todo.issue_title_placeholder', 'Issue 标题')}
-                    className="block h-11 w-full border-0 bg-transparent text-heading-md font-medium leading-8 tracking-normal text-text-primary outline-none placeholder:text-text-muted/55 disabled:opacity-60"
+                    className="block h-11 w-full text-heading-md font-medium leading-8 tracking-normal placeholder:text-text-muted/55 disabled:opacity-60"
                   />
 
                   <div className="mt-4 flex flex-wrap items-center gap-2">
-                    <label className="relative inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border border-border px-3 text-sm font-normal text-text-secondary transition hover:bg-muted hover:text-text-primary">
-                      <Folder className="h-4 w-4 shrink-0 text-text-muted" />
-                      <span className="max-w-48 truncate font-medium text-text-primary">
-                        {selectedWorkItemProject?.name ??
-                          t('workbench.default_work_item_board', '我的任务')}
-                      </span>
-                      <ChevronDown className="h-3 w-3 shrink-0 text-text-muted" />
-                      <select
-                        data-testid="workspace-issue-project"
-                        aria-label={t('todo.issue_project_label', '项目空间')}
-                        value={boardKey}
-                        disabled={busy || projects.length === 0}
-                        onChange={event => selectBoard(event.target.value)}
-                        className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
-                      >
-                        {!projects.some(
-                          project => `${project.project_store}:${String(project.id)}` === boardKey
-                        ) && boardKey ? (
-                          <option value={boardKey}>
+                    <SelectField
+                      testId="workspace-issue-project"
+                      accessibleLabel={t('todo.issue_project_label', '项目空间')}
+                      value={boardKey}
+                      options={projectOptions}
+                      onChange={selectBoard}
+                      disabled={busy || projects.length === 0}
+                      triggerContent={
+                        <span className="flex min-w-0 items-center gap-2">
+                          <Folder
+                            className="h-4 w-4 shrink-0 text-text-secondary"
+                            aria-hidden="true"
+                          />
+                          <span className="truncate">
                             {selectedWorkItemProject?.name ??
                               t('workbench.default_work_item_board', '我的任务')}
-                          </option>
-                        ) : null}
-                        {projects.map(project => (
-                          <option
-                            key={`${project.project_store}:${String(project.id)}`}
-                            value={`${project.project_store}:${String(project.id)}`}
-                          >
-                            {project.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="relative inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border border-border px-3 text-sm font-normal text-text-secondary transition hover:bg-muted hover:text-text-primary">
-                      <span className="h-2 w-2 rounded-full bg-text-muted wework:bg-zinc-400" />
-                      <span className="font-medium text-text-primary">
-                        {statusOptions.find(option => option.id === status)?.name ?? status}
-                      </span>
-                      <ChevronDown className="h-3 w-3 text-text-muted" />
-                      <select
-                        data-testid="workspace-issue-status"
-                        aria-label={t('todo.status', '状态')}
-                        value={status}
-                        disabled={busy}
-                        onChange={event => setStatus(event.target.value as CloudLoopItem['status'])}
-                        className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-                      >
-                        {statusOptions.map(option => (
-                          <option key={option.id} value={option.id}>
-                            {option.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="relative inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border border-border px-3 text-sm font-normal text-text-secondary transition hover:bg-muted hover:text-text-primary">
-                      <Flag className="h-3.5 w-3.5 text-text-muted" />
-                      <span className="font-medium text-text-primary">
-                        {priority === 'none'
-                          ? t('todo.priority_none', '无优先级')
-                          : priority === 'low'
-                            ? t('todo.priority_low', '低')
-                            : priority === 'medium'
-                              ? t('todo.priority_medium', '普通')
-                              : priority === 'high'
-                                ? t('todo.priority_high', '高')
-                                : t('todo.priority_urgent', '紧急')}
-                      </span>
-                      <ChevronDown className="h-3 w-3 text-text-muted" />
-                      <select
-                        data-testid="workspace-issue-priority"
-                        aria-label={t('todo.priority', '优先级')}
-                        value={priority}
-                        disabled={busy}
-                        onChange={event =>
-                          setPriority(event.target.value as CloudLoopItem['priority'])
-                        }
-                        className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-                      >
-                        <option value="none">{t('todo.priority_none', '无优先级')}</option>
-                        <option value="low">{t('todo.priority_low', '低')}</option>
-                        <option value="medium">{t('todo.priority_medium', '普通')}</option>
-                        <option value="high">{t('todo.priority_high', '高')}</option>
-                        <option value="urgent">{t('todo.priority_urgent', '紧急')}</option>
-                      </select>
-                    </label>
-                    <label className="relative inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-full border border-border px-3 text-sm font-normal text-text-secondary transition hover:bg-muted hover:text-text-primary">
-                      <CircleUserRound className="h-3.5 w-3.5 text-text-muted" />
-                      <span className="max-w-32 truncate font-medium text-text-primary">
-                        {selectedAssigneeName ?? t('todo.unassigned', '未指派')}
-                      </span>
-                      <ChevronDown className="h-3 w-3 text-text-muted" />
-                      <select
-                        data-testid="workspace-issue-assignee"
-                        aria-label={t('todo.assignee', '负责人')}
-                        value={assigneeUserId ?? ''}
-                        disabled={busy || selectedProjectMembers.length === 0}
-                        onChange={event => setAssigneeUserId(Number(event.target.value) || null)}
-                        className="absolute inset-0 h-full w-full cursor-pointer opacity-0 disabled:cursor-not-allowed"
-                      >
-                        <option value="">{t('todo.unassigned', '未指派')}</option>
-                        {selectedProjectMembers.map(member => (
-                          <option key={member.user_id} value={member.user_id}>
-                            {member.user_name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                          </span>
+                        </span>
+                      }
+                      className="max-w-48"
+                    />
+                    <SelectField
+                      testId="workspace-issue-status"
+                      accessibleLabel={t('todo.status', '状态')}
+                      value={status}
+                      options={statusOptions.map(option => ({
+                        value: option.id,
+                        label: option.name,
+                      }))}
+                      disabled={busy}
+                      onChange={value => setStatus(value as CloudLoopItem['status'])}
+                      triggerContent={
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="h-2 w-2 shrink-0 rounded-full bg-text-muted" />
+                          <span className="truncate">
+                            {statusOptions.find(option => option.id === status)?.name ?? status}
+                          </span>
+                        </span>
+                      }
+                    />
+                    <SelectField<CloudLoopItem['priority']>
+                      testId="workspace-issue-priority"
+                      accessibleLabel={t('todo.priority', '优先级')}
+                      value={priority}
+                      options={priorityOptions}
+                      disabled={busy}
+                      onChange={setPriority}
+                      triggerContent={
+                        <span className="flex min-w-0 items-center gap-2">
+                          <Flag
+                            className="h-4 w-4 shrink-0 text-text-secondary"
+                            aria-hidden="true"
+                          />
+                          <span className="truncate">
+                            {priorityOptions.find(option => option.value === priority)?.label}
+                          </span>
+                        </span>
+                      }
+                    />
+                    <SearchableSelect
+                      testId="workspace-issue-assignee"
+                      searchPlaceholder={t('todo.search_assignee')}
+                      emptyLabel={t('todo.no_matching_assignee')}
+                      accessibleLabel={t('todo.assignee', '负责人')}
+                      value={String(assigneeUserId ?? '')}
+                      options={[
+                        { value: '', label: t('todo.unassigned', '未指派') },
+                        ...selectedProjectMembers.map(member => ({
+                          value: String(member.user_id),
+                          label: member.user_name,
+                        })),
+                      ]}
+                      disabled={busy || selectedProjectMembers.length === 0}
+                      onChange={value => setAssigneeUserId(Number(value) || null)}
+                      triggerContent={
+                        <>
+                          <span className="flex min-w-0 items-center gap-2">
+                            <CircleUserRound
+                              className="h-4 w-4 shrink-0 text-text-secondary"
+                              aria-hidden="true"
+                            />
+                            <span className="max-w-32 truncate">
+                              {selectedAssigneeName ?? t('todo.unassigned', '未指派')}
+                            </span>
+                          </span>
+                          <ChevronDown
+                            className="h-4 w-4 shrink-0 text-text-secondary"
+                            aria-hidden="true"
+                          />
+                        </>
+                      }
+                    />
                     {tags.map(tag => (
                       <span
                         key={tag}
@@ -965,7 +950,8 @@ export function IssueComposer({
                         className="inline-flex h-8 items-center gap-1 rounded-full border border-border px-3 text-sm font-normal text-text-primary"
                       >
                         # {tag}
-                        <button
+                        <ControlButton
+                          variant="unstyled"
                           type="button"
                           aria-label={t('todo.remove_tag', '移除标签 {{tag}}', { tag })}
                           onClick={() =>
@@ -974,13 +960,15 @@ export function IssueComposer({
                           className="flex h-4 w-4 items-center justify-center rounded-full text-text-muted hover:bg-muted hover:text-text-primary"
                         >
                           <X className="h-3 w-3" />
-                        </button>
+                        </ControlButton>
                       </span>
                     ))}
-                    <label className="inline-flex h-8 items-center gap-1.5 rounded-full px-2 text-sm font-normal text-text-secondary focus-within:bg-muted">
+                    <label className="inline-flex min-h-11 items-center gap-1.5 rounded-full px-2 text-sm font-normal text-text-secondary focus-within:bg-muted md:min-h-8">
                       <Tag className="h-3.5 w-3.5 text-text-muted" />
-                      <input
+                      <ControlInput
                         data-testid="workspace-issue-tag-input"
+                        density="compact"
+                        appearance="plain"
                         value={tagDraft}
                         disabled={busy}
                         onChange={event => setTagDraft(event.target.value)}
@@ -991,10 +979,10 @@ export function IssueComposer({
                           commitTagDraft()
                         }}
                         placeholder={t('todo.add_tag', '添加标签')}
-                        className="w-20 bg-transparent outline-none placeholder:text-text-muted"
+                        className="w-20"
                       />
                     </label>
-                    <input
+                    <ControlInput
                       ref={fileInputRef}
                       data-testid="workspace-issue-file-input"
                       type="file"
@@ -1005,7 +993,9 @@ export function IssueComposer({
                         event.target.value = ''
                       }}
                     />
-                    <button
+                    <ControlButton
+                      variant="outline"
+                      size="sm"
                       type="button"
                       data-testid="workspace-issue-attach"
                       disabled={busy}
@@ -1018,7 +1008,7 @@ export function IssueComposer({
                             count: stagedAttachments.length,
                           })
                         : t('todo.add_attachment', '添加附件')}
-                    </button>
+                    </ControlButton>
                   </div>
 
                   <section
@@ -1057,7 +1047,8 @@ export function IssueComposer({
               </div>
               <footer className="shrink-0 border-t border-border pt-3">
                 <div className="mx-auto flex w-full max-w-[860px] items-center gap-2">
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid="workspace-issue-continue-creating"
                     aria-pressed={continueCreating}
@@ -1081,7 +1072,7 @@ export function IssueComposer({
                       {continueCreating ? <Check className="h-3 w-3" /> : null}
                     </span>
                     {t('todo.issue_continue_creating', '创建后继续')}
-                  </button>
+                  </ControlButton>
                   {hasDraft ? (
                     <>
                       <span
@@ -1090,7 +1081,8 @@ export function IssueComposer({
                       >
                         {t('todo.issue_draft_saved', '草稿已自动保存')}
                       </span>
-                      <button
+                      <ControlButton
+                        variant="unstyled"
                         type="button"
                         data-testid="workspace-issue-clear-draft"
                         disabled={busy}
@@ -1098,7 +1090,7 @@ export function IssueComposer({
                         className="h-8 rounded-lg px-2 text-xs text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50"
                       >
                         {t('todo.clear_issue_draft', '清除草稿')}
-                      </button>
+                      </ControlButton>
                     </>
                   ) : null}
                   <span className="flex-1" />
@@ -1107,7 +1099,9 @@ export function IssueComposer({
                       ? t('todo.task_create_shortcut', '⌘ Enter 添加任务')
                       : t('todo.issue_create_shortcut', '⌘ Enter 创建 Issue')}
                   </span>
-                  <button
+                  <ControlButton
+                    variant="primary"
+                    size="sm"
                     type="button"
                     data-testid="workspace-issue-fullscreen-submit"
                     disabled={busy || !boardKey || !title.trim()}
@@ -1116,7 +1110,7 @@ export function IssueComposer({
                   >
                     {busy ? t('todo.creating', '创建中…') : createLightweightItemLabel}
                     <Check className="h-4 w-4" />
-                  </button>
+                  </ControlButton>
                 </div>
               </footer>
             </div>
@@ -1167,7 +1161,8 @@ export function IssueComposer({
                     </p>
                   </div>
                 </div>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="workspace-issue-close"
                   onClick={onCancel}
@@ -1175,51 +1170,54 @@ export function IssueComposer({
                   aria-label={t('common.close', '关闭')}
                 >
                   <X className="h-4 w-4" />
-                </button>
+                </ControlButton>
               </div>
             )}
             <div className="mb-3">
-              <div
-                data-testid="workspace-issue-creation-tabs"
-                className="inline-flex h-9 items-center rounded-xl bg-muted p-1"
-                role="tablist"
-                aria-label={t('todo.issue_creation_mode', '创建方式')}
+              <TabsRoot
+                value={creationMode}
+                onValueChange={next => {
+                  if (next) setCreationMode(next)
+                }}
+                render={<div className="contents" />}
               >
-                <button
-                  type="button"
-                  role="tab"
-                  data-testid="workspace-create-issue-tab"
-                  aria-selected={creationMode === 'issue'}
-                  onClick={() => setCreationMode('issue')}
-                  className={cn(
-                    'h-7 rounded-lg px-3 text-sm font-medium transition',
-                    creationMode === 'issue'
-                      ? 'bg-background text-text-primary shadow-sm'
-                      : 'text-text-secondary hover:text-text-primary'
-                  )}
+                <TabsList
+                  data-testid="workspace-issue-creation-tabs"
+                  className="inline-flex h-9 items-center rounded-xl bg-muted p-1"
+                  aria-label={t('todo.issue_creation_mode', '创建方式')}
                 >
-                  {isPersonalTaskBoard
-                    ? t('todo.add_task_tab', '添加任务')
-                    : t('todo.create_issue_tab', '创建 Issue')}
-                </button>
-                <button
-                  type="button"
-                  role="tab"
-                  data-testid="workspace-create-task-tab"
-                  aria-selected={creationMode === 'task'}
-                  onClick={() => setCreationMode('task')}
-                  className={cn(
-                    'h-7 rounded-lg px-3 text-sm font-medium transition',
-                    creationMode === 'task'
-                      ? 'bg-background text-text-primary shadow-sm'
-                      : 'text-text-secondary hover:text-text-primary'
-                  )}
-                >
-                  {isPersonalTaskBoard
-                    ? t('todo.create_and_run_task_tab', '创建并执行')
-                    : t('todo.create_task_tab', '创建任务')}
-                </button>
-              </div>
+                  <TabsTab
+                    value={'issue'}
+                    type="button"
+                    data-testid="workspace-create-issue-tab"
+                    className={cn(
+                      'h-7 rounded-lg px-3 text-sm font-medium transition',
+                      creationMode === 'issue'
+                        ? 'bg-background text-text-primary shadow-sm'
+                        : 'text-text-secondary hover:text-text-primary'
+                    )}
+                  >
+                    {isPersonalTaskBoard
+                      ? t('todo.add_task_tab', '添加任务')
+                      : t('todo.create_issue_tab', '创建 Issue')}
+                  </TabsTab>
+                  <TabsTab
+                    value={'task'}
+                    type="button"
+                    data-testid="workspace-create-task-tab"
+                    className={cn(
+                      'h-7 rounded-lg px-3 text-sm font-medium transition',
+                      creationMode === 'task'
+                        ? 'bg-background text-text-primary shadow-sm'
+                        : 'text-text-secondary hover:text-text-primary'
+                    )}
+                  >
+                    {isPersonalTaskBoard
+                      ? t('todo.create_and_run_task_tab', '创建并执行')
+                      : t('todo.create_task_tab', '创建任务')}
+                  </TabsTab>
+                </TabsList>
+              </TabsRoot>
               <p
                 data-testid="workspace-issue-creation-mode-description"
                 className="mt-2 text-xs text-text-muted"
@@ -1261,7 +1259,8 @@ export function IssueComposer({
                 >
                   {t('todo.issue_draft_saved', '草稿已自动保存')}
                 </span>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="workspace-issue-clear-draft"
                   disabled={busy}
@@ -1269,12 +1268,12 @@ export function IssueComposer({
                   className="h-7 rounded-lg px-2 text-xs text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50"
                 >
                   {t('todo.clear_issue_draft', '清除草稿')}
-                </button>
+                </ControlButton>
               </div>
             ) : null}
           </>
         )}
-      </section>
+      </DialogSurface>
     </div>
   )
 }

@@ -1,8 +1,10 @@
-import * as Popover from '@radix-ui/react-popover'
-import { Link2, Loader2, Monitor, Search } from 'lucide-react'
-import { useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { RuntimeTaskAddress } from '@/types/api'
+import { Popover, PopoverContent, PopoverTrigger } from '@wegent/collaboration/controls/Popover'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Link2, Loader2, Monitor, Search } from 'lucide-react'
+import { useState } from 'react'
 
 export interface ExistingIssueTask {
   address: RuntimeTaskAddress
@@ -44,7 +46,7 @@ export function IssueExistingTaskPicker({
     }
   }
   return (
-    <Popover.Root
+    <Popover
       open={open}
       onOpenChange={next => {
         if (!pending) {
@@ -54,28 +56,26 @@ export function IssueExistingTaskPicker({
         }
       }}
     >
-      <Popover.Trigger asChild>
-        <button
-          type="button"
-          data-testid="issue-link-existing-task"
-          className="task-detail-workspace-ghost-action"
-        >
-          <Link2 aria-hidden="true" className="h-4 w-4" />
-          {t('todo.link_existing_task')}
-        </button>
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content
+      <PopoverTrigger
+        render={
+          <button
+            type="button"
+            data-testid="issue-link-existing-task"
+            className="task-detail-workspace-ghost-action"
+          />
+        }
+      >
+        <Link2 aria-hidden="true" className="h-4 w-4" />
+        {t('todo.link_existing_task')}
+      </PopoverTrigger>
+      <>
+        <PopoverContent
           align="end"
           sideOffset={6}
           collisionPadding={8}
           aria-label={t('todo.link_existing_task')}
           data-testid="issue-existing-task-picker"
-          className="z-system-popover flex max-h-[var(--radix-popover-content-available-height)] w-[min(384px,calc(100vw-16px))] flex-col overflow-hidden rounded-xl border border-border bg-popover p-2 text-text-primary shadow-lg"
-          onEscapeKeyDown={event => {
-            event.stopPropagation()
-            if (pending) event.preventDefault()
-          }}
+          className="z-system-popover flex max-h-[var(--available-height)] w-[min(384px,calc(100vw-16px))] flex-col overflow-hidden rounded-xl border border-border bg-popover p-2 text-text-primary shadow-lg"
         >
           <div className="px-2 pb-3 pt-2">
             <p className="text-base font-medium">{t('todo.link_existing_task')}</p>
@@ -83,14 +83,15 @@ export function IssueExistingTaskPicker({
           </div>
           <div className="mb-2 flex shrink-0 items-center gap-2 rounded-lg border border-border px-3 focus-within:ring-2 focus-within:ring-focus">
             <Search aria-hidden="true" className="h-4 w-4 shrink-0 text-text-muted" />
-            <input
+            <ControlInput
+              appearance="plain"
               aria-label={t('todo.search_existing_task')}
               placeholder={t('todo.search_existing_task')}
               data-testid="issue-existing-task-search"
               value={query}
               disabled={pending}
               onChange={event => setQuery(event.target.value)}
-              className="h-11 min-w-0 flex-1 bg-transparent text-sm outline-none md:h-9"
+              className="h-11 min-w-0 flex-1 md:h-9"
             />
           </div>
           {error && (
@@ -105,7 +106,8 @@ export function IssueExistingTaskPicker({
               </p>
             )}
             {candidates.map(task => (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 key={`${task.address.deviceId}:${task.address.taskId}`}
                 data-testid={`issue-existing-task-${task.address.deviceId}-${task.address.taskId}`}
@@ -133,11 +135,11 @@ export function IssueExistingTaskPicker({
                     className="h-4 w-4 shrink-0 text-text-muted opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100"
                   />
                 )}
-              </button>
+              </ControlButton>
             ))}
           </div>
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
+        </PopoverContent>
+      </>
+    </Popover>
   )
 }

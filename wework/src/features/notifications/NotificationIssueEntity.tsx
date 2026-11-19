@@ -1,12 +1,13 @@
-import { useEffect, useState } from 'react'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import { WorkItemContextPanel } from '@/features/todo/WorkItemContextPanel'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
-import { getWorkbenchDeviceNamesById } from '@/lib/workbench-device'
 import { useTranslation } from '@/hooks/useTranslation'
+import { getWorkbenchDeviceNamesById } from '@/lib/workbench-device'
 import type { RuntimeTaskAddress } from '@/types/api'
-import { openWeworkScheme } from './schemeEvents'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useEffect, useState } from 'react'
 import { weworkIssueScheme, weworkTaskScheme } from './scheme'
+import { openWeworkScheme } from './schemeEvents'
 
 /** Load the destination's real records into the existing Issue detail surface. */
 export function NotificationIssueEntity({
@@ -61,7 +62,9 @@ export function NotificationIssueEntity({
           {result?.error ?? t('interactions.entity_unavailable')}
         </p>
         {api && (
-          <button
+          <ControlButton
+            variant="outline"
+            size="sm"
             type="button"
             data-testid="notification-entity-retry"
             className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted"
@@ -71,7 +74,7 @@ export function NotificationIssueEntity({
             }}
           >
             {t('workbench.retry')}
-          </button>
+          </ControlButton>
         )}
       </div>
     )

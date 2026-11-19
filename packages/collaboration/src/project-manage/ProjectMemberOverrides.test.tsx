@@ -1,3 +1,4 @@
+import { sdkSelectValue as selectValue } from '../test/selectControl'
 // @vitest-environment jsdom
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
@@ -170,11 +171,7 @@ describe('Project member overrides', () => {
     return { host, onProjectUpdated }
   }
   async function changeRole(role: 'Maintainer' | 'Developer' | 'Viewer') {
-    await act(async () => {
-      const select = find<HTMLSelectElement>('cloud-project-member-role-2')
-      select.value = role
-      select.dispatchEvent(new Event('change', { bubbles: true }))
-    })
+    await selectValue(find('cloud-project-member-role-2'), role)
   }
 
   it('promotes an inherited member while preserving the inherited source', async () => {
@@ -216,7 +213,7 @@ describe('Project member overrides', () => {
     expect(host.confirm).toHaveBeenCalledWith('移除“member”的项目角色，恢复分组角色？')
     expect(api.removeMember).toHaveBeenCalledWith('project-1', 2)
     expect(api.listMembers).toHaveBeenCalledTimes(2)
-    expect(find<HTMLSelectElement>('cloud-project-member-role-2').value).toBe('Developer')
+    expect(await selectValue(find('cloud-project-member-role-2'))).toBe('Developer')
     expect(find('cloud-project-member-remove-2')).toBeNull()
     expect(find<HTMLInputElement>('cloud-project-member-capability-2').value).toBe('')
   })

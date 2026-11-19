@@ -1,7 +1,10 @@
-import { Check, Maximize2, Plus, X } from 'lucide-react'
-import { useState } from 'react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { useTranslation } from '@/hooks/useTranslation'
+import { SelectField } from '@wegent/collaboration/controls/SelectField'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Check, Maximize2, Plus, X } from 'lucide-react'
+import { useState } from 'react'
 
 export function BoardQuickCreate({
   columnKey,
@@ -61,7 +64,9 @@ export function BoardQuickCreate({
               column: columnLabel,
             })}
           </span>
-          <input
+          <ControlInput
+            density="compact"
+            appearance="plain"
             autoFocus
             data-testid={`cloud-todo-column-quick-create-input-${columnKey}`}
             value={content}
@@ -77,7 +82,7 @@ export function BoardQuickCreate({
               }
             }}
             placeholder={t('todo.quick_create_placeholder', '输入事项内容')}
-            className="h-8 min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted disabled:opacity-60"
+            className="min-w-0 flex-1 placeholder:text-text-muted disabled:opacity-60"
           />
         </label>
         {error ? (
@@ -91,32 +96,32 @@ export function BoardQuickCreate({
         ) : null}
         <div className="mt-1 flex items-center justify-between pl-6">
           {localProjects?.length && localProjectId && onLocalProjectChange ? (
-            <label className="relative flex h-7 max-w-40 cursor-pointer items-center rounded-md px-1.5 text-xs text-text-muted hover:bg-muted hover:text-text-primary">
-              <span className="min-w-0 truncate">
-                {t('todo.project_with_name', '项目：{{project}}', {
-                  project: localProjects.find(project => project.id === localProjectId)?.name ?? '',
-                })}
-              </span>
-              <select
-                data-testid={`cloud-todo-column-quick-create-project-${columnKey}`}
-                aria-label={t('todo.local_project_filter', '本地项目')}
-                value={localProjectId}
-                onChange={event => onLocalProjectChange(Number(event.target.value))}
-                className="absolute inset-0 cursor-pointer opacity-0"
-              >
-                {localProjects.map(project => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <SelectField
+              testId={'cloud-todo-column-quick-create-project-' + columnKey}
+              accessibleLabel={t('todo.local_project_filter', '本地项目')}
+              value={String(localProjectId)}
+              onChange={value => onLocalProjectChange(Number(value))}
+              options={localProjects.map(project => ({
+                value: String(project.id),
+                label: project.name,
+              }))}
+              triggerContent={
+                <span className="truncate">
+                  {t('todo.project_with_name', '项目：{{project}}', {
+                    project:
+                      localProjects.find(project => project.id === localProjectId)?.name ?? '',
+                  })}
+                </span>
+              }
+              className="max-w-40"
+            />
           ) : (
             <span />
           )}
           <span className="flex items-center gap-1">
             <Tooltip label={t('todo.quick_create_full_mode', '完整模式')} side="top" align="end">
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid={`cloud-todo-column-quick-create-full-${columnKey}`}
                 disabled={busy}
@@ -125,9 +130,10 @@ export function BoardQuickCreate({
                 aria-label={t('todo.quick_create_full_mode', '完整模式')}
               >
                 <Maximize2 className="h-3.5 w-3.5" />
-              </button>
+              </ControlButton>
             </Tooltip>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid={`cloud-todo-column-quick-create-cancel-${columnKey}`}
               disabled={busy}
@@ -136,8 +142,10 @@ export function BoardQuickCreate({
               aria-label={t('common.cancel', '取消')}
             >
               <X className="h-3.5 w-3.5" />
-            </button>
-            <button
+            </ControlButton>
+            <ControlButton
+              variant="primary"
+              size="sm"
               type="submit"
               data-testid={`cloud-todo-column-quick-create-confirm-${columnKey}`}
               disabled={!content.trim() || busy}
@@ -147,7 +155,7 @@ export function BoardQuickCreate({
               }
             >
               <Check className="h-3.5 w-3.5" />
-            </button>
+            </ControlButton>
           </span>
         </div>
       </div>

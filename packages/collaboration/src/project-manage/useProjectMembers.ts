@@ -103,32 +103,9 @@ export function useProjectMembers<
   }, [api, enabled, host, projectId, loadRevision])
 
   useEffect(() => {
-    if (!membersOpen || typeof document === 'undefined') return
-    const close = (event: MouseEvent) => {
-      if (event.target instanceof Node && !memberComposerRef.current?.contains(event.target)) {
-        setMembersOpen(false)
-      }
-    }
-    const escape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') setMembersOpen(false)
-    }
-    document.addEventListener('mousedown', close)
-    document.addEventListener('keydown', escape)
-    return () => {
-      document.removeEventListener('mousedown', close)
-      document.removeEventListener('keydown', escape)
-    }
-  }, [membersOpen])
-
-  useEffect(() => {
     if (openMembersRequestId === undefined) return
     onOpenMembersRequestConsumed?.(openMembersRequestId)
   }, [openMembersRequestId, onOpenMembersRequestConsumed, canManage])
-
-  useEffect(() => {
-    if (!membersOpen) return
-    memberSearchInputRef.current?.focus()
-  }, [membersOpen, openMembersRequestId])
 
   useEffect(() => {
     const query = memberQuery.trim()
@@ -233,7 +210,7 @@ export function useProjectMembers<
   async function removeMember(member: Member) {
     if (!canManage || savingUserId !== null) return
     if (
-      !host.confirm(
+      !(await host.confirm(
         member.inherited_role
           ? host.translate(
               'todo.reset_member_role_confirm',
@@ -243,7 +220,7 @@ export function useProjectMembers<
           : host.translate('todo.remove_member_confirm', '从项目中移除“{{name}}”？', {
               name: member.user_name,
             })
-      )
+      ))
     )
       return
     const scope = projectScopeRef.current

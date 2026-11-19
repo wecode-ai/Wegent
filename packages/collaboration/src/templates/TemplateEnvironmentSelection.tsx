@@ -1,9 +1,12 @@
+import { CollapsibleRoot, CollapsibleTrigger, CollapsiblePanel } from '../controls/Collapsible'
+import { Checkbox } from '../controls/Checkbox'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { CollaborationExecutionEnvironment } from '../types'
-import { ChevronRight, Monitor } from 'lucide-react'
+import { Monitor } from 'lucide-react'
 import type { CollaborationLocale } from '../i18n'
+import type { CollaborationExecutionEnvironment } from '../types'
 import { templateMessages } from './messages'
 
 export function TemplateEnvironmentSelection({
@@ -33,54 +36,59 @@ export function TemplateEnvironmentSelection({
       environment.status === 'online'
   )
   return (
-    <details
+    <CollapsibleRoot
       className="collaboration-runtime-disclosure"
       data-testid="template-environment-selection"
     >
-      <summary data-testid="template-environment-selection-toggle">
-        <ChevronRight aria-hidden="true" />
+      <CollapsibleTrigger data-testid="template-environment-selection-toggle">
         <span>{m.optionalRuntimeConfiguration}</span>
-      </summary>
-      <div className="collaboration-runtime-disclosure-body">
-        <p className="collaboration-runtime-hint">{m.deferredRuntimeHint}</p>
-        {loading && <p role="status">{m.loading}</p>}
-        {error && (
-          <p role="alert">
-            {error}{' '}
-            <button type="button" data-testid="template-environments-retry" onClick={onRetry}>
-              {m.retry}
-            </button>
-          </p>
-        )}
-        {available.map(environment => (
-          <label className="collaboration-runtime-device" key={environment.id}>
-            <input
-              type="checkbox"
-              data-testid={`template-authorize-environment-${environment.device_id}`}
-              disabled={disabled}
-              checked={selected.includes(environment.device_id!)}
-              onChange={event =>
-                onChange(
-                  event.target.checked
-                    ? [...selected, environment.device_id!]
-                    : selected.filter(id => id !== environment.device_id)
-                )
-              }
-            />
-            <Monitor aria-hidden="true" />
-            <span className="collaboration-runtime-device-name" title={environment.name}>
-              {environment.name}
-            </span>
-            <span className="collaboration-runtime-device-status">{m.environmentOnline}</span>
-          </label>
-        ))}
-        {available.length > 0 && (
-          <p className="collaboration-runtime-hint">{m.environmentAuthorizationHint}</p>
-        )}
-        {!available.length && !loading && !error && (
-          <p className="collaboration-runtime-hint">{m.selectExecutionEnvironment}</p>
-        )}
-      </div>
-    </details>
+      </CollapsibleTrigger>
+      <CollapsiblePanel>
+        <div className="collaboration-runtime-disclosure-body">
+          <p className="collaboration-runtime-hint">{m.deferredRuntimeHint}</p>
+          {loading && <p role="status">{m.loading}</p>}
+          {error && (
+            <p role="alert">
+              {error}{' '}
+              <ControlButton
+                variant="unstyled"
+                type="button"
+                data-testid="template-environments-retry"
+                onClick={onRetry}
+              >
+                {m.retry}
+              </ControlButton>
+            </p>
+          )}
+          {available.map(environment => (
+            <label className="collaboration-runtime-device" key={environment.id}>
+              <Checkbox
+                data-testid={`template-authorize-environment-${environment.device_id}`}
+                disabled={disabled}
+                checked={selected.includes(environment.device_id!)}
+                onCheckedChange={checked =>
+                  onChange(
+                    checked === true
+                      ? [...selected, environment.device_id!]
+                      : selected.filter(id => id !== environment.device_id)
+                  )
+                }
+              />
+              <Monitor aria-hidden="true" />
+              <span className="collaboration-runtime-device-name" title={environment.name}>
+                {environment.name}
+              </span>
+              <span className="collaboration-runtime-device-status">{m.environmentOnline}</span>
+            </label>
+          ))}
+          {available.length > 0 && (
+            <p className="collaboration-runtime-hint">{m.environmentAuthorizationHint}</p>
+          )}
+          {!available.length && !loading && !error && (
+            <p className="collaboration-runtime-hint">{m.selectExecutionEnvironment}</p>
+          )}
+        </div>
+      </CollapsiblePanel>
+    </CollapsibleRoot>
   )
 }

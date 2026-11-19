@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useState } from 'react'
-import type { ReactNode } from 'react'
-import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import type { LocalCodexHomeMigrationStatus } from '@/api/local/codexPlugins'
+import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isElectronRuntime } from '@/lib/runtime-environment'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import type { ReactNode } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 const CODEX_MIGRATION_DISMISSED_STORAGE_KEY = 'wework.plugins.codexMigrationDismissed'
 const SHOULD_SKIP_CODEX_HOME_INITIALIZATION =
@@ -33,11 +35,13 @@ function CodexHomeInitializationDialog({
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/30 px-4 backdrop-blur-sm">
-      <div
-        data-testid="codex-home-initializer-dialog"
-        role="dialog"
-        aria-modal="true"
-        className="w-full max-w-lg rounded-xl border border-border bg-background p-5 shadow-2xl"
+      <DialogSurface
+        render={
+          <div
+            data-testid="codex-home-initializer-dialog"
+            className="w-full max-w-lg rounded-xl border border-border bg-background p-5 shadow-2xl"
+          />
+        }
       >
         <div className="space-y-2">
           <h2 className="text-base font-medium text-text-primary">
@@ -56,7 +60,8 @@ function CodexHomeInitializationDialog({
           </div>
         )}
         <div className="mt-5 flex justify-end gap-2">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="codex-home-initializer-create-button"
             className="h-9 rounded-lg px-3 text-sm text-text-secondary hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60"
@@ -64,8 +69,10 @@ function CodexHomeInitializationDialog({
             disabled={isInitializing}
           >
             {t('workbench.codex_home_init_create')}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="primary"
+            size="sm"
             type="button"
             data-testid="codex-home-initializer-migrate-button"
             className="h-9 rounded-lg bg-text-primary px-3 text-sm font-medium text-background hover:bg-text-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
@@ -75,9 +82,9 @@ function CodexHomeInitializationDialog({
             {isInitializing
               ? t('workbench.codex_home_init_processing')
               : t('workbench.codex_home_init_migrate')}
-          </button>
+          </ControlButton>
         </div>
-      </div>
+      </DialogSurface>
     </div>
   )
 }

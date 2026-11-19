@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { Loader2 } from 'lucide-react'
 
 import { type LocalCodexAccounts } from '@/api/local/codexAuth'
@@ -90,7 +91,9 @@ export function LocalCodexModelRow({
         {!loading && (
           <div className="flex items-center gap-2">
             {loginState === 'waiting' || loginState === 'cancelling' ? (
-              <button
+              <ControlButton
+                variant="outline"
+                size="sm"
                 type="button"
                 data-testid="local-codex-login-cancel-button"
                 onClick={onCancelLogin}
@@ -101,9 +104,11 @@ export function LocalCodexModelRow({
                   <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
                 )}
                 {t('workbench.local_codex_login_cancel', '取消登录')}
-              </button>
+              </ControlButton>
             ) : (
-              <button
+              <ControlButton
+                variant="primary"
+                size="sm"
                 type="button"
                 data-testid="local-codex-login-button"
                 onClick={onLogin}
@@ -118,7 +123,7 @@ export function LocalCodexModelRow({
                   : exists
                     ? t('workbench.local_codex_add_account', '添加账号')
                     : t('workbench.local_codex_login_action', '登录')}
-              </button>
+              </ControlButton>
             )}
           </div>
         )}
@@ -147,7 +152,9 @@ export function LocalCodexModelRow({
                     {t('workbench.local_codex_account_current', '当前账号')}
                   </span>
                 ) : (
-                  <button
+                  <ControlButton
+                    variant="outline"
+                    size="sm"
                     type="button"
                     data-testid={`local-codex-account-switch-${account.id}`}
                     onClick={() => onSwitchAccount(account.id)}
@@ -156,7 +163,7 @@ export function LocalCodexModelRow({
                   >
                     {switching && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
                     {t('workbench.local_codex_account_switch', '切换')}
-                  </button>
+                  </ControlButton>
                 )}
               </div>
             )

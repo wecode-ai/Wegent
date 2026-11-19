@@ -1,9 +1,12 @@
-import { FolderOpen, Loader2, Puzzle, X } from 'lucide-react'
-import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { openNativeDirectoryPicker } from '@/lib/native-directory-picker'
 import { getSmartAppErrorMessage } from '@/lib/smart-app-error-message'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { FolderOpen, Loader2, Puzzle, X } from 'lucide-react'
+import { useState } from 'react'
 
 interface SmartAppPluginDialogProps {
   displayName: string
@@ -58,13 +61,18 @@ export function SmartAppPluginDialog({
         if (!busy) onClose()
       }}
     >
-      <section
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="smart-app-plugin-dialog-title"
-        data-testid="smart-app-plugin-dialog"
-        className="plugin-dialog-surface w-full max-w-[520px]"
-        onClick={event => event.stopPropagation()}
+      <DialogSurface
+        onClose={() => {
+          if (!busy) onClose()
+        }}
+        render={
+          <section
+            aria-labelledby="smart-app-plugin-dialog-title"
+            data-testid="smart-app-plugin-dialog"
+            className="plugin-dialog-surface w-full max-w-[520px]"
+            onClick={event => event.stopPropagation()}
+          />
+        }
       >
         <header className="plugin-dialog-divider flex items-start justify-between gap-4 border-b px-6 py-5">
           <div className="flex min-w-0 items-start gap-3">
@@ -83,7 +91,8 @@ export function SmartAppPluginDialog({
               </p>
             </div>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="smart-app-plugin-dialog-close"
             aria-label={t('common.close', '关闭')}
@@ -92,7 +101,7 @@ export function SmartAppPluginDialog({
             onClick={onClose}
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </header>
 
         <div className="px-6 py-5">
@@ -106,7 +115,7 @@ export function SmartAppPluginDialog({
                 '支持 npm 包名、Git URL、压缩包地址或本地插件目录。'
               )}
             </span>
-            <input
+            <ControlInput
               autoFocus
               data-testid="smart-app-plugin-spec-input"
               value={pluginSpec}
@@ -114,7 +123,7 @@ export function SmartAppPluginDialog({
                 'workbench.smart_app_plugin_source_placeholder',
                 '@scope/dsh-plugin、https://… 或本地目录'
               )}
-              className="mt-2 h-10 w-full rounded-xl border border-border/50 bg-background px-3 text-sm text-text-primary outline-none transition-colors keyboard:focus:border-focus keyboard:focus:ring-2 keyboard:focus:ring-focus/15"
+              className="mt-2 h-10 w-full transition-colors"
               onChange={event => setPluginSpec(event.target.value)}
               onKeyDown={event => {
                 if (event.key === 'Enter') void install()
@@ -122,7 +131,8 @@ export function SmartAppPluginDialog({
             />
           </label>
 
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="smart-app-plugin-choose-directory"
             disabled={busy}
@@ -131,7 +141,7 @@ export function SmartAppPluginDialog({
           >
             <FolderOpen className="h-4 w-4" />
             {t('workbench.smart_app_plugin_choose_directory', '选择插件目录')}
-          </button>
+          </ControlButton>
 
           {error ? (
             <p
@@ -166,7 +176,7 @@ export function SmartAppPluginDialog({
               : t('workbench.smart_app_plugin_confirm', '添加并重新加载')}
           </Button>
         </footer>
-      </section>
+      </DialogSurface>
     </div>
   )
 }

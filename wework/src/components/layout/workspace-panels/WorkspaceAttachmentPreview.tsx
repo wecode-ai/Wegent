@@ -1,11 +1,12 @@
-import { useEffect, useState } from 'react'
-import { Download } from 'lucide-react'
+import { useTranslation } from '@/hooks/useTranslation'
+import { saveBlobToDownloads } from '@/lib/blobDownload'
 import type {
   WorkspaceAttachmentPreviewSource,
   WorkspaceTextFileResponse,
 } from '@/types/workspace-files'
-import { useTranslation } from '@/hooks/useTranslation'
-import { saveBlobToDownloads } from '@/lib/blobDownload'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Download } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { WorkspaceFilePreview } from './WorkspaceFilePreview'
 import { workspaceFilePreviewKind } from './workspaceFileTypes'
 
@@ -82,7 +83,8 @@ export function WorkspaceAttachmentPreview({
         <span className="min-w-0 flex-1 truncate text-sm" title={source.filename}>
           {source.filename}
         </span>
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="composer-attachment-preview-download"
           disabled={!file}
@@ -100,7 +102,7 @@ export function WorkspaceAttachmentPreview({
           }}
         >
           <Download className="h-4 w-4" />
-        </button>
+        </ControlButton>
       </header>
       <WorkspaceFilePreview
         file={text}

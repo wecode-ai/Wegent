@@ -1,6 +1,7 @@
-import { useId, type ReactNode } from 'react'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { X } from 'lucide-react'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
+import { useId, useRef, type ReactNode } from 'react'
 import './ExperienceDialog.css'
 
 interface Props {
@@ -23,26 +24,30 @@ export function ExperienceDialog({
 }: Props) {
   const titleId = useId()
   const subtitleId = useId()
-  const ref = useDialogKeyboard<HTMLElement>(onClose)
+  const ref = useRef<HTMLElement>(null)
   return (
     <div className="experience-dialog-scrim">
-      <section
-        ref={ref}
-        className="experience-dialog"
-        data-size="md"
-        data-testid={testId}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby={titleId}
-        aria-describedby={subtitleId}
-        tabIndex={-1}
+      <DialogSurface
+        onClose={onClose}
+        render={
+          <section
+            ref={ref}
+            className="experience-dialog"
+            data-size="md"
+            data-testid={testId}
+            aria-labelledby={titleId}
+            aria-describedby={subtitleId}
+            tabIndex={-1}
+          />
+        }
       >
         <header className="experience-dialog-header">
           <div>
             <h2 id={titleId}>{title}</h2>
             <p id={subtitleId}>{subtitle}</p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             className="experience-dialog-close"
             data-testid={`${testId}-close`}
@@ -51,10 +56,10 @@ export function ExperienceDialog({
             onClick={onClose}
           >
             <X size={18} aria-hidden="true" />
-          </button>
+          </ControlButton>
         </header>
         <div className="experience-dialog-body">{children}</div>
-      </section>
+      </DialogSurface>
     </div>
   )
 }

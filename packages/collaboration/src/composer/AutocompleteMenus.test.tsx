@@ -6,6 +6,7 @@ import { Package } from 'lucide-react'
 import { ComposerMentionMenu, type MentionMenuRow } from './ComposerMentionMenu'
 import { SlashCommandMenu } from './SlashCommandMenu'
 import { SlashModelMenu } from './SlashModelMenu'
+import { ComposerAutocompletePopup } from './ComposerAutocompletePopup'
 import { createCollaborationTranslator } from '../i18n'
 import type { SlashCommand } from './composerAutocomplete'
 import type { UnifiedModel } from '@wegent/chat-core/models'
@@ -33,8 +34,20 @@ describe('shared autocomplete menus without desktop imports', () => {
   it('preserves command payloads and uses the supplied plugin icon renderer', async () => {
     const app = { id: 'plugin', name: 'Plugin' }
     const commands: SlashCommand<typeof app>[] = [
-      { id: 'installed', title: 'Installed plugin', app, Icon: Package, testId: 'installed' },
-      { id: 'disabled', title: 'Unavailable', enabled: false, Icon: Package, testId: 'disabled' },
+      {
+        id: 'installed',
+        title: 'Installed plugin',
+        app,
+        Icon: Package,
+        testId: 'installed',
+      },
+      {
+        id: 'disabled',
+        title: 'Unavailable',
+        enabled: false,
+        Icon: Package,
+        testId: 'disabled',
+      },
     ]
     const select = vi.fn()
     const retry = vi.fn()
@@ -60,6 +73,20 @@ describe('shared autocomplete menus without desktop imports', () => {
       )
     )
     expect(element('host-plugin-icon').textContent).toBe('Plugin')
+    const editor = document.createElement('div')
+    editor.contentEditable = 'true'
+    editor.tabIndex = 0
+    container.append(editor)
+    editor.focus()
+    const pointer = new MouseEvent('pointerdown', {
+      bubbles: true,
+      cancelable: true,
+    })
+    await act(async () => {
+      element('slash-command-option-installed').dispatchEvent(pointer)
+    })
+    expect(pointer.defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(editor)
     await click('slash-command-option-disabled')
     expect(select).not.toHaveBeenCalled()
     await click('slash-command-option-installed')
@@ -73,7 +100,12 @@ describe('shared autocomplete menus without desktop imports', () => {
       { kind: 'files-action' },
       {
         kind: 'external',
-        candidate: { id: 'agent', type: 'agent', title: 'Reviewer', metaLabel: 'Agent' },
+        candidate: {
+          id: 'agent',
+          type: 'agent',
+          title: 'Reviewer',
+          metaLabel: 'Agent',
+        },
       },
     ]
     const select = vi.fn()
@@ -122,27 +154,36 @@ describe('shared autocomplete menus without desktop imports', () => {
     const blocked = vi.fn()
     await act(async () =>
       root.render(
-        <SlashModelMenu
-          translate={t}
-          models={models}
-          selectedModel={null}
-          selectedModelOptions={{}}
-          query=""
-          selectedIndex={0}
+        <ComposerAutocompletePopup
+          anchor={container}
+          editorRef={{ current: null }}
+          label="Models"
           className=""
-          searchPlaceholder="Search models"
-          noResultsLabel="No models"
-          onQueryChange={vi.fn()}
-          onSelectedIndexChange={vi.fn()}
-          onSelectModel={select}
-          onBlockedModelSelect={blocked}
           onClose={vi.fn()}
-          getCompatibilityDisabledMessage={() => 'Unavailable here'}
-        />
+        >
+          <SlashModelMenu
+            translate={t}
+            models={models}
+            selectedModel={null}
+            selectedModelOptions={{}}
+            query=""
+            selectedIndex={0}
+            className=""
+            searchPlaceholder="Search models"
+            noResultsLabel="No models"
+            onQueryChange={vi.fn()}
+            onSelectedIndexChange={vi.fn()}
+            onSelectModel={select}
+            onBlockedModelSelect={blocked}
+            onClose={vi.fn()}
+            getCompatibilityDisabledMessage={() => 'Unavailable here'}
+          />
+        </ComposerAutocompletePopup>
       )
     )
+    expect(document.activeElement).toBe(element('slash-model-search-input'))
     await act(async () =>
-      element('slash-model-menu').dispatchEvent(
+      element('slash-model-search-input').dispatchEvent(
         new KeyboardEvent('keydown', {
           key: 'Enter',
           keyCode: 229,
@@ -157,5 +198,53 @@ describe('shared autocomplete menus without desktop imports', () => {
     expect(select).not.toHaveBeenCalled()
     await click('slash-model-option-gpt-available')
     expect(select).toHaveBeenCalledWith(models[0])
+  })
+  it('keeps the editor focused and delegates candidate dismissal to the SDK popup', async () => {
+    const editor = document.createElement('div')
+    editor.contentEditable = 'true'
+    editor.tabIndex = 0
+    editor.textContent = '/plugin'
+    document.body.append(editor)
+    editor.focus()
+    const range = document.createRange()
+    range.setStart(editor.firstChild!, 3)
+    range.collapse(true)
+    window.getSelection()!.removeAllRanges()
+    window.getSelection()!.addRange(range)
+    const close = vi.fn()
+    try {
+      await act(async () =>
+        root.render(
+          <ComposerAutocompletePopup
+            anchor={editor}
+            editorRef={{ current: editor }}
+            label="Candidates"
+            className=""
+            onClose={close}
+          >
+            <button data-testid="candidate">Candidate</button>
+          </ComposerAutocompletePopup>
+        )
+      )
+      expect(document.activeElement).toBe(editor)
+      expect(window.getSelection()!.anchorOffset).toBe(3)
+      expect(window.getSelection()!.anchorNode).toBe(editor.firstChild)
+      expect(element('composer-autocomplete-popup').getAttribute('data-side')).toBeTruthy()
+      await act(async () =>
+        editor.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+      )
+      expect(close).not.toHaveBeenCalled()
+      await act(async () =>
+        editor.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+      )
+      expect(close).toHaveBeenCalledWith(true)
+      close.mockClear()
+      await act(async () =>
+        document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0 }))
+      )
+      expect(close).toHaveBeenCalledWith(false)
+    } finally {
+      editor.remove()
+    }
   })
 })

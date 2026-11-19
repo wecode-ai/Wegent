@@ -1,13 +1,14 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useStableEvent } from '@/features/workbench/useStableEvent'
+import { useTranslation } from '@/hooks/useTranslation'
 import type {
   CollaborationIssue,
   CollaborationIssueDetailRenderContext,
   SharedWorkspaceApi,
 } from '@wegent/collaboration'
 import { mergeIssueReadConfirmation } from '@wegent/collaboration'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { X } from 'lucide-react'
-import { useTranslation } from '@/hooks/useTranslation'
-import { useStableEvent } from '@/features/workbench/useStableEvent'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { PersonalHomeIssueDetailContext } from './WeworkPersonalHome'
 
 /** Load an authorized Issue and reuse the board's complete detail and task workflow. */
@@ -127,14 +128,15 @@ export function PersonalHomeIssuePanel({
   const error = current?.failed ? (
     <div role="alert" className="p-5 text-sm text-error">
       {t('personalHome.detailFailed')}
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="personal-home-detail-retry"
         className="ml-2 min-h-11 underline md:min-h-8"
         onClick={() => setRevision(value => value + 1)}
       >
         {t('standIn.reload')}
-      </button>
+      </ControlButton>
     </div>
   ) : null
   if (!current?.detail) {
@@ -148,7 +150,8 @@ export function PersonalHomeIssuePanel({
       <>
         <header className="flex items-center justify-between gap-2 border-b border-border p-4">
           <span className="truncate">{issue.title}</span>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="cloud-todo-detail-close"
             aria-label={t('independentIssues.close')}
@@ -156,7 +159,7 @@ export function PersonalHomeIssuePanel({
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md md:h-8 md:w-8 hover:bg-muted"
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </header>
         {content}
       </>

@@ -1,3 +1,8 @@
+import {
+  CollapsibleRoot,
+  CollapsibleTrigger,
+  CollapsiblePanel,
+} from '@wegent/collaboration/controls/Collapsible'
 import { useEffect, useRef, useState } from 'react'
 import { ArrowRight, Circle, FileText, Lock, Sparkles } from 'lucide-react'
 import {
@@ -153,18 +158,22 @@ export function TaskTimeline(props: Props) {
       <div ref={contentRef} className="experience-matter-scroll">
         <div className="experience-matter-document">
           {filter === 'all' && issue.description ? (
-            <details
+            <CollapsibleRoot
               className="experience-matter-background"
               data-testid="collaboration-exp-background"
             >
-              <summary>{t('timeline.background')}</summary>
-              <IssueActivityMarkdown
-                content={issue.description}
-                onOpenAttachment={(id, name) =>
-                  props.onAttachment({ id, name, sourceNodeId: null })
-                }
-              />
-            </details>
+              <CollapsibleTrigger data-testid="task-timeline-toggle">
+                {t('timeline.background')}
+              </CollapsibleTrigger>
+              <CollapsiblePanel>
+                <IssueActivityMarkdown
+                  content={issue.description}
+                  onOpenAttachment={(id, name) =>
+                    props.onAttachment({ id, name, sourceNodeId: null })
+                  }
+                />
+              </CollapsiblePanel>
+            </CollapsibleRoot>
           ) : null}
           <TimelineFilters
             value={filter}

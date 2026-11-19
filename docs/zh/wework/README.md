@@ -31,6 +31,7 @@ Wework 是面向 AI 协作的桌面工作台。你可以直接打开本地项目
 
 ## 开发者文档
 
+- [组件库与 Storybook](./component-library.md)：统一基础控件、业务组件、运行示例和 AI MCP 入口
 - [插件市场开发指南](./developer-guide/wework-plugin-marketplace-dev.md)：开发插件、迁移开源插件、本地联调与发布路径
 - [Core DSH 插件隔离开发](./developer-guide/wework-core-dsh-plugin-development.md)：使用第二个 Wework 实例、HMR、DevTools 和独立日志调试 Wework 插件
 - [插件市场 V2](./developer-guide/plugin-marketplace-v2.md)：云端控制面架构与运维

@@ -1,58 +1,5 @@
-import { ExpiredPluginInventoryRequest } from '@/api/local/codexInstalledCatalog'
-import { LOCAL_CONNECTOR_AUTH_CHANGED_EVENT } from '@/api/local/localConnectorAuthEvents'
-import {
-  recordPluginInstallationAccepted,
-  reconcilePluginInstallation,
-} from '@/features/plugins/pluginInstallTelemetry'
-import { beginOperation, type OperationAttempt } from '@/telemetry/operationBus'
+import { useDialogRequests } from '@/components/common/useDialogRequests'
 import { getToken } from '@/api/auth'
-import { getRuntimeConfig } from '@/config/runtime'
-import { isElectronRuntime } from '@/lib/runtime-environment'
-import {
-  createLocalDevicePluginApi,
-  resolveLocalPluginDeviceRouteId,
-} from '@/features/plugins/pluginDeviceApi'
-import { usePluginRefreshReconciliation } from './hooks/usePluginRefreshReconciliation'
-import { PluginReconciliationStatus } from './PluginReconciliationStatus'
-import {
-  pluginDeviceReceiptPending,
-  waitForPluginDeviceReceipt,
-  PluginDeviceReceiptError,
-  PluginInstallationSupersededError,
-} from '@/features/plugins/waitForPluginDeviceReceipt'
-import { useInstalledPluginDetail } from './hooks/useInstalledPluginDetail'
-import { useMarketplacePluginDetail } from './hooks/useMarketplacePluginDetail'
-import {
-  beginPluginSettingsRequest,
-  ExpiredPluginSettingsRequest,
-  restorePluginComponentState,
-} from '@/features/plugins/pluginSettingsRequest'
-import { usePluginVersionSubmission } from './hooks/usePluginVersionSubmission'
-import { useOpenAiPluginCatalog } from '@/features/plugins/useOpenAiPluginCatalog'
-import { isOpenAiOfficialRemoteMarketplaceId } from '@/features/plugins/marketplaceIdentity'
-import { RefreshCw, Settings2 } from 'lucide-react'
-import type { FormEvent, ReactNode } from 'react'
-import {
-  startTransition,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from 'react'
-import { useTranslation } from '@/hooks/useTranslation'
-import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
-import { ApiError } from '@/api/http'
-import { requiresInstallConnectorAuth } from '@/features/plugins/connectorAuthPolicy'
-import {
-  clearLocalCodexPluginsReadStateCache,
-  readPluginReconciliationInventory,
-  createLocalCodexPluginApi,
-  listPersonalMarketplacePluginsFromDisk,
-  peekLocalCodexPluginsReadState,
-} from '@/api/local/codexPlugins'
 import {
   authorizeWegentConnector,
   connectorAuthorizationErrorMessage,
@@ -60,12 +7,16 @@ import {
   notifyConnectorAuthorizationChanged,
   refreshWegentConnector,
 } from '@/api/cloud/connectorApps'
-import { trackPluginEvent as track } from '@/telemetry/businessEvents'
+import { ApiError } from '@/api/http'
+import { ExpiredPluginInventoryRequest } from '@/api/local/codexInstalledCatalog'
 import {
-  installedPluginTelemetryIdentity,
-  marketplacePluginTelemetryIdentity,
-  pluginTelemetryIdentityFromParts,
-} from '@/telemetry/pluginIdentity'
+  clearLocalCodexPluginsReadStateCache,
+  createLocalCodexPluginApi,
+  listPersonalMarketplacePluginsFromDisk,
+  peekLocalCodexPluginsReadState,
+  readPluginReconciliationInventory,
+} from '@/api/local/codexPlugins'
+import { isGithubCliTarget } from '@/api/local/githubCli'
 import {
   isLocalBrowserConnector,
   isLocalConnector,
@@ -77,77 +28,44 @@ import {
   pluginLocalConnectorAuthTarget,
   type LocalConnectorAuthTarget,
 } from '@/api/local/localConnectorAuth'
+import { LOCAL_CONNECTOR_AUTH_CHANGED_EVENT } from '@/api/local/localConnectorAuthEvents'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { MacOSTitleBarDragRegion } from '@/components/layout/MacOSTitleBarDragRegion'
 import { LocalConnectorAuthDialog } from '@/components/plugins/LocalConnectorAuthDialog'
-import { GithubCliAuthDialog } from './GithubCliAuthDialog'
-import { isGithubCliTarget } from '@/api/local/githubCli'
+import { getRuntimeConfig } from '@/config/runtime'
+import {
+  ensureLocalExecutorAvailable,
+  getKnownLocalExecutorDeviceId,
+} from '@/desktop/localExecutor'
+import { useOptionalAppearance } from '@/features/appearance'
+import {
+  refreshLocalExecutorCloudConnectionStatus,
+  useLocalExecutorCloudConnectionStatus,
+} from '@/features/cloud-connection/localExecutorCloudConnectionStatus'
+import {
+  isPersonalMarketplaceId,
+  WEWORK_PERSONAL_MARKETPLACE_ID,
+} from '@/features/plugins/builtinPlugins'
 import {
   codexAppAuthorizationUrl,
   codexAuthorizationErrorKey,
   readCodexAuthorizationApps,
   resolveCodexConnectorApp,
 } from '@/features/plugins/codexConnectorAuthorization'
-import type { LocalDeviceApp } from '@/types/api'
-import { openExternalUrl } from '@/lib/external-links'
-import { getErrorMessage } from '@/lib/error-message'
-import { isDesktopRuntime } from '@/lib/runtime-environment'
-import { navigateTo } from '@/lib/navigation'
-import { openConnectorAuthorizationWindow } from '@/lib/connector-authorization-window'
-import {
-  ensureLocalExecutorAvailable,
-  getKnownLocalExecutorDeviceId,
-} from '@/desktop/localExecutor'
-import {
-  refreshLocalExecutorCloudConnectionStatus,
-  useLocalExecutorCloudConnectionStatus,
-} from '@/features/cloud-connection/localExecutorCloudConnectionStatus'
-import {
-  notifyLocalPluginSkillsChanged,
-  queuePluginPromptTrial,
-} from '@/features/plugins/pluginTrial'
-import { buildPluginDetailRoute, type PluginReference } from '@/features/plugins/pluginNavigation'
-import {
-  isPersonalMarketplaceId,
-  WEWORK_PERSONAL_MARKETPLACE_ID,
-} from '@/features/plugins/builtinPlugins'
+import { requiresInstallConnectorAuth } from '@/features/plugins/connectorAuthPolicy'
 import { logoutLocalConnectorsForPlugin } from '@/features/plugins/logoutLocalQrConnectors'
+import { isOpenAiOfficialRemoteMarketplaceId } from '@/features/plugins/marketplaceIdentity'
 import {
-  LocalConnectorPluginSyncTimeoutError,
-  waitForLocalConnectorAuthAvailability,
-} from '@/features/plugins/waitForLocalConnectorAuthAvailability'
+  marketplaceItemCanRetryPluginUpdate,
+  marketplaceItemHasPausedPluginAutoUpdate,
+  marketplaceItemNeedsPluginAutoUpdate,
+  runPluginAutoUpdate,
+} from '@/features/plugins/pluginAutoUpdate'
+import { PLUGIN_AUTO_UPDATE_COMPLETED_EVENT } from '@/features/plugins/PluginAutoUpdateCoordinator'
 import {
-  getPluginMarketplaceCache,
-  getPluginInventoryMutationVersion,
-  capturePluginMarketplaceScope,
-  pluginMarketplaceCacheKey,
-  sameInstalledPlugins,
-  sameMarketplaceItems,
-  setPluginMarketplaceCache,
-  subscribePluginMarketplaceCache,
-  removePluginMarketplaceInstallation,
-} from '@/features/plugins/pluginMarketplaceCache'
-import {
-  pluginInstallationReadIsCurrent,
-  updatePluginInventoryInstallation,
-  writePluginInventory,
-  pluginInventoryReadIsCurrent,
-  commitPluginInventoryInstallation,
-} from '@/features/plugins/pluginInventory'
-import {
-  indexLocalPluginSources,
-  resolveLocalPluginInventory,
-  sameLocalPluginSources,
-} from '@/features/plugins/pluginInventorySources'
-import { useMarketplaceFilters } from './hooks/useMarketplaceFilters'
-import { usePluginMarketplaceCatalog } from './hooks/usePluginMarketplaceCatalog'
-import {
-  findMarketplaceItemForPluginReference,
-  openMarketplacePluginDetailSelection,
-  usePluginDetailSelection,
-} from './hooks/usePluginDetailSelection'
-import { usePluginInstallActions } from './hooks/usePluginInstallActions'
-import { InstalledPluginStrip } from './workspace/InstalledPluginStrip'
-import { MarketplaceCatalogView } from './workspace/MarketplaceCatalogView'
+  createLocalDevicePluginApi,
+  resolveLocalPluginDeviceRouteId,
+} from '@/features/plugins/pluginDeviceApi'
 import {
   acquirePluginDeviceSync,
   beginPluginDeviceSync,
@@ -168,70 +86,146 @@ import {
   withAcknowledgedMarketplaceDeviceState,
   withOptimisticDevicePending,
 } from '@/features/plugins/pluginDeviceAutoSync'
+import {
+  reconcilePluginInstallation,
+  recordPluginInstallationAccepted,
+} from '@/features/plugins/pluginInstallTelemetry'
+import {
+  commitPluginInventoryInstallation,
+  pluginInstallationReadIsCurrent,
+  pluginInventoryReadIsCurrent,
+  updatePluginInventoryInstallation,
+  writePluginInventory,
+} from '@/features/plugins/pluginInventory'
+import {
+  indexLocalPluginSources,
+  resolveLocalPluginInventory,
+  sameLocalPluginSources,
+} from '@/features/plugins/pluginInventorySources'
+import {
+  capturePluginMarketplaceScope,
+  getPluginInventoryMutationVersion,
+  getPluginMarketplaceCache,
+  pluginMarketplaceCacheKey,
+  removePluginMarketplaceInstallation,
+  sameInstalledPlugins,
+  sameMarketplaceItems,
+  setPluginMarketplaceCache,
+  subscribePluginMarketplaceCache,
+} from '@/features/plugins/pluginMarketplaceCache'
+import { buildPluginDetailRoute, type PluginReference } from '@/features/plugins/pluginNavigation'
 import { logPluginRefreshPhase } from '@/features/plugins/pluginRefreshDiagnostics'
 import {
-  marketplaceItemCanRetryPluginUpdate,
-  marketplaceItemHasPausedPluginAutoUpdate,
-  marketplaceItemNeedsPluginAutoUpdate,
-  runPluginAutoUpdate,
-} from '@/features/plugins/pluginAutoUpdate'
-import { PLUGIN_AUTO_UPDATE_COMPLETED_EVENT } from '@/features/plugins/PluginAutoUpdateCoordinator'
+  beginPluginSettingsRequest,
+  ExpiredPluginSettingsRequest,
+  restorePluginComponentState,
+} from '@/features/plugins/pluginSettingsRequest'
+import {
+  notifyLocalPluginSkillsChanged,
+  queuePluginPromptTrial,
+} from '@/features/plugins/pluginTrial'
+import { useOpenAiPluginCatalog } from '@/features/plugins/useOpenAiPluginCatalog'
+import {
+  LocalConnectorPluginSyncTimeoutError,
+  waitForLocalConnectorAuthAvailability,
+} from '@/features/plugins/waitForLocalConnectorAuthAvailability'
+import {
+  PluginDeviceReceiptError,
+  pluginDeviceReceiptPending,
+  PluginInstallationSupersededError,
+  waitForPluginDeviceReceipt,
+} from '@/features/plugins/waitForPluginDeviceReceipt'
+import { useTranslation } from '@/hooks/useTranslation'
+import { openConnectorAuthorizationWindow } from '@/lib/connector-authorization-window'
+import { getErrorMessage } from '@/lib/error-message'
+import { openExternalUrl } from '@/lib/external-links'
+import { navigateTo } from '@/lib/navigation'
+import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
+import { trackPluginEvent as track } from '@/telemetry/businessEvents'
+import { beginOperation, type OperationAttempt } from '@/telemetry/operationBus'
+import {
+  installedPluginTelemetryIdentity,
+  marketplacePluginTelemetryIdentity,
+  pluginTelemetryIdentityFromParts,
+} from '@/telemetry/pluginIdentity'
 import type {
   InstalledPlugin,
+  LocalDeviceApp,
   PluginAccessResponse,
   PluginAccessUpdateRequest,
-  PluginMarketplaceItem,
   PluginDeleteImpactResponse,
+  PluginMarketplaceItem,
   PluginPublicationRequestItem,
   PluginSubmissionCompleteResponse,
 } from '@/types/api'
-import { connectorDisplayName } from './connectorDisplayName'
-import { holdBackInFlightMarketplaceInstalls } from './holdBackInFlightMarketplaceInstalls'
-import { hasLocalCodexMaterialization } from './installedPluginMerge'
-import { retainMarketplaceInstalledState } from './retainMarketplaceInstallHints'
-import { type InstalledPluginItem } from './PluginManagementRows'
-import { PluginCreateMenu } from './PluginCreateMenu'
-import { PluginImportDialog } from './PluginImportDialog'
-import { PluginDetailView } from './PluginDetailView'
-import { PluginOperationNotice, type PluginOperationNoticeState } from './PluginOperationNotice'
-import { pluginOperationNoticeAutoDismissDelay } from './pluginOperationNoticePolicy'
-import { PluginPublishDialog, type PluginPublishRequest } from './PluginPublishDialog'
-import { PluginPublicationProgressDrawer } from './PluginPublicationProgressDrawer'
-import { PluginShareDialog } from './PluginShareDialog'
-import { InstallPluginDialog } from './plugin-dialogs/InstallPluginDialog'
-import { DeletePersonalPluginDialog } from './plugin-dialogs/DeletePersonalPluginDialog'
-import { UninstallPluginDialog } from './plugin-dialogs/UninstallPluginDialog'
-import { useOptionalAppearance } from '@/features/appearance'
-import { resolvePluginLogo } from './plugin-assets'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { RefreshCw, Settings2 } from 'lucide-react'
+import type { FormEvent, ReactNode } from 'react'
 import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
+import { connectorDisplayName } from './connectorDisplayName'
+import { findMarketplaceItemForInstalled } from './findMarketplaceItemForInstalled'
+import { GithubCliAuthDialog } from './GithubCliAuthDialog'
+import { holdBackInFlightMarketplaceInstalls } from './holdBackInFlightMarketplaceInstalls'
+import { useInstalledPluginDetail } from './hooks/useInstalledPluginDetail'
+import { useMarketplaceFilters } from './hooks/useMarketplaceFilters'
+import { useMarketplacePluginDetail } from './hooks/useMarketplacePluginDetail'
+import {
+  findMarketplaceItemForPluginReference,
+  openMarketplacePluginDetailSelection,
+  usePluginDetailSelection,
+} from './hooks/usePluginDetailSelection'
+import { usePluginInstallActions } from './hooks/usePluginInstallActions'
+import { usePluginMarketplaceCatalog } from './hooks/usePluginMarketplaceCatalog'
+import { usePluginRefreshReconciliation } from './hooks/usePluginRefreshReconciliation'
+import { usePluginVersionSubmission } from './hooks/usePluginVersionSubmission'
+import {
+  hasLocalCodexMaterialization,
   isCloudManagedInstalledPlugin,
   isWegentManagedStorePlugin,
-  linkedCloudPluginId,
   linkedCloudInstalledPluginId,
+  linkedCloudPluginId,
   mergeInstalledPlugins,
   resolveProgressiveLocalInstalledRaw,
   storeDirMatchesPluginKey,
 } from './installedPluginMerge'
-import { findMarketplaceItemForInstalled } from './findMarketplaceItemForInstalled'
 import {
   isLocalMarketplaceItem,
   mergeDiskPersonalIntoLocalRows,
   mergeMarketplaceCatalog,
 } from './marketplaceCatalogMerge'
+import { type MarketplaceCategorySection } from './marketplaceCategorySections'
 import {
   humanizeMarketplaceInstallError,
   humanizeMarketplaceUninstallError,
 } from './marketplaceInstallError'
-import { type MarketplaceSearchInputHandle } from './MarketplaceSearchInput'
 import { marketplacePluginLockLabel, resolveMarketplacePluginLock } from './marketplacePluginLock'
-import { type MarketplaceCategorySection } from './marketplaceCategorySections'
+import { type MarketplaceSearchInputHandle } from './MarketplaceSearchInput'
+import { resolvePluginLogo } from './plugin-assets'
+import { DeletePersonalPluginDialog } from './plugin-dialogs/DeletePersonalPluginDialog'
+import { InstallPluginDialog } from './plugin-dialogs/InstallPluginDialog'
+import { UninstallPluginDialog } from './plugin-dialogs/UninstallPluginDialog'
+import { PluginCreateMenu } from './PluginCreateMenu'
+import { pluginDetailPrimaryActionPending, pluginDetailReadyToTry } from './pluginDetailReadyToTry'
+import { PluginDetailView } from './PluginDetailView'
 import {
-  pluginUninstallScope,
-  pluginUninstallWarningDetails,
-  uninstallAccountPlugin,
-  uninstallPluginIdentities,
-  type PluginUninstallScope,
-} from './pluginUninstall'
+  installedPluginMarketplaceId,
+  isOfficialMarketplacePlugin,
+  marketplaceItemMarketplaceId,
+  marketplacePluginDistribution,
+} from './pluginDistribution'
+import { PluginImportDialog } from './PluginImportDialog'
+import { type InstalledPluginItem } from './PluginManagementRows'
+import { PluginOperationNotice, type PluginOperationNoticeState } from './PluginOperationNotice'
+import { pluginOperationNoticeAutoDismissDelay } from './pluginOperationNoticePolicy'
 import {
   canRecoverShareAfterVersionConflict,
   resolvePluginOwnerActions,
@@ -243,27 +237,37 @@ import {
   marketplaceItemOwnsLocalCreatedPackage,
   resolveContinueEditingPluginKey,
 } from './pluginOwnerLocalPackage'
-import { withPublishedPluginCloudLink } from './publishedPluginIdentity'
+import { PluginPublicationProgressDrawer } from './PluginPublicationProgressDrawer'
+import { PluginPublishDialog, type PluginPublishRequest } from './PluginPublishDialog'
+import { PluginReconciliationStatus } from './PluginReconciliationStatus'
+import { PluginShareDialog } from './PluginShareDialog'
 import {
-  installedPluginMarketplaceId,
-  isOfficialMarketplacePlugin,
-  marketplaceItemMarketplaceId,
-  marketplacePluginDistribution,
-} from './pluginDistribution'
-import { pluginDetailPrimaryActionPending, pluginDetailReadyToTry } from './pluginDetailReadyToTry'
+  pluginUninstallScope,
+  pluginUninstallWarningDetails,
+  uninstallAccountPlugin,
+  uninstallPluginIdentities,
+  type PluginUninstallScope,
+} from './pluginUninstall'
+import { withPublishedPluginCloudLink } from './publishedPluginIdentity'
+import { retainMarketplaceInstalledState } from './retainMarketplaceInstallHints'
+import { InstalledPluginStrip } from './workspace/InstalledPluginStrip'
+import { MarketplaceCatalogView } from './workspace/MarketplaceCatalogView'
 
+import { AddMarketDialog } from './workspace/AddMarketDialog'
+import { CategoryBrowseDialog } from './workspace/CategoryBrowseDialog'
 import {
   CLOUD_MARKETPLACE_REVALIDATE_INTERVAL_MS,
-  MARKETPLACE_SEARCH_RESULT_BATCH_SIZE,
   cloudMarketplaceKey,
   createDefaultPluginApi,
   currentDeviceInstallation,
   findInstalledPluginForMarketplaceItem,
   isCodexCatalogItem,
   isMarketplaceSourceValid,
+  isMarketplaceUninstallPending,
   isUserAddedMarketplace,
   localMarketplaceIdFromItem,
   localMarketplaceKey,
+  MARKETPLACE_SEARCH_RESULT_BATCH_SIZE,
   marketplaceComponentCount,
   marketplacePluginDetailSelectionKey,
   marketplacePluginDetailSource,
@@ -273,11 +277,10 @@ import {
   pluginDetailActionErrorMessage,
   pluginUsesWegentConnectorOAuth,
   preferNonEmptyCatalogRows,
-  rememberMarketplaceKey,
   rememberedMarketplaceKey,
-  resolveMarketplaceUninstallId,
-  isMarketplaceUninstallPending,
+  rememberMarketplaceKey,
   requiredConnectionNames,
+  resolveMarketplaceUninstallId,
   toInstalledPluginItem,
   toMarketplaceInstalledPluginItem,
   toMarketplaceOptions,
@@ -290,8 +293,6 @@ import {
   type PluginMarketplaceState,
   type PluginShareState,
 } from './workspace/marketplaceWorkspaceHelpers'
-import { AddMarketDialog } from './workspace/AddMarketDialog'
-import { CategoryBrowseDialog } from './workspace/CategoryBrowseDialog'
 import {
   type PluginMarketplaceRowAction,
   type PluginMarketplaceRowLabels,
@@ -426,6 +427,10 @@ export function PluginsWorkspace({
   pluginReference = null,
 }: PluginsWorkspaceProps) {
   const { t } = useTranslation('common')
+  const { confirm: requestConfirmation, dialogs: requestDialogs } = useDialogRequests(
+    (key, fallback) => t(key, fallback)
+  )
+
   const appearanceMode = useOptionalAppearance()?.resolvedMode ?? 'light'
   const localExecutorCloudConnection = useLocalExecutorCloudConnectionStatus()
   const [localSyncScope, setLocalSyncScope] = useState<{
@@ -2325,7 +2330,7 @@ export function PluginsWorkspace({
       !installFromLocal && (!alreadyInstalled || marketplaceItemCanRetryPluginUpdate(item))
 
     if (needsCloudPackagePush && !cloudToken) {
-      const shouldLogin = window.confirm(
+      const shouldLogin = await requestConfirmation(
         t('workbench.plugins_login_required', '安装插件需要登录 Wegent 账户。是否前往登录？')
       )
       if (shouldLogin) {
@@ -3306,7 +3311,7 @@ export function PluginsWorkspace({
       }
 
       if (action === 'logout') {
-        const confirmed = window.confirm(
+        const confirmed = await requestConfirmation(
           t(
             githubCli
               ? 'workbench.github_cli_logout_confirm'
@@ -5731,118 +5736,125 @@ export function PluginsWorkspace({
       )
     return (
       <>
-        <PluginDetailView
-          plugin={selectedPlugin}
-          backLabel={t('workbench.plugins_back_to_marketplace', '返回插件市场')}
-          actionError={pluginDetailActionErrorMessage(pluginDetailActionError, selectedPlugin.id)}
-          usableOnThisDevice={pluginDetailReadyToTry(selectedPlugin, ownedMarketplace)}
-          primaryActionLabel={
-            selectedUninstalling
-              ? t('workbench.plugins_uninstalling', '正在卸载')
-              : t('workbench.plugins_try_now', '立即对话')
-          }
-          primaryActionDisabled={selectedUninstalling}
-          shareActionLabel={t('workbench.plugins_share', '分享')}
-          shareActionDisabled={headerBusy}
-          onShareAction={ownerActions.showShareAction ? openOwnerPublish : undefined}
-          publication={selectedPublication}
-          publicationWithdrawing={withdrawingPublicationId === selectedPublication?.id}
-          onViewPublication={
-            selectedPublication
-              ? selectedPublication.actionEligibility.canViewEnterprisePlugin
-                ? () => void openPublishedEnterprisePlugin(selectedPublication)
-                : () => void openPublicationProgress(selectedPublication.id)
-              : undefined
-          }
-          onWithdrawPublication={
-            selectedPublication?.actionEligibility?.canWithdraw
-              ? () => void openPublicationProgress(selectedPublication.id)
-              : undefined
-          }
-          onCreatePublicationRevision={
-            selectedPublication?.actionEligibility?.canCreateRevision
-              ? () => openPublicationRevision(selectedPublication)
-              : undefined
-          }
-          publicationHistoryCount={selectedPluginPublications.length}
-          onViewPublicationHistory={
-            selectedPublication && selectedPluginPublications.length > 1
-              ? () => void openPublicationProgress(selectedPublication.id)
-              : undefined
-          }
-          accessRole={associatedListing?.accessRole}
-          shareRecipient={associatedListing?.accessRole === 'recipient'}
-          versionSubmission={versionSubmission.actionFor(packableCreated, ownedMarketplace ?? null)}
-          pluginVisibility={associatedListing?.visibility ?? null}
-          shareGrantUserCount={ownedMarketplace?.grantUserCount ?? 0}
-          shareGrantNamespaceCount={ownedMarketplace?.grantNamespaceCount ?? 0}
-          manageAccessLabel={t('workbench.plugins_manage_access', '管理权限')}
-          onManageAccess={ownerActions.canManageAccess ? openOwnerShare : undefined}
-          submissionStatus={submissionStatus}
-          submissionReviewNote={submissionReviewNote}
-          onBack={() => closePluginDetail(() => setSelectedPluginId(null))}
-          editActionLabel={t('workbench.plugins_continue_editing', '继续编辑')}
-          onEditAction={
-            continueEditingKey
-              ? () => navigateTo(`/plugins/create?edit=${encodeURIComponent(continueEditingKey)}`)
-              : undefined
-          }
-          deleteActionLabel={t('workbench.plugins_delete_plugin', '删除插件')}
-          deleteActionDisabled={headerBusy}
-          onDeleteAction={
-            packableCreated
-              ? () =>
-                  void requestDeletePersonalPlugin({
-                    pluginName: packableCreated.raw.spec.source.pluginKey,
-                    displayName: selectedPlugin.name,
-                    marketplacePath:
-                      typeof packableCreated.raw.spec.sourcePayload?.marketplacePath === 'string'
-                        ? packableCreated.raw.spec.sourcePayload.marketplacePath
-                        : null,
-                    installedId: packableCreated.id,
-                  })
-              : undefined
-          }
-          onToggle={() => {
-            if (isInstalledPluginUninstalling(selectedPlugin)) return
-            if (!tryPluginInChat(selectedPlugin.raw)) {
-              setPluginDetailActionError({
-                pluginId: selectedPlugin.id,
-                message: t('workbench.plugins_trial_missing_skill', '这个插件没有可试用的技能'),
-              })
+        {' '}
+        {requestDialogs}{' '}
+        <>
+          <PluginDetailView
+            plugin={selectedPlugin}
+            backLabel={t('workbench.plugins_back_to_marketplace', '返回插件市场')}
+            actionError={pluginDetailActionErrorMessage(pluginDetailActionError, selectedPlugin.id)}
+            usableOnThisDevice={pluginDetailReadyToTry(selectedPlugin, ownedMarketplace)}
+            primaryActionLabel={
+              selectedUninstalling
+                ? t('workbench.plugins_uninstalling', '正在卸载')
+                : t('workbench.plugins_try_now', '立即对话')
             }
-          }}
-          onPromptSelect={prompt => {
-            if (isInstalledPluginUninstalling(selectedPlugin)) return
-            if (queuePluginPromptTrial(selectedPlugin.raw, prompt, { openInNewChat: true })) {
-              navigateTo('/')
+            primaryActionDisabled={selectedUninstalling}
+            shareActionLabel={t('workbench.plugins_share', '分享')}
+            shareActionDisabled={headerBusy}
+            onShareAction={ownerActions.showShareAction ? openOwnerPublish : undefined}
+            publication={selectedPublication}
+            publicationWithdrawing={withdrawingPublicationId === selectedPublication?.id}
+            onViewPublication={
+              selectedPublication
+                ? selectedPublication.actionEligibility.canViewEnterprisePlugin
+                  ? () => void openPublishedEnterprisePlugin(selectedPublication)
+                  : () => void openPublicationProgress(selectedPublication.id)
+                : undefined
             }
-          }}
-          onComponentToggle={(componentKey, enabled) =>
-            togglePluginComponent(selectedPlugin.id, componentKey, enabled)
-          }
-          autoUpdateEnabled={selectedPlugin.raw.spec.updatePolicy === 'auto'}
-          autoUpdateSaving={updatingPluginPolicyIds.has(selectedPlugin.id)}
-          autoUpdatePaused={
-            selectedPlugin.raw.spec.updatePolicy === 'auto' && selectedAutoUpdatePaused
-          }
-          autoUpdateFailureCount={selectedDeviceInstallation?.attemptCount ?? 0}
-          onAutoUpdateChange={
-            isCloudManagedInstalledPlugin(selectedPlugin.raw)
-              ? enabled => changePluginAutoUpdatePolicy(selectedPlugin, enabled)
-              : undefined
-          }
-          onUninstall={() => requestUninstallPlugin(selectedPlugin.id, selectedPlugin.name)}
-          onManageConnector={slug => void managePluginConnector(slug, selectedPlugin)}
-          connectorAuthBySlug={localConnectorAuthBySlug}
-          connectorAuthBusySlug={connectorActionSlug}
-        />
-        {pluginShareDialog}
-        {versionSubmission.drawer}
-        {pluginPublishDialog}
-        {publicationProgressDrawer}
-        {pluginOperationNoticeOverlay}
-        {pluginOverlayDialogs}
+            onWithdrawPublication={
+              selectedPublication?.actionEligibility?.canWithdraw
+                ? () => void openPublicationProgress(selectedPublication.id)
+                : undefined
+            }
+            onCreatePublicationRevision={
+              selectedPublication?.actionEligibility?.canCreateRevision
+                ? () => openPublicationRevision(selectedPublication)
+                : undefined
+            }
+            publicationHistoryCount={selectedPluginPublications.length}
+            onViewPublicationHistory={
+              selectedPublication && selectedPluginPublications.length > 1
+                ? () => void openPublicationProgress(selectedPublication.id)
+                : undefined
+            }
+            accessRole={associatedListing?.accessRole}
+            shareRecipient={associatedListing?.accessRole === 'recipient'}
+            versionSubmission={versionSubmission.actionFor(
+              packableCreated,
+              ownedMarketplace ?? null
+            )}
+            pluginVisibility={associatedListing?.visibility ?? null}
+            shareGrantUserCount={ownedMarketplace?.grantUserCount ?? 0}
+            shareGrantNamespaceCount={ownedMarketplace?.grantNamespaceCount ?? 0}
+            manageAccessLabel={t('workbench.plugins_manage_access', '管理权限')}
+            onManageAccess={ownerActions.canManageAccess ? openOwnerShare : undefined}
+            submissionStatus={submissionStatus}
+            submissionReviewNote={submissionReviewNote}
+            onBack={() => closePluginDetail(() => setSelectedPluginId(null))}
+            editActionLabel={t('workbench.plugins_continue_editing', '继续编辑')}
+            onEditAction={
+              continueEditingKey
+                ? () => navigateTo(`/plugins/create?edit=${encodeURIComponent(continueEditingKey)}`)
+                : undefined
+            }
+            deleteActionLabel={t('workbench.plugins_delete_plugin', '删除插件')}
+            deleteActionDisabled={headerBusy}
+            onDeleteAction={
+              packableCreated
+                ? () =>
+                    void requestDeletePersonalPlugin({
+                      pluginName: packableCreated.raw.spec.source.pluginKey,
+                      displayName: selectedPlugin.name,
+                      marketplacePath:
+                        typeof packableCreated.raw.spec.sourcePayload?.marketplacePath === 'string'
+                          ? packableCreated.raw.spec.sourcePayload.marketplacePath
+                          : null,
+                      installedId: packableCreated.id,
+                    })
+                : undefined
+            }
+            onToggle={() => {
+              if (isInstalledPluginUninstalling(selectedPlugin)) return
+              if (!tryPluginInChat(selectedPlugin.raw)) {
+                setPluginDetailActionError({
+                  pluginId: selectedPlugin.id,
+                  message: t('workbench.plugins_trial_missing_skill', '这个插件没有可试用的技能'),
+                })
+              }
+            }}
+            onPromptSelect={prompt => {
+              if (isInstalledPluginUninstalling(selectedPlugin)) return
+              if (queuePluginPromptTrial(selectedPlugin.raw, prompt, { openInNewChat: true })) {
+                navigateTo('/')
+              }
+            }}
+            onComponentToggle={(componentKey, enabled) =>
+              togglePluginComponent(selectedPlugin.id, componentKey, enabled)
+            }
+            autoUpdateEnabled={selectedPlugin.raw.spec.updatePolicy === 'auto'}
+            autoUpdateSaving={updatingPluginPolicyIds.has(selectedPlugin.id)}
+            autoUpdatePaused={
+              selectedPlugin.raw.spec.updatePolicy === 'auto' && selectedAutoUpdatePaused
+            }
+            autoUpdateFailureCount={selectedDeviceInstallation?.attemptCount ?? 0}
+            onAutoUpdateChange={
+              isCloudManagedInstalledPlugin(selectedPlugin.raw)
+                ? enabled => changePluginAutoUpdatePolicy(selectedPlugin, enabled)
+                : undefined
+            }
+            onUninstall={() => requestUninstallPlugin(selectedPlugin.id, selectedPlugin.name)}
+            onManageConnector={slug => void managePluginConnector(slug, selectedPlugin)}
+            connectorAuthBySlug={localConnectorAuthBySlug}
+            connectorAuthBusySlug={connectorActionSlug}
+          />
+          {pluginShareDialog}
+          {versionSubmission.drawer}
+          {pluginPublishDialog}
+          {publicationProgressDrawer}
+          {pluginOperationNoticeOverlay}
+          {pluginOverlayDialogs}
+        </>{' '}
       </>
     )
   }
@@ -5961,406 +5973,424 @@ export function PluginsWorkspace({
 
     return (
       <>
-        <PluginDetailView
-          plugin={detailPlugin}
-          detailLoading={marketplaceDetailLoading}
-          backLabel={t('workbench.plugins_back_to_marketplace', '返回插件市场')}
-          usableOnThisDevice={isInstalled}
-          accessRole={selectedMarketplacePlugin.accessRole}
-          versionSubmission={versionSubmission.actionFor(packableCreated, ownedListing)}
-          pluginVisibility={selectedMarketplacePlugin.visibility}
-          shareGrantUserCount={selectedMarketplacePlugin.grantUserCount ?? 0}
-          shareGrantNamespaceCount={selectedMarketplacePlugin.grantNamespaceCount ?? 0}
-          shareRecipient={selectedMarketplacePlugin.accessRole === 'recipient'}
-          manageAccessLabel={t('workbench.plugins_manage_access', '管理权限')}
-          onManageAccess={
-            marketplaceOwnerActions.canManageAccess ? openMarketplaceOwnerShare : undefined
-          }
-          shareActionLabel={t('workbench.plugins_share', '分享')}
-          shareActionDisabled={pluginPublishPreparing || isUploadingPlugin || pluginSharePreparing}
-          onShareAction={
-            marketplaceOwnerActions.showShareAction
-              ? packableCreated
-                ? openMarketplaceOwnerPublish
-                : openMarketplaceOwnerShare
-              : undefined
-          }
-          publication={marketplacePublication}
-          publicationWithdrawing={withdrawingPublicationId === marketplacePublication?.id}
-          onViewPublication={
-            marketplacePublication
-              ? marketplacePublication.actionEligibility.canViewEnterprisePlugin
-                ? () => void openPublishedEnterprisePlugin(marketplacePublication)
-                : () => void openPublicationProgress(marketplacePublication.id)
-              : undefined
-          }
-          onWithdrawPublication={
-            marketplacePublication?.actionEligibility?.canWithdraw
-              ? () => void openPublicationProgress(marketplacePublication.id)
-              : undefined
-          }
-          onCreatePublicationRevision={
-            marketplacePublication?.actionEligibility?.canCreateRevision
-              ? () => openPublicationRevision(marketplacePublication)
-              : undefined
-          }
-          publicationHistoryCount={marketplacePluginPublications.length}
-          onViewPublicationHistory={
-            marketplacePublication && marketplacePluginPublications.length > 1
-              ? () => void openPublicationProgress(marketplacePublication.id)
-              : undefined
-          }
-          originPersonalActionLabel={t(
-            'workbench.plugin_detail_view_origin_personal',
-            '查看个人创建版本'
-          )}
-          onOpenOriginPersonalPlugin={
-            originPersonalListing
-              ? () =>
-                  navigateTo(
-                    buildPluginDetailRoute({
-                      pluginName: originPersonalListing.name,
-                      marketplaceName: WEWORK_PERSONAL_MARKETPLACE_ID,
+        {' '}
+        {requestDialogs}{' '}
+        <>
+          <PluginDetailView
+            plugin={detailPlugin}
+            detailLoading={marketplaceDetailLoading}
+            backLabel={t('workbench.plugins_back_to_marketplace', '返回插件市场')}
+            usableOnThisDevice={isInstalled}
+            accessRole={selectedMarketplacePlugin.accessRole}
+            versionSubmission={versionSubmission.actionFor(packableCreated, ownedListing)}
+            pluginVisibility={selectedMarketplacePlugin.visibility}
+            shareGrantUserCount={selectedMarketplacePlugin.grantUserCount ?? 0}
+            shareGrantNamespaceCount={selectedMarketplacePlugin.grantNamespaceCount ?? 0}
+            shareRecipient={selectedMarketplacePlugin.accessRole === 'recipient'}
+            manageAccessLabel={t('workbench.plugins_manage_access', '管理权限')}
+            onManageAccess={
+              marketplaceOwnerActions.canManageAccess ? openMarketplaceOwnerShare : undefined
+            }
+            shareActionLabel={t('workbench.plugins_share', '分享')}
+            shareActionDisabled={
+              pluginPublishPreparing || isUploadingPlugin || pluginSharePreparing
+            }
+            onShareAction={
+              marketplaceOwnerActions.showShareAction
+                ? packableCreated
+                  ? openMarketplaceOwnerPublish
+                  : openMarketplaceOwnerShare
+                : undefined
+            }
+            publication={marketplacePublication}
+            publicationWithdrawing={withdrawingPublicationId === marketplacePublication?.id}
+            onViewPublication={
+              marketplacePublication
+                ? marketplacePublication.actionEligibility.canViewEnterprisePlugin
+                  ? () => void openPublishedEnterprisePlugin(marketplacePublication)
+                  : () => void openPublicationProgress(marketplacePublication.id)
+                : undefined
+            }
+            onWithdrawPublication={
+              marketplacePublication?.actionEligibility?.canWithdraw
+                ? () => void openPublicationProgress(marketplacePublication.id)
+                : undefined
+            }
+            onCreatePublicationRevision={
+              marketplacePublication?.actionEligibility?.canCreateRevision
+                ? () => openPublicationRevision(marketplacePublication)
+                : undefined
+            }
+            publicationHistoryCount={marketplacePluginPublications.length}
+            onViewPublicationHistory={
+              marketplacePublication && marketplacePluginPublications.length > 1
+                ? () => void openPublicationProgress(marketplacePublication.id)
+                : undefined
+            }
+            originPersonalActionLabel={t(
+              'workbench.plugin_detail_view_origin_personal',
+              '查看个人创建版本'
+            )}
+            onOpenOriginPersonalPlugin={
+              originPersonalListing
+                ? () =>
+                    navigateTo(
+                      buildPluginDetailRoute({
+                        pluginName: originPersonalListing.name,
+                        marketplaceName: WEWORK_PERSONAL_MARKETPLACE_ID,
+                      })
+                    )
+                : undefined
+            }
+            editActionLabel={t('workbench.plugins_continue_editing', '继续编辑')}
+            onEditAction={
+              continueEditingKey
+                ? () => navigateTo(`/plugins/create?edit=${encodeURIComponent(continueEditingKey)}`)
+                : undefined
+            }
+            deleteActionLabel={t('workbench.plugins_delete_plugin', '删除插件')}
+            deleteActionDisabled={pluginPublishPreparing || isActionPending}
+            onDeleteAction={
+              isOwnedPersonalListing || hasDeletablePersonalSource
+                ? () =>
+                    void requestDeletePersonalPlugin({
+                      pluginName:
+                        selectedMarketplacePlugin.localPersonalSource?.pluginName ||
+                        selectedMarketplacePlugin.name,
+                      displayName:
+                        selectedMarketplacePlugin.displayName || selectedMarketplacePlugin.name,
+                      marketplacePath:
+                        typeof packableCreated?.raw.spec.sourcePayload?.marketplacePath === 'string'
+                          ? packableCreated.raw.spec.sourcePayload.marketplacePath
+                          : selectedMarketplacePlugin.localPersonalSource?.marketplacePath
+                            ? selectedMarketplacePlugin.localPersonalSource.marketplacePath
+                            : typeof selectedMarketplacePlugin.manifest.marketplacePath === 'string'
+                              ? selectedMarketplacePlugin.manifest.marketplacePath
+                              : null,
+                      installedId: packableCreated?.id ?? null,
+                      cloudPluginId: isOwnedPersonalListing ? selectedMarketplacePlugin.id : null,
+                      deleteLocalSource: hasDeletablePersonalSource,
                     })
-                  )
-              : undefined
-          }
-          editActionLabel={t('workbench.plugins_continue_editing', '继续编辑')}
-          onEditAction={
-            continueEditingKey
-              ? () => navigateTo(`/plugins/create?edit=${encodeURIComponent(continueEditingKey)}`)
-              : undefined
-          }
-          deleteActionLabel={t('workbench.plugins_delete_plugin', '删除插件')}
-          deleteActionDisabled={pluginPublishPreparing || isActionPending}
-          onDeleteAction={
-            isOwnedPersonalListing || hasDeletablePersonalSource
-              ? () =>
-                  void requestDeletePersonalPlugin({
-                    pluginName:
-                      selectedMarketplacePlugin.localPersonalSource?.pluginName ||
-                      selectedMarketplacePlugin.name,
-                    displayName:
-                      selectedMarketplacePlugin.displayName || selectedMarketplacePlugin.name,
-                    marketplacePath:
-                      typeof packableCreated?.raw.spec.sourcePayload?.marketplacePath === 'string'
-                        ? packableCreated.raw.spec.sourcePayload.marketplacePath
-                        : selectedMarketplacePlugin.localPersonalSource?.marketplacePath
-                          ? selectedMarketplacePlugin.localPersonalSource.marketplacePath
-                          : typeof selectedMarketplacePlugin.manifest.marketplacePath === 'string'
-                            ? selectedMarketplacePlugin.manifest.marketplacePath
-                            : null,
-                    installedId: packableCreated?.id ?? null,
-                    cloudPluginId: isOwnedPersonalListing ? selectedMarketplacePlugin.id : null,
-                    deleteLocalSource: hasDeletablePersonalSource,
-                  })
-              : undefined
-          }
-          isExternalSource={
-            selectedMarketplacePlugin.sourceProvider === 'codex' ||
-            marketplacePluginDistribution(selectedMarketplacePlugin) === 'public'
-          }
-          actionError={
-            marketplaceDetailLoadError ||
-            (deviceState === 'failed' &&
-              selectedMarketplacePlugin.currentDeviceInstallation?.errorMessage) ||
-            pluginDetailActionErrorMessage(pluginDetailActionError, selectedMarketplacePlugin.id)
-          }
-          onRetryAction={
-            marketplaceDetailLoadError
-              ? () => setMarketplaceDetailRevision(revision => revision + 1)
-              : undefined
-          }
-          primaryActionLabel={
-            primaryActionPending
-              ? isUninstalling
-                ? t('workbench.plugins_uninstalling', '正在卸载')
-                : isInstalling
-                  ? t('workbench.plugins_installing', '正在安装')
-                  : t('workbench.plugins_syncing_installation', '同步中...')
-              : canUpdate
-                ? t('workbench.plugins_update', '更新')
-                : isInstalled
-                  ? t('workbench.plugins_try_now', '立即对话')
-                  : isFailed
-                    ? t('workbench.plugins_retry_install', '重试安装')
-                    : detailRequiresConnection
-                      ? t('workbench.plugins_install_and_connect_named', '安装并连接 {{name}}', {
-                          name:
-                            detailRequiredConnectionNames[0] ||
-                            selectedMarketplacePlugin.displayName ||
-                            selectedMarketplacePlugin.name,
-                        })
-                      : t('workbench.plugins_install_plugin', '安装插件')
-          }
-          primaryActionIcon={marketplacePrimaryIcon}
-          primaryActionDisabled={primaryActionPending}
-          tertiaryActionLabel={
-            selectedMarketplacePlugin.accessRole === 'recipient' &&
-            selectedMarketplacePlugin.allowCopy
-              ? t('workbench.plugins_copy_to_personal', '复制到我的插件')
-              : undefined
-          }
-          tertiaryActionDisabled={pluginSharePreparing}
-          onTertiaryAction={
-            selectedMarketplacePlugin.accessRole === 'recipient' &&
-            selectedMarketplacePlugin.allowCopy
-              ? () => void copyMarketplacePlugin(selectedMarketplacePlugin)
-              : undefined
-          }
-          showUninstall={showDetailActionMenu}
-          onBack={() => closePluginDetail(() => setSelectedMarketplacePluginId(null))}
-          onToggle={() => {
-            if (primaryActionPending || isMarketplacePluginUninstalling(selectedMarketplacePlugin))
-              return
-            if (canUpdate) {
-              installMarketplacePlugin(selectedMarketplacePlugin)
-              return
+                : undefined
             }
-            if (isInstalled) {
-              beginMarketplacePluginTrial(selectedMarketplacePlugin, detailPlugin)
-              return
+            isExternalSource={
+              selectedMarketplacePlugin.sourceProvider === 'codex' ||
+              marketplacePluginDistribution(selectedMarketplacePlugin) === 'public'
             }
-            installMarketplacePlugin(detailedMarketplacePlugin)
-          }}
-          onComponentToggle={(componentKey, enabled) => {
-            if (installedDetail) {
-              togglePluginComponent(installedDetail.id, componentKey, enabled)
+            actionError={
+              marketplaceDetailLoadError ||
+              (deviceState === 'failed' &&
+                selectedMarketplacePlugin.currentDeviceInstallation?.errorMessage) ||
+              pluginDetailActionErrorMessage(pluginDetailActionError, selectedMarketplacePlugin.id)
             }
-          }}
-          autoUpdateEnabled={installedDetail?.raw.spec.updatePolicy === 'auto'}
-          autoUpdateSaving={
-            installedDetail ? updatingPluginPolicyIds.has(installedDetail.id) : false
-          }
-          autoUpdatePaused={
-            Boolean(installedDetail?.raw.spec.updatePolicy === 'auto') && autoUpdatePaused
-          }
-          autoUpdateFailureCount={
-            selectedMarketplacePlugin.currentDeviceInstallation?.attemptCount ?? 0
-          }
-          onAutoUpdateChange={
-            installedDetail && isCloudManagedInstalledPlugin(installedDetail.raw)
-              ? enabled => changePluginAutoUpdatePolicy(installedDetail, enabled)
-              : undefined
-          }
-          onUninstall={() => {
-            requestUninstallPlugin(
-              marketplaceUninstallId(selectedMarketplacePlugin),
-              selectedMarketplacePlugin.displayName || selectedMarketplacePlugin.name
-            )
-          }}
-          onPromptSelect={prompt => {
-            if (primaryActionPending || isMarketplacePluginUninstalling(selectedMarketplacePlugin))
-              return
-            if (isInstalled) {
-              beginMarketplacePluginTrial(selectedMarketplacePlugin, detailPlugin, prompt)
-              return
+            onRetryAction={
+              marketplaceDetailLoadError
+                ? () => setMarketplaceDetailRevision(revision => revision + 1)
+                : undefined
             }
-            installMarketplacePlugin(detailedMarketplacePlugin, prompt)
-          }}
-          onManageConnector={slug => void managePluginConnector(slug, detailPlugin)}
-          connectorAuthBySlug={localConnectorAuthBySlug}
-          connectorAuthBusySlug={connectorActionSlug}
-        />
-        {pluginShareDialog}
-        {versionSubmission.drawer}
-        {pluginPublishDialog}
-        {publicationProgressDrawer}
-        {pluginOperationNoticeOverlay}
-        {pluginOverlayDialogs}
+            primaryActionLabel={
+              primaryActionPending
+                ? isUninstalling
+                  ? t('workbench.plugins_uninstalling', '正在卸载')
+                  : isInstalling
+                    ? t('workbench.plugins_installing', '正在安装')
+                    : t('workbench.plugins_syncing_installation', '同步中...')
+                : canUpdate
+                  ? t('workbench.plugins_update', '更新')
+                  : isInstalled
+                    ? t('workbench.plugins_try_now', '立即对话')
+                    : isFailed
+                      ? t('workbench.plugins_retry_install', '重试安装')
+                      : detailRequiresConnection
+                        ? t('workbench.plugins_install_and_connect_named', '安装并连接 {{name}}', {
+                            name:
+                              detailRequiredConnectionNames[0] ||
+                              selectedMarketplacePlugin.displayName ||
+                              selectedMarketplacePlugin.name,
+                          })
+                        : t('workbench.plugins_install_plugin', '安装插件')
+            }
+            primaryActionIcon={marketplacePrimaryIcon}
+            primaryActionDisabled={primaryActionPending}
+            tertiaryActionLabel={
+              selectedMarketplacePlugin.accessRole === 'recipient' &&
+              selectedMarketplacePlugin.allowCopy
+                ? t('workbench.plugins_copy_to_personal', '复制到我的插件')
+                : undefined
+            }
+            tertiaryActionDisabled={pluginSharePreparing}
+            onTertiaryAction={
+              selectedMarketplacePlugin.accessRole === 'recipient' &&
+              selectedMarketplacePlugin.allowCopy
+                ? () => void copyMarketplacePlugin(selectedMarketplacePlugin)
+                : undefined
+            }
+            showUninstall={showDetailActionMenu}
+            onBack={() => closePluginDetail(() => setSelectedMarketplacePluginId(null))}
+            onToggle={() => {
+              if (
+                primaryActionPending ||
+                isMarketplacePluginUninstalling(selectedMarketplacePlugin)
+              )
+                return
+              if (canUpdate) {
+                installMarketplacePlugin(selectedMarketplacePlugin)
+                return
+              }
+              if (isInstalled) {
+                beginMarketplacePluginTrial(selectedMarketplacePlugin, detailPlugin)
+                return
+              }
+              installMarketplacePlugin(detailedMarketplacePlugin)
+            }}
+            onComponentToggle={(componentKey, enabled) => {
+              if (installedDetail) {
+                togglePluginComponent(installedDetail.id, componentKey, enabled)
+              }
+            }}
+            autoUpdateEnabled={installedDetail?.raw.spec.updatePolicy === 'auto'}
+            autoUpdateSaving={
+              installedDetail ? updatingPluginPolicyIds.has(installedDetail.id) : false
+            }
+            autoUpdatePaused={
+              Boolean(installedDetail?.raw.spec.updatePolicy === 'auto') && autoUpdatePaused
+            }
+            autoUpdateFailureCount={
+              selectedMarketplacePlugin.currentDeviceInstallation?.attemptCount ?? 0
+            }
+            onAutoUpdateChange={
+              installedDetail && isCloudManagedInstalledPlugin(installedDetail.raw)
+                ? enabled => changePluginAutoUpdatePolicy(installedDetail, enabled)
+                : undefined
+            }
+            onUninstall={() => {
+              requestUninstallPlugin(
+                marketplaceUninstallId(selectedMarketplacePlugin),
+                selectedMarketplacePlugin.displayName || selectedMarketplacePlugin.name
+              )
+            }}
+            onPromptSelect={prompt => {
+              if (
+                primaryActionPending ||
+                isMarketplacePluginUninstalling(selectedMarketplacePlugin)
+              )
+                return
+              if (isInstalled) {
+                beginMarketplacePluginTrial(selectedMarketplacePlugin, detailPlugin, prompt)
+                return
+              }
+              installMarketplacePlugin(detailedMarketplacePlugin, prompt)
+            }}
+            onManageConnector={slug => void managePluginConnector(slug, detailPlugin)}
+            connectorAuthBySlug={localConnectorAuthBySlug}
+            connectorAuthBusySlug={connectorActionSlug}
+          />
+          {pluginShareDialog}
+          {versionSubmission.drawer}
+          {pluginPublishDialog}
+          {publicationProgressDrawer}
+          {pluginOperationNoticeOverlay}
+          {pluginOverlayDialogs}
+        </>{' '}
       </>
     )
   }
 
   return (
-    <main
-      data-testid="plugins-workspace"
-      className="min-h-0 min-w-0 flex-1 overflow-hidden bg-background text-text-primary"
-    >
-      <div
-        data-testid="plugins-page-content"
-        className={[
-          'mx-auto flex h-full min-h-0 w-full max-w-[1120px] flex-col px-5 md:px-10',
-          sidebarCollapsed ? 'md:pl-6' : 'md:pl-7',
-          topBarLeftActions ? 'pt-3 md:pt-4' : 'pt-6 md:pt-7',
-        ].join(' ')}
+    <>
+      {' '}
+      {requestDialogs}{' '}
+      <main
+        data-testid="plugins-workspace"
+        className="min-h-0 min-w-0 flex-1 overflow-hidden bg-background text-text-primary"
       >
-        {topBarLeftActions ? (
-          <div className="mb-3 flex min-h-8 items-center gap-2 md:mb-4">
-            <div data-testid="plugins-topbar-left-actions" className="shrink-0">
-              {topBarLeftActions}
-            </div>
-            <div
-              data-testid="plugins-topbar-drag-region"
-              className="min-h-8 min-w-0 flex-1 self-stretch"
-            >
-              <MacOSTitleBarDragRegion className="h-full w-full" />
-            </div>
-          </div>
-        ) : null}
-
-        <header
-          data-testid="plugins-topbar"
-          className="plugin-market-header relative flex items-start justify-between gap-6"
+        <div
+          data-testid="plugins-page-content"
+          className={[
+            'mx-auto flex h-full min-h-0 w-full max-w-[1120px] flex-col px-5 md:px-10',
+            sidebarCollapsed ? 'md:pl-6' : 'md:pl-7',
+            topBarLeftActions ? 'pt-3 md:pt-4' : 'pt-6 md:pt-7',
+          ].join(' ')}
         >
-          {!topBarLeftActions ? (
-            <div
-              data-testid="plugins-topbar-drag-region"
-              className="pointer-events-none absolute inset-x-0 top-0 hidden min-h-[52px] md:block"
-              aria-hidden="true"
-            >
-              <MacOSTitleBarDragRegion className="h-full w-full" />
+          {topBarLeftActions ? (
+            <div className="mb-3 flex min-h-8 items-center gap-2 md:mb-4">
+              <div data-testid="plugins-topbar-left-actions" className="shrink-0">
+                {topBarLeftActions}
+              </div>
+              <div
+                data-testid="plugins-topbar-drag-region"
+                className="min-h-8 min-w-0 flex-1 self-stretch"
+              >
+                <MacOSTitleBarDragRegion className="h-full w-full" />
+              </div>
             </div>
           ) : null}
-          <div className="min-w-0 flex-1">
-            <h2 className="sr-only">{t('workbench.plugin_management_tab_plugins', '插件')}</h2>
-            <h1 className="plugin-market-title text-text-primary">
-              {t('workbench.plugins_marketplace_title', '插件市场')}
-            </h1>
-            <p className="mt-1 max-w-2xl text-sm leading-5 text-text-secondary">
-              {t(
-                'workbench.plugins_marketplace_subtitle',
-                '发现并接入开发工具、企业数据和专业方法。'
-              )}
-            </p>
-            <span className="sr-only">
-              {t('workbench.plugins_subtitle', '通过插件扩展 WeWork 能力')}
-            </span>
-          </div>
-          <div
-            data-testid="plugins-topbar-right-actions"
-            className="flex w-full max-w-[420px] shrink-0 flex-col items-end gap-2 sm:w-auto"
-          >
-            <div className="flex items-center gap-2 md:gap-[9px]">
-              <button
-                type="button"
-                data-testid="plugins-refresh-button"
-                data-reconciling={isReconcilingPlugins}
-                data-local-sync={localSyncAvailable}
-                data-catalog-loading={pluginMarketplaceState.isLoading}
-                data-marketplace-refreshing={isMarketplaceRefreshing}
-                data-official-catalog-loading={openAiCatalog.loading}
-                data-official-catalog-view={isOfficialCatalogView}
-                data-reconciliation-revision={reconciliationRevision}
-                aria-label={t('workbench.plugins_refresh_marketplace', '刷新插件市场')}
-                disabled={isCatalogRefreshBusy}
-                className="plugin-market-icon-button hidden disabled:opacity-50 md:inline-flex"
-                onClick={refreshMarketplace}
-              >
-                <RefreshCw
-                  className={['h-4 w-4', isCatalogRefreshBusy ? 'animate-spin' : ''].join(' ')}
-                />
-              </button>
-              <PluginCreateMenu
-                isOpen={isCreateMenuOpen}
-                onToggle={() => setIsCreateMenuOpen(previous => !previous)}
-                onCreatePlugin={openPluginCreator}
-                onImportPlugin={() => {
-                  setIsCreateMenuOpen(false)
-                  setShowPluginImportDialog(true)
-                }}
-                onAddMarket={() => {
-                  setIsCreateMenuOpen(false)
-                  setShowAddMarketDialog(true)
-                }}
-              />
-              <button
-                type="button"
-                data-testid="plugins-manage-button"
-                className="plugin-market-action-button"
-                onClick={() => navigateTo('/plugins/manage')}
-              >
-                <Settings2 className="h-[17px] w-[17px]" aria-hidden="true" />
-                {t('workbench.plugins_manage_plugins', '管理插件')}
-              </button>
-            </div>
-            {isReconcilingPlugins && (
-              <PluginReconciliationStatus
-                stage={reconciliation.stage}
-                startedAt={reconciliation.startedAt}
-              />
-            )}
-          </div>
-        </header>
 
-        <MarketplaceCatalogView
-          hasMarketplace={hasMarketplace}
-          marketplaces={marketplaces}
-          selectedMarketplaceKey={selectedMarketplaceKey}
-          selectedDistributionTab={selectedDistributionTab}
-          marketplaceSourceFilterKey={marketplaceSourceFilterKey}
-          marketplaceDistributionLabels={marketplaceDistributionLabels}
-          localMarketplaceTabs={localMarketplaceTabs}
-          query={query}
-          searchInputRef={marketplaceSearchInputRef}
-          scrollRef={marketplaceScrollRegionRef}
-          showInstalledStrip={showInstalledStrip}
-          installedStrip={
-            showInstalledStrip ? (
-              <InstalledPluginStrip
-                plugins={installedStripPlugins}
-                hiddenPlugins={hiddenInstalledPlugins}
-                marketplaceItems={pluginMarketplaceState.items}
-                sidebarCollapsed={sidebarCollapsed}
-                onOpen={openInstalledPluginDetail}
-              />
-            ) : null
-          }
-          pluginMarketplaceState={pluginMarketplaceState}
-          marketplaceLoadingMessage={marketplaceLoadingMessage}
-          isMarketplaceRefreshing={isMarketplaceRefreshing}
-          isMarketplaceSearchUpdating={isMarketplaceSearchUpdating}
-          isOpenAiOfficialViewLoading={isOpenAiOfficialViewLoading}
-          openAiCatalogError={openAiCatalog.error}
-          isOpenAiCatalogRefreshing={openAiCatalog.loading}
-          normalizedQuery={normalizedQuery}
-          visibleMarketplaceItems={visibleMarketplaceItems}
-          marketplaceCategorySections={marketplaceCategorySections}
-          visibleSearchResultLimit={visibleSearchResultLimit}
-          isLoggedIn={Boolean(cloudToken && (localSyncAvailable || currentDeviceId))}
-          isReconciling={reconciliationBlocksActions}
-          installingMarketplacePluginIds={installingMarketplacePluginIds}
-          isLocallyUninstalling={isMarketplacePluginLocallyUninstalling}
-          allowPendingRetry={deviceAutoSyncSettled || !deviceCloudConnected}
-          showPendingAsSyncing={localInventoryReady && deviceCloudConnected}
-          rowLabels={marketplaceRowLabels}
-          onSelectDistributionTab={handleSelectDistributionTab}
-          onSelectLocalMarketplaceTab={handleSelectLocalMarketplaceTab}
-          onQueryChange={setQuery}
-          onRefresh={refreshMarketplace}
-          onClearFilters={handleClearMarketplaceFilters}
-          onRevealMore={handleRevealMore}
-          onAction={handleMarketplaceRowAction}
-        />
-      </div>
-      {pluginOverlayDialogs}
-      {pluginOperationNoticeOverlay}
-      {browsingCategorySection && (
-        <CategoryBrowseDialog
-          section={browsingCategorySection}
-          isLoggedIn={Boolean(cloudToken && (localSyncAvailable || currentDeviceId))}
-          isReconciling={reconciliationBlocksActions}
-          installingMarketplacePluginIds={installingMarketplacePluginIds}
-          isLocallyUninstalling={isMarketplacePluginLocallyUninstalling}
-          allowPendingRetry={deviceAutoSyncSettled || !deviceCloudConnected}
-          showPendingAsSyncing={localInventoryReady && deviceCloudConnected}
-          rowLabels={marketplaceRowLabels}
-          onClose={() => setBrowsingCategoryKey(null)}
-          onAction={handleMarketplaceRowAction}
-        />
-      )}
-      {showAddMarketDialog && (
-        <AddMarketDialog
-          isOpen={showAddMarketDialog}
-          isSubmitting={isAddingMarket}
-          formData={addMarketForm}
-          onClose={() => setShowAddMarketDialog(false)}
-          onChange={setAddMarketForm}
-          onSubmit={addMarketplace}
-        />
-      )}
-      {pluginShareDialog}
-      {pluginPublishDialog}
-    </main>
+          <header
+            data-testid="plugins-topbar"
+            className="plugin-market-header relative flex items-start justify-between gap-6"
+          >
+            {!topBarLeftActions ? (
+              <div
+                data-testid="plugins-topbar-drag-region"
+                className="pointer-events-none absolute inset-x-0 top-0 hidden min-h-[52px] md:block"
+                aria-hidden="true"
+              >
+                <MacOSTitleBarDragRegion className="h-full w-full" />
+              </div>
+            ) : null}
+            <div className="min-w-0 flex-1">
+              <h2 className="sr-only">{t('workbench.plugin_management_tab_plugins', '插件')}</h2>
+              <h1 className="plugin-market-title text-text-primary">
+                {t('workbench.plugins_marketplace_title', '插件市场')}
+              </h1>
+              <p className="mt-1 max-w-2xl text-sm leading-5 text-text-secondary">
+                {t(
+                  'workbench.plugins_marketplace_subtitle',
+                  '发现并接入开发工具、企业数据和专业方法。'
+                )}
+              </p>
+              <span className="sr-only">
+                {t('workbench.plugins_subtitle', '通过插件扩展 WeWork 能力')}
+              </span>
+            </div>
+            <div
+              data-testid="plugins-topbar-right-actions"
+              className="flex w-full max-w-[420px] shrink-0 flex-col items-end gap-2 sm:w-auto"
+            >
+              <div className="flex items-center gap-2 md:gap-[9px]">
+                <ControlButton
+                  variant="unstyled"
+                  type="button"
+                  data-testid="plugins-refresh-button"
+                  data-reconciling={isReconcilingPlugins}
+                  data-local-sync={localSyncAvailable}
+                  data-catalog-loading={pluginMarketplaceState.isLoading}
+                  data-marketplace-refreshing={isMarketplaceRefreshing}
+                  data-official-catalog-loading={openAiCatalog.loading}
+                  data-official-catalog-view={isOfficialCatalogView}
+                  data-reconciliation-revision={reconciliationRevision}
+                  aria-label={t('workbench.plugins_refresh_marketplace', '刷新插件市场')}
+                  disabled={isCatalogRefreshBusy}
+                  className="plugin-market-icon-button hidden disabled:opacity-50 md:inline-flex"
+                  onClick={refreshMarketplace}
+                >
+                  <RefreshCw
+                    className={['h-4 w-4', isCatalogRefreshBusy ? 'animate-spin' : ''].join(' ')}
+                  />
+                </ControlButton>
+                <PluginCreateMenu
+                  isOpen={isCreateMenuOpen}
+                  onToggle={() => setIsCreateMenuOpen(previous => !previous)}
+                  onCreatePlugin={openPluginCreator}
+                  onImportPlugin={() => {
+                    setIsCreateMenuOpen(false)
+                    setShowPluginImportDialog(true)
+                  }}
+                  onAddMarket={() => {
+                    setIsCreateMenuOpen(false)
+                    setShowAddMarketDialog(true)
+                  }}
+                />
+                <ControlButton
+                  variant="unstyled"
+                  type="button"
+                  data-testid="plugins-manage-button"
+                  className="plugin-market-action-button"
+                  onClick={() => navigateTo('/plugins/manage')}
+                >
+                  <Settings2 className="h-[17px] w-[17px]" aria-hidden="true" />
+                  {t('workbench.plugins_manage_plugins', '管理插件')}
+                </ControlButton>
+              </div>
+              {isReconcilingPlugins && (
+                <PluginReconciliationStatus
+                  stage={reconciliation.stage}
+                  startedAt={reconciliation.startedAt}
+                />
+              )}
+            </div>
+          </header>
+
+          <MarketplaceCatalogView
+            hasMarketplace={hasMarketplace}
+            marketplaces={marketplaces}
+            selectedMarketplaceKey={selectedMarketplaceKey}
+            selectedDistributionTab={selectedDistributionTab}
+            marketplaceSourceFilterKey={marketplaceSourceFilterKey}
+            marketplaceDistributionLabels={marketplaceDistributionLabels}
+            localMarketplaceTabs={localMarketplaceTabs}
+            query={query}
+            searchInputRef={marketplaceSearchInputRef}
+            scrollRef={marketplaceScrollRegionRef}
+            showInstalledStrip={showInstalledStrip}
+            installedStrip={
+              showInstalledStrip ? (
+                <InstalledPluginStrip
+                  plugins={installedStripPlugins}
+                  hiddenPlugins={hiddenInstalledPlugins}
+                  marketplaceItems={pluginMarketplaceState.items}
+                  sidebarCollapsed={sidebarCollapsed}
+                  onOpen={openInstalledPluginDetail}
+                />
+              ) : null
+            }
+            pluginMarketplaceState={pluginMarketplaceState}
+            marketplaceLoadingMessage={marketplaceLoadingMessage}
+            isMarketplaceRefreshing={isMarketplaceRefreshing}
+            isMarketplaceSearchUpdating={isMarketplaceSearchUpdating}
+            isOpenAiOfficialViewLoading={isOpenAiOfficialViewLoading}
+            openAiCatalogError={openAiCatalog.error}
+            isOpenAiCatalogRefreshing={openAiCatalog.loading}
+            normalizedQuery={normalizedQuery}
+            visibleMarketplaceItems={visibleMarketplaceItems}
+            marketplaceCategorySections={marketplaceCategorySections}
+            visibleSearchResultLimit={visibleSearchResultLimit}
+            isLoggedIn={Boolean(cloudToken && (localSyncAvailable || currentDeviceId))}
+            isReconciling={reconciliationBlocksActions}
+            installingMarketplacePluginIds={installingMarketplacePluginIds}
+            isLocallyUninstalling={isMarketplacePluginLocallyUninstalling}
+            allowPendingRetry={deviceAutoSyncSettled || !deviceCloudConnected}
+            showPendingAsSyncing={localInventoryReady && deviceCloudConnected}
+            rowLabels={marketplaceRowLabels}
+            onSelectDistributionTab={handleSelectDistributionTab}
+            onSelectLocalMarketplaceTab={handleSelectLocalMarketplaceTab}
+            onQueryChange={setQuery}
+            onRefresh={refreshMarketplace}
+            onClearFilters={handleClearMarketplaceFilters}
+            onRevealMore={handleRevealMore}
+            onAction={handleMarketplaceRowAction}
+          />
+        </div>
+        {pluginOverlayDialogs}
+        {pluginOperationNoticeOverlay}
+        {browsingCategorySection && (
+          <CategoryBrowseDialog
+            section={browsingCategorySection}
+            isLoggedIn={Boolean(cloudToken && (localSyncAvailable || currentDeviceId))}
+            isReconciling={reconciliationBlocksActions}
+            installingMarketplacePluginIds={installingMarketplacePluginIds}
+            isLocallyUninstalling={isMarketplacePluginLocallyUninstalling}
+            allowPendingRetry={deviceAutoSyncSettled || !deviceCloudConnected}
+            showPendingAsSyncing={localInventoryReady && deviceCloudConnected}
+            rowLabels={marketplaceRowLabels}
+            onClose={() => setBrowsingCategoryKey(null)}
+            onAction={handleMarketplaceRowAction}
+          />
+        )}
+        {showAddMarketDialog && (
+          <AddMarketDialog
+            isOpen={showAddMarketDialog}
+            isSubmitting={isAddingMarket}
+            formData={addMarketForm}
+            onClose={() => setShowAddMarketDialog(false)}
+            onChange={setAddMarketForm}
+            onSubmit={addMarketplace}
+          />
+        )}
+        {pluginShareDialog}
+        {pluginPublishDialog}
+      </main>{' '}
+    </>
   )
 }

@@ -1,41 +1,42 @@
-import { useEffect, useMemo, useState } from 'react'
-import { Menu } from 'lucide-react'
 import { ApiError, createHttpClient } from '@/api/http'
+import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { createPluginApi } from '@/api/plugins'
+import type { Site, SiteAppType } from '@/api/sites'
 import { createSitesApi, createUnavailableSitesApi } from '@/api/sites'
 import { createSmartAppsApi } from '@/api/smartApps'
-import type { Site, SiteAppType } from '@/api/sites'
-import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
 import { DesktopCollapsedSidebarToggle } from '@/components/layout/DesktopCollapsedSidebarToggle'
+import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
 import { MobileDrawer } from '@/components/layout/MobileDrawer'
 import { useDesktopSidebarCollapsed } from '@/components/layout/useDesktopSidebarCollapsed'
 import { WorkbenchSearchDialog } from '@/components/layout/WorkbenchSearchDialog'
 import { ConnectionsSettingsPage } from '@/components/settings/ConnectionsSettingsPage'
 import { MobileSettingsPage } from '@/components/settings/MobileSettingsPage'
-import { SitesWorkspace } from '@/components/sites/SitesWorkspace'
-import { getApplicationTypeDefinition } from '@/components/sites/applicationTypeDefinitions'
 import type { ApplicationCreateStrategy } from '@/components/sites/applicationTypeDefinitions'
+import { getApplicationTypeDefinition } from '@/components/sites/applicationTypeDefinitions'
+import { SitesWorkspace } from '@/components/sites/SitesWorkspace'
 import { getRuntimeConfig } from '@/config/runtime'
 import { useAuth } from '@/features/auth/useAuth'
 import { useCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { useExperimentalFeaturesState } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
-import { useWorkbench } from '@/features/workbench/useWorkbench'
-import { useIsMobile } from '@/hooks/useIsMobile'
-import { useTranslation } from '@/hooks/useTranslation'
-import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
+import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plugins/pluginTrial'
 import {
   ApplicationPluginSyncConfirmationError,
   PluginInstallationInspectionError,
   applicationPluginReferenceName,
   preparePluginTrial,
 } from '@/features/plugins/preparePluginTrial'
-import { notifyLocalPluginSkillsChanged, queuePluginTrial } from '@/features/plugins/pluginTrial'
+import { useWorkbench } from '@/features/workbench/useWorkbench'
+import { useIsMobile } from '@/hooks/useIsMobile'
+import { useTranslation } from '@/hooks/useTranslation'
 import { getPreferredStandaloneDeviceId } from '@/lib/device-selection'
 import { buildRuntimeTaskRoute, navigateTo } from '@/lib/navigation'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 import { isLocalFirstAppRuntime } from '@/lib/runtime-mode'
 import type { InstalledPlugin, RuntimeTaskAddress } from '@/types/api'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Menu } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
 import { SmartAppsMarketplacePage } from './SmartAppsMarketplacePage'
 
 interface PreparedApplicationPlugin {
@@ -458,7 +459,8 @@ export function SitesPage({ onNavigate, search = window.location.search }: Sites
         {isMobile && (
           <>
             <header className="pointer-events-none absolute left-5 top-[max(8px,env(safe-area-inset-top))] z-chrome flex h-11 items-center">
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="open-mobile-drawer-button"
                 onClick={() => setDrawerOpen(true)}
@@ -466,7 +468,7 @@ export function SitesPage({ onNavigate, search = window.location.search }: Sites
                 aria-label={commonT('workbench.open_menu', '打开菜单')}
               >
                 <Menu className="h-5 w-5" />
-              </button>
+              </ControlButton>
             </header>
             <MobileDrawer
               open={drawerOpen}

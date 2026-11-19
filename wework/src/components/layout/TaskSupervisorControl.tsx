@@ -1,9 +1,5 @@
-import { AlertCircle, Check, Loader2, MessageSquareText, Play, ShieldCheck, X } from 'lucide-react'
-import { useEffect, useState } from 'react'
-import { createPortal } from 'react-dom'
 import { ModelSelector } from '@/components/chat/composer/ModelSelector'
 import { Button } from '@/components/ui/button'
-import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getDefaultModelOptions } from '@/lib/model-ui'
 import { cn } from '@/lib/utils'
@@ -15,6 +11,19 @@ import type {
   RuntimeSupervisorSuggestion,
   UnifiedModel,
 } from '@/types/api'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { AlertCircle, Check, Loader2, MessageSquareText, Play, ShieldCheck, X } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 export interface TaskSupervisorConfig {
   mode: RuntimeSupervisorMode
@@ -144,7 +153,8 @@ export function TaskSupervisorStatusButton({
         data-testid="task-supervisor-status-row"
         className="flex min-h-11 w-full items-center gap-2"
       >
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="task-supervisor-toggle-button"
           onClick={onClick}
@@ -178,9 +188,10 @@ export function TaskSupervisorStatusButton({
               {pendingCount}
             </span>
           )}
-        </button>
+        </ControlButton>
         {onRunNow && (
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="task-supervisor-status-run-now-button"
             disabled={runningNow || supervisor.status === 'checking'}
@@ -194,7 +205,7 @@ export function TaskSupervisorStatusButton({
             ) : (
               <Play className="h-4 w-4" />
             )}
-          </button>
+          </ControlButton>
         )}
       </div>
       {runError && (
@@ -257,9 +268,6 @@ function TaskSupervisorDialogContent({
         supervisor.lastEvaluatedAt + (supervisor.intervalSeconds ?? intervalSeconds) * 1_000
       )
     : null
-  useEscapeKey(() => {
-    if (!saving && !runningNow) onOpenChange(false)
-  })
 
   const save = async () => {
     setSaving(true)
@@ -329,14 +337,19 @@ function TaskSupervisorDialogContent({
         }
       }}
     >
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="task-supervisor-dialog-title"
-        className={cn(
-          'max-h-[calc(100vh-2rem)] w-full max-w-[420px] overflow-y-auto rounded-2xl border border-border/80 bg-background p-5 text-text-primary shadow-xl',
-          className
-        )}
+      <DialogSurface
+        onClose={() => {
+          if (!saving && !runningNow) onOpenChange(false)
+        }}
+        render={
+          <div
+            aria-labelledby="task-supervisor-dialog-title"
+            className={cn(
+              'max-h-[calc(100vh-2rem)] w-full max-w-[420px] overflow-y-auto rounded-2xl border border-border/80 bg-background p-5 text-text-primary shadow-xl',
+              className
+            )}
+          />
+        }
       >
         <div className="mb-4 flex items-start justify-between gap-4">
           <div className="min-w-0">
@@ -347,7 +360,8 @@ function TaskSupervisorDialogContent({
               {t('workbench.supervisor_description')}
             </p>
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="task-supervisor-close-button"
             autoFocus
@@ -357,7 +371,7 @@ function TaskSupervisorDialogContent({
             aria-label={t('common.close', '关闭')}
           >
             <X className="h-4 w-4" />
-          </button>
+          </ControlButton>
         </div>
 
         {supervisor && (
@@ -402,7 +416,8 @@ function TaskSupervisorDialogContent({
           </label>
           <div className="mt-1 grid grid-cols-2 gap-1">
             {(['suggest', 'auto'] as const).map(option => (
-              <button
+              <ControlButton
+                variant="unstyled"
                 key={option}
                 type="button"
                 data-testid={`task-supervisor-mode-${option}`}
@@ -415,7 +430,7 @@ function TaskSupervisorDialogContent({
                 onClick={() => setMode(option)}
               >
                 {t(`workbench.supervisor_mode_${option}`)}
-              </button>
+              </ControlButton>
             ))}
           </div>
 
@@ -453,18 +468,25 @@ function TaskSupervisorDialogContent({
             </label>
             <label className="block text-xs font-medium text-text-secondary">
               {t('workbench.supervisor_frequency')}
-              <select
-                data-testid="task-supervisor-frequency"
-                value={intervalSeconds}
-                onChange={event => setIntervalSeconds(Number(event.target.value))}
-                className="mt-1 h-8 w-full rounded-md border border-border bg-background px-2 text-sm text-text-primary outline-none keyboard:focus:border-primary"
+              <SelectRoot
+                value={normalizeSelectValue(intervalSeconds)}
+                onValueChange={selectedValue => {
+                  if (selectedValue !== null) return setIntervalSeconds(Number(selectedValue))
+                }}
               >
-                {[10, 30, 60, 300].map(seconds => (
-                  <option key={seconds} value={seconds}>
-                    {t(`workbench.supervisor_frequency_${seconds}`)}
-                  </option>
-                ))}
-              </select>
+                <SelectTrigger
+                  density="compact"
+                  data-testid="task-supervisor-frequency"
+                  className="mt-1 w-full"
+                />
+                <SelectContent>
+                  {[10, 30, 60, 300].map(seconds => (
+                    <SelectItem key={seconds} value={String(seconds)}>
+                      {t(`workbench.supervisor_frequency_${seconds}`)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </SelectRoot>
             </label>
           </div>
 
@@ -474,7 +496,7 @@ function TaskSupervisorDialogContent({
           >
             {t('workbench.supervisor_instructions')}
           </label>
-          <textarea
+          <ControlTextarea
             id="task-supervisor-instructions"
             data-testid="task-supervisor-instructions"
             value={instructions}
@@ -518,7 +540,7 @@ function TaskSupervisorDialogContent({
             </Button>
           </div>
         </div>
-      </div>
+      </DialogSurface>
     </div>,
     document.body
   )

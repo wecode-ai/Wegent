@@ -1,40 +1,109 @@
-import { DefaultRunnerSetting } from '@/components/settings/DefaultRunnerSetting'
-import { DesktopProjectSettingsPages } from './DesktopProjectSettingsPages'
-import { IndependentIssuesProvider } from './IndependentIssuesProvider'
-import { createPersonalIssuesApi } from '@/api/personalIssues'
-import { PersonalIssuesView } from './PersonalIssuesView'
-import { migrateLocalProject } from './localProjectMigration'
-import { ConfirmDialog } from '@/components/common/ConfirmDialog'
-import { prepareIssueRuntimeTask } from './prepareIssueRuntimeTask'
-import { PersonalHomeTaskComposer } from './PersonalHomeTaskComposer'
-import { issueRuntimePort } from './issueRuntimePort'
-import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
-import { requireIssueTaskAvailable } from './issueTaskAvailability'
-import { useStandInProjects } from './useStandInProjects'
-import { StandInIcon } from '@wegent/collaboration'
-import { bindProjectStandInApi } from '@/api/standIn'
-import { WeworkPersonalHome, type PersonalHomeIssueDetailContext } from './WeworkPersonalHome'
-import { PersonalStandInWorkspace } from './PersonalStandInWorkspace'
-import { PersonalHomeIssuePanel } from './PersonalHomeIssuePanel'
-import { LOCAL_USER } from '@/api/local/localSession'
-import { WorkspaceRunnerRegistrationDialog } from '@/features/collaboration/WorkspaceRunnerRegistrationDialog'
-import { ProjectCoordinatorConversation } from './ProjectCoordinatorConversation'
-import { ProjectSpaceChatSidebar } from './ProjectSpaceChatSidebar'
-import { ArrowUpRight, Maximize2, Minimize2, MessageSquare } from 'lucide-react'
-import { Tooltip } from '@/components/ui/tooltip'
-import { StandInPopover } from './StandInPopover'
-import { navigateTo } from '@/lib/navigation'
-import { createLocalWorkspaceApi, LOCAL_WORKSPACE_ID } from './localWorkspaceApi'
-import { createWeworkPlatformApi, withoutDefaultWorkItemProject } from './weworkPlatformApi'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import {
-  CollaborationTemplateStore,
+  DEFAULT_WORK_ITEM_PROJECT_ID,
+  type CloudLoopItem,
+  type CloudProject,
+  type LoopItemTaskBinding,
+} from '@/api/deliveries'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { createHttpClient } from '@/api/http'
+import { LOCAL_USER } from '@/api/local/localSession'
+import { loopItemLocalProject } from '@/api/localProjectAssociation'
+import { createPersonalIssuesApi } from '@/api/personalIssues'
+import { bindProjectStandInApi } from '@/api/standIn'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { TransientNotice } from '@/components/common/TransientNotice'
+import {
+  DesktopSidebarAccount,
+  type DesktopSidebarAccountSettingsOptions,
+} from '@/components/layout/DesktopSidebarAccount'
+import { AddCloudDeviceDialog } from '@/components/settings/AddCloudDeviceDialog'
+import { DefaultRunnerSetting } from '@/components/settings/DefaultRunnerSetting'
+import { Tooltip } from '@/components/ui/tooltip'
+import { getRuntimeConfig } from '@/config/runtime'
+import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
+import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
+import { createWeworkProjectAgentConfigurationHost } from '@/features/collaboration/WeworkProjectAgentConfigurationHost'
+import { WorkspaceRunnerRegistrationDialog } from '@/features/collaboration/WorkspaceRunnerRegistrationDialog'
+import { generateCollaborationGroupDraft } from '@/features/collaboration/collaborationGroupDraftGeneration'
+import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
+import {
+  issueDispatchPersonalTaskInput,
+  type IssueDispatchPersonalTaskAction,
+  type IssueTaskDispatchInput,
+} from '@/features/notifications/NotificationTaskSourceContext'
+import { subscribeIssueDispatch } from '@/features/notifications/issueDispatch'
+import { getChangeRequestMonitor } from '@/features/workbench/changeRequestMonitor'
+import { runtimeConversationKey } from '@/features/workbench/runtimeConversationCache'
+import {
+  defaultNewChatModelSelection,
+  modelSelectionIdentityOptions,
+} from '@/features/workbench/runtimeModelSelection'
+import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
+import {
+  isRuntimeTaskExecutionRunning,
+  runtimeTaskTrackingExecutionStatus,
+} from '@/features/workbench/runtimeTaskLifecycle/projection'
+import { useStableEvent } from '@/features/workbench/useStableEvent'
+import type {
+  ArchiveRuntimeConversationsResult,
+  WorkbenchContextValue,
+} from '@/features/workbench/workbenchContextTypes'
+import { getNewChatModelSelection } from '@/features/workbench/workbenchProviderHelpers'
+import {
+  findRuntimeTask,
+  hydrateRuntimeTaskAddress,
+} from '@/features/workbench/workbenchRuntimeHelpers'
+import type {
+  ProjectSpaceDetailServices,
+  WorkbenchServices,
+} from '@/features/workbench/workbenchServices'
+import { useTranslation } from '@/hooks/useTranslation'
+import { normalizeClipboardImageFiles } from '@/lib/clipboard-images'
+import { getDefaultModelOptions, getModelDisplayLabel } from '@/lib/model-ui'
+import { navigateTo } from '@/lib/navigation'
+import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
+import { runtimeProjectUiId } from '@/lib/runtime-project'
+import { getRuntimeWorkDeviceNamesById, getWorkbenchDeviceNamesById } from '@/lib/workbench-device'
+import type {
+  DeviceInfo,
+  ModelSelectionConfig,
+  ProjectWithTasks,
+  RuntimeProjectSpaceRef,
+  RuntimeTaskAddress,
+  RuntimeTaskCreateRequest,
+  RuntimeWorkListResponse,
+  User,
+} from '@/types/api'
+import {
+  CollaborationApp,
+  CollaborationPlatformApp,
+  collaborationTestIds,
+  createCollaborationTranslator,
+  IssueConversationDrawers,
+  StandInIcon,
+  toSharedIssueDetailTaskBinding,
+  type CollaborationHostAdapter,
+  type CollaborationIssue,
+  type CollaborationIssueDetailRenderContext,
+  type CollaborationPlatformLocation,
+  type CollaborationProject,
+  type CollaborationProjectRendererWorkspaceContext,
+  type SharedIssueDetailTaskExecutionState,
+  type SharedWorkspaceApi,
+  type WeworkWorkspaceRuntimePort,
+  type WorkspaceTaskBinding,
+} from '@wegent/collaboration'
+import { MarkdownServicesProvider } from '@wegent/collaboration/markdown'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import {
   browserTemplatePersistence,
+  CollaborationTemplateStore,
   createCollaborationTemplateRemote,
 } from '@wegent/collaboration/templates'
-import { createHttpClient } from '@/api/http'
-import { getRuntimeConfig } from '@/config/runtime'
-// eslint-disable-next-line react-refresh/only-export-components
-export { createLocalWorkspaceApi, createWeworkPlatformApi }
+import { ArrowUpRight, Maximize2, MessageSquare, Minimize2 } from 'lucide-react'
 import {
   useCallback,
   useEffect,
@@ -46,103 +115,28 @@ import {
   type ReactNode,
   type SetStateAction,
 } from 'react'
-import {
-  CollaborationApp,
-  CollaborationPlatformApp,
-  collaborationTestIds,
-  createCollaborationTranslator,
-  IssueConversationDrawers,
-  toSharedIssueDetailTaskBinding,
-  type CollaborationHostAdapter,
-  type CollaborationIssueDetailRenderContext,
-  type CollaborationIssue,
-  type CollaborationPlatformLocation,
-  type CollaborationProjectRendererWorkspaceContext,
-  type CollaborationProject,
-  type SharedIssueDetailTaskExecutionState,
-  type SharedWorkspaceApi,
-  type WeworkWorkspaceRuntimePort,
-  type WorkspaceTaskBinding,
-} from '@wegent/collaboration'
-import { MarkdownServicesProvider } from '@wegent/collaboration/markdown'
-import {
-  DEFAULT_WORK_ITEM_PROJECT_ID,
-  type CloudLoopItem,
-  type CloudProject,
-  type LoopItemTaskBinding,
-} from '@/api/deliveries'
-import { loopItemLocalProject } from '@/api/localProjectAssociation'
-import { useTranslation } from '@/hooks/useTranslation'
-import { useStableEvent } from '@/features/workbench/useStableEvent'
-import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
-import { useExperimentalFeaturesEnabled } from '@/features/experimental-features/useExperimentalFeaturesEnabled'
-import { getChangeRequestMonitor } from '@/features/workbench/changeRequestMonitor'
-import { useCollaborationMarkdownServices } from './useCollaborationMarkdownServices'
-import { AddCloudDeviceDialog } from '@/components/settings/AddCloudDeviceDialog'
-import { TransientNotice } from '@/components/common/TransientNotice'
-import { resolveDeviceResourceSettingsOptions } from './deviceResourceSettings'
-import { invokeDesktopHost } from '@/api/dsh/desktopHost'
-import { normalizeClipboardImageFiles } from '@/lib/clipboard-images'
-import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
-import {
-  DesktopSidebarAccount,
-  type DesktopSidebarAccountSettingsOptions,
-} from '@/components/layout/DesktopSidebarAccount'
-import { createWeworkProjectAgentConfigurationHost } from '@/features/collaboration/WeworkProjectAgentConfigurationHost'
-import { generateCollaborationGroupDraft } from '@/features/collaboration/collaborationGroupDraftGeneration'
-import {
-  issueDispatchPersonalTaskInput,
-  type IssueTaskDispatchInput,
-  type IssueDispatchPersonalTaskAction,
-} from '@/features/notifications/NotificationTaskSourceContext'
-import { humanTaskDispatchInput, resolveHumanTaskDispatch } from './humanTaskDispatch'
-import { subscribeIssueDispatch } from '@/features/notifications/issueDispatch'
-import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
-import type {
-  ArchiveRuntimeConversationsResult,
-  WorkbenchContextValue,
-} from '@/features/workbench/workbenchContextTypes'
-import type { RuntimeTaskLifecycleStoreSnapshot } from '@/features/workbench/runtimeTaskLifecycle'
-import type {
-  ProjectSpaceDetailServices,
-  WorkbenchServices,
-} from '@/features/workbench/workbenchServices'
-import { getNewChatModelSelection } from '@/features/workbench/workbenchProviderHelpers'
-import {
-  defaultNewChatModelSelection,
-  modelSelectionIdentityOptions,
-} from '@/features/workbench/runtimeModelSelection'
-import { getDefaultModelOptions, getModelDisplayLabel } from '@/lib/model-ui'
-import { runtimeProjectUiId } from '@/lib/runtime-project'
-import type {
-  DeviceInfo,
-  ModelSelectionConfig,
-  ProjectWithTasks,
-  RuntimeProjectSpaceRef,
-  RuntimeTaskAddress,
-  RuntimeTaskCreateRequest,
-  RuntimeWorkListResponse,
-  User,
-} from '@/types/api'
-import { getRuntimeWorkDeviceNamesById, getWorkbenchDeviceNamesById } from '@/lib/workbench-device'
-import { runtimeConversationKey } from '@/features/workbench/runtimeConversationCache'
-import {
-  findRuntimeTask,
-  hydrateRuntimeTaskAddress,
-} from '@/features/workbench/workbenchRuntimeHelpers'
-import {
-  isRuntimeTaskExecutionRunning,
-  runtimeTaskTrackingExecutionStatus,
-} from '@/features/workbench/runtimeTaskLifecycle/projection'
 import { AiChatModal } from './AiChatModal'
 import { CloudTodoBoardCard, type CloudTodoBoardTaskBinding } from './CloudTodoBoardCard'
-import {
-  runtimeTaskConversationStatusesByAddress,
-  type RuntimeTaskConversationStatus,
-} from './runtimeTaskConversationStatus'
+import { DesktopProjectSettingsPages } from './DesktopProjectSettingsPages'
+import { IndependentIssuesProvider } from './IndependentIssuesProvider'
+import { PersonalHomeIssuePanel } from './PersonalHomeIssuePanel'
+import { PersonalHomeTaskComposer } from './PersonalHomeTaskComposer'
+import { PersonalIssuesView } from './PersonalIssuesView'
+import { PersonalStandInWorkspace } from './PersonalStandInWorkspace'
+import { ProjectCoordinatorConversation } from './ProjectCoordinatorConversation'
+import { ProjectSpaceChatSidebar } from './ProjectSpaceChatSidebar'
+import { StandInPopover } from './StandInPopover'
 import { TodoEditor } from './TodoEditor'
 import { WeworkCollaborationEmbeddedBrowserHost } from './WeworkCollaborationEmbeddedBrowserHost'
-import { workItemComposerReference } from './workItemTaskInput'
+import { WeworkIssueHomeComposer } from './WeworkIssueHomeComposer'
+import { WeworkPersonalHome, type PersonalHomeIssueDetailContext } from './WeworkPersonalHome'
+import { resolveDeviceResourceSettingsOptions } from './deviceResourceSettings'
+import { humanTaskDispatchInput, resolveHumanTaskDispatch } from './humanTaskDispatch'
+import { issueRuntimePort } from './issueRuntimePort'
+import { requireIssueTaskAvailable } from './issueTaskAvailability'
+import { migrateLocalProject } from './localProjectMigration'
+import { createLocalWorkspaceApi, LOCAL_WORKSPACE_ID } from './localWorkspaceApi'
+import { prepareIssueRuntimeTask } from './prepareIssueRuntimeTask'
 import {
   loadProjectSpaceCodeWorkspacePreference,
   saveProjectSpaceCodeWorkspacePreference,
@@ -155,6 +149,16 @@ import {
   subscribeProjectSpaceTaskContextChanged,
   type LocatedProjectSpace,
 } from './projectSpaceSelection'
+import {
+  runtimeTaskConversationStatusesByAddress,
+  type RuntimeTaskConversationStatus,
+} from './runtimeTaskConversationStatus'
+import { useCollaborationMarkdownServices } from './useCollaborationMarkdownServices'
+import { useStandInProjects } from './useStandInProjects'
+import { createWeworkPlatformApi, withoutDefaultWorkItemProject } from './weworkPlatformApi'
+import { workItemComposerReference } from './workItemTaskInput'
+// eslint-disable-next-line react-refresh/only-export-components
+export { createLocalWorkspaceApi, createWeworkPlatformApi }
 
 const initialLocation: CollaborationPlatformLocation = {
   platformView: 'spaces',
@@ -609,7 +613,9 @@ export function WeworkSharedProject({
       renderBoardToolbarAction: onOpenProjectConversation
         ? () => (
             <Tooltip label={t('workbench.project_space_chat.open')} side="bottom">
-              <button
+              <ControlButton
+                variant="outline"
+                size="sm"
                 type="button"
                 data-testid="project-space-chat-open"
                 aria-label={t('workbench.project_space_chat.open')}
@@ -624,7 +630,7 @@ export function WeworkSharedProject({
                 <span className="project-board-action-label">
                   {t('workbench.project_space_chat.open')}
                 </span>
-              </button>
+              </ControlButton>
             </Tooltip>
           )
         : undefined,
@@ -1259,7 +1265,8 @@ export function WeworkSharedProject({
       headerActions={
         <>
           {personalIssue?.presentation === 'drawer' ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="personal-issue-detail-expand"
               aria-label={t(
@@ -1281,10 +1288,11 @@ export function WeworkSharedProject({
               ) : (
                 <Maximize2 aria-hidden="true" className="h-4 w-4" />
               )}
-            </button>
+            </ControlButton>
           ) : null}
           {personalIssue?.onOpenInProject ? (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="personal-home-open-in-project"
               aria-label={t('personalHome.openInProject')}
@@ -1293,7 +1301,7 @@ export function WeworkSharedProject({
               className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md md:h-8 md:w-8 text-text-secondary hover:bg-muted hover:text-text-primary"
             >
               <ArrowUpRight aria-hidden="true" className="h-4 w-4" />
-            </button>
+            </ControlButton>
           ) : null}
         </>
       }
@@ -1369,7 +1377,6 @@ export function WeworkSharedProject({
       key={context.issue.id}
       label={createCollaborationTranslator(locale)('todo.issue_details')}
       conversation={taskComposer?.issue.id === context.issue.id ? conversationPanel : null}
-      conversationKey={taskComposer?.conversationKey}
       onClose={() => {
         closeTaskConversation()
         context.onClose()
@@ -1399,7 +1406,6 @@ export function WeworkSharedProject({
             conversation={
               taskComposer?.issue.id === personalIssue.issue.id ? conversationPanel : null
             }
-            conversationKey={taskComposer?.conversationKey}
             onClose={() => {
               closeTaskConversation()
               personalIssue.onClose?.()
@@ -2313,10 +2319,14 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
                     if (event.target === event.currentTarget) onClose()
                   }}
                 >
-                  <section
-                    aria-modal="true"
-                    className="w-full max-w-lg rounded-lg border border-border bg-popover p-5 shadow-lg"
-                    role="dialog"
+                  <DialogSurface
+                    onClose={onClose}
+                    render={
+                      <section
+                        aria-label={locale === 'zh-CN' ? '本地设备' : 'Local device'}
+                        className="w-full max-w-lg rounded-lg border border-border bg-popover p-5 shadow-lg"
+                      />
+                    }
                   >
                     <h2 className="text-sm font-semibold text-text-primary">
                       {locale === 'zh-CN' ? '本地设备' : 'Local device'}
@@ -2327,16 +2337,18 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
                         : 'This device is already part of your personal group. Install and enable its execution environments to run Agents and teams locally.'}
                     </p>
                     <div className="mt-5 flex justify-end">
-                      <button
+                      <ControlButton
+                        variant="primary"
+                        size="sm"
                         className="inline-flex h-8 items-center rounded-md bg-text-primary px-4 text-sm text-background"
                         data-testid="local-device-resource-confirm"
                         onClick={onClose}
                         type="button"
                       >
                         {locale === 'zh-CN' ? '知道了' : 'Done'}
-                      </button>
+                      </ControlButton>
                     </div>
-                  </section>
+                  </DialogSurface>
                 </div>
               ),
             renderProjectImporter: props.renderLocalProjectImporter
@@ -2489,5 +2501,3 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
     </div>
   )
 }
-import { WeworkIssueHomeComposer } from './WeworkIssueHomeComposer'
-import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'

@@ -67,14 +67,17 @@ afterEach(() => {
 
 test.each([false, true])(
   'Escape dismisses only the project layer and preserves its host draft (mobile=%s)',
-  mobile => {
+  async mobile => {
     act(() => root.render(<Host mobile={mobile} />))
     const draft = document.querySelector(
       'input[aria-label="Pending editor draft"]'
     ) as HTMLInputElement
     const trigger = element('project-work-button')
-    act(() => trigger.click())
-    escape()
+    await act(async () => trigger.click())
+    await vi.waitFor(() =>
+      expect(document.activeElement?.closest('[data-testid="project-work-menu"]')).not.toBeNull()
+    )
+    await act(async () => escape())
     expect(document.querySelector('[data-testid="project-work-menu"]')).toBeNull()
     expect(closeParent).not.toHaveBeenCalled()
     expect(document.activeElement).toBe(trigger)

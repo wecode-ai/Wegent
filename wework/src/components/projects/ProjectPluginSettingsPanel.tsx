@@ -1,7 +1,9 @@
-import { Loader2, Plug, Search } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { PluginMarketplaceItem, RuntimeProjectPluginRef } from '@/types/api'
 import type { ProjectPluginSupport } from '@/lib/project-editing-capabilities'
+import type { PluginMarketplaceItem, RuntimeProjectPluginRef } from '@/types/api'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Loader2, Plug, Search } from 'lucide-react'
 import {
   marketplacePluginLockLabel,
   resolveMarketplacePluginLock,
@@ -72,13 +74,14 @@ export function ProjectPluginSettingsPanel({
       </p>
       <label className="mt-4 flex h-10 items-center rounded-xl border border-border bg-background keyboard:focus-within:border-primary keyboard:focus-within:ring-2 keyboard:focus-within:ring-primary/10">
         <Search className="mx-3 h-4 w-4 shrink-0 text-text-secondary" />
-        <input
+        <ControlInput
+          appearance="plain"
           data-testid="local-project-plugin-search"
           value={pluginSearch}
           disabled={searchDisabled}
           onChange={event => onSearch(event.target.value)}
           placeholder={t('workbench.project_plugins_search_placeholder', '搜索插件市场')}
-          className="min-w-0 flex-1 bg-transparent pr-3 text-base outline-none"
+          className="min-w-0 flex-1 pr-3 text-base"
         />
       </label>
       <div className="mt-3 max-h-72 overflow-y-auto rounded-xl border border-border bg-background">
@@ -98,7 +101,8 @@ export function ProjectPluginSettingsPanel({
               className="flex items-center justify-between gap-3 py-2 text-base"
             >
               <span>{plugin.displayName || plugin.pluginName}</span>
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid={`remove-project-selected-plugin-${plugin.id}`}
                 disabled={pluginsDisabled}
@@ -106,7 +110,7 @@ export function ProjectPluginSettingsPanel({
                 className="rounded-lg bg-muted px-3 py-1 text-sm disabled:opacity-50"
               >
                 {t('workbench.project_plugin_remove', '从项目移除')}
-              </button>
+              </ControlButton>
             </div>
           ))}
         {pluginsPending ? (
@@ -138,7 +142,8 @@ export function ProjectPluginSettingsPanel({
                     {item.sourceLabel || marketplaceId}
                   </div>
                 </div>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`local-project-plugin-toggle-${item.name}`}
                   disabled={pluginsDisabled || installing || !marketplaceId || Boolean(installLock)}
@@ -157,7 +162,7 @@ export function ProjectPluginSettingsPanel({
                     : installLock
                       ? marketplacePluginLockLabel(installLock, t)
                       : t('workbench.project_plugin_install', '安装到项目')}
-                </button>
+                </ControlButton>
               </div>
             )
           })

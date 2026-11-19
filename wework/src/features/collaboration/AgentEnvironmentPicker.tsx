@@ -1,7 +1,8 @@
-import { useState } from 'react'
-import { ChevronDown } from 'lucide-react'
-import { IssueDetailSearchableSelect, type RunnerEnvironment } from '@wegent/collaboration'
 import { useTranslation } from '@/hooks/useTranslation'
+import { SearchableSelect, type RunnerEnvironment } from '@wegent/collaboration'
+import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
+import { ChevronDown } from 'lucide-react'
+import { useState } from 'react'
 
 export function AgentEnvironmentPicker({
   value,
@@ -69,7 +70,7 @@ export function AgentEnvironmentPicker({
   )
 
   return (
-    <IssueDetailSearchableSelect
+    <SearchableSelect
       open={open}
       onOpenChange={onOpenChange}
       value={value}
@@ -78,7 +79,7 @@ export function AgentEnvironmentPicker({
       accessibleLabel={t('workbench.runner_environment')}
       disabled={disabled}
       className="flex h-11 w-full items-center justify-between gap-2 rounded-lg border border-border bg-background px-3 text-left text-sm text-text-primary outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/20 disabled:opacity-50 md:h-9"
-      contentClassName="w-[var(--radix-popover-trigger-width)]"
+      contentClassName="w-[var(--anchor-width)]"
       triggerContent={
         <>
           <span className="min-w-0 flex-1 truncate">{selectedLabel}</span>
@@ -89,11 +90,10 @@ export function AgentEnvironmentPicker({
       emptyLabel={t('workbench.runner_no_matching_environments')}
       footer={
         <label className="flex min-h-11 cursor-pointer items-center justify-end gap-2 rounded-lg px-2.5 text-xs text-text-secondary md:min-h-9">
-          <input
-            type="checkbox"
+          <Checkbox
             data-testid={`${testId}-show-offline`}
             checked={showOffline}
-            onChange={event => setShowOffline(event.target.checked)}
+            onCheckedChange={checked => setShowOffline(checked === true)}
             className="h-4 w-4 accent-current"
           />
           <span>{t('workbench.runner_show_offline')}</span>

@@ -1,7 +1,30 @@
-import { useIndependentIssuePage } from './useIndependentIssuePage'
-import { IndependentIssueList } from './IndependentIssueList'
-import { PersonalIssueList } from './PersonalIssueList'
-import { PersonalIssueErrors } from './PersonalIssueErrors'
+import { WorkspaceTitleTab } from '@/components/layout/workspace-panels/WorkspaceTitleTab'
+import { revealWorkspaceTab } from '@/components/layout/workspace-panels/revealWorkspaceTab'
+import { useIsDesktop } from '@/hooks/useIsDesktop'
+import { useTranslation } from '@/hooks/useTranslation'
+import type {
+  CollaborationIssue,
+  CollaborationProject,
+  SharedWorkspaceApi,
+  WorkspaceMyWorkItem,
+  WorkspaceRuntimeTaskAddress,
+  WorkspaceTaskBinding,
+} from '@wegent/collaboration'
+import {
+  IssueDetailDraftProvider,
+  issueNeedsUser,
+  pendingIssueHumanRequests,
+} from '@wegent/collaboration'
+import {
+  SelectContent,
+  SelectItem,
+  SelectRoot,
+  SelectTrigger,
+} from '@wegent/collaboration/controls/SelectParts'
+import { normalizeSelectValue } from '@wegent/collaboration/controls/selectValue'
+import { TabsList, TabsRoot } from '@wegent/collaboration/controls/Tabs'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ArrowLeft, Circle, PanelRightClose, PanelRightOpen, UserRound } from 'lucide-react'
 import {
   useCallback,
   useEffect,
@@ -11,25 +34,11 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { ArrowLeft, Circle, PanelRightClose, PanelRightOpen, UserRound } from 'lucide-react'
-import type {
-  CollaborationIssue,
-  CollaborationProject,
-  SharedWorkspaceApi,
-  WorkspaceMyWorkItem,
-  WorkspaceTaskBinding,
-  WorkspaceRuntimeTaskAddress,
-} from '@wegent/collaboration'
-import {
-  issueNeedsUser,
-  pendingIssueHumanRequests,
-  IssueDetailDraftProvider,
-} from '@wegent/collaboration'
-import { useTranslation } from '@/hooks/useTranslation'
-import { useIsDesktop } from '@/hooks/useIsDesktop'
+import { IndependentIssueList } from './IndependentIssueList'
+import { PersonalIssueErrors } from './PersonalIssueErrors'
+import { PersonalIssueList } from './PersonalIssueList'
+import { useIndependentIssuePage } from './useIndependentIssuePage'
 import { usePersonalHomeIssues, type PersonalHomeIssueOrder } from './usePersonalHomeIssues'
-import { WorkspaceTitleTab } from '@/components/layout/workspace-panels/WorkspaceTitleTab'
-import { revealWorkspaceTab } from '@/components/layout/workspace-panels/revealWorkspaceTab'
 
 export interface PersonalHomeIssueDetailContext {
   presentation?: 'drawer'
@@ -135,7 +144,7 @@ export function WeworkPersonalHome({
   const returnFocus = useRef<HTMLElement | null>(null)
   const [detailExpanded, setDetailExpanded] = useState(false)
   const [expandedTabs, setExpandedTabs] = useState<ReadonlySet<string>>(new Set())
-  const tabsViewport = useRef<HTMLElement>(null)
+  const tabsViewport = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
     revealWorkspaceTab(tabsViewport.current)
   }, [activeTab, issueTabs.length])
@@ -289,7 +298,8 @@ export function WeworkPersonalHome({
                 <h1 className="text-heading-md font-medium">{t('personalHome.title')}</h1>
                 <p className="mt-2 text-base text-text-secondary">{t('personalHome.subtitle')}</p>
               </div>
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="personal-home-toggle-sidebar"
                 aria-expanded={!sidebarCollapsed}
@@ -303,7 +313,7 @@ export function WeworkPersonalHome({
                   <PanelRightClose aria-hidden="true" className="h-4 w-4" />
                 )}
                 {t(sidebarCollapsed ? 'personalHome.showSidebar' : 'personalHome.hideSidebar')}
-              </button>
+              </ControlButton>
             </header>
             <div ref={composerRegion} className="mb-5" data-testid="personal-home-create">
               {createIssue}
@@ -323,7 +333,8 @@ export function WeworkPersonalHome({
                   { value: true, label: 'assigned' },
                   { value: false, label: 'participating' },
                 ].map(option => (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     key={option.label}
                     data-testid={`personal-home-scope-${option.label}`}
@@ -332,33 +343,50 @@ export function WeworkPersonalHome({
                     className={`min-h-11 rounded-md px-3 text-base md:min-h-8 ${assignedOnly === option.value ? 'bg-muted font-medium text-text-primary' : 'text-text-secondary hover:bg-muted'}`}
                   >
                     {t(`personalHome.${option.label}`)}
-                  </button>
+                  </ControlButton>
                 ))}
               </div>
               <div className="flex shrink-0 items-center gap-2">
-                <select
-                  aria-label={t('personalHome.sort')}
-                  data-testid="personal-home-sort"
-                  className="wework-native-select min-h-11 rounded-md bg-transparent px-2 text-sm text-text-secondary hover:bg-muted md:min-h-8"
-                  value={order}
-                  onChange={event => setOrder(event.target.value as PersonalHomeIssueOrder)}
+                <SelectRoot
+                  value={normalizeSelectValue(order)}
+                  onValueChange={selectedValue => {
+                    if (selectedValue !== null)
+                      return setOrder(selectedValue as PersonalHomeIssueOrder)
+                  }}
                 >
-                  {(['attention', 'assignment', 'activity', 'priority'] as const).map(value => (
-                    <option key={value} value={value}>
-                      {t(`personalHome.sort_${value}`)}
-                    </option>
-                  ))}
-                </select>
-                <select
-                  aria-label={t('personalHome.filter')}
-                  data-testid="personal-home-filter"
-                  className="wework-native-select min-h-11 rounded-md bg-transparent px-2 text-sm md:min-h-8"
-                  value={showCompleted ? 'all' : 'open'}
-                  onChange={event => setShowCompleted(event.target.value === 'all')}
+                  <SelectTrigger
+                    density="compact"
+                    appearance="plain"
+                    aria-label={t('personalHome.sort')}
+                    data-testid="personal-home-sort"
+                    className="wework-native-select text-text-secondary hover:bg-muted"
+                  />
+                  <SelectContent>
+                    {(['attention', 'assignment', 'activity', 'priority'] as const).map(value => (
+                      <SelectItem key={value} value={String(value)}>
+                        {t(`personalHome.sort_${value}`)}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </SelectRoot>
+                <SelectRoot
+                  value={normalizeSelectValue(showCompleted ? 'all' : 'open')}
+                  onValueChange={selectedValue => {
+                    if (selectedValue !== null) return setShowCompleted(selectedValue === 'all')
+                  }}
                 >
-                  <option value="open">{t('personalHome.open')}</option>
-                  <option value="all">{t('personalHome.all')}</option>
-                </select>
+                  <SelectTrigger
+                    density="compact"
+                    appearance="plain"
+                    aria-label={t('personalHome.filter')}
+                    data-testid="personal-home-filter"
+                    className="wework-native-select"
+                  />
+                  <SelectContent>
+                    <SelectItem value="open">{t('personalHome.open')}</SelectItem>
+                    <SelectItem value="all">{t('personalHome.all')}</SelectItem>
+                  </SelectContent>
+                </SelectRoot>
               </div>
             </div>
             <PersonalIssueErrors projects={state} independent={independent} />
@@ -381,7 +409,8 @@ export function WeworkPersonalHome({
                           : 'personalHome.emptyUnfinished'
                     )}
                   </p>
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid="personal-home-empty-action"
                     className="mt-2 min-h-11 rounded-md px-2 text-sm text-text-primary hover:bg-muted md:min-h-8"
@@ -399,7 +428,7 @@ export function WeworkPersonalHome({
                         ? 'personalHome.viewAllParticipation'
                         : 'personalHome.startWriting'
                     )}
-                  </button>
+                  </ControlButton>
                 </div>
               }
               recentIssue={
@@ -428,7 +457,8 @@ export function WeworkPersonalHome({
               }
             />
             {state.hasMore && (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="personal-home-load-more"
                 disabled={state.loading}
@@ -436,7 +466,7 @@ export function WeworkPersonalHome({
                 className="min-h-11 rounded-md px-3 text-sm text-text-secondary hover:bg-muted md:min-h-8"
               >
                 {t('personalHome.loadMore')}
-              </button>
+              </ControlButton>
             )}
           </div>
         </main>
@@ -448,7 +478,9 @@ export function WeworkPersonalHome({
           data-testid="personal-home-stand-in"
         >
           {!isDesktop && activeTab !== 'stand-in' && (
-            <button
+            <ControlButton
+              variant="outline"
+              size="sm"
               type="button"
               data-testid="personal-home-back-to-issues"
               onClick={() => {
@@ -459,45 +491,61 @@ export function WeworkPersonalHome({
             >
               <ArrowLeft aria-hidden="true" className="h-4 w-4" />
               {t('personalHome.backToIssues')}
-            </button>
+            </ControlButton>
           )}
-          <header
-            ref={tabsViewport}
-            role="tablist"
-            aria-label={t('personalHome.workspaceTabs')}
-            data-testid="personal-home-tabs"
-            className="flex h-12 min-h-12 shrink-0 items-center gap-1.5 overflow-x-auto border-b border-border px-3 lg:h-10 lg:min-h-10"
-          >
-            <WorkspaceTitleTab
-              id={`${panelId}-stand-in-tab`}
-              controls={`${panelId}-stand-in-panel`}
-              testId="personal-home-tab-stand-in"
-              active={activeTab === 'stand-in'}
-              label={t('personalHome.standInTab')}
-              icon={<UserRound aria-hidden="true" className="h-4 w-4" />}
-              onSelect={() => {
+          <TabsRoot
+            value={`${panelId}-${activeTab}-tab`}
+            onValueChange={next => {
+              if (next === `${panelId}-stand-in-tab`) {
                 setWorkspaceFocus(null)
                 setActiveTab('stand-in')
-              }}
-            />
-            {issueTabs.map(tab => (
+                return
+              }
+              const tab = issueTabs.find(tab => `${panelId}-${tab.id}-tab` === next)
+              if (tab) {
+                setWorkspaceFocus(null)
+                setActiveTab(tab.id)
+              }
+            }}
+            render={<div className="contents" />}
+          >
+            <TabsList
+              ref={tabsViewport}
+              aria-label={t('personalHome.workspaceTabs')}
+              data-testid="personal-home-tabs"
+              className="flex h-12 min-h-12 shrink-0 items-center gap-1.5 overflow-x-auto border-b border-border px-3 lg:h-10 lg:min-h-10"
+            >
               <WorkspaceTitleTab
-                id={`${panelId}-${tab.id}-tab`}
-                controls={`${panelId}-${tab.id}-panel`}
-                key={tab.id}
-                testId={`personal-home-tab-${tab.issue.id}`}
-                active={activeTab === tab.id}
-                label={tab.issue.title}
-                title={`${tab.project.name} · #${tab.issue.sequence_number} ${tab.issue.title}`}
-                icon={<Circle aria-hidden="true" className="h-4 w-4" />}
+                id={`${panelId}-stand-in-tab`}
+                controls={`${panelId}-stand-in-panel`}
+                testId="personal-home-tab-stand-in"
+                active={activeTab === 'stand-in'}
+                label={t('personalHome.standInTab')}
+                icon={<UserRound aria-hidden="true" className="h-4 w-4" />}
                 onSelect={() => {
                   setWorkspaceFocus(null)
-                  setActiveTab(tab.id)
+                  setActiveTab('stand-in')
                 }}
-                onClose={() => closeIssue(tab.id)}
               />
-            ))}
-          </header>
+              {issueTabs.map(tab => (
+                <WorkspaceTitleTab
+                  id={`${panelId}-${tab.id}-tab`}
+                  controls={`${panelId}-${tab.id}-panel`}
+                  key={tab.id}
+                  testId={`personal-home-tab-${tab.issue.id}`}
+                  active={activeTab === tab.id}
+                  label={tab.issue.title}
+                  title={`${tab.project.name} · #${tab.issue.sequence_number} ${tab.issue.title}`}
+                  icon={<Circle aria-hidden="true" className="h-4 w-4" />}
+                  onSelect={() => {
+                    setWorkspaceFocus(null)
+                    setActiveTab(tab.id)
+                  }}
+                  onClose={() => closeIssue(tab.id)}
+                />
+              ))}
+            </TabsList>
+          </TabsRoot>
           <div
             id={`${panelId}-stand-in-panel`}
             role="tabpanel"

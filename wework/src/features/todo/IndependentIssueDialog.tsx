@@ -1,22 +1,24 @@
-import type { SharedWorkspaceApi } from '@wegent/collaboration'
 import { ApiError } from '@/api/http'
-import { IndependentIssueProjectPicker } from './IndependentIssueProjectPicker'
-import { IndependentIssueTaskButton } from './IndependentIssueTaskButton'
-import { useEffect, useState } from 'react'
-import { createPortal } from 'react-dom'
-import { X, Maximize2, Minimize2 } from 'lucide-react'
-import { useEscapeKey } from '@/hooks/useEscapeKey'
-import { useTranslation } from '@/hooks/useTranslation'
-import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
-import { ConfirmDialog } from '@/components/common/ConfirmDialog'
-import { DialogForm } from '@/components/common/DialogForm'
 import {
   independentIssueInput,
   type IndependentIssue,
   type IndependentIssueComment,
   type PersonalIssuesApi,
 } from '@/api/personalIssues'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { DialogForm } from '@/components/common/DialogForm'
+import { useEscapeKey } from '@/hooks/useEscapeKey'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { SharedWorkspaceApi } from '@wegent/collaboration'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Maximize2, Minimize2, X } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { IndependentIssueEditor, type IssueCreationInput } from './IndependentIssueEditor'
+import { IndependentIssueProjectPicker } from './IndependentIssueProjectPicker'
+import { IndependentIssueTaskButton } from './IndependentIssueTaskButton'
 
 const action =
   'min-h-11 rounded-md border border-border px-3 text-sm hover:bg-muted disabled:opacity-50 md:min-h-8'
@@ -87,11 +89,7 @@ export function IndependentIssueDialog({
       onClose()
     }
   }
-  const ref = useDialogKeyboard<HTMLDivElement>(
-    requestClose,
-    presentation === 'dialog',
-    '[data-testid="independent-issue-title"]'
-  )
+  const ref = useRef<HTMLDivElement>(null)
   useEscapeKey(requestClose, presentation === 'drawer' && !deleting && !discarding, ref)
   useEffect(() => {
     if (!loadId) return
@@ -210,14 +208,21 @@ export function IndependentIssueDialog({
               : 'fixed inset-0 z-modal flex items-center justify-center bg-black/35 p-4'
         }
       >
-        <div
-          ref={ref}
-          role={presentation === 'drawer' ? 'region' : 'dialog'}
-          aria-modal={presentation === 'dialog' ? true : undefined}
-          aria-labelledby="independent-issue-dialog-title"
-          inert={deleting}
-          data-testid="independent-issue-dialog"
-          className={`flex w-full max-w-[680px] flex-col overflow-hidden border border-border bg-popover text-text-primary shadow-lg ${presentation === 'drawer' ? 'h-full max-w-none rounded-none border-0 shadow-none' : 'max-h-[calc(100dvh-2rem)] rounded-[20px]'}`}
+        <DialogSurface
+          onClose={requestClose}
+          active={presentation === 'dialog'}
+          initialFocus={'[data-testid="independent-issue-title"]'}
+          render={
+            <div
+              ref={ref}
+              role={presentation === 'drawer' ? 'region' : 'dialog'}
+              aria-modal={presentation === 'dialog' ? true : undefined}
+              aria-labelledby="independent-issue-dialog-title"
+              inert={deleting}
+              data-testid="independent-issue-dialog"
+              className={`flex w-full max-w-[680px] flex-col overflow-hidden border border-border bg-popover text-text-primary shadow-lg ${presentation === 'drawer' ? 'h-full max-w-none rounded-none border-0 shadow-none' : 'max-h-[calc(100dvh-2rem)] rounded-[20px]'}`}
+            />
+          }
         >
           <header className="flex shrink-0 items-center justify-between gap-4 border-b border-border px-5 py-3">
             <div className="min-w-0">
@@ -235,7 +240,8 @@ export function IndependentIssueDialog({
             </div>
             <div className="flex shrink-0 gap-1">
               {presentation === 'drawer' && onExpandedChange && (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="independent-issue-expand"
                   aria-pressed={expanded}
@@ -248,9 +254,10 @@ export function IndependentIssueDialog({
                   className="flex min-h-11 min-w-11 items-center justify-center rounded-md hover:bg-muted md:min-h-8 md:min-w-8"
                 >
                   {expanded ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-                </button>
+                </ControlButton>
               )}
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 disabled={busy}
                 data-testid="independent-issue-close"
@@ -259,7 +266,7 @@ export function IndependentIssueDialog({
                 className="flex min-h-11 min-w-11 items-center justify-center rounded-md hover:bg-muted md:min-h-8 md:min-w-8"
               >
                 <X className="h-4 w-4" />
-              </button>
+              </ControlButton>
             </div>
           </header>
           <div
@@ -285,23 +292,25 @@ export function IndependentIssueDialog({
                       : error}
                 </span>
                 {!editing ? (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid="independent-issue-retry"
                     onClick={() => setRetry(value => value + 1)}
                     className={action}
                   >
                     {t('independentIssues.retry')}
-                  </button>
+                  </ControlButton>
                 ) : conflicted && issue ? (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid="independent-issue-reload"
                     onClick={() => (dirty ? setDiscarding('reload') : reloadLatest())}
                     className={action}
                   >
                     {t('issue_creation.reload_latest')}
-                  </button>
+                  </ControlButton>
                 ) : null}
               </div>
             ) : null}
@@ -329,7 +338,8 @@ export function IndependentIssueDialog({
             ) : issue ? (
               <>
                 <div className="mb-5 flex flex-wrap gap-2">
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     disabled={busy}
                     data-testid="independent-issue-edit"
@@ -337,8 +347,9 @@ export function IndependentIssueDialog({
                     className={action}
                   >
                     {t('independentIssues.edit')}
-                  </button>
-                  <button
+                  </ControlButton>
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     disabled={busy}
                     data-testid="independent-issue-archive"
@@ -359,10 +370,11 @@ export function IndependentIssueDialog({
                         ? 'independentIssues.restore'
                         : 'independentIssues.archive'
                     )}
-                  </button>
+                  </ControlButton>
                   <IndependentIssueTaskButton api={api} issue={issue} onError={setError} />
                   {issue.creator_id === userId && onOpenProjectIssue ? (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       disabled={busy}
                       data-testid="independent-issue-associate"
@@ -370,10 +382,11 @@ export function IndependentIssueDialog({
                       className={action}
                     >
                       {t('independentIssues.attachProject')}
-                    </button>
+                    </ControlButton>
                   ) : null}
                   {issue.creator_id === userId ? (
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       disabled={busy}
                       data-testid="independent-issue-delete"
@@ -384,7 +397,7 @@ export function IndependentIssueDialog({
                       }}
                     >
                       {t('independentIssues.delete')}
-                    </button>
+                    </ControlButton>
                   ) : null}
                 </div>
                 {associating && onOpenProjectIssue ? (
@@ -455,14 +468,15 @@ export function IndependentIssueDialog({
                 {commentError ? (
                   <p role="alert" className="mb-3 text-sm text-destructive">
                     {commentError}
-                    <button
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       data-testid="independent-issue-comments-retry"
                       className={action}
                       onClick={() => setRetry(value => value + 1)}
                     >
                       {t('independentIssues.retry')}
-                    </button>
+                    </ControlButton>
                   </p>
                 ) : null}
                 {comments.map(comment => (
@@ -483,7 +497,7 @@ export function IndependentIssueDialog({
                 >
                   <label className="grid gap-2 text-sm">
                     {t('independentIssues.comment')}
-                    <textarea
+                    <ControlTextarea
                       data-testid="independent-issue-comment"
                       disabled={busy}
                       value={body}
@@ -492,19 +506,20 @@ export function IndependentIssueDialog({
                       className="rounded-md border border-border bg-background p-3"
                     />
                   </label>
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="submit"
                     disabled={busy || !body.trim()}
                     data-testid="independent-issue-comment-send"
                     className={`${action} justify-self-end`}
                   >
                     {t('independentIssues.send')}
-                  </button>
+                  </ControlButton>
                 </DialogForm>
               </>
             ) : null}
           </div>
-        </div>
+        </DialogSurface>
       </div>
       <ConfirmDialog
         open={Boolean(discarding)}

@@ -1,68 +1,65 @@
-import {
-  ArrowLeft,
-  ArrowRight,
-  CheckCircle2,
-  Download,
-  EllipsisVertical,
-  ExternalLink,
-  Globe2,
-  CircleAlert,
-  Loader2,
-  MessageSquarePlus,
-  Pause,
-  Play,
-  RotateCw,
-  Trash2,
-  X,
-} from 'lucide-react'
-import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react'
-import type { FormEvent, KeyboardEvent, PointerEvent, ReactNode } from 'react'
-import { deviceSurfaceExtension } from '@extensions/device-surface'
-import { TransientNotice } from '@/components/common/TransientNotice'
-import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { DeleteIconButton } from '@wegent/collaboration/controls/DeleteIconButton'
 import { ActionMenu } from '@/components/common/ActionMenu'
+import { ConfirmDialog } from '@/components/common/ConfirmDialog'
+import { TransientNotice } from '@/components/common/TransientNotice'
+import { useTranslation } from '@/hooks/useTranslation'
+import { browserAnnotationStateToContexts } from '@/lib/browser-annotation-context'
+import {
+  BROWSER_DEVICE_MIN_HEIGHT,
+  BROWSER_DEVICE_MIN_WIDTH,
+  clampDeviceDimension,
+  computeDeviceViewportPlacement,
+  defaultBrowserDeviceToolbarState,
+  matchDevicePresetId,
+  resizeDeviceDimensions,
+  resolveDevicePreset,
+  type BrowserDeviceResizeEdge,
+  type BrowserDeviceToolbarState,
+} from '@/lib/browser-device-toolbar'
+import { browserDiagnosticOrigin, normalizeBrowserUrl } from '@/lib/browser-url'
+import { BROWSER_ZOOM_DEFAULT_PERCENT, zoomPercentToScaleFactor } from '@/lib/browser-zoom'
 import {
   canUseEmbeddedBrowser,
   captureEmbeddedBrowserSnapshot,
+  clearEmbeddedBrowserAnnotations,
   clearEmbeddedBrowserData,
   closeEmbeddedBrowser,
   consumeEmbeddedBrowserLabelTransfer,
   deleteEmbeddedBrowserDownload,
-  clearEmbeddedBrowserAnnotations,
-  listenEmbeddedBrowserAnnotationState,
-  listenEmbeddedBrowserAgentState,
-  listenEmbeddedBrowserAnnotationRequests,
-  listenEmbeddedBrowserCloseRequests,
   EMBEDDED_BROWSER_DEBUG_PANEL_VISIBILITY_EVENT,
   EMBEDDED_BROWSER_OCCLUSION_EVENT,
   evalEmbeddedBrowserJson,
   goBackEmbeddedBrowser,
   goForwardEmbeddedBrowser,
+  isEmbeddedBrowserLabelTransferred,
+  listenEmbeddedBrowserAgentCursor,
+  listenEmbeddedBrowserAgentState,
+  listenEmbeddedBrowserAnnotationRequests,
+  listenEmbeddedBrowserAnnotationState,
+  listenEmbeddedBrowserCloseRequests,
   listenEmbeddedBrowserInvalidTlsCertificates,
   listenEmbeddedBrowserLocalFilePreview,
   listenEmbeddedBrowserPageStateChanges,
-  isEmbeddedBrowserLabelTransferred,
-  listenEmbeddedBrowserAgentCursor,
   navigateEmbeddedBrowser,
   openEmbeddedBrowser,
   pauseEmbeddedBrowserDownload,
-  readEmbeddedBrowserPageState,
   readEmbeddedBrowserAnnotationState,
+  readEmbeddedBrowserPageState,
   reloadEmbeddedBrowser,
-  resumeEmbeddedBrowserDownload,
   resolveEmbeddedBrowserAgentApproval,
+  resumeEmbeddedBrowserDownload,
   setEmbeddedBrowserAgentControlPaused,
+  setEmbeddedBrowserAnnotationOriginalView,
   setEmbeddedBrowserBounds,
   setEmbeddedBrowserDeviceMetrics,
   setEmbeddedBrowserZoom,
-  setEmbeddedBrowserAnnotationOriginalView,
   startEmbeddedBrowserAnnotation,
   stopEmbeddedBrowserAnnotation,
+  type EmbeddedBrowserAgentCursorEvent,
   type EmbeddedBrowserAgentStateEvent,
   type EmbeddedBrowserAnnotationRequest,
-  type EmbeddedBrowserAgentCursorEvent,
-  type EmbeddedBrowserDataKind,
   type EmbeddedBrowserBounds,
+  type EmbeddedBrowserDataKind,
   type EmbeddedBrowserDownloadEvent,
   type EmbeddedBrowserInvalidTlsCertificateEvent,
   type EmbeddedBrowserNavigationError,
@@ -74,24 +71,46 @@ import {
   readEmbeddedBrowserDownloadSnapshot,
   subscribeEmbeddedBrowserDownloadEvents,
 } from '@/lib/embedded-browser-download-store'
+import {
+  embeddedBrowserOverlayMutationAffectsVisibility,
+  hasEmbeddedBrowserOverlayConflict,
+} from '@/lib/embedded-browser-overlay'
 import { openInExternalBrowser } from '@/lib/external-links'
 import { fileManagerRevealLabel } from '@/lib/file-manager'
 import { openLocalFile, revealLocalFile } from '@/lib/local-terminal'
-import { browserDiagnosticOrigin, normalizeBrowserUrl } from '@/lib/browser-url'
 import { navigateTo } from '@/lib/navigation'
-import { BROWSER_ZOOM_DEFAULT_PERCENT, zoomPercentToScaleFactor } from '@/lib/browser-zoom'
+import { isElectronRuntime } from '@/lib/runtime-environment'
+import { cn } from '@/lib/utils'
+import { track } from '@/telemetry/client'
+import type {
+  BrowserAnnotationCommand,
+  BrowserAnnotationComment,
+  BrowserAnnotationScope,
+  BrowserAnnotationState,
+} from '@/types/browser-annotation'
+import type { CodeCommentContext } from '@/types/workspace-files'
+import { deviceSurfaceExtension } from '@extensions/device-surface'
+import { TextField as ControlInput } from '@wegent/collaboration/controls/TextField'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
-  clampDeviceDimension,
-  computeDeviceViewportPlacement,
-  defaultBrowserDeviceToolbarState,
-  matchDevicePresetId,
-  resizeDeviceDimensions,
-  resolveDevicePreset,
-  BROWSER_DEVICE_MIN_HEIGHT,
-  BROWSER_DEVICE_MIN_WIDTH,
-  type BrowserDeviceResizeEdge,
-  type BrowserDeviceToolbarState,
-} from '@/lib/browser-device-toolbar'
+  ArrowLeft,
+  ArrowRight,
+  CheckCircle2,
+  CircleAlert,
+  Download,
+  EllipsisVertical,
+  ExternalLink,
+  Globe2,
+  Loader2,
+  MessageSquarePlus,
+  Pause,
+  Play,
+  RotateCw,
+  Trash2,
+  X,
+} from 'lucide-react'
+import type { FormEvent, KeyboardEvent, PointerEvent, ReactNode } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react'
 import {
   clearEmbeddedBrowserFind,
   searchEmbeddedBrowserPage,
@@ -100,24 +119,8 @@ import {
 } from './browser-find/browser-find-store'
 import { BrowserFindBar } from './browser-find/BrowserFindBar'
 import { BrowserDeviceToolbar } from './BrowserDeviceToolbar'
-import {
-  embeddedBrowserOverlayMutationAffectsVisibility,
-  hasEmbeddedBrowserOverlayConflict,
-} from '@/lib/embedded-browser-overlay'
-import { cn } from '@/lib/utils'
-import { useTranslation } from '@/hooks/useTranslation'
-import type { CodeCommentContext } from '@/types/workspace-files'
-import type {
-  BrowserAnnotationComment,
-  BrowserAnnotationScope,
-  BrowserAnnotationState,
-} from '@/types/browser-annotation'
-import { track } from '@/telemetry/client'
-import type { BrowserAnnotationCommand } from '@/types/browser-annotation'
-import { browserAnnotationStateToContexts } from '@/lib/browser-annotation-context'
-import { isElectronRuntime } from '@/lib/runtime-environment'
-import { ElectronEmbeddedBrowserView } from './ElectronEmbeddedBrowserView'
 import { resetElectronEmbeddedBrowserView } from './electronEmbeddedBrowserHost'
+import { ElectronEmbeddedBrowserView } from './ElectronEmbeddedBrowserView'
 
 const EMBEDDED_BROWSER_STATE_INTERVAL_MS = 1000
 const EMBEDDED_BROWSER_BOUNDS_DEBOUNCE_MS = 80
@@ -2412,7 +2415,8 @@ export function WorkspaceBrowserTabPanel({
                     : t('workbench.browser'),
                 })}
           </div>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             data-testid="workspace-browser-annotation-original-view-button"
             aria-pressed={originalViewEnabled}
@@ -2440,7 +2444,7 @@ export function WorkspaceBrowserTabPanel({
                 <OriginalViewEye className="h-4 w-4" />
               )}
             </span>
-          </button>
+          </ControlButton>
           {annotations.length > 0 ? (
             <span
               data-testid="workspace-browser-annotation-count"
@@ -2481,7 +2485,9 @@ export function WorkspaceBrowserTabPanel({
             <RotateCw className="h-4 w-4" />
           </BrowserToolbarButton>
           <form onSubmit={handleSubmit} className="min-w-0 flex-1">
-            <input
+            <ControlInput
+              density="compact"
+              appearance="plain"
               ref={addressInputRef}
               name="url"
               data-testid="workspace-browser-url-input"
@@ -2502,7 +2508,7 @@ export function WorkspaceBrowserTabPanel({
                 if (currentPageUrl) setAddress(currentPageUrl)
               }}
               placeholder={t('workbench.browser_url_placeholder')}
-              className="workbench-chrome-input h-8 w-full rounded-md border-0 bg-surface px-3 text-sm text-text-primary outline-none transition-colors placeholder:text-text-muted focus:bg-background"
+              className="workbench-chrome-input w-full transition-colors placeholder:text-text-muted focus:bg-background"
             />
           </form>
           <BrowserToolbarButton
@@ -2543,7 +2549,8 @@ export function WorkspaceBrowserTabPanel({
               placement="bottom-end"
               width={240}
               itemClassName="min-h-9 px-2"
-              triggerClassName="flex h-8 min-w-8 shrink-0 items-center justify-center gap-1.5 rounded-md px-2 text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
+              density="compact"
+              triggerClassName="flex shrink-0 items-center justify-center gap-1.5 rounded-md px-2 text-text-secondary transition-colors hover:bg-muted hover:text-text-primary"
               items={[
                 {
                   label: t('workbench.browser_find_in_page'),
@@ -2676,7 +2683,9 @@ export function WorkspaceBrowserTabPanel({
           </span>
           {agentState?.approval ? (
             <>
-              <button
+              <ControlButton
+                variant="outline"
+                size="sm"
                 type="button"
                 data-testid="workspace-browser-agent-approval-approve-button"
                 data-approval-id={agentState.approval.approvalId}
@@ -2685,8 +2694,10 @@ export function WorkspaceBrowserTabPanel({
               >
                 <CheckCircle2 className="h-3.5 w-3.5" />
                 {t('workbench.browser_agent_approval_continue')}
-              </button>
-              <button
+              </ControlButton>
+              <ControlButton
+                variant="outline"
+                size="sm"
                 type="button"
                 data-testid="workspace-browser-agent-approval-reject-button"
                 data-approval-id={agentState.approval.approvalId}
@@ -2695,10 +2706,12 @@ export function WorkspaceBrowserTabPanel({
               >
                 <X className="h-3.5 w-3.5" />
                 {t('workbench.browser_agent_approval_cancel')}
-              </button>
+              </ControlButton>
             </>
           ) : agentState?.status === 'paused' ? (
-            <button
+            <ControlButton
+              variant="outline"
+              size="sm"
               type="button"
               data-testid="workspace-browser-agent-resume-button"
               className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-border bg-background px-2 font-medium text-text-primary hover:bg-muted"
@@ -2706,7 +2719,7 @@ export function WorkspaceBrowserTabPanel({
             >
               <Play className="h-3.5 w-3.5" />
               {t('workbench.browser_agent_resume')}
-            </button>
+            </ControlButton>
           ) : null}
         </div>
       ) : null}
@@ -2719,7 +2732,8 @@ export function WorkspaceBrowserTabPanel({
             <span className="text-xs font-medium text-text-secondary">
               {t('workbench.browser_downloads')}
             </span>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="workspace-browser-downloads-close"
               aria-label={t('workbench.browser_downloads_close')}
@@ -2727,7 +2741,7 @@ export function WorkspaceBrowserTabPanel({
               onClick={() => setDownloadsOpen(false)}
             >
               <X className="h-3.5 w-3.5" />
-            </button>
+            </ControlButton>
           </div>
           {downloads.length === 0 ? (
             <span className="text-xs text-text-muted">
@@ -2769,17 +2783,19 @@ export function WorkspaceBrowserTabPanel({
                         : t(`workbench.browser_download_${download.status}`)}
                     </span>
                     {download.status === 'finished' && download.path ? (
-                      <button
+                      <ControlButton
+                        variant="unstyled"
                         type="button"
                         data-testid="workspace-browser-download-reveal-button"
                         className="shrink-0 rounded-md px-2 py-1 text-text-secondary hover:bg-muted hover:text-text-primary"
                         onClick={() => void revealLocalFile(download.path ?? undefined)}
                       >
                         {fileManagerRevealLabel(t)}
-                      </button>
+                      </ControlButton>
                     ) : null}
                     {downloading ? (
-                      <button
+                      <ControlButton
+                        variant="unstyled"
                         type="button"
                         data-testid="workspace-browser-download-pause-button"
                         className="shrink-0 rounded-md p-1 text-text-secondary hover:bg-muted hover:text-text-primary"
@@ -2787,11 +2803,12 @@ export function WorkspaceBrowserTabPanel({
                         onClick={() => void pauseEmbeddedBrowserDownload(download.id)}
                       >
                         <Pause className="h-3.5 w-3.5" />
-                      </button>
+                      </ControlButton>
                     ) : null}
                     {download.status === 'paused' ? (
                       <>
-                        <button
+                        <ControlButton
+                          variant="unstyled"
                           type="button"
                           data-testid="workspace-browser-download-resume-button"
                           className="shrink-0 rounded-md p-1 text-text-secondary hover:bg-muted hover:text-text-primary"
@@ -2799,16 +2816,13 @@ export function WorkspaceBrowserTabPanel({
                           onClick={() => void resumeEmbeddedBrowserDownload(download.id)}
                         >
                           <Play className="h-3.5 w-3.5" />
-                        </button>
-                        <button
+                        </ControlButton>
+                        <DeleteIconButton
                           type="button"
                           data-testid="workspace-browser-download-delete-button"
-                          className="shrink-0 rounded-md p-1 text-destructive hover:bg-destructive/10 wework:text-red-500 wework:hover:bg-red-500/10"
                           aria-label={t('workbench.browser_download_delete')}
                           onClick={() => void deleteEmbeddedBrowserDownload(download.id)}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+                        />
                       </>
                     ) : null}
                   </div>
@@ -2863,7 +2877,8 @@ export function WorkspaceBrowserTabPanel({
                 {downloadPeek.fileName}
               </p>
             </div>
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="workspace-browser-download-peek-dismiss"
               aria-label={t('workbench.browser_download_peek_dismiss')}
@@ -2871,12 +2886,13 @@ export function WorkspaceBrowserTabPanel({
               onClick={() => setDownloadPeek(null)}
             >
               <X className="h-3.5 w-3.5" />
-            </button>
+            </ControlButton>
           </div>
           <div className="flex items-center gap-1.5">
             {downloadPeek.status === 'finished' && downloadPeek.path ? (
               <>
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="workspace-browser-download-peek-open"
                   className="rounded-md px-2 py-1 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
@@ -2886,8 +2902,9 @@ export function WorkspaceBrowserTabPanel({
                   }}
                 >
                   {t('workbench.browser_download_peek_open')}
-                </button>
-                <button
+                </ControlButton>
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid="workspace-browser-download-peek-show-in-folder"
                   className="rounded-md px-2 py-1 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
@@ -2897,10 +2914,11 @@ export function WorkspaceBrowserTabPanel({
                   }}
                 >
                   {fileManagerRevealLabel(t)}
-                </button>
+                </ControlButton>
               </>
             ) : null}
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="workspace-browser-download-peek-view-downloads"
               className="rounded-md px-2 py-1 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
@@ -2910,7 +2928,7 @@ export function WorkspaceBrowserTabPanel({
               }}
             >
               {t('workbench.browser_download_peek_view_downloads')}
-            </button>
+            </ControlButton>
           </div>
         </div>
       ) : null}
@@ -3134,7 +3152,8 @@ function BrowserToolbarButton({
   testId: string
 }) {
   return (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid={testId}
       disabled={disabled}
@@ -3144,7 +3163,7 @@ function BrowserToolbarButton({
       title={label}
     >
       {children}
-    </button>
+    </ControlButton>
   )
 }
 

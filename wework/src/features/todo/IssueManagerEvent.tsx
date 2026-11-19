@@ -1,13 +1,14 @@
-import {
-  createCollaborationTranslator,
-  formatIssueTimestamp,
-  managerActivityPresentation,
-  executionDisplayStatus,
-} from '@wegent/collaboration'
 import type { ProjectChatMessage } from '@/api/backend/projectChatSocket'
 import type { CloudLoopItem } from '@/api/deliveries'
-import { LoaderCircle } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import {
+  createCollaborationTranslator,
+  executionDisplayStatus,
+  formatIssueTimestamp,
+  managerActivityPresentation,
+} from '@wegent/collaboration'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { LoaderCircle } from 'lucide-react'
 import { resolveMessageRunStatus } from './taskActivityMessageUtils'
 
 export function IssueManagerEvent({
@@ -52,17 +53,19 @@ export function IssueManagerEvent({
           {onOpenExecution || onCancel ? (
             <div className="flex shrink-0 items-center gap-3">
               {onOpenExecution ? (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`cloud-task-manager-execution-${message.messageId}`}
                   className="text-xs text-text-muted hover:text-text-primary"
                   onClick={onOpenExecution}
                 >
                   {t('activity.task_activity_view_execution')}
-                </button>
+                </ControlButton>
               ) : null}
               {onCancel ? (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   data-testid={`cloud-task-manager-cancel-${message.messageId}`}
                   disabled={cancelling}
@@ -72,7 +75,7 @@ export function IssueManagerEvent({
                   {cancelling
                     ? t('activity.task_activity_stopping_workflow')
                     : t('activity.task_activity_stop_workflow')}
-                </button>
+                </ControlButton>
               ) : null}
             </div>
           ) : null}

@@ -1,15 +1,16 @@
-import { useContext, useState, type ReactNode } from 'react'
-import { ArrowUpRight, LoaderCircle, SquareTerminal } from 'lucide-react'
-import type { WorkspaceMyWorkItem, WorkspaceTaskBinding } from '@wegent/collaboration'
-import { findRuntimeTask } from '@wegent/chat-core/runtime-task-lookup'
-import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import { useRuntimeTaskLifecycleResolver } from '@/features/workbench/runtimeTaskLifecycle'
 import {
   runtimeTaskSummaryTrackingExecutionStatus,
   runtimeTaskTrackingExecutionStatus,
 } from '@/features/workbench/runtimeTaskLifecycle/projection'
+import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import { useTranslation } from '@/hooks/useTranslation'
 import { findWorkbenchDevice } from '@/lib/workbench-device'
+import { findRuntimeTask } from '@wegent/chat-core/runtime-task-lookup'
+import type { WorkspaceMyWorkItem, WorkspaceTaskBinding } from '@wegent/collaboration'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ArrowUpRight, LoaderCircle, SquareTerminal } from 'lucide-react'
+import { useContext, useState, type ReactNode } from 'react'
 import { AnchorPopover } from './AnchorPopover'
 
 /** Consume the page's batched context; rendering an Issue must never request its own data. */
@@ -108,7 +109,8 @@ export function PersonalHomeIssueActivity({
         </blockquote>
       )}
       {tasks.length > 0 && (
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid={
             tasks.length === 1
@@ -150,7 +152,7 @@ export function PersonalHomeIssueActivity({
               </span>
             ))}
           <ArrowUpRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-text-muted" />
-        </button>
+        </ControlButton>
       )}
       {taskAnchor && active && tasks.length > 1 && (
         <AnchorPopover
@@ -163,7 +165,8 @@ export function PersonalHomeIssueActivity({
           }}
         >
           {tasks.map(task => (
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               key={task.binding.id}
               disabled={!onOpenTask || task.status === 'reserved'}
@@ -180,7 +183,7 @@ export function PersonalHomeIssueActivity({
                 {statusLabel(task.status)}
               </span>
               <ArrowUpRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-text-muted" />
-            </button>
+            </ControlButton>
           ))}
         </AnchorPopover>
       )}

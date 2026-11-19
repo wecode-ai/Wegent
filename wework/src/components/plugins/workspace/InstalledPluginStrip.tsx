@@ -1,8 +1,9 @@
-import { memo } from 'react'
+import { useOptionalAppearance } from '@/features/appearance'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
-import { useOptionalAppearance } from '@/features/appearance'
 import type { PluginMarketplaceItem } from '@/types/api'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { memo } from 'react'
 import { findMarketplaceItemForInstalled } from '../findMarketplaceItemForInstalled'
 import { resolvePreferredPluginLogo } from '../plugin-assets'
 import type { InstalledPluginItem } from '../PluginManagementRows'
@@ -50,7 +51,8 @@ export const InstalledPluginStrip = memo(function InstalledPluginStrip({
                 interfaces: [plugin.raw.spec.interface, marketplaceItem?.interface],
               })
               return (
-                <button
+                <ControlButton
+                  variant="unstyled"
                   key={plugin.id}
                   type="button"
                   data-testid={`plugins-installed-strip-item-${plugin.id}`}
@@ -70,11 +72,12 @@ export const InstalledPluginStrip = memo(function InstalledPluginStrip({
                     name={plugin.name}
                     useInitial={logo.source === 'fallback'}
                   />
-                </button>
+                </ControlButton>
               )
             })}
             {hiddenPlugins.length > 0 && (
-              <button
+              <ControlButton
+                variant="unstyled"
                 type="button"
                 data-testid="plugins-installed-overflow-button"
                 className="plugin-installed-overflow-button"
@@ -114,7 +117,7 @@ export const InstalledPluginStrip = memo(function InstalledPluginStrip({
                     count: hiddenPlugins.length,
                   })}
                 </span>
-              </button>
+              </ControlButton>
             )}
             {plugins.length === 0 && (
               <span data-testid="plugins-installed-strip-empty" className="text-sm text-text-muted">

@@ -1,10 +1,13 @@
+import { SelectContent, SelectItem, SelectRoot, SelectTrigger } from '../controls/SelectParts'
+import { normalizeSelectValue } from '../controls/selectValue'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
 import { useEffect, useState } from 'react'
+import type { CollaborationLocale } from '../i18n'
 import type { ProjectAgentConfigurationHost } from '../project-agent-config/types'
 import type { CollaborationExecutionEnvironment, CollaborationProject } from '../types'
-import type { CollaborationLocale } from '../i18n'
 import { templateMessages } from './messages'
 
 export function TemplateProjectEnvironment({
@@ -63,19 +66,23 @@ export function TemplateProjectEnvironment({
     >
       <label className="collaboration-template-field">
         <span>{m.executionEnvironment}</span>
-        <select
-          data-testid="template-project-environment-select"
-          value={selected ?? ''}
+        <SelectRoot
+          value={normalizeSelectValue(selected ?? '')}
           disabled={disabled || loading || error}
-          onChange={event => onChange(event.target.value || undefined)}
+          onValueChange={selectedValue => {
+            if (selectedValue !== null) return onChange(selectedValue || undefined)
+          }}
         >
-          <option value="">{m.chooseProjectEnvironment}</option>
-          {environments.map(environment => (
-            <option key={environment.id} value={environment.id}>
-              {environment.name}
-            </option>
-          ))}
-        </select>
+          <SelectTrigger data-testid="template-project-environment-select" />
+          <SelectContent>
+            <SelectItem value="">{m.chooseProjectEnvironment}</SelectItem>
+            {environments.map(environment => (
+              <SelectItem key={environment.id} value={String(environment.id)}>
+                {environment.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </SelectRoot>
       </label>
       {loading && <p role="status">{m.loading}</p>}
       {error && <p role="alert">{m.failed}</p>}
@@ -91,14 +98,15 @@ export function TemplateProjectEnvironment({
             {m.configureProjectEnvironment}
           </a>
         )}
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="template-project-environment-refresh"
           disabled={disabled || loading}
           onClick={() => setRevision(value => value + 1)}
         >
           {m.refresh}
-        </button>
+        </ControlButton>
       </div>
     </section>
   )

@@ -1,10 +1,12 @@
+import { settle } from '@ui-sdk/core/testing'
 // @vitest-environment jsdom
 import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { useDesktopModelMenu } from './useDesktopModelMenu'
-import { ReasoningSlider } from './ReasoningSlider'
 import { createCollaborationTranslator } from '../i18n'
+import { DialogSurface } from './DialogSurface'
+import { Radio, RadioGroup } from './RadioGroup'
+import { ReasoningSlider } from './ReasoningSlider'
 
 let root: Root
 let container: HTMLDivElement
@@ -21,7 +23,7 @@ afterEach(() => {
   container.remove()
 })
 function get(id: string) {
-  return container.querySelector<HTMLElement>(`[data-testid="${id}"]`)!
+  return document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!
 }
 function press(target: HTMLElement, key: string, extra: KeyboardEventInit = {}) {
   const event = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...extra })
@@ -29,27 +31,28 @@ function press(target: HTMLElement, key: string, extra: KeyboardEventInit = {}) 
   return event
 }
 function Picker({ onClose }: { onClose: () => void }) {
-  const { ref, ...keyboard } = useDesktopModelMenu(onClose, true)
   const [selected, setSelected] = useState('b')
   const [reasoning, setReasoning] = useState('medium')
   return (
-    <div ref={ref} {...keyboard} role="dialog" aria-modal="true" aria-label="Models" tabIndex={-1}>
+    <DialogSurface
+      onClose={onClose}
+      initialFocus='[role="radio"][aria-checked="true"]'
+      render={<div aria-label="Models" tabIndex={-1} />}
+    >
       <button data-testid="first">First</button>
-      <div role="radiogroup" aria-label="Model choices">
+      <RadioGroup
+        value={selected}
+        onValueChange={value => {
+          if (value) setSelected(value)
+        }}
+        aria-label="Model choices"
+      >
         {['a', 'disabled', 'b', 'c'].map(value => (
-          <button
-            key={value}
-            data-testid={value}
-            role="radio"
-            aria-checked={selected === value}
-            aria-disabled={value === 'disabled'}
-            tabIndex={-1}
-            onClick={() => setSelected(value)}
-          >
+          <Radio value={value} key={value} data-testid={value} disabled={value === 'disabled'}>
             {value}
-          </button>
+          </Radio>
         ))}
-      </div>
+      </RadioGroup>
       <ReasoningSlider
         translate={createCollaborationTranslator('en')}
         control={{
@@ -67,7 +70,7 @@ function Picker({ onClose }: { onClose: () => void }) {
       />
       <input data-testid="input" aria-label="Other option" />
       <button data-testid="last">Last</button>
-    </div>
+    </DialogSurface>
   )
 }
 function Host() {
@@ -88,15 +91,16 @@ function Host() {
     </>
   )
 }
-function mount() {
-  act(() => root.render(<Host />))
-  act(() => {
+async function mount() {
+  await act(async () => root.render(<Host />))
+  await act(async () => {
     get('opener').focus()
     get('opener').click()
+    await settle()
   })
 }
-it('focuses the selected model, skips disabled choices, wraps arrows, and owns Home/End', () => {
-  mount()
+it('focuses the selected model, skips disabled choices, wraps arrows, and owns Home/End', async () => {
+  await mount()
   expect(document.activeElement).toBe(get('b'))
   for (const [key, expected] of [
     ['End', 'c'],
@@ -109,14 +113,15 @@ it('focuses the selected model, skips disabled choices, wraps arrows, and owns H
     expect(press(document.activeElement as HTMLElement, key).defaultPrevented).toBe(true)
     expect(document.activeElement).toBe(get(expected))
     expect(get(expected).getAttribute('aria-checked')).toBe('true')
-    expect([...container.querySelectorAll('[role="radio"][tabindex="0"]')]).toEqual([get(expected)])
+    expect([...document.querySelectorAll('[role="radio"][tabindex="0"]')]).toEqual([get(expected)])
   }
   act(() => get('c').focus())
-  expect([...container.querySelectorAll('[role="radio"][tabindex="0"]')]).toEqual([get('c')])
+  expect(document.activeElement).toBe(get('c'))
+  expect([...document.querySelectorAll('[role="radio"][tabindex="0"]')]).toEqual([get('a')])
 })
-it('leaves slider values and text navigation to their controls', () => {
-  mount()
-  const slider = container.querySelector<HTMLElement>('[role="slider"]')!
+it('leaves slider values and text navigation to their controls', async () => {
+  await mount()
+  const slider = document.querySelector<HTMLElement>('[role="slider"]')!
   act(() => slider.focus())
   for (const [key, expected] of [
     ['End', '2'],
@@ -134,8 +139,8 @@ it('leaves slider values and text navigation to their controls', () => {
     expect(press(get('input'), key).defaultPrevented).toBe(false)
   expect(document.activeElement).toBe(get('input'))
 })
-it('ignores composition and modified navigation without selecting another model', () => {
-  mount()
+it('ignores composition and modified navigation without selecting another model', async () => {
+  await mount()
   for (const extra of [
     { isComposing: true },
     { keyCode: 229 },
@@ -147,8 +152,8 @@ it('ignores composition and modified navigation without selecting another model'
   expect(get('b').getAttribute('aria-checked')).toBe('true')
   expect(document.activeElement).toBe(get('b'))
 })
-it('traps Tab in its modal, isolates the background, and restores the opener after Escape', () => {
-  mount()
+it('traps Tab in its modal, isolates the background, and restores the opener after Escape', async () => {
+  await mount()
   expect(get('opener').getAttribute('inert')).not.toBeNull()
   act(() => get('last').focus())
   expect(press(get('last'), 'Tab').defaultPrevented).toBe(true)
@@ -156,6 +161,9 @@ it('traps Tab in its modal, isolates the background, and restores the opener aft
   expect(press(get('first'), 'Tab', { shiftKey: true }).defaultPrevented).toBe(true)
   expect(document.activeElement).toBe(get('last'))
   expect(press(get('last'), 'Escape').defaultPrevented).toBe(true)
+  await act(async () => {
+    await settle()
+  })
   expect(close).toHaveBeenCalledOnce()
   expect(document.activeElement).toBe(get('opener'))
   expect(get('opener').hasAttribute('inert')).toBe(false)

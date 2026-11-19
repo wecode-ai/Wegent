@@ -1,18 +1,5 @@
+import { bindLayer } from '@ui-sdk/core'
 import { useEffect, useRef, type RefObject } from 'react'
-import { isImeComposingEvent } from '@wegent/chat-core/ime'
-
-const layers = new Set<RefObject<HTMLElement | null>>()
-
-function topLayer() {
-  let top: HTMLElement | null = null
-  for (const ref of layers) {
-    const node = ref.current
-    if (!node?.isConnected || node.closest('[inert], [hidden]')) continue
-    // Children stay above their parent even when their effects mount first.
-    if (!top || !node.contains(top)) top = node
-  }
-  return top
-}
 
 export function useEscapeKey(
   onEscape: () => void,
@@ -23,32 +10,12 @@ export function useEscapeKey(
   useEffect(() => {
     callback.current = onEscape
   }, [onEscape])
-
   useEffect(() => {
     if (!enabled) return
-    if (scope) layers.add(scope)
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      const nativeDialog = document.activeElement?.closest('dialog[open]')
-      if (nativeDialog && (!scope?.current || !nativeDialog.contains(scope.current))) return
-      if (scope?.current?.closest('[inert], [hidden]')) return
-      if (scope?.current && event.target instanceof Element) {
-        const nativeDialog = event.target.closest('dialog[open]')
-        if (nativeDialog && nativeDialog !== scope.current) return
-      }
-      const top = topLayer()
-      if (event.defaultPrevented || isImeComposingEvent(event)) return
-      if (top && top !== scope?.current) return
-      event.preventDefault()
-      event.stopPropagation()
-      callback.current()
-    }
-
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      if (scope) layers.delete(scope)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
+    return bindLayer(scope?.current ?? document.body, {
+      onDismiss: reason => {
+        if (reason === 'escape-key') callback.current()
+      },
+    })
   }, [enabled, scope])
 }

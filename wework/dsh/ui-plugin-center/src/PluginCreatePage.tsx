@@ -1,5 +1,3 @@
-import { useState } from 'react'
-import { Menu } from 'lucide-react'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
 import { MobileDrawer } from '@/components/layout/MobileDrawer'
@@ -14,6 +12,9 @@ import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { isElectronRuntime } from '@/lib/runtime-environment'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { Menu } from 'lucide-react'
+import { useState } from 'react'
 import { createPluginRouteRuntimeTaskOpener } from './plugin-route-navigation'
 
 export function PluginCreatePage() {
@@ -136,7 +137,8 @@ export function PluginCreatePage() {
       {isMobile && (
         <>
           <header className="pointer-events-none absolute left-5 top-[max(8px,env(safe-area-inset-top))] z-chrome flex h-11 items-center">
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="open-mobile-drawer-button"
               onClick={() => setDrawerOpen(true)}
@@ -144,7 +146,7 @@ export function PluginCreatePage() {
               aria-label={t('workbench.open_menu', '打开菜单')}
             >
               <Menu className="h-5 w-5" />
-            </button>
+            </ControlButton>
           </header>
           <MobileDrawer
             open={drawerOpen}

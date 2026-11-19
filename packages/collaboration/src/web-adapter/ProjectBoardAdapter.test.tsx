@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, type ComponentProps } from 'react'
+import { act, useState, type ComponentProps } from 'react'
 import { createRoot } from 'react-dom/client'
 import { describe, expect, it, vi } from 'vitest'
 import { ProjectBoardAdapter } from './ProjectBoardAdapter'
@@ -8,11 +8,12 @@ import { createCollaborationTranslator } from '../i18n'
 import { baseBoardStatusGroupingFlag } from '../project-board/baseBoardStatusGrouping'
 
 describe('board card sub-issue progress', () => {
-  it('keeps full child progress across filters, grouping and updates, and opens the child board', () => {
+  it('keeps full child progress across filters, grouping and updates, and opens the child board', async () => {
     // Exercise arbitrary personal grouping through the supported rollback mode.
     localStorage.setItem(baseBoardStatusGroupingFlag, 'false')
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
     const container = document.createElement('div')
+    document.body.append(container)
     const root = createRoot(container)
     const parent = {
       id: 'parent',
@@ -72,83 +73,168 @@ describe('board card sub-issue progress', () => {
     try {
       act(() => root.render(<ProjectBoardAdapter {...props} />))
       const selector = '[data-testid="collaboration-issue-children-parent"]'
-      const milestone = { id: 'ms', project_id: 'project', title: 'Release target', description: '', state: 'open' as const, due_on: null, version: 1, open_issues: 2, closed_issues: 1 }
-      const linked = props.issues.map(issue => ({ ...issue, milestone_id: milestone.id }))
-      act(() => root.render(<ProjectBoardAdapter {...props} issues={linked} milestones={[milestone]} />))
-      const milestoneSelector = '[data-testid="cloud-todo-card-milestone-parent"]'
-      expect(container.querySelector(milestoneSelector)?.textContent).toContain('Release target')
-      act(() => container.querySelector<HTMLButtonElement>('[data-testid="cloud-board-parent-layout"]')!.click())
-      expect(container.querySelector('[data-testid="cloud-board-parent-rows"]')).toBeTruthy()
-      const parentHeader = container.querySelector('[data-testid="cloud-board-parent-row-parent"] > header')
-      expect(parentHeader?.querySelector('[data-testid="cloud-board-parent-open-parent"]')).toBeTruthy()
-      expect(parentHeader?.querySelector(milestoneSelector)?.textContent).toContain('Release target')
-      act(() => container.querySelector<HTMLButtonElement>('[data-testid="cloud-board-parent-layout"]')!.click())
-      act(() => root.render(<ProjectBoardAdapter {...props} issues={linked} milestones={[]} />))
-      expect(container.querySelector(milestoneSelector)).toBeNull()
-      act(() => root.render(<ProjectBoardAdapter {...props} issues={linked.map(issue => ({ ...issue, can_view_detail: false }))} milestones={[milestone]} />))
-      expect(container.querySelector(milestoneSelector)).toBeNull()
-      act(() => root.render(<ProjectBoardAdapter {...props} />))
-      expect(container.querySelector(selector)?.textContent).toBe('子任务 1/2')
-      expect(
-        container.querySelector('[data-testid="collaboration-issue-children-child"]')
-      ).toBeNull()
-      act(() =>
-        root.render(
-          <ProjectBoardAdapter {...props} allIssues={props.issues} issues={[props.issues[0]]} />
-        )
-      )
-      expect(container.querySelector(selector)?.textContent).toBe('子任务 1/2')
-      expect(container.querySelector('[data-testid="cloud-todo-card-child"]')).toBeNull()
-      expect(container.querySelector('[data-testid="cloud-todo-card-second"]')).toBeNull()
+      const milestone = {
+        id: 'ms',
+        project_id: 'project',
+        title: 'Release target',
+        description: '',
+        state: 'open' as const,
+        due_on: null,
+        version: 1,
+        open_issues: 2,
+        closed_issues: 1,
+      }
+      const linked = props.issues.map((issue) => ({
+        ...issue,
+        milestone_id: milestone.id,
+      }))
       act(() =>
         root.render(
           <ProjectBoardAdapter
             {...props}
-            issues={props.issues.map(issue => ({ ...issue, can_view_detail: false }))}
-          />
-        )
+            issues={linked}
+            milestones={[milestone]}
+          />,
+        ),
+      )
+      const milestoneSelector =
+        '[data-testid="cloud-todo-card-milestone-parent"]'
+      expect(container.querySelector(milestoneSelector)?.textContent).toContain(
+        'Release target',
+      )
+      act(() =>
+        container
+          .querySelector<HTMLButtonElement>(
+            '[data-testid="cloud-board-parent-layout"]',
+          )!
+          .click(),
+      )
+      expect(
+        container.querySelector('[data-testid="cloud-board-parent-rows"]'),
+      ).toBeTruthy()
+      const parentHeader = container.querySelector(
+        '[data-testid="cloud-board-parent-row-parent"] > header',
+      )
+      expect(
+        parentHeader?.querySelector(
+          '[data-testid="cloud-board-parent-open-parent"]',
+        ),
+      ).toBeTruthy()
+      expect(
+        parentHeader?.querySelector(milestoneSelector)?.textContent,
+      ).toContain('Release target')
+      act(() =>
+        container
+          .querySelector<HTMLButtonElement>(
+            '[data-testid="cloud-board-parent-layout"]',
+          )!
+          .click(),
+      )
+      act(() =>
+        root.render(
+          <ProjectBoardAdapter {...props} issues={linked} milestones={[]} />,
+        ),
+      )
+      expect(container.querySelector(milestoneSelector)).toBeNull()
+      act(() =>
+        root.render(
+          <ProjectBoardAdapter
+            {...props}
+            issues={linked.map((issue) => ({
+              ...issue,
+              can_view_detail: false,
+            }))}
+            milestones={[milestone]}
+          />,
+        ),
+      )
+      expect(container.querySelector(milestoneSelector)).toBeNull()
+      act(() => root.render(<ProjectBoardAdapter {...props} />))
+      expect(container.querySelector(selector)?.textContent).toBe('子任务 1/2')
+      expect(
+        container.querySelector(
+          '[data-testid="collaboration-issue-children-child"]',
+        ),
+      ).toBeNull()
+      act(() =>
+        root.render(
+          <ProjectBoardAdapter
+            {...props}
+            allIssues={props.issues}
+            issues={[props.issues[0]]}
+          />,
+        ),
+      )
+      expect(container.querySelector(selector)?.textContent).toBe('子任务 1/2')
+      expect(
+        container.querySelector('[data-testid="cloud-todo-card-child"]'),
+      ).toBeNull()
+      expect(
+        container.querySelector('[data-testid="cloud-todo-card-second"]'),
+      ).toBeNull()
+      act(() =>
+        root.render(
+          <ProjectBoardAdapter
+            {...props}
+            issues={props.issues.map((issue) => ({
+              ...issue,
+              can_view_detail: false,
+            }))}
+          />,
+        ),
       )
       expect(container.querySelector(selector)).toBeNull()
       act(() => root.render(<ProjectBoardAdapter {...props} />))
       const search = container.querySelector<HTMLInputElement>(
-        '[data-testid="cloud-board-search"]'
+        '[data-testid="cloud-board-search"]',
       )!
       act(() => {
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(
-          search,
-          'Parent'
-        )
+        Object.getOwnPropertyDescriptor(
+          HTMLInputElement.prototype,
+          'value',
+        )!.set!.call(search, 'Parent')
         search.dispatchEvent(new Event('input', { bubbles: true }))
       })
       expect(search.value).toBe('Parent')
       expect(container.querySelector(selector)?.textContent).toBe('子任务 1/2')
       act(() => {
-        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(search, '')
+        Object.getOwnPropertyDescriptor(
+          HTMLInputElement.prototype,
+          'value',
+        )!.set!.call(search, '')
         search.dispatchEvent(new Event('input', { bubbles: true }))
       })
-      act(() =>
-        container.querySelector<HTMLButtonElement>('[data-testid="cloud-board-group-by"]')!.click()
+      await act(async () =>
+        container
+          .querySelector<HTMLButtonElement>(
+            '[data-testid="cloud-board-group-by"]',
+          )!
+          .click(),
       )
-      act(() =>
+      await act(async () =>
         document
-          .querySelector<HTMLButtonElement>('[data-testid="cloud-board-group-option-priority"]')!
-          .click()
+          .querySelector<HTMLButtonElement>(
+            '[data-testid="cloud-board-group-option-priority"]',
+          )!
+          .click(),
       )
       expect(container.querySelector(selector)?.textContent).toBe('子任务 1/2')
       act(() =>
         root.render(
           <ProjectBoardAdapter
             {...props}
-            issues={props.issues.map(issue =>
-              issue.id === 'second' ? { ...issue, status: 'completed' } : issue
+            issues={props.issues.map((issue) =>
+              issue.id === 'second' ? { ...issue, status: 'completed' } : issue,
             )}
-          />
-        )
+          />,
+        ),
       )
       expect(container.querySelector(selector)?.textContent).toBe('子任务 2/2')
       const onCurrentParentIdChange = vi.fn()
       const onOpenChildren = vi.fn(() =>
-        root.render(<ProjectBoardAdapter {...props} allIssues={props.issues} />)
+        root.render(
+          <ProjectBoardAdapter {...props} allIssues={props.issues} />,
+        ),
       )
       act(() =>
         root.render(
@@ -158,10 +244,12 @@ describe('board card sub-issue progress', () => {
             issues={[props.issues[0]]}
             onOpenChildren={onOpenChildren}
             onCurrentParentIdChange={onCurrentParentIdChange}
-          />
-        )
+          />,
+        ),
       )
-      expect(container.querySelector('[data-testid="cloud-todo-card-child"]')).toBeNull()
+      expect(
+        container.querySelector('[data-testid="cloud-todo-card-child"]'),
+      ).toBeNull()
       act(() => container.querySelector<HTMLButtonElement>(selector)!.click())
       expect(onOpenChildren).toHaveBeenCalledWith(props.issues[0])
       expect(onCurrentParentIdChange).toHaveBeenCalledWith(props.issues[0].id)
@@ -170,6 +258,7 @@ describe('board card sub-issue progress', () => {
       expect(container.textContent).toContain('Child')
     } finally {
       act(() => root.unmount())
+      container.remove()
       localStorage.clear()
     }
   })
@@ -236,39 +325,161 @@ describe('parent board creation context', () => {
       act(() => root.render(<ProjectBoardAdapter {...props} />))
       act(() =>
         container
-          .querySelector<HTMLButtonElement>('[data-testid="cloud-board-parent-layout"]')!
-          .click()
+          .querySelector<HTMLButtonElement>(
+            '[data-testid="cloud-board-parent-layout"]',
+          )!
+          .click(),
       )
       act(() =>
         container
-          .querySelector<HTMLButtonElement>('[data-testid="cloud-board-parent-enter-parent"]')!
-          .click()
+          .querySelector<HTMLButtonElement>(
+            '[data-testid="cloud-board-parent-enter-parent"]',
+          )!
+          .click(),
       )
       act(() =>
         container
-          .querySelector<HTMLButtonElement>('[data-testid="cloud-todo-column-empty-add-inbox"]')!
-          .click()
+          .querySelector<HTMLButtonElement>(
+            '[data-testid="cloud-todo-column-empty-add-inbox"]',
+          )!
+          .click(),
       )
       expect(onCreateUnmatchedIssue).toHaveBeenCalledWith(
-        expect.objectContaining({ parent, status: 'inbox', tags: [] })
+        expect.objectContaining({ parent, status: 'inbox', tags: [] }),
       )
       expect(onCreateIssue).not.toHaveBeenCalled()
       act(() =>
         root.render(
           <ProjectBoardAdapter
             {...props}
-            issues={props.issues.map(issue =>
-              issue.id === parent.id ? { ...issue, can_view_detail: false } : issue
+            issues={props.issues.map((issue) =>
+              issue.id === parent.id
+                ? { ...issue, can_view_detail: false }
+                : issue,
             )}
-          />
-        )
+          />,
+        ),
       )
       expect(
-        container.querySelector('[data-testid="cloud-todo-column-empty-add-inbox"]')
+        container.querySelector(
+          '[data-testid="cloud-todo-column-empty-add-inbox"]',
+        ),
       ).toBeNull()
     } finally {
       act(() => root.unmount())
       localStorage.clear()
     }
   })
+})
+
+it('keeps focus on the real IssueBoardCard detail button after a cross-column save', async () => {
+  localStorage.setItem(baseBoardStatusGroupingFlag, 'false')
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+  const container = document.createElement('div')
+  document.body.append(container)
+  const root = createRoot(container)
+  const onOpen = vi.fn()
+  function Host() {
+    const [issues, setIssues] = useState<
+      ComponentProps<typeof ProjectBoardAdapter>['issues']
+    >([
+      {
+        id: 'real-moving',
+        cloud_project_id: 'focus-project',
+        sequence_number: 1,
+        parent_id: null,
+        created_by_user_id: 1,
+        assignee_user_id: null,
+        title: 'Real card',
+        description: '',
+        status: 'pending',
+        priority: 'none',
+        due_at: null,
+        tags: ['keep-tag'],
+        sort_order: 0,
+        version: 1,
+        created_at: '2026-11-01',
+        updated_at: '2026-11-01',
+        completed_at: null,
+        can_edit: true,
+      },
+    ])
+    return (
+      <ProjectBoardAdapter
+        project={{
+          id: 'focus-project',
+          public_id: 'focus-project',
+          project_key: 'FOCUS',
+          name: 'Focus',
+          description: '',
+          project_store: 'local',
+          task_provider: 'local',
+          provider_config: {},
+          status: 'active',
+          tags: [],
+          version: 1,
+          created_by_user_id: 1,
+          created_at: '2026-11-01',
+          updated_at: '2026-11-01',
+        }}
+        issues={issues}
+        statuses={[
+          { id: 'pending', name: 'Pending', color: 'gray' },
+          { id: 'in_progress', name: 'In progress', color: 'blue' },
+          { id: 'completed', name: 'Completed', color: 'green' },
+        ]}
+        agents={[]}
+        members={[]}
+        taskBindings={[]}
+        boardError={null}
+        labels={{
+          groupBy: 'Group',
+          groupStatus: 'Status',
+          groupPriority: 'Priority',
+          groupAssignee: 'Assignee',
+          groupTag: 'Tag',
+          noIssues: 'Empty',
+          noPriority: 'None',
+          noTag: 'None',
+          search: 'Search',
+          unassigned: 'Unassigned',
+        }}
+        translate={createCollaborationTranslator('en')}
+        onOpen={onOpen}
+        onCreateIssue={() => {}}
+        onMove={async (_item, mutation) => setIssues(mutation.optimisticItems)}
+      />
+    )
+  }
+  const card = () => {
+    const button = container.querySelector<HTMLButtonElement>(
+      '[data-testid="cloud-todo-card-real-moving"]',
+    )
+    if (!button) throw new Error('Missing real card')
+    return button
+  }
+  try {
+    await act(async () => root.render(<Host />))
+    act(() => card().focus())
+    for (const key of [' ', 'ArrowRight', ' '])
+      await act(async () =>
+        card().dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key,
+            code: key === ' ' ? 'Space' : key,
+            bubbles: true,
+            cancelable: true,
+          }),
+        ),
+      )
+    expect(
+      card().closest('[data-testid="cloud-todo-column-dropzone-in_progress"]'),
+    ).not.toBeNull()
+    expect(document.activeElement).toBe(card())
+    expect(onOpen).not.toHaveBeenCalled()
+  } finally {
+    act(() => root.unmount())
+    container.remove()
+    localStorage.removeItem(baseBoardStatusGroupingFlag)
+  }
 })

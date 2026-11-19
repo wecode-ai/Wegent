@@ -1,4 +1,3 @@
-import { useMarkdownServices } from './MarkdownServices'
 import {
   Check,
   Copy,
@@ -8,10 +7,12 @@ import {
   Minimize2,
   TriangleAlert,
 } from 'lucide-react'
-import { useState } from 'react'
 import type { ReactNode, RefObject } from 'react'
+import { useState } from 'react'
+import { Button as ControlButton } from './Button'
 import type { DiagramArtifact } from './diagramArtifact'
 import { copyDiagramPng, renderDiagramPng, saveDiagramPng } from './diagramImageExport'
+import { useMarkdownServices } from './MarkdownServices'
 
 type ActionState = 'busy' | 'error' | 'idle' | 'success'
 
@@ -79,7 +80,8 @@ export function DiagramImageActions({
       data-search-excluded
       className="absolute bottom-3 right-3 z-10 flex items-center gap-1 rounded-lg border border-border bg-background/90 p-1 shadow-sm backdrop-blur"
     >
-      <button
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="diagram-copy-image-button"
         aria-label={copyLabel}
@@ -89,8 +91,9 @@ export function DiagramImageActions({
         className="flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50 md:h-7 md:w-7"
       >
         <ActionIcon state={copyState} idleIcon={<Copy className="h-4 w-4" />} />
-      </button>
-      <button
+      </ControlButton>
+      <ControlButton
+        variant="unstyled"
         type="button"
         data-testid="diagram-save-image-button"
         aria-label={saveLabel}
@@ -100,9 +103,10 @@ export function DiagramImageActions({
         className="flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50 md:h-7 md:w-7"
       >
         <ActionIcon state={saveState} idleIcon={<Download className="h-4 w-4" />} />
-      </button>
+      </ControlButton>
       {onToggleFullscreen ? (
-        <button
+        <ControlButton
+          variant="unstyled"
           ref={fullscreenButtonRef}
           type="button"
           data-testid={fullscreen ? 'diagram-exit-fullscreen-button' : 'diagram-fullscreen-button'}
@@ -112,7 +116,7 @@ export function DiagramImageActions({
           className="flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary md:h-7 md:w-7"
         >
           {fullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
-        </button>
+        </ControlButton>
       ) : null}
     </div>
   )

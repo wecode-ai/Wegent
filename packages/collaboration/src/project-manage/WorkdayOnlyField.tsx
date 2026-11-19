@@ -1,4 +1,5 @@
 import { useId } from 'react'
+import { Checkbox } from '../controls/Checkbox'
 
 interface WorkdayOnlyFieldProps {
   checked: boolean
@@ -19,13 +20,12 @@ export function WorkdayOnlyField({
   return (
     <div className="space-y-1.5 py-2">
       <label className="!flex min-h-11 items-center gap-2 text-sm text-text-primary md:min-h-8">
-        <input
+        <Checkbox
+          aria-label={label}
           aria-describedby={descriptionId}
           checked={checked}
-          className="!h-4 !min-h-0 !w-4 shrink-0 rounded border-border !p-0 accent-text-primary"
           data-testid={testId}
-          onChange={event => onChange(event.target.checked)}
-          type="checkbox"
+          onCheckedChange={checked => onChange(checked === true)}
         />
         <span>{label}</span>
       </label>

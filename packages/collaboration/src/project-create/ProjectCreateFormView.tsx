@@ -1,21 +1,11 @@
+import { SelectContent, SelectItem, SelectRoot, SelectTrigger } from '../controls/SelectParts'
+import { normalizeSelectValue } from '../controls/selectValue'
+import { Textarea as ControlTextarea } from '../controls/Textarea'
+import { TextField as ControlInput } from '../controls/TextField'
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useId, type Dispatch, type ReactNode, type RefObject, type SetStateAction } from 'react'
-import type {
-  CollaborationGroupMember,
-  CollaborationOwnedAgent,
-  CollaborationWorkspaceMember,
-} from '../types'
-import type {
-  ProjectCreateCollaborationGroupDraft,
-  ProjectCreateDialogProps,
-  ProjectCreateLabels,
-  ProjectCreateProvider,
-  ProjectCreateResourceSetup,
-  ProjectCreateTarget,
-} from './types'
-import type { useProjectCreateController } from './useProjectCreateController'
 import {
   Bot,
   ChevronDown,
@@ -28,11 +18,26 @@ import {
   UserRound,
   UsersRound,
 } from 'lucide-react'
+import { useId, type Dispatch, type ReactNode, type RefObject, type SetStateAction } from 'react'
 import { DialogForm } from '../controls/DialogForm'
 import { TemplateCreateSection } from '../templates/TemplateCreateSection'
 import { TemplateEnvironmentSelection } from '../templates/TemplateEnvironmentSelection'
+import type {
+  CollaborationGroupMember,
+  CollaborationOwnedAgent,
+  CollaborationWorkspaceMember,
+} from '../types'
 import { ProjectCollaboratorPicker } from './ProjectCollaboratorPicker'
 import { ChoiceButton, CollaboratorToken } from './ProjectCreatePrimitives'
+import type {
+  ProjectCreateCollaborationGroupDraft,
+  ProjectCreateDialogProps,
+  ProjectCreateLabels,
+  ProjectCreateProvider,
+  ProjectCreateResourceSetup,
+  ProjectCreateTarget,
+} from './types'
+import type { useProjectCreateController } from './useProjectCreateController'
 
 type Controller = ReturnType<typeof useProjectCreateController>
 
@@ -164,7 +169,7 @@ export function ProjectCreateFormView({
       <div className="collaboration-project-create-body">
         <label className="collaboration-project-create-field">
           <span id={nameLabelId}>{labels.name}</span>
-          <input
+          <ControlInput
             ref={nameInput}
             required
             aria-labelledby={nameLabelId}
@@ -188,11 +193,11 @@ export function ProjectCreateFormView({
         {props.workspaceSelection && (
           <label className="collaboration-project-create-field">
             <span>{props.workspaceSelection.label}</span>
-            <select
-              data-testid="collaboration-project-workspace-select"
-              value={props.workspaceSelection.value}
+            <SelectRoot
+              value={normalizeSelectValue(props.workspaceSelection.value)}
               disabled={state.saving || Boolean(state.createdProject) || groupGenerating}
-              onChange={event => {
+              onValueChange={selectedValue => {
+                if (selectedValue === null) return
                 setAddedPeople([])
                 commands.setMemberUserIds([])
                 commands.setAgentResourceIds([])
@@ -204,15 +209,18 @@ export function ProjectCreateFormView({
                 commands.clearError()
                 setCollaboratorPickerOpen(false)
                 setGroupEditorDraft(null)
-                props.workspaceSelection?.onChange(event.target.value)
+                props.workspaceSelection?.onChange(selectedValue)
               }}
             >
-              {props.workspaceSelection.options.map(option => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+              <SelectTrigger data-testid="collaboration-project-workspace-select" />
+              <SelectContent>
+                {props.workspaceSelection.options.map(option => (
+                  <SelectItem key={option.value} value={String(option.value)}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </SelectRoot>
           </label>
         )}
 
@@ -357,7 +365,8 @@ export function ProjectCreateFormView({
                     <UsersRound aria-hidden="true" />
                     <strong>{state.collaborationGroupDraft.name}</strong>
                   </span>
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid="collaboration-project-create-edit-group"
                     onClick={() => {
@@ -371,7 +380,7 @@ export function ProjectCreateFormView({
                   >
                     <Pencil aria-hidden="true" />
                     {labels.editResponsibilities}
-                  </button>
+                  </ControlButton>
                 </div>
                 <div className="collaboration-project-create-group-members">
                   {groupedParticipants.map(participant => {
@@ -406,13 +415,14 @@ export function ProjectCreateFormView({
                     <p>{state.collaborationGroupDraft.instructions}</p>
                   </div>
                 ) : null}
-                <button
+                <ControlButton
+                  variant="unstyled"
                   type="button"
                   className="collaboration-project-create-group-remove"
                   onClick={() => commands.setCollaborationGroupDraft(null)}
                 >
                   {labels.removeGroup}
-                </button>
+                </ControlButton>
               </div>
             ) : null}
             <div className="collaboration-project-create-collaborator-tokens">
@@ -473,7 +483,8 @@ export function ProjectCreateFormView({
               onSelectGroup={importGroup}
               groupAction={
                 selectedAgents.length > 0 && resourceSetup.generateCollaborationGroupDraft ? (
-                  <button
+                  <ControlButton
+                    variant="unstyled"
                     type="button"
                     data-testid="collaboration-project-create-new-group"
                     disabled={groupGenerating || generationModelsLoading}
@@ -492,7 +503,7 @@ export function ProjectCreateFormView({
                           : labels.groupRecommendationDescription}
                       </small>
                     </span>
-                  </button>
+                  </ControlButton>
                 ) : null
               }
             />
@@ -509,10 +520,15 @@ export function ProjectCreateFormView({
                   <strong>{labels.groupRecommendationTitle}</strong>
                   <p>{labels.groupRecommendationDescription}</p>
                   <span>
-                    <button type="button" onClick={() => setGroupRecommendationDismissed(true)}>
+                    <ControlButton
+                      variant="unstyled"
+                      type="button"
+                      onClick={() => setGroupRecommendationDismissed(true)}
+                    >
                       {labels.keepDirectCollaboration}
-                    </button>
-                    <button
+                    </ControlButton>
+                    <ControlButton
+                      variant="unstyled"
                       type="button"
                       className="collaboration-primary-button"
                       data-testid="collaboration-project-create-organize-group"
@@ -520,7 +536,7 @@ export function ProjectCreateFormView({
                       onClick={openGroupModelPicker}
                     >
                       {groupGenerating ? labels.generatingGroup : labels.organizeAsGroup}
-                    </button>
+                    </ControlButton>
                   </span>
                 </div>
               </div>
@@ -547,7 +563,8 @@ export function ProjectCreateFormView({
         )}
 
         <section className="collaboration-project-create-advanced">
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             className="collaboration-project-create-advanced-trigger"
             aria-expanded={advancedSettingsOpen}
@@ -561,14 +578,14 @@ export function ProjectCreateFormView({
               </small>
             )}
             <ChevronDown aria-hidden="true" />
-          </button>
+          </ControlButton>
           {advancedSettingsOpen ? (
             <div className="collaboration-project-create-advanced-content">
               <label className="collaboration-project-create-field">
                 <span>
                   {labels.description} <small>{labels.optional}</small>
                 </span>
-                <textarea
+                <ControlTextarea
                   data-testid={testIds?.description ?? 'cloud-project-description'}
                   value={state.description}
                   onChange={event => commands.setDescription(event.target.value)}
@@ -599,7 +616,7 @@ export function ProjectCreateFormView({
                 <section className="collaboration-project-create-provider-config">
                   <label className="collaboration-project-create-field">
                     <span id={repositoryLabelId}>{labels.repository}</span>
-                    <input
+                    <ControlInput
                       ref={repositoryInput}
                       required
                       aria-labelledby={repositoryLabelId}
@@ -638,7 +655,7 @@ export function ProjectCreateFormView({
                     </span>
                     <div className="collaboration-project-create-token">
                       <LockKeyhole aria-hidden="true" />
-                      <input
+                      <ControlInput
                         data-testid="cloud-project-provider-token"
                         type="password"
                         autoComplete="new-password"
@@ -658,7 +675,7 @@ export function ProjectCreateFormView({
                 <section className="collaboration-project-create-provider-config">
                   <label className="collaboration-project-create-field">
                     <span>{labels.aitableUrl}</span>
-                    <input
+                    <ControlInput
                       data-testid="cloud-project-aitable-url"
                       value={state.aitableUrl}
                       onChange={event => {
@@ -688,15 +705,17 @@ export function ProjectCreateFormView({
             </p>
           )}
           <div className="collaboration-project-create-footer-actions">
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               disabled={state.saving}
               data-testid="collaboration-project-create-cancel"
               onClick={requestProjectClose}
             >
               {labels.cancel}
-            </button>
-            <button
+            </ControlButton>
+            <ControlButton
+              variant="unstyled"
               type="submit"
               className="collaboration-primary-button"
               data-testid={testIds?.confirm ?? 'cloud-project-create-confirm'}
@@ -707,7 +726,7 @@ export function ProjectCreateFormView({
                 : state.createdProject
                   ? labels.openCreated
                   : labels.create}
-            </button>
+            </ControlButton>
           </div>
         </footer>
       ) : null}

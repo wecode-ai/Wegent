@@ -1,12 +1,13 @@
-import { useMemo } from 'react'
-import { ArrowRight, FolderKanban } from 'lucide-react'
-import { IssueActivityMarkdown } from '@wegent/collaboration'
 import { useTranslation } from '@/hooks/useTranslation'
+import { IssueActivityMarkdown } from '@wegent/collaboration'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ArrowRight, FolderKanban } from 'lucide-react'
+import { useMemo } from 'react'
 import type { ExperienceIssueData } from '../data/useExperienceIssue'
 import { projectScopeOf, type ExperienceProjectScope } from '../model'
 import { ExperienceDialog } from '../shell/ExperienceDialog'
-import { issueSummaryContent } from './issueSummaryContent'
 import './ExperienceIssueSummary.css'
+import { issueSummaryContent } from './issueSummaryContent'
 
 interface Props {
   data: ExperienceIssueData
@@ -39,22 +40,24 @@ export function ExperienceIssueSummary({ data, onClose, onConfigure, onProject }
         <p data-testid="collaboration-exp-issue-summary-status">
           {t('detailsSummary.status', { value: status })}
         </p>
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           className="experience-summary-link"
           data-testid="collaboration-exp-issue-summary-configure"
           onClick={onConfigure}
         >
           {t('detailsSummary.configure')} <ArrowRight size={14} aria-hidden="true" />
-        </button>
-        <button
+        </ControlButton>
+        <ControlButton
+          variant="unstyled"
           type="button"
           className="experience-summary-link"
           data-testid="collaboration-exp-issue-summary-project"
           onClick={() => onProject(projectScopeOf(project))}
         >
           <FolderKanban size={16} aria-hidden="true" /> {project.name}
-        </button>
+        </ControlButton>
         {content.acceptance ? (
           <section data-testid="collaboration-exp-issue-summary-acceptance">
             <h3>{t('detailsSummary.acceptance')}</h3>

@@ -1,4 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { RadioGroup, Radio } from '@wegent/collaboration/controls/RadioGroup'
+import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import { Checkbox } from '@wegent/collaboration/controls/Checkbox'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { useEffect, useMemo, useState } from 'react'
 
 import type {
   WeworkConversationReference,
@@ -27,8 +31,6 @@ const ASSET_BYTE_CHUNK_SIZE = 128 * 1024
 const STATUS_POLL_INTERVAL_MS = 100
 const REMOTE_ASSET_TIMEOUT_MS = 30_000
 const REMOTE_ASSET_MAX_BYTES = 100 * 1024 * 1024
-const FOCUSABLE_SELECTOR =
-  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
 interface ExportTaskStatus {
   readonly exportTaskId: string
@@ -61,8 +63,6 @@ export default function ConversationExportDialog() {
   const [progress, setProgress] = useState('')
   const [error, setError] = useState('')
   const [completedPath, setCompletedPath] = useState('')
-  const dialogRef = useRef<HTMLElement | null>(null)
-  const previousFocusRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
     const open = (event: Event) => {
@@ -79,28 +79,6 @@ export default function ConversationExportDialog() {
     window.addEventListener(OPEN_EVENT, open)
     return () => window.removeEventListener(OPEN_EVENT, open)
   }, [])
-
-  useEffect(() => {
-    if (!reference) return
-    previousFocusRef.current = document.activeElement as HTMLElement | null
-    const frame = window.requestAnimationFrame(() => dialogRef.current?.focus())
-    return () => {
-      window.cancelAnimationFrame(frame)
-      previousFocusRef.current?.focus()
-      previousFocusRef.current = null
-    }
-  }, [reference])
-
-  useEffect(() => {
-    if (!reference || submitting) return
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      event.preventDefault()
-      setReference(null)
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [reference, submitting])
 
   useEffect(() => {
     if (!reference) return
@@ -260,35 +238,34 @@ export default function ConversationExportDialog() {
         if (event.target === event.currentTarget) close()
       }}
     >
-      <section
-        ref={dialogRef}
-        aria-labelledby="conversation-export-title"
-        aria-modal="true"
-        className="max-h-[calc(100vh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-surface p-5 text-text-primary shadow-xl"
-        role="dialog"
-        tabIndex={-1}
-        onKeyDown={event => {
-          if (event.key !== 'Tab') return
-          const focusable = Array.from(
-            dialogRef.current?.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR) ?? []
-          )
-          if (focusable.length === 0) return
-          const currentIndex = focusable.indexOf(document.activeElement as HTMLElement)
-          const nextIndex = event.shiftKey
-            ? currentIndex <= 0
-              ? focusable.length - 1
-              : currentIndex - 1
-            : currentIndex === focusable.length - 1
-              ? 0
-              : currentIndex + 1
-          event.preventDefault()
-          focusable[nextIndex]?.focus()
-        }}
+      <DialogSurface
+        onClose={close}
+        render={
+          <section
+            aria-labelledby="conversation-export-title"
+            aria-modal="true"
+            className="max-h-[calc(100vh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl border border-border bg-surface p-5 text-text-primary shadow-xl"
+            tabIndex={-1}
+          />
+        }
       >
         <h2 id="conversation-export-title" className="text-heading-md font-semibold">
           {translate('导出会话', 'Export conversation')}
         </h2>
-        <fieldset className="mt-5 space-y-2">
+        <RadioGroup
+          render={<fieldset />}
+          value={format}
+          disabled={submitting || Boolean(completedPath)}
+          onValueChange={value => {
+            if (value !== 'markdown' && value !== 'html') return
+            setFormat(value)
+            setSelection(current => ({
+              ...current,
+              images: defaultConversationExportSelection(value).images,
+            }))
+          }}
+          className="mt-5 space-y-2"
+        >
           <legend className="mb-2 text-sm font-medium">
             {translate('文件格式', 'File format')}
           </legend>
@@ -302,25 +279,11 @@ export default function ConversationExportDialog() {
               key={value}
               className="flex min-h-11 cursor-pointer items-center gap-3 rounded-xl border border-border px-3 hover:bg-muted"
             >
-              <input
-                checked={format === value}
-                data-testid={`conversation-export-format-${value}`}
-                disabled={submitting || Boolean(completedPath)}
-                name="conversation-export-format"
-                type="radio"
-                value={value}
-                onChange={() => {
-                  setFormat(value)
-                  setSelection(current => ({
-                    ...current,
-                    images: defaultConversationExportSelection(value).images,
-                  }))
-                }}
-              />
+              <Radio value={value} data-testid={`conversation-export-format-${value}`} />
               <span className="text-sm">{label}</span>
             </label>
           ))}
-        </fieldset>
+        </RadioGroup>
         <fieldset className="mt-5">
           <legend className="mb-2 text-sm font-medium">
             {translate('导出内容', 'Export content')}
@@ -342,13 +305,12 @@ export default function ConversationExportDialog() {
                   key={key}
                   className="flex min-h-10 cursor-pointer items-center gap-2 rounded-lg border border-border px-3 text-sm hover:bg-muted has-[:disabled]:cursor-default has-[:disabled]:opacity-45"
                 >
-                  <input
+                  <Checkbox
                     checked={selection[key]}
                     data-testid={`conversation-export-content-${key}`}
                     disabled={loading || submitting || Boolean(completedPath) || unavailable}
-                    type="checkbox"
-                    onChange={event =>
-                      setSelection(current => ({ ...current, [key]: event.target.checked }))
+                    onCheckedChange={checked =>
+                      setSelection(current => ({ ...current, [key]: checked === true }))
                     }
                   />
                   <span className="min-w-0 flex-1">{label}</span>
@@ -389,7 +351,8 @@ export default function ConversationExportDialog() {
           </p>
         ) : null}
         <div className="mt-5 flex justify-end gap-2">
-          <button
+          <ControlButton
+            variant="unstyled"
             className="h-8 rounded-lg px-3 text-sm text-text-secondary hover:bg-muted"
             data-testid="conversation-export-cancel"
             disabled={submitting}
@@ -397,8 +360,10 @@ export default function ConversationExportDialog() {
             onClick={close}
           >
             {translate('取消', 'Cancel')}
-          </button>
-          <button
+          </ControlButton>
+          <ControlButton
+            variant="primary"
+            size="sm"
             className="h-8 rounded-lg bg-text-primary px-3 text-sm text-background disabled:opacity-50"
             data-testid="conversation-export-confirm"
             disabled={loading || submitting || !hasSelectedContent}
@@ -416,9 +381,9 @@ export default function ConversationExportDialog() {
               : submitting
                 ? translate('正在导出…', 'Exporting…')
                 : translate('导出', 'Export')}
-          </button>
+          </ControlButton>
         </div>
-      </section>
+      </DialogSurface>
     </div>
   )
 }

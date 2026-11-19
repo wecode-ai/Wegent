@@ -1,7 +1,8 @@
-import { memo } from 'react'
-import { ChevronDown } from 'lucide-react'
 import { useOptionalAppearance } from '@/features/appearance'
 import type { PluginMarketplaceItem } from '@/types/api'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
+import { ChevronDown } from 'lucide-react'
+import { memo } from 'react'
 import { resolvePluginLogo } from '../plugin-assets'
 import { marketplacePluginDistribution } from '../pluginDistribution'
 import { PluginSourceAvatar } from '../PluginSourceAvatar'
@@ -19,7 +20,8 @@ export const PluginMarketplaceRevealButton = memo(function PluginMarketplaceReve
 }) {
   const appearanceMode = useOptionalAppearance()?.resolvedMode ?? 'light'
   return (
-    <button
+    <ControlButton
+      variant="unstyled"
       type="button"
       data-testid={testId}
       className="plugin-market-reveal-button"
@@ -54,6 +56,6 @@ export const PluginMarketplaceRevealButton = memo(function PluginMarketplaceReve
       </span>
       <span className="plugin-market-reveal-copy">{label}</span>
       <ChevronDown className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-    </button>
+    </ControlButton>
   )
 })

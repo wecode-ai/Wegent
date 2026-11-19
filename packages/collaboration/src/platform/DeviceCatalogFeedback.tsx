@@ -1,3 +1,4 @@
+import { Button as ControlButton } from '../markdown/Button'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -27,14 +28,15 @@ export function DeviceCatalogFeedback({
             )}
             {error instanceof Error ? `：${error.message}` : ''}
           </span>
-          <button
+          <ControlButton
+            variant="unstyled"
             type="button"
             className="collaboration-link-button"
             data-testid={`collaboration-devices-retry-${source}`}
             onClick={() => void retry()}
           >
             {translate('common.retry', '重试')}
-          </button>
+          </ControlButton>
         </div>
       ))}
       {catalog.pending ? (

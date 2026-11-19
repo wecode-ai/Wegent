@@ -1,9 +1,29 @@
+import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
+import { DiagramImageActions } from '@/components/chat/DiagramImageActions'
+import { captureDiagramArtifact } from '@/components/chat/diagramImageExport'
+import { PierreCodeProvider } from '@/components/code/PierreCodeProvider'
+import { Button } from '@/components/ui/button'
+import { getRuntimeConfig } from '@/config/runtime'
+import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
+import { useCodeTheme } from '@/features/appearance/useCodeTheme'
+import { useTranslation } from '@/hooks/useTranslation'
+import {
+  logFilePreviewDiagnostic,
+  scheduleFilePreviewMainThreadProbe,
+} from '@/lib/file-preview-diagnostics'
+import { isEditableShortcutTarget } from '@/lib/keybindings'
+import { isDocxPreviewFile, safeOfficePreviewFile } from '@/lib/safe-office-preview'
+import { publishSelectedTextSelection, writeSelectedTextDragData } from '@/lib/selected-text-drag'
+import type { CodeCommentContext, WorkspaceTextFileResponse } from '@/types/workspace-files'
+import engineeringRenderers from '@file-viewer/preset-engineering'
+import liteRenderers from '@file-viewer/preset-lite'
+import officeRenderers from '@file-viewer/preset-office'
+import FileViewer from '@file-viewer/react'
 import type { CodeViewFileItem } from '@pierre/diffs'
 import { CodeView, EditProvider, type CodeViewHandle } from '@pierre/diffs/react'
-import FileViewer from '@file-viewer/react'
-import engineeringRenderers from '@file-viewer/preset-engineering'
-import officeRenderers from '@file-viewer/preset-office'
-import liteRenderers from '@file-viewer/preset-lite'
+import { Textarea as ControlTextarea } from '@wegent/collaboration/controls/Textarea'
+import type { MarkdownFileOpenOptions } from '@wegent/collaboration/markdown'
+import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { MessageSquare } from 'lucide-react'
 import {
   memo,
@@ -19,28 +39,10 @@ import {
   type KeyboardEvent,
   type ProfilerOnRenderCallback,
 } from 'react'
-import type { MarkdownFileOpenOptions } from '@wegent/collaboration/markdown'
-import { AssistantMarkdown } from '@/components/chat/AssistantMarkdown'
-import { DiagramImageActions } from '@/components/chat/DiagramImageActions'
-import { Button } from '@/components/ui/button'
-import { captureDiagramArtifact } from '@/components/chat/diagramImageExport'
-import { getRuntimeConfig } from '@/config/runtime'
-import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
-import { useTranslation } from '@/hooks/useTranslation'
-import { isEditableShortcutTarget } from '@/lib/keybindings'
-import { publishSelectedTextSelection, writeSelectedTextDragData } from '@/lib/selected-text-drag'
-import {
-  logFilePreviewDiagnostic,
-  scheduleFilePreviewMainThreadProbe,
-} from '@/lib/file-preview-diagnostics'
-import { installCodeViewTextDrag } from './codeViewTextDrag'
-import { useCodeTheme } from '@/features/appearance/useCodeTheme'
-import type { CodeCommentContext, WorkspaceTextFileResponse } from '@/types/workspace-files'
 import { WorkspaceXMindPreview } from './WorkspaceXMindPreview'
+import { installCodeViewTextDrag } from './codeViewTextDrag'
 import { useWorkspaceCodeEditor } from './useWorkspaceCodeEditor'
-import { PierreCodeProvider } from '@/components/code/PierreCodeProvider'
 import { isHtmlFile, isMarkdownFile, workspaceFileViewerType } from './workspaceFileTypes'
-import { isDocxPreviewFile, safeOfficePreviewFile } from '@/lib/safe-office-preview'
 
 const PIERRE_WORKSPACE_CODE_VIEW_CSS = `
   :host {
@@ -721,7 +723,7 @@ function WorkspaceFilePreviewContent({
             <MessageSquare className="h-4 w-4" />
             {t('workbench.workspace_file_local_comment', '本地评论')}
           </div>
-          <textarea
+          <ControlTextarea
             data-testid="workspace-file-comment-input"
             value={comment}
             onChange={event =>
@@ -734,7 +736,8 @@ function WorkspaceFilePreviewContent({
             className="min-h-20 w-full resize-none rounded-lg border border-border bg-surface p-2 text-sm outline-none"
           />
           <div className="mt-2 flex justify-end gap-2">
-            <button
+            <ControlButton
+              variant="unstyled"
               type="button"
               data-testid="workspace-file-comment-cancel-button"
               className="h-8 rounded-md px-3 text-sm text-text-secondary hover:bg-muted"
@@ -744,8 +747,10 @@ function WorkspaceFilePreviewContent({
               }}
             >
               {t('workbench.cancel', '取消')}
-            </button>
-            <button
+            </ControlButton>
+            <ControlButton
+              variant="primary"
+              size="sm"
               type="button"
               data-testid="workspace-file-add-comment-button"
               className="h-8 rounded-md bg-text-primary px-3 text-sm font-medium text-background disabled:opacity-50"
@@ -753,7 +758,7 @@ function WorkspaceFilePreviewContent({
               onClick={addComment}
             >
               {t('workbench.comment', '评论')}
-            </button>
+            </ControlButton>
           </div>
         </div>
       )}
@@ -826,14 +831,15 @@ export function WorkspaceFilePreview({
         role="alert"
       >
         <p>{error}</p>
-        <button
+        <ControlButton
+          variant="unstyled"
           type="button"
           data-testid="workspace-file-preview-retry-button"
           className="underline"
           onClick={onRetry}
         >
           {t('workbench.workspace_file_retry', '重试')}
-        </button>
+        </ControlButton>
       </section>
     )
   }
