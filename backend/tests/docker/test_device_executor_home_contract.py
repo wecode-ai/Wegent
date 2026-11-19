@@ -4,9 +4,11 @@
 
 """Contracts for the cloud/remote device Executor Home and entrypoint."""
 
+import fcntl
 import os
 import shlex
 import subprocess
+from contextlib import ExitStack
 from pathlib import Path
 
 import pytest
@@ -53,6 +55,23 @@ def _executor_home(tmp_path: Path) -> Path:
     return executor_home
 
 
+def _write_flock_command(path: Path) -> None:
+    command = path / "flock"
+    command.write_text(
+        """#!/usr/bin/env python3
+import fcntl
+import sys
+
+try:
+    fcntl.flock(int(sys.argv[-1]), fcntl.LOCK_EX | fcntl.LOCK_NB)
+except BlockingIOError:
+    sys.exit(1)
+""",
+        encoding="utf-8",
+    )
+    command.chmod(0o755)
+
+
 def _run_entrypoint(
     *,
     tmp_path: Path,
@@ -64,13 +83,15 @@ def _run_entrypoint(
     projects_root: Path | None = None,
     legacy_executor_home: bool = False,
     legacy_volume_mounted: bool = False,
+    additional_mounts: tuple[Path, ...] = (),
     codex_homes: dict[str, str] | None = None,
     start_executor: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir(exist_ok=True)
-    for name in ("code-server", "flock", "install", "node", "wecode"):
+    for name in ("code-server", "install", "node", "wecode"):
         _write_success_command(fake_bin, name)
+    _write_flock_command(fake_bin)
     (fake_bin / "code-server").write_text(
         "#!/usr/bin/env bash\n"
         'printf "%s\\n" "${CODEX_HOME-}" "${WEGENT_CODEX_HOME-}" '
@@ -82,6 +103,7 @@ def _run_entrypoint(
     mounted_roots = [data_root]
     if legacy_executor_home or legacy_volume_mounted:
         mounted_roots.append(legacy_home)
+    mounted_roots.extend(additional_mounts)
     (fake_bin / "mountpoint").write_text(
         "#!/usr/bin/env bash\n"
         + " || ".join(
@@ -458,16 +480,23 @@ def test_device_entrypoint_rejects_conflicting_home_link_without_mutating_data(
 
 
 @pytest.mark.parametrize(
-    ("target_name", "link_parent", "persistence_verified"),
+    ("target_name", "link_parent", "persistence_verified", "mounted_root"),
     [
-        ("unmounted", False, "true"),
-        ("data-root-extra", False, "true"),
-        ("unmounted", True, "true"),
-        ("unmounted", False, "false"),
+        ("unmounted", False, "true", None),
+        ("data-root-extra", False, "true", None),
+        ("unmounted", True, "true", None),
+        ("unmounted", False, "false", None),
+        ("separately-mounted", False, "true", "home"),
+        ("separately-mounted", True, "true", "home"),
+        ("mounted-parent", True, "true", "parent"),
     ],
 )
 def test_device_entrypoint_verifies_resolved_home_storage_before_writing(
-    tmp_path: Path, target_name: str, link_parent: bool, persistence_verified: str
+    tmp_path: Path,
+    target_name: str,
+    link_parent: bool,
+    persistence_verified: str,
+    mounted_root: str | None,
 ) -> None:
     executor_home = _executor_home(tmp_path)
     data_root = tmp_path / "data-root"
@@ -482,12 +511,14 @@ def test_device_entrypoint_verifies_resolved_home_storage_before_writing(
         link.rmdir()
     link.symlink_to(target_root, target_is_directory=True)
     entries = {root: set(root.rglob("*")) for root in (data_root, target_root)}
+    mount_paths = {"home": linked_home, "parent": target_root}
 
     result = _run_entrypoint(
         tmp_path=tmp_path,
         executor_home=executor_home,
         home_id="device-stable-1",
         persistence_verified=persistence_verified,
+        additional_mounts=(mount_paths[mounted_root],) if mounted_root else (),
     )
 
     assert link.is_symlink()
@@ -495,7 +526,7 @@ def test_device_entrypoint_verifies_resolved_home_storage_before_writing(
     for root in (data_root, linked_home):
         assert (root / ".executor-home-id").read_text() == "device-stable-1"
         assert (root / "persisted-session").read_text() == "original-session"
-    if persistence_verified == "true":
+    if persistence_verified == "true" and mounted_root != "home":
         assert result.returncode != 0
         assert "Executor Home inside a mounted storage root" in result.stderr
         for root, original_entries in entries.items():
@@ -504,6 +535,79 @@ def test_device_entrypoint_verifies_resolved_home_storage_before_writing(
     else:
         assert result.returncode == 0, result.stderr
         assert (linked_home / "runtime-work").is_dir()
+
+
+def test_device_entrypoint_rejects_container_root_before_identity_and_writes(
+    tmp_path: Path,
+) -> None:
+    executor_home = _executor_home(tmp_path)
+    executor_home.symlink_to("/", target_is_directory=True)
+    data_root = tmp_path / "data-root"
+    sentinel = data_root / "persisted-session"
+    sentinel.write_text("original-session")
+    original_entries = set(data_root.rglob("*"))
+
+    result = _run_entrypoint(
+        tmp_path=tmp_path,
+        executor_home=executor_home,
+        home_id=None,
+        additional_mounts=(Path("/"),),
+    )
+
+    assert result.returncode != 0
+    assert "Executor Home inside a mounted storage root" in result.stderr
+    assert "requires WEGENT_EXECUTOR_HOME_ID" not in result.stderr
+    assert executor_home.is_symlink()
+    assert os.readlink(executor_home) == "/"
+    assert set(data_root.rglob("*")) == original_entries
+    assert sentinel.read_text() == "original-session"
+    assert not (tmp_path / "codex-homes").exists()
+
+
+@pytest.mark.parametrize(
+    ("blocked_home", "expected_error"),
+    [
+        (None, "Executor Home identity does not match WEGENT_EXECUTOR_HOME_ID"),
+        ("executor", "Another Executor is already using WEGENT_EXECUTOR_HOME"),
+        ("data", "Another Executor is already using the Wegent data volume"),
+    ],
+)
+def test_separately_mounted_executor_home_enforces_identity_and_writer_locks(
+    tmp_path: Path, blocked_home: str | None, expected_error: str
+) -> None:
+    executor_home = _executor_home(tmp_path)
+    linked_home = tmp_path / "mounted-home"
+    linked_home.mkdir()
+    data_root = tmp_path / "data-root"
+    identities = {
+        data_root: "device-stable-1",
+        linked_home: "another-device" if blocked_home is None else "device-stable-1",
+    }
+    for root, identity in identities.items():
+        (root / ".executor-home-id").write_text(identity)
+        (root / "persisted-session").write_text("original-session")
+    executor_home.symlink_to(linked_home, target_is_directory=True)
+
+    with ExitStack() as stack:
+        if blocked_home is not None:
+            root = linked_home if blocked_home == "executor" else data_root
+            lock = stack.enter_context((root / ".writer.lock").open("w"))
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        result = _run_entrypoint(
+            tmp_path=tmp_path,
+            executor_home=executor_home,
+            home_id="device-stable-1",
+            additional_mounts=(linked_home,),
+        )
+
+    assert result.returncode != 0
+    assert expected_error in result.stderr
+    assert executor_home.is_symlink()
+    assert executor_home.resolve() == linked_home
+    for root, identity in identities.items():
+        assert (root / ".executor-home-id").read_text() == identity
+        assert (root / "persisted-session").read_text() == "original-session"
+    assert not (tmp_path / "codex-homes").exists()
 
 
 def test_device_entrypoint_rejects_missing_persistent_mount(tmp_path):

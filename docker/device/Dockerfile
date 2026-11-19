@@ -405,8 +405,9 @@ case "${WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED-true}" in
                 "$resolved_storage_root/"*) executor_home_persisted=true ;;
             esac
         done
-        # Resolve leaf and ancestor links before accepting persisted storage.
-        if [ "$executor_home_persisted" != true ]; then
+        # Container root is not a Home volume; external homes need an exact mount.
+        if [ "$resolved_executor_home" = / ] ||
+            { [ "$executor_home_persisted" != true ] && ! mountpoint -q "$resolved_executor_home"; }; then
             echo "Verified Worktree persistence requires Executor Home inside a mounted storage root" >&2
             exit 1
         fi
