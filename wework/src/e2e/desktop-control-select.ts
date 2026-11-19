@@ -144,6 +144,25 @@ export async function selectDesktopControlChoice(
   if (!target) throw new Error('Selection target is not a registered SDK select or combobox')
   if (target.disabled || !target.actions.includes('setValue'))
     throw new Error('Selection target is disabled or read-only')
+  // The agent omits empty item keys. Use the owned listbox to select a declared empty value.
+  if (target.component === 'select' && mode === 'value' && selection === '') {
+    if (element.getAttribute('aria-expanded') !== 'true') {
+      const opened = await selectionAgent.act({
+        steps: [{ ref: target.ref, action: 'setOpen', args: [true] }],
+      })
+      if (!opened.ok) throw new Error(opened.error?.message ?? 'Unable to open selection target')
+    }
+    const contentId = element.getAttribute('aria-controls')
+    const option = (
+      contentId ? element.ownerDocument.getElementById(contentId) : null
+    )?.querySelector<HTMLElement>('[role="option"][data-value=""]')
+    if (!option) throw new Error('Unable to find select option by value ""')
+    if (option.matches('[aria-disabled="true"], [data-disabled]'))
+      throw new Error('Select option is disabled')
+    option.click()
+    await waitForSelection(element, target.ref, '', timeoutMs)
+    return option.textContent?.trim() ?? ''
+  }
   const query = () => selectionAgent.query({ within: target.ref, text: selection })
   let found = await query()
   if ('error' in found) throw new Error(found.error)

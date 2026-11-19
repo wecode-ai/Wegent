@@ -168,6 +168,9 @@ async function sdkFixture(
             <SelectContent keepMounted>
               <SelectItem value="first">First project</SelectItem>
               <SelectItem value="second">Second project</SelectItem>
+              <SelectItem value="" data-value="">
+                Unassigned
+              </SelectItem>
             </SelectContent>
           </Select>
         ) : kind === 'combobox' ? (
@@ -222,6 +225,18 @@ for (const kind of ['select', 'combobox', 'raw'] as const) {
     }
   )
 }
+
+test('clears an SDK selection when the list offers an empty value', async () => {
+  const fixture = await sdkFixture('raw')
+  try {
+    expect(await selectDesktopControlChoice(fixture.element, '')).toBe('Unassigned')
+    expect(await desktopControlSelectionValue(fixture.element)).toBe('')
+    expect(fixture.container.querySelector('output')?.textContent).toBe('')
+  } finally {
+    await act(async () => fixture.root.unmount())
+    fixture.container.remove()
+  }
+})
 
 for (const kind of ['cancel', 'reject'] as const) {
   test(`rejects SDK success when the business owner ${kind}s selection`, async () => {
