@@ -950,6 +950,7 @@ export async function createDesktopScenario({
         modelResponseTimeoutMs
       )
       await guidedReplies.verify({
+        control,
         reply: (card, text) => replyToActivity(control, card, text),
         firstCard: publicComment,
         secondCard: `cloud-task-activity-card-${secondPublicComment.id}`,

@@ -8,6 +8,8 @@ import {
   requestContainsToolOutput,
 } from './response-protocol.mjs'
 
+const roundSummary = '两个评论线程的处理结果已分别回复。'
+
 export function createGuidedReplies({
   marker,
   firstQuestion,
@@ -50,7 +52,7 @@ export function createGuidedReplies({
     async modelEvents(body, requestText, scope, listComments) {
       if (!requestText.includes(firstQuestion)) return null
       if (requestContainsToolOutput(body, answerA)) {
-        return [assistantMessage('两个评论线程的处理结果已分别回复。')]
+        return [assistantMessage(roundSummary)]
       }
       if (!requestContainsToolOutput(body, listCall)) {
         if (!requestContainsToolOutput(body, `${listCall}-search`)) {
@@ -73,7 +75,7 @@ export function createGuidedReplies({
         body: secondDone ? firstAnswer : secondAnswer,
       })
     },
-    async verify({ reply, firstCard, secondCard, executorLog, listComments, timeoutMs }) {
+    async verify({ control, reply, firstCard, secondCard, executorLog, listComments, timeoutMs }) {
       const offset = (await readFile(executorLog, 'utf8')).length
       try {
         await reply(firstCard, firstQuestion)
@@ -115,6 +117,18 @@ export function createGuidedReplies({
           'A 楼回复没有回到 A 楼',
           timeoutMs
         )
+        await waitForValue(
+          listComments,
+          rows => rows.find(row => row.body === roundSummary && !row.reply_to_comment_id),
+          '未指定楼层的总结没有发到 Issue 主讨论',
+          timeoutMs
+        )
+        for (const [card, text] of [
+          [firstCard, firstAnswer],
+          [secondCard, secondAnswer],
+        ]) {
+          await control.command('waitFor', `[data-testid="${card}"]`, { text, timeoutMs })
+        }
       } finally {
         releaseList()
         releaseAnswerA()
