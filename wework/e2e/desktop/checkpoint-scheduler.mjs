@@ -23,13 +23,16 @@ export function isResourceExclusiveCheckpoint(checkpoint, linuxCore = false) {
   )
 }
 
-// Database and Backend startup in these fixtures can delay the 200ms Python
-// descriptor request used by Python setup and plugin development. Keep these
-// fixtures separate from both checkpoints on Linux Core.
+// Backend startup and concurrent Electron sessions can delay the 200ms Python
+// descriptor request. The plugin development job exceeded that deadline while
+// conversation state, Claude runtime and stand-in sessions shared its runner.
 const PYTHON_RUNTIME_STARTUP_PEERS = [
   'collaboration-shared-core',
   'collaboration-templates',
   'collaboration-template-app-device-routing',
+  'claude-runtime',
+  'conversation-state',
+  'stand-in-sessions',
 ]
 
 export function linuxCoreCheckpointResources(checkpoint) {
