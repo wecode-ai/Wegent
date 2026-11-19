@@ -67,5 +67,4 @@ pub(super) const REVISIONS: &[&str] = &[
     include_str!("../../migrations/revisions/e6f1a2b3c4d5.json"),
     include_str!("../../migrations/revisions/f3a7c9e1b2d4.json"),
     include_str!("../../migrations/revisions/b1c2d3e4f5a6.json"),
-    include_str!("../../migrations/revisions/b7e8f9a0c1d2.json"),
 ];

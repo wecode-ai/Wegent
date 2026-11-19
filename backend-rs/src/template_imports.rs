@@ -1,6 +1,6 @@
 //! Actor-private durable template import identities and resource-owned receipts.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 
 use brz_http_server::StatusCode;
 use brz_mysql::{FromMysqlRow, Json, MysqlRow, MysqlTransaction};
@@ -13,23 +13,15 @@ use crate::{auth::SessionUser, http_compat::FastApiError, state::AppState};
 mod cipher;
 use cipher::IntentCipher;
 
-// Binary storage preserves exact identities; SQLx requires text result metadata.
+const TEMPLATE_IMPORT_RESOURCE_TYPE: &str = "template_import";
+const TEMPLATE_IMPORT_KIND: &str = "template_import_operation";
+
 const OPERATION_COLUMNS: &str = concat!(
     "CONVERT(id USING utf8mb4) COLLATE utf8mb4_unicode_ci AS id,",
-    "CONVERT(project_id USING utf8mb4) COLLATE utf8mb4_unicode_ci AS project_id,",
-    "protocol_version,",
-    "CONVERT(intent_sha256 USING utf8mb4) COLLATE utf8mb4_unicode_ci AS intent_sha256,",
-    "CONVERT(intent_encrypted USING utf8mb4) COLLATE utf8mb4_unicode_ci AS intent_encrypted,manifest"
-);
-const SUMMARY_COLUMNS: &str = concat!(
-    "CONVERT(id USING utf8mb4) COLLATE utf8mb4_unicode_ci AS id,",
-    "CONVERT(project_id USING utf8mb4) COLLATE utf8mb4_unicode_ci AS project_id,",
-    "protocol_version,manifest"
-);
-const RECEIPT_COLUMNS: &str = concat!(
-    "CONVERT(step_key USING utf8mb4) COLLATE utf8mb4_unicode_ci AS step_key,",
+    "CONVERT(cloud_project_id USING utf8mb4) COLLATE utf8mb4_unicode_ci AS project_id,",
+    "created_by_user_id AS actor_user_id,",
     "CONVERT(kind USING utf8mb4) COLLATE utf8mb4_unicode_ci AS kind,",
-    "CONVERT(resource_id USING utf8mb4) COLLATE utf8mb4_unicode_ci AS resource_id"
+    "metadata"
 );
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -48,6 +40,27 @@ enum StepKind {
     Board,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Receipt {
+    kind: StepKind,
+    request_sha256: String,
+    resource_id: String,
+    #[serde(default)]
+    completed_at: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OperationData {
+    protocol_version: i32,
+    intent_sha256: String,
+    intent_encrypted: String,
+    manifest: Vec<Step>,
+    #[serde(default)]
+    receipts: BTreeMap<String, Receipt>,
+}
+
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 struct Begin {
@@ -60,33 +73,9 @@ struct Begin {
 struct Operation {
     id: String,
     project_id: String,
-    protocol_version: i32,
-    intent_sha256: String,
-    intent_encrypted: String,
-    manifest: Json<Vec<Step>>,
-}
-
-#[derive(FromMysqlRow)]
-struct Receipt {
-    step_key: String,
+    actor_user_id: i32,
     kind: String,
-    resource_id: String,
-}
-
-#[derive(FromMysqlRow)]
-struct SummaryOperation {
-    id: String,
-    project_id: String,
-    protocol_version: i32,
-    manifest: Json<Vec<Step>>,
-}
-
-#[derive(FromMysqlRow)]
-struct OperationReceipt {
-    operation_id: String,
-    step_key: String,
-    kind: String,
-    resource_id: String,
+    data: Json<OperationData>,
 }
 
 fn unavailable() -> FastApiError {
@@ -128,10 +117,28 @@ fn canonical(value: &Value) -> Value {
     }
 }
 
-fn digest(intent: &Value, steps: &[Step]) -> Result<String, FastApiError> {
-    let payload = canonical(&json!({"protocolVersion":1,"intent":intent,"steps":steps}));
-    let bytes = serde_json::to_vec(&payload).map_err(|_| FastApiError::internal())?;
+fn digest_value(value: &Value) -> Result<String, FastApiError> {
+    let bytes = serde_json::to_vec(value).map_err(|_| FastApiError::internal())?;
     Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+fn digest(intent: &Value, steps: &[Step]) -> Result<String, FastApiError> {
+    digest_value(&canonical(
+        &json!({"protocolVersion":1,"intent":intent,"steps":steps}),
+    ))
+}
+
+fn operation_identity(
+    actor: i32,
+    project: &str,
+    intent_sha256: &str,
+) -> Result<String, FastApiError> {
+    digest_value(&canonical(&json!({
+        "actorUserId":actor,
+        "projectId":project,
+        "protocolVersion":1,
+        "intentSha256":intent_sha256,
+    })))
 }
 
 impl Begin {
@@ -177,15 +184,73 @@ async fn can_maintain(
     Ok(priority.is_some_and(|priority| priority <= 1))
 }
 
-async fn receipts(
+fn manifest_complete(manifest: &[Step], receipts: &BTreeMap<String, Receipt>) -> bool {
+    manifest.iter().all(|step| {
+        receipts
+            .get(&step.key)
+            .is_some_and(|receipt| receipt.kind == step.kind)
+    })
+}
+
+fn steps_complete(operation: &Operation) -> bool {
+    manifest_complete(&operation.data.0.manifest, &operation.data.0.receipts)
+}
+
+fn step_views(manifest: &[Step], receipts: &BTreeMap<String, Receipt>) -> Vec<Value> {
+    manifest
+        .iter()
+        .map(|step| {
+            let mut value = json!({"key":step.key,"kind":step.kind});
+            if let Some(receipt) = receipts.get(&step.key) {
+                if receipt.kind == step.kind {
+                    value["resourceId"] = Value::String(receipt.resource_id.clone());
+                }
+            }
+            value
+        })
+        .collect()
+}
+
+fn summary(operation: &Operation) -> Value {
+    let steps = step_views(&operation.data.0.manifest, &operation.data.0.receipts);
+    let complete = steps.iter().all(|step| step.get("resourceId").is_some());
+    json!({
+        "id":operation.id,"projectId":operation.project_id,
+        "protocolVersion":operation.data.0.protocol_version,
+        "status":if complete { "completed" } else { "pending" },
+        "steps":steps
+    })
+}
+
+fn view(operation: Operation, cipher: &IntentCipher) -> Result<Value, FastApiError> {
+    let intent = cipher.open(&operation.data.0.intent_encrypted)?;
+    if digest(&intent, &operation.data.0.manifest)? != operation.data.0.intent_sha256 {
+        return Err(unavailable());
+    }
+    let mut result = summary(&operation);
+    result["intent"] = intent;
+    Ok(result)
+}
+
+async fn operation_by_id(
     tx: &mut impl MysqlTransaction,
-    operation: &str,
-) -> brz_mysql::MysqlResult<Vec<Receipt>> {
-    tx.fetch_all(
+    operation_id: &str,
+    actor: i32,
+    project: &str,
+) -> brz_mysql::MysqlResult<Option<Operation>> {
+    tx.fetch_optional(
         format!(
-            "SELECT {RECEIPT_COLUMNS} FROM template_import_receipts WHERE operation_id=? FOR UPDATE"
+            "SELECT {OPERATION_COLUMNS} FROM loop_items \
+             WHERE id=? AND resource_type=? AND kind=? AND created_by_user_id=? \
+             AND cloud_project_id=? FOR UPDATE"
         ),
-        (operation,),
+        (
+            operation_id,
+            TEMPLATE_IMPORT_RESOURCE_TYPE,
+            TEMPLATE_IMPORT_KIND,
+            actor,
+            project,
+        ),
     )
     .await
 }
@@ -196,66 +261,8 @@ async fn predecessor_complete(
     actor: i32,
     previous: &str,
 ) -> brz_mysql::MysqlResult<Option<bool>> {
-    let operation:Option<SummaryOperation>=tx.fetch_optional(format!("SELECT {SUMMARY_COLUMNS} FROM template_import_operations WHERE id=? AND actor_user_id=? AND project_id=? AND protocol_version=1 FOR UPDATE"),(previous,actor,project)).await?;
-    let Some(operation) = operation else {
-        return Ok(None);
-    };
-    let receipt = receipts(tx, previous).await?;
-    Ok(Some(
-        step_views(&operation.manifest.0, &receipt)
-            .iter()
-            .all(|step| step.get("resourceId").is_some()),
-    ))
-}
-
-fn step_views(manifest: &[Step], receipts: &[Receipt]) -> Vec<Value> {
-    manifest
-        .iter()
-        .map(|step| {
-            let mut value = json!({"key":step.key,"kind":step.kind});
-            if let Some(receipt) = receipts.iter().find(|receipt| {
-                receipt.step_key == step.key
-                    && serde_json::to_value(&step.kind).ok().as_ref()
-                        == Some(&Value::String(receipt.kind.clone()))
-            }) {
-                value["resourceId"] = Value::String(receipt.resource_id.clone());
-            }
-            value
-        })
-        .collect()
-}
-
-fn summary(operation: SummaryOperation, receipts: Vec<Receipt>) -> Value {
-    let steps = step_views(&operation.manifest.0, &receipts);
-    let complete = steps.iter().all(|step| step.get("resourceId").is_some());
-    json!({
-        "id":operation.id,"projectId":operation.project_id,
-        "protocolVersion":operation.protocol_version,
-        "status":if complete { "completed" } else { "pending" },
-        "steps":steps
-    })
-}
-
-fn view(
-    operation: Operation,
-    receipts: Vec<Receipt>,
-    cipher: &IntentCipher,
-) -> Result<Value, FastApiError> {
-    let intent = cipher.open(&operation.intent_encrypted)?;
-    if digest(&intent, &operation.manifest.0)? != operation.intent_sha256 {
-        return Err(unavailable());
-    }
-    let mut result = summary(
-        SummaryOperation {
-            id: operation.id,
-            project_id: operation.project_id,
-            protocol_version: operation.protocol_version,
-            manifest: operation.manifest,
-        },
-        receipts,
-    );
-    result["intent"] = intent;
-    Ok(result)
+    let operation = operation_by_id(tx, previous, actor, project).await?;
+    Ok(operation.map(|operation| steps_complete(&operation)))
 }
 
 #[brz_http_server::post("/api/v1/cloud-projects/:project_id/template-imports")]
@@ -282,7 +289,7 @@ async fn begin_with_cipher(
     let cipher = cipher?;
     let checksum = digest(&body.intent, &body.steps)?;
     let encrypted = cipher.seal(&canonical(&body.intent))?;
-    let id = crate::wework_auth_tokens::uuid4_hex()?;
+    let id = operation_identity(user.0.id, &project_id, &checksum)?;
     // Keep preflight outside the write transaction so it cannot establish an old snapshot.
     if !state
         .mysql
@@ -307,23 +314,75 @@ async fn begin_with_cipher(
                     Some(true)=>{},
                 }
             }
-            // The unique configuration identity serializes concurrent clients without a lease.
-            tx.execute("INSERT INTO template_import_operations (id,project_id,actor_user_id,protocol_version,intent_sha256,intent_encrypted,manifest,created_at,updated_at) VALUES (?,?,?,1,?,?,?,UTC_TIMESTAMP(6),UTC_TIMESTAMP(6)) ON DUPLICATE KEY UPDATE id=template_import_operations.id",(id.as_str(),project_id.as_str(),user.0.id,checksum.as_str(),encrypted.as_str(),Json(&body.steps))).await?;
-            let operation:Operation=tx.fetch_one(format!("SELECT {OPERATION_COLUMNS} FROM template_import_operations WHERE actor_user_id=? AND project_id=? AND protocol_version=1 AND intent_sha256=? FOR UPDATE"),(user.0.id,project_id.as_str(),checksum.as_str())).await?;
+            let data = OperationData {
+                protocol_version: 1,
+                intent_sha256: checksum.clone(),
+                intent_encrypted: encrypted.clone(),
+                manifest: body.steps.clone(),
+                receipts: BTreeMap::new(),
+            };
+            let required = crate::loop_node_storage::required_columns(tx).await?;
+            let insert = crate::loop_node_storage::insert_sql(
+                &[
+                    "id",
+                    "resource_type",
+                    "project_space",
+                    "cloud_project_id",
+                    "created_by_user_id",
+                    "kind",
+                    "status",
+                    "description",
+                    "metadata",
+                    "version",
+                    "next_item_number",
+                    "sort_order",
+                    "created_at",
+                    "updated_at",
+                ],
+                &[
+                    "?",
+                    "'template_import'",
+                    "'default'",
+                    "?",
+                    "?",
+                    "'template_import_operation'",
+                    "'pending'",
+                    "''",
+                    "?",
+                    "1",
+                    "1",
+                    "0",
+                    "UTC_TIMESTAMP(6)",
+                    "UTC_TIMESTAMP(6)",
+                ],
+                &required,
+            );
+            tx.execute(
+                format!("{insert} ON DUPLICATE KEY UPDATE id=id"),
+                (
+                    id.as_str(),
+                    project_id.as_str(),
+                    user.0.id,
+                    Json(&data),
+                ),
+            )
+            .await?;
+            let operation = operation_by_id(tx, &id, user.0.id, &project_id)
+                .await?
+                .ok_or(brz_mysql::MysqlError::RowNotFound)?;
             // Locking reads above do not establish an RR snapshot. This first consistent
             // read observes revocations committed while waiting, and denial rolls back INSERT.
             if !can_maintain(tx, project, user.0.id).await? {
                 return Err(brz_mysql::MysqlError::RowNotFound);
             }
-            let receipt = receipts(tx, &operation.id).await?;
-            Ok(Ok((operation, receipt)))
+            Ok(Ok(operation))
         })
         .await
         .map_err(|error| match error {
             brz_mysql::MysqlError::RowNotFound => missing(),
             other => storage(other),
         })??;
-    view(result.0, result.1, &cipher)
+    view(result, &cipher)
 }
 
 #[brz_http_server::get("/api/v1/cloud-projects/:project_id/template-imports")]
@@ -337,18 +396,8 @@ async fn list_imports(
     let project_id = project.to_string();
     let result = state.mysql.with_transaction(async |tx| {
         if !can_maintain(tx, project, user.0.id).await? { return Ok(None); }
-        let operations:Vec<SummaryOperation>=tx.fetch_all(format!("SELECT {SUMMARY_COLUMNS} FROM template_import_operations o WHERE actor_user_id=? AND project_id=? AND (SELECT COUNT(*) FROM template_import_receipts r WHERE r.operation_id=o.id)<JSON_LENGTH(manifest) ORDER BY created_at DESC,id DESC"),(user.0.id,project_id.as_str())).await?;
-        let rows:Vec<OperationReceipt>=tx.fetch_all("SELECT CONVERT(r.operation_id USING utf8mb4) COLLATE utf8mb4_unicode_ci AS operation_id,CONVERT(r.step_key USING utf8mb4) COLLATE utf8mb4_unicode_ci AS step_key,CONVERT(r.kind USING utf8mb4) COLLATE utf8mb4_unicode_ci AS kind,CONVERT(r.resource_id USING utf8mb4) COLLATE utf8mb4_unicode_ci AS resource_id FROM template_import_receipts r JOIN template_import_operations o ON o.id=r.operation_id WHERE o.actor_user_id=? AND o.project_id=? AND (SELECT COUNT(*) FROM template_import_receipts completed WHERE completed.operation_id=o.id)<JSON_LENGTH(o.manifest)",(user.0.id,project_id.as_str())).await?;
-        let mut receipts:HashMap<String,Vec<Receipt>>=HashMap::new();
-        for row in rows {
-            receipts.entry(row.operation_id).or_default().push(Receipt {
-                step_key:row.step_key,kind:row.kind,resource_id:row.resource_id,
-            });
-        }
-        Ok(Some(operations.into_iter().map(|operation| {
-            let receipt=receipts.remove(&operation.id).unwrap_or_default();
-            summary(operation,receipt)
-        }).collect::<Vec<_>>()))
+        let operations:Vec<Operation>=tx.fetch_all(format!("SELECT {OPERATION_COLUMNS} FROM loop_items WHERE resource_type=? AND kind=? AND created_by_user_id=? AND cloud_project_id=? AND status='pending' ORDER BY created_at DESC,id DESC"),(TEMPLATE_IMPORT_RESOURCE_TYPE,TEMPLATE_IMPORT_KIND,user.0.id,project_id.as_str())).await?;
+        Ok(Some(operations.into_iter().filter(|operation| !steps_complete(operation)).map(|operation| summary(&operation)).collect::<Vec<_>>()))
     }).await.map_err(storage)?.ok_or_else(missing)?;
     Ok(json!({"items":result}))
 }
@@ -363,14 +412,25 @@ async fn import_status(
 ) -> Result<Value, FastApiError> {
     let project = project_number(project_id)?;
     let project_id = project.to_string();
-    let result = state.mysql.with_transaction(async |tx| {
-        let operation:Option<Operation>=tx.fetch_optional(format!("SELECT {OPERATION_COLUMNS} FROM template_import_operations WHERE id=? AND actor_user_id=? AND project_id=? FOR UPDATE"),(operation_id,user.0.id,project_id.as_str())).await?;
-        let Some(operation)=operation else { return Ok(None); };
-        if !can_maintain(tx, project, user.0.id).await? { return Ok(None); }
-        let receipt=receipts(tx, &operation.id).await?;
-        Ok(Some((operation,receipt)))
-    }).await.map_err(storage)?.ok_or_else(missing)?;
-    view(result.0, result.1, &IntentCipher::from_env()?)
+    let result = state
+        .mysql
+        .with_transaction(async |tx| {
+            let operation = operation_by_id(tx, operation_id, user.0.id, &project_id).await?;
+            let Some(operation) = operation else {
+                return Ok(None);
+            };
+            if operation.kind != TEMPLATE_IMPORT_KIND || operation.actor_user_id != user.0.id {
+                return Ok(None);
+            }
+            if !can_maintain(tx, project, user.0.id).await? {
+                return Ok(None);
+            }
+            Ok(Some(operation))
+        })
+        .await
+        .map_err(storage)?
+        .ok_or_else(missing)?;
+    view(result, &IntentCipher::from_env()?)
 }
 
 #[cfg(test)]

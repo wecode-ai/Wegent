@@ -1,19 +1,24 @@
 # SPDX-FileCopyrightText: 2026 Weibo, Inc.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Serialize each template write with its receipt in the resource transaction."""
+"""Serialize each template write with its node-owned receipt."""
 
 import hashlib
 import json
 import re
+from copy import deepcopy
 from dataclasses import dataclass
-from typing import Annotated, Literal
+from datetime import datetime, timezone
+from typing import Annotated, Any, Literal
 
 from fastapi import Depends, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.models.template_import import TemplateImportOperation, TemplateImportReceipt
+from app.models.template_import import (
+    TEMPLATE_IMPORT_KIND,
+    TemplateImportOperation,
+)
 from app.schemas.base_role import BaseRole
 from app.services.cloud_projects.access import require_cloud_project_role
 from shared.telemetry.decorators import trace_sync
@@ -50,6 +55,41 @@ TemplateImportDependency = Annotated[
 ]
 
 
+def _metadata(operation: TemplateImportOperation) -> dict[str, Any]:
+    value = operation.metadata_json
+    return deepcopy(value) if isinstance(value, dict) else {}
+
+
+def _invalid_state() -> HTTPException:
+    return HTTPException(409, "Template import state is invalid; start a new import")
+
+
+def _receipts(operation: TemplateImportOperation) -> dict[str, Any]:
+    value = _metadata(operation).get("receipts", {})
+    if not isinstance(value, dict):
+        raise _invalid_state()
+    return value
+
+
+def _manifest(operation: TemplateImportOperation) -> list[dict[str, Any]] | None:
+    value = _metadata(operation).get("manifest")
+    if not isinstance(value, list):
+        return None
+    if not all(isinstance(step, dict) for step in value):
+        return None
+    return [step for step in value if isinstance(step, dict)]
+
+
+def _all_steps_completed(
+    manifest: list[dict[str, Any]], receipts: dict[str, Any]
+) -> bool:
+    return bool(manifest) and all(
+        isinstance(receipt := receipts.get(str(step.get("key"))), dict)
+        and receipt.get("kind") == step.get("kind")
+        for step in manifest
+    )
+
+
 @dataclass
 class TemplateImportWrite:
     db: Session
@@ -60,16 +100,26 @@ class TemplateImportWrite:
     resource_id: str | None
 
     def record(self, resource_id: object) -> None:
-        """The caller must commit this receipt with the successful resource write."""
-        self.db.add(
-            TemplateImportReceipt(
-                operation_id=self.operation.id,
-                step_key=self.request.step_key,
-                kind=self.kind,
-                request_sha256=self.request_sha256,
-                resource_id=str(resource_id),
+        """Commit this receipt with the caller's successful resource write."""
+        metadata = _metadata(self.operation)
+        receipts = metadata.get("receipts")
+        if not isinstance(receipts, dict):
+            receipts = {}
+        receipts[self.request.step_key] = {
+            "kind": self.kind,
+            "requestSha256": self.request_sha256,
+            "resourceId": str(resource_id),
+            "completedAt": datetime.now(timezone.utc).isoformat(),
+        }
+        metadata["receipts"] = receipts
+        manifest = _manifest(self.operation) or []
+        complete = _all_steps_completed(manifest, receipts)
+        self.operation.metadata_json = metadata
+        self.operation.status = "completed" if complete else "pending"
+        if complete:
+            self.operation.completed_at = datetime.now(timezone.utc).replace(
+                tzinfo=None
             )
-        )
         self.db.flush()
 
 
@@ -85,8 +135,9 @@ def _operation_for_step(
         db.query(TemplateImportOperation)
         .filter(
             TemplateImportOperation.id == request.operation_id,
-            TemplateImportOperation.actor_user_id == user_id,
-            TemplateImportOperation.project_id == str(project_id),
+            TemplateImportOperation.created_by_user_id == user_id,
+            TemplateImportOperation.cloud_project_id == str(project_id),
+            TemplateImportOperation.kind == TEMPLATE_IMPORT_KIND,
         )
         .populate_existing()
         .with_for_update()
@@ -95,14 +146,13 @@ def _operation_for_step(
     if operation is None:
         raise HTTPException(404, "Template import not found")
     require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
-    manifest = operation.manifest
+    metadata = _metadata(operation)
+    manifest = _manifest(operation)
     if (
-        operation.protocol_version != 1
-        or not isinstance(manifest, list)
+        metadata.get("protocolVersion") != 1
+        or manifest is None
         or not any(
-            isinstance(step, dict)
-            and step.get("key") == request.step_key
-            and step.get("kind") == kind
+            step.get("key") == request.step_key and step.get("kind") == kind
             for step in manifest
         )
     ):
@@ -144,21 +194,16 @@ def lock_template_import(
         kind=kind,
     )
     digest = _request_digest(payload, kind)
-    receipt = (
-        db.query(TemplateImportReceipt)
-        .filter_by(
-            operation_id=operation.id,
-            step_key=request.step_key,
-        )
-        .populate_existing()
-        .with_for_update()
-        .one_or_none()
-    )
+    receipts = _receipts(operation)
+    receipt = receipts.get(request.step_key)
+    if request.step_key in receipts and not isinstance(receipt, dict):
+        raise _invalid_state()
     # Board writes include a mutable project snapshot. A committed receipt
     # returns the current project without applying that snapshot again; a
     # different board intent must begin a distinct operation.
-    if receipt is not None and (
-        receipt.kind != kind or (kind != "board" and receipt.request_sha256 != digest)
+    if isinstance(receipt, dict) and (
+        receipt.get("kind") != kind
+        or (kind != "board" and receipt.get("requestSha256") != digest)
     ):
         raise HTTPException(
             409, "Template import step is already bound to another request"
@@ -169,5 +214,9 @@ def lock_template_import(
         request,
         kind,
         digest,
-        str(receipt.resource_id) if receipt is not None else None,
+        (
+            str(receipt["resourceId"])
+            if isinstance(receipt, dict) and receipt.get("resourceId") is not None
+            else None
+        ),
     )

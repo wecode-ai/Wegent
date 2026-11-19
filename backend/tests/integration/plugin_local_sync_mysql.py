@@ -89,10 +89,7 @@ def verify(engine, url):
         legacy_tables = set(inspect(engine).get_table_names())
         command.upgrade(config, "head")
         tables = set(inspect(engine).get_table_names())
-        assert tables == legacy_tables | {
-            "template_import_operations",
-            "template_import_receipts",
-        }
+        assert tables == legacy_tables
         assert "plugin_local_sync_operations" not in tables
         assert "plugin_sync_outbox" not in tables
         verify_ordering(engine)

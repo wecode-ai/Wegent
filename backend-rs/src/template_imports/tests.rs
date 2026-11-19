@@ -112,43 +112,56 @@ fn normalizes_numeric_project_identity_and_rejects_invalid_projects() {
 
 #[test]
 fn summaries_never_disclose_intent_and_only_matching_receipts_complete_steps() {
-    let operation = SummaryOperation {
+    let operation = Operation {
         id: "operation".into(),
         project_id: "1001".into(),
-        protocol_version: 1,
-        manifest: Json(vec![Step {
-            key: "group:delivery".into(),
-            kind: StepKind::Group,
-        }]),
+        actor_user_id: 8,
+        kind: TEMPLATE_IMPORT_KIND.into(),
+        data: Json(OperationData {
+            protocol_version: 1,
+            intent_sha256: "a".repeat(64),
+            intent_encrypted: "encrypted".into(),
+            manifest: vec![Step {
+                key: "group:delivery".into(),
+                kind: StepKind::Group,
+            }],
+            receipts: BTreeMap::from([(
+                "group:delivery".into(),
+                Receipt {
+                    kind: StepKind::Agent,
+                    request_sha256: "b".repeat(64),
+                    resource_id: "unrelated".into(),
+                    completed_at: None,
+                },
+            )]),
+        }),
     };
-    let pending = summary(
-        operation,
-        vec![Receipt {
-            step_key: "group:delivery".into(),
-            kind: "agent".into(),
-            resource_id: "unrelated".into(),
-        }],
-    );
+    let pending = summary(&operation);
     assert_eq!(pending["status"], "pending");
     assert!(pending["steps"][0].get("resourceId").is_none());
     assert!(pending.get("intent").is_none());
-    let operation = SummaryOperation {
-        id: "operation".into(),
-        project_id: "1001".into(),
-        protocol_version: 1,
-        manifest: Json(vec![Step {
-            key: "group:delivery".into(),
-            kind: StepKind::Group,
-        }]),
+    let completed_operation = Operation {
+        id: operation.id.clone(),
+        project_id: operation.project_id.clone(),
+        actor_user_id: operation.actor_user_id,
+        kind: operation.kind.clone(),
+        data: Json(OperationData {
+            protocol_version: operation.data.0.protocol_version,
+            intent_sha256: operation.data.0.intent_sha256.clone(),
+            intent_encrypted: operation.data.0.intent_encrypted.clone(),
+            manifest: operation.data.0.manifest.clone(),
+            receipts: BTreeMap::from([(
+                "group:delivery".into(),
+                Receipt {
+                    kind: StepKind::Group,
+                    request_sha256: "b".repeat(64),
+                    resource_id: "confirmed".into(),
+                    completed_at: None,
+                },
+            )]),
+        }),
     };
-    let completed = summary(
-        operation,
-        vec![Receipt {
-            step_key: "group:delivery".into(),
-            kind: "group".into(),
-            resource_id: "confirmed".into(),
-        }],
-    );
+    let completed = summary(&completed_operation);
     assert_eq!(completed["status"], "completed");
     assert_eq!(completed["steps"][0]["resourceId"], "confirmed");
 }

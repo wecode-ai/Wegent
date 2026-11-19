@@ -72,6 +72,62 @@ fn repeat(name: &str, previous: &str) -> Begin {
     body
 }
 
+async fn operation(tx: &mut impl MysqlTransaction, id: &str) -> brz_mysql::MysqlResult<Operation> {
+    tx.fetch_one(
+        format!(
+            "SELECT {OPERATION_COLUMNS} FROM loop_items WHERE id=? AND resource_type=? AND kind=? FOR UPDATE"
+        ),
+        (id, TEMPLATE_IMPORT_RESOURCE_TYPE, TEMPLATE_IMPORT_KIND),
+    )
+    .await
+}
+
+async fn record_receipt(
+    tx: &mut impl MysqlTransaction,
+    id: &str,
+    step_key: &str,
+    kind: StepKind,
+    resource_id: &str,
+) -> brz_mysql::MysqlResult<()> {
+    let mut data = operation(tx, id).await?.data.0;
+    data.receipts.insert(
+        step_key.to_owned(),
+        Receipt {
+            kind,
+            request_sha256: "c".repeat(64),
+            resource_id: resource_id.to_owned(),
+            completed_at: None,
+        },
+    );
+    let status = if manifest_complete(&data.manifest, &data.receipts) {
+        "completed"
+    } else {
+        "pending"
+    };
+    tx.execute(
+        "UPDATE loop_items SET metadata=?,status=?,version=version+1,updated_at=UTC_TIMESTAMP(6) WHERE id=? AND resource_type='template_import' AND kind='template_import_operation'",
+        (Json(data), status, id),
+    )
+    .await?;
+    Ok(())
+}
+
+async fn add_receipt(
+    mysql: &MysqlService,
+    id: &str,
+    step_key: &str,
+    kind: StepKind,
+    resource_id: &str,
+) -> Result<()> {
+    mysql
+        .with_transaction(async |tx| {
+            record_receipt(tx, id, step_key, kind, resource_id).await?;
+            Ok(())
+        })
+        .await?;
+    Ok(())
+}
+
 async fn verify_explicit_repeat(state: &AppState, original: &str) -> Result<()> {
     let (first, second) = tokio::join!(
         begin_import(state, actor(8), "1001", repeat("Another group", original)),
@@ -194,16 +250,16 @@ async fn seed(mysql: &MysqlService) -> Result<()> {
 }
 
 async fn verify_atomic_receipt(state: &AppState, writer: &MysqlService) -> Result<()> {
-    let operation = begin_import(state, actor(8), "1001", input("Atomic receipt"))
+    let started = begin_import(state, actor(8), "1001", input("Atomic receipt"))
         .await
         .unwrap();
-    let id = operation["id"].as_str().unwrap();
+    let id = started["id"].as_str().unwrap();
     let (ready, started) = tokio::sync::oneshot::channel();
     let (release, released) = tokio::sync::oneshot::channel();
     let mutation = writer.with_transaction(async |tx| {
-        let _: Operation = tx.fetch_one(format!("SELECT {OPERATION_COLUMNS} FROM template_import_operations WHERE id=? FOR UPDATE"),(id,)).await?;
+        operation(tx, id).await?;
         tx.execute("INSERT INTO kinds (id,user_id,name,kind,namespace,is_active,json) VALUES (3101,8,'Atomic group','CollaborationGroup','projects/1001',true,JSON_OBJECT())",()).await?;
-        tx.execute("INSERT INTO template_import_receipts VALUES (?,'group:delivery','group',REPEAT('c',64),'3101',UTC_TIMESTAMP(6))",(id,)).await?;
+        record_receipt(tx, id, "group:delivery", StepKind::Group, "3101").await?;
         ready.send(()).unwrap();
         released.await.unwrap();
         Ok(())
@@ -243,9 +299,9 @@ async fn verify_atomic_receipt(state: &AppState, writer: &MysqlService) -> Resul
         .unwrap();
     let rollback_id = rollback["id"].as_str().unwrap();
     let failed = writer.with_transaction(async |tx| {
-        let _:Operation=tx.fetch_one(format!("SELECT {OPERATION_COLUMNS} FROM template_import_operations WHERE id=? FOR UPDATE"),(rollback_id,)).await?;
+        operation(tx, rollback_id).await?;
         tx.execute("INSERT INTO kinds (id,user_id,name,kind,namespace,is_active,json) VALUES (3201,8,'Rollback group','CollaborationGroup','projects/1001',true,JSON_OBJECT())",()).await?;
-        tx.execute("INSERT INTO template_import_receipts VALUES (?,'group:delivery','group',REPEAT('d',64),'3201',UTC_TIMESTAMP(6))",(rollback_id,)).await?;
+        record_receipt(tx, rollback_id, "group:delivery", StepKind::Group, "3201").await?;
         tx.execute("SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='rollback fixture'",()).await?;
         Ok(())
     }).await;
@@ -272,7 +328,7 @@ async fn wait_for_operation_lock(writer: &MysqlService) {
     }
     tokio::time::timeout(std::time::Duration::from_secs(10), async {
         loop {
-            let waiting:Count=writer.fetch_one("SELECT COUNT(*) AS count FROM performance_schema.data_lock_waits w JOIN performance_schema.data_locks l ON l.ENGINE_LOCK_ID=w.REQUESTING_ENGINE_LOCK_ID WHERE l.OBJECT_SCHEMA=DATABASE() AND l.OBJECT_NAME='template_import_operations'",()).await.unwrap();
+            let waiting:Count=writer.fetch_one("SELECT COUNT(*) AS count FROM performance_schema.data_lock_waits w JOIN performance_schema.data_locks l ON l.ENGINE_LOCK_ID=w.REQUESTING_ENGINE_LOCK_ID WHERE l.OBJECT_SCHEMA=DATABASE() AND l.OBJECT_NAME='loop_items' AND l.LOCK_TYPE='RECORD'",()).await.unwrap();
             if waiting.count > 0 { break; }
             tokio::task::yield_now().await;
         }
@@ -303,14 +359,11 @@ async fn verify_unconfigured_encryption_writes_nothing(
     }
     let operations: Count = writer
         .fetch_one(
-            "SELECT COUNT(*) AS count FROM template_import_operations",
+            "SELECT COUNT(*) AS count FROM loop_items WHERE resource_type='template_import'",
             (),
         )
         .await?;
-    let receipts: Count = writer
-        .fetch_one("SELECT COUNT(*) AS count FROM template_import_receipts", ())
-        .await?;
-    assert_eq!((operations.count, receipts.count), (0, 0));
+    assert_eq!(operations.count, 0);
     Ok(())
 }
 
@@ -324,7 +377,7 @@ async fn verify_revocation_while_waiting_rolls_back_begin(
     let (ready, started) = tokio::sync::oneshot::channel();
     let (release, released) = tokio::sync::oneshot::channel();
     let lock = writer.with_transaction(async |tx| {
-        let _:Operation=tx.fetch_one(format!("SELECT {OPERATION_COLUMNS} FROM template_import_operations WHERE id=? FOR UPDATE"),(original,)).await?;
+        operation(tx, original).await?;
         ready.send(()).unwrap();
         released.await.unwrap();
         Ok(())
@@ -345,14 +398,14 @@ async fn verify_revocation_while_waiting_rolls_back_begin(
     struct Count {
         count: i64,
     }
-    let successor:Count=writer.fetch_one("SELECT COUNT(*) AS count FROM template_import_operations WHERE actor_user_id=8 AND project_id='1001' AND intent_sha256=?",(checksum,)).await?;
+    let successor:Count=writer.fetch_one("SELECT COUNT(*) AS count FROM loop_items WHERE resource_type='template_import' AND kind='template_import_operation' AND created_by_user_id=8 AND cloud_project_id='1001' AND JSON_UNQUOTE(JSON_EXTRACT(metadata,'$.intentSha256'))=?",(checksum,)).await?;
     assert_eq!(
         successor.count, 0,
         "post-lock authorization denial must roll back the newly inserted operation"
     );
     let original: Count = writer
         .fetch_one(
-            "SELECT COUNT(*) AS count FROM template_import_operations WHERE id=?",
+            "SELECT COUNT(*) AS count FROM loop_items WHERE id=? AND resource_type='template_import'",
             (original,),
         )
         .await?;
@@ -397,22 +450,22 @@ async fn verify(mysql: &MysqlService) -> Result<()> {
     }
     let count: Count = mysql
         .fetch_one(
-            "SELECT COUNT(*) AS count FROM template_import_operations",
+            "SELECT COUNT(*) AS count FROM loop_items WHERE resource_type='template_import'",
             (),
         )
         .await?;
     assert_eq!(count.count, 1);
     #[derive(FromMysqlRow)]
     struct Encrypted {
-        intent_encrypted: String,
+        metadata: Json<Value>,
     }
     let stored: Encrypted = mysql
         .fetch_one(
-            "SELECT CONVERT(intent_encrypted USING utf8mb4) COLLATE utf8mb4_unicode_ci AS intent_encrypted FROM template_import_operations WHERE id=?",
+            "SELECT metadata FROM loop_items WHERE id=? AND resource_type='template_import'",
             (id,),
         )
         .await?;
-    assert!(!stored.intent_encrypted.contains("secret-test-value"));
+    assert!(!stored.metadata.0.to_string().contains("secret-test-value"));
     assert_eq!(
         import_status(&state, actor(8), "1001", id).await.unwrap()["intent"],
         first["intent"]
@@ -455,12 +508,19 @@ async fn verify(mysql: &MysqlService) -> Result<()> {
         .await
         .unwrap();
     assert_ne!(other["id"], first["id"]);
-    mysql.execute("INSERT INTO template_import_receipts (operation_id,step_key,kind,request_sha256,resource_id,completed_at) VALUES (?,'group:delivery','group',REPEAT('a',64),'confirmed-group',UTC_TIMESTAMP(6))",(id,)).await?;
+    add_receipt(
+        &writer,
+        id,
+        "group:delivery",
+        StepKind::Group,
+        "confirmed-group",
+    )
+    .await?;
     let partial = import_status(&state, actor(8), "1001", id).await.unwrap();
     assert_eq!(partial["status"], "pending");
     assert_eq!(partial["steps"][0]["resourceId"], "confirmed-group");
     assert!(partial["steps"][1].get("resourceId").is_none());
-    mysql.execute("INSERT INTO template_import_receipts (operation_id,step_key,kind,request_sha256,resource_id,completed_at) VALUES (?,'board:project-board','board',REPEAT('b',64),'1001',UTC_TIMESTAMP(6))",(id,)).await?;
+    add_receipt(&writer, id, "board:project-board", StepKind::Board, "1001").await?;
     let complete = import_status(&state, actor(8), "1001", id).await.unwrap();
     assert_eq!(complete["status"], "completed");
     assert_eq!(
@@ -519,24 +579,4 @@ async fn current_authority_and_actor_private_cross_client_receipts() -> Result<(
     crate::migrations::mysql_tests::isolated(verify)
         .with_subscriber(StorageDiagnostics)
         .await
-}
-
-#[tokio::test]
-#[ignore = "requires disposable loopback MySQL; CI invokes this suite"]
-async fn migration_upgrade_write_downgrade_and_upgrade() -> Result<()> {
-    crate::migrations::mysql_tests::isolated(async |mysql| {
-        crate::migrations::upgrade(mysql).await?;
-        mysql.execute("INSERT INTO template_import_operations VALUES ('migration-op','1001',8,1,REPEAT('a',64),'encrypted',JSON_ARRAY(JSON_OBJECT('key','group:delivery','kind','group')),UTC_TIMESTAMP(6),UTC_TIMESTAMP(6))",()).await?;
-        mysql.execute("INSERT INTO template_import_receipts VALUES ('migration-op','group:delivery','group',REPEAT('b',64),'group',UTC_TIMESTAMP(6))",()).await?;
-        crate::migrations::downgrade(mysql,"b1c2d3e4f5a6").await?;
-        #[derive(FromMysqlRow)]
-        struct Count { count: i64 }
-        let count:Count=mysql.fetch_one("SELECT COUNT(*) AS count FROM information_schema.TABLES WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME IN ('template_import_operations','template_import_receipts')",()).await?;
-        assert_eq!(count.count,0);
-        crate::migrations::upgrade(mysql).await?;
-        crate::migrations::check(mysql).await?;
-        let count:Count=mysql.fetch_one("SELECT COUNT(*) AS count FROM template_import_operations",()).await?;
-        assert_eq!(count.count,0);
-        Ok(())
-    }).await
 }
