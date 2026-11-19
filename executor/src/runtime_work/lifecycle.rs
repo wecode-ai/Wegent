@@ -159,6 +159,9 @@ pub(crate) fn project_native_execution(link: &mut RuntimeTaskLink, state: &Nativ
     if !queued {
         if let Some(handle) = link.runtime_handle.as_object_mut() {
             handle.remove("queuePosition");
+            if state.phase != NativeExecutionPhase::Idle {
+                handle.remove("quotaWait");
+            }
         }
     }
     link.running = state.phase != NativeExecutionPhase::Idle && !queued;

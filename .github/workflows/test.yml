@@ -304,6 +304,16 @@ jobs:
           cargo test --locked --lib running_transition_commits_before_dispatch_when_replica_has_no_subtask -- --ignored --nocapture \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/running-transition-mysql.log
 
+      - name: Verify managed execution recovery with MySQL and Redis
+        working-directory: backend-rs
+        env:
+          PROJECT_TEST_MYSQL_URL: mysql://root@127.0.0.1:3306/mysql
+          PROJECT_TEST_REDIS_ENDPOINT: 127.0.0.1:6379
+        run: |
+          set -o pipefail
+          cargo test --locked --lib background_jobs::project::mysql_tests -- --ignored --nocapture \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/managed-execution-recovery.log
+
       - name: Verify account HTTP plugin snapshots without Device registration
         working-directory: backend-rs
         env:
@@ -369,6 +379,16 @@ jobs:
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/project-roster-mysql.log
           cargo test --locked --lib cloud_projects::agent_deletion_mysql_tests -- --ignored \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/project-agent-deletion-mysql.log
+          cargo test --locked --lib cloud_projects::collaboration_metrics::mysql_tests -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/collaboration-metrics-mysql.log
+          cargo test --locked --lib loop_tasks::assistant_participation::mysql_tests -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/assistant-participation-mysql.log
+          cargo test --locked --lib milestones::tests::mutation_response_reads_the_uncommitted_writer_row -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/milestone-mysql.log
+          cargo test --locked --lib loop_tasks::assignment_receipts::tests -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/assignment-receipt-mysql.log
+          cargo test --locked --lib socketio::device_pull_claim::tests::device_queue_never_consumes_managed_teams -- --ignored \
+            2>&1 | tee ../.ci-artifacts/backend-rs-tests/managed-device-queue-mysql.log
           cargo test --locked --lib device_records::retention::mysql_tests -- --ignored \
             2>&1 | tee ../.ci-artifacts/backend-rs-tests/device-retention-mysql.log
 

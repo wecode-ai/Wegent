@@ -135,6 +135,7 @@ mod diagnostics;
 mod home;
 mod memory_review;
 mod native_provider;
+mod plugin_cache;
 mod provider_migration;
 mod stand_in_approval;
 mod stand_in_plugin_cli;
@@ -1542,7 +1543,8 @@ pub(crate) async fn terminate_shared_codex_app_servers() -> usize {
 
 fn is_codex_cloud_config_error(error: &str) -> bool {
     error.contains("cloud config bundle")
-        || (error.contains("failed to read configuration layers")
+        || ((error.contains("failed to read configuration layers")
+            || error.contains("failed to load configuration:"))
             && error.contains("Your authentication session could not be refreshed automatically. Please log out and sign in again."))
 }
 

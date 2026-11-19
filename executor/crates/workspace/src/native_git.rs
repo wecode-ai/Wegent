@@ -112,6 +112,41 @@ pub async fn run_git_capture(
     .await
 }
 
+/// Bridge synchronous discovery to the shared bounded runner, including inside Tokio workers.
+pub fn run_git_capture_blocking(
+    args: &[String],
+    cwd: Option<&Path>,
+    env: &HashMap<String, String>,
+    timeout: Duration,
+    max_output_bytes: usize,
+) -> Result<GitCapture, GitRunError> {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name("git-capture".to_owned())
+            .spawn_scoped(scope, || {
+                let runtime = blocking_git_runtime()?;
+                runtime.block_on(run_git_capture(args, cwd, env, timeout, max_output_bytes))
+            })
+            .map_err(|error| git_error(error.to_string(), false))?
+            .join()
+            .map_err(|_| git_error("Git capture worker panicked", false))?
+    })
+}
+
+fn blocking_git_runtime() -> Result<&'static tokio::runtime::Runtime, GitRunError> {
+    static RUNTIME: std::sync::OnceLock<tokio::runtime::Runtime> = std::sync::OnceLock::new();
+    if let Some(runtime) = RUNTIME.get() {
+        return Ok(runtime);
+    }
+    // Pipe readers must retain directory ownership after the synchronous caller returns.
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .enable_all()
+        .build()
+        .map_err(|error| git_error(error.to_string(), false))?;
+    Ok(RUNTIME.get_or_init(|| runtime))
+}
+
 /// Directory removal must exclude concurrent Git users through process and pipe cleanup.
 pub async fn run_git_capture_for_removal(
     args: &[String],
@@ -271,6 +306,21 @@ async fn supervise_git(
         }
     };
     if let Err(original) = &result {
+        if original.timed_out
+            && std::env::var("WEWORK_PROJECT_INDEX_DIAGNOSTICS").as_deref() == Ok("1")
+        {
+            crate::logging::log_executor_event(
+                "native git timeout diagnostic",
+                &[
+                    ("pid", pid.map(|pid| pid.to_string()).unwrap_or_default()),
+                    (
+                        "child_exited",
+                        format!("{:?}", child.try_wait().map(|status| status.is_some())),
+                    ),
+                    ("reason", original.message.clone()),
+                ],
+            );
+        }
         tree.terminate();
         if let Err(error) = child.kill().await {
             if child.try_wait().ok().flatten().is_none() {
@@ -401,6 +451,76 @@ pub fn owned_args(args: &[&str]) -> Vec<String> {
 #[cfg(test)]
 mod pipe_lifetime_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn synchronous_capture_works_inside_a_runtime_and_reports_expired_deadlines() {
+        let root = tempfile::tempdir().unwrap();
+        let args = owned_args(&["--version"]);
+        let env = std::env::vars().collect();
+        let output = run_git_capture_blocking(
+            &args,
+            Some(root.path()),
+            &env,
+            Duration::from_secs(10),
+            4096,
+        )
+        .unwrap();
+        assert!(output.success);
+        assert!(String::from_utf8(output.stdout)
+            .unwrap()
+            .starts_with("git version"));
+        let error = run_git_capture_blocking(&args, Some(root.path()), &env, Duration::ZERO, 4096)
+            .unwrap_err();
+        assert!(error.timed_out, "{error:?}");
+        let output = run_git_capture_blocking(
+            &args,
+            Some(root.path()),
+            &env,
+            Duration::from_secs(10),
+            4096,
+        )
+        .unwrap();
+        assert!(
+            output.success,
+            "A timed-out capture must not prevent another capture"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn expired_capture_terminates_and_reaps_a_live_child() {
+        let mut command = Command::new("/bin/sleep");
+        command
+            .arg("30")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut tree = ProcessTreeGuard::prepare_child(&mut command).unwrap();
+        let child = command.spawn().unwrap();
+        let pid = child.id().unwrap();
+        let attached = tree.attach_child(&child);
+        let (_cancel, cancelled) = tokio::sync::oneshot::channel();
+        let error = supervise_git(
+            GitProcess {
+                child,
+                tree,
+                attached,
+            },
+            None,
+            None,
+            None,
+            time::Instant::now(),
+            4096,
+            cancelled,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.timed_out, "{error:?}");
+        assert_eq!(
+            unsafe { libc::kill(pid as i32, 0) },
+            -1,
+            "The timed-out child must be reaped"
+        );
+    }
 
     #[tokio::test]
     async fn removing_git_command_waits_for_existing_directory_readers() {
