@@ -424,7 +424,7 @@ test.describe('Collaboration group Executor coordination', () => {
     }
   })
 
-  test('runs two collaboration rounds with parallel members and fresh manager tasks', async ({
+  test('runs two collaboration rounds with parallel members in one manager session', async ({
     page,
     request,
   }, testInfo) => {
@@ -651,9 +651,7 @@ test.describe('Collaboration group Executor coordination', () => {
       const managerToolNames = modelToolNames(managerBodies)
       expect(managerBodies.length).toBeGreaterThanOrEqual(6)
       expect(managerScenario.nextStep).toBe(6)
-      expect(managerSessionIds).toHaveLength(3)
-      expect(managerSessionIds.some(id => id.endsWith(`manager-after-${firstRoundId}`))).toBe(true)
-      expect(managerSessionIds.some(id => id.endsWith(`manager-after-${secondRoundId}`))).toBe(true)
+      expect(managerSessionIds).toEqual([`${executions[0].runtimeTaskId}-manager-initial`])
       expect(managerToolNames.some(isSubmitWorkflowPlan)).toBe(true)
       expect(managerToolNames.some(isUpdateIssueStatus)).toBe(true)
       expect(managerToolNames.some(isNativeSubagentTool)).toBe(false)

@@ -322,14 +322,17 @@ test.describe('Collaboration agent execution', () => {
             async () => {
               const rows = await apiRequest<{ items: CollaborationExecution[] }>(
                 request,
-                `/api/v1/cloud-projects/${projectId}/executions?status=completed`
+                `/api/v1/cloud-projects/${projectId}/executions?include_terminal=true`
               )
               second = rows.items.find(row => row.loopItemId === issue.id && row.id !== first.id)
-              return second?.status
+              return ['completed', 'failed', 'cancelled'].includes(second?.status ?? '')
             },
             { timeout: 90_000 }
           )
-          .toBe('completed')
+          .toBe(true)
+        expect(second!.status, second!.errorMessage ?? 'Managed continuation must succeed').toBe(
+          'completed'
+        )
         expect(second!.backendTaskId).toBe(first.backendTaskId)
         const reloaded = await chat.subscribe(projectId, issue.id, 0, () => {})
         try {

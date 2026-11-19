@@ -587,7 +587,11 @@ def enqueue_execution_batch(
         from app.services.collaboration_round_assignment import assign_round_owner
 
         assign_round_owner(
-            db, item=item, assignments=assignment_activity, user_id=current_user.id
+            db,
+            item=item,
+            assignments=assignment_activity,
+            user_id=current_user.id,
+            manager=manager,
         )
         message_id = str(uuid.uuid7()) if hasattr(uuid, "uuid7") else str(uuid.uuid4())
         assignment_message = ProjectChatMessage(
