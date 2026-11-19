@@ -5,9 +5,12 @@ ARG UV_VERSION=0.11.17
 
 RUN apt-get update \
   && apt-get install --yes --no-install-recommends \
+    ca-certificates \
     curl \
     docker.io \
     ffmpeg \
+    iproute2 \
+    openssl \
     socat \
     libmagic1 \
     zstd \
@@ -21,6 +24,9 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 RUN node --version \
   && docker --version \
+  && ip -Version \
+  && openssl version \
+  && command -v update-ca-certificates \
   && pnpm --version \
   && uv --version \
   && zstd --version \
