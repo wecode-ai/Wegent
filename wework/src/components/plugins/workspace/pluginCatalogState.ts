@@ -95,6 +95,7 @@ export interface PluginCatalogContext {
   readonly epoch: symbol | null
   readonly pendingDevicePackageSync: boolean
   ledger: {
+    cloudMembershipAuthoritative: boolean
     lastMarketplaceRefreshTick: number
     deferredCodexCatalogRequest: string
     skipLocalCatalogReconcile: boolean
@@ -288,6 +289,7 @@ export function createPluginCatalogState(key: string, initial: PluginCatalogInpu
       )
     },
     ledger: {
+      cloudMembershipAuthoritative: false,
       lastMarketplaceRefreshTick: 0,
       deferredCodexCatalogRequest: '',
       skipLocalCatalogReconcile: false,

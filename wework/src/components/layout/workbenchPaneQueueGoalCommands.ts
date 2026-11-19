@@ -18,7 +18,11 @@ import {
 
 import { logRuntimeQueueStage } from '@/features/workbench/runtimeQueueDiagnostics'
 
-import { isInterruptedGuidance, runtimeAddressDebug } from './workbenchPaneSessionHelpers'
+import {
+  clearRuntimePaneGoalSeed,
+  isInterruptedGuidance,
+  runtimeAddressDebug,
+} from './workbenchPaneSessionHelpers'
 import type { RuntimePaneSendOptions } from './workbenchPaneSessionTypes'
 import type { PaneCommandContext } from './workbenchPaneCommandContext'
 
@@ -502,6 +506,8 @@ export function createPaneQueueGoalCommands(sessionOwner: PaneCommandContext) {
       const response = await clearRuntimeGoal(currentRuntimeTask)
       if (!response.accepted) return false
 
+      clearRuntimePaneGoalSeed(currentRuntimeTask, sessionOwner.ownerKey)
+      setPendingGoalState(null)
       syncRuntimeGoal(lifecycleStore, currentRuntimeTask, null)
       await refreshWorkLists()
       return true

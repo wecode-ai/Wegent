@@ -333,6 +333,8 @@ export function loadPluginCatalog(ctx: PluginCatalogContext) {
         ctx.state.installedPlugins
       ),
     })
+    if (cloudInstalled !== null && ctx.input.cloudMarketplaceAvailable)
+      ctx.ledger.cloudMembershipAuthoritative = true
     ctx.publish({
       marketplaceCatalogState: (previous => {
         if (

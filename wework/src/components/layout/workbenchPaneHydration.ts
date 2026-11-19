@@ -18,7 +18,6 @@ import {
   runtimeTranscriptHasMoreBefore,
   isPendingGoalVisibleForRuntimeTarget,
   getRuntimePaneGoalSeed,
-  clearRuntimePaneGoalSeed,
   resolveHydratedRuntimeGoal,
   runtimeAddressDebug,
   summarizeWorkbenchMessages,
@@ -67,12 +66,6 @@ export function hydrateRuntimePaneGoal(context: PaneCommandContext, signal: Abor
         if (loadedGoal?.status === 'active') {
           void context.live.refreshWorkLists().catch(() => undefined)
         }
-        clearRuntimePaneGoalSeed(runtimeTaskLoadTarget.address, context.ownerKey)
-        setPendingGoalState(current =>
-          current && isPendingGoalVisibleForRuntimeTarget(current, runtimeTaskLoadTarget.address)
-            ? null
-            : current
-        )
       }
     })
     .catch(error => {

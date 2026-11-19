@@ -269,7 +269,7 @@ export function scheduleRuntimeTurnNavigationLoad(callback: () => void): () => v
 export function isRuntimeTaskAddress(value: unknown): value is RuntimeTaskAddress {
   if (!value || typeof value !== 'object') return false
   const candidate = value as Partial<RuntimeTaskAddress>
-  return typeof candidate.deviceId === 'string' && typeof candidate.taskId === 'number'
+  return typeof candidate.deviceId === 'string' && typeof candidate.taskId === 'string'
 }
 
 export function createPendingRuntimeGoal(objective: string): RuntimeGoal {

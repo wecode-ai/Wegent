@@ -73,7 +73,8 @@ export function applyLivePluginCatalog(
     const nextInstalledRaw = mergeInstalledPlugins(
       cloudInstalledRaw,
       localInstalled,
-      localState.deviceId || ctx.state.currentDeviceId || ''
+      localState.deviceId || ctx.state.currentDeviceId || '',
+      ctx.ledger.cloudMembershipAuthoritative
     ).map(toInstalledPluginItem)
     // Keep existing cloud rows (device pending/failed inclusive). Only refresh the
     // Codex/OpenAI slice from plugin/list so retain hints cannot invent
@@ -120,7 +121,7 @@ export function applyLivePluginCatalog(
         ),
         ...localState.marketplaceItems,
       ],
-      localInstalled
+      nextInstalledRaw.map(plugin => plugin.raw)
     ).map(item => {
       const previous = previousById.get(String(item.id))
       const withDeviceState = previous?.currentDeviceInstallation

@@ -10002,10 +10002,10 @@ describe('WorkbenchProvider runtime tasks', () => {
   )
 
   test('clears thinking when a created runtime task transcript is already complete', async () => {
-    let createdClientMessageId: string | undefined
+    const createdClientMessageId = deferred<string | undefined>()
     const runtimeWorkApi = createRuntimeWorkApiMock({
       createRuntimeTask: vi.fn(async request => {
-        createdClientMessageId = request.clientUserMessageId
+        createdClientMessageId.resolve(request.clientUserMessageId)
         return {
           accepted: true,
           deviceId: 'device-1',
@@ -10025,7 +10025,7 @@ describe('WorkbenchProvider runtime tasks', () => {
             role: 'user',
             content: '修复 CI',
             status: 'done',
-            clientUserMessageId: createdClientMessageId,
+            clientUserMessageId: await createdClientMessageId.promise,
           },
           {
             id: `${address.taskId}:assistant:1`,

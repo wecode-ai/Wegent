@@ -181,7 +181,7 @@ export function createLocalDevicePluginApi(
       const release = await acquirePluginDeviceSync(deviceId, undefined, 'reconcile')
       try {
         const scope = await deviceScope(deviceId)
-        await api.uninstallInstalledPlugin(id, scope.requestId)
+        await api.uninstallInstalledPluginWithDeviceHandoff(id, scope.requestId)
         // Account deletion is not proof that this Runtime has removed its materialization.
         const receipt = await api.syncInstalledPluginsToDevice(scope.requestId, true)
         if (
