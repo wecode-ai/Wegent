@@ -12,7 +12,14 @@ The GitHub `Wegent Release` workflow builds amd64 and arm64 device images, verif
 
 Use the generated command for new devices. Before upgrading, record the previous image digest, launch arguments and both volume mounts. Let active work finish and stop the old container. Recreate it with the candidate digest and the original device ID, credentials, network and mounts. Use the previous digest to roll back. Run one writer per volume.
 
-For a legacy single-volume device, retain the volume at `/home/wegent/.wecode/wegent-executor` and add a persistent volume at `/home/wegent/.wegent`. After stopping the old container, copy any existing data at that path into the new volume, preserving paths and ownership. Keep separately mounted workspaces and Codex homes. If both Executor homes contain data, confirm the old process's active path and back up each home separately. The entrypoint preserves existing Codex home settings and refreshes only the Executor binary and connection runtime link.
+For a legacy single-volume device, retain the volume at `/home/wegent/.wecode/wegent-executor` and add a persistent volume at `/home/wegent/.wegent`. After stopping the old container, copy any existing data at that path into the new volume, preserving paths and ownership. Keep separately mounted workspaces and Codex homes. The entrypoint preserves existing Codex home settings and refreshes only the Executor binary and connection runtime link.
+
+If both Executor homes contain data, use the old process's launch arguments, environment and resolved paths to verify the active home. Stop the container, back up each home separately, and recreate it with the corresponding configuration:
+
+- For an active legacy home, explicitly set `WEGENT_EXECUTOR_HOME=/home/wegent/.wecode/wegent-executor` and retain its original volume mount and the `/home/wegent/.wegent` data volume.
+- For an active unified home, set `WEGENT_EXECUTOR_HOME=/home/wegent/.wegent/workbench/executor` and retain its containing `/home/wegent/.wegent` data volume and any original nested mounts. Remove the inactive legacy volume mount at `/home/wegent/.wecode/wegent-executor` from the new container's launch arguments, keeping that volume and the original arguments for rollback. If the unified path resolves to the legacy home, follow the legacy configuration instead.
+
+Both configurations must retain the verified device identity, separately mounted workspaces, and Codex home configuration and mounts. Do not merge the two homes or delete the inactive volume; verify the active home before recreating the container. Selecting an existing unified home while retaining the legacy volume mount triggers `Both legacy and unified Executor Homes exist`, and the entrypoint refuses to start.
 
 Run persistence acceptance in an isolated Docker environment with separate previous, candidate and rollback image references. The optional `WEGENT_REMOTE_DEVICE_ACCEPTANCE_PLATFORM` selects `linux/amd64` or `linux/arm64`.
 

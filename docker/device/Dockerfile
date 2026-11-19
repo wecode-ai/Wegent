@@ -479,7 +479,7 @@ if [ "$DEVICE_CODE_SERVER_ENABLED" = "true" ] && [ "$DEVICE_SESSION_GATEWAY_ENAB
 fi
 
 if [ -n "${WEGENT_AUTH_TOKEN:-}" ]; then
-    wegent-executor >"$DEVICE_LOG_DIR/wegent-executor.log" 2>&1 &
+    "$WEGENT_EXECUTOR_HOME/bin/wegent-executor" >"$DEVICE_LOG_DIR/wegent-executor.log" 2>&1 &
     pids+=("$!")
 else
     echo "WEGENT_AUTH_TOKEN is not set; skipping wegent-executor startup" >&2

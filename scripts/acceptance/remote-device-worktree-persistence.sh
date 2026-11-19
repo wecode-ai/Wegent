@@ -127,14 +127,22 @@ start_container() {
         >/dev/null
 }
 
-wait_until_running() {
+wait_until_image_binary_refreshed() {
     local name="$1"
     local attempt
     local state
     for attempt in $(seq 1 30); do
         state="$(run_docker inspect --format '{{.State.Status}}' "$name")"
         case "$state" in
-            running) return ;;
+            running)
+                if run_docker exec "$name" bash -lc '
+                    test -d "$WEGENT_EXECUTOR_HOME/logs" &&
+                    test -x "$WEGENT_EXECUTOR_HOME/bin/wegent-executor" &&
+                    cmp -s /app/executor "$WEGENT_EXECUTOR_HOME/bin/wegent-executor"
+                ' >/dev/null 2>&1; then
+                    return
+                fi
+                ;;
             exited | dead)
                 run_docker logs "$name" >&2 || true
                 fail "container exited before becoming ready: $name"
@@ -143,7 +151,7 @@ wait_until_running() {
         sleep 1
     done
     run_docker logs "$name" >&2 || true
-    fail "container did not become ready: $name"
+    fail "persisted Executor binary was not refreshed from the current image after 30 readiness checks: $name"
 }
 
 wait_until_exited() {
@@ -175,13 +183,6 @@ assert_volume_mount() {
     [ "$mount" = "volume|$DATA_VOLUME_NAME" ] || {
         fail "container does not use the expected named Wegent data volume"
     }
-}
-
-assert_image_binary_refreshed() {
-    local name="$1"
-    run_docker exec "$name" \
-        bash -lc 'cmp -s /app/executor "$WEGENT_EXECUTOR_HOME/bin/wegent-executor"' \
-        || fail "persisted Executor binary was not refreshed from the current image"
 }
 
 initialize_runtime_identity() {
@@ -260,9 +261,8 @@ DATA_VOLUME_ID="$(run_docker volume inspect --format '{{.Name}}|{{.CreatedAt}}' 
 first_container="$CONTAINER_PREFIX-first"
 first_instance="$RUN_ID-instance-a"
 start_container "$first_container" "$IMAGE" "$first_instance"
-wait_until_running "$first_container"
+wait_until_image_binary_refreshed "$first_container"
 assert_volume_mount "$first_container"
-assert_image_binary_refreshed "$first_container"
 initialize_runtime_identity "$first_container"
 run_probe "$first_container" seed
 first_container_id="$(run_docker inspect --format '{{.Id}}' "$first_container")"
@@ -279,9 +279,8 @@ run_docker rm -f "$first_container" >/dev/null
 rebuilt_container="$CONTAINER_PREFIX-rebuilt"
 rebuilt_instance="$RUN_ID-instance-b"
 start_container "$rebuilt_container" "$REBUILD_IMAGE" "$rebuilt_instance"
-wait_until_running "$rebuilt_container"
+wait_until_image_binary_refreshed "$rebuilt_container"
 assert_volume_mount "$rebuilt_container"
-assert_image_binary_refreshed "$rebuilt_container"
 initialize_runtime_identity "$rebuilt_container"
 rebuilt_container_id="$(run_docker inspect --format '{{.Id}}' "$rebuilt_container")"
 [ "$first_container_id" != "$rebuilt_container_id" ] || {
@@ -302,9 +301,8 @@ run_docker rm -f "$wrong_identity" >/dev/null
 
 final_container="$CONTAINER_PREFIX-final"
 start_container "$final_container" "$ROLLBACK_IMAGE" "$RUN_ID-instance-c"
-wait_until_running "$final_container"
+wait_until_image_binary_refreshed "$final_container"
 assert_volume_mount "$final_container"
-assert_image_binary_refreshed "$final_container"
 initialize_runtime_identity "$final_container"
 run_probe "$final_container" verify
 run_probe "$final_container" cleanup

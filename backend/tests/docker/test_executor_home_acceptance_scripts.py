@@ -11,6 +11,7 @@ import sys
 import textwrap
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -66,8 +67,7 @@ def _run_probe(
 
 def _write_fake_executor(path: Path) -> None:
     path.write_text(
-        textwrap.dedent(
-            """\
+        textwrap.dedent("""\
             #!/usr/bin/env python3
             import json
             import os
@@ -215,8 +215,7 @@ def _write_fake_executor(path: Path) -> None:
                     "result": result,
                 }
                 print(json.dumps(response, separators=(",", ":")), flush=True)
-            """
-        ),
+            """),
         encoding="utf-8",
     )
     path.chmod(0o755)
@@ -359,10 +358,125 @@ def test_remote_docker_acceptance_fails_explicitly_without_docker():
     assert "Docker CLI not found" in result.stderr
 
 
+def _write_fake_docker(docker: Path) -> None:
+    docker.write_text(
+        f"#!{sys.executable}\n" + textwrap.dedent("""\
+            import json
+            import os
+            from pathlib import Path
+            import sys
+
+            args = sys.argv[1:]
+            state_path = Path(os.environ["FAKE_DOCKER_STATE"])
+            state = json.loads(state_path.read_text()) if state_path.exists() else {}
+            scenario = os.environ["FAKE_DOCKER_SCENARIO"]
+
+            def finish(code=0, output=""):
+                state_path.write_text(json.dumps(state))
+                print(output)
+                sys.exit(code)
+
+            if args[0] in ("info", "image", "rm"):
+                finish()
+            if args[0] == "volume":
+                name = args[-1]
+                if args[1] == "create":
+                    state[name] = True
+                elif args[1] == "inspect" and name not in state:
+                    finish(1)
+                finish(output=f"{name}|created")
+            if args[0] == "run":
+                name = args[args.index("--name") + 1]
+                state[name] = {"checks": 0, "refreshed": False}
+                finish()
+            name = args[-1] if args[0] in ("inspect", "logs") else args[1]
+            container = state[name]
+            conflict = name.endswith("writer-conflict")
+            wrong_identity = name.endswith("wrong-identity")
+            if args[0] == "inspect":
+                format_value = args[args.index("--format") + 1]
+                if "State.Status" in format_value:
+                    exited = conflict or wrong_identity or (
+                        scenario == "exited" and container["checks"] > 0
+                    )
+                    finish(output="exited" if exited else "running")
+                if "State.ExitCode" in format_value:
+                    finish(output="1")
+                if "Mounts" in format_value:
+                    volume = os.environ["WEGENT_ACCEPTANCE_VOLUME_NAME"]
+                    if ".wecode" not in format_value:
+                        volume += "-data"
+                    finish(output=f"volume|{volume}")
+                finish(output=name)
+            if args[0] == "logs":
+                if conflict:
+                    finish(output="Another Executor is already using WEGENT_EXECUTOR_HOME")
+                if wrong_identity:
+                    finish(output="Executor Home identity does not match WEGENT_EXECUTOR_HOME_ID")
+                finish(output="entrypoint initialization diagnostic")
+            if args[0] == "exec":
+                if "cmp -s /app/executor" in args[-1]:
+                    container["checks"] += 1
+                    container["refreshed"] = (
+                        scenario == "delayed" and container["checks"] >= 3
+                    )
+                    finish(0 if container["refreshed"] else 1)
+                if not container["refreshed"]:
+                    finish(1, "Runtime used an unrefreshed binary")
+                finish()
+            finish(1, f"Unsupported Docker operation: {args}")
+            """),
+        encoding="utf-8",
+    )
+    docker.chmod(0o755)
+
+
+@pytest.mark.parametrize(
+    ("scenario", "expected_error"),
+    [
+        ("delayed", None),
+        ("exited", "container exited before becoming ready"),
+        ("never", "binary was not refreshed from the current image"),
+    ],
+)
+def test_remote_docker_acceptance_waits_for_binary_refresh(
+    tmp_path: Path, scenario: str, expected_error: str | None
+) -> None:
+    docker = tmp_path / "docker"
+    _write_fake_docker(docker)
+    sleep = tmp_path / "sleep"
+    sleep.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    sleep.chmod(0o755)
+
+    result = subprocess.run(
+        ["bash", str(REMOTE_DOCKER_ACCEPTANCE)],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env={
+            **os.environ,
+            "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
+            "DOCKER_BIN": str(docker),
+            "FAKE_DOCKER_STATE": str(tmp_path / "docker-state.json"),
+            "FAKE_DOCKER_SCENARIO": scenario,
+            "WEGENT_ACCEPTANCE_RUN_ID": "binary-refresh",
+            "WEGENT_ACCEPTANCE_VOLUME_NAME": "binary-refresh-home",
+        },
+    )
+
+    if expected_error is None:
+        assert result.returncode == 0, result.stderr
+        assert "ACCEPTANCE_RESULT=passed" in result.stdout
+    else:
+        assert result.returncode != 0
+        assert expected_error in result.stderr
+        assert "entrypoint initialization diagnostic" in result.stderr
+
+
 def _write_delayed_fake_executor(path: Path) -> None:
     path.write_text(
-        textwrap.dedent(
-            """\
+        textwrap.dedent("""\
             #!/usr/bin/env python3
             import json
             import sys
@@ -388,8 +502,7 @@ def _write_delayed_fake_executor(path: Path) -> None:
             threading.Thread(target=respond, daemon=True).start()
             for _line in sys.stdin:
                 pass
-            """
-        ),
+            """),
         encoding="utf-8",
     )
     path.chmod(0o755)

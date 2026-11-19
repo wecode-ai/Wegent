@@ -54,6 +54,7 @@ def _run_entrypoint(
     legacy_executor_home: bool = False,
     legacy_volume_mounted: bool = False,
     codex_homes: dict[str, str] | None = None,
+    start_executor: bool = False,
 ) -> subprocess.CompletedProcess[str]:
     fake_bin = tmp_path / "fake-bin"
     fake_bin.mkdir(exist_ok=True)
@@ -124,6 +125,8 @@ def _run_entrypoint(
     else:
         env.pop("WEGENT_EXECUTOR_HOME_ID", None)
     env.pop("WEGENT_AUTH_TOKEN", None)
+    if start_executor:
+        env["WEGENT_AUTH_TOKEN"] = "entrypoint-contract-test"
     for key in (
         "WORKSPACE_ROOT",
         "WEGENT_WORKSPACE_ROOT",
@@ -185,6 +188,39 @@ def test_device_entrypoint_uses_canonical_legacy_home_for_existing_volume(tmp_pa
         str(legacy_home / "codex"),
         str(legacy_home / "codex"),
     ]
+
+
+@pytest.mark.parametrize("legacy_executor_home", [False, True])
+def test_device_entrypoint_starts_executor_from_selected_home(
+    tmp_path: Path, legacy_executor_home: bool
+) -> None:
+    executor_home = tmp_path / "executor-home"
+    active_home = tmp_path / "legacy-home" if legacy_executor_home else executor_home
+    active_bin = active_home / "bin"
+    active_bin.mkdir(parents=True)
+    fake_bin = tmp_path / "fake-bin"
+    fake_bin.mkdir()
+    marker = tmp_path / "started-executor"
+    for directory in (active_bin, fake_bin):
+        binary = directory / "wegent-executor"
+        binary.write_text(
+            '#!/usr/bin/env bash\nprintf "%s" "$0" > '
+            + shlex.quote(str(marker))
+            + "\n",
+            encoding="utf-8",
+        )
+        binary.chmod(0o755)
+
+    result = _run_entrypoint(
+        tmp_path=tmp_path,
+        executor_home=executor_home,
+        home_id="device-stable-1",
+        legacy_executor_home=legacy_executor_home,
+        start_executor=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert marker.read_text() == str(active_bin / "wegent-executor")
 
 
 @pytest.mark.parametrize(
