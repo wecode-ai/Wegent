@@ -12,6 +12,7 @@ import {
   selectShellToolCommand,
 } from '../modules/response-protocol.mjs'
 import { sendPrompt } from '../modules/conversation-navigation.mjs'
+import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import {
   ACTIVE_SEND_BUTTON_SELECTOR,
   selectE2EModel,
@@ -573,6 +574,12 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await control.command('press', COMPOSER_SELECTOR, { key: 'Enter' })
+      await waitForValue(
+        () => largeTargetRequest,
+        Boolean,
+        'The model did not receive the large referenced conversation after the tool read',
+        modelResponseTimeoutMs
+      )
       await control.command('waitFor', '[data-testid="message-assistant"]', {
         text: LARGE_TARGET_COMPLETION,
         timeoutMs: uiTimeoutMs,
