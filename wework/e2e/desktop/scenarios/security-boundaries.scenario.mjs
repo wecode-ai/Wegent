@@ -105,7 +105,11 @@ export function createDesktopScenario({
         restartDesktopApp,
         resultDir,
       })
-      await verifyNativePluginAdmission({ control, electronUserDataDirectory, resultDir })
+      await verifyNativePluginAdmission({
+        control,
+        electronUserDataDirectory,
+        resultDir,
+      })
 
       const payload = `document.body.setAttribute('${MARKER}','yes')`
       const links = [

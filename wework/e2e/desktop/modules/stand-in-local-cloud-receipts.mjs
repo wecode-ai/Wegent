@@ -59,7 +59,13 @@ export async function verifyLocalCloudStandInReceipt(
     const pending = await until(
       () => request(`/v1/loop-items/${issue.id}/assignments`),
       result =>
-        result.items.find(row => row.dispatch_receipt?.reasonCode === 'awaiting_publication'),
+        result.items.find(
+          row =>
+            row.id === assignment.id &&
+            row.dispatch_receipt?.reasonCode === 'awaiting_publication' &&
+            typeof row.dispatch_receipt.publicMessageId === 'string' &&
+            row.dispatch_receipt.publicMessageId.length > 0
+        ),
       uiTimeoutMs,
       'Unconfirmed output must wait for the owning human to publish it'
     )
