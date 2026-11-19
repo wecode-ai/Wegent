@@ -34,6 +34,7 @@ interface Options extends Omit<
   listRef: RefObject<HTMLDivElement | null>
   virtualizerRef?: RefObject<ConversationVirtualizer | null>
   initialDistanceFromBottomPx: number
+  onNativeScrollRange?: () => void
   onScrollAdjustment?: (delta: number) => void
   scrollTailHeight?: number
 }
@@ -44,6 +45,7 @@ export function useConversationVirtualizer({
   listRef,
   virtualizerRef,
   initialDistanceFromBottomPx,
+  onNativeScrollRange,
   onScrollAdjustment,
   scrollTailHeight = 0,
   ...options
@@ -101,6 +103,8 @@ export function useConversationVirtualizer({
       ),
     scrollToFn: (offset, settings, instance) => {
       const element = instance.scrollElement
+      // Attribute native range clamping before adding our own size compensation.
+      onNativeScrollRange?.()
       const before = element?.scrollTop ?? 0
       if (element)
         recordConversationScrollWrite(

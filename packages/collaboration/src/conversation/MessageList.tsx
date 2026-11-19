@@ -385,6 +385,7 @@ export const MessageList = memo(function MessageList({
     scrollElementRef,
     listRef,
     virtualizerRef,
+    onNativeScrollRange,
     onScrollAdjustment: onVirtualScrollAdjustment,
   })
   messageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = virtualScrollAdjustmentEnabled

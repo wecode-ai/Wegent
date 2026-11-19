@@ -1,3 +1,4 @@
+import { createConversationScrollState } from '../../../packages/collaboration/src/conversation/conversationScrollState'
 import './turn-navigation-resize-native'
 import { createRoot } from 'react-dom/client'
 import { useLayoutEffect, useRef, useState } from 'react'
@@ -136,5 +137,152 @@ Object.assign(window, {
       }
     }
     return { errors, anchorOffsets, scrollSamples, uncovered }
+  },
+})
+
+// Reproduce the native clamp followed by virtual compensation observed on panel close.
+function RangeClampRows() {
+  const listRef = useRef<HTMLDivElement>(null)
+  useConversationVirtualizer({
+    count: 1,
+    enabled: true,
+    estimateSize: () => 5456,
+    scrollElementRef: clampViewport,
+    listRef,
+    virtualizerRef: clampEngine,
+    initialDistanceFromBottomPx: 0,
+    onNativeScrollRange: () => clampReader?.captureNativeScrollRange(),
+    onScrollAdjustment: delta => {
+      if (clampState.anchor) clampState.selfScrollOffset += delta
+    },
+  })
+  return (
+    <div ref={listRef} style={{ height: 5456, position: 'relative' }}>
+      <article data-message-id="clamp-anchor">
+        <p
+          id="clamp-anchor"
+          data-scroll-anchor
+          style={{ position: 'absolute', top: 2704, margin: 0 }}
+        >
+          Anchor
+        </p>
+      </article>
+    </div>
+  )
+}
+
+import {
+  createReaderViewportAnchor,
+  type ReaderViewportState,
+} from '../../../packages/collaboration/src/conversation/readerViewportAnchor'
+const clampViewport = { current: null as HTMLDivElement | null }
+const clampEngine = { current: null as ConversationVirtualizer | null }
+const clampState: ReaderViewportState = {
+  anchor: null,
+  selfScrollOffset: 0,
+  lastMeasuredLayout: null,
+  lastScrollPosition: null,
+}
+let clampReader: ReturnType<typeof createReaderViewportAnchor> | null = null
+Object.assign(window, {
+  async runNativeRangeClampContract() {
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    try {
+      root.render(
+        <div
+          ref={element => {
+            clampViewport.current = element
+          }}
+          style={{ width: 1040, height: 643, overflow: 'auto', overflowAnchor: 'none' }}
+        >
+          <RangeClampRows />
+        </div>
+      )
+      for (let i = 0; i < 120 && !clampEngine.current; i++) await frame()
+      const viewport = clampViewport.current!
+      if (!clampEngine.current) throw new Error('Range clamp virtualizer was not ready')
+      const content = viewport.firstElementChild as HTMLElement
+      const anchor = content.querySelector<HTMLElement>('#clamp-anchor')!
+      viewport.scrollTop = 2700
+      clampState.anchor = {
+        messageId: 'clamp-anchor',
+        itemId: null,
+        chunkIndex: null,
+        text: 'Anchor',
+        element: anchor,
+        anchorIndex: 0,
+        textOffset: null,
+        offsetFromScrollerTop: 4,
+        scrollTopPx: 2700,
+      }
+      clampState.selfScrollOffset = 0
+      clampReader = createReaderViewportAnchor(
+        () => viewport,
+        () => content,
+        clampState
+      )
+      content.style.height = '3240px'
+      anchor.style.top = '1889px'
+      const clampedOffset = viewport.scrollTop
+      clampEngine.current.scrollToOffset(2403, { behavior: 'auto' })
+      clampReader.restoreReaderPositionFromLayout()
+      const restoredOffset = viewport.scrollTop
+      const anchorOffset = anchor.getBoundingClientRect().top - viewport.getBoundingClientRect().top
+      const config = {
+        messages: [
+          {
+            id: 'clamp-anchor',
+            role: 'assistant' as const,
+            status: 'done' as const,
+            content: 'Anchor',
+            createdAt: new Date().toISOString(),
+          },
+        ],
+        geometry: null,
+      }
+      const state = createConversationScrollState(null, config)
+      const stop = state.subscribe(
+        () => {},
+        { ...config, scrollRef: clampViewport },
+        {
+          scrollRef: clampViewport,
+          contentRef: { current: content },
+          virtualizerRef: { current: null },
+          externalScrollInteractionRef: undefined,
+          owner: { lease: null },
+        }
+      )
+      let appendButton
+      try {
+        state.markInput(new WheelEvent('wheel', { deltaY: -40 }))
+        viewport.scrollTop = viewport.scrollHeight - viewport.clientHeight - 40
+        state.scroll()
+        state.endInput()
+        const before = state.getSnapshot().showScrollButton
+        const beforeOffset = viewport.scrollTop
+        content.style.height = '4240px'
+        state.handleContentLayoutChange()
+        appendButton = {
+          before,
+          after: state.getSnapshot().showScrollButton,
+          offsetChange: viewport.scrollTop - beforeOffset,
+        }
+      } finally {
+        stop()
+      }
+      return {
+        appendButton,
+        clampedOffset,
+        restoredOffset,
+        anchorOffset,
+      }
+    } finally {
+      clampReader?.dispose()
+      clampReader = null
+      root.unmount()
+      host.remove()
+    }
   },
 })

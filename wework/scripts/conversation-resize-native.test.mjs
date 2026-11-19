@@ -25,7 +25,9 @@ test('native conversation size compensation and scroll rendering preserve frame 
       format: 'iife',
       jsx: 'automatic',
       tsconfigRaw: {},
-      define: { 'process.env.NODE_ENV': '"production"' },
+      // Geometry is explicit in this fixture; imported renderer theme assets are unused.
+      loader: { '.css': 'empty' },
+      define: { 'process.env.NODE_ENV': '"production"', 'import.meta.env': '{}' },
     })
     const main = join(directory, 'main.cjs')
     const output = join(directory, 'result.json')
@@ -46,8 +48,10 @@ app.whenReady().then(async()=>{
   progress('fixture-loaded')
   const result=await window.webContents.executeJavaScript('window.runConversationResizeContract()')
   progress('conversation-finished')
+  result.rangeClamp=await window.webContents.executeJavaScript('window.runNativeRangeClampContract()')
   result.navigation=await window.webContents.executeJavaScript('window.runTurnNavigationResizeContract()')
   require('fs').writeFileSync(${JSON.stringify(output)},JSON.stringify(result))
+  console.log('[conversation-resize-contract] evidence',JSON.stringify(result))
   progress('navigation-finished')
   window.destroy()
   progress('window-destroyed')
@@ -80,6 +84,12 @@ app.whenReady().then(async()=>{
       JSON.stringify(evidence)
     )
     assert.deepEqual(evidence.uncovered, [])
+    assert.deepEqual(evidence.rangeClamp, {
+      appendButton: { before: false, after: true, offsetChange: 0 },
+      clampedOffset: 2597,
+      restoredOffset: 1885,
+      anchorOffset: 4,
+    })
     assert.deepEqual(evidence.navigation.errors, [])
     assert.deepEqual(evidence.navigation.offsets, [0, 0, 0, 0])
     assert.equal(evidence.navigation.cancelledScrollTop, 100)

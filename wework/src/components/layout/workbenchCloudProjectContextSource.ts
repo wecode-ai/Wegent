@@ -519,8 +519,25 @@ export function createWorkbenchCloudProjectContextSource(
       input.runtimeTaskTitle ||
       truncateRuntimeTaskTitle(input.runtimeTaskDescription) ||
       input.t('workbench.untitled_task', '未命名任务')
+    const revision = dialogRevision
     const request = { ...association, pending: true }
+    const reportAssociation = (phase: string) =>
+      reportE2EDiagnostic('project-space-task-association', {
+        phase,
+        taskId: address.taskId,
+        deviceId: address.deviceId,
+        projectId: project.id,
+        projectStore: project.project_store,
+        existingItemId: item?.id ?? null,
+        observed: listeners.size > 0,
+        sameScope: current(scope),
+        sameRequest: snapshot.taskBoardAssociation === request,
+        sameDialog: revision === dialogRevision,
+        associationTaskKey: snapshot.taskBoardAssociation?.taskKey ?? null,
+        currentTaskKey: task() ? runtimeTaskKey(task()!) : null,
+      })
     publish({ taskBoardAssociation: request, todoBindingError: null })
+    reportAssociation('started')
     try {
       const linked = item
         ? (await api.bindTask(
@@ -537,7 +554,11 @@ export function createWorkbenchCloudProjectContextSource(
               input.runtimeTaskDescription ?? ''
             )
           ).item
-      if (!current(scope) || snapshot.taskBoardAssociation !== request) return
+      reportAssociation('runtime-committed')
+      if (!current(scope) || revision !== dialogRevision) {
+        reportAssociation('superseded')
+        return
+      }
       ++lookupRevision
       registry.publishBound({ task: address, project, item: linked })
       publish({
@@ -547,7 +568,16 @@ export function createWorkbenchCloudProjectContextSource(
         }),
       })
     } catch (cause) {
-      if (current(scope) && snapshot.taskBoardAssociation === request)
+      reportE2EDiagnostic('project-space-task-association-failed', {
+        taskId: address.taskId,
+        deviceId: address.deviceId,
+        projectId: project.id,
+        sameScope: current(scope),
+        sameRequest: snapshot.taskBoardAssociation === request,
+        error: cause instanceof Error ? cause.message : String(cause),
+        stack: cause instanceof Error ? cause.stack : undefined,
+      })
+      if (current(scope) && revision === dialogRevision)
         publish({
           taskBoardAssociation: { ...request, pending: false },
           todoBindingError:

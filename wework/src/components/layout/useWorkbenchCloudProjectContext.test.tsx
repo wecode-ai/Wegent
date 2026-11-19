@@ -876,6 +876,76 @@ describe('useWorkbenchCloudProjectContext', () => {
       '完成已有任务的看板关联'
     )
   })
+
+  test('finishes an existing-task association when its inventory resolves during the write', async () => {
+    const targetProject = project('space-target', 'local')
+    const createdItem = {
+      ...loopItem(targetProject.id),
+      status: 'pending' as const,
+    }
+    const currentRuntimeTask = {
+      deviceId: 'local-device',
+      taskId: 'runtime-existing',
+      runtime: 'codex' as const,
+      threadId: 'thread-existing',
+      workspacePath: '/tmp/existing-worktree',
+      workspaceKind: 'worktree' as const,
+      worktreeId: 'worktree-existing',
+    }
+    let finishInventory!: (value: { items: CloudLoopItem[] }) => void
+    let finishAssociation!: (value: { item: CloudLoopItem }) => void
+    const inventory = new Promise<{ items: CloudLoopItem[] }>(resolve => {
+      finishInventory = resolve
+    })
+    const association = new Promise<{ item: CloudLoopItem }>(resolve => {
+      finishAssociation = resolve
+    })
+    const localApi = {
+      findCloudContextForTask: vi.fn().mockRejectedValue(new Error('Not bound yet')),
+      listCloudProjects: vi.fn().mockResolvedValue({ items: [targetProject] }),
+      listCloudFiles: vi.fn().mockResolvedValue({ items: [] }),
+      listLoopItems: vi.fn().mockReturnValue(inventory),
+      listDeliveries: vi.fn().mockResolvedValue({ items: [] }),
+      trackProjectTask: vi.fn().mockReturnValue(association),
+    }
+    const services = {
+      projectSpaceApis: {
+        local: localApi,
+        defaultLocation: 'local',
+      },
+    } as unknown as WorkbenchServices
+    const { result } = renderHook(() =>
+      useWorkbenchCloudProjectContext({
+        active: true,
+        currentRuntimeTask,
+        currentProjectId: 42,
+        defaultProjectSpace: null,
+        paneKey: 'project:42',
+        runtimeTaskDescription: '完成已有任务的看板关联',
+        runtimeTaskTitle: '已有任务',
+        services,
+        userId: 1,
+      })
+    )
+
+    await waitFor(() => expect(result.current.cloudProjects).toEqual([targetProject]))
+    act(() => result.current.handleSelectCloudProject(targetProject))
+    expect(result.current.taskBoardAssociation?.loading).toBe(true)
+
+    act(() => result.current.associateRuntimeTaskWithNewItem())
+    expect(result.current.taskBoardAssociation?.pending).toBe(true)
+    await act(async () => finishInventory({ items: [] }))
+    await act(async () => finishAssociation({ item: createdItem }))
+
+    await waitFor(() => expect(result.current.boundCloudItem).toEqual(createdItem))
+    expect(result.current.taskBoardAssociation).toBeNull()
+    expect(localApi.trackProjectTask).toHaveBeenCalledWith(
+      targetProject.id,
+      currentRuntimeTask,
+      '已有任务',
+      '完成已有任务的看板关联'
+    )
+  })
 })
 
 describe('current project binding context ownership', () => {
