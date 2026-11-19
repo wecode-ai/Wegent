@@ -90,8 +90,12 @@ export function createPluginConnectorHealthState(key: string) {
     getSnapshot: () => snapshot,
     isCurrent: () => observers.size > 0,
     subscribe(next: HealthInput, listener: () => void) {
-      const changed = !input || input.detail !== next.detail || input.t !== next.t
-      if (input && (input.revision !== next.revision || input.busy !== next.busy)) request += 1
+      const changed =
+        !input ||
+        input.detail !== next.detail ||
+        input.t !== next.t ||
+        input.revision !== next.revision ||
+        input.busy !== next.busy
       input = next
       observers.add(listener)
       if (changed || !initialized) {
@@ -111,6 +115,7 @@ export function createPluginConnectorHealthState(key: string) {
     },
     refresh,
     clearError() {
+      request += 1
       if (snapshot.error !== null) publish({ error: null })
     },
     clear() {
@@ -123,4 +128,20 @@ export function createPluginConnectorHealthState(key: string) {
       publish({ states: { ...snapshot.states, [slug]: connected }, error: null })
     },
   }
+}
+
+/** Foreground failures remain visible independently of optional background health. */
+export function pluginConnectorActionError(
+  action: {
+    pluginId: string | number
+    message: string
+    source?: 'detail-read' | 'auth-health'
+  } | null,
+  detailId: string | number | null,
+  healthError: string | null
+) {
+  if (action && String(action.pluginId) === String(detailId)) return action
+  return healthError && detailId !== null
+    ? { pluginId: detailId, message: healthError, source: 'auth-health' as const }
+    : null
 }

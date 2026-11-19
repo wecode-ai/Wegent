@@ -20,7 +20,7 @@ import type { Dispatch, SetStateAction } from 'react'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 interface Input {
   workbenchVisible: boolean
-  onRuntimeTaskCreated: (paneKey: string, address: RuntimeTaskAddress) => void
+  onRuntimeTaskCreated: (paneKey: string, address: RuntimeTaskAddress) => void | (() => void)
   paneActive: boolean
   paneVisible: boolean
   t: TFunction<'common'>
@@ -86,24 +86,33 @@ export function useDesktopPaneConversationActions({
       const description = value ?? paneSession.input
       const draftEditVersion = getDraftEditVersion()
       const cloudSubmission = prepareSubmission(description)
-      return sendPaneInput(value, {
-        ...options,
-        draftEditVersion,
-        additionalContext: cloudSubmission.additionalContext,
-        cloudProjectId: cloudSubmission.cloudProjectId,
-        origin: cloudSubmission.origin,
-        initialSupervisor: supervisorConfig,
-        onRuntimeTaskCreated: address => {
-          onRuntimeTaskCreated(sourcePaneKey, address)
-          cloudSubmission.onRuntimeTaskCreated(address)
-          requestWorkbenchComposerFocus(getRuntimeTaskChatScopeKey(address))
-        },
-        onRuntimeTaskReady: () => {
-          if (supervisorConfig) {
-            setPendingSupervisorConfig(null)
-          }
-        },
-      })
+      const discardTransfers: Array<() => void> = []
+      try {
+        const accepted = await sendPaneInput(value, {
+          ...options,
+          draftEditVersion,
+          additionalContext: cloudSubmission.additionalContext,
+          cloudProjectId: cloudSubmission.cloudProjectId,
+          origin: cloudSubmission.origin,
+          initialSupervisor: supervisorConfig,
+          onRuntimeTaskCreated: address => {
+            const discard = onRuntimeTaskCreated(sourcePaneKey, address)
+            if (discard) discardTransfers.push(discard)
+            cloudSubmission.onRuntimeTaskCreated(address)
+            requestWorkbenchComposerFocus(getRuntimeTaskChatScopeKey(address))
+          },
+          onRuntimeTaskReady: () => {
+            if (supervisorConfig) {
+              setPendingSupervisorConfig(null)
+            }
+          },
+        })
+        if (accepted === false) for (const discard of discardTransfers) discard()
+        return accepted
+      } catch (error) {
+        for (const discard of discardTransfers) discard()
+        throw error
+      }
     },
     [
       paneKey,

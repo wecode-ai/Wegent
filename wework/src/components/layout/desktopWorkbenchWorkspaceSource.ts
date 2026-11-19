@@ -21,6 +21,7 @@ interface WorkspaceRouting {
 export function createDesktopWorkbenchWorkspaceSource() {
   let snapshot: WorkspaceSnapshot = { resourceOwnersByPane: {}, pendingBrowserOpenRequests: {} }
   const paneWorkspaceStates = new Map<string, WorkbenchPaneWorkspaceState>()
+  const provisionalTransfers = new Map<string, symbol>()
   const paneOwnerListeners = new Set<() => void>()
   const listeners = new Set<() => void>()
   let routing: WorkspaceRouting | null = null
@@ -43,11 +44,15 @@ export function createDesktopWorkbenchWorkspaceSource() {
   return {
     readPaneWorkspaceState: (key: string) => paneWorkspaceStates.get(key),
     rememberPaneWorkspaceState(key: string, value: WorkbenchPaneWorkspaceState) {
+      provisionalTransfers.delete(key)
       paneWorkspaceStates.set(key, value)
     },
     transferPaneWorkspaceState(sourceKey: string, address: RuntimeTaskAddress) {
       const target = getWorkbenchPaneKey({ currentRuntimeTask: address, currentProject: null })
-      if (paneWorkspaceStates.has(target)) return
+      if (paneWorkspaceStates.has(target)) {
+        provisionalTransfers.delete(target)
+        return
+      }
       const source = paneWorkspaceStates.get(sourceKey)
       if (!source) return
       for (const browser of Object.values(source.browserStates ?? {})) {
@@ -55,10 +60,22 @@ export function createDesktopWorkbenchWorkspaceSource() {
         retainElectronEmbeddedBrowserView(browser.label)
         markEmbeddedBrowserLabelTransferred(browser.label)
       }
-      paneWorkspaceStates.set(target, {
+      const transferred = {
         ...source,
         transferredFromBlank: sourceKey.startsWith('blank:'),
-      })
+      }
+      const receipt = Symbol('workspace-transfer')
+      provisionalTransfers.set(target, receipt)
+      paneWorkspaceStates.set(target, transferred)
+      return () => {
+        if (
+          provisionalTransfers.get(target) !== receipt ||
+          paneWorkspaceStates.get(target) !== transferred
+        )
+          return
+        provisionalTransfers.delete(target)
+        paneWorkspaceStates.delete(target)
+      }
     },
     hasPane(key: string) {
       return key === routing?.activePaneKey || !key.startsWith('runtime:') || validPaneKeys.has(key)
@@ -80,17 +97,21 @@ export function createDesktopWorkbenchWorkspaceSource() {
         subscribe(listener: () => void) {
           const previousRouting = routing
           routing = next
-          if (previousRouting?.runtimePaneKeysKey !== next.runtimePaneKeysKey)
-            validPaneKeys = new Set<string>(JSON.parse(next.runtimePaneKeysKey))
+          if (previousRouting?.runtimePaneKeysKey !== next.runtimePaneKeysKey) {
+            const nextValidKeys = new Set<string>(JSON.parse(next.runtimePaneKeysKey))
+            // An unlisted task can be a newly admitted creation; only removals are authoritative.
+            for (const key of validPaneKeys) {
+              if (nextValidKeys.has(key)) continue
+              provisionalTransfers.delete(key)
+              paneWorkspaceStates.delete(key)
+            }
+            validPaneKeys = nextValidKeys
+          }
           if (
             previousRouting?.runtimePaneKeysKey !== next.runtimePaneKeysKey ||
             previousRouting?.activePaneKey !== next.activePaneKey
           )
             for (const listener of paneOwnerListeners) listener()
-          for (const key of paneWorkspaceStates.keys()) {
-            if (key.startsWith('runtime:') && !validPaneKeys.has(key))
-              paneWorkspaceStates.delete(key)
-          }
           listeners.add(listener)
           generation += 1
           if (!nativeListener) {

@@ -12,7 +12,10 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useDOMEvent, useWindowEvent } from '@wegent/collaboration/dom-events'
 import { createPluginWorkspaceOperations } from '../workspace/pluginWorkspaceOperations'
 import { createPluginMarketplaceViewport } from '../workspace/pluginMarketplaceViewport'
-import { createPluginConnectorHealthState } from '../workspace/pluginConnectorHealthState'
+import {
+  createPluginConnectorHealthState,
+  pluginConnectorActionError,
+} from '../workspace/pluginConnectorHealthState'
 import { usePluginWorkspacePublishing } from '../workspace/usePluginWorkspacePublishing'
 import { usePluginWorkspaceConnectors } from '../workspace/usePluginWorkspaceConnectors'
 import { usePluginWorkspaceInstallation } from '../workspace/usePluginWorkspaceInstallation'
@@ -265,7 +268,9 @@ export function usePluginsWorkspaceController({
     marketplaceCacheKeyValue,
   })
   const isReconcilingPlugins = reconciliation.active
-  const reconciliationBlocksActions = isReconcilingPlugins && !reconciliation.waitingOnNative
+  // Complete current-account inventory remains usable while native cleanup is reconciled.
+  const reconciliationBlocksActions =
+    isReconcilingPlugins && !reconciliation.waitingOnNative && !localInventoryReady
   const isOfficialCatalogView =
     selectedDistributionTab === 'official' && !marketplaceSourceFilterKey
   const isCatalogRefreshBusy = isOfficialCatalogView
@@ -671,10 +676,11 @@ export function usePluginsWorkspaceController({
     requiredConnections?.getSnapshot ?? getIdleResourceSnapshot
   )
   const selectedRequiredConnectionNames = requiredSnapshot.data ?? null
-  const pluginDetailActionError =
-    connectorHealthError && healthDetailId !== null
-      ? { pluginId: healthDetailId, message: connectorHealthError, source: 'auth-health' as const }
-      : localPluginDetailActionError
+  const pluginDetailActionError = pluginConnectorActionError(
+    localPluginDetailActionError,
+    healthDetailId,
+    connectorHealthError
+  )
   const marketplaceFilterKey = JSON.stringify([
     marketplaceDistributionFilter,
     marketplaceSourceFilterKey,

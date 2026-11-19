@@ -322,7 +322,8 @@ export function createBufferedComposerModel(initial: BufferedComposerInput) {
       previous.value !== value ||
       previous.scopeKey !== scopeKey ||
       previous.replaceDraftKey !== replaceDraftKey ||
-      previous.revision !== synchronousRevision
+      (previous.revision !== synchronousRevision &&
+        publishedDraftsRef.current.get(scopeKey)?.some(publication => publication.value === value))
     ) {
       committedExternal = { value, scopeKey, replaceDraftKey, revision: synchronousRevision }
       reconcileExternal()

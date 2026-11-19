@@ -382,7 +382,7 @@ export interface DesktopWorkbenchPaneProps {
   onBrowserOpenRequestHandled: (paneKey: string, requestId: string) => void
   initialWorkspaceState?: WorkbenchPaneWorkspaceState
   onWorkspaceStateChange: (paneKey: string, state: WorkbenchPaneWorkspaceState) => void
-  onRuntimeTaskCreated: (paneKey: string, address: RuntimeTaskAddress) => void
+  onRuntimeTaskCreated: (paneKey: string, address: RuntimeTaskAddress) => void | (() => void)
   onLocalHarnessSessionStarted: (
     session: LocalHarnessWorkbenchSession,
     options?: LocalHarnessSessionRegistrationOptions
