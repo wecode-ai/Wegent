@@ -404,6 +404,7 @@ export function createDesktopScenario({
           uiTimeoutMs,
           'Stage tag was not persisted'
         )
+        await control.command('scrollIntoView', selector('cloud-task-activity-list'))
         await wait('cloud-task-activity-list', `阶段验收-${i + 1}`)
         const assignmentEvent = await waitForTestIdByText(
           control,

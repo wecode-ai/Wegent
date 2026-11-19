@@ -262,7 +262,7 @@ describe("shared Issue threads", () => {
     ).toBe("09-17 08:00");
   });
 
-  it("renders a manager assignment as a compact dispatch event", () => {
+  it("preserves the activity identity for a compact manager dispatch event", () => {
     act(() =>
       root.render(
         <IssueProjectChatThread
@@ -308,9 +308,14 @@ describe("shared Issue threads", () => {
     expect(
       container.querySelector('[data-testid="collaboration-chat-card-root"]'),
     ).not.toBeNull();
+    const activity = container.querySelector(
+      '[data-testid="cloud-task-activity-card-root"]',
+    );
+    expect(activity).not.toBeNull();
+    expect(activity?.contains(event)).toBe(true);
     expect(
-      container.querySelector('[data-testid="cloud-task-activity-card-root"]'),
-    ).toBeNull();
+      activity?.querySelector('[data-testid="collaboration-chat-card-root"]'),
+    ).not.toBeNull();
   });
 
   it("renders a manager answer inside the human reply thread", () => {
