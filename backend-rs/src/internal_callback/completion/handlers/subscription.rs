@@ -77,12 +77,7 @@ pub(crate) async fn handle_task_completed<M: Mysql, R: Redis>(
     let (event, execution, result) = match outcome {
         Ok(Some((_, Some(applied), result))) => (event, applied, result),
         Ok(Some((execution, None, _))) => {
-            // A cancel from the subscription API marks the execution CANCELLED
-            // before the executor reports the end of the run, so this event is
-            // the first chance to release the container.
-            if model::terminal(&execution.status) && releases_executor(event.status) {
-                release_finished_executor(ctx, &mysql, &execution, event.task_id).await;
-            }
+            release_after_status_noop(ctx, &mysql, execution.id, event).await;
             return;
         }
         Ok(None) => return,
@@ -162,30 +157,7 @@ async fn fail_unsaved_result<M: Mysql, R: Redis>(
     match outcome {
         Ok(Some((_, Some(applied)))) => Some(applied),
         Ok(Some((execution, None))) => {
-            // REPEATABLE READ can retain the old lookup, and pooled reads may
-            // use a lagging replica. The first read of a fresh writer
-            // transaction sees the committed row after the lost status update.
-            let execution: Execution = match mysql
-                .with_transaction(async |tx| {
-                    tx.fetch_optional(model::execution_by_id(), (execution.id,))
-                        .await
-                })
-                .await
-            {
-                Ok(Some(execution)) => execution,
-                Ok(None) => return None,
-                Err(error) => {
-                    tracing::warn!(
-                        %error,
-                        task_id = event.task_id,
-                        "could not reload the run after a lost status update"
-                    );
-                    return None;
-                }
-            };
-            if model::terminal(&execution.status) && releases_executor(event.status) {
-                release_finished_executor(ctx, mysql, &execution, event.task_id).await;
-            }
+            release_after_status_noop(ctx, mysql, execution.id, event).await;
             None
         }
         Ok(None) => None,
@@ -193,6 +165,39 @@ async fn fail_unsaved_result<M: Mysql, R: Redis>(
             tracing::error!(%error, task_id=event.task_id, "could not mark the run FAILED");
             None
         }
+    }
+}
+
+/// A status no-op can lose its CAS to a cancel after the execution lookup.
+/// Refresh the committed execution before deciding whether cleanup is due.
+async fn release_after_status_noop<M: Mysql, R: Redis>(
+    ctx: &Completion<'_, M, R>,
+    mysql: &M,
+    execution_id: i64,
+    event: &TaskCompletedEvent<'_>,
+) {
+    // REPEATABLE READ can retain the old lookup, and pooled reads may use a
+    // lagging replica. A fresh writer transaction sees the committed row.
+    let execution: Execution = match mysql
+        .with_transaction(async |tx| {
+            tx.fetch_optional(model::execution_by_id(), (execution_id,))
+                .await
+        })
+        .await
+    {
+        Ok(Some(execution)) => execution,
+        Ok(None) => return,
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                task_id = event.task_id,
+                "could not reload the run after a lost status update"
+            );
+            return;
+        }
+    };
+    if model::terminal(&execution.status) && releases_executor(event.status) {
+        release_finished_executor(ctx, mysql, &execution, event.task_id).await;
     }
 }
 

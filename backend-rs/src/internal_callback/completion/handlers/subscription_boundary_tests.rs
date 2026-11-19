@@ -496,12 +496,12 @@ async fn the_statistics_write_runs_on_the_callers_transaction() {
 
 /// Records pooled reads, optionally delegating to the SQL fixture and exposing
 /// when its transaction commits so the fixture can retain a stale read view.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct RecordingMysql {
-    statements: Mutex<Vec<String>>,
+    statements: Arc<Mutex<Vec<String>>>,
     mysql: Option<MysqlService>,
     committed: Arc<AtomicBool>,
-    transactions: AtomicUsize,
+    transactions: Arc<AtomicUsize>,
 }
 
 impl Mysql for RecordingMysql {
@@ -512,7 +512,7 @@ impl Mysql for RecordingMysql {
     }
 
     fn route<K: MysqlRouteKey>(&self, _: K) -> Self {
-        Self::default()
+        self.clone()
     }
 
     async fn fetch_optional<S, A, T>(&self, sql: S, args: A) -> MysqlResult<Option<T>>
@@ -670,7 +670,7 @@ fn subscription_row() -> Row {
 #[tokio::test]
 async fn an_already_cancelled_execution_still_runs_the_executor_cleanup_transaction() {
     let server = MysqlRows::start_results(|sql| {
-        if sql.contains("FROM background_executions") && sql.contains("ORDER BY") {
+        if sql.contains("FROM background_executions") {
             let row = execution_row("CANCELLED");
             return (row.clone(), vec![row]);
         }
@@ -778,79 +778,86 @@ async fn fail_unsaved_result_cleans_up_when_a_concurrent_writer_already_finished
 /// transaction read RUNNING. Only a read after commit may see CANCELLED and
 /// trigger cleanup; re-reading in the same transaction cannot fix the leak.
 #[tokio::test]
-async fn fail_unsaved_result_refreshes_a_lost_transition_before_cleanup() {
-    let redis = NoRedis;
-    let manager = crate::executor_manager::ExecutorManager::new("http://127.0.0.1:1")
-        .expect("executor-manager client");
-    let execution = running_execution();
-    let event = completed_event(&execution);
-    let committed = Arc::new(AtomicBool::new(false));
-    let read_view = Arc::clone(&committed);
-    let server = MysqlRows::start_results(move |sql| {
-        if sql.contains("FROM background_executions") {
-            let status = if read_view.load(Ordering::SeqCst) {
-                "CANCELLED"
-            } else {
-                "RUNNING"
-            };
-            let row = execution_row(status);
-            return (row.clone(), vec![row]);
-        }
-        if sql.contains("FROM kinds") && sql.contains("Subscription") {
-            let row = subscription_row();
-            return (row.clone(), vec![row]);
-        }
-        (vec![("id", SqlValue::I64(0))], Vec::new())
-    })
-    .await;
-    let mysql = RecordingMysql {
-        mysql: Some(server.mysql.clone()),
-        committed,
-        ..Default::default()
-    };
-    let ctx = Completion {
-        app: None,
-        mysql: &mysql,
-        redis: &redis,
-        tables: tables(),
-        executor_manager: &manager,
-    };
+async fn terminal_completion_refreshes_a_lost_transition_before_cleanup() {
+    for fallback in [false, true] {
+        let redis = NoRedis;
+        let manager = crate::executor_manager::ExecutorManager::new("http://127.0.0.1:1")
+            .expect("executor-manager client");
+        let execution = running_execution();
+        let event = completed_event(&execution);
+        let committed = Arc::new(AtomicBool::new(false));
+        let read_view = Arc::clone(&committed);
+        let server = MysqlRows::start_results(move |sql| {
+            if sql.contains("FROM background_executions") {
+                let status = if read_view.load(Ordering::SeqCst) {
+                    "CANCELLED"
+                } else {
+                    "RUNNING"
+                };
+                let row = execution_row(status);
+                return (row.clone(), vec![row]);
+            }
+            if sql.contains("FROM kinds") && sql.contains("Subscription") {
+                let row = subscription_row();
+                return (row.clone(), vec![row]);
+            }
+            (vec![("id", SqlValue::I64(0))], Vec::new())
+        })
+        .await;
+        let mysql = RecordingMysql {
+            mysql: Some(server.mysql.clone()),
+            committed,
+            ..Default::default()
+        };
+        let ctx = Completion {
+            app: None,
+            mysql: &mysql,
+            redis: &redis,
+            tables: tables(),
+            executor_manager: &manager,
+        };
 
-    let fallback = super::fail_unsaved_result(
-        &ctx,
-        &mysql,
-        &event,
-        "The run finished but its result could not be saved: Data too long",
-    )
-    .await;
-
-    assert!(fallback.is_none());
-    let queries = server.queries();
-    // MysqlRows' empty result set reports zero affected rows for the guarded
-    // UPDATE, so the real transition_in helper cannot overwrite CANCELLED.
-    let updates: Vec<_> = queries
-        .iter()
-        .filter(|q| q.starts_with("UPDATE background_executions"))
-        .collect();
-    assert_eq!(updates.len(), 1, "one CAS attempt: {queries:?}");
-    assert!(updates[0].contains("version = ?"), "{:?}", updates[0]);
-    assert!(
-        !queries.iter().any(|q| q.starts_with("UPDATE kinds")),
-        "a lost CAS must not rewrite subscription statistics: {queries:?}"
-    );
-    assert!(
-        mysql.statements().is_empty(),
-        "pooled reads may use a replica"
-    );
-    assert_eq!(
-        mysql.transactions.load(Ordering::SeqCst),
-        3,
-        "status, fresh writer read, then managed-task cleanup: {queries:?}"
-    );
-    assert!(
-        queries
+        if fallback {
+            assert!(
+                super::fail_unsaved_result(
+                    &ctx,
+                    &mysql,
+                    &event,
+                    "The run finished but its result could not be saved: Data too long",
+                )
+                .await
+                .is_none()
+            );
+        } else {
+            handle_task_completed(&ctx, &event).await;
+        }
+        let queries = server.queries();
+        // MysqlRows' empty result set reports zero affected rows for the guarded
+        // UPDATE, so the real transition_in helper cannot overwrite CANCELLED.
+        let updates: Vec<_> = queries
             .iter()
-            .any(|q| q.contains("FROM `tasks_0030`") && q.contains("kind = 'Task'")),
-        "the committed CANCELLED row must still release the executor: {queries:?}"
-    );
+            .filter(|q| q.starts_with("UPDATE background_executions"))
+            .collect();
+        assert_eq!(updates.len(), 1, "one CAS attempt: {queries:?}");
+        assert!(updates[0].contains("version = ?"), "{:?}", updates[0]);
+        assert!(
+            !queries.iter().any(|q| q.starts_with("UPDATE kinds")),
+            "a lost CAS must not rewrite subscription statistics: {queries:?}"
+        );
+        assert!(
+            queries
+                .iter()
+                .any(|q| q.contains("FROM `tasks_0030`") && q.contains("kind = 'Task'")),
+            "the committed CANCELLED row must still release the executor (fallback={fallback}): {queries:?}"
+        );
+        assert!(
+            mysql.statements().is_empty(),
+            "pooled reads may use a replica"
+        );
+        assert_eq!(
+            mysql.transactions.load(Ordering::SeqCst),
+            3,
+            "status, fresh writer read, then managed-task cleanup: {queries:?}"
+        );
+    }
 }
