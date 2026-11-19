@@ -203,7 +203,7 @@ Object.assign(window, {
       for (let i = 0; i < 120 && !clampEngine.current; i++) await frame()
       const viewport = clampViewport.current!
       if (!clampEngine.current) throw new Error('Range clamp virtualizer was not ready')
-      const content = viewport.firstElementChild as HTMLElement
+      const content = viewport.firstElementChild as HTMLDivElement
       const anchor = content.querySelector<HTMLElement>('#clamp-anchor')!
       viewport.scrollTop = 2700
       clampState.anchor = {
