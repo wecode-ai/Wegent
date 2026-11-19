@@ -1,3 +1,4 @@
+import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
 import { runtimeProjectRefFromWorkspace } from '../../../../packages/chat-core/src/runtime-project-metadata'
 import type { RuntimeTaskArchiveRequest } from '../../../../packages/chat-core/src/runtime-management-types'
 import type { ConnectionDependencyPluginApi } from '@/api/standInConnectionDependencies'
@@ -2393,7 +2394,8 @@ export function createRuntimeWorkApiFromIpc(
           requestOptions,
           identity ?? undefined
         )
-        if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+        const e2eConfig = getDesktopE2ERuntimeConfig()
+        if (e2eConfig.controlUrl && !e2eConfig.disabled) {
           logRuntimeTaskCreateStage('local-runtime-work-list', {
             identityElapsedMs: Math.round(identityReadyAt - loadStartedAt),
             defaultDeviceElapsedMs: Math.round(startedAt - identityReadyAt),
