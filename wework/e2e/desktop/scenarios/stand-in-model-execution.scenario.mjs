@@ -903,7 +903,7 @@ async function verifyCloudModelRecovery({
     await waitForDeliveredCloudCatalog(control, catalogProxy, updatedRequestStart)
     await control.command('press', 'body', { key: 'Escape' })
     await control.command('waitFor', trigger, { text: updatedLabel })
-    await control.command('waitFor', `${submit}:not(:disabled)`, { timeoutMs: 30_000 })
+    await control.command('waitFor', submit, { enabled: true, timeoutMs: 30_000 })
     return { reasoning, limits: UPDATED_LIMITS }
   } finally {
     catalogProxy.rule = previousRule
