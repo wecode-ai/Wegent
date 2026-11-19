@@ -189,6 +189,7 @@ test('chat requests protected current content on demand, pages explicitly and re
     const { panel, open } = await openOriginal()
     const scroll = within(panel).getByTestId('answer-evidence-scroll')
     scroll.scrollTop = 146
+    expect(within(panel).queryByTestId('answer-evidence-copy-fragment')).not.toBeInTheDocument()
     expect(get.mock.calls.every(([url]) => isEvidenceMetadataRead(url))).toBe(true)
     expect(attachmentFetch).not.toHaveBeenCalled()
 
@@ -196,7 +197,6 @@ test('chat requests protected current content on demand, pages explicitly and re
     expect(await within(panel).findByText('当前正文')).toBeInTheDocument()
     expect(within(panel).getByText('evidence.current_original')).toBeInTheDocument()
     expect(within(panel).queryByText('回答时的快照')).not.toBeInTheDocument()
-    expect(within(panel).queryByTestId('answer-evidence-copy-fragment')).not.toBeInTheDocument()
     expect(within(panel).queryByTestId('knowledge-source-preview')).not.toBeInTheDocument()
     expect(within(panel).getByTestId('knowledge-document-watermark')).toHaveAttribute(
       'data-watermark-text',
@@ -214,7 +214,7 @@ test('chat requests protected current content on demand, pages explicitly and re
     fireEvent.click(within(panel).getByTestId('answer-evidence-return-fragment'))
     expect(within(panel).getByText('回答时的快照')).toBeInTheDocument()
     expect(within(panel).getByTestId('answer-evidence-select-fragment')).toHaveValue('42')
-    expect(within(panel).getByText('资料 · 1', { selector: 'h3' })).toBeInTheDocument()
+    expect(within(panel).getByRole('heading', { name: '资料', level: 3 })).toBeInTheDocument()
     expect(within(panel).getByTestId('answer-evidence-scroll').scrollTop).toBe(146)
     expect(within(panel).getByTestId('answer-evidence-open-original')).toHaveFocus()
     expect(citationReads()).toHaveLength(2)

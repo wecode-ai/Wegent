@@ -1302,50 +1302,6 @@ test('the chat host temporarily yields an occupied right panel without losing it
   expect(draft).toHaveValue('草稿')
 })
 
-test.each([true, false])(
-  'copies a snapshot without the Clipboard API (copy returns %s)',
-  async copied => {
-    const clipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
-    const execCommand = Object.getOwnPropertyDescriptor(document, 'execCommand')
-    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
-    const copy = jest.fn(() => {
-      const field = document.activeElement
-      expect(field).toBeInstanceOf(HTMLTextAreaElement)
-      expect(field?.closest('[role="dialog"]')).toBe(screen.getByTestId('answer-evidence-panel'))
-      expect(field).toHaveValue('回答时的快照')
-      return copied
-    })
-    Object.defineProperty(document, 'execCommand', { configurable: true, value: copy })
-    try {
-      get.mockImplementation(async (url: string) =>
-        url.includes('my-permission') ? { source_access: 'readable' } : snapshotOf('42')
-      )
-      render(
-        <ChatEvidenceHost mobile>
-          <Answer />
-        </ChatEvidenceHost>
-      )
-      fireEvent.click(screen.getByTestId('answer-citation-42'))
-      const button = await screen.findByTestId('answer-evidence-copy-fragment')
-      await act(async () => {
-        button.focus()
-        fireEvent.click(button)
-      })
-      expect(copy).toHaveBeenCalledWith('copy')
-      expect(
-        screen.getByText(copied ? 'evidence.copied' : 'evidence.copy_failed')
-      ).toBeInTheDocument()
-      expect(button).toHaveFocus()
-      expect(document.querySelector('textarea')).toBeNull()
-    } finally {
-      if (clipboard) Object.defineProperty(navigator, 'clipboard', clipboard)
-      else Reflect.deleteProperty(navigator, 'clipboard')
-      if (execCommand) Object.defineProperty(document, 'execCommand', execCommand)
-      else Reflect.deleteProperty(document, 'execCommand')
-    }
-  }
-)
-
 test('closing the side panel returns focus to the collapsed source summary', async () => {
   const width = jest.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1100)
   try {

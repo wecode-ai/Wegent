@@ -2,11 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { useId, useLayoutEffect, useRef, useState } from 'react'
-import { Copy, X } from 'lucide-react'
+import { ArrowLeft, BookOpen, ChevronRight, FileText, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { useTranslation } from '@/hooks/useTranslation'
-import { copyMessageText } from '../copyMessageText'
 import { registerTaskRightPanel, type TaskRightPanelComponentProps } from '../../right-panel'
 import { type EvidenceEntry, type EvidenceRead } from './useEvidenceRead'
 
@@ -90,41 +89,54 @@ export function AnswerEvidencePanel({
       ref={closeButton}
       variant="ghost"
       type="button"
-      className="h-11 w-11 shrink-0 p-0"
+      className="h-11 w-11 shrink-0 p-0 text-text-muted md:h-8 md:w-8"
       aria-label={t('evidence.close')}
       data-testid="answer-evidence-close"
       onClick={onClose}
     >
-      <X className="h-5 w-5" aria-hidden />
+      <X className="h-4 w-4" aria-hidden />
     </Button>
   )
-  const title = t(originalOpen ? 'evidence.current_original' : 'evidence.title')
+  const title = (
+    <>
+      {!originalOpen && <BookOpen className="h-4 w-4 shrink-0" aria-hidden />}
+      {t(originalOpen ? 'evidence.current_original' : 'evidence.panel_title')}
+    </>
+  )
   const changed = versionStatus === 'changed' && original !== undefined
+  const openCurrentOriginal = () => {
+    if (!original) return
+    fragmentPosition.current = scroll.current?.scrollTop ?? 0
+    setOriginalFor(original.selectionSignal)
+  }
   const returnToFragment = () => {
     focusFragment.current = true
     setOriginalFor(undefined)
   }
   const content = (
     <>
-      <header className="flex items-center justify-between gap-2 border-b border-border px-4 py-2">
+      <header className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-4 py-1.5 sm:px-5">
         {mode === 'side' ? (
-          <h2 id={titleId} className="font-semibold">
+          <h2 id={titleId} className="flex items-center gap-2 text-sm font-semibold">
             {title}
           </h2>
         ) : (
-          <DialogTitle className="text-base">{title}</DialogTitle>
+          <DialogTitle className="flex items-center gap-2 text-sm">{title}</DialogTitle>
         )}
         {close}
       </header>
-      <div className="space-y-2 border-b border-border px-4 py-3">
-        <h3 className="break-words font-medium">
-          {t('evidence.citation_label', { title: entry.citation.title, number: entry.number })}
-        </h3>
+      <div className="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-border px-4 py-3 sm:px-5">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-primary/10 text-primary">
+            <FileText className="h-4 w-4" aria-hidden />
+          </span>
+          <h3 className="min-w-0 break-words text-sm font-semibold">{entry.citation.title}</h3>
+        </div>
         {entries.length > 1 && (
           <select
             aria-label={t('evidence.select_fragment')}
             data-testid="answer-evidence-select-fragment"
-            className="h-11 w-full rounded-lg border border-border bg-surface px-2 text-sm"
+            className="h-11 max-w-[45%] rounded-md border border-border bg-base px-2 text-xs text-text-secondary focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary md:h-8"
             value={citationId}
             onChange={event => {
               const next = entries.find(item => item.citation.citation_id === event.target.value)
@@ -136,63 +148,79 @@ export function AnswerEvidencePanel({
             )}
             {entries.map(item => (
               <option key={item.citation.citation_id} value={item.citation.citation_id}>
-                {t('evidence.citation_label', { title: item.citation.title, number: item.number })}
+                {item.citation.document_id === entry.citation.document_id &&
+                item.citation.knowledge_base_id === entry.citation.knowledge_base_id
+                  ? t('evidence.fragment_number', { number: item.number })
+                  : t('evidence.citation_label', {
+                      title: item.citation.title,
+                      number: item.number,
+                    })}
               </option>
             ))}
           </select>
         )}
-        {changed && <p className="text-sm font-medium">{t('evidence.original_changed')}</p>}
-        {original && (
-          <div className="flex flex-wrap items-center gap-2">
-            {(changed || originalOpen) && (
-              <Button
-                ref={returnButton}
-                type="button"
-                variant="outline"
-                className="min-h-11"
-                aria-pressed={changed ? !originalOpen : undefined}
-                disabled={changed && !originalOpen}
-                data-testid="answer-evidence-return-fragment"
-                onClick={returnToFragment}
-              >
-                {t(changed ? 'evidence.answer_fragment' : 'evidence.return_fragment')}
-              </Button>
-            )}
-            {(changed || !originalOpen) && (
-              <Button
-                ref={openOriginalButton}
-                type="button"
-                variant="outline"
-                className="min-h-11"
-                aria-pressed={changed ? originalOpen : undefined}
-                disabled={changed && originalOpen}
-                data-testid="answer-evidence-open-original"
-                onClick={() => {
-                  fragmentPosition.current = scroll.current?.scrollTop ?? 0
-                  setOriginalFor(original.selectionSignal)
-                }}
-              >
-                {t(changed ? 'evidence.current_original' : 'evidence.open_original')}
-              </Button>
-            )}
-            {!originalOpen && read.status === 'ready' && (
-              <CopyExcerpt key={citationId} content={read.snapshot.content} />
-            )}
-          </div>
+        {entries.length <= 1 && (
+          <span className="text-xs text-text-muted">
+            {t('evidence.fragment_number', { number: entry.number })}
+          </span>
         )}
       </div>
+      {original && changed && (
+        <div className="shrink-0 space-y-2 border-b border-border bg-surface px-4 py-3 sm:px-5">
+          <p className="text-xs font-medium">{t('evidence.original_changed')}</p>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              ref={returnButton}
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              aria-pressed={!originalOpen}
+              disabled={!originalOpen}
+              data-testid="answer-evidence-return-fragment"
+              onClick={returnToFragment}
+            >
+              {t('evidence.answer_fragment')}
+            </Button>
+            <Button
+              ref={openOriginalButton}
+              type="button"
+              variant="outline"
+              className="min-h-11"
+              aria-pressed={originalOpen}
+              disabled={originalOpen}
+              data-testid="answer-evidence-open-original"
+              onClick={openCurrentOriginal}
+            >
+              {t('evidence.current_original')}
+            </Button>
+          </div>
+        </div>
+      )}
       {originalOpen ? (
-        <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto px-4 py-3 text-sm">
+        <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto px-4 py-3 text-sm sm:px-5">
+          {!changed && (
+            <Button
+              ref={returnButton}
+              type="button"
+              variant="ghost"
+              className="h-11 shrink-0 self-start px-2 text-xs text-primary md:h-8"
+              data-testid="answer-evidence-return-fragment"
+              onClick={returnToFragment}
+            >
+              <ArrowLeft className="h-4 w-4" aria-hidden />
+              {t('evidence.return_fragment')}
+            </Button>
+          )}
           <CurrentEvidenceOriginal {...original} />
         </div>
       ) : (
         <div
           ref={scroll}
           role="region"
-          aria-label={title}
+          aria-label={t('evidence.title')}
           tabIndex={0}
           data-testid="answer-evidence-scroll"
-          className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-3 text-sm focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary"
+          className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 text-sm leading-7 text-text-secondary focus-visible:outline focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-primary sm:px-5"
         >
           <EvidenceReadBody
             read={read}
@@ -202,6 +230,22 @@ export function AnswerEvidencePanel({
             }}
           />
         </div>
+      )}
+      {original && !originalOpen && !changed && (
+        <footer className="shrink-0 border-t border-border px-3 py-1 sm:px-4">
+          <Button
+            ref={openOriginalButton}
+            type="button"
+            variant="ghost"
+            className="h-11 w-full justify-start px-2 text-xs text-primary md:h-9"
+            data-testid="answer-evidence-open-original"
+            onClick={openCurrentOriginal}
+          >
+            <FileText className="h-4 w-4" aria-hidden />
+            {t('evidence.open_original')}
+            <ChevronRight className="ml-auto h-4 w-4" aria-hidden />
+          </Button>
+        </footer>
       )}
     </>
   )
@@ -214,7 +258,7 @@ export function AnswerEvidencePanel({
         data-testid="answer-evidence-panel"
         data-layout={mode}
         data-version-status={versionStatus}
-        className="flex h-full flex-col"
+        className="flex h-full min-h-0 flex-col bg-base"
         onKeyDown={event => {
           if (event.key === 'Escape') {
             event.stopPropagation()
@@ -259,35 +303,6 @@ export function AnswerEvidencePanel({
         {content}
       </DialogContent>
     </Dialog>
-  )
-}
-
-function CopyExcerpt({ content }: { content: string }) {
-  const { t } = useTranslation('chat')
-  const [copyResult, setCopyResult] = useState<'copied' | 'copy_failed'>()
-
-  const copy = async (trigger: HTMLButtonElement) => {
-    setCopyResult((await copyMessageText(content, trigger)) ? 'copied' : 'copy_failed')
-  }
-
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      <Button
-        variant="ghost"
-        type="button"
-        className="min-h-11"
-        data-testid="answer-evidence-copy-fragment"
-        onClick={event => void copy(event.currentTarget)}
-      >
-        <Copy className="h-4 w-4" aria-hidden />
-        {t('evidence.copy_fragment')}
-      </Button>
-      {copyResult && (
-        <span role="status" className="text-sm">
-          {t(`evidence.${copyResult}`)}
-        </span>
-      )}
-    </div>
   )
 }
 
