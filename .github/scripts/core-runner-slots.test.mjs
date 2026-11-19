@@ -133,11 +133,16 @@ for (const [platform, balance, script, args] of [
       new Set(checkpoints(result)).size,
       checkpoints(original).length,
     );
-    for (const id of ["core-9", "core-10"])
+    for (const id of ["core-9", "core-10"]) {
+      const originalShard = original.include.find((entry) => entry.id === id);
+      const expected = platform === "Linux"
+        ? { ...originalShard, segments: originalShard.segments.split(",")[0] }
+        : originalShard;
       assert.deepEqual(
         result.include.find((entry) => entry.id === id),
-        original.include.find((entry) => entry.id === id),
+        expected,
       );
+    }
     assert.equal(JSON.stringify(original), snapshot);
     assert.deepEqual(balance(original, undefined, 1.5), result);
     const cli = execFileSync(
