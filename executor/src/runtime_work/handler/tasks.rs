@@ -1237,7 +1237,12 @@ impl RuntimeWorkRpcHandler {
             return Ok(json!({"pending":true,"accepted":false,"code":"stand_in_waiting_for_user"}));
         }
         let question_response = request_user_input_response(&payload);
-        let owner_input = owner_input && question_response.is_none();
+        // The desktop delivers an async answer as the next ordinary user message.
+        let owner_input = owner_input
+            && question_response.is_none()
+            && !existing_link.as_ref().is_some_and(|link| {
+                link.interaction_status.as_deref() == Some(INTERACTION_AWAITING_USER_REPLY)
+            });
         if let Some(response) = question_response {
             if response["delivery"] == "async" {
                 self.prepare_async_question_reply(&local_task_id, &response, &mut payload)
@@ -2045,6 +2050,10 @@ impl RuntimeWorkRpcHandler {
     ) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let owner_input = owner_input
+            && self.store.read_task(&local_task_id, |link| {
+                link.interaction_status.as_deref() == Some(INTERACTION_AWAITING_USER_REPLY)
+            }) != Some(true);
         let message = string_field(&payload, "message")
             .or_else(|| string_field(&payload, "guidance"))
             .map(|value| value.trim().to_owned())
