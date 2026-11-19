@@ -221,6 +221,7 @@ mod transcript_read_link;
 mod transcript_search;
 mod transcript_sync;
 mod turns;
+mod workspace_read;
 mod workspaces;
 
 use super::{
