@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { useDialogKeyboard } from './useDialogKeyboard'
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useDialogKeyboard } from "./useDialogKeyboard";
 
 export function ConfirmationDialog({
   title,
@@ -7,61 +7,66 @@ export function ConfirmationDialog({
   description,
   labels,
   testIdPrefix,
+  confirmDisabled = false,
   onConfirm,
   onClose,
 }: {
-  title: string
-  subject: ReactNode
-  description: ReactNode
-  labels: { cancel: string; confirm: string; pending: string; failed: string }
-  testIdPrefix: string
-  onConfirm(): Promise<void>
-  onClose(): void
+  title: string;
+  subject: ReactNode;
+  description: ReactNode;
+  labels: { cancel: string; confirm: string; pending: string; failed: string };
+  testIdPrefix: string;
+  confirmDisabled?: boolean;
+  onConfirm(): Promise<void>;
+  onClose(): void;
 }) {
-  const lock = useRef(false)
+  const lock = useRef(false);
   const dialog = useDialogKeyboard<HTMLDivElement>(
     () => {
-      if (!lock.current) onClose()
+      if (!lock.current) onClose();
     },
     true,
-    `[data-testid="${testIdPrefix}-cancel"]`
-  )
-  const mounted = useRef(false)
-  const [pending, setPending] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+    `[data-testid="${testIdPrefix}-cancel"]`,
+  );
+  const mounted = useRef(false);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    mounted.current = true
+    mounted.current = true;
     return () => {
-      mounted.current = false
-    }
-  }, [])
+      mounted.current = false;
+    };
+  }, []);
   useEffect(() => {
     if (!pending && error)
       dialog.current
-        ?.querySelector<HTMLButtonElement>(`[data-testid="${testIdPrefix}-confirm"]`)
-        ?.focus()
-  }, [pending, error, testIdPrefix])
+        ?.querySelector<HTMLButtonElement>(
+          `[data-testid="${testIdPrefix}-confirm"]`,
+        )
+        ?.focus();
+  }, [pending, error, testIdPrefix]);
   const confirm = async () => {
-    if (lock.current) return
-    lock.current = true
-    dialog.current?.focus()
-    setPending(true)
-    setError(null)
+    if (lock.current || confirmDisabled) return;
+    lock.current = true;
+    dialog.current?.focus();
+    setPending(true);
+    setError(null);
     try {
-      await onConfirm()
-      if (mounted.current) onClose()
+      await onConfirm();
+      if (mounted.current) onClose();
     } catch (cause) {
-      if (mounted.current) setError(cause instanceof Error ? cause.message : labels.failed)
+      if (mounted.current)
+        setError(cause instanceof Error ? cause.message : labels.failed);
     } finally {
-      lock.current = false
-      if (mounted.current) setPending(false)
+      lock.current = false;
+      if (mounted.current) setPending(false);
     }
-  }
+  };
   return (
     <div
       className="collaboration-resource-dialog-backdrop"
-      onMouseDown={event => {
-        if (event.target === event.currentTarget && !lock.current) onClose()
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !lock.current) onClose();
       }}
     >
       <div
@@ -94,7 +99,7 @@ export function ConfirmationDialog({
           </button>
           <button
             type="button"
-            disabled={pending}
+            disabled={pending || confirmDisabled}
             className="min-h-11 rounded-lg bg-text-primary px-4 text-sm text-background disabled:opacity-50 md:min-h-8"
             data-testid={`${testIdPrefix}-confirm`}
             onClick={() => void confirm()}
@@ -104,5 +109,5 @@ export function ConfirmationDialog({
         </div>
       </div>
     </div>
-  )
+  );
 }

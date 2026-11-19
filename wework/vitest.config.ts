@@ -1,20 +1,9 @@
-import path from 'node:path'
-import fs from 'node:fs'
 import { configDefaults, defineConfig, mergeConfig } from 'vitest/config'
 import type { BuiltinReporterOptions } from 'vitest/reporters'
 import viteConfig from './vite.config'
+import { discoverNodeTestFiles } from './scripts/lib/test-files.mjs'
 
-function discoverNodeTestScripts(directory: string): string[] {
-  return fs.readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
-    const entryPath = path.join(directory, entry.name)
-    if (entry.isDirectory()) return discoverNodeTestScripts(entryPath)
-    if (!entry.isFile() || !entry.name.endsWith('.test.mjs')) return []
-    if (!fs.readFileSync(entryPath, 'utf8').includes("from 'node:test'")) return []
-    return [path.relative(__dirname, entryPath).replaceAll('\\', '/')]
-  })
-}
-
-const nodeTestScripts = discoverNodeTestScripts(path.resolve(__dirname, './scripts'))
+const nodeTestScripts = discoverNodeTestFiles(__dirname, ['scripts'])
 
 export default mergeConfig(
   viteConfig,
@@ -56,7 +45,8 @@ export default mergeConfig(
         : {}),
       server: {
         deps: {
-          inline: [/@file-viewer/, /@panzoom/, /mermaid/],
+          // Mermaid's native ESM avoids cold-transforming lazy Dagre chunks during rendering.
+          inline: [/@file-viewer/, /@panzoom/],
         },
       },
       // Keep local and pre-push runs below the resource-contention point where

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { join } from 'node:path'
 import { Readable } from 'node:stream'
 import { ServerResponse } from 'node:http'
 import test from 'node:test'

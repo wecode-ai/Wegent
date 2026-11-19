@@ -333,6 +333,14 @@ export function createDesktopScenario(options) {
           '[data-workspace-tab-content="fixed-task"] [data-testid="new-chat-button"]'
         )
         await control.command('waitFor', ORDINARY)
+        const ordinaryDraft = `${marker}_ORDINARY_UNSENT`
+        await control.command('fill', `${ORDINARY} [data-testid="chat-message-input"]`, {
+          value: ordinaryDraft,
+        })
+        await control.command(
+          'waitFor',
+          `${ORDINARY} [data-testid="send-message-button"]:not(:disabled)`
+        )
         await openExplicitModelMenu(control, `${ORDINARY} [data-testid="model-selector-button"]`, {
           requireSelection: true,
         })
@@ -341,10 +349,6 @@ export function createDesktopScenario(options) {
           '[data-testid="model-selector-menu"] [data-testid^="model-option-"][aria-checked="true"]'
         )
         await control.command('press', 'body', { key: 'Escape' })
-        const ordinaryDraft = `${marker}_ORDINARY_UNSENT`
-        await control.command('fill', `${ORDINARY} [data-testid="chat-message-input"]`, {
-          value: ordinaryDraft,
-        })
         const ordinary = {
           model: await control.command(
             'getText',

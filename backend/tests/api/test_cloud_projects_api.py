@@ -965,7 +965,9 @@ def test_related_task_project_filters_non_admins_and_keeps_admin_overview(
         headers=_auth(test_token),
     )
     assert owner_snapshot.status_code == 200
-    assert {item["id"] for item in owner_snapshot.json()["items"]} == {
+    owner_snapshot_body = owner_snapshot.json()
+    assert owner_snapshot_body["project_version"] == project["version"]
+    assert {item["id"] for item in owner_snapshot_body["items"]} == {
         assigned_item["id"],
         owner_item["id"],
         visitor_item["id"],

@@ -174,9 +174,18 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       await control.command('click', scoped(`[data-testid="personal-home-issue-${issueId}"]`))
       await control.command('waitFor', scoped('[data-testid="personal-home-open-in-project"]'))
       await control.command('click', scoped('[data-testid="personal-home-open-in-project"]'))
-      await control.command('waitFor', scoped('[data-testid="cloud-todo-detail-title"]'))
+      await control.command('waitFor', scoped('[data-testid="cloud-project-header-title"]'), {
+        text: PROJECT_NAME,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', scoped(`[data-testid="cloud-todo-card-${issueId}"]`), {
+        timeoutMs: uiTimeoutMs,
+      })
       assert.equal(
-        await control.command('getValue', scoped('[data-testid="cloud-todo-detail-title"]')),
+        await control.command(
+          'getValueWhenReady',
+          scoped('[data-testid="cloud-todo-detail-title"]')
+        ),
         ISSUE_NAME
       )
       assert.equal(

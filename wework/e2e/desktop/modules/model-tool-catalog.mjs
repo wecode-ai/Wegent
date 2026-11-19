@@ -7,12 +7,17 @@ export function programmaticExecTools(request) {
   const catalog = request.tools === undefined ? { input: request.input } : { tools: request.tools }
   for (const tool of wireDeclarations(catalog, 'responses'))
     declarations.set(JSON.stringify([tool.namespace ?? null, tool.name]), tool)
-  return [...declarations.values()].filter(
-    tool =>
-      ['exec', 'functions__exec'].includes(tool.name) &&
-      (tool.type === 'custom' ||
-        (tool.type === 'function' && tool.parameters?.properties?.input?.type === 'string'))
-  )
+  return [...declarations.values()]
+    .filter(
+      tool =>
+        ['exec', 'functions__exec'].includes(tool.name) &&
+        (tool.type === 'custom' ||
+          (tool.type === 'function' && tool.parameters?.properties?.input?.type === 'string') ||
+          (tool.type === undefined && tool.input_schema?.properties?.input?.type === 'string'))
+    )
+    .map(tool =>
+      tool.input_schema ? { ...tool, type: 'function', parameters: tool.input_schema } : tool
+    )
 }
 
 export function programmaticSelection(request, name, args) {

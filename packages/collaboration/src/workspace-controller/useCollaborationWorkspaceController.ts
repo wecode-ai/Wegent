@@ -100,6 +100,9 @@ export interface CollaborationWorkspaceControllerCommands {
       isCurrent?(): boolean;
       invalidate?: boolean;
       loadSnapshot?: boolean;
+      revalidate?: boolean;
+      throwOnError?: boolean;
+      forceLoading?: boolean;
     },
   ): Promise<void>;
   loadProjectSnapshot(
@@ -214,6 +217,7 @@ export type CollaborationWorkspaceControllerAction =
         WorkspaceBoardSnapshot["taskBindings"]
       >;
       myWork: WorkspaceMyWorkItem[];
+      preserveMyWork?: boolean;
     }
   | { type: "project-catalog-loaded"; projects: CollaborationProject[] }
   | { type: "project-metadata-loaded"; project: CollaborationProject }
@@ -258,6 +262,7 @@ export type CollaborationWorkspaceControllerAction =
     }
   | { type: "issue-selected"; issue: CollaborationIssue }
   | { type: "clear-project" }
+  | { type: "project-access-revoked"; projectId: string }
   | { type: "clear-selected-issue" }
   | { type: "replace-project"; project: CollaborationProject }
   | {
@@ -323,17 +328,77 @@ function preserveProjectSnapshotValues<T>(
   return values;
 }
 
+function removeProjectSnapshotValue<T>(
+  current: Record<string, T>,
+  projectId: string,
+): Record<string, T> {
+  const values = { ...current };
+  delete values[projectId];
+  return values;
+}
+
 export function collaborationWorkspaceControllerReducer(
   state: CollaborationWorkspaceControllerState,
   action: CollaborationWorkspaceControllerAction,
 ): CollaborationWorkspaceControllerState {
+  const projectAction = preserveProjectVersions(state, action);
+  if (!projectAction) return state;
   const next = mergeIssueReadState(
     state,
-    reduceWorkspaceState(state, action),
+    reduceWorkspaceState(state, projectAction),
     action.type === "issue-read" ? action.issue : undefined,
   );
   traceIssueStateChange(action.type, state.selectedIssue, next.selectedIssue);
   return next;
+}
+
+function newestProject(
+  current: CollaborationProject | null | undefined,
+  incoming: CollaborationProject,
+): CollaborationProject {
+  return current?.id === incoming.id && current.version > incoming.version
+    ? current
+    : incoming;
+}
+
+function preserveProjectVersions(
+  state: CollaborationWorkspaceControllerState,
+  action: CollaborationWorkspaceControllerAction,
+): CollaborationWorkspaceControllerAction | null {
+  const current = new Map(
+    state.projects.map((project) => [project.id, project]),
+  );
+  if (state.project) {
+    current.set(
+      state.project.id,
+      newestProject(current.get(state.project.id), state.project),
+    );
+  }
+  if (
+    action.type === "project-catalog-loaded" ||
+    action.type === "home-loaded"
+  ) {
+    return {
+      ...action,
+      projects: action.projects.map((project) =>
+        newestProject(current.get(project.id), project),
+      ),
+    };
+  }
+  if (
+    action.type === "project-loaded" ||
+    action.type === "project-metadata-loaded" ||
+    action.type === "replace-project"
+  ) {
+    const project = newestProject(
+      current.get(action.project.id),
+      action.project,
+    );
+    if (project !== action.project && action.type === "project-loaded")
+      return null;
+    return { ...action, project };
+  }
+  return action;
 }
 
 function resolveLoadedIssue(
@@ -384,7 +449,7 @@ function reduceWorkspaceState(
           state.projectTaskBindings,
           action.preserveSnapshotProjectIds,
         ),
-        myWork: action.myWork,
+        myWork: action.preserveMyWork ? state.myWork : action.myWork,
         error: null,
         errorSource: null,
       };
@@ -623,6 +688,53 @@ function reduceWorkspaceState(
         assignments: [],
         executions: [],
       };
+    case "project-access-revoked": {
+      const next =
+        state.project?.id === action.projectId
+          ? {
+              ...state,
+              project: null,
+              issues: [],
+              members: [],
+              agents: [],
+              taskBindings: [],
+              externalBoardParentId: null,
+              externalPageCursors: {},
+              externalPageLoading: {},
+            }
+          : state;
+      const cleared =
+        state.selectedIssue?.cloud_project_id === action.projectId &&
+        !state.selectedIssue.invited_only
+          ? reduceWorkspaceState(next, { type: "clear-selected-issue" })
+          : next;
+      return {
+        ...cleared,
+        projects: cleared.projects.filter(
+          (project) => project.id !== action.projectId,
+        ),
+        myWork: cleared.myWork.filter(
+          (issue) =>
+            issue.cloud_project_id !== action.projectId || issue.invited_only,
+        ),
+        projectItems: removeProjectSnapshotValue(
+          cleared.projectItems,
+          action.projectId,
+        ),
+        projectMembers: removeProjectSnapshotValue(
+          cleared.projectMembers,
+          action.projectId,
+        ),
+        projectAgents: removeProjectSnapshotValue(
+          cleared.projectAgents,
+          action.projectId,
+        ),
+        projectTaskBindings: removeProjectSnapshotValue(
+          cleared.projectTaskBindings,
+          action.projectId,
+        ),
+      };
+    }
     case "replace-project": {
       const current =
         state.projects.find((project) => project.id === action.project.id) ??
@@ -764,6 +876,7 @@ const externalGitBoardStatuses = [
   "completed",
 ] as const;
 const defaultExternalGitBoardPageSize = 100;
+const maxProjectSnapshotVersionAttempts = 2;
 
 function isExternalGitProject(project: CollaborationProject): boolean {
   return (
@@ -878,12 +991,30 @@ export function createCollaborationWorkspaceControllerCommands({
   notify,
 }: CommandEnvironment): CollaborationWorkspaceControllerCommands {
   let catalogProjects = getProjects();
+  let catalogRequestRevision = 0;
+  let acceptedCatalogRevision = 0;
+  let acceptedHomeRevision = 0;
+  let myWorkRequestRevision = 0;
+  let acceptedMyWorkRevision = 0;
   let projectLoadRevision = 0;
+  // A successful snapshot belongs to this API command scope, not inherited reducer state.
+  let loadedProjectId: string | null = null;
   let selectedIssueLoadRevision = 0;
   const selectedIssueAttachmentsRevisions = new Map<string, number>();
   const selectedIssueCommentsRevisions = new Map<string, number>();
   const selectedIssueAssignmentsRevisions = new Map<string, number>();
   const projectMutationGenerations = new Map<string, number>();
+  const revokedProjectIds = new Set<string>();
+  // Recovery must not authorize responses that started before revocation.
+  const projectAccessGenerations = new Map<string, number>();
+  const revalidatingProjects = new Map<
+    string,
+    {
+      promise: Promise<void>;
+      loadSnapshot: boolean;
+      isCurrent(): boolean;
+    }
+  >();
   const externalColumnLoads = new Set<string>();
   const standardSnapshotLoads = new Map<
     string,
@@ -894,15 +1025,30 @@ export function createCollaborationWorkspaceControllerCommands({
     Promise<WorkspaceBoardSnapshot | null>
   >();
   const homeSnapshotResults = new Map<string, WorkspaceBoardSnapshot | null>();
-  let homeMyWorkLoad: Promise<WorkspaceMyWorkItem[]> | null = null;
-  const loadStandardSnapshot = (projectId: string) => {
-    const active = standardSnapshotLoads.get(projectId);
+  let homeMyWorkLoad: {
+    revision: number;
+    promise: Promise<WorkspaceMyWorkItem[]>;
+    accessGenerations: ReadonlyMap<string, number>;
+  } | null = null;
+  const startMyWorkLoad = () => ({
+    revision: ++myWorkRequestRevision,
+    accessGenerations: new Map(projectAccessGenerations),
+    promise:
+      myWorkEnabled && api.myWork ? api.myWork.list() : Promise.resolve([]),
+  });
+  const loadStandardSnapshot = (
+    projectId: string,
+    options?: { bypassCache?: boolean },
+  ) => {
+    const active = options?.bypassCache
+      ? null
+      : standardSnapshotLoads.get(projectId);
     if (active) return active;
     const pending = api.issues.getBoardSnapshot(projectId).finally(() => {
       if (standardSnapshotLoads.get(projectId) === pending)
         standardSnapshotLoads.delete(projectId);
     });
-    standardSnapshotLoads.set(projectId, pending);
+    if (!options?.bypassCache) standardSnapshotLoads.set(projectId, pending);
     return pending;
   };
   const loadHomeSnapshot = (projectId: string) => {
@@ -954,6 +1100,68 @@ export function createCollaborationWorkspaceControllerCommands({
     homeSnapshotLoads.delete(projectId);
     homeSnapshotResults.delete(projectId);
   };
+  const acceptProject = (incoming: CollaborationProject) => {
+    const known = catalogProjects.find(
+      (candidate) => candidate.id === incoming.id,
+    );
+    const current = getProjects().find(
+      (candidate) => candidate.id === incoming.id,
+    );
+    const project = newestProject(current, newestProject(known, incoming));
+    const previous = known ?? current;
+    if (previous && project.version > previous.version) {
+      markProjectMutated(project.id);
+    }
+    catalogProjects = catalogProjects.some(
+      (candidate) => candidate.id === project.id,
+    )
+      ? catalogProjects.map((candidate) =>
+          candidate.id === project.id ? project : candidate,
+        )
+      : [...catalogProjects, project];
+    return project;
+  };
+  const acceptCatalog = (
+    incoming: CollaborationProject[],
+    requestGenerations: ReadonlyMap<string, number>,
+    requestRevision: number,
+  ) => {
+    if (requestRevision < acceptedCatalogRevision) return null;
+    const projects = incoming
+      .filter(
+        (project) =>
+          (requestGenerations.get(project.id) ?? 0) ===
+          (projectAccessGenerations.get(project.id) ?? 0),
+      )
+      .map(acceptProject);
+    for (const project of projects) revokedProjectIds.delete(project.id);
+    // A partially outdated response can discover projects, but cannot remove newer ones.
+    if (
+      projects.length === incoming.length &&
+      catalogProjects.every(
+        (project) =>
+          (requestGenerations.get(project.id) ?? 0) ===
+          (projectAccessGenerations.get(project.id) ?? 0),
+      )
+    ) {
+      catalogProjects = projects;
+      acceptedCatalogRevision = requestRevision;
+    }
+    return catalogProjects;
+  };
+  const canShowMyWorkItem = (
+    item: WorkspaceMyWorkItem,
+    requestGenerations: ReadonlyMap<string, number>,
+  ) =>
+    item.invited_only === true ||
+    (!revokedProjectIds.has(item.cloud_project_id) &&
+      (requestGenerations.get(item.cloud_project_id) ?? 0) ===
+        (projectAccessGenerations.get(item.cloud_project_id) ?? 0));
+  const projectVersion = (projectId: string) =>
+    Math.max(
+      catalogProjects.find((project) => project.id === projectId)?.version ?? 0,
+      getProjects().find((project) => project.id === projectId)?.version ?? 0,
+    );
   const reportPositionConflict = async (issueId: string, error: unknown) => {
     if (!isIssueVersionConflict(error)) return false;
     try {
@@ -1006,66 +1214,162 @@ export function createCollaborationWorkspaceControllerCommands({
     pendingReadRequests.set(issue.id, request);
     return request;
   };
-  const loadProject = async (
+  const loadProjectBoardSnapshot = async (
+    project: CollaborationProject,
+    options: { useHomeSnapshot: boolean },
+  ): Promise<{
+    snapshot: WorkspaceBoardSnapshot;
+    externalBoard: {
+      parentId: string | null;
+      pageCursors: Record<string, string | null>;
+    } | null;
+  }> => {
+    const externalBoardOptions = getExternalBoardOptions();
+    const externalBoard = isExternalGitProject(project)
+      ? await loadExternalGitBoardSnapshot(
+          api,
+          project.id,
+          externalBoardOptions,
+          getProjectSnapshot(project.id),
+        )
+      : null;
+    const homeSnapshotLoad = options.useHomeSnapshot
+      ? homeSnapshotLoads.get(project.id)
+      : null;
+    const homeSnapshot = homeSnapshotLoad
+      ? await homeSnapshotLoad
+      : options.useHomeSnapshot
+        ? (homeSnapshotResults.get(project.id) ?? null)
+        : null;
+    if (options.useHomeSnapshot) {
+      homeSnapshotLoads.delete(project.id);
+      homeSnapshotResults.delete(project.id);
+    }
+    const snapshot =
+      externalBoard?.snapshot ??
+      homeSnapshot ??
+      (await loadStandardSnapshot(project.id, {
+        bypassCache: !options.useHomeSnapshot,
+      }));
+    return {
+      snapshot,
+      externalBoard: externalBoard
+        ? {
+            parentId: externalBoardOptions.parentId,
+            pageCursors: externalBoard.pageCursors,
+          }
+        : null,
+    };
+  };
+  const performProjectLoad = async (
     projectId: string,
     showLoading = true,
     options?: {
       isCurrent?(): boolean;
       invalidate?: boolean;
       loadSnapshot?: boolean;
+      revalidate?: boolean;
+      throwOnError?: boolean;
+      forceLoading?: boolean;
     },
   ) => {
     if (options?.invalidate) markProjectMutated(projectId);
     const revision = ++projectLoadRevision;
     const isCurrent = () =>
       revision === projectLoadRevision && (options?.isCurrent?.() ?? true);
-    const mutationGeneration = projectMutationGeneration(projectId);
+    let mutationGeneration = projectMutationGeneration(projectId);
+    let metadataVersion = projectVersion(projectId);
     const hasCurrentSnapshot =
       getExternalBoardState().project?.id === projectId &&
       getProjectSnapshot(projectId) !== null;
+    const hasCurrentDetail =
+      getSelectedIssue()?.cloud_project_id === projectId;
     // Refreshing a loaded project must not unmount its editors or pending exit animations.
-    if (showLoading && !hasCurrentSnapshot)
+    if (
+      showLoading &&
+      (options?.forceLoading || !hasCurrentSnapshot || !hasCurrentDetail)
+    )
       dispatch({ type: "loading", value: true });
     try {
-      const project =
-        catalogProjects.find((item) => item.id === projectId) ??
-        (await api.projects.get(projectId));
+      const incoming = options?.revalidate
+        ? await api.projects.get(projectId)
+        : (catalogProjects.find((item) => item.id === projectId) ??
+          (await api.projects.get(projectId)));
       if (
         !isCurrent() ||
-        mutationGeneration !== projectMutationGeneration(projectId)
+        (!options?.revalidate &&
+          mutationGeneration !== projectMutationGeneration(projectId))
       )
         return;
-      if (!catalogProjects.some((item) => item.id === project.id)) {
-        catalogProjects = [...catalogProjects, project];
+      revokedProjectIds.delete(projectId);
+      let project = acceptProject(incoming);
+      if (options?.revalidate && project !== incoming) return;
+      mutationGeneration = projectMutationGeneration(projectId);
+      metadataVersion = project.version;
+      if (options?.revalidate && options.loadSnapshot !== false) {
+        dispatch({ type: "project-metadata-loaded", project });
       }
       if (options?.loadSnapshot === false) {
         dispatch({ type: "project-metadata-loaded", project });
         return;
       }
-      const externalBoardOptions = getExternalBoardOptions();
-      const externalBoard = isExternalGitProject(project)
-        ? await loadExternalGitBoardSnapshot(
-            api,
-            projectId,
-            externalBoardOptions,
-            getProjectSnapshot(projectId),
+      let snapshotRead: Awaited<
+        ReturnType<typeof loadProjectBoardSnapshot>
+      > | null = null;
+      if (options?.revalidate) {
+        for (
+          let attempt = 0;
+          attempt < maxProjectSnapshotVersionAttempts;
+          attempt += 1
+        ) {
+          const read = await loadProjectBoardSnapshot(project, {
+            useHomeSnapshot: false,
+          });
+          if (
+            !isCurrent() ||
+            mutationGeneration !== projectMutationGeneration(projectId)
           )
-        : null;
-      const homeSnapshotLoad = homeSnapshotLoads.get(projectId);
-      const homeSnapshot = homeSnapshotLoad
-        ? await homeSnapshotLoad
-        : (homeSnapshotResults.get(projectId) ?? null);
-      homeSnapshotLoads.delete(projectId);
-      homeSnapshotResults.delete(projectId);
-      const snapshot =
-        externalBoard?.snapshot ??
-        homeSnapshot ??
-        (await loadStandardSnapshot(projectId));
+            return;
+          const verification = await api.projects.get(projectId);
+          if (
+            !isCurrent() ||
+            mutationGeneration !== projectMutationGeneration(projectId)
+          )
+            return;
+          const verifiedProject = acceptProject(verification);
+          if (verifiedProject !== verification) return;
+          const snapshotVersion = read.snapshot.projectVersion;
+          if (
+            snapshotVersion === verifiedProject.version ||
+            (snapshotVersion === undefined &&
+              verifiedProject.version === project.version)
+          ) {
+            project = verifiedProject;
+            mutationGeneration = projectMutationGeneration(projectId);
+            metadataVersion = project.version;
+            snapshotRead = read;
+            break;
+          }
+          project = verifiedProject;
+          mutationGeneration = projectMutationGeneration(projectId);
+          metadataVersion = project.version;
+          if (attempt + 1 === maxProjectSnapshotVersionAttempts) {
+            throw new Error(messages.loadFailed);
+          }
+          dispatch({ type: "project-metadata-loaded", project });
+        }
+        if (!snapshotRead) throw new Error(messages.loadFailed);
+      } else {
+        snapshotRead = await loadProjectBoardSnapshot(project, {
+          useHomeSnapshot: true,
+        });
+      }
       if (
         !isCurrent() ||
         mutationGeneration !== projectMutationGeneration(projectId)
       )
         return;
+      const { snapshot, externalBoard } = snapshotRead;
       const selected = getSelectedIssue();
       if (
         externalBoard &&
@@ -1100,96 +1404,186 @@ export function createCollaborationWorkspaceControllerCommands({
         type: "project-loaded",
         project,
         snapshot,
-        externalBoard: externalBoard
-          ? {
-              parentId: externalBoardOptions.parentId,
-              pageCursors: externalBoard.pageCursors,
-            }
-          : undefined,
+        externalBoard: externalBoard ?? undefined,
       });
-    } catch {
+      loadedProjectId = projectId;
+    } catch (cause) {
       if (
         !isCurrent() ||
-        mutationGeneration !== projectMutationGeneration(projectId)
+        (mutationGeneration !== projectMutationGeneration(projectId) &&
+          (!options?.revalidate || projectVersion(projectId) > metadataVersion))
       )
         return;
+      const status =
+        cause && typeof cause === "object" && "status" in cause
+          ? cause.status
+          : null;
+      if (status === 401 || status === 403 || status === 404) {
+        markProjectMutated(projectId);
+        revokedProjectIds.add(projectId);
+        projectAccessGenerations.set(
+          projectId,
+          (projectAccessGenerations.get(projectId) ?? 0) + 1,
+        );
+        catalogProjects = catalogProjects.filter(
+          (project) => project.id !== projectId,
+        );
+        if (loadedProjectId === projectId) loadedProjectId = null;
+        const selected = getSelectedIssue();
+        if (
+          !selected?.invited_only &&
+          (getExternalBoardState().project?.id === projectId ||
+            selected?.cloud_project_id === projectId)
+        )
+          selectedIssueLoadRevision += 1;
+        dispatch({ type: "project-access-revoked", projectId });
+      }
       reportError(messages.loadFailed, "load");
+      if (options?.throwOnError) throw cause;
     } finally {
-      if (showLoading && isCurrent()) {
+      if ((showLoading || options?.revalidate) && isCurrent()) {
         dispatch({ type: "loading", value: false });
       }
     }
   };
+  const loadProject: CollaborationWorkspaceControllerCommands["loadProject"] = (
+    projectId,
+    showLoading = true,
+    options,
+  ) => {
+    const active = revalidatingProjects.get(projectId);
+    if (
+      active?.isCurrent() &&
+      (options?.loadSnapshot === false || active.loadSnapshot) &&
+      !options?.revalidate
+    ) {
+      if (!options?.invalidate) {
+        return options?.throwOnError
+          ? active.promise
+          : active.promise.catch(() => undefined);
+      }
+      markProjectMutated(projectId);
+      const refresh = () => loadProject(projectId, showLoading, options);
+      return active.promise.then(refresh, refresh);
+    }
+    const revision = projectLoadRevision + 1;
+    const pending = performProjectLoad(projectId, showLoading, options).finally(
+      () => {
+        if (revalidatingProjects.get(projectId)?.promise === pending)
+          revalidatingProjects.delete(projectId);
+      },
+    );
+    if (options?.revalidate)
+      revalidatingProjects.set(projectId, {
+        promise: pending,
+        loadSnapshot: options.loadSnapshot !== false,
+        isCurrent: () =>
+          revision === projectLoadRevision && (options.isCurrent?.() ?? true),
+      });
+    return pending;
+  };
   return {
     async loadProjectCatalog(options) {
       const isCurrent = options?.isCurrent ?? (() => true);
+      const requestRevision = ++catalogRequestRevision;
       dispatch({ type: "loading", value: true });
       try {
-        const projects = await api.projects.list();
+        const requestGenerations = new Map(projectAccessGenerations);
+        const incoming = await api.projects.list();
         if (!isCurrent()) return;
-        catalogProjects = projects;
+        if (!acceptCatalog(incoming, requestGenerations, requestRevision))
+          return;
         dispatch({ type: "project-catalog-loaded", projects: catalogProjects });
       } catch {
-        if (!isCurrent()) return;
+        if (!isCurrent() || requestRevision < acceptedCatalogRevision) return;
         reportError(messages.loadFailed, "load");
       } finally {
-        if (isCurrent()) dispatch({ type: "loading", value: false });
+        if (isCurrent() && requestRevision >= acceptedCatalogRevision)
+          dispatch({ type: "loading", value: false });
       }
     },
     async loadProjects() {
+      const requestRevision = ++catalogRequestRevision;
       dispatch({ type: "loading", value: true });
       dispatch({ type: "error", value: null });
       try {
-        homeMyWorkLoad =
-          myWorkEnabled && api.myWork ? api.myWork.list() : Promise.resolve([]);
-        const myWorkResult = homeMyWorkLoad.then(
+        const myWorkLoad = startMyWorkLoad();
+        homeMyWorkLoad = myWorkLoad;
+        const myWorkResult = myWorkLoad.promise.then(
           (items) => ({ status: "fulfilled" as const, items }),
           (error: unknown) => ({ status: "rejected" as const, error }),
         );
-        const projects = await api.projects.list();
-        catalogProjects = projects;
-        dispatch({ type: "project-catalog-loaded", projects });
+        const requestGenerations = new Map(projectAccessGenerations);
+        const requestMutationGenerations = new Map(projectMutationGenerations);
+        const projects = acceptCatalog(
+          await api.projects.list(),
+          requestGenerations,
+          requestRevision,
+        );
+        const snapshotProjects = (projects ?? []).map((project) => ({
+          project,
+          mutationGeneration:
+            (requestGenerations.get(project.id) ?? 0) ===
+            (projectAccessGenerations.get(project.id) ?? 0)
+              ? projectMutationGeneration(project.id)
+              : (requestMutationGenerations.get(project.id) ?? 0),
+        }));
+        if (projects) dispatch({ type: "project-catalog-loaded", projects });
         const myWorkOutcome = await myWorkResult;
+        if (requestRevision < acceptedHomeRevision) return;
         if (myWorkOutcome.status === "rejected") throw myWorkOutcome.error;
         const myWork = myWorkOutcome.items;
         const snapshots = preloadHomeSnapshots
           ? await Promise.all(
-              projects.map(async (project) => ({
+              snapshotProjects.map(async ({ project, mutationGeneration }) => ({
                 projectId: project.id,
-                mutationGeneration: projectMutationGeneration(project.id),
-                snapshot: !canPreloadHomeSnapshot(project)
-                  ? null
-                  : isExternalGitProject(project)
-                    ? await loadExternalGitBoardSnapshot(
-                        api,
-                        project.id,
-                        {
-                          parentId: null,
-                          pageSize: defaultExternalGitBoardPageSize,
-                          eager: true,
-                        },
-                        getProjectSnapshot(project.id),
-                      )
-                        .then((result) => result.snapshot)
-                        .catch(() => null)
-                    : await loadHomeSnapshot(project.id),
+                mutationGeneration,
+                snapshot:
+                  revokedProjectIds.has(project.id) ||
+                  mutationGeneration !==
+                    projectMutationGeneration(project.id) ||
+                  !canPreloadHomeSnapshot(project)
+                    ? null
+                    : isExternalGitProject(project)
+                      ? await loadExternalGitBoardSnapshot(
+                          api,
+                          project.id,
+                          {
+                            parentId: null,
+                            pageSize: defaultExternalGitBoardPageSize,
+                            eager: true,
+                          },
+                          getProjectSnapshot(project.id),
+                        )
+                          .then((result) => result.snapshot)
+                          .catch(() => null)
+                      : await loadHomeSnapshot(project.id),
               })),
             )
           : [];
+        if (requestRevision < acceptedHomeRevision) return;
         const currentSnapshots = snapshots.filter(
           ({ projectId, mutationGeneration }) =>
+            !revokedProjectIds.has(projectId) &&
             mutationGeneration === projectMutationGeneration(projectId),
         );
-        const preserveSnapshotProjectIds = snapshots
-          .filter(
-            ({ projectId, mutationGeneration }) =>
-              mutationGeneration !== projectMutationGeneration(projectId),
-          )
-          .map(({ projectId }) => projectId);
+        const preserveSnapshotProjectIds = projects
+          ? snapshots
+              .filter(
+                ({ projectId, mutationGeneration }) =>
+                  !revokedProjectIds.has(projectId) &&
+                  mutationGeneration !== projectMutationGeneration(projectId),
+              )
+              .map(({ projectId }) => projectId)
+          : catalogProjects.map((project) => project.id);
+        const preserveMyWork = myWorkLoad.revision < acceptedMyWorkRevision;
+        acceptedHomeRevision = requestRevision;
+        if (!preserveMyWork) acceptedMyWorkRevision = myWorkLoad.revision;
         dispatch({
           type: "home-loaded",
-          projects,
+          projects: catalogProjects,
           preserveSnapshotProjectIds,
+          preserveMyWork,
           projectItems: Object.fromEntries(
             currentSnapshots.flatMap(({ projectId, snapshot }) =>
               snapshot ? [[projectId, snapshot.items]] : [],
@@ -1210,12 +1604,16 @@ export function createCollaborationWorkspaceControllerCommands({
               snapshot ? [[projectId, snapshot.taskBindings]] : [],
             ),
           ),
-          myWork,
+          myWork: myWork.filter((item) =>
+            canShowMyWorkItem(item, myWorkLoad.accessGenerations),
+          ),
         });
       } catch {
+        if (requestRevision < acceptedHomeRevision) return;
         reportError(messages.loadFailed, "load");
       } finally {
-        dispatch({ type: "loading", value: false });
+        if (requestRevision >= acceptedHomeRevision)
+          dispatch({ type: "loading", value: false });
       }
     },
     async loadMyWork() {
@@ -1226,17 +1624,26 @@ export function createCollaborationWorkspaceControllerCommands({
       }
       dispatch({ type: "loading", value: true });
       dispatch({ type: "error", value: null });
+      let requestRevision = myWorkRequestRevision;
       try {
-        const pending = homeMyWorkLoad;
+        const pending = homeMyWorkLoad ?? startMyWorkLoad();
+        requestRevision = pending.revision;
         homeMyWorkLoad = null;
+        const items = await pending.promise;
+        if (requestRevision < acceptedMyWorkRevision) return;
+        acceptedMyWorkRevision = requestRevision;
         dispatch({
           type: "my-work-loaded",
-          items: await (pending ?? api.myWork.list()),
+          items: items.filter((item) =>
+            canShowMyWorkItem(item, pending.accessGenerations),
+          ),
         });
       } catch {
+        if (requestRevision < acceptedMyWorkRevision) return;
         reportError(messages.loadFailed, "load");
       } finally {
-        dispatch({ type: "loading", value: false });
+        if (requestRevision >= acceptedMyWorkRevision)
+          dispatch({ type: "loading", value: false });
       }
     },
     loadProject,
@@ -1409,6 +1816,7 @@ export function createCollaborationWorkspaceControllerCommands({
     },
     clearProject: () => {
       projectLoadRevision += 1;
+      loadedProjectId = null;
       selectedIssueLoadRevision += 1;
       dispatch({ type: "clear-project" });
     },
@@ -1429,11 +1837,9 @@ export function createCollaborationWorkspaceControllerCommands({
     },
     async updateProject(projectId, input) {
       try {
-        const project = await api.projects.update(projectId, input);
-        markProjectMutated(projectId);
-        catalogProjects = catalogProjects.map((item) =>
-          item.id === project.id ? project : item,
-        );
+        const incoming = await api.projects.update(projectId, input);
+        const project = acceptProject(incoming);
+        if (project === incoming) markProjectMutated(projectId);
         dispatch({ type: "replace-project", project });
         return project;
       } catch {
@@ -1542,17 +1948,9 @@ export function createCollaborationWorkspaceControllerCommands({
       }
     },
     replaceProject: (project) => {
-      if (
-        catalogProjects.some(
-          (current) =>
-            current.id === project.id && current.version > project.version,
-        )
-      )
-        return;
+      const accepted = acceptProject(project);
+      if (accepted !== project) return;
       markProjectMutated(project.id);
-      catalogProjects = catalogProjects.map((item) =>
-        item.id === project.id ? project : item,
-      );
       dispatch({ type: "replace-project", project });
     },
     appendIssue: (issue) => {
@@ -1744,6 +2142,7 @@ export function useCollaborationWorkspaceController({
     if (location.projectId) {
       const projectId = location.projectId;
       const loadProject = async () => {
+        let hasCurrentRouteIssue = false;
         if (location.issueId) {
           const issue = await commands.loadSelectedIssue(location.issueId);
           if (!isCurrent()) return;
@@ -1751,6 +2150,9 @@ export function useCollaborationWorkspaceController({
             dispatch({ type: "loading", value: false });
             return;
           }
+          hasCurrentRouteIssue =
+            issue?.id === location.issueId &&
+            issue.cloud_project_id === projectId;
         }
         if (
           loadedProjectScopeRef.current === projectRequestScope &&
@@ -1758,10 +2160,15 @@ export function useCollaborationWorkspaceController({
         )
           return;
         if (loadProjectOnLocation) {
-          await commands.loadProject(projectId, true, {
-            isCurrent,
-            loadSnapshot: loadProjectSnapshotOnLocation,
-          });
+          await commands.loadProject(
+            projectId,
+            stateRef.current.loading || !hasCurrentRouteIssue,
+            {
+              forceLoading: !hasCurrentRouteIssue,
+              isCurrent,
+              loadSnapshot: loadProjectSnapshotOnLocation,
+            },
+          );
         } else {
           await commands.loadProjectCatalog({ isCurrent });
         }

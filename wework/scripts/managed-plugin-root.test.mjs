@@ -50,6 +50,8 @@ test('still rejects a symlink instead of accepting it as a managed runtime copy'
 
 test('propagates filesystem errors other than a not-yet-published runtime', async () => {
   const { home } = await fixture()
-  await writeFile(join(home, 'codex'), 'not a directory')
-  await expect(managedRoot(home, 71)).rejects.toMatchObject({ code: 'ENOTDIR' })
+  const manifestPath = join(home, 'capabilities/manifest-v2.json')
+  await rm(manifestPath)
+  await mkdir(manifestPath)
+  await expect(managedRoot(home, 71)).rejects.toMatchObject({ code: 'EISDIR' })
 })

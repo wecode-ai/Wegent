@@ -4,6 +4,10 @@
 
 use super::*;
 
+#[cfg(test)]
+#[path = "stand_in_telemetry_rpc_tests.rs"]
+mod telemetry_tests;
+
 // Build the selected future outside the dispatcher: debug builds otherwise reserve
 // stack temporaries for every branch even though only one route executes.
 #[inline(never)]

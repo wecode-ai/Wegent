@@ -1,6 +1,7 @@
 // @vitest-environment node
 
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import { join, resolve } from 'node:path'
 import { verifyBackendGitProjectCreation } from '../e2e/desktop/modules/backend-git-project-creation.mjs'
 
 const mocks = vi.hoisted(() => ({
@@ -32,6 +33,8 @@ const cloud = {
 }
 const control = {}
 const fixture = { source: '/virtual/source', domain: 'git.invalid' }
+const workspaceRoot = resolve('/virtual/workspace')
+const checkout = join(workspaceRoot, 'private-checkout')
 let checkoutPath
 
 beforeEach(() => {
@@ -48,7 +51,7 @@ beforeEach(() => {
   mocks.requestExecutor.mockImplementation(async (_control, _method, params) => {
     const { command_key } = params
     const stdout = {
-      project_workspace_root: '/virtual/workspace',
+      project_workspace_root: workspaceRoot,
       git_branch: 'develop',
       git_remote_url: fixture.source,
     }[command_key]
@@ -91,32 +94,21 @@ test('checks Backend creation at workspace root, persisted path and repo identit
     client_origin: 'wework',
     git: { url: fixture.source, domain: fixture.domain, branch: 'develop' },
   })
-  expect(mocks.readFile).toHaveBeenCalledWith(
-    '/virtual/workspace/private-checkout/README.md',
-    'utf8'
-  )
+  expect(mocks.readFile).toHaveBeenCalledWith(join(checkout, 'README.md'), 'utf8')
   expect(mocks.runChecked).toHaveBeenCalledWith('git', ['rev-parse', '--is-inside-work-tree'], {
-    cwd: '/virtual/workspace/private-checkout',
+    cwd: checkout,
   })
   const commands = mocks.requestExecutor.mock.calls.map(([, , params]) => params)
   expect(commands.filter(command => command.command_key === 'git_config')).toEqual([])
   expect(mocks.commandOutputAsync.mock.calls).toEqual([
-    [
-      'git',
-      ['config', '--local', '--get', 'user.name'],
-      { cwd: '/virtual/workspace/private-checkout' },
-    ],
-    [
-      'git',
-      ['config', '--local', '--get', 'user.email'],
-      { cwd: '/virtual/workspace/private-checkout' },
-    ],
+    ['git', ['config', '--local', '--get', 'user.name'], { cwd: checkout }],
+    ['git', ['config', '--local', '--get', 'user.email'], { cwd: checkout }],
   ])
   expect(mocks.fetch).toHaveBeenCalledWith(
     'https://backend.invalid/api/projects/42?client_origin=wework',
     expect.objectContaining({ method: 'DELETE' })
   )
-  expect(mocks.rm).toHaveBeenCalledWith('/virtual/workspace/private-checkout', {
+  expect(mocks.rm).toHaveBeenCalledWith(checkout, {
     recursive: true,
     force: true,
   })

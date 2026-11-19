@@ -10,6 +10,7 @@ import {
   prepareBundledRuntimeCache,
 } from '../e2e/desktop/modules/bundled-runtime-cache.mjs'
 import { hashReleaseAsset } from './lib/portable-desktop-release.mjs'
+import { runtimeArchiveExecutable } from './lib/extract-runtime-archive.mjs'
 
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'wework-installed-cache-'))
@@ -28,7 +29,9 @@ async function fixture(t) {
   await writeFile(join(source, 'runtime.json'), JSON.stringify(identity))
   await writeFile(join(source, 'module.js'), 'export const value = 42\n')
   const archive = join(bundled, 'runtime.tar.gz')
-  execFileSync('tar', ['-czf', archive, '-C', source, '.'])
+  execFileSync(runtimeArchiveExecutable(), ['-czf', archive, '-C', source, '.'], {
+    windowsHide: true,
+  })
   const descriptor = {
     ...identity,
     assetName: 'runtime.tar.gz',

@@ -321,6 +321,11 @@ impl RuntimeWorkRpcHandler {
                     );
                     if let Some(link) = handler.local_task_link(&binding.task_id) {
                         handler.project_runtime_link_status_now(&link);
+                        emit_runtime_work_changed(
+                            &handler.event_tx,
+                            &handler.device_id,
+                            &binding.task_id,
+                        );
                     }
                 }
                 Ok(Err(error)) => log_executor_event(

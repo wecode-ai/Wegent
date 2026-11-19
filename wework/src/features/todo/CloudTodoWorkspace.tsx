@@ -21,6 +21,16 @@ import { useAssignmentNotificationChoice } from '@/features/notifications/useAss
 import { runtimeTaskBindingAddress } from './runtimeTaskBindingAddress'
 import { createWeworkProjectAgentConfigurationHost } from '@/features/collaboration/WeworkProjectAgentConfigurationHost'
 import {
+  projectSnapshotRevalidateEnabled,
+  useProjectSnapshotRefresh,
+} from '@/features/collaboration/projectSnapshotRefresh'
+import { ProjectSnapshotSyncNotice } from '@/features/collaboration/ProjectSnapshotSyncNotice'
+import { createWeworkDeliverySharedWorkspaceApi } from '@/features/collaboration/weworkSharedWorkspaceApi'
+import {
+  guardProjectSnapshotWrites,
+  type ProjectSnapshotWriteGuard,
+} from '@/features/collaboration/projectSnapshotWriteGuard'
+import {
   useCallback,
   useContext,
   useEffect,
@@ -335,6 +345,18 @@ type LocatedCloudProject = LocatedProjectSpace
 type LocatedLoopItem = CloudLoopItem & {
   project_store?: RuntimeProjectSpaceRef['projectStore']
 }
+
+function latestLoopItem(
+  current: LocatedLoopItem | undefined,
+  incoming: LocatedLoopItem
+): LocatedLoopItem {
+  return current?.id === incoming.id &&
+    current.cloud_project_id === incoming.cloud_project_id &&
+    current.project_store === incoming.project_store &&
+    current.version > incoming.version
+    ? current
+    : incoming
+}
 type LoopItemTaskBinding = Awaited<ReturnType<DeliveryApi['listTaskBindings']>>[number]
 type BoardReadResult = {
   items: CloudLoopItem[]
@@ -350,6 +372,10 @@ function toWeworkCloudProject(project: CollaborationProject): CloudProject {
 
 function toCloudLoopItem(issue: Awaited<ReturnType<SharedWorkspaceApi['issues']['get']>>) {
   return issue as CloudLoopItem
+}
+
+function isInvitedOnlyIssue(issue: CloudLoopItem | null | undefined): boolean {
+  return Boolean(issue && 'invited_only' in issue && issue.invited_only === true)
 }
 
 function boardTaskModelSelection(
@@ -667,7 +693,26 @@ export function CloudTodoWorkspace({
       ? getChangeRequestMonitor(services.deviceApi)
       : null
   const changeRequestMonitor = changeRequestStatusEnabled ? issueChangeRequestMonitor : null
-  const cloudWorkspaceApi = services.sharedWorkspaceApi
+  const snapshotWriteGuardRef = useRef<ProjectSnapshotWriteGuard>({
+    scope: null,
+    projectId: null,
+    issueIds: new Set(),
+    canWrite: true,
+    message: t('todo.project_snapshot_write_blocked'),
+  })
+  const localSnapshotWriteGuardRef = useRef<ProjectSnapshotWriteGuard>(
+    snapshotWriteGuardRef.current
+  )
+  const cloudWorkspaceApi = useMemo(
+    () =>
+      services.sharedWorkspaceApi
+        ? guardProjectSnapshotWrites(
+            services.sharedWorkspaceApi,
+            () => snapshotWriteGuardRef.current
+          )
+        : undefined,
+    [services.sharedWorkspaceApi]
+  )
   const deviceNamesById = useMemo(() => getRuntimeWorkDeviceNamesById(runtimeWork), [runtimeWork])
   const runtimeTaskExecutionStatusByAddress = useMemo(
     () => runtimeTaskConversationStatusesByAddress(runtimeWork, runtimeTaskLifecycle),
@@ -729,6 +774,7 @@ export function CloudTodoWorkspace({
     },
     messages: cloudWorkspaceMessages,
     loadProjectOnLocation: false,
+    pollIntervalMs: workspaceActive ? 15_000 : 0,
     externalBoard: {
       parentId: boardParentId,
       pageSize: externalBoardColumnPageSize,
@@ -836,7 +882,16 @@ export function CloudTodoWorkspace({
         current.map(project =>
           projectSpaceKey(projectSpaceRef(project)) ===
           projectSpaceKey(projectSpaceRef(currentProject))
-            ? { ...updated, location: currentProject.location }
+            ? project.version > updated.version
+              ? project
+              : {
+                  ...updated,
+                  current_user_id: project.current_user_id,
+                  current_user_name: project.current_user_name,
+                  id: currentProject.id,
+                  project_store: currentProject.project_store,
+                  location: currentProject.location,
+                }
             : project
         )
       )
@@ -882,6 +937,8 @@ export function CloudTodoWorkspace({
   // Which project's items are currently in `items`. Anything else rendered on
   // the board would be stale, so the board shows the skeleton instead.
   const [itemsProjectKey, setItemsProjectKey] = useState<string | null>(null)
+  const [localBoardSnapshotScope, setLocalBoardSnapshotScope] = useState<object | null>(null)
+  const localBoardSnapshotScopeRef = useRef<object | null>(null)
   const [localExternalPageCursors, setLocalExternalPageCursors] = useState<
     Record<string, string | null>
   >({})
@@ -999,7 +1056,14 @@ export function CloudTodoWorkspace({
   const [localProjectsLoading, setLocalProjectsLoading] = useState(Boolean(projectSpaceApis.local))
   const [localProjectsError, setLocalProjectsError] = useState<string | null>(null)
   const [localProjectsRefreshNonce, setLocalProjectsRefreshNonce] = useState(0)
-  const [boardError, setBoardError] = useState<string | null>(null)
+  const boardErrorScopeRef = useRef<object | null>(null)
+  const [boardErrorResult, setBoardErrorResult] = useState<{
+    scope: object | null
+    message: string | null
+  }>({ scope: null, message: null })
+  const setBoardError = useCallback((message: string | null) => {
+    setBoardErrorResult({ scope: boardErrorScopeRef.current, message })
+  }, [])
   const [taskDispatchError, setTaskDispatchError] = useState<string | null>(null)
   const clearTaskDispatchError = useCallback(() => setTaskDispatchError(null), [])
   const [dingtalkAuthPrompt, setDingtalkAuthPrompt] = useState(false)
@@ -1043,16 +1107,7 @@ export function CloudTodoWorkspace({
       }
       setItems(current => {
         const currentById = new Map(current.map(item => [item.id, item]))
-        return fetchedItems.map(incoming => {
-          const existing = currentById.get(incoming.id)
-          return existing &&
-            existing.cloud_project_id === incoming.cloud_project_id &&
-            existing.project_store === incoming.project_store
-            ? existing.version > incoming.version
-              ? existing
-              : incoming
-            : incoming
-        })
+        return fetchedItems.map(incoming => latestLoopItem(currentById.get(incoming.id), incoming))
       })
       setItemsProjectKey(spaceKey)
       setBoardError(error)
@@ -1063,7 +1118,7 @@ export function CloudTodoWorkspace({
         setSelectedItem(newlyFailed)
       }
     },
-    []
+    [setBoardError]
   )
   const connectDingTalkBoard = async () => {
     if (!services.dwsApi || dingtalkAuthBusy) return
@@ -1504,6 +1559,179 @@ export function CloudTodoWorkspace({
   const isExternalGitBoard =
     selectedProject?.task_provider === 'github' || selectedProject?.task_provider === 'gitlab'
   const usesSharedCloudBoard = selectedProject?.location === 'cloud'
+  const snapshotApi =
+    selectedProjectLocation === 'local' ? localProjectManageApi : cloudWorkspaceApi
+  const snapshotScope = useMemo(
+    () =>
+      selectedProjectKey
+        ? { projectKey: selectedProjectKey, api: snapshotApi, userId: user.id }
+        : null,
+    [selectedProjectKey, snapshotApi, user.id]
+  )
+  const detailReadIdentityRef = useRef({
+    projectKey: selectedProjectKey,
+    api: snapshotApi,
+    userId: user.id,
+  })
+  useLayoutEffect(() => {
+    boardErrorScopeRef.current = snapshotScope
+    const previous = detailReadIdentityRef.current
+    detailReadIdentityRef.current = {
+      projectKey: selectedProjectKey,
+      api: snapshotApi,
+      userId: user.id,
+    }
+    if (
+      previous.userId !== user.id ||
+      (previous.projectKey === selectedProjectKey && previous.api !== snapshotApi)
+    ) {
+      advanceTaskPanelSession()
+      setSelectedItem(null)
+      setDetailItems([])
+      setSelectedTaskBinding(null)
+      setTaskComposerRequest(null)
+      setBackgroundTaskItemId(null)
+      setItems([])
+      setItemsProjectKey(null)
+      setLocalProjectItems({})
+      setLocalProjectMembers({})
+      setLocalProjectAgents({})
+      setLocalProjectCounts({})
+      setLocalItemTaskBindings({})
+      setItemTaskBindingsProjectKey(null)
+    }
+  }, [advanceTaskPanelSession, selectedProjectKey, snapshotApi, snapshotScope, user.id])
+  const boardError = boardErrorResult.scope === snapshotScope ? boardErrorResult.message : null
+  const projectSnapshot = useProjectSnapshotRefresh({
+    scope: snapshotScope,
+    active: workspaceActive,
+    requiresNetwork: !(
+      selectedProjectLocation === 'local' && selectedProject?.task_provider === 'local'
+    ),
+    refreshKey: `${boardRefreshNonce}:${boardParentId ?? ''}:${projectView}:${selectedProjectLocation === 'local' ? runtimeTaskStatusSignature : ''}`,
+    refresh: async isCurrent => {
+      const project = selectedProjectForBoardLoadRef.current
+      if (!project) return
+      if (project.location === 'cloud') {
+        if (isAITableProject && services.dwsApi) {
+          const status = await services.dwsApi.authStatus()
+          if (!isCurrent()) return
+          if (!status.authenticated || status.token_valid === false) setDingtalkAuthPrompt(true)
+        }
+        if (isAITableProject && services.aitableApi) {
+          await services.aitableApi.configureProject(project)
+        }
+        if (!isCurrent()) return
+        await cloudWorkspace.commands.loadProject(String(project.id), false, {
+          revalidate: true,
+          throwOnError: true,
+          loadSnapshot: projectView !== 'manage' && projectView !== 'files',
+          isCurrent,
+        })
+      } else {
+        const localDelivery = apiForProject(project)
+        if (!localDelivery) throw new Error(cloudWorkspaceMessages.loadFailed)
+        const updated = await createWeworkDeliverySharedWorkspaceApi(localDelivery)
+          .projects.get(String(project.id))
+          .catch(cause => {
+            if (isCurrent()) revokeLocalBoardAccess(project, cause)
+            throw cause
+          })
+        if (!isCurrent()) return
+        const updatedProject = {
+          ...toWeworkCloudProject(updated),
+          id: project.id,
+          location: project.location,
+          project_store: project.project_store,
+        }
+        replaceProject(project, updatedProject)
+        if (projectView !== 'manage' && projectView !== 'files') {
+          await refreshLocalBoard(updatedProject, isCurrent)
+        }
+      }
+    },
+  })
+  const retryProjectSnapshot = projectSnapshot.retry
+  useLayoutEffect(() => {
+    const localProject = selectedProject?.location === 'local' ? selectedProject : null
+    localSnapshotWriteGuardRef.current = {
+      scope: snapshotScope,
+      projectId: localProject ? String(localProject.id) : null,
+      independentIssueAccess:
+        localProject &&
+        isInvitedOnlyIssue(selectedItem) &&
+        selectedItem?.project_store === localProject.project_store &&
+        String(selectedItem.cloud_project_id) === String(localProject.id)
+          ? {
+              scope: snapshotScope,
+              projectId: String(localProject.id),
+              issueIds: new Set([selectedItem.id]),
+            }
+          : undefined,
+      issueIds: new Set([
+        ...items
+          .filter(
+            item =>
+              localProject &&
+              !isInvitedOnlyIssue(item) &&
+              item.project_store === localProject.project_store &&
+              String(item.cloud_project_id) === String(localProject.id)
+          )
+          .map(item => item.id),
+        ...(localProject &&
+        !isInvitedOnlyIssue(selectedItem) &&
+        selectedItem?.project_store === localProject.project_store &&
+        String(selectedItem.cloud_project_id) === String(localProject.id)
+          ? [selectedItem.id]
+          : []),
+      ]),
+      canWrite: projectSnapshot.canWrite,
+      message: t('todo.project_snapshot_write_blocked'),
+    }
+    snapshotWriteGuardRef.current = {
+      scope: snapshotScope,
+      projectId: selectedProject?.location === 'cloud' ? String(selectedProject.id) : null,
+      independentIssueAccess:
+        selectedProject?.location === 'cloud' &&
+        isInvitedOnlyIssue(selectedItem) &&
+        selectedItem?.project_store === 'backend' &&
+        String(selectedItem.cloud_project_id) === String(selectedProject.id)
+          ? {
+              scope: snapshotScope,
+              projectId: String(selectedProject.id),
+              issueIds: new Set([selectedItem.id]),
+            }
+          : undefined,
+      issueIds: new Set([
+        ...cloudWorkspace.state.issues
+          .filter(
+            issue =>
+              selectedProject?.location === 'cloud' &&
+              issue.invited_only !== true &&
+              String(issue.cloud_project_id) === String(selectedProject.id)
+          )
+          .map(issue => issue.id),
+        ...(selectedProject?.location === 'cloud' &&
+        !isInvitedOnlyIssue(selectedItem) &&
+        selectedItem?.project_store === 'backend' &&
+        String(selectedItem.cloud_project_id) === String(selectedProject.id)
+          ? [selectedItem.id]
+          : []),
+      ]),
+      canWrite: projectSnapshot.canWrite,
+      message: t('todo.project_snapshot_write_blocked'),
+      acceptProject: project => cloudWorkspace.commands.replaceProject(project),
+    }
+  }, [
+    cloudWorkspace.commands,
+    cloudWorkspace.state.issues,
+    items,
+    snapshotScope,
+    projectSnapshot.canWrite,
+    selectedItem,
+    selectedProject,
+    t,
+  ])
   const selectedCloudProjectItems = useMemo(() => {
     if (
       !usesSharedCloudBoard ||
@@ -1567,7 +1795,12 @@ export function CloudTodoWorkspace({
     showDate: selectedProject?.card_display?.show_date ?? true,
   }
   useEffect(() => {
-    if (!usesSharedCloudBoard || boardRefreshNonce === 0 || !selectedProjectId) {
+    if (
+      projectSnapshotRevalidateEnabled ||
+      !usesSharedCloudBoard ||
+      boardRefreshNonce === 0 ||
+      !selectedProjectId
+    ) {
       return
     }
     void cloudWorkspace.commands.loadProject(String(selectedProjectId), false, {
@@ -1606,6 +1839,7 @@ export function CloudTodoWorkspace({
   }, [
     cloudWorkspace.state.error,
     cloudWorkspace.state.errorSource,
+    setBoardError,
     isAITableProject,
     selectedProjectKey,
     services.dwsApi,
@@ -1755,7 +1989,7 @@ export function CloudTodoWorkspace({
     return () => {
       active = false
     }
-  }, [aitableApi, isAITableProject, selectedProject])
+  }, [aitableApi, isAITableProject, selectedProject, setBoardError])
 
   const canCreateBoardTask = selectedProject !== null
   const persistedBoardItems = useMemo(() => {
@@ -1834,27 +2068,40 @@ export function CloudTodoWorkspace({
     selectedProject !== null &&
     (selectedProject.location === 'cloud'
       ? cloudWorkspace.state.project?.id !== String(selectedProject.id) ||
-        cloudWorkspace.state.loading
-      : itemsProjectKey !== selectedProjectKey)
+        cloudWorkspace.state.loading ||
+        cloudWorkspace.state.projectItems[String(selectedProject.id)] === undefined
+      : itemsProjectKey !== selectedProjectKey ||
+        (projectSnapshotRevalidateEnabled && localBoardSnapshotScope !== snapshotScope))
   const startupProjectsLoading =
     (Boolean(projectSpaceApis.local) && localProjectsLoading) ||
     (Boolean(cloudWorkspaceApi) && cloudWorkspace.state.loading)
   const startupProjectRouteReady =
     !activeProjectRef ||
     Boolean(selectedProject && sameProjectSpace(projectSpaceRef(selectedProject), activeProjectRef))
+  const boardLoadFailed = projectSnapshotRevalidateEnabled
+    ? projectSnapshot.state === 'stale' || projectSnapshot.state === 'offline'
+    : Boolean(boardError) ||
+      (usesSharedCloudBoard &&
+        cloudWorkspace.state.project?.id === String(selectedProject?.id) &&
+        cloudWorkspace.state.errorSource === 'load' &&
+        Boolean(cloudWorkspace.state.error))
   const focusedStartupItem = focusedItemId
     ? activeBoardSourceItems.find(item => item.id === focusedItemId)
     : undefined
   const startupFocusedItemReady =
     !focusedItemId ||
     selectedItem?.id === focusedItemId ||
+    boardLoadFailed ||
     (!boardItemsLoading && (!focusedStartupItem || focusedStartupItem.can_view_detail === false))
   const startupBoardReady =
     startupActive &&
     Boolean(workbench?.isStartupReady) &&
     !startupProjectsLoading &&
     startupProjectRouteReady &&
-    !boardItemsLoading &&
+    (projectView === 'manage' ||
+      projectView === 'files' ||
+      !boardItemsLoading ||
+      boardLoadFailed) &&
     startupFocusedItemReady
   useEffect(() => {
     if (!startupBoardReady) return
@@ -1865,6 +2112,30 @@ export function CloudTodoWorkspace({
   }, [startupBoardReady])
   const selectedItemProject = selectedItem ? projectForItem(selectedItem) : undefined
   const selectedItemApi = apiForProject(selectedItemProject)
+  const localItemSharedApi = useMemo(() => {
+    if (!selectedItemApi || !localProjectManageApi) return undefined
+    const delivery = createWeworkDeliverySharedWorkspaceApi(selectedItemApi)
+    const guarded = guardProjectSnapshotWrites(
+      {
+        ...localProjectManageApi,
+        ...delivery,
+        projects: { ...localProjectManageApi.projects, ...delivery.projects },
+      },
+      () => localSnapshotWriteGuardRef.current
+    )
+    return {
+      ...delivery,
+      projects: guarded.projects,
+      issues: guarded.issues,
+      agents: {
+        async list(projectId: string) {
+          return ((await selectedProjectAgentApi?.list(projectId)) ?? []).map(agent => ({
+            ...agent,
+          }))
+        },
+      },
+    }
+  }, [localProjectManageApi, selectedItemApi, selectedProjectAgentApi])
   const runtimeAddressesForTaskBoardItem = useCallback(
     (item: CloudLoopItem): RuntimeTaskAddress[] => {
       if (isRuntimeMyWorkItem(item)) return [item.runtime_address]
@@ -1950,7 +2221,7 @@ export function CloudTodoWorkspace({
     return () => {
       active = false
     }
-  }, [cloudWorkspaceApi, selectedItem, selectedItemApi, selectedItemProject, t])
+  }, [cloudWorkspaceApi, selectedItem, selectedItemApi, selectedItemProject, setBoardError, t])
   // Source for the detail drawer / creation dialog when the selected todo lives
   // in a project other than the one shown on the board.
   const detailAllItems =
@@ -1992,6 +2263,7 @@ export function CloudTodoWorkspace({
     revision: selectedProject?.version ?? 0,
     translate: boardTranslate,
     save: async (boardViews, settings) => {
+      if (!projectSnapshot.canWrite) throw new Error(t('todo.project_snapshot_write_blocked'))
       if (!selectedProject) throw new Error(cloudWorkspaceMessages.saveFailed)
       const api = selectedProject.location === 'cloud' ? cloudWorkspaceApi : localProjectManageApi
       if (!api) throw new Error(cloudWorkspaceMessages.saveFailed)
@@ -2034,7 +2306,7 @@ export function CloudTodoWorkspace({
         }
       : null,
     enabled: baseBoardStatusGrouping && baseBoardMigrationReady && projectView === 'board',
-    canManage: canManageViews,
+    canManage: canManageViews && projectSnapshot.canWrite,
     onMigrated: project => {
       if (selectedProject) replaceProject(selectedProject, toWeworkCloudProject(project))
     },
@@ -2162,7 +2434,7 @@ export function CloudTodoWorkspace({
     completed: t('todo.issue_column_empty_completed', '验收通过的 Issue 会显示在这里。'),
   }
   useEffect(() => {
-    if (!usesSharedCloudBoard || !selectedProjectId) return
+    if (projectSnapshotRevalidateEnabled || !usesSharedCloudBoard || !selectedProjectId) return
     let active = true
     const load = async () => {
       try {
@@ -2201,6 +2473,7 @@ export function CloudTodoWorkspace({
     cloudWorkspace.commands,
     cloudWorkspaceMessages.loadFailed,
     isAITableProject,
+    setBoardError,
     selectedProjectId,
     selectedProjectKey,
     services.aitableApi,
@@ -2471,6 +2744,7 @@ export function CloudTodoWorkspace({
     initialTitle?: string,
     options?: { startRuntime?: boolean }
   ) {
+    if (!projectSnapshot.canWrite) return
     setQuickCreateStatus(null)
     setCreateTodoParent(parent)
     setCreateTodoStatus(status)
@@ -2736,8 +3010,12 @@ export function CloudTodoWorkspace({
     selectedProjectKey,
     usesSharedCloudBoard,
   ])
+  const completedCloudBoardRevisionRef = useRef(cloudWorkspace.state.boardLoadRevision)
   useEffect(() => {
+    const previousRevision = completedCloudBoardRevisionRef.current
+    completedCloudBoardRevisionRef.current = cloudWorkspace.state.boardLoadRevision
     if (
+      previousRevision === cloudWorkspace.state.boardLoadRevision ||
       !usesSharedCloudBoard ||
       !selectedProjectKey ||
       cloudWorkspace.state.project?.id !== selectedProjectId
@@ -2758,198 +3036,273 @@ export function CloudTodoWorkspace({
     cloudWorkspace.state.project?.id,
     selectedProjectId,
     selectedProjectKey,
+    setBoardError,
     usesSharedCloudBoard,
   ])
+  const revokeLocalBoardAccess = useCallback((project: LocatedCloudProject, cause: unknown) => {
+    if (!(cause instanceof ApiError) || ![401, 403, 404].includes(cause.status)) return
+    const key = projectSpaceKey(projectSpaceRef(project))
+    setItems([])
+    setItemsProjectKey(null)
+    setLocalBoardSnapshotScope(null)
+    localBoardSnapshotScopeRef.current = null
+    boardSnapshotSignatureRef.current = null
+    setLocalItemTaskBindings({})
+    setItemTaskBindingsProjectKey(null)
+    setLocalExternalPageCursors({})
+    setLocalProjectItems(current => {
+      const next = { ...current }
+      delete next[key]
+      return next
+    })
+    setLocalProjectCounts(current => {
+      const next = { ...current }
+      delete next[key]
+      return next
+    })
+    setLocalProjectMembers(current => ({ ...current, [key]: [] }))
+    setLocalProjectAgents(current => ({ ...current, [key]: [] }))
+    setSelectedItem(current =>
+      current &&
+      String(current.cloud_project_id) === String(project.id) &&
+      current.project_store === project.project_store
+        ? null
+        : current
+    )
+  }, [])
+  const refreshLocalBoard = useCallback(
+    async (selectedProject: LocatedCloudProject, isCurrent: () => boolean): Promise<void> => {
+      const selectedProjectId = String(selectedProject.id)
+      const selectedProjectKey = projectSpaceKey(projectSpaceRef(selectedProject))
+      const selectedProjectApi = apiForProject(selectedProject)
+      if (!selectedProjectApi) throw new Error(cloudWorkspaceMessages.loadFailed)
+      const isExternalGitBoard =
+        selectedProject.task_provider === 'github' || selectedProject.task_provider === 'gitlab'
+      const refreshItems = () => {
+        const prepare =
+          selectedProject?.task_provider === 'dingtalk_aitable' && services.aitableApi
+            ? services.aitableApi.configureProject(selectedProject)
+            : Promise.resolve()
+        const readBoard = async (): Promise<BoardReadResult> => {
+          await prepare
+          if (isExternalGitBoard) {
+            const [pages, members, agents] = await Promise.all([
+              Promise.all(
+                localExternalBoardStatuses.map(async status => {
+                  return selectedProjectApi.listLoopItemsPage(selectedProjectId, {
+                    status,
+                    parentId: boardParentId,
+                    limit: externalBoardColumnPageSize,
+                  })
+                })
+              ),
+              selectedProjectApi.listCloudProjectMembers(selectedProjectId),
+              selectedProjectAgentApi?.list(selectedProjectId) ?? Promise.resolve([]),
+            ])
+            return {
+              items: locateItems(
+                pages.flatMap(page => page.items),
+                selectedProject.project_store
+              ),
+              task_bindings: pages.flatMap(page => page.task_bindings),
+              members,
+              agents,
+              page_cursors: Object.fromEntries(
+                pages.map((page, index) => [localExternalBoardStatuses[index], page.next_cursor])
+              ),
+            }
+          }
+          const [selectedResponse, agents] = await Promise.all([
+            selectedProjectApi.getBoardSnapshot(selectedProjectId),
+            selectedProjectAgentApi?.list(selectedProjectId),
+          ])
+          const selectedItems = locateItems(selectedResponse.items, selectedProject.project_store)
+          return {
+            ...selectedResponse,
+            items: selectedItems,
+            agents: agents ?? selectedResponse.agents,
+          }
+        }
+        return readBoard()
+          .then(response => {
+            if (!isCurrent()) return
+            setDingtalkAuthPrompt(false)
+            setBoardError(null)
+            const boardContext = response.task_bindings
+              ? {
+                  taskBindings: response.task_bindings,
+                  members: response.members ?? [],
+                  agents: response.agents ?? [],
+                }
+              : undefined
+            const snapshotSpaceKey = isExternalGitBoard
+              ? `${selectedProjectKey}:${boardParentId ?? 'root'}`
+              : selectedProjectKey
+            const signature = boardSnapshotKey(snapshotSpaceKey, response.items, null, boardContext)
+            if (localBoardSnapshotScopeRef.current !== snapshotScope)
+              boardSnapshotSignatureRef.current = null
+            localBoardSnapshotScopeRef.current = snapshotScope
+            setLocalBoardSnapshotScope(snapshotScope)
+            if (boardSnapshotSignatureRef.current === signature) return
+            boardSnapshotSignatureRef.current = signature
+            const locatedItems = response.items
+            if (isExternalGitBoard) {
+              setItems(current => {
+                const retained = current.filter(
+                  item =>
+                    String(item.cloud_project_id) === String(selectedProject.id) &&
+                    item.project_store === selectedProject.project_store &&
+                    item.parent_id !== boardParentId
+                )
+                return [...retained, ...locatedItems]
+              })
+              setItemsProjectKey(selectedProjectKey)
+              setBoardError(null)
+              setLocalExternalPageCursors(response.page_cursors ?? {})
+            } else {
+              applyBoardItems(selectedProjectKey, locatedItems, null)
+              setLocalExternalPageCursors({})
+            }
+            if (boardContext) {
+              const bindingsByItem: Record<string, LoopItemTaskBinding[]> = {}
+              for (const binding of boardContext.taskBindings) {
+                if (!binding.loop_item_id) continue
+                const itemBindings = bindingsByItem[binding.loop_item_id] ?? []
+                itemBindings.push(binding)
+                bindingsByItem[binding.loop_item_id] = itemBindings
+              }
+              setLocalItemTaskBindings(current =>
+                isExternalGitBoard ? { ...current, ...bindingsByItem } : bindingsByItem
+              )
+              setItemTaskBindingsProjectKey(selectedProjectKey)
+            }
+            if (boardContext) {
+              setLocalProjectMembers(current => ({
+                ...current,
+                [selectedProjectKey]: boardContext.members,
+              }))
+              setLocalProjectAgents(current => ({
+                ...current,
+                [selectedProjectKey]: boardContext.agents.filter(
+                  agent => agent.status === 'active'
+                ),
+              }))
+            }
+            // Keep the projects-home cache in sync with the board fetch.
+            setLocalProjectItems(current => {
+              const currentById = new Map(
+                (current[selectedProjectKey] ?? []).map(item => [item.id, item])
+              )
+              const refreshed = locatedItems.map(incoming =>
+                latestLoopItem(currentById.get(incoming.id), incoming)
+              )
+              return {
+                ...current,
+                [selectedProjectKey]: isExternalGitBoard
+                  ? Array.from(
+                      new Map(
+                        [...(current[selectedProjectKey] ?? []), ...refreshed].map(item => [
+                          item.id,
+                          item,
+                        ])
+                      ).values()
+                    )
+                  : refreshed,
+              }
+            })
+            setLocalProjectCounts(current => ({
+              ...current,
+              [selectedProjectKey]: response.items.length,
+            }))
+            // Only sync the open drawer when it belongs to this project; a drawer
+            // opened from another view (e.g. my work) must not be closed here.
+            setSelectedItem(current => {
+              if (
+                !current ||
+                !sameProjectSpace(
+                  {
+                    projectStore: current.project_store ?? selectedProject.project_store,
+                    projectId: current.cloud_project_id,
+                  },
+                  projectSpaceRef(selectedProject)
+                )
+              ) {
+                return current
+              }
+              const incoming = locatedItems.find(item => item.id === current.id)
+              return incoming
+                ? latestLoopItem(current, incoming)
+                : isExternalGitBoard
+                  ? current
+                  : null
+            })
+          })
+          .catch(async error => {
+            console.error('[Wework project board] issue refresh failed', {
+              projectId: selectedProjectId,
+              error,
+            })
+            if (!isCurrent()) return
+            if (selectedProject?.task_provider === 'dingtalk_aitable' && services.dwsApi) {
+              try {
+                const status = await services.dwsApi.authStatus()
+                if (!status.authenticated || status.token_valid === false) {
+                  if (!isCurrent()) return
+                  setDingtalkAuthPrompt(true)
+                }
+              } catch {
+                // Fall through to the raw board error.
+              }
+            }
+            if (!isCurrent()) return
+            revokeLocalBoardAccess(selectedProject, error)
+            const message = error instanceof Error ? error.message : '任务加载失败'
+            setBoardError(message)
+            throw error
+          })
+      }
+      await refreshItems()
+    },
+    [
+      apiForProject,
+      applyBoardItems,
+      boardParentId,
+      cloudWorkspaceMessages.loadFailed,
+      locateItems,
+      revokeLocalBoardAccess,
+      selectedProjectAgentApi,
+      services.aitableApi,
+      services.dwsApi,
+      setBoardError,
+      snapshotScope,
+    ]
+  )
   useEffect(() => {
     if (
       !selectedProject ||
       !selectedProjectId ||
-      !selectedProjectKey ||
       selectedProject.location !== 'local' ||
-      !selectedProjectApi
+      !selectedProjectApi ||
+      projectView === 'manage' ||
+      projectView === 'files'
     ) {
       return
     }
     let active = true
     const refreshItems = () => {
-      const prepare =
-        selectedProject?.task_provider === 'dingtalk_aitable' && services.aitableApi
-          ? services.aitableApi.configureProject(selectedProject)
-          : Promise.resolve()
-      const readBoard = async (): Promise<BoardReadResult> => {
-        await prepare
-        if (isExternalGitBoard) {
-          const [pages, members, agents] = await Promise.all([
-            Promise.all(
-              localExternalBoardStatuses.map(async status => {
-                return selectedProjectApi.listLoopItemsPage(selectedProjectId, {
-                  status,
-                  parentId: boardParentId,
-                  limit: externalBoardColumnPageSize,
-                })
-              })
-            ),
-            selectedProjectApi.listCloudProjectMembers(selectedProjectId),
-            selectedProjectAgentApi?.list(selectedProjectId) ?? Promise.resolve([]),
-          ])
-          return {
-            items: locateItems(
-              pages.flatMap(page => page.items),
-              selectedProject.project_store
-            ),
-            task_bindings: pages.flatMap(page => page.task_bindings),
-            members,
-            agents,
-            page_cursors: Object.fromEntries(
-              pages.map((page, index) => [localExternalBoardStatuses[index], page.next_cursor])
-            ),
-          }
-        }
-        const [selectedResponse, agents] = await Promise.all([
-          selectedProjectApi.getBoardSnapshot(selectedProjectId),
-          selectedProjectAgentApi?.list(selectedProjectId),
-        ])
-        const selectedItems = locateItems(selectedResponse.items, selectedProject.project_store)
-        return {
-          ...selectedResponse,
-          items: selectedItems,
-          agents: agents ?? selectedResponse.agents,
-        }
+      if (projectSnapshotRevalidateEnabled) {
+        void retryProjectSnapshot()
+      } else {
+        void refreshLocalBoard(selectedProject, () => active).catch(() => undefined)
       }
-      void readBoard()
-        .then(response => {
-          if (!active) return
-          setDingtalkAuthPrompt(false)
-          const boardContext = response.task_bindings
-            ? {
-                taskBindings: response.task_bindings,
-                members: response.members ?? [],
-                agents: response.agents ?? [],
-              }
-            : undefined
-          const snapshotSpaceKey = isExternalGitBoard
-            ? `${selectedProjectKey}:${boardParentId ?? 'root'}`
-            : selectedProjectKey
-          const signature = boardSnapshotKey(snapshotSpaceKey, response.items, null, boardContext)
-          if (boardSnapshotSignatureRef.current === signature) return
-          boardSnapshotSignatureRef.current = signature
-          const locatedItems = response.items
-          if (isExternalGitBoard) {
-            setItems(current => {
-              const retained = current.filter(
-                item =>
-                  String(item.cloud_project_id) === String(selectedProject.id) &&
-                  item.project_store === selectedProject.project_store &&
-                  item.parent_id !== boardParentId
-              )
-              return [...retained, ...locatedItems]
-            })
-            setItemsProjectKey(selectedProjectKey)
-            setBoardError(null)
-            setLocalExternalPageCursors(response.page_cursors ?? {})
-          } else {
-            applyBoardItems(selectedProjectKey, locatedItems, null)
-            setLocalExternalPageCursors({})
-          }
-          if (boardContext) {
-            const bindingsByItem: Record<string, LoopItemTaskBinding[]> = {}
-            for (const binding of boardContext.taskBindings) {
-              if (!binding.loop_item_id) continue
-              const itemBindings = bindingsByItem[binding.loop_item_id] ?? []
-              itemBindings.push(binding)
-              bindingsByItem[binding.loop_item_id] = itemBindings
-            }
-            setLocalItemTaskBindings(current =>
-              isExternalGitBoard ? { ...current, ...bindingsByItem } : bindingsByItem
-            )
-            setItemTaskBindingsProjectKey(selectedProjectKey)
-          }
-          if (boardContext) {
-            setLocalProjectMembers(current => ({
-              ...current,
-              [selectedProjectKey]: boardContext.members,
-            }))
-            setLocalProjectAgents(current => ({
-              ...current,
-              [selectedProjectKey]: boardContext.agents.filter(agent => agent.status === 'active'),
-            }))
-          }
-          // Keep the projects-home cache in sync with the board fetch.
-          setLocalProjectItems(current => ({
-            ...current,
-            [selectedProjectKey]: isExternalGitBoard
-              ? Array.from(
-                  new Map(
-                    [...(current[selectedProjectKey] ?? []), ...locatedItems].map(item => [
-                      item.id,
-                      item,
-                    ])
-                  ).values()
-                )
-              : locatedItems,
-          }))
-          setLocalProjectCounts(current => ({
-            ...current,
-            [selectedProjectKey]: response.items.length,
-          }))
-          // Only sync the open drawer when it belongs to this project; a drawer
-          // opened from another view (e.g. my work) must not be closed here.
-          setSelectedItem(current =>
-            current &&
-            sameProjectSpace(
-              {
-                projectStore: current.project_store ?? selectedProject.project_store,
-                projectId: current.cloud_project_id,
-              },
-              projectSpaceRef(selectedProject)
-            )
-              ? (locatedItems.find(item => item.id === current.id) ??
-                (isExternalGitBoard ? current : null))
-              : current
-          )
-        })
-        .catch(async error => {
-          console.error('[Wework project board] issue refresh failed', {
-            projectId: selectedProjectId,
-            error,
-          })
-          if (!active) return
-          if (selectedProject?.task_provider === 'dingtalk_aitable' && services.dwsApi) {
-            try {
-              const status = await services.dwsApi.authStatus()
-              if (!status.authenticated || status.token_valid === false) {
-                if (!active) return
-                setDingtalkAuthPrompt(true)
-                applyBoardItems(selectedProjectKey, [], null)
-                return
-              }
-            } catch {
-              // Fall through to the raw board error.
-            }
-          }
-          if (!active) return
-          setDingtalkAuthPrompt(false)
-          const message = error instanceof Error ? error.message : '任务加载失败'
-          const signature = boardSnapshotKey(
-            isExternalGitBoard
-              ? `${selectedProjectKey}:${boardParentId ?? 'root'}`
-              : selectedProjectKey,
-            [],
-            message
-          )
-          if (boardSnapshotSignatureRef.current === signature) return
-          boardSnapshotSignatureRef.current = signature
-          applyBoardItems(selectedProjectKey, [], message)
-          setLocalExternalPageCursors({})
-          setLocalItemTaskBindings({})
-          setItemTaskBindingsProjectKey(selectedProjectKey)
-          setLocalProjectMembers(current => ({ ...current, [selectedProjectKey]: [] }))
-          setLocalProjectAgents(current => ({ ...current, [selectedProjectKey]: [] }))
-        })
     }
-    refreshItems()
+    if (!projectSnapshotRevalidateEnabled) refreshItems()
     const interval = window.setInterval(() => {
-      if (document.visibilityState === 'visible' && !boardLiveSubscriptionActiveRef.current) {
+      if (
+        workspaceActive &&
+        document.visibilityState === 'visible' &&
+        !boardLiveSubscriptionActiveRef.current
+      ) {
         refreshItems()
       }
     }, 15_000)
@@ -2967,6 +3320,10 @@ export function CloudTodoWorkspace({
     selectedProjectAgentApi,
     selectedProjectId,
     selectedProjectKey,
+    retryProjectSnapshot,
+    refreshLocalBoard,
+    projectView,
+    workspaceActive,
     locateItems,
     runtimeTaskStatusSignature,
     services.aitableApi,
@@ -3228,7 +3585,8 @@ export function CloudTodoWorkspace({
     mutation: StandardCloudBoardMutation<LocatedLoopItem>,
     automationRuleId?: string
   ): Promise<boolean> {
-    if (!canEditProjectSpaceIssue(item) || isAITableProject) return false
+    if (!projectSnapshot.canWrite || !canEditProjectSpaceIssue(item) || isAITableProject)
+      return false
     const enteringExecution = mutation.kind === 'status' && isProcessingStatus(mutation.status)
     const forceStart =
       mutation.kind === 'status' && item.status === 'pending' && isProcessingStatus(mutation.status)
@@ -3537,12 +3895,13 @@ export function CloudTodoWorkspace({
 
   function finishBoardDrop(event: DragEndEvent) {
     setActiveDragItemId(null)
+    if (!projectSnapshot.canWrite) return
     standardBoardController.moveDroppedItem(projectBoardDrop(event))
   }
 
   async function saveGlobalGroupBy() {
     if (baseBoardStatusGrouping) return
-    if (!selectedProject || groupScopeBusy) return
+    if (!projectSnapshot.canWrite || !selectedProject || groupScopeBusy) return
     const projectApi = projectSpaceApis[selectedProject.location]
     if (selectedProject.location === 'cloud' ? !cloudWorkspaceApi : !projectApi) return
     setGroupScopeBusy(true)
@@ -3608,6 +3967,7 @@ export function CloudTodoWorkspace({
     initialContent = '',
     presentation: 'page' | 'popup' = 'page'
   ) {
+    if (!projectSnapshot.canWrite) return
     const targetProject = selectedProject ?? projects[0]
     if (!targetProject) {
       setCreateProjectOpen(true)
@@ -4253,6 +4613,12 @@ export function CloudTodoWorkspace({
                 />
               </div>
             )}
+            {selectedProject && projectSnapshotRevalidateEnabled ? (
+              <ProjectSnapshotSyncNotice
+                state={projectSnapshot.state}
+                retry={projectSnapshot.retry}
+              />
+            ) : null}
             {!selectedProject && projects.length > 0 && localProjectsError ? (
               <div
                 data-testid="local-project-spaces-error"
@@ -4750,6 +5116,11 @@ export function CloudTodoWorkspace({
                                 testId: 'cloud-project-settings-automatic-processing',
                                 content: (
                                   <ProjectAutomaticProcessing
+                                    onProjectChange={updated => {
+                                      if (snapshotWriteGuardRef.current.scope !== snapshotScope)
+                                        return
+                                      replaceProject(selectedProject, updated as CloudProject)
+                                    }}
                                     api={
                                       selectedProject.location === 'cloud'
                                         ? cloudWorkspaceApi!
@@ -4830,6 +5201,7 @@ export function CloudTodoWorkspace({
                             statuses={nativeStatuses}
                             tags={availableTags}
                             canManage={canManageViews}
+                            canWrite={projectSnapshot.canWrite}
                             settings={{
                               cardDisplay: selectedProject?.card_display,
                               boardConfig: selectedProject?.board_config,
@@ -4861,6 +5233,7 @@ export function CloudTodoWorkspace({
                         sensors: boardSensors,
                         collisionDetection: projectBoardCollisionDetection,
                         onDragStart: (event: DragStartEvent) => {
+                          if (!projectSnapshot.canWrite) return
                           standardBoardController.setActiveSourceColumnKey(
                             event.active.data.current?.columnKey ?? null
                           )
@@ -5096,6 +5469,7 @@ export function CloudTodoWorkspace({
                                 <button
                                   type="button"
                                   data-testid={`cloud-todo-column-add-${column.key}`}
+                                  disabled={!projectSnapshot.canWrite}
                                   onClick={open}
                                   className="flex h-6 w-6 items-center justify-center rounded-md text-text-muted opacity-0 transition hover:bg-background hover:text-text-primary focus-visible:opacity-100 focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 group-hover:opacity-100"
                                   aria-label={t(
@@ -5156,7 +5530,11 @@ export function CloudTodoWorkspace({
                                 type="button"
                                 className="h-8 shrink-0 rounded-lg border border-border bg-background px-3 text-xs font-medium text-text-secondary hover:bg-muted hover:text-text-primary"
                                 data-testid="cloud-board-settings"
-                                disabled={!canManageViews || !savedViews.supported}
+                                disabled={
+                                  !projectSnapshot.canWrite ||
+                                  !canManageViews ||
+                                  !savedViews.supported
+                                }
                                 onClick={() => setBoardSettingsOpen(true)}
                               >
                                 {t('todo.board_settings', '看板设置')}
@@ -5262,7 +5640,7 @@ export function CloudTodoWorkspace({
                         ) : null
                       }
                       renderSkeleton={() =>
-                        startupActive ? (
+                        boardLoadFailed ? null : startupActive ? (
                           <CloudTodoStartupAnimation
                             label={t('todo.startup_loading', '正在准备项目空间…')}
                           />
@@ -5529,6 +5907,16 @@ export function CloudTodoWorkspace({
                   mode="edit"
                   presentation="workspace-panel"
                   readFirst
+                  structuralWritesEnabled={
+                    isInvitedOnlyIssue(selectedItem) ||
+                    !selectedItemProject ||
+                    !selectedProject ||
+                    !sameProjectSpace(
+                      projectSpaceRef(selectedItemProject),
+                      projectSpaceRef(selectedProject)
+                    ) ||
+                    projectSnapshot.canWrite
+                  }
                   selectedTaskId={
                     selectedTaskBinding?.work_item_id === selectedItem.id
                       ? selectedTaskBinding.task_id
@@ -5536,7 +5924,7 @@ export function CloudTodoWorkspace({
                   }
                   {...(selectedItemProject?.location === 'cloud'
                     ? { sharedApi: cloudWorkspaceApi! }
-                    : { api: selectedItemApi! })}
+                    : { sharedApi: localItemSharedApi! })}
                   projectChatAgentApi={selectedProjectAgentApi}
                   teamApi={services.teamApi}
                   projectChatClient={selectedProjectChatClient}
@@ -5666,15 +6054,26 @@ export function CloudTodoWorkspace({
                       cloudWorkspace.commands.replaceIssue(updated as CollaborationIssue)
                     } else if (selectedItemProject?.location === 'local') {
                       setItems(current =>
-                        current.map(item => (item.id === updated.id ? locatedUpdated : item))
+                        current.map(item =>
+                          item.id === updated.id ? latestLoopItem(item, locatedUpdated) : item
+                        )
                       )
+                      const projectKey = projectSpaceKey(projectSpaceRef(selectedItemProject))
+                      setLocalProjectItems(current => ({
+                        ...current,
+                        [projectKey]: (current[projectKey] ?? []).map(item =>
+                          item.id === updated.id ? latestLoopItem(item, locatedUpdated) : item
+                        ),
+                      }))
                     }
                     if (selectedItemProject?.location === 'local') {
                       setDetailItems(current =>
-                        current.map(item => (item.id === updated.id ? locatedUpdated : item))
+                        current.map(item =>
+                          item.id === updated.id ? latestLoopItem(item, locatedUpdated) : item
+                        )
                       )
                     }
-                    setSelectedItem(locatedUpdated)
+                    setSelectedItem(current => latestLoopItem(current ?? undefined, locatedUpdated))
                     track('feature_action_completed', { domain: 'board_item', action: 'update' })
                   }}
                 />

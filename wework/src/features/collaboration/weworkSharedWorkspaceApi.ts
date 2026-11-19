@@ -266,6 +266,7 @@ function toBoardSnapshot(
   contextProjectId: string
 ): WorkspaceBoardSnapshot {
   return {
+    projectVersion: snapshot.project_version,
     items: snapshot.items.map(toIssue),
     members: snapshot.members.map(toMember),
     agents: snapshot.agents.map(toAgent),
@@ -931,9 +932,6 @@ export function createWeworkSharedWorkspaceApi<
             })
           )
         )
-      },
-      get(projectId) {
-        return client.get<CloudProject>(`/v1/cloud-projects/${encodeURIComponent(projectId)}`)
       },
       async initializeExecutionEnvironment(projectId, input) {
         return toProject(

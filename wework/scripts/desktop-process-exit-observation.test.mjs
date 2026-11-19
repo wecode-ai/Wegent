@@ -125,6 +125,8 @@ function childWithoutExitNotification() {
 }
 
 function observeLiveness(isAlive) {
+  // POSIX accepts a missing kernel PID before Node delivers its exit callback.
+  Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true })
   vi.spyOn(process, 'kill').mockImplementation((_pid, signal) => {
     assert.equal(signal, 0, 'The test must never signal a real process')
     if (!isAlive()) throw Object.assign(new Error('No process'), { code: 'ESRCH' })
@@ -174,6 +176,47 @@ test('still fails when the process remains alive after forced termination', asyn
   await vi.advanceTimersByTimeAsync(20_000)
   assert.match((await stopping).message, /Timed out waiting for process/)
   assert.deepEqual(child.kill.mock.calls, [['SIGTERM'], ['SIGKILL']])
+  assert.equal(child.listenerCount('exit'), 0)
+})
+
+test('waits for the native Windows exit callback after a PID probe disappears', async () => {
+  Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+  vi.useFakeTimers()
+  const child = childWithoutExitNotification()
+  const probe = vi.spyOn(process, 'kill').mockImplementation(() => {
+    throw Object.assign(new Error('No process'), { code: 'ESRCH' })
+  })
+  let stopped = false
+  const stopping = stopProcess(child).then(() => {
+    stopped = true
+  })
+  await vi.advanceTimersByTimeAsync(100)
+  assert.equal(stopped, false)
+  assert.equal(child.listenerCount('exit'), 1)
+  child.exitCode = 0
+  child.emit('exit', 0, null)
+  await stopping
+  assert.equal(stopped, true)
+  assert.deepEqual(child.kill.mock.calls, [['SIGTERM']])
+  assert.equal(probe.mock.calls.length, 0)
+  assert.equal(child.listenerCount('exit'), 0)
+})
+
+test('rejects Windows shutdown when its native exit callback never arrives', async () => {
+  Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+  vi.useFakeTimers()
+  const child = childWithoutExitNotification()
+  const probe = vi.spyOn(process, 'kill').mockImplementation(() => {
+    throw Object.assign(new Error('No process'), { code: 'ESRCH' })
+  })
+  const stopping = stopProcess(child).then(
+    () => null,
+    error => error
+  )
+  await vi.advanceTimersByTimeAsync(20_000)
+  assert.match((await stopping).message, /Timed out waiting for process/)
+  assert.deepEqual(child.kill.mock.calls, [['SIGTERM'], ['SIGKILL']])
+  assert.equal(probe.mock.calls.length, 0)
   assert.equal(child.listenerCount('exit'), 0)
 })
 

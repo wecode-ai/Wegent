@@ -36,12 +36,13 @@ import type {
   CollaborationGroup,
   CollaborationComment,
   CollaborationIssue,
+  CollaborationProject,
   CollaborationWorkspaceMember,
 } from "../types";
 
 export interface SharedWorkspaceHttpTransport {
   getCacheScope?(): unknown;
-  get<T>(endpoint: string): Promise<T>;
+  get<T>(endpoint: string, options?: { cache?: RequestCache }): Promise<T>;
   post<T>(endpoint: string, data?: unknown): Promise<T>;
   patch<T>(endpoint: string, data?: unknown): Promise<T>;
   delete<T>(endpoint: string, data?: unknown): Promise<T>;
@@ -55,6 +56,7 @@ export interface SharedWorkspaceHttpApi {
   gitRepositories: SharedWorkspaceGitRepositoriesApi;
   projects: Pick<
     SharedWorkspaceProjectsApi,
+    | "get"
     | "listCollaborationGroups"
     | "addCollaborationGroup"
     | "createCollaborationGroup"
@@ -579,6 +581,15 @@ export function createSharedWorkspaceHttpApi(
       },
     },
     projects: {
+      get(projectId) {
+        // Project versions gate structural writes, so revalidation needs a fresh response.
+        return transport.get<CollaborationProject>(
+          `/v1/cloud-projects/${encoded(projectId)}`,
+          {
+            cache: "no-store",
+          },
+        );
+      },
       async listExecutionEnvironments(projectId) {
         const response = await transport.get<{ items: unknown[] }>(
           `/v1/cloud-projects/${encoded(projectId)}/execution-environments`,

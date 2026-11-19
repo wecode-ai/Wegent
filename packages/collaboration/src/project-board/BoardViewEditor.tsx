@@ -41,6 +41,7 @@ function AlignedSelect({ className = '', ...props }: ComponentProps<'select'>) {
 
 export function BoardViewEditor({
   initial,
+  canWrite = true,
   statuses,
   tags,
   settings,
@@ -51,6 +52,7 @@ export function BoardViewEditor({
   onClose,
 }: {
   initial: SavedBoardView
+  canWrite?: boolean
   statuses: readonly CollaborationStatus[]
   tags: readonly string[]
   settings?: BoardViewEditorSettings
@@ -98,7 +100,7 @@ export function BoardViewEditor({
     }
   }, [dialog, returnFocus])
   const submit = async (remove = false) => {
-    if (lock.current) return
+    if (lock.current || !canWrite) return
     if (
       !remove &&
       (draft.columns.some(column => column.type === 'tag' && isTagNameTooLong(column.value)) ||
@@ -549,7 +551,7 @@ export function BoardViewEditor({
           {onDelete && (
             <button
               type="button"
-              disabled={pending}
+              disabled={pending || !canWrite}
               className={`${action} mr-auto text-destructive`}
               data-testid="board-view-delete"
               onClick={() => (confirmDelete ? void submit(true) : setConfirmDelete(true))}
@@ -568,7 +570,7 @@ export function BoardViewEditor({
           </button>
           <button
             type="submit"
-            disabled={pending}
+            disabled={pending || !canWrite}
             data-testid="board-view-save"
             className={`${action} bg-text-primary text-background hover:bg-text-primary/80`}
           >

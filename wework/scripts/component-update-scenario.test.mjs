@@ -6,7 +6,14 @@ import test from 'node:test'
 
 import { createDesktopScenario } from '../e2e/desktop/scenarios/component-update.scenario.mjs'
 import { validateUpgradeCatalog } from '../electron/src/runtime/upgrade-policy.mjs'
-import { extractRuntimeArchive } from './lib/extract-runtime-archive.mjs'
+import { extractRuntimeArchive, runtimeArchiveExecutable } from './lib/extract-runtime-archive.mjs'
+
+test('archive fixtures select native Windows tar independently of PATH', () => {
+  assert.equal(
+    runtimeArchiveExecutable(),
+    process.platform === 'win32' ? join(process.env.SystemRoot, 'System32', 'tar.exe') : 'tar'
+  )
+})
 
 for (const packageChannel of ['stable', 'beta']) {
   test(`${packageChannel} package fixture serves both user-selected update channels`, async t => {

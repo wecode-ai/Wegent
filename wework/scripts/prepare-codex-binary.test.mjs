@@ -2,7 +2,8 @@
 
 import { cp, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, join, resolve } from 'node:path'
+import { createRequire } from 'node:module'
+import { basename, dirname, join } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { createServer } from 'node:http'
@@ -14,6 +15,7 @@ import {
 } from './prepare-codex-binary.mjs'
 
 const temporaryDirectories = []
+const require = createRequire(import.meta.url)
 
 afterEach(async () => {
   await Promise.all(
@@ -35,9 +37,10 @@ test('direct execution through a directory link still runs the native preparatio
     join(root, 'scripts/lib/process-lock.mjs')
   )
   await writeFile(join(root, 'codex-binaries.lock.json'), '{"targets":{}}')
+  await mkdir(join(root, 'node_modules'))
   await symlink(
-    resolve('node_modules'),
-    join(root, 'node_modules'),
+    dirname(require.resolve('tar/package.json')),
+    join(root, 'node_modules/tar'),
     process.platform === 'win32' ? 'junction' : 'dir'
   )
   const alias = join(directory, 'alias')

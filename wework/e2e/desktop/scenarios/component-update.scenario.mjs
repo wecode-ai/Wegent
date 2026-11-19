@@ -6,6 +6,7 @@ import { createServer } from 'node:http'
 import { basename, dirname, join, relative, resolve } from 'node:path'
 
 import { hashComponentPath } from '../../../scripts/lib/component-content-hash.mjs'
+import { runtimeArchiveExecutable } from '../../../scripts/lib/extract-runtime-archive.mjs'
 import { DEFAULT_STEP_TIMEOUT_MS } from '../modules/shared.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import { unavailableUpdatePolicy, verifyAppUpdateRetry } from '../modules/app-update-retry.mjs'
@@ -288,10 +289,11 @@ function createTarArchive(source, archive) {
   return new Promise((resolvePromise, reject) => {
     // GNU tar treats a drive-letter archive path as a remote host specification.
     const child = spawn(
-      'tar',
+      runtimeArchiveExecutable(),
       ['-czf', basename(archive), '-C', relative(dirname(archive), source), '.'],
       {
         cwd: dirname(archive),
+        windowsHide: true,
         env: {
           ...process.env,
           COPYFILE_DISABLE: '1',

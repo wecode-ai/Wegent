@@ -722,7 +722,7 @@ async function waitForStableSnapshot(control, predicate, message) {
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
     const snapshot = JSON.parse(await control.command('snapshot', 'body'))
     lastSnapshot = snapshot
-    if (predicate(snapshot)) {
+    if (await predicate(snapshot)) {
       stableSince ??= Date.now()
       if (Date.now() - stableSince >= 500) return snapshot
     } else {
@@ -1518,35 +1518,16 @@ async function verifyTrackedTaskSettledStatus(control) {
   )
 }
 
-async function openBoardTaskPageByText(control, activeBoardContentSelector, text, marker) {
-  const boardCardId = await control.command(
-    'markElementWithText',
-    `${activeBoardContentSelector} [data-testid^="cloud-todo-card-drop-"]`,
-    {
-      text,
-      value: marker,
-      visible: true,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
-  assert.ok(boardCardId.startsWith('cloud-todo-card-drop-'))
-  const boardItemId = boardCardId.slice('cloud-todo-card-drop-'.length)
-  const boardCardSelector = `${activeBoardContentSelector} [data-testid="${boardCardId}"]`
-  const openTaskSelector = `${boardCardSelector} [data-testid="cloud-todo-card-open-task-${boardItemId}"]`
-  const selector =
-    Number(await control.command('getElementCount', openTaskSelector)) > 0
-      ? openTaskSelector
-      : `${boardCardSelector} [data-testid="cloud-todo-card-${boardItemId}"]`
-  await control.command('scrollIntoView', selector)
-  await control.command('click', selector, { visible: true })
-  await control.command(
-    'waitFor',
-    `${activeBoardContentSelector} [data-testid="cloud-todo-detail"]`,
-    {
-      visible: true,
-      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-    }
-  )
+async function openTrackedWorkItemDetails(control) {
+  const issuePanel =
+    '[data-testid="right-workspace-panel-shell"][aria-hidden="false"] [data-testid="work-item-context-panel"]'
+  await control.command('click', '[data-testid="work-item-open-details"]')
+  await control.command('waitFor', issuePanel, {
+    text: 'WEWORK_DESKTOP_E2E_TASK',
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  return issuePanel
 }
 
 async function enrichTrackedDefaultIssueTitle(control, taskTabTestId, title) {
@@ -1556,18 +1537,10 @@ async function enrichTrackedDefaultIssueTitle(control, taskTabTestId, title) {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="work-item-open-board-menu"]')
-  const activeBoardContentSelector = await requireActiveWorkItemsTab(
-    control,
-    'The default Issue context test did not open its My Tasks tab'
-  )
-  await openBoardTaskPageByText(
-    control,
-    activeBoardContentSelector,
-    'WEWORK_DESKTOP_E2E_TASK',
-    'enrich-default-issue-board-card'
-  )
+  const issuePanel = await openTrackedWorkItemDetails(control)
+  const activeBoardContentSelector = await openTrackedWorkItemBoard(control, issuePanel)
   const titleSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-detail-title"]`
+  await control.command('scrollIntoView', titleSelector)
   await control.command('waitFor', titleSelector, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
@@ -1590,21 +1563,79 @@ async function enrichTrackedDefaultIssueTitle(control, taskTabTestId, title) {
   })
 }
 
+export async function openTrackedWorkItemBoard(control, issuePanel) {
+  const activityTestId = await control.command(
+    'getAttribute',
+    `${issuePanel} section[data-testid^="cloud-task-activity-"]:has(> [data-testid="cloud-task-activity-list"])`,
+    { value: 'data-testid' }
+  )
+  const activityPrefix = 'cloud-task-activity-'
+  assert.ok(
+    activityTestId?.startsWith(activityPrefix) && activityTestId.length > activityPrefix.length,
+    'The tracked Issue identity was unavailable before opening its workspace'
+  )
+  const itemId = activityTestId.slice(activityPrefix.length)
+  await control.command('click', '[data-testid="work-item-open-board"]')
+  const activeBoardContentSelector = await requireActiveWorkItemsTab(
+    control,
+    'The tracked work-item navigation did not open its My Tasks tab'
+  )
+  await waitForStableSnapshot(
+    control,
+    async snapshot => {
+      const location = new URL(snapshot.location)
+      if (
+        location.searchParams.get('projectStore') !== 'local' ||
+        location.searchParams.get('projectId') !== 'default-work-items' ||
+        (await control.command('getAttribute', activeBoardContentSelector, {
+          value: 'aria-hidden',
+        })) !== 'false'
+      )
+        return false
+      // Opening the focused Issue consumes itemId from the route. Verify its
+      // rendered owner instead of requiring that one-shot navigation parameter.
+      const board = JSON.parse(await control.command('snapshot', activeBoardContentSelector))
+      if (
+        board.testIds.includes('cloud-todo-board-loading') ||
+        !board.testIds.includes('cloud-todo-detail') ||
+        !board.testIds.includes(activityTestId) ||
+        !board.text.includes('WEWORK_DESKTOP_E2E_TASK')
+      )
+        return false
+      const reviewCardSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_review"] [data-testid="cloud-todo-card-${itemId}"]`
+      return (
+        (await control.command('getElementCount', reviewCardSelector)) === '1' &&
+        (await control.command(
+          'getValue',
+          `${activeBoardContentSelector} [data-testid="cloud-todo-detail-status"]`
+        )) === 'in_review' &&
+        (
+          await control.command(
+            'getValue',
+            `${activeBoardContentSelector} [data-testid="cloud-todo-detail-title"]`
+          )
+        ).includes('WEWORK_DESKTOP_E2E_TASK')
+      )
+    },
+    'The work-item board did not settle on the tracked task awaiting confirmation'
+  )
+  const activitySelector = `${activeBoardContentSelector} [data-testid="${activityTestId}"]`
+  await control.command('scrollIntoView', activitySelector)
+  await control.command('waitFor', activitySelector, {
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  return activeBoardContentSelector
+}
+
 async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
-  const issuePanel =
-    '[data-testid="right-workspace-panel-shell"][aria-hidden="false"] [data-testid="work-item-context-panel"]'
   const comment = '从任务页 Issue 详情发送的动态在协作页保持一致'
   await control.command('waitFor', '[data-testid="work-item-guide-summary-title"]', {
     text: 'WEWORK_DESKTOP_E2E_TASK',
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await captureVerificationScreenshot(control, 'workspace-02-task-associated.png')
-  await control.command('click', '[data-testid="work-item-open-details"]')
-  await control.command('waitFor', issuePanel, {
-    text: 'WEWORK_DESKTOP_E2E_TASK',
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  const issuePanel = await openTrackedWorkItemDetails(control)
   const activityComposer = `${issuePanel} [data-testid="cloud-task-activity-composer"]`
   await control.command('waitFor', activityComposer)
   await control.command('scrollIntoView', activityComposer)
@@ -1623,19 +1654,7 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   await captureVerificationScreenshot(control, 'workspace-04-details-and-executions.png')
-  await control.command('click', '[data-testid="work-item-open-board"]')
-  const activeBoardContentSelector = await requireActiveWorkItemsTab(
-    control,
-    'The tracked work-item navigation did not open its My Tasks tab'
-  )
-  await waitForStableSnapshot(
-    control,
-    snapshot =>
-      !snapshot.location.includes('itemId=') &&
-      !snapshot.testIds.includes('cloud-todo-board-loading') &&
-      snapshot.text.includes('WEWORK_DESKTOP_E2E_TASK'),
-    'The work-item board did not settle on the tracked task awaiting confirmation'
-  )
+  const activeBoardContentSelector = await openTrackedWorkItemBoard(control, issuePanel)
   const reviewColumnSelector = `${activeBoardContentSelector} [data-testid="cloud-todo-column-in_review"]`
   await control.command('scrollIntoView', reviewColumnSelector)
   await control.command('waitFor', reviewColumnSelector, {
@@ -1648,17 +1667,15 @@ async function verifyExplicitlyTrackedTask(control, taskTabTestId) {
     'workspace-05-awaiting-confirmation-on-board.png',
     activeBoardContentSelector
   )
-  await openBoardTaskPageByText(
-    control,
-    activeBoardContentSelector,
-    'WEWORK_DESKTOP_E2E_TASK',
-    'tracked-task-board-card'
+  await control.command(
+    'waitFor',
+    `${activeBoardContentSelector} [data-testid="cloud-todo-detail"]`,
+    {
+      text: 'WEWORK_DESKTOP_E2E_TASK',
+      visible: true,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
   )
-  await control.command('waitFor', '[data-testid="cloud-todo-detail"]', {
-    text: 'WEWORK_DESKTOP_E2E_TASK',
-    visible: true,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
   await control.command(
     'waitFor',
     `${activeBoardContentSelector} [data-testid="cloud-task-activity-list"]`,
@@ -1748,7 +1765,7 @@ async function verifyExistingTaskBoardAssociation(
   const createIssueSelector = `${activeBoardContentSelector} [data-testid="collaboration-issue-create"]`
   const createIssueDialog = `${activeBoardContentSelector} [data-testid="collaboration-issue-create-dialog"]`
   const createIssuePanel = `${createIssueDialog} [data-testid="cloud-todo-create-panel"]`
-  await control.command('click', createIssueSelector)
+  await control.command('clickWhenEnabled', createIssueSelector)
   await control.command('waitFor', createIssuePanel, {
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,

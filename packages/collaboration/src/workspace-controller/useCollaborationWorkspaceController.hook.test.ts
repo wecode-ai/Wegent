@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
 import type {
   CollaborationIssue,
+  CollaborationExecution,
   CollaborationLocation,
   CollaborationProject,
 } from "../types";
@@ -214,12 +215,13 @@ function renderController(
   myWorkEnabled?: boolean,
   initialProject?: CollaborationProject,
   loadProjectOnLocation = true,
+  controllerMessages = messages,
 ): CollaborationWorkspaceController {
   hookRuntime.beginRender();
   const controller = useCollaborationWorkspaceController({
     api,
     location,
-    messages,
+    messages: controllerMessages,
     initialProject,
     loadProjectOnLocation,
     ...(myWorkEnabled === undefined ? {} : { myWorkEnabled }),
@@ -262,6 +264,68 @@ describe("useCollaborationWorkspaceController location effects", () => {
     );
     expect(renderController(api, location).state.loading).toBe(false);
     expect(api.issues.getBoardSnapshot).toHaveBeenCalledTimes(reads);
+  });
+
+  it("keeps the loaded Issue readable when presentation callbacks replace project commands", async () => {
+    const api = createApi();
+    const location = {
+      projectId: projectA.id,
+      issueId: issueA.id,
+      view: "board" as const,
+    };
+    renderController(api, location);
+    await vi.waitFor(() => {
+      const controller = renderController(api, location);
+      expect(controller.state.project).toEqual(projectA);
+      expect(controller.state.selectedIssue).toEqual(issueA);
+      expect(controller.state.loading).toBe(false);
+    });
+    const reads = vi.mocked(api.issues.getBoardSnapshot).mock.calls.length;
+    const pendingSnapshot = deferred<{
+      items: CollaborationIssue[];
+      members: [];
+      agents: [];
+      taskBindings: [];
+    }>();
+    vi.mocked(api.issues.getBoardSnapshot).mockReturnValueOnce(
+      pendingSnapshot.promise,
+    );
+    const pendingExecutions = deferred<CollaborationExecution[]>();
+    const readExecutions = vi
+      .fn()
+      .mockReturnValueOnce(pendingExecutions.promise);
+    api.executions = { ...api.executions, list: readExecutions };
+    const refreshedMessages = { ...messages };
+    const render = () =>
+      renderController(
+        api,
+        location,
+        false,
+        undefined,
+        true,
+        refreshedMessages,
+      );
+    render();
+    await vi.waitFor(() => expect(readExecutions).toHaveBeenCalledOnce());
+    expect(render().state.selectedIssue).toEqual(issueA);
+    expect(render().state.loading).toBe(false);
+    expect(api.issues.getBoardSnapshot).toHaveBeenCalledTimes(reads);
+    pendingExecutions.resolve([]);
+    await vi.waitFor(() =>
+      expect(api.issues.getBoardSnapshot).toHaveBeenCalledTimes(reads + 1),
+    );
+    const pendingState = render().state;
+    pendingSnapshot.resolve({
+      items: [issueA],
+      members: [],
+      agents: [],
+      taskBindings: [],
+    });
+    await vi.waitFor(() => expect(render().state.loading).toBe(false));
+
+    expect(pendingState.selectedIssue).toEqual(issueA);
+    expect(pendingState.project).toEqual(projectA);
+    expect(pendingState.loading).toBe(false);
   });
 
   it("keeps a loaded Issue mounted while its API refreshes the current project", async () => {
@@ -333,6 +397,143 @@ describe("useCollaborationWorkspaceController location effects", () => {
     expect(api.issues.getBoardSnapshot).not.toHaveBeenCalled();
     expect(renderController(api, location).state.error).toBeNull();
   });
+
+  it("keeps initial loading until the routed Issue's project metadata and board finish", async () => {
+    const api = createApi();
+    const metadata = deferred<CollaborationProject>();
+    const snapshot = deferred<{
+      items: CollaborationIssue[];
+      members: [];
+      agents: [];
+      taskBindings: [];
+    }>();
+    vi.mocked(api.projects.get).mockReturnValueOnce(metadata.promise);
+    vi.mocked(api.issues.getBoardSnapshot).mockReturnValueOnce(
+      snapshot.promise,
+    );
+    const location = {
+      projectId: projectA.id,
+      issueId: issueA.id,
+      view: "board" as const,
+    };
+    const render = () => renderController(api, location);
+    expect(render().state.loading).toBe(true);
+    await vi.waitFor(() => expect(api.projects.get).toHaveBeenCalledOnce());
+    expect(render().state.selectedIssue).toEqual(issueA);
+    expect(render().state.loading).toBe(true);
+
+    metadata.resolve(projectA);
+    await vi.waitFor(() =>
+      expect(api.issues.getBoardSnapshot).toHaveBeenCalledOnce(),
+    );
+    expect(render().state.loading).toBe(true);
+    snapshot.resolve({
+      items: [issueA],
+      members: [],
+      agents: [],
+      taskBindings: [],
+    });
+    await vi.waitFor(() => expect(render().state.loading).toBe(false));
+    expect(render().state.project).toEqual(projectA);
+    expect(render().state.selectedIssue).toEqual(issueA);
+  });
+
+  it.each(["another Issue", "another project", "failed Issue read"] as const)(
+    "does not treat %s as a successful current-route detail read",
+    async (result) => {
+      const api = createApi();
+      const location = {
+        projectId: projectA.id,
+        issueId: issueA.id,
+        view: "board" as const,
+      };
+      renderController(api, location);
+      await vi.waitFor(() =>
+        expect(renderController(api, location).state.project).toEqual(projectA),
+      );
+      const reads = vi.mocked(api.issues.getBoardSnapshot).mock.calls.length;
+      const snapshot = deferred<{
+        items: CollaborationIssue[];
+        members: [];
+        agents: [];
+        taskBindings: [];
+      }>();
+      vi.mocked(api.issues.getBoardSnapshot).mockReturnValueOnce(
+        snapshot.promise,
+      );
+      if (result === "failed Issue read")
+        vi.mocked(api.issues.get).mockRejectedValueOnce(
+          new Error("Issue read failed"),
+        );
+      else
+        vi.mocked(api.issues.get).mockResolvedValueOnce(
+          result === "another Issue"
+            ? issueB
+            : { ...issueA, cloud_project_id: projectB.id },
+        );
+      const refreshedMessages = { ...messages };
+      const render = () =>
+        renderController(
+          api,
+          location,
+          false,
+          undefined,
+          true,
+          refreshedMessages,
+        );
+      render();
+      await vi.waitFor(() =>
+        expect(api.issues.getBoardSnapshot).toHaveBeenCalledTimes(reads + 1),
+      );
+      const pendingState = render().state;
+      snapshot.resolve({
+        items: [issueA],
+        members: [],
+        agents: [],
+        taskBindings: [],
+      });
+      await vi.waitFor(() => expect(render().state.loading).toBe(false));
+      expect(pendingState.loading).toBe(true);
+    },
+  );
+
+  it.each([401, 403])(
+    "revokes the readable routed Issue when its project board rejects with %s",
+    async (status) => {
+      const api = createApi();
+      const location = {
+        projectId: projectA.id,
+        issueId: issueA.id,
+        view: "board" as const,
+      };
+      renderController(api, location);
+      await vi.waitFor(() =>
+        expect(renderController(api, location).state.project).toEqual(projectA),
+      );
+      vi.mocked(api.issues.getBoardSnapshot).mockRejectedValueOnce(
+        Object.assign(new Error("Access revoked"), { status }),
+      );
+      const refreshedMessages = { ...messages };
+      const render = () =>
+        renderController(
+          api,
+          location,
+          false,
+          undefined,
+          true,
+          refreshedMessages,
+        );
+      render();
+      await vi.waitFor(() =>
+        expect(render().state.error).toBe(messages.loadFailed),
+      );
+      const state = render().state;
+      expect(state.project).toBeNull();
+      expect(state.selectedIssue).toBeNull();
+      expect(state.issues).toEqual([]);
+      expect(state.loading).toBe(false);
+    },
+  );
 
   it("keeps a host-managed project catalog loaded when switching between board and settings", async () => {
     const api = createApi();

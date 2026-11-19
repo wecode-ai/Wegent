@@ -70,6 +70,7 @@ test.each(checkouts.flatMap(checkout => ['directory', 'file'].map(input => [chec
       await rename(staged, source)
     }
     let nativeWatcher
+    let watchedDirectory
     const restoreMethodObservers = []
     const observeMethod = (owner, name) => {
       const ownDescriptor = Object.getOwnPropertyDescriptor(owner, name)
@@ -126,6 +127,7 @@ test.each(checkouts.flatMap(checkout => ['directory', 'file'].map(input => [chec
             notify(...event)
           },
           (directory, options) => {
+            watchedDirectory = directory
             nativeWatcher = chokidar.watch(directory, {
               ...options,
               interval: 20,
@@ -171,6 +173,7 @@ test.each(checkouts.flatMap(checkout => ['directory', 'file'].map(input => [chec
         JSON.stringify({ checkout, input, phases, snapshots })
       )
     })
+    expect(watchedDirectory).toBe(await realpath(root))
     expect(published).toBe('one')
     record('write-invalid')
     await saveSource('invalid')
@@ -205,10 +208,11 @@ test.each(checkouts.flatMap(checkout => ['directory', 'file'].map(input => [chec
       })
       await expect.poll(() => published).toBe('')
       await handle.writeFile('four')
-      await expect.poll(() => published).toBe('four')
     } finally {
+      // Windows can defer the final write notification until its handle closes.
       await handle.close()
     }
+    await expect.poll(() => published).toBe('four')
     expect(build).toHaveBeenCalledTimes(6)
     expect(snapshots).toEqual(['one', 'invalid', 'two', 'three', '', 'four'])
   }
@@ -372,23 +376,40 @@ test('rebuilds a subscribed file when a raw directory notification omits its fil
   expect(onError).not.toHaveBeenCalled()
 })
 
-test('accepts canonical raw paths only inside the subscribed directory', async () => {
+test('subscribes to canonical paths and accepts notifications only inside the directory', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'development-build-boundary-'))
+  const canonical = await realpath(root)
   const native = new EventEmitter()
   native.close = vi.fn()
   const notify = vi.fn()
-  const watcher = watchDevelopmentDirectory(root, { recursive: true }, notify, () => native)
+  const ignored = vi.fn(() => false)
+  const createWatcher = vi.fn(() => native)
+  const watcher = watchDevelopmentDirectory(
+    root,
+    { recursive: true, ignored },
+    notify,
+    createWatcher
+  )
   native.emit('ready')
   await watcher.ready
   try {
+    expect(createWatcher).toHaveBeenCalledExactlyOnceWith(
+      canonical,
+      expect.objectContaining({ ignoreInitial: true, depth: undefined })
+    )
+    createWatcher.mock.calls[0][1].ignored(path.join(canonical, 'output', 'bundle.js'))
+    expect(ignored).toHaveBeenCalledExactlyOnceWith(path.join(root, 'output', 'bundle.js'))
     const outside = path.join(`${root}-outside`, 'entry.js')
     native.emit('raw', 'change', outside, {})
     native.emit('raw', 'change', 'entry.js', { watchedPath: path.dirname(outside) })
     native.emit('raw', 'change', 'entry.js', {})
     native.emit('raw', 'change', undefined, { watchedPath: path.dirname(outside) })
     expect(notify).not.toHaveBeenCalled()
-    native.emit('raw', 'change', path.join(await realpath(root), 'entry.js'), {})
+    native.emit('raw', 'change', path.join(canonical, 'entry.js'), {})
     expect(notify).toHaveBeenCalledExactlyOnceWith('change', 'entry.js')
+    native.emit('all', 'change', path.join(canonical, 'entry.js'))
+    expect(notify).toHaveBeenLastCalledWith('change', 'entry.js')
+    expect(notify).toHaveBeenCalledTimes(2)
   } finally {
     await watcher.close()
     await rm(root, { recursive: true, force: true })

@@ -414,7 +414,8 @@ const invokedScript = process.argv[1]
       return null
     })
   : null
-if (invokedScript === fileURLToPath(import.meta.url)) {
+const currentScript = await realpath(fileURLToPath(import.meta.url))
+if (invokedScript === currentScript) {
   main().catch(error => {
     console.error(error instanceof Error ? error.message : error)
     process.exit(1)

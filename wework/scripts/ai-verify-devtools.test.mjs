@@ -5,7 +5,7 @@ import { createServer } from 'node:http'
 import { once } from 'node:events'
 import { mkdtemp, mkdir, readFile, writeFile, symlink, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
   analyzeCpuProfile,
@@ -136,7 +136,7 @@ describe('DevTools evidence analysis', () => {
     const frame = {
       scriptId: '1',
       functionName: 'hot',
-      url: 'file:///build/app.js',
+      url: pathToFileURL(resolve('/build/app.js')).href,
       lineNumber: 0,
       columnNumber: 0,
     }
@@ -144,7 +144,7 @@ describe('DevTools evidence analysis', () => {
       [
         '1',
         {
-          url: 'file:///build/app.js.map',
+          url: pathToFileURL(resolve('/build/app.js.map')).href,
           map: new SourceMap({
             version: 3,
             sources: ['../src/app.ts'],
@@ -169,7 +169,7 @@ describe('DevTools evidence analysis', () => {
       function: 'child',
       selfMs: 5,
       totalMs: 5,
-      location: { mapped: true, source: '/src/app.ts', line: 7, column: 1 },
+      location: { mapped: true, source: resolve('/src/app.ts'), line: 7, column: 1 },
     })
     expect(result[1]).toMatchObject({ selfMs: 1, totalMs: 6 })
     expect(sourceLocation(frame)).toEqual({

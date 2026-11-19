@@ -256,13 +256,16 @@ function toolOutputText(request, callId) {
     if (value.type === 'tool_search_output' && value.call_id === callId) {
       return JSON.stringify(value.tools ?? [])
     }
+    if (value.type === 'tool_result' && value.tool_use_id === callId) {
+      return modelToolOutputText(value.content)
+    }
     for (const item of Object.values(value)) {
       const output = findOutput(item)
       if (output != null) return output
     }
     return null
   }
-  return findOutput(request.input ?? [])
+  return findOutput(request.input ?? request.messages ?? [])
 }
 
 function toolSearchCall(callId, argumentsValue) {
@@ -566,11 +569,12 @@ function requestContainsToolOutput(request, callId) {
       type === 'custom_tool_call_output' ||
       type === 'tool_search_output'
     if (isToolOutput && (!callId || value.call_id === callId)) return true
+    if (type === 'tool_result' && (!callId || value.tool_use_id === callId)) return true
 
     return Object.values(value).some(containsOutput)
   }
 
-  return containsOutput(request.input ?? [])
+  return containsOutput(request.input ?? request.messages ?? [])
 }
 
 function requestAdvertisesShellTool(request) {

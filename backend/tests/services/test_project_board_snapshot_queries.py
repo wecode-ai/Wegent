@@ -168,6 +168,8 @@ def test_board_query_count_does_not_grow_with_issues_or_members(
 
     record_property("small_snapshot_queries", len(small_queries))
     record_property("large_snapshot_queries", len(large_queries))
+    assert small.project_version == test_db.get(CloudProject, small_id).version
+    assert large.project_version == test_db.get(CloudProject, large_id).version
     assert len(small.items) == 2
     assert len(large.items) == 30
     assert len(large.members) == 31

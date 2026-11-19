@@ -3,7 +3,7 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { delimiter, join, resolve } from 'node:path'
 import { expect, it } from 'vitest'
 
 const launcher = resolve(import.meta.dirname, '../e2e/desktop/run-with-openbox.sh')
@@ -12,10 +12,14 @@ const fixtureTimeoutMs = 10_000
 // within the usual 5-second test budget without changing readiness assertions.
 const processTestTimeoutMs = fixtureTimeoutMs + 5_000
 
-const runningOpenbox = `#!/bin/sh
-echo $$ > "$OPENBOX_TEST_DIR/pid"
-touch "$OPENBOX_TEST_DIR/openbox-started"
-exec node -e 'setInterval(() => {}, 1000)'
+const runningOpenbox = `#!/usr/bin/env node
+const fs = require('node:fs')
+const directory = process.env.OPENBOX_TEST_DIR
+fs.writeFileSync(directory + '/openbox-started', '')
+// A failed launcher may leave this fixture alive after its directory is removed.
+setInterval(() => {
+  if (!fs.existsSync(directory)) process.exit(0)
+}, 50)
 `
 
 const windowManagerProperties = `#!/bin/sh
@@ -47,6 +51,11 @@ fi
 
 function runFixture(openbox, xprop, display = '#!/bin/sh\nexit 0\n') {
   const directory = mkdtempSync(join(tmpdir(), 'wegent-openbox-readiness-'))
+  const environment = Object.fromEntries(
+    Object.entries(process.env).filter(
+      ([key]) => process.platform !== 'win32' || key.toLowerCase() !== 'path'
+    )
+  )
   try {
     writeFileSync(join(directory, 'openbox'), openbox, { mode: 0o755 })
     writeFileSync(join(directory, 'xprop-window-manager'), xprop, { mode: 0o755 })
@@ -80,16 +89,17 @@ shift
       ],
       {
         env: {
-          ...process.env,
-          PATH: `${directory}:${process.env.PATH}`,
+          ...environment,
+          PATH: `${directory}${delimiter}${process.env.PATH}`,
           DISPLAY: ':1234',
           OPENBOX_TEST_DIR: directory,
         },
         encoding: 'utf8',
         timeout: fixtureTimeoutMs,
+        windowsHide: true,
       }
     )
-    expect(result.error).toBeUndefined()
+    expect(result.error, result.stderr).toBeUndefined()
     const displayQueries = join(directory, 'display-queries')
     return {
       ...result,
@@ -98,11 +108,6 @@ shift
       displayQueries: existsSync(displayQueries) ? Number(readFileSync(displayQueries, 'utf8')) : 0,
     }
   } finally {
-    try {
-      process.kill(Number(readFileSync(join(directory, 'pid'), 'utf8')))
-    } catch (error) {
-      if (error.code !== 'ENOENT' && error.code !== 'ESRCH') throw error
-    }
     rmSync(directory, { recursive: true, force: true })
   }
 }
@@ -199,7 +204,9 @@ fs.writeFileSync(directory + '/pid', String(process.pid))
 // Display probes have finished; window-manager probes must not rewrite this counter.
 if (Number(fs.readFileSync(directory + '/display-queries', 'utf8')) < 3) process.exit(1)
 fs.writeFileSync(directory + '/registered', '')
-setInterval(() => {}, 1000)
+setInterval(() => {
+  if (!fs.existsSync(directory)) process.exit(0)
+}, 50)
 `,
       xprop,
       delayedXDisplay

@@ -15,6 +15,9 @@ import {
   requestToolSearchResults,
   selectToolSearch,
   toolOutputText,
+  requestAdvertisesProgrammaticExec,
+  requestContainsToolOutput,
+  selectProgrammaticExec,
 } from '../e2e/desktop/modules/response-protocol.mjs'
 
 const entry = { type: 'custom', name: 'exec' }
@@ -47,6 +50,62 @@ variants.push({
 const inputOf = event =>
   event.item.type === 'custom_tool_call' ? event.item.input : JSON.parse(event.item.arguments).input
 const finalCall = events => events.find(event => event.type === 'response.output_item.done')
+
+test('recognizes the native Anthropic raw-input exec declaration and preserves its bound result', () => {
+  const schema = {
+    type: 'object',
+    properties: { input: { type: 'string' } },
+    required: ['input'],
+    additionalProperties: false,
+  }
+  const request = {
+    tools: [{ name: 'exec', description: 'Execute code', input_schema: schema }],
+    messages: [{ role: 'user', content: 'Open the embedded browser' }],
+  }
+  expect(requestAdvertisesProgrammaticExec(request)).toBe(true)
+  const exec = selectProgrammaticExec(request, 'text("real tool result")')
+  const call = finalCall(selectedToolCall('browser-open', { codeMode: exec })).item
+  expect(call).toMatchObject({
+    name: 'exec',
+    type: 'function_call',
+    arguments: JSON.stringify({ input: 'text("real tool result")' }),
+  })
+  const history = {
+    ...request,
+    messages: [
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool_use',
+            id: 'browser-open',
+            name: 'exec',
+            input: { input: 'text("real tool result")' },
+          },
+        ],
+      },
+      {
+        role: 'user',
+        content: [
+          { type: 'tool_result', tool_use_id: 'unrelated', content: 'Wrong result' },
+          {
+            type: 'tool_result',
+            tool_use_id: 'browser-open',
+            content: [{ type: 'text', text: 'real tool result' }],
+          },
+        ],
+      },
+    ],
+  }
+  expect(requestContainsToolOutput(history, 'browser-open')).toBe(true)
+  expect(requestContainsToolOutput(history, 'missing-call')).toBe(false)
+  expect(toolOutputText(history, 'browser-open')).toBe('real tool result')
+  expect(
+    requestAdvertisesProgrammaticExec({
+      tools: [{ name: 'exec', input_schema: { properties: { input: { type: 'number' } } } }],
+    })
+  ).toBe(false)
+})
 
 test.each(['function_call_output', 'custom_tool_call_output'])(
   'reads the bound Issue success marker from %s without confusing another call',

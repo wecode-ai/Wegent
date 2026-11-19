@@ -102,6 +102,78 @@ describe("createSharedWorkspaceHttpApi", () => {
     expect(saved.mcpServers).toEqual(mcpServers);
   });
 
+  it("revalidates the selected project without joining an older read or reusing its version", async () => {
+    const { transport, get } = createTransport();
+    const oldProject = {
+      id: "project/1",
+      version: 1,
+      name: "Old project",
+      tags: ["removed"],
+      board_config: {
+        group_by: "status",
+        processing_start_status_id: null,
+        statuses: [],
+      },
+      board_views: {
+        schema_version: 1,
+        views: [{ id: "old-view", name: "Old view", columns: [] }],
+      },
+    };
+    const newProject = {
+      ...oldProject,
+      version: 2,
+      name: "Updated project",
+      tags: ["current"],
+      board_config: { ...oldProject.board_config, group_by: "tag" },
+      board_views: {
+        schema_version: 1,
+        views: [{ id: "new-view", name: "New view", columns: [] }],
+      },
+    };
+    let resolveOld!: (project: typeof oldProject) => void;
+    get
+      .mockReturnValueOnce(
+        new Promise<typeof oldProject>((resolve) => {
+          resolveOld = resolve;
+        }),
+      )
+      .mockResolvedValue(newProject);
+    const api = createSharedWorkspaceHttpApi(transport);
+
+    const oldRead = api.projects.get("project/1");
+    await expect(api.projects.get("project/1")).resolves.toEqual(newProject);
+    resolveOld(oldProject);
+    await expect(oldRead).resolves.toEqual(oldProject);
+    await expect(api.projects.get("project/1")).resolves.toEqual(newProject);
+
+    expect(get).toHaveBeenCalledTimes(3);
+    for (const call of get.mock.calls) {
+      expect(call).toEqual([
+        "/v1/cloud-projects/project%2F1",
+        { cache: "no-store" },
+      ]);
+    }
+  });
+
+  it("propagates project revalidation errors and allows a fresh recovery", async () => {
+    const { transport, get } = createTransport();
+    const project = { id: "project-1", version: 2 };
+    get
+      .mockResolvedValueOnce(project)
+      .mockRejectedValueOnce(new Error("Network unavailable"))
+      .mockResolvedValueOnce({ ...project, version: 3 });
+    const api = createSharedWorkspaceHttpApi(transport);
+
+    await expect(api.projects.get("project-1")).resolves.toEqual(project);
+    await expect(api.projects.get("project-1")).rejects.toThrow(
+      "Network unavailable",
+    );
+    await expect(api.projects.get("project-1")).resolves.toEqual({
+      ...project,
+      version: 3,
+    });
+  });
+
   it.each(["renamed", null])(
     "serializes atomic tag change target %s without losing null",
     (target) => {

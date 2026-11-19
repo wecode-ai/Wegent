@@ -668,6 +668,8 @@ export type TodoEditorProps = {
   showCurrentTaskOnly?: boolean;
   showAssignee?: boolean;
   canAssign?: boolean;
+  /** Snapshot freshness gates structure independently from content permissions. */
+  structuralWritesEnabled?: boolean;
   onAddAssigneeMember?: () => void;
   onAddAssigneeAgent?: () => void;
   /**
@@ -714,6 +716,12 @@ export function TodoEditor(props: TodoEditorProps) {
   const canStartWork =
     !isCreate && props.canStartWork !== false && Boolean(props.onCreateTask);
   const editable = isCreate || editProps?.editable === true;
+  const structuralWritesEnabled = props.structuralWritesEnabled !== false;
+  const structuralWritesEnabledRef = useRef(structuralWritesEnabled);
+  useLayoutEffect(() => {
+    structuralWritesEnabledRef.current = structuralWritesEnabled;
+  }, [structuralWritesEnabled]);
+  const structureEditable = editable && structuralWritesEnabled;
   const workspacePanel = props.presentation === "workspace-panel";
   const readFirst = workspacePanel && props.readFirst === true && !isCreate;
   const showPanelControls = props.showPanelControls !== false;
@@ -834,6 +842,11 @@ export function TodoEditor(props: TodoEditorProps) {
     field: K,
     value: SetStateAction<IssueDetailDraftValue[K]>,
   ) {
+    if (
+      !structuralWritesEnabledRef.current &&
+      ["status", "tags", "parentId", "assigneeTarget"].includes(field)
+    )
+      return;
     const next =
       typeof value === "function"
         ? (
@@ -1731,11 +1744,12 @@ export function TodoEditor(props: TodoEditorProps) {
       ? assigneeTarget.slice(assigneeTarget.indexOf(":") + 1)
       : null);
   const canAssign =
-    props.canAssign ??
-    (item?.invited_only === true ||
-      (project !== undefined &&
-        (item === null || item.can_view_detail !== false) &&
-        canAssignCollaborationIssue(project)));
+    structuralWritesEnabled &&
+    (props.canAssign ??
+      (item?.invited_only === true ||
+        (project !== undefined &&
+          (item === null || item.can_view_detail !== false) &&
+          canAssignCollaborationIssue(project))));
   const commentActions =
     item && project && editProps && (editable || canAssign)
       ? createIssueCommentActions({
@@ -1744,7 +1758,7 @@ export function TodoEditor(props: TodoEditorProps) {
             props.commentBoard ??
             defaultIssueCommentBoard(project, allItems, statusOptions, t),
           statuses: statusOptions,
-          editable,
+          editable: structureEditable,
           canAssign,
           issues: editorPort.issues,
           onUpdated: editProps.onUpdated,
@@ -1769,6 +1783,7 @@ export function TodoEditor(props: TodoEditorProps) {
   async function submitCreate(notifyAssignee = true) {
     if (
       props.mode !== "create" ||
+      !structuralWritesEnabled ||
       !createTitle ||
       saving ||
       scheduleRangeInvalid
@@ -2404,10 +2419,10 @@ export function TodoEditor(props: TodoEditorProps) {
           project: editProps.project,
           editable,
           commentAssignment:
-            canAssign || editable
+            canAssign || structureEditable
               ? {
                   canAssignCurrent: canAssign,
-                  ...(editable && editProps.project
+                  ...(structureEditable && editProps.project
                     ? {
                         createChild: async (
                           input: import("./issue-detail/useCommentAssignment").CommentChildInput,
@@ -2482,7 +2497,7 @@ export function TodoEditor(props: TodoEditorProps) {
       accessibleLabel={t("todo.issue_status", "状态")}
       value={status}
       onChange={setStatus}
-      disabled={!editable}
+      disabled={!structureEditable}
       className={overlayControlClass}
       statuses={statusOptions}
       includeUnset={status === ""}
@@ -2631,6 +2646,7 @@ export function TodoEditor(props: TodoEditorProps) {
         failed: t("todo.save_failed", "保存失败"),
       }}
       testIdPrefix="issue-outside-assignee"
+      confirmDisabled={!structuralWritesEnabled}
       onClose={() => {
         outsideAssigneeConfirmationRef.current?.(false);
         outsideAssigneeConfirmationRef.current = null;
@@ -2664,7 +2680,7 @@ export function TodoEditor(props: TodoEditorProps) {
       accessibleLabel={t("todo.parent_issue", "父任务")}
       value={parentId}
       onChange={(value) => changeProperty("parentId", value)}
-      disabled={!editable}
+      disabled={!structureEditable}
       className={overlayControlClass}
       searchPlaceholder={t("todo.search_parent_issue", "搜索父任务")}
       emptyLabel={t("todo.no_matching_parent_issue", "没有匹配的父任务")}
@@ -2776,7 +2792,7 @@ export function TodoEditor(props: TodoEditorProps) {
       }
       tags={tags}
       onChange={setTags}
-      disabled={!editable}
+      disabled={!structureEditable}
       suggestions={tagSuggestions}
       lengthErrorLabel={t("todo.tag_name_too_long")}
       tagLimit={{
@@ -3868,7 +3884,9 @@ export function TodoEditor(props: TodoEditorProps) {
                     ),
                   ]}
                   onOpen={props.onOpenRelatedIssue}
-                  onAddChild={editable ? editProps?.onAddChild : undefined}
+                  onAddChild={
+                    structureEditable ? editProps?.onAddChild : undefined
+                  }
                   translate={t}
                 />
               ) : null}
@@ -4119,7 +4137,7 @@ export function TodoEditor(props: TodoEditorProps) {
                             ? `${completedChildCount}/${childItems.length}`
                             : childItems.length}
                         </span>
-                        {editable && editProps?.onAddChild ? (
+                        {structureEditable && editProps?.onAddChild ? (
                           <button
                             type="button"
                             data-testid="cloud-todo-detail-add-child"
@@ -4366,7 +4384,7 @@ export function TodoEditor(props: TodoEditorProps) {
                             ? `${completedChildCount}/${childItems.length}`
                             : childItems.length}
                         </span>
-                        {editable && editProps?.onAddChild ? (
+                        {structureEditable && editProps?.onAddChild ? (
                           <button
                             type="button"
                             data-testid="cloud-todo-detail-add-child"
@@ -4673,7 +4691,12 @@ export function TodoEditor(props: TodoEditorProps) {
                   <>
                     <IssueSaveButton
                       testId="cloud-todo-create-confirm"
-                      disabled={!createTitle || saving || scheduleRangeInvalid}
+                      disabled={
+                        !structuralWritesEnabled ||
+                        !createTitle ||
+                        saving ||
+                        scheduleRangeInvalid
+                      }
                       saving={saving}
                       notificationAvailable={notificationAvailable}
                       labels={notificationSaveLabels}

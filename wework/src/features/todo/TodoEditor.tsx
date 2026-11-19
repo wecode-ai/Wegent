@@ -103,6 +103,7 @@ export type TodoEditorProps = TodoEditorApiProps & {
   showPanelControls?: boolean
   showFullscreenControl?: boolean
   showChildren?: boolean
+  structuralWritesEnabled?: boolean
   showCurrentTaskOnly?: boolean
   defaultAssistant?: import('@wegent/collaboration').CollaborationDefaultAssistant
   taskRefreshKey?: string | number
@@ -407,6 +408,7 @@ export function TodoEditor(props: TodoEditorProps) {
     showPanelControls: props.showPanelControls,
     showFullscreenControl: props.showFullscreenControl,
     showChildren: props.showChildren,
+    structuralWritesEnabled: props.structuralWritesEnabled,
     showCurrentTaskOnly: props.showCurrentTaskOnly,
     defaultAssistant: props.defaultAssistant,
     taskRefreshKey: `${props.taskRefreshKey ?? ''}:${taskLinkRevision}`,

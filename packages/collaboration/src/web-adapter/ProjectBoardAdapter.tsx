@@ -115,6 +115,7 @@ export type ProjectBoardIssueCardRenderer = (
 ) => ReactNode;
 
 interface ProjectBoardAdapterProps {
+  structuralWritesEnabled?: boolean;
   projectApi?: Pick<SharedWorkspaceProjectsApi, "get" | "update">;
   onProjectMigrated?(project: CollaborationProject): void;
   participationUserId?: import("../issueParticipation").IssueParticipationViewer;
@@ -183,6 +184,7 @@ function issueSearchText(
 }
 
 export function ProjectBoardAdapter({
+  structuralWritesEnabled = true,
   projectApi,
   onProjectMigrated,
   participationUserId,
@@ -267,7 +269,7 @@ export function ProjectBoardAdapter({
     api: projectApi ?? null,
     project,
     enabled: baseBoardStatusGrouping && Boolean(onProjectMigrated),
-    canManage: canManageViews,
+    canManage: canManageViews && structuralWritesEnabled,
     onMigrated: (updated) => onProjectMigrated?.(updated),
   });
   const runtimeWork = useBrowserBoardRuntimeWork(
@@ -499,6 +501,7 @@ export function ProjectBoardAdapter({
             statuses={statuses}
             tags={availableTags}
             canManage={canManageViews}
+            canWrite={structuralWritesEnabled}
             settings={{
               cardDisplay: project.card_display,
               boardConfig: project.board_config,
@@ -564,6 +567,7 @@ export function ProjectBoardAdapter({
           onDragStart: (
             event: Pick<Parameters<typeof projectBoardDrop>[0], "active">,
           ) => {
+            if (!structuralWritesEnabled) return;
             controller.setActiveSourceColumnKey(
               event.active.data.current?.columnKey ?? null,
             );
@@ -575,6 +579,7 @@ export function ProjectBoardAdapter({
           onDragEnd: (event: Parameters<typeof projectBoardDrop>[0]) => {
             controller.setActiveDragItemId(null);
             if (
+              structuralWritesEnabled &&
               issues.some(
                 (issue) =>
                   issue.id === projectBoardDragItemId(event.active) &&
@@ -611,7 +616,8 @@ export function ProjectBoardAdapter({
         }
         getColumnEmptyState={(column) => ({
           hint: labels.noIssues,
-          ...((column.type ?? controller.state.groupBy) === "status" &&
+          ...(structuralWritesEnabled &&
+          (column.type ?? controller.state.groupBy) === "status" &&
           column.status === "inbox" &&
           (!controller.currentParentId ||
             (controller.currentParent &&
@@ -741,6 +747,7 @@ export function ProjectBoardAdapter({
               <button
                 type="button"
                 data-testid={`cloud-todo-column-add-${column.key}`}
+                disabled={!structuralWritesEnabled}
                 className="flex min-h-11 items-center rounded-md px-2 text-xs text-text-muted hover:bg-background hover:text-text-primary md:h-6 md:min-h-0"
                 onClick={() => onCreateUnmatchedIssue(defaults)}
               >
@@ -803,7 +810,8 @@ export function ProjectBoardAdapter({
                 : undefined,
             archiveLabel: translate("todo.archive_issue", "归档任务"),
             articleTestId: collaborationTestIds.issue(issue.id),
-            dragEnabled: canEditCollaborationIssue(issue),
+            dragEnabled:
+              structuralWritesEnabled && canEditCollaborationIssue(issue),
             onOpen: () =>
               onOpen(issue, {
                 columns: controller.columns,

@@ -98,6 +98,19 @@ interface NavigationCollections {
   successfulLoads: number;
 }
 
+type NavigationSourceSnapshot = Pick<
+  NavigationCollections,
+  "workspaces" | "projects"
+>;
+
+function navigationAccessDenied(cause: unknown): boolean {
+  const status =
+    cause && typeof cause === "object" && "status" in cause
+      ? cause.status
+      : null;
+  return status === 401 || status === 403 || status === 404;
+}
+
 function mergeByKey<T>(collections: T[][], keyFor: (item: T) => string): T[] {
   const merged = new Map<string, T>();
   for (const collection of collections) {
@@ -157,10 +170,19 @@ function mergeRootNavigationSnapshots(
 
 async function loadNavigationCollections(
   sources: SharedWorkspaceApi[],
-  onProgress?: (collections: NavigationCollections) => void,
+  onProgress: (collections: NavigationCollections) => void,
+  cachedSources: ReadonlyMap<SharedWorkspaceApi, NavigationSourceSnapshot>,
+  onSourceUpdate: (
+    source: SharedWorkspaceApi,
+    update: Partial<NavigationSourceSnapshot>,
+  ) => void,
 ): Promise<NavigationCollections> {
-  const workspaceCollections: CollaborationWorkspace[][] = [];
-  const projectCollections: CollaborationProject[][] = [];
+  const workspaceCollections = sources.map(
+    (source) => cachedSources.get(source)?.workspaces ?? [],
+  );
+  const projectCollections = sources.map(
+    (source) => cachedSources.get(source)?.projects ?? [],
+  );
   let successfulLoads = 0;
   const snapshot = (complete = false): NavigationCollections => ({
     workspaces: mergeByKey(workspaceCollections, (workspace) => workspace.id),
@@ -169,21 +191,43 @@ async function loadNavigationCollections(
     successfulLoads,
   });
   const results = await Promise.allSettled(
-    sources.flatMap((source) => {
+    sources.flatMap((source, index) => {
       const loads: Promise<void>[] = [
-        source.projects.list().then((projects) => {
-          successfulLoads += 1;
-          projectCollections.push(projects);
-          onProgress?.(snapshot());
-        }),
+        source.projects.list().then(
+          (projects) => {
+            successfulLoads += 1;
+            projectCollections[index] = projects;
+            onSourceUpdate(source, { projects });
+            onProgress(snapshot());
+          },
+          (cause) => {
+            if (navigationAccessDenied(cause)) {
+              projectCollections[index] = [];
+              onSourceUpdate(source, { projects: [] });
+              onProgress(snapshot());
+            }
+            throw cause;
+          },
+        ),
       ];
       if (source.workspaces) {
         loads.push(
-          source.workspaces.list().then((workspaces) => {
-            successfulLoads += 1;
-            workspaceCollections.push(workspaces);
-            onProgress?.(snapshot());
-          }),
+          source.workspaces.list().then(
+            (workspaces) => {
+              successfulLoads += 1;
+              workspaceCollections[index] = workspaces;
+              onSourceUpdate(source, { workspaces });
+              onProgress(snapshot());
+            },
+            (cause) => {
+              if (navigationAccessDenied(cause)) {
+                workspaceCollections[index] = [];
+                onSourceUpdate(source, { workspaces: [] });
+                onProgress(snapshot());
+              }
+              throw cause;
+            },
+          ),
         );
       }
       return loads;
@@ -231,6 +275,13 @@ export function useCollaborationPlatformController({
     projects: [] as CollaborationProject[],
   });
   const navigationSourcesRef = useRef<SharedWorkspaceApi[]>([]);
+  const navigationSourceCacheRef = useRef(
+    new Map<SharedWorkspaceApi, NavigationSourceSnapshot>(),
+  );
+  const authorizedProjectRef = useRef<{
+    api: SharedWorkspaceApi;
+    project: CollaborationProject;
+  } | null>(null);
   const pendingNavigationRef = useRef<object | null>(null);
   const refreshKeyRef = useRef(refreshKey);
 
@@ -246,7 +297,27 @@ export function useCollaborationPlatformController({
         navigationSourcesRef.current = sources;
         navigationCacheStatusRef.current = "unsettled";
         navigationCacheRef.current = { workspaces: [], projects: [] };
+        navigationSourceCacheRef.current.clear();
+        authorizedProjectRef.current = null;
         pendingNavigationRef.current = null;
+        setState((current) => ({
+          ...current,
+          workspaces: [],
+          workspace: null,
+          workspaceNavigationContext: null,
+          navigationProjects: [],
+          projects: [],
+          projectIssues: {},
+          myWork: [],
+          members: [],
+          agents: [],
+          collaborationGroups: [],
+          executionEnvironments: [],
+          resources: emptyResources,
+          navigationIncomplete: false,
+          loading: true,
+          error: null,
+        }));
       }
       if (force) navigationCacheStatusRef.current = "unsettled";
       const collectNavigation = async <T>(
@@ -298,13 +369,82 @@ export function useCollaborationPlatformController({
         (project) => project.id === location.projectId,
       );
       let requestedProjectAuthorized = false;
+      let projectAccessRevoked = false;
+      const cacheNavigationSource = (
+        source: SharedWorkspaceApi,
+        update: Partial<NavigationSourceSnapshot>,
+      ) => {
+        if (revision !== loadRevisionRef.current) return;
+        const previous = navigationSourceCacheRef.current.get(source);
+        const projects = update.projects ?? previous?.projects ?? [];
+        if (
+          update.projects !== undefined &&
+          !requestedProjectAuthorized &&
+          (source === api ||
+            previous?.projects.some(
+              (project) => project.id === location.projectId,
+            )) &&
+          !projects.some((project) => project.id === location.projectId)
+        ) {
+          requestedProject = undefined;
+        }
+        navigationSourceCacheRef.current.set(source, {
+          workspaces: update.workspaces ?? previous?.workspaces ?? [],
+          projects: projectAccessRevoked
+            ? projects.filter((project) => project.id !== location.projectId)
+            : projects,
+        });
+      };
+      const loadNavigation = (
+        onProgress: (collections: NavigationCollections) => void,
+      ) =>
+        loadNavigationCollections(
+          sources,
+          onProgress,
+          navigationSourceCacheRef.current,
+          cacheNavigationSource,
+        );
       if (!workspaceId && location.projectId) {
         try {
           requestedProject = await api.projects.get(location.projectId);
+          if (revision !== loadRevisionRef.current) return;
+          authorizedProjectRef.current = { api, project: requestedProject };
           requestedProjectAuthorized = true;
           workspaceId = requestedProject.workspace_id ?? null;
-        } catch {
-          workspaceId = null;
+        } catch (cause) {
+          if (revision !== loadRevisionRef.current) return;
+          if (navigationAccessDenied(cause)) {
+            projectAccessRevoked = true;
+            requestedProject = undefined;
+            authorizedProjectRef.current = null;
+            for (const [source] of navigationSourceCacheRef.current) {
+              cacheNavigationSource(source, {});
+            }
+            navigationCacheRef.current.projects =
+              navigationCacheRef.current.projects.filter(
+                (project) => project.id !== location.projectId,
+              );
+            setState((current) => ({
+              ...current,
+              projects: current.projects.filter(
+                (project) => project.id !== location.projectId,
+              ),
+              navigationProjects: current.navigationProjects.filter(
+                (project) => project.id !== location.projectId,
+              ),
+              workspace: null,
+              workspaceNavigationContext: null,
+              loading: false,
+              error: loadFailedMessage,
+            }));
+          }
+          // A transport failure does not move an already known project out of its workspace.
+          const authorized = authorizedProjectRef.current;
+          workspaceId =
+            authorized?.api === api &&
+            authorized.project.id === location.projectId
+              ? (authorized.project.workspace_id ?? null)
+              : null;
         }
         if (revision !== loadRevisionRef.current) return;
       }
@@ -356,12 +496,7 @@ export function useCollaborationPlatformController({
             successfulLoads: 1,
           });
         } else {
-          void collectNavigation(
-            loadNavigationCollections(
-              navigationApis?.length ? navigationApis : [api],
-              publishStandaloneNavigation,
-            ),
-          )
+          void collectNavigation(loadNavigation(publishStandaloneNavigation))
             .then((collections) => {
               if (revision !== loadRevisionRef.current) return;
               publishStandaloneNavigation(collections);
@@ -401,13 +536,14 @@ export function useCollaborationPlatformController({
         loading: workspaceId
           ? current.workspace?.id !== workspaceId
           : navigationCacheStatusRef.current !== "complete",
-        error: null,
+        error: projectAccessRevoked ? loadFailedMessage : null,
       }));
       if (!workspaceId) {
-        const sources = navigationApis?.length ? navigationApis : [api];
-        const snapshots = sources.map<RootNavigationSnapshot>(() => ({
-          workspaces: [],
-          projects: [],
+        const snapshots = sources.map<RootNavigationSnapshot>((source) => ({
+          workspaces:
+            navigationSourceCacheRef.current.get(source)?.workspaces ?? [],
+          projects:
+            navigationSourceCacheRef.current.get(source)?.projects ?? [],
           myWork: [],
           collaborationGroups: [],
           resources: emptyResources,
@@ -418,42 +554,28 @@ export function useCollaborationPlatformController({
         const publish = () => {
           if (revision !== loadRevisionRef.current) return;
           const snapshot = mergeRootNavigationSnapshots(snapshots);
-          const navigationProjects = primaryNavigationSettled
-            ? reconcileNavigationProjects(
-                snapshot.projects,
-                navigationCacheRef.current.projects,
-              )
-            : undefined;
-          if (primaryNavigationSettled) {
-            navigationCacheRef.current = {
-              workspaces: snapshot.workspaces,
-              projects: navigationProjects!,
-            };
+          if (projectAccessRevoked) {
+            snapshot.projects = snapshot.projects.filter(
+              (project) => project.id !== location.projectId,
+            );
           }
+          const navigationProjects = reconcileNavigationProjects(
+            snapshot.projects,
+            navigationCacheRef.current.projects,
+          );
+          navigationCacheRef.current = {
+            workspaces: snapshot.workspaces,
+            projects: navigationProjects,
+          };
           setState((current) => ({
             ...current,
-            workspaces: primaryNavigationSettled
-              ? snapshot.workspaces
-              : mergeByKey(
-                  [current.workspaces, snapshot.workspaces],
-                  (workspace) => workspace.id,
-                ),
+            workspaces: snapshot.workspaces,
             workspace: null,
             workspaceNavigationContext: null,
             navigationIncomplete:
               primaryNavigationSettled && !navigationComplete,
-            navigationProjects:
-              navigationProjects ??
-              mergeByKey(
-                [current.navigationProjects, snapshot.projects],
-                (project) => project.id,
-              ),
-            projects:
-              navigationProjects ??
-              mergeByKey(
-                [current.navigationProjects, snapshot.projects],
-                (project) => project.id,
-              ),
+            navigationProjects,
+            projects: navigationProjects,
             projectIssues: {},
             myWork: snapshot.myWork,
             members: [],
@@ -462,7 +584,7 @@ export function useCollaborationPlatformController({
             executionEnvironments: [],
             resources: snapshot.resources,
             loading: false,
-            error: null,
+            error: projectAccessRevoked ? loadFailedMessage : null,
           }));
         };
         const updateSnapshot = (
@@ -470,11 +592,22 @@ export function useCollaborationPlatformController({
           update: Partial<RootNavigationSnapshot>,
         ) => {
           if (revision !== loadRevisionRef.current) return;
+          if (
+            update.projects !== undefined ||
+            update.workspaces !== undefined
+          ) {
+            cacheNavigationSource(sources[index], update);
+          }
           snapshots[index] = {
             ...snapshots[index],
             ...update,
           };
-          if (successfulNavigationLoads > 0) publish();
+          if (
+            successfulNavigationLoads > 0 ||
+            update.projects !== undefined ||
+            update.workspaces !== undefined
+          )
+            publish();
         };
         const mergeCollaborationGroups = (
           index: number,
@@ -506,52 +639,66 @@ export function useCollaborationPlatformController({
         const navigationCollection = Promise.allSettled(
           sources.flatMap((source, index) => {
             const loads: Promise<void>[] = [
-              source.projects.list().then((projects) => {
-                if (revision !== loadRevisionRef.current) return;
-                successfulNavigationLoads += 1;
-                updateSnapshot(index, { projects });
-                if (
-                  rootView === "teams" &&
-                  source.projects.listCollaborationGroups
-                ) {
-                  void Promise.all(
-                    projects.map(async (project) => {
-                      try {
-                        const groups = await source.projects
-                          .listCollaborationGroups!(project.id);
-                        return groups.filter(
-                          (group) =>
-                            group.owner_type === "project" &&
-                            group.owner_id === project.id,
-                        );
-                      } catch {
-                        return [];
-                      }
-                    }),
-                  ).then((groups) => {
-                    mergeCollaborationGroups(index, groups.flat());
-                  });
-                }
-              }),
-            ];
-            if (source.workspaces) {
-              loads.push(
-                source.workspaces.list().then((workspaces) => {
+              source.projects
+                .list()
+                .then((projects) => {
                   if (revision !== loadRevisionRef.current) return;
                   successfulNavigationLoads += 1;
-                  updateSnapshot(index, { workspaces });
-                  if (rootView === "teams") {
+                  updateSnapshot(index, { projects });
+                  if (
+                    rootView === "teams" &&
+                    source.projects.listCollaborationGroups
+                  ) {
                     void Promise.all(
-                      workspaces.map((workspace) =>
-                        source
-                          .workspaces!.listCollaborationGroups(workspace.id)
-                          .catch(() => []),
-                      ),
+                      projects.map(async (project) => {
+                        try {
+                          const groups = await source.projects
+                            .listCollaborationGroups!(project.id);
+                          return groups.filter(
+                            (group) =>
+                              group.owner_type === "project" &&
+                              group.owner_id === project.id,
+                          );
+                        } catch {
+                          return [];
+                        }
+                      }),
                     ).then((groups) => {
                       mergeCollaborationGroups(index, groups.flat());
                     });
                   }
+                })
+                .catch((cause) => {
+                  if (navigationAccessDenied(cause))
+                    updateSnapshot(index, { projects: [] });
+                  throw cause;
                 }),
+            ];
+            if (source.workspaces) {
+              loads.push(
+                source.workspaces
+                  .list()
+                  .then((workspaces) => {
+                    if (revision !== loadRevisionRef.current) return;
+                    successfulNavigationLoads += 1;
+                    updateSnapshot(index, { workspaces });
+                    if (rootView === "teams") {
+                      void Promise.all(
+                        workspaces.map((workspace) =>
+                          source
+                            .workspaces!.listCollaborationGroups(workspace.id)
+                            .catch(() => []),
+                        ),
+                      ).then((groups) => {
+                        mergeCollaborationGroups(index, groups.flat());
+                      });
+                    }
+                  })
+                  .catch((cause) => {
+                    if (navigationAccessDenied(cause))
+                      updateSnapshot(index, { workspaces: [] });
+                    throw cause;
+                  }),
               );
             }
             return loads;
@@ -599,13 +746,17 @@ export function useCollaborationPlatformController({
               ],
               (project) => project.id,
             ),
-            cachedNavigation.projects,
+            navigationCacheRef.current.projects,
           );
         const publishNavigationTarget = (
           collections: NavigationCollections,
         ) => {
           if (revision !== loadRevisionRef.current) return;
           const projects = projectNavigation(collections, true);
+          navigationCacheRef.current = {
+            workspaces: collections.workspaces,
+            projects,
+          };
           const target = projects.find(
             (project) => project.id === location.projectId,
           );
@@ -614,8 +765,18 @@ export function useCollaborationPlatformController({
               (candidate) => candidate.id === workspaceId,
             ) ?? null;
           const parentContext = target?.workspace_context;
+          if (location.projectId && !target) {
+            setState((current) => ({
+              ...current,
+              navigationProjects: projects,
+              projects: projects.filter(
+                (project) => project.workspace_id === workspaceId,
+              ),
+              navigationIncomplete: !collections.complete,
+            }));
+            return;
+          }
           if (!workspace && !parentContext) return;
-          if (location.projectId && !target) return;
           setState((current) => ({
             ...current,
             workspaces: collections.workspaces,
@@ -674,12 +835,7 @@ export function useCollaborationPlatformController({
               complete: navigationCacheStatusRef.current === "complete",
               successfulLoads: 1,
             }
-          : await collectNavigation(
-              loadNavigationCollections(
-                navigationApis?.length ? navigationApis : [api],
-                publishNavigationTarget,
-              ),
-            );
+          : await collectNavigation(loadNavigation(publishNavigationTarget));
         if (revision !== loadRevisionRef.current) return;
         const { workspaces, complete } = navigationCollections;
         const navigationProjects = projectNavigation(navigationCollections);
@@ -887,6 +1043,7 @@ export function useCollaborationPlatformController({
     const cachedProject = navigationCacheRef.current.projects.find(
       (candidate) => candidate.id === project.id,
     );
+    if (cachedProject && cachedProject.version > project.version) return;
     const cachedProjectExists = Boolean(cachedProject);
     navigationCacheRef.current = {
       workspaces: navigationCacheRef.current.workspaces.map((workspace) =>
@@ -951,6 +1108,25 @@ export function useCollaborationPlatformController({
       reload: () => load(true),
       async archiveProject(project: CollaborationProject) {
         await api.projects.archive(project.id, project.version);
+        for (const [source, snapshot] of navigationSourceCacheRef.current) {
+          if (
+            !snapshot.projects.some((candidate) => candidate.id === project.id)
+          )
+            continue;
+          navigationSourceCacheRef.current.set(source, {
+            projects: snapshot.projects.filter(
+              (candidate) => candidate.id !== project.id,
+            ),
+            workspaces: snapshot.workspaces.map((workspace) =>
+              workspace.id === project.workspace_id
+                ? {
+                    ...workspace,
+                    project_count: Math.max(0, workspace.project_count - 1),
+                  }
+                : workspace,
+            ),
+          });
+        }
         navigationCacheRef.current = {
           workspaces: navigationCacheRef.current.workspaces.map((workspace) =>
             workspace.id === project.workspace_id

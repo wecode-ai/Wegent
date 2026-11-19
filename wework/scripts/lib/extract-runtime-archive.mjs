@@ -6,14 +6,18 @@ import { promisify } from 'node:util'
 
 const execute = promisify(execFile)
 
-/** Shared runners consume build artifacts without installing workspace packages. */
-export async function extractRuntimeArchive(archive, destination) {
-  let executable = 'tar'
+export function runtimeArchiveExecutable() {
   if (process.platform === 'win32') {
     const systemRoot = process.env.SystemRoot
     if (!systemRoot || !isAbsolute(systemRoot)) throw new Error('Windows SystemRoot is unavailable')
-    executable = join(systemRoot, 'System32', 'tar.exe')
+    return join(systemRoot, 'System32', 'tar.exe')
   }
+  return 'tar'
+}
+
+/** Shared runners consume build artifacts without installing workspace packages. */
+export async function extractRuntimeArchive(archive, destination) {
+  const executable = runtimeArchiveExecutable()
   // Keep native paths in Node: GNU tar parses drive letters as remote hosts
   // and unquotes backslash escapes in extraction directory arguments.
   const started = performance.now()

@@ -212,6 +212,191 @@ describe("collaboration workspace controller", () => {
     };
   }
 
+  it("retains a loaded project while its delayed initial route loads again", async () => {
+    const { api, commands } = createController();
+    await commands.loadProject(project.id, false, { revalidate: true });
+    await commands.loadSelectedIssue(issue.id);
+    const pending = deferred<{
+      items: CollaborationIssue[];
+      members: [];
+      agents: [];
+      taskBindings: [];
+    }>();
+    vi.mocked(api.issues.getBoardSnapshot).mockReturnValueOnce(pending.promise);
+
+    const initialRoute = commands.loadProject(project.id, true);
+
+    expect(state.loading).toBe(false);
+    expect(state.project).toEqual(project);
+    expect(state.selectedIssue).toEqual(issue);
+    pending.resolve({
+      items: [issue],
+      members: [],
+      agents: [],
+      taskBindings: [],
+    });
+    await initialRoute;
+  });
+
+  it.each(
+    [401, 403, 404].flatMap((status) =>
+      ["metadata", "snapshot"].map((read) => ({ status, read })),
+    ),
+  )(
+    "revokes only the denied project snapshot and rereads metadata after $read status $status",
+    async ({ status, read }) => {
+      const { api, commands } = createController();
+      await commands.loadProject(project.id, false, { revalidate: true });
+      await commands.loadSelectedIssue(issue.id);
+      const other = { ...project, id: "other-project" };
+      const otherIssue = {
+        ...issue,
+        id: "other-issue",
+        cloud_project_id: other.id,
+      };
+      state = {
+        ...state,
+        projects: [...state.projects, other],
+        projectItems: { ...state.projectItems, [other.id]: [otherIssue] },
+        projectMembers: { ...state.projectMembers, [other.id]: [] },
+        projectAgents: { ...state.projectAgents, [other.id]: [] },
+        projectTaskBindings: { ...state.projectTaskBindings, [other.id]: [] },
+        myWork: [issue, otherIssue],
+      };
+      const denied = Object.assign(new Error("Access denied"), { status });
+      if (read === "metadata")
+        vi.mocked(api.projects.get).mockRejectedValueOnce(denied);
+      else vi.mocked(api.issues.getBoardSnapshot).mockRejectedValueOnce(denied);
+
+      await expect(
+        commands.loadProject(project.id, false, {
+          revalidate: true,
+          throwOnError: true,
+        }),
+      ).rejects.toBe(denied);
+
+      expect(state.project).toBeNull();
+      expect(state.selectedIssue).toBeNull();
+      expect(state.issues).toEqual([]);
+      expect(state.members).toEqual([]);
+      expect(state.agents).toEqual([]);
+      expect(state.taskBindings).toEqual([]);
+      expect(state.attachments).toEqual([]);
+      expect(state.comments).toEqual([]);
+      expect(state.assignments).toEqual([]);
+      expect(state.executions).toEqual([]);
+      expect(state.projects).toEqual([other]);
+      expect(state.myWork).toEqual([otherIssue]);
+      expect(state.projectItems).toEqual({ [other.id]: [otherIssue] });
+      expect(state.projectMembers).toEqual({ [other.id]: [] });
+      expect(state.projectAgents).toEqual({ [other.id]: [] });
+      expect(state.projectTaskBindings).toEqual({ [other.id]: [] });
+      expect(state.errorSource).toBe("load");
+
+      const metadata = deferred<CollaborationProject>();
+      vi.mocked(api.projects.get).mockReturnValueOnce(metadata.promise);
+      const retry = commands.loadProject(project.id);
+      expect(api.projects.get).toHaveBeenCalledTimes(4);
+      expect(state.loading).toBe(true);
+      expect(state.project).toBeNull();
+      metadata.resolve(project);
+      await retry;
+      expect(state.project).toEqual(project);
+      expect(state.projectItems[project.id]).toEqual([issue]);
+      expect(state.loading).toBe(false);
+    },
+  );
+
+  it("retains a separately authorized invited Issue after project access is denied", async () => {
+    const { api, commands } = createController();
+    await commands.loadProject(project.id, false, { revalidate: true });
+    const invited = { ...issue, invited_only: true, can_edit: true };
+    vi.mocked(api.issues.get).mockResolvedValueOnce(invited);
+    await commands.loadSelectedIssue(issue.id);
+    state = { ...state, myWork: [invited] };
+    vi.mocked(api.issues.getBoardSnapshot).mockRejectedValueOnce(
+      Object.assign(new Error("Project access denied"), { status: 403 }),
+    );
+
+    await commands.loadProject(project.id, false, { revalidate: true });
+
+    expect(state.project).toBeNull();
+    expect(state.projectItems[project.id]).toBeUndefined();
+    expect(state.selectedIssue).toEqual(invited);
+    expect(state.attachments).toEqual([attachment]);
+    expect(state.comments).toEqual([comment]);
+    expect(state.myWork).toEqual([invited]);
+  });
+
+  it("retains an authorized project snapshot when its board transport fails", async () => {
+    const { api, commands } = createController();
+    await commands.loadProject(project.id, false, { revalidate: true });
+    await commands.loadSelectedIssue(issue.id);
+    const unavailable = new Error("Network unavailable");
+    vi.mocked(api.issues.getBoardSnapshot).mockRejectedValueOnce(unavailable);
+
+    await expect(
+      commands.loadProject(project.id, false, {
+        revalidate: true,
+        throwOnError: true,
+      }),
+    ).rejects.toBe(unavailable);
+
+    expect(state.project).toEqual(project);
+    expect(state.projectItems[project.id]).toEqual([issue]);
+    expect(state.selectedIssue).toEqual(issue);
+    expect(state.errorSource).toBe("load");
+  });
+
+  it("discards a pending project snapshot after metadata access is revoked", async () => {
+    const { api, commands } = createController();
+    await commands.loadProject(project.id, false, { revalidate: true });
+    const pending = deferred<{
+      items: CollaborationIssue[];
+      members: [];
+      agents: [];
+      taskBindings: [];
+    }>();
+    vi.mocked(api.issues.getBoardSnapshot).mockReturnValueOnce(pending.promise);
+    const oldSnapshot = commands.loadProjectSnapshot(project.id);
+    vi.mocked(api.projects.get).mockRejectedValueOnce(
+      Object.assign(new Error("Access denied"), { status: 403 }),
+    );
+
+    await commands.loadProject(project.id, false, { revalidate: true });
+    pending.resolve({
+      items: [issue],
+      members: [],
+      agents: [],
+      taskBindings: [],
+    });
+
+    await expect(oldSnapshot).resolves.toBeNull();
+    expect(state.projectItems[project.id]).toBeUndefined();
+    expect(state.project).toBeNull();
+  });
+
+  it("does not retain another project or API instance during initial loading", async () => {
+    const first = createController();
+    await first.commands.loadProject(project.id, false, { revalidate: true });
+    const second = createController();
+    const pending = deferred<CollaborationProject>();
+    vi.mocked(second.api.projects.get).mockReturnValueOnce(pending.promise);
+
+    const nextApiLoad = second.commands.loadProject(project.id, true, {
+      revalidate: true,
+    });
+
+    expect(state.loading).toBe(true);
+    pending.resolve(project);
+    await nextApiLoad;
+    const otherProject = { ...project, id: "another-project" };
+    vi.mocked(second.api.projects.get).mockResolvedValueOnce(otherProject);
+    const nextProjectLoad = second.commands.loadProject(otherProject.id, true);
+    expect(state.loading).toBe(true);
+    await nextProjectLoad;
+  });
+
   it("loads project home snapshots into one shared state", async () => {
     const { api, commands } = createController();
 
@@ -434,6 +619,346 @@ describe("collaboration workspace controller", () => {
     expect(state.issues).toEqual([reassigned]);
     expect(state.selectedIssue).toEqual(reassigned);
     expect(api.issues.getBoardSnapshot).toHaveBeenCalledTimes(3);
+  });
+
+  it.each(
+    [401, 403, 404].flatMap((status) =>
+      ["my-work", "snapshot"].flatMap((pendingRead) =>
+        [false, true].map((recoverCatalog) => ({
+          status,
+          pendingRead,
+          recoverCatalog,
+        })),
+      ),
+    ),
+  )(
+    "does not restore revoked data after pending $pendingRead, status $status and recovered catalog=$recoverCatalog",
+    async ({ status, pendingRead, recoverCatalog }) => {
+      const other = { ...project, id: "other-project" };
+      const otherIssue = {
+        ...issue,
+        id: "other-issue",
+        cloud_project_id: other.id,
+      };
+      const invited = { ...issue, id: "invited-issue", invited_only: true };
+      const pendingMyWork = deferred<CollaborationIssue[]>();
+      const snapshot = {
+        items: [issue],
+        members: [],
+        agents: [],
+        taskBindings: [],
+      };
+      const pendingSnapshot = deferred<typeof snapshot>();
+      state = {
+        ...state,
+        project,
+        projects: [project, other],
+        issues: [issue],
+        selectedIssue: invited,
+        projectItems: { [project.id]: [issue] },
+      };
+      const api = createApi();
+      vi.mocked(api.projects.list).mockResolvedValue([project, other]);
+      vi.mocked(api.myWork!.list).mockReturnValueOnce(pendingMyWork.promise);
+      vi.mocked(api.issues.getBoardSnapshot).mockImplementation(async (id) =>
+        id === project.id
+          ? pendingSnapshot.promise
+          : { ...snapshot, items: [otherIssue] },
+      );
+      const { commands } = createController(api, vi.fn(), undefined, true);
+      const oldHome = commands.loadProjects();
+      await vi.waitFor(() =>
+        expect(
+          actions.some((action) => action.type === "project-catalog-loaded"),
+        ).toBe(true),
+      );
+      if (pendingRead === "snapshot") {
+        pendingMyWork.resolve([issue, invited, otherIssue]);
+        await vi.waitFor(() =>
+          expect(api.issues.getBoardSnapshot).toHaveBeenCalledWith(project.id),
+        );
+      }
+      vi.mocked(api.projects.get).mockRejectedValueOnce(
+        Object.assign(new Error("Project access revoked"), { status }),
+      );
+
+      await commands.loadProject(project.id, false, { revalidate: true });
+      expect(state.projects).toEqual([other]);
+      if (recoverCatalog) {
+        await commands.loadProjectCatalog();
+        expect(state.projects).toEqual([project, other]);
+      }
+      pendingMyWork.resolve([issue, invited, otherIssue]);
+      pendingSnapshot.resolve(snapshot);
+      await oldHome;
+
+      expect(state.projects).toEqual(
+        recoverCatalog ? [project, other] : [other],
+      );
+      expect(state.projectItems[project.id]).toBeUndefined();
+      expect(state.projectItems[other.id]).toEqual([otherIssue]);
+      expect(state.myWork).toEqual([invited, otherIssue]);
+      expect(state.selectedIssue).toEqual(invited);
+      await commands.loadMyWork();
+      expect(state.myWork).toEqual([invited, otherIssue]);
+      await commands.loadProject(project.id, false, { revalidate: true });
+      expect(state.projects).toContainEqual(project);
+      expect(state.projectItems[project.id]).toEqual([issue]);
+      vi.mocked(api.myWork!.list).mockResolvedValue([
+        issue,
+        invited,
+        otherIssue,
+      ]);
+      await commands.loadMyWork();
+      expect(state.myWork).toEqual([issue, invited, otherIssue]);
+    },
+  );
+
+  it.each(["loadProjects", "loadProjectCatalog"] as const)(
+    "rejects a catalog captured before revocation during %s and accepts a fresh retry",
+    async (load) => {
+      const other = { ...project, id: "other-project" };
+      const pendingCatalog = deferred<CollaborationProject[]>();
+      state = { ...state, projects: [project, other] };
+      const { api, commands } = createController();
+      vi.mocked(api.projects.list).mockReturnValueOnce(pendingCatalog.promise);
+      const oldCatalog = commands[load]();
+      vi.mocked(api.projects.get).mockRejectedValueOnce(
+        Object.assign(new Error("Project access revoked"), { status: 403 }),
+      );
+
+      await commands.loadProject(project.id, false, { revalidate: true });
+      pendingCatalog.resolve([project, other]);
+      await oldCatalog;
+
+      expect(state.projects).toEqual([other]);
+      expect(api.issues.getBoardSnapshot).not.toHaveBeenCalledWith(project.id);
+      expect(state.projectItems[project.id]).toBeUndefined();
+      await commands.loadProjectCatalog();
+      expect(state.projects).toEqual([project]);
+    },
+  );
+
+  it.each(
+    (["loadProjects", "loadProjectCatalog"] as const).flatMap((oldLoad) =>
+      (["loadProjects", "loadProjectCatalog"] as const).map((recoveryLoad) => ({
+        oldLoad,
+        recoveryLoad,
+      })),
+    ),
+  )(
+    "keeps a newer $recoveryLoad catalog when $oldLoad returns after access recovery",
+    async ({ oldLoad, recoveryLoad }) => {
+      const recovered = { ...project, access_role: "Viewer" as const };
+      const discovered = { ...project, id: "discovered-project" };
+      const oldCatalog = deferred<CollaborationProject[]>();
+      const { api, commands } = createController();
+      vi.mocked(api.projects.list)
+        .mockReturnValueOnce(oldCatalog.promise)
+        .mockResolvedValueOnce([recovered, discovered]);
+      const oldHome = commands[oldLoad]();
+      vi.mocked(api.projects.get).mockRejectedValueOnce(
+        Object.assign(new Error("Project access revoked"), { status: 403 }),
+      );
+      await commands.loadProject(project.id, false, { revalidate: true });
+      await commands[recoveryLoad]();
+      expect(state.projects).toEqual([recovered, discovered]);
+      const boardReads = vi.mocked(api.issues.getBoardSnapshot).mock.calls
+        .length;
+
+      oldCatalog.resolve([{ ...project, access_role: "Owner" }]);
+      await oldHome;
+
+      expect(state.projects).toEqual([recovered, discovered]);
+      expect(api.issues.getBoardSnapshot).toHaveBeenCalledTimes(boardReads);
+    },
+  );
+
+  it.each(
+    (["loadProjects", "loadProjectCatalog"] as const).flatMap((load) =>
+      ["stale-project", "unrelated-only", "empty"].map((reply) => ({
+        load,
+        reply,
+      })),
+    ),
+  )(
+    "preserves GET-only recovery during older $load with $reply reply",
+    async ({ load, reply }) => {
+      const recovered = { ...project, access_role: "Viewer" as const };
+      const discovered = { ...project, id: "discovered-project" };
+      const oldCatalog = deferred<CollaborationProject[]>();
+      const { api, commands } = createController();
+      vi.mocked(api.projects.list).mockReturnValueOnce(oldCatalog.promise);
+      const oldHome = commands[load]();
+      vi.mocked(api.projects.get)
+        .mockRejectedValueOnce(
+          Object.assign(new Error("Project access revoked"), { status: 403 }),
+        )
+        .mockResolvedValue(recovered);
+      await commands.loadProject(project.id, false, { revalidate: true });
+      await commands.loadProject(project.id, false, { revalidate: true });
+      expect(state.projects).toEqual([recovered]);
+      const snapshot = state.projectItems[project.id];
+
+      oldCatalog.resolve(
+        reply === "empty"
+          ? []
+          : reply === "unrelated-only"
+            ? [discovered]
+            : [{ ...project, access_role: "Owner" }, discovered],
+      );
+      await oldHome;
+
+      expect(state.projects).toEqual(
+        reply === "empty" ? [recovered] : [recovered, discovered],
+      );
+      expect(state.projectItems[project.id]).toBe(snapshot);
+      expect(
+        vi
+          .mocked(api.issues.getBoardSnapshot)
+          .mock.calls.filter(([id]) => id === project.id),
+      ).toHaveLength(1);
+      if (load === "loadProjects" && reply !== "empty")
+        expect(api.issues.getBoardSnapshot).toHaveBeenCalledWith(discovered.id);
+    },
+  );
+
+  it.each(["loadProjects", "loadProjectCatalog"] as const)(
+    "allows earlier %s discovery after a newer catalog read fails",
+    async (load) => {
+      const discovered = { ...project, id: "discovered-project" };
+      const oldCatalog = deferred<CollaborationProject[]>();
+      const { api, commands } = createController();
+      vi.mocked(api.projects.list)
+        .mockReturnValueOnce(oldCatalog.promise)
+        .mockRejectedValueOnce(new Error("Catalog unavailable"));
+      const oldHome = commands[load]();
+      vi.mocked(api.projects.get).mockRejectedValueOnce(
+        Object.assign(new Error("Project access revoked"), { status: 403 }),
+      );
+      await commands.loadProject(project.id, false, { revalidate: true });
+      await commands.loadProjectCatalog();
+
+      oldCatalog.resolve([project, discovered]);
+      await oldHome;
+
+      expect(state.projects).toEqual([discovered]);
+      expect(api.issues.getBoardSnapshot).not.toHaveBeenCalledWith(project.id);
+    },
+  );
+
+  it.each(["my-work", "snapshot"])(
+    "does not publish an older home after newer home data settles during %s",
+    async (pendingRead) => {
+      const refreshed = { ...issue, title: "Refreshed", version: 2 };
+      const pendingMyWork = deferred<CollaborationIssue[]>();
+      const snapshot = {
+        items: [issue],
+        members: [],
+        agents: [],
+        taskBindings: [],
+      };
+      const pendingSnapshot = deferred<typeof snapshot>();
+      const { api, commands } = createController(
+        createApi(),
+        vi.fn(),
+        undefined,
+        true,
+      );
+      vi.mocked(api.myWork!.list)
+        .mockReturnValueOnce(pendingMyWork.promise)
+        .mockResolvedValue([refreshed]);
+      vi.mocked(api.issues.getBoardSnapshot).mockResolvedValue({
+        ...snapshot,
+        items: [refreshed],
+      });
+      if (pendingRead === "snapshot")
+        vi.mocked(api.issues.getBoardSnapshot).mockReturnValueOnce(
+          pendingSnapshot.promise,
+        );
+      const oldHome = commands.loadProjects();
+      await vi.waitFor(() =>
+        expect(
+          actions.some((action) => action.type === "project-catalog-loaded"),
+        ).toBe(true),
+      );
+      if (pendingRead === "snapshot") {
+        pendingMyWork.resolve([issue]);
+        await vi.waitFor(() =>
+          expect(api.issues.getBoardSnapshot).toHaveBeenCalledOnce(),
+        );
+      }
+      vi.mocked(api.projects.get).mockRejectedValueOnce(
+        Object.assign(new Error("Project access revoked"), { status: 403 }),
+      );
+      await commands.loadProject(project.id, false, { revalidate: true });
+      await commands.loadProjects();
+      expect(state.myWork).toEqual([refreshed]);
+      const freshSnapshot = state.projectItems[project.id];
+
+      pendingMyWork.resolve([issue]);
+      pendingSnapshot.resolve(snapshot);
+      await oldHome;
+
+      expect(state.myWork).toEqual([refreshed]);
+      expect(state.projectItems[project.id]).toBe(freshSnapshot);
+      expect(freshSnapshot).toEqual([refreshed]);
+    },
+  );
+
+  it("retains newer My Work while an older home snapshot completes", async () => {
+    const refreshed = { ...issue, title: "Refreshed", version: 2 };
+    const snapshot = {
+      items: [issue],
+      members: [],
+      agents: [],
+      taskBindings: [],
+    };
+    const pending = deferred<typeof snapshot>();
+    const { api, commands } = createController(
+      createApi(),
+      vi.fn(),
+      undefined,
+      true,
+    );
+    vi.mocked(api.myWork!.list)
+      .mockResolvedValueOnce([issue])
+      .mockResolvedValueOnce([refreshed]);
+    vi.mocked(api.issues.getBoardSnapshot).mockReturnValueOnce(pending.promise);
+    const oldHome = commands.loadProjects();
+    await vi.waitFor(() =>
+      expect(api.issues.getBoardSnapshot).toHaveBeenCalledOnce(),
+    );
+    await commands.loadMyWork();
+    await commands.loadMyWork();
+    expect(state.myWork).toEqual([refreshed]);
+
+    pending.resolve(snapshot);
+    await oldHome;
+
+    expect(state.myWork).toEqual([refreshed]);
+    expect(state.projectItems[project.id]).toEqual([issue]);
+  });
+
+  it("does not overwrite newer My Work with a delayed independent read", async () => {
+    const refreshed = { ...issue, title: "Refreshed", version: 2 };
+    const pending = deferred<CollaborationIssue[]>();
+    const { api, commands } = createController(
+      createApi(),
+      vi.fn(),
+      undefined,
+      true,
+    );
+    vi.mocked(api.myWork!.list)
+      .mockReturnValueOnce(pending.promise)
+      .mockResolvedValueOnce([refreshed]);
+    const oldMyWork = commands.loadMyWork();
+    await commands.loadMyWork();
+
+    pending.resolve([issue]);
+    await oldMyWork;
+
+    expect(state.myWork).toEqual([refreshed]);
   });
 
   it("preserves refreshed home data when React batches snapshot dispatches before refs update", async () => {

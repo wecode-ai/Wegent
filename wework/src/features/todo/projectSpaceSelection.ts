@@ -277,6 +277,15 @@ export async function findProjectSpaceContextSourceForTask<TApi extends ProjectS
   task: RuntimeTaskAddress,
   timeoutMs = 5_000
 ): Promise<ProjectSpaceTaskContextSource<TApi>> {
+  // A single owner uses its request deadline, without a competing-store discovery timeout.
+  if (apis.length === 1) {
+    const [api] = apis
+    try {
+      return { api, context: await api.findCloudContextForTask(task) }
+    } catch (error) {
+      throw new AggregateError([error], 'Task is not linked to a project space', { cause: error })
+    }
+  }
   type TaskContextSource = ProjectSpaceTaskContextSource<TApi>
   const results: Array<PromiseSettledResult<TaskContextSource> | undefined> = new Array(apis.length)
   let resolveUserContext: ((source: TaskContextSource) => void) | undefined

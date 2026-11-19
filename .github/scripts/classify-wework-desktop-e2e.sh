@@ -333,8 +333,7 @@ if ((${#cloud_matrix_entries[@]} > 0)); then
   run_desktop=true
 fi
 
-output_file="${GITHUB_OUTPUT:-/dev/stdout}"
-{
+write_outputs() {
   printf 'wework_desktop_e2e=%s\n' "$run_desktop"
   printf 'wework_desktop_core_e2e=%s\n' "$run_core"
   printf 'wework_desktop_core_e2e_matrix=%s\n' "$core_matrix_json"
@@ -343,4 +342,11 @@ output_file="${GITHUB_OUTPUT:-/dev/stdout}"
   printf 'wework_desktop_other_e2e=%s\n' "$run_other"
   printf 'wework_desktop_other_e2e_matrix=%s\n' "$other_matrix_json"
   printf 'wework_desktop_macos_inspector_e2e=%s\n' "$macos_inspector_e2e"
-} >> "$output_file"
+}
+
+output_file="${GITHUB_OUTPUT:-}"
+if [[ -n "$output_file" && "$output_file" != /dev/stdout ]]; then
+  write_outputs >> "$output_file"
+else
+  write_outputs
+fi

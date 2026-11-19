@@ -163,6 +163,7 @@ function createMockDeliveryApi() {
       next_cursor: 'next',
     }),
     getBoardSnapshot: vi.fn().mockResolvedValue({
+      project_version: 4,
       items: [issue],
       task_bindings: [binding],
       members: [],
@@ -426,6 +427,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       ],
     })
     await expect(api.issues.getBoardSnapshot('project-1')).resolves.toEqual({
+      projectVersion: 4,
       items: [issue],
       taskBindings: expect.any(Array),
       members: [],
@@ -1153,7 +1155,9 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
     })
 
     await expect(api.projects.get('project/1')).resolves.toBe(project)
-    expect(client.get).toHaveBeenCalledWith('/v1/cloud-projects/project%2F1')
+    expect(client.get).toHaveBeenCalledWith('/v1/cloud-projects/project%2F1', {
+      cache: 'no-store',
+    })
 
     await expect(
       api.projects.importMessages('project/1', {
