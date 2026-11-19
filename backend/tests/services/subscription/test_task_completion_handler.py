@@ -1,5 +1,6 @@
 from contextlib import contextmanager
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -807,6 +808,65 @@ def _result_save_fixture(update_side_effect):
         patch.object(handler, "_cleanup_finished_subscription_executor", new=cleanup),
     )
     return handler, event, db, dispatch, patches
+
+
+@pytest.mark.parametrize("event_status", ["COMPLETED", "FAILED"])
+@pytest.mark.asyncio
+async def test_cleanup_commit_failure_still_writes_inbox_and_notifies(
+    event_status: str,
+) -> None:
+    """A failed cleanup commit must roll back before required result delivery."""
+    handler, event, db, _, dispatch, patches = _finished_subscription_fixture(
+        event_status=event_status,
+        execution_status=BackgroundExecutionStatus.RUNNING.value,
+    )
+    lifecycle = []
+
+    def fail_cleanup_commit() -> None:
+        lifecycle.append("cleanup commit")
+        raise RuntimeError("cleanup commit failed")
+
+    def writeback(*args: Any, **kwargs: Any) -> None:
+        assert lifecycle == ["cleanup commit", "rollback"]
+        lifecycle.append("inbox")
+
+    async def notify(*args: Any, **kwargs: Any) -> None:
+        assert lifecycle == ["cleanup commit", "rollback", "inbox"]
+        lifecycle.append("notifications")
+
+    db.commit.side_effect = fail_cleanup_commit
+    db.rollback.side_effect = lambda: lifecycle.append("rollback")
+    dispatch.side_effect = notify
+    with (
+        patches[0] as find,
+        patches[1],
+        patches[2],
+        patches[3] as update,
+        patches[4],
+        patches[5],
+        patches[6] as runtime_client_factory,
+        patches[7] as executor_service,
+        patch.object(handler, "_is_code_wiki_scheduled_update", return_value=False),
+        patch(
+            "app.services.inbox.result_writeback.write_execution_result_to_message",
+            side_effect=writeback,
+        ) as write_result,
+    ):
+        find.return_value.inbox_message_id = 7
+        runtime_client = MagicMock()
+        runtime_client.get_sandbox = AsyncMock(return_value=(None, None))
+        runtime_client_factory.return_value = runtime_client
+        executor_service.delete_executor_task_async = AsyncMock(
+            return_value={"status": "success"}
+        )
+        await handler.on_task_completed(event)
+
+    assert lifecycle == ["cleanup commit", "rollback", "inbox", "notifications"]
+    db.rollback.assert_called_once()
+    write_result.assert_called_once()
+    assert write_result.call_args.kwargs["status"] == event_status
+    dispatch.assert_awaited_once()
+    assert update.call_count == 1
 
 
 def _data_too_long():

@@ -162,6 +162,27 @@ async fn fail_unsaved_result<M: Mysql, R: Redis>(
     match outcome {
         Ok(Some((_, Some(applied)))) => Some(applied),
         Ok(Some((execution, None))) => {
+            // REPEATABLE READ can retain the old lookup, and pooled reads may
+            // use a lagging replica. The first read of a fresh writer
+            // transaction sees the committed row after the lost status update.
+            let execution: Execution = match mysql
+                .with_transaction(async |tx| {
+                    tx.fetch_optional(model::execution_by_id(), (execution.id,))
+                        .await
+                })
+                .await
+            {
+                Ok(Some(execution)) => execution,
+                Ok(None) => return None,
+                Err(error) => {
+                    tracing::warn!(
+                        %error,
+                        task_id = event.task_id,
+                        "could not reload the run after a lost status update"
+                    );
+                    return None;
+                }
+            };
             if model::terminal(&execution.status) && releases_executor(event.status) {
                 release_finished_executor(ctx, mysql, &execution, event.task_id).await;
             }

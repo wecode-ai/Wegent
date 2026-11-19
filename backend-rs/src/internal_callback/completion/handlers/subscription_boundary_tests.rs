@@ -21,6 +21,7 @@ use brz_mysql::{
 };
 use brz_redis::{EncodeRedisArg, EncodeRedisArgs, FromRedisBulk, Redis, RedisResult, RedisValues};
 use chrono::NaiveDateTime;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use super::handle_task_completed;
@@ -493,11 +494,14 @@ async fn the_statistics_write_runs_on_the_callers_transaction() {
     );
 }
 
-/// A `Mysql` handle that records the statements a post-commit block issues and
-/// answers every read with no row, so the block's first reads are observable.
+/// Records pooled reads, optionally delegating to the SQL fixture and exposing
+/// when its transaction commits so the fixture can retain a stale read view.
 #[derive(Default)]
 struct RecordingMysql {
     statements: Mutex<Vec<String>>,
+    mysql: Option<MysqlService>,
+    committed: Arc<AtomicBool>,
+    transactions: AtomicUsize,
 }
 
 impl Mysql for RecordingMysql {
@@ -511,7 +515,7 @@ impl Mysql for RecordingMysql {
         Self::default()
     }
 
-    async fn fetch_optional<S, A, T>(&self, sql: S, _: A) -> MysqlResult<Option<T>>
+    async fn fetch_optional<S, A, T>(&self, sql: S, args: A) -> MysqlResult<Option<T>>
     where
         S: AsRef<str> + Send,
         A: MysqlArgs + Send,
@@ -521,6 +525,9 @@ impl Mysql for RecordingMysql {
             .lock()
             .unwrap()
             .push(normalize(sql.as_ref()));
+        if let Some(mysql) = &self.mysql {
+            return mysql.fetch_optional(sql, args).await;
+        }
         Ok(None)
     }
 
@@ -559,12 +566,19 @@ impl Mysql for RecordingMysql {
         futures_util::stream::once(async { panic!("the post-commit block does not stream") })
     }
 
-    async fn with_transaction<T, F>(&self, _: F) -> MysqlResult<T>
+    async fn with_transaction<T, F>(&self, body: F) -> MysqlResult<T>
     where
         T: Send,
         F: for<'a> AsyncFnOnce(&'a mut Self::Transaction) -> MysqlResult<T> + Send,
     {
-        panic!("the post-commit block commits nothing")
+        let mysql = self
+            .mysql
+            .as_ref()
+            .expect("the post-commit block commits nothing");
+        self.transactions.fetch_add(1, Ordering::SeqCst);
+        let result = mysql.with_transaction(body).await?;
+        self.committed.store(true, Ordering::SeqCst);
+        Ok(result)
     }
 }
 
@@ -724,7 +738,7 @@ async fn fail_unsaved_result_cleans_up_when_a_concurrent_writer_already_finished
         ..completed_event(&execution)
     };
     let server_cancel = MysqlRows::start_results(|sql| {
-        if sql.contains("FROM background_executions") && sql.contains("ORDER BY") {
+        if sql.contains("FROM background_executions") {
             let row = execution_row("CANCELLED");
             return (row.clone(), vec![row]);
         }
@@ -757,5 +771,86 @@ async fn fail_unsaved_result_cleans_up_when_a_concurrent_writer_already_finished
             .iter()
             .any(|q| q.contains("FROM `tasks_0030`") && q.contains("kind = 'Task'")),
         "concurrent terminal state during fallback must still release the executor: {queries:?}"
+    );
+}
+
+/// A concurrent cancel defeats the CAS while REPEATABLE READ keeps every
+/// transaction read RUNNING. Only a read after commit may see CANCELLED and
+/// trigger cleanup; re-reading in the same transaction cannot fix the leak.
+#[tokio::test]
+async fn fail_unsaved_result_refreshes_a_lost_transition_before_cleanup() {
+    let redis = NoRedis;
+    let manager = crate::executor_manager::ExecutorManager::new("http://127.0.0.1:1")
+        .expect("executor-manager client");
+    let execution = running_execution();
+    let event = completed_event(&execution);
+    let committed = Arc::new(AtomicBool::new(false));
+    let read_view = Arc::clone(&committed);
+    let server = MysqlRows::start_results(move |sql| {
+        if sql.contains("FROM background_executions") {
+            let status = if read_view.load(Ordering::SeqCst) {
+                "CANCELLED"
+            } else {
+                "RUNNING"
+            };
+            let row = execution_row(status);
+            return (row.clone(), vec![row]);
+        }
+        if sql.contains("FROM kinds") && sql.contains("Subscription") {
+            let row = subscription_row();
+            return (row.clone(), vec![row]);
+        }
+        (vec![("id", SqlValue::I64(0))], Vec::new())
+    })
+    .await;
+    let mysql = RecordingMysql {
+        mysql: Some(server.mysql.clone()),
+        committed,
+        ..Default::default()
+    };
+    let ctx = Completion {
+        app: None,
+        mysql: &mysql,
+        redis: &redis,
+        tables: tables(),
+        executor_manager: &manager,
+    };
+
+    let fallback = super::fail_unsaved_result(
+        &ctx,
+        &mysql,
+        &event,
+        "The run finished but its result could not be saved: Data too long",
+    )
+    .await;
+
+    assert!(fallback.is_none());
+    let queries = server.queries();
+    // MysqlRows' empty result set reports zero affected rows for the guarded
+    // UPDATE, so the real transition_in helper cannot overwrite CANCELLED.
+    let updates: Vec<_> = queries
+        .iter()
+        .filter(|q| q.starts_with("UPDATE background_executions"))
+        .collect();
+    assert_eq!(updates.len(), 1, "one CAS attempt: {queries:?}");
+    assert!(updates[0].contains("version = ?"), "{:?}", updates[0]);
+    assert!(
+        !queries.iter().any(|q| q.starts_with("UPDATE kinds")),
+        "a lost CAS must not rewrite subscription statistics: {queries:?}"
+    );
+    assert!(
+        mysql.statements().is_empty(),
+        "pooled reads may use a replica"
+    );
+    assert_eq!(
+        mysql.transactions.load(Ordering::SeqCst),
+        3,
+        "status, fresh writer read, then managed-task cleanup: {queries:?}"
+    );
+    assert!(
+        queries
+            .iter()
+            .any(|q| q.contains("FROM `tasks_0030`") && q.contains("kind = 'Task'")),
+        "the committed CANCELLED row must still release the executor: {queries:?}"
     );
 }

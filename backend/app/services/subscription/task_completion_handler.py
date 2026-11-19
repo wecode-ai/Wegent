@@ -390,6 +390,23 @@ class SubscriptionTaskCompletionHandler:
         execution: BackgroundExecution,
         task_id: int,
     ) -> None:
+        """Isolate runtime cleanup failures from required result delivery."""
+        try:
+            await self._delete_finished_subscription_executor(db, execution, task_id)
+        except Exception:
+            db.rollback()
+            logger.exception(
+                "[TaskCompletionHandler] Subscription runtime cleanup failed "
+                "for task_id=%s; continuing completion handling",
+                task_id,
+            )
+
+    async def _delete_finished_subscription_executor(
+        self,
+        db: Session,
+        execution: BackgroundExecution,
+        task_id: int,
+    ) -> None:
         """Delete the executors as soon as a subscription run ends.
 
         The cleanup applies whatever the outcome was: a finished run never
