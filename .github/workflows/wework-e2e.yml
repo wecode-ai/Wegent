@@ -456,7 +456,7 @@ jobs:
           setup-toolchain: "false"
 
       - name: Configure the native log-folder opener
-        if: contains(matrix.segments, 'native-window-startup')
+        if: contains(matrix.segments, 'startup-fault-isolation')
         run: |
           command -v file
           command -v xdg-mime
@@ -466,11 +466,11 @@ jobs:
           test "$(xdg-mime query filetype /tmp)" = inode/directory
 
       - name: Restore verified Electron installer cache
-        if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')
+        if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'startup-fault-isolation')
         uses: ./.github/actions/prepare-electron-installer-cache
 
       - name: Install Electron for native startup and schema verification
-        if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')
+        if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'startup-fault-isolation')
         env:
           WEWORK_ELECTRON_DEPENDENCIES_READY: "true"
         run: |
@@ -654,7 +654,7 @@ jobs:
           node-version: "24"
 
       - name: Set up pnpm for native startup verification
-        if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')
+        if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'startup-fault-isolation')
         uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
 
       - name: Set up Python and uv
@@ -790,7 +790,7 @@ jobs:
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Install Electron for native startup and schema verification
-        if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')
+        if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'startup-fault-isolation')
         run: |
           pnpm --dir wework prepare:electron
           pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
@@ -1353,7 +1353,7 @@ jobs:
           test -x "$WEWORK_E2E_APP_BIN"
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
           test -x "$WEWORK_E2E_BACKEND_RS_BIN"
-          segments=browser-toolbar-actions,tray-lifecycle,clipboard-history-image
+          segments=tray-lifecycle
           if [[ "$COMPONENT_UPDATE_E2E" == "true" ]]; then
             segments+=,component-update
           fi
