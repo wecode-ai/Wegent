@@ -85,8 +85,18 @@ interface SearchableSelectCommonProps<T extends string> {
 
 export type SearchableSelectProps<T extends string> = SearchableSelectCommonProps<T> &
   (
-    | { multiple?: false; value: T; onChange(value: T): void }
-    | { multiple: true; value: T[]; onChange(value: T[]): void }
+    | {
+        multiple?: false
+        value: T
+        activateSelected?: boolean
+        onChange(value: T): void
+      }
+    | {
+        multiple: true
+        value: T[]
+        activateSelected?: never
+        onChange(value: T[]): void
+      }
   )
 
 export function SearchableSelect<T extends string>(props: SearchableSelectProps<T>) {
@@ -195,7 +205,7 @@ export function SearchableSelect<T extends string>(props: SearchableSelectProps<
       autoHighlight={autoHighlight}
       onHighlight={next => onHighlight?.(options.find(option => option.value === next) ?? null)}
       multiple={multiple}
-      value={value}
+      value={props.activateSelected ? null : value}
       disabled={disabled}
       open={controlledOpen ?? internalOpen}
       modal={modal}
@@ -353,6 +363,9 @@ export function SearchableSelect<T extends string>(props: SearchableSelectProps<
                   value={option.value}
                   label={option.label}
                   disabled={option.disabled}
+                  aria-current={
+                    props.activateSelected && values.includes(option.value) ? true : undefined
+                  }
                   data-testid={option.testId ?? `${testId}-option-${option.value || 'empty'}`}
                   className={cn(
                     controlOption,

@@ -227,6 +227,8 @@ async function verifyPastedZipAttachment({ composerSelector, control, prepareCon
 }
 
 async function verifySystemDragPanelLayout(control) {
+  // On macOS the inactive panel needs an active owner to return focus after the popout closes.
+  if (process.platform === 'darwin') await control.command('focusMainWindow', 'body')
   const panelWindow = 'system-drag-panel'
   const readyCount = control.readyCount
   await control.command('showSystemDragPanel', 'body')

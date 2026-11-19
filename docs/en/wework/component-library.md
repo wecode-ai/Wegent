@@ -42,6 +42,8 @@ Find the existing component and Story before editing production callers. `compon
 
 Use `ActionMenu` for commands and `SelectField` for choosing a value. Use `SearchableSelect` for searching, grouping and multiple selection, while preserving domain request cancellation and permission filtering. Use `Switch`, `Checkbox` and `RadioGroup` for their corresponding settings. Page tabs use `TabsRoot`, `TabsList` and `TabsTab`; short setting choices use `SegmentedControl`.
 
+Use `activateSelected` when activating any single-select option starts a follow-up action. For example, choosing the current project again lets a task link to a different Issue in that project.
+
 Settings pages reuse `SettingsGroup` and `SettingsRow`. Controls serving the same purpose share dimensions, radii, selected and disabled states, and feedback. Containers express layout differences. Mobile targets are at least 44px; desktop density follows the design guide. Production text uses i18n.
 
 Forms compose the shared `Field`, `FieldLabel`, `FieldDescription` and `FieldError` parts with visible labels. Inputs and selects use full-width `default/outline` controls: 36px on desktop and 44px on mobile. `MenuSelect field` requires a `label` and uses the same composition; settings rows and toolbars keep `dense/plain` with a stable `accessibleLabel`.
