@@ -1,3 +1,12 @@
+import {
+  useCallback,
+  useMemo,
+  useSyncExternalStore,
+  type Dispatch,
+  type SetStateAction,
+} from 'react'
+import { useDOMEvent, useWindowEvent } from '@wegent/collaboration/dom-events'
+import { LOCAL_CONNECTOR_AUTH_CHANGED_EVENT } from '@/api/local/localConnectorAuthEvents'
 import { isGithubCliTarget } from '@/api/local/githubCli'
 import {
   localConnectorAuthHealth,
@@ -30,9 +39,9 @@ export function createPluginConnectorHealthState(key: string) {
   }
   const refresh = () => {
     const latest = input
-    if (!latest || !observers.size) return
+    if (!latest || !observers.size) return Promise.resolve(null)
     const read = ++request
-    if (latest.busy) return
+    if (latest.busy) return Promise.resolve(null)
     const detail = latest.detail
     const pluginKey = detail?.raw.spec.source.pluginKey ?? ''
     const marketplaceId =
@@ -44,10 +53,10 @@ export function createPluginConnectorHealthState(key: string) {
     if (!connectors.length) {
       if (Object.keys(snapshot.states).length || snapshot.error)
         publish({ states: {}, error: null })
-      return
+      return Promise.resolve(null)
     }
     const version = generation
-    void Promise.all(
+    return Promise.all(
       connectors.map(async ({ connector, target }) => {
         try {
           const health = await localConnectorAuthHealth(target)
@@ -73,7 +82,7 @@ export function createPluginConnectorHealthState(key: string) {
         }
       })
     ).then(entries => {
-      if (!observers.size || generation !== version || read !== request) return
+      if (!observers.size || generation !== version || read !== request) return null
       publish({
         states: Object.fromEntries(
           entries.flatMap(([slug, state]) => {
@@ -83,6 +92,10 @@ export function createPluginConnectorHealthState(key: string) {
         ),
         error: entries.find(([, , error]) => error)?.[2] ?? null,
       })
+      return {
+        isCurrent: () =>
+          observers.size > 0 && generation === version && read === request && !input?.busy,
+      }
     })
   }
   return {
@@ -144,4 +157,43 @@ export function pluginConnectorActionError(
   return healthError && detailId !== null
     ? { pluginId: detailId, message: healthError, source: 'auth-health' as const }
     : null
+}
+
+interface PluginConnectorActionFailure {
+  pluginId: string | number
+  message: string
+  source?: 'detail-read' | 'auth-health'
+}
+
+/** Only a newly admitted explicit health read can retire the error it observed. */
+export function usePluginConnectorHealth(
+  input: HealthInput & {
+    scope: readonly unknown[]
+    actionError: PluginConnectorActionFailure | null
+    setActionError: Dispatch<SetStateAction<PluginConnectorActionFailure | null>>
+    captureScope(): () => boolean
+  }
+) {
+  const key = JSON.stringify(input.scope)
+  const source = useMemo(() => createPluginConnectorHealthState(key), [key])
+  const observation = useMemo(
+    () => ({ detail: input.detail, t: input.t, revision: input.revision, busy: input.busy }),
+    [input.detail, input.t, input.revision, input.busy]
+  )
+  const subscribe = useCallback(
+    (notify: () => void) => source.subscribe(observation, notify),
+    [source, observation]
+  )
+  const snapshot = useSyncExternalStore(subscribe, source.getSnapshot, source.getSnapshot)
+  const refresh = () => {
+    const observedError = input.actionError
+    const isCurrent = input.captureScope()
+    void source.refresh().then(receipt => {
+      if (!receipt?.isCurrent() || !isCurrent() || observedError?.source === 'detail-read') return
+      input.setActionError(current => (current === observedError ? null : current))
+    })
+  }
+  useWindowEvent('focus', refresh)
+  useDOMEvent('window', LOCAL_CONNECTOR_AUTH_CHANGED_EVENT, refresh)
+  return { source, snapshot }
 }

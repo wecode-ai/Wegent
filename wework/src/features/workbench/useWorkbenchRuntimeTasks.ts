@@ -162,9 +162,13 @@ export function useWorkbenchRuntimeTasks({
           : executorClient.runtime.getRuntimeTranscript(request)
       return threadOnly
         ? readRuntimeThreadConversation(read, address, requestOptions)
-        : synchronizeRuntimeConversation(read, address, { ...requestOptions, isolated })
+        : synchronizeRuntimeConversation(read, address, {
+            ...requestOptions,
+            isolated,
+            authorityScope: lifecycleStore.notificationScope,
+          })
     },
-    [executorClient]
+    [executorClient, lifecycleStore]
   )
 
   const searchRuntimeTranscriptForPane = useCallback(

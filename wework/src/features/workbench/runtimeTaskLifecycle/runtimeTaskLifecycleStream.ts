@@ -1,3 +1,4 @@
+import { hasRuntimeTranscriptAuthority } from '../runtimeConversationCacheStore'
 import { synchronizeRuntimeConversation } from '../runtimeConversationSynchronization'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import { syncRuntimeGoal } from '@/features/workbench/runtimeTaskLifecycle/goalSynchronization'
@@ -8,7 +9,6 @@ import {
 import {
   beginRuntimeGoalSnapshot,
   getRuntimeConversationQueuedMessages,
-  getRuntimeConversationTurns,
   isRuntimeGoalSnapshotCurrent,
   reconcileRuntimeConversationQueueAfterTransportReplacement,
   runtimeConversationKey,
@@ -183,6 +183,7 @@ export function createRuntimeTaskLifecycleStream(store: RuntimeTaskLifecycleStor
           (request, options) => executorClient.runtime.getRuntimeTranscript(request, options),
           address,
           {
+            authorityScope: store.notificationScope,
             limit: RECOVERY_PAGE_SIZE,
             signal: reads.signal,
             ...(queriedClientUserMessageIds.length
@@ -392,15 +393,10 @@ export function createRuntimeTaskLifecycleStream(store: RuntimeTaskLifecycleStor
               })
           })
       }
-      // A cached terminal snapshot can predate the native completion. Only skip
-      // history repair when its outcome agrees with the authoritative event.
-      const terminal = getRuntimeConversationTurns(address).find(turn => turn.id === terminalTurnId)
+      // A terminal task and live assistant body do not prove native history completeness.
       if (
         hasAuthoritativeTask &&
-        terminal &&
-        (outcome === 'succeeded'
-          ? ['done', 'completed'].includes(terminal.status)
-          : terminal.status === outcome)
+        hasRuntimeTranscriptAuthority(address, terminalTurnId, outcome, store.notificationScope)
       )
         return
       try {
@@ -408,6 +404,7 @@ export function createRuntimeTaskLifecycleStream(store: RuntimeTaskLifecycleStor
           (request, options) => executorClient.runtime.getRuntimeTranscript(request, options),
           address,
           {
+            authorityScope: store.notificationScope,
             limit: RECOVERY_PAGE_SIZE,
             signal: reads.signal,
           }

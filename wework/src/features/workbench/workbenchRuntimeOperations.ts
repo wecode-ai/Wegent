@@ -19,11 +19,16 @@ import {
   reconcileRuntimeConversationSnapshot,
   beginRuntimeGoalSnapshot,
   getRuntimeConversationMetadata,
+  getRuntimeConversationMessages,
+  getRuntimeConversationQueuedMessages,
   isRuntimeGoalSnapshotCurrent,
 } from './runtimeConversationCache'
 import { syncRuntimeGoal } from './runtimeTaskLifecycle/goalSynchronization'
 import { getRuntimeConversationQueueController } from './runtimeConversationQueueController'
-import { logRuntimeQueueStage } from './runtimeQueueDiagnostics'
+import {
+  logRuntimeQueueStage,
+  runtimeMessagePresentationDiagnostic,
+} from './runtimeQueueDiagnostics'
 import { notifyMainRuntimeWorkChanged } from '@/desktop/runtimeWorkSync'
 import { recordPluginUsageFromInput } from '@/features/plugins/pluginTrial'
 const RUNTIME_TASK_SETTLE_SYNC_DELAYS_MS = [0, 250, 500, 1000, 2000, 3000] as const
@@ -120,7 +125,28 @@ export function createWorkbenchRuntimeOperations({
     settleCanonicalRuntimeGuidance: (
       address: RuntimeTaskAddress,
       payload: Parameters<typeof settleRuntimeConversationGuidance>[1]
-    ) => settleRuntimeConversationGuidance(address, payload),
+    ) => {
+      const queued = getRuntimeConversationQueuedMessages(address).find(
+        message => message.id === payload.clientGuidanceId
+      )
+      const previous = getRuntimeConversationMessages(address).find(
+        message => message.id === payload.clientGuidanceId
+      )
+      const settled = settleRuntimeConversationGuidance(address, payload)
+      logRuntimeQueueStage(address, 'guidance-applied-presentation', {
+        messageId: payload.clientGuidanceId ?? null,
+        turnId: payload.subtaskId ?? null,
+        queuedMessagePresent: Boolean(queued),
+        previousMessagePresent: Boolean(previous),
+        payload: runtimeMessagePresentationDiagnostic(payload.message),
+        queued: runtimeMessagePresentationDiagnostic(queued?.content),
+        previous: runtimeMessagePresentationDiagnostic(previous?.content),
+        settled: runtimeMessagePresentationDiagnostic(settled?.content),
+        queuedAttachmentCount: queued?.attachments?.length ?? 0,
+        settledAttachmentCount: settled?.attachments?.length ?? 0,
+      })
+      return settled
+    },
     syncRuntimeTaskSnapshot: (address: RuntimeTaskAddress) => {
       const expectedLifecycle = lifecycleStore.getTask(address)
       void refreshRuntimeTask(address)

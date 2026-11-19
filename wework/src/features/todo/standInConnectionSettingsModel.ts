@@ -136,10 +136,8 @@ export function createConnectionSettingsModel(
     },
     setView(next: string | null) {
       if (next === view) return
-      const wasObserved = Boolean(stopCatalog)
       view = next
       observeCatalog()
-      if (wasObserved && view !== 'time') reload()
       publish()
     },
     setScheduleDirty(dirty: boolean) {

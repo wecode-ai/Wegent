@@ -127,6 +127,32 @@ export function createConversationScrollState(currentScrollKey: string | null) {
     readerState
   )
   const { captureUserViewportAnchor, restoreReaderPositionFromLayout } = reader
+  let historyLayoutSamples = 0
+  const traceHistoryLayout = (phase: 'prepare' | 'captured' | 'layout') => {
+    if (!historyLayoutSamples) return
+    historyLayoutSamples--
+    const viewport = scrollRef.current
+    const anchor = readerState.anchor
+    const item = anchor?.element.closest<HTMLElement>(
+      '[data-runtime-item-id], [data-processing-block-id]'
+    )
+    console.debug('[Wework] History prepend layout', {
+      phase,
+      mode: state.mode,
+      owned: owned(),
+      anchorItemId: anchor?.itemId ?? null,
+      anchorConnected: anchor?.element.isConnected ?? false,
+      anchorOffset: anchor?.offsetFromScrollerTop ?? null,
+      anchorTextOffset: anchor?.textOffset ?? null,
+      itemTop:
+        item && viewport
+          ? item.getBoundingClientRect().top - viewport.getBoundingClientRect().top
+          : null,
+      scrollTop: viewport?.scrollTop ?? null,
+      scrollHeight: viewport?.scrollHeight ?? null,
+      clientHeight: viewport?.clientHeight ?? null,
+    })
+  }
   let lastSnapshot: { key: string | null; snapshot: ConversationScrollSnapshot } | null = null
   let restoring: ConversationScrollSnapshot | null = null
   let restoreNeedsDistance = false
@@ -314,6 +340,7 @@ export function createConversationScrollState(currentScrollKey: string | null) {
       restoreConversationAnchor(viewport, snapshot)
     } else if (state.mode === 'read') restoreReaderPositionFromLayout()
     else follow()
+    traceHistoryLayout('layout')
   }
   const handleVirtualLayoutChange = () => {
     if (!owned()) return
@@ -338,10 +365,13 @@ export function createConversationScrollState(currentScrollKey: string | null) {
   }
   const preserveUserMessagePosition = preserveScrollPositionForNextLayout
   const prepareForHistoryPrepend = () => {
+    historyLayoutSamples = 8
+    traceHistoryLayout('prepare')
     if (!owned()) return
     // Prefetching a short initial page must retain live following. A reader already
     // browsing history owns a semantic anchor, including growth inside one turn.
     if (state.mode === 'read') preserveScrollPositionForNextLayout()
+    traceHistoryLayout('captured')
   }
   const finishNavigation = () => {
     if (!owned()) return

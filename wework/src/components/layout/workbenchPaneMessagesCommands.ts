@@ -1,3 +1,7 @@
+import {
+  logRuntimeQueueStage,
+  runtimeMessagePresentationDiagnostic,
+} from '@/features/workbench/runtimeQueueDiagnostics'
 import { pendingRequestUserInputPayload } from './requestUserInputOverlay'
 
 import i18n from '@/i18n'
@@ -636,6 +640,12 @@ export function createPaneMessagesCommands(sessionOwner: PaneCommandContext) {
       const messageAttachments = queuedMessage.attachments ?? []
       const attachmentIds = remoteAttachmentIds(messageAttachments)
       const attachments = localRuntimeAttachments(messageAttachments)
+      logRuntimeQueueStage(currentRuntimeTask, 'guidance-request-presentation', {
+        messageId: id,
+        content: runtimeMessagePresentationDiagnostic(queuedMessage.content),
+        displayContent: runtimeMessagePresentationDiagnostic(queuedMessage.displayContent),
+        attachmentCount: messageAttachments.length,
+      })
       const guidanceRequest = sendRuntimePaneGuidance({
         address: currentRuntimeTask,
         message: queuedMessage.content,

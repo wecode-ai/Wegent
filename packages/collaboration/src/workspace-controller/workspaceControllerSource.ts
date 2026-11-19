@@ -46,8 +46,21 @@ const unavailableCollaborationWorkspaceControllerCommands: CollaborationWorkspac
 
 export function createWorkspaceControllerSource(initial: CollaborationWorkspaceControllerOptions) {
   const api = initial.api
+  const settingsProject =
+    initial.initialProject &&
+    api &&
+    initial.loadProjectOnLocation !== false &&
+    initial.location.view === 'manage' &&
+    initial.initialProject.id === initial.location.projectId
+      ? initial.initialProject
+      : null
   let state: CollaborationWorkspaceControllerState = initial.initialProject
-    ? { ...initialCollaborationWorkspaceControllerState, projects: [initial.initialProject] }
+    ? {
+        ...initialCollaborationWorkspaceControllerState,
+        projects: [initial.initialProject],
+        project: settingsProject,
+        loading: !settingsProject,
+      }
     : initialCollaborationWorkspaceControllerState
   let observation = initial
   const listeners = new Set<() => void>()

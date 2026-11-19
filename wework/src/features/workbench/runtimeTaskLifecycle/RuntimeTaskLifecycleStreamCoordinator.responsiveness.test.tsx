@@ -108,7 +108,9 @@ test('a complete live turn and authoritative terminal task do not read history a
   const store = new RuntimeTaskLifecycleStore('complete-live-turn')
   store.syncRuntimeWork(work(true))
   store.turnStarted(address('fast'), 'fast-turn')
-  await synchronizeRuntimeConversation(async () => transcript('fast'), address('fast'))
+  await synchronizeRuntimeConversation(async () => transcript('fast'), address('fast'), {
+    authorityScope: store.notificationScope,
+  })
   let handlers: ChatStreamHandlers = {}
   const getRuntimeTranscript = vi.fn()
   const services = {

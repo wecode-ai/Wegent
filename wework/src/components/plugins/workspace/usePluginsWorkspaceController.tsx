@@ -1,5 +1,4 @@
 import { createPluginDetailNavigation } from './pluginWorkspaceNavigation'
-import { LOCAL_CONNECTOR_AUTH_CHANGED_EVENT } from '@/api/local/localConnectorAuthEvents'
 import { useInstalledPluginDetail } from '../hooks/useInstalledPluginDetail'
 import { useMarketplacePluginDetail } from '../hooks/useMarketplacePluginDetail'
 import { useOpenAiPluginCatalog } from '@/features/plugins/useOpenAiPluginCatalog'
@@ -9,11 +8,10 @@ import { createAsyncResource, getIdleResourceSnapshot } from '@wegent/chat-core/
 import type { PluginsWorkspaceProps } from './pluginWorkspaceTypes'
 import { createPluginMarketplaceRowLabels } from './pluginMarketplaceLabels'
 import { useTranslation } from '@/hooks/useTranslation'
-import { useDOMEvent, useWindowEvent } from '@wegent/collaboration/dom-events'
 import { createPluginWorkspaceOperations } from '../workspace/pluginWorkspaceOperations'
 import { createPluginMarketplaceViewport } from '../workspace/pluginMarketplaceViewport'
 import {
-  createPluginConnectorHealthState,
+  usePluginConnectorHealth,
   pluginConnectorActionError,
 } from '../workspace/pluginConnectorHealthState'
 import { usePluginWorkspacePublishing } from '../workspace/usePluginWorkspacePublishing'
@@ -547,37 +545,23 @@ export function usePluginsWorkspaceController({
     [selectedPlugin, selectedMarketplacePlugin, selectedMarketplacePluginDetail, installedPlugins]
   )
   const healthDetailId = selectedMarketplacePluginId ?? selectedPluginId
-  const healthScope = JSON.stringify([
-    marketplaceCacheKeyValue,
-    currentDeviceId,
-    healthDetailId,
-    detailPlugin?.raw.spec.source.marketplace,
-    detailPlugin?.raw.spec.source.pluginKey,
-  ])
-  const connectorHealth = useMemo(
-    () => createPluginConnectorHealthState(healthScope),
-    [healthScope]
-  )
-  const healthInput = useMemo(
-    () => ({
-      detail: detailPlugin,
-      t,
-      revision: connectorAuthRevision,
-      busy: connectorActionSlug !== null,
-    }),
-    [detailPlugin, t, connectorAuthRevision, connectorActionSlug]
-  )
-  const subscribeHealth = useCallback(
-    (listener: () => void) => connectorHealth.subscribe(healthInput, listener),
-    [connectorHealth, healthInput]
-  )
-  const { states: localConnectorAuthBySlug, error: connectorHealthError } = useSyncExternalStore(
-    subscribeHealth,
-    connectorHealth.getSnapshot,
-    connectorHealth.getSnapshot
-  )
-  useWindowEvent('focus', connectorHealth.refresh)
-  useDOMEvent('window', LOCAL_CONNECTOR_AUTH_CHANGED_EVENT, connectorHealth.refresh)
+  const { source: connectorHealth, snapshot: connectorHealthSnapshot } = usePluginConnectorHealth({
+    scope: [
+      marketplaceCacheKeyValue,
+      currentDeviceId,
+      healthDetailId,
+      detailPlugin?.raw.spec.source.marketplace,
+      detailPlugin?.raw.spec.source.pluginKey,
+    ],
+    detail: detailPlugin,
+    t,
+    revision: connectorAuthRevision,
+    busy: connectorActionSlug !== null,
+    actionError: localPluginDetailActionError,
+    setActionError: setPluginDetailActionError,
+    captureScope: catalog.captureScope,
+  })
+  const { states: localConnectorAuthBySlug, error: connectorHealthError } = connectorHealthSnapshot
   const { togglePluginComponent, changePluginAutoUpdatePolicy, uninstallInstalledPlugin } =
     usePluginInstalledOperations({
       installedPlugins,
