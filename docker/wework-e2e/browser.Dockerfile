@@ -32,8 +32,3 @@ RUN node --version \
     \( -name chrome -o -name headless_shell \) \
     -perm -111 -print -quit \
   | grep -q .
-
-# Provision the DingTalk HTTPS fixture before the platform shards start.
-RUN apt-get -o APT::Update::Error-Mode=any update \
-  && apt-get install --yes --no-install-recommends iproute2 ca-certificates openssl \
-  && rm -rf /var/lib/apt/lists/*
