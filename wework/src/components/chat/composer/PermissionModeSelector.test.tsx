@@ -127,7 +127,8 @@ describe('PermissionModeSelector', () => {
     expect(onCommandApprovalChange).toHaveBeenCalledWith('ai')
   })
 
-  test('reports confirmation of the current command approval when enabling full access', () => {
+  test('reports confirmation of the current command approval when enabling full access', async () => {
+    const user = userEvent.setup()
     const onChange = vi.fn()
     render(
       <PermissionModeSelector
@@ -138,9 +139,9 @@ describe('PermissionModeSelector', () => {
       />
     )
 
-    fireEvent.click(screen.getByTestId('permission-mode-menu-button'))
-    fireEvent.click(screen.getByTestId('permission-mode-full-access'))
-    fireEvent.click(screen.getByTestId('full-access-confirm-submit'))
+    await user.click(screen.getByTestId('permission-mode-menu-button'))
+    await user.click(screen.getByTestId('permission-mode-full-access'))
+    await user.click(screen.getByTestId('full-access-confirm-submit'))
 
     expect(onChange).toHaveBeenCalledWith('full-access', 'manual')
   })

@@ -116,7 +116,7 @@ export function ReasoningSlider({
             onFocus={clear}
             onClick={() => choose(step.value)}
             style={{ left: steps.length < 2 ? '50%' : (position / (steps.length - 1)) * 100 + '%' }}
-            className="absolute top-1/2 z-10 h-8 w-8 -translate-x-1/2 -translate-y-1/2 rounded-full focus-visible:outline-solid focus-visible:outline-2 focus-visible:outline-focus"
+            className="absolute top-1/2 z-10 h-8 w-8 -translate-x-1/2 -translate-y-1/2 rounded-full focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus"
           >
             <span
               aria-hidden="true"
