@@ -2197,7 +2197,7 @@ function ArchiveRemoteRuntimeTaskProbe() {
   )
 }
 
-function RuntimeOpenProbe() {
+function RuntimeOpenProbe({ runtime }: { runtime?: RuntimeTaskAddress['runtime'] } = {}) {
   const { workbench, paneSession, currentRuntimeTask } = useWorkbenchProbeSession()
   const taskLifecycle = useRuntimeTaskLifecycle(currentRuntimeTask)
   const [fileChangesDiff, setFileChangesDiff] = useState('')
@@ -2338,6 +2338,7 @@ function RuntimeOpenProbe() {
             deviceId: 'device-1',
             workspacePath: '/workspace/project-alpha',
             taskId: 'runtime-a',
+            ...(runtime ? { runtime } : {}),
           })
         }
       >
@@ -14861,7 +14862,7 @@ describe('WorkbenchProvider runtime tasks', () => {
       } as unknown as WorkbenchServices['chatStream'],
     })
 
-    renderWorkbench(<RuntimeOpenProbe />, services)
+    renderWorkbench(<RuntimeOpenProbe runtime="claude_code" />, services)
 
     await userEvent.click(await screen.findByText('open runtime a'))
     await waitFor(() =>
@@ -17215,6 +17216,7 @@ describe('WorkbenchProvider runtime tasks', () => {
         deviceId: 'device-1',
         workspacePath: '/workspace/project-alpha',
         taskId: 'runtime-a',
+        runtime: 'claude_code',
       },
       clientUserMessageId: expect.any(String),
       message: '继续修',

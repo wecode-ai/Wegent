@@ -14,6 +14,7 @@ interface WorkItemComposerGuideProps {
   project?: CloudProject | null
   item?: CloudLoopItem | null
   api?: ProjectSpaceApi
+  taskOwnerKey?: string | null
   currentTask?: RuntimeTaskAddress | null
   goalPresent?: boolean
   integrated?: boolean
@@ -43,6 +44,7 @@ function WorkItemComposerGuideContent({
   item,
   api,
   currentTask,
+  taskOwnerKey,
   goalPresent = false,
   integrated = false,
   toolbar = false,
@@ -57,9 +59,9 @@ function WorkItemComposerGuideContent({
   const containerRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const canChangeProject = Boolean(onSelectProject)
-  const pickerStoreKey = currentTask
-    ? `task:${currentTask.deviceId}:${currentTask.taskId}`
-    : (item?.id ?? null)
+  const pickerStoreKey =
+    taskOwnerKey ??
+    (currentTask ? `task:${currentTask.deviceId}:${currentTask.taskId}` : (item?.id ?? null))
   const scope = project ? projectKey(project) : ''
   const itemId = item?.id
   const source = useMemo(
@@ -73,8 +75,18 @@ function WorkItemComposerGuideContent({
         projectId: project?.id,
         projectStore: project?.project_store,
         taskId: currentTask?.taskId,
+        deviceId: currentTask?.deviceId,
+        canChangeProject,
       }),
-    [source, refreshKey, project?.id, project?.project_store, currentTask?.taskId]
+    [
+      source,
+      refreshKey,
+      project?.id,
+      project?.project_store,
+      currentTask?.taskId,
+      currentTask?.deviceId,
+      canChangeProject,
+    ]
   )
   const {
     open,

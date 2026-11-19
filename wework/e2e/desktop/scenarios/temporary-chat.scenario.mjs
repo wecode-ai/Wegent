@@ -368,7 +368,13 @@ async function waitForRuntimeSource(control, taskId, timeoutMs) {
   while (Date.now() - startedAt < timeoutMs) {
     const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
     lastTask = snapshot.workbench?.currentRuntimeTask ?? null
-    if (lastTask?.taskId === taskId && lastTask.hasRuntimeHandle) return lastTask
+    if (
+      lastTask?.taskId === taskId &&
+      lastTask.hasRuntimeHandle &&
+      typeof lastTask.workspacePath === 'string' &&
+      lastTask.workspacePath.length > 0
+    )
+      return lastTask
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error(

@@ -1,3 +1,5 @@
+import { runtimeTasksShareOwner } from '@/lib/workbench-device'
+import { useRuntimeTaskOwnerKey } from '@/features/workbench/useRuntimeTaskOwnerKey'
 import { useMemo, useState, useSyncExternalStore } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useOptionalWorkspaceTabs } from '@/features/workspace-tabs/workspaceTabsContextValue'
@@ -26,6 +28,8 @@ export function useWorkbenchCloudProjectContext(options: UseWorkbenchCloudProjec
   const { t } = useTranslation('common')
   const tabs = useOptionalWorkspaceTabs()
   const { active, currentRuntimeTask, paneKey, services, userId } = options
+  const taskOwnerKey = useRuntimeTaskOwnerKey(currentRuntimeTask, options.devices ?? [])
+  const ownerKey = taskOwnerKey ?? paneKey
   const local = services?.projectSpaceApis?.local,
     cloud = services?.projectSpaceApis?.cloud,
     delivery = services?.deliveryApi
@@ -38,6 +42,7 @@ export function useWorkbenchCloudProjectContext(options: UseWorkbenchCloudProjec
   const cloudProjects = useProjectSpaceProjects(active, apis, userId)
   const observation: CloudProjectContextObservation = {
     ...options,
+    taskOwnerKey,
     projects: cloudProjects,
     t,
     tabs,
@@ -45,13 +50,13 @@ export function useWorkbenchCloudProjectContext(options: UseWorkbenchCloudProjec
   const registry = workbenchCloudProjectPendingBindings(userId, services)
   const [owner, setOwner] = useState(() => ({
     registry,
-    paneKey,
+    ownerKey,
     source: createWorkbenchCloudProjectContextSource(observation, registry),
   }))
-  if (owner.registry !== registry || owner.paneKey !== paneKey)
+  if (owner.registry !== registry || owner.ownerKey !== ownerKey)
     setOwner({
       registry,
-      paneKey,
+      ownerKey,
       source: createWorkbenchCloudProjectContextSource(observation, registry),
     })
   const source = owner.source
@@ -60,7 +65,7 @@ export function useWorkbenchCloudProjectContext(options: UseWorkbenchCloudProjec
     source.getSnapshot,
     source.getSnapshot
   )
-  const sameTask = snapshot.taskScope === runtimeContextIdentity(currentRuntimeTask)
+  const sameTask = snapshot.taskScope === runtimeContextIdentity(currentRuntimeTask, taskOwnerKey)
   const boundCloudProject = sameTask ? snapshot.boundCloudProject : null
   const boundCloudItem = sameTask ? snapshot.boundCloudItem : null
   const pending = registry.get(currentRuntimeTask, paneKey)
@@ -116,7 +121,17 @@ export function useWorkbenchCloudProjectContext(options: UseWorkbenchCloudProjec
     activeDeliveryItem,
     boundCloudItem,
     boundCloudProject,
-    boundRuntimeTaskAddress: sameTask ? snapshot.boundRuntimeTaskAddress : null,
+    boundRuntimeTaskAddress:
+      sameTask &&
+      currentRuntimeTask &&
+      snapshot.boundRuntimeTaskAddress &&
+      runtimeTasksShareOwner(
+        snapshot.boundRuntimeTaskAddress,
+        currentRuntimeTask,
+        options.devices ?? []
+      )
+        ? { ...snapshot.boundRuntimeTaskAddress, deviceId: currentRuntimeTask.deviceId }
+        : null,
     boundProjectSpaceApi: boundCloudProject
       ? source.projectSpaceApiFor(boundCloudProject)
       : undefined,

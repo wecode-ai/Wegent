@@ -11,6 +11,8 @@ interface GuideInput {
   projectId?: string | number
   projectStore?: string
   taskId?: string
+  deviceId?: string
+  canChangeProject?: boolean
 }
 let nextTraceId = 0
 
@@ -42,12 +44,16 @@ export function createWorkItemGuideSource(
       projectStore: input?.projectStore ?? null,
       itemId: itemId ?? null,
       taskId: input?.taskId ?? null,
+      deviceId: input?.deviceId ?? null,
+      pickerStoreKey: pickerKey,
+      canChangeProject: Boolean(input?.canChangeProject),
+      menuOpen: snapshot.open && Boolean(input?.canChangeProject),
     }
     const signature = JSON.stringify(state)
     if (event === 'state' && signature === previousTrace) return
     if (event === 'state') previousTrace = signature
     if (event === 'mounted') previousTrace = ''
-    console.debug('[Wework] Project picker lifecycle', { event, traceId, ...state })
+    console.debug('[Wework] Project picker lifecycle', JSON.stringify({ event, traceId, ...state }))
   }
   const publish = (patch: Partial<typeof snapshot>) => {
     snapshot = { ...snapshot, ...patch }

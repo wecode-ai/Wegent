@@ -47,6 +47,7 @@ export function createRuntimeTaskRouteCoordinator(read: () => RouteInput) {
   let scheduled = false
   let generation = 0
   let lastReceipt: string | undefined
+  let settledLocation: string | undefined
   let lastTray: RouteTrayInput | undefined
   const synchronize = () => {
     const input = read()
@@ -61,12 +62,17 @@ export function createRuntimeTaskRouteCoordinator(read: () => RouteInput) {
       lastTray = input.tray
     }
     const location = locationKey()
+    if (settledLocation === location) return
+    settledLocation = undefined
+    if (input.state.isBootstrapping) return
     const next = resolveRuntimeTaskRoute(input)
-    const receipt = JSON.stringify([location, next])
     if (!next) {
+      // Discovery refreshes must not replay an already resolved URL through an older alias.
+      settledLocation = location
       lastReceipt = undefined
       return
     }
+    const receipt = JSON.stringify([location, next])
     if (receipt === lastReceipt || locationKey() !== location) return
     lastReceipt = receipt
     void input.openRuntimeTask(next)
@@ -77,6 +83,7 @@ export function createRuntimeTaskRouteCoordinator(read: () => RouteInput) {
     if (listening) window.removeEventListener('popstate', synchronize)
     listening = false
     lastReceipt = undefined
+    settledLocation = undefined
     lastTray = undefined
   }
   return {

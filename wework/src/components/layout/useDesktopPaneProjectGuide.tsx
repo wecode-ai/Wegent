@@ -1,3 +1,4 @@
+import { useRuntimeTaskOwnerKey } from '@/features/workbench/useRuntimeTaskOwnerKey'
 import { useMemo } from 'react'
 import { WorkItemComposerGuide } from '@/features/todo/WorkItemComposerGuide'
 import {
@@ -12,6 +13,10 @@ export function useDesktopPaneProjectGuide(
   paneContext: ReturnType<typeof useDesktopPaneContext>,
   panelActions: ReturnType<typeof useDesktopPanePanelActions>
 ) {
+  const taskOwnerKey = useRuntimeTaskOwnerKey(
+    paneContext.currentRuntimeTask,
+    paneContext.state.devices
+  )
   const defaultWorkItemPreviewProject = useMemo<CloudProject>(
     () => ({
       id: DEFAULT_WORK_ITEM_PROJECT_ID,
@@ -45,46 +50,37 @@ export function useDesktopPaneProjectGuide(
           ? []
           : [currentWorkItemGuideProject]
         : []
-  const projectSpaceContext =
-    paneContext.currentProjectSpaceRuntimeTask &&
-    paneContext.boundCloudProject &&
-    paneContext.boundCloudItem ? (
-      <WorkItemComposerGuide
-        integrated
-        project={paneContext.boundCloudProject}
-        item={paneContext.boundCloudItem}
-        api={paneContext.boundProjectSpaceApi}
-        currentTask={paneContext.currentProjectSpaceRuntimeTask}
-        projects={availableWorkItemProjects}
-        onSelectProject={paneContext.handleSelectCloudProject}
-        onRemoveProject={paneContext.removeCloudProjectContext}
-        goalPresent={Boolean(
-          paneContext.paneSession.goal && !paneContext.paneSession.goalDraftActive
-        )}
-        refreshKey={`${paneContext.paneSession.status.taskExecution.running}:${paneContext.paneSession.status.taskExecution.status ?? ''}`}
-        onOpen={() => panelActions.openRightPanelTab('work-item')}
-        onOpenBoard={paneContext.openBoundProjectSpaceTask}
-      />
-    ) : paneContext.currentProjectSpaceRuntimeTask && currentWorkItemGuideProject ? (
-      <WorkItemComposerGuide
-        integrated
-        project={currentWorkItemGuideProject}
-        projects={availableWorkItemProjects}
-        onSelectProject={paneContext.handleSelectCloudProject}
-        onRemoveProject={paneContext.removeCloudProjectContext}
-        goalPresent={Boolean(
-          paneContext.paneSession.goal && !paneContext.paneSession.goalDraftActive
-        )}
-      />
-    ) : !paneContext.currentProjectSpaceRuntimeTask && currentWorkItemGuideProject ? (
-      <WorkItemComposerGuide
-        integrated
-        toolbar
-        project={currentWorkItemGuideProject}
-        projects={availableWorkItemProjects}
-        onSelectProject={paneContext.handleSelectCloudProject}
-        onRemoveProject={paneContext.clearPendingProjectContext}
-      />
-    ) : null
+  const projectSpaceContext = currentWorkItemGuideProject ? (
+    <WorkItemComposerGuide
+      taskOwnerKey={taskOwnerKey}
+      integrated
+      toolbar={!paneContext.currentProjectSpaceRuntimeTask}
+      project={currentWorkItemGuideProject}
+      item={paneContext.boundCloudItem}
+      api={paneContext.boundProjectSpaceApi}
+      currentTask={paneContext.currentProjectSpaceRuntimeTask}
+      projects={availableWorkItemProjects}
+      onSelectProject={paneContext.handleSelectCloudProject}
+      onRemoveProject={
+        paneContext.currentProjectSpaceRuntimeTask
+          ? paneContext.removeCloudProjectContext
+          : paneContext.clearPendingProjectContext
+      }
+      goalPresent={Boolean(
+        paneContext.currentProjectSpaceRuntimeTask &&
+        paneContext.paneSession.goal &&
+        !paneContext.paneSession.goalDraftActive
+      )}
+      refreshKey={
+        paneContext.boundCloudItem
+          ? `${paneContext.paneSession.status.taskExecution.running}:${paneContext.paneSession.status.taskExecution.status ?? ''}`
+          : undefined
+      }
+      onOpen={
+        paneContext.boundCloudItem ? () => panelActions.openRightPanelTab('work-item') : undefined
+      }
+      onOpenBoard={paneContext.boundCloudItem ? paneContext.openBoundProjectSpaceTask : undefined}
+    />
+  ) : null
   return { projectSpaceContext, availableWorkItemProjects }
 }

@@ -1,3 +1,4 @@
+import { runtimeTasksShareOwner } from '@/lib/workbench-device'
 import type { ComposerCloudMentionCandidate } from '@/components/chat/composer/composerMentionCandidates'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import type { RuntimeTaskAddress, RuntimeProjectSpaceRef } from '@/types/api'
@@ -50,6 +51,7 @@ import type { WorkbenchCloudPendingBindings } from './workbenchCloudProjectPendi
 import { loadWorkbenchCloudMentions } from './workbenchCloudProjectMentions'
 
 export interface CloudProjectContextObservation extends UseWorkbenchCloudProjectContextOptions {
+  taskOwnerKey?: string | null
   projects: CloudProject[]
   t: ReturnType<typeof useTranslation>['t']
   tabs: WorkspaceTabsContextValue | null
@@ -107,7 +109,7 @@ export function createWorkbenchCloudProjectContextSource(
   let input = initial
   const pending = registry.get(initial.currentRuntimeTask, initial.paneKey)
   let snapshot: ContextSnapshot = {
-    taskScope: runtimeContextIdentity(initial.currentRuntimeTask),
+    taskScope: runtimeContextIdentity(initial.currentRuntimeTask, initial.taskOwnerKey),
     deliveryItem: null,
     boundCloudProject: null,
     boundCloudItem: null,
@@ -144,10 +146,14 @@ export function createWorkbenchCloudProjectContextSource(
     listeners.forEach(listener => listener())
   }
   const task = () => input.currentRuntimeTask
-  const current = (scope: string | null) =>
-    listeners.size > 0 && runtimeContextIdentity(task()) === scope
+  const contextIdentity = (address: RuntimeTaskAddress | null) =>
+    runtimeContextIdentity(
+      address,
+      runtimeTasksShareOwner(address, task(), input.devices ?? []) ? input.taskOwnerKey : undefined
+    )
+  const current = (scope: string | null) => listeners.size > 0 && contextIdentity(task()) === scope
   const matches = (address: RuntimeTaskAddress) =>
-    Boolean(task() && runtimeTaskKey(task()!) === runtimeTaskKey(address))
+    runtimeTasksShareOwner(task(), address, input.devices ?? [])
   const runtimeApi = () =>
     input.services?.workspaceRuntimePort
       ? createCloudProjectTaskRuntimeApi(input.services.workspaceRuntimePort)
@@ -215,7 +221,7 @@ export function createWorkbenchCloudProjectContextSource(
   }
   const resolve = async () => {
     const address = task()
-    const scope = runtimeContextIdentity(address)
+    const scope = contextIdentity(address)
     const revision = ++lookupRevision
     const valid = () => current(scope) && revision === lookupRevision && input.active
     if (!address || !input.active) return
@@ -242,7 +248,7 @@ export function createWorkbenchCloudProjectContextSource(
       for (let attempt = 0; attempt <= 50; attempt++) {
         if (!valid()) return
         try {
-          context = await find(runtimeTaskAddressForBinding(address, task()))
+          context = await find(runtimeTaskAddressForBinding(address, task(), input.devices))
           break
         } catch (error) {
           if (
@@ -322,13 +328,13 @@ export function createWorkbenchCloudProjectContextSource(
     const api = projectTaskRuntimeApiForProject(input.services, project)
     if (!api || (isDefaultWorkItemProject(project) && !value.item)) return
     binding = value
-    const scope = runtimeContextIdentity(address)
+    const scope = contextIdentity(address)
     const title =
       input.runtimeTaskTitle ||
       truncateRuntimeTaskTitle(value.description) ||
       input.t('workbench.untitled_task', '未命名任务')
     void registry
-      .bind(value, runtimeTaskAddressForBinding(address, task()), api, title)
+      .bind(value, runtimeTaskAddressForBinding(address, task(), input.devices), api, title)
       .catch(cause => {
         if (current(scope) && binding === value)
           publish({
@@ -385,7 +391,7 @@ export function createWorkbenchCloudProjectContextSource(
       })
   }
   const observe = () => {
-    const scope = runtimeContextIdentity(task())
+    const scope = contextIdentity(task())
     if (scope !== snapshot.taskScope) {
       lookupRevision++
       dialogRevision++
@@ -405,7 +411,7 @@ export function createWorkbenchCloudProjectContextSource(
         pendingTodoItem: pending?.item ?? null,
       })
     }
-    const keys = [input.active, scope, input.t]
+    const keys = [input.active, scope, task()?.deviceId, input.t]
     if (!lookupKeys || keys.some((value, index) => value !== lookupKeys![index])) {
       lookupKeys = keys
       void resolve()
@@ -474,7 +480,7 @@ export function createWorkbenchCloudProjectContextSource(
     }
     const api = projectTaskRuntimeApiForProject(input.services, project)
     if (!api) return
-    const scope = runtimeContextIdentity(address)
+    const scope = contextIdentity(address)
     const title =
       input.runtimeTaskTitle ||
       truncateRuntimeTaskTitle(input.runtimeTaskDescription) ||
@@ -483,11 +489,16 @@ export function createWorkbenchCloudProjectContextSource(
     publish({ taskBoardAssociation: request, todoBindingError: null })
     try {
       const linked = item
-        ? (await api.bindTask(item.id, runtimeTaskAddressForBinding(address, task()), title), item)
+        ? (await api.bindTask(
+            item.id,
+            runtimeTaskAddressForBinding(address, task(), input.devices),
+            title
+          ),
+          item)
         : (
             await api.trackProjectTask(
               project.id,
-              runtimeTaskAddressForBinding(address, task()),
+              runtimeTaskAddressForBinding(address, task(), input.devices),
               title,
               input.runtimeTaskDescription ?? ''
             )
@@ -514,7 +525,7 @@ export function createWorkbenchCloudProjectContextSource(
   }
   const prepare = (description: string): CloudSubmissionContext => {
     const address = task(),
-      scope = runtimeContextIdentity(address),
+      scope = contextIdentity(address),
       frame = input
     if (!current(scope)) throw new Error('Project-space submission context changed')
     let project = address ? snapshot.boundCloudProject : snapshot.pendingCloudProject
@@ -570,7 +581,7 @@ export function createWorkbenchCloudProjectContextSource(
         )
           registry.store({ ...selected, target: address }, selected)
         if (lateDefault && pendingAutoJoin === lateDefault) lateDefault.target = address
-        if (current(runtimeContextIdentity(task()))) {
+        if (current(contextIdentity(task()))) {
           autoJoin()
           bindPending()
         }
@@ -703,7 +714,7 @@ export function createWorkbenchCloudProjectContextSource(
       if (!project) return
       const api = projectTaskRuntimeApiForProject(input.services, project)
       if (!api) return
-      const scope = runtimeContextIdentity(address)
+      const scope = contextIdentity(address)
       void api
         .unbindCloudContext(address)
         .then(() => {

@@ -1,3 +1,5 @@
+import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import { updateRuntimeWorkProject, type RuntimeProjectUpdate } from '@/lib/runtime-project-update'
 import { stripAppBasePath } from '@/config/runtime'
 import { navigateTo, parseRuntimeTaskRoute } from '@/lib/navigation'
@@ -404,6 +406,18 @@ export function createWorkbenchDataRefreshSource(
       'runtimeWork',
       executorClient.runtime.listRuntimeWork(preferCached ? { preferCached: true } : undefined)
     )
+    const e2eConfig = getDesktopE2ERuntimeConfig()
+    if (e2eConfig.controlUrl && !e2eConfig.disabled) {
+      logRuntimeTaskCreateStage('local-work-snapshot-received', {
+        preferCached,
+        currentScope: isCurrent(),
+        revision,
+        currentRevision: workListRefreshRevision,
+        generation,
+        currentGeneration: runtimeLoadGeneration,
+        status: result.status,
+      })
+    }
     if (!isCurrent()) return
     if (revision !== workListRefreshRevision) {
       if (generation === runtimeLoadGeneration) return loadLocalRuntimeWork(false, isCurrent)

@@ -49,7 +49,13 @@ export interface ConversationScrollInput {
   onLoadTranscriptGap?: (gap: RuntimeTranscriptGap) => Promise<void> | void
   geometry: unknown
 }
+type ScrollConfiguration = Omit<
+  ConversationScrollInput,
+  'scrollRef' | 'externalScrollInteractionRef'
+>
 interface ScrollPorts {
+  scrollRef: ConversationScrollInput['scrollRef']
+  externalScrollInteractionRef: ConversationScrollInput['externalScrollInteractionRef']
   owner: { lease: symbol | null }
   contentRef: RefObject<HTMLDivElement | null>
   virtualizerRef: RefObject<ConversationVirtualizer | null>
@@ -67,7 +73,10 @@ interface ScrollSnapshot {
 }
 
 /** One actual transcript viewport owns follow intent, navigation, reader anchors and paging. */
-export function createConversationScrollState(currentScrollKey: string | null) {
+export function createConversationScrollState(
+  currentScrollKey: string | null,
+  initialInput: ScrollConfiguration
+) {
   let contentRef: ScrollPorts['contentRef'] = { current: null }
   let virtualizerRef: ScrollPorts['virtualizerRef'] = { current: null }
   let ownedVirtualizer: ConversationVirtualizer | null = null
@@ -743,7 +752,7 @@ export function createConversationScrollState(currentScrollKey: string | null) {
         })
       }
     },
-    bindContent(node: HTMLDivElement, next: ConversationScrollInput, ports: ScrollPorts) {
+    bindContent(node: HTMLDivElement, ports: ScrollPorts) {
       ;({ contentRef, virtualizerRef } = ports)
       contentRef.current = node
       const lease = Symbol('conversation-scroll-content')
@@ -753,7 +762,14 @@ export function createConversationScrollState(currentScrollKey: string | null) {
       contentLease = lease
       contentOwner = ports.owner
       contentOwner.lease = lease
-      commit(next, resumed)
+      commit(
+        {
+          ...(input ?? initialInput),
+          scrollRef: ports.scrollRef,
+          externalScrollInteractionRef: ports.externalScrollInteractionRef,
+        },
+        resumed
+      )
       return () => {
         if (contentLease !== lease) return
         contentLease = null

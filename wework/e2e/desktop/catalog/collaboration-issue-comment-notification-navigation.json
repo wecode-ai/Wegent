@@ -1,5 +1,0 @@
-{
-  "order": 67000,
-  "scenario": "./scenarios/collaboration-issue-comment-notification.scenario.mjs",
-  "scenarioOnly": true
-}

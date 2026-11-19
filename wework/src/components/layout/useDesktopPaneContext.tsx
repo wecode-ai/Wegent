@@ -222,6 +222,7 @@ export function useDesktopPaneContext({
   } = useWorkbenchCloudProjectContext({
     active: paneActive && workbenchVisible,
     currentRuntimeTask: currentProjectSpaceRuntimeTask,
+    devices: state.devices,
     currentProjectId: currentProject?.id,
     defaultProjectSpace,
     paneKey,

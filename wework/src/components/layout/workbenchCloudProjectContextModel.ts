@@ -1,3 +1,4 @@
+import { runtimeTasksShareOwner } from '@/lib/workbench-device'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
 import {
   isDefaultWorkItemProject,
@@ -7,6 +8,7 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { type LocalWorkItem } from '@/features/todo/todoModel'
 import { useTranslation } from '@/hooks/useTranslation'
 import type {
+  DeviceInfo,
   RuntimeAdditionalContext,
   RuntimeProjectSpaceRef,
   RuntimeTaskAddress,
@@ -32,6 +34,7 @@ export interface CloudSubmissionContext {
 export interface UseWorkbenchCloudProjectContextOptions {
   active: boolean
   currentRuntimeTask: RuntimeTaskAddress | null
+  devices?: DeviceInfo[]
   currentProjectId?: number
   defaultProjectSpace: RuntimeProjectSpaceRef | null
   paneKey: string
@@ -57,11 +60,10 @@ export function runtimeTaskKey(address: RuntimeTaskAddress): string {
 }
 export function runtimeTaskAddressForBinding(
   identity: RuntimeTaskAddress,
-  current: RuntimeTaskAddress | null
+  current: RuntimeTaskAddress | null,
+  devices: DeviceInfo[] = []
 ): RuntimeTaskAddress {
-  return current?.deviceId === identity.deviceId && current.taskId === identity.taskId
-    ? current
-    : identity
+  return runtimeTasksShareOwner(identity, current, devices) && current ? current : identity
 }
 export function executionAddressFromContext(
   task: RuntimeTaskAddress,
@@ -167,10 +169,13 @@ export function projectHasModelContext(
   if (!isDefaultWorkItemProject(project)) return true
   return Boolean(item)
 }
-export function runtimeContextIdentity(task: RuntimeTaskAddress | null) {
+export function runtimeContextIdentity(
+  task: RuntimeTaskAddress | null,
+  taskOwnerKey?: string | null
+) {
   return task
     ? JSON.stringify([
-        task.deviceId,
+        taskOwnerKey ?? task.deviceId,
         task.taskId,
         task.projectSession?.projectId,
         task.projectSession?.issueId,

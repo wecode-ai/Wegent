@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useSyncExternalStore } from 'react'
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { WorkbenchMessage } from '@wegent/chat-core/runtime-conversation'
 import { useDOMEvent, useWindowEvent, useElementGeometry } from '../dom-events'
 import type { ScrollableMessageAreaProps } from './scrollableMessageTypes'
@@ -52,12 +52,14 @@ export function useConversationScrollController(options: Options) {
   const virtualizerRef = useRef<ConversationVirtualizer | null>(null)
   const currentScrollKey = scrollPositionKey(conversationKey)
   const ports = useMemo(
-    () => ({ contentRef: contentNode, virtualizerRef, owner: { lease: null as symbol | null } }),
-    []
-  )
-  const resource = useMemo(
-    () => createConversationScrollState(currentScrollKey),
-    [currentScrollKey]
+    () => ({
+      contentRef: contentNode,
+      virtualizerRef,
+      scrollRef,
+      externalScrollInteractionRef,
+      owner: { lease: null as symbol | null },
+    }),
+    [scrollRef, externalScrollInteractionRef]
   )
   const geometryTargets = useMemo(() => [scrollRef, contentNode], [scrollRef])
   const geometry = useElementGeometry(geometryTargets)
@@ -85,6 +87,24 @@ export function useConversationScrollController(options: Options) {
       geometry,
     ]
   )
+  const initialConfiguration = {
+    messages,
+    loading,
+    isWaitingForAssistant,
+    onLoadTranscriptGap,
+    autoScrollSuspended,
+    initialScrollPosition,
+    geometry,
+  }
+  const [owner, setOwner] = useState(() => ({
+    key: currentScrollKey,
+    resource: createConversationScrollState(currentScrollKey, initialConfiguration),
+  }))
+  let resource = owner.resource
+  if (owner.key !== currentScrollKey) {
+    resource = createConversationScrollState(currentScrollKey, initialConfiguration)
+    setOwner({ key: currentScrollKey, resource })
+  }
   const subscribe = useCallback(
     (listener: () => void) => resource.subscribe(listener, input, ports),
     [resource, input, ports]
@@ -95,10 +115,10 @@ export function useConversationScrollController(options: Options) {
     (node: HTMLDivElement | null) => {
       contentNode.current = node
       if (!node) return
-      const release = resource.bindContent(node, input, ports)
+      const release = resource.bindContent(node, ports)
       return release
     },
-    [resource, input, ports]
+    [resource, ports]
   )
   const nativeTargets = [
     snapshot.viewport,
