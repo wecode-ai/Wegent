@@ -1372,20 +1372,21 @@ async function verifyCloudProjectFlow(
       value.testIds.some(testId => testId.startsWith('project-device-status-')),
     'The real cloud project was not shown with its remote device status'
   )
-  await control.command('waitFor', '[data-testid^="project-menu-"]', {
+  const statePrefix = 'project-device-status-'
+  await control.command('waitFor', `[data-testid^="${statePrefix}"]`, {
     stableMs: COMPOSER_READY_STABILITY_MS * 2,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   const projectSnapshot = JSON.parse(await control.command('snapshot', 'body'))
-  const projectMenuTestIds = projectSnapshot.testIds.filter(testId =>
-    testId.startsWith('project-menu-')
+  const remoteProjectStates = projectSnapshot.testIds.filter(testId =>
+    testId.startsWith(statePrefix)
   )
   assert.equal(
-    projectMenuTestIds.length,
+    remoteProjectStates.length,
     1,
     'The cloud flow did not expose exactly one remote project'
   )
-  const preservedProjectId = projectMenuTestIds[0].slice('project-menu-'.length)
+  const preservedProjectId = remoteProjectStates[0].slice(statePrefix.length)
   await control.command(
     'waitFor',
     `[data-testid="project-remote-folder-icon-${preservedProjectId}"]`,

@@ -8,6 +8,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { createCollaborationTranslator } from '../i18n'
 import { DefaultModal } from '../project-create/ProjectCreatePrimitives'
 import { ModelSelector } from './ModelSelector'
+import { Tooltip } from './Tooltip'
 
 let container: HTMLDivElement
 let background: HTMLButtonElement
@@ -191,3 +192,19 @@ it.each([
     expect(background.hasAttribute('inert')).toBe(false)
   }
 )
+
+it('dismisses an open tooltip when its trigger opens another surface', async () => {
+  const render = (disabled: boolean) => (
+    <Tooltip label="Select a model" testId="keyboard-tooltip" disabled={disabled}>
+      <button data-testid="keyboard-tooltip-trigger">Model</button>
+    </Tooltip>
+  )
+  await act(async () => root.render(render(false)))
+  document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }))
+  await act(async () => get('keyboard-tooltip-trigger').focus())
+  expect(get('keyboard-tooltip')?.hasAttribute('data-open')).toBe(true)
+  await act(async () => root.render(render(true)))
+  expect(get('keyboard-tooltip')?.hasAttribute('data-open') ?? false).toBe(false)
+  await act(async () => root.render(render(false)))
+  expect(get('keyboard-tooltip')?.hasAttribute('data-open') ?? false).toBe(false)
+})

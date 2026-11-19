@@ -30,12 +30,13 @@ export function Tooltip({
 }: TooltipProps) {
   const theme = useCollaborationPortalTheme()
   const [open, setOpen] = useState(false)
+  if (disabled && open) setOpen(false)
   const dismiss = () => setOpen(false)
   useWindowEvent('resize', dismiss, { enabled: open })
   useWindowEvent('scroll', dismiss, { enabled: open, capture: true })
   return (
     <TooltipContext.Provider value={true}>
-      <UiTooltip delay={700} disabled={disabled} open={open} onOpenChange={setOpen}>
+      <UiTooltip delay={700} disabled={disabled} open={!disabled && open} onOpenChange={setOpen}>
         <TooltipTrigger
           data-tooltip-trigger
           render={isValidElement(children) ? children : <span>{children}</span>}

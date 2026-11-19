@@ -161,6 +161,8 @@ export function SystemDragPanel() {
               type="button"
               data-testid="system-drag-close-button"
               aria-label={t('common.close', '关闭')}
+              title={t('common.close', '关闭')}
+              showTooltip={false}
               onClick={dismiss}
               className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted transition-colors hover:bg-muted hover:text-text-primary focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-ring"
             >

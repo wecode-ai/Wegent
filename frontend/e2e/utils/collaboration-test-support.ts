@@ -94,6 +94,13 @@ export async function chooseCollaborationOption(
           .and(page.locator(`[data-value=${JSON.stringify(option.value)}]`))
       : listbox.getByRole('option', { name: option.label, exact: true })
   await choice.click()
+  // An SDK select can remain open after its controlled value has been committed.
+  await listbox.evaluateAll(elements => {
+    const open = elements.find(element => element.hasAttribute('data-open'))
+    open?.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    )
+  })
   await expect(listbox).toBeHidden()
 }
 
