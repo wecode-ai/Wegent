@@ -330,7 +330,7 @@ test('balancing includes exclusive startup checkpoints before the four-worker qu
         ),
       ),
   )
-  assert.equal(peak, 240)
+  assert.equal(peak, 220)
   assert.deepEqual(
     balanced.include.map((entry) => entry.id),
     matrix.include.map((entry) => entry.id),

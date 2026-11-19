@@ -58,7 +58,11 @@ export function balanceLinuxCoreMatrix(
     })
     .filter((checkpoint) => checkpoint !== LINUX_CORE_HISTORY_CHECKPOINT)
     .sort((a, b) => a.localeCompare(b))
-  const ordered = orderLinuxCheckpoints(pending, scope, seconds)
+  const exclusiveFor = (checkpoint) => isResourceExclusiveCheckpoint(checkpoint, scope === 'core')
+  // Place isolated prefixes before allocating any work to the parallel workers.
+  const ordered = orderLinuxCheckpoints(pending, scope, seconds).sort(
+    (a, b) => Number(exclusiveFor(b)) - Number(exclusiveFor(a)),
+  )
   const historySeconds = seconds[LINUX_CORE_HISTORY_CHECKPOINT]
   // History reserves every worker until it exits. Its remaining runner time
   // can serve measured ordinary checkpoints without sharing its runtime.
@@ -74,7 +78,7 @@ export function balanceLinuxCoreMatrix(
   const resources = (checkpoint) =>
     scope === 'core' ? linuxCoreCheckpointResources(checkpoint) : []
   for (const checkpoint of ordered) {
-    const exclusive = isResourceExclusiveCheckpoint(checkpoint, scope === 'core')
+    const exclusive = exclusiveFor(checkpoint)
     const load = (assignment) =>
       exclusive
         ? Math.max(...assignment.workers)
