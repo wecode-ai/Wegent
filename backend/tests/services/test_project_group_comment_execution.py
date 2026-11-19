@@ -11,13 +11,18 @@ from app.models.delivery import LoopItemTaskBinding, ProjectChatAgent
 from app.models.kind import Kind
 from app.models.loop_item_execution import LoopItemExecution
 from app.models.project_chat_message import ProjectChatMessage
-from app.schemas.project_chat import LoopItemExecutionAssignmentStatus
+from app.schemas.issue_activity_comment import CollaborationPublicReply
+from app.schemas.project_chat import (
+    LoopItemExecutionAssignmentStatus,
+    ProjectChatCommentExecution,
+)
 from app.schemas.runtime_work import RuntimeTaskCreateRequest, RuntimeTranscriptRequest
 from app.services.collaboration_member_activity import (
     project_collaboration_member_activity,
 )
 from app.services.collaboration_round_assignment import assign_round_owner
 from app.services.loop_item_executions.service import loop_item_execution_service
+from app.services.project_chat.collaboration_replies import publish_collaboration_reply
 from app.services.project_chat.comment_execution import _execution, execute_comment
 from app.services.project_chat.runtime_binding import collaboration_manager_task_id
 from app.services.project_chat.session_access import resolve_project_transcript
@@ -224,6 +229,109 @@ def activity(s, key, **metadata):
     s.db.add(row)
     s.db.flush()
     return row
+
+
+def test_member_public_reply_uses_recorded_author_and_is_idempotent(member_scenario):
+    s = member_scenario
+    identity = CollaborationPublicReply(
+        dispatch_id="group-dispatch-1",
+        device_id="admin-native",
+        task_id=s.root.runtime_task_id,
+        message_id="native-progress",
+    )
+    scope = dict(
+        user_id=s.owner.id,
+        project_id=str(s.project.id),
+        item_id=s.issue.id,
+        reply_to_comment_id=s.root.message_id,
+    )
+    result = publish_collaboration_reply(
+        s.db, **scope, body="Progress", identity=identity
+    )
+    replay = publish_collaboration_reply(
+        s.db,
+        **scope,
+        body="Progress",
+        identity=identity.model_copy(update={"device_id": "admin-cloud"}),
+    )
+    assert replay.message_id == result.message_id
+    assert result.sender["name"] == s.member_agent.title
+    assert result.runtime_address is None
+    assert result.metadata["execution_dispatch"] == "comment_only"
+    assert result.reply_to_message_id == s.root.message_id
+    assert result.root_message_id == s.root.message_id
+    public = (
+        s.db.query(ProjectChatMessage).filter_by(message_id=result.message_id).one()
+    )
+    reply = ProjectChatCommentExecution(
+        project_id=str(s.project.id),
+        task_id=s.issue.id,
+        trigger_message_id=result.message_id,
+    )
+    assert _execution(s.db, reply, public).runtime_task_id == s.root.runtime_task_id
+    with pytest.raises(HTTPException) as error:
+        publish_collaboration_reply(s.db, **scope, body="Changed", identity=identity)
+    assert error.value.status_code == 409
+    with pytest.raises(HTTPException) as error:
+        publish_collaboration_reply(
+            s.db,
+            **scope,
+            body="Wrong device",
+            identity=identity.model_copy(update={"device_id": "unknown-device"}),
+        )
+    assert error.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_two_public_threads_guide_one_active_session_and_keep_their_replies(
+    member_scenario,
+):
+    s = member_scenario
+    member_run = s.root
+    member_run.status = "streaming"
+    s.db.commit()
+    s.rpc.return_value = {"accepted": True, "turnId": "active-turn"}
+    identity = CollaborationPublicReply(
+        dispatch_id="group-dispatch-1",
+        device_id="admin-native",
+        task_id=member_run.runtime_task_id,
+        message_id="placeholder",
+    )
+    scope = dict(user_id=s.owner.id, project_id=str(s.project.id), item_id=s.issue.id)
+    for label in ("A", "B"):
+        root = publish_collaboration_reply(
+            s.db,
+            **scope,
+            body=f"Discussion {label}",
+            identity=identity.model_copy(update={"message_id": f"root-{label}"}),
+        )
+        s.root = (
+            s.db.query(ProjectChatMessage).filter_by(message_id=root.message_id).one()
+        )
+        request = comment(s, text=f"Follow-up {label}")
+        (response,) = await execute_comment(s.db, user_id=s.member.id, request=request)
+        assert response.metadata["collaboration_guidance"] is True
+        call = s.rpc.call_args.kwargs
+        assert call["method"] == "runtime.tasks.guidance"
+        assert call["payload"]["taskId"] == member_run.runtime_task_id
+        assert call["payload"]["issueCommentId"] == request.trigger_message_id
+        answer = publish_collaboration_reply(
+            s.db,
+            **scope,
+            body=f"Answer {label}",
+            reply_to_comment_id=request.trigger_message_id,
+            identity=identity.model_copy(update={"message_id": f"answer-{label}"}),
+        )
+        assert answer.reply_to_message_id == request.trigger_message_id
+        assert answer.root_message_id == root.message_id
+        assert (
+            s.db.query(ProjectChatMessage)
+            .filter_by(message_id=response.message_id)
+            .one()
+            .status
+            == "completed"
+        )
+    assert s.rpc.await_count == 2
 
 
 def test_historical_manager_decision_resolves_its_recorded_rounds(group_scenario):

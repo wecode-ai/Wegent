@@ -882,6 +882,7 @@ mod tests {
         assert!(!system_prompt.contains("manager system instructions"));
         assert!(system_prompt.contains("The Executor records this run in the current Issue"));
         assert!(system_prompt.contains("Use native subagents"));
+        assert!(system_prompt.contains("Delegate a single nontrivial task to one subagent"));
         assert!(system_prompt.contains("finalize_delivery"));
     }
 

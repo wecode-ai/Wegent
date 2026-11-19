@@ -264,8 +264,13 @@ def test_long_rounds_keep_exact_manager_transcripts_readable(resumed_manager):
     assert s.db.query(LoopItemTaskBinding).count() == 6
 
 
-def test_resume_returns_owner_and_exposes_the_exact_manager_transcript(resumed_manager):
+@pytest.mark.parametrize("reuse_session", [True, False])
+def test_resume_returns_owner_and_exposes_the_exact_manager_transcript(
+    resumed_manager, reuse_session
+):
     s, values = resumed_manager
+    if reuse_session:
+        values.runtime_task_id = f"{s.execution.runtime_task_id}-manager-initial"
     assert s.issue.assignee_agent_id == s.member_agent.id
 
     message, created = report(s, values)

@@ -31,15 +31,27 @@ class AssistantPublicationSource(BaseModel):
     requires_confirmation: bool = False
 
 
+class CollaborationPublicReply(BaseModel):
+    device_id: str = Field(min_length=1, max_length=255)
+    task_id: str = Field(min_length=1, max_length=255)
+    dispatch_id: str = Field(min_length=1, max_length=255)
+    message_id: str = Field(min_length=1, max_length=64)
+    trigger_comment_id: str | None = Field(default=None, min_length=1, max_length=64)
+
+
 class IssueActivityCommentCreate(LoopItemCommentCreate):
     client_message_id: str | None = Field(default=None, min_length=1, max_length=64)
     mentions: list[ProjectChatMention] = Field(default_factory=list, max_length=64)
     stand_in: StandInPublicReply | None = None
+    collaboration: CollaborationPublicReply | None = None
+    reply_to_comment_id: str | None = Field(default=None, min_length=1, max_length=64)
     assistant_source: AssistantPublicationSource | None = None
 
 
 class IssueActivityCommentResponse(LoopItemCommentResponse):
     sequence_number: int
+    reply_to_comment_id: str | None = None
+    root_comment_id: str | None = None
     mentions: list[ProjectChatMention] = Field(default_factory=list)
     stand_in_reply_to: dict | None = None
     actor_user_id: str | None = None

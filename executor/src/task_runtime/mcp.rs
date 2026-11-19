@@ -18,6 +18,7 @@ use base64::{engine::general_purpose::STANDARD, Engine as _};
 use chrono::Local;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use crate::protocol::ExecutionRequest;
@@ -2308,12 +2309,27 @@ async fn call_backend_tool(
             let item = task_id()?;
             let mut body = json!({
                 "body": arguments.get("body").and_then(Value::as_str).unwrap_or_default(),
-                "mentions": arguments.get("mentions").cloned().unwrap_or_else(|| json!([]))
+                "mentions": arguments.get("mentions").cloned().unwrap_or_else(|| json!([])),
+                "reply_to_comment_id": arguments.get("reply_to_comment_id"),
             });
-            // A model cannot select or replace its publication identity. The
-            // server independently validates the current owned Issue binding.
-            if let Some(address) = grant
-                .filter(|grant| grant.item_id.as_deref() == Some(item))
+            let issue_grant = grant.filter(|grant| grant.item_id.as_deref() == Some(item));
+            if let Some(dispatch_id) = issue_grant
+                .and_then(|grant| grant.dispatch_id.as_deref())
+                .filter(|_| body["reply_to_comment_id"].is_string())
+            {
+                let address = delivery_address(issue_grant).map_err(|error| error.to_string())?;
+                let message_key = json!([
+                    "explicit-reply",
+                    body["reply_to_comment_id"],
+                    body["body"]
+                ]);
+                body["collaboration"] = json!({
+                    "device_id": address.device_id,
+                    "task_id": address.task_id,
+                    "dispatch_id": dispatch_id,
+                    "message_id": format!("{:x}", Sha256::digest(message_key.to_string().as_bytes()))
+                });
+            } else if let Some(address) = issue_grant
                 .and_then(|grant| delivery_address(Some(grant)).ok())
             {
                 body["assistant_source"] = json!({
@@ -3166,7 +3182,7 @@ fn tools() -> Vec<Value> {
         ),
         tool(
             "add_board_item_comment",
-            "Post an Issue comment. Structured user mentions notify shared project members like the page; resolve IDs and labels with get_assignment_candidates. Pass mentions as [{\"type\":\"user\",\"id\":\"52\",\"label\":\"qindi\"}]. Plain @name text does not notify. Do not send a separate notification for the same mention.",
+            "Post an Issue comment or reply. To reply in an existing thread, read list_board_item_comments and pass the target's id as reply_to_comment_id. Structured user mentions notify shared project members like the page; resolve IDs and labels with get_assignment_candidates. Plain @name text does not notify. Do not send a separate notification for the same mention.",
             comments::create_schema(),
         ),
         tool(

@@ -13,6 +13,7 @@ SHARED_METADATA_KEYS = frozenset(
         "mentions",
         "stand_in_reply_to",
         "execution_dispatch",
+        "collaboration_member_activity_id",
         "activity_type",
         "dispatch_role",
         "manager_display_name",

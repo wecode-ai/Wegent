@@ -6,10 +6,12 @@
 import uuid
 from typing import Any
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.schemas.issue_activity_comment import (
     AssistantPublicationSource,
+    CollaborationPublicReply,
     StandInPublicReply,
 )
 from app.schemas.project_chat import (
@@ -31,6 +33,8 @@ def _comment_view(message: ProjectChatMessageView) -> dict[str, Any]:
         "created_at": message.created_at,
         "updated_at": message.updated_at,
         "sequence_number": message.sequence_number,
+        "reply_to_comment_id": message.reply_to_message_id,
+        "root_comment_id": message.root_message_id,
         "mentions": message.metadata.get("mentions", []),
         "stand_in_reply_to": message.metadata.get("stand_in_reply_to"),
         "actor_user_id": message.actor_user_id,
@@ -110,8 +114,28 @@ def add_issue_comment(
     client_message_id: str | None = None,
     mentions: list[ProjectChatMention] | None = None,
     stand_in: StandInPublicReply | None = None,
+    collaboration: CollaborationPublicReply | None = None,
+    reply_to_comment_id: str | None = None,
     assistant_source: AssistantPublicationSource | None = None,
 ) -> dict[str, Any]:
+    if collaboration is not None:
+        from app.services.project_chat.collaboration_replies import (
+            publish_collaboration_reply,
+        )
+
+        if stand_in is not None or assistant_source is not None:
+            raise HTTPException(422, "Issue comment has multiple publication sources")
+        message = publish_collaboration_reply(
+            db,
+            user_id=user_id,
+            project_id=project_id,
+            item_id=item_id,
+            body=body,
+            identity=collaboration,
+            reply_to_comment_id=reply_to_comment_id,
+        )
+        push_project_chat_message(message.model_dump(mode="json", by_alias=True))
+        return _comment_view(message)
     if stand_in is not None:
         from app.services.project_chat.stand_in_replies import publish_stand_in_reply
 
@@ -135,6 +159,7 @@ def add_issue_comment(
             task_id=item_id,
             content=body,
             mentions=mentions or [],
+            reply_to_message_id=reply_to_comment_id,
         ),
         assistant_source=assistant_source,
     )

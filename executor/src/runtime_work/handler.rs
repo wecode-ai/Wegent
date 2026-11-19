@@ -1142,7 +1142,7 @@ impl RuntimeWorkRpcHandler {
         self.resume_cloud_collaboration_rounds();
         for link in self.local_task_links(false) {
             self.sync_issue_human_requests(&link.local_task_id);
-            self.sync_stand_in_issue_replies(&link.local_task_id);
+            self.sync_public_issue_replies(&link.local_task_id);
         }
         self.start_supervisor_scheduler();
     }
