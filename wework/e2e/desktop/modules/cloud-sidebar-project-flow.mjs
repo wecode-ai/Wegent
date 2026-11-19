@@ -125,7 +125,10 @@ export async function verifyGitCloneDeviceRecovery(control, workspacePath, cloud
       text: 'executor-not-found',
     })
     await control.command('click', '[data-testid="remote-project-git-reselect-device"]')
-    await control.command('clickWhenEnabled', '[data-testid="standalone-remote-device-select"]')
+    await control.command('setExpanded', '[data-testid="standalone-remote-device-select"]', {
+      value: 'true',
+      visible: true,
+    })
     await control.command(
       'waitFor',
       `[data-testid="standalone-remote-device-option-${REMOTE_DOCKER_DEVICE_ID}"]`,
@@ -140,7 +143,10 @@ export async function verifyGitCloneDeviceRecovery(control, workspacePath, cloud
       REMOTE_DOCKER_DEVICE_ID,
       'The refreshed device picker retained the removed Executor'
     )
-    await control.command('clickWhenEnabled', '[data-testid="standalone-remote-device-select"]')
+    await control.command('setExpanded', '[data-testid="standalone-remote-device-select"]', {
+      value: 'true',
+      visible: true,
+    })
     await control.command(
       'waitFor',
       `[data-testid="standalone-remote-device-option-${REMOTE_DOCKER_DEVICE_ID}"]`,

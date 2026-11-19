@@ -610,15 +610,12 @@ export function StandInOverviewPage({
             userId={props.userId}
             roleId={roleId ?? '@primary'}
             deviceId={deviceId}
-            onClose={() => {
-              setSelectedScheduleId(undefined)
-              window.requestAnimationFrame(() =>
-                (scheduleTrigger.current?.isConnected
-                  ? scheduleTrigger.current
-                  : detailsTrigger.current
-                )?.focus({ preventScroll: true })
-              )
-            }}
+            onClose={() => setSelectedScheduleId(undefined)}
+            finalFocus={() =>
+              scheduleTrigger.current?.isConnected
+                ? scheduleTrigger.current
+                : detailsTrigger.current
+            }
           />
         )}
         <StandInReviewDialog

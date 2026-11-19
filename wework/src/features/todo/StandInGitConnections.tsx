@@ -197,7 +197,7 @@ function StandInGitConnectionsContent({
             data-testid="stand-in-git-kind"
             className="block w-full min-w-0 transition-colors placeholder:text-text-secondary disabled:opacity-50"
           />
-          <SelectContent>
+          <SelectContent data-testid="stand-in-git-kind-options">
             <SelectItem value="personal">{t('standIn.git.personal')}</SelectItem>
             <SelectItem value="repository">{t('standIn.git.repository')}</SelectItem>
           </SelectContent>

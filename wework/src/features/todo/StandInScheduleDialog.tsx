@@ -12,12 +12,14 @@ export function StandInScheduleDialog({
   roleId,
   deviceId,
   onClose,
+  finalFocus,
 }: {
   id: string
   userId: number
   roleId: string
   deviceId: string
   onClose(): void
+  finalFocus(): HTMLElement | null
 }) {
   const { t } = useTranslation('common')
   const editor = useRef<AutomationNavigationHandle>(null)
@@ -26,6 +28,7 @@ export function StandInScheduleDialog({
       open
       title={t('todo.automation_edit_title')}
       testId="stand-in-schedule-dialog"
+      finalFocus={finalFocus}
       onClose={() => {
         if (editor.current) editor.current.requestLeave(onClose)
         else onClose()

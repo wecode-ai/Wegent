@@ -13,6 +13,8 @@ interface DialogSurfaceProps {
   render: ReactElement<{ children?: ReactNode; className?: string }>
   onClose?(): void
   active?: boolean
+  /** Keep the content mounted while relinquishing the overlay and its focus ownership. */
+  suspended?: boolean
   modal?: boolean
   inline?: boolean
   kind?: 'dialog' | 'alertdialog'
@@ -25,6 +27,7 @@ export function DialogSurface({
   render,
   onClose,
   active = true,
+  suspended,
   modal = true,
   inline = true,
   kind = 'dialog',
@@ -38,7 +41,7 @@ export function DialogSurface({
   if (!active) return cloneElement(render, {}, children)
   const Content = kind === 'alertdialog' ? AlertDialogContent : DialogContent
   const onOpenChange = (open: boolean, details: { cancel(): void }) => {
-    if (!open) {
+    if (!open && !suspended) {
       details.cancel()
       onClose?.()
     }
@@ -46,6 +49,7 @@ export function DialogSurface({
   const content = (
     <Content
       inline={inline}
+      keepMounted={suspended !== undefined}
       render={
         inline
           ? render
@@ -57,18 +61,22 @@ export function DialogSurface({
             })
       }
       initialFocus={initialFocus}
-      finalFocus={finalFocus ?? (() => (opener.current?.isConnected ? opener.current : null))}
+      finalFocus={
+        suspended
+          ? 'none'
+          : (finalFocus ?? (() => (opener.current?.isConnected ? opener.current : null)))
+      }
     >
       {children}
     </Content>
   )
   return kind === 'alertdialog' ? (
-    <AlertDialog open dismissible={Boolean(onClose)} onOpenChange={onOpenChange}>
+    <AlertDialog open={!suspended} dismissible={Boolean(onClose)} onOpenChange={onOpenChange}>
       {content}
     </AlertDialog>
   ) : (
     <Dialog
-      open
+      open={!suspended}
       dismissible={Boolean(onClose)}
       modal={modal}
       closeOnOutsidePress={false}

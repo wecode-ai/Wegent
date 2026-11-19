@@ -1632,11 +1632,27 @@ async function selectE2EModel(
   } else if (selectionSnapshot.testIds.includes('model-selector-menu')) {
     await waitForE2EModelOptionSelected(control, targetSelector)
     await control.command('press', '[data-model-selector-layer="true"]', { key: 'Escape' })
-    await waitForSnapshot(
-      control,
-      snapshot => !snapshot.testIds.includes('model-selector-menu'),
-      'The model selector menu did not close after selecting the E2E model'
-    )
+    try {
+      await waitForSnapshot(
+        control,
+        snapshot => !snapshot.testIds.includes('model-selector-menu'),
+        'The model selector menu did not close after selecting the E2E model'
+      )
+    } catch (error) {
+      const diagnostics = await control
+        .command(
+          'getElementMetrics',
+          '[data-model-selector-layer="true"], [data-slot$="-content"][data-open]',
+          {
+            value: JSON.stringify({
+              attributeNames: ['data-testid', 'data-slot', 'role', 'aria-hidden', 'inert'],
+            }),
+          }
+        )
+        .catch(() => 'unavailable')
+      console.error('[desktop-e2e-model-dismissal]', diagnostics)
+      throw error
+    }
   }
   await waitForE2EModelLabel(control, labels, modelSelectorButton)
   if (expectedProviderId) {

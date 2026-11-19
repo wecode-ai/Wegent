@@ -1,5 +1,6 @@
 import { useTranslation } from '@/hooks/useTranslation'
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
+import type { DialogFinalFocus } from '@ui-sdk/react/dialog'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { X } from 'lucide-react'
 import { useId, useRef, type ReactNode } from 'react'
@@ -12,6 +13,7 @@ export function StandInReviewDialog({
   busy = false,
   compact = false,
   onClose,
+  finalFocus,
   children,
 }: {
   open: boolean
@@ -20,6 +22,7 @@ export function StandInReviewDialog({
   busy?: boolean
   compact?: boolean
   onClose(): void
+  finalFocus?: DialogFinalFocus
   children: ReactNode
 }) {
   const { t } = useTranslation('common')
@@ -40,6 +43,7 @@ export function StandInReviewDialog({
         onClose={close}
         active={open}
         initialFocus={'[data-dialog-close]'}
+        finalFocus={finalFocus}
         render={
           <div
             ref={ref}

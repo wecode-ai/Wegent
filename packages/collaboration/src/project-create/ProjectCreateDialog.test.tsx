@@ -485,7 +485,11 @@ it.each([false, true])(
     expect(get('cloud-project-name').closest('form')?.hidden).toBe(true)
     if (modelMenuOpen) {
       const editor = get('collaboration-project-create-generation-instructions')
+      const status = get('collaboration-project-create-generation-status')
+      expect(status.getAttribute('role')).toBe('status')
       await click('model-selector-button')
+      expect(status.hasAttribute('role')).toBe(false)
+      expect(status.hasAttribute('aria-live')).toBe(false)
       expect(
         get('model-selector-menu').closest('[role="dialog"]')?.contains(document.activeElement)
       ).toBe(true)
@@ -502,6 +506,8 @@ it.each([false, true])(
         )
       })
       expect(document.querySelector('[data-testid="model-selector-menu"]')).toBeNull()
+      expect(status.getAttribute('role')).toBe('status')
+      expect(status.getAttribute('aria-live')).toBe('polite')
       expect(get('collaboration-project-create-model-picker')).toBe(configuration)
       expect(document.activeElement).toBe(editor)
       expect(onClose).not.toHaveBeenCalled()

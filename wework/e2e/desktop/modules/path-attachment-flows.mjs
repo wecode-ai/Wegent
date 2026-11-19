@@ -167,7 +167,7 @@ async function verifyPastedZipAttachment({ composerSelector, control, prepareCon
   assert.equal(
     await control.command(
       'getText',
-      '[data-testid="attachment-badge-list"] > [data-testid="attachment-badge"]:first-child'
+      `[data-testid="attachment-badge-list"] > [data-testid="attachment-badge"]:first-child [title=${JSON.stringify(PASTED_ZIP_FILENAME)}]`
     ),
     PASTED_ZIP_FILENAME,
     'A file added after pasted text must appear before the pasted-text card'

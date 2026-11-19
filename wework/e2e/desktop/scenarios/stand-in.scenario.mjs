@@ -935,11 +935,17 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
       await openStandInMemory(control)
       await control.command('clickWhenEnabled', '[data-testid="stand-in-memory-add"]')
-      const scopes = await control.command('getText', '[data-testid="stand-in-memory-scope"]')
+      const scopeTrigger = '[data-testid="stand-in-memory-scope"]'
+      const scopeOptions = '[data-testid="stand-in-memory-scope-options"]'
+      await control.command('setExpanded', scopeTrigger, { value: 'true', visible: true })
+      await control.command('waitFor', scopeOptions, { visible: true })
+      const scopes = await control.command('getText', scopeOptions, { visible: true })
       assert.ok(scopes.includes(`${renamed}（与你聊天时）`), scopes)
       assert.ok(scopes.includes(`项目 · ${PROJECT}`), scopes)
       assert.ok(!scopes.includes('standIn.'), scopes)
       assert.ok(!scopes.includes(`项目 · ${project.id}`), scopes)
+      await control.command('press', scopeTrigger, { key: 'Escape' })
+      await control.command('waitFor', scopeOptions, { visible: false })
       await control.command('click', '[data-testid="stand-in-memory-cancel"]')
       await control.command('click', '[data-testid="stand-in-memory-close"]')
       await verifyProjectIntakeBoundary({

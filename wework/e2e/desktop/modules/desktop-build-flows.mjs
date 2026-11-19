@@ -901,12 +901,12 @@ export async function verifyRemoteDockerCommandFlow(
       false,
       'Device setup did not advance to project creation'
     )
+    const deviceSelector = '[data-testid="standalone-remote-device-select"]'
+    const showDevices = () =>
+      control.command('setExpanded', deviceSelector, { value: 'true', visible: true })
+    await showDevices()
     const existingOption = `[data-testid="standalone-remote-device-option-${REMOTE_DOCKER_DEVICE_ID}"]`
-    assert.equal(
-      Number(await control.command('getElementCount', `${existingOption}:not(:disabled)`)),
-      1,
-      'The existing remote device was not selectable before disconnecting'
-    )
+    await control.command('waitFor', existingOption, { visible: true, enabled: true })
     await cloudEnvironment.stopRemoteDockerExecutorAndWaitOffline()
     await waitForWorkbenchDeviceStatus(
       control,
@@ -914,11 +914,8 @@ export async function verifyRemoteDockerCommandFlow(
       'offline',
       'The workbench catalog did not publish the disconnected remote device'
     )
-    assert.equal(
-      Number(await control.command('getElementCount', `${existingOption}:disabled`)),
-      1,
-      'The open project picker kept the disconnected device selectable'
-    )
+    await showDevices()
+    await control.command('waitFor', `${existingOption}[aria-disabled="true"]`, { visible: true })
     assert.equal(
       await control.command('getValue', '[data-testid="standalone-remote-device-select"]'),
       generatedDeviceId,

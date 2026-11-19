@@ -4,7 +4,7 @@ import { Button as ControlButton } from '../markdown/Button'
 
 import type { UnifiedModel } from '@wegent/chat-core/models'
 import { Bot, LoaderCircle, Sparkles, UserRound } from 'lucide-react'
-import type { Dispatch, RefObject, SetStateAction } from 'react'
+import { useState, type Dispatch, type RefObject, type SetStateAction } from 'react'
 import type { ComposerInputHandle } from '../composer'
 import { ComposerTextInput, ProjectComposerBody } from '../composer'
 import { ModelSelector } from '../controls/ModelSelector'
@@ -111,6 +111,9 @@ export function ProjectCreateGroupView({
   groupGenerationPrinciples,
   groupGenerationStages,
 }: ProjectCreateGroupViewProps) {
+  const [generationModelMenuOpen, setGenerationModelMenuOpen] = useState(false)
+  // The SDK preserves live regions and their ancestors during modal isolation.
+  const announceGeneration = !generationModelMenuOpen
   const hasPartialPreview = Boolean(
     groupGenerationError &&
     (visibleGroupParticipants.some(participant => participant.responsibility) ||
@@ -158,8 +161,8 @@ export function ProjectCreateGroupView({
       <div className="collaboration-project-create-group-editor is-generator">
         <p
           className="sr-only"
-          role="status"
-          aria-live="polite"
+          role={announceGeneration ? 'status' : undefined}
+          aria-live={announceGeneration ? 'polite' : undefined}
           aria-atomic="true"
           data-testid="collaboration-project-create-generation-status"
         >
@@ -170,12 +173,15 @@ export function ProjectCreateGroupView({
               : ''}
         </p>
         {generationModelsLoading ? (
-          <p role="status" className="text-sm text-text-secondary">
+          <p role={announceGeneration ? 'status' : undefined} className="text-sm text-text-secondary">
             {labels.loadingGenerationModels}
           </p>
         ) : null}
         {generationModelsError ? (
-          <p className="collaboration-project-create-inline-error" role="alert">
+          <p
+            className="collaboration-project-create-inline-error"
+            role={announceGeneration ? 'alert' : undefined}
+          >
             {generationModelsError}
             <ControlButton
               variant="unstyled"
@@ -190,7 +196,10 @@ export function ProjectCreateGroupView({
           </p>
         ) : null}
         {groupGenerationError ? (
-          <p className="collaboration-project-create-inline-error" role="alert">
+          <p
+            className="collaboration-project-create-inline-error"
+            role={announceGeneration ? 'alert' : undefined}
+          >
             {groupGenerationError}
           </p>
         ) : null}
@@ -301,6 +310,7 @@ export function ProjectCreateGroupView({
                   selectedModelOptions={selectedGenerationModelOptions}
                   disabled={generationModelsLoading}
                   menuPlacement="above"
+                  onOpenChange={setGenerationModelMenuOpen}
                   onSelectModel={model => {
                     if (!model) return false
                     const applied = selectGenerationModel({

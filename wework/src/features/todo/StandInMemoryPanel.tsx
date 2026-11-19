@@ -284,7 +284,7 @@ function StandInMemoryPanelContent({
                   }}
                 >
                   <SelectTrigger density="compact" data-testid="stand-in-memory-scope" />
-                  <SelectContent>
+                  <SelectContent data-testid="stand-in-memory-scope-options">
                     {!selectedScope && (
                       <SelectItem value={String(JSON.stringify(editing.scope))} disabled>
                         {t('standIn.memory.disconnected')}
