@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readProjectChatMessages } from './project-chat-snapshot.mjs'
 import { isTranscriptReadAdmissionBusy } from './runtime-read-admission.mjs'
 
 export async function assertManagerComment(cloud, projectId, issueId, comments, body, leader) {
@@ -213,7 +214,18 @@ export async function verifyRecordedMemberTranscript({
     requestJson(backendUrl, login.access_token, path, options, deferTranscriptBusy)
   const bindings = await read('/api/v1/loop-items/' + issueId + '/tasks')
   assert.deepEqual(bindings, [], '查看者不应拥有 Executor 的个人会话绑定')
-  const address = { deviceId: memberBinding.device_id, taskId: memberBinding.task_id }
+  const activity = await readProjectChatMessages(
+    { backendUrl, authToken: login.access_token, projectId: String(projectId) },
+    issueId,
+    timeoutMs
+  )
+  const memberActivity = activity.find(
+    message =>
+      message.metadata.activity_type === 'member_execution' &&
+      message.runtimeAddress?.taskId === memberBinding.task_id
+  )
+  assert.ok(memberActivity, '项目查看者应能从 Issue 动态中获得成员执行入口')
+  const address = memberActivity.runtimeAddress
   const transcript = await waitForValue(
     () =>
       read(

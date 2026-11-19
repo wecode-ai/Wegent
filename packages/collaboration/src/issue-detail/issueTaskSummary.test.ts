@@ -25,7 +25,6 @@ describe("issueTaskSummaryForMessage", () => {
     const activity = {
       ...message({
         activity_type: "member_execution",
-        dispatch_id: "group-dispatch",
         workflow_task_title: "Review the plan",
       }),
       runtimeAddress: address,

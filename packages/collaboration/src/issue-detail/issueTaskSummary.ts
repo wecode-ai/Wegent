@@ -40,8 +40,6 @@ export function issueTaskSummaryForMessage<
     onOpenProjectExecution &&
     address?.deviceId &&
     address.taskId &&
-    typeof message.metadata.dispatch_id === "string" &&
-    message.metadata.dispatch_id.trim() &&
     (activityType === "member_execution" ||
       activityType === "manager_execution")
       ? () =>
