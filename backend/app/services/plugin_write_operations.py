@@ -1,6 +1,7 @@
 """Run synchronous plugin transactions outside the ASGI event loop."""
 
 import asyncio
+import logging
 import time
 from collections.abc import Callable
 from contextlib import AbstractContextManager
@@ -15,16 +16,53 @@ from app.services.plugin_write_errors import PluginWriteError
 from shared.telemetry.decorators import trace_sync
 
 T = TypeVar("T")
+logger = logging.getLogger(__name__)
 
 
-async def run_plugin_operation(operation: Callable[..., T], **kwargs: Any) -> T:
+async def run_plugin_operation(
+    operation: Callable[..., T],
+    *,
+    retry_busy: bool = False,
+    retry_conflicts: bool = False,
+    **kwargs: Any,
+) -> T:
     """Keep a transaction's session, Redis waits and cleanup in one worker."""
-    return await asyncio.to_thread(partial(_run_plugin_operation, operation, kwargs))
+    return await asyncio.to_thread(
+        partial(
+            _run_plugin_operation,
+            operation,
+            kwargs,
+            queued_at=time.monotonic(),
+            retry_busy=retry_busy,
+            retry_conflicts=retry_conflicts,
+        )
+    )
 
 
 @trace_sync("plugin_write.operation", "backend.plugins")
-def _run_plugin_operation(operation: Callable[..., T], kwargs: dict[str, Any]) -> T:
-    return run_plugin_transaction(lambda db: operation(db=db, **kwargs), get_db_session)
+def _run_plugin_operation(
+    operation: Callable[..., T],
+    kwargs: dict[str, Any],
+    *,
+    queued_at: float,
+    retry_busy: bool = False,
+    retry_conflicts: bool = False,
+) -> T:
+    started = time.monotonic()
+    try:
+        return run_plugin_transaction(
+            lambda db: operation(db=db, **kwargs),
+            get_db_session,
+            retry_busy=retry_busy,
+            retry_conflicts=retry_conflicts,
+        )
+    finally:
+        logger.debug(
+            "Plugin write operation=%s queue_ms=%.0f execution_ms=%.0f",
+            getattr(operation, "__name__", "plugin_operation"),
+            (started - queued_at) * 1000,
+            (time.monotonic() - started) * 1000,
+        )
 
 
 def run_plugin_transaction(

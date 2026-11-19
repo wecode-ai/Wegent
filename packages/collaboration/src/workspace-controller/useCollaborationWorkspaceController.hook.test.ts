@@ -328,6 +328,54 @@ describe("useCollaborationWorkspaceController location effects", () => {
     expect(pendingState.loading).toBe(false);
   });
 
+  it("keeps a loaded Issue mounted while its API refreshes the current project", async () => {
+    const api = createApi();
+    const location: CollaborationLocation = {
+      projectId: projectA.id,
+      issueId: issueA.id,
+      view: "board",
+    };
+    await vi.waitFor(() => {
+      const controller = renderController(api, location);
+      expect(controller.state.project?.id).toBe(projectA.id);
+      expect(controller.state.selectedIssue?.id).toBe(issueA.id);
+      expect(controller.state.loading).toBe(false);
+    });
+    const snapshot = await api.issues.getBoardSnapshot(projectA.id);
+    const refresh = deferred<typeof snapshot>();
+    const refreshedApi = {
+      ...api,
+      issues: {
+        ...api.issues,
+        getBoardSnapshot: vi.fn(() => refresh.promise),
+      },
+    };
+    const closedLocation = { ...location, issueId: null };
+
+    try {
+      renderController(refreshedApi, location);
+      await vi.waitFor(() => {
+        renderController(refreshedApi, location);
+        expect(refreshedApi.issues.getBoardSnapshot).toHaveBeenCalled();
+      });
+      const controller = renderController(refreshedApi, location);
+      // A loading screen would unmount the drawer and cancel its pending close.
+      expect(controller.state.loading).toBe(false);
+      expect(controller.state.selectedIssue?.id).toBe(issueA.id);
+      expect(
+        renderController(refreshedApi, closedLocation).state.selectedIssue,
+      ).toBeNull();
+    } finally {
+      refresh.resolve(snapshot);
+      await refresh.promise;
+    }
+    await vi.waitFor(() => {
+      const controller = renderController(refreshedApi, closedLocation);
+      expect(controller.state.loading).toBe(false);
+      expect(controller.state.selectedIssue).toBeNull();
+    });
+  });
+
   it("loads an invited Issue without requesting project authority", async () => {
     const api = createApi();
     const invited = { ...issueA, invited_only: true, can_edit: true };

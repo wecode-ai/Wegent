@@ -102,6 +102,7 @@ export interface CollaborationWorkspaceControllerCommands {
       loadSnapshot?: boolean;
       revalidate?: boolean;
       throwOnError?: boolean;
+      forceLoading?: boolean;
     },
   ): Promise<void>;
   loadProjectSnapshot(
@@ -1269,6 +1270,7 @@ export function createCollaborationWorkspaceControllerCommands({
       loadSnapshot?: boolean;
       revalidate?: boolean;
       throwOnError?: boolean;
+      forceLoading?: boolean;
     },
   ) => {
     if (options?.invalidate) markProjectMutated(projectId);
@@ -1277,7 +1279,16 @@ export function createCollaborationWorkspaceControllerCommands({
       revision === projectLoadRevision && (options?.isCurrent?.() ?? true);
     let mutationGeneration = projectMutationGeneration(projectId);
     let metadataVersion = projectVersion(projectId);
-    if (showLoading && loadedProjectId !== projectId)
+    const hasCurrentSnapshot =
+      getExternalBoardState().project?.id === projectId &&
+      getProjectSnapshot(projectId) !== null;
+    const hasCurrentDetail =
+      getSelectedIssue()?.cloud_project_id === projectId;
+    // Refreshing a loaded project must not unmount its editors or pending exit animations.
+    if (
+      showLoading &&
+      (options?.forceLoading || !hasCurrentSnapshot || !hasCurrentDetail)
+    )
       dispatch({ type: "loading", value: true });
     try {
       const incoming = options?.revalidate
@@ -2153,6 +2164,7 @@ export function useCollaborationWorkspaceController({
             projectId,
             stateRef.current.loading || !hasCurrentRouteIssue,
             {
+              forceLoading: !hasCurrentRouteIssue,
               isCurrent,
               loadSnapshot: loadProjectSnapshotOnLocation,
             },
