@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
 import { createPortal } from 'react-dom'
 import { Brain, ListTodo, MessageSquare, Send, Settings, X } from 'lucide-react'
 import type {
@@ -19,17 +20,7 @@ import { ProjectCoordinatorPublication } from './ProjectCoordinatorPublication'
 import { ProjectCoordinationPanel } from './ProjectCoordinationPanel'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 
-export function ProjectCoordinatorConversation({
-  api,
-  project,
-  services,
-  userId,
-  devices,
-  onOpenTask,
-  onOpenGroupSettings,
-  onOpenIssue,
-  onPublished,
-}: {
+type ProjectCoordinatorConversationProps = {
   api: SharedWorkspaceApi
   project: CollaborationProject
   services: WorkbenchServices
@@ -39,15 +30,78 @@ export function ProjectCoordinatorConversation({
   onOpenGroupSettings(): void
   onOpenIssue(issueId: string): void
   onPublished(): void
-}) {
+}
+
+export function ProjectCoordinatorConversation(props: ProjectCoordinatorConversationProps) {
+  const [owner, setOwner] = useState({ api: props.api, services: props.services, revision: 0 })
+  if (owner.api !== props.api || owner.services !== props.services) {
+    setOwner({ api: props.api, services: props.services, revision: owner.revision + 1 })
+  }
+  return (
+    <ProjectCoordinatorConversationContent
+      key={JSON.stringify([
+        owner.revision,
+        props.userId,
+        props.project.project_store,
+        props.project.id,
+      ])}
+      {...props}
+    />
+  )
+}
+
+function ProjectCoordinatorConversationContent({
+  api,
+  project,
+  services,
+  userId,
+  devices,
+  onOpenTask,
+  onOpenGroupSettings,
+  onOpenIssue,
+  onPublished,
+}: ProjectCoordinatorConversationProps) {
   const { t } = useTranslation('common')
   const [open, setOpen] = useState(false)
-  const [groups, setGroups] = useState<CollaborationGroup[] | null>(null)
-  const [selectedGroup, setSelectedGroup] = useState('')
-  const [localDeviceId, setLocalDeviceId] = useState('')
-  const [deviceId, setDeviceId] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [retry, setRetry] = useState(0)
+  const catalogResource = useMemo(
+    () =>
+      createAsyncResource(
+        JSON.stringify([userId, project.project_store, project.id]),
+        async () => {
+          const [groups, identity] = await Promise.all([
+            api.projects.listCollaborationGroups?.(project.id) ?? Promise.resolve([]),
+            services.getLocalRuntimeSidebarIdentity?.(),
+          ])
+          return { groups, localDeviceId: identity?.deviceId ?? '' }
+        },
+        { refreshOnSubscribe: true }
+      ),
+    [api, services, userId, project.project_store, project.id]
+  )
+  const catalog = useSyncExternalStore(
+    open ? catalogResource.subscribe : subscribeIdleResource,
+    catalogResource.getSnapshot,
+    catalogResource.getSnapshot
+  )
+  const groups = catalog.data?.groups ?? null
+  const localDeviceId = catalog.data?.localDeviceId ?? ''
+  const [chosenDeviceId, setDeviceId] = useState('')
+  const deviceId = chosenDeviceId || localDeviceId
+  const [selection, setSelection] = useState<{ id: string; receipt: unknown }>()
+  const selectedGroup =
+    selection &&
+    (groups?.some(row => row.id === selection.id) ||
+      (!selection.id && selection.receipt === catalog.data))
+      ? selection.id
+      : groups?.length === 1
+        ? groups[0].id
+        : ''
+  const error =
+    catalog.status === 'error' || catalog.error !== undefined
+      ? getStandInErrorMessage(catalog.error)
+      : catalog.data && !localDeviceId
+        ? t('standIn.errors.workspace_unavailable')
+        : null
   const [memory, setMemory] = useState(false)
   const [publication, setPublication] = useState(false)
   const memoryRef = useRef<StandInSettingsHandle>(null)
@@ -69,32 +123,6 @@ export function ProjectCoordinatorConversation({
     else action()
   }
   const storage = project.project_store === 'local' ? 'local' : 'cloud'
-  useEffect(() => {
-    if (!open) return
-    let active = true
-    void Promise.all([
-      api.projects.listCollaborationGroups?.(project.id) ?? Promise.resolve([]),
-      services.getLocalRuntimeSidebarIdentity?.(),
-    ])
-      .then(([rows, identity]) => {
-        if (!active) return
-        setGroups(rows)
-        setSelectedGroup(current =>
-          rows.some(row => row.id === current) ? current : rows.length === 1 ? rows[0].id : ''
-        )
-        if (identity?.deviceId) {
-          setLocalDeviceId(identity.deviceId)
-          setDeviceId(current => current || identity.deviceId)
-        }
-        setError(identity?.deviceId ? null : t('standIn.errors.workspace_unavailable'))
-      })
-      .catch(cause => {
-        if (active) setError(getStandInErrorMessage(cause))
-      })
-    return () => {
-      active = false
-    }
-  }, [api, project.id, services, open, retry, t])
   const configure = () => {
     closeConversation()
     onOpenGroupSettings()
@@ -234,7 +262,9 @@ export function ProjectCoordinatorConversation({
                         <select
                           data-testid="project-coordinator-group"
                           value={selectedGroup}
-                          onChange={event => setSelectedGroup(event.target.value)}
+                          onChange={event =>
+                            setSelection({ id: event.target.value, receipt: catalog.data })
+                          }
                           className="min-h-9 min-w-0 flex-1 bg-background outline-none"
                         >
                           <option value="">{t('standIn.project_coordinator.choose_group')}</option>
@@ -278,7 +308,7 @@ export function ProjectCoordinatorConversation({
                         <button
                           type="button"
                           data-testid="project-coordinator-retry"
-                          onClick={() => setRetry(value => value + 1)}
+                          onClick={() => void catalogResource.reload()}
                           className="min-h-9 underline"
                         >
                           {t('standIn.reload')}
@@ -349,27 +379,21 @@ function ProjectCoordinatorChat({
   active: boolean
 }) {
   const { t } = useTranslation('common')
-  const [initial, setInitial] = useState<{ taskId: string; address: RuntimeTaskAddress | null }>()
-  const [error, setError] = useState<string | null>(null)
-  const [retry, setRetry] = useState(0)
   const storage = project.project_store === 'local' ? 'local' : 'cloud'
-  useEffect(() => {
-    let active = true
-    void api
-      .projectConversation(userId, deviceId, project.id, storage, group.id)
-      .then(result => {
-        if (active) {
-          setInitial(result)
-          setError(null)
-        }
-      })
-      .catch(cause => {
-        if (active) setError(getStandInErrorMessage(cause))
-      })
-    return () => {
-      active = false
-    }
-  }, [api, userId, deviceId, project.id, storage, group.id, retry])
+  const resource = useMemo(
+    () =>
+      createAsyncResource(JSON.stringify([userId, deviceId, storage, project.id, group.id]), () =>
+        api.projectConversation(userId, deviceId, project.id, storage, group.id)
+      ),
+    [api, userId, deviceId, storage, project.id, group.id]
+  )
+  const snapshot = useSyncExternalStore(
+    active ? resource.subscribe : subscribeIdleResource,
+    resource.getSnapshot,
+    resource.getSnapshot
+  )
+  const initial = snapshot.data
+  const error = snapshot.status === 'error' ? getStandInErrorMessage(snapshot.error) : null
   if (error)
     return (
       <div role="alert" className="p-5 text-sm text-error">
@@ -378,9 +402,7 @@ function ProjectCoordinatorChat({
           type="button"
           data-testid="project-coordinator-chat-retry"
           onClick={() => {
-            setInitial(undefined)
-            setError(null)
-            setRetry(value => value + 1)
+            void resource.reload()
           }}
           className="min-h-9 underline"
         >

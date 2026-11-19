@@ -1,5 +1,6 @@
+import { useDocumentEvent } from '@wegent/collaboration/dom-events'
 import { Check, Circle, ExternalLink, FileWarning, RotateCcw, X, XCircle } from 'lucide-react'
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import { useCallback, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
 import { formatUTC8DateTime } from '@/lib/utc-date'
@@ -59,8 +60,15 @@ export function PluginPublicationProgressDrawer({
   const { t } = useTranslation('common')
   const [confirmingWithdraw, setConfirmingWithdraw] = useState(false)
   const drawerRef = useRef<HTMLElement>(null)
-  const closeButtonRef = useRef<HTMLButtonElement>(null)
-  const onCloseRef = useRef(onClose)
+  const focusCloseButton = useCallback((button: HTMLButtonElement | null) => {
+    if (!button) return
+    const previousFocus =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null
+    button.focus()
+    return () => {
+      previousFocus?.focus()
+    }
+  }, [])
   const revision = publication.revision
   const revisionHistory = [...publication.revisions].sort(
     (left, right) => right.number - left.number
@@ -106,25 +114,11 @@ export function PluginPublicationProgressDrawer({
     )
   }
 
-  useEffect(() => {
-    onCloseRef.current = onClose
-  }, [onClose])
-
-  useEffect(() => {
-    const previousFocus =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null
-    closeButtonRef.current?.focus()
-    const handleEscape = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      event.preventDefault()
-      onCloseRef.current()
-    }
-    document.addEventListener('keydown', handleEscape)
-    return () => {
-      document.removeEventListener('keydown', handleEscape)
-      previousFocus?.focus()
-    }
-  }, [])
+  useDocumentEvent('keydown', event => {
+    if (event.key !== 'Escape') return
+    event.preventDefault()
+    onClose()
+  })
 
   const trapDrawerFocus = (event: ReactKeyboardEvent<HTMLElement>) => {
     if (event.key !== 'Tab') return
@@ -181,7 +175,7 @@ export function PluginPublicationProgressDrawer({
             </p>
           </div>
           <Button
-            ref={closeButtonRef}
+            ref={focusCloseButton}
             type="button"
             size="icon"
             variant="ghost"

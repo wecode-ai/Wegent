@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useSyncExternalStore } from 'react'
+import { useMemo, useSyncExternalStore } from 'react'
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import type { InteractionHistory, InteractionReplyDraft } from './RuntimeInteractionsContext'
 import {
@@ -87,26 +87,32 @@ export function createInteractionDraftStore(accountKey: string) {
     void operation.then(complete, complete)
     return operation
   }
+  const connect = () => {
+    active = true
+    refresh()
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== key && event.key !== null) return
+      if (pending) syncAfterPending = true
+      else refresh()
+    }
+    window.addEventListener('storage', onStorage)
+    return () => {
+      active = false
+      window.removeEventListener('storage', onStorage)
+    }
+  }
+  let disconnect: (() => void) | undefined
   return {
     getSnapshot: () => values,
     subscribe: (listener: () => void) => {
       listeners.add(listener)
+      if (listeners.size === 1) disconnect = connect()
       return () => {
         listeners.delete(listener)
-      }
-    },
-    activate() {
-      active = true
-      refresh()
-      const onStorage = (event: StorageEvent) => {
-        if (event.key !== key && event.key !== null) return
-        if (pending) syncAfterPending = true
-        else refresh()
-      }
-      window.addEventListener('storage', onStorage)
-      return () => {
-        active = false
-        window.removeEventListener('storage', onStorage)
+        if (!listeners.size) {
+          disconnect?.()
+          disconnect = undefined
+        }
       }
     },
     setDraft(id: string, text: string) {
@@ -196,10 +202,6 @@ export function createInteractionDraftStore(accountKey: string) {
 export function useInteractionDrafts(accountKey: string) {
   const store = useMemo(() => createInteractionDraftStore(accountKey), [accountKey])
   const values = useSyncExternalStore(store.subscribe, store.getSnapshot)
-  useEffect(() => {
-    // Upgrade old string drafts while their handled-history metadata still exists.
-    return store.activate()
-  }, [store])
   return {
     drafts: Object.fromEntries(
       Object.entries(values).map(([id, value]) => [

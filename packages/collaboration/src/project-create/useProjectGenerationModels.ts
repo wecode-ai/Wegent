@@ -1,4 +1,9 @@
-import { useCallback, useEffect, useRef, useState, type SetStateAction } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore, type SetStateAction } from 'react'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
 import type {
   ProjectCreateGenerationModel,
   ProjectCreateGenerationModelCatalog,
@@ -9,12 +14,25 @@ export function generationModelKey(model: { modelName: string; modelType?: strin
   return `${model.modelType ?? ''}:${model.modelName}`
 }
 
-type ModelState = {
-  models: ProjectCreateGenerationModel[]
-  key: string
+const EMPTY_MODELS: ProjectCreateGenerationModel[] = []
+
+function resolveSelection(
+  catalog: ProjectCreateGenerationModelCatalog,
+  key: string,
   options: Record<string, string>
-  loading: boolean
-  error: string | null
+) {
+  const previous = catalog.models.find(model => generationModelKey(model) === key)
+  const saved = catalog.defaultSelection
+  const preferred = saved
+    ? catalog.models.find(model => generationModelKey(model) === generationModelKey(saved))
+    : undefined
+  const selected = previous ?? preferred ?? catalog.models[0]
+  return {
+    key: selected ? generationModelKey(selected) : '',
+    options: previous
+      ? options
+      : { ...selected?.options, ...(preferred ? saved?.options : undefined) },
+  }
 }
 
 /** Keep model discovery local to the active configuration step. */
@@ -24,77 +42,51 @@ export function useProjectGenerationModels(
   formatError: ((cause: unknown) => string) | undefined,
   failedLabel: string
 ) {
-  const inputs = useRef({ loader, formatError, failedLabel })
-  const requested = useRef(false)
-  const version = useRef(0)
-  const [state, setState] = useState<ModelState>({
-    models: [],
-    key: '',
-    options: {},
-    loading: false,
-    error: null,
-  })
-  useEffect(() => {
-    inputs.current = { loader, formatError, failedLabel }
-  }, [loader, formatError, failedLabel])
-  useEffect(
-    () => () => {
-      version.current += 1
-      requested.current = false
-    },
-    []
+  const resource = useMemo(
+    () => (loader ? createAsyncResource('project-generation-models', () => loader()) : null),
+    [loader]
   )
+  const [activation, setActivation] = useState(() => ({
+    resource,
+    requested: active && resource !== null,
+  }))
+  if (activation.resource !== resource || (active && resource !== null && !activation.requested)) {
+    setActivation({ resource, requested: active && resource !== null })
+  }
+  const snapshot = useSyncExternalStore(
+    activation.requested && resource ? resource.subscribe : subscribeIdleResource,
+    resource?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const catalog = snapshot.data
+  const [selection, setSelection] = useState(() => ({
+    resource,
+    catalog: undefined as ProjectCreateGenerationModelCatalog | undefined,
+    key: '',
+    options: {} as Record<string, string>,
+  }))
+  if (selection.resource !== resource) {
+    setSelection({ resource, catalog: undefined, key: '', options: {} })
+  } else if (catalog && selection.catalog !== catalog) {
+    setSelection({
+      resource,
+      catalog,
+      ...resolveSelection(catalog, selection.key, selection.options),
+    })
+  }
+  const models = catalog?.models ?? EMPTY_MODELS
   const reload = useCallback(async () => {
-    const { loader, formatError, failedLabel } = inputs.current
-    if (!loader) return
-    requested.current = true
-    const request = ++version.current
-    setState(current => ({ ...current, loading: true, error: null }))
-    try {
-      const catalog = await loader()
-      if (request !== version.current) return
-      setState(current => {
-        const previous = catalog.models.find(model => generationModelKey(model) === current.key)
-        const preferred = catalog.defaultSelection
-          ? catalog.models.find(
-              model => generationModelKey(model) === generationModelKey(catalog.defaultSelection!)
-            )
-          : undefined
-        const selected = previous ?? preferred ?? catalog.models[0]
-        return {
-          models: catalog.models,
-          key: selected ? generationModelKey(selected) : '',
-          options: previous
-            ? current.options
-            : {
-                ...selected?.options,
-                ...(preferred ? catalog.defaultSelection?.options : undefined),
-              },
-          loading: false,
-          error: null,
-        }
-      })
-    } catch (cause) {
-      if (request !== version.current) return
-      setState(current => ({
-        ...current,
-        loading: false,
-        error: formatError?.(cause) ?? (cause instanceof Error ? cause.message : failedLabel),
-      }))
-    }
-  }, [])
-  useEffect(() => {
-    if (active && loader && !requested.current) void reload()
-  }, [active, loader, reload])
+    await resource?.reload()
+  }, [resource])
   const selectModel = (
-    selection: ProjectCreateGenerationModelSelection,
+    value: ProjectCreateGenerationModelSelection,
     options?: Record<string, string>
   ) => {
-    const model = state.models.find(
-      candidate => generationModelKey(candidate) === generationModelKey(selection)
+    const model = models.find(
+      candidate => generationModelKey(candidate) === generationModelKey(value)
     )
     if (!model) return false
-    setState(current => ({
+    setSelection(current => ({
       ...current,
       key: generationModelKey(model),
       options: { ...model.options, ...options },
@@ -102,9 +94,27 @@ export function useProjectGenerationModels(
     return true
   }
   const setOptions = (options: SetStateAction<Record<string, string>>) =>
-    setState(current => ({
+    setSelection(current => ({
       ...current,
       options: typeof options === 'function' ? options(current.options) : options,
     }))
-  return { ...state, reload, selectModel, setOptions }
+  const error =
+    snapshot.status === 'error'
+      ? (formatError?.(snapshot.error) ??
+        (snapshot.error instanceof Error ? snapshot.error.message : failedLabel))
+      : null
+  return {
+    models,
+    key: selection.key,
+    options: selection.options,
+    loading: Boolean(
+      activation.requested &&
+      resource &&
+      (snapshot.status === 'idle' || snapshot.status === 'loading')
+    ),
+    error,
+    reload,
+    selectModel,
+    setOptions,
+  }
 }

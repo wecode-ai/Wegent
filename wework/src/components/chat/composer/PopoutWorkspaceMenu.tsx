@@ -1,5 +1,6 @@
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
 import { Check, ChevronDown, Ellipsis, Folder, Search, ShieldCheck } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { useCallback, useMemo, useRef, useState, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 
 import { DshContributionSlotSurface } from '@/features/dsh-runtime/DshContributionSlotSurface'
@@ -91,10 +92,9 @@ export function PopoutWorkspaceMenu({
 
   useOutsideClick(menuRef, open, closeMenu, outsideRefs)
 
-  useEffect(() => {
-    if (!open) return undefined
-
-    const handleKeyDown = (event: KeyboardEvent) => {
+  useWindowEvent(
+    'keydown',
+    event => {
       if (event.key !== 'Escape') return
       event.preventDefault()
       event.stopImmediatePropagation()
@@ -104,11 +104,9 @@ export function PopoutWorkspaceMenu({
       }
       closeMenu()
       triggerRef.current?.focus()
-    }
-
-    window.addEventListener('keydown', handleKeyDown, true)
-    return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [closeMenu, open, projectSubmenuOpen])
+    },
+    { enabled: open, capture: true }
+  )
 
   const filteredProjects = projects.filter(project =>
     project.name.toLocaleLowerCase().includes(projectQuery.trim().toLocaleLowerCase())

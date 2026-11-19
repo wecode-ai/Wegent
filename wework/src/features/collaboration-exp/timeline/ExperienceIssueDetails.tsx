@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useSyncExternalStore } from 'react'
+import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
 import {
   canStartWorkOnCollaborationIssue,
   toSharedIssueDetailTaskBinding,
-  type CollaborationAssignment,
   type CollaborationIssue,
   type SharedWorkspaceApi,
 } from '@wegent/collaboration'
@@ -27,7 +27,6 @@ interface Props {
 export function ExperienceIssueDetails({ api, data, active, revision, onClose, onChange }: Props) {
   const { state, services } = useWorkbench()
   const { t } = useTranslation('collaborationExp')
-  const [request, setRequest] = useState(0)
   const detailServices =
     services.projectSpaceDetailServices?.[
       data.project.project_store === 'local' ? 'local' : 'cloud'
@@ -42,54 +41,50 @@ export function ExperienceIssueDetails({ api, data, active, revision, onClose, o
     }),
     [api, data.project.project_store, data.project.id, data.issue.id]
   )
-  const [snapshot, setSnapshot] = useState<{
-    owner: typeof owner
-    issues: CollaborationIssue[] | null
-    assignment: CollaborationAssignment | null
-    error: string | null
-  }>({ owner, issues: null, assignment: null, error: null })
-  const current = snapshot.owner === owner ? snapshot : null
-  useEffect(() => {
-    if (!active || !chatClient) return
-    let cancelled = false
-    void Promise.all([
-      api.issues.list(owner.projectId),
-      api.assignments?.list(owner.issueId) ?? Promise.resolve(null),
-    ]).then(
-      ([issues, assignments]) => {
-        if (cancelled) return
-        setSnapshot({
-          owner,
-          issues: issues.filter(
-            issue =>
-              issue.cloud_project_id === owner.projectId && canStartWorkOnCollaborationIssue(issue)
-          ),
-          assignment:
-            assignments
-              ?.filter(
-                assignment =>
-                  assignment.issue_id === owner.issueId && assignment.status === 'active'
-              )
-              .sort((left, right) => left.updated_at.localeCompare(right.updated_at))
-              .at(-1) ?? null,
-          error: null,
-        })
-      },
-      cause => {
-        if (!cancelled)
-          setSnapshot(previous => ({
-            owner,
-            issues: previous.owner === owner ? previous.issues : null,
-            assignment: previous.owner === owner ? previous.assignment : null,
-            error: cause instanceof Error ? cause.message : String(cause),
-          }))
-      }
-    )
-    return () => {
-      cancelled = true
-    }
-  }, [api, owner, active, chatClient, revision, request])
-  const error = !chatClient ? t('unavailable') : current?.error
+  const source = useMemo(
+    () =>
+      createAsyncResource(
+        'experience-issue-details',
+        async () => {
+          const [issues, assignments] = await Promise.all([
+            owner.api.issues.list(owner.projectId),
+            owner.api.assignments?.list(owner.issueId) ?? Promise.resolve(null),
+          ])
+          return {
+            issues: issues.filter(
+              issue =>
+                issue.cloud_project_id === owner.projectId &&
+                canStartWorkOnCollaborationIssue(issue)
+            ),
+            assignment:
+              assignments
+                ?.filter(
+                  assignment =>
+                    assignment.issue_id === owner.issueId && assignment.status === 'active'
+                )
+                .sort((left, right) => left.updated_at.localeCompare(right.updated_at))
+                .at(-1) ?? null,
+          }
+        },
+        { refreshOnSubscribe: true }
+      ),
+    [owner]
+  )
+  const version = useMemo(() => ({ revision, chatClient }), [revision, chatClient])
+  const subscribe = useCallback(
+    (notify: () => void) =>
+      active && chatClient ? source.subscribe(notify, version) : subscribeIdleResource(),
+    [source, active, chatClient, version]
+  )
+  const snapshot = useSyncExternalStore(subscribe, source.getSnapshot, source.getSnapshot)
+  const current = snapshot.data
+  const error = !chatClient
+    ? t('unavailable')
+    : snapshot.error === undefined
+      ? null
+      : snapshot.error instanceof Error
+        ? snapshot.error.message
+        : String(snapshot.error)
   return (
     <section
       className="flex h-full min-h-0 min-w-0 flex-col"
@@ -101,7 +96,9 @@ export function ExperienceIssueDetails({ api, data, active, revision, onClose, o
           <Button
             variant="ghost"
             data-testid="collaboration-exp-issue-details-retry"
-            onClick={() => setRequest(value => value + 1)}
+            onClick={() => {
+              if (active && chatClient) void source.reload()
+            }}
           >
             {t('retry')}
           </Button>

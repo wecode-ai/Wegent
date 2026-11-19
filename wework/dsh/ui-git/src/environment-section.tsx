@@ -1,3 +1,4 @@
+import { createCommitFeedbackSource } from './commitFeedbackSource'
 import {
   Check,
   CircleDot,
@@ -10,8 +11,9 @@ import {
   Upload,
   X,
 } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useRef, useState, useSyncExternalStore, type FormEvent } from 'react'
 import { createPortal } from 'react-dom'
+import { useDocumentEvent } from '@wegent/collaboration/dom-events'
 
 import { BranchSelector } from '@/components/common/BranchSelector'
 import { ChangeRequestStatusIcon } from '@/components/common/ChangeRequestStatusIcon'
@@ -158,11 +160,22 @@ function GitEnvironmentSectionContent({
   const { t } = useTranslation('common')
   const [commitFormOpen, setCommitFormOpen] = useState(false)
   const [commitMessage, setCommitMessage] = useState('')
-  const [commitStatus, setCommitStatus] = useState<'idle' | 'committing' | 'success'>('idle')
-  const [commitProgressLabel, setCommitProgressLabel] = useState('')
-  const [commitError, setCommitError] = useState<string | null>(null)
-  const commitFeedbackTimerRef = useRef<number | null>(null)
-  const commitFeedbackMountedRef = useRef(false)
+  const [commitFeedback] = useState(createCommitFeedbackSource)
+  const {
+    status: commitStatus,
+    progress: commitProgressLabel,
+    error: commitError,
+  } = useSyncExternalStore(
+    commitFeedback.subscribe,
+    commitFeedback.getSnapshot,
+    commitFeedback.getSnapshot
+  )
+  const {
+    setStatus: setCommitStatus,
+    setProgress: setCommitProgressLabel,
+    setError: setCommitError,
+    clearTimer: clearCommitFeedbackTimer,
+  } = commitFeedback
   const commitButtonRef = useRef<HTMLButtonElement>(null)
   const commitFormRef = useRef<HTMLFormElement>(null)
   const gitRepositoryAvailable = info.isGitRepository !== false
@@ -175,51 +188,33 @@ function GitEnvironmentSectionContent({
   const closeCommitForm = useCallback(() => {
     setCommitFormOpen(false)
     setCommitError(null)
-  }, [])
+  }, [setCommitError])
 
-  const clearCommitFeedbackTimer = useCallback(() => {
-    if (commitFeedbackTimerRef.current === null) return
-    window.clearTimeout(commitFeedbackTimerRef.current)
-    commitFeedbackTimerRef.current = null
-  }, [])
-
-  useEffect(() => {
-    commitFeedbackMountedRef.current = true
-    return () => {
-      commitFeedbackMountedRef.current = false
-      clearCommitFeedbackTimer()
-    }
-  }, [clearCommitFeedbackTimer])
-
-  useEffect(() => {
-    if (!commitFormOpen) return
-
-    const handlePointerDown = (event: PointerEvent) => {
+  useDocumentEvent(
+    'pointerdown',
+    event => {
       const target = event.target
       if (
         !(target instanceof Node) ||
         commitFormRef.current?.contains(target) ||
         commitButtonRef.current?.contains(target)
-      ) {
+      )
         return
-      }
       closeCommitForm()
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
+    },
+    { enabled: commitFormOpen }
+  )
+  useDocumentEvent(
+    'keydown',
+    event => {
       if (event.key !== 'Escape') return
       event.preventDefault()
       event.stopPropagation()
       closeCommitForm()
       commitButtonRef.current?.focus()
-    }
-
-    document.addEventListener('pointerdown', handlePointerDown)
-    document.addEventListener('keydown', handleKeyDown, true)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-      document.removeEventListener('keydown', handleKeyDown, true)
-    }
-  }, [closeCommitForm, commitFormOpen])
+    },
+    { enabled: commitFormOpen, capture: true }
+  )
 
   if (!hasDiffStats && !hasGitInfo && !canShowBranchSelector) return null
 
@@ -262,6 +257,7 @@ function GitEnvironmentSectionContent({
     if (action === 'push' && !onPushChanges) return
 
     clearCommitFeedbackTimer()
+    const isCurrentFeedback = commitFeedback.captureOwner()
     setCommitError(null)
     setCommitProgressLabel(getCommitProgressLabel(action, trimmedMessage))
     setCommitStatus('committing')
@@ -270,16 +266,12 @@ function GitEnvironmentSectionContent({
       if (action === 'push') await onPushChanges?.()
       else if (action === 'commit-and-push') await onCommitAndPushChanges?.(trimmedMessage)
       else await onCommitChanges?.(trimmedMessage)
-      if (!commitFeedbackMountedRef.current) return
+      if (!isCurrentFeedback()) return
       setCommitStatus('success')
       if (action !== 'push') setCommitMessage('')
-      commitFeedbackTimerRef.current = window.setTimeout(() => {
-        commitFeedbackTimerRef.current = null
-        setCommitStatus('idle')
-        setCommitProgressLabel('')
-      }, 1600)
+      commitFeedback.scheduleReset()
     } catch (error) {
-      if (!commitFeedbackMountedRef.current) return
+      if (!isCurrentFeedback()) return
       setCommitStatus('idle')
       setCommitProgressLabel('')
       setCommitError(getCommitErrorMessage(error))

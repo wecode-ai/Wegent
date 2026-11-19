@@ -6,6 +6,8 @@ sidebar_position: 7
 
 <!-- ui-source: src/components/settings/ConnectionsSettingsPage.tsx -->
 
+If the device list fails to load, it shows the error and a **Retry** action. A failed refresh preserves devices already read for the current connection; switching cloud accounts never carries over the previous account’s list.
+
 ## Individual device-card operations
 
 Open **left sidebar → Cloud work**. **Connection settings** at the top right opens **Settings → Personal → Cloud connection**, not a project's execution-environment page.

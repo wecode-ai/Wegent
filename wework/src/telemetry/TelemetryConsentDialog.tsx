@@ -1,6 +1,6 @@
 import { TelemetryCollectionNotice } from './TelemetryCollectionNotice'
 import { ShieldCheck } from 'lucide-react'
-import { useEffect, useRef, type KeyboardEvent } from 'react'
+import { useRef, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -10,12 +10,7 @@ interface TelemetryConsentDialogProps {
 
 export function TelemetryConsentDialog({ onChoose }: TelemetryConsentDialogProps) {
   const { t } = useTranslation('common')
-  const acceptRef = useRef<HTMLButtonElement>(null)
   const sectionRef = useRef<HTMLElement>(null)
-
-  useEffect(() => {
-    acceptRef.current?.focus()
-  }, [])
 
   const trapFocus = (event: KeyboardEvent<HTMLElement>) => {
     if (event.key !== 'Tab') return
@@ -73,7 +68,7 @@ export function TelemetryConsentDialog({ onChoose }: TelemetryConsentDialogProps
           </button>
           <button
             type="button"
-            ref={acceptRef}
+            autoFocus
             data-testid="telemetry-consent-accept"
             onClick={() => onChoose(true)}
             className="h-10 rounded-lg bg-text-primary px-4 text-sm font-medium text-background hover:bg-text-primary/90 disabled:opacity-50"

@@ -1,7 +1,7 @@
 import { FileTree, useFileTree } from '@pierre/trees/react'
 import { Search } from 'lucide-react'
 import type { CSSProperties } from 'react'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { getDiffFileStatus, type DiffFileSection } from './parseUnifiedDiff'
 
@@ -190,28 +190,39 @@ function PierreReviewFileTree({
     unsafeCSS: PIERRE_FILE_TREE_CSS,
   })
 
-  useEffect(() => {
-    model.setSearch(query.trim() || null)
-  }, [model, query])
-
-  useEffect(() => {
-    if (!selectedPath) return
-    model.getItem(selectedPath)?.select()
-    model.scrollToPath(selectedPath, { focus: false, offset: 'nearest' })
-  }, [model, selectedPath])
+  const committedBinding = useRef<{ model: typeof model; query: string; selectedPath?: string }>(
+    null
+  )
+  const bindTree = useCallback(
+    (host: HTMLDivElement | null) => {
+      if (!host) return
+      const previous = committedBinding.current
+      if (previous?.model !== model || previous.query !== query) {
+        model.setSearch(query.trim() || null)
+      }
+      if (selectedPath && (previous?.model !== model || previous.selectedPath !== selectedPath)) {
+        model.getItem(selectedPath)?.select()
+        model.scrollToPath(selectedPath, { focus: false, offset: 'nearest' })
+      }
+      committedBinding.current = { model, query, selectedPath }
+    },
+    [model, query, selectedPath]
+  )
 
   return (
-    <FileTree
-      data-testid="pierre-file-tree"
-      model={model}
-      className="block h-full min-h-0 w-full"
-      style={
-        {
-          '--trees-border-color-override': 'rgb(var(--color-border))',
-          '--trees-fg-override': 'rgb(var(--color-text-secondary))',
-          '--trees-selected-bg-override': 'rgb(var(--color-bg-surface))',
-        } as CSSProperties
-      }
-    />
+    <div ref={bindTree} className="contents">
+      <FileTree
+        data-testid="pierre-file-tree"
+        model={model}
+        className="block h-full min-h-0 w-full"
+        style={
+          {
+            '--trees-border-color-override': 'rgb(var(--color-border))',
+            '--trees-fg-override': 'rgb(var(--color-text-secondary))',
+            '--trees-selected-bg-override': 'rgb(var(--color-bg-surface))',
+          } as CSSProperties
+        }
+      />
+    </div>
   )
 }

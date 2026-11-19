@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
 import { localHtmlBrowserUrl } from './assistantMarkdownLinks'
 import { forwardVisualizationWheel, withVisualizationWheel } from './inlineVisualizationScroll'
 import { joinDevicePath } from '@/lib/device-workspace-path'
@@ -9,6 +15,7 @@ import { Button } from '@/components/ui/button'
 import type { TurnFileChangesSummary } from '@/types/api'
 import {
   readVisualizationThemeVariables,
+  createVisualizationThemeObservation,
   VISUALIZATION_THEME_PROPERTIES,
 } from '@/lib/visualization-theme'
 
@@ -17,10 +24,6 @@ const MAX_FRAME_HEIGHT = 1200
 const DEFAULT_FRAME_HEIGHT = 480
 const RESIZE_MESSAGE_TYPE = 'wework-inline-visualization-resize'
 const THEME_MESSAGE_TYPE = 'wework-inline-visualization-theme'
-
-type VisualizationDocument =
-  | { source: string; attempt: number; status: 'loaded'; url: string }
-  | { source: string; attempt: number; status: 'error' }
 
 // Codex visualization files are fragments that consume this host contract.
 const CODEX_VISUALIZATION_HOST_STYLES = `
@@ -82,10 +85,8 @@ export function CodexInlineVisualizationHost({
 }) {
   const { t } = useTranslation('chat')
   const theme = useOptionalAppearance()?.resolvedMode ?? 'light'
-  const themeRef = useRef(theme)
   const sourcePath = resolveVisualizationPath(file, fileChanges)
   const sourceUrl = sourcePath ? localHtmlBrowserUrl(sourcePath) : null
-  const [document, setDocument] = useState<VisualizationDocument>()
   const [attempt, setAttempt] = useState(0)
   const [frameHeight, setFrameHeight] = useState(DEFAULT_FRAME_HEIGHT)
   const frameRef = useRef<HTMLIFrameElement>(null)
@@ -93,63 +94,77 @@ export function CodexInlineVisualizationHost({
 
   useFrameMessages(frameRef, resizeToken, setFrameHeight)
 
+  const [themeObservation] = useState(() => createVisualizationThemeObservation(theme))
+  const subscribeTheme = useCallback(
+    (listener: () => void) => themeObservation.subscribe(listener, theme),
+    [themeObservation, theme]
+  )
+  const palette = useSyncExternalStore(
+    subscribeTheme,
+    themeObservation.getSnapshot,
+    themeObservation.getServerSnapshot
+  )
+  const resource = useMemo(
+    () =>
+      createAsyncResource(
+        JSON.stringify([sourceUrl, attempt]),
+        async signal => {
+          if (!sourcePath || !sourceUrl) throw new Error('A visualization source is required')
+          const fragment = await readInlineVisualizationHtml(sourcePath)
+          signal.throwIfAborted()
+          return URL.createObjectURL(
+            new Blob(
+              [
+                buildVisualizationDocument(
+                  fragment,
+                  sourceUrl,
+                  resizeToken,
+                  themeObservation.getSnapshot().mode
+                ),
+              ],
+              { type: 'text/html;charset=utf-8' }
+            )
+          )
+        },
+        {
+          release: url => URL.revokeObjectURL(url),
+          failure(error) {
+            console.error('[Wework] Failed to load inline visualization:', sourcePath, error)
+          },
+        }
+      ),
+    [attempt, resizeToken, sourcePath, sourceUrl, themeObservation]
+  )
+  const document = useSyncExternalStore(
+    sourcePath && sourceUrl ? resource.subscribe : subscribeIdleResource,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
   const updateFrameTheme = useCallback(() => {
     frameRef.current?.contentWindow?.postMessage(
       {
         type: THEME_MESSAGE_TYPE,
         token: resizeToken,
-        theme,
-        variables: readVisualizationThemeVariables(),
+        theme: palette.mode,
+        variables: palette.variables,
       },
       '*'
     )
-  }, [resizeToken, theme])
-
-  useEffect(() => {
-    themeRef.current = theme
-    updateFrameTheme()
-  }, [theme, updateFrameTheme, document])
-
-  useEffect(() => {
-    const observer = new MutationObserver(updateFrameTheme)
-    observer.observe(window.document.documentElement, {
-      attributes: true,
-      attributeFilter: ['style', 'class', 'data-theme', 'data-appearance-theme'],
-    })
-    return () => observer.disconnect()
-  }, [updateFrameTheme])
-
-  useEffect(() => {
-    if (!sourcePath || !sourceUrl) return
-
-    let active = true
-    let objectUrl: string | undefined
-    void readInlineVisualizationHtml(sourcePath)
-      .then(fragment => {
-        if (!active) return
-        objectUrl = URL.createObjectURL(
-          new Blob(
-            [buildVisualizationDocument(fragment, sourceUrl, resizeToken, themeRef.current)],
-            { type: 'text/html;charset=utf-8' }
-          )
-        )
-        setDocument({ source: sourceUrl, attempt, status: 'loaded', url: objectUrl })
-      })
-      .catch(error => {
-        if (!active) return
-        console.error('[Wework] Failed to load inline visualization:', sourcePath, error)
-        setDocument({ source: sourceUrl, attempt, status: 'error' })
-      })
-
-    return () => {
-      active = false
-      if (objectUrl) URL.revokeObjectURL(objectUrl)
-    }
-  }, [attempt, resizeToken, sourcePath, sourceUrl])
-
+  }, [resizeToken, palette])
+  const attachFrame = useCallback(
+    (frame: HTMLIFrameElement | null) => {
+      frameRef.current = frame
+      if (frame) updateFrameTheme()
+    },
+    [updateFrameTheme]
+  )
   if (!sourceUrl) return null
   const currentDocument =
-    document?.source === sourceUrl && document.attempt === attempt ? document : undefined
+    document.status === 'error'
+      ? { status: 'error' as const }
+      : document.data
+        ? { status: 'loaded' as const, url: document.data }
+        : undefined
   const frameUrl = currentDocument?.status === 'loaded' ? currentDocument.url : 'about:blank'
 
   return (
@@ -186,7 +201,7 @@ export function CodexInlineVisualizationHost({
         </div>
       )}
       <iframe
-        ref={frameRef}
+        ref={attachFrame}
         title={title ?? file}
         src={frameUrl}
         sandbox="allow-scripts"
@@ -206,21 +221,17 @@ function useFrameMessages(
   token: string,
   setHeight: (height: number) => void
 ) {
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      const frame = frameRef.current
-      if (!frame || event.source !== frame.contentWindow) return
-      if (isResizeMessage(event.data, token)) {
-        setHeight(
-          Math.min(MAX_FRAME_HEIGHT, Math.max(MIN_FRAME_HEIGHT, Math.ceil(event.data.height)))
-        )
-      } else {
-        forwardVisualizationWheel(frame, event.data, token)
-      }
+  useWindowEvent('message', event => {
+    const frame = frameRef.current
+    if (!frame || event.source !== frame.contentWindow) return
+    if (isResizeMessage(event.data, token)) {
+      setHeight(
+        Math.min(MAX_FRAME_HEIGHT, Math.max(MIN_FRAME_HEIGHT, Math.ceil(event.data.height)))
+      )
+    } else {
+      forwardVisualizationWheel(frame, event.data, token)
     }
-    window.addEventListener('message', handleMessage)
-    return () => window.removeEventListener('message', handleMessage)
-  }, [frameRef, setHeight, token])
+  })
 }
 
 function isResizeMessage(

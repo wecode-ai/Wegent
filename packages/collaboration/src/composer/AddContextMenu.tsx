@@ -1,6 +1,7 @@
+import { useWindowEvent } from '../dom-events'
 import { ClipboardList, Eye, Paperclip, Plus, PencilLine, Target } from 'lucide-react'
 import type { ChangeEvent } from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CollaborationTranslate } from '../i18n'
 import { useCollaborationPortalTheme } from '../theme'
@@ -47,27 +48,29 @@ export function AddContextMenu({
 
   useOutsideClick(containerRef, open, closeMenu, outsideRefs)
 
-  useEffect(() => {
-    if (!open) return undefined
-
+  const attachMenu = useCallback((node: HTMLDivElement | null) => {
+    menuRef.current = node
+    if (!node) return
     const trigger = triggerRef.current
-    const animationFrame = window.requestAnimationFrame(() => {
-      menuRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
-    })
-    const handleKeyDown = (event: KeyboardEvent) => {
+    const frame = window.requestAnimationFrame(() =>
+      node.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
+    )
+    return () => {
+      window.cancelAnimationFrame(frame)
+      menuRef.current = null
+      trigger?.focus()
+    }
+  }, [])
+  useWindowEvent(
+    'keydown',
+    event => {
       if (event.key !== 'Escape') return
       event.preventDefault()
       event.stopImmediatePropagation()
       closeMenu()
-    }
-    window.addEventListener('keydown', handleKeyDown, true)
-
-    return () => {
-      window.cancelAnimationFrame(animationFrame)
-      window.removeEventListener('keydown', handleKeyDown, true)
-      trigger?.focus()
-    }
-  }, [closeMenu, open])
+    },
+    { enabled: open, capture: true }
+  )
 
   const handleFileChange = useCallback(
     (event: ChangeEvent<HTMLInputElement>) => {
@@ -110,7 +113,7 @@ export function AddContextMenu({
         typeof document !== 'undefined' &&
         createPortal(
           <div
-            ref={menuRef}
+            ref={attachMenu}
             role="menu"
             data-testid="add-context-menu"
             style={{

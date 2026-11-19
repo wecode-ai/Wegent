@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useSyncExternalStore } from 'react'
+import { useMemo, useSyncExternalStore } from 'react'
 import { useWorkbenchPaneId } from '@/components/layout/workbenchPanePresentation'
 import type { RuntimeTaskAddress } from '@/types/api'
+import { track } from '@/telemetry/client'
 
 export type McpAppPanelTab = `mcp-app:${string}`
 export interface McpAppPanel {
@@ -41,6 +42,7 @@ export function registerMcpAppPanel(panel: McpAppPanel) {
   return () => {
     if (panels.get(panel.id) !== panel) return
     panels.delete(panel.id)
+    track('workspace_panel_removed', { panel: 'other' })
     notify()
   }
 }
@@ -60,21 +62,35 @@ export function useMcpAppPanels(address: RuntimeTaskAddress | null | undefined) 
   )
 }
 
-export function useMcpAppWorkspacePanels({
-  address,
-  openTab,
-  closeTab,
-}: {
-  address: RuntimeTaskAddress | null | undefined
-  openTab: (tab: McpAppPanelTab) => void
-  closeTab: (tab: McpAppPanelTab) => void
-}) {
-  const available = useMcpAppPanels(address)
-  const previous = useRef(new Set<McpAppPanelTab>())
-  useEffect(() => {
-    const current = new Set(available.map(panel => panel.id))
-    for (const id of previous.current) if (!current.has(id)) closeTab(id)
-    for (const id of current) if (!previous.current.has(id)) openTab(id)
-    previous.current = current
-  }, [available, openTab, closeTab])
+export function reconcileMcpAppWorkspacePanels<Tab extends string>(
+  previous: readonly McpAppPanel[],
+  current: readonly McpAppPanel[],
+  tabs: readonly Tab[],
+  selected: Tab | 'launcher'
+) {
+  const currentIds = new Set(current.map(panel => panel.id))
+  const previousIds = new Set(previous.map(panel => panel.id))
+  const removed = new Set(
+    previous.filter(panel => !currentIds.has(panel.id)).map(panel => panel.id)
+  )
+  const added = current.filter(panel => !previousIds.has(panel.id)).map(panel => panel.id)
+  const retainedTabs = tabs.filter(tab => !removed.has(tab as McpAppPanelTab))
+  const nextTabs: (Tab | McpAppPanelTab)[] = [...retainedTabs]
+  for (const id of added) if (!nextTabs.includes(id)) nextTabs.push(id)
+  const lastAdded = added[added.length - 1]
+  const collapsed = removed.size > 0 && retainedTabs.length === 0
+  const view =
+    lastAdded ??
+    (collapsed
+      ? 'launcher'
+      : removed.has(selected as McpAppPanelTab)
+        ? (nextTabs[nextTabs.length - 1] ?? 'launcher')
+        : selected)
+  return {
+    tabs: nextTabs,
+    view,
+    opened: added.length > 0,
+    collapsed,
+    emptied: removed.size > 0 && nextTabs.length === 0,
+  }
 }

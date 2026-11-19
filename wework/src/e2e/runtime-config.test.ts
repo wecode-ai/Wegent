@@ -1,4 +1,4 @@
-import { createElement, useEffect } from 'react'
+import { createElement, useCallback, type Ref } from 'react'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { CloudConnectionProvider } from '@/features/cloud-connection/CloudConnectionProvider'
@@ -30,9 +30,9 @@ afterEach(async () => {
   vi.unstubAllEnvs()
 })
 
-function CloudIdentity() {
+function CloudIdentity({ elementRef }: { elementRef?: Ref<HTMLSpanElement> } = {}) {
   const cloud = useCloudConnection()
-  return createElement('span', { 'data-testid': 'cloud-user-id' }, cloud.user?.id)
+  return createElement('span', { ref: elementRef, 'data-testid': 'cloud-user-id' }, cloud.user?.id)
 }
 
 describe('desktop E2E account session reuse', () => {
@@ -45,10 +45,10 @@ describe('desktop E2E account session reuse', () => {
     let ownerRefreshStarted = false
     let mounts = 0
     function MountedIdentity() {
-      useEffect(() => {
-        mounts += 1
+      const countMount = useCallback((element: HTMLSpanElement | null) => {
+        if (element) mounts += 1
       }, [])
-      return createElement(CloudIdentity)
+      return createElement(CloudIdentity, { elementRef: countMount })
     }
     vi.stubGlobal('fetch', async (url: string, options?: RequestInit) => {
       if (url.includes('/commands?')) {

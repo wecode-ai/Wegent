@@ -1,9 +1,11 @@
+import { IssueAssignmentReceipts } from './IssueAssignmentReceipts'
 import {
-  IssueAssignmentReceipts,
-  type IssueAssignmentReceiptState,
-} from './IssueAssignmentReceipts'
+  createIssueAssignmentReceiptObservation,
+  getEmptyAssignmentReceiptSnapshot,
+} from './issueAssignmentReceiptObservation'
+import { subscribeIdleResource } from '@wegent/chat-core/async-resource'
 import { issueAssignmentRevision } from './issueAssignmentReceiptScope'
-import { useCallback, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { Send } from 'lucide-react'
 import { IssueExistingTaskAction, type ExistingIssueTaskSource } from './IssueExistingTaskAction'
 import {
@@ -179,9 +181,6 @@ export function TodoEditor(props: TodoEditorProps) {
       },
     }
   }, [props.api, props.projectChatAgentApi, props.sharedApi])
-  const [assignmentReceipts, setAssignmentReceipts] = useState<IssueAssignmentReceiptState | null>(
-    null
-  )
   const receiptApi = useMemo(
     () =>
       workspaceApi.assignmentReceipts
@@ -192,6 +191,15 @@ export function TodoEditor(props: TodoEditorProps) {
           }
         : undefined,
     [workspaceApi]
+  )
+  const receiptObservation = useMemo(
+    () => (receiptApi ? createIssueAssignmentReceiptObservation(receiptApi) : null),
+    [receiptApi]
+  )
+  const assignmentReceipts = useSyncExternalStore(
+    receiptObservation?.subscribe ?? subscribeIdleResource,
+    receiptObservation?.getSnapshot ?? getEmptyAssignmentReceiptSnapshot,
+    getEmptyAssignmentReceiptSnapshot
   )
   const attachmentProjectId = props.project ? String(props.project.id) : undefined
   const attachmentIssueId = props.mode === 'edit' ? props.item.id : undefined
@@ -344,7 +352,7 @@ export function TodoEditor(props: TodoEditorProps) {
           assignmentRevision={issueAssignmentRevision(item)}
           currentUserId={props.currentUserId}
           assigneeUserId={item.assignee_user_id}
-          onStateChange={setAssignmentReceipts}
+          observation={receiptObservation ?? undefined}
         />
       ) : null,
     renderAssignmentHistory: context => (
