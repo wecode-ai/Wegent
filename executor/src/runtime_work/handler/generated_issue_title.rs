@@ -1,5 +1,6 @@
 //! Only an Issue created with a task opts into its generated title.
 use super::*;
+use crate::task_runtime::TaskRuntimeError;
 
 const ISSUE_TITLE_WRITE_ATTEMPTS: usize = 3;
 
@@ -26,24 +27,29 @@ impl RuntimeWorkRpcHandler {
             let store = LocalTaskStore::open(self.task_store_path.as_ref()).map_err(|error| {
                 AppIpcError::new("issue_title_update_failed", error.to_string())
             })?;
-            let current = store.get_task(project, issue).map_err(|error| {
-                AppIpcError::new("issue_title_update_failed", error.to_string())
-            })?;
-            if current.title.as_deref() != Some(source) {
-                return Ok(());
-            }
-            store
-                .update_task(
-                    project,
-                    issue,
-                    serde_json::from_value(json!({
-                        "version":current.version,"title":title
-                    }))
-                    .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?,
-                )
-                .map_err(|error| {
+            for attempt in 1..=ISSUE_TITLE_WRITE_ATTEMPTS {
+                let current = store.get_task(project, issue).map_err(|error| {
                     AppIpcError::new("issue_title_update_failed", error.to_string())
                 })?;
+                if current.title.as_deref() != Some(source) {
+                    return Ok(());
+                }
+                let input =
+                    serde_json::from_value(json!({"version":current.version,"title":title}))
+                        .map_err(|error| AppIpcError::new("bad_request", error.to_string()))?;
+                match store.update_task(project, issue, input) {
+                    Err(TaskRuntimeError::VersionConflict)
+                        if attempt < ISSUE_TITLE_WRITE_ATTEMPTS =>
+                    {
+                        continue
+                    }
+                    result => {
+                        return result.map(|_| ()).map_err(|error| {
+                            AppIpcError::new("issue_title_update_failed", error.to_string())
+                        });
+                    }
+                }
+            }
         } else {
             let path = format!(
                 "/v1/loop-items/{}",

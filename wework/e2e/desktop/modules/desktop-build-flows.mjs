@@ -93,6 +93,7 @@ import {
   join,
   mkdir,
   mcpElicitationServerPath,
+  UNANSWERED_MCP_APPROVAL_SERVER,
   randomUUID,
   readFile,
   rename,
@@ -395,6 +396,12 @@ function mcpElicitationConfigToml(evidencePath) {
     'env = { ELECTRON_RUN_AS_NODE = "1" }',
     // Keep the real tool alive beyond the production ten-minute URL deadline.
     'tool_timeout_sec = 1200',
+    'default_tools_approval_mode = "prompt"',
+    '',
+    `[mcp_servers.${UNANSWERED_MCP_APPROVAL_SERVER}]`,
+    `command = ${command}`,
+    `args = [${server}, ${JSON.stringify(evidencePath + '.approval')}, "--verify-unanswered-approval"]`,
+    'env = { ELECTRON_RUN_AS_NODE = "1" }',
     'default_tools_approval_mode = "prompt"',
     '',
   ].join('\n')
