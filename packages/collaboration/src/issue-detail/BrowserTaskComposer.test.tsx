@@ -212,8 +212,8 @@ describe('browser adapter for the PC task composer', () => {
 
   it('displays the addressed task usage and sends its confirmed compact command', async () => {
     const breakdown = {
-      totalTokens: 700,
-      inputTokens: 700,
+      totalTokens: 332_500,
+      inputTokens: 332_500,
       cachedInputTokens: 0,
       outputTokens: 0,
       reasoningOutputTokens: 0,
@@ -227,11 +227,23 @@ describe('browser adapter for the PC task composer', () => {
       contextUsage: {
         last: breakdown,
         total: breakdown,
-        modelContextWindow: 1000,
+        modelContextWindow: 475_000,
       },
     })
     await mount()
     expect(element('context-usage-indicator').getAttribute('aria-label')).toContain('70%')
+    vi.useFakeTimers()
+    try {
+      await act(async () => {
+        const enter = new MouseEvent('pointerenter', { bubbles: true })
+        Object.defineProperty(enter, 'pointerType', { value: 'mouse' })
+        element('context-usage-button').dispatchEvent(enter)
+        await vi.advanceTimersByTimeAsync(1000)
+      })
+      expect(element('context-usage-details')?.textContent).toContain('475k')
+    } finally {
+      vi.useRealTimers()
+    }
     await click('context-usage-button')
     expect(element('compact-context-confirm-popover').textContent).toContain('压缩')
     expect(runtime.work.sendRuntimeMessage).not.toHaveBeenCalled()

@@ -78,6 +78,7 @@ export function ContextUsageIndicator({
           </HoverCardTrigger>
           <HoverCardContent
             {...portalTheme}
+            data-testid="context-usage-details"
             aria-label={t('workbench.context_usage_title')}
             side="top"
             sideOffset={8}

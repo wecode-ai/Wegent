@@ -220,6 +220,11 @@ export function createCatalogContextVerification({
             'Catalog context task did not finish'
           )
           await control.command('waitFor', '[data-testid="context-usage-indicator"]', {
+            visible: true,
+          })
+          await control.command('hover', '[data-testid="context-usage-button"]')
+          await control.command('waitFor', '[data-testid="context-usage-details"]', {
+            visible: true,
             text: '475k',
           })
           assert.equal(compactions, 0, 'Catalog context was compacted at the obsolete 256k limit')
