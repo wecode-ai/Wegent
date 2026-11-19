@@ -221,6 +221,7 @@ jobs:
       WEWORK_E2E_MYSQLD_BIN: ${{ github.workspace }}/.github/scripts/run-ci-mysqld.sh
       WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/backend-rs/wegent-backend-rs
       WEWORK_E2E_BROWSER_EXECUTABLE: /opt/google/chrome/chrome
+      WEWORK_E2E_PREBUILT_WEB_ARCHIVE: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/resources/wework-core-plugins.tar.gz
     container:
       options: --security-opt apparmor=unconfined
       volumes:

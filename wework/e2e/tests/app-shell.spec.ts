@@ -7,8 +7,10 @@ test('exposes a CI automation bridge and renders the login route', async ({ page
   const sessionResponse = page.waitForResponse(
     response => new URL(response.url()).pathname === '/api/users/me'
   )
-  await app.goto('/')
+  // The anonymous handshake belongs to the login route, independently of dev StrictMode.
+  await app.goto('/login')
   errors.expectHttpError(await sessionResponse, 401)
+  await app.goto('/')
 
   await expect(page.getByTestId('login-form')).toBeVisible()
   await expect(page.getByTestId('login-username-input')).toBeVisible()

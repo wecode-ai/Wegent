@@ -1,9 +1,12 @@
 import { spawn } from 'node:child_process'
-import { mkdir } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { RealCloudEnvironment } from '../desktop/modules/cloud-environment.mjs'
-import { resultDir, weworkDir, stopProcessGroup } from '../desktop/modules/shared.mjs'
+import { resultDir, runChecked, weworkDir, stopProcessGroup } from '../desktop/modules/shared.mjs'
 
+const webRoot = await mkdtemp(join(tmpdir(), 'wework-browser-web-'))
+const viteBinary = join(weworkDir, 'node_modules/vite/bin/vite.js')
 await mkdir(resultDir, { recursive: true })
 const cloud = new RealCloudEnvironment({
   modelServerUrl: process.env.WEWORK_RESPONSE_API_MOCK_URL,
@@ -20,12 +23,50 @@ for (const signal of ['SIGTERM', 'SIGINT'])
   })
 let vite
 try {
+  const archive = process.env.WEWORK_E2E_PREBUILT_WEB_ARCHIVE?.trim()
+  if (archive) {
+    await runChecked('tar', [
+      '-xzf',
+      archive,
+      '-C',
+      webRoot,
+      '--strip-components=3',
+      './wework-app/web',
+    ])
+  } else {
+    await runChecked(
+      process.execPath,
+      [viteBinary, 'build', '--mode', 'e2e', '--base', '/wework/app/', '--outDir', webRoot],
+      { cwd: weworkDir, env: process.env }
+    )
+  }
   await cloud.startBackend()
+  await writeFile(
+    join(webRoot, 'runtime-config.js'),
+    'window.__WEWORK_RUNTIME_CONFIG__ = ' +
+      JSON.stringify({
+        appBasePath: '/wework/app/',
+        desktopHost: 'browser',
+        runtimeMode: 'backend',
+        loginMode: 'password',
+        wegentBackendUrl: cloud.backendUrl,
+        apiBaseUrl: cloud.backendUrl + '/api',
+        socketBaseUrl: cloud.socketUrl,
+        socketPath: '/socket.io',
+      }) +
+      '\n'
+  )
   if (!stopping) {
     vite = spawn(
       process.execPath,
       [
-        join(weworkDir, 'node_modules/vite/bin/vite.js'),
+        viteBinary,
+        'preview',
+        '--outDir',
+        webRoot,
+        '--base',
+        '/wework/app/',
+        '--strictPort',
         '--host',
         '127.0.0.1',
         '--port',
@@ -58,4 +99,5 @@ try {
 } finally {
   await stopProcessGroup(vite)
   await cloud.stop()
+  await rm(webRoot, { recursive: true, force: true })
 }
