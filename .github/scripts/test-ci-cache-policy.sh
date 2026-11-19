@@ -655,8 +655,7 @@ archive_common = {
   'Signed-By' => '/usr/share/keyrings/ubuntu-archive-keyring.gpg'
 }
 expected_archives = [
-  archive_common.merge('URIs' => 'https://archive.ubuntu.com/ubuntu/', 'Suites' => 'noble noble-updates noble-backports'),
-  archive_common.merge('URIs' => 'https://azure.archive.ubuntu.com/ubuntu/', 'Suites' => 'noble-security')
+  archive_common.merge('URIs' => 'https://azure.archive.ubuntu.com/ubuntu/', 'Suites' => 'noble noble-updates noble-backports noble-security')
 ]
 abort 'Native setup must preserve Ubuntu suites, components and the distribution signing keyring' unless archives == expected_archives
 %w[dbus-run-session gnome-keyring-daemon gdbus secret-tool xdotool].each do |binary|
