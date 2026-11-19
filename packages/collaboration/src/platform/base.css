@@ -511,7 +511,7 @@
   color: inherit;
 }
 
-.collaboration-project-collaborator-search > input:focus {
+.collaboration-project-create-collaborator-menu .collaboration-project-collaborator-search > input:is(:focus, :focus-visible) {
   outline: none;
   box-shadow: none;
 }
