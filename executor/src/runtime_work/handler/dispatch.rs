@@ -680,6 +680,9 @@ impl RuntimeWorkRpcHandler {
             "runtime.workspace.search" => {
                 boxed_rpc(move || async move { self.search_workspace(payload).await })
             }
+            "runtime.workspace.read" => {
+                boxed_rpc(move || async move { self.read_workspace(payload).await })
+            }
             "runtime.sidebar.projects.reorder" => {
                 boxed_rpc(move || async move { self.reorder_sidebar_projects(payload).await })
             }

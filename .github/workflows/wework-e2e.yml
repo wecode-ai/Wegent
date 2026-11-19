@@ -519,6 +519,10 @@ jobs:
       - name: Set up real object storage for desktop E2E
         uses: ./.github/actions/setup-minio-e2e
 
+      - name: Verify Electron for native startup checkpoints
+        if: contains(matrix.segments, 'native-window-startup') || contains(matrix.segments, 'workbench-mode')
+        run: pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
+
       - name: Run Wework desktop Core shard E2E
         env:
           CI: true
@@ -538,6 +542,9 @@ jobs:
           WEWORK_E2E_SEGMENTS: ${{ matrix.segments }}
         run: |
           WEWORK_E2E_SEGMENTS="$(node .github/scripts/order-wework-linux-e2e.mjs)"
+          if [[ "$WEWORK_E2E_SEGMENTS" == *"native-window-startup"* || "$WEWORK_E2E_SEGMENTS" == *"workbench-mode"* ]]; then
+            pnpm --dir wework/electron exec node -e "const fs=require('node:fs');const electron=require('electron');const stats=fs.statSync(electron);if(!stats.isFile()||!(stats.mode&0o111))throw new Error('Electron is not an executable regular file: '+electron)"
+          fi
           test -x "$WEWORK_E2E_APP_BIN"
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
           test -x "$WEWORK_E2E_BACKEND_RS_BIN"
