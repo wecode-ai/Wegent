@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import type { ProjectChatMessage } from '@/api/backend/projectChatSocket'
 import { useActivityExecutionDisplayStatus } from './useActivityExecutionStatus'
 import { RuntimeExecutionConversation, createCollaborationTranslator } from '@wegent/collaboration'
@@ -46,18 +45,16 @@ export function RuntimeTaskExecutionOverlay({
     currentRuntimeTask: address,
     debugSnapshotEnabled: false,
   })
-  const { turn, status: executionStatus } = useActivityExecutionDisplayStatus(
+  const { status: executionStatus } = useActivityExecutionDisplayStatus(
     activityMessage,
     executionTurnId,
     singleExecution &&
       !session.transcriptLoading &&
       !session.transcriptError &&
       !session.transcriptHasMoreBefore &&
-      session.loadedTranscriptRanges.some(range => range.start === 0)
+      session.loadedTranscriptRanges.some(range => range.start === 0),
+    onExecutionTurnIdentified
   )
-  useEffect(() => {
-    if (turn?.id) onExecutionTurnIdentified?.(turn.id)
-  }, [turn?.id, onExecutionTurnIdentified])
   const task = findRuntimeTask(state.runtimeWork, address)
   const device = findWorkbenchDevice(state.devices, address.deviceId)
   return (

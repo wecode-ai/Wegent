@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useRef, type RefObject } from 'react'
+import { useCallback, useImperativeHandle, useMemo, useState, type RefObject } from 'react'
+import { useDOMEvent, useEditorFocusRequest } from '@wegent/collaboration/dom-events'
+import type { WeworkComposerCommandApi } from '../../../../dsh/app-wework/client'
 import { getDshExtensionHost } from '@/features/dsh-runtime/dshExtensions'
 import { FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT } from '@/features/plugins/pluginTrial'
 import { WORKBENCH_NEW_CHAT_FOCUS_EVENT } from '@/lib/workbenchComposerFocus'
@@ -19,10 +21,14 @@ export function useDesktopComposerBindings({
   commitEditorValue(value: string, cursor: number): void
   closeAutocompleteMenu(): void
 }) {
-  useEffect(() => {
+  const bindComposer = useCallback((controller: WeworkComposerCommandApi | null) => {
     const composer = getDshExtensionHost()?.composer
-    if (!composer || typeof composer.bind !== 'function') return
-    return composer.bind({
+    if (!controller || !composer || typeof composer.bind !== 'function') return
+    return composer.bind(controller)
+  }, [])
+  useImperativeHandle(
+    bindComposer,
+    () => ({
       focus: () => editorRef.current?.focus(),
       getValue: () => editorRef.current?.getSnapshot().value ?? valueRef.current,
       insertText: text => {
@@ -40,79 +46,78 @@ export function useDesktopComposerBindings({
         commitEditorValue(nextValue, selectionOffset)
         editorRef.current?.focus()
       },
-    })
-  }, [commitEditorValue, editorRef, valueRef])
+    }),
+    [commitEditorValue, editorRef, valueRef]
+  )
 
-  useEffect(() => {
-    const openSlashMenu = () => {
-      const editor = editorRef.current
-      if (!editor) return
-      const snapshot = editor.getSnapshot()
-      const before = snapshot.value.slice(0, snapshot.selectionStart)
-      const after = snapshot.value.slice(snapshot.selectionEnd)
-      const spacer = before && !/\s$/.test(before) ? ' ' : ''
-      const inserted = `${spacer}/`
-      commitEditorValue(`${before}${inserted}${after}`, before.length + inserted.length)
-      editor.focus()
-      textareaRef.current?.focus()
-    }
-    window.addEventListener(OPEN_COMPOSER_SLASH_MENU_EVENT, openSlashMenu)
-    return () => window.removeEventListener(OPEN_COMPOSER_SLASH_MENU_EVENT, openSlashMenu)
-  }, [commitEditorValue, editorRef, textareaRef])
-
-  const pendingTrialFocusExpectedRef = useRef<string | null>(null)
-
-  const focusTrialComposer = useCallback(() => {
+  useDOMEvent('window', OPEN_COMPOSER_SLASH_MENU_EVENT, () => {
     const editor = editorRef.current
     if (!editor) return
-    editor.setValue(valueRef.current, valueRef.current.length)
+    const snapshot = editor.getSnapshot()
+    const before = snapshot.value.slice(0, snapshot.selectionStart)
+    const after = snapshot.value.slice(snapshot.selectionEnd)
+    const spacer = before && !/\s$/.test(before) ? ' ' : ''
+    const inserted = spacer + '/'
+    commitEditorValue(before + inserted + after, before.length + inserted.length)
+    editor.focus()
+    textareaRef.current?.focus()
+  })
+
+  const [trialFocus, setTrialFocus] = useState<{ expectedValue: string } | null>(null)
+  const [newChatFocus, setNewChatFocus] = useState<object | null>(null)
+  const focusTarget = useMemo(
+    () => ({
+      get current() {
+        const editor = editorRef.current
+        if (!editor) return null
+        return {
+          get element() {
+            return editor.element
+          },
+          focus() {
+            editor.setValue(valueRef.current, valueRef.current.length)
+            editor.focus()
+          },
+        }
+      },
+    }),
+    [editorRef, valueRef]
+  )
+  const focusTrialComposer = useCallback(() => {
+    const editor = focusTarget.current
+    if (!editor) return
     editor.focus()
     closeAutocompleteMenu()
-  }, [closeAutocompleteMenu, editorRef, valueRef])
-
-  useEffect(() => {
-    const handleFocusRequest = (event: Event) => {
-      const detail = (event as CustomEvent<{ expectedValue?: string }>).detail
-      const expectedValue = detail?.expectedValue
+  }, [closeAutocompleteMenu, focusTarget])
+  const finishTrialFocus = useCallback(() => {
+    setTrialFocus(null)
+    closeAutocompleteMenu()
+  }, [closeAutocompleteMenu])
+  const finishNewChatFocus = useCallback(() => {
+    setNewChatFocus(null)
+    closeAutocompleteMenu()
+  }, [closeAutocompleteMenu])
+  useEditorFocusRequest(focusTarget, trialFocus, {
+    enabled: trialFocus !== null && trialFocus.expectedValue === value,
+    onFocused: finishTrialFocus,
+  })
+  useEditorFocusRequest(focusTarget, newChatFocus, {
+    enabled: newChatFocus !== null,
+    animationFrame: true,
+    onFocused: finishNewChatFocus,
+  })
+  useDOMEvent<CustomEvent<{ expectedValue?: string }>>(
+    'window',
+    FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT,
+    event => {
+      const expectedValue = event.detail?.expectedValue
       if (expectedValue && expectedValue !== valueRef.current) {
-        pendingTrialFocusExpectedRef.current = expectedValue
+        setTrialFocus({ expectedValue })
         return
       }
-      pendingTrialFocusExpectedRef.current = null
+      setTrialFocus(null)
       focusTrialComposer()
     }
-
-    window.addEventListener(FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT, handleFocusRequest)
-    return () => {
-      window.removeEventListener(FOCUS_PLUGIN_TRIAL_COMPOSER_EVENT, handleFocusRequest)
-    }
-  }, [focusTrialComposer, valueRef])
-
-  useEffect(() => {
-    const expectedValue = pendingTrialFocusExpectedRef.current
-    if (!expectedValue || expectedValue !== value) return
-    pendingTrialFocusExpectedRef.current = null
-    focusTrialComposer()
-  }, [focusTrialComposer, value])
-
-  useEffect(() => {
-    let focusFrame: number | null = null
-    const handleNewChatFocusRequest = () => {
-      if (focusFrame !== null) window.cancelAnimationFrame(focusFrame)
-      focusFrame = window.requestAnimationFrame(() => {
-        focusFrame = null
-        const editor = editorRef.current
-        if (!editor) return
-        editor.setValue(valueRef.current, valueRef.current.length)
-        editor.focus()
-        closeAutocompleteMenu()
-      })
-    }
-
-    window.addEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, handleNewChatFocusRequest)
-    return () => {
-      window.removeEventListener(WORKBENCH_NEW_CHAT_FOCUS_EVENT, handleNewChatFocusRequest)
-      if (focusFrame !== null) window.cancelAnimationFrame(focusFrame)
-    }
-  }, [closeAutocompleteMenu, editorRef, valueRef])
+  )
+  useDOMEvent('window', WORKBENCH_NEW_CHAT_FOCUS_EVENT, () => setNewChatFocus({}))
 }

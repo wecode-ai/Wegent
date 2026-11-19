@@ -1,10 +1,10 @@
-import { createRuntimeConversationSession } from '@wegent/chat-core/runtime-conversation-session'
+import { useRuntimeConversationSession } from '../conversation/useRuntimeConversationSession'
 import {
   createQuickPhrasePreferencesStore,
   defaultQuickPhrases,
 } from '@wegent/chat-core/composer-quick-phrases'
 // @vitest-environment jsdom
-import { act, useState, useMemo, useEffect } from 'react'
+import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { beforeEach, afterEach, describe, it, expect, vi } from 'vitest'
 import { BrowserTaskComposer } from './BrowserTaskComposer'
@@ -56,14 +56,7 @@ function Harness({
 }) {
   const [open, setOpen] = useState(true)
   const [currentTask, setCurrentTask] = useState('task-1')
-  const session = useMemo(
-    () => createRuntimeConversationSession(runtime, { ...address, taskId: currentTask }),
-    [runtime, currentTask]
-  )
-  useEffect(() => {
-    session.start()
-    return session.stop
-  }, [session])
+  const { session } = useRuntimeConversationSession(runtime, { ...address, taskId: currentTask })
   const draft = useBrowserTaskDraft(`device-1:${currentTask}`)
   return (
     <>
@@ -197,6 +190,17 @@ describe('browser adapter for the PC task composer', () => {
       )
     )
   }
+
+  it('refreshes a failed model catalog from the retry action', async () => {
+    vi.mocked(runtime.listModels).mockRejectedValueOnce(new Error('Model directory unavailable'))
+    await mount()
+    expect(container.textContent).toContain('Model directory unavailable')
+    expect(runtime.listModels).toHaveBeenCalledTimes(1)
+    await click('task-conversation-models-retry')
+    expect(runtime.listModels).toHaveBeenCalledTimes(2)
+    expect(container.querySelector('[data-testid="task-conversation-models-retry"]')).toBeNull()
+    expect(container.textContent).not.toContain('Model directory unavailable')
+  })
 
   it('displays the addressed task usage and sends its confirmed compact command', async () => {
     const breakdown = {

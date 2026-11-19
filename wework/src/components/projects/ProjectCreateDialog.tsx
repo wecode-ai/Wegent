@@ -1,5 +1,5 @@
 import { ArrowUpCircle, Folder, FolderPlus, Loader2, RotateCcw, X } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { shouldUseNativeProjectDirectoryPicker } from '@/e2e/automation'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
@@ -202,8 +202,17 @@ function ProjectCreateDialogContent({
   const cloudRestarts = useWorkbenchCloudDeviceRestarts()
   const isEditing = Boolean(project)
   const incomingProjectDevices = useMemo(() => getProjectDevices(devices), [devices])
-  const [deviceSnapshot, setDeviceSnapshot] = useState<DeviceInfo[]>(incomingProjectDevices)
-  const allProjectDevices = deviceSnapshot
+  const [deviceSnapshot, setDeviceSnapshot] = useState({
+    source: incomingProjectDevices,
+    items: incomingProjectDevices,
+  })
+  if (incomingProjectDevices.length > 0 && deviceSnapshot.source !== incomingProjectDevices) {
+    setDeviceSnapshot({
+      source: incomingProjectDevices,
+      items: mergeDialogDevices(deviceSnapshot.items, incomingProjectDevices),
+    })
+  }
+  const allProjectDevices = deviceSnapshot.items
   const existingMappings = useMemo(() => mappingsByDeviceId(deviceWorkspaces), [deviceWorkspaces])
   const [activeDeviceId, setActiveDeviceId] = useState(() =>
     getInitialActiveDeviceId(allProjectDevices, deviceWorkspaces, preferredDeviceId, isEditing)
@@ -216,19 +225,6 @@ function ProjectCreateDialogContent({
   const [workspaceKind, setWorkspaceKind] = useState<ProjectWorkspaceKind>('worktree')
   const [projectCreateError, setProjectCreateError] = useState<string | null>(null)
   const [submitting, setSubmitting] = useState(false)
-
-  useEffect(() => {
-    if (incomingProjectDevices.length === 0) return
-    let cancelled = false
-    queueMicrotask(() => {
-      if (!cancelled) {
-        setDeviceSnapshot(current => mergeDialogDevices(current, incomingProjectDevices))
-      }
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [incomingProjectDevices])
 
   const getDeviceFolder = (deviceId: string) => {
     const draft = folderDrafts[deviceId]

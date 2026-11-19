@@ -27,11 +27,20 @@ const coordinator: Coordinator = {
   unsubscribe: null,
 }
 
+export interface RuntimeConversationStreamRegistration {
+  (): void
+  update(
+    chatStream: WorkbenchServices['chatStream'],
+    handlers: RuntimeConversationStreamHandlers,
+    active: boolean
+  ): void
+}
+
 export function registerRuntimeConversationStream(
   chatStream: WorkbenchServices['chatStream'],
   handlers: RuntimeConversationStreamHandlers,
   active: boolean
-): () => void {
+): RuntimeConversationStreamRegistration {
   const token = Symbol('runtime-conversation-stream-registration')
   coordinator.registrations.set(token, {
     active,
@@ -41,11 +50,26 @@ export function registerRuntimeConversationStream(
   })
   ensureSubscription()
   logCoordinatorStage('registered')
-  return () => {
+  const unregister = () => {
     coordinator.registrations.delete(token)
     ensureSubscription()
     logCoordinatorStage('unregistered')
   }
+  return Object.assign(unregister, {
+    update(
+      nextStream: WorkbenchServices['chatStream'],
+      nextHandlers: RuntimeConversationStreamHandlers,
+      nextActive: boolean
+    ) {
+      const registration = coordinator.registrations.get(token)
+      if (!registration) return
+      registration.chatStream = nextStream
+      registration.handlers = nextHandlers
+      registration.active = nextActive
+      // Metadata updates retain both provider order and the existing parser subscription.
+      ensureSubscription()
+    },
+  })
 }
 
 function ensureSubscription(): void {

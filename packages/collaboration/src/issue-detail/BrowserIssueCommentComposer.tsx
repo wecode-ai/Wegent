@@ -1,5 +1,6 @@
+import { useMediaQuery } from '../media-query'
 import { useIssueMentionCandidates } from './useIssueMentionCandidates'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import type { ProjectChatClient, ProjectChatMessage } from '@wegent/chat-core'
 import type { Attachment } from '@wegent/chat-core/runtime'
 import {
@@ -73,14 +74,8 @@ export function BrowserIssueCommentComposer({
   const draft = useBrowserTaskDraft(`issue:${project.id}:${issue.id}`)
   const execution = useBrowserIssueExecution()
   const serverExecution = project.project_store === 'backend' && client.executeTaskComment
-  const [isMobile, setIsMobile] = useState(false)
-  useEffect(() => {
-    const media = window.matchMedia('(max-width: 767px)')
-    const update = () => setIsMobile(media.matches)
-    update()
-    media.addEventListener('change', update)
-    return () => media.removeEventListener('change', update)
-  }, [])
+  const isMobile = useMediaQuery('(max-width: 767px)')
+
   const agent = agents.find(
     agent => agent.id === issue.assignee_agent_id && agent.status === 'active'
   )

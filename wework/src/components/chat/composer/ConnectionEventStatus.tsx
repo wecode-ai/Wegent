@@ -1,4 +1,5 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { createConnectionEventStatusSource } from './connectionEventStatusSource'
+import { memo, useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import { Button } from '@/components/ui/button'
 import { ChevronRight, CircleAlert, Radio } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -22,30 +23,26 @@ export function ConnectionEventStatus({
   unsupported?: boolean
 }) {
   const { t } = useTranslation('common')
-  const [cancelled, setCancelled] = useState<string[]>([])
-  const [announcement, setAnnouncement] = useState('')
-  const [pending, setPending] = useState<string[]>([])
-  const [unsupportedFailure, setUnsupportedFailure] = useState(false)
+  const [source] = useState(createConnectionEventStatusSource)
+  const { cancelled, announcement, pending, unsupportedFailure, errors } = useSyncExternalStore(
+    source.subscribe,
+    source.getSnapshot,
+    source.getSnapshot
+  )
+  const bindContainer = useCallback(
+    (node: HTMLDivElement | null) => source.bindContainer(node),
+    [source]
+  )
   const cancellationUnsupported = unsupported || unsupportedFailure
-  const [errors, setErrors] = useState<Record<string, boolean>>({})
-  const inFlight = useRef(new Set<string>())
-  const statusRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    if (!announcement) return
-    const timeout = setTimeout(() => {
-      if (!statusRef.current?.contains(document.activeElement)) setAnnouncement('')
-    }, 5000)
-    return () => clearTimeout(timeout)
-  }, [announcement])
   const items = connectionEventSubscriptions(subscriptions).filter(
     item => !cancelled.includes(item.subscription_key)
   )
   if (!items.length) {
     return announcement ? (
       <div
-        ref={statusRef}
+        ref={bindContainer}
         tabIndex={-1}
-        onBlur={() => setAnnouncement('')}
+        onBlur={() => source.clearAnnouncement()}
         data-testid="connection-event-cancel-feedback"
         role="status"
         className="col-span-full min-h-8 min-w-0 truncate px-2.5 py-1 text-xs text-text-secondary"
@@ -55,46 +52,21 @@ export function ConnectionEventStatus({
       </div>
     ) : null
   }
-  const cancel = async (key: string, source: string) => {
-    if (!onCancel || unavailable || cancellationUnsupported || inFlight.current.has(key)) return
-    const focused = document.activeElement
-    const restoreFocus = statusRef.current?.contains(focused)
-    inFlight.current.add(key)
-    setPending(current => [...current, key])
-    setErrors(current => ({ ...current, [key]: false }))
-    try {
-      await onCancel(key)
-      setCancelled(current => [...current, key])
-      setAnnouncement(t('workbench.connection_event_cancelled', { source }))
-      requestAnimationFrame(() => {
-        if (
-          restoreFocus &&
-          (document.activeElement === focused || document.activeElement === document.body)
-        ) {
-          const next = statusRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')
-          const target = next ?? statusRef.current
-          target?.focus()
-        }
-      })
-    } catch (failure) {
-      const code = failure && typeof failure === 'object' && 'code' in failure ? failure.code : null
-      if (code === 'unsupported_method' || code === 'connection_event_upgrade_required') {
-        setUnsupportedFailure(true)
-      } else {
-        setErrors(current => ({ ...current, [key]: true }))
-      }
-    } finally {
-      inFlight.current.delete(key)
-      setPending(current => current.filter(value => value !== key))
-    }
+  const cancel = (key: string, sourceName: string) => {
+    if (!onCancel || unavailable || cancellationUnsupported) return
+    return source.cancel(
+      key,
+      t('workbench.connection_event_cancelled', { source: sourceName }),
+      onCancel
+    )
   }
 
   return (
     <div
-      ref={statusRef}
+      ref={bindContainer}
       tabIndex={-1}
       onBlur={event => {
-        if (!event.currentTarget.contains(event.relatedTarget)) setAnnouncement('')
+        if (!event.currentTarget.contains(event.relatedTarget)) source.clearAnnouncement()
       }}
       data-testid="connection-event-status"
       className="col-span-full w-full min-w-0 basis-full px-2.5 text-xs text-text-secondary"

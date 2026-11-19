@@ -1,14 +1,6 @@
-import {
-  useCallback,
-  useContext,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react'
+import { useCallback, useContext, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { X } from 'lucide-react'
+import { useFocusRequest } from '@wegent/collaboration/dom-events'
 import {
   ToolInteractionServicesProvider,
   useToolInteractionServices,
@@ -98,10 +90,6 @@ export function QuestionDiscussionTabPanel({
 }) {
   const store = useContext(QuestionDiscussionStoreContext)
   const discussion = useContext(QuestionDiscussionContext)
-  const activeRef = useRef(active)
-  useEffect(() => {
-    activeRef.current = active
-  }, [active])
   const key = tab.slice('discussion:'.length)
   const session = store?.sessions[key]
   if (!session) return null
@@ -113,7 +101,7 @@ export function QuestionDiscussionTabPanel({
         session={session}
         open={active}
         onClose={() => {
-          if (activeRef.current) discussion?.restoreFocus?.(key)
+          if (active) discussion?.restoreFocus?.(key)
           onClose()
         }}
       />
@@ -161,9 +149,7 @@ function QuestionDiscussionPanel({
   const [checking, setChecking] = useState(false)
   const panelRef = useRef<HTMLDivElement>(null)
   const closeCurrentTab = useStableEvent(onClose)
-  useEffect(() => {
-    if (open) panelRef.current?.focus({ preventScroll: true })
-  }, [open])
+  useFocusRequest(panelRef, undefined, { enabled: open, preventScroll: true })
   const [initialAddress] = useState(session.address)
   const checkingRef = useRef(false)
   const onAddressChange = useCallback(

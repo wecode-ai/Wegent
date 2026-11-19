@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { DeviceInfo } from '@/types/api'
 
 export function useStandaloneProjectDeviceSelection({
@@ -26,16 +26,7 @@ export function useStandaloneProjectDeviceSelection({
   const [activeDeviceId, setActiveDeviceId] = useState<string | null>(
     defaultDevice?.device_id ?? null
   )
-  useEffect(() => {
-    if (!open || activeDeviceId !== null || !defaultDevice) return
-    let cancelled = false
-    queueMicrotask(() => {
-      if (!cancelled) setActiveDeviceId(defaultDevice.device_id)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [activeDeviceId, defaultDevice, open])
+  if (open && activeDeviceId === null && defaultDevice) setActiveDeviceId(defaultDevice.device_id)
   const activeDevice =
     activeDeviceId === null
       ? defaultDevice

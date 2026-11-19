@@ -30,6 +30,8 @@ To sync manually:
 
 Only the first effective account per domain in configuration order is synced. Success does not prove repository permission, branch availability or commit identity. Cloning and environment preparation first check actual device access; only HTTP(S) authentication failures trigger synchronization of existing accounts and one recheck. Sync failures retain the original Git diagnosis and configuration action.
 
+Account metadata and the device list load independently; a device-list failure does not hide loaded accounts. Failed refreshes retain existing data and selections for the same connection; use Refresh to retry. Switching cloud accounts or connections requires selecting the target again; prior results and clear confirmations do not carry over.
+
 Clearing is independent: when there are no effective cloud accounts, ordinary sync is disabled. Select a target, choose **Clear Wegent Git configuration**, and confirm to remove that device's managed configuration. Empty accounts, refreshes and authentication failures never clear it automatically or alter native local configuration.
 
 Local devices use existing Git, credential managers and SSH configuration, including `core.sshCommand`, `GIT_SSH` and `GIT_SSH_COMMAND`. Repair SSH keys on the selected device rather than opening HTTP(S) accounts. Network, TLS, SSH host trust and 403/404 permission errors do not prove expired login. See [Git projects](../wegent/user-guide/coding/git-workspace-projects.md#configuration-and-recovery) for cloning and recovery.

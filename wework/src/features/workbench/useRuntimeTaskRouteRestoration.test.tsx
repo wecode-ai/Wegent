@@ -1,14 +1,14 @@
-import { act, renderHook, waitFor } from '@testing-library/react'
-import { useLayoutEffect } from 'react'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
-import { RuntimeTaskLifecycleProvider, RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
-import { useRuntimeTaskRouteRestoration } from './useRuntimeTaskRouteRestoration'
+import { act, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
+import { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
+import {
+  createRuntimeTaskRouteCoordinator,
+  resolveRuntimeTaskRoute,
+  type RouteInput,
+} from './runtimeTaskRouteCoordinator'
 import type { DeviceInfo, RuntimeTaskAddress } from '@/types/api'
 
 let lifecycleStore: RuntimeTaskLifecycleStore
-const wrapper = ({ children }: { children: React.ReactNode }) => (
-  <RuntimeTaskLifecycleProvider store={lifecycleStore}>{children}</RuntimeTaskLifecycleProvider>
-)
 
 const openRuntimeTaskMock = vi.hoisted(() => vi.fn())
 const workbenchState = vi.hoisted(() => ({
@@ -21,12 +21,41 @@ const workbenchState = vi.hoisted(() => ({
   runtimeWork: null,
 }))
 
-vi.mock('./useWorkbench', () => ({
-  useWorkbench: () => ({
+const routeFixtures = new Set<() => void>()
+function renderRoute(initial: { enabled?: boolean; beforeObserve?: () => void } = {}) {
+  let enabled = initial.enabled ?? true
+  const read = (): RouteInput => ({
+    enabled,
     state: workbenchState,
+    resolveTask: address =>
+      lifecycleStore.selectTask(lifecycleStore.getSnapshot(), address)?.task ?? null,
     openRuntimeTask: openRuntimeTaskMock,
-  }),
-}))
+  })
+  const actor = createRuntimeTaskRouteCoordinator(read)
+  const update = (props?: { enabled: boolean }) => {
+    if (props) enabled = props.enabled
+    actor.update()
+  }
+  const stop = () => {
+    actor.stop()
+    routeFixtures.delete(stop)
+  }
+  routeFixtures.add(stop)
+  initial.beforeObserve?.()
+  update()
+  return {
+    result: {
+      get current() {
+        return resolveRuntimeTaskRoute(read())
+      },
+    },
+    rerender: update,
+    unmount: stop,
+  }
+}
+afterEach(() => {
+  for (const stop of routeFixtures) stop()
+})
 
 describe('useRuntimeTaskRouteRestoration', () => {
   beforeEach(() => {
@@ -54,7 +83,7 @@ describe('useRuntimeTaskRouteRestoration', () => {
   test('switches from the active task to a different runtime task in the URL', async () => {
     window.history.replaceState({}, '', '/runtime-tasks?deviceId=local-device&taskId=task-b')
 
-    renderHook(() => useRuntimeTaskRouteRestoration(), { wrapper })
+    renderRoute()
 
     await waitFor(() =>
       expect(openRuntimeTaskMock).toHaveBeenCalledWith({
@@ -66,23 +95,19 @@ describe('useRuntimeTaskRouteRestoration', () => {
 
   test('does not restore a task from a stale render after navigation has already changed', () => {
     window.history.replaceState({}, '', '/runtime-tasks?deviceId=local-device&taskId=task-b')
-    renderHook(
-      () => {
-        useRuntimeTaskRouteRestoration()
-        useLayoutEffect(() => {
-          window.history.replaceState({}, '', '/stand-in')
-          window.dispatchEvent(new PopStateEvent('popstate'))
-        }, [])
+    renderRoute({
+      beforeObserve: () => {
+        window.history.replaceState({}, '', '/stand-in')
+        window.dispatchEvent(new PopStateEvent('popstate'))
       },
-      { wrapper }
-    )
+    })
     expect(openRuntimeTaskMock).not.toHaveBeenCalled()
   })
 
   test('does not reopen the task that is already active', () => {
     window.history.replaceState({}, '', '/runtime-tasks?deviceId=local-device&taskId=task-a')
 
-    const { result } = renderHook(() => useRuntimeTaskRouteRestoration(), { wrapper })
+    const { result } = renderRoute()
 
     expect(result.current).toBeNull()
     expect(openRuntimeTaskMock).not.toHaveBeenCalled()
@@ -106,7 +131,7 @@ describe('useRuntimeTaskRouteRestoration', () => {
       workspacePath: '/known',
     }
     window.history.replaceState({}, '', '/runtime-tasks?deviceId=app-record-75&taskId=task-a')
-    const { result, rerender } = renderHook(() => useRuntimeTaskRouteRestoration(), { wrapper })
+    const { result, rerender } = renderRoute()
     expect(result.current).toBeNull()
     workbenchState.currentRuntimeTask = {
       deviceId: 'app-record-75',
@@ -143,7 +168,7 @@ describe('useRuntimeTaskRouteRestoration', () => {
     workbenchState.isBootstrapping = true
     window.history.replaceState({}, '', '/runtime-tasks?deviceId=local-device&taskId=first-turn')
 
-    const { rerender } = renderHook(() => useRuntimeTaskRouteRestoration(), { wrapper })
+    const { rerender } = renderRoute()
     expect(openRuntimeTaskMock).not.toHaveBeenCalled()
 
     workbenchState.isBootstrapping = false
@@ -161,10 +186,7 @@ describe('useRuntimeTaskRouteRestoration', () => {
     workbenchState.currentRuntimeTask = null
     window.history.replaceState({}, '', '/runtime-tasks?deviceId=local-device&taskId=first-turn')
 
-    const { rerender } = renderHook(({ enabled }) => useRuntimeTaskRouteRestoration(enabled), {
-      initialProps: { enabled: false },
-      wrapper,
-    })
+    const { rerender } = renderRoute({ enabled: false })
     expect(openRuntimeTaskMock).not.toHaveBeenCalled()
     rerender({ enabled: true })
 
@@ -179,7 +201,7 @@ describe('useRuntimeTaskRouteRestoration', () => {
   test('switches tasks when navigation changes only the URL query', async () => {
     window.history.replaceState({}, '', '/runtime-tasks?deviceId=local-device&taskId=task-a')
 
-    renderHook(() => useRuntimeTaskRouteRestoration(), { wrapper })
+    renderRoute()
 
     act(() => {
       window.history.pushState({}, '', '/runtime-tasks?deviceId=local-device&taskId=task-b')
@@ -194,19 +216,18 @@ describe('useRuntimeTaskRouteRestoration', () => {
     )
   })
 
-  test('does not repeat a failed unlisted metadata read on unrelated renders and retries on tab reveal', () => {
+  test('does not repeat a failed unlisted metadata read on unrelated renders and retries on tab reveal', async () => {
     workbenchState.currentRuntimeTask = { deviceId: 'local-device', taskId: 'unlisted' }
     window.history.replaceState({}, '', '/runtime-tasks?deviceId=local-device&taskId=unlisted')
-    const { rerender } = renderHook(({ enabled }) => useRuntimeTaskRouteRestoration(enabled), {
-      initialProps: { enabled: true },
-      wrapper,
-    })
+    const { rerender } = renderRoute({ enabled: true })
+    await act(async () => {})
     expect(openRuntimeTaskMock).toHaveBeenCalledOnce()
     workbenchState.currentRuntimeTask = { ...workbenchState.currentRuntimeTask }
     rerender({ enabled: true })
     expect(openRuntimeTaskMock).toHaveBeenCalledOnce()
     rerender({ enabled: false })
     rerender({ enabled: true })
+    await act(async () => {})
     expect(openRuntimeTaskMock).toHaveBeenCalledTimes(2)
   })
 })

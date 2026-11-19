@@ -1,4 +1,5 @@
-import { useContext, useEffect, useMemo, useState } from 'react'
+import { useCallback, useContext, useMemo, useSyncExternalStore } from 'react'
+import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
 import { canAccessCollaborationProjectView, IssueActivityMarkdown } from '@wegent/collaboration'
 import type {
   CollaborationMember,
@@ -101,43 +102,23 @@ function ProjectOverview({
   const backendUrl = cloud?.apiBaseUrl ?? ''
   const userId = workbench.user?.id
   const scope = JSON.stringify([backendUrl, userId, project.project_store, project.current_user_id])
-  const [revision, setRevision] = useState(0)
-  const owner = useMemo(() => ({ api, projectId: project.id, scope }), [api, project.id, scope])
-  const request = useMemo(() => ({ owner, active, revision }), [owner, active, revision])
-  const [state, setSnapshot] = useState<{
-    owner: typeof owner
-    request: typeof request | null
-    members: CollaborationMember[] | null
-    error: string | null
-  }>({ owner, request: null, members: null, error: null })
-  const snapshot = state.owner === owner ? state : { request: null, members: null, error: null }
-  const loading = active && snapshot.request !== request
+  const members = useMemo(
+    () => createProjectOverviewMembers(api, project.id, scope),
+    [api, project.id, scope]
+  )
+  const activation = useMemo(() => ({ active, members }), [active, members])
+  const subscribe = useCallback(
+    (listener: () => void) => members.subscribe(listener, activation),
+    [members, activation]
+  )
+  const query = useSyncExternalStore(
+    active ? subscribe : subscribeIdleResource,
+    members.getSnapshot,
+    members.getSnapshot
+  )
+  const snapshot = query.data ?? { members: null, error: null }
+  const loading = active && (query.status === 'idle' || query.status === 'loading')
   const error = loading ? null : snapshot.error
-  useEffect(() => {
-    if (!request.active) return
-    let cancelled = false
-    const { owner } = request
-    void owner.api.members.list(owner.projectId).then(
-      members => {
-        if (!cancelled) setSnapshot({ owner, request, members, error: null })
-      },
-      cause => {
-        if (!cancelled)
-          setSnapshot(previous => ({
-            owner,
-            request,
-            members:
-              previous.owner === owner && !invalidatesExperienceRead(cause)
-                ? previous.members
-                : null,
-            error: String(cause),
-          }))
-      }
-    )
-    return () => {
-      cancelled = true
-    }
-  }, [request])
   return (
     <section
       className="experience-project-overview"
@@ -192,7 +173,7 @@ function ProjectOverview({
             <Button
               variant="ghost"
               data-testid="collaboration-exp-project-members-retry"
-              onClick={() => setRevision(value => value + 1)}
+              onClick={() => void members.reload()}
             >
               {t('retry')}
             </Button>
@@ -201,4 +182,33 @@ function ProjectOverview({
       </div>
     </section>
   )
+}
+
+interface ProjectOverviewMembers {
+  members: CollaborationMember[] | null
+  error: string | null
+}
+
+/** Project/account ownership fences reads while transient failures retain same-scope members. */
+function createProjectOverviewMembers(api: SharedWorkspaceApi, projectId: string, scope: string) {
+  const resource: ReturnType<typeof createAsyncResource<ProjectOverviewMembers>> =
+    createAsyncResource<ProjectOverviewMembers>(
+      JSON.stringify(['project-overview-members', scope, projectId]),
+      async signal => {
+        try {
+          const members = await api.members.list(projectId)
+          signal.throwIfAborted()
+          return { members, error: null }
+        } catch (cause) {
+          signal.throwIfAborted()
+          return {
+            members: invalidatesExperienceRead(cause)
+              ? null
+              : (resource.getSnapshot().data?.members ?? null),
+            error: String(cause),
+          }
+        }
+      }
+    )
+  return resource
 }

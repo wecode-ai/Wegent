@@ -17,7 +17,14 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
+import {
+  createSidebarPointerDragSource,
+  isWithinSidebarHorizontalBounds as isWithinHorizontalBounds,
+  type SidebarPointerCoordinates as PointerCoordinates,
+  type SidebarHorizontalBounds as HorizontalBounds,
+} from './sidebarPointerDragSource'
 import { cn } from '@/lib/utils'
 import { SidebarPointerSensor } from './sidebarDragActivator'
 import { getSidebarAutoScrollConfiguration } from './sidebarSortableAutoScroll'
@@ -49,16 +56,6 @@ interface SortableItemProps {
   children: ReactNode
 }
 
-interface PointerCoordinates {
-  x: number
-  y: number
-}
-
-interface HorizontalBounds {
-  left: number
-  right: number
-}
-
 function readPointerCoordinates(event: Event): PointerCoordinates | null {
   if (!('clientX' in event) || !('clientY' in event)) return null
   const { clientX, clientY } = event
@@ -77,13 +74,6 @@ function getHorizontalBounds(
     right = Math.max(right, rect.right)
   }
   return Number.isFinite(left) && Number.isFinite(right) ? { left, right } : null
-}
-
-function isWithinHorizontalBounds(
-  coordinates: PointerCoordinates,
-  bounds: HorizontalBounds | null
-) {
-  return !bounds || (coordinates.x >= bounds.left && coordinates.x <= bounds.right)
 }
 
 function SortableItem({ id, disabled, sortingSuppressed, children }: SortableItemProps) {
@@ -150,11 +140,16 @@ export function SidebarSortableList<T>({
   const orderedIds =
     optimisticOrder?.sourceSignature === sourceSignature ? optimisticOrder.ids : sourceIds
   const [activeId, setActiveId] = useState<string | null>(null)
-  const [sortingSuppressed, setSortingSuppressed] = useState(false)
-  const pointerCoordinatesRef = useRef<PointerCoordinates | null>(null)
-  const horizontalBoundsRef = useRef<HorizontalBounds | null>(null)
-  const externalDragActiveRef = useRef(false)
-  const pointerTrackingCleanupRef = useRef<(() => void) | null>(null)
+  const [pointerDrag] = useState(createSidebarPointerDragSource)
+  const { suppressed: sortingSuppressed } = useSyncExternalStore(
+    pointerDrag.subscribe,
+    pointerDrag.getSnapshot,
+    pointerDrag.getSnapshot
+  )
+  const trackPointer = (event: PointerEvent) => pointerDrag.track(readPointerCoordinates(event))
+  useWindowEvent('pointermove', trackPointer, { capture: true })
+  useWindowEvent('pointerup', trackPointer, { capture: true })
+  useWindowEvent('pointercancel', trackPointer, { capture: true })
   const itemById = useMemo(
     () => new Map(items.map(item => [getId(item), item] as const)),
     [getId, items]
@@ -166,58 +161,22 @@ export function SidebarSortableList<T>({
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   )
 
-  const clearPointerListeners = useCallback(() => {
-    pointerTrackingCleanupRef.current?.()
-    pointerTrackingCleanupRef.current = null
-  }, [])
+  const stopPointerTracking = pointerDrag.stop
+  const startPointerTracking = pointerDrag.start
 
-  const stopPointerTracking = useCallback(() => {
-    clearPointerListeners()
-    pointerCoordinatesRef.current = null
-    externalDragActiveRef.current = false
-    setSortingSuppressed(false)
-  }, [clearPointerListeners])
-
-  useEffect(() => {
-    return () => {
-      if (externalDragActiveRef.current) dispatchWorkbenchSidebarPaneDragCancel()
-      clearPointerListeners()
-    }
-  }, [clearPointerListeners])
-
-  const startPointerTracking = useCallback(
-    (initialCoordinates: PointerCoordinates) => {
-      stopPointerTracking()
-      externalDragActiveRef.current = true
-      pointerCoordinatesRef.current = initialCoordinates
-      const trackPointer = (event: PointerEvent) => {
-        const coordinates = readPointerCoordinates(event)
-        if (!coordinates) return
-        pointerCoordinatesRef.current = coordinates
-        setSortingSuppressed(!isWithinHorizontalBounds(coordinates, horizontalBoundsRef.current))
+  const sidebarCollisionDetection = useCallback<CollisionDetection>(
+    args => {
+      pointerDrag.setBounds(getHorizontalBounds(args.droppableRects.values()))
+      if (
+        args.pointerCoordinates &&
+        !isWithinHorizontalBounds(args.pointerCoordinates, pointerDrag.getBounds())
+      ) {
+        return []
       }
-      window.addEventListener('pointermove', trackPointer, true)
-      window.addEventListener('pointerup', trackPointer, true)
-      window.addEventListener('pointercancel', trackPointer, true)
-      pointerTrackingCleanupRef.current = () => {
-        window.removeEventListener('pointermove', trackPointer, true)
-        window.removeEventListener('pointerup', trackPointer, true)
-        window.removeEventListener('pointercancel', trackPointer, true)
-      }
+      return closestCenter(args)
     },
-    [stopPointerTracking]
+    [pointerDrag]
   )
-
-  const sidebarCollisionDetection = useCallback<CollisionDetection>(args => {
-    horizontalBoundsRef.current = getHorizontalBounds(args.droppableRects.values())
-    if (
-      args.pointerCoordinates &&
-      !isWithinHorizontalBounds(args.pointerCoordinates, horizontalBoundsRef.current)
-    ) {
-      return []
-    }
-    return closestCenter(args)
-  }, [])
 
   const handleDragStart = ({ active, activatorEvent }: DragStartEvent) => {
     const activeId = String(active.id)
@@ -227,9 +186,9 @@ export function SidebarSortableList<T>({
     const pointerCoordinates = readPointerCoordinates(activatorEvent)
     if (externalData && pointerCoordinates) {
       const initialRect = active.rect.current.initial
-      horizontalBoundsRef.current = initialRect
-        ? { left: initialRect.left, right: initialRect.right }
-        : null
+      pointerDrag.setBounds(
+        initialRect ? { left: initialRect.left, right: initialRect.right } : null
+      )
       startPointerTracking(pointerCoordinates)
       dispatchWorkbenchSidebarPaneDragStart(externalData)
     }
@@ -238,11 +197,11 @@ export function SidebarSortableList<T>({
     setActiveId(null)
     const movedItem = itemById.get(String(active.id))
     const externalData = movedItem ? getExternalDragData?.(movedItem) : undefined
-    const pointerCoordinates = pointerCoordinatesRef.current
+    const pointerCoordinates = pointerDrag.getCoordinates()
     const pointerOutsideSidebar =
       pointerCoordinates !== null &&
-      !isWithinHorizontalBounds(pointerCoordinates, horizontalBoundsRef.current)
-    if (externalData && externalDragActiveRef.current) {
+      !isWithinHorizontalBounds(pointerCoordinates, pointerDrag.getBounds())
+    if (externalData && pointerDrag.getSnapshot().active) {
       if (pointerCoordinates) {
         const dragEndData = {
           ...externalData,
@@ -286,8 +245,7 @@ export function SidebarSortableList<T>({
       onDragStart={handleDragStart}
       onDragCancel={() => {
         setActiveId(null)
-        if (externalDragActiveRef.current) dispatchWorkbenchSidebarPaneDragCancel()
-        stopPointerTracking()
+        pointerDrag.cancel()
       }}
       onDragEnd={event => void handleDragEnd(event)}
     >

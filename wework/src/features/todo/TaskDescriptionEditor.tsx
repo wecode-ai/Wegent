@@ -1,6 +1,20 @@
 import { parseWeworkScheme } from '@/features/notifications/scheme'
-import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from 'react'
 import { createPortal } from 'react-dom'
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
 import { BlockNoteSchema, type Block } from '@blocknote/core'
 import { createReactBlockSpec, useCreateBlockNote } from '@blocknote/react'
 import { BlockNoteView } from '@blocknote/mantine'
@@ -51,43 +65,36 @@ function AttachmentImageBlockView({
   filename: string
 }) {
   const { readAttachment } = useContext(AttachmentImageServicesContext)
-  const [loadState, setLoadState] = useState<{
-    attachmentId: string
-    src: string | null
-    failed: boolean
-  }>({ attachmentId, src: null, failed: false })
+  const resource = useMemo(
+    () =>
+      createAsyncResource(
+        attachmentId,
+        async signal => {
+          if (!readAttachment || !attachmentId)
+            throw new Error('An attachment reader and identity are required')
+          const blob = await readAttachment(attachmentId)
+          signal.throwIfAborted()
+          return URL.createObjectURL(blob)
+        },
+        { release: url => URL.revokeObjectURL(url) }
+      ),
+    [attachmentId, readAttachment]
+  )
+  const image = useSyncExternalStore(
+    readAttachment && attachmentId ? resource.subscribe : subscribeIdleResource,
+    resource.getSnapshot,
+    getIdleResourceSnapshot
+  )
+  const src = image.data ?? null
+  const failed = image.status === 'error'
   const [previewOpen, setPreviewOpen] = useState(false)
-
-  useEffect(() => {
-    if (!readAttachment || !attachmentId) return
-    let active = true
-    let objectUrl: string | null = null
-    void readAttachment(attachmentId)
-      .then(blob => {
-        if (!active) return
-        objectUrl = URL.createObjectURL(blob)
-        setLoadState({ attachmentId, src: objectUrl, failed: false })
-      })
-      .catch(() => {
-        if (active) setLoadState({ attachmentId, src: null, failed: true })
-      })
-    return () => {
-      active = false
-      if (objectUrl) URL.revokeObjectURL(objectUrl)
-    }
-  }, [attachmentId, readAttachment])
-
-  useEffect(() => {
-    if (!previewOpen) return
-    const closeOnEscape = (event: KeyboardEvent) => {
+  useWindowEvent(
+    'keydown',
+    event => {
       if (event.key === 'Escape') setPreviewOpen(false)
-    }
-    window.addEventListener('keydown', closeOnEscape)
-    return () => window.removeEventListener('keydown', closeOnEscape)
-  }, [previewOpen])
-
-  const currentState =
-    loadState.attachmentId === attachmentId ? loadState : { attachmentId, src: null, failed: false }
+    },
+    { enabled: previewOpen }
+  )
 
   return (
     <figure
@@ -95,21 +102,21 @@ function AttachmentImageBlockView({
       data-testid={`task-description-attachment-image-${attachmentId}`}
       contentEditable={false}
     >
-      {currentState.src ? (
+      {src ? (
         <button
           type="button"
           className="task-description-attachment-image-trigger"
           aria-label={`预览 ${filename}`}
           onClick={() => setPreviewOpen(true)}
         >
-          <img src={currentState.src} alt={filename} />
+          <img src={src} alt={filename} />
         </button>
       ) : (
         <div className="task-description-attachment-image-placeholder">
-          {!readAttachment || currentState.failed ? '图片加载失败' : '加载图片…'}
+          {!readAttachment || failed ? '图片加载失败' : '加载图片…'}
         </div>
       )}
-      {previewOpen && currentState.src
+      {previewOpen && src
         ? createPortal(
             <div
               className="task-description-attachment-image-lightbox"
@@ -126,11 +133,7 @@ function AttachmentImageBlockView({
               >
                 <X className="h-5 w-5" />
               </button>
-              <img
-                src={currentState.src}
-                alt={filename}
-                onClick={event => event.stopPropagation()}
-              />
+              <img src={src} alt={filename} onClick={event => event.stopPropagation()} />
             </div>,
             document.body
           )
@@ -281,11 +284,8 @@ export function TaskDescriptionEditor({
   className,
 }: TaskDescriptionEditorProps) {
   const appearance = useOptionalAppearance()
-  const onChangeRef = useRef(onChange)
-  const onPasteFilesRef = useRef(onPasteFiles)
-  const onInlineAttachmentIdsChangeRef = useRef(onInlineAttachmentIdsChange)
+  const callbacks = useRef({ onChange, onPasteFiles, onInlineAttachmentIdsChange })
   const composingRef = useRef(false)
-  const pendingCompositionChangeRef = useRef(false)
   const compositionSnapshotRef = useRef<ImeCompositionSnapshot | null>(null)
   const repairingImeRef = useRef(false)
   // Tracks the markdown value the editor state is currently mirrored from, so
@@ -297,12 +297,6 @@ export function TaskDescriptionEditor({
   // item never rewrites its stored description just because the editor's
   // markdown round-trip normalizes line breaks.
   const applyingExternalRef = useRef(false)
-
-  useEffect(() => {
-    onChangeRef.current = onChange
-    onPasteFilesRef.current = onPasteFiles
-    onInlineAttachmentIdsChangeRef.current = onInlineAttachmentIdsChange
-  }, [onChange, onInlineAttachmentIdsChange, onPasteFiles])
 
   const editor = useCreateBlockNote({
     schema: taskDescriptionSchema,
@@ -336,45 +330,47 @@ export function TaskDescriptionEditor({
     },
   })
 
-  useEffect(() => {
-    editor.domElement?.setAttribute('aria-label', ariaLabel)
-  }, [ariaLabel, editor])
-
-  // Mirror external markdown into the editor without resetting it on every
-  // keystroke: only apply the value when it differs from the markdown we last
-  // emitted (or the value we last loaded).
-  useEffect(() => {
-    if (!editor) return
-    const next = normalizeTaskDescription(value)
-    if (next === lastEmittedMarkdownRef.current) return
-    applyingExternalRef.current = true
-    editor.replaceBlocks(editor.document, parseTaskDescriptionBlocks(editor, next))
-    const finalBlock = editor.document.at(-1)
-    if (finalBlock?.type === 'attachmentImage') {
-      editor.insertBlocks([{ type: 'paragraph' }], finalBlock.id, 'after')
-    }
-    applyingExternalRef.current = false
-    lastEmittedMarkdownRef.current = next
-    lastSerializedMarkdownRef.current = taskDescriptionMarkdown(editor)
-    onInlineAttachmentIdsChangeRef.current?.(inlineAttachmentIds(editor))
-  }, [editor, value])
+  // Bind controlled content only after BlockNote's own DOM mount has committed.
+  const attachEditor = useCallback(
+    (element: HTMLDivElement | null) => {
+      if (!element) return
+      callbacks.current = { onChange, onPasteFiles, onInlineAttachmentIdsChange }
+      const surface = editor.domElement
+      if (surface && surface.getAttribute('aria-label') !== ariaLabel) {
+        surface.setAttribute('aria-label', ariaLabel)
+      }
+      const next = normalizeTaskDescription(value)
+      if (next === lastEmittedMarkdownRef.current) return
+      applyingExternalRef.current = true
+      try {
+        editor.replaceBlocks(editor.document, parseTaskDescriptionBlocks(editor, next))
+        const finalBlock = editor.document.at(-1)
+        if (finalBlock?.type === 'attachmentImage')
+          editor.insertBlocks([{ type: 'paragraph' }], finalBlock.id, 'after')
+      } finally {
+        applyingExternalRef.current = false
+      }
+      lastEmittedMarkdownRef.current = next
+      lastSerializedMarkdownRef.current = taskDescriptionMarkdown(editor)
+      callbacks.current.onInlineAttachmentIdsChange?.(inlineAttachmentIds(editor))
+    },
+    [ariaLabel, editor, onChange, onPasteFiles, onInlineAttachmentIdsChange, value]
+  )
 
   const emitEditorChange = useCallback(() => {
     const markdown = taskDescriptionMarkdown(editor)
-    onInlineAttachmentIdsChangeRef.current?.(inlineAttachmentIds(editor))
+    callbacks.current.onInlineAttachmentIdsChange?.(inlineAttachmentIds(editor))
     if (applyingExternalRef.current) return
     if (markdown === lastSerializedMarkdownRef.current) return
     lastSerializedMarkdownRef.current = markdown
     lastEmittedMarkdownRef.current = markdown
-    onChangeRef.current(markdown)
+    callbacks.current.onChange(markdown)
   }, [editor])
 
   const handleEditorChange = useCallback(() => {
     if (composingRef.current || repairingImeRef.current) {
-      pendingCompositionChangeRef.current = true
       return
     }
-    pendingCompositionChangeRef.current = false
     emitEditorChange()
   }, [emitEditorChange])
 
@@ -411,7 +407,7 @@ export function TaskDescriptionEditor({
   const handlePasteCapture = useCallback(
     (event: React.ClipboardEvent) => {
       const files = Array.from(event.clipboardData?.files ?? [])
-      const pasteFiles = onPasteFilesRef.current
+      const pasteFiles = callbacks.current.onPasteFiles
       if (!files.length || !pasteFiles) return
       const referenceBlockId = editor.getTextCursorPosition().block.id
       event.preventDefault()
@@ -436,7 +432,6 @@ export function TaskDescriptionEditor({
 
   const handleCompositionStartCapture = useCallback(() => {
     composingRef.current = true
-    pendingCompositionChangeRef.current = false
     const cursor = editor.getTextCursorPosition()
     compositionSnapshotRef.current =
       inlineContentText(cursor.block.content) === ''
@@ -492,8 +487,6 @@ export function TaskDescriptionEditor({
             }
           }
         }
-
-        pendingCompositionChangeRef.current = false
         emitEditorChange()
       }, 0)
     },
@@ -502,6 +495,7 @@ export function TaskDescriptionEditor({
 
   return (
     <div
+      ref={attachEditor}
       className={cn('task-description-editor relative', className)}
       onPasteCapture={handlePasteCapture}
       onKeyDownCapture={handleKeyDownCapture}
