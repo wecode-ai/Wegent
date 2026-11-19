@@ -9,6 +9,8 @@ fail() {
 DOCKER_BIN="${DOCKER_BIN:-docker}"
 IMAGE="${WEGENT_REMOTE_DEVICE_ACCEPTANCE_IMAGE:-${REMOTE_DEVICE_DOCKER_IMAGE:-ghcr.io/wecode-ai/wegent-device:latest}}"
 REBUILD_IMAGE="${WEGENT_REMOTE_DEVICE_REBUILD_IMAGE:-$IMAGE}"
+ROLLBACK_IMAGE="${WEGENT_REMOTE_DEVICE_ROLLBACK_IMAGE:-$REBUILD_IMAGE}"
+PLATFORM="${WEGENT_REMOTE_DEVICE_ACCEPTANCE_PLATFORM:-}"
 RUN_ID="${WEGENT_ACCEPTANCE_RUN_ID:-$(date +%Y%m%d%H%M%S)-$$}"
 DEVICE_ID="${WEGENT_ACCEPTANCE_DEVICE_ID:-acceptance-device-$RUN_ID}"
 PROBE_ID="${WEGENT_ACCEPTANCE_PROBE_ID:-git-worktree-$RUN_ID}"
@@ -78,7 +80,11 @@ trap cleanup EXIT
 ensure_image() {
     local image="$1"
     if ! run_docker image inspect "$image" >/dev/null 2>&1; then
-        run_docker pull "$image" >/dev/null
+        if [ -n "$PLATFORM" ]; then
+            run_docker pull --platform "$PLATFORM" "$image" >/dev/null
+        else
+            run_docker pull "$image" >/dev/null
+        fi
     fi
 }
 
@@ -99,7 +105,11 @@ start_container() {
         fail "Docker data volume identity changed during container replacement"
     }
     containers+=("$name")
-    run_docker run -d \
+    local -a run_args=(-d)
+    if [ -n "$PLATFORM" ]; then
+        run_args+=(--platform "$PLATFORM")
+    fi
+    run_docker run "${run_args[@]}" \
         --name "$name" \
         -e DEVICE_TYPE=remote \
         -e DEVICE_ID="$DEVICE_ID" \
@@ -220,9 +230,8 @@ assert_expected_failure() {
 }
 
 ensure_image "$IMAGE"
-if [ "$REBUILD_IMAGE" != "$IMAGE" ]; then
-    ensure_image "$REBUILD_IMAGE"
-fi
+ensure_image "$REBUILD_IMAGE"
+ensure_image "$ROLLBACK_IMAGE"
 
 if run_docker volume inspect "$VOLUME_NAME" >/dev/null 2>&1; then
     [ "$ALLOW_EXISTING_VOLUME" = "1" ] || {
@@ -292,8 +301,10 @@ assert_expected_failure \
 run_docker rm -f "$wrong_identity" >/dev/null
 
 final_container="$CONTAINER_PREFIX-final"
-start_container "$final_container" "$REBUILD_IMAGE" "$RUN_ID-instance-c"
+start_container "$final_container" "$ROLLBACK_IMAGE" "$RUN_ID-instance-c"
 wait_until_running "$final_container"
+assert_volume_mount "$final_container"
+assert_image_binary_refreshed "$final_container"
 initialize_runtime_identity "$final_container"
 run_probe "$final_container" verify
 run_probe "$final_container" cleanup
@@ -305,3 +316,4 @@ echo "ACCEPTANCE_VOLUME=$VOLUME_NAME"
 echo "ACCEPTANCE_DATA_VOLUME=$DATA_VOLUME_NAME"
 echo "ACCEPTANCE_INITIAL_IMAGE=$IMAGE"
 echo "ACCEPTANCE_REBUILD_IMAGE=$REBUILD_IMAGE"
+echo "ACCEPTANCE_ROLLBACK_IMAGE=$ROLLBACK_IMAGE"

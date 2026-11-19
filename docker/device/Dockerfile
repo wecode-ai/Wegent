@@ -49,8 +49,11 @@ RUN if [ -n "$DEVICE_APT_MIRROR" ]; then \
 
 RUN if [ -n "$RUSTUP_DIST_SERVER" ]; then export RUSTUP_DIST_SERVER; fi; \
     if [ -n "$RUSTUP_UPDATE_ROOT" ]; then export RUSTUP_UPDATE_ROOT; fi; \
-    curl --proto '=https' --tlsv1.2 -sSf "$RUSTUP_INIT_URL" \
-    | sh -s -- -y --profile minimal --default-toolchain stable
+    curl --proto '=https' --tlsv1.2 -fsS --retry 3 --connect-timeout 10 --max-time 60 \
+        -o /tmp/wegent-rustup-init.sh "$RUSTUP_INIT_URL" \
+    && sh /tmp/wegent-rustup-init.sh -y --profile minimal --default-toolchain stable \
+    && rm -f /tmp/wegent-rustup-init.sh \
+    && /root/.cargo/bin/cargo --version
 
 ENV PATH=/root/.cargo/bin:${PATH}
 
@@ -148,7 +151,7 @@ COPY wework/harness-runtime ./harness-runtime
 COPY wework/scripts/prepare-harness-runtime.mjs wework/scripts/child-process-command.mjs ./scripts/
 COPY wework/scripts/lib ./scripts/lib
 ENV WEWORK_HARNESS_RUNTIME_CACHE_ROOT=/build/runtime-cache
-RUN node scripts/prepare-harness-runtime.mjs --materialize
+RUN npm_config_registry="$NPM_REGISTRY" node scripts/prepare-harness-runtime.mjs --materialize
 COPY wework/scripts/package-connection-runtime.mjs ./scripts/
 COPY wework/dsh ./dsh
 RUN node scripts/package-connection-runtime.mjs \
@@ -339,6 +342,13 @@ if [ "$WEGENT_EXECUTOR_HOME" != "$EXPECTED_EXECUTOR_HOME" ] && [ "$WEGENT_EXECUT
     echo "WEGENT_EXECUTOR_HOME must remain at the stable mount path $EXPECTED_EXECUTOR_HOME" >&2
     exit 1
 fi
+# Verify links left by earlier releases before selecting the mounted home.
+if [ "$WEGENT_EXECUTOR_HOME" = "$EXPECTED_EXECUTOR_HOME" ] && [ -L "$EXPECTED_EXECUTOR_HOME" ]; then
+    if ! mountpoint -q "$LEGACY_EXECUTOR_HOME" || [ "$(realpath -m -- "$EXPECTED_EXECUTOR_HOME")" != "$LEGACY_EXECUTOR_HOME" ]; then
+        echo "Unified Executor Home requires its original legacy volume; refusing to reset identity" >&2
+        exit 1
+    fi
+fi
 # Reuse a mounted legacy Executor Home through its canonical path. This keeps
 # the persisted identity without making the active Executor Home a symlink.
 if [ "$WEGENT_EXECUTOR_HOME" = "$EXPECTED_EXECUTOR_HOME" ] && mountpoint -q "$LEGACY_EXECUTOR_HOME"; then
@@ -357,6 +367,7 @@ fi
 # Keep project state and app-server configuration in the same persisted home.
 export CODEX_HOME="${CODEX_HOME:-${WEGENT_CODEX_HOME:-$WEGENT_EXECUTOR_HOME/codex}}"
 export WEGENT_CODEX_HOME="${WEGENT_CODEX_HOME:-$CODEX_HOME}"
+export ADDITIONAL_CODEX_HOME_LIST="${ADDITIONAL_CODEX_HOME_LIST:-$WEGENT_CODEX_HOME}"
 case "$LOCAL_WORKSPACE_ROOT/" in
     "$EXPECTED_DATA_ROOT/workspace/"* | "$WEGENT_EXECUTOR_HOME/workspace/"*) ;;
     *)

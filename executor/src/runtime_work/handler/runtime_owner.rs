@@ -137,14 +137,18 @@ impl RuntimeWorkRpcHandler {
             .map_err(|error| AppIpcError::new("cloud_response_invalid", error.to_string()))
     }
 
-    pub(super) async fn verify_runtime_user(&self, config: &Value) -> Result<(), AppIpcError> {
+    pub(super) async fn runtime_account_identity(&self) -> Result<Value, AppIpcError> {
         let connection = self.require_runtime_connection()?;
         let path = if connection.auth_token.starts_with("wg-") {
             "/devices/runtime-owner"
         } else {
             "/users/me"
         };
-        let user = Self::runtime_http_on(&connection, reqwest::Method::GET, path, None).await?;
+        Self::runtime_http_on(&connection, reqwest::Method::GET, path, None).await
+    }
+
+    pub(super) async fn verify_runtime_user(&self, config: &Value) -> Result<(), AppIpcError> {
+        let user = self.runtime_account_identity().await?;
         if user["id"].as_i64().is_none() || user["id"] != config["userId"] {
             return Err(AppIpcError::new(
                 "permission_denied",

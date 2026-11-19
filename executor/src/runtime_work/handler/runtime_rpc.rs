@@ -9,9 +9,7 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
         &'a self,
     ) -> Pin<Box<dyn Future<Output = Result<i64, AppIpcError>> + Send + 'a>> {
         Box::pin(async move {
-            let user = self
-                .runtime_http(reqwest::Method::GET, "/users/me", None)
-                .await?;
+            let user = self.runtime_account_identity().await?;
             user["id"].as_i64().filter(|id| *id > 0).ok_or_else(|| {
                 AppIpcError::new("permission_denied", "Connected account identity is invalid")
             })

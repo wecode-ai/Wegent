@@ -380,6 +380,8 @@ jobs:
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$image")" = "$VERSION"
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "$GITHUB_SHA"
           test "$(docker run --rm --entrypoint /app/executor "$image" --version)" = "$VERSION"
+          docker run --rm --entrypoint /bin/sh "$image" -ec \
+            'test -s /app/connection-runtime/connection-runtime.json; /app/connection-runtime/node/node --version'
 
       - name: Validate Remote Docker Worktree persistence (amd64)
         env:
@@ -436,6 +438,8 @@ jobs:
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.version"}}' "$image")" = "$VERSION"
           test "$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$image")" = "$GITHUB_SHA"
           test "$(docker run --rm --entrypoint /app/executor "$image" --version)" = "$VERSION"
+          docker run --rm --entrypoint /bin/sh "$image" -ec \
+            'test -s /app/connection-runtime/connection-runtime.json; /app/connection-runtime/node/node --version'
 
   # ============================================================================
   # Device Multi-arch Manifest

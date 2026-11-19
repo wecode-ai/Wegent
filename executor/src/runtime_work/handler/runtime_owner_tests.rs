@@ -7,7 +7,7 @@ use axum::{
 };
 
 #[tokio::test]
-async fn runtime_owner_uses_the_credential_route_and_rejects_a_different_owner() {
+async fn runtime_owner_and_connection_reader_use_the_credential_route() {
     let router = Router::new()
         .route(
             "/api/devices/runtime-owner",
@@ -22,8 +22,11 @@ async fn runtime_owner_uses_the_credential_route_and_rejects_a_different_owner()
         .route(
             "/api/users/me",
             get(|headers: HeaderMap| async move {
-                assert_eq!(headers["authorization"], "Bearer desktop-session");
-                Json(json!({"id": 7}))
+                if headers["authorization"] == "Bearer desktop-session" {
+                    (StatusCode::OK, Json(json!({"id": 7})))
+                } else {
+                    (StatusCode::UNAUTHORIZED, Json(json!({})))
+                }
             }),
         );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -40,6 +43,7 @@ async fn runtime_owner_uses_the_credential_route_and_rejects_a_different_owner()
     };
     let owner = json!({"userId": 7});
 
+    assert_eq!(handler.connection_service_owner().await.unwrap(), 7);
     handler.verify_runtime_user(&owner).await.unwrap();
     for payload in [json!({"userId": 8}), json!({})] {
         let error = handler.verify_runtime_user(&payload).await.unwrap_err();
@@ -49,8 +53,12 @@ async fn runtime_owner_uses_the_credential_route_and_rejects_a_different_owner()
     let error = handler.verify_runtime_user(&owner).await.unwrap_err();
     assert_eq!(error.code, "cloud_request_failed");
     assert!(error.message.contains("401"));
+    let error = handler.connection_service_owner().await.unwrap_err();
+    assert_eq!(error.code, "cloud_request_failed");
+    assert!(error.message.contains("401"));
 
     connection.lock().unwrap().as_mut().unwrap().auth_token = "desktop-session".into();
+    assert_eq!(handler.connection_service_owner().await.unwrap(), 7);
     handler.verify_runtime_user(&owner).await.unwrap();
     server.abort();
 }
