@@ -1,6 +1,7 @@
 import { AlertCircle, Loader2, Package } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { createLocalCodexPluginApi, type LocalCodexLocalConfig } from '@/api/local/codexPlugins'
+import { useRef, useState, useSyncExternalStore } from 'react'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
+import { createLocalCodexPluginApi } from '@/api/local/codexPlugins'
 import { useTranslation } from '@/hooks/useTranslation'
 import { SettingsPage, SettingsPageHeader, SettingsSwitch } from './settings-ui'
 
@@ -10,42 +11,39 @@ function getErrorMessage(error: unknown, fallback: string) {
 
 export function PluginSettingsPage() {
   const { t } = useTranslation('common')
-  const [codexConfig, setCodexConfig] = useState<LocalCodexLocalConfig | null>(null)
-  const [codexConfigLoading, setCodexConfigLoading] = useState(true)
-  const [codexConfigSaving, setCodexConfigSaving] = useState(false)
-  const [codexConfigError, setCodexConfigError] = useState<string | null>(null)
-  const localCodexApi = useMemo(() => createLocalCodexPluginApi(), [])
-
-  const loadCodexConfig = useCallback(async () => {
-    setCodexConfigLoading(true)
-    setCodexConfigError(null)
-    try {
-      setCodexConfig(await localCodexApi.readCodexLocalConfig())
-    } catch (readError) {
-      setCodexConfigError(
-        getErrorMessage(readError, t('workbench.codex_plugin_config_load_failed'))
-      )
-    } finally {
-      setCodexConfigLoading(false)
+  const [{ api, resource }] = useState(() => {
+    const api = createLocalCodexPluginApi()
+    return {
+      api,
+      resource: createAsyncResource('settings/codex-plugin-config', () =>
+        api.readCodexLocalConfig()
+      ),
     }
-  }, [localCodexApi, t])
-
-  useEffect(() => {
-    void Promise.resolve().then(() => loadCodexConfig())
-  }, [loadCodexConfig])
+  })
+  const snapshot = useSyncExternalStore(resource.subscribe, resource.getSnapshot)
+  const codexConfig = snapshot.data
+  const codexConfigLoading = !snapshot.settled
+  const [codexConfigSaving, setCodexConfigSaving] = useState(false)
+  const pending = useRef(false)
+  const [saveFailure, setSaveFailure] = useState<{ error: unknown } | null>(null)
+  const codexConfigError = saveFailure
+    ? getErrorMessage(saveFailure.error, t('workbench.codex_plugin_config_save_failed'))
+    : snapshot.status === 'error'
+      ? getErrorMessage(snapshot.error, t('workbench.codex_plugin_config_load_failed'))
+      : null
 
   const updateRemoteAppsEnabled = async (enabled: boolean) => {
-    if (codexConfigSaving) return
-
+    if (pending.current) return
+    pending.current = true
     setCodexConfigSaving(true)
-    setCodexConfigError(null)
+    setSaveFailure(null)
     try {
-      setCodexConfig(await localCodexApi.updateCodexLocalConfig({ remoteAppsEnabled: enabled }))
-    } catch (saveError) {
-      setCodexConfigError(
-        getErrorMessage(saveError, t('workbench.codex_plugin_config_save_failed'))
-      )
+      const receipt = await api.updateCodexLocalConfig({ remoteAppsEnabled: enabled })
+      resource.update(() => receipt)
+    } catch (error) {
+      setSaveFailure({ error })
     } finally {
+      pending.current = false
       setCodexConfigSaving(false)
     }
   }

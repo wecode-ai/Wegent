@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import type { RuntimeTaskAddress } from '@wegent/chat-core/runtime'
 
 /** One addressed stop at a time; late responses cannot change a newly opened Issue. */
@@ -7,43 +7,37 @@ export function useIssueExecutionCancellation(
   cancel: (address: RuntimeTaskAddress) => Promise<unknown>,
   failureLabel: string
 ) {
-  const request = useRef<object | null>(null)
-  const [state, setState] = useState<{
-    scope: string
-    messageId: string | null
-    error: string | null
-  }>({ scope, messageId: null, error: null })
-  useEffect(
-    () => () => {
-      request.current = null
-    },
-    [scope]
-  )
+  const owner = useMemo(() => ({ scope }), [scope])
+  const request = useRef<{ owner: typeof owner } | null>(null)
+  const [state, setState] = useState({
+    owner,
+    messageId: null as string | null,
+    error: null as string | null,
+  })
+  if (state.owner !== owner) setState({ owner, messageId: null, error: null })
   const stop = useCallback(
     async (messageId: string, address: RuntimeTaskAddress) => {
-      if (request.current) return
-      const pending = {}
+      if (request.current?.owner === owner) return
+      const pending = { owner }
       request.current = pending
-      setState({ scope, messageId, error: null })
+      const publish = (messageId: string | null, error: string | null) => {
+        setState(current => (current.owner === owner ? { owner, messageId, error } : current))
+      }
+      publish(messageId, null)
       try {
         await cancel(address)
-        if (request.current === pending) setState({ scope, messageId: null, error: null })
+        publish(null, null)
       } catch (cause) {
-        if (request.current === pending)
-          setState({
-            scope,
-            messageId: null,
-            error: cause instanceof Error ? cause.message : failureLabel,
-          })
+        publish(null, cause instanceof Error ? cause.message : failureLabel)
       } finally {
         if (request.current === pending) request.current = null
       }
     },
-    [scope, cancel, failureLabel]
+    [owner, cancel, failureLabel]
   )
   return {
     stop,
-    stoppingMessageId: state.scope === scope ? state.messageId : null,
-    error: state.scope === scope ? state.error : null,
+    stoppingMessageId: state.owner === owner ? state.messageId : null,
+    error: state.owner === owner ? state.error : null,
   }
 }

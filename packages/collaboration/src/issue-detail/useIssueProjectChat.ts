@@ -1,20 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo, useSyncExternalStore } from 'react'
 import type { ProjectChatClient, ProjectChatMention, ProjectChatMessage } from '@wegent/chat-core'
-import { acceptsProjectChatMessage, generateMessageId } from '@wegent/chat-core'
-
-export function mergeIssueChatMessages(
-  current: ProjectChatMessage[],
-  incoming: ProjectChatMessage[]
-) {
-  const byId = new Map(current.map(message => [message.messageId, message]))
-  for (const message of incoming) {
-    const previous = byId.get(message.messageId)
-    // Runtime sequence distinguishes updates within the same SQL timestamp.
-    if (!previous || acceptsProjectChatMessage(previous, message))
-      byId.set(message.messageId, message)
-  }
-  return [...byId.values()].sort((a, b) => a.sequenceNumber - b.sequenceNumber)
-}
+import { generateMessageId } from '@wegent/chat-core'
+import { createIssueProjectChatSource } from './issueProjectChatSource'
+export { mergeIssueChatMessages } from './issueProjectChatSource'
 
 /** The caller supplies its source's structured access-invalidation policy. */
 export function useIssueProjectChat(
@@ -24,131 +12,35 @@ export function useIssueProjectChat(
   revision = 0,
   invalidatesSnapshot?: (cause: unknown) => boolean
 ) {
-  // A revision refreshes the stream without changing its owner or mounted drafts.
-  const owner = useMemo(() => ({ client, projectId, issueId }), [client, projectId, issueId])
-  const empty = useMemo(
-    () => ({
-      owner,
-      messages: [] as ProjectChatMessage[],
-      loading: Boolean(client),
-      ready: false,
-      currentUserId: undefined as string | undefined,
-      error: null as string | null,
-    }),
-    [owner, client]
+  const source = useMemo(
+    () => createIssueProjectChatSource(client, projectId, issueId),
+    [client, projectId, issueId]
   )
-  const [snapshot, setSnapshot] = useState(empty)
-  const current = snapshot.owner === owner ? snapshot : empty
-  useEffect(() => {
-    if (!client) return
-    let active = true
-    let unsubscribe: (() => void) | undefined
-    let subscribing = false
-    let reconnectDuringAttempt = false
-    const receive = (message: ProjectChatMessage) => {
-      if (!active) return
-      setSnapshot(previous => {
-        const state = previous.owner === owner ? previous : empty
-        return {
-          ...state,
-          messages: mergeIssueChatMessages(state.messages, [message]),
-        }
-      })
-    }
-    const subscribe = () => {
-      if (!active || subscribing || unsubscribe) return
-      subscribing = true
-      reconnectDuringAttempt = false
-      void client
-        .subscribe(projectId, issueId, 0, receive, chunk => {
-          if (!active) return
-          setSnapshot(previous => {
-            const state = previous.owner === owner ? previous : empty
-            const message = state.messages.find(message => message.messageId === chunk.messageId)
-            if (
-              message &&
-              !acceptsProjectChatMessage(message, chunk, chunk.metadata.contentMode !== 'snapshot')
-            )
-              return previous
-            return {
-              ...state,
-              messages: mergeIssueChatMessages(state.messages, [
-                {
-                  ...chunk,
-                  content:
-                    chunk.metadata.contentMode === 'snapshot'
-                      ? chunk.content
-                      : `${message?.content ?? ''}${chunk.content}`,
-                },
-              ]),
-            }
-          })
-        })
-        .then(subscription => {
-          if (!active) {
-            subscription.unsubscribe()
-            return
-          }
-          unsubscribe = subscription.unsubscribe
-          setSnapshot(previous => {
-            const state = previous.owner === owner ? previous : empty
-            return {
-              ...state,
-              loading: false,
-              ready: true,
-              error: null,
-              currentUserId: subscription.snapshot.currentUserId,
-              messages: mergeIssueChatMessages(state.messages, subscription.snapshot.messages),
-            }
-          })
-        })
-        .catch(cause => {
-          if (active)
-            setSnapshot(previous => ({
-              ...(previous.owner === owner && !invalidatesSnapshot?.(cause) ? previous : empty),
-              loading: false,
-              error: cause instanceof Error ? cause.message : String(cause),
-            }))
-        })
-        .finally(() => {
-          subscribing = false
-          if (reconnectDuringAttempt && !unsubscribe) subscribe()
-        })
-    }
-    const stopReconnect = client.onReconnect?.(() => {
-      if (subscribing) reconnectDuringAttempt = true
-      else subscribe()
-    })
-    subscribe()
-    return () => {
-      active = false
-      stopReconnect?.()
-      unsubscribe?.()
-    }
-  }, [client, projectId, issueId, revision, owner, empty, invalidatesSnapshot])
-  const merge = (incoming: ProjectChatMessage[]) =>
-    setSnapshot(previous =>
-      previous.owner === owner
-        ? {
-            ...previous,
-            messages: mergeIssueChatMessages(previous.messages, incoming),
-          }
-        : previous
-    )
+  const subscribe = useCallback(
+    (listener: () => void) => source.observeStatus(listener, revision, invalidatesSnapshot),
+    [source, revision, invalidatesSnapshot]
+  )
+  const feed = useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot)
+  const snapshot = useSyncExternalStore(
+    subscribe,
+    source.getStatusSnapshot,
+    source.getStatusSnapshot
+  )
   const messages = useMemo(
-    () => current.messages.filter(message => message.taskId === issueId),
-    [current.messages, issueId]
+    () => feed.messages.filter(message => message.taskId === issueId),
+    [feed.messages, issueId]
   )
   return {
-    ...current,
+    ...snapshot,
     messages,
-    merge,
+    merge: source.merge,
     async send(
       text: string,
       replyToMessageId?: string,
       mentions?: ProjectChatMention[]
     ): Promise<ProjectChatMessage> {
       if (!client) throw new Error('Project chat is unavailable')
+      const receipt = source.captureSendReceipt()
       const message = await client.send({
         projectId,
         taskId: issueId,
@@ -157,7 +49,7 @@ export function useIssueProjectChat(
         replyToMessageId,
         ...(mentions && mentions.length ? { mentions } : {}),
       })
-      merge([message])
+      source.mergeSendReceipt(receipt, [message])
       return message
     },
   }

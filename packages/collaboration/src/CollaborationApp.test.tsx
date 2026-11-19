@@ -2,13 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import {
-  Children,
-  type ComponentProps,
-  type ReactElement,
-  type ReactNode,
-} from "react";
-import { beforeEach, describe, expect, expectTypeOf, it, vi } from "vitest";
+import { Children, type ComponentProps, type ReactElement, type ReactNode } from 'react'
+import { beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
 
 const collaborationAppMocks = vi.hoisted(() => ({
   useController: vi.fn(),
@@ -16,117 +11,127 @@ const collaborationAppMocks = vi.hoisted(() => ({
     assignmentsByIssueId: {},
     replaceIssueAssignments: vi.fn(),
   })),
+  archiveItemsChanged: vi.fn(),
   stateSetters: [] as Array<{
-    initialValue: unknown;
-    setter: ReturnType<typeof vi.fn>;
+    initialValue: unknown
+    setter: ReturnType<typeof vi.fn>
   }>,
-}));
+}))
 
-vi.mock("react", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("react")>();
+vi.mock('react', async importOriginal => {
+  const actual = await importOriginal<typeof import('react')>()
   return {
     ...actual,
-    useCallback: <T extends (...args: never[]) => unknown>(callback: T) =>
-      callback,
+    useCallback: <T extends (...args: never[]) => unknown>(callback: T) => callback,
     useEffect: vi.fn(),
+    useSyncExternalStore: <T,>(
+      subscribe: (listener: () => void) => () => void,
+      getSnapshot: () => T
+    ) => {
+      const snapshot = getSnapshot()
+      if (snapshot && typeof snapshot === 'object' && 'archivedIssues' in snapshot) {
+        let items = snapshot.archivedIssues
+        subscribe(() => {
+          const next = getSnapshot()
+          if (
+            next &&
+            typeof next === 'object' &&
+            'archivedIssues' in next &&
+            next.archivedIssues !== items
+          ) {
+            items = next.archivedIssues
+            collaborationAppMocks.archiveItemsChanged(items)
+          }
+        })
+      }
+      return snapshot
+    },
     useMemo: <T,>(factory: () => T) => factory(),
     useRef: <T,>(initialValue: T) => ({ current: initialValue }),
     useState: <T,>(initialValue: T | (() => T)) => {
       const resolvedValue =
-        typeof initialValue === "function"
-          ? (initialValue as () => T)()
-          : initialValue;
-      const setter = vi.fn();
+        typeof initialValue === 'function' ? (initialValue as () => T)() : initialValue
+      const setter = vi.fn()
       collaborationAppMocks.stateSetters.push({
         initialValue: resolvedValue,
         setter,
-      });
-      return [resolvedValue, setter];
+      })
+      return [resolvedValue, setter]
     },
-  };
-});
+  }
+})
 
-vi.mock("./workspace-controller", () => ({
+vi.mock('./workspace-controller', () => ({
   useCollaborationWorkspaceController: collaborationAppMocks.useController,
-}));
+}))
 
-vi.mock("./templates/context", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./templates/context")>()),
+vi.mock('./templates/context', async importOriginal => ({
+  ...(await importOriginal<typeof import('./templates/context')>()),
   useCollaborationTemplateStore: () => null,
-}));
+}))
 
-vi.mock("./platform", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./platform")>()),
+vi.mock('./platform', async importOriginal => ({
+  ...(await importOriginal<typeof import('./platform')>()),
   useIssueAssignmentsByIssueId: collaborationAppMocks.useAssignments,
-}));
+}))
 
-vi.mock("./project-board/projectBoardDnd", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./project-board/projectBoardDnd")>()),
+vi.mock('./project-board/projectBoardDnd', async importOriginal => ({
+  ...(await importOriginal<typeof import('./project-board/projectBoardDnd')>()),
   useProjectBoardSensors: () => [],
-}));
+}))
 
-import { CollaborationApp } from "./CollaborationApp";
-import { IssueDetail } from "./IssueDetail";
-import { CollaborationSettings } from "./CollaborationSettings";
-import { collaborationTestIds } from "./testIds";
+import { CollaborationApp } from './CollaborationApp'
+import { IssueDetail } from './IssueDetail'
+import { CollaborationSettings } from './CollaborationSettings'
+import { collaborationTestIds } from './testIds'
 import {
   CollaborationParticipantsTabs,
   ProjectCollaborationGroups,
   ProjectAutomaticProcessing,
   ProjectSettingsShell,
-} from "./project-manage";
-import { CollaborationFilesAdapter } from "./web-adapter/CollaborationFilesAdapter";
-import { MyWorkAdapter } from "./web-adapter/MyWorkAdapter";
-import { ProjectBoardAdapter } from "./web-adapter/ProjectBoardAdapter";
-import { ProjectIssueTable } from "./platform";
-import { BoardViewNavigation, ProjectBoardBody } from "./project-board";
-import { WorkspaceProjectsHomeAdapter } from "./web-adapter/WorkspaceProjectsHomeAdapter";
+} from './project-manage'
+import { CollaborationFilesAdapter } from './web-adapter/CollaborationFilesAdapter'
+import { MyWorkAdapter } from './web-adapter/MyWorkAdapter'
+import { ProjectBoardAdapter } from './web-adapter/ProjectBoardAdapter'
+import { ProjectIssueTable } from './platform'
+import { BoardViewNavigation, ProjectBoardBody } from './project-board'
+import { WorkspaceProjectsHomeAdapter } from './web-adapter/WorkspaceProjectsHomeAdapter'
 import {
   CollaborationProjectViewShell,
   buildCollaborationProjectViewOptions,
   collaborationProjectViewIds,
-} from "./project-shell";
-import {
-  ProjectCalendarView,
-  ProjectGanttView,
-} from "./project-schedule/ProjectScheduleViews";
-import type { SharedWorkspaceApi } from "./ports/SharedWorkspaceApi";
+} from './project-shell'
+import { ProjectCalendarView, ProjectGanttView } from './project-schedule/ProjectScheduleViews'
+import type { SharedWorkspaceApi } from './ports/SharedWorkspaceApi'
 import type {
   CollaborationCapabilities,
   CollaborationHostAdapter,
   CollaborationIssue,
   CollaborationLocation,
   CollaborationProject,
-} from "./types";
+} from './types'
 import {
   WorkspaceProjectsHome,
   type WorkspaceProjectsHomeHost,
-} from "./workspace/WorkspaceProjectsHome";
+} from './workspace/WorkspaceProjectsHome'
 
 function descendants(node: ReactNode): ReactElement[] {
-  if (!node || typeof node !== "object" || !("props" in node)) return [];
-  const element = node as ReactElement;
-  return [
-    element,
-    ...Children.toArray(element.props.children).flatMap((child) =>
-      descendants(child),
-    ),
-  ];
+  if (!node || typeof node !== 'object' || !('props' in node)) return []
+  const element = node as ReactElement
+  return [element, ...Children.toArray(element.props.children).flatMap(child => descendants(child))]
 }
 
-function findByType(node: ReactNode, type: ReactElement["type"]) {
-  return descendants(node).find((element) => element.type === type);
+function findByType(node: ReactNode, type: ReactElement['type']) {
+  return descendants(node).find(element => element.type === type)
 }
 
 function findByTestId(node: ReactNode, testId: string) {
-  return descendants(node).find(
-    (element) => element.props["data-testid"] === testId,
-  );
+  return descendants(node).find(element => element.props['data-testid'] === testId)
 }
 
 function createHost(
   myWork: boolean | undefined,
-  rootView: CollaborationLocation["rootView"],
+  rootView: CollaborationLocation['rootView']
 ): CollaborationHostAdapter {
   return {
     capabilities: {
@@ -137,11 +142,11 @@ function createHost(
     location: {
       projectId: null,
       issueId: null,
-      view: "board",
+      view: 'board',
       rootView,
     },
     navigate: vi.fn(),
-  };
+  }
 }
 
 function createApi(): SharedWorkspaceApi {
@@ -153,37 +158,34 @@ function createApi(): SharedWorkspaceApi {
       listCollaborationGroups: vi.fn(async () => []),
     },
     automations: {},
-  } as unknown as SharedWorkspaceApi;
+  } as unknown as SharedWorkspaceApi
 }
 
-function renderApp(
-  host: CollaborationHostAdapter,
-  api: SharedWorkspaceApi = createApi(),
-) {
+function renderApp(host: CollaborationHostAdapter, api: SharedWorkspaceApi = createApi()) {
   return CollaborationApp({
     api,
     host,
-  });
+  })
 }
 
 function createProject(version: number): CollaborationProject {
   return {
-    id: "project-1",
-    workspace_id: "workspace-1",
-    project_key: "PRJ",
-    name: "Project",
-    description: "",
-    project_store: "backend",
-    task_provider: "local",
+    id: 'project-1',
+    workspace_id: 'workspace-1',
+    project_key: 'PRJ',
+    name: 'Project',
+    description: '',
+    project_store: 'backend',
+    task_provider: 'local',
     provider_config: {},
-    access_role: "Maintainer",
+    access_role: 'Maintainer',
     created_by_user_id: 1,
-    status: "active",
+    status: 'active',
     tags: [],
     version,
-    created_at: "2026-09-11T00:00:00Z",
+    created_at: '2026-09-11T00:00:00Z',
     updated_at: `2026-09-11T00:00:0${version}Z`,
-  };
+  }
 }
 
 function controllerWithProject(project: CollaborationProject) {
@@ -214,10 +216,10 @@ function controllerWithProject(project: CollaborationProject) {
       updateProject: vi.fn().mockResolvedValue(project),
       updateIssue: vi.fn().mockResolvedValue(null),
     },
-  };
+  }
 }
 
-const Icon = () => null;
+const Icon = () => null
 
 function createWorkspaceHomeHost(): WorkspaceProjectsHomeHost {
   return {
@@ -232,26 +234,27 @@ function createWorkspaceHomeHost(): WorkspaceProjectsHomeHost {
     },
     translate: (_key, fallback) => fallback,
     copyText: async () => undefined,
-    formatRelativeTime: (value) => value,
+    formatRelativeTime: value => value,
     renderTooltip: ({ children }) => children,
     renderModal: ({ children }) => children,
-  };
+  }
 }
 
-describe("CollaborationApp API boundary", () => {
+describe('CollaborationApp API boundary', () => {
   beforeEach(() => {
-    collaborationAppMocks.useAssignments.mockClear();
-    collaborationAppMocks.useController.mockReset();
-    collaborationAppMocks.stateSetters.length = 0;
+    collaborationAppMocks.useAssignments.mockClear()
+    collaborationAppMocks.useController.mockReset()
+    collaborationAppMocks.stateSetters.length = 0
+    collaborationAppMocks.archiveItemsChanged.mockClear()
     collaborationAppMocks.useController.mockReturnValue({
       state: {
         projects: [],
         myWork: [
           {
-            id: "my-work-1",
-            cloud_project_id: "project-1",
-            project_key: "PRJ",
-            title: "Hidden Web task",
+            id: 'my-work-1',
+            cloud_project_id: 'project-1',
+            project_key: 'PRJ',
+            title: 'Hidden Web task',
           },
         ],
         projectItems: {},
@@ -268,525 +271,449 @@ describe("CollaborationApp API boundary", () => {
       commands: {
         reportError: vi.fn(),
       },
-    });
-  });
+    })
+  })
 
-  it.each(["board", "calendar", "gantt", "files", "manage", "table"] as const)(
-    "loads assignment records only when the active view is table (%s)",
-    (view) => {
-      const project = createProject(1);
-      collaborationAppMocks.useController.mockReturnValue(
-        controllerWithProject(project),
-      );
-      const host = createHost(false, undefined);
-      host.location = { projectId: project.id, issueId: null, view };
+  it.each(['board', 'calendar', 'gantt', 'files', 'manage', 'table'] as const)(
+    'loads assignment records only when the active view is table (%s)',
+    view => {
+      const project = createProject(1)
+      collaborationAppMocks.useController.mockReturnValue(controllerWithProject(project))
+      const host = createHost(false, undefined)
+      host.location = { projectId: project.id, issueId: null, view }
 
-      renderApp(host);
+      renderApp(host)
 
       expect(collaborationAppMocks.useAssignments).toHaveBeenCalledWith(
-        expect.objectContaining({ enabled: view === "table" }),
-      );
-    },
-  );
+        expect.objectContaining({ enabled: view === 'table' })
+      )
+    }
+  )
 
-  it("accepts the grouped SharedWorkspaceApi as its only cloud API", () => {
+  it('accepts the grouped SharedWorkspaceApi as its only cloud API', () => {
     expectTypeOf<
-      ComponentProps<typeof CollaborationApp>["api"]
-    >().toEqualTypeOf<SharedWorkspaceApi>();
-    expect(true).toBe(true);
-  });
+      ComponentProps<typeof CollaborationApp>['api']
+    >().toEqualTypeOf<SharedWorkspaceApi>()
+    expect(true).toBe(true)
+  })
 
-  it("exposes only capabilities that change shared app behavior", () => {
+  it('exposes only capabilities that change shared app behavior', () => {
     expectTypeOf<keyof CollaborationCapabilities>().toEqualTypeOf<
-      "myWork" | "automation" | "dingtalkAitable"
-    >();
-  });
+      'myWork' | 'automation' | 'dingtalkAitable'
+    >()
+  })
 
-  it("models My Work as a root location rather than a project view", () => {
+  it('models My Work as a root location rather than a project view', () => {
     const location: CollaborationLocation = {
       projectId: null,
       issueId: null,
-      view: "board",
-      rootView: "my-work",
-    };
+      view: 'board',
+      rootView: 'my-work',
+    }
 
-    expect(location.rootView).toBe("my-work");
-  });
+    expect(location.rootView).toBe('my-work')
+  })
 
-  it("keeps the shared project view set free of host-only pages", () => {
-    expect(collaborationProjectViewIds).toEqual([
-      "board",
-      "table",
-      "files",
-      "manage",
-    ]);
-    expect(collaborationProjectViewIds).not.toContain("members");
-    expect(collaborationProjectViewIds).not.toContain("runs");
-    expect(collaborationProjectViewIds).not.toContain("automation");
-  });
+  it('keeps the shared project view set free of host-only pages', () => {
+    expect(collaborationProjectViewIds).toEqual(['board', 'table', 'files', 'manage'])
+    expect(collaborationProjectViewIds).not.toContain('members')
+    expect(collaborationProjectViewIds).not.toContain('runs')
+    expect(collaborationProjectViewIds).not.toContain('automation')
+  })
 
-  it("registers calendar and Gantt as project views that preserve their route", async () => {
-    const host = createHost(false, "home");
+  it('registers calendar and Gantt as project views that preserve their route', async () => {
+    const host = createHost(false, 'home')
     host.location = {
-      projectId: "project-1",
+      projectId: 'project-1',
       issueId: null,
-      view: "calendar",
-    };
-    const project = createProject(1);
-    const controller = controllerWithProject(project);
+      view: 'calendar',
+    }
+    const project = createProject(1)
+    const controller = controllerWithProject(project)
     const issue = {
-      id: "issue-1",
+      id: 'issue-1',
       cloud_project_id: project.id,
       sequence_number: 1,
       parent_id: null,
       created_by_user_id: 1,
       assignee_user_id: null,
-      title: "Scheduled issue",
-      description: "",
-      status: "pending",
-      priority: "none",
-      due_at: "2026-10-20T08:00:00Z",
+      title: 'Scheduled issue',
+      description: '',
+      status: 'pending',
+      priority: 'none',
+      due_at: '2026-10-20T08:00:00Z',
       tags: [],
       sort_order: 0,
       version: 1,
-      created_at: "2026-10-10T08:00:00Z",
-      updated_at: "2026-10-10T08:00:00Z",
+      created_at: '2026-10-10T08:00:00Z',
+      updated_at: '2026-10-10T08:00:00Z',
       completed_at: null,
       can_edit: true,
-    } satisfies CollaborationIssue;
+    } satisfies CollaborationIssue
     collaborationAppMocks.useController.mockReturnValue({
       ...controller,
       state: { ...controller.state, issues: [issue] },
-    });
+    })
 
-    const shell = findByType(renderApp(host), CollaborationProjectViewShell);
+    const shell = findByType(renderApp(host), CollaborationProjectViewShell)
     const calendar = shell?.props.extensions.find(
-      (extension: { id: string }) => extension.id === "calendar",
-    );
+      (extension: { id: string }) => extension.id === 'calendar'
+    )
     const gantt = shell?.props.extensions.find(
-      (extension: { id: string }) => extension.id === "gantt",
-    );
+      (extension: { id: string }) => extension.id === 'gantt'
+    )
 
-    expect(calendar?.content.type).toBe(ProjectCalendarView);
-    expect(gantt?.content.type).toBe(ProjectGanttView);
+    expect(calendar?.content.type).toBe(ProjectCalendarView)
+    expect(gantt?.content.type).toBe(ProjectGanttView)
     expect(calendar?.content.props.viewOptions).toEqual({
-      status: "",
-      assignee: "",
-      tag: "",
-      groupBy: "none",
-      sortBy: "start_asc",
-    });
-    expect(calendar?.content.props.onSaveProjectViewOptions).toBeTypeOf(
-      "function",
-    );
-    calendar?.content.props.onOpen(issue);
-    gantt?.content.props.onOpen(issue);
+      status: '',
+      assignee: '',
+      tag: '',
+      groupBy: 'none',
+      sortBy: 'start_asc',
+    })
+    expect(calendar?.content.props.onSaveProjectViewOptions).toBeTypeOf('function')
+    calendar?.content.props.onOpen(issue)
+    gantt?.content.props.onOpen(issue)
     await calendar?.content.props.onSchedule(issue, {
-      startAt: "2026-10-19",
-      dueAt: "2026-10-21",
-    });
+      startAt: '2026-10-19',
+      dueAt: '2026-10-21',
+    })
     await gantt?.content.props.onSchedule(issue, {
-      startAt: "2026-10-20",
-      dueAt: "2026-10-22",
-    });
+      startAt: '2026-10-20',
+      dueAt: '2026-10-22',
+    })
     expect(host.navigate).toHaveBeenNthCalledWith(1, {
       projectId: project.id,
       issueId: issue.id,
-      view: "calendar",
-    });
+      view: 'calendar',
+    })
     expect(host.navigate).toHaveBeenNthCalledWith(2, {
       projectId: project.id,
       issueId: issue.id,
-      view: "gantt",
-    });
-    expect(controller.commands.updateIssue).toHaveBeenNthCalledWith(
-      1,
-      issue.id,
-      {
-        version: issue.version,
-        startAt: "2026-10-19",
-        dueAt: "2026-10-21",
-      },
-    );
-    expect(controller.commands.updateIssue).toHaveBeenNthCalledWith(
-      2,
-      issue.id,
-      {
-        version: issue.version,
-        startAt: "2026-10-20",
-        dueAt: "2026-10-22",
-      },
-    );
+      view: 'gantt',
+    })
+    expect(controller.commands.updateIssue).toHaveBeenNthCalledWith(1, issue.id, {
+      version: issue.version,
+      startAt: '2026-10-19',
+      dueAt: '2026-10-21',
+    })
+    expect(controller.commands.updateIssue).toHaveBeenNthCalledWith(2, issue.id, {
+      version: issue.version,
+      startAt: '2026-10-20',
+      dueAt: '2026-10-22',
+    })
     await calendar?.content.props.onSaveProjectViewOptions({
-      status: "pending",
-      assignee: "",
-      tag: "",
-      groupBy: "status",
-      sortBy: "due_asc",
-    });
+      status: 'pending',
+      assignee: '',
+      tag: '',
+      groupBy: 'status',
+      sortBy: 'due_asc',
+    })
     expect(controller.commands.updateProject).toHaveBeenCalledWith(project.id, {
       version: project.version,
       boardConfig: expect.objectContaining({
         schedule_view: {
-          status_filter: "pending",
+          status_filter: 'pending',
           assignee_filter: null,
           tag_filter: null,
-          group_by: "status",
-          sort_by: "due_asc",
+          group_by: 'status',
+          sort_by: 'due_asc',
         },
       }),
-    });
-  });
+    })
+  })
 
-  it("keeps project settings mounted across polling refreshes", () => {
-    const host = createHost(false, "home");
+  it('keeps project settings mounted across polling refreshes', () => {
+    const host = createHost(false, 'home')
     host.location = {
-      projectId: "project-1",
+      projectId: 'project-1',
       issueId: null,
-      view: "manage",
-    };
-    collaborationAppMocks.useController.mockReturnValue(
-      controllerWithProject(createProject(1)),
-    );
-    const firstShell = findByType(
-      renderApp(host),
-      CollaborationProjectViewShell,
-    );
-    const firstSettingsShell = findByType(
-      firstShell?.props.slots.manage,
-      ProjectSettingsShell,
-    );
+      view: 'manage',
+    }
+    collaborationAppMocks.useController.mockReturnValue(controllerWithProject(createProject(1)))
+    const firstShell = findByType(renderApp(host), CollaborationProjectViewShell)
+    const firstSettingsShell = findByType(firstShell?.props.slots.manage, ProjectSettingsShell)
     const firstSettings = firstSettingsShell?.props.sections.find(
-      (section: { id: string }) => section.id === "project",
-    )?.content;
+      (section: { id: string }) => section.id === 'project'
+    )?.content
 
-    collaborationAppMocks.useController.mockReturnValue(
-      controllerWithProject(createProject(2)),
-    );
-    const refreshedShell = findByType(
-      renderApp(host),
-      CollaborationProjectViewShell,
-    );
+    collaborationAppMocks.useController.mockReturnValue(controllerWithProject(createProject(2)))
+    const refreshedShell = findByType(renderApp(host), CollaborationProjectViewShell)
     const refreshedSettingsShell = findByType(
       refreshedShell?.props.slots.manage,
-      ProjectSettingsShell,
-    );
+      ProjectSettingsShell
+    )
     const refreshedSettings = refreshedSettingsShell?.props.sections.find(
-      (section: { id: string }) => section.id === "project",
-    )?.content;
+      (section: { id: string }) => section.id === 'project'
+    )?.content
 
-    expect(firstSettings?.type).toBe(CollaborationSettings);
-    expect(firstSettings?.key).toContain("project-1");
-    expect(refreshedSettings?.key).toBe(firstSettings?.key);
-    expect(refreshedSettings?.props.project.version).toBe(2);
-  });
+    expect(firstSettings?.type).toBe(CollaborationSettings)
+    expect(firstSettings?.key).toContain('project-1')
+    expect(refreshedSettings?.key).toBe(firstSettings?.key)
+    expect(refreshedSettings?.props.project.version).toBe(2)
+  })
 
-  it("allows Issue creation without redirecting before environment initialization", async () => {
-    const host = createHost(false, "home");
+  it('allows Issue creation without redirecting before environment initialization', async () => {
+    const host = createHost(false, 'home')
     host.location = {
-      projectId: "project-1",
+      projectId: 'project-1',
       issueId: null,
-      view: "board",
-    };
-    host.notify = vi.fn();
+      view: 'board',
+    }
+    host.notify = vi.fn()
     collaborationAppMocks.useController.mockReturnValue(
       controllerWithProject({
         ...createProject(1),
-        project_store: "local",
-        access_role: "Owner",
-      }),
-    );
+        project_store: 'local',
+        access_role: 'Owner',
+      })
+    )
 
-    const shell = findByType(renderApp(host), CollaborationProjectViewShell);
+    const shell = findByType(renderApp(host), CollaborationProjectViewShell)
     const createButton = findByTestId(
       shell?.props.renderRightActions({
         actionRefs: {},
         showLabels: true,
       }),
-      collaborationTestIds.createIssue,
-    );
-    expect(createButton).toBeDefined();
-    await createButton?.props.onClick();
+      collaborationTestIds.createIssue
+    )
+    expect(createButton).toBeDefined()
+    await createButton?.props.onClick()
 
-    expect(host.notify).not.toHaveBeenCalled();
-    expect(host.navigate).not.toHaveBeenCalled();
-  });
+    expect(host.notify).not.toHaveBeenCalled()
+    expect(host.navigate).not.toHaveBeenCalled()
+  })
 
-  it("does not require an environment refresh before creating an Issue", async () => {
-    const host = createHost(false, "home");
+  it('does not require an environment refresh before creating an Issue', async () => {
+    const host = createHost(false, 'home')
     host.location = {
-      projectId: "project-1",
+      projectId: 'project-1',
       issueId: null,
-      view: "board",
-    };
-    host.notify = vi.fn();
+      view: 'board',
+    }
+    host.notify = vi.fn()
     const project = {
       ...createProject(1),
-      access_role: "Owner" as const,
+      access_role: 'Owner' as const,
       execution_environment: {
         repositories: [],
         setup_steps: [],
-        fingerprint: "",
+        fingerprint: '',
         devices: {
-          "device-21": {
-            status: "ready" as const,
-            workspace_path: "/workspace/project-1",
+          'device-21': {
+            status: 'ready' as const,
+            workspace_path: '/workspace/project-1',
           },
         },
       },
-    };
-    collaborationAppMocks.useController.mockReturnValue(
-      controllerWithProject(project),
-    );
-    const api = createApi();
-    api.projects.get = vi.fn(async () => project);
+    }
+    collaborationAppMocks.useController.mockReturnValue(controllerWithProject(project))
+    const api = createApi()
+    api.projects.get = vi.fn(async () => project)
     api.projects.listExecutionEnvironments = vi.fn(async () => [
       {
-        id: "environment-21",
+        id: 'environment-21',
         device_id: 21,
-        device_key: "device-21",
-        name: "Device",
-        kind: "local_device",
-        coding_tools: ["codex"],
-        owner_type: "user",
-        owner_id: "1",
-        owner_name: "Owner",
-        status: "online",
-        updated_at: "2026-09-26T00:00:00Z",
+        device_key: 'device-21',
+        name: 'Device',
+        kind: 'local_device',
+        coding_tools: ['codex'],
+        owner_type: 'user',
+        owner_id: '1',
+        owner_name: 'Owner',
+        status: 'online',
+        updated_at: '2026-09-26T00:00:00Z',
       },
-    ]);
+    ])
 
-    const shell = findByType(
-      renderApp(host, api),
-      CollaborationProjectViewShell,
-    );
+    const shell = findByType(renderApp(host, api), CollaborationProjectViewShell)
     const createButton = findByTestId(
       shell?.props.renderRightActions({
         actionRefs: {},
         showLabels: true,
       }),
-      collaborationTestIds.createIssue,
-    );
-    await createButton?.props.onClick();
+      collaborationTestIds.createIssue
+    )
+    await createButton?.props.onClick()
 
-    expect(api.projects.get).not.toHaveBeenCalled();
-    expect(api.projects.listExecutionEnvironments).not.toHaveBeenCalled();
-    expect(host.notify).not.toHaveBeenCalled();
-    expect(host.navigate).not.toHaveBeenCalled();
-  });
+    expect(api.projects.get).not.toHaveBeenCalled()
+    expect(api.projects.listExecutionEnvironments).not.toHaveBeenCalled()
+    expect(host.notify).not.toHaveBeenCalled()
+    expect(host.navigate).not.toHaveBeenCalled()
+  })
 
-  it("uses the shared project settings content as the vertical scroller", () => {
+  it('uses the shared project settings content as the vertical scroller', () => {
     const shell = ProjectSettingsShell({
-      ariaLabel: "项目设置",
+      ariaLabel: '项目设置',
       sections: [
         {
-          id: "dispatch",
-          label: "自动处理",
-          testId: "project-settings-dispatch",
+          id: 'dispatch',
+          label: '自动处理',
+          testId: 'project-settings-dispatch',
           content: <div>dispatch</div>,
         },
       ],
-    });
-    const content = findByTestId(shell, "project-settings-shell-content");
+    })
+    const content = findByTestId(shell, 'project-settings-shell-content')
 
-    expect(shell.props.className).toContain("overflow-hidden");
-    expect(content?.type).toBe("main");
-    expect(content?.props.className).toContain("h-full");
-    expect(content?.props.className.split(" ")).not.toContain("h-0");
-    expect(content?.props.className).toContain("min-h-0");
-    expect(content?.props.className).toContain("overflow-y-auto");
-    expect(content?.props.className).toContain("overscroll-y-contain");
-    expect(content?.props.className).toContain("[scrollbar-gutter:stable]");
-    expect(content?.props.className).not.toContain("overflow-hidden");
-  });
+    expect(shell.props.className).toContain('overflow-hidden')
+    expect(content?.type).toBe('main')
+    expect(content?.props.className).toContain('h-full')
+    expect(content?.props.className.split(' ')).not.toContain('h-0')
+    expect(content?.props.className).toContain('min-h-0')
+    expect(content?.props.className).toContain('overflow-y-auto')
+    expect(content?.props.className).toContain('overscroll-y-contain')
+    expect(content?.props.className).toContain('[scrollbar-gutter:stable]')
+    expect(content?.props.className).not.toContain('overflow-hidden')
+  })
 
-  it.each(["local", "backend"] as const)(
-    "exposes grouped settings and the %s agent creator",
-    (store) => {
-      const host = createHost(false, "home");
+  it.each(['local', 'backend'] as const)(
+    'exposes grouped settings and the %s agent creator',
+    store => {
+      const host = createHost(false, 'home')
       host.projectAgentConfiguration = {
         renderLocalAgentCreator: vi.fn(() => null),
         renderAgentCreator: vi.fn(() => null),
-      };
+      }
       host.projectAgentResourceContext = {
-        name: "Workspace",
-        namespace: "default",
-      };
+        name: 'Workspace',
+        namespace: 'default',
+      }
       host.location = {
-        projectId: "project-1",
+        projectId: 'project-1',
         issueId: null,
-        view: "manage",
-      };
+        view: 'manage',
+      }
       collaborationAppMocks.useController.mockReturnValue(
         controllerWithProject({
           ...createProject(1),
           project_store: store,
-          access_role: "Owner",
+          access_role: 'Owner',
           current_user_id: 1,
-          current_user_name: "Project owner",
-        }),
-      );
+          current_user_name: 'Project owner',
+        })
+      )
 
-      const shell = findByType(renderApp(host), CollaborationProjectViewShell);
-      const settingsShell = findByType(
-        shell?.props.slots.manage,
-        ProjectSettingsShell,
-      );
-      const sectionIds = settingsShell?.props.sections.map(
-        (section: { id: string }) => section.id,
-      );
+      const shell = findByType(renderApp(host), CollaborationProjectViewShell)
+      const settingsShell = findByType(shell?.props.slots.manage, ProjectSettingsShell)
+      const sectionIds = settingsShell?.props.sections.map((section: { id: string }) => section.id)
       const groupsSection = settingsShell?.props.sections.find(
-        (section: { id: string }) => section.id === "groups",
-      );
+        (section: { id: string }) => section.id === 'groups'
+      )
       const automaticProcessingSection = settingsShell?.props.sections.find(
-        (section: { id: string }) => section.id === "automatic-processing",
-      );
+        (section: { id: string }) => section.id === 'automatic-processing'
+      )
 
       expect(sectionIds).toEqual([
-        "project",
-        "agents",
-        "members",
-        "groups",
-        "environments",
-        "automatic-processing",
-      ]);
-      expect(groupsSection?.group).toEqual({ id: "ai-team", label: "AI 配置" });
+        'project',
+        'agents',
+        'members',
+        'groups',
+        'environments',
+        'automatic-processing',
+      ])
+      expect(groupsSection?.group).toEqual({ id: 'ai-team', label: 'AI 配置' })
       expect(
         settingsShell?.props.sections
-          .filter(
-            (section: { group?: { id: string } }) =>
-              section.group?.id === "ai-team",
-          )
-          .map((section: { id: string }) => section.id),
-      ).toEqual(["agents", "groups", "environments"]);
-      const groups = findByType(
-        groupsSection?.content.props.children,
-        ProjectCollaborationGroups,
-      );
-      expect(groups?.props.location).toBe(
-        store === "local" ? "local" : "cloud",
-      );
-      expect(groups?.props.agentConfiguration).toBe(
-        host.projectAgentConfiguration,
-      );
-      expect(groups?.props.agentResourceContext).toBe(
-        host.projectAgentResourceContext,
-      );
-      expect(automaticProcessingSection).toBeDefined();
-      expect(automaticProcessingSection?.content.type).toBe(
-        ProjectAutomaticProcessing,
-      );
-      expect(groupsSection?.content).not.toBe(
-        automaticProcessingSection?.content,
-      );
-    },
-  );
+          .filter((section: { group?: { id: string } }) => section.group?.id === 'ai-team')
+          .map((section: { id: string }) => section.id)
+      ).toEqual(['agents', 'groups', 'environments'])
+      const groups = findByType(groupsSection?.content.props.children, ProjectCollaborationGroups)
+      expect(groups?.props.location).toBe(store === 'local' ? 'local' : 'cloud')
+      expect(groups?.props.agentConfiguration).toBe(host.projectAgentConfiguration)
+      expect(groups?.props.agentResourceContext).toBe(host.projectAgentResourceContext)
+      expect(automaticProcessingSection).toBeDefined()
+      expect(automaticProcessingSection?.content.type).toBe(ProjectAutomaticProcessing)
+      expect(groupsSection?.content).not.toBe(automaticProcessingSection?.content)
+    }
+  )
 
-  it("orders collaboration participants as agents, project members and groups", () => {
+  it('orders collaboration participants as agents, project members and groups', () => {
     const participants = CollaborationParticipantsTabs({
       agentsContent: <div data-testid="agents-content" />,
-      agentsLabel: "智能体",
-      ariaLabel: "协作成员",
+      agentsLabel: '智能体',
+      ariaLabel: '协作成员',
       membersContent: <div data-testid="members-content" />,
-      membersLabel: "项目成员",
+      membersLabel: '项目成员',
       groupsContent: <div data-testid="groups-content" />,
-      groupsLabel: "协作小组",
-    });
-    const tabs = descendants(participants).filter(
-      (element) => element.props.role === "tab",
-    );
+      groupsLabel: '协作小组',
+    })
+    const tabs = descendants(participants).filter(element => element.props.role === 'tab')
 
-    expect(tabs.map((tab) => tab.props["data-testid"])).toEqual([
-      "collaboration-participants-tab-agents",
-      "collaboration-participants-tab-members",
-      "collaboration-participants-tab-groups",
-    ]);
-    expect(tabs.map((tab) => tab.props.children)).toEqual([
-      "智能体",
-      "项目成员",
-      "协作小组",
-    ]);
-    expect(tabs.map((tab) => tab.props["aria-selected"])).toEqual([
-      true,
-      false,
-      false,
-    ]);
-    expect(
-      findByTestId(participants, "collaboration-participants-panel-agents"),
-    ).toBeDefined();
-    expect(findByTestId(participants, "agents-content")).toBeDefined();
-    expect(findByTestId(participants, "members-content")).toBeUndefined();
-    expect(findByTestId(participants, "groups-content")).toBeUndefined();
-  });
+    expect(tabs.map(tab => tab.props['data-testid'])).toEqual([
+      'collaboration-participants-tab-agents',
+      'collaboration-participants-tab-members',
+      'collaboration-participants-tab-groups',
+    ])
+    expect(tabs.map(tab => tab.props.children)).toEqual(['智能体', '项目成员', '协作小组'])
+    expect(tabs.map(tab => tab.props['aria-selected'])).toEqual([true, false, false])
+    expect(findByTestId(participants, 'collaboration-participants-panel-agents')).toBeDefined()
+    expect(findByTestId(participants, 'agents-content')).toBeDefined()
+    expect(findByTestId(participants, 'members-content')).toBeUndefined()
+    expect(findByTestId(participants, 'groups-content')).toBeUndefined()
+  })
 
-  it("mounts files as a top-level project view instead of a settings section", () => {
-    const host = createHost(false, "home");
+  it('mounts files as a top-level project view instead of a settings section', () => {
+    const host = createHost(false, 'home')
     host.location = {
-      projectId: "project-1",
+      projectId: 'project-1',
       issueId: null,
-      view: "manage",
-    };
-    collaborationAppMocks.useController.mockReturnValue(
-      controllerWithProject(createProject(1)),
-    );
+      view: 'manage',
+    }
+    collaborationAppMocks.useController.mockReturnValue(controllerWithProject(createProject(1)))
 
-    const shell = findByType(renderApp(host), CollaborationProjectViewShell);
-    const settingsShell = findByType(
-      shell?.props.slots.manage,
-      ProjectSettingsShell,
-    );
+    const shell = findByType(renderApp(host), CollaborationProjectViewShell)
+    const settingsShell = findByType(shell?.props.slots.manage, ProjectSettingsShell)
     const filesSection = settingsShell?.props.sections.find(
-      (section: { id: string }) => section.id === "files",
-    );
-    const filesView = findByType(
-      shell?.props.slots.files,
-      CollaborationFilesAdapter,
-    );
+      (section: { id: string }) => section.id === 'files'
+    )
+    const filesView = findByType(shell?.props.slots.files, CollaborationFilesAdapter)
 
-    expect(filesSection).toBeUndefined();
-    expect(filesView).toBeDefined();
-  });
+    expect(filesSection).toBeUndefined()
+    expect(filesView).toBeDefined()
+  })
 
-  it("passes runtime bindings and the host card renderer through the shared board", () => {
-    const host = createHost(false, "home");
+  it('passes runtime bindings and the host card renderer through the shared board', () => {
+    const host = createHost(false, 'home')
     host.location = {
-      projectId: "project-1",
+      projectId: 'project-1',
       issueId: null,
-      view: "board",
-    };
-    const project = createProject(1);
+      view: 'board',
+    }
+    const project = createProject(1)
     const binding = {
-      id: "binding-1",
+      id: 'binding-1',
       projectId: project.id,
-      issueId: "issue-1",
+      issueId: 'issue-1',
       taskUserId: 1,
-      deviceId: "device-1",
-      taskId: "task-1",
-      taskTitle: "Runtime task",
+      deviceId: 'device-1',
+      taskId: 'task-1',
+      taskTitle: 'Runtime task',
       backendTaskId: null,
-      linkedAt: "2026-09-13T00:00:00Z",
-    };
-    const renderBoardIssueCard = vi.fn();
-    const controller = controllerWithProject(project);
+      linkedAt: '2026-09-13T00:00:00Z',
+    }
+    const renderBoardIssueCard = vi.fn()
+    const controller = controllerWithProject(project)
     const issue: CollaborationIssue = {
-      id: "issue-1",
+      id: 'issue-1',
       cloud_project_id: project.id,
       sequence_number: 1,
       parent_id: null,
       created_by_user_id: 1,
       assignee_user_id: null,
-      title: "Issue",
-      description: "",
-      status: "inbox",
-      priority: "none",
+      title: 'Issue',
+      description: '',
+      status: 'inbox',
+      priority: 'none',
       due_at: null,
       tags: [],
       sort_order: 0,
       version: 1,
-      created_at: "2026-09-13T00:00:00Z",
-      updated_at: "2026-09-13T00:00:00Z",
+      created_at: '2026-09-13T00:00:00Z',
+      updated_at: '2026-09-13T00:00:00Z',
       completed_at: null,
-    };
+    }
     collaborationAppMocks.useController.mockReturnValue({
       ...controller,
       state: {
@@ -794,102 +721,97 @@ describe("CollaborationApp API boundary", () => {
         issues: [issue],
         taskBindings: [binding],
       },
-    });
+    })
 
     const app = CollaborationApp({
       api: createApi(),
       host,
       renderBoardIssueCard,
-    });
-    const shell = findByType(app, CollaborationProjectViewShell);
-    const board = findByType(shell?.props.slots.board, ProjectBoardAdapter);
-    const renderedBoard = ProjectBoardAdapter(board?.props);
-    const boardBody = findByType(renderedBoard, ProjectBoardBody);
+    })
+    const shell = findByType(app, CollaborationProjectViewShell)
+    const board = findByType(shell?.props.slots.board, ProjectBoardAdapter)
+    const renderedBoard = ProjectBoardAdapter(board?.props)
+    const boardBody = findByType(renderedBoard, ProjectBoardBody)
 
-    expect(board?.props.taskBindings).toEqual([binding]);
+    expect(board?.props.taskBindings).toEqual([binding])
     expect(
       boardBody?.props.getColumnEmptyState({
-        key: "inbox",
-        label: "收集箱",
-        status: "inbox",
-      }).action,
-    ).toBeDefined();
+        key: 'inbox',
+        label: '收集箱',
+        status: 'inbox',
+      }).action
+    ).toBeDefined()
     expect(
       boardBody?.props.getColumnEmptyState({
-        key: "pending",
-        label: "待开始",
-        status: "pending",
-      }).action,
-    ).toBeUndefined();
+        key: 'pending',
+        label: '待开始',
+        status: 'pending',
+      }).action
+    ).toBeUndefined()
     board?.props.renderIssueCard({
       issue,
       previewDisabled: false,
       taskBindings: [binding],
-    });
+    })
     expect(renderBoardIssueCard).toHaveBeenCalledWith({
       issue,
       previewDisabled: false,
       taskBindings: [binding],
       onMarkRead: expect.any(Function),
-    });
-    renderBoardIssueCard.mock.calls[0][0].onMarkRead();
-    expect(controller.commands.markIssueRead).toHaveBeenCalledWith(issue);
-    expect(board?.props.onSaveViews).toEqual(expect.any(Function));
-    const viewNavigation = findByType(
-      boardBody?.props.viewNavigation,
-      BoardViewNavigation,
-    );
-    expect(viewNavigation?.props.canManage).toBe(true);
-    expect(viewNavigation?.props.controller.saveView).toEqual(
-      expect.any(Function),
-    );
-  });
+    })
+    renderBoardIssueCard.mock.calls[0][0].onMarkRead()
+    expect(controller.commands.markIssueRead).toHaveBeenCalledWith(issue)
+    expect(board?.props.onSaveViews).toEqual(expect.any(Function))
+    const viewNavigation = findByType(boardBody?.props.viewNavigation, BoardViewNavigation)
+    expect(viewNavigation?.props.canManage).toBe(true)
+    expect(viewNavigation?.props.controller.saveView).toEqual(expect.any(Function))
+  })
 
-  it("passes the selected Issue task bindings to a custom detail renderer", () => {
-    const host = createHost(false, "home");
+  it('passes the selected Issue task bindings to a custom detail renderer', () => {
+    const host = createHost(false, 'home')
     host.location = {
-      projectId: "project-1",
-      issueId: "issue-1",
-      view: "board",
-    };
-    const project = createProject(1);
+      projectId: 'project-1',
+      issueId: 'issue-1',
+      view: 'board',
+    }
+    const project = createProject(1)
     const issue = {
-      id: "issue-1",
+      id: 'issue-1',
       cloud_project_id: project.id,
       sequence_number: 1,
       parent_id: null,
       created_by_user_id: 1,
       assignee_user_id: null,
-      title: "Issue",
-      description: "",
-      status: "inbox",
-      priority: "none",
+      title: 'Issue',
+      description: '',
+      status: 'inbox',
+      priority: 'none',
       due_at: null,
       tags: [],
       sort_order: 0,
       version: 1,
-      created_at: "2026-09-14T00:00:00Z",
-      updated_at: "2026-09-14T00:00:00Z",
+      created_at: '2026-09-14T00:00:00Z',
+      updated_at: '2026-09-14T00:00:00Z',
       completed_at: null,
-    } satisfies CollaborationIssue;
+    } satisfies CollaborationIssue
     const selectedBinding = {
-      id: "binding-1",
+      id: 'binding-1',
       projectId: project.id,
       issueId: issue.id,
       taskUserId: 1,
-      deviceId: "device-1",
-      taskId: "task-1",
-      taskTitle: "Runtime task",
+      deviceId: 'device-1',
+      taskId: 'task-1',
+      taskTitle: 'Runtime task',
       backendTaskId: null,
-      linkedAt: "2026-09-14T00:00:00Z",
-    };
+      linkedAt: '2026-09-14T00:00:00Z',
+    }
     const otherBinding = {
       ...selectedBinding,
-      id: "binding-2",
-      issueId: "issue-2",
-      taskId: "task-2",
-    };
-    const controller = controllerWithProject(project);
+      id: 'binding-2',
+      issueId: 'issue-2',
+      taskId: 'task-2',
+    }
+    const controller = controllerWithProject(project)
     collaborationAppMocks.useController.mockReturnValue({
       ...controller,
       state: {
@@ -898,121 +820,115 @@ describe("CollaborationApp API boundary", () => {
         selectedIssue: issue,
         taskBindings: [selectedBinding, otherBinding],
       },
-    });
-    const renderIssueDetail = vi.fn(() => null);
+    })
+    const renderIssueDetail = vi.fn(() => null)
 
     CollaborationApp({
       api: createApi(),
       host,
       renderIssueDetail,
-    });
+    })
 
     expect(renderIssueDetail).toHaveBeenCalledWith(
       expect.objectContaining({
         issue,
         taskBindings: [selectedBinding],
-      }),
-    );
-    const read = { ...issue, is_unread: false };
-    renderIssueDetail.mock.calls[0][0].onRead(read);
-    const related = { ...issue, id: "child-issue", parent_id: issue.id };
-    const openRelated = renderIssueDetail.mock.calls[0][0].onOpenRelatedIssue;
-    openRelated(related);
+      })
+    )
+    const read = { ...issue, is_unread: false }
+    renderIssueDetail.mock.calls[0][0].onRead(read)
+    const related = { ...issue, id: 'child-issue', parent_id: issue.id }
+    const openRelated = renderIssueDetail.mock.calls[0][0].onOpenRelatedIssue
+    openRelated(related)
     expect(host.navigate).toHaveBeenLastCalledWith({
       projectId: project.id,
       issueId: related.id,
-      view: "board",
-    });
-    vi.mocked(host.navigate).mockClear();
-    openRelated({ ...related, can_view_detail: false });
-    openRelated({ ...related, cloud_project_id: "foreign-project" });
-    expect(host.navigate).not.toHaveBeenCalled();
-    expect(
-      controller.commands.confirmIssueRead,
-    ).toHaveBeenCalledExactlyOnceWith(read);
-    expect(controller.commands.replaceIssue).not.toHaveBeenCalled();
+      view: 'board',
+    })
+    vi.mocked(host.navigate).mockClear()
+    openRelated({ ...related, can_view_detail: false })
+    openRelated({ ...related, cloud_project_id: 'foreign-project' })
+    expect(host.navigate).not.toHaveBeenCalled()
+    expect(controller.commands.confirmIssueRead).toHaveBeenCalledExactlyOnceWith(read)
+    expect(controller.commands.replaceIssue).not.toHaveBeenCalled()
 
-    const app = CollaborationApp({ api: createApi(), host });
-    const detail = findByType(app, IssueDetail);
-    detail?.props.onRead(read);
-    expect(controller.commands.confirmIssueRead).toHaveBeenCalledTimes(2);
-    expect(controller.commands.replaceIssue).not.toHaveBeenCalled();
-  });
+    const app = CollaborationApp({ api: createApi(), host })
+    const detail = findByType(app, IssueDetail)
+    detail?.props.onRead(read)
+    expect(controller.commands.confirmIssueRead).toHaveBeenCalledTimes(2)
+    expect(controller.commands.replaceIssue).not.toHaveBeenCalled()
+  })
 
-  it("keeps Issue deletion hidden until the host enables it", () => {
-    const host = createHost(false, "home");
+  it('keeps Issue deletion hidden until the host enables it', () => {
+    const host = createHost(false, 'home')
     host.location = {
-      projectId: "project-1",
+      projectId: 'project-1',
       issueId: null,
-      view: "board",
-    };
-    collaborationAppMocks.useController.mockReturnValue(
-      controllerWithProject(createProject(1)),
-    );
+      view: 'board',
+    }
+    collaborationAppMocks.useController.mockReturnValue(controllerWithProject(createProject(1)))
 
     const app = CollaborationApp({
       api: createApi(),
       host,
-    });
-    const shell = findByType(app, CollaborationProjectViewShell);
-    const board = findByType(shell?.props.slots.board, ProjectBoardAdapter);
-    const table = findByType(shell?.props.slots.table, ProjectIssueTable);
+    })
+    const shell = findByType(app, CollaborationProjectViewShell)
+    const board = findByType(shell?.props.slots.board, ProjectBoardAdapter)
+    const table = findByType(shell?.props.slots.table, ProjectIssueTable)
 
-    expect(board?.props.onDeleteIssue).toBeUndefined();
-    expect(table?.props.onDelete).toBeUndefined();
-  });
+    expect(board?.props.onDeleteIssue).toBeUndefined()
+    expect(table?.props.onDelete).toBeUndefined()
+  })
 
-  it("propagates failed board writes so the board never announces a successful move", async () => {
-    const host = createHost(false, "home");
-    host.location = { projectId: "project-1", issueId: null, view: "board" };
-    const controller = controllerWithProject(createProject(1));
-    controller.commands.updateIssue.mockRejectedValue(
-      new Error("Permission denied"),
-    );
-    collaborationAppMocks.useController.mockReturnValue(controller);
-    const app = CollaborationApp({ api: createApi(), host });
-    const shell = findByType(app, CollaborationProjectViewShell);
-    const board = findByType(shell?.props.slots.board, ProjectBoardAdapter);
+  it('propagates failed board writes so the board never announces a successful move', async () => {
+    const host = createHost(false, 'home')
+    host.location = { projectId: 'project-1', issueId: null, view: 'board' }
+    const controller = controllerWithProject(createProject(1))
+    controller.commands.updateIssue.mockRejectedValue(new Error('Permission denied'))
+    collaborationAppMocks.useController.mockReturnValue(controller)
+    const app = CollaborationApp({ api: createApi(), host })
+    const shell = findByType(app, CollaborationProjectViewShell)
+    const board = findByType(shell?.props.slots.board, ProjectBoardAdapter)
     await expect(
-      board!.props.onMove({ id: "issue-1", version: 1 } as CollaborationIssue, {
-        kind: "tag",
-        tags: ["frontend"],
+      board!.props.onMove({ id: 'issue-1', version: 1 } as CollaborationIssue, {
+        kind: 'tag',
+        tags: ['frontend'],
         optimisticItems: [],
-      }),
-    ).rejects.toThrow("Permission denied");
-  });
+      })
+    ).rejects.toThrow('Permission denied')
+  })
 
-  it.each(["inbox", "in_progress", "in_review", "completed"])(
-    "wires editable %s Issue archiving into the detail menu",
-    (status) => {
-      const host = createHost(false, "home");
+  it.each(['inbox', 'in_progress', 'in_review', 'completed'])(
+    'wires editable %s Issue archiving into the detail menu',
+    status => {
+      const host = createHost(false, 'home')
       host.location = {
-        projectId: "project-1",
-        issueId: "issue-1",
-        view: "board",
-      };
-      const project = createProject(1);
+        projectId: 'project-1',
+        issueId: 'issue-1',
+        view: 'board',
+      }
+      const project = createProject(1)
       const issue = {
-        id: "issue-1",
+        id: 'issue-1',
         cloud_project_id: project.id,
         sequence_number: 1,
         parent_id: null,
         created_by_user_id: 1,
         assignee_user_id: null,
-        title: "Issue",
-        description: "",
+        title: 'Issue',
+        description: '',
         status,
-        priority: "none",
+        priority: 'none',
         due_at: null,
         tags: [],
         sort_order: 0,
         can_edit: true,
         version: 1,
-        created_at: "2026-09-14T00:00:00Z",
-        updated_at: "2026-09-14T00:00:00Z",
+        created_at: '2026-09-14T00:00:00Z',
+        updated_at: '2026-09-14T00:00:00Z',
         completed_at: null,
-      } satisfies CollaborationIssue;
-      const controller = controllerWithProject(project);
+      } satisfies CollaborationIssue
+      const controller = controllerWithProject(project)
       collaborationAppMocks.useController.mockReturnValue({
         ...controller,
         state: {
@@ -1020,56 +936,56 @@ describe("CollaborationApp API boundary", () => {
           issues: [issue],
           selectedIssue: issue,
         },
-      });
-      const renderIssueDetail = vi.fn(() => null);
+      })
+      const renderIssueDetail = vi.fn(() => null)
 
       const app = CollaborationApp({
         api: createApi(),
         host,
         issueArchiveEnabled: true,
         renderIssueDetail,
-      });
-      const shell = findByType(app, CollaborationProjectViewShell);
-      const board = findByType(shell?.props.slots.board, ProjectBoardAdapter);
-      const table = findByType(shell?.props.slots.table, ProjectIssueTable);
+      })
+      const shell = findByType(app, CollaborationProjectViewShell)
+      const board = findByType(shell?.props.slots.board, ProjectBoardAdapter)
+      const table = findByType(shell?.props.slots.table, ProjectIssueTable)
 
-      expect(board?.props.onDeleteIssue).toEqual(expect.any(Function));
-      expect(table?.props.onDelete).toEqual(expect.any(Function));
+      expect(board?.props.onDeleteIssue).toEqual(expect.any(Function))
+      expect(table?.props.onDelete).toEqual(expect.any(Function))
       expect(renderIssueDetail).toHaveBeenCalledWith(
-        expect.objectContaining({ onDelete: expect.any(Function) }),
-      );
-    },
-  );
+        expect.objectContaining({ onDelete: expect.any(Function) })
+      )
+    }
+  )
 
-  it("ignores a stale archive page after the archive drawer reopens", async () => {
-    const host = createHost(false, "home");
+  it('ignores a stale archive page after the archive drawer reopens', async () => {
+    const host = createHost(false, 'home')
     host.location = {
-      projectId: "project-1",
-      issueId: "issue-1",
-      view: "board",
-    };
-    const project = createProject(1);
-    const controller = controllerWithProject(project);
+      projectId: 'project-1',
+      issueId: 'issue-1',
+      view: 'board',
+    }
+    const project = createProject(1)
+    const controller = controllerWithProject(project)
     const issue = {
-      id: "issue-1",
+      id: 'issue-1',
       cloud_project_id: project.id,
       sequence_number: 1,
       parent_id: null,
       created_by_user_id: 1,
       assignee_user_id: null,
-      title: "Issue",
-      description: "",
-      status: "completed",
-      priority: "none",
+      title: 'Issue',
+      description: '',
+      status: 'completed',
+      priority: 'none',
       due_at: null,
       tags: [],
       sort_order: 0,
       can_edit: true,
       version: 1,
-      created_at: "2026-09-14T00:00:00Z",
-      updated_at: "2026-09-14T00:00:00Z",
+      created_at: '2026-09-14T00:00:00Z',
+      updated_at: '2026-09-14T00:00:00Z',
       completed_at: null,
-    } satisfies CollaborationIssue;
+    } satisfies CollaborationIssue
     collaborationAppMocks.useController.mockReturnValue({
       ...controller,
       state: {
@@ -1077,91 +993,86 @@ describe("CollaborationApp API boundary", () => {
         issues: [issue],
         selectedIssue: issue,
       },
-    });
+    })
     let resolveFirst:
       | ((value: { items: CollaborationIssue[]; nextCursor: null }) => void)
-      | undefined;
+      | undefined
     let resolveSecond:
       | ((value: { items: CollaborationIssue[]; nextCursor: null }) => void)
-      | undefined;
+      | undefined
     const first = new Promise<{
-      items: CollaborationIssue[];
-      nextCursor: null;
-    }>((resolve) => {
-      resolveFirst = resolve;
-    });
+      items: CollaborationIssue[]
+      nextCursor: null
+    }>(resolve => {
+      resolveFirst = resolve
+    })
     const second = new Promise<{
-      items: CollaborationIssue[];
-      nextCursor: null;
-    }>((resolve) => {
-      resolveSecond = resolve;
-    });
-    const api = createApi();
+      items: CollaborationIssue[]
+      nextCursor: null
+    }>(resolve => {
+      resolveSecond = resolve
+    })
+    const api = createApi()
     api.issues = {
       ...api.issues,
-      listArchived: vi
-        .fn()
-        .mockReturnValueOnce(first)
-        .mockReturnValueOnce(second),
-    };
+      listArchived: vi.fn().mockReturnValueOnce(first).mockReturnValueOnce(second),
+    }
 
     const app = CollaborationApp({
       api,
       host,
       issueArchiveEnabled: true,
-    });
-    const shell = findByType(app, CollaborationProjectViewShell);
-    const board = findByType(shell?.props.slots.board, ProjectBoardAdapter);
-    const archivedIssuesSetter = collaborationAppMocks.stateSetters.find(
-      ({ initialValue }) => Array.isArray(initialValue),
-    )?.setter;
+    })
+    const shell = findByType(app, CollaborationProjectViewShell)
+    const board = findByType(shell?.props.slots.board, ProjectBoardAdapter)
+    const archivedIssuesSetter = collaborationAppMocks.archiveItemsChanged
 
-    expect(board?.props.onOpenArchive).toEqual(expect.any(Function));
-    board?.props.onOpenArchive();
-    board?.props.onOpenArchive();
-    expect(api.issues.listArchived).toHaveBeenCalledTimes(2);
-    expect(archivedIssuesSetter).toHaveBeenCalledTimes(2);
-    resolveSecond?.({ items: [], nextCursor: null });
+    expect(board?.props.onOpenArchive).toEqual(expect.any(Function))
+    board?.props.onOpenArchive()
+    board?.props.onOpenArchive()
+    expect(api.issues.listArchived).toHaveBeenCalledTimes(2)
+    expect(archivedIssuesSetter).toHaveBeenCalledTimes(2)
+    resolveSecond?.({ items: [], nextCursor: null })
     await vi.waitFor(() => {
-      expect(archivedIssuesSetter).toHaveBeenCalledTimes(3);
-    });
-    resolveFirst?.({ items: [], nextCursor: null });
-    await Promise.resolve();
-    await Promise.resolve();
+      expect(archivedIssuesSetter).toHaveBeenCalledTimes(3)
+    })
+    resolveFirst?.({ items: [], nextCursor: null })
+    await Promise.resolve()
+    await Promise.resolve()
 
-    expect(api.issues.listArchived).toHaveBeenCalledTimes(2);
-    expect(archivedIssuesSetter).toHaveBeenCalledTimes(3);
-  });
+    expect(api.issues.listArchived).toHaveBeenCalledTimes(2)
+    expect(archivedIssuesSetter).toHaveBeenCalledTimes(3)
+  })
 
-  it("keeps detail deletion unavailable for a read-only Issue", () => {
-    const host = createHost(false, "home");
+  it('keeps detail deletion unavailable for a read-only Issue', () => {
+    const host = createHost(false, 'home')
     host.location = {
-      projectId: "project-1",
-      issueId: "issue-1",
-      view: "board",
-    };
-    const project = createProject(1);
+      projectId: 'project-1',
+      issueId: 'issue-1',
+      view: 'board',
+    }
+    const project = createProject(1)
     const issue = {
-      id: "issue-1",
+      id: 'issue-1',
       cloud_project_id: project.id,
       sequence_number: 1,
       parent_id: null,
       created_by_user_id: 1,
       assignee_user_id: null,
-      title: "Issue",
-      description: "",
-      status: "completed",
-      priority: "none",
+      title: 'Issue',
+      description: '',
+      status: 'completed',
+      priority: 'none',
       due_at: null,
       tags: [],
       sort_order: 0,
       can_edit: false,
       version: 1,
-      created_at: "2026-09-14T00:00:00Z",
-      updated_at: "2026-09-14T00:00:00Z",
+      created_at: '2026-09-14T00:00:00Z',
+      updated_at: '2026-09-14T00:00:00Z',
       completed_at: null,
-    } satisfies CollaborationIssue;
-    const controller = controllerWithProject(project);
+    } satisfies CollaborationIssue
+    const controller = controllerWithProject(project)
     collaborationAppMocks.useController.mockReturnValue({
       ...controller,
       state: {
@@ -1169,112 +1080,110 @@ describe("CollaborationApp API boundary", () => {
         issues: [issue],
         selectedIssue: issue,
       },
-    });
-    const renderIssueDetail = vi.fn(() => null);
+    })
+    const renderIssueDetail = vi.fn(() => null)
 
     CollaborationApp({
       api: createApi(),
       host,
       issueArchiveEnabled: true,
       renderIssueDetail,
-    });
+    })
 
-    expect(renderIssueDetail).toHaveBeenCalledWith(
-      expect.objectContaining({ onDelete: undefined }),
-    );
-  });
+    expect(renderIssueDetail).toHaveBeenCalledWith(expect.objectContaining({ onDelete: undefined }))
+  })
 
-  it("centralizes permission filtering and host extension placement", () => {
+  it('centralizes permission filtering and host extension placement', () => {
     const options = buildCollaborationProjectViewOptions({
-      project: { access_role: "RestrictedAnalyst" },
+      project: { access_role: 'RestrictedAnalyst' },
       labels: {
-        board: "Board",
-        table: "Table",
-        files: "Files",
-        manage: "Manage",
+        board: 'Board',
+        table: 'Table',
+        files: 'Files',
+        manage: 'Manage',
       },
       testIds: {
-        board: "board",
-        table: "table",
-        files: "files",
-        manage: "manage",
+        board: 'board',
+        table: 'table',
+        files: 'files',
+        manage: 'manage',
       },
       extensions: [
         {
-          id: "table",
-          label: "Table",
-          testId: "table",
+          id: 'table',
+          label: 'Table',
+          testId: 'table',
           content: null,
         },
       ],
-    });
+    })
 
-    expect(options.map((option) => option.id)).toEqual(["board", "table"]);
-  });
+    expect(options.map(option => option.id)).toEqual(['board', 'table'])
+  })
 
   it.each([undefined, false])(
-    "keeps My Work unavailable when the host capability is %s",
-    (myWork) => {
-      const host = createHost(myWork, "my-work");
-      const tree = renderApp(host);
-      const home = findByType(tree, WorkspaceProjectsHomeAdapter);
+    'keeps My Work unavailable when the host capability is %s',
+    myWork => {
+      const host = createHost(myWork, 'my-work')
+      const tree = renderApp(host)
+      const home = findByType(tree, WorkspaceProjectsHomeAdapter)
 
-      expect(findByType(tree, MyWorkAdapter)).toBeUndefined();
-      expect(home).toBeDefined();
-      expect(home?.props.myWork).toEqual([]);
-      expect(home?.props.onOpenMyWork).toBeUndefined();
-      expect(host.navigate).not.toHaveBeenCalled();
+      expect(findByType(tree, MyWorkAdapter)).toBeUndefined()
+      expect(home).toBeDefined()
+      expect(home?.props.myWork).toEqual([])
+      expect(home?.props.onOpenMyWork).toBeUndefined()
+      expect(host.navigate).not.toHaveBeenCalled()
       expect(collaborationAppMocks.useController).toHaveBeenCalledWith(
-        expect.objectContaining({ myWorkEnabled: false }),
-      );
-    },
-  );
+        expect.objectContaining({ myWorkEnabled: false })
+      )
+    }
+  )
 
-  it("keeps My Work available only when the host explicitly enables it", () => {
-    const homeHost = createHost(true, "home");
-    const home = findByType(renderApp(homeHost), WorkspaceProjectsHomeAdapter);
+  it('keeps My Work available only when the host explicitly enables it', () => {
+    const homeHost = createHost(true, 'home')
+    const home = findByType(renderApp(homeHost), WorkspaceProjectsHomeAdapter)
 
-    expect(home?.props.myWork).toHaveLength(1);
-    expect(home?.props.onOpenMyWork).toEqual(expect.any(Function));
+    expect(home?.props.myWork).toHaveLength(1)
+    expect(home?.props.onOpenMyWork).toEqual(expect.any(Function))
     expect(collaborationAppMocks.useController).toHaveBeenCalledWith(
-      expect.objectContaining({ myWorkEnabled: true }),
-    );
-    home?.props.onOpenMyWork();
+      expect.objectContaining({ myWorkEnabled: true })
+    )
+    home?.props.onOpenMyWork()
     expect(homeHost.navigate).toHaveBeenCalledWith({
       projectId: null,
       issueId: null,
-      view: "board",
-      rootView: "my-work",
-    });
+      view: 'board',
+      rootView: 'my-work',
+    })
 
-    const myWorkHost = createHost(true, "my-work");
-    expect(findByType(renderApp(myWorkHost), MyWorkAdapter)).toBeDefined();
-  });
+    const myWorkHost = createHost(true, 'my-work')
+    expect(findByType(renderApp(myWorkHost), MyWorkAdapter)).toBeDefined()
+  })
 
-  it("keeps the Wework direct onOpenMyWork integration available", () => {
-    const onOpenMyWork = vi.fn();
+  it('keeps the Wework direct onOpenMyWork integration available', () => {
+    const onOpenMyWork = vi.fn()
     const tree = WorkspaceProjectsHome({
       projects: [],
       projectCounts: {},
       projectMembers: {},
       projectItems: {},
       myWork: [],
-      searchQuery: "",
+      searchQuery: '',
       host: createWorkspaceHomeHost(),
       onCreateProject: vi.fn(),
       onSelectProject: vi.fn(),
       onManageProject: vi.fn(),
       onSelectItem: vi.fn(),
       onOpenMyWork,
-    });
-    const entry = findByTestId(tree, "cloud-projects-home-my-work");
+    })
+    const entry = findByTestId(tree, 'cloud-projects-home-my-work')
 
-    expect(entry).toBeDefined();
-    entry?.props.onClick();
-    expect(onOpenMyWork).toHaveBeenCalledOnce();
-  });
+    expect(entry).toBeDefined()
+    entry?.props.onClick()
+    expect(onOpenMyWork).toHaveBeenCalledOnce()
+  })
 
-  it("hides the whole My Work section when no host callback is provided", () => {
+  it('hides the whole My Work section when no host callback is provided', () => {
     const tree = WorkspaceProjectsHome({
       projects: [],
       projectCounts: {},
@@ -1282,25 +1191,23 @@ describe("CollaborationApp API boundary", () => {
       projectItems: {},
       myWork: [
         {
-          id: "my-work-1",
-          cloud_project_id: "project-1",
-          project_key: "PRJ",
-          title: "Hidden Web task",
-          status: "pending",
-          updated_at: "2026-09-11T00:00:00Z",
+          id: 'my-work-1',
+          cloud_project_id: 'project-1',
+          project_key: 'PRJ',
+          title: 'Hidden Web task',
+          status: 'pending',
+          updated_at: '2026-09-11T00:00:00Z',
         },
       ],
-      searchQuery: "",
+      searchQuery: '',
       host: createWorkspaceHomeHost(),
       onCreateProject: vi.fn(),
       onSelectProject: vi.fn(),
       onManageProject: vi.fn(),
       onSelectItem: vi.fn(),
-    });
+    })
 
-    expect(findByTestId(tree, "cloud-projects-home-my-work")).toBeUndefined();
-    expect(
-      findByTestId(tree, "cloud-projects-home-todo-my-work-1"),
-    ).toBeUndefined();
-  });
-});
+    expect(findByTestId(tree, 'cloud-projects-home-my-work')).toBeUndefined()
+    expect(findByTestId(tree, 'cloud-projects-home-todo-my-work-1')).toBeUndefined()
+  })
+})

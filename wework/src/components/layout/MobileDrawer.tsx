@@ -131,7 +131,7 @@ export function MobileDrawer({
   onOpenRuntimeTask,
   onRefreshWorkLists,
 }: MobileDrawerProps) {
-  useSidebarRelativeTimeRefresh()
+  const nowMs = useSidebarRelativeTimeRefresh()
   const { t } = useTranslation('common')
   const lifecycleSnapshot = useRuntimeTaskLifecycleStoreSnapshot()
   const workbench = useContext(WorkbenchContext)
@@ -530,7 +530,9 @@ export function MobileDrawer({
                                 >
                                   <Monitor className="h-3.5 w-3.5" aria-hidden="true" />
                                 </span>
-                                <span>{formatRelativeSidebarTime(getRuntimeTaskTime(task))}</span>
+                                <span>
+                                  {formatRelativeSidebarTime(getRuntimeTaskTime(task), nowMs)}
+                                </span>
                               </span>
                             )}
                           </button>
@@ -746,7 +748,10 @@ export function MobileDrawer({
                                             />
                                           )}
                                           <span>
-                                            {formatRelativeSidebarTime(getRuntimeTaskTime(task))}
+                                            {formatRelativeSidebarTime(
+                                              getRuntimeTaskTime(task),
+                                              nowMs
+                                            )}
                                           </span>
                                         </span>
                                       )}

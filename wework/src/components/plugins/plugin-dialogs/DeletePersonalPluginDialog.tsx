@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useDocumentEvent } from '@wegent/collaboration/dom-events'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { PluginDeleteImpactResponse } from '@/types/api'
 
@@ -24,22 +24,13 @@ export function DeletePersonalPluginDialog({
   onConfirm,
 }: DeletePersonalPluginDialogProps) {
   const { t } = useTranslation('common')
-  const cancelRef = useRef<HTMLButtonElement>(null)
   const requiresRevocation = Boolean(
     impact && (impact.affectedUserCount > 0 || impact.sharedTargetCount > 0)
   )
 
-  useEffect(() => {
-    cancelRef.current?.focus()
-  }, [])
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !deleting) onCancel()
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [deleting, onCancel])
+  useDocumentEvent('keydown', event => {
+    if (event.key === 'Escape' && !deleting) onCancel()
+  })
 
   return (
     <div
@@ -95,7 +86,7 @@ export function DeletePersonalPluginDialog({
         </p>
         <div className="mt-5 flex justify-end gap-2">
           <button
-            ref={cancelRef}
+            autoFocus
             type="button"
             disabled={deleting}
             data-testid="plugin-delete-cancel-button"

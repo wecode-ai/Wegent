@@ -1,17 +1,27 @@
-import { Activity, StrictMode } from 'react'
+import { Activity, StrictMode, useCallback, useState, useSyncExternalStore } from 'react'
 import { render, waitFor } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
-import {
-  retainWorkbenchServiceConnections,
-  useWorkbenchServiceConnections,
-} from './workbenchServiceConnections'
+import { retainWorkbenchServiceConnections } from './workbenchServiceConnections'
+import { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
+import { createAppRouteSession } from '@/appRouteSession'
 import type { WorkbenchServices } from './workbenchServices'
 
 type Connections = Pick<WorkbenchServices, 'socketClient' | 'projectChatClient'>
 
 function Owner({ services }: { services: Connections }) {
-  useWorkbenchServiceConnections(services)
-  return null
+  const [session] = useState(() =>
+    createAppRouteSession({
+      tabs: null,
+      lifecycleStore: new RuntimeTaskLifecycleStore('connection-owner'),
+    })
+  )
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      session.subscribe(listener, { pathname: '/', search: '' }, false, services, false),
+    [session, services]
+  )
+  const mounted = useSyncExternalStore(subscribe, session.getSnapshot, session.getSnapshot)
+  return <output>{mounted.ids.size}</output>
 }
 
 function fixture() {

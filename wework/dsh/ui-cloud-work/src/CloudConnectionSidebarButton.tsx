@@ -1,5 +1,6 @@
 import { AlertCircle, Cloud, Loader2, Settings } from 'lucide-react'
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
+import { useDocumentEvent, useElementGeometry } from '@wegent/collaboration/dom-events'
 import { createPortal } from 'react-dom'
 import { canUseForProjectCreation, isCloudDevice, isRemoteDevice } from '@/lib/device-capabilities'
 import { cn } from '@/lib/utils'
@@ -47,7 +48,21 @@ export function CloudConnectionSidebarButton({
   const [detailsOpen, setDetailsOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const popoverRef = useRef<HTMLDivElement>(null)
-  const [popoverPosition, setPopoverPosition] = useState({ left: 0, top: 0 })
+  const geometry = useElementGeometry([rootRef, popoverRef], detailsOpen)
+  const triggerRect = geometry?.elements[0]
+  const popoverHeight = geometry?.elements[1]?.height ?? 0
+  const viewportWidth = geometry?.viewportWidth ?? 0
+  const viewportHeight = geometry?.viewportHeight ?? 0
+  const maxLeft = Math.max(VIEWPORT_PADDING, viewportWidth - POPOVER_WIDTH - VIEWPORT_PADDING)
+  const preferredTop = (triggerRect?.bottom ?? 0) + POPOVER_GAP
+  const popoverPosition = {
+    left: triggerRect ? Math.min(Math.max(triggerRect.left, VIEWPORT_PADDING), maxLeft) : 0,
+    top: triggerRect
+      ? popoverHeight > 0 && preferredTop + popoverHeight > viewportHeight - VIEWPORT_PADDING
+        ? Math.max(VIEWPORT_PADDING, triggerRect.top - POPOVER_GAP - popoverHeight)
+        : preferredTop
+      : 0,
+  }
   const cloudWorkDevices = useMemo(
     () => devices.filter(device => isCloudDevice(device) || isRemoteDevice(device)),
     [devices]
@@ -131,57 +146,22 @@ export function CloudConnectionSidebarButton({
     if (!errorDetail) setDetailsOpen(false)
   }
 
-  useLayoutEffect(() => {
-    if (!detailsOpen) return
-
-    const updatePosition = () => {
-      const triggerRect = rootRef.current?.getBoundingClientRect()
-      if (!triggerRect) return
-      const popoverHeight = popoverRef.current?.getBoundingClientRect().height ?? 0
-      const maxLeft = Math.max(
-        VIEWPORT_PADDING,
-        window.innerWidth - POPOVER_WIDTH - VIEWPORT_PADDING
-      )
-      const left = Math.min(Math.max(triggerRect.left, VIEWPORT_PADDING), maxLeft)
-      const preferredTop = triggerRect.bottom + POPOVER_GAP
-      const top =
-        popoverHeight > 0 && preferredTop + popoverHeight > window.innerHeight - VIEWPORT_PADDING
-          ? Math.max(VIEWPORT_PADDING, triggerRect.top - POPOVER_GAP - popoverHeight)
-          : preferredTop
-      setPopoverPosition({ left, top })
-    }
-
-    updatePosition()
-    window.addEventListener('resize', updatePosition)
-    window.addEventListener('scroll', updatePosition, true)
-    return () => {
-      window.removeEventListener('resize', updatePosition)
-      window.removeEventListener('scroll', updatePosition, true)
-    }
-  }, [detailsOpen, errorDetail])
-
-  useEffect(() => {
-    if (!detailsOpen) return
-
-    const handlePointerDown = (event: PointerEvent) => {
+  useDocumentEvent(
+    'pointerdown',
+    event => {
       const target = event.target as Node
-      if (!rootRef.current?.contains(target) && !popoverRef.current?.contains(target)) {
+      if (!rootRef.current?.contains(target) && !popoverRef.current?.contains(target))
         setDetailsOpen(false)
-      }
-    }
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
-        setDetailsOpen(false)
-      }
-    }
-
-    document.addEventListener('pointerdown', handlePointerDown, true)
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown, true)
-      document.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [detailsOpen])
+    },
+    { enabled: detailsOpen, capture: true }
+  )
+  useDocumentEvent(
+    'keydown',
+    event => {
+      if (event.key === 'Escape') setDetailsOpen(false)
+    },
+    { enabled: detailsOpen }
+  )
 
   return (
     <>

@@ -2,77 +2,72 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { createMemberSearchResource, filterMemberSearchResults } from './memberSearch'
 
-import {
-  clearMemberResultsForEmptyQuery,
-  runActiveMemberSearch,
-} from "./memberSearch";
+const stops: Array<() => void> = []
+beforeEach(() => vi.useFakeTimers())
+afterEach(() => {
+  stops.splice(0).forEach(stop => stop())
+  vi.useRealTimers()
+})
 
-describe("member search", () => {
-  it("clears stale results immediately when the query becomes empty", () => {
-    const onResults = vi.fn();
+it('cancels a debounced read when its query is detached before the delay', async () => {
+  const search = vi.fn(async () => ({ users: [{ id: 1 }] }))
+  const resource = createMemberSearchResource('query:Ada', 'Ada', search)
+  const stop = resource.subscribe(() => {})
+  stops.push(stop)
+  await vi.advanceTimersByTimeAsync(249)
+  expect(search).not.toHaveBeenCalled()
+  stop()
+  await vi.advanceTimersByTimeAsync(1)
+  expect(search).not.toHaveBeenCalled()
+  expect(resource.getSnapshot().data).toBeUndefined()
+})
 
-    expect(clearMemberResultsForEmptyQuery("  ", onResults)).toBe(true);
-    expect(onResults).toHaveBeenCalledWith([]);
-    expect(clearMemberResultsForEmptyQuery("Ada", onResults)).toBe(false);
-  });
+it('exposes an active failure with no stale results', async () => {
+  const cause = new Error('search unavailable')
+  const resource = createMemberSearchResource('query:Ada', 'Ada', vi.fn().mockRejectedValue(cause))
+  stops.push(resource.subscribe(() => {}))
+  await vi.advanceTimersByTimeAsync(250)
+  expect(resource.getSnapshot().status).toBe('error')
+  expect(resource.getSnapshot().error).toBe(cause)
+  expect(resource.getSnapshot().data).toBeUndefined()
+})
 
-  it("clears results and reports an active request failure", async () => {
-    const cause = new Error("search unavailable");
-    const onResults = vi.fn();
-    const onError = vi.fn();
+it('ignores a failure after a request loses its last subscriber', async () => {
+  let fail!: (cause: Error) => void
+  const search = vi.fn(
+    () =>
+      new Promise<{ users: { id: number }[] }>((_resolve, reject) => {
+        fail = reject
+      })
+  )
+  const resource = createMemberSearchResource('query:Ada', 'Ada', search)
+  const changed = vi.fn()
+  const stop = resource.subscribe(changed)
+  stops.push(stop)
+  await vi.advanceTimersByTimeAsync(250)
+  stop()
+  const calls = changed.mock.calls.length
+  fail(new Error('late failure'))
+  await vi.advanceTimersByTimeAsync(0)
+  expect(resource.getSnapshot().error).toBeUndefined()
+  expect(changed).toHaveBeenCalledTimes(calls)
+})
 
-    await runActiveMemberSearch({
-      query: "Ada",
-      existingUserIds: new Set(),
-      search: vi.fn().mockRejectedValue(cause),
-      userId: (user: { id: number }) => user.id,
-      isActive: () => true,
-      onResults,
-      onError,
-    });
-
-    expect(onResults).toHaveBeenCalledWith([]);
-    expect(onError).toHaveBeenCalledWith(cause);
-  });
-
-  it("does not update results or errors after the request becomes stale", async () => {
-    const onResults = vi.fn();
-    const onError = vi.fn();
-
-    await runActiveMemberSearch({
-      query: "Ada",
-      existingUserIds: new Set(),
-      search: vi.fn().mockRejectedValue(new Error("late failure")),
-      userId: (user: { id: number }) => user.id,
-      isActive: () => false,
-      onResults,
-      onError,
-    });
-
-    expect(onResults).not.toHaveBeenCalled();
-    expect(onError).not.toHaveBeenCalled();
-  });
-
-  it("filters existing members from active successful results", async () => {
-    const onResults = vi.fn();
-
-    await runActiveMemberSearch({
-      query: "Ada",
-      existingUserIds: new Set([1]),
-      search: vi.fn().mockResolvedValue({
-        users: [
-          { id: 1, name: "Existing" },
-          { id: 2, name: "Ada" },
-        ],
-      }),
-      userId: (user) => user.id,
-      isActive: () => true,
-      onResults,
-      onError: vi.fn(),
-    });
-
-    expect(onResults).toHaveBeenCalledWith([{ id: 2, name: "Ada" }]);
-  });
-});
+it('filters the current roster from successful results without repeating the search', async () => {
+  const search = vi.fn(async () => ({
+    users: [
+      { id: 1, name: 'Existing' },
+      { id: 2, name: 'Ada' },
+    ],
+  }))
+  const resource = createMemberSearchResource('query:Ada', 'Ada', search)
+  stops.push(resource.subscribe(() => {}))
+  await vi.advanceTimersByTimeAsync(250)
+  const results = resource.getSnapshot().data!
+  expect(filterMemberSearchResults(results, [{ user_id: 1 }])).toEqual([{ id: 2, name: 'Ada' }])
+  expect(filterMemberSearchResults(results, [{ user_id: 1 }, { user_id: 2 }])).toEqual([])
+  expect(search).toHaveBeenCalledExactlyOnceWith('Ada')
+})

@@ -1,4 +1,5 @@
-import { useEffect, useSyncExternalStore } from 'react'
+import { useCallback, useSyncExternalStore } from 'react'
+import type { AppPreferencesState } from '@/features/app-preferences/appPreferencesContext'
 import { updateAppPreferences } from '@/desktop/appPreferences'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
 
@@ -8,7 +9,6 @@ let persistedChoice: boolean | undefined
 let asked = false
 let pending = 0
 let generation = 0
-let revision = 0
 const listeners = new Set<() => void>()
 
 export function isLatestTelemetryConsentChoice(value: boolean): boolean {
@@ -28,37 +28,46 @@ export function setSessionTelemetryConsent(value: boolean | undefined): void {
 }
 
 function publish(): void {
-  revision += 1
   for (const listener of listeners) listener()
 }
 
-function subscribe(listener: () => void) {
+export function subscribeSessionTelemetryConsent(listener: () => void) {
   listeners.add(listener)
   return () => listeners.delete(listener)
 }
 
+function acknowledgeSavedRefusal(preferences: AppPreferencesState | null): void {
+  if (
+    choice === false &&
+    pending === 0 &&
+    persistedChoice === false &&
+    preferences?.loaded &&
+    preferences.preferences.telemetryConsentAsked &&
+    !preferences.preferences.telemetryEnabled
+  ) {
+    choice = undefined
+    publish()
+  }
+}
+
 export function useSessionTelemetryConsent(): boolean | undefined {
-  const currentRevision = useSyncExternalStore(subscribe, () => revision)
   const preferences = useAppPreferencesState()
-  useEffect(() => {
-    if (
-      choice === false &&
-      pending === 0 &&
-      persistedChoice === false &&
-      preferences?.loaded &&
-      preferences.preferences.telemetryConsentAsked &&
-      !preferences.preferences.telemetryEnabled
-    ) {
-      choice = undefined
-      publish()
-    }
-  }, [currentRevision, preferences])
-  return choice
+  const observe = useCallback(
+    (listener: () => void) => {
+      const stop = subscribeSessionTelemetryConsent(() => {
+        acknowledgeSavedRefusal(preferences)
+        listener()
+      })
+      acknowledgeSavedRefusal(preferences)
+      return stop
+    },
+    [preferences]
+  )
+  return useSyncExternalStore(observe, () => choice)
 }
 
 export function useSessionTelemetryConsentAsked(): boolean {
-  useSyncExternalStore(subscribe, () => revision)
-  return asked
+  return useSyncExternalStore(subscribeSessionTelemetryConsent, () => asked)
 }
 
 export function saveTelemetryConsent(value: boolean, expectedRevision: number) {
@@ -91,4 +100,8 @@ async function persistChoice(
     return persistChoice(latestChoice, currentGeneration, preferences.telemetryConsentRevision)
   persistedChoice = value
   return preferences
+}
+
+export function getSessionTelemetryConsent() {
+  return choice
 }

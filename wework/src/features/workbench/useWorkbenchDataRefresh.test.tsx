@@ -1,12 +1,13 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
-import { useLayoutEffect, useReducer, useRef } from 'react'
+import { useState, useSyncExternalStore } from 'react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import type { ExecutorClient } from '@/api/executorAccess'
 import { LOCAL_USER } from '@/api/local/localSession'
 import type { DeviceInfo, RuntimeWorkListResponse, User } from '@/types/api'
 import type { WorkbenchServices } from './workbenchServices'
 import { useWorkbenchDataRefresh } from './useWorkbenchDataRefresh'
-import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
+import { createWorkbenchSessionState } from './workbenchSessionState'
+import { RuntimeTaskLifecycleStore } from './runtimeTaskLifecycle'
 import { readCachedDeviceList } from './workbenchCloudStatus'
 import { qualifyLocalRuntimeWork } from '@/lib/local-runtime-sidebar-identity'
 import { AmbiguousExecutorIdentityError } from '@/lib/workbench-device'
@@ -74,14 +75,21 @@ function setup(
       client: ExecutorClient
       ownershipKey?: string
     }) => {
-      const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState)
+      const [stateSource] = useState(() =>
+        createWorkbenchSessionState(
+          user,
+          new RuntimeTaskLifecycleStore('data-refresh-fixture'),
+          false
+        )
+      )
+      const { state } = useSyncExternalStore(stateSource.subscribe, stateSource.getSnapshot)
+      const dispatch = stateSource.dispatch
       const actions = useWorkbenchDataRefresh({
         user,
         ownershipKey,
         executorClient: client,
         services: workbenchServices,
-        state,
-        dispatch,
+        stateSource,
         canNavigate,
       })
       return { state, dispatch, ...actions }
@@ -839,25 +847,32 @@ describe('useWorkbenchDataRefresh', () => {
       commands: { listDevices: vi.fn().mockResolvedValue(devices) },
     } as unknown as ExecutorClient
     const previousLocation = `${window.location.pathname}${window.location.search}`
+    let removed = false
     const hook = renderHook(() => {
-      const [state, dispatch] = useReducer(workbenchReducer, initialWorkbenchState)
+      const [stateSource] = useState(() =>
+        createWorkbenchSessionState(
+          LOCAL_USER,
+          new RuntimeTaskLifecycleStore('project-removal-fixture'),
+          false
+        )
+      )
+      const { state } = useSyncExternalStore(stateSource.subscribe, stateSource.getSnapshot)
       const actions = useWorkbenchDataRefresh({
         user: LOCAL_USER,
         executorClient,
         services,
-        state,
-        dispatch,
+        stateSource,
       })
-      const removed = useRef(false)
-      const { markRuntimeProjectRemoved } = actions
-      useLayoutEffect(() => {
-        if (removed.current || state.currentProject?.id !== 8) return
-        removed.current = true
-        markRuntimeProjectRemoved(7, {
-          deviceId: 'local-device',
-          workspacePath: '/workspace',
-        })
-      }, [markRuntimeProjectRemoved, state.currentProject?.id])
+      const dispatch: typeof stateSource.dispatch = action => {
+        stateSource.dispatch(action)
+        if (!removed && stateSource.getSnapshot().state.currentProject?.id === 8) {
+          removed = true
+          actions.markRuntimeProjectRemoved(7, {
+            deviceId: 'local-device',
+            workspacePath: '/workspace',
+          })
+        }
+      }
       return { state, dispatch, ...actions }
     })
     try {

@@ -2,118 +2,114 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useSyncExternalStore } from 'react'
 
-import type { CollaborationProject } from "../types";
+import type { CollaborationProject } from '../types'
 import {
   defaultScheduleViewOptions,
   sameScheduleViewOptions,
   scheduleViewOptionsFromConfig,
   type ScheduleViewOptions,
-} from "./model";
+} from './model'
 
-const STORAGE_PREFIX = "collaboration-schedule-view";
+const STORAGE_PREFIX = 'collaboration-schedule-view'
 
 function isScheduleViewOptions(value: unknown): value is ScheduleViewOptions {
-  if (!value || typeof value !== "object") return false;
-  const options = value as Partial<ScheduleViewOptions>;
+  if (!value || typeof value !== 'object') return false
+  const options = value as Partial<ScheduleViewOptions>
   return (
-    typeof options.status === "string" &&
-    typeof options.assignee === "string" &&
-    typeof options.tag === "string" &&
-    ["none", "status", "priority", "assignee", "tag"].includes(
-      options.groupBy ?? "",
-    ) &&
-    ["start_asc", "due_asc", "updated_desc", "priority_desc"].includes(
-      options.sortBy ?? "",
-    )
-  );
+    typeof options.status === 'string' &&
+    typeof options.assignee === 'string' &&
+    typeof options.tag === 'string' &&
+    ['none', 'status', 'priority', 'assignee', 'tag'].includes(options.groupBy ?? '') &&
+    ['start_asc', 'due_asc', 'updated_desc', 'priority_desc'].includes(options.sortBy ?? '')
+  )
 }
 
 export function readPersonalScheduleViewOptions(
-  storage: Pick<Storage, "getItem">,
-  key: string | null,
+  storage: Pick<Storage, 'getItem'>,
+  key: string | null
 ): ScheduleViewOptions | null {
-  if (!key) return null;
+  if (!key) return null
   try {
-    const raw = storage.getItem(key);
-    if (!raw) return null;
-    const parsed: unknown = JSON.parse(raw);
-    return isScheduleViewOptions(parsed) ? parsed : null;
+    const raw = storage.getItem(key)
+    if (!raw) return null
+    const parsed: unknown = JSON.parse(raw)
+    return isScheduleViewOptions(parsed) ? parsed : null
   } catch {
-    return null;
+    return null
   }
 }
 
 export function writePersonalScheduleViewOptions(
-  storage: Pick<Storage, "setItem" | "removeItem">,
+  storage: Pick<Storage, 'setItem' | 'removeItem'>,
   key: string | null,
-  options: ScheduleViewOptions | null,
+  options: ScheduleViewOptions | null
 ) {
-  if (!key) return;
+  if (!key) return
   try {
     if (options) {
-      storage.setItem(key, JSON.stringify(options));
+      storage.setItem(key, JSON.stringify(options))
     } else {
-      storage.removeItem(key);
+      storage.removeItem(key)
     }
   } catch {
     // Keep the current in-memory options when browser storage is unavailable.
   }
 }
 
-export function useProjectScheduleViewOptions(
-  project: CollaborationProject | null,
-) {
+const getServerOptions = () => null
+
+function createScheduleViewStore(key: string | null) {
+  let snapshot =
+    typeof window === 'undefined' ? null : readPersonalScheduleViewOptions(window.localStorage, key)
+  const listeners = new Set<() => void>()
+  return {
+    getSnapshot: () => snapshot,
+    subscribe(listener: () => void) {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
+    },
+    set(options: ScheduleViewOptions | null) {
+      snapshot = options
+      if (typeof window !== 'undefined')
+        writePersonalScheduleViewOptions(window.localStorage, key, options)
+      listeners.forEach(listener => listener())
+    },
+  }
+}
+
+export function useProjectScheduleViewOptions(project: CollaborationProject | null) {
   const projectOptions = useMemo(
     () =>
       project
         ? scheduleViewOptionsFromConfig(project.board_config?.schedule_view)
         : defaultScheduleViewOptions,
-    [project?.board_config?.schedule_view],
-  );
+    [project?.board_config?.schedule_view]
+  )
   const storageKey = project
-    ? `${STORAGE_PREFIX}:${project.project_store}:${project.id}:${project.current_user_id ?? "local"}`
-    : null;
-  const [personalOptions, setPersonalOptions] =
-    useState<ScheduleViewOptions | null>(null);
+    ? `${STORAGE_PREFIX}:${project.project_store}:${project.id}:${project.current_user_id ?? 'local'}`
+    : null
+  const store = useMemo(() => createScheduleViewStore(storageKey), [storageKey])
+  const personalOptions = useSyncExternalStore(store.subscribe, store.getSnapshot, getServerOptions)
 
-  useEffect(() => {
-    setPersonalOptions(
-      typeof window === "undefined"
-        ? null
-        : readPersonalScheduleViewOptions(window.localStorage, storageKey),
-    );
-  }, [storageKey]);
-
-  const options = personalOptions ?? projectOptions;
+  const options = personalOptions ?? projectOptions
   const hasPersonalOverride =
-    personalOptions !== null &&
-    !sameScheduleViewOptions(personalOptions, projectOptions);
+    personalOptions !== null && !sameScheduleViewOptions(personalOptions, projectOptions)
 
   const changeOptions = useCallback(
     (next: ScheduleViewOptions) => {
-      const personal = sameScheduleViewOptions(next, projectOptions)
-        ? null
-        : next;
-      setPersonalOptions(personal);
-      if (typeof window !== "undefined") {
-        writePersonalScheduleViewOptions(
-          window.localStorage,
-          storageKey,
-          personal,
-        );
-      }
+      const personal = sameScheduleViewOptions(next, projectOptions) ? null : next
+      store.set(personal)
     },
-    [projectOptions, storageKey],
-  );
+    [projectOptions, store]
+  )
 
   const resetOptions = useCallback(() => {
-    setPersonalOptions(null);
-    if (typeof window !== "undefined") {
-      writePersonalScheduleViewOptions(window.localStorage, storageKey, null);
-    }
-  }, [storageKey]);
+    store.set(null)
+  }, [store])
 
   return {
     acceptProjectOptions: resetOptions,
@@ -121,5 +117,5 @@ export function useProjectScheduleViewOptions(
     hasPersonalOverride,
     options,
     resetOptions,
-  };
+  }
 }

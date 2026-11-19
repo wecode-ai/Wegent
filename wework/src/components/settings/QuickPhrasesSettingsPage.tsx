@@ -1,23 +1,19 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
-import { getAppPreferences, updateAppPreferences, type QuickPhrase } from '@/desktop/appPreferences'
+import { updateAppPreferences, type QuickPhrase } from '@/desktop/appPreferences'
+import { useQuickPhrases } from '@/hooks/useQuickPhrases'
 import { SettingsPage, SettingsPageHeader } from './settings-ui'
 import { track } from '@/telemetry/client'
 import { QuickPhrasesEditor, type QuickPhraseChangeAction } from './QuickPhrasesEditor'
 
 export function QuickPhrasesSettingsPage() {
   const { t } = useTranslation('common')
-  const [phrases, setPhrases] = useState<QuickPhrase[]>([])
+  const phrases = useQuickPhrases()
   const [error, setError] = useState('')
-
-  useEffect(() => {
-    void getAppPreferences().then(value => setPhrases(value.quickPhrases))
-  }, [])
 
   const save = async (next: QuickPhrase[], action: QuickPhraseChangeAction) => {
     try {
       await updateAppPreferences({ quickPhrases: next })
-      setPhrases(next)
       setError('')
       track('feature_action_completed', { domain: 'quick_phrase', action })
     } catch (cause) {

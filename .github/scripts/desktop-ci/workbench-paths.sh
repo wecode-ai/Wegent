@@ -382,7 +382,8 @@ classify_workbench_path() {
       wework/src/desktop/computerUse* | \
       wework/src/features/computer-use/* | \
       wework/e2e/desktop/scenarios/computer-use.scenario.mjs | \
-      executor/src/computer_use_mcp.rs)
+      executor/src/computer_use_mcp.rs | \
+      executor/src/computer_use_mcp/*)
       select_target "core:computer-use"
       return
       ;;

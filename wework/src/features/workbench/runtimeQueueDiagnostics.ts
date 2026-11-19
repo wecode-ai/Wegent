@@ -22,3 +22,11 @@ export function logRuntimeQueueStage(
     ...details,
   })
 }
+
+export function runtimeMessagePresentationDiagnostic(content: string | null | undefined) {
+  return {
+    contentLength: content?.length ?? 0,
+    folderSchemeCount: content ? content.split('folder://').length - 1 : 0,
+    fileSchemeCount: content ? content.split('file://').length - 1 : 0,
+  }
+}

@@ -148,11 +148,13 @@ Wework Composer 为本地 Codex 任务提供三种权限模式，并把选择保
 | -------- | ------------------------ | --------------- | ---------------------------------------------------------------------- |
 | 只读     | `:read-only`             | `on-request`    | 允许读取工作区；写文件、运行超出权限边界的命令或请求额外权限时需要审批 |
 | 工作区   | `:workspace`             | `on-request`    | 允许在工作区内读写；访问工作区之外或扩大权限时需要审批                 |
-| 完整访问 | `:danger-full-access`    | granular        | 文件、终端和网络执行不弹审批；MCP 插件业务表单仍可以请求用户输入       |
+| 完整访问 | `:danger-full-access`    | granular        | 高危命令可选人工确认、AI 审核或自动执行，MCP 业务表单仍可请求用户输入 |
 
 前端在每次本地运行时请求中发送 `runtime_permission_profile`。Executor 在 `thread/start`、`thread/resume`、`thread/fork` 和 `turn/start` 上同时设置对应的 `permissions` 与 `approvalPolicy`；从任务运行句柄恢复或继续会话时，也必须从保存的权限模式重建相同配置，不能回退为更高权限。
 
-完整访问使用 granular approval policy，关闭 `sandbox_approval`、`rules`、`skill_approval` 和 `request_permissions`，但保留 `mcp_elicitations: true`。MCP elicitation 是插件主动发起的业务交互，不属于命令、文件或权限提升等执行安全审批，因此不能通过 `approvalPolicy: "never"` 一并关闭。
+明确指定完整访问的请求使用 granular approval policy，启用 `sandbox_approval` 和 `mcp_elicitations`，关闭 `rules`、`skill_approval` 和 `request_permissions`。MCP elicitation 是插件主动发起的业务交互，不属于命令、文件或权限提升等执行安全审批，因此不能通过 `approvalPolicy: "never"` 一并关闭。
+
+高危命令的处理方式保存在任务的 `modelSelection.options.commandApproval`。人工确认是默认选项，AI 审核使用 Codex 原生 `auto_review`。自动执行只会单次批准 Codex 风险检测产生的命令请求，规则限制和额外授权请求仍由原有审批策略处理。
 
 Wework 的 Claude Code 普通对话通过非交互子进程运行，无法展示或完成 Claude CLI 自带的审批提示。因此，Claude Code 设置中的 `default` 在这条执行路径上会映射为 `bypassPermissions`；用户明确选择的 `acceptEdits`、`plan`、`auto` 或 `bypassPermissions` 仍会原样传递。交互式本地终端不经过这项映射。
 

@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useRef, useState, type ReactNode } from 'react'
+import { useFocusRequest } from '../dom-events'
 import { useDialogKeyboard } from './useDialogKeyboard'
 
 export function ConfirmationDialog({
@@ -29,18 +30,17 @@ export function ConfirmationDialog({
   const mounted = useRef(false)
   const [pending, setPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  useEffect(() => {
+  const confirmButton = useRef<HTMLButtonElement>(null)
+  const attachBackdrop = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return
     mounted.current = true
     return () => {
       mounted.current = false
     }
   }, [])
-  useEffect(() => {
-    if (!pending && error)
-      dialog.current
-        ?.querySelector<HTMLButtonElement>(`[data-testid="${testIdPrefix}-confirm"]`)
-        ?.focus()
-  }, [pending, error, testIdPrefix])
+  useFocusRequest(confirmButton, error ?? undefined, {
+    enabled: !pending && Boolean(error),
+  })
   const confirm = async () => {
     if (lock.current) return
     lock.current = true
@@ -59,6 +59,7 @@ export function ConfirmationDialog({
   }
   return (
     <div
+      ref={attachBackdrop}
       className="collaboration-resource-dialog-backdrop"
       onMouseDown={event => {
         if (event.target === event.currentTarget && !lock.current) onClose()
@@ -96,6 +97,7 @@ export function ConfirmationDialog({
             type="button"
             disabled={pending}
             className="min-h-11 rounded-lg bg-text-primary px-4 text-sm text-background disabled:opacity-50 md:min-h-8"
+            ref={confirmButton}
             data-testid={`${testIdPrefix}-confirm`}
             onClick={() => void confirm()}
           >

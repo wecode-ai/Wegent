@@ -1,3 +1,7 @@
+import { afterEach } from 'vitest'
+import { createRuntimeTaskLifecycleStream } from './runtimeTaskLifecycleStream'
+import type { WorkbenchServices } from '../workbenchServices'
+import type { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
 import type { RuntimeTranscriptResponse, RuntimeWorkListResponse } from '@/types/api'
 
 export function runtimeTaskAddress() {
@@ -69,5 +73,34 @@ export function runtimeTranscript(running: boolean): RuntimeTranscriptResponse {
         ],
       },
     ],
+  }
+}
+
+const lifecycleOwners = new Set<ReturnType<typeof createRuntimeTaskLifecycleStream>>()
+afterEach(() => {
+  for (const owner of lifecycleOwners) owner.disconnect()
+  lifecycleOwners.clear()
+})
+
+export function renderRuntimeTaskLifecycle(input: {
+  services: WorkbenchServices
+  store: RuntimeTaskLifecycleStore
+}) {
+  let current = input.store
+  let owner = createRuntimeTaskLifecycleStream(current)
+  lifecycleOwners.add(owner)
+  owner.observe(input.services)
+  return {
+    unmount: () => owner.disconnect(),
+    rerender(next: typeof input) {
+      if (next.store !== current) {
+        owner.disconnect()
+        lifecycleOwners.delete(owner)
+        current = next.store
+        owner = createRuntimeTaskLifecycleStream(current)
+        lifecycleOwners.add(owner)
+      }
+      owner.observe(next.services)
+    },
   }
 }

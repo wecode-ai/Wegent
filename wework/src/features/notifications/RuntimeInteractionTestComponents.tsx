@@ -1,13 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useImperativeHandle, useState, type Ref } from 'react'
 import { useRuntimeInteractions } from './RuntimeInteractionsContext'
 
-export function InteractionProbe({
-  onChange,
-}: {
-  onChange: (value: ReturnType<typeof useRuntimeInteractions>) => void
-}) {
+export interface InteractionProbeHandle {
+  value: ReturnType<typeof useRuntimeInteractions>
+}
+
+export function InteractionProbe({ ref }: { ref: Ref<InteractionProbeHandle> }) {
   const value = useRuntimeInteractions()
-  useEffect(() => onChange(value), [onChange, value])
+  useImperativeHandle(ref, () => ({ value }), [value])
   return null
 }
 

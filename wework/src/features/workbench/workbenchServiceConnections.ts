@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import type { WorkbenchServices } from './workbenchServices'
 
 interface Connection {
@@ -48,14 +47,4 @@ export function retainWorkbenchServiceConnections(
     releaseSocket()
     releaseProjectChat()
   }
-}
-
-export function useWorkbenchServiceConnections(
-  services: Pick<WorkbenchServices, 'socketClient' | 'projectChatClient'>
-): void {
-  const { socketClient, projectChatClient } = services
-  useEffect(
-    () => retainWorkbenchServiceConnections({ socketClient, projectChatClient }),
-    [socketClient, projectChatClient]
-  )
 }
