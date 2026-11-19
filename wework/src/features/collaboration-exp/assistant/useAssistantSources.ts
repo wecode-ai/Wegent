@@ -1,7 +1,12 @@
 import { useCallback, useContext, useEffect, useState } from 'react'
 import { LOCAL_USER } from '@/api/local/localSession'
 import { subscribePersonalStandIn, type PersonalStandInSettings } from '@/api/personalStandIn'
-import type { StandInExecutorApi, StandInProposal } from '@/api/standIn'
+import {
+  isStandInBindingOwner,
+  readStandInBindingForAccount,
+  type StandInExecutorApi,
+  type StandInProposal,
+} from '@/api/standIn'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
 import { useStandInInbox } from '@/features/todo/useStandInInbox'
@@ -29,8 +34,9 @@ export function useAssistantSources(active: boolean, includeProposals = true) {
   const { services, state } = useWorkbench()
   const cloud = useContext(CloudConnectionContext)
   const userId = Number(state.user?.id ?? LOCAL_USER.id)
+  const username = state.user?.user_name ?? LOCAL_USER.user_name
   const backendUrl = cloud?.apiBaseUrl ?? ''
-  const scope = JSON.stringify([userId, backendUrl])
+  const scope = JSON.stringify([userId, username, backendUrl])
   const [data, setData] = useState<AssistantSourceData>()
   const [failure, setFailure] = useState<AssistantSourceFailure>()
   const [proposalFailure, setProposalFailure] = useState<AssistantSourceFailure>()
@@ -54,14 +60,11 @@ export function useAssistantSources(active: boolean, includeProposals = true) {
           ? undefined
           : previous
       )
-      const binding = await api.binding(identity.deviceId)
+      const account = { userId, username, backendUrl }
+      const binding = await readStandInBindingForAccount(api, identity.deviceId, account)
       if (!current) return
       const target = binding.target
-      if (
-        target &&
-        target.userId !== LOCAL_USER.id &&
-        (target.userId !== userId || (target.backendUrl ?? '') !== backendUrl)
-      ) {
+      if (target && !isStandInBindingOwner(target, account)) {
         throw Object.assign(new Error(), { code: 'permission_denied' })
       }
       const ownerId = target?.userId ?? userId
@@ -105,7 +108,7 @@ export function useAssistantSources(active: boolean, includeProposals = true) {
     return () => {
       current = false
     }
-  }, [active, api, services, userId, backendUrl, scope, revision])
+  }, [active, api, services, userId, username, backendUrl, scope, revision])
 
   const source = data?.scope === scope && data.api === api ? data : undefined
   const ownerId = source?.ownerId ?? userId
@@ -181,7 +184,7 @@ export function useAssistantSources(active: boolean, includeProposals = true) {
     [source, refresh]
   )
 
-  const inbox = useStandInInbox(api, ownerId, deviceId, active)
+  const inbox = useStandInInbox(api, ownerId, deviceId, active, scope)
   const currentFailure = failure?.scope === scope && failure.api === api ? failure : undefined
   const currentProposalFailure =
     proposalFailure?.scope === scope && proposalFailure.api === api ? proposalFailure : undefined
@@ -198,7 +201,7 @@ export function useAssistantSources(active: boolean, includeProposals = true) {
           ? currentProposalFailure.message
           : inbox.error,
     inbox,
-    inboxReady: Boolean(deviceId && inbox.scope === `${ownerId}:${deviceId}`),
+    inboxReady: Boolean(inbox.scope),
     refresh,
   }
 }

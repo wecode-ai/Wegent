@@ -46,17 +46,23 @@ export function useStandInInbox(
   api: StandInExecutorApi | undefined,
   userId: number,
   deviceId?: string,
-  enabled = true
+  enabled = true,
+  connectionScope = ''
 ) {
   const [data, setData] = useState<{
-    scope?: string
+    api: StandInExecutorApi
+    scope: string
     items: StandInInboxWork[]
     sourceErrors: StandInSourceError[]
-  }>({ items: [], sourceErrors: [] })
-  const [error, setError] = useState<string | null>(null)
+  }>()
+  const [failure, setFailure] = useState<{
+    api: StandInExecutorApi
+    scope: string
+    error: string
+  }>()
   const [revision, setRevision] = useState(0)
   const refresh = useCallback(() => setRevision(value => value + 1), [])
-  const scope = `${userId}:${deviceId}`
+  const scope = JSON.stringify([connectionScope, userId, deviceId])
   useEffect(() => {
     if (!enabled || !api || !deviceId) return
     let active = true
@@ -65,11 +71,11 @@ export function useStandInInbox(
       try {
         const next = await api.inbox(userId, deviceId)
         if (active) {
-          setData({ ...next, scope })
-          setError(null)
+          setData({ ...next, api, scope })
+          setFailure(undefined)
         }
       } catch (cause) {
-        if (active) setError(getStandInErrorMessage(cause))
+        if (active) setFailure({ api, scope, error: getStandInErrorMessage(cause) })
       } finally {
         if (active) timer = setTimeout(poll, 3000)
       }
@@ -80,5 +86,13 @@ export function useStandInInbox(
       clearTimeout(timer)
     }
   }, [api, userId, deviceId, revision, scope, enabled])
-  return { ...(data.scope === scope ? data : { items: [], sourceErrors: [] }), error, refresh }
+  const current = data?.api === api && data?.scope === scope ? data : undefined
+  const error = failure?.api === api && failure?.scope === scope ? failure.error : null
+  return {
+    scope: current?.scope,
+    items: current?.items ?? [],
+    sourceErrors: current?.sourceErrors ?? [],
+    error,
+    refresh,
+  }
 }

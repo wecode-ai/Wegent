@@ -103,6 +103,29 @@ impl LocalTaskStore {
                 binding["target"] = target;
                 binding["status"] = json!("active");
             }
+            "recordUsername" => {
+                let current = &mut binding["target"];
+                let username = target["username"]
+                    .as_str()
+                    .filter(|name| !name.trim().is_empty());
+                if current["username"]
+                    .as_str()
+                    .is_some_and(|name| !name.is_empty())
+                    || !current["userId"].as_i64().is_some_and(|id| id > 0)
+                    || current["userId"] != target["userId"]
+                    || current["deviceId"] != target["deviceId"]
+                    || !current["backendUrl"]
+                        .as_str()
+                        .is_some_and(|url| !url.is_empty())
+                    || current["backendUrl"] != target["backendUrl"]
+                    || username.is_none()
+                {
+                    return Err(TaskRuntimeError::Invalid(
+                        "Only the original connection can record a legacy binding username".into(),
+                    ));
+                }
+                current["username"] = target["username"].clone();
+            }
             "beginStop" if matches!(binding["status"].as_str(), Some("active" | "stopping")) => {
                 binding["status"] = json!("stopping");
             }
@@ -244,6 +267,30 @@ mod tests {
             .unwrap();
         assert_eq!(binding["target"], second);
         assert_eq!(binding["status"], "active");
+    }
+
+    #[test]
+    fn legacy_binding_records_username_once_from_the_original_connection() {
+        let root = tempfile::tempdir().unwrap();
+        let store = LocalTaskStore::open(root.path().join("tasks.sqlite")).unwrap();
+        let target =
+            json!({"userId":7,"deviceId":"mac","backendUrl":"https://original.example/api"});
+        store.stand_in_binding("bind", 0, target.clone()).unwrap();
+        let mut updated = target.clone();
+        updated["username"] = json!("alice");
+        let mut wrong_target = updated.clone();
+        wrong_target["backendUrl"] = json!("https://other.example/api");
+        assert!(store
+            .stand_in_binding("recordUsername", 1, wrong_target)
+            .is_err());
+        let binding = store
+            .stand_in_binding("recordUsername", 1, updated.clone())
+            .unwrap();
+        assert_eq!(
+            binding,
+            json!({"version":2,"status":"active","target":updated})
+        );
+        assert!(store.stand_in_binding("recordUsername", 2, target).is_err());
     }
 
     #[test]

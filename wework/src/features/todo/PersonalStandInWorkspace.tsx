@@ -16,6 +16,7 @@ import { StandInOverviewPage } from './StandInOverviewPage'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 import { LOCAL_USER } from '@/api/local/localSession'
+import { isStandInBindingOwner } from '@/api/standIn'
 import type { StandInSettingsHandle } from './StandInSettingsPage'
 import { CloudConnectionContext } from '@/features/cloud-connection/CloudConnectionContext'
 import { availableStandInDevices } from './standInDevices'
@@ -49,7 +50,7 @@ export function PersonalStandInWorkspace(props: PersonalStandInWorkspaceProps) {
   const cloud = useContext(CloudConnectionContext)
   return (
     <AccountStandInWorkspace
-      key={JSON.stringify([cloud?.apiBaseUrl ?? '', props.user.id])}
+      key={JSON.stringify([cloud?.apiBaseUrl ?? '', props.user.id, props.user.user_name])}
       {...props}
     />
   )
@@ -84,13 +85,17 @@ function AccountStandInWorkspace({
   }, [active, contentRoute, embedded])
   const query = new URLSearchParams(contentRoute.split('?')[1] ?? '')
   const [initialBindingDevice] = useState(() => query.get('deviceId') ?? undefined)
+  const account = {
+    userId: Number(user.id),
+    username: user.user_name,
+    backendUrl: cloud?.apiBaseUrl ?? '',
+  }
   const instance = useStandInInstance(
     services,
-    Number(user.id),
+    account,
     devices,
     !!cloud?.isConnected,
     active,
-    cloud?.apiBaseUrl ?? '',
     initialBindingDevice,
     refreshKey
   )
@@ -110,9 +115,7 @@ function AccountStandInWorkspace({
         }
       : undefined
   )
-  const bindingScope = target
-    ? JSON.stringify([target.userId, target.deviceId, target.backendUrl ?? ''])
-    : undefined
+  const bindingScope = target ? JSON.stringify([target.userId, target.deviceId]) : undefined
   const [locationBinding, setLocationBinding] = useState(bindingScope)
   if (locationBinding !== bindingScope) {
     setLocationBinding(bindingScope)
@@ -122,9 +125,7 @@ function AccountStandInWorkspace({
     roleLocation?.roleId && roleLocation.roleId !== '@primary' ? roleLocation.deviceId : deviceId
   const ownerAvailable =
     notificationOwnerMatches &&
-    (binding?.status === 'stopped' ||
-      ownerId === LOCAL_USER.id ||
-      (ownerId === Number(user.id) && (target?.backendUrl ?? '') === (cloud?.apiBaseUrl ?? '')))
+    (binding?.status === 'stopped' || !target || isStandInBindingOwner(target, account))
   const routeMatches = !query.get('deviceId') || query.get('deviceId') === deviceId
   const directory = useStandInRoleDirectory(
     services.standInApi,
@@ -256,7 +257,7 @@ function AccountStandInWorkspace({
           </p>
         )
       ) : !ownerAvailable ? (
-        <p role="alert" className="p-5 text-sm">
+        <p role="alert" className="p-5 text-sm" data-testid="stand-in-instance-owner-unavailable">
           {t('standIn.instance.owner_unavailable')}
         </p>
       ) : binding.status === 'stopped' && embedded ? (
@@ -293,9 +294,10 @@ function AccountStandInWorkspace({
                 className="min-h-11 rounded-md border border-border px-3 text-sm hover:bg-muted disabled:opacity-50 md:min-h-8"
                 onClick={() =>
                   void instance.bind({
-                    userId: value.userId,
+                    ...(value.userId === LOCAL_USER.id
+                      ? { userId: LOCAL_USER.id, backendUrl: '' }
+                      : account),
                     deviceId: value.deviceId,
-                    backendUrl: value.userId === LOCAL_USER.id ? '' : (cloud?.apiBaseUrl ?? ''),
                   })
                 }
               >
@@ -311,7 +313,7 @@ function AccountStandInWorkspace({
               busy={busy}
               onMigrate={async (deviceId, roleId) => {
                 const role = await instance.migrate(
-                  { userId: Number(user.id), deviceId, backendUrl: cloud.apiBaseUrl ?? '' },
+                  { ...account, deviceId },
                   roleId,
                   t('standIn.title')
                 )

@@ -1,5 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { StandInBindingTarget, StandInInstanceBinding } from '@/api/standIn'
+import {
+  isStandInBindingOwner,
+  readStandInBindingForAccount,
+  type StandInAccountIdentity,
+  type StandInBindingTarget,
+  type StandInInstanceBinding,
+} from '@/api/standIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo } from '@/types/api'
 import { LOCAL_USER } from '@/api/local/localSession'
@@ -11,16 +17,20 @@ import type { PersonalStandInSettings } from '@/api/personalStandIn'
 /** An instance has one durable binding; failed cancellation never unlocks rebinding. */
 export function useStandInInstance(
   services: WorkbenchServices,
-  userId: number,
+  { userId, username, backendUrl }: StandInAccountIdentity,
   devices: DeviceInfo[],
   connected: boolean,
   active: boolean,
-  backendUrl = '',
   initialDeviceId?: string,
   entryRequestKey?: number
 ) {
   const [binding, setBinding] = useState<StandInInstanceBinding>()
-  const [stoppedProfile, setStoppedProfile] = useState<PersonalStandInSettings>()
+  const [stoppedProfile, setStoppedProfile] = useState<{
+    version: number
+    userId: number
+    deviceId: string
+    profile: PersonalStandInSettings
+  }>()
   const [localDeviceId, setLocalDeviceId] = useState('')
   const [error, setError] = useState<{
     cause: unknown
@@ -53,19 +63,24 @@ export function useStandInInstance(
       const identity = await services.getLocalRuntimeSidebarIdentity?.()
       if (!identity || !api) throw new Error('Executor identity is unavailable')
       if (current) setLocalDeviceId(identity.deviceId)
-      let value = await api.binding(identity.deviceId)
+      const account = { userId, username, backendUrl }
+      let value = await readStandInBindingForAccount(api, identity.deviceId, account)
       if (!current) return
       if (
         value.status === 'stopped' &&
         value.target &&
-        (value.target.userId === LOCAL_USER.id ||
-          (value.target.userId === userId && (value.target.backendUrl ?? '') === backendUrl))
+        isStandInBindingOwner(value.target, account)
       ) {
         // Binding choices do not depend on reading an already stopped device.
         setBinding(value)
         const profile = await api.personalGet(value.target.userId, value.target.deviceId)
         if (!current) return
-        setStoppedProfile(profile)
+        setStoppedProfile({
+          version: value.version,
+          userId: value.target.userId,
+          deviceId: value.target.deviceId,
+          profile,
+        })
         setError(null)
         return
       }
@@ -97,8 +112,9 @@ export function useStandInInstance(
           const available = connected ? availableStandInDevices(devices) : []
           const preferred = available.find(device => device.is_default) ?? available[0]
           const target = {
-            userId: localOwner ? LOCAL_USER.id : userId,
-            backendUrl: localOwner || userId === LOCAL_USER.id ? '' : backendUrl,
+            ...(localOwner || userId === LOCAL_USER.id
+              ? { userId: LOCAL_USER.id, backendUrl: '' }
+              : account),
             deviceId:
               initialDeviceId ||
               (configured(owned) || localOwner
@@ -164,6 +180,7 @@ export function useStandInInstance(
     api,
     services,
     userId,
+    username,
     devices,
     connected,
     active,
@@ -190,7 +207,13 @@ export function useStandInInstance(
   }
   const stop = (version: number) =>
     run(async () => {
-      if (!api || !binding?.target || !localDeviceId) return
+      if (
+        !api ||
+        !binding?.target ||
+        !isStandInBindingOwner(binding.target, { userId, username, backendUrl }) ||
+        !localDeviceId
+      )
+        return
       cancelRead.current?.()
       const stopping = await api.binding(localDeviceId, 'beginStop', version)
       setBinding(stopping)
@@ -201,8 +224,14 @@ export function useStandInInstance(
           code: 'stand_in_stop_incomplete',
         })
       }
-      setBinding(await api.binding(localDeviceId, 'completeStop', stopping.version))
-      setStoppedProfile(stopped)
+      const completed = await api.binding(localDeviceId, 'completeStop', stopping.version)
+      setBinding(completed)
+      setStoppedProfile({
+        version: completed.version,
+        userId: target.userId,
+        deviceId: target.deviceId,
+        profile: stopped,
+      })
     })
   const bind = (target: StandInBindingTarget) =>
     run(async () => {
@@ -217,7 +246,13 @@ export function useStandInInstance(
     })
   const migrate = (target: StandInBindingTarget, roleId: string | undefined, primaryName: string) =>
     run(async () => {
-      if (!api || !binding?.target || binding.status !== 'stopped' || !localDeviceId)
+      if (
+        !api ||
+        !binding?.target ||
+        binding.status !== 'stopped' ||
+        !isStandInBindingOwner(binding.target, { userId, username, backendUrl }) ||
+        !localDeviceId
+      )
         throw new StandInMigrationError('not_stopped')
       cancelRead.current?.()
       const role = await migrateStandIn(api, {
@@ -236,9 +271,18 @@ export function useStandInInstance(
         setBinding(next)
       }
     }, true)
+  const currentStoppedProfile =
+    binding?.status === 'stopped' &&
+    binding.target &&
+    isStandInBindingOwner(binding.target, { userId, username, backendUrl }) &&
+    stoppedProfile?.version === binding.version &&
+    stoppedProfile.userId === binding.target.userId &&
+    stoppedProfile.deviceId === binding.target.deviceId
+      ? stoppedProfile.profile
+      : undefined
   return {
     binding,
-    stoppedProfile,
+    stoppedProfile: currentStoppedProfile,
     localDeviceId,
     busy,
     error: error ? getStandInErrorMessage(error.cause, error.fallback) : null,

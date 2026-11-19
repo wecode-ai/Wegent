@@ -94,6 +94,8 @@ export function createTaskDeliveryIssueRegression({
       await control.command('fill', '[data-testid="delivery-markdown"]', { value: NOTES })
       await control.command('click', '[data-testid="delivery-confirm"]')
 
+      // The submission closes the dialog after finalization, before the destination loads.
+      await control.command('waitFor', '[data-testid="delivery-dialog"]', { visible: false })
       const drawer = `${CONTENT} .issue-drawer-detail`
       await control.command('waitFor', drawer, { text: issue.title })
       assert.equal(
