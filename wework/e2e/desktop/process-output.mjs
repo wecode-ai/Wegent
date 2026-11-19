@@ -1,7 +1,9 @@
+import { once } from 'node:events'
 import { createWriteStream } from 'node:fs'
 import { finished } from 'node:stream/promises'
 
 const outputs = new Map()
+const intentionallyClosedSources = new WeakSet()
 
 function completionOf(stream, options = {}) {
   return finished(stream, { cleanup: true, ...options }).then(
@@ -33,7 +35,18 @@ export function appendProcessOutput(stream, destination, owner) {
   if (!stream) return
   const output = outputFor(destination)
   output.sources.set(stream, owner)
-  output.sourceCompletions.push(completionOf(stream, { readable: true, writable: false }))
+  output.sourceCompletions.push(
+    completionOf(stream, { readable: true, writable: false }).then(result => {
+      if (
+        intentionallyClosedSources.has(stream) &&
+        result.status === 'rejected' &&
+        result.reason.code === 'ERR_STREAM_PREMATURE_CLOSE'
+      ) {
+        return { status: 'fulfilled' }
+      }
+      return result
+    })
+  )
   const complete = () => output.sources.delete(stream)
   stream.once('end', complete)
   stream.once('close', complete)
@@ -44,6 +57,18 @@ export function appendProcessOutput(stream, destination, owner) {
       output.writer.once('drain', () => stream.resume())
     }
   })
+}
+
+// A Windows release handoff can keep inherited pipes open after their launcher exits.
+export async function closeExitedProcessOutput(destination) {
+  const output = outputs.get(destination)
+  if (!output) return
+  while (output.writer.writableNeedDrain) await once(output.writer, 'drain')
+  for (const [source, owner] of output.sources) {
+    if (owner?.exitCode == null && owner?.signalCode == null) continue
+    intentionallyClosedSources.add(source)
+    source.destroy()
+  }
 }
 
 function reportPendingOutput() {
