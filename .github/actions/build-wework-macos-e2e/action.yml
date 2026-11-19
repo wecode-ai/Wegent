@@ -135,17 +135,21 @@ runs:
       if: steps.macos-build.outputs.cache-hit != 'true'
       env:
         INCLUDE_BACKEND: ${{ inputs.include-backend }}
+        CACHE_PR_NUMBER: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.number || '' }}
         EXECUTOR_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:executor-v1-${{ steps.macos-source.outputs.executor }}
         EXECUTOR_HEAD_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:executor-head-${{ github.event.pull_request.head.sha || github.sha }}
         BACKEND_SOURCE_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:backend-rs-v1-${{ steps.macos-source.outputs.backend-rs }}
         BACKEND_HEAD_REF: ghcr.io/${{ github.repository_owner }}/wegent-wework-macos-e2e-runtime:backend-rs-head-${{ github.event.pull_request.head.sha || github.sha }}
       run: |
         runtime_root="$HOME/.cache/wegent/wework-macos-e2e-runtimes"
+        executor_references=("$EXECUTOR_SOURCE_REF" "$EXECUTOR_HEAD_REF")
+        if [[ -n "$CACHE_PR_NUMBER" ]]; then
+          executor_references+=("$EXECUTOR_SOURCE_REF-pr-$CACHE_PR_NUMBER")
+        fi
         .github/scripts/restore-macos-e2e-runtime-oci.sh \
           "$runtime_root/wegent-executor" \
           wegent-executor \
-          "$EXECUTOR_SOURCE_REF" \
-          "$EXECUTOR_HEAD_REF"
+          "${executor_references[@]}"
         if [[ "$INCLUDE_BACKEND" == "true" ]]; then
           .github/scripts/restore-macos-e2e-runtime-oci.sh \
             "$runtime_root/wegent-backend-rs" \

@@ -326,7 +326,6 @@ jobs:
           if [[ -n "$CACHE_PR_NUMBER" ]]; then
             pr_reference="$reference-pr-$CACHE_PR_NUMBER"
             references+=("$pr_reference")
-            echo "pr-reference=$pr_reference" >> "$GITHUB_OUTPUT"
           fi
 
           set +e
@@ -337,7 +336,12 @@ jobs:
           set -e
           case "$restore_status" in
             0) echo "cache-hit=true" >> "$GITHUB_OUTPUT" ;;
-            1) echo "cache-hit=false" >> "$GITHUB_OUTPUT" ;;
+            1)
+              echo "cache-hit=false" >> "$GITHUB_OUTPUT"
+              if [[ -n "$CACHE_PR_NUMBER" ]]; then
+                echo "pr-reference=$pr_reference" >> "$GITHUB_OUTPUT"
+              fi
+              ;;
             *) exit "$restore_status" ;;
           esac
 
@@ -1364,6 +1368,7 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Prepare shared macOS desktop E2E build
+        id: macos-build
         uses: ./.github/actions/build-wework-macos-e2e
         with:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
@@ -1396,6 +1401,17 @@ jobs:
           fi
           node wework/e2e/desktop/run-checkpoints.mjs \
             --parallel-segments "$segments"
+
+      - name: Publish verified PR macOS Executor runtime
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && steps.macos-build.outputs.cache-hit != 'true'
+        env:
+          CACHE_PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          owner="$(printf '%s' "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          digest="$(node .github/scripts/macos-e2e-source-digest.mjs executor)"
+          .github/scripts/publish-macos-e2e-runtime-oci.sh \
+            "$WEWORK_E2E_EXECUTOR_BIN" \
+            "ghcr.io/$owner/wegent-wework-macos-e2e-runtime:executor-v1-$digest-pr-$CACHE_PR_NUMBER"
 
       - name: Upload macOS Inspector failure evidence before cleanup
         if: always() && failure()
