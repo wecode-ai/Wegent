@@ -210,11 +210,12 @@ function ExecutionDetailsContent({
             variant="unstyled"
             type="button"
             data-testid="runtime-execution-detail-close"
-            aria-label={t('activity.close_dialog', '关闭')}
+            title={t('activity.close_dialog', '关闭')}
             onClick={onClose}
             className="flex h-8 w-8 flex-none items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary"
           >
-            <X className="h-4 w-4" />
+            <X aria-hidden="true" className="h-4 w-4" />
+            <span className="sr-only">{t('activity.close_dialog', '关闭')}</span>
           </ControlButton>
         </header>
 

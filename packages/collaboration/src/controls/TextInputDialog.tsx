@@ -50,7 +50,7 @@ function TextInputDialogContent({
 
   const trimmedValue = value.trim()
 
-  const dialogRef = useRef<HTMLFormElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
 
   return createPortal(
     <div
@@ -58,12 +58,12 @@ function TextInputDialogContent({
       className="fixed inset-0 z-modal flex items-center justify-center bg-black/35 px-4"
     >
       <DialogSurface
+        initialFocus={() => inputRef.current}
         onClose={() => {
           if (!submitting) onClose()
         }}
         render={
           <DialogForm
-            ref={dialogRef}
             aria-labelledby={`${inputTestId}-title`}
             className="w-full max-w-[420px] rounded-lg border border-border bg-popover p-5 text-text-primary shadow-2xl"
             onSubmit={async event => {
@@ -109,6 +109,7 @@ function TextInputDialogContent({
           {label}
         </label>
         <ControlInput
+          ref={inputRef}
           id={inputTestId}
           data-testid={inputTestId}
           value={value}
