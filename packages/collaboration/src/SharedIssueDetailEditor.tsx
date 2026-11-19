@@ -8,6 +8,7 @@ import { IssueDeliveryEditor } from "./issue-detail/IssueDeliveryEditor";
 import { collaborationIssueCardPriorityClasses as priorityBadgeClasses } from "./issue-card/priorityBadgeClasses";
 import { useIssueFieldSaves } from "./issue-detail/useIssueFieldSaves";
 import { useIssueTitleSize } from "./issue-detail/useIssueTitleSize";
+import { stageAssigneeMismatchMessage } from "./issue-detail/issueAssignmentError";
 import { IssueHeaderContext } from "./issue-detail/IssueHeaderContext";
 import { persistIssueDetailFields } from "./issue-detail/persistIssueDetailFields";
 import {
@@ -860,7 +861,7 @@ export function TodoEditor(props: TodoEditorProps) {
           );
         } catch (error) {
           const latest = latestItemRef.current;
-          if (runnerEnvironmentError(error, t) && latest?.id === source.id)
+          if (latest?.id === source.id)
             setIssueDraftField("assigneeTarget", (current) =>
               current === next ? issueAssigneeTarget(latest) : current,
             );
@@ -3879,6 +3880,7 @@ export function TodoEditor(props: TodoEditorProps) {
                   className="mt-2 text-xs text-destructive"
                 >
                   {saveError ??
+                    stageAssigneeMismatchMessage(fieldSaves.error, t) ??
                     runnerEnvironmentError(fieldSaves.error, t) ??
                     (fieldSaves.error instanceof Error
                       ? fieldSaves.error.message

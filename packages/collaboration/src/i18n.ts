@@ -607,6 +607,8 @@ const sharedMessages: Record<
     "todo.not_set": "未设置",
     "todo.create_issue_failed": "创建任务失败",
     "todo.save_issue_failed": "保存任务失败",
+    "todo.stage_assignee_mismatch":
+      "该成员不符合当前阶段的负责人要求，已恢复为当前保存的负责人。",
     "todo.add_collaborator_failed": "添加参与者失败",
     "todo.remove_collaborator_failed": "移除参与者失败",
     "todo.remove_collaborator": "移除参与者 {{name}}",
@@ -1272,6 +1274,8 @@ const sharedMessages: Record<
     "todo.not_set": "Not set",
     "todo.create_issue_failed": "Failed to create issue",
     "todo.save_issue_failed": "Failed to save issue",
+    "todo.stage_assignee_mismatch":
+      "This assignee does not match the current stage requirement. The saved assignee has been retained.",
     "todo.add_collaborator_failed": "Failed to add participant",
     "todo.remove_collaborator_failed": "Failed to remove participant",
     "todo.remove_collaborator": "Remove participant {{name}}",
