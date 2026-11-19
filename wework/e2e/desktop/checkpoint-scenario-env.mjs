@@ -3,6 +3,10 @@ import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from './upgrade-suite.mjs'
 
 export function checkpointScenarioEnv(env, checkpoint) {
   const nextEnv = { ...env }
+  if (checkpoint === 'plugin-development' && env.WEWORK_E2E_PLUGIN_DEVELOPMENT_EXECUTOR_BIN) {
+    nextEnv.WEWORK_E2E_EXECUTOR_BIN = env.WEWORK_E2E_PLUGIN_DEVELOPMENT_EXECUTOR_BIN
+  }
+  delete nextEnv.WEWORK_E2E_PLUGIN_DEVELOPMENT_EXECUTOR_BIN
   if (checkpoint === 'coordination-history') {
     nextEnv.WEWORK_E2E_HISTORY_MAINTENANCE_INTERVAL_MS ??= '1000'
     nextEnv.WEWORK_E2E_STAND_IN_POLL_INTERVAL_MS ??= '500'

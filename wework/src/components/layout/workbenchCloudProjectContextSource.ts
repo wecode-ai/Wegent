@@ -515,11 +515,11 @@ export function createWorkbenchCloudProjectContextSource(
     const api = projectTaskRuntimeApiForProject(input.services, project)
     if (!api) return
     const scope = contextIdentity(address)
+    const revision = dialogRevision
     const title =
       input.runtimeTaskTitle ||
       truncateRuntimeTaskTitle(input.runtimeTaskDescription) ||
       input.t('workbench.untitled_task', '未命名任务')
-    const revision = dialogRevision
     const request = { ...association, pending: true }
     const reportAssociation = (phase: string) =>
       reportE2EDiagnostic('project-space-task-association', {
@@ -577,9 +577,10 @@ export function createWorkbenchCloudProjectContextSource(
         error: cause instanceof Error ? cause.message : String(cause),
         stack: cause instanceof Error ? cause.stack : undefined,
       })
-      if (current(scope) && revision === dialogRevision)
+      const currentAssociation = snapshot.taskBoardAssociation
+      if (current(scope) && revision === dialogRevision && currentAssociation)
         publish({
-          taskBoardAssociation: { ...request, pending: false },
+          taskBoardAssociation: { ...currentAssociation, pending: false },
           todoBindingError:
             cause instanceof Error
               ? cause.message
