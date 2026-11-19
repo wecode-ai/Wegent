@@ -30,6 +30,7 @@ pub(crate) const TASK_METHODS: &[&str] = &[
     "runtime.tasks.goal.set",
     "runtime.worktrees.capabilities",
     "runtime.worktrees.preflight",
+    "runtime.workspace.read",
     "runtime.projects.upsert_local",
     "runtime.workspaces.rename",
     "runtime.workspaces.remove",

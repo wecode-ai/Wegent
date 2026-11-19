@@ -61,9 +61,14 @@ export function createConversationEventModel({
         item =>
           item.role === 'user' && JSON.stringify(item.content).includes(`${marker}_EVENT_RECEIVED`)
       )
-      if (phase === 'human') for (const eventInput of eventInputs) onEvent(eventInput.id)
       const input = eventInputs.at(-1)
       assert.ok(input, 'The event must be delivered as a user message')
+      const goalCompleted = requestContainsToolOutput(body, `${marker}_complete`)
+      if (phase === 'human') {
+        assert.equal(eventInputs.length, 1, 'The input must contain exactly one event message')
+        // The request after update_goal retains the same message ID in its history.
+        onEvent(input.id)
+      }
       if (input.id !== undefined) {
         assert.match(input.id, /^msg/, 'Responses rejects message IDs without the msg prefix')
       }
@@ -106,10 +111,7 @@ export function createConversationEventModel({
         assert.equal(external.payload.head_sha, 'a'.repeat(40))
         assert.equal(external.url, 'https://github.com/org/repo/pull/17')
       }
-      if (
-        ['goal', 'human'].includes(phase) &&
-        !requestContainsToolOutput(body, `${marker}_complete`)
-      ) {
+      if (['goal', 'human'].includes(phase) && !goalCompleted) {
         return selectedToolCall(
           `${marker}_complete`,
           selectTool(body, 'update_goal', { status: 'complete' })

@@ -16,7 +16,11 @@ import {
   type CachedCatalog,
 } from './pluginMarketplaceCatalogCache'
 import { applyInstalledPluginsToMarketplaceItems } from '@/api/local/codexPlugins'
-import { isOpenAiOfficialRemoteMarketplaceId } from './marketplaceIdentity'
+import {
+  isOpenAiOfficialRemoteMarketplaceItem,
+  openAiRemoteCatalog,
+  type RemotePluginCatalogSnapshot,
+} from '@/api/local/codexRemoteCatalog'
 import { reconcileCodexInstallations } from '@/api/local/codexPluginInstallation'
 import {
   inventoryIdentity,
@@ -38,7 +42,7 @@ export interface PluginMarketplaceCacheSnapshot {
   localInstalledSourceStatus?: LocalInstalledSourceStatus
   /** A complete installed-only refresh succeeded, including an empty inventory. */
   installedPluginsFetchedAt?: number
-  /** Only a successful remote catalog read updates this timestamp, including empty results. */
+  /** Identifies the verified remote directory projected into the live inventory. */
   openAiCatalogFetchedAt?: number
   /** App authorization is separate from package installation and enablement. */
   apps?: LocalDeviceApp[]
@@ -204,16 +208,19 @@ function toPersistedSnapshot(
   next: PluginMarketplaceCacheSnapshot,
   slimItems = true
 ): PluginMarketplaceCacheSnapshot {
+  const marketplaceItems =
+    next.openAiCatalogFetchedAt == null
+      ? next.marketplaceItems
+      : next.marketplaceItems.filter(item => !isOpenAiOfficialRemoteMarketplaceItem(item))
   const logosStripped =
     next.logosStripped === true ||
-    next.marketplaceItems.some(item => hasOversizedLogo(item.interface)) ||
+    marketplaceItems.some(item => hasOversizedLogo(item.interface)) ||
     next.installedPlugins.some(plugin => hasOversizedLogo(plugin.spec.interface))
   return {
     ...next,
     logosStripped,
-    marketplaceItems: slimItems
-      ? next.marketplaceItems.map(slimMarketplaceItem)
-      : next.marketplaceItems,
+    openAiCatalogFetchedAt: undefined,
+    marketplaceItems: slimItems ? marketplaceItems.map(slimMarketplaceItem) : marketplaceItems,
     installedPlugins: next.installedPlugins.map(plugin => ({
       ...plugin,
       spec: {
@@ -369,21 +376,19 @@ function snapshotPersistSignature(next: PluginMarketplaceCacheSnapshot): string 
     JSON.stringify(next.localInstalledSources ?? {}),
     JSON.stringify(next.localInstalledSourceStatus ?? {}),
     String(Boolean(next.installedPluginsFetchedAt)),
-    String(next.openAiCatalogFetchedAt ?? ''),
     JSON.stringify(next.apps ?? []),
     JSON.stringify(next.connectorApps ?? []),
   ].join('|')
 }
 
-function persistSnapshot(next: PluginMarketplaceCacheSnapshot): boolean {
+function persistSnapshot(persisted: PluginMarketplaceCacheSnapshot): boolean {
   if (typeof window === 'undefined') return false
   const previousRaw = window.localStorage.getItem(STORAGE_KEY)
-  const persisted = toPersistedSnapshot(next, false)
   const store =
-    splitPluginMarketplaceCacheKey(next.cacheKey).tokenHint === 'anon'
+    splitPluginMarketplaceCacheKey(persisted.cacheKey).tokenHint === 'anon'
       ? readPersistedStore()
       : { entries: {} }
-  store.entries[next.cacheKey] = persisted
+  store.entries[persisted.cacheKey] = persisted
   trimPersistedEntries(store)
 
   try {
@@ -396,7 +401,7 @@ function persistSnapshot(next: PluginMarketplaceCacheSnapshot): boolean {
     try {
       // Account switches can leave several otherwise valid snapshots. Under quota
       // pressure, the active account is the only one needed for the next paint.
-      writePersistedStore({ entries: { [next.cacheKey]: persisted } }, true)
+      writePersistedStore({ entries: { [persisted.cacheKey]: persisted } }, true)
       console.warn(
         '[Wework] Plugin marketplace cache exceeded storage quota; kept the active account only.'
       )
@@ -405,7 +410,7 @@ function persistSnapshot(next: PluginMarketplaceCacheSnapshot): boolean {
         // The directory is already compressed independently of installation state.
         // Release only this key when WebKit counts the replaced value against quota.
         window.localStorage.removeItem(STORAGE_KEY)
-        writePersistedStore({ entries: { [next.cacheKey]: persisted } }, true)
+        writePersistedStore({ entries: { [persisted.cacheKey]: persisted } }, true)
       } catch (retryError) {
         if (previousRaw) {
           try {
@@ -429,9 +434,10 @@ function clearPersistTimer(): void {
 }
 
 function persistIfChanged(next: PluginMarketplaceCacheSnapshot): void {
-  const signature = snapshotPersistSignature(next)
+  const persisted = toPersistedSnapshot(next, false)
+  const signature = snapshotPersistSignature(persisted)
   if (signature === lastPersistedSignature) return
-  if (persistSnapshot(next)) lastPersistedSignature = signature
+  if (persistSnapshot(persisted)) lastPersistedSignature = signature
 }
 
 function schedulePersistSnapshot(next: PluginMarketplaceCacheSnapshot): void {
@@ -526,17 +532,13 @@ export function setPluginMarketplaceCache(
   }
   // Local/catalog readers never own the remote slice. Overlay current membership
   // on the retained metadata so late reads cannot undo remote refreshes or installs.
-  if (sameDevice && previous?.openAiCatalogFetchedAt && !options?.remoteCatalog) {
-    const isRemote = (item: PluginMarketplaceItem) =>
-      isOpenAiOfficialRemoteMarketplaceId(
-        typeof item.manifest?.marketplaceId === 'string' ? item.manifest.marketplaceId : null
-      )
+  if (sameDevice && previous?.openAiCatalogFetchedAt != null && !options?.remoteCatalog) {
     next = {
       ...next,
       marketplaceItems: [
-        ...next.marketplaceItems.filter(item => !isRemote(item)),
+        ...next.marketplaceItems.filter(item => !isOpenAiOfficialRemoteMarketplaceItem(item)),
         ...applyInstalledPluginsToMarketplaceItems(
-          previous.marketplaceItems.filter(isRemote),
+          previous.marketplaceItems.filter(isOpenAiOfficialRemoteMarketplaceItem),
           next.installedPlugins
         ),
       ],
@@ -588,6 +590,50 @@ export function setPluginMarketplaceCache(
   } else {
     schedulePersistSnapshot(next)
   }
+  for (const listener of listeners) listener(snapshot)
+}
+
+export function projectOpenAiRemoteCatalog(
+  cacheKey: string,
+  deviceId: string,
+  catalog: RemotePluginCatalogSnapshot | undefined
+): void {
+  const previous = getPluginMarketplaceCache(cacheKey)
+  const current =
+    previous && (!previous.deviceId || previous.deviceId === deviceId) ? previous : null
+  if (!catalog && current?.openAiCatalogFetchedAt == null) return
+  const installedPlugins = current?.installedPlugins ?? []
+  setPluginMarketplaceCache(
+    {
+      ...current,
+      cacheKey,
+      deviceId,
+      marketplaceItems: [
+        ...(current?.marketplaceItems ?? []).filter(
+          item => !isOpenAiOfficialRemoteMarketplaceItem(item)
+        ),
+        ...applyInstalledPluginsToMarketplaceItems(catalog?.items ?? [], installedPlugins),
+      ],
+      installedPlugins,
+      marketplaces: current?.marketplaces ?? [],
+      selectedMarketplaceKey: current?.selectedMarketplaceKey ?? '',
+      fetchedAt: current?.fetchedAt ?? Date.now(),
+      openAiCatalogFetchedAt: catalog?.fetchedAt,
+    },
+    { remoteCatalog: true }
+  )
+}
+
+export function detachOpenAiRemoteCatalog(cacheKey: string): boolean {
+  if (snapshot?.cacheKey !== cacheKey || snapshot.openAiCatalogFetchedAt == null) return false
+  projectOpenAiRemoteCatalog(cacheKey, snapshot.deviceId, undefined)
+  return true
+}
+
+export function invalidateOpenAiRemoteCatalogAccount(): void {
+  accountEpoch += 1
+  openAiRemoteCatalog.clear()
+  if (snapshot && detachOpenAiRemoteCatalog(snapshot.cacheKey)) return
   for (const listener of listeners) listener(snapshot)
 }
 
@@ -705,6 +751,7 @@ export function removePluginMarketplaceInstallation(
 export function clearPluginMarketplaceCache(): void {
   accountEpoch += 1
   inventoryMutationVersion += 1
+  openAiRemoteCatalog.clear()
   clearPersistTimer()
   pendingPersist = null
   lastPersistedSignature = ''

@@ -16,8 +16,12 @@ dockerfile="$(jq -r .dockerfile <<< "$metadata")"
 target="$(jq -r .target <<< "$metadata")"
 source_label="org.opencontainers.image.source=https://github.com/${GITHUB_REPOSITORY:?repository is required}"
 cache=()
-if [[ "$component" == executor ]]; then
-  cache_ref="${EXECUTOR_BUILD_CACHE:?Executor registry cache is required}"
+case "$component" in
+  executor) cache_ref="${EXECUTOR_BUILD_CACHE:?Executor registry cache is required}" ;;
+  backend-rs) cache_ref="ghcr.io/$owner/wegent-backend-rs-e2e:buildcache" ;;
+  downloads) cache_ref="" ;;
+esac
+if [[ -n "$cache_ref" ]]; then
   cache_ref="${cache_ref,,}"
   cache+=(--cache-from "type=registry,ref=$cache_ref")
   if [[ "${GITHUB_REF:-}" == refs/heads/main ]]; then
@@ -44,7 +48,7 @@ if [[ "$component" == executor ]]; then
 elif [[ "$component" == backend-rs ]]; then
   runtime="${RUNTIME_IMAGE:?Backend runtime reference is required}"
   if ! docker buildx imagetools inspect "$runtime" >/dev/null 2>&1; then
-    docker buildx build --load --platform linux/amd64 --file "$dockerfile" \
+    docker buildx build --load --platform linux/amd64 --file "$dockerfile" --cache-from "type=registry,ref=$cache_ref" \
       --build-arg "DEPS_IMAGE=$image" --target runtime --tag "$runtime" --label "$source_label" .
     docker push "$runtime"
   fi

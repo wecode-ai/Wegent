@@ -95,11 +95,7 @@ export function createPersistentInteractionNoticeCase() {
       await control.command('waitFor', `${page} [data-testid="interactions-pending-count"]`, {
         text: '0',
       })
-      assert.equal(
-        Number(await control.command('getElementCount', NOTICE)),
-        0,
-        'Handling the question in its original conversation must remove the reminder'
-      )
+      await control.command('waitFor', `body:not(:has(${NOTICE}))`)
     },
   }
 }
