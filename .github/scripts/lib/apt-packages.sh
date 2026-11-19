@@ -33,6 +33,21 @@ run_apt_with_diagnostics() {
   return "$apt_status"
 }
 
+update_apt_package_indexes() {
+  local update_log apt_status=0
+  update_log=$(run_apt_with_diagnostics "$@" -o APT::Update::Error-Mode=any update 2>&1) || apt_status=$?
+  printf '%s\n' "$update_log" >&2
+  if ((apt_status == 0)); then return 0; fi
+
+  if grep -Eq '^E: Failed to fetch .* (File has unexpected size|Hash Sum mismatch)' <<< "$update_log"; then
+    printf 'Refreshing APT metadata after an inconsistent mirror index.\n' >&2
+    run_apt_with_diagnostics "$@" -o APT::Update::Error-Mode=any \
+      -o Acquire::http::No-Cache=true -o Acquire::https::No-Cache=true update
+  else
+    return "$apt_status"
+  fi
+}
+
 install_apt_packages() {
   local privileged=()
   if ((EUID != 0)); then privileged=(sudo); fi
@@ -45,7 +60,7 @@ install_apt_packages() {
     # Limit this transaction without changing the runner's repositories or trust.
     apt_options=(-o "Dir::Etc::sourcelist=$WEGENT_CI_APT_SOURCE_LIST" -o Dir::Etc::sourceparts=-)
   fi
-  run_apt_with_diagnostics "${privileged[@]}" apt-get "${apt_options[@]}" -o APT::Update::Error-Mode=any update || return
+  update_apt_package_indexes "${privileged[@]}" apt-get "${apt_options[@]}" || return
   run_apt_with_diagnostics "${privileged[@]}" apt-get "${apt_options[@]}" install --yes --no-install-recommends "$@"
 }
 

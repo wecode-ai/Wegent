@@ -1,6 +1,6 @@
 """A resumed manager owns a visible Issue session before asking for input."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from uuid import uuid4
 
 import pytest
@@ -14,8 +14,10 @@ from app.services.collaboration_manager_activity import (
     project_collaboration_manager_activity,
 )
 from app.services.collaboration_round_assignment import assign_round_owner
+from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.project_chat.runtime_binding import resumed_manager_task_id
 from app.services.project_chat.session_access import resolve_project_transcript
+from app.services.runner_recovery import runner_recovery_available
 from tests.services.test_project_comment_execution import scenario  # noqa: F401
 from tests.services.test_project_group_comment_execution import (  # noqa: F401
     group_scenario,
@@ -50,6 +52,53 @@ def report(s, values):
     return project_collaboration_manager_activity(
         s.db, project_id=s.project.id, user_id=s.owner.id, values=values
     )
+
+
+@pytest.mark.parametrize("dispatched_next_round", [False, True])
+def test_expired_dispatch_reconciles_only_current_manager_failure(
+    resumed_manager, dispatched_next_round
+):
+    s, values = resumed_manager
+    activity, _ = report(s, values)
+    activity.status = "failed"
+    activity.content = "401 Unauthorized"
+    s.execution.status = "claimed"
+    s.execution.sync_state = "stale"
+    s.execution.start_requested_at = datetime(2026, 11, 19, 7)
+    s.execution.lease_expires_at = s.execution.start_requested_at + timedelta(minutes=5)
+    if dispatched_next_round:
+        plan = s.db.query(ProjectChatMessage).filter_by(message_id="member-plan").one()
+        s.db.add(
+            ProjectChatMessage(
+                message_id="next-plan",
+                project_id=str(s.project.id),
+                task_id=s.issue.id,
+                sender_type="agent",
+                sender_id=s.agent.id,
+                sender_name=s.agent.name,
+                agent_id=s.agent.id,
+                message_type="text",
+                content="",
+                metadata_json={
+                    **plan.metadata_json,
+                    "coordination_round_id": "round-2",
+                    "manager_runtime_task_id": activity.runtime_task_id,
+                },
+                status="completed",
+            )
+        )
+    s.db.commit()
+
+    assert loop_item_execution_service.recovery_scan(
+        s.db, now=datetime(2026, 11, 19, 8)
+    ) == (0, 0)
+    s.db.refresh(s.execution)
+    assert s.execution.status == ("claimed" if dispatched_next_round else "failed")
+    assert runner_recovery_available(s.db, s.issue.id) is not dispatched_next_round
+    if not dispatched_next_round:
+        assert s.execution.sync_state == "in_sync"
+        assert s.execution.error_message == "401 Unauthorized"
+        assert s.issue.status == "in_progress"
 
 
 @pytest.mark.parametrize(

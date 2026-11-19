@@ -3,6 +3,16 @@ import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from './upgrade-suite.mjs'
 
 export function checkpointScenarioEnv(env, checkpoint) {
   const nextEnv = { ...env }
+  if (checkpoint === 'temporary-chat') {
+    nextEnv.WEWORK_E2E_CONVERSATION_CACHE_IDLE_TTL_MS ??= '10000'
+  }
+  if (checkpoint === 'coordination-history') {
+    nextEnv.WEWORK_E2E_HISTORY_MAINTENANCE_INTERVAL_MS ??= '1000'
+    nextEnv.WEWORK_E2E_STAND_IN_POLL_INTERVAL_MS ??= '500'
+  }
+  if (['stand-in', 'stand-in-cloud', 'stand-in-assignment-notifications'].includes(checkpoint)) {
+    nextEnv.WEWORK_E2E_STAND_IN_POLL_INTERVAL_MS ??= '500'
+  }
   if (
     ['workspace-attachments', 'clipboard-history-image', 'browser-toolbar-actions'].includes(
       checkpoint
