@@ -19,21 +19,6 @@ test('reads the current native V2 completion envelope for the actual spawned tas
   )
 })
 
-test('reads a V2 completion after the Responses proxy normalizes its envelope', () => {
-  const compatible = { ...message(), type: 'message', role: 'developer' }
-  assert.equal(
-    nativeSubagentCompletionPayload({ input: [compatible] }, sender),
-    'Verified worker result'
-  )
-  for (const unrelated of [
-    { ...compatible, role: 'user' },
-    { ...compatible, author: '/root/other' },
-    { ...compatible, recipient: '/another' },
-  ]) {
-    assert.equal(nativeSubagentCompletionPayload({ input: [unrelated] }, sender), undefined)
-  }
-})
-
 test('never mistakes user input, a tool prompt or another worker for completion', () => {
   for (const input of [
     [{ role: 'user', content: text }],

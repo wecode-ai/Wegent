@@ -143,7 +143,7 @@ pub(super) fn prepare_request_with_model_hint(
         status: StatusCode::BAD_REQUEST,
         detail: format!("Invalid Codex Responses request: {error}"),
     })?;
-    normalize_responses_request_input(&mut responses_body, api_format == "openai-responses");
+    normalize_responses_request_input(&mut responses_body, api_format == "anthropic-messages");
     image_budget::limit_request_images(&mut responses_body);
 
     if api_format == "openai-responses" {

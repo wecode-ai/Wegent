@@ -5,13 +5,12 @@ function isCollaborationSubagentRequest(headers) {
 }
 
 function nativeSubagentCompletionPayload(request, sender) {
-  // The Responses proxy can forward the native V2 envelope as a developer message.
+  // Native V2 completion messages are distinct from user input and tool prompts.
   const parent = sender.slice(0, sender.lastIndexOf('/'))
   const prefix = `Message Type: FINAL_ANSWER\nTask name: ${parent}\nSender: ${sender}\nPayload:\n`
   for (const item of request.input ?? []) {
-    const isAgentMessage =
-      item.type === 'agent_message' || (item.type === 'message' && item.role === 'developer')
-    if (!isAgentMessage || item.author !== sender || item.recipient !== parent) continue
+    if (item.type !== 'agent_message' || item.author !== sender || item.recipient !== parent)
+      continue
     const content =
       typeof item.content === 'string'
         ? item.content

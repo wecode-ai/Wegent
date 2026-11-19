@@ -56,8 +56,6 @@ The provider `base_url` may be a service root, a versioned API base, or a comple
 | `standard`        | Use ordinary function tools, bridging `tool_search`, namespace and custom tools, and restoring tool identities on the return path to Codex. Use this for Kimi Responses and other services that do not support Codex's native tool types. |
 | `passthrough`     | Replace only the model ID and authentication needed for routing. Preserve all other request business fields and stream responses without protocol rewriting. Requires an OpenAI Responses upstream.                                       |
 
-For every OpenAI Responses upstream using `auto` or `standard`, the executor converts Codex subagent input items from `agent_message` to `type: "message"` with `role: "developer"`, preserving the message ID, author, recipient, and content.
-
 Passthrough retains reasoning, history, original call IDs, encrypted content, `previous_response_id`, `include`, `store` and extension fields. It also bypasses image budget trimming, vision sidecar replacement, history enhancement, fork/model-switch cleanup and output-limit injection. The proxy does not add the configured `max_output_tokens` to the request. The upstream must support the original Codex request contents directly.
 
 The internal official ChatGPT route is a separate passthrough path. It preserves the same native fields and stream behavior, but the compatibility layer still normalizes non-portable reasoning history and performs the first-request cleanup after a model switch. This keeps ordinary conversations and stand-in chats on one route without sending third-party `reasoning_text` or stale sealed state to the official endpoint.
@@ -176,6 +174,8 @@ uses real Electron, Codex, and executor processes to verify tool-history retenti
 automatic continuation, no duplicate user messages, and cancellation.
 
 ### Anthropic Empty-Output Recovery
+
+For every Anthropic Messages upstream, the executor normalizes Codex subagent `agent_message` items to messages with the `developer` role. The Anthropic adapter then places their content in the upstream request's `system` field. The `model-sse-parsing` checkpoint uses real Codex parent and child agents with a simulated upstream to verify that both the child task and the completion reach that field.
 
 Some Anthropic Messages-compatible services may return a stop reason and positive `output_tokens` in `message_delta` without sending any text, thinking content, or tool call. The executor Codex compatibility proxy converts this incomplete response into a failure event instead of incorrectly emitting a successful completion. Codex can then retry the current model request through its stream-error recovery path, preventing Wework from ending the task without an assistant response.
 
