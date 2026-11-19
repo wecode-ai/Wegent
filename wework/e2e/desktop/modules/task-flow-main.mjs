@@ -1118,9 +1118,7 @@ async function main() {
   const executorHome = usesDefaultUserData
     ? join(homePath, '.wegent/workbench/wework/default')
     : join(resultDir, 'executor-home')
-  const codexHome = usesDefaultUserData
-    ? join(homePath, '.wework/codex')
-    : join(executorHome, 'codex')
+  const codexHome = join(executorHome, 'codex')
   const codexSqliteHome = join(tmpdir(), 'wework-desktop-e2e', String(process.pid), 'codex-sqlite')
   const nativeCodexHome = join(resultDir, 'native-codex')
   const staleBundledMarketplacePath = join(resultDir, 'stale-wework-personal')
