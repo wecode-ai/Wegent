@@ -1,5 +1,9 @@
 import { useCallback, useId, useMemo, useSyncExternalStore } from 'react'
 import { useDOMEvent, useWindowEvent } from '@wegent/collaboration/dom-events'
+import {
+  RUNTIME_COMMAND_APPROVAL_OPTION,
+  runtimeCommandApprovalMode,
+} from '@wegent/chat-core/runtime-permission'
 import { logModelLoading } from '@/lib/model-loading-diagnostics'
 import {
   getDefaultModelOptions,
@@ -35,6 +39,7 @@ export function useWorkbenchModels({
   fallbackWhenConfiguredModelUnavailable = true,
   selectionReady = true,
   onSelectionChange,
+  onScopedCommandApprovalChange,
   onSelectionBlocked,
 }: UseWorkbenchModelsOptions) {
   const traceId = useId()
@@ -146,6 +151,10 @@ export function useWorkbenchModels({
       const currentSelection = source.getSelectedModelForScope(targetScopeKey)
       const currentOptions = source.getSelectedModelOptionsForScope(targetScopeKey)
       const nextOptions = resolveOptions(model, currentSelection, currentOptions)
+      const commandApproval = currentOptions[RUNTIME_COMMAND_APPROVAL_OPTION]
+      if (model && commandApproval !== undefined) {
+        nextOptions[RUNTIME_COMMAND_APPROVAL_OPTION] ??= commandApproval
+      }
       logModelLoading(traceId, 'workbench.selection_changed', {
         scopeFingerprint: modelSelectionScopeFingerprint(targetScopeKey),
         previousModelFingerprint:
@@ -238,14 +247,19 @@ export function useWorkbenchModels({
         })
       }
       source.option(targetScopeKey, nextOptions)
-      if (!persist) return
+      if (!persist) {
+        if (optionId === RUNTIME_COMMAND_APPROVAL_OPTION) {
+          onScopedCommandApprovalChange?.(runtimeCommandApprovalMode(nextOptions))
+        }
+        return
+      }
       if (currentModel) {
         onSelectionChange?.(toSelectionConfig(currentModel, nextOptions))
       } else {
         onSelectionChange?.(toDefaultModelSelectionConfig(nextOptions))
       }
     },
-    [source, locked, onSelectionChange, traceId]
+    [source, locked, onSelectionChange, onScopedCommandApprovalChange, traceId]
   )
 
   const setSelectedModelOption = useCallback(
