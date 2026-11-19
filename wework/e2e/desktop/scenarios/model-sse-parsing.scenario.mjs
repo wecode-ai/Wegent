@@ -72,7 +72,12 @@ function toolCall(model) {
   }
 }
 
-export function createDesktopScenario({ electronUserDataDirectory, workspacePath, resultDir }) {
+export function createDesktopScenario({
+  electronUserDataDirectory,
+  workspacePath,
+  resultDir,
+  modelResponseTimeoutMs,
+}) {
   let modelControl
   const observed = []
   const completed = new Set()
@@ -263,7 +268,7 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
         await control.command(
           'waitFor',
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-          { text: `SSE_COMPLETED_${model.id}` }
+          { text: `SSE_COMPLETED_${model.id}`, timeoutMs: modelResponseTimeoutMs }
         )
         assert.ok(
           completed.has(model.id),
