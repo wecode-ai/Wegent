@@ -1,5 +1,5 @@
 import * as desktopHost from '@/api/dsh/desktopHost'
-import { createCloudModelCatalog } from '@/api/hybrid/cloudModelCatalog'
+import { createModelCatalog } from '@/api/hybrid/modelCatalog'
 import { WEWORK_DSH_SLOTS } from '@/features/dsh-runtime/dshUiSlots'
 import { useStandInConversationModel } from '@/features/todo/useStandInConversationModel'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
@@ -1239,10 +1239,37 @@ describe('ChatInput', () => {
     }
   )
 
-  test('uploads pasted images from the desktop message textbox', async () => {
-    const handleFileSelect = vi.fn().mockResolvedValue(undefined)
-    const image = new File(['image'], 'clipboard.png', { type: 'image/png' })
+  test.each(['', 'file:///tmp/clipboard.png'])(
+    'registers pasted images synchronously with clipboard URI %s',
+    uri => {
+      const handleFileSelect = vi.fn().mockResolvedValue(undefined)
+      const image = new File(['image'], 'clipboard.png', { type: 'image/png' })
 
+      render(
+        <ChatInput
+          value=""
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          disabled={false}
+          variant="desktop"
+          projectChat={projectChatControls({ handleFileSelect })}
+        />
+      )
+
+      fireEvent.paste(screen.getByTestId('chat-message-input'), {
+        clipboardData: {
+          files: [image],
+          getData: (type: string) => (type === 'text/uri-list' ? uri : ''),
+        },
+      })
+
+      expect(handleFileSelect).toHaveBeenCalledWith([image])
+    }
+  )
+
+  test('registers a TIFF synchronously before native conversion can finish', () => {
+    const handleFileSelect = vi.fn().mockResolvedValue(undefined)
+    const screenshot = new File(['tiff'], 'clipboard.tiff', { type: 'image/tiff' })
     render(
       <ChatInput
         value=""
@@ -1253,53 +1280,10 @@ describe('ChatInput', () => {
         projectChat={projectChatControls({ handleFileSelect })}
       />
     )
-
     fireEvent.paste(screen.getByTestId('chat-message-input'), {
-      clipboardData: {
-        files: [image],
-      },
+      clipboardData: { files: [screenshot], getData: () => '' },
     })
-
-    await waitFor(() => expect(handleFileSelect).toHaveBeenCalledWith([image]))
-  })
-
-  test('normalizes a TIFF from clipboard history before attaching it', async () => {
-    const handleFileSelect = vi.fn().mockResolvedValue(undefined)
-    const screenshot = new File(['tiff'], '2026-11-12_14-07-58.tiff', {
-      type: 'image/tiff',
-    })
-    vi.spyOn(runtimeEnvironment, 'isElectronRuntime').mockReturnValue(true)
-    vi.spyOn(desktopHost, 'invokeDesktopHost').mockResolvedValue(
-      'data:image/png;base64,iVBORw0KGgo='
-    )
-
-    render(
-      <ChatInput
-        value=""
-        onChange={vi.fn()}
-        onSubmit={vi.fn()}
-        disabled={false}
-        variant="desktop"
-        projectChat={projectChatControls({ handleFileSelect })}
-      />
-    )
-
-    fireEvent.paste(screen.getByTestId('chat-message-input'), {
-      clipboardData: { files: [screenshot] },
-    })
-
-    await waitFor(() => expect(handleFileSelect).toHaveBeenCalledOnce())
-    const [files] = handleFileSelect.mock.calls[0] as unknown as [File[]]
-    expect(files).toHaveLength(1)
-    expect(files[0]).toMatchObject({
-      name: '2026-11-12_14-07-58.png',
-      type: 'image/png',
-    })
-    expect(desktopHost.invokeDesktopHost).toHaveBeenCalledWith('clipboard.convertImageToPng', {
-      dataBase64: 'dGlmZg==',
-      fileName: '2026-11-12_14-07-58.tiff',
-      mimeType: 'image/tiff',
-    })
+    expect(handleFileSelect).toHaveBeenCalledExactlyOnceWith([screenshot])
   })
 
   test.each(['drop'] as const)(
@@ -2299,6 +2283,58 @@ describe('ChatInput', () => {
     expect(onResumeGoal).toHaveBeenCalledTimes(1)
   })
 
+  test.each(['pending', 'resuming_goal'])(
+    'keeps a %s event Goal waiting for execution without asking the user to start it',
+    status => {
+      const onPauseGoal = vi.fn()
+      render(
+        <ChatInput
+          value=""
+          onChange={vi.fn()}
+          onSubmit={vi.fn()}
+          disabled={false}
+          variant="desktop"
+          goal={{
+            threadId: 'thread-1',
+            objective: 'Process the review',
+            status: 'blocked',
+            tokenBudget: 500,
+            tokensUsed: 12,
+            timeUsedSeconds: 0,
+            createdAt: 1780000000000,
+            updatedAt: 1780000000000,
+          }}
+          eventSubscriptions={[
+            {
+              subscription_key: 'another-wait',
+              status: 'armed',
+              waiting_goal: true,
+              source: { name: 'Other source' },
+              last_collected_at: Date.now(),
+            },
+            {
+              subscription_key: 'review',
+              status,
+              waiting_goal: true,
+              source: { name: 'Review' },
+              last_collected_at: Date.now(),
+            },
+          ]}
+          interactionStatus="awaitingUserReply"
+          onPauseGoal={onPauseGoal}
+          onResumeGoal={vi.fn()}
+        />
+      )
+      expect(screen.getByTestId('goal-status-bar')).toHaveTextContent('等待继续执行')
+      expect(screen.getByTestId('connection-event-status')).toHaveTextContent(
+        '等待你处理当前问题或确认'
+      )
+      expect(screen.queryByTestId('resume-goal-button')).not.toBeInTheDocument()
+      fireEvent.click(screen.getByTestId('pause-goal-button'))
+      expect(onPauseGoal).toHaveBeenCalledOnce()
+    }
+  )
+
   test.each(['usageLimited', 'budgetLimited'] as const)(
     'does not offer the pause action for a %s goal',
     status => {
@@ -2512,7 +2548,7 @@ describe('ChatInput', () => {
       const load = vi.fn(() => pending)
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
       if (recovery === 'menu') load.mockRejectedValueOnce(new Error('Cloud unavailable'))
-      const cache = createCloudModelCatalog(load)
+      const cache = createModelCatalog('cloud', load)
       const refresh = vi.fn(cache.refresh)
       const services = {
         standInApi: {
@@ -2872,4 +2908,57 @@ describe('ChatInput', () => {
     expect(window.getSelection()?.anchorNode).toBe(trailingText)
     expect(window.getSelection()?.anchorOffset).toBe(trailingText?.textContent?.length)
   })
+  test.each(['ordinary', 'goal'])(
+    'keeps cancellation feedback after the last native %s watch disappears',
+    async mode => {
+      const onResume = vi.fn()
+      const collectedAt = Date.now()
+      function Harness() {
+        const [subscriptions, setSubscriptions] = useState<unknown>([
+          {
+            subscription_key: 'watch',
+            source: { name: 'PR' },
+            status: 'armed',
+            last_collected_at: collectedAt,
+            waiting_goal: mode === 'goal',
+          },
+        ])
+        return (
+          <ChatInput
+            value=""
+            onChange={vi.fn()}
+            onSubmit={vi.fn()}
+            disabled={false}
+            variant="desktop"
+            eventSubscriptions={subscriptions}
+            eventSubscriptionScope="task"
+            onCancelEventSubscription={async () => {
+              setSubscriptions([])
+            }}
+            goal={
+              mode === 'goal'
+                ? {
+                    threadId: 'thread',
+                    objective: 'Wait',
+                    status: 'blocked',
+                    tokenBudget: 500,
+                    tokensUsed: 12,
+                    timeUsedSeconds: 0,
+                    createdAt: 1780000000000,
+                    updatedAt: 1780000000000,
+                  }
+                : undefined
+            }
+            onResumeGoal={onResume}
+          />
+        )
+      }
+      render(<Harness />)
+      await userEvent.click(screen.getByTestId('cancel-connection-event-subscription'))
+      expect(await screen.findByTestId('connection-event-cancel-feedback')).toBeInTheDocument()
+      expect(screen.queryByTestId('connection-event-status')).not.toBeInTheDocument()
+      expect(onResume).not.toHaveBeenCalled()
+      if (mode === 'goal') expect(screen.getByTestId('resume-goal-button')).toBeInTheDocument()
+    }
+  )
 })

@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
+import { DatabaseSync } from 'node:sqlite'
 import { execFile } from 'node:child_process'
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
 import { delimiter, join } from 'node:path'
-import { promisify } from 'node:util'
+import { isDeepStrictEqual, promisify } from 'node:util'
 import { waitForAttribute } from '../modules/workspace-flows.mjs'
-import { selectE2EModel } from '../modules/shared.mjs'
+import { selectE2EModel, waitForLogPattern } from '../modules/shared.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { until } from '../modules/plugin-regression-fixture.mjs'
 
 const execFileAsync = promisify(execFile)
 const ACTIVE_WORKBENCH_SELECTOR =
@@ -13,6 +15,15 @@ const ACTIVE_WORKBENCH_SELECTOR =
 const CHANGE_REQUEST_BUTTON = '[data-testid="change-request-button"]'
 const CHANGE_REQUEST_REFRESH_INTERVAL_MS = 30_000
 const ENVIRONMENT_BUTTON = '[data-testid="environment-info-button"]'
+const CHANGE_REQUEST_SOURCE = {
+  providerId: '@wegent/dsh-connection-git/github',
+  kind: 'repository',
+  transport: 'cli',
+  profile: JSON.stringify(['https://github.com', '1']),
+  id: '2630',
+  name: 'wecode-ai/Wegent',
+  monitoredObjects: [{ entityKind: 'change_request', number: 2631 }],
+}
 const QUERY_LOG_FILE = '.wework-change-request-e2e-queries'
 const STATE_FILE = '.wework-change-request-e2e-state'
 const TASK_PROMPT = 'Inspect the pull request status for this branch'
@@ -70,9 +81,43 @@ const checksState =
   state === 'pending' ? 'PENDING' : state === 'failure' ? 'FAILURE' : 'SUCCESS'
 const prState = state === 'merged' ? 'MERGED' : 'OPEN'
 const mergedAt = state === 'merged' ? '2026-08-20T08:00:00Z' : null
-const args = process.argv.slice(2).join(' ')
+const argv = process.argv.slice(2)
+const args = argv.join(' ')
+const endpoint = argv.find(value => value === 'user' || value === 'graphql' || value.startsWith('repos/'))
+const requestUrl = 'https://github.com/wecode-ai/Wegent/pull/2631'
+const headSha = 'a'.repeat(40)
+const pullRequest = {
+  number: 2631, url: requestUrl, title: 'feat(wework): show pull request status',
+  state: prState, isDraft: false, mergedAt, headRefOid: headSha,
+  updatedAt: '2026-08-20T08:00:00Z', mergeable: 'MERGEABLE', mergeStateStatus: 'CLEAN',
+  statusCheckRollup: { state: checksState }, mergeQueueEntry: null, timelineItems: { nodes: [] },
+}
+let input
+if (argv.includes('--input')) {
+  let body = ''
+  for await (const chunk of process.stdin) body += chunk
+  input = JSON.parse(body)
+}
 
-if (args.includes('graphql')) {
+// This legacy checkpoint uses an external CLI protocol double, not real GitHub.
+if (endpoint === 'user') {
+  console.log(JSON.stringify({ id: 1, login: 'wework-e2e' }))
+} else if (endpoint === 'repos/wecode-ai/Wegent') {
+  console.log(JSON.stringify({ id: 2630, full_name: 'wecode-ai/Wegent' }))
+} else if (endpoint === 'repos/wecode-ai/Wegent/pulls/2631') {
+  console.log(JSON.stringify({
+    number: 2631, html_url: requestUrl, title: pullRequest.title,
+    state: state === 'merged' ? 'closed' : 'open', merged_at: mergedAt,
+    head: { ref: 'feature/change-request-status', sha: headSha },
+    base: { ref: 'main' }, updated_at: pullRequest.updatedAt,
+  }))
+} else if (endpoint?.includes('/comments?') || endpoint === 'repos/wecode-ai/Wegent/pulls/2631/reviews') {
+  console.log('[]')
+} else if (endpoint?.includes('/check-runs?')) {
+  console.log(JSON.stringify({ check_runs: [] }))
+} else if (endpoint === 'graphql' && input?.variables?.number === 2631) {
+  console.log(JSON.stringify({ data: { repository: { pullRequest } } }))
+} else if (args.includes('graphql')) {
   console.log(
     JSON.stringify({
       data: {
@@ -107,7 +152,7 @@ if (args.includes('graphql')) {
       },
     ])
   )
-} else {
+} else if (argv[0] === 'pr' && argv[1] === 'list') {
   console.log(
     JSON.stringify([
       {
@@ -120,6 +165,13 @@ if (args.includes('graphql')) {
       },
     ])
   )
+} else if (argv[0] === 'auth' && argv[1] === 'status') {
+  console.log('Logged in to github.com as wework-e2e')
+} else if (argv[0] === '--version') {
+  console.log('gh version 2.0.0 (protocol fixture)')
+} else {
+  console.error('Unsupported GitHub protocol fixture request: ' + (endpoint ?? argv[0]))
+  process.exit(64)
 }
 `
   )
@@ -130,6 +182,11 @@ if (args.includes('graphql')) {
     await chmod(executablePath, 0o755)
   }
   process.env.PATH = `${binPath}${delimiter}${process.env.PATH ?? ''}`
+  if (process.platform === 'win32') return {}
+  // Keep the CLI fixture ahead of developer tools after login-shell hydration.
+  const nodePath = join(binPath, 'node')
+  await symlink(process.execPath, nodePath)
+  return { WEWORK_NODE_PATH: nodePath }
 }
 
 async function createLocalProject(control, workspacePath, timeoutMs) {
@@ -219,14 +276,125 @@ async function refreshEnvironment(control) {
   await control.command('waitFor', '[data-testid="environment-info-popover"]')
 }
 
+async function readNativeUiObservers(journalPath) {
+  try {
+    const database = new DatabaseSync(journalPath, { readOnly: true })
+    try {
+      // Match the native event store's lock budget during concurrent WAL recovery.
+      database.exec('PRAGMA busy_timeout = 250')
+      return database
+        .prepare("SELECT id,value FROM records WHERE section='observers'")
+        .all()
+        .map(({ id, value }) => {
+          const observer = JSON.parse(value)
+          assert.ok(observer && typeof observer === 'object' && observer.id === id)
+          return observer
+        })
+    } finally {
+      database.close()
+    }
+  } catch (error) {
+    // Keep diagnostic codes without exposing journal contents or native error text.
+    throw Object.assign(new Error('The native change-request observer journal could not be read'), {
+      code: error.code,
+      sqliteCode: error.errcode,
+    })
+  }
+}
+
+function hasChangeRequestSource(observer) {
+  return Object.entries(CHANGE_REQUEST_SOURCE).every(([key, value]) =>
+    isDeepStrictEqual(observer.source?.[key], value)
+  )
+}
+
+function newChangeRequestObserverPredicate(before) {
+  const devices = new Set(before.filter(hasChangeRequestSource).map(observer => observer.device_id))
+  assert.equal(devices.size, 1, 'The target observation must belong to one native Runtime')
+  const [deviceId] = devices
+  assert.ok(typeof deviceId === 'string' && deviceId)
+  const identityFields = ['id', 'consumer_key', 'generation']
+  const previousIdentities = identityFields.map(field => new Set(before.map(row => row[field])))
+  return observers =>
+    observers.filter(
+      observer =>
+        hasChangeRequestSource(observer) &&
+        observer.device_id === deviceId &&
+        identityFields.every(
+          (field, index) =>
+            typeof observer[field] === 'string' &&
+            observer[field].length > 0 &&
+            !previousIdentities[index].has(observer[field])
+        ) &&
+        observer.consumer_key.startsWith('change-request-ui:') &&
+        observer.status === 'observing' &&
+        Number.isSafeInteger(observer.expires_at) &&
+        observer.expires_at > Date.now()
+    ).length === 1
+}
+
+export async function prepareChangeRequestRecovery(executorHome) {
+  const journalPath = join(executorHome, 'runtime-work', 'conversation-event-subscriptions.sqlite')
+  return {
+    journalPath,
+    activationCompleted: newChangeRequestObserverPredicate(
+      await readNativeUiObservers(journalPath)
+    ),
+  }
+}
+
+export async function recoverChangeRequestStatus(
+  control,
+  { statePath, uiTimeoutMs, journalPath, activationCompleted }
+) {
+  // Repair the provider before re-enabling its observer. Start may return cached facts.
+  await writeFile(statePath, 'merged\n')
+  await control.command('click', '[data-testid="change-request-status-switch"]')
+  await waitForAttribute(
+    control,
+    '[data-testid="change-request-status-switch"]',
+    'aria-checked',
+    'true',
+    'Re-enabling PR/MR status lookup was not persisted'
+  )
+  await until(
+    () => readNativeUiObservers(journalPath),
+    activationCompleted,
+    'The target native change-request observer did not finish its new activation',
+    uiTimeoutMs
+  )
+  // Only now open the summary: its forced refresh has the original UI step budget.
+  await control.command('click', '[data-testid="settings-back-button"]')
+  await control.command('waitFor', ENVIRONMENT_BUTTON, { timeoutMs: uiTimeoutMs })
+  await control.command('click', ENVIRONMENT_BUTTON)
+  await control.command('waitFor', '[data-testid="environment-info-popover"]')
+
+  await control.command('waitFor', CHANGE_REQUEST_BUTTON, { text: '#2631' })
+  await control.command('waitFor', CHANGE_REQUEST_BUTTON, { text: '已合并' })
+  assert.match(
+    await control.command('getAttribute', CHANGE_REQUEST_BUTTON, { value: 'aria-label' }),
+    /已合并/,
+    'The recovered PR control did not expose its merged status'
+  )
+  await control.command('waitFor', '[data-testid="change-request-checks"]', { text: '检查通过' })
+  await control.command('click', '[data-testid="environment-change-request-status"]')
+  await control.command(
+    'waitFor',
+    '[data-testid="environment-change-request-status-popover"] [data-testid="resource-observation-status"]',
+    { text: '状态同步正常' }
+  )
+}
+
 export async function createDesktopScenario({
   captureScreenshot,
+  executorHome,
   homePath,
+  resultDir,
   uiTimeoutMs,
   workspacePath,
 }) {
   await configureGitFixture(workspacePath)
-  await createGitHubCliFixture(homePath)
+  const appEnvironment = await createGitHubCliFixture(homePath)
   const queryLogPath = join(homePath, QUERY_LOG_FILE)
   const statePath = join(homePath, STATE_FILE)
   const gitSyncRequests = []
@@ -237,6 +405,7 @@ export async function createDesktopScenario({
     captureScreenshot(control, name, selector)
 
   return {
+    appEnvironment,
     async handleHttp(request, response, url) {
       if (request.method === 'GET' && url.pathname === '/api/auth/wework/config') {
         json(response, 200, {
@@ -340,6 +509,8 @@ export async function createDesktopScenario({
     async verify(control) {
       await createLocalProject(control, workspacePath, uiTimeoutMs)
       await selectE2EModel(control, undefined, undefined, ACTIVE_WORKBENCH_SELECTOR)
+      const executorLogPath = join(resultDir, 'executor.log')
+      const observerLogOffset = (await readFile(executorLogPath, 'utf8')).length
       const monitorRegistrationWindowStartedAt = Date.now()
       await control.command('fill', '[data-testid="chat-message-input"]', {
         value: TASK_PROMPT,
@@ -397,8 +568,30 @@ export async function createDesktopScenario({
       )
       await capture(control, 'change-request-status-02-pending.png')
 
+      // Branch discovery can render before the first shared observer has finished collecting.
+      // Establish the baseline only after that original activation has completed.
+      const observerLog = await waitForLogPattern(
+        executorLogPath,
+        /app IPC request finished .*command_key=connection_observer_start .*ok=true/,
+        { fromOffset: observerLogOffset, timeoutMs: uiTimeoutMs }
+      )
+      const countObserverStarts = log =>
+        [
+          ...log
+            .slice(observerLogOffset)
+            .matchAll(/app IPC request started .*command_key=connection_observer_start/g),
+        ].length
+      assert.equal(
+        countObserverStarts(observerLog),
+        1,
+        'The first visible PR/MR resource started more than one shared observer'
+      )
       const scheduledRefreshCutoff =
         monitorRegistrationWindowStartedAt + CHANGE_REQUEST_REFRESH_INTERVAL_MS
+      assert.ok(
+        Date.now() < scheduledRefreshCutoff,
+        'The first shared observation did not settle before the scheduled refresh'
+      )
       const initialQueries = (await queryTimestamps(queryLogPath)).filter(
         timestamp => timestamp < scheduledRefreshCutoff
       )
@@ -415,12 +608,21 @@ export async function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       await new Promise(resolve => setTimeout(resolve, 500))
+      assert.ok(
+        Date.now() < scheduledRefreshCutoff,
+        'The equivalent refresh was not observed before the scheduled refresh'
+      )
       assert.equal(
         (await queryTimestamps(queryLogPath)).filter(
           timestamp => timestamp < scheduledRefreshCutoff
         ).length,
         initialQueries.length,
         'An equivalent runtime task refresh repeated the PR/MR lookup'
+      )
+      assert.equal(
+        countObserverStarts(await readFile(executorLogPath, 'utf8')),
+        1,
+        'An equivalent runtime task refresh restarted the shared PR/MR observer'
       )
       await control.command('click', ENVIRONMENT_BUTTON)
       await control.command('waitFor', '[data-testid="environment-info-popover"]')
@@ -436,6 +638,7 @@ export async function createDesktopScenario({
         'waitFor',
         '[data-testid^="runtime-local-task-change-request-"][data-testid$="-popover"]'
       )
+      await capture(control, 'change-request-status-02b-failed-repair-action.png', 'body')
       await control.command(
         'click',
         '[data-testid^="runtime-local-task-change-request-"][data-testid$="-repair"]'
@@ -453,14 +656,34 @@ export async function createDesktopScenario({
       await control.command('waitFor', '[data-testid="change-request-checks"]', {
         text: '检查通过',
       })
+      await control.command('click', '[data-testid="environment-change-request-status"]')
+      await control.command(
+        'waitFor',
+        '[data-testid="environment-change-request-status-popover"]',
+        { text: '检查通过' }
+      )
+      await control.command(
+        'waitFor',
+        '[data-testid="environment-change-request-status-popover"] [data-testid="resource-observation-status"]',
+        { text: '状态同步正常' }
+      )
       await capture(control, 'change-request-status-04-checks-passed.png')
+      const recovery = await prepareChangeRequestRecovery(executorHome)
+      await control.command('click', '[data-testid="environment-change-request-status"]')
 
       await writeFile(statePath, 'unavailable\n')
       await refreshEnvironment(control)
       await control.command('waitFor', '[data-testid="change-request-lookup-hint"]', {
         text: '安装 GitHub CLI',
       })
-      await control.command('waitFor', '[data-testid="create-pull-request-button"]')
+      await control.command('waitFor', CHANGE_REQUEST_BUTTON, { text: '#2631' })
+      assert.equal(
+        Number(
+          await control.command('getElementCount', '[data-testid="create-pull-request-button"]')
+        ),
+        0,
+        'A collection failure must retain the known PR rather than suggest creating a duplicate'
+      )
       await capture(control, 'change-request-status-05-cli-unavailable.png')
 
       await control.command('click', '[data-testid="change-request-open-settings"]')
@@ -484,6 +707,7 @@ export async function createDesktopScenario({
         0,
         'Device Git configuration should not remain under Git hosting settings'
       )
+      await capture(control, 'change-request-status-06-settings-enabled.png', 'body')
       await control.command('click', '[data-testid="settings-nav-connections"]')
       await control.command('waitFor', '[data-testid="cloud-connection-status-card"]', {
         timeoutMs: uiTimeoutMs,
@@ -531,7 +755,8 @@ export async function createDesktopScenario({
         [{ allow_empty: false }],
         'Git credentials were not synced exactly once to the explicitly selected device'
       )
-      await capture(control, 'change-request-status-06-settings-enabled.png', 'body')
+      await control.command('scrollIntoView', '[data-testid="git-device-sync-result"]')
+      await capture(control, 'change-request-status-06b-device-sync-result.png', 'body')
 
       await control.command('click', '[data-testid="settings-nav-git-hosting"]')
       await control.command('waitFor', '[data-testid="git-hosting-settings-page"]', {
@@ -557,33 +782,15 @@ export async function createDesktopScenario({
         'false',
         'Disabled PR/MR status lookup should remain disabled after reopening settings'
       )
+      await control.command('waitFor', '[data-testid="git-hosting-cli-github-status"]', {
+        text: '检测失败',
+        timeoutMs: uiTimeoutMs,
+      })
       await capture(control, 'change-request-status-07-settings-disabled.png', 'body')
 
-      await control.command('click', '[data-testid="change-request-status-switch"]')
-      await waitForAttribute(
-        control,
-        '[data-testid="change-request-status-switch"]',
-        'aria-checked',
-        'true',
-        'Re-enabling PR/MR status lookup was not persisted'
-      )
-      await control.command('click', '[data-testid="settings-back-button"]')
-      await control.command('waitFor', ENVIRONMENT_BUTTON, { timeoutMs: uiTimeoutMs })
-      await control.command('click', ENVIRONMENT_BUTTON)
-      await control.command('waitFor', '[data-testid="environment-info-popover"]')
-
-      await writeFile(statePath, 'merged\n')
-      await refreshEnvironment(control)
-      await control.command('waitFor', CHANGE_REQUEST_BUTTON, {
-        text: '#2631',
-      })
-      await control.command('waitFor', '[data-testid="change-request-state"]', {
-        text: '已合并',
-      })
-      await control.command('waitFor', '[data-testid="change-request-checks"]', {
-        text: '检查通过',
-      })
+      await recoverChangeRequestStatus(control, { statePath, uiTimeoutMs, ...recovery })
       await capture(control, 'change-request-status-08-recovered-merged.png')
+      await control.command('click', '[data-testid="environment-change-request-status"]')
     },
 
     diagnostics() {

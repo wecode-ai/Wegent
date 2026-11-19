@@ -5,6 +5,7 @@ import {
 import { issueAssignmentRevision } from './issueAssignmentReceiptScope'
 import { useCallback, useMemo, useState, type ReactNode } from 'react'
 import { Send } from 'lucide-react'
+import { IssueExistingTaskAction, type ExistingIssueTaskSource } from './IssueExistingTaskAction'
 import {
   TodoEditor as SharedIssueDetailEditor,
   type CollaborationAssignment,
@@ -116,6 +117,7 @@ export type TodoEditorProps = TodoEditorApiProps & {
   /** Delete this Issue; rendered in the header overflow menu in edit mode. */
   onDelete?: () => void
   deleteLabel?: string
+  existingTaskSource?: ExistingIssueTaskSource
   onCreateTask?: () => void
   onOpenTaskConversation?: (task: LoopItemTaskBinding) => void
   onOpenRuntimeTask?: (address: RuntimeTaskAddress) => void
@@ -149,6 +151,7 @@ function canCreatePersonalTask(props: TodoEditorProps): boolean {
 
 export function TodoEditor(props: TodoEditorProps) {
   const { t, i18n } = useTranslation('common')
+  const [taskLinkRevision, setTaskLinkRevision] = useState(0)
   const taskOwnerUserId = props.project?.project_store === 'local' ? 0 : props.currentUserId
   const collaboratorEditingSupported = props.project?.project_store !== 'local'
   const showPersonalTaskAction = canCreatePersonalTask(props)
@@ -290,7 +293,7 @@ export function TodoEditor(props: TodoEditorProps) {
       />
     ),
     renderActivity: context =>
-      props.projectChatClient ? (
+      props.projectChatClient && context.project ? (
         <TaskActivityView
           assignmentReceipts={assignmentReceipts}
           commentAssignment={context.commentAssignment}
@@ -406,7 +409,7 @@ export function TodoEditor(props: TodoEditorProps) {
     showChildren: props.showChildren,
     showCurrentTaskOnly: props.showCurrentTaskOnly,
     defaultAssistant: props.defaultAssistant,
-    taskRefreshKey: props.taskRefreshKey,
+    taskRefreshKey: `${props.taskRefreshKey ?? ''}:${taskLinkRevision}`,
     initialTaskBindings: props.initialTaskBindings?.filter(
       task => taskOwnerUserId !== undefined && String(task.task_user_id) === String(taskOwnerUserId)
     ) as SharedIssueDetailTaskBinding[] | undefined,
@@ -423,6 +426,21 @@ export function TodoEditor(props: TodoEditorProps) {
     canStartWork: false,
     selectedTaskId: props.selectedTaskId,
     currentAssignment: props.currentAssignment,
+    linkedTaskAction:
+      props.mode === 'edit' && canEditProjectSpaceIssue(props.item) && props.existingTaskSource ? (
+        <IssueExistingTaskAction
+          deviceNamesById={props.deviceNamesById}
+          key={props.item.id}
+          source={props.existingTaskSource}
+          issue={props.item}
+          project={{
+            projectStore: props.project?.project_store ?? 'backend',
+            projectId: props.project?.id ?? props.item.cloud_project_id,
+          }}
+          bindings={props.initialTaskBindings ?? []}
+          onLinked={() => setTaskLinkRevision(value => value + 1)}
+        />
+      ) : undefined,
     onCreateTask: props.onCreateTask,
     onAddAssigneeMember: props.onAddAssigneeMember,
     onAddAssigneeAgent: props.onAddAssigneeAgent,

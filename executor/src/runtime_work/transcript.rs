@@ -28,8 +28,6 @@ use super::util::{
 const MAX_TRANSCRIPT_TOOL_OUTPUT_BYTES: usize = 64 * 1024;
 const MAX_TRANSCRIPT_MESSAGE_CONTENT_CHARS: usize = 200_000;
 const MAX_TRANSCRIPT_BLOCK_CONTENT_CHARS: usize = 120_000;
-const APPLICATION_CONTEXT_OPEN: &str = "<application_context>";
-const APPLICATION_CONTEXT_CLOSE: &str = "</application_context>";
 
 #[derive(Clone, Copy)]
 pub(crate) struct TranscriptBuildOptions {
@@ -221,12 +219,19 @@ fn project_transcript_checked(
             options,
         )
         .project(checkpoint)?;
+        let error_type = turn.get("error").and_then(crate::agents::codex_error_type);
+        for message in &mut messages[message_start..] {
+            if message["role"] == "assistant" && message["status"] == "failed" {
+                message["errorType"] = json!(error_type);
+            }
+        }
         let mut normalized = json!({
             "id": stable_indexed_id(turn, "turn", turn_index),
             "status": turn_assistant_status(turn),
             "startedAt": turn_started_at(turn),
             "completedAt": turn_completed_at(turn, turn_started_at(turn)),
             "error": turn_error_message(turn),
+            "errorType": error_type,
             "position": turn.get("position"),
         });
         normalized["items"] = Value::Array(items);

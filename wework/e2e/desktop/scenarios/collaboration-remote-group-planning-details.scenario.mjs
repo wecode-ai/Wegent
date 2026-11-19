@@ -50,7 +50,7 @@ export async function createDesktopScenario(options) {
       const close = '[data-testid="ai-chat-modal"] [data-testid="ai-chat-modal-close"]'
       const before = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
       const lastLogId = before.logs.at(-1)?.id ?? 0
-      await control.command('click', `[data-testid="${executionTestId}"]`)
+      await control.command('clickWhenEnabled', `[data-testid="${executionTestId}"]`)
       await control.command('waitFor', panel, { text: groupRules, visible: true })
       assert.equal(
         Number(

@@ -753,7 +753,8 @@ describe('SmartAppsMarketplacePage', () => {
       const model = await screen.findByTestId(`harness-app-model-${installation.id}`)
       fireEvent.click(screen.getByTestId(`smart-app-actions-${installation.id}`))
       fireEvent.pointerDown(screen.getByTestId(`smart-app-remove-local-${installation.id}`))
-      const submit = screen.getByTestId('smart-app-remove-local-confirm')
+      let submit = screen.getByTestId('smart-app-remove-local-confirm')
+      const dialog = screen.getByRole('dialog')
       let finishLocal!: (value: (typeof installation)[]) => void
       listInstalled.mockImplementationOnce(() =>
         discoveryState === 'failed'
@@ -766,7 +767,15 @@ describe('SmartAppsMarketplacePage', () => {
       act(() => window.dispatchEvent(new PopStateEvent('popstate')))
       await waitFor(() => expect(listInstalled).toHaveBeenCalledTimes(2))
       if (discoveryState === 'failed') {
-        await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('本机列表不可用'))
+        await waitFor(() =>
+          expect(within(dialog).getByRole('alert')).toHaveTextContent('本机列表不可用')
+        )
+        expect(within(dialog).getByRole('alert')).toHaveTextContent(/取消.*重试/)
+        await waitFor(() => expect(dialog).toHaveAccessibleDescription(/本机列表不可用/))
+        expect(dialog).toHaveAccessibleDescription(/取消.*重试/)
+      } else {
+        expect(within(dialog).getByRole('status')).toHaveTextContent('正在重新确认本机安装状态')
+        expect(dialog).toHaveAccessibleDescription(/正在重新确认本机安装状态/)
       }
       expect(screen.getByTestId(`harness-app-model-${installation.id}`)).toBe(model)
       expect(model).toHaveValue(installation.modelKey)
@@ -779,7 +788,14 @@ describe('SmartAppsMarketplacePage', () => {
       expect(stopInstalled).not.toHaveBeenCalled()
 
       if (discoveryState === 'failed') {
+        fireEvent.click(within(dialog).getByRole('button', { name: '取消', exact: true }))
+        expect(screen.queryByRole('dialog')).toBeNull()
+        expect(screen.getByRole('alert')).toHaveTextContent('本机列表不可用')
         fireEvent.click(screen.getByTestId('smart-apps-load-retry'))
+        await waitFor(() => expect(model).toBeEnabled())
+        fireEvent.click(screen.getByTestId(`smart-app-actions-${installation.id}`))
+        fireEvent.pointerDown(screen.getByTestId(`smart-app-remove-local-${installation.id}`))
+        submit = screen.getByTestId('smart-app-remove-local-confirm')
       } else {
         await act(async () => finishLocal([installation]))
       }

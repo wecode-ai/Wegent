@@ -35,7 +35,6 @@ from app.models.plugin_marketplace import (
     PluginUpstream,
     is_featured_rank,
     unset_datetime,
-    unset_id,
     unset_str,
 )
 from app.models.resource_member import MemberStatus, ResourceMember
@@ -49,7 +48,6 @@ from app.schemas.installed_plugin import (
     PluginAccessUpdateRequest,
     PluginCopyResponse,
     PluginDeleteImpactResponse,
-    PluginDeviceInstallationItem,
     PluginMarketplaceItem,
     PluginMarketplaceListResponse,
     PluginReleaseItem,
@@ -68,9 +66,12 @@ from app.services.marketplace_submission_upload import (
 )
 from app.services.plugin_catalog_identity import ensure_catalog_plugin
 from app.services.plugin_device_identity import (
-    coalesce_plugin_device_rows,
-    plugin_device_id,
     plugin_device_rows,
+)
+from app.services.plugin_installation_views import (
+    device_has_materialized_release,
+    device_installation_item,
+    enrich_plugin_installations,
 )
 from app.services.plugin_kind_revision import replace_installed_kind
 from app.services.plugin_marketplace_identity import (
@@ -158,7 +159,7 @@ class PluginMarketplaceService:
             )
 
     def reconcile_stale_installed_catalog_refs(
-        self, db: Session, *, user_id: int
+        self, db: Session, *, user_id: int, plugin_id: int | None = None
     ) -> int:
         """Repair InstalledPlugin kinds whose catalog IDs drifted after a DB reimport.
 
@@ -166,7 +167,6 @@ class PluginMarketplaceService:
         current published catalog, detaches orphaned cloud refs that no longer
         exist, and deactivates duplicate installs for the same pluginKey.
         """
-        acquire_plugin_write_lock(db, user_id)
         rows = (
             db.query(Kind)
             .filter(
@@ -181,36 +181,18 @@ class PluginMarketplaceService:
         if not rows:
             return 0
 
+        rows = self._catalog_repair_candidates(db, user_id, rows, plugin_id)
+        rows = self._catalog_repair_work(db, user_id, rows)
+        acquire_plugin_write_locks(db, ((user_id, row.id) for row in rows))
+
         changed = 0
         by_key: dict[tuple[str, str], list[Kind]] = {}
         for row in rows:
-            payload = row.json if isinstance(row.json, dict) else {}
-            spec = payload.get("spec") if isinstance(payload.get("spec"), dict) else {}
-            source = spec.get("source") if isinstance(spec.get("source"), dict) else {}
-            # Kind-backed catalogs use a different ID space from Plugin/Release.
-            if (
-                source.get("type") != "marketplace"
-                or source.get("providerKey") == "wegent-marketplace"
-            ):
+            if not row.is_active:
                 continue
-            plugin_key = str(source.get("pluginKey") or "").strip()
-            if not plugin_key:
+            identity = self._catalog_repair_identity(db, user_id, row)
+            if identity is None:
                 continue
-            matched = self._matching_published_plugin(
-                db,
-                user_id=user_id,
-                plugin_key=plugin_key,
-                plugin_id=spec.get("pluginId"),
-                marketplace=str(source.get("marketplace") or ""),
-            )
-            identity = (
-                ("plugin", str(matched.id))
-                if matched
-                else (
-                    str(source.get("marketplace") or "").lower(),
-                    plugin_key.lower(),
-                )
-            )
             by_key.setdefault(identity, []).append(row)
 
         # Drop duplicates before remapping so device-install resets are not deleted
@@ -243,6 +225,97 @@ class PluginMarketplaceService:
             db.commit()
         return changed
 
+    def _catalog_repair_identity(
+        self,
+        db: Session,
+        user_id: int,
+        row: Kind,
+    ) -> tuple[str, str] | None:
+        payload = row.json if isinstance(row.json, dict) else {}
+        spec = payload.get("spec") if isinstance(payload.get("spec"), dict) else {}
+        source = spec.get("source") if isinstance(spec.get("source"), dict) else {}
+        key = str(source.get("pluginKey") or "").strip()
+        if not key:
+            return None
+        matched = self._matching_published_plugin(
+            db,
+            user_id=user_id,
+            plugin_key=key,
+            plugin_id=spec.get("pluginId"),
+            marketplace=str(source.get("marketplace") or ""),
+        )
+        return (
+            ("plugin", str(matched.id))
+            if matched
+            else (str(source.get("marketplace") or "").lower(), key.lower())
+        )
+
+    def _catalog_repair_work(
+        self,
+        db: Session,
+        user_id: int,
+        rows: list[Kind],
+    ) -> list[Kind]:
+        """Healthy catalog reads must not acquire any installation write lease."""
+        groups: dict[tuple[str, str], list[Kind]] = {}
+        for row in rows:
+            identity = self._catalog_repair_identity(db, user_id, row)
+            if identity is not None:
+                groups.setdefault(identity, []).append(row)
+        selected = []
+        for group in groups.values():
+            if len(group) > 1:
+                selected.extend(group)
+                continue
+            row = group[0]
+            source = row.json["spec"]["source"]
+            if self._reconcile_installed_kind_catalog_ref(
+                db,
+                row=row,
+                user_id=user_id,
+                plugin_key=str(source["pluginKey"]).strip(),
+                dry_run=True,
+            ):
+                selected.append(row)
+        return selected
+
+    def _catalog_repair_candidates(
+        self,
+        db: Session,
+        user_id: int,
+        rows: list[Kind],
+        plugin_id: int | None,
+    ) -> list[Kind]:
+        target = db.get(Plugin, plugin_id) if plugin_id is not None else None
+        if plugin_id is not None and target is None:
+            return []
+        keys = {target.name.lower(), (target.slug or "").lower()} if target else None
+        selected = []
+        for row in rows:
+            payload = row.json if isinstance(row.json, dict) else {}
+            spec = payload.get("spec") if isinstance(payload.get("spec"), dict) else {}
+            source = spec.get("source") if isinstance(spec.get("source"), dict) else {}
+            if (
+                source.get("type") != "marketplace"
+                or source.get("providerKey") == "wegent-marketplace"
+            ):
+                continue
+            key = str(source.get("pluginKey") or "").strip()
+            if keys is not None:
+                if key.lower() not in keys:
+                    continue
+                matched = self._matching_published_plugin(
+                    db,
+                    user_id=user_id,
+                    plugin_key=key,
+                    plugin_id=spec.get("pluginId"),
+                    marketplace=str(source.get("marketplace") or ""),
+                )
+                if matched is None or matched.id != plugin_id:
+                    continue
+            selected.append(row)
+        return selected
+
     def enrich_installed_list(
         self,
         db: Session,
@@ -250,72 +323,7 @@ class PluginMarketplaceService:
         *,
         device_id: str | None = None,
     ) -> InstalledPluginListResponse:
-        installed_by_id = {
-            int(item.metadata["labels"]["id"]): item
-            for item in response.items
-            if str((item.metadata.get("labels") or {}).get("id", "")).isdigit()
-        }
-        device_rows = (
-            db.query(PluginDeviceInstallation)
-            .filter(
-                PluginDeviceInstallation.installed_kind_id.in_(installed_by_id.keys())
-            )
-            .order_by(PluginDeviceInstallation.device_id)
-            .all()
-            if installed_by_id
-            else []
-        )
-        coalesced_rows = coalesce_plugin_device_rows(db, device_rows)
-        for (_, canonical_id), row in coalesced_rows.items():
-            item = installed_by_id.get(row.installed_kind_id)
-            if not item:
-                continue
-            item.status.devices.append(
-                PluginDeviceInstallationItem(
-                    deviceId=(
-                        device_id
-                        if device_id
-                        and plugin_device_id(db, row.user_id, device_id) == canonical_id
-                        else canonical_id
-                    ),
-                    desiredReleaseId=row.desired_release_id,
-                    actualReleaseId=unset_id(row.actual_release_id),
-                    state=row.state,
-                    errorCode=unset_str(row.error_code),
-                    errorMessage=unset_str(row.error_message),
-                    attemptCount=row.attempt_count,
-                    lastSyncAt=unset_datetime(row.last_sync_at),
-                    updatedAt=row.updated_at,
-                )
-            )
-        rows_by_install = {
-            installed_id: row
-            for (installed_id, canonical_id), row in coalesced_rows.items()
-            if device_id
-            and plugin_device_id(db, row.user_id, device_id) == canonical_id
-        }
-        for item in response.items:
-            plugin_id = item.spec.pluginId
-            if not plugin_id:
-                continue
-            installed_id = self._installed_item_id(item)
-            if device_id and installed_id:
-                device_row = rows_by_install.get(installed_id)
-                if not self._device_has_materialized_release(device_row):
-                    item.spec.installState = (
-                        "failed"
-                        if device_row and device_row.state == "failed"
-                        else "not_installed"
-                    )
-                    continue
-                if device_row.actual_release_id != item.spec.releaseId:
-                    item.spec.installState = "update_available"
-                    continue
-                item.spec.installState = "installed"
-            plugin = db.get(Plugin, plugin_id)
-            if plugin and plugin.latest_release_id != item.spec.releaseId:
-                item.spec.installState = "update_available"
-        return response
+        return enrich_plugin_installations(db, response, device_id=device_id)
 
     def list_plugins(
         self,
@@ -476,18 +484,25 @@ class PluginMarketplaceService:
         commit: bool = True,
     ) -> InstalledPlugin:
         if commit:
-            self.reconcile_stale_installed_catalog_refs(db, user_id=user_id)
-        # Catalog repair may have committed its own transaction.
-        acquire_plugin_write_lock(db, user_id)
-        plugin = self._published_plugin(db, plugin_id, user_id=user_id)
-        kind_name = self._kind_name(plugin.catalog_namespace, plugin.slug)
-        existing = self._find_installed(db, user_id=user_id, plugin_id=plugin.id)
-        if existing is None:
-            # Catalog rebuilds can leave inactive installs whose pluginId no longer
-            # resolves. Their canonical Kind name is still the catalog identity.
-            existing = self._find_installed_kind_by_name(
-                db, user_id=user_id, kind_name=kind_name
+            self.reconcile_stale_installed_catalog_refs(
+                db, user_id=user_id, plugin_id=plugin_id
             )
+        # Catalog repair may have committed its own transaction.
+        from app.services.plugin_write_identity import acquire_installation_write_lock
+
+        plugin = db.get(Plugin, plugin_id)
+        if plugin is None:
+            raise HTTPException(404, "Marketplace plugin not found")
+        kind_name = self._kind_name(plugin.catalog_namespace, plugin.slug)
+        existing = acquire_installation_write_lock(
+            db,
+            user_id,
+            creation_name=kind_name,
+            find_existing=lambda: self._find_installation_for_plugin(
+                db, user_id=user_id, plugin=plugin
+            ),
+        )
+        plugin = self._published_plugin(db, plugin_id, user_id=user_id)
         if release_id is not None:
             if not existing and release_id != plugin.latest_release_id:
                 raise HTTPException(
@@ -534,7 +549,7 @@ class PluginMarketplaceService:
         release_id: int,
         commit: bool = True,
     ) -> InstalledPlugin:
-        acquire_plugin_write_lock(db, user_id)
+        acquire_plugin_write_lock(db, user_id, installed_id=installed_id)
         installed = self._owned_install(db, user_id=user_id, installed_id=installed_id)
         spec = installed.json.get("spec", {})
         plugin_id = spec.get("pluginId")
@@ -2042,7 +2057,7 @@ class PluginMarketplaceService:
         installed_for_device = bool(
             installed
             and installed.is_active
-            and (not device_id or self._device_has_materialized_release(device_row))
+            and (not device_id or device_has_materialized_release(device_row))
         )
         source_provider = self._source_provider(plugin)
         scan_report = release.scan_report_json or {}
@@ -2104,7 +2119,7 @@ class PluginMarketplaceService:
                 )
             ),
             currentDeviceInstallation=(
-                self._device_installation_item(device_row).model_copy(
+                device_installation_item(device_row).model_copy(
                     update={"deviceId": device_id or device_row.device_id}
                 )
                 if device_row and installed and installed.is_active
@@ -2154,10 +2169,6 @@ class PluginMarketplaceService:
             self._resolved_interface_cache.popitem(last=False)
         return resolved or None
 
-    def _installed_item_id(self, item: InstalledPlugin) -> int | None:
-        value = (item.metadata.get("labels") or {}).get("id")
-        return int(value) if str(value).isdigit() else None
-
     def _device_installation(
         self,
         db: Session,
@@ -2169,26 +2180,6 @@ class PluginMarketplaceService:
             return None
         return plugin_device_rows(db, installed.user_id, device_id).get(
             installed_kind_id
-        )
-
-    def _device_has_materialized_release(
-        self, row: PluginDeviceInstallation | None
-    ) -> bool:
-        return bool(row and row.actual_release_id)
-
-    def _device_installation_item(
-        self, row: PluginDeviceInstallation
-    ) -> PluginDeviceInstallationItem:
-        return PluginDeviceInstallationItem(
-            deviceId=row.device_id,
-            desiredReleaseId=row.desired_release_id,
-            actualReleaseId=unset_id(row.actual_release_id),
-            state=row.state,
-            errorCode=unset_str(row.error_code),
-            errorMessage=unset_str(row.error_message),
-            attemptCount=row.attempt_count,
-            lastSyncAt=unset_datetime(row.last_sync_at),
-            updatedAt=row.updated_at,
         )
 
     def _installed_payload(self, plugin: Plugin, release: PluginRelease) -> dict:
@@ -2535,7 +2526,7 @@ class PluginMarketplaceService:
                 grants=grants,
             )
         ]
-        acquire_plugin_write_locks(db, (user_id for user_id, _ in revoked))
+        acquire_plugin_write_locks(db, revoked)
         (
             db.query(ResourceMember)
             .filter(
@@ -2597,7 +2588,7 @@ class PluginMarketplaceService:
                 status_code=409,
                 detail="Plugin is shared or installed by other users",
             )
-        acquire_plugin_write_locks(db, (user_id for user_id, _ in installations))
+        acquire_plugin_write_locks(db, installations)
         self._clear_plugin_grants(db, plugin_id=plugin.id)
         self._deactivate_revoked_installations(db, installations)
         plugin.status = "deleted"
@@ -2966,6 +2957,19 @@ class PluginMarketplaceService:
             plugin_id
         )
 
+    def _find_installation_for_plugin(
+        self, db: Session, *, user_id: int, plugin: Plugin
+    ) -> Kind | None:
+        existing = self._find_installed(db, user_id=user_id, plugin_id=plugin.id)
+        if existing is not None:
+            return existing
+        # Reuse inactive canonical installs after a catalog rebuild as well.
+        return self._find_installed_kind_by_name(
+            db,
+            user_id=user_id,
+            kind_name=self._kind_name(plugin.catalog_namespace, plugin.slug),
+        )
+
     def _find_installed_kind_by_name(
         self, db: Session, *, user_id: int, kind_name: str
     ) -> Kind | None:
@@ -2978,7 +2982,7 @@ class PluginMarketplaceService:
                 Kind.name == kind_name,
             )
             .order_by(Kind.is_active.desc(), Kind.id.asc())
-            .with_for_update()
+            .populate_existing()
             .first()
         )
 
@@ -3064,7 +3068,13 @@ class PluginMarketplaceService:
         return (1 if key_ok else 0, 1 if release_ok else 0, row.id)
 
     def _reconcile_installed_kind_catalog_ref(
-        self, db: Session, *, row: Kind, user_id: int, plugin_key: str
+        self,
+        db: Session,
+        *,
+        row: Kind,
+        user_id: int,
+        plugin_key: str,
+        dry_run: bool = False,
     ) -> bool:
         payload = row.json if isinstance(row.json, dict) else {}
         spec = payload.get("spec") if isinstance(payload.get("spec"), dict) else {}
@@ -3105,6 +3115,8 @@ class PluginMarketplaceService:
             ):
                 target_release = release
             if not target_release:
+                if dry_run:
+                    return True
                 self._deactivate_orphaned_catalog_install(db, row)
                 self._clear_device_installations(db, installed_kind_id=row.id)
                 return True
@@ -3129,9 +3141,13 @@ class PluginMarketplaceService:
                 )
                 if components == (spec.get("components") or {}):
                     return False
+                if dry_run:
+                    return True
                 replacement = deepcopy(payload)
                 replacement["spec"]["components"] = components
                 replace_installed_kind(db, row, replacement)
+                return True
+            if dry_run:
                 return True
             self._apply_catalog_ref_to_installed_kind(
                 db, row, plugin=matched, release=target_release
@@ -3142,6 +3158,8 @@ class PluginMarketplaceService:
             return True
         if not (needs_repair or plugin_id or release_id or source.get("catalogItemId")):
             return False
+        if dry_run:
+            return True
         # No accessible package can satisfy this cloud install. Deactivate the
         # orphan so full desired-state sync stops recreating it on every device.
         self._deactivate_orphaned_catalog_install(db, row)

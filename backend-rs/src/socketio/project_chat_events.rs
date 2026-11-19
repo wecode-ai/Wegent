@@ -27,8 +27,9 @@ use super::project_chat_mentions::{self, Mention};
 use super::project_chat_messages::{
     InsertMessage, existing_agent_response, existing_client_message, insert_message,
     load_active_agent_response, load_agent, load_message_by_id, load_messages, load_trigger,
-    load_user_message, message_view, metadata_map, project_task_exists, runtime_activity_key,
-    update_message, utc_isoformat_micros, uuid4, validate_agent,
+    load_user_message, message_view_with_actor, metadata_map, project_task_exists,
+    runtime_activity_key, shared_message_payload, update_message, utc_isoformat_micros, uuid4,
+    validate_agent,
 };
 use crate::background_jobs::project::notifications;
 use crate::board_snapshot::repository::{BoardSnapshotRepository, ProjectAccess, has_permission};
@@ -58,6 +59,7 @@ fn payload(data: &Value) -> Map<String, Value> {
         ("replyToMessageId", "reply_to_message_id"),
         ("triggerMessageId", "trigger_message_id"),
         ("afterSequence", "after_sequence"),
+        ("messageId", "message_id"),
     ];
     let mut out = Map::new();
     let Some(object) = data.as_object() else {
@@ -81,6 +83,7 @@ pub(crate) fn ack_error(code: &str, message: &str) -> Value {
 /// The source `HTTPException`/validation mapping for one scope failure.
 pub(super) enum ScopeError {
     NotFound(&'static str),
+    Unavailable(&'static str),
     Forbidden(&'static str),
     Invalid(String),
 }
@@ -89,6 +92,7 @@ impl ScopeError {
     pub(super) fn ack(&self) -> Value {
         match self {
             Self::NotFound(message) => ack_error("SCOPE_NOT_FOUND", message),
+            Self::Unavailable(message) => ack_error("SCOPE_UNAVAILABLE", message),
             Self::Forbidden(message) => ack_error("SCOPE_FORBIDDEN", message),
             Self::Invalid(message) => ack_error("INVALID_MESSAGE", message),
         }
@@ -111,7 +115,7 @@ pub(super) async fn require_scope(
         .await
         .map_err(|error| {
             tracing::error!(%error, project_id, "project chat scope read failed");
-            ScopeError::NotFound("Cloud project not found")
+            ScopeError::Unavailable("Project authorization is unavailable")
         })?
         .ok_or(ScopeError::NotFound("Cloud project not found"))?;
     if !has_permission(&access.role, "Viewer") {
@@ -158,6 +162,71 @@ pub(super) async fn require_scope(
     Ok((access, external_issue))
 }
 
+/// Explicit invitations authorize only this Issue's public discussion.
+async fn require_comment_scope(
+    state: &AppState,
+    user_id: i64,
+    project_id: &str,
+    task_id: Option<&str>,
+    developer: bool,
+) -> Result<(ProjectAccess, Option<PageIssue>), ScopeError> {
+    let failure = match require_scope(state, user_id, project_id, task_id, false).await {
+        Ok((mut access, external_issue)) => {
+            if let Some(issue_id) = task_id
+                && access.role == "Viewer"
+                && access.project.task_provider() == "local"
+                && crate::loop_tasks::issue_invitation::permits_read(
+                    &state.mysql,
+                    issue_id,
+                    user_id as i32,
+                )
+                .await
+                .map_err(|_| ScopeError::NotFound("Project task not found"))?
+            {
+                access.role = "IssueManager".into();
+                access.workspace_id = None;
+            }
+            if developer
+                && access.role != "IssueManager"
+                && !has_permission(&access.role, "Developer")
+            {
+                return Err(ScopeError::Forbidden("Insufficient permission"));
+            }
+            return Ok((access, external_issue));
+        }
+        Err(failure) => failure,
+    };
+    if !matches!(failure, ScopeError::NotFound(_)) {
+        return Err(failure);
+    }
+    let Some(task_id) = task_id else {
+        return Err(failure);
+    };
+    if !crate::loop_tasks::issue_invitation::permits_read(&state.mysql, task_id, user_id as i32)
+        .await
+        .map_err(|_| ScopeError::NotFound("Project task not found"))?
+    {
+        return Err(failure);
+    }
+    let item = crate::loop_tasks::assignment_repository::loop_item_access(&state.mysql, task_id)
+        .await
+        .map_err(|_| ScopeError::NotFound("Project task not found"))?
+        .filter(|item| item.cloud_project_id == project_id)
+        .ok_or(ScopeError::NotFound("Project task not found"))?;
+    let project: Option<crate::board_snapshot::repository::ProjectRow> = state.mysql.fetch_optional(
+        format!("SELECT {} FROM loop_items WHERE loop_items.id = ? AND loop_items.resource_type = 'project'",
+            crate::cloud_projects::LOOP_ITEMS_COLUMNS), (item.cloud_project_id.as_str(),)
+    ).await.map_err(|_| ScopeError::NotFound("Project task not found"))?;
+    Ok((
+        ProjectAccess {
+            project: project.ok_or(ScopeError::NotFound("Cloud project not found"))?,
+            role: "IssueManager".into(),
+            workspace_id: None,
+        },
+        None,
+    ))
+}
+
 /// `on_project_chat_subscribe`.
 pub(crate) async fn subscribe(
     state: &AppState,
@@ -168,7 +237,7 @@ pub(crate) async fn subscribe(
         Ok(request) => request,
         Err(message) => return Ok(Reply::payload(ack_error("INVALID_MESSAGE", &message))),
     };
-    if let Err(scope) = require_scope(
+    let _access = match require_comment_scope(
         state,
         user_id,
         &request.project_id,
@@ -177,14 +246,17 @@ pub(crate) async fn subscribe(
     )
     .await
     {
-        return Ok(Reply::payload(scope.ack()));
-    }
+        Ok(scope) => scope,
+        Err(scope) => return Ok(Reply::payload(scope.ack())),
+    };
     let messages = match load_messages(
-        state,
+        &state.mysql,
+        user_id,
         &request.project_id,
         request.task_id.as_deref(),
         request.after_sequence,
         request.limit,
+        request.message_id.as_deref(),
     )
     .await
     {
@@ -197,15 +269,21 @@ pub(crate) async fn subscribe(
         .and_then(Value::as_i64)
         .unwrap_or(request.after_sequence);
     let room = project_chat_room(&request.project_id, request.task_id.as_deref());
+    if let Err(scope) = require_comment_scope(
+        state,
+        user_id,
+        &request.project_id,
+        request.task_id.as_deref(),
+        false,
+    )
+    .await
+    {
+        return Ok(Reply::payload(scope.ack()));
+    }
     Ok(Reply::payload(json!({
         "ok": true,
-        "result": {
-            "messages": messages,
-            "currentUserId": user_id.to_string(),
-            "latestSequence": latest_sequence,
-        },
-    }))
-    .join(room))
+        "result": { "messages": messages, "currentUserId": user_id.to_string(), "latestSequence": latest_sequence },
+    })).join(room))
 }
 
 /// `ProjectChatSubscribe`.
@@ -214,6 +292,7 @@ struct SubscribeRequest {
     task_id: Option<String>,
     after_sequence: i64,
     limit: i64,
+    message_id: Option<String>,
 }
 
 impl SubscribeRequest {
@@ -222,6 +301,7 @@ impl SubscribeRequest {
             project_id: required_identifier(payload, "project_id")?,
             task_id: optional_identifier(payload, "task_id")?,
             after_sequence: optional_i64(payload, "after_sequence").unwrap_or(0).max(0),
+            message_id: optional_identifier(payload, "message_id")?,
             limit: optional_i64(payload, "limit")
                 .unwrap_or(DEFAULT_LIMIT)
                 .clamp(1, LIMIT_MAX),
@@ -238,8 +318,8 @@ pub(crate) async fn unsubscribe(data: Value) -> Result<Reply<Value>, ClientError
     ) else {
         return Ok(Reply::payload(ack_error("INVALID_MESSAGE", "project_id")));
     };
-    Ok(Reply::payload(json!({"ok": true}))
-        .leave(project_chat_room(&project_id, task_id.as_deref())))
+    let room = project_chat_room(&project_id, task_id.as_deref());
+    Ok(Reply::payload(json!({"ok": true})).leave(room))
 }
 
 /// `on_project_chat_message_send`.
@@ -254,7 +334,7 @@ pub(crate) async fn send(
         Ok(request) => request,
         Err(message) => return Ok(Reply::payload(ack_error("INVALID_MESSAGE", &message))),
     };
-    let (access, _) = match require_scope(
+    let (access, _) = match require_comment_scope(
         state,
         user_id,
         &request.project_id,
@@ -325,6 +405,17 @@ async fn send_message(
     request: &SendRequest,
     access: &ProjectAccess,
 ) -> Result<(Value, bool), Value> {
+    if request.mentions.iter().any(|mention| !mention.is_user()) {
+        require_scope(
+            state,
+            user_id,
+            &request.project_id,
+            request.task_id.as_deref(),
+            true,
+        )
+        .await
+        .map_err(|failure| failure.ack())?;
+    }
     project_chat_mentions::validate_agents(state, &request.project_id, &request.mentions).await?;
     if let Some(existing) =
         existing_client_message(state, user_id, &request.client_message_id).await
@@ -335,7 +426,10 @@ async fn send_message(
                 "client_message_id already belongs to another project",
             ));
         }
-        return Ok((message_view(&existing), false));
+        return Ok((
+            message_view_with_actor(state, user_id, &existing).await?,
+            false,
+        ));
     }
     let reply = reply::resolve(state, request).await?;
     let mut mentions = request.mentions.clone();
@@ -400,6 +494,21 @@ async fn send_message(
                 }
                 None => None,
             };
+            if access.role == "IssueManager" {
+                use crate::loop_tasks::issue_invitation::{INVITATION_SQL, Invitation};
+                let task = request.task_id.as_deref().unwrap_or_default();
+                let invited: Option<Invitation> = tx
+                    .fetch_optional(
+                        INVITATION_SQL,
+                        (user_id as i32, task, user_id as i32, user_id as i32),
+                    )
+                    .await?;
+                if invited.is_none() {
+                    return Err(brz_mysql::MysqlError::InvalidQuery {
+                        reason: "Issue invitation revoked".into(),
+                    });
+                }
+            }
             let row = tx
                 .execute(
                     super::project_chat_messages::INSERT_MESSAGE_SQL,
@@ -487,7 +596,7 @@ async fn send_message(
     for notification in pending {
         notifications::deliver(state, notification).await;
     }
-    Ok((message_view(&saved), true))
+    Ok((message_view_with_actor(state, user_id, &saved).await?, true))
 }
 
 /// `on_project_chat_agent_start`.
@@ -596,9 +705,9 @@ async fn start_agent(
             let refreshed = load_message_by_id(state, existing.id)
                 .await?
                 .ok_or_else(|| ack_error("INVALID_MESSAGE", "message refresh lost the row"))?;
-            return Ok(message_view(&refreshed));
+            return message_view_with_actor(state, user_id, &refreshed).await;
         }
-        return Ok(message_view(&existing));
+        return message_view_with_actor(state, user_id, &existing).await;
     }
     let message_id = uuid4();
     let run_id = uuid4();
@@ -657,7 +766,7 @@ async fn start_agent(
     let row = load_message_by_id(state, id)
         .await?
         .ok_or_else(|| ack_error("INVALID_MESSAGE", "message refresh lost the row"))?;
-    Ok(message_view(&row))
+    message_view_with_actor(state, user_id, &row).await
 }
 
 /// `on_project_chat_agent_failed`.
@@ -757,7 +866,7 @@ async fn fail_agent(
     let refreshed = load_message_by_id(state, row.id)
         .await?
         .ok_or_else(|| ack_error("INVALID_MESSAGE", "message refresh lost the row"))?;
-    Ok(message_view(&refreshed))
+    message_view_with_actor(state, user_id, &refreshed).await
 }
 
 /// `on_project_chat_comment_execute`'s migrated scope check.
@@ -832,9 +941,10 @@ async fn emit_created(state: &AppState, runtime: &Arc<SocketRuntime>, view: &Val
         .unwrap_or_default();
     let task_id = view.get("taskId").and_then(Value::as_str);
     let room = project_chat_room(project_id, task_id);
+    let shared = shared_message_payload(view);
     if let Err(error) = runtime
         .emitters()
-        .project_chat_message(&room, false, view)
+        .project_chat_message(&room, false, &shared)
         .await
     {
         tracing::warn!(%error, room, "project chat local delivery failed");
@@ -842,7 +952,7 @@ async fn emit_created(state: &AppState, runtime: &Arc<SocketRuntime>, view: &Val
     publish_room_event(
         state,
         PROJECT_CHAT_CREATED_EVENT,
-        view,
+        &shared,
         RUNTIME_NAMESPACE,
         &room,
     )
@@ -904,6 +1014,17 @@ pub(crate) fn optional_i64(payload: &Map<String, Value>, key: &str) -> Option<i6
     }
 }
 
+pub(crate) async fn permits_comment(
+    state: &AppState,
+    user_id: i64,
+    project_id: &str,
+    issue_id: &str,
+) -> bool {
+    require_comment_scope(state, user_id, project_id, Some(issue_id), false)
+        .await
+        .is_ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -953,7 +1074,7 @@ mod tests {
                 .and_hms_opt(13, 13, 8)
                 .unwrap(),
         };
-        let view = message_view(&row);
+        let view = super::super::project_chat_messages::message_view(&row);
         assert_eq!(view["clientMessageId"], Value::Null);
         assert_eq!(view["taskId"], Value::Null);
         assert_eq!(view["createdAt"], json!("2026-11-09T05:13:08+00:00"));

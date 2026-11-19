@@ -6,6 +6,7 @@ import {
 import assert from 'node:assert/strict'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { createTemporaryChatFilePreview } from '../modules/temporary-chat-file-preview.mjs'
 
 import { selectE2EModel } from '../modules/shared.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -453,6 +454,7 @@ export function createDesktopScenario({
   let active = false
   let followUpRequestCount = 0
   let recoveredModelHistory = null
+  const filePreview = createTemporaryChatFilePreview(workspacePath)
   let releaseSource
   let releaseFollowUp
   const sourceRelease = new Promise(resolve => {
@@ -476,6 +478,17 @@ export function createDesktopScenario({
       if (handleEmptyReplyPrediction(body, response)) return true
       const input = latestModelInputText(body)
       const responseId = `wework-temporary-chat-${Date.now()}`
+      if (filePreview.matchesRequest(body)) {
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([
+            responseCreated(responseId),
+            ...filePreview.responseEvents(body),
+            responseCompleted(responseId),
+          ])
+        )
+        return true
+      }
       const match = [
         [RECOVERY_PROMPT, RECOVERY_COMPLETION],
         [LEGACY_PROMPT, LEGACY_COMPLETION],
@@ -813,6 +826,13 @@ export function createDesktopScenario({
           )
         )
         await captureScreenshot(control, '04-temporary-chat-capability-resumed.png', SIDE_CHAT)
+        // Keep the cache recovery's exact plain-text transcript assertions unchanged.
+        await filePreview.verify(control, {
+          sourceAddress,
+          sideTaskId: sideThread.taskId,
+          sideChatSelector: SIDE_CHAT,
+          sideComposerSelector: SIDE_COMPOSER,
+        })
         await assertExpiredLegacyTemporaryChat(control, {
           fixture: legacy,
           resultDir,

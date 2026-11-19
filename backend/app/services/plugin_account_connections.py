@@ -9,7 +9,9 @@ import json
 import time
 from typing import Any
 
+from fastapi import HTTPException
 from pydantic import SecretStr
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
@@ -22,7 +24,11 @@ from app.schemas.plugin_account_auth import (
 from app.services.device.identity import record_id_from_route
 from app.services.device.runtime_route import resolve_runtime_route_identity
 from app.services.plugin_credential_cipher import PluginCredentialCipher
-from app.services.plugin_write_coordination import acquire_plugin_write_lock
+from app.services.plugin_write_coordination import (
+    acquire_plugin_write_lock,
+    configure_plugin_session,
+)
+from app.services.plugin_write_errors import PluginWriteError
 from shared.telemetry.decorators import trace_sync
 
 CONNECTION_KIND = "ConnectorConnection"
@@ -50,7 +56,7 @@ class PluginAccountConnectionService:
         self, db: Session, *, user_id: int, request: PluginCredentialWrite
     ) -> PluginAccountConnectionResponse:
         """Store a migrated credential; updates require the observed revision."""
-        self._coordinate_owner(db, user_id)
+        self._coordinate_owner(db, user_id, installed_id=request.installed_plugin_id)
         plugin, definition = self._plugin(
             db, user_id, request.installed_plugin_id, request.connector_slug
         )
@@ -142,7 +148,7 @@ class PluginAccountConnectionService:
         device_id: str,
         expected_revision: int,
     ) -> PluginAccountConnectionResponse:
-        self._coordinate_owner(db, user_id)
+        self._coordinate_owner(db, user_id, connection_id=connection_id)
         row = self._get(db, user_id, connection_id)
         spec = dict(row.json["spec"])
         self._require_connected(spec)
@@ -167,7 +173,7 @@ class PluginAccountConnectionService:
         device_id: str,
         expected_revision: int,
     ) -> PluginAccountConnectionResponse:
-        self._coordinate_owner(db, user_id)
+        self._coordinate_owner(db, user_id, connection_id=connection_id)
         row = self._get(db, user_id, connection_id)
         spec = dict(row.json["spec"])
         grants = dict(spec["deviceGrants"])
@@ -190,7 +196,7 @@ class PluginAccountConnectionService:
         expected_revision: int,
         device_id: str | None = None,
     ) -> PluginAccountConnectionResponse:
-        self._coordinate_owner(db, user_id)
+        self._coordinate_owner(db, user_id, connection_id=connection_id)
         row = self._get(db, user_id, connection_id)
         spec = dict(row.json["spec"])
         if spec["status"] == "connected" and spec["credentialType"] == "oauth2":
@@ -284,11 +290,69 @@ class PluginAccountConnectionService:
         db.refresh(row)
 
     @staticmethod
-    def _coordinate_owner(db: Session, user_id: int) -> None:
-        acquire_plugin_write_lock(db, user_id)
+    def _coordinate_owner(
+        db: Session,
+        user_id: int,
+        *,
+        installed_id: int | None = None,
+        connection_id: str | None = None,
+        migration_id: str | None = None,
+    ) -> None:
+        configure_plugin_session(db)
         owner = db.query(User).filter(User.id == user_id).populate_existing().first()
         if owner is None or not owner.is_active:
             raise PluginAccountAuthError("plugin_auth_owner_unavailable", 403)
+        if connection_id is not None or migration_id is not None:
+            kinds = (
+                (CONNECTION_KIND,)
+                if connection_id
+                else ("ConnectorMigration", "ConnectorTransfer")
+            )
+            rows = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == user_id,
+                    Kind.namespace == CONNECTION_NAMESPACE,
+                    Kind.name == (connection_id or migration_id),
+                    Kind.kind.in_(kinds),
+                )
+                .all()
+            )
+            ids = {
+                row.json.get("spec", {}).get("installedPluginId")
+                or row.json.get("spec", {}).get("installed_plugin_id")
+                for row in rows
+            }
+            if not rows:
+                if connection_id is not None:
+                    raise PluginAccountAuthError(
+                        "plugin_auth_connection_not_found", 404
+                    )
+            elif len(ids) != 1 or None in ids:
+                raise PluginAccountAuthError("plugin_auth_plugin_not_found", 404)
+            else:
+                installed_id = ids.pop()
+        if installed_id is not None:
+            try:
+                acquire_plugin_write_lock(db, user_id, installed_id=installed_id)
+            except HTTPException as exc:
+                if exc.status_code != 404:
+                    raise
+                raise PluginAccountAuthError(
+                    "plugin_auth_plugin_not_found", 404
+                ) from None
+        from app.services.plugin_policy_revision import read_policy_revision
+
+        fences = db.info.setdefault("plugin_auth_policy_fences", {})
+        if user_id not in fences:
+            try:
+                fences[user_id] = read_policy_revision(db, user_id)
+            except SQLAlchemyError:
+                db.rollback()
+                raise PluginWriteError("plugin_write_unavailable") from None
+            except PluginWriteError:
+                db.rollback()
+                raise
 
     @staticmethod
     def _query(db: Session, user_id: int, name: str | None = None):

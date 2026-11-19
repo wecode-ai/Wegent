@@ -18,27 +18,35 @@ models retains the conversation, draft and workspace panels instead of creating 
 conversation. An in-progress reply keeps its original model; model capabilities and existing
 tool permissions still apply.
 
-| Feature                    | Steps and result                                                                                  | Limitations                                                                                                      |
-| -------------------------- | ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Local Codex subscription   | Toggle and restart when prompted; expand model or account management                              | Local Codex and Wegent cloud accounts are separate                                                               |
-| Add provider model         | Add provider → Connection → name and key → Manage models → discover or add manually → save        | Models in a group share provider URL and key; never enter secrets in chat                                        |
-| Custom endpoint            | Select Custom endpoint in the provider list; enter name, protocol, Base URL and key               | Protocol must match the API; a passing test does not authorize external plugins                                  |
-| Edit provider / add model  | Provider group → Edit → Connection / Models; edit shared settings or add models                   | Shared settings affect the group; a model test checks that model only                                            |
-| Edit model capabilities    | Expand provider → Edit model; set context, maximum output and capabilities                        | Maximum output must be positive and smaller than an explicitly configured context                                |
-| Vision sidecar             | Select an explicitly image-capable model in a text model's configuration                          | Images go to that vision model; descriptions go to the main model. Cloud references are configured in Wegent Web |
-| Test connection            | Expand a model and test it, or test all models at the bottom; expand errors for details           | No save required; does not change stored settings. A blank key during editing uses the stored key                |
-| Codex Catalog              | Expand Codex models → model actions → Edit Catalog; save or restore defaults                      | Cannot add models here; an executor restart may be required                                                      |
-| Disable, cancel and delete | Use the model/provider action and review the affected scope                                       | Cancel does not save; deleting a provider removes its models, not conversations                                  |
-| Choose for a task          | Return to the composer, open the model selector and select a model and available reasoning effort | Options depend on capabilities; recover missing configuration in settings                                        |
+Opening an existing computer conversation on Mobile restores the task's saved model, provider
+and reasoning options, and follow-up messages retain those settings. If its model catalog is
+still loading or unavailable, Mobile preserves the task model identity instead of substituting
+the new-conversation default. Manual model choices on Mobile belong to the current conversation;
+other conversations and new conversations retain their own choices.
+Selecting an available execution device automatically loads its model catalog. Reasoning levels
+and defaults follow the PC capability resolver without requiring the model list to be opened first.
+
+| Feature                    | Steps and result                                                                                       | Limitations                                                                                                      |
+| -------------------------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| Local Codex subscription   | Toggle and restart when prompted; expand model or account management                                   | Local Codex and Wegent cloud accounts are separate                                                               |
+| Add provider model         | Add models → select service and enter connection → discover or add models in the same form → save once | Models in a group share provider URL and key; never enter secrets in chat                                        |
+| Custom endpoint            | Select Custom endpoint in the provider list; enter name, protocol, Base URL and key                    | Protocol must match the API; a passing test does not authorize external plugins                                  |
+| Edit provider / add model  | Provider group → Edit → change shared settings or add models in the same form → save                   | Shared settings affect the group; a model test checks that model only                                            |
+| Edit model capabilities    | Expand provider → Edit model; set context, maximum output and capabilities                             | Maximum output must be positive and smaller than an explicitly configured context                                |
+| Vision sidecar             | Select an explicitly image-capable model in a text model's configuration                               | Images go to that vision model; descriptions go to the main model. Cloud references are configured in Wegent Web |
+| Test connection            | Expand a model and test it, or test all models at the bottom; expand errors for details                | No save required; does not change stored settings. A blank key during editing uses the stored key                |
+| Codex Catalog              | Expand Codex models → model actions → Edit Catalog; save or restore defaults                           | Cannot add models here; an executor restart may be required                                                      |
+| Disable, cancel and delete | Use the model/provider action and review the affected scope                                            | Cancel does not save; deleting a provider removes its models, not conversations                                  |
+| Choose for a task          | Return to the composer, open the model selector and select a model and available reasoning effort      | Options depend on capabilities; recover missing configuration in settings                                        |
 
 Manage task models in **Settings → Models**.
 
 - **Codex subscription**: Enable the local subscription to use your local Codex account and models. Use “View models” to adjust model capabilities and “Manage account” to sign in or manage your account. Changing the subscription switch requires restarting the app.
-- **Custom models**: Select “Add provider”, choose a service such as DeepSeek, and enter a connection name and API key. Select “Manage models” to discover or manually add models, then save. Connections may be saved without models and completed later. Different connection names support multiple accounts with the same service.
+- **Custom models**: Select “Add models”, choose a service such as DeepSeek, and enter a connection name and API key. Discover or manually add models in the same form, then save once to use them without switching steps. Connections may be saved without models and completed later. Different connection names support multiple accounts with the same service.
 - **Custom endpoint**: Choose the last option in the same provider dropdown. Enter a name, API protocol, Base URL, and any required API key, then fetch or manually add models.
 - **Cloud models**: Connect to the cloud to view models provided by the server.
 
-Models are grouped by endpoint and share its URL and key. Select “Edit” and use “Connection” for shared settings; preset endpoints and protocols are available in advanced connection settings. Use “Models” to search by model ID or display name. Refreshing discovery does not overwrite saved names, capabilities or enabled state. Expand a group and select “Edit model” to change a model's context length, maximum output length, capabilities, protocol, and tools. Maximum output length is measured in tokens and must be a positive integer. If a context length is set, the output limit must be smaller. Leave it blank to use the runtime default.
+Models are grouped by endpoint and share its URL and key. Select “Edit” to change shared settings and models in the same form; preset endpoints and protocols are available in advanced connection settings. Search by model ID or display name above the model list. Refreshing discovery does not overwrite saved names, capabilities or enabled state. Expand a group and select “Edit model” to change a model's context length, maximum output length, capabilities, protocol, and tools. Maximum output length is measured in tokens and must be a positive integer. If a context length is set, the output limit must be smaller. Leave it blank to use the runtime default.
 
 Codex tasks without an explicit context length use the model Catalog's context window. The maximum context and auto-compaction threshold are separate settings: with a 500,000-token context, a 95% effective context ratio, and no explicit auto-compaction threshold, the usable window is about 475k and the default auto-compaction threshold is about 450k.
 

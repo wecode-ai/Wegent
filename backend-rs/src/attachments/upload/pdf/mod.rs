@@ -53,8 +53,13 @@ pub(crate) fn page_texts(binary_data: &[u8]) -> Result<Vec<String>, PdfError> {
 /// WinAnsi-encoded font. Shared with the document-dispatch test.
 #[cfg(test)]
 pub(crate) fn simple_pdf_bytes() -> Vec<u8> {
+    simple_pdf_bytes_with_prefix(b"")
+}
+
+#[cfg(test)]
+fn simple_pdf_bytes_with_prefix(prefix: &[u8]) -> Vec<u8> {
     let content = b"BT /F1 12 Tf 72 720 Td (A) Tj ET";
-    let mut pdf = Vec::new();
+    let mut pdf = prefix.to_vec();
     pdf.extend_from_slice(b"%PDF-1.4\n");
     let mut offsets = Vec::new();
     offsets.push(pdf.len());
@@ -175,6 +180,43 @@ mod tests {
     }
 
     #[test]
+    fn a_prefix_can_precede_header_relative_offsets() {
+        let mut prefix = vec![b'>'; 578];
+        for pdf in [simple_pdf_bytes(), xref_stream_pdf_bytes()] {
+            prefix.truncate(578);
+            prefix.extend_from_slice(&pdf);
+            assert_eq!(page_texts(&prefix).unwrap(), vec!["A".to_owned()]);
+        }
+    }
+
+    #[test]
+    fn a_prefix_can_precede_file_relative_offsets() {
+        let pdf = simple_pdf_bytes_with_prefix(&[b'>'; 578]);
+        assert_eq!(page_texts(&pdf).unwrap(), vec!["A".to_owned()]);
+    }
+
+    #[test]
+    fn header_relative_offsets_must_point_to_the_listed_object() {
+        let mut pdf = simple_pdf_bytes();
+        let wrong_object = pdf
+            .windows(7)
+            .position(|bytes| bytes == b"2 0 obj")
+            .unwrap();
+        let first_entry = pdf
+            .windows(10)
+            .position(|bytes| bytes == b"0000000009")
+            .unwrap();
+        pdf[first_entry..first_entry + 10]
+            .copy_from_slice(format!("{wrong_object:010}").as_bytes());
+
+        let prefixed = [vec![b'>'; 578], pdf].concat();
+        let Err(PdfError::Other(error)) = page_texts(&prefixed) else {
+            panic!("a mismatched xref entry should fail to parse");
+        };
+        assert!(error.contains("expected object 1, found 2"));
+    }
+
+    #[test]
     fn an_encrypted_trailer_is_reported_separately() {
         let mut pdf = simple_pdf_bytes();
         let trailer = b"/Root 1 0 R >>";
@@ -188,6 +230,8 @@ mod tests {
 
     #[test]
     fn malformed_input_is_a_parse_failure() {
-        assert!(matches!(page_texts(b"not a pdf"), Err(PdfError::Other(_))));
+        for invalid in [b"".as_slice(), b"not a pdf"] {
+            assert!(matches!(page_texts(invalid), Err(PdfError::Other(_))));
+        }
     }
 }

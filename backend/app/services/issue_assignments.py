@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from hashlib import sha256
 
 from fastapi import HTTPException, status
@@ -29,7 +29,6 @@ from app.schemas.base_role import BaseRole
 from app.services.cloud_project_visibility import project_participant_ids
 from app.services.cloud_projects.access import (
     IssueAction,
-    require_cloud_project_role,
     require_issue_action,
 )
 from app.services.loop_item_history_actor import automation_history_actor
@@ -91,8 +90,10 @@ class IssueAssignmentService:
         issue_id: str,
         user_id: int,
     ) -> list[AssignmentEvent]:
-        access = require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
         item = self._require_issue_project(db, project_id, issue_id)
+        from app.services.loop_items.access import require_item_access
+
+        access = require_item_access(db, item, user_id)
         if access.project.task_provider in {"github", "gitlab"}:
             from app.services.loop_items.external_provider import (
                 external_loop_item_provider,
@@ -184,6 +185,7 @@ class IssueAssignmentService:
             for previous in current.values():
                 if previous.workflow_step:
                     continue
+                self._cancel_dispatch(previous, "superseded")
                 db.add(
                     LoopItemComment(
                         cloud_project_id=str(project_id),
@@ -232,6 +234,35 @@ class IssueAssignmentService:
         else:
             comment.metadata_json = metadata
         db.flush()
+        if (
+            normalized_type == "human"
+            and notify
+            and not workflow_step
+            and trigger != "collaboration_round"
+        ):
+            from app.services.collaboration_human_assignments import (
+                direct_human_assignment_id,
+            )
+
+            metadata = {
+                **metadata,
+                "dispatch_receipt": {
+                    "projectId": str(project_id),
+                    "issueId": issue_id,
+                    "humanAssignmentId": direct_human_assignment_id(
+                        issue_id=issue_id, assignment_id=str(comment.id)
+                    ),
+                    "ownerUserId": int(normalized_id),
+                    "state": "queued",
+                    "reasonCode": "awaiting_device_ack",
+                    "runtimeTaskId": None,
+                    "deliveryId": None,
+                    "updatedAt": datetime.now(timezone.utc).isoformat(),
+                },
+            }
+            comment.metadata_json = metadata
+            # Index refresh reloads comments with populate_existing.
+            db.flush()
         event = AssignmentEvent(comment=comment, metadata=metadata)
         if initial_assignment:
             self._insert_active_index(db, issue_id, [event])
@@ -248,15 +279,17 @@ class IssueAssignmentService:
         assignment_id: str,
         user_id: int,
     ) -> AssignmentEvent:
-        access = require_cloud_project_role(db, project_id, user_id, BaseRole.Viewer)
+        self._lock_issue(db, issue_id)
         item = self._require_issue_project(db, project_id, issue_id)
+        from app.services.loop_items.service import loop_item_service
+
+        access = loop_item_service._require_item_access(db, item, user_id)
         require_issue_action(
             access,
             action=IssueAction.ASSIGN,
             issue_creator_user_id=item.created_by_user_id,
             user_id=user_id,
         )
-        self._lock_issue(db, issue_id)
         assignment = next(
             (
                 event
@@ -267,6 +300,7 @@ class IssueAssignmentService:
         )
         if assignment is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Assignment not found")
+        self._cancel_dispatch(assignment, "assignment_cancelled")
         metadata = {
             "event_type": ASSIGNMENT_EVENT_TYPE,
             "action": "unassign",
@@ -344,7 +378,11 @@ class IssueAssignmentService:
                     status.HTTP_422_UNPROCESSABLE_ENTITY,
                     "Human member id must be numeric",
                 ) from exc
-            if user_id not in project_participant_ids(
+            if project.task_provider == "local":
+                from app.services.loop_items.access import require_active_issue_user
+
+                require_active_issue_user(db, user_id)
+            elif user_id not in project_participant_ids(
                 db, project, required_role=BaseRole.Developer
             ):
                 raise HTTPException(
@@ -376,6 +414,22 @@ class IssueAssignmentService:
         return "agent", agent.id
 
     @staticmethod
+    def _cancel_dispatch(assignment: AssignmentEvent, reason: str) -> None:
+        receipt = assignment.metadata.get("dispatch_receipt")
+        if not isinstance(receipt, dict):
+            return
+        metadata = {
+            **assignment.metadata,
+            "dispatch_receipt": {
+                **receipt,
+                "state": "cancelled",
+                "reasonCode": reason,
+                "updatedAt": datetime.now(timezone.utc).isoformat(),
+            },
+        }
+        assignment.comment.metadata_json = metadata
+
+    @staticmethod
     def response_values(db: Session, assignment: AssignmentEvent) -> dict[str, object]:
         creator = db.get(User, assignment.assigned_by_user_id)
         return {
@@ -390,6 +444,11 @@ class IssueAssignmentService:
             "created_by_user_id": assignment.assigned_by_user_id,
             "created_by_user_name": creator.user_name if creator is not None else None,
             "automation": assignment.metadata.get("automation"),
+            **(
+                {"dispatch_receipt": assignment.metadata["dispatch_receipt"]}
+                if "dispatch_receipt" in assignment.metadata
+                else {}
+            ),
             "status": "active",
             "created_at": database_datetime_as_utc(db, assignment.created_at),
             "updated_at": database_datetime_as_utc(db, assignment.updated_at),
@@ -404,7 +463,9 @@ class IssueAssignmentService:
         project = db.get(CloudProject, item.cloud_project_id)
         if project is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, "Project not found")
-        require_cloud_project_role(db, int(project.id), user_id, BaseRole.Viewer)
+        from app.services.loop_items.service import loop_item_service
+
+        loop_item_service._require_item_access(db, item, user_id)
         return project, item
 
     def project_legacy_assignment(self, db: Session, *, item: LoopItem) -> None:

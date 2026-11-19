@@ -84,7 +84,7 @@ type MentionChat = Pick<ProjectChatClient, 'send' | 'dispose'> & {
 
 type ChatAck<T> = { ok: true; result: T } | { ok: false; error: { message: string } }
 
-function connectChat(token: string): MentionChat {
+export function connectChat(token: string): MentionChat {
   const client = createSocketClient({
     socketBaseUrl: () => process.env.E2E_API_URL || 'http://localhost:8000',
     namespace: '/wework-runtime',
@@ -159,7 +159,7 @@ export const test = base.extend<MentionOptions & { mentions: MentionFixture }>({
       localIssueIndex,
       assignedUnavailableAgent,
     },
-    use
+    provide
   ) => {
     const token = (await page.context().cookies()).find(
       cookie => cookie.name === 'auth_token'
@@ -281,7 +281,7 @@ export const test = base.extend<MentionOptions & { mentions: MentionFixture }>({
         runnerSeeded = true
       }
       const projectId = project.id
-      await use({
+      await provide({
         api,
         recipientApi,
         actor,

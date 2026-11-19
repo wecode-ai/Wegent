@@ -2,7 +2,7 @@ import { DialogForm } from '@/components/common/DialogForm'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { useState } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
-import type { HookDraft, ResolvedHookPlugin } from './hooksTypes'
+import type { HookDraft, HookEventName, ResolvedHookPlugin } from './hooksTypes'
 
 export function HookEditorDialog({
   plugin,
@@ -15,6 +15,7 @@ export function HookEditorDialog({
 }) {
   const { t } = useTranslation('hooks')
   const first = plugin?.handlers[0]
+  const [eventName, setEventName] = useState<HookEventName>(first?.eventName ?? 'PostToolUse')
   const [id, setId] = useState(plugin?.manifest.id ?? '')
   const [name, setName] = useState(plugin?.manifest.name ?? '')
   const [description, setDescription] = useState(plugin?.manifest.description ?? '')
@@ -45,32 +46,36 @@ export function HookEditorDialog({
           if (!valid || saving) return
           setSaving(true)
           try {
+            const edited = {
+              eventName,
+              matcher,
+              config: {
+                ...first?.config,
+                type: 'command' as const,
+                command,
+                ...(commandWindows ? { commandWindows } : {}),
+                timeout,
+                async: eventName !== 'PostToolUse' || asynchronous,
+                ...(statusMessage ? { statusMessage } : {}),
+              },
+            }
+            if (!commandWindows) delete edited.config.commandWindows
+            if (!statusMessage) delete edited.config.statusMessage
+            const hooks: HookDraft['hooks'] = {}
+            for (const handler of [edited, ...(plugin?.handlers.slice(1) ?? [])]) {
+              const groups = (hooks[handler.eventName] ??= [])
+              groups.push({ matcher: handler.matcher, hooks: [handler.config] })
+            }
             await onSave({
               manifest: {
+                ...plugin?.manifest,
                 schemaVersion: 1,
                 id,
                 name: name.trim(),
                 description: description.trim(),
                 version,
               },
-              hooks: {
-                PostToolUse: [
-                  {
-                    matcher,
-                    hooks: [
-                      {
-                        type: 'command',
-                        command,
-                        ...(commandWindows ? { commandWindows } : {}),
-                        ...(first?.config.commands ? { commands: first.config.commands } : {}),
-                        timeout,
-                        async: asynchronous,
-                        ...(statusMessage ? { statusMessage } : {}),
-                      },
-                    ],
-                  },
-                ],
-              },
+              hooks,
             })
             onClose()
           } finally {
@@ -79,6 +84,30 @@ export function HookEditorDialog({
         }}
       >
         <h2 className="heading-small">{plugin ? t('edit_title') : t('create_title')}</h2>
+        <label className="block text-sm">
+          <span className="mb-1 block text-text-secondary">{t('event')}</span>
+          <select
+            data-testid="hook-editor-event"
+            className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm"
+            value={eventName}
+            onChange={event => {
+              const next = event.target.value as HookEventName
+              setEventName(next)
+              setMatcher(next === 'PostToolUse' ? '^(apply_patch|Write|Edit)$' : '.*')
+            }}
+          >
+            {(['PostToolUse', 'TurnStarted', 'TurnCompleted', 'ExecutionCompleted'] as const).map(
+              name => (
+                <option key={name} value={name}>
+                  {t('event_' + name)}
+                </option>
+              )
+            )}
+          </select>
+        </label>
+        {eventName !== 'PostToolUse' && (
+          <p className="text-sm text-text-secondary">{t('lifecycle_help')}</p>
+        )}
         {[
           ['id', id, setId, plugin ? true : false],
           ['name', name, setName, false],
@@ -90,7 +119,9 @@ export function HookEditorDialog({
           ['status_message', statusMessage, setStatusMessage, false],
         ].map(([key, value, setter, disabled]) => (
           <label key={String(key)} className="block text-sm">
-            <span className="mb-1 block text-text-secondary">{t(String(key))}</span>
+            <span className="mb-1 block text-text-secondary">
+              {t(key === 'matcher' && eventName !== 'PostToolUse' ? 'status_matcher' : String(key))}
+            </span>
             <input
               data-testid={`hook-editor-${String(key)}`}
               className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm"
@@ -116,7 +147,8 @@ export function HookEditorDialog({
           <input
             data-testid="hook-editor-async"
             type="checkbox"
-            checked={asynchronous}
+            checked={eventName !== 'PostToolUse' || asynchronous}
+            disabled={eventName !== 'PostToolUse'}
             onChange={event => setAsynchronous(event.target.checked)}
           />
           {t('async')}

@@ -516,11 +516,11 @@ async def run() -> None:
         assert await handler.handle_message(
             _message("/standin", conversation_id, sender_id)
         )
-        assert "已进入 Wework 分身模式" in handler.replies[-1]
+        assert "已进入 Wework 助理模式" in handler.replies[-1]
         assert await handler.handle_message(
             _message("/new", conversation_id, sender_id)
         )
-        assert "分身详情" in handler.replies[-1]
+        assert "助理详情" in handler.replies[-1]
         assert "点击对应的 IM 渠道" in handler.replies[-1]
         assert await handler.handle_message(_message("1", conversation_id, sender_id))
         assert runtime_requests[-1]["message"] == "1"
@@ -588,7 +588,7 @@ async def run() -> None:
                 "任务标题：CI notification task\n\n"
                 "任务状态：有新的 AI 回复\n\n"
                 "最新回复：CI runtime update\n\n"
-                "在分身模式下引用本通知回复，可交给当前分身处理。发送 /standin 可进入。",
+                "在助理模式下引用本通知回复，可交给当前助理处理。发送 /standin 可进入。",
             )
         ]
         assert (

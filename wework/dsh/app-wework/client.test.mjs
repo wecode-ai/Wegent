@@ -6,6 +6,8 @@ import test from 'node:test'
 import vm from 'node:vm'
 import JSZip from 'jszip'
 
+import { waitForTerminalStatus } from '../test-support/export-status.mjs'
+
 import { apply as applyConversationExport } from '../conversation-export/index.js'
 
 async function loadClient({ setTimeoutImpl = setTimeout } = {}) {
@@ -553,78 +555,82 @@ test('does not retry a plugin backend request after its transport loses the resp
   runtime.dispose()
 })
 
-test('does not duplicate a conversation export write after its response is lost', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'wework-backend-retry-'))
-  const destination = join(root, 'conversation.zip')
-  let registration
-  const cleanups = []
-  applyConversationExport({
-    effect(factory) {
-      cleanups.push(factory())
-    },
-    weworkPluginRuntime: {
-      register(_owner, value) {
-        registration = value
+test(
+  'does not duplicate a conversation export write after its response is lost',
+  { timeout: 30_000 },
+  async t => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-backend-retry-'))
+    const destination = join(root, 'conversation.zip')
+    let registration
+    const cleanups = []
+    applyConversationExport({
+      effect(factory) {
+        cleanups.push(factory())
       },
-    },
-  })
-  const { exportTaskId } = await registration.methods.start({
-    path: destination,
-    archive: true,
-    documentName: 'conversation.md',
-    assetCount: 1,
-  })
-  const calls = new Map()
-  const client = await loadClient()
-  const runtime = client.exports.createExtensionRuntime({
-    fetch: async (_path, options) => {
-      const request = JSON.parse(options.body)
-      const count = (calls.get(request.method) ?? 0) + 1
-      calls.set(request.method, count)
-      const result = await registration.methods[request.method](request.params)
-      if (count === 1) throw new TypeError('Response lost after the handler wrote the export')
-      return {
-        ok: true,
-        status: 200,
-        async json() {
-          return { ok: true, result }
+      weworkPluginRuntime: {
+        register(_owner, value) {
+          registration = value
         },
-      }
-    },
-  })
-  const backend = runtime.service.backend.scope('conversation-export')
+      },
+    })
+    const { exportTaskId } = await registration.methods.start({
+      path: destination,
+      archive: true,
+      documentName: 'conversation.md',
+      assetCount: 1,
+    })
+    const calls = new Map()
+    const client = await loadClient()
+    const runtime = client.exports.createExtensionRuntime({
+      fetch: async (_path, options) => {
+        const request = JSON.parse(options.body)
+        const count = (calls.get(request.method) ?? 0) + 1
+        calls.set(request.method, count)
+        const result = await registration.methods[request.method](request.params)
+        if (count === 1) throw new TypeError('Response lost after the handler wrote the export')
+        return {
+          ok: true,
+          status: 200,
+          async json() {
+            return { ok: true, result }
+          },
+        }
+      },
+    })
+    const backend = runtime.service.backend.scope('conversation-export')
 
-  await assert.rejects(
-    backend.request('append', { exportTaskId, content: 'hello\\n' }),
-    /Plugin backend is unreachable/
-  )
-  await assert.rejects(
-    backend.request('appendAsset', {
-      exportTaskId,
-      archivePath: 'attachments/hello.txt',
-      contentBase64: Buffer.from('hello\\n').toString('base64'),
-    }),
-    /Plugin backend is unreachable/
-  )
-  assert.deepEqual(
-    [...calls],
-    [
-      ['append', 1],
-      ['appendAsset', 1],
-    ]
-  )
+    await assert.rejects(
+      backend.request('append', { exportTaskId, content: 'hello\\n' }),
+      /Plugin backend is unreachable/
+    )
+    await assert.rejects(
+      backend.request('appendAsset', {
+        exportTaskId,
+        archivePath: 'attachments/hello.txt',
+        contentBase64: Buffer.from('hello\\n').toString('base64'),
+      }),
+      /Plugin backend is unreachable/
+    )
+    assert.deepEqual(
+      [...calls],
+      [
+        ['append', 1],
+        ['appendAsset', 1],
+      ]
+    )
 
-  await registration.methods.finish({ exportTaskId })
-  const status = await waitForExportCompletion(registration.methods, exportTaskId)
-  const archive = await JSZip.loadAsync(await readFile(destination))
-  assert.equal(status.state, 'completed')
-  assert.equal(await archive.file('conversation.md').async('string'), 'hello\\n')
-  assert.equal(await archive.file('attachments/hello.txt').async('string'), 'hello\\n')
+    await registration.methods.finish({ exportTaskId })
+    const status = await waitForTerminalStatus(registration.methods, exportTaskId, t.signal)
+    const archive = await JSZip.loadAsync(await readFile(destination))
+    assert.equal(status.state, 'completed')
+    assert.equal(await archive.file('conversation.md').async('string'), 'hello\\n')
+    assert.equal(await archive.file('attachments/hello.txt').async('string'), 'hello\\n')
 
-  runtime.dispose()
-  for (const cleanup of cleanups) cleanup()
-  await rm(root, { recursive: true, force: true })
-})
+    runtime.dispose()
+    for (const cleanup of cleanups) cleanup()
+    await rm(root, { recursive: true, force: true })
+  }
+)
 
 test('does not send a delayed retry after the extension runtime is disposed', async () => {
   let resolveDelay
@@ -959,23 +965,10 @@ test('exposes only the save dialog capability to contribution modules', async ()
   assert.equal('host' in runtime.host, false)
 })
 
-test('provides namespaced state, validated configuration, and secure values', async () => {
+test('provides namespaced state and validated configuration', async () => {
   const client = await loadClient()
   const values = new Map()
-  const secureCalls = []
   const runtime = client.exports.createExtensionRuntime({
-    secureStorage: {
-      get: async key => {
-        secureCalls.push(['get', key])
-        return 'secret'
-      },
-      set: async (key, value) => {
-        secureCalls.push(['set', key, value])
-      },
-      delete: async key => {
-        secureCalls.push(['delete', key])
-      },
-    },
     storage: {
       getItem: key => values.get(key) ?? null,
       setItem: (key, value) => values.set(key, value),
@@ -1009,19 +1002,13 @@ test('provides namespaced state, validated configuration, and secure values', as
     () => runtime.service.configuration.update('quality', { threshold: -1 }),
     /Threshold is invalid/
   )
+})
 
-  const secrets = runtime.service.secrets.scope('quality')
-  assert.equal(await secrets.get('token'), 'secret')
-  await secrets.set('token', 'updated')
-  await secrets.delete('token')
-  assert.equal(
-    JSON.stringify(secureCalls),
-    JSON.stringify([
-      ['get', 'quality.token'],
-      ['set', 'quality.token', 'updated'],
-      ['delete', 'quality.token'],
-    ])
-  )
+test('does not expose a credential registry through either renderer SDK surface', async () => {
+  const client = await loadClient()
+  const runtime = client.exports.createExtensionRuntime()
+  assert.equal('secrets' in runtime.service, false)
+  assert.equal('secrets' in runtime.host, false)
 })
 
 test('mounts the Wework bundle with the active DSH context', async () => {
@@ -1074,12 +1061,3 @@ test('waits for the Wework application bundle when it loads after DSH plugins', 
   assert.equal(mounted, true)
   cleanup()
 })
-
-async function waitForExportCompletion(methods, exportTaskId) {
-  for (let attempt = 0; attempt < 100; attempt += 1) {
-    const status = await methods.status({ exportTaskId })
-    if (status.state === 'completed' || status.state === 'failed') return status
-    await new Promise(resolve => setTimeout(resolve, 10))
-  }
-  throw new Error('Conversation export did not finish in time')
-}

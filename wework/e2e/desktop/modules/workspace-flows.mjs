@@ -227,7 +227,7 @@ export async function selectAgentEnvironment(
 /** Native fixtures require an explicit environment; automatic routing is cloud-only. */
 export async function selectProjectRunnerModel(control, timeoutMs) {
   const prefix = 'cloud-project-chat-agent'
-  await selectAgentFormTab(control, 'cloud-project-chat-agent-editor', 'runtime', timeoutMs)
+  await setAgentRuntimeExpanded(control, 'cloud-project-chat-agent-editor', true, timeoutMs)
   const environment = `[data-testid="${prefix}-environment"]`
   const model = `[data-testid="${prefix}-model"]`
   const identity = JSON.stringify(['codex', MODEL_PROVIDER_ID, DEFAULT_MODEL_ID])
@@ -278,16 +278,22 @@ export async function selectProjectRunnerModel(control, timeoutMs) {
     0,
     'Agent creation must use one model selector without a separate policy field'
   )
-  await selectAgentFormTab(control, 'cloud-project-chat-agent-editor', 'basic', timeoutMs)
+  await setAgentRuntimeExpanded(control, 'cloud-project-chat-agent-editor', false, timeoutMs)
 }
 
-export async function selectAgentFormTab(control, dialogId, tab, timeoutMs) {
-  const selector = `[data-testid="${dialogId}-tab-${tab}"]`
-  await control.command('clickWhenEnabled', selector, { timeoutMs })
-  await control.command('waitFor', `${selector}[aria-selected="true"]`, { timeoutMs })
+export async function setAgentRuntimeExpanded(control, dialogId, expanded, timeoutMs) {
+  const selector = `[data-testid="${dialogId}-tab-runtime"]`
+  const current = await control.command('getAttribute', selector, { value: 'aria-expanded' })
+  assert.ok(
+    current === 'true' || current === 'false',
+    'Runtime settings must expose disclosure state'
+  )
+  if (current !== String(expanded))
+    await control.command('clickWhenEnabled', selector, { timeoutMs })
+  await control.command('waitFor', `${selector}[aria-expanded="${expanded}"]`, { timeoutMs })
 }
 
-/** Use a stable cloud resource identity and exercise both creation tabs. */
+/** Use a stable cloud resource identity and exercise the inline runtime disclosure. */
 export async function selectCloudAgentModel(
   control,
   request,
@@ -296,7 +302,7 @@ export async function selectCloudAgentModel(
   environmentId = null
 ) {
   const dialog = 'wework-agent-resource-creator'
-  await control.command('waitFor', `[data-testid="${dialog}-tab-basic"][aria-selected="true"]`, {
+  await control.command('waitFor', `[data-testid="${dialog}-tab-runtime"][aria-expanded="false"]`, {
     timeoutMs,
   })
   const selector = '[data-testid="wework-agent-model"]'
@@ -305,12 +311,12 @@ export async function selectCloudAgentModel(
   assert.equal(
     await control.command('getAttribute', `${modelOptions}:checked`, { value: 'value' }),
     await control.command('getAttribute', modelOptions, { value: 'value' }),
-    'The first listed cloud model must be selected on the basic tab'
+    'The first listed cloud model must be selected before opening runtime settings'
   )
   await control.command('waitFor', '[data-testid="wework-agent-resource-create"]:not(:disabled)', {
     timeoutMs,
   })
-  await selectAgentFormTab(control, dialog, 'runtime', timeoutMs)
+  await setAgentRuntimeExpanded(control, dialog, true, timeoutMs)
   await selectAgentEnvironment(
     control,
     'wework-agent-environment',
@@ -332,11 +338,11 @@ export async function selectCloudAgentModel(
     model.name,
   ])
   await selectWhenOptionAvailable(control, selector, identity, timeoutMs)
-  await selectAgentFormTab(control, dialog, 'basic', timeoutMs)
+  await setAgentRuntimeExpanded(control, dialog, false, timeoutMs)
   const summary = await control.command('getText', `[data-testid="${dialog}-runtime-summary"]`)
   assert.ok(
     summary.includes(model.displayName || model.name),
-    'The basic tab must show the selected runtime model'
+    'The collapsed runtime summary must show the selected model'
   )
 }
 
@@ -667,7 +673,9 @@ async function waitForControlSelectionOffset(control, selector, expected, messag
 async function waitForPersistedComposerInput(control, expected, message) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    const snapshot = JSON.parse(
+      await control.command('getWorkbenchDebugSnapshot', 'body', { value: 'state-only' })
+    )
     if (snapshot.workbench?.composer?.currentInputLength === expected.length) return
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
   }
@@ -697,7 +705,9 @@ async function waitForWorkbenchDebugState(
   const startedAt = Date.now()
   let lastSnapshot = null
   while (Date.now() - startedAt < timeoutMs) {
-    const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+    const snapshot = JSON.parse(
+      await control.command('getWorkbenchDebugSnapshot', 'body', { value: 'state-only' })
+    )
     lastSnapshot = snapshot
     if (predicate(snapshot)) return snapshot
     await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
@@ -1771,7 +1781,7 @@ async function verifyExistingTaskBoardAssociation(
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="work-item-change-board"]')
+  await control.command('clickWhenEnabled', '[data-testid="work-item-change-board"]')
   await control.command('waitFor', '[data-testid="work-item-context-menu"]', {
     text: targetProjectName,
     visible: true,
@@ -1815,7 +1825,7 @@ async function verifyExistingTaskBoardAssociation(
     visible: false,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="work-item-change-board"]')
+  await control.command('clickWhenEnabled', '[data-testid="work-item-change-board"]')
   await control.command('fill', pickerSearch, { value: targetProjectName })
   await control.command('waitFor', '[data-testid="work-item-context-menu"] [role="option"]', {
     text: targetProjectName,
@@ -1848,7 +1858,7 @@ async function verifyExistingTaskBoardAssociation(
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="work-item-change-board"]')
+  await control.command('clickWhenEnabled', '[data-testid="work-item-change-board"]')
   await control.command('waitFor', '[data-testid="work-item-context-menu"]', {
     text: targetProjectName,
     visible: true,
@@ -1900,7 +1910,7 @@ async function verifyExistingTaskBoardAssociation(
     visible: true,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
-  await control.command('click', '[data-testid="work-item-change-board"]')
+  await control.command('clickWhenEnabled', '[data-testid="work-item-change-board"]')
   await control.command(
     'markElementWithText',
     '[data-testid="work-item-context-menu"] [data-testid^="work-item-workspace-option-"]',
@@ -2133,9 +2143,12 @@ async function verifyWorkspaceTabIsolation(control, restartDesktopApp) {
     WORKBENCH_READY_TIMEOUT_MS
   )
   await control.command('hover', firstWorkspaceIdentity)
+  // The exact `collaboration-workspace-actions` testid only renders on the
+  // currently active workspace; an inactive workspace carries the suffixed
+  // form (see CollaborationPlatformNavigation). Match either state.
   await control.command(
     'click',
-    `${firstWorkspaceTree} [data-testid="collaboration-workspace-actions"]`
+    `${firstWorkspaceTree} [data-testid^="collaboration-workspace-actions"]`
   )
   await control.command('click', '[data-testid="collaboration-workspace-nav-settings"]')
   await control.command(

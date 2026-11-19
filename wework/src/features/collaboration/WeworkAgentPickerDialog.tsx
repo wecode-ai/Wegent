@@ -46,14 +46,14 @@ export function WeworkAgentPickerDialog({
             </h2>
             <p
               id="wework-project-agent-dialog-description"
-              className="text-sm leading-5 text-text-muted"
+              className="text-sm leading-5 text-text-secondary"
             >
               {description}
             </p>
           </div>
           <button
             aria-label={closeLabel}
-            className="flex h-11 w-11 shrink-0 md:h-8 md:w-8 items-center justify-center rounded-lg text-text-muted hover:bg-muted hover:text-text-primary disabled:pointer-events-none disabled:opacity-40"
+            className="flex h-11 w-11 shrink-0 md:h-8 md:w-8 items-center justify-center rounded-lg text-text-secondary hover:bg-muted hover:text-text-primary disabled:pointer-events-none disabled:opacity-40"
             data-testid={testIds.close}
             disabled={busy}
             onClick={onClose}

@@ -20,6 +20,7 @@ import {
   waitForTestIdByText,
 } from '../modules/workspace-flows.mjs'
 import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
+import { verifyLocalSettingsProjectVersion } from '../modules/collaboration-settings-ux.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const MODEL = 'local-model:desktop-e2e-responses'
@@ -159,7 +160,11 @@ async function configureDefaultDeviceAgent(control, captureScreenshot, timeoutMs
     'scrollIntoView',
     `[data-testid="cloud-project-chat-agent-model-${ALTERNATE_MODEL}"]`
   )
-  await control.command('click', '[data-testid="cloud-project-chat-agent-editor-tab-basic"]')
+  await control.command('click', '[data-testid="cloud-project-chat-agent-editor-tab-runtime"]')
+  await control.command('waitFor', '[data-testid="cloud-project-chat-agent-system-prompt"]', {
+    visible: true,
+    timeoutMs,
+  })
   await control.command('fill', '[data-testid="cloud-project-chat-agent-system-prompt"]', {
     value: `${REVIEWER_ROLE_MARKER}。你是当前设备上的执行成员，只完成负责人分配的复核任务并返回证据。`,
   })
@@ -294,6 +299,7 @@ async function createIssueAndAssignGroup(control, timeoutMs, title = ISSUE) {
 }
 
 async function waitForActivityText(control, text, timeoutMs) {
+  await control.command('scrollIntoView', scoped('[data-testid="cloud-task-activity-list"]'))
   await control.command('waitFor', scoped('[data-testid="cloud-task-activity-list"]'), {
     text,
     timeoutMs,
@@ -592,6 +598,7 @@ export async function createDesktopScenario({
       reviewerAgentId = group.reviewerId
       humanUserId = group.humanId
       await captureScreenshot(control, 'local-coordinate-02-default-device-in-group.png', CONTENT)
+      await verifyLocalSettingsProjectVersion(control, { scoped, projectName: PROJECT })
       await createIssueAndAssignGroup(control, uiTimeoutMs)
 
       await waitForPromise(

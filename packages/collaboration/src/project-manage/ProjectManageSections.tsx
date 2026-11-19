@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Dispatch, ReactNode, SetStateAction } from 'react'
+import { isImeComposingEvent } from '@wegent/chat-core/ime'
 import { isTagNameTooLong } from '../tagging'
 import type {
   ProjectManageExtensionContext,
@@ -49,12 +50,14 @@ export function ProjectTagsSection({
     <section className={className}>
       <div className="flex items-start justify-between gap-4">
         <div>
-          <p className="mt-1 text-sm text-text-muted">
+          <p className="mt-1 text-sm text-text-secondary">
             {host.translate('todo.project_tags_description', '用于区分任务类型并筛选看板。')}
           </p>
         </div>
         <button
           type="button"
+          data-testid="cloud-project-tag-create-toggle"
+          aria-expanded={tagComposerOpen}
           onClick={() => setTagComposerOpen(open => !open)}
           className="h-8 rounded-lg px-2.5 text-sm text-text-secondary hover:bg-muted"
         >
@@ -63,22 +66,27 @@ export function ProjectTagsSection({
       </div>
       {tagComposerOpen && (
         <div className="mt-3 flex gap-2">
-          <input
-            data-testid="cloud-project-tag-create-input"
-            autoFocus
-            value={newTag}
-            aria-invalid={tooLong}
-            onChange={event => setNewTag(event.target.value)}
-            onKeyDown={event => event.key === 'Enter' && void createTag()}
-            placeholder={host.translate('todo.tag_name_placeholder', '输入标签名称')}
-            className="h-9 min-w-0 flex-1 rounded-lg border border-border bg-background px-3 text-sm outline-none"
-          />
+          <label className="min-w-0 flex-1 space-y-1 text-sm text-text-secondary">
+            <span>{host.translate('todo.tag_name', '标签名称')}</span>
+            <input
+              data-testid="cloud-project-tag-create-input"
+              autoFocus
+              value={newTag}
+              aria-invalid={tooLong}
+              onChange={event => setNewTag(event.target.value)}
+              onKeyDown={event => {
+                if (event.key === 'Enter' && !isImeComposingEvent(event)) void createTag()
+              }}
+              placeholder={host.translate('todo.tag_name_placeholder', '输入标签名称')}
+              className="h-9 w-full rounded-lg border border-border bg-background px-3 text-sm text-text-primary outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70"
+            />
+          </label>
           <button
             type="button"
             data-testid="cloud-project-tag-create-confirm"
             disabled={!newTag.trim() || tooLong || tagBusy}
             onClick={() => void createTag()}
-            className="h-9 rounded-lg bg-text-primary px-3.5 text-sm text-background disabled:bg-text-primary disabled:text-background"
+            className="h-9 self-end rounded-lg bg-text-primary px-3.5 text-sm text-background outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70 disabled:bg-text-primary disabled:text-background disabled:opacity-40"
           >
             {host.translate('todo.create_tag', '新建标签')}
           </button>
@@ -102,16 +110,20 @@ export function ProjectTagsSection({
                 data-testid={`cloud-project-tag-rename-input-${tag}`}
                 autoFocus
                 value={renameValue}
+                aria-label={host.translate('todo.tag_name', '标签名称')}
                 aria-invalid={renameTooLong}
                 onChange={event => setRenameValue(event.target.value)}
-                onKeyDown={event => event.key === 'Enter' && void renameTag(tag)}
-                className="h-6 w-28 bg-transparent px-1 text-sm outline-none"
+                onKeyDown={event => {
+                  if (event.key === 'Enter' && !isImeComposingEvent(event)) void renameTag(tag)
+                }}
+                className="h-6 w-28 rounded bg-transparent px-1 text-sm outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70"
               />
               {host.renderTooltip({
                 label: host.translate('todo.confirm_rename', '确认重命名'),
                 children: (
                   <button
                     type="button"
+                    data-testid={`cloud-project-tag-rename-confirm-${tag}`}
                     disabled={renameTooLong || !renameValue.trim() || tagBusy}
                     onClick={() => void renameTag(tag)}
                     aria-label={host.translate('todo.confirm_rename', '确认重命名')}
@@ -125,6 +137,7 @@ export function ProjectTagsSection({
                 children: (
                   <button
                     type="button"
+                    data-testid={`cloud-project-tag-rename-cancel-${tag}`}
                     onClick={() => setRenamingTag(null)}
                     aria-label={host.translate('todo.cancel_rename', '取消重命名')}
                   >

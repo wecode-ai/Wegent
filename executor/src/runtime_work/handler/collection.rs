@@ -292,8 +292,23 @@ impl RuntimeWorkRpcHandler {
             _ => return false,
         };
         let goal_is_active = goal_status.as_deref() == Some("active");
-        self.sync_runtime_task_goal_status(local_task_id, goal_status);
+        self.observe_runtime_task_goal_status(local_task_id, goal_status);
         goal_is_active
+    }
+
+    pub(super) fn observe_runtime_task_goal_status(
+        &self,
+        local_task_id: &str,
+        goal_status: Option<String>,
+    ) {
+        // Delayed native notifications are projections, not authority to
+        // permanently cancel a wait established by a newer Goal mutation.
+        self.with_goal_status_change(local_task_id, |mutating| {
+            // A notification cannot settle the route being activated by an
+            // in-flight mutation. Its response or a later read is authoritative.
+            self.update_runtime_task_goal_status(local_task_id, goal_status, true, !mutating);
+        });
+        self.schedule_connection_goal_reconciliation(local_task_id);
     }
 
     pub(super) fn sync_runtime_task_goal_status(
@@ -301,7 +316,10 @@ impl RuntimeWorkRpcHandler {
         local_task_id: &str,
         goal_status: Option<String>,
     ) {
-        self.update_runtime_task_goal_status(local_task_id, goal_status, true);
+        self.cancel_connection_goal_waits(local_task_id, goal_status.as_deref());
+        self.with_goal_status_change(local_task_id, |_| {
+            self.update_runtime_task_goal_status(local_task_id, goal_status, true, true);
+        });
     }
 
     pub(super) fn hydrate_runtime_task_goal_status(
@@ -309,7 +327,7 @@ impl RuntimeWorkRpcHandler {
         local_task_id: &str,
         goal_status: Option<String>,
     ) {
-        self.update_runtime_task_goal_status(local_task_id, goal_status, false);
+        self.update_runtime_task_goal_status(local_task_id, goal_status, false, true);
     }
 
     fn update_runtime_task_goal_status(
@@ -317,6 +335,7 @@ impl RuntimeWorkRpcHandler {
         local_task_id: &str,
         goal_status: Option<String>,
         update_activity_time: bool,
+        settle_inactive: bool,
     ) {
         let goal_is_active = goal_status.as_deref() == Some("active");
         self.store.update_task(local_task_id, |link| {
@@ -328,7 +347,7 @@ impl RuntimeWorkRpcHandler {
                 link.updated_at = now_ms();
             }
         });
-        if !goal_is_active {
+        if !goal_is_active && settle_inactive {
             self.clear_active_goal_turn(local_task_id);
         }
     }

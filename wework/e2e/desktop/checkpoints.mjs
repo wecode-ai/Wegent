@@ -13,6 +13,20 @@ export const {
   CLOUD_ONLY_CHECKPOINTS,
 } = catalog
 
+export function desktopCheckpointArgs(
+  checkpoint,
+  scope = CLOUD_ONLY_CHECKPOINTS.has(checkpoint) ? 'cloud' : 'core'
+) {
+  if (!['cloud', 'core'].includes(scope)) {
+    throw new Error('Desktop checkpoint scope must be "cloud" or "core"')
+  }
+  const args = ['--segment', checkpoint]
+  // A scenario owns its prerequisites; cloud placement is not an execution mode.
+  return scope === 'cloud' && !SCENARIO_ONLY_CHECKPOINTS.has(checkpoint)
+    ? ['--cloud-only', ...args]
+    : args
+}
+
 export function expandDesktopCheckpoints(checkpoints) {
   const expanded = []
   const seen = new Set()

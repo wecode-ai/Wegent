@@ -8,6 +8,7 @@ import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import {
   dragCollaborationIssueToColumn,
+  enableLegacyBoardGrouping,
   openBlankProjectCreation,
   selectCollaborationProjectView,
   webApi,
@@ -584,7 +585,8 @@ test.describe('Collaboration cloud capabilities', () => {
       await expect(page.getByTestId('issue-primary-metadata')).toBeVisible()
       await expect(page.getByTestId('cloud-todo-add-collaborator')).toBeVisible()
       await page.getByTestId('cloud-todo-add-collaborator').click()
-      await page.getByTestId('cloud-todo-collaborator-select').selectOption(String(member.id))
+      await page.getByTestId('cloud-todo-collaborator-select').fill(member.user_name)
+      await page.getByTestId(`cloud-todo-collaborator-option-${member.id}`).click()
       await page.getByTestId('cloud-todo-confirm-collaborator').click()
       await expect(
         page.getByTestId('cloud-todo-collaborators').getByRole('button', {
@@ -615,6 +617,7 @@ test.describe('Collaboration cloud capabilities', () => {
     page,
   }) => {
     test.setTimeout(120_000)
+    await enableLegacyBoardGrouping(page.context())
     const suffix = Date.now()
     let projectId = ''
     let workspaceId = ''

@@ -64,6 +64,7 @@ export async function assertRetainedSourceOwnership({
   ]) {
     // Electron treats app.asar as an archive even when a test fixture uses a plain file.
     // Keep this assertion path literal so hashing reads the delivered bytes directly.
+    const noAsar = process.noAsar
     process.noAsar = true
     let copyHash
     let deliveredHash
@@ -71,7 +72,7 @@ export async function assertRetainedSourceOwnership({
       copyHash = await hashReleaseAsset(copy)
       deliveredHash = await hashReleaseAsset(delivered)
     } finally {
-      process.noAsar = false
+      process.noAsar = noAsar
     }
     assert.equal(
       copyHash,

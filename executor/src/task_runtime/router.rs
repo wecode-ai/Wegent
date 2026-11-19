@@ -71,14 +71,16 @@ impl TaskRuntime {
             .map(|projects| projects.into_iter().map(mask_project).collect())
     }
 
-    pub(crate) fn list_collaboration_projects(&self) -> Result<Vec<LoopItem>, TaskRuntimeError> {
+    pub(crate) fn list_collaboration_projects(
+        local_store: &LocalTaskStore,
+    ) -> Result<Vec<LoopItem>, TaskRuntimeError> {
         use wegent_runtime_logging::project_index_diagnostics::trace;
-
         let duplicate_keys = trace("projects_list.sync", || {
-            crate::runtime_work::sync_local_collaboration_projects(&self.local_store)
+            crate::runtime_work::sync_local_collaboration_projects(local_store)
         })?;
-        Ok(trace("projects_list.read", || self.list_projects())?
+        Ok(trace("projects_list.read", || local_store.list_projects())?
             .into_iter()
+            .map(mask_project)
             .filter(|project| {
                 // Keep previously imported aliases and their issues addressable by ID;
                 // only omit their duplicate entries from the collaboration catalog.
@@ -1410,6 +1412,10 @@ fn mask_project(mut project: LoopItem) -> LoopItem {
     }
     project
 }
+
+#[cfg(all(test, unix))]
+#[path = "mcp/context_store_regressions.rs"]
+mod context_store_regressions;
 
 #[cfg(test)]
 mod tests {

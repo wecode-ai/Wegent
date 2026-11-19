@@ -34,10 +34,27 @@ export function WorkspaceTitleTab({
       aria-selected={active}
       aria-controls={controls}
       title={title}
-      tabIndex={0}
+      tabIndex={active ? 0 : -1}
       onClick={onSelect}
       onKeyDown={event => {
         if (event.target !== event.currentTarget) return
+        if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+          const list = event.currentTarget.closest('[role="tablist"]')
+          const tabs = Array.from(list?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [])
+          const index = tabs.indexOf(event.currentTarget)
+          if (index < 0) return
+          event.preventDefault()
+          event.stopPropagation()
+          const next =
+            event.key === 'Home'
+              ? 0
+              : event.key === 'End'
+                ? tabs.length - 1
+                : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
+          tabs[next]?.click()
+          tabs[next]?.focus()
+          return
+        }
         if (event.key !== 'Enter' && event.key !== ' ') return
         event.preventDefault()
         onSelect()
@@ -70,6 +87,7 @@ export function WorkspaceTitleTab({
           <button
             type="button"
             data-testid={`${testId}-close-button`}
+            tabIndex={active ? 0 : -1}
             onClick={event => {
               event.stopPropagation()
               onClose()

@@ -581,16 +581,26 @@ def test_cp15_cp16_group_snapshots_do_not_preserve_revoked_authority(
     assert run.status == "cancelled"
 
 
-def test_cp07_viewers_cannot_be_assignees(test_client, scope):
+def test_cp07_cp14_viewer_assignment_grants_issue_management_without_execution(
+    test_client, test_db, scope
+):
     invite(test_client, scope, "Viewer")
     pid = scope["project"]["id"]
     created = test_client.post(
         f"/api/v1/cloud-projects/{pid}/loop-items",
         headers=scope["owner"],
-        json={"title": "Cannot assign to viewer"},
+        json={"title": "Viewer receives only this Issue"},
     )
     assert created.status_code == 201
     item = created.json()
+    item_path = f"/api/v1/loop-items/{item['id']}"
+    before = test_client.get(item_path, headers=scope["member"])
+    assert before.json()["permissions"] == {
+        "edit_content": False,
+        "comment": False,
+        "assign": False,
+        "execute": False,
+    }
     response = test_client.post(
         f"/api/v1/cloud-projects/{pid}/loop-items/{item['id']}/assign",
         headers=scope["owner"],
@@ -598,9 +608,34 @@ def test_cp07_viewers_cannot_be_assignees(test_client, scope):
             "version": item["version"],
             "assignee_type": "user",
             "assignee_id": str(scope["user"].id),
+            "notify_assignee": False,
         },
     )
-    assert response.status_code == 422
+    assert response.status_code == 200, response.text
+    current = test_client.get(item_path, headers=scope["member"])
+    assert current.json()["permissions"] == {
+        "edit_content": True,
+        "comment": True,
+        "assign": True,
+        "execute": False,
+    }
+    decision = collaboration_permission_service.check(
+        test_db, scope["user"].id, "execute", pid
+    )
+    assert not decision.allowed
+    assert decision.role.value == "Viewer"
+    revoked = test_client.patch(
+        item_path,
+        headers=scope["owner"],
+        json={"version": response.json()["version"], "assignee_user_id": None},
+    )
+    assert revoked.status_code == 200, revoked.text
+    denied = test_client.patch(
+        item_path,
+        headers=scope["member"],
+        json={"version": revoked.json()["version"], "title": "No invitation remains"},
+    )
+    assert denied.status_code == 403
 
 
 def test_cp05_inactive_initiator_cannot_keep_queued_execution_authority(

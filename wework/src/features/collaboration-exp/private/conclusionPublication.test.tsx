@@ -24,16 +24,25 @@ function fixture() {
   const getProject = vi.fn(async () => project())
   const getIssue = vi.fn(async () => issue())
   const create = vi.fn(async () => ({ id: 'comment-1' }))
+  const createAssistantPublication = vi.fn(async () => ({ id: 'comment-1' }))
   const onPublished = vi.fn(async () => {})
   const api = {
     projects: { get: getProject },
     issues: { get: getIssue },
-    comments: { create },
+    comments: { create, createAssistantPublication },
   } as unknown as SharedWorkspaceApi
-  return { api, getProject, getIssue, create, onPublished, accountKey: `account-${nextAccount++}` }
+  return {
+    api,
+    getProject,
+    getIssue,
+    create,
+    createAssistantPublication,
+    onPublished,
+    accountKey: `account-${nextAccount++}`,
+  }
 }
 
-function setup(f = fixture()) {
+function setup(f = fixture(), assistantSource?: { deviceId: string; taskId: string }) {
   const hook = renderHook(
     ({ scopeKey = 'scope-1', active = true } = {}) => {
       const drafts = useExperienceDraftInput({
@@ -51,6 +60,7 @@ function setup(f = fixture()) {
         scopeKey,
         active,
         expectedUserId: 7,
+        assistantSource,
         draft: {
           value: text,
           revision: drafts.revision,
@@ -67,6 +77,30 @@ function setup(f = fixture()) {
 }
 
 describe('explicit conclusion publication', () => {
+  it('preserves an assistant draft when its provenance transport is unavailable', async () => {
+    const base = fixture()
+    delete base.api.comments.createAssistantPublication
+    const view = setup(base, { deviceId: 'device', taskId: 'task' })
+    await act(async () => expect(await view.result.current.publish()).toBe(false))
+    expect(base.create).not.toHaveBeenCalled()
+    expect(view.result.current.text).toBe('  Edited conclusion only  ')
+  })
+  it('uses the verified assistant source only for an assistant-derived publication', async () => {
+    const base = fixture()
+    const view = setup(base, { deviceId: 'device-1', taskId: 'task-1' })
+    await act(async () => expect(await view.result.current.publish()).toBe(true))
+    expect(base.createAssistantPublication).toHaveBeenCalledExactlyOnceWith(
+      'EXP-1',
+      'Edited conclusion only',
+      {
+        clientMessageId: expect.any(String),
+        projectId: 'project-1',
+        assistantSource: { deviceId: 'device-1', taskId: 'task-1' },
+      }
+    )
+    expect(base.create).not.toHaveBeenCalled()
+  })
+
   it.each(['New conclusion', '  Edited conclusion only  '])(
     'preserves a remounted edited draft, including edit away and back: %s',
     async nextDraft => {
@@ -171,7 +205,7 @@ describe('explicit conclusion publication', () => {
     expect(replacement.create).toHaveBeenCalledExactlyOnceWith(
       'EXP-1',
       'A new explicitly edited conclusion',
-      { clientMessageId: expect.any(String) }
+      { clientMessageId: expect.any(String), projectId: 'project-1' }
     )
   })
 
@@ -236,6 +270,7 @@ describe('explicit conclusion publication', () => {
     expect(f.getIssue).toHaveBeenCalledWith('EXP-1')
     expect(f.create).toHaveBeenCalledExactlyOnceWith('EXP-1', 'Edited conclusion only', {
       clientMessageId: expect.any(String),
+      projectId: 'project-1',
     })
     expect(f.onPublished).toHaveBeenCalledTimes(1)
     expect(f.result.current.text).toBe('')

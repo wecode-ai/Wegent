@@ -2,11 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { Search } from 'lucide-react'
+import { Check, Search } from 'lucide-react'
 import type { ReactNode, Ref } from 'react'
 
 const focus =
-  'focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70 keyboard:focus-visible:ring-offset-2'
+  'focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)] keyboard:focus-visible:ring-offset-2'
 
 /** Shared member search fields used by project creation and project settings. */
 export function MemberSearchPicker<User extends { id: number; user_name: string }>({
@@ -26,6 +26,8 @@ export function MemberSearchPicker<User extends { id: number; user_name: string 
   error,
   children,
   searchable = true,
+  selectedUserIds,
+  userDescription,
 }: {
   query: string
   onQueryChange(query: string): void
@@ -42,12 +44,14 @@ export function MemberSearchPicker<User extends { id: number; user_name: string 
   loadingLabel?: string
   error?: string
   children?: ReactNode
+  selectedUserIds?: ReadonlySet<number>
+  userDescription?(user: User): string | undefined
   searchable?: boolean
 }) {
   return (
     <>
       {searchable && (
-        <label className="flex min-h-11 items-center gap-2 rounded-lg border border-border px-3 keyboard:focus-within:ring-2 keyboard:focus-within:ring-focus/70 md:min-h-9">
+        <label className="flex min-h-11 items-center gap-2 rounded-lg border border-border px-3 keyboard:focus-within:ring-2 keyboard:focus-within:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)] md:min-h-9">
           <Search className="h-4 w-4 shrink-0 text-text-muted" />
           <input
             ref={inputRef}
@@ -69,13 +73,27 @@ export function MemberSearchPicker<User extends { id: number; user_name: string 
             key={user.id}
             type="button"
             data-testid={resultTestId(user.id)}
+            aria-pressed={selectedUserIds ? selectedUserIds.has(user.id) : undefined}
             disabled={savingUserId !== null}
             onClick={() => onSelect(user)}
             className={`flex min-h-11 w-full items-center gap-2 rounded-lg px-2 text-left hover:bg-muted disabled:opacity-40 ${focus}`}
           >
-            <span className="min-w-0 flex-1 truncate text-sm">{user.user_name}</span>
+            <span className="min-w-0 flex-1 text-sm">
+              <span className="block truncate">{user.user_name}</span>
+              {userDescription?.(user) && (
+                <span className="block whitespace-normal break-words text-xs text-text-muted">
+                  {userDescription(user)}
+                </span>
+              )}
+            </span>
             <span className="text-xs text-text-muted">
-              {savingUserId === user.id ? addingLabel : addLabel}
+              {selectedUserIds?.has(user.id) ? (
+                <Check aria-hidden="true" className="h-4 w-4" />
+              ) : savingUserId === user.id ? (
+                addingLabel
+              ) : (
+                addLabel
+              )}
             </span>
           </button>
         ))}

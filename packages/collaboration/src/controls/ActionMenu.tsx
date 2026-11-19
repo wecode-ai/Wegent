@@ -221,6 +221,12 @@ export function ActionMenu({
 
   const handleItemSelect = async (item: ActionMenuItem) => {
     if (item.disabled || item.children?.length || !item.onSelect) return;
+    // A selected action can mount a dialog immediately. Leave a stable opener
+    // before removing the focused menu item, rather than stealing focus later.
+    const returnFocus = contextMenuPosition
+      ? contextMenuPreviousFocusRef.current
+      : triggerRef.current;
+    returnFocus?.focus();
     closeMenu();
     await item.onSelect();
   };

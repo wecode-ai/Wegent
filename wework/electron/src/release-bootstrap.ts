@@ -2,6 +2,7 @@ import { app, dialog } from 'electron'
 import { existsSync } from 'node:fs'
 import { realpath } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
+import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
 import {
   resolveWorkbenchCodexHome,
   resolveWorkbenchPaths,
@@ -12,6 +13,7 @@ import { currentCoreProfile, selectReleaseProfile } from './runtime/release-prof
 import { releaseBridgeUserData } from './runtime/release-handoff.js'
 import { recordReleaseDiagnostic } from './runtime/release-diagnostics.js'
 import { enterInstalledMacosRelease } from './runtime/macos-release-installation.js'
+import { acquireReleaseStartup } from './runtime/release-startup-owner.js'
 import {
   assertReleaseAfterStopReady,
   prepareReleaseAfterStop,
@@ -25,7 +27,7 @@ export async function routeRelease(
   forwardedArguments: () => string[],
   failStartup: (error: unknown) => void
 ): Promise<boolean> {
-  if (!app.isPackaged) return true
+  if (!isEffectivePackagedApplication(app.isPackaged, process.env)) return true
   const dataDirectory =
     process.env.WEWORK_USER_DATA_DIR?.trim() ||
     join(
@@ -37,6 +39,46 @@ export async function routeRelease(
       'user-data'
     )
   const root = join(dataDirectory, 'releases')
+  const release = await acquireReleaseStartup(
+    root,
+    join(
+      process.resourcesPath,
+      process.platform === 'win32' ? 'wework-launcher.exe' : 'wework-launcher'
+    ),
+    error => {
+      recordReleaseDiagnostic('release-startup-lock-lost', { message: error.message }, true)
+      process.env.WEWORK_STARTUP_RECOVERY = error.message
+      app.relaunch({ args: forwardedArguments() })
+      app.exit(1)
+    }
+  )
+  const failRouting = (error: unknown): void => {
+    void release().then(() => failStartup(error), failStartup)
+  }
+  let startMain: boolean
+  try {
+    startMain = await routeSelectedRelease(
+      metadata,
+      dataDirectory,
+      root,
+      forwardedArguments,
+      failRouting
+    )
+  } catch (error) {
+    await release()
+    throw error
+  }
+  if (startMain) await release()
+  return startMain
+}
+
+async function routeSelectedRelease(
+  metadata: ReleaseMetadata,
+  dataDirectory: string,
+  root: string,
+  forwardedArguments: () => string[],
+  failStartup: (error: unknown) => void
+): Promise<boolean> {
   const store = new ReleaseStore(root)
   const supervisedId = process.env.WEWORK_RELEASE_SUPERVISED
   const recoveryToken = process.env.WEWORK_RELEASE_RECOVERY

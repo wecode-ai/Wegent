@@ -58,7 +58,10 @@ export function WeworkIssueHomeComposer({
     flushSync(() => props.onDraftChange?.(draft))
   }
   const projectControl = (
-    <div data-testid="collaboration-issue-project-bar" className="flex min-w-0 items-center">
+    <div
+      data-testid="collaboration-issue-project-bar"
+      className="flex min-w-0 max-w-full items-center"
+    >
       <button
         type="button"
         data-testid="collaboration-issue-project-trigger"
@@ -67,14 +70,16 @@ export function WeworkIssueHomeComposer({
         aria-haspopup="dialog"
         aria-label={
           selectedProject
-            ? `${props.projectLabel}: ${selectedProject.name} · ${projectLocation(selectedProject)}`
-            : props.projectLabel
+            ? `${t('personalHome.collaborationProject')}: ${selectedProject.name} · ${projectLocation(selectedProject)}`
+            : t('personalHome.collaborationProject')
         }
         onClick={event => setAnchor(event.currentTarget)}
         className="inline-flex min-h-11 min-w-0 max-w-full items-center gap-2 rounded-md px-2 text-sm text-text-secondary transition-colors hover:bg-text-primary/[0.04] hover:text-text-primary keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-primary md:min-h-7"
       >
         <ProjectIcon className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
-        <span className="truncate">{selectedProject?.name}</span>
+        <span className="min-w-0 truncate">
+          {t('personalHome.collaborationProject')} · {selectedProject?.name}
+        </span>
         <ChevronDown className="h-4 w-4 shrink-0 text-text-muted" aria-hidden="true" />
       </button>
     </div>
@@ -82,13 +87,32 @@ export function WeworkIssueHomeComposer({
   return (
     <section
       data-testid="collaboration-issue-workspace"
-      className="flex min-h-0 w-full flex-col gap-3"
+      className="flex min-h-0 min-w-0 w-full max-w-full flex-col gap-3"
     >
       <div className="flex w-full min-w-0 flex-col gap-3">
         <div
           role="tablist"
           aria-label={t('issue_creation.entry_mode')}
           className="flex items-center gap-5"
+          onKeyDown={event => {
+            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+            const tabs = Array.from(
+              event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]:not(:disabled)')
+            )
+            const index = tabs.indexOf(event.target as HTMLButtonElement)
+            if (index < 0) return
+            event.preventDefault()
+            const target =
+              event.key === 'Home'
+                ? tabs[0]
+                : event.key === 'End'
+                  ? tabs.at(-1)
+                  : tabs[
+                      (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
+                    ]
+            target?.click()
+            target?.focus()
+          }}
         >
           {[false, ...(renderTaskComposer ? [true] : [])].map(mode => (
             <button
@@ -98,6 +122,7 @@ export function WeworkIssueHomeComposer({
               id={`${composerId}-${mode ? 'task' : 'record'}-tab`}
               aria-controls={`${composerId}-${mode ? 'task' : 'record'}-panel`}
               aria-selected={taskMode === mode}
+              tabIndex={taskMode === mode ? 0 : -1}
               data-testid={mode ? 'personal-home-new-issue' : 'personal-home-record-mode'}
               disabled={disabled}
               onClick={() => {
@@ -106,7 +131,7 @@ export function WeworkIssueHomeComposer({
                 if (mode) setTaskOpened(true)
                 setTaskMode(mode)
               }}
-              className={`min-h-11 border-b-2 pb-1 text-base transition-colors keyboard:focus-visible:rounded-sm keyboard:focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/30 md:min-h-8 ${taskMode === mode ? 'border-text-primary font-medium text-text-primary' : 'border-transparent text-text-secondary hover:text-text-primary'}`}
+              className={`min-h-11 border-b-2 pb-1 text-base transition-colors keyboard:focus-visible:rounded-sm keyboard:focus-visible:outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-[color-mix(in_srgb,rgb(var(--color-focus-ring))_80%,rgb(var(--color-text-primary))_20%)] md:min-h-8 ${taskMode === mode ? 'border-text-primary font-medium text-text-primary' : 'border-transparent text-text-secondary hover:text-text-primary'}`}
             >
               {t(mode ? 'issue_creation.create_task' : 'issue_creation.record_mode')}
             </button>
@@ -144,7 +169,7 @@ export function WeworkIssueHomeComposer({
             showWorkspaceMenu={false}
             showExecutionTools={false}
             toolbarLeadingContext={
-              <div className="flex flex-wrap items-center gap-1">
+              <div className="flex min-w-0 max-w-full flex-wrap items-center gap-1">
                 {projectControl}
                 {(
                   [
@@ -218,7 +243,7 @@ export function WeworkIssueHomeComposer({
       {anchor && (
         <AnchorPopover
           anchor={anchor}
-          title={props.projectLabel}
+          title={t('personalHome.collaborationProject')}
           testId="collaboration-issue-project-picker"
           onClose={closePicker}
         >
@@ -241,7 +266,7 @@ export function WeworkIssueHomeComposer({
                 <Icon aria-hidden="true" className="h-4 w-4 shrink-0 text-text-muted" />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate">{project.name}</span>
-                  <span className="block truncate text-xs text-text-muted">
+                  <span className="block truncate text-xs text-text-secondary">
                     {projectLocation(project)}
                   </span>
                 </span>

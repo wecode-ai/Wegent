@@ -16,7 +16,7 @@ export async function apply(ctx) {
     bindGitProvider(
       `@wegent/dsh-connection-git/${platform}`,
       createProvider(platform),
-      (method, input) => client.request(method, input),
+      (method, input, options) => client.request(method, input, undefined, undefined, options),
       manifest.wework.connections.providers.find(provider => provider.id === platform)?.authTarget
     )
   await ctx.weworkConnections.register(ctx, manifestUrl, {

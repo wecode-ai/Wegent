@@ -32,6 +32,8 @@ export function AgentEnvironmentFields({
       <div className="block space-y-1 text-sm">
         <span>{t('workbench.runner_environment')}</span>
         <AgentEnvironmentPicker
+          open={routing.environmentPickerOpen}
+          onOpenChange={routing.setEnvironmentPickerOpen}
           testId={`${prefix}-environment`}
           disabled={disabled}
           loading={routing.environmentLoading}
@@ -215,7 +217,27 @@ export function AgentModelFields({
         !routing.nativeLoading &&
         routing.models.length === 0 &&
         !chooseAtRuntime && (
-          <p className="text-xs text-text-muted">{t('workbench.runner_no_models')}</p>
+          <div
+            className="space-y-2 text-sm text-text-secondary"
+            role="status"
+            data-testid={`${prefix}-model-empty`}
+          >
+            <p>{t('workbench.runner_no_models')}</p>
+            {!selectionOnly && routing.executionPolicy?.mode === 'project_pool' && (
+              <>
+                <p>{t('workbench.runner_automatic_native_hint')}</p>
+                <button
+                  type="button"
+                  data-testid={`${prefix}-choose-device`}
+                  disabled={disabled || routing.environmentLoading}
+                  className="rounded-md px-2 py-1 text-text-primary underline underline-offset-4 outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/70 hover:bg-muted disabled:opacity-40"
+                  onClick={() => routing.setEnvironmentPickerOpen(true)}
+                >
+                  {t('workbench.runner_specify_device')}
+                </button>
+              </>
+            )}
+          </div>
         )}
       {sources.length > 0 && (
         <ul

@@ -11,6 +11,33 @@ pub(super) fn write(
     kind: &str,
     value: &Value,
 ) -> Result<(), TaskRuntimeError> {
+    let indexed = matches!(kind, EVENT | STATE | ACTION | "stand_in_route");
+    if indexed {
+        connection.execute_batch("SAVEPOINT stand_in_history_write")?;
+    }
+    let result = write_record(connection, kind, value).and_then(|()| {
+        if indexed {
+            super::stand_in_history_index::record(connection, kind, value)?;
+        }
+        Ok(())
+    });
+    if indexed {
+        if result.is_err() {
+            connection.execute_batch(
+                "ROLLBACK TO stand_in_history_write; RELEASE stand_in_history_write",
+            )?;
+        } else {
+            connection.execute_batch("RELEASE stand_in_history_write")?;
+        }
+    }
+    result
+}
+
+fn write_record(
+    connection: &Connection,
+    kind: &str,
+    value: &Value,
+) -> Result<(), TaskRuntimeError> {
     connection.execute(
         "INSERT INTO loop_items (id,resource_type,metadata,created_at,updated_at) VALUES (?1,?2,?3,?4,?4) ON CONFLICT(id) DO UPDATE SET metadata=excluded.metadata,updated_at=excluded.updated_at",
         params![value["id"].as_str(), kind, value.to_string(), now()],
@@ -56,7 +83,7 @@ pub(super) fn update_processing_configuration(
     state["error"] = Value::Null;
     state["nextCheckAt"] = json!((Utc::now() + chrono::Duration::minutes(5)).to_rfc3339());
     write(connection, STATE, &state)?;
-    for mut action in rows(connection, ACTION, user)?
+    for mut action in super::stand_in_processing_queries::pending_actions(connection, user)?
         .into_iter()
         .filter(|action| matches!(action["status"].as_str(), Some("pending" | "sending")))
     {
@@ -331,11 +358,13 @@ impl LocalTaskStore {
             return Ok(existing.metadata);
         }
         if kind == "continue_work"
-            && rows(&connection, ACTION, user)?.iter().any(|action| {
-                matches!(action["status"].as_str(), Some("pending" | "sending"))
-                    && action["kind"] == kind
-                    && action["arguments"]["taskId"] == arguments["taskId"]
-            })
+            && super::stand_in_processing_queries::pending_actions(&connection, user)?
+                .iter()
+                .any(|action| {
+                    matches!(action["status"].as_str(), Some("pending" | "sending"))
+                        && action["kind"] == kind
+                        && action["arguments"]["taskId"] == arguments["taskId"]
+                })
         {
             return Err(TaskRuntimeError::Invalid(
                 "A follow-up for this work is already waiting".into(),
