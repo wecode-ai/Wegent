@@ -300,6 +300,8 @@ export function createAppUpdateSource() {
 
       try {
         const update = await checkForWeworkUpdate(channel)
+        // A successful foreground check also satisfies the scheduled check for this channel.
+        if (!silent) writeLastAutoCheckAt(channel, Date.now())
         if (channel !== updateChannel) {
           return { update, error: null }
         }
