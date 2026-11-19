@@ -3,7 +3,21 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createMcpAppConversationServices } from './conversationServices'
 
-describe('MCP App Issue execution permission contract', () => {
+describe('MCP App conversation permission contract', () => {
+  it('does not discover app resources for stand-in memory review evidence tools', () => {
+    const services = createMcpAppConversationServices({
+      address: {
+        deviceId: 'device',
+        taskId: 'memory-review',
+        runtimeHandle: { origin: { type: 'stand_in_schedule', memoryReview: true } },
+      },
+      api: { requestMcpApp: vi.fn() },
+      readOnly: false,
+      sendMessage: vi.fn(),
+    })
+    expect(services).toBeUndefined()
+  })
+
   it('preserves rendering and resource access while withholding message admission in read-only views', () => {
     const requestMcpApp = vi.fn()
     const sendMessage = vi.fn()

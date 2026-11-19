@@ -1,0 +1,13 @@
+{
+  "order": 149100,
+  "scenario": "./scenarios/codex-responses-continuation.scenario.mjs",
+  "scenarioOnly": true,
+  "paths": [
+    "executor/crates/model-proxy/src/local_model_proxy",
+    "executor/src/agents/codex/native_provider.rs",
+    "wework/e2e/desktop/scenarios/codex-responses-continuation.scenario.mjs"
+  ],
+  "ci": {
+    "core": { "order": 98100, "shard": 7, "position": 13100 }
+  }
+}
