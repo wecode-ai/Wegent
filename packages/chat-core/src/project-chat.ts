@@ -207,6 +207,10 @@ export function createProjectChatClient(
       stage,
       messageId: message.messageId,
       sequenceNumber: message.sequenceNumber,
+      status: message.status,
+      updatedAt: message.updatedAt,
+      runtimeEventSequence: String(message.metadata.runtime_event_sequence ?? ''),
+      recordedRunStatus: typeof message.metadata.run_status === 'string' ? message.metadata.run_status : null,
       traceState: message.traceState ?? 'unknown',
       hasTraceRef: Boolean(message.traceRef),
       hasRuntimeAddress: Boolean(
@@ -358,7 +362,14 @@ export function createProjectChatClient(
       const handler = (message: ProjectChatMessage) => {
         if (!inScope(message)) return
         const previous = latestMessages.get(message.messageId)
-        if (previous && !acceptsProjectChatMessage(previous, message)) return
+        if (previous && !acceptsProjectChatMessage(previous, message)) {
+          logActivitySource('ignored-stale', message, {
+            previousStatus: previous.status,
+            previousUpdatedAt: previous.updatedAt,
+            previousRuntimeEventSequence: String(previous.metadata.runtime_event_sequence ?? ''),
+          })
+          return
+        }
         const revision = (revisions.get(message.messageId) ?? 0) + 1
         revisions.set(message.messageId, revision)
         resolvedSources.delete(message.messageId)
