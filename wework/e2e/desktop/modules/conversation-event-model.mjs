@@ -47,6 +47,15 @@ export function createConversationEventModel({
     const usesGoal = !['ordinary', 'workflow', 'workflow_conflict', 'preexisting_checks'].includes(
       phase
     )
+    if (phase === 'owner' && modelRequestTexts(body).includes(`${marker}_CONTINUE`)) {
+      if (!requestContainsToolOutput(body, `${marker}_complete`)) {
+        return selectedToolCall(
+          `${marker}_complete`,
+          selectTool(body, 'update_goal', { status: 'complete' })
+        )
+      }
+      return [assistantMessage(`${marker}_DONE`)]
+    }
     if (modelRequestTexts(body).includes(`${marker}_EVENT_RECEIVED`)) {
       if (phase === 'human') onEvent()
       const input = body.input.findLast(

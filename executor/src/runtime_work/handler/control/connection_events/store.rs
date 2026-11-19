@@ -6,6 +6,7 @@ use std::path::Path;
 pub(super) enum Scope<'a> {
     Row(&'a str, &'a str),
     Task(&'a str),
+    AwaitingEvent(&'a str),
     Waiting(&'a str),
     TaskProjection(&'a str),
     TaskEvents(&'a str),
@@ -154,6 +155,7 @@ fn load(connection: &Connection, scope: Scope<'_>) -> Result<Value, AppIpcError>
     let (sql, args): (&str, Vec<&dyn rusqlite::ToSql>) = match &scope {
         Scope::Row(section, id) => ("SELECT section,id,value FROM records WHERE section=?1 AND id=?2", vec![section,id]),
         Scope::Task(task) => ("SELECT section,id,value FROM records WHERE section='operations' AND task=?1", vec![task]),
+        Scope::AwaitingEvent(task) => ("SELECT section,id,value FROM records WHERE section='operations' AND task=?1 AND status IN ('preparing','armed')", vec![task]),
         Scope::TaskProjection(task) => ("SELECT section,id,metadata FROM records WHERE section='operations' AND task=?1 AND status IN ('preparing','armed','pending','resuming_goal','needs_attention','error','delivered')", vec![task]),
         Scope::Waiting(task) => ("SELECT section,id,value FROM records WHERE section='operations' AND task=?1 AND waiting=1", vec![task]),
         Scope::TaskEvents(task) => ("SELECT section,id,value FROM records WHERE section='operations' AND task=?1 UNION ALL SELECT section,id,value FROM records WHERE section='observations' AND id IN (SELECT source FROM records WHERE section='operations' AND task=?1)", vec![task]),

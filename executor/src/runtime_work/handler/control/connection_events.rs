@@ -5,6 +5,7 @@ mod admission;
 mod cloud;
 mod conditions;
 mod goal_reconciliation;
+mod guidance;
 mod observations;
 mod observers;
 mod poll_schedule;
@@ -13,6 +14,9 @@ mod resource_delivery;
 mod session;
 pub(in crate::runtime_work::handler) mod store;
 use self::store as event_store;
+
+pub(in crate::runtime_work::handler) const OWNER_INPUT: &str =
+    "resume_event_goal_after_owner_input";
 
 #[cfg(test)]
 mod delivery_tests;
@@ -47,7 +51,116 @@ fn public_subscription(record: &Value) -> Value {
         "observation_id":record["observation_id"],"refresh_pending":record["refresh_pending"]==true,"handled_events":record["handled_events"],"resource_events":record["resource_events"],"resource_states":record["resource_states"]})
 }
 
+fn event_can_continue_goal(record: &Value, goal: &Value) -> bool {
+    record["waiting_goal"] == goal_identity(goal)
+        && (goal["status"] == "blocked"
+            || (record["status"] == "pending" && goal["status"] == "active"))
+}
+
+fn handled_event_summaries(record: &Value) -> Value {
+    json!(record["events"].as_array().into_iter().flatten().map(|event| json!({
+        "topicId":event["topicId"],"version":event["version"],"external":{
+            "headSha":event["external"]["headSha"],"objectKind":event["external"]["objectKind"],
+            "eventType":event["external"]["eventType"],"conclusion":event["external"]["payload"]["conclusion"],
+            "status":event["external"]["payload"]["status"],
+        },
+    })).collect::<Vec<_>>())
+}
+
 impl RuntimeWorkRpcHandler {
+    pub(in crate::runtime_work::handler) async fn append_connection_event_context(
+        &self,
+        task: &str,
+        thread: &str,
+        request: &mut ExecutionRequest,
+    ) {
+        let change_requests = self
+            .store
+            .read_task(task, |link| {
+                link.runtime_handle["changeRequests"]
+                    .as_array()
+                    .map(|urls| {
+                        urls.iter()
+                            .filter_map(Value::as_str)
+                            .filter_map(|url| canonical_pr(url).ok())
+                            .collect::<Vec<_>>()
+                    })
+            })
+            .flatten();
+        let path = self.event_subscription_path();
+        let task = task.to_owned();
+        let thread = thread.to_owned();
+        let snapshot = tokio::task::spawn_blocking(move || {
+            event_store::read(&path, event_store::Scope::AwaitingEvent(&task), |state| {
+                let subscriptions = state["operations"]
+                    .as_object()
+                    .into_iter()
+                    .flat_map(|records| records.values())
+                    .filter(|record| {
+                        record["session"]["engine"] == "Codex" && record["session"]["id"] == thread
+                    })
+                    .map(|record| {
+                        let source = &record["source"];
+                        json!({
+                            "subscription_key": record["subscription_key"],
+                            "source": {"providerId": source["providerId"], "kind": source["kind"], "id": source["id"]},
+                            "status": record["status"],
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                Ok(json!(subscriptions).to_string())
+            })
+        })
+        .await;
+        let unavailable = "Waiting subscription state is unavailable. Query list_connection_event_subscriptions if needed.";
+        let value = match snapshot {
+            Ok(Ok(value)) => value.replace('<', "\\u003c").replace('>', "\\u003e"),
+            Ok(Err(error)) => {
+                log_executor_event(
+                    "runtime waiting subscription snapshot unavailable",
+                    &[("code", error.code)],
+                );
+                unavailable.to_owned()
+            }
+            Err(_) => {
+                log_executor_event("runtime waiting subscription worker failed", &[]);
+                unavailable.to_owned()
+            }
+        };
+        let key = if request.extra.contains_key("additionalContext")
+            || !request.extra.contains_key("additional_context")
+        {
+            "additionalContext"
+        } else {
+            "additional_context"
+        };
+        if let Some(context) = request
+            .extra
+            .entry(key)
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+        {
+            context.insert(
+                "wework.connection-events.waiting".into(),
+                json!({"kind": "untrusted", "value": value}),
+            );
+            if let Some(urls) = change_requests {
+                let value = if urls.is_empty() {
+                    "[]".to_owned()
+                } else {
+                    format!(
+                        "Change requests bound to this conversation: {}\nIf the task needs to wait for checks or merge, verify the current status and exact head SHA. Reuse a matching waiting subscription if present. Otherwise discover the exact resource and call subscribe_connection_events with wait_for_event:true. After arming, recheck once and yield the turn if still waiting. Do not sleep or poll.",
+                        json!(urls)
+                    )
+                };
+                context.insert(
+                    "wework.connection-events.change-requests".into(),
+                    json!({"kind": "application", "value": value}),
+                );
+            }
+        }
+    }
+
     pub(in crate::runtime_work::handler) fn validate_resource_event_keys(
         &self,
         task: &str,
@@ -74,6 +187,16 @@ impl RuntimeWorkRpcHandler {
         self.store
             .index_path()
             .with_file_name("conversation-event-subscriptions.sqlite")
+    }
+
+    async fn remove_queued_event_continuation(&self, record: &Value) -> Result<(), AppIpcError> {
+        if let (Some(task), Some(operation)) =
+            (record["task_id"].as_str(), record["operation_id"].as_str())
+        {
+            self.remove_queued_turn_for_command(task, Some(operation))
+                .await?;
+        }
+        Ok(())
     }
 
     fn subscription_id(&self, task: &str, key: &str) -> String {
@@ -175,12 +298,22 @@ impl RuntimeWorkRpcHandler {
         }
         let id = self.subscription_id(task, key);
         if operation == "cancel_connection_event_subscription" {
-            let mut record = records
-                .get(&id)
-                .cloned()
-                .ok_or_else(|| invalid("Subscription not found in this conversation"))?;
+            let goal_gate = self.task_send_gate(&format!("goal-status:{task}"));
+            let goal_guard = goal_gate.lock().await;
+            let mut record = event_store::read(
+                &self.event_subscription_path(),
+                event_store::Scope::Row("operations", &id),
+                |state| {
+                    state["operations"]
+                        .get(&id)
+                        .cloned()
+                        .ok_or_else(|| invalid("Subscription not found in this conversation"))
+                },
+            )?;
             record["status"] = json!("cancelled");
             self.save_event_subscription(&id, &record)?;
+            self.remove_queued_event_continuation(&record).await?;
+            drop(goal_guard);
             // Local cancellation is durable even while the cloud is unavailable.
             let _ = self
                 .finish_cloud_connection_cancellation(&id, &mut record)
@@ -492,6 +625,7 @@ impl RuntimeWorkRpcHandler {
             |state| Ok(state["operations"][id].clone()),
         )?;
         if record["status"] == "resuming_goal" {
+            drop(guard);
             return self.resume_event_goal(id, &mut record).await;
         }
         if !matches!(record["status"].as_str(), Some("armed" | "pending")) {
@@ -499,7 +633,7 @@ impl RuntimeWorkRpcHandler {
         }
         if !record["waiting_goal"].is_null() {
             let current = self.read_event_goal(&task).await?;
-            if current["status"] != "blocked" || goal_identity(&current) != record["waiting_goal"] {
+            if !event_can_continue_goal(&record, &current) {
                 record["status"] = json!("cancelled");
                 return self.save_event_subscription(id, &record);
             }
@@ -566,9 +700,7 @@ impl RuntimeWorkRpcHandler {
             if current["accepted"] != true {
                 return Err(invalid("Cannot revalidate waiting Goal"));
             }
-            if current["goal"]["status"] != "blocked"
-                || goal_identity(&current["goal"]) != waiting_goal
-            {
+            if !event_can_continue_goal(&record, &current["goal"]) {
                 record["status"] = json!("cancelled");
                 return self.save_event_subscription(id, &record);
             }
@@ -585,6 +717,16 @@ impl RuntimeWorkRpcHandler {
             &request_key
         ));
         self.save_event_subscription(id, &record)?;
+        if self
+            .steer_connection_event(id, &mut record, &link, &context)
+            .await?
+        {
+            drop(goal_guard);
+            if record["status"] == "resuming_goal" {
+                self.resume_event_goal(id, &mut record).await?;
+            }
+            return Ok(());
+        }
         let message = record["continuation"].as_str().unwrap().to_owned();
         let result = self
             .control_continue(
@@ -597,7 +739,7 @@ impl RuntimeWorkRpcHandler {
             .await?;
         record["operation_id"] = result["operation"]["operation_id"].clone();
         if result["operation"]["delivery_status"] == "accepted" {
-            record["handled_events"] = json!(record["events"].as_array().into_iter().flatten().map(|event| json!({"topicId":event["topicId"],"version":event["version"],"external":{"headSha":event["external"]["headSha"],"objectKind":event["external"]["objectKind"],"eventType":event["external"]["eventType"],"conclusion":event["external"]["payload"]["conclusion"],"status":event["external"]["payload"]["status"]}})).collect::<Vec<_>>());
+            record["handled_events"] = handled_event_summaries(&record);
         }
         record["status"] = json!(if result["operation"]["delivery_status"] == "accepted" {
             if waiting_goal.is_null() {
@@ -653,15 +795,35 @@ impl RuntimeWorkRpcHandler {
     }
 
     async fn resume_event_goal(&self, id: &str, record: &mut Value) -> Result<(), AppIpcError> {
-        // Acceptance can precede actual worker capacity. Only that worker may
-        // inject the source input and activate accounting; collection never
-        // restarts a Goal whose event turn may already have finished.
-        let current = event_store::read(
+        // Queued event turns activate their own Goals at native input admission.
+        if record["native_guidance"] != "accepted" {
+            return Ok(());
+        }
+        *record = event_store::read(
             &self.event_subscription_path(),
             event_store::Scope::Row("operations", id),
             |state| Ok(state["operations"][id].clone()),
         )?;
-        *record = current;
+        if record["status"] != "resuming_goal" {
+            return Ok(());
+        }
+        let task = record["task_id"].as_str().unwrap();
+        let current = self.read_event_goal(task).await?;
+        if current["status"] == "blocked"
+            && current["threadId"] == record["session"]["id"]
+            && goal_identity(&current) == record["waiting_goal"]
+        {
+            let result = self
+                .set_task_goal(
+                    json!({"taskId": task, "status": "active", "eventGoalExpected": current}),
+                )
+                .await?;
+            if result["accepted"] != true {
+                return Err(invalid("Cannot resume the Goal after event guidance"));
+            }
+        }
+        record["status"] = json!("delivered");
+        self.save_event_subscription(id, record)?;
         Ok(())
     }
 

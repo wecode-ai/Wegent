@@ -4,6 +4,7 @@ import { normalize } from 'node:path'
 
 import { verifyLocalExecutorUsesCloudSocketUrl } from '../modules/cloud-environment.mjs'
 import { readMcpToolOutput } from '../modules/mcp-tool-results.mjs'
+import { modelRequestTexts } from '../modules/model-tool-output.mjs'
 import { TransportFaultProxy } from '../modules/transport-fault-proxy.mjs'
 import { waitForScenarioProgress } from '../modules/scenario-progress.mjs'
 import { createWorkbenchControlCollaboration } from '../modules/workbench-control-collaboration.mjs'
@@ -607,9 +608,22 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs }) {
         } else if (serialized.includes(CREATED)) {
           events = [assistantMessage('WEWORK_CONTROL_CREATED_READY'), responseCompleted(id)]
         } else if (serialized.includes(FOLLOW_UP)) {
+          const changeRequestContext = modelRequestTexts(body, 'developer')
+            .split('<wework.connection-events.change-requests>')
+            .at(-1)
+            .split('</wework.connection-events.change-requests>')[0]
+          assert.ok(changeRequestContext.includes(JSON.stringify([PR])))
+          assert.ok(changeRequestContext.includes('subscribe_connection_events'))
+          assert.ok(changeRequestContext.includes('exact head SHA'))
           followUpRequests += 1
           events = [assistantMessage('WEWORK_CONTROL_ORIGINAL_RESUMED'), responseCompleted(id)]
         } else if (serialized.includes(SOURCE)) {
+          assert.ok(
+            !modelRequestTexts(body, 'developer').includes(
+              '<wework.connection-events.change-requests>'
+            ),
+            'An unbound PR URL in a user message must not create a binding hint'
+          )
           events = [assistantMessage('WEWORK_CONTROL_SOURCE_READY'), responseCompleted(id)]
         } else {
           throw new Error('Unexpected model request during control checkpoint')
