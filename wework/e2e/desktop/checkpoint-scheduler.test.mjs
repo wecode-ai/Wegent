@@ -4,6 +4,7 @@ import test from 'node:test'
 import {
   isResourceExclusiveCheckpoint,
   linuxCoreCheckpointResources,
+  linuxCoreParallelWorkerLimit,
   runWithCheckpointResources,
 } from './checkpoint-scheduler.mjs'
 
@@ -123,6 +124,22 @@ test('runs resource-exclusive checkpoints alone before parallel work', async () 
 
   assert.equal(started[0], 'release-package-startup')
   assert.deepEqual(startedDuringExclusive, [])
+})
+
+test('caps Linux Core renderer-intensive shards at two workers', () => {
+  const rendererIntensive = [
+    'collaboration-shared-core',
+    'question-discussion',
+    'issue-human-handoff',
+    'stand-in-memory-learning',
+    'stand-in-memory-timer',
+  ]
+
+  for (const checkpoint of rendererIntensive) {
+    assert.equal(linuxCoreParallelWorkerLimit([checkpoint, 'independent'], 4), 2)
+  }
+  assert.equal(linuxCoreParallelWorkerLimit(['independent-a', 'independent-b'], 4), 4)
+  assert.equal(linuxCoreParallelWorkerLimit(rendererIntensive, 1), 1)
 })
 
 test('keeps the real system-idle uninstall checkpoint isolated in the shared policy', async () => {

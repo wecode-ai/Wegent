@@ -1488,7 +1488,7 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
         command=managed_git_cli_command(
             "gh pr list --state all --limit 20 "
             "--json number,url,title,state,isDraft,statusCheckRollup,"
-            "mergeable,mergeStateStatus --head"
+            "mergeable,mergeStateStatus,reviewDecision,headRefOid --head"
         ),
         post_processor="json",
     ),
@@ -1505,7 +1505,7 @@ DEFAULT_LOCAL_DEVICE_COMMANDS: dict[str, LocalDeviceCommandDefinition] = {
         command=managed_git_cli_command(
             "gh api graphql "
             "-f 'query=query($url:URI!){resource(url:$url){"
-            "... on PullRequest{mergeQueueEntry{id}}}}'"
+            "... on PullRequest{mergeQueueEntry{state}}}}'"
         ),
         post_processor="json",
     ),

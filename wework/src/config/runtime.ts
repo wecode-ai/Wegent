@@ -14,10 +14,7 @@ export interface RuntimeConfig {
   loginMode: 'password' | 'oidc' | 'all'
   oidcLoginText: string
   cloudDeviceScalingWikiUrl: string
-  featureFlags?: {
-    'collab.projectSurfaces.v1'?: boolean
-    'collab.humanAssignmentReceipts.v1'?: boolean
-  }
+  featureFlags?: Record<string, boolean>
 }
 
 type RuntimeConfigOverrides = Partial<RuntimeConfig>
@@ -166,6 +163,7 @@ export function getRuntimeConfig(): RuntimeConfig {
       'collab.projectSurfaces.v1':
         overrides.featureFlags?.['collab.projectSurfaces.v1'] ??
         import.meta.env.VITE_COLLAB_PROJECT_SURFACES_V1 === 'true',
+      ...overrides.featureFlags,
     },
     desktopWindowLabel: runtimeString(overrides, 'desktopWindowLabel') || 'main',
     desktopHost: runtimeString(overrides, 'desktopHost') === 'electron' ? 'electron' : 'browser',
@@ -188,4 +186,8 @@ export function getRuntimeConfig(): RuntimeConfig {
       import.meta.env.VITE_CLOUD_DEVICE_SCALING_WIKI_URL ||
       '',
   }
+}
+
+export function isRuntimeFeatureEnabled(flag: string): boolean {
+  return getRuntimeConfig().featureFlags?.[flag] !== false
 }

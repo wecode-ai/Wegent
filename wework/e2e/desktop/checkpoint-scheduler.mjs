@@ -17,11 +17,29 @@ export const RESOURCE_EXCLUSIVE_CHECKPOINTS = new Set([
 
 export const LINUX_CORE_HISTORY_CHECKPOINT = 'running-conversation-history'
 
+// Shard 10 combines long-running collaboration, Issue, and stand-in model
+// scenarios. Four concurrent Electron/backend fixtures saturate the four-vCPU
+// CI runner and can fail otherwise unrelated local RPC or Chromium requests.
+const LINUX_CORE_RENDERER_INTENSIVE_CHECKPOINTS = new Set([
+  'collaboration-shared-core',
+  'issue-human-handoff',
+  'question-discussion',
+  'stand-in-memory-learning',
+  'stand-in-memory-timer',
+])
+
 export function isResourceExclusiveCheckpoint(checkpoint, linuxCore = false) {
   return (
     RESOURCE_EXCLUSIVE_CHECKPOINTS.has(checkpoint) ||
     (linuxCore && checkpoint === LINUX_CORE_HISTORY_CHECKPOINT)
   )
+}
+
+export function linuxCoreParallelWorkerLimit(checkpoints, requestedWorkerCount) {
+  const rendererIntensive = checkpoints.some(checkpoint =>
+    LINUX_CORE_RENDERER_INTENSIVE_CHECKPOINTS.has(checkpoint)
+  )
+  return rendererIntensive ? Math.min(requestedWorkerCount, 2) : requestedWorkerCount
 }
 
 // Database and Backend startup in these fixtures can delay the 200ms Python

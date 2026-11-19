@@ -286,7 +286,7 @@ if isolated or (root / "current").is_dir():
     os.environ["GH_CONFIG_DIR"] = str(root / "current" / "gh")
     os.environ["GLAB_CONFIG_DIR"] = str(root / "current" / "glab")
 os.execvp(sys.argv[1], sys.argv[1:])
-' gh pr list --state all --limit 20 --json number,url,title,state,isDraft,statusCheckRollup,mergeable,mergeStateStatus --head"#,
+' gh pr list --state all --limit 20 --json number,url,title,state,isDraft,statusCheckRollup,mergeable,mergeStateStatus,reviewDecision,headRefOid --head"#,
             post_processor: Some("json"),
         }),
         "git_github_pull_requests_batch" => Some(DeviceCommandSpec {
@@ -358,7 +358,7 @@ if isolated or (root / "current").is_dir():
     os.environ["GH_CONFIG_DIR"] = str(root / "current" / "gh")
     os.environ["GLAB_CONFIG_DIR"] = str(root / "current" / "glab")
 os.execvp(sys.argv[1], sys.argv[1:])
-' gh api graphql -f 'query=query($url:URI!){resource(url:$url){... on PullRequest{mergeQueueEntry{id}}}}'"#,
+' gh api graphql -f 'query=query($url:URI!){resource(url:$url){... on PullRequest{mergeQueueEntry{state}}}}'"#,
             post_processor: Some("json"),
         }),
         "git_github_pull_request_merge_queue_batch" => Some(DeviceCommandSpec {

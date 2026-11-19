@@ -292,7 +292,7 @@ describe('ChangeRequestMonitor', () => {
         changeRequest: {
           checks: 'failure',
           headSha: 'revision',
-          mergeQueue: 'checking',
+          mergeQueue: 'awaiting_checks',
           title: 'Observed PR',
         },
         observation: { transport: 'connection' },

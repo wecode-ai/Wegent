@@ -58,8 +58,14 @@ export function resolveThemeVariables(
     "--color-focus": focus,
     "--color-focus-ring": focus,
     "--color-link": focus,
+    "--color-info": resolvedMode === "dark" ? "96 165 250" : "30 64 175",
     "--color-success": resolvedMode === "dark" ? "64 201 119" : "0 162 64",
+    "--color-success-foreground":
+      resolvedMode === "dark" ? "74 222 128" : "21 128 61",
     "--color-warning": resolvedMode === "dark" ? "251 191 36" : "180 83 9",
+    "--color-warning-foreground":
+      resolvedMode === "dark" ? "251 191 36" : "146 64 14",
+    "--color-merged": resolvedMode === "dark" ? "192 132 252" : "109 40 217",
     "--color-destructive": destructive,
     "--color-error": destructive,
     "--color-text-inverted": palette.bgBase,

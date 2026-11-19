@@ -10,6 +10,32 @@ import {
 } from "./CollaborationTheme";
 import { resolveThemeVariables } from "./resolveThemeVariables";
 
+type Rgb = [number, number, number];
+
+function rgb(value: string): Rgb {
+  return value.split(/\s+/).map(Number) as Rgb;
+}
+
+function blend(foreground: Rgb, background: Rgb, alpha: number): Rgb {
+  return foreground.map(
+    (channel, index) => channel * alpha + background[index] * (1 - alpha),
+  ) as Rgb;
+}
+
+function luminance(color: Rgb): number {
+  const linear = color.map((channel) => {
+    const value = channel / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  });
+  return linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722;
+}
+
+function contrastRatio(foreground: Rgb, background: Rgb): number {
+  const lighter = Math.max(luminance(foreground), luminance(background));
+  const darker = Math.min(luminance(foreground), luminance(background));
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
 function Portal() {
   const theme = useCollaborationPortalTheme();
   return createPortal(
@@ -33,6 +59,36 @@ describe("CollaborationTheme portal variables", () => {
     await act(async () => root.unmount());
     container.remove();
   });
+
+  it.each(["light", "dark"] as const)(
+    "defines distinct PR status tones in %s mode",
+    (mode) => {
+      const variables = resolveThemeVariables(mode);
+      expect(variables["--color-info"]).toBeTruthy();
+      expect(variables["--color-success"]).toBeTruthy();
+      expect(variables["--color-warning"]).toBeTruthy();
+      expect(variables["--color-destructive"]).toBeTruthy();
+      expect(variables["--color-merged"]).toBeTruthy();
+      expect(variables["--color-merged"]).not.toBe(
+        variables["--color-success"],
+      );
+    },
+  );
+
+  it.each(["light", "dark"] as const)(
+    "keeps compact success and warning badges above WCAG AA in %s mode",
+    (mode) => {
+      const variables = resolveThemeVariables(mode);
+      const page = rgb(variables["--color-bg-base"]);
+      const muted = blend(rgb(variables["--color-muted"]), page, 0.4);
+      expect(
+        contrastRatio(rgb(variables["--color-success-foreground"]), muted),
+      ).toBeGreaterThanOrEqual(4.5);
+      expect(
+        contrastRatio(rgb(variables["--color-warning-foreground"]), muted),
+      ).toBeGreaterThanOrEqual(4.5);
+    },
+  );
 
   it.each(["light", "dark"] as const)(
     "preserves every default %s variable without overrides",

@@ -11,6 +11,7 @@ import type {
 import {
   classifyChangeRequestCommandError,
   type DeviceCommandApi,
+  normalizeChangeRequestMergeQueueState,
   outputAsArray,
   outputAsRecord,
   parseChangeRequest,
@@ -52,6 +53,11 @@ interface MergeQueueEvent {
   type: 'added' | 'removed'
   createdAt: string
   reason?: string | null
+}
+
+interface GithubDetailsResult {
+  changeRequest: ChangeRequest
+  error: string | null
 }
 
 function commandError(response: DeviceCommandResponse): string {
@@ -96,22 +102,6 @@ function groupTargets(targets: TaskChangeRequestTarget[]): RepositoryTargetGroup
   return [...groups.values()]
 }
 
-function mergeQueueState(value: string): ChangeRequestMergeQueueState {
-  switch (value.toUpperCase()) {
-    case 'QUEUED':
-    case 'LOCKED':
-      return 'queued'
-    case 'AWAITING_CHECKS':
-      return 'checking'
-    case 'MERGEABLE':
-      return 'mergeable'
-    case 'UNMERGEABLE':
-      return 'conflicting'
-    default:
-      return 'unknown'
-  }
-}
-
 function removedQueueState(reason: string): ChangeRequestMergeQueueState {
   const normalized = reason.toLowerCase()
   if (normalized.includes('timeout') || normalized.includes('timed out')) return 'timed_out'
@@ -120,7 +110,7 @@ function removedQueueState(reason: string): ChangeRequestMergeQueueState {
     normalized.includes('unmergeable') ||
     normalized.includes('merge conflict')
   ) {
-    return 'conflicting'
+    return 'unmergeable'
   }
   if (
     normalized.includes('fail') ||
@@ -184,7 +174,8 @@ function applyMergeQueueDetails(changeRequest: ChangeRequest, value: unknown): C
     const state = (entry as Record<string, unknown>).state
     return {
       ...changeRequest,
-      mergeQueue: typeof state === 'string' ? mergeQueueState(state) : 'queued',
+      mergeQueue:
+        typeof state === 'string' ? normalizeChangeRequestMergeQueueState(state) : 'queued',
       mergeQueueReason: null,
     }
   }
@@ -225,8 +216,10 @@ function applyGithubDetails(changeRequest: ChangeRequest, value: unknown): Chang
           draft: parsed.draft,
           checks: parsed.checks,
           mergeability: parsed.mergeability,
-          updatedAt: parsed.updatedAt ?? changeRequest.updatedAt,
+          mergeStateStatus: parsed.mergeStateStatus ?? changeRequest.mergeStateStatus,
+          reviewDecision: parsed.reviewDecision ?? changeRequest.reviewDecision,
           headSha: parsed.headSha ?? changeRequest.headSha,
+          updatedAt: parsed.updatedAt ?? changeRequest.updatedAt,
         }
       : changeRequest,
     details
@@ -266,8 +259,8 @@ async function loadGithubMergeQueue(
   api: DeviceCommandApi,
   group: RepositoryTargetGroup,
   pullRequests: ChangeRequest[]
-): Promise<ChangeRequest[]> {
-  if (pullRequests.length === 0) return pullRequests
+): Promise<{ pullRequests: ChangeRequest[]; error: string | null }> {
+  if (pullRequests.length === 0) return { pullRequests, error: null }
   const response = await api.executeCommand(group.deviceId, {
     command_key: 'git_github_pull_request_merge_queue_batch',
     path: group.workspacePath,
@@ -275,7 +268,9 @@ async function loadGithubMergeQueue(
     timeout_seconds: 20,
     max_output_bytes: 256 * 1024,
   })
-  if (!response.success) return pullRequests
+  if (!response.success) {
+    return { pullRequests, error: commandError(response) }
+  }
   const repository = outputAsRecord(response.stdout)?.data
   const repositoryRecord =
     repository && typeof repository === 'object' && !Array.isArray(repository)
@@ -286,12 +281,58 @@ async function loadGithubMergeQueue(
     typeof repositoryRecord !== 'object' ||
     Array.isArray(repositoryRecord)
   ) {
-    return pullRequests
+    return { pullRequests, error: 'Invalid GitHub pull request status response' }
   }
   const details = repositoryRecord as Record<string, unknown>
-  return pullRequests.map((pullRequest, index) =>
-    applyGithubDetails(pullRequest, details[`pr${index}`])
-  )
+  return {
+    pullRequests: pullRequests.map((pullRequest, index) =>
+      applyGithubDetails(pullRequest, details[`pr${index}`])
+    ),
+    error: null,
+  }
+}
+
+async function loadLinkedGithubDetails(
+  api: DeviceCommandApi,
+  target: TaskChangeRequestTarget,
+  changeRequest: ChangeRequest
+): Promise<GithubDetailsResult> {
+  const group = repositoryGroup(target)
+  if (!group) {
+    return { changeRequest, error: 'Unable to resolve the linked GitHub repository' }
+  }
+  try {
+    const response = await api.executeCommand(target.deviceId, {
+      command_key: 'git_github_pull_request_merge_queue_batch',
+      args: ['-f', `query=${githubMergeQueueQuery(group, [changeRequest])}`],
+      timeout_seconds: 20,
+      max_output_bytes: 256 * 1024,
+    })
+    if (!response.success) {
+      return { changeRequest, error: commandError(response) }
+    }
+    const repository = outputAsRecord(response.stdout)?.data
+    const repositoryRecord =
+      repository && typeof repository === 'object' && !Array.isArray(repository)
+        ? (repository as Record<string, unknown>).repository
+        : null
+    if (
+      !repositoryRecord ||
+      typeof repositoryRecord !== 'object' ||
+      Array.isArray(repositoryRecord)
+    ) {
+      return { changeRequest, error: 'Invalid GitHub pull request status response' }
+    }
+    return {
+      changeRequest: applyGithubDetails(
+        changeRequest,
+        (repositoryRecord as Record<string, unknown>).pr0
+      ),
+      error: null,
+    }
+  } catch {
+    return { changeRequest, error: 'Unable to refresh GitHub pull request details' }
+  }
 }
 
 async function loadRepository(
@@ -328,8 +369,11 @@ async function loadRepository(
   pullRequests = pullRequests.filter(
     pullRequest => Boolean(pullRequest.headBranch) && targetBranches.has(pullRequest.headBranch!)
   )
+  let detailsError: string | null = null
   if (group.provider === 'github') {
-    pullRequests = await loadGithubMergeQueue(api, group, pullRequests)
+    const details = await loadGithubMergeQueue(api, group, pullRequests)
+    pullRequests = details.pullRequests
+    detailsError = details.error
   }
   const byBranch = new Map<string, ChangeRequest[]>()
   for (const pullRequest of pullRequests) {
@@ -350,6 +394,7 @@ async function loadRepository(
         return right.number - left.number
       })[0] ?? null,
     fetchedAt,
+    ...(detailsError ? { error: detailsError, stale: true } : {}),
   }))
 }
 
@@ -451,10 +496,21 @@ async function loadLinkedChangeRequest(
         lookupState: classifyChangeRequestCommandError(response),
         error: commandError(response),
       }
-    const changeRequest = parseChangeRequest(provider, outputAsRecord(response.stdout))
-    if (!changeRequest)
-      return { ...base, lookupState: 'error', error: 'Invalid change request response' }
-    return { ...base, changeRequest, lookupState: 'found' }
+    const parsed = parseChangeRequest(provider, outputAsRecord(response.stdout))
+    if (!parsed) return { ...base, lookupState: 'error', error: 'Invalid change request response' }
+    const details =
+      provider === 'github' && parsed.state === 'open'
+        ? await loadLinkedGithubDetails(api, target, parsed)
+        : { changeRequest: parsed, error: null }
+    return details.error
+      ? {
+          ...base,
+          changeRequest: details.changeRequest,
+          lookupState: 'error',
+          error: details.error,
+          stale: true,
+        }
+      : { ...base, changeRequest: details.changeRequest, lookupState: 'found' }
   } catch (error) {
     return {
       ...base,

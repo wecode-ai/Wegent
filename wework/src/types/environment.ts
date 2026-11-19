@@ -4,12 +4,23 @@ export type ChangeRequestProvider = 'github' | 'gitlab'
 export type ChangeRequestState = 'open' | 'closed' | 'merged'
 export type ChangeRequestChecksState = 'unknown' | 'pending' | 'success' | 'failure'
 export type ChangeRequestMergeability = 'unknown' | 'mergeable' | 'conflicting'
+export type ChangeRequestMergeStateStatus =
+  | 'clean'
+  | 'blocked'
+  | 'behind'
+  | 'unstable'
+  | 'has_hooks'
+  | 'dirty'
+  | 'unknown'
+export type ChangeRequestReviewDecision = 'approved' | 'changes_requested' | 'review_required'
 export type ChangeRequestMergeQueueState =
   | 'unknown'
   | 'queued'
+  | 'awaiting_checks'
   | 'checking'
   | 'mergeable'
-  | 'conflicting'
+  | 'unmergeable'
+  | 'locked'
   | 'failed'
   | 'timed_out'
   | 'removed'
@@ -30,6 +41,8 @@ export interface ChangeRequest {
   draft: boolean
   checks: ChangeRequestChecksState
   mergeability: ChangeRequestMergeability
+  mergeStateStatus?: ChangeRequestMergeStateStatus
+  reviewDecision?: ChangeRequestReviewDecision | null
   mergeQueue: ChangeRequestMergeQueueState
   mergeQueueReason?: string | null
   headBranch?: string | null

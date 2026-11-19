@@ -15,6 +15,7 @@ import {
 import {
   isResourceExclusiveCheckpoint,
   linuxCoreCheckpointResources,
+  linuxCoreParallelWorkerLimit,
   runWithCheckpointResources,
 } from './checkpoint-scheduler.mjs'
 import { UPGRADE_DIAGNOSTIC_CHECKPOINTS, rejectFailedReleaseCheckpoint } from './upgrade-suite.mjs'
@@ -356,7 +357,12 @@ async function runParallelCheckpoints(checkpoints) {
     }
     const failures = []
     const activeCheckpoints = new Set()
-    const workerCount = Math.min(parallelCheckpointLimit(), checkpoints.length)
+    const linuxCore =
+      process.platform === 'linux' && process.env.WEWORK_E2E_PARALLEL_SCOPE === 'core'
+    const configuredWorkerCount = Math.min(parallelCheckpointLimit(), checkpoints.length)
+    const workerCount = linuxCore
+      ? linuxCoreParallelWorkerLimit(checkpoints, configuredWorkerCount)
+      : configuredWorkerCount
     const logActivity = (event, checkpoint) => {
       console.log(
         `[desktop-e2e-schedule] ${JSON.stringify({
@@ -373,8 +379,6 @@ async function runParallelCheckpoints(checkpoints) {
       `[desktop-e2e] Running ${checkpoints.length} checkpoints with ${workerCount} parallel workers`
     )
 
-    const linuxCore =
-      process.platform === 'linux' && process.env.WEWORK_E2E_PARALLEL_SCOPE === 'core'
     await runWithCheckpointResources({
       checkpoints,
       workerCount,

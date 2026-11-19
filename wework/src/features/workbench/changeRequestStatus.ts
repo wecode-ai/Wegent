@@ -9,6 +9,28 @@ export type ChangeRequestVisualStatus =
   | 'checks_passed'
   | 'checks_failed'
   | 'merge_conflict'
+  | 'blocked'
+  | 'behind'
+  | 'unstable'
+  | 'has_hooks'
+  | 'merge_queue_queued'
+  | 'merge_queue_checking'
+  | 'merge_queue_failed'
+  | 'merge_queue_timed_out'
+  | 'merge_queue_unmergeable'
+  | 'merge_queue_locked'
+  | 'merge_queue_removed'
+  | 'closed'
+  | 'merged'
+  | 'unknown'
+
+export type LegacyChangeRequestVisualStatus =
+  | 'draft'
+  | 'open'
+  | 'checks_pending'
+  | 'checks_passed'
+  | 'checks_failed'
+  | 'merge_conflict'
   | 'merge_queue_queued'
   | 'merge_queue_checking'
   | 'merge_queue_failed'
@@ -25,20 +47,65 @@ const AUTO_REPAIR_STATUS_BY_VISUAL_STATUS: Partial<
   merge_conflict: 'merge_conflict',
   merge_queue_failed: 'merge_queue_failed',
   merge_queue_timed_out: 'merge_queue_timed_out',
-  merge_queue_conflicting: 'merge_queue_conflicting',
+  merge_queue_unmergeable: 'merge_queue_conflicting',
 }
 
 export function changeRequestVisualStatus(changeRequest: ChangeRequest): ChangeRequestVisualStatus {
   if (changeRequest.state === 'merged') return 'merged'
   if (changeRequest.state === 'closed') return 'closed'
+  if (changeRequest.mergeability === 'conflicting' || changeRequest.mergeStateStatus === 'dirty') {
+    return 'merge_conflict'
+  }
+  if (changeRequest.checks === 'failure') return 'checks_failed'
   if (changeRequest.mergeQueue === 'failed') return 'merge_queue_failed'
   if (changeRequest.mergeQueue === 'timed_out') return 'merge_queue_timed_out'
-  if (changeRequest.mergeQueue === 'conflicting') return 'merge_queue_conflicting'
+  if (changeRequest.mergeQueue === 'unmergeable') return 'merge_queue_unmergeable'
+  if (
+    changeRequest.mergeStateStatus === 'blocked' ||
+    changeRequest.reviewDecision === 'changes_requested' ||
+    changeRequest.reviewDecision === 'review_required'
+  ) {
+    return 'blocked'
+  }
+  if (changeRequest.draft) return 'draft'
+  if (changeRequest.mergeQueue === 'removed') return 'merge_queue_removed'
+  if (changeRequest.checks === 'pending') return 'checks_pending'
+  if (changeRequest.mergeQueue === 'awaiting_checks' || changeRequest.mergeQueue === 'checking') {
+    return 'merge_queue_checking'
+  }
+  if (changeRequest.mergeQueue === 'queued') {
+    return 'merge_queue_queued'
+  }
+  if (changeRequest.mergeQueue === 'locked') return 'merge_queue_locked'
+  if (changeRequest.mergeStateStatus === 'behind') return 'behind'
+  if (changeRequest.mergeStateStatus === 'unstable') return 'unstable'
+  if (changeRequest.mergeStateStatus === 'has_hooks') return 'has_hooks'
+  if (
+    changeRequest.checks === 'success' &&
+    (changeRequest.mergeStateStatus === 'clean' || changeRequest.mergeability === 'mergeable')
+  ) {
+    return 'checks_passed'
+  }
+  return 'open'
+}
+
+export function legacyChangeRequestVisualStatus(
+  changeRequest: ChangeRequest
+): LegacyChangeRequestVisualStatus {
+  if (changeRequest.state === 'merged') return 'merged'
+  if (changeRequest.state === 'closed') return 'closed'
+  if (changeRequest.mergeQueue === 'failed') return 'merge_queue_failed'
+  if (changeRequest.mergeQueue === 'timed_out') return 'merge_queue_timed_out'
+  if (changeRequest.mergeQueue === 'unmergeable') return 'merge_queue_conflicting'
   if (changeRequest.mergeability === 'conflicting') return 'merge_conflict'
   if (changeRequest.checks === 'failure') return 'checks_failed'
   if (changeRequest.draft) return 'draft'
-  if (changeRequest.mergeQueue === 'checking') return 'merge_queue_checking'
-  if (changeRequest.mergeQueue === 'queued') return 'merge_queue_queued'
+  if (changeRequest.mergeQueue === 'awaiting_checks' || changeRequest.mergeQueue === 'checking') {
+    return 'merge_queue_checking'
+  }
+  if (changeRequest.mergeQueue === 'queued' || changeRequest.mergeQueue === 'locked') {
+    return 'merge_queue_queued'
+  }
   if (changeRequest.mergeQueue === 'removed') return 'merge_queue_removed'
   if (changeRequest.checks === 'pending') return 'checks_pending'
   if (changeRequest.checks === 'success') return 'checks_passed'
