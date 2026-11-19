@@ -39,6 +39,8 @@ test('prebuilt desktop wire client runs without workspace dependencies', async (
     for (const runtimePath of [
       '.github/scripts/node-async-resource-diagnostics.mjs',
       'wework/electron/src/runtime/release-preparation-progress.mjs',
+      'wework/electron/src/host/e2e-error-journal.mjs',
+      'wework/electron/src/runtime/log-redaction.mjs',
       'wework/scripts/ai-verify-devtools.mjs',
       'wework/scripts/lib/extract-runtime-archive.mjs',
       'wework/scripts/lib/windows-native-runtime.mjs',

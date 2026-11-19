@@ -25,7 +25,7 @@ const ASSISTANCE = {
   confirmBefore: ['Changing a record requires native authorization'],
 }
 
-export function createDesktopScenario(options) {
+export function createDesktopScenario(options, { versionedEventTypes = [] } = {}) {
   const {
     resultDir,
     electronUserDataDirectory,
@@ -135,8 +135,8 @@ export function createDesktopScenario(options) {
                   resourceKinds: ['record'],
                   allResourceKinds: ['record'],
                   resourceLabels: { record: 'Records' },
-                  eventTypes: ['record.received', 'message.received'],
-                  versionedEventTypes: ['record.received'],
+                  eventTypes: ['record.received', 'message.received', ...versionedEventTypes],
+                  versionedEventTypes: ['record.received', ...versionedEventTypes],
                   assistance: ASSISTANCE,
                 },
               ],

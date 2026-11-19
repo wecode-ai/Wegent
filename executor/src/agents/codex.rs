@@ -1703,6 +1703,7 @@ struct CodexNotificationHub {
     threads: Arc<StdMutex<HashMap<String, broadcast::Sender<CodexNotification>>>>,
     native_activity: Arc<StdMutex<CodexNativeActivity>>,
     mcp_recovery: Arc<mcp_recovery::McpRecovery>,
+    pending_mcp_elicitations: Arc<StdMutex<HashMap<String, oneshot::Sender<()>>>>,
     thread_activity_changed: Arc<tokio::sync::Notify>,
 }
 
@@ -1728,6 +1729,7 @@ impl CodexNotificationHub {
             threads: Arc::new(StdMutex::new(HashMap::new())),
             native_activity: Arc::new(StdMutex::new(CodexNativeActivity::default())),
             mcp_recovery: Arc::new(mcp_recovery::McpRecovery::default()),
+            pending_mcp_elicitations: Arc::default(),
             thread_activity_changed,
         }
     }
@@ -1766,17 +1768,12 @@ impl CodexNotificationHub {
         self.update_native_activity(|activity| activity.observe(&message));
         let message =
             CodexNotification::from(message).with_process_generation(self.process_generation);
-        if matches!(
-            message["method"].as_str(),
-            Some("turn/started" | "turn/completed")
-        ) {
+        let method = message["method"].as_str().unwrap_or_default();
+        if matches!(method, "turn/started" | "turn/completed") {
             log_executor_event(
                 "codex native turn boundary received",
                 &[
-                    (
-                        "method",
-                        message["method"].as_str().unwrap_or_default().to_owned(),
-                    ),
+                    ("method", method.to_owned()),
                     ("process_generation", self.process_generation.to_string()),
                     ("native_sequence", message.sequence().to_string()),
                     (
@@ -1790,6 +1787,27 @@ impl CodexNotificationHub {
                             .unwrap_or_default()
                             .to_owned(),
                     ),
+                ],
+            );
+        }
+        if crate::runtime_work::codex_stream_debug_enabled()
+            && matches!(method, "item/started" | "item/completed")
+            && message["params"]["item"]["type"] == "mcpToolCall"
+        {
+            let params = message_params(&message);
+            let item = &params["item"];
+            log_executor_event(
+                "codex native MCP tool boundary received",
+                &[
+                    ("method", method.to_owned()),
+                    ("process_generation", self.process_generation.to_string()),
+                    ("native_sequence", message.sequence().to_string()),
+                    ("thread_id", stream_thread_id(params).unwrap_or_default()),
+                    ("turn_id", json_string_field(params, "turnId")),
+                    ("item_id", json_string_field(item, "id")),
+                    ("server", json_string_field(item, "server")),
+                    ("tool", json_string_field(item, "tool")),
+                    ("status", json_string_field(item, "status")),
                 ],
             );
         }
@@ -1893,6 +1911,75 @@ impl CodexAppServerHandle {
         self.pending.lock().await.remove(&request_id);
         self.notifications.thread_activity_changed.notify_waiters();
     }
+
+    fn track_mcp_elicitation(&self, message: &Value) {
+        if message["method"] == "serverRequest/resolved" {
+            self.take_mcp_elicitation(&message["params"]["requestId"]);
+            return;
+        }
+        if message["method"] != "mcpServer/elicitation/request" {
+            return;
+        }
+        let Some(request_id) = json_rpc_request_id(message) else {
+            return;
+        };
+        let (settled, wait_for_settlement) = oneshot::channel();
+        {
+            let mut pending = self.notifications.pending_mcp_elicitations.lock().unwrap();
+            match pending.entry(request_id.to_string()) {
+                std::collections::hash_map::Entry::Vacant(entry) => entry.insert(settled),
+                std::collections::hash_map::Entry::Occupied(_) => return,
+            };
+        }
+        let deadline = Instant::now() + elicitation::remaining(message);
+        let transport = self.clone();
+        let message = message.clone();
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = wait_for_settlement => return,
+                _ = tokio::time::sleep_until(deadline) => {}
+            }
+            match transport
+                .answer_mcp_elicitation(&request_id, json!({"action": "cancel"}))
+                .await
+            {
+                Ok(true) => {
+                    elicitation::log_event("codex native MCP elicitation expired", &message);
+                    transport
+                        .notifications
+                        .send_runtime(elicitation::settled(&message, "expired", None).into())
+                        .await;
+                }
+                Ok(false) => {}
+                Err(error) => log_executor_event(
+                    "codex native MCP elicitation cancellation failed",
+                    &[("request_id", request_id.to_string()), ("error", error)],
+                ),
+            }
+        });
+    }
+
+    fn take_mcp_elicitation(&self, request_id: &Value) -> bool {
+        self.notifications
+            .pending_mcp_elicitations
+            .lock()
+            .unwrap()
+            .remove(&request_id.to_string())
+            .is_some()
+    }
+
+    async fn answer_mcp_elicitation(
+        &self,
+        request_id: &Value,
+        result: Value,
+    ) -> Result<bool, String> {
+        if !self.take_mcp_elicitation(request_id) {
+            return Ok(false);
+        }
+        self.write_message(json!({"id": request_id, "result": result}))
+            .await?;
+        Ok(true)
+    }
 }
 
 async fn start_persistent_codex_app_server(
@@ -1961,15 +2048,20 @@ async fn start_persistent_codex_app_server(
             let pending = Arc::new(Mutex::new(HashMap::new()));
             let notifications =
                 CodexNotificationHub::for_runtime(runtime_notifications, thread_activity_changed);
+            let stdin = Arc::new(Mutex::new(FrameWriter::new(stdin)));
             let reader_task = tokio::spawn(read_persistent_codex_app_server_stdout(
                 stdout,
-                Arc::clone(&pending),
-                notifications.clone(),
+                CodexAppServerHandle {
+                    stdin: Arc::clone(&stdin),
+                    pending: Arc::clone(&pending),
+                    notifications: notifications.clone(),
+                },
             ));
             Ok((
                 CodexAppServerProcess {
                     child,
-                    stdin: Arc::new(Mutex::new(FrameWriter::new(stdin))),
+                    stdin,
+
                     pending,
                     notifications,
                     reader_task,
@@ -2063,6 +2155,11 @@ fn windows_codex_router_auth_script() -> String {
 }
 
 async fn notify_shared_process_closed(notifications: &CodexNotificationHub, message: &str) {
+    notifications
+        .pending_mcp_elicitations
+        .lock()
+        .unwrap()
+        .clear();
     notifications
         .send(json!({
             "method": "codex/app-server/exited",
@@ -3592,6 +3689,10 @@ async fn read_shared_turn_notifications(
             .and_then(Value::as_str)
             .is_some_and(|method| method == "mcpServer/elicitation/request")
         {
+            if elicitation::drops_test_approval(&message) {
+                elicitation::log_event("desktop e2e skipped MCP approval observer", &message);
+                continue;
+            }
             spawn_shared_mcp_server_elicitation_response(
                 client,
                 &message,
@@ -4134,7 +4235,7 @@ fn codex_network_policy_approval_decision(message: &Value, answer: &str) -> Valu
 
 fn spawn_shared_mcp_server_elicitation_response(
     client: &CodexAppServerClient,
-    message: &Value,
+    message: &CodexNotification,
     request_user_input_answers: Option<Arc<InteractionAnswerRouter>>,
     response_error_tx: mpsc::UnboundedSender<String>,
     auto_approve_mcp_tool_calls: bool,
@@ -4150,6 +4251,10 @@ fn spawn_shared_mcp_server_elicitation_response(
     let message = message.clone();
     tokio::spawn(async move {
         let result = async {
+            let transport = client.existing_process().await?;
+            if transport.notifications.process_generation != message.process_generation() {
+                return Ok(());
+            }
             if let Some(result) = url_elicitation::shared_response(
                 &message,
                 request_user_input_answers,
@@ -4158,17 +4263,24 @@ fn spawn_shared_mcp_server_elicitation_response(
             )
             .await?
             {
-                if visible {
+                // The connection owns wire expiry even when this observer misses the request.
+                if result.status == "expired" {
+                    return Ok(());
+                }
+                if transport
+                    .answer_mcp_elicitation(&request_id, result.result)
+                    .await?
+                    && visible
+                {
                     let settled: CodexNotification =
                         elicitation::settled(&message, result.status, result.response.as_ref())
                             .into();
-                    client.publish_runtime_notification(settled.clone()).await?;
+                    transport.notifications.send_runtime(settled.clone()).await;
                     if let Some(sender) = notifications.as_ref().and_then(|sender| sender.upgrade())
                     {
                         let _ = sender.send(settled);
                     }
                 }
-                client.send_response(request_id, result.result).await?;
             }
             Ok::<(), String>(())
         }
@@ -7438,7 +7550,9 @@ fn is_mcp_tool_call_approval_request(message: &Value) -> bool {
         Some("item/tool/requestUserInput") => {
             mcp_tool_call_request_user_input_response(message_params(message)).is_some()
         }
-        Some("mcpServer/elicitation/request") => is_mcp_tool_call_approval(message_params(message)),
+        Some("mcpServer/elicitation/request" | "wegent/mcpElicitation/settled") => {
+            is_mcp_tool_call_approval(message_params(message))
+        }
         _ => false,
     }
 }

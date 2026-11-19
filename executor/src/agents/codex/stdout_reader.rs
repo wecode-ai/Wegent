@@ -5,9 +5,10 @@ use super::*;
 
 pub(super) async fn read_persistent_codex_app_server_stdout(
     mut stdout: CodexStdout,
-    pending: Arc<Mutex<HashMap<u64, PendingCodexResponse>>>,
-    notifications: CodexNotificationHub,
+    transport: CodexAppServerHandle,
 ) {
+    let pending = Arc::clone(&transport.pending);
+    let notifications = transport.notifications.clone();
     loop {
         let mut line = String::new();
         let message = match stdout.read_line(&mut line).await {
@@ -89,9 +90,9 @@ pub(super) async fn read_persistent_codex_app_server_stdout(
         }
         log_codex_mcp_startup_status(&message, notifications.process_generation);
 
-        notifications
-            .send(external_work::project_review_notification(message))
-            .await;
+        let message = external_work::project_review_notification(message);
+        transport.track_mcp_elicitation(&message);
+        notifications.send(message).await;
         if let Some(mut fields) = timing {
             fields["dispatch_elapsed_ms"] = json!(dispatch_started.elapsed().as_millis());
             fields["dispatched_at_ms"] = json!(now_ms());

@@ -68,16 +68,11 @@ where
 
 fn retryable(error: Option<&MysqlError>, retry_busy: bool) -> bool {
     error.is_some_and(|error| {
-        // InnoDB has already rolled back all statements for 1213. Other database
-        // failures may have ambiguous outcomes and must not replay this work.
+        let code = super::super::write_coordination::plugin_write_error_code(error);
+        // InnoDB rolls back the entire deadlock victim transaction.
         error.database_code() == Some(1213)
-            || matches!(
-                super::super::write_coordination::plugin_write_error_code(error),
-                Some("plugin_write_conflict")
-            )
-            || retry_busy
-                && super::super::write_coordination::plugin_write_error_code(error)
-                    == Some("plugin_write_busy")
+            || code == Some("plugin_write_conflict")
+            || retry_busy && code == Some("plugin_write_busy")
     })
 }
 

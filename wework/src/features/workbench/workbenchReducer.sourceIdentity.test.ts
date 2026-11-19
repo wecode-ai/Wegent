@@ -28,50 +28,53 @@ const cloudWork: RuntimeWorkListResponse = {
   totalTasks: 1,
 }
 
-test.each([
-  'runtime_work_refreshed',
-  'lists_refreshed',
-  'devices_refreshed',
-  'bootstrapped',
-] as const)('%s does not change a restored task owner while native discovery is pending', type => {
-  const user = { id: 1, user_name: 'Owner', email: 'owner@example.test' }
-  const state: WorkbenchState = {
-    ...initialWorkbenchState,
-    user,
-    currentRuntimeTask: address,
-    runtimeWork: type === 'devices_refreshed' ? cloudWork : null,
-  }
-  const action =
-    type === 'runtime_work_refreshed'
-      ? { type, runtimeWork: cloudWork }
-      : type === 'devices_refreshed'
-        ? { type, devices: [registered] }
-        : type === 'bootstrapped'
-          ? { type, user, projects: [], devices: [registered], runtimeWork: cloudWork }
-          : { type, projects: [], devices: [registered], runtimeWork: cloudWork }
-  const refreshed = workbenchReducer(state, action)
-  expect(refreshed.currentRuntimeTask).toEqual(address)
-  expect(
-    getWorkbenchPaneKey({
-      currentRuntimeTask: refreshed.currentRuntimeTask,
-      currentProject: refreshed.currentProject,
-    })
-  ).toBe('runtime:electron-home:restored-task')
+test.each(
+  (
+    ['runtime_work_refreshed', 'lists_refreshed', 'devices_refreshed', 'bootstrapped'] as const
+  ).flatMap(type => ['app', 'local'].map(deviceType => ({ type, deviceType })))
+)(
+  '$type preserves the native owner despite unverified $deviceType registration',
+  ({ type, deviceType }) => {
+    const user = { id: 1, user_name: 'Owner', email: 'owner@example.test' }
+    const state: WorkbenchState = {
+      ...initialWorkbenchState,
+      user,
+      currentRuntimeTask: address,
+      runtimeWork: type === 'devices_refreshed' ? cloudWork : null,
+    }
+    const devices = [{ ...registered, device_type: deviceType }]
+    const action =
+      type === 'runtime_work_refreshed'
+        ? { type, runtimeWork: cloudWork }
+        : type === 'devices_refreshed'
+          ? { type, devices }
+          : type === 'bootstrapped'
+            ? { type, user, projects: [], devices, runtimeWork: cloudWork }
+            : { type, projects: [], devices, runtimeWork: cloudWork }
+    const refreshed = workbenchReducer(state, action)
+    expect(refreshed.currentRuntimeTask).toEqual(address)
+    expect(
+      getWorkbenchPaneKey({
+        currentRuntimeTask: refreshed.currentRuntimeTask,
+        currentProject: refreshed.currentProject,
+      })
+    ).toBe('runtime:electron-home:restored-task')
 
-  const path = 'D:\\repo'
-  const hydrated = workbenchReducer(refreshed, {
-    type: 'runtime_work_refreshed',
-    runtimeWork: {
-      ...cloudWork,
-      chats: [
-        {
-          ...cloudWork.chats[0],
-          deviceId: address.deviceId,
-          workspacePath: path,
-          tasks: [{ taskId: address.taskId, title: 'Restored', workspacePath: path }],
-        },
-      ],
-    },
-  })
-  expect(hydrated.currentRuntimeTask).toEqual({ ...address, workspacePath: path })
-})
+    const path = 'D:\\repo'
+    const hydrated = workbenchReducer(refreshed, {
+      type: 'runtime_work_refreshed',
+      runtimeWork: {
+        ...cloudWork,
+        chats: [
+          {
+            ...cloudWork.chats[0],
+            deviceId: address.deviceId,
+            workspacePath: path,
+            tasks: [{ taskId: address.taskId, title: 'Restored', workspacePath: path }],
+          },
+        ],
+      },
+    })
+    expect(hydrated.currentRuntimeTask).toEqual({ ...address, workspacePath: path })
+  }
+)

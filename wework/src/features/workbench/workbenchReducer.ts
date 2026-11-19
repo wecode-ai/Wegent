@@ -23,7 +23,11 @@ import {
   runtimeProjectUiId,
   standaloneRuntimeProjectKey,
 } from '@/lib/runtime-project'
-import { findWorkbenchDevice, workbenchDeviceMatchesId } from '@/lib/workbench-device'
+import {
+  findNativeLocalWorkbenchDevice,
+  findWorkbenchDevice,
+  workbenchDeviceMatchesId,
+} from '@/lib/workbench-device'
 import {
   findRuntimeTaskProjectWork,
   getDefaultProjectDeviceWorkspaceId,
@@ -762,9 +766,12 @@ function reconcileCurrentRuntimeTaskAddress(
   runtimeWork: RuntimeWorkListResponse | null | undefined
 ): RuntimeTaskAddress | null {
   if (!currentRuntimeTask) return null
+  const resolvedDevice = findWorkbenchDevice(devices, currentRuntimeTask.deviceId)
+  // Cloud registration aliases do not prove the current native IPC owner.
   const deviceId =
-    findWorkbenchDevice(devices, currentRuntimeTask.deviceId)?.device_id ??
-    currentRuntimeTask.deviceId
+    resolvedDevice && findNativeLocalWorkbenchDevice(devices, resolvedDevice.device_id)
+      ? resolvedDevice.device_id
+      : currentRuntimeTask.deviceId
   const hydratedTask = findRuntimeTaskAddressByTaskId(
     runtimeWork,
     currentRuntimeTask.taskId,

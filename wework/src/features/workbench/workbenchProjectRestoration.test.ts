@@ -1,3 +1,4 @@
+import { qualifyLocalRuntimeSource } from '@/lib/local-runtime-sidebar-identity'
 import { describe, expect, test } from 'vitest'
 import type { RuntimeWorkListResponse } from '@/types/api'
 import { runtimeProjectUiId } from '@/lib/runtime-project'
@@ -70,15 +71,23 @@ describe('project task restoration', () => {
         ...initialWorkbenchState,
         currentRuntimeTask: { ...address, deviceId: 'previous-local-device' },
         devices: [
-          {
-            id: 79,
-            device_id: address.deviceId,
-            socket_device_id: 'previous-local-device',
-            name: 'Local Executor',
-            status: 'online',
-            device_type: 'local',
-            is_default: true,
-          },
+          qualifyLocalRuntimeSource(
+            {
+              id: 79,
+              device_id: address.deviceId,
+              runtime_instance_id: 'native-epoch',
+              socket_device_id: 'previous-local-device',
+              name: 'Local Executor',
+              status: 'online',
+              device_type: 'local',
+              is_default: true,
+            },
+            {
+              deviceId: address.deviceId,
+              runtimeInstanceId: 'native-epoch',
+              provenance: 'local-ipc',
+            }
+          ),
         ],
       },
       { type: 'runtime_work_refreshed', runtimeWork }
