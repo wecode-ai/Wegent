@@ -1,4 +1,4 @@
-import { renderHook, waitFor } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
 import type { DeviceInfo, RuntimeTaskAddress } from '@/types/api'
 import { cloudRuntimePort, loopItem, project } from './workbenchCloudProjectContextTestFixtures'
@@ -48,4 +48,37 @@ test('retains the same owner binding during alias refresh but isolates another d
   rerender({ task: address('another-device'), knownDevices: devices })
   expect(result.current.boundCloudProject).toBeNull()
   expect(result.current.boundCloudItem).toBeNull()
+})
+
+test('recovers a persisted task association after a transient lookup timeout', async () => {
+  vi.useFakeTimers()
+  try {
+    const board = project('persisted-board')
+    const item = loopItem(board.id)
+    const findCloudContextForTask = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<never>(() => {}))
+      .mockResolvedValue({ project: board, loop_item: item })
+    const services = { workspaceRuntimePort: cloudRuntimePort({ findCloudContextForTask }) }
+    const { result, unmount } = renderHook(() =>
+      useWorkbenchCloudProjectContext({
+        active: true,
+        currentRuntimeTask: { deviceId: 'persisted-device', taskId: 'persisted-task' },
+        defaultProjectSpace: null,
+        paneKey: 'runtime:persisted-device:persisted-task',
+        runtimeTaskTitle: 'Persisted task',
+        services,
+        userId: 1,
+      })
+    )
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_200)
+    })
+    expect(result.current.boundCloudProject?.id).toBe(board.id)
+    expect(result.current.boundCloudItem?.id).toBe(item.id)
+    unmount()
+  } finally {
+    vi.useRealTimers()
+  }
 })

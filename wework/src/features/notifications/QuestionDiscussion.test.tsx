@@ -1,6 +1,6 @@
 import '@/i18n'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { useContext, useEffect, useRef, useState } from 'react'
+import { useContext, useRef, useState } from 'react'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { QuestionDiscussionProvider } from './QuestionDiscussionProvider'
 import { QuestionDiscussionScope, QuestionDiscussionTabPanel } from './QuestionDiscussionScope'
@@ -9,10 +9,10 @@ import {
   questionDiscussionDrafts,
   questionDiscussionKey,
   QuestionDiscussionStoreContext,
-  useQuestionDiscussionWorkspacePanel,
-  type QuestionDiscussionTab,
+  useQuestionDiscussionPanels,
   type QuestionDiscussionStore,
 } from './questionDiscussion'
+import type { QuestionDiscussionPanel } from './questionDiscussionPanels'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { WorkbenchPaneContext } from '@/features/workbench/workbenchContexts'
 import type { WorkbenchPaneContextValue } from '@/features/workbench/workbenchContextTypes'
@@ -109,27 +109,15 @@ function DiscussionTabs({
   address?: typeof source
   active?: boolean
 }) {
-  const [tabs, setTabs] = useState<QuestionDiscussionTab[]>([])
-  const [selected, setSelected] = useState<QuestionDiscussionTab | null>(null)
-  const close = (tab: QuestionDiscussionTab) => {
-    const remaining = tabs.filter(value => value !== tab)
-    setTabs(remaining)
-    if (selected === tab) setSelected(remaining.at(-1) ?? null)
-  }
-  useQuestionDiscussionWorkspacePanel({
-    address,
-    active,
-    openTab: tab => {
-      setTabs(current => (current.includes(tab) ? current : [...current, tab]))
-      setSelected(tab)
-    },
-  })
+  const { snapshot, close } = useQuestionDiscussionPanels({ address, active })
+  const [deactivated, setDeactivated] = useState<QuestionDiscussionPanel | null>(null)
+  const selected = snapshot.activation === deactivated ? null : snapshot.activation?.tab
   return (
     <>
-      <button data-testid="open-another-panel" onClick={() => setSelected(null)}>
+      <button data-testid="open-another-panel" onClick={() => setDeactivated(snapshot.activation)}>
         Open another panel
       </button>
-      {tabs.map(tab => (
+      {snapshot.panels.map(({ tab }) => (
         <QuestionDiscussionTabPanel
           key={tab}
           tab={tab}
@@ -142,10 +130,14 @@ function DiscussionTabs({
 }
 function StoreProbe() {
   const store = useContext(QuestionDiscussionStoreContext)!
-  useEffect(() => {
-    latestStore = store
-  }, [store])
-  return null
+  return (
+    <span
+      hidden
+      ref={element => {
+        if (element) latestStore = store
+      }}
+    />
+  )
 }
 function setup(count = 1, input = payload) {
   function Entries() {
@@ -397,10 +389,15 @@ test('account switches isolate discussion drafts and late creation without remou
   let store!: QuestionDiscussionStore
   function Probe() {
     const current = useContext(QuestionDiscussionStoreContext)!
-    useEffect(() => {
-      store = current
-    }, [current])
-    return <input aria-label="Keep connection input" defaultValue="" />
+    return (
+      <input
+        ref={element => {
+          if (element) store = current
+        }}
+        aria-label="Keep connection input"
+        defaultValue=""
+      />
+    )
   }
   const tree = (accountKey: string) => (
     <QuestionDiscussionProvider accountKey={accountKey}>

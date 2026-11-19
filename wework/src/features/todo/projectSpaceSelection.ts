@@ -114,6 +114,13 @@ export class ProjectSpaceTaskContextUnavailableError extends Error {
   }
 }
 
+export class ProjectSpaceTaskContextLookupTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Project-space context lookup timed out after ${timeoutMs}ms`)
+    this.name = 'ProjectSpaceTaskContextLookupTimeoutError'
+  }
+}
+
 function isMissingProjectTaskContext(error: unknown): boolean {
   if (error instanceof AggregateError)
     return error.errors.length > 0 && error.errors.every(isMissingProjectTaskContext)
@@ -316,7 +323,7 @@ export async function findProjectSpaceContextSourceForTask<TApi extends ProjectS
     result.status === 'rejected' ? [result.reason] : []
   )
   if (settledResults.length < apis.length) {
-    errors.push(new Error(`Project-space context lookup timed out after ${timeoutMs}ms`))
+    errors.push(new ProjectSpaceTaskContextLookupTimeoutError(timeoutMs))
   }
   throw new AggregateError(errors, 'Task is not linked to a project space')
 }

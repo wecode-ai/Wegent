@@ -8,11 +8,12 @@ from contextlib import AbstractContextManager
 from functools import partial
 from typing import Any, TypeVar
 
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db_session
 from app.services.plugin_write_coordination import configure_plugin_session
-from app.services.plugin_write_errors import PluginWriteError
+from app.services.plugin_write_errors import PluginWriteError, is_mysql_deadlock
 from shared.telemetry.decorators import trace_sync
 
 T = TypeVar("T")
@@ -87,16 +88,27 @@ def run_plugin_transaction(
                 return operation(db)
             except Exception as error:
                 db.rollback()
-                if (
-                    not isinstance(error, PluginWriteError)
-                    or time.monotonic() >= deadline
-                ):
+                deadlock = (
+                    retry_conflicts
+                    and isinstance(error, OperationalError)
+                    and is_mysql_deadlock(error)
+                )
+                if time.monotonic() >= deadline:
                     raise
-                if retry_busy and error.code == "plugin_write_busy":
+                if deadlock:
+                    attempt += 1
+                    delay = min(0.25, 0.01 * attempt)
+                elif (
+                    isinstance(error, PluginWriteError)
+                    and retry_busy
+                    and error.code == "plugin_write_busy"
+                ):
                     delay = busy_backoff
                     busy_backoff = min(0.25, busy_backoff * 2)
-                elif error.code == "plugin_write_conflict" and (
-                    retry_conflicts or attempt + 1 < attempts
+                elif (
+                    isinstance(error, PluginWriteError)
+                    and error.code == "plugin_write_conflict"
+                    and (retry_conflicts or attempt + 1 < attempts)
                 ):
                     attempt += 1
                     delay = min(0.25, 0.01 * attempt)

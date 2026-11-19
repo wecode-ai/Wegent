@@ -1,6 +1,12 @@
 """Client-safe failures shared by plugin leases and optimistic writes."""
 
 from fastapi import HTTPException
+from sqlalchemy.exc import OperationalError
+
+
+def is_mysql_deadlock(error: OperationalError) -> bool:
+    """Identify a transaction selected as the MySQL deadlock victim."""
+    return bool(error.orig.args and error.orig.args[0] == 1213)
 
 
 class PluginWriteError(HTTPException):

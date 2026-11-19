@@ -34,35 +34,58 @@ export function useComposerTransfers({
   commitEditorValue,
   disabled,
   onPasteFiles,
+  onTransferReadyChange,
   services = browserComposerTransferServices,
 }: {
   editorRef: RefObject<ComposerEditorHandle | null>
   commitEditorValue: (value: string, cursor: number) => void
   disabled?: boolean
   onPasteFiles?: (files: File[]) => void | Promise<void>
+  onTransferReadyChange?: (ready: boolean) => void
   services?: ComposerTransferServices
 }) {
   const [transferError, setTransferError] = useState<string | null>(null)
   const [pendingTransfers, setPendingTransfers] = useState(0)
   const activeTransfers = useRef(0)
+  const transferErrorRef = useRef<string | null>(null)
+  const readyRef = useRef(true)
+  const publishTransferReadiness = useCallback(
+    (ready: boolean) => {
+      if (readyRef.current === ready) return
+      readyRef.current = ready
+      onTransferReadyChange?.(ready)
+    },
+    [onTransferReadyChange]
+  )
   const dismissTransferError = useCallback(() => {
-    if (activeTransfers.current === 0) setTransferError(null)
-  }, [])
-  const runTransfer = useCallback((transfer: () => void | Promise<void>) => {
-    activeTransfers.current += 1
+    if (activeTransfers.current !== 0) return
+    transferErrorRef.current = null
     setTransferError(null)
-    setPendingTransfers(count => count + 1)
-    void (async () => {
-      try {
-        await transfer()
-      } catch (cause) {
-        setTransferError(cause instanceof Error ? cause.message : String(cause))
-      } finally {
-        activeTransfers.current -= 1
-        setPendingTransfers(count => count - 1)
-      }
-    })()
-  }, [])
+    publishTransferReadiness(true)
+  }, [publishTransferReadiness])
+  const runTransfer = useCallback(
+    (transfer: () => void | Promise<void>) => {
+      activeTransfers.current += 1
+      transferErrorRef.current = null
+      setTransferError(null)
+      setPendingTransfers(count => count + 1)
+      publishTransferReadiness(false)
+      void (async () => {
+        try {
+          await transfer()
+        } catch (cause) {
+          const message = cause instanceof Error ? cause.message : String(cause)
+          transferErrorRef.current = message
+          setTransferError(message)
+        } finally {
+          activeTransfers.current -= 1
+          setPendingTransfers(count => count - 1)
+          publishTransferReadiness(activeTransfers.current === 0 && !transferErrorRef.current)
+        }
+      })()
+    },
+    [publishTransferReadiness]
+  )
   const insertPathReferences = useCallback(
     (entries: ComposerPathEntry[]) => {
       if (entries.length === 0) return

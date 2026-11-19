@@ -18,7 +18,6 @@ from app.services.device.plugin_sync_protocol import (
     lock_plugin_sync_state,
 )
 from app.services.plugin_device_installation_service import (
-    _is_mysql_deadlock,
     plugin_device_installation_service,
 )
 from app.services.plugin_marketplace_service import plugin_marketplace_service
@@ -27,7 +26,7 @@ from app.services.plugin_write_coordination import (
     acquire_plugin_write_locks,
     configure_plugin_session,
 )
-from app.services.plugin_write_errors import PluginWriteError
+from app.services.plugin_write_errors import PluginWriteError, is_mysql_deadlock
 from app.services.plugin_write_operations import run_plugin_transaction
 from shared.telemetry.decorators import trace_async
 
@@ -84,7 +83,7 @@ def record_reconciliation_result(
             state.json = deepcopy(state.json)
             db.commit()
         except OperationalError as error:
-            if _is_mysql_deadlock(error):
+            if is_mysql_deadlock(error):
                 raise PluginWriteError("plugin_write_conflict") from error
             raise
         return None

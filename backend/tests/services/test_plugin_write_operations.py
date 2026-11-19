@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from sqlalchemy.exc import OperationalError
 
 from app.models.kind import Kind
 from app.services import plugin_write_operations as operations
@@ -282,3 +283,57 @@ def test_snapshot_contention_releases_sessions_and_stops_at_shared_deadline(
     assert clock[0] == 20
     assert len(sessions) > 2
     assert all(db.closed and db.rollback.call_count == 1 for db in sessions)
+
+
+@pytest.mark.parametrize(
+    ("code", "retry_conflicts", "retried"),
+    [(1213, True, True), (1205, True, False), (1213, False, False)],
+)
+def test_snapshot_retries_only_opted_in_mysql_deadlocks(
+    monkeypatch, code, retry_conflicts, retried
+):
+    sessions = []
+    failure = OperationalError(
+        "UPDATE plugin_sync_state", {}, Exception(code, "db error")
+    )
+
+    @contextmanager
+    def session():
+        db = Mock(closed=False)
+        sessions.append(db)
+        try:
+            yield db
+        finally:
+            db.closed = True
+
+    def operation(_db):
+        if len(sessions) == 1:
+            raise failure
+        return "committed"
+
+    def backoff(_delay):
+        assert all(db.closed for db in sessions)
+
+    monkeypatch.setattr(operations, "configure_plugin_session", Mock())
+    monkeypatch.setattr(
+        operations,
+        "time",
+        SimpleNamespace(monotonic=lambda: 0, sleep=backoff),
+    )
+    if retried:
+        assert (
+            operations.run_plugin_transaction(
+                operation, session, retry_conflicts=retry_conflicts
+            )
+            == "committed"
+        )
+        assert len(sessions) == 2
+    else:
+        with pytest.raises(OperationalError) as caught:
+            operations.run_plugin_transaction(
+                operation, session, retry_conflicts=retry_conflicts
+            )
+        assert caught.value is failure
+        assert len(sessions) == 1
+    sessions[0].rollback.assert_called_once()
+    assert all(db.closed for db in sessions)

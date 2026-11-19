@@ -85,7 +85,7 @@ export function createDesktopScenario(options) {
   const { events: modelEvents, completed } = createConversationEventModel({
     markerPrefix: MARKER,
     providerId: PROVIDER,
-    onEvent: () => human.eventStarted(),
+    onEvent: messageId => human.eventStarted(messageId),
     onQuestion: output => {
       questionOutput = output
     },

@@ -57,11 +57,12 @@ export function createConversationEventModel({
       return [assistantMessage(`${marker}_DONE`)]
     }
     if (modelRequestTexts(body).includes(`${marker}_EVENT_RECEIVED`)) {
-      if (phase === 'human') onEvent()
-      const input = body.input.findLast(
+      const eventInputs = body.input.filter(
         item =>
           item.role === 'user' && JSON.stringify(item.content).includes(`${marker}_EVENT_RECEIVED`)
       )
+      if (phase === 'human') for (const eventInput of eventInputs) onEvent(eventInput.id)
+      const input = eventInputs.at(-1)
       assert.ok(input, 'The event must be delivered as a user message')
       if (input.id !== undefined) {
         assert.match(input.id, /^msg/, 'Responses rejects message IDs without the msg prefix')

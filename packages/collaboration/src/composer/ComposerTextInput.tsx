@@ -1,7 +1,6 @@
 import { insertComposerReference } from './insertComposerReference'
 import {
   useCallback,
-  useEffect,
   useImperativeHandle,
   useLayoutEffect,
   useRef,
@@ -121,21 +120,19 @@ export function ComposerTextInput({
     },
     [onChange]
   )
+  const transferReadyCallback = useRef(onTransferReadyChange)
+  useLayoutEffect(() => {
+    transferReadyCallback.current = onTransferReadyChange
+  }, [onTransferReadyChange])
   const transfers = useComposerTransfers({
     editorRef,
     commitEditorValue,
     disabled,
     onPasteFiles,
+    onTransferReadyChange: ready => transferReadyCallback.current?.(ready),
     services: transferServices,
   })
   const transferReady = !transfers.isTransferring && !transfers.transferError
-  const transferReadyCallback = useRef(onTransferReadyChange)
-  useLayoutEffect(() => {
-    transferReadyCallback.current = onTransferReadyChange
-  }, [onTransferReadyChange])
-  useEffect(() => {
-    transferReadyCallback.current?.(transferReady)
-  }, [transferReady])
   const events = useComposerInputEvents({
     editorRef,
     valueRef,

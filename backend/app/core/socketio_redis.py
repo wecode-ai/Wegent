@@ -5,6 +5,8 @@
 """Observe the Redis callback path used by this Socket.IO worker."""
 
 import asyncio
+import hashlib
+import json
 import logging
 from typing import Any
 
@@ -30,13 +32,63 @@ def _log_ack(stage: str, message: dict[str, Any], outcome: str) -> None:
     )
 
 
+def _ack_reference(value: str | None) -> str | None:
+    return hashlib.sha256(value.encode()).hexdigest()[:12] if value else None
+
+
+def _ack_payload_bytes(data: Any) -> int | None:
+    try:
+        return len(json.dumps(data, separators=(",", ":")).encode())
+    except (TypeError, ValueError, UnicodeError):
+        return None
+
+
 class ObservedRedisManager(AsyncRedisManager):
     """Trace cross-worker ACKs and exercise their real subscriber and waiter."""
 
-    def __init__(self, url: str, *, redis_options: dict[str, Any]) -> None:
+    def __init__(
+        self, url: str, *, redis_options: dict[str, Any], ack_diagnostics: bool = False
+    ) -> None:
         super().__init__(url, redis_options=redis_options)
+        self._ack_diagnostics = ack_diagnostics
         self._probe_sid = f"wegent-ack-probe:{self.host_id}"
         self._probe_failures = 0
+
+    def _trace_ack(
+        self,
+        stage: str,
+        sid: str | None,
+        callback_id: int | None,
+        data: Any = None,
+        outcome: str = "",
+    ) -> None:
+        if self._ack_diagnostics:
+            logger.info(
+                "Socket.IO E2E ACK stage=%s host_ref=%s sid_ref=%s "
+                "callback_id=%s response_bytes=%s outcome=%s",
+                stage,
+                _ack_reference(self.host_id),
+                _ack_reference(sid),
+                callback_id,
+                _ack_payload_bytes(data) if data is not None else None,
+                outcome,
+            )
+
+    def _generate_ack_id(self, sid: str, callback: Any) -> int:
+        callback_id = super()._generate_ack_id(sid, callback)
+        self._trace_ack("register", sid, callback_id)
+        return callback_id
+
+    async def trigger_callback(self, sid: str | None, id: int, data: Any) -> None:
+        matched = id in self.callbacks.get(sid, {})
+        self._trace_ack("trigger", sid, id, data, "matched" if matched else "missing")
+        await super().trigger_callback(sid, id, data)
+
+    async def _return_callback(
+        self, host_id: str, sid: str, namespace: str, callback_id: int, *args: Any
+    ) -> None:
+        self._trace_ack("return", sid, callback_id, args)
+        await super()._return_callback(host_id, sid, namespace, callback_id, *args)
 
     @property
     def ack_ready(self) -> bool:
@@ -51,11 +103,18 @@ class ObservedRedisManager(AsyncRedisManager):
             elif subscribers == 0:
                 outcome = "no_subscribers"
             _log_ack("publish", data, outcome)
+            self._trace_ack(
+                "publish", data.get("sid"), data.get("id"), data.get("args"), outcome
+            )
         return subscribers
 
     async def _handle_callback(self, message: dict[str, Any]) -> None:
         if message.get("host_id") != self.host_id:
             return
+        if isinstance(message.get("sid"), str) and isinstance(message.get("id"), int):
+            self._trace_ack(
+                "redis-receive", message["sid"], message["id"], message.get("args")
+            )
         if not logger.isEnabledFor(logging.DEBUG):
             await super()._handle_callback(message)
             return

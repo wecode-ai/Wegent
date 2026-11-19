@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useCallback, useId, useMemo, useRef, useState } from 'react'
 import type { FormEvent, KeyboardEvent, ReactNode } from 'react'
 import {
   ChevronDown,
@@ -165,19 +165,37 @@ function RequestUserInputForm({
   const [inputReadiness, setInputReadiness] = useState<Record<string, boolean>>(
     {},
   )
-  const ready = Object.values(inputReadiness).every(Boolean)
-  const previousDrafts = useRef(draftAnswers)
-  useEffect(() => {
-    if (previousDrafts.current === draftAnswers) return
-    const previous = previousDrafts.current
-    previousDrafts.current = draftAnswers
-    for (const [id, value] of Object.entries(draftAnswers ?? {})) {
-      if (previous?.[id] !== value) {
-        selectCustomQuestion(id)
-        setCustomAnswers((current) => ({ ...current, [id]: value }))
+  const ready = questions.every(
+    (question) =>
+      !question.allowCustom ||
+      (inputReadiness[question.id] !== false &&
+        (answerAttachments[question.id] ?? []).every(
+          (attachment) => attachment.status === 'ready',
+        )),
+  )
+  const [previousDrafts, setPreviousDrafts] = useState(draftAnswers)
+  if (previousDrafts !== draftAnswers) {
+    setPreviousDrafts(draftAnswers)
+    const changes = Object.entries(draftAnswers ?? {}).filter(
+      ([id, value]) => previousDrafts?.[id] !== value,
+    )
+    if (changes.length) {
+      const customChanges = changes.filter(
+        ([id]) => !(id in (draftOptionAnswers ?? {})),
+      )
+      if (customChanges.length) {
+        setCustomAnswers((current) => ({
+          ...current,
+          ...Object.fromEntries(customChanges),
+        }))
+        setCustomModes((current) => ({
+          ...current,
+          ...Object.fromEntries(customChanges.map(([id]) => [id, true])),
+        }))
+        setActiveQuestionId(customChanges[customChanges.length - 1][0])
       }
     }
-  }, [draftAnswers, selectCustomQuestion])
+  }
   // Newly arriving questions receive their defaults without resetting drafts.
   const selectedAnswers = {
     ...initialAnswers(questions),
