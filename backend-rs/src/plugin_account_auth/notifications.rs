@@ -1,9 +1,7 @@
 //! Wake cloud authorization after a committed native credential change.
 
-use brz_redis::Redis;
+use brz_redis::{Redis, RedisService};
 use serde_json::json;
-
-use crate::state::AppState;
 
 pub(super) fn changes_credentials(operation: &str) -> bool {
     matches!(
@@ -21,8 +19,8 @@ fn message(user_id: i64, installed_id: i64) -> String {
     )
 }
 
-pub(super) async fn publish(state: &AppState, user_id: i64, targets: &[i64]) {
-    let Some(redis) = state.redis.as_ref() else {
+pub(super) async fn publish(redis: Option<&RedisService>, user_id: i64, targets: &[i64]) {
+    let Some(redis) = redis else {
         return;
     };
     for &installed_id in targets {

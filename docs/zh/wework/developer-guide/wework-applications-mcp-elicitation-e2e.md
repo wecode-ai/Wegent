@@ -184,7 +184,7 @@ args = ["<fixture 绝对路径>", "<证据文件绝对路径>"]
 default_tools_approval_mode = "approve"
 ```
 
-不能把基础配置改成 granular 来让测试通过。用户在 UI 中启用完整访问后，Executor 必须在 `thread/start`、`thread/resume`、`thread/fork` 和 `turn/start` 覆盖为 granular policy：关闭执行安全审批，同时保留 `mcp_elicitations: true`。
+不能把基础配置改成 granular 来让测试通过。用户在 UI 中启用完整访问后，Executor 必须在 `thread/start`、`thread/resume`、`thread/fork` 和 `turn/start` 覆盖为 granular policy：启用 `sandbox_approval: true`，同时保留 `mcp_elicitations: true`。
 
 ### 模型与协议步骤
 

@@ -21,6 +21,7 @@ import {
   DEFAULT_MODEL_ID,
   DEFAULT_MODEL_LABEL,
   DEFAULT_STEP_TIMEOUT_MS,
+  MODEL_REQUEST_TIMEOUT_MS,
   GOAL_BUSY_COMPLETION_TEXT,
   GOAL_BUSY_OBJECTIVE,
   GOAL_BUSY_PLAN_PROMPT,
@@ -810,19 +811,21 @@ async function verifyTaskSupervisorLifecycle({ composerSelector, control, readRu
     'The pre-task supervisor indicator remained after the task was created'
   )
 
+  // Scheduled cloud evaluations include transcript reads and a model request.
+  // Use the shared model budget for both waits, including the counter's deadline.
   await withTimeout(
-    control.awaitScenarioRequestCount('supervisor', 2),
-    DEFAULT_STEP_TIMEOUT_MS,
+    control.awaitScenarioRequestCount('supervisor', 2, MODEL_REQUEST_TIMEOUT_MS),
+    MODEL_REQUEST_TIMEOUT_MS,
     'The supervisor evaluator did not inspect the completed task'
   )
   await withTimeout(
-    control.awaitScenarioRequestCount('supervisor', 3),
-    DEFAULT_STEP_TIMEOUT_MS,
+    control.awaitScenarioRequestCount('supervisor', 3, MODEL_REQUEST_TIMEOUT_MS),
+    MODEL_REQUEST_TIMEOUT_MS,
     'Auto-correction did not send a normal follow-up turn after the task became idle'
   )
   await withTimeout(
     control.awaitSupervisorCorrectionResponseStarted(),
-    DEFAULT_STEP_TIMEOUT_MS,
+    MODEL_REQUEST_TIMEOUT_MS,
     'The supervisor correction response did not start'
   )
   const supervisorTaskRowTestId = await waitForNewTaskRow(
@@ -917,15 +920,15 @@ async function verifyTaskSupervisorLifecycle({ composerSelector, control, readRu
     'The active supervisor did not retain its selected model'
   )
   await withTimeout(
-    control.awaitScenarioRequestCount('supervisor', 4),
-    DEFAULT_STEP_TIMEOUT_MS,
+    control.awaitScenarioRequestCount('supervisor', 4, MODEL_REQUEST_TIMEOUT_MS),
+    MODEL_REQUEST_TIMEOUT_MS,
     'The supervisor did not inspect the completed auto-correction'
   )
   const supervisorStatusSelector = '[data-testid="task-supervisor-status"]'
   await control.command('clickWhenEnabled', '[data-testid="task-supervisor-run-now-button"]')
   await withTimeout(
-    control.awaitScenarioRequestCount('supervisor', 5),
-    DEFAULT_STEP_TIMEOUT_MS,
+    control.awaitScenarioRequestCount('supervisor', 5, MODEL_REQUEST_TIMEOUT_MS),
+    MODEL_REQUEST_TIMEOUT_MS,
     'The immediate supervisor review did not reach the evaluator'
   )
   await control.command('waitFor', '[data-testid="task-supervisor-run-now-button"]', {

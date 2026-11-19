@@ -13,11 +13,13 @@ fn received_event_enters_the_message_queue_while_the_conversation_is_busy() {
         link.runtime_handle["executionRequest"]["user_id"] = json!(7);
         handler.store.upsert_task(link.clone());
         handler.preparing_turns.lock().unwrap().insert("caller".into(), PreparingTurn { owner_request:None,cancellation_requested:false });
+        handler.turn_scheduler.lock().unwrap().active_task_ids.insert("caller".into(), RuntimeTaskKind::Personal);
         let key = "a".repeat(64);
-        let id = "busy-event";
+        let subscription_key = "busy-event";
+        let id = &handler.subscription_id("caller", subscription_key);
         let operation = super::super::execution::continuation_operation_id("control-test-device","caller",&format!("connection-event:{id}"));
         let event = json!({"id":"ci-terminal","topicId":"pr","text":"Checks failed","at":chrono::Utc::now().to_rfc3339()});
-        let record = json!({"subscription_key":id,"task_id":"caller","device_id":"control-test-device",
+        let record = json!({"subscription_key":subscription_key,"task_id":"caller","device_id":"control-test-device",
             "session":session::binding(&link).unwrap(),"source":{"name":"Repository","enabledAfter":"2026-01-01T00:00:00Z"},
             "status":"pending","operation_id":operation,"continuation":"Inspect the CI failure","events":[event],
             "resource_event_keys":[key],"observation_id":"observation"});
@@ -36,5 +38,29 @@ fn received_event_enters_the_message_queue_while_the_conversation_is_busy() {
         assert_eq!(queued[0].request.extra["resource_event_keys"],json!([key]));
         handler.collect_conversation_subscription(id,saved,"cycle-2").await.unwrap();
         assert_eq!(handler.turn_scheduler.lock().unwrap().queued_turns.clone().len(),1,"The accepted event must not be enqueued twice");
+        let unrelated = handler.control_continue(
+            &context("caller"), link, json!({
+                "conversation_id":workbench_control::conversation_id("control-test-device", "caller"),
+                "request_key":"unrelated",
+                "message":"Keep the unrelated queued continuation",
+                "queue_if_busy":true,
+            }),
+        ).await.unwrap();
+        assert_eq!(unrelated["operation"]["delivery_status"], "accepted");
+        let unrelated_operation = unrelated["operation"]["operation_id"].as_str().unwrap();
+        let cancelled = handler.control_operation(
+            &context("caller"), "cancel_connection_event_subscription",
+            json!({"subscription_key":subscription_key}),
+        ).await.unwrap();
+        assert_eq!(cancelled["subscription"]["status"], "cancelled");
+        let admit = handler.automatic_input_admission("caller", &queued[0].request).unwrap();
+        assert_eq!(admit().unwrap_err(), CODEX_APP_SERVER_TURN_CANCELLED);
+        let turns = super::super::super::turns::read_runtime_turn_state(&handler.turn_queue_path).unwrap();
+        assert_eq!(turns.queued_turns.len(), 1);
+        assert_eq!(turns.queued_turns[0].request.extra["client_user_message_id"], unrelated_operation);
+        assert_eq!(
+            turns.commands[&command_journal::key("caller", &operation)].state,
+            command_journal::CommandState::Cancelled,
+        );
     });
 }

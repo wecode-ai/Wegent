@@ -350,6 +350,29 @@ impl RuntimeWorkRpcHandler {
                 }
                 if !route_nested {
                     self.record_background_terminal_notification(&local_task_id, &message);
+                    if message["method"] == "item/completed" {
+                        let item = &message["params"]["item"];
+                        let client_id = item["clientId"]
+                            .as_str()
+                            .or_else(|| item["client_id"].as_str());
+                        let display = client_id.and_then(|client_id| {
+                            self.store
+                                .read_task(&local_task_id, |link| {
+                                    link.runtime_handle["userMessagePresentations"]
+                                        .as_array()?
+                                        .iter()
+                                        .find(|entry| {
+                                            entry["clientUserMessageId"] == client_id
+                                                && entry["source"]["source"] == "connection_event"
+                                        })
+                                        .cloned()
+                                })
+                                .flatten()
+                        });
+                        if let Some(display) = display {
+                            message["params"]["weworkGuidanceDisplay"] = display;
+                        }
+                    }
                 }
                 let event_request = if route_nested {
                     route_request
