@@ -81,6 +81,16 @@ export function managerActivityPresentation(
       planning: false,
     };
   }
+  if (
+    display === "succeeded" &&
+    metadata.dispatch_role === "manager" &&
+    !metadata.activity_type
+  ) {
+    return {
+      label: translate("activity.task_activity_manager_initial_plan_completed"),
+      planning: false,
+    };
+  }
   return {
     label: translate(
       display === "succeeded"

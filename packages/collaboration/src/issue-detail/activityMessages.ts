@@ -86,6 +86,7 @@ export const activityMessages: Record<
       "将「{{task}}」分配给{{assignee}}",
     "activity.task_activity_manager_assignment_separator": "；",
     "activity.task_activity_manager_planning": "正在规划任务",
+    "activity.task_activity_manager_initial_plan_completed": "已完成任务规划",
     "activity.task_activity_manager_planned": "已完成本轮评估",
     "activity.task_activity_manager_cancelled": "已停止任务规划",
     "activity.task_activity_manager_reviewing": "正在验收成员结果",
@@ -212,6 +213,8 @@ export const activityMessages: Record<
       "assigned “{{task}}” to {{assignee}}",
     "activity.task_activity_manager_assignment_separator": "; ",
     "activity.task_activity_manager_planning": "Planning tasks",
+    "activity.task_activity_manager_initial_plan_completed":
+      "Finished planning tasks",
     "activity.task_activity_manager_planned": "Finished this review round",
     "activity.task_activity_manager_cancelled": "Stopped planning tasks",
     "activity.task_activity_manager_reviewing": "Reviewing executor results",

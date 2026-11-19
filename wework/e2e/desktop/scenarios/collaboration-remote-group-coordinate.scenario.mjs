@@ -780,6 +780,8 @@ export async function createDesktopScenario({
       })
       await waitForIssueStatus(control, scoped, 'in_review', modelResponseTimeoutMs)
       await waitForActivityText(control, '待确认', modelResponseTimeoutMs)
+      await waitForActivityText(control, '已完成任务规划', uiTimeoutMs)
+      await waitForActivityText(control, '已完成本轮评估', uiTimeoutMs)
       await waitForCondition(
         () => parentStage,
         value => value === 'complete',
