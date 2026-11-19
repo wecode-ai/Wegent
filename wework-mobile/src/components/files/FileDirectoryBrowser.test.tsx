@@ -154,13 +154,18 @@ describe('FileDirectoryBrowser', () => {
 
   it('sorts directories before files, lazily expands folders, and preserves the file owner', async () => {
     await render()
-    expect(api.listWorkspaceDirectory).toHaveBeenCalledWith('device-a', '/repo')
+    expect(api.listWorkspaceDirectory).toHaveBeenCalledWith('device-a', '/repo', '/repo', 'task-a')
     expect(rows().map((item: { name: string }) => item.name)).toEqual(['docs', 'a.md', 'z.md'])
     api.listWorkspaceDirectory.mockResolvedValueOnce({
       entries: [{ ...file('child.md'), path: '/repo/docs/child.md' }],
     })
     await act(() => element('file-entry-/repo/docs').props.onPress())
-    expect(api.listWorkspaceDirectory).toHaveBeenLastCalledWith('device-a', '/repo/docs')
+    expect(api.listWorkspaceDirectory).toHaveBeenLastCalledWith(
+      'device-a',
+      '/repo/docs',
+      '/repo',
+      'task-a'
+    )
     expect(onNavigate).not.toHaveBeenCalled()
     expect(rows().map((item: { name: string; depth: number }) => [item.name, item.depth])).toEqual([
       ['docs', 0],
@@ -220,7 +225,12 @@ describe('FileDirectoryBrowser', () => {
     await act(() => element('files-retry-/repo/docs').props.onPress())
     expect(element('file-entry-/repo/docs/child.md')).toBeDefined()
     expect(element('files-retry-/repo/docs')).toBeUndefined()
-    expect(api.listWorkspaceDirectory).toHaveBeenLastCalledWith('device-a', '/repo/docs')
+    expect(api.listWorkspaceDirectory).toHaveBeenLastCalledWith(
+      'device-a',
+      '/repo/docs',
+      '/repo',
+      'task-a'
+    )
   })
 
   it('ignores child results after switching devices and clears expansions on refresh', async () => {
@@ -289,7 +299,8 @@ describe('FileDirectoryBrowser', () => {
       'device-a',
       '/repo',
       'new',
-      expect.stringMatching(/^mobile-files-/)
+      expect.stringMatching(/^mobile-files-/),
+      'task-a'
     )
   })
 
@@ -308,7 +319,12 @@ describe('FileDirectoryBrowser', () => {
       vi.advanceTimersByTime(0)
     })
     await act(async () => resolve({ entries: [file('obsolete.md')] }))
-    expect(api.listWorkspaceDirectory).toHaveBeenLastCalledWith('device-b', '/other')
+    expect(api.listWorkspaceDirectory).toHaveBeenLastCalledWith(
+      'device-b',
+      '/other',
+      '/other',
+      'task-a'
+    )
     expect(element('files-search').props.value).toBe('')
     await menuAction('files-edit-path')
     expect(element('files-path').props.value).toBe('/other')
@@ -367,7 +383,12 @@ describe('FileDirectoryBrowser', () => {
     })
     expect(rows()).toMatchObject([file('updated.md')])
     expect(element('files-retry')).toBeUndefined()
-    expect(api.listWorkspaceDirectory).toHaveBeenLastCalledWith('device-a', '/repo')
+    expect(api.listWorkspaceDirectory).toHaveBeenLastCalledWith(
+      'device-a',
+      '/repo',
+      '/repo',
+      'task-a'
+    )
   })
 
   it('retains a completed search on same-query refresh failure and clears it for a different query', async () => {
@@ -425,7 +446,9 @@ describe('FileDirectoryBrowser', () => {
       expect(element('files-retry')).toBeDefined()
       expect(api.listWorkspaceDirectory).toHaveBeenLastCalledWith(
         nextTarget.deviceId,
-        nextTarget.path
+        nextTarget.path,
+        nextTarget.path,
+        nextTarget.taskId
       )
     }
   )

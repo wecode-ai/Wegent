@@ -92,6 +92,7 @@ import {
 } from './runtime/workbench-mode.js'
 import type { RendererStorageStore } from './host/renderer-storage-store.js'
 import { createDesktopRendererStorage } from './host/desktop-renderer-storage.js'
+import { OpenAiCatalogStore } from './host/openai-catalog-store.js'
 import {
   EMBEDDED_BROWSER_PARTITION,
   EMBEDDED_BROWSER_ROUTE_HOST_SEPARATOR,
@@ -454,6 +455,7 @@ let preferences: PreferencesStore | null = null
 let desktopPreferences: DesktopPreferencesController | null = null
 let performanceRecorder: PerformanceRecorder | null = null
 let rendererStorage: RendererStorageStore | null = null
+const openAiCatalog = new OpenAiCatalogStore(app.getPath('userData'))
 let cloudCredentials: CloudCredentialService | null = null
 const pluginNativeAuthorization = new PluginNativeAuthorization(
   requiredCloudCredentials,
@@ -2348,6 +2350,7 @@ async function shutdown(): Promise<void> {
   await traceShutdownStep('child-runtime-stopped', () =>
     pluginDevelopmentChildRuntime?.writeState('stopped')
   )
+  await openAiCatalog.flush()
 }
 
 function requestApplicationShutdown(exit: () => void): void {
@@ -2629,6 +2632,7 @@ async function configureDesktopRuntime(): Promise<void> {
         embeddedBrowser,
         computerUse,
         {
+          openAiCatalog,
           executorHome:
             environment.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework'),
           processExplorer: processExplorerService,
@@ -3122,6 +3126,7 @@ if (hasSingleInstanceLock) {
           }
         },
         clearRuntimeFiles: () => clearStartupRuntimeFiles(app.getPath('userData')),
+        clearOpenAiCatalog: () => openAiCatalog.clear(),
         clearUserFiles: () => {
           const environment = startupRuntimeEnvironment ?? process.env
           const home = environment.WEGENT_EXECUTOR_HOME?.trim() || executorHome

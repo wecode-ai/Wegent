@@ -70,5 +70,6 @@ export interface PluginsWorkspaceProps {
   cloudMarketplaceAvailable?: boolean
   cloudApiBaseUrl?: string
   cloudToken?: string | null
+  cloudUserId?: number | null
   pluginReference?: PluginReference | null
 }
