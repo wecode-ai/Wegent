@@ -50,7 +50,10 @@ export function installE2EErrorCapture(target: Window = window): () => void {
       'uncaught-exception',
       event.error ?? event.message,
       event.message?.includes('ResizeObserver loop')
-        ? { ...resize?.snapshot(), conversation: getConversationDiagnosticsSnapshot() }
+        ? {
+            ...resize?.snapshot({ inspectCurrentGeometry: true }),
+            conversation: getConversationDiagnosticsSnapshot(),
+          }
         : undefined
     )
   const onRejection = (event: PromiseRejectionEvent) =>

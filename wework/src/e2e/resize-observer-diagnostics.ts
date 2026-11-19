@@ -55,11 +55,12 @@ function mutationWrites(
   })
 }
 
-/** Observe native delivery without changing callback timing, layout or error handling. */
+/** Record native delivery without layout reads; error snapshots can inspect current boxes. */
 export function installResizeObserverDiagnostics(target: Window) {
   const scope = target as Window & Pick<typeof globalThis, 'ResizeObserver' | 'MutationObserver'>
   const NativeObserver = scope.ResizeObserver
   const recent: ResizeDelivery[] = []
+  const deliveryTargets = new WeakMap<ResizeDelivery, WeakRef<Element>[]>()
   const betweenCallbacks: MutationBatch[] = []
   const observationChanges: ObservationChange[] = []
   const elementIds = new WeakMap<Element, number>()
@@ -141,6 +142,10 @@ export function installResizeObserverDiagnostics(target: Window) {
             writeCount: 0,
             writes: [],
           }
+          deliveryTargets.set(
+            delivery,
+            entries.slice(0, 4).map(entry => new WeakRef(entry.target))
+          )
           appendRecent(recent, delivery)
         } catch {
           failed = true
@@ -214,7 +219,30 @@ export function installResizeObserverDiagnostics(target: Window) {
   }
   scope.ResizeObserver = ObservedResizeObserver
   return {
-    snapshot: () => ({
+    snapshot: ({ inspectCurrentGeometry = false } = {}) => ({
+      ...(inspectCurrentGeometry
+        ? {
+            currentGeometry: recent.map(delivery => ({
+              observerId: delivery.observerId,
+              deliveredAtMs: delivery.atMs,
+              targets: (deliveryTargets.get(delivery) ?? []).map((reference, index) => {
+                const element = reference.deref()
+                if (!element)
+                  return { elementId: delivery.targets[index].elementId, collected: true }
+                try {
+                  const bounds = element.getBoundingClientRect()
+                  return {
+                    ...describeElement(element),
+                    connected: element.isConnected,
+                    borderRect: { width: bounds.width, height: bounds.height },
+                  }
+                } catch {
+                  return { elementId: delivery.targets[index].elementId, geometryUnavailable: true }
+                }
+              }),
+            })),
+          }
+        : {}),
       capturedAtMs: performance.now(),
       recent: [...recent],
       betweenCallbacks: [...betweenCallbacks],

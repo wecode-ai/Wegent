@@ -33,6 +33,18 @@ test('preserves native callback timing, identity and exceptions while recording 
       height: 200,
     },
   ])
+  const geometry = vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
+    width: 0,
+    height: 0,
+  } as DOMRect)
+  expect(diagnostics.snapshot()).not.toHaveProperty('currentGeometry')
+  expect(geometry).not.toHaveBeenCalled()
+  expect(diagnostics.snapshot({ inspectCurrentGeometry: true }).currentGeometry?.[0]).toMatchObject(
+    {
+      observerId: 1,
+      targets: [{ elementId: 1, connected: false, borderRect: { width: 0, height: 0 } }],
+    }
+  )
   expect(JSON.stringify(diagnostics.snapshot())).not.toContain('private text')
   const failure = new Error('Original callback failed')
   const throwing = new scope.ResizeObserver(() => {
