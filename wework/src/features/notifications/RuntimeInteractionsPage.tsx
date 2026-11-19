@@ -15,6 +15,7 @@ import { ArrowLeft, ArrowUpRight, RefreshCw, X } from 'lucide-react'
 import { useCallback, useId, useRef, useState, useSyncExternalStore } from 'react'
 import { InteractionDraftRecovery } from './InteractionDraftRecovery'
 import { InteractionTime } from './InteractionTime'
+import { RuntimeInteractionReply } from './RuntimeInteractionReply'
 import {
   hasRecordedIssueResolution,
   issueHumanInteraction,
@@ -27,6 +28,7 @@ import { projectIssueAssignedAfter, projectIssueNeedsInput } from './pendingProj
 import { canDiscussQuestion, useQuestionDiscussion } from './questionDiscussion'
 import {
   INTERACTION_SOURCES,
+  canReplyToInteraction,
   interactionOriginalScheme,
   interactionSource,
 } from './runtimeInteractions'
@@ -69,6 +71,7 @@ export function RuntimeInteractionsPage({
   const owner = useId()
   const list = useRef<HTMLElement>(null)
   const heading = useRef<HTMLHeadingElement>(null)
+  const [contextRowId, setContextRowId] = useState<string | null>(null)
   const [page] = useState(() =>
     createRuntimeInteractionsPageState(selectedId, twoPanes, interactions)
   )
@@ -169,7 +172,7 @@ export function RuntimeInteractionsPage({
   })
   useFocusRequest(list, focusListVersion, {
     enabled: !twoPanes && showList && focusListRequested,
-    selector: 'button[aria-pressed="true"], :scope:not(:has(button[aria-pressed="true"])) h1',
+    selector: 'button[aria-pressed="true"], :scope:not(:has(button[aria-pressed="true"])) h2',
   })
   if (!interactions) return null
   const { pending, errors } = interactions
@@ -255,277 +258,351 @@ export function RuntimeInteractionsPage({
     }
   }
   const row = selected ? rows.find(item => item.id === selected) : rows[0]
-  const liveQuestion = row ? pending.find(item => item.id === row.id && !item.cached) : undefined
+  const pendingQuestion = row ? pending.find(item => item.id === row.id) : undefined
+  const liveQuestion = pendingQuestion?.cached ? undefined : pendingQuestion
+  const quickReply = liveQuestion && canReplyToInteraction(liveQuestion) ? liveQuestion : null
+  const showProcessing = Boolean(pendingQuestion && !pendingQuestion.project && !history)
+  const showContext = Boolean(row && (contextRowId === row.id || !showProcessing))
   return (
     <main
       data-testid="runtime-interactions-page"
-      className="flex h-full min-h-0 bg-background text-text-primary"
+      className="flex h-full min-h-0 min-w-0 flex-col bg-background text-text-primary"
     >
-      <section
-        ref={list}
-        className={cn(
-          'flex w-full shrink-0 flex-col border-r border-border bg-muted/20 md:w-64 md:max-w-[36%] xl:w-72',
-          !twoPanes && !showList && 'hidden'
-        )}
-      >
-        <header className="flex min-h-14 flex-wrap items-center gap-1 px-4 py-2">
-          <h1 tabIndex={-1} className="min-w-0 flex-1 text-base font-medium outline-none">
-            {t(history ? 'interactions.history' : 'interactions.title')}{' '}
-            <span
-              data-testid={history ? 'interactions-history-count' : 'interactions-pending-count'}
-              className="ml-1 text-sm text-text-secondary"
-            >
-              {history ? interactions.history.length : pending.length + projectRows.length}
-            </span>
-          </h1>
-          {!history && (
-            <ControlButton
-              variant="unstyled"
-              type="button"
-              data-testid="interactions-dismiss-all"
-              disabled={dismissing || !rows.length || interactions.busy.size > 0}
-              className="min-h-11 shrink-0 rounded-md px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50 md:min-h-8"
-              onClick={() => void dismissRows(rows)}
-            >
-              {t('interactions.dismiss_all')}
-            </ControlButton>
-          )}
+      <header className={cn('shrink-0 px-5 pb-4 pt-5', !twoPanes && !showList && 'hidden')}>
+        <div className="flex items-start justify-between gap-4">
+          <h1 className="text-heading-md font-medium">{t('interactions.title')}</h1>
           <ControlButton
-            variant="unstyled"
-            type="button"
-            data-testid="interactions-history"
-            className="min-h-11 shrink-0 rounded-md px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary md:min-h-8"
-            onClick={() => {
-              setHistory(value => !value)
-              setSelected(null)
-            }}
-          >
-            {t(history ? 'interactions.pending' : 'interactions.history')}
-          </ControlButton>
-          <ControlButton
-            variant="unstyled"
-            type="button"
+            variant="ghost"
+            size="icon"
             data-testid="interactions-refresh"
             disabled={loading}
             aria-label={t('notifications.refresh')}
             onClick={() => void Promise.all([interactions.refresh(), projectIssues.refresh()])}
-            className="flex min-h-11 min-w-11 items-center justify-center rounded-md hover:bg-muted md:min-h-8 md:min-w-8"
+            className="shrink-0 text-text-secondary"
           >
-            <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
+            <RefreshCw aria-hidden="true" className={cn('h-4 w-4', loading && 'animate-spin')} />
           </ControlButton>
-        </header>
-        <div className="flex-1 overflow-y-auto px-2 pb-3">
-          <InteractionDraftRecovery />
-          {dismissFailed && (
-            <p role="alert" className="px-3 py-2 text-sm text-status-error">
-              {t('interactions.dismiss_failed')}
-            </p>
+        </div>
+      </header>
+      <div className="flex min-h-0 min-w-0 flex-1 border-t border-border">
+        <section
+          ref={list}
+          aria-label={t(history ? 'interactions.history' : 'interactions.pending')}
+          className={cn(
+            'interaction-queue flex min-h-0 w-full shrink-0 flex-col bg-[rgb(var(--color-bg-subtle))]',
+            twoPanes && 'w-[clamp(17rem,29%,23rem)] border-r border-border',
+            !twoPanes && !showList && 'hidden'
           )}
-          {INTERACTION_SOURCES.map(source => {
-            const entries = rows
-              .filter(entry => entry.source === source)
-              .sort((a, b) => b.timestamp - a.timestamp)
-            if (!entries.length) return null
-            return (
-              <div
-                role="group"
-                key={source}
-                data-testid={`interaction-source-group-${source}`}
-                aria-label={t(`interactions.sources.${source}`)}
+        >
+          <div className="flex min-h-12 shrink-0 flex-wrap items-center gap-1 px-4 py-2">
+            <h2
+              tabIndex={-1}
+              className="flex min-w-0 items-center gap-2 rounded-md bg-muted px-2.5 py-1.5 text-sm font-medium outline-none"
+            >
+              {t(history ? 'interactions.history' : 'interactions.pending')}
+              <span
+                data-testid={history ? 'interactions-history-count' : 'interactions-pending-count'}
+                className="tabular-nums text-text-secondary"
               >
-                <h2 className="flex items-center gap-2 px-3 pb-2 pt-3 text-sm font-medium text-text-secondary">
-                  {t(`interactions.sources.${source}`)}
-                  <span data-testid={`interaction-source-count-${source}`}>{entries.length}</span>
-                </h2>
-                {entries.map(entry => (
-                  <div key={entry.id} className="group relative">
-                    <ControlButton
-                      variant="unstyled"
-                      type="button"
-                      data-testid="interaction-list-item"
-                      data-project-issue={entry.projectItem ? 'true' : undefined}
-                      data-interaction-id={entry.id}
-                      aria-pressed={row?.id === entry.id}
-                      className={cn(
-                        'mb-1 flex w-full items-start rounded-lg px-3 py-3 text-left hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus',
-                        !history && 'pr-12',
-                        row?.id === entry.id && 'bg-muted'
-                      )}
-                      onClick={() => {
-                        setSelected(entry.id)
-                        setShowList(false)
-                      }}
-                    >
-                      <span className="min-w-0 flex-1">
-                        <span
-                          data-testid="interaction-list-summary"
-                          className="line-clamp-2 text-base font-medium"
-                        >
-                          {entry.question}
-                        </span>
-                        <span
-                          className="mt-1 block truncate text-sm text-text-secondary"
-                          title={entry.title}
-                        >
-                          {entry.title}
-                        </span>
-                        {!history && entry.source === 'project' && (
-                          <IssueWaitingTime since={entry.waitingSince ?? null} />
-                        )}
-                        <InteractionTime
-                          timestamp={entry.timestamp}
-                          testId="interaction-list-time"
-                        />
-                      </span>
-                    </ControlButton>
-                    {!history && (
+                {rows.length}
+              </span>
+            </h2>
+            <ControlButton
+              variant="ghost"
+              type="button"
+              data-testid="interactions-history"
+              className="text-text-secondary"
+              onClick={() => {
+                setHistory(value => !value)
+                setSelected(null)
+              }}
+            >
+              {t(history ? 'interactions.pending' : 'interactions.history')}
+            </ControlButton>
+            {!history && (
+              <ControlButton
+                variant="ghost"
+                type="button"
+                data-testid="interactions-dismiss-all"
+                disabled={dismissing || !rows.length || interactions.busy.size > 0}
+                className="ml-auto text-text-secondary"
+                onClick={() => void dismissRows(rows)}
+              >
+                {t('interactions.dismiss_all')}
+              </ControlButton>
+            )}
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 pb-3">
+            <InteractionDraftRecovery />
+            {dismissFailed && (
+              <p role="alert" className="px-3 py-2 text-sm text-status-error">
+                {t('interactions.dismiss_failed')}
+              </p>
+            )}
+            {INTERACTION_SOURCES.map(source => {
+              const entries = rows
+                .filter(entry => entry.source === source)
+                .sort((a, b) => b.timestamp - a.timestamp)
+              if (!entries.length) return null
+              return (
+                <div
+                  role="group"
+                  key={source}
+                  data-testid={`interaction-source-group-${source}`}
+                  aria-label={t(`interactions.sources.${source}`)}
+                >
+                  <h2 className="flex items-center gap-2 px-2.5 pb-1 pt-3 text-xs font-medium text-text-secondary">
+                    {t(`interactions.sources.${source}`)}
+                    <span data-testid={`interaction-source-count-${source}`}>{entries.length}</span>
+                  </h2>
+                  {entries.map(entry => (
+                    <div key={entry.id} className="group relative">
                       <ControlButton
                         variant="unstyled"
                         type="button"
-                        data-testid="interaction-dismiss"
-                        aria-label={t('interactions.skip')}
-                        title={t('interactions.skip')}
-                        disabled={dismissing || interactions.busy.has(entry.id)}
-                        className="absolute right-1 top-2 flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50 md:h-7 md:w-7 keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus"
-                        onClick={() => void dismissRows([entry])}
+                        data-testid="interaction-list-item"
+                        data-project-issue={entry.projectItem ? 'true' : undefined}
+                        data-interaction-id={entry.id}
+                        aria-pressed={row?.id === entry.id}
+                        className={cn(
+                          'mb-0.5 flex w-full items-start rounded-md px-2.5 py-1.5 text-left text-text-primary hover:bg-[rgb(var(--color-sidebar-hover))] keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus',
+                          !history && 'pr-12 md:pr-9',
+                          row?.id === entry.id && 'bg-[rgb(var(--color-sidebar-active))]'
+                        )}
+                        onClick={() => {
+                          setSelected(entry.id)
+                          setContextRowId(null)
+                          setShowList(false)
+                        }}
                       >
-                        <X className="h-4 w-4" aria-hidden="true" />
+                        <span className="min-w-0 flex-1">
+                          <span className="flex min-w-0 items-baseline justify-between gap-2">
+                            <span
+                              className="truncate text-base"
+                              title={entry.projectItem ? entry.question : entry.title}
+                            >
+                              {entry.projectItem ? entry.question : entry.title || entry.question}
+                            </span>
+                            <span className="shrink-0 tabular-nums">
+                              <InteractionTime
+                                timestamp={entry.timestamp}
+                                testId="interaction-list-time"
+                              />
+                            </span>
+                          </span>
+                          {entry.title && entry.question && entry.title !== entry.question && (
+                            <span
+                              data-testid="interaction-list-summary"
+                              className="block truncate text-sm text-text-secondary"
+                              title={entry.projectItem ? entry.title : entry.question}
+                            >
+                              {entry.projectItem ? entry.title : entry.question}
+                            </span>
+                          )}
+                        </span>
                       </ControlButton>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )
-          })}
-          {!rows.length && (history || !projectRows.length) && (
-            <p
-              data-testid={loading ? 'interactions-loading' : 'interactions-empty'}
-              className="px-3 py-8 text-sm text-text-secondary"
-            >
-              {t(loading ? 'interactions.loading' : 'interactions.empty')}
-            </p>
-          )}
-          {Object.entries(errors)
-            .filter(
-              ([key]) =>
-                !pending.some(request => request.id === key) &&
-                !interactions.history.some(item => item.id === key) &&
-                !interactions.replyDrafts.some(draft => draft.interaction.id === key)
-            )
-            .map(([key, error]) => (
-              <p key={key} role="alert" className="px-3 py-2 text-sm text-status-error">
-                {error}
+                      {!history && (
+                        <ControlButton
+                          variant="unstyled"
+                          type="button"
+                          data-testid="interaction-dismiss"
+                          aria-label={t('interactions.skip')}
+                          title={t('interactions.skip')}
+                          disabled={dismissing || interactions.busy.has(entry.id)}
+                          className="absolute right-1 top-1.5 flex h-11 w-11 items-center justify-center rounded-md text-text-secondary hover:bg-muted hover:text-text-primary disabled:opacity-50 md:h-7 md:w-7 md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus"
+                          onClick={() => void dismissRows([entry])}
+                        >
+                          <X className="h-4 w-4" aria-hidden="true" />
+                        </ControlButton>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )
+            })}
+            {!rows.length && (history || !projectRows.length) && (
+              <p
+                data-testid={loading ? 'interactions-loading' : 'interactions-empty'}
+                className="px-3 py-8 text-sm text-text-secondary"
+              >
+                {t(loading ? 'interactions.loading' : 'interactions.empty')}
               </p>
-            ))}
-          {!history &&
-            Object.entries(projectIssues.errors)
-              .filter(([, error]) => error)
-              .map(([store, error]) => (
-                <CollapsibleRoot key={store} className="px-3 py-2 text-sm text-status-error">
-                  <CollapsibleTrigger
-                    data-testid={`project-work-error-${store}`}
-                    className="min-h-11 cursor-pointer md:min-h-8"
-                  >
-                    {t(
-                      store.endsWith('local')
-                        ? 'issueParticipation.local_load_failed'
-                        : 'issueParticipation.cloud_load_failed'
-                    )}
-                  </CollapsibleTrigger>
-                  <CollapsiblePanel>
-                    <p className="mt-2 break-words whitespace-pre-wrap">{error}</p>
-                  </CollapsiblePanel>
-                </CollapsibleRoot>
-              ))}
-        </div>
-      </section>
-      <section
-        className={cn('flex min-h-0 min-w-0 flex-1 flex-col', !twoPanes && showList && 'hidden')}
-      >
-        {!twoPanes && (
-          <ControlButton
-            variant="unstyled"
-            type="button"
-            data-testid="interactions-back-to-list"
-            className="mx-3 mt-2 flex min-h-11 items-center gap-2 self-start rounded-md px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
-            onClick={() => {
-              page.returnToList()
-            }}
-          >
-            <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-            {t('interactions.back_to_list')}
-          </ControlButton>
-        )}
-        {row ? (
-          <div className="flex min-h-0 flex-1 flex-col">
-            <header className="flex shrink-0 flex-col gap-2 border-b border-border/60 px-5 py-2 sm:flex-row sm:items-center sm:gap-3">
-              <div className="min-w-0 flex-1">
-                <h2
-                  ref={heading}
-                  tabIndex={0}
-                  data-testid="interaction-question-heading"
-                  className="max-h-24 overflow-y-auto whitespace-pre-wrap break-words text-base font-medium outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus"
-                >
-                  {row.question}
-                </h2>
-                <p className="mt-1 truncate text-sm text-text-secondary" title={row.title}>
-                  {row.title}
+            )}
+            {Object.entries(errors)
+              .filter(
+                ([key]) =>
+                  !pending.some(request => request.id === key) &&
+                  !interactions.history.some(item => item.id === key) &&
+                  !interactions.replyDrafts.some(draft => draft.interaction.id === key)
+              )
+              .map(([key, error]) => (
+                <p key={key} role="alert" className="px-3 py-2 text-sm text-status-error">
+                  {error}
                 </p>
-                <InteractionTime timestamp={row.timestamp} testId="interaction-detail-time" />
-              </div>
-              {discussion && liveQuestion && canDiscussQuestion(liveQuestion.payload) && (
+              ))}
+            {!history &&
+              Object.entries(projectIssues.errors)
+                .filter(([, error]) => error)
+                .map(([store, error]) => (
+                  <CollapsibleRoot key={store} className="px-3 py-2 text-sm text-status-error">
+                    <CollapsibleTrigger
+                      data-testid={`project-work-error-${store}`}
+                      className="min-h-11 cursor-pointer md:min-h-8"
+                    >
+                      {t(
+                        store.endsWith('local')
+                          ? 'issueParticipation.local_load_failed'
+                          : 'issueParticipation.cloud_load_failed'
+                      )}
+                    </CollapsibleTrigger>
+                    <CollapsiblePanel>
+                      <p className="mt-2 break-words whitespace-pre-wrap">{error}</p>
+                    </CollapsiblePanel>
+                  </CollapsibleRoot>
+                ))}
+          </div>
+        </section>
+        <section
+          aria-label={t('interactions.context')}
+          className={cn('flex min-h-0 min-w-0 flex-1 flex-col', !twoPanes && showList && 'hidden')}
+        >
+          {!twoPanes && (
+            <ControlButton
+              variant="unstyled"
+              type="button"
+              data-testid="interactions-back-to-list"
+              className="mx-3 mt-2 flex min-h-11 items-center gap-2 self-start rounded-md px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
+              onClick={() => {
+                page.returnToList()
+              }}
+            >
+              <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+              {t('interactions.back_to_list')}
+            </ControlButton>
+          )}
+          {row ? (
+            <div className="flex min-h-0 flex-1 flex-col">
+              <header className="flex shrink-0 flex-wrap items-start gap-x-4 gap-y-2 border-b border-border px-5 pb-4 pt-4">
+                <div className="min-w-0 flex-1 basis-52">
+                  <h2
+                    ref={heading}
+                    tabIndex={0}
+                    data-testid="interaction-question-heading"
+                    className="line-clamp-2 break-words text-heading-sm font-medium outline-none keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus"
+                    title={row.projectItem ? row.question : row.title || row.question}
+                  >
+                    {row.projectItem ? row.question : row.title || row.question}
+                  </h2>
+                  {!history && row.source === 'project' && row.waitingSince ? (
+                    <IssueWaitingTime since={row.waitingSince} />
+                  ) : (
+                    <InteractionTime timestamp={row.timestamp} testId="interaction-detail-time" />
+                  )}
+                </div>
+                {discussion && liveQuestion && canDiscussQuestion(liveQuestion.payload) && (
+                  <ControlButton
+                    variant="unstyled"
+                    type="button"
+                    data-testid="interaction-discuss"
+                    disabled={interactions.busy.has(liveQuestion.id)}
+                    onClick={() => discussion.open(liveQuestion.task.address, liveQuestion.payload)}
+                    className="min-h-11 shrink-0 rounded-md px-2 text-sm text-text-secondary hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus disabled:opacity-50 md:min-h-7"
+                  >
+                    {t('question_discussion.open')}
+                  </ControlButton>
+                )}
                 <ControlButton
                   variant="unstyled"
                   type="button"
-                  data-testid="interaction-discuss"
-                  disabled={interactions.busy.has(liveQuestion.id)}
-                  onClick={() => discussion.open(liveQuestion.task.address, liveQuestion.payload)}
-                  className="min-h-11 shrink-0 rounded-md px-2 text-sm text-text-secondary hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus disabled:opacity-50 md:min-h-7"
-                >
-                  {t('question_discussion.open')}
-                </ControlButton>
-              )}
-              <ControlButton
-                variant="unstyled"
-                type="button"
-                data-testid="interaction-open-original"
-                className="flex min-h-11 shrink-0 self-start items-center gap-1 rounded-md px-2 text-sm text-text-secondary hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus sm:self-auto md:min-h-7"
-                onClick={() =>
-                  openWeworkScheme(
-                    originalNavigation?.id === row.id ? originalNavigation.url : originalUrl(row)
-                  )
-                }
-              >
-                {t('interactions.open_original')}
-                <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
-              </ControlButton>
-            </header>
-            <div
-              className="flex min-h-0 flex-1 flex-col overflow-hidden"
-              data-testid="interaction-entity-container"
-            >
-              <WorkbenchErrorBoundary key={originalUrl(row)}>
-                <NotificationEntitySurface
-                  interactionId={row.id}
-                  sourceMessageIds={row.sourceMessageIds}
-                  focusedRequest={
-                    interactions.pending.find(item => item.id === row.id && !item.cached)
-                      ?.payload ?? null
+                  data-testid="interaction-open-original"
+                  className="flex min-h-11 shrink-0 self-start items-center gap-1 rounded-md px-2 text-sm text-text-secondary hover:bg-muted keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus sm:self-auto md:min-h-7"
+                  onClick={() =>
+                    openWeworkScheme(
+                      originalNavigation?.id === row.id ? originalNavigation.url : originalUrl(row)
+                    )
                   }
-                  onOriginalUrlChange={onOriginalUrlChange}
-                  url={originalUrl(row)}
-                  address={row.address}
-                  active={active}
-                />
-              </WorkbenchErrorBoundary>
+                >
+                  {t('interactions.open_original')}
+                  <ArrowUpRight className="h-4 w-4" aria-hidden="true" />
+                </ControlButton>
+              </header>
+              {showProcessing && (
+                <div className="shrink-0 border-b border-border px-5 py-2">
+                  <div className="flex items-center gap-1">
+                    <ControlButton
+                      variant={showContext ? 'ghost' : 'secondary'}
+                      size="sm"
+                      aria-pressed={!showContext}
+                      onClick={() => setContextRowId(null)}
+                    >
+                      {t('interactions.pending')}
+                    </ControlButton>
+                    <ControlButton
+                      variant={showContext ? 'secondary' : 'ghost'}
+                      size="sm"
+                      data-testid="interaction-show-context"
+                      aria-pressed={showContext}
+                      onClick={() => setContextRowId(row.id)}
+                    >
+                      {t('interactions.context')}
+                    </ControlButton>
+                  </div>
+                </div>
+              )}
+              {showContext ? (
+                <div
+                  className="flex min-h-0 flex-1 flex-col overflow-hidden"
+                  data-testid="interaction-entity-container"
+                >
+                  <WorkbenchErrorBoundary key={originalUrl(row)}>
+                    <NotificationEntitySurface
+                      interactionId={row.id}
+                      sourceMessageIds={row.sourceMessageIds}
+                      focusedRequest={liveQuestion?.payload ?? null}
+                      onOriginalUrlChange={onOriginalUrlChange}
+                      url={originalUrl(row)}
+                      address={row.address}
+                      active={active && showContext}
+                    />
+                  </WorkbenchErrorBoundary>
+                </div>
+              ) : (
+                <div className="min-h-0 flex-1 overflow-y-auto px-5 py-6">
+                  <div className="mx-auto flex max-w-3xl flex-col gap-5">
+                    <p className="whitespace-pre-wrap break-words text-base leading-relaxed">
+                      {row.question}
+                    </p>
+                    {quickReply ? (
+                      <RuntimeInteractionReply
+                        key={quickReply.id}
+                        item={quickReply}
+                        autoFocus={false}
+                      />
+                    ) : (
+                      <div className="space-y-3">
+                        {pendingQuestion?.cached && (
+                          <p className="text-sm text-text-secondary">{t('interactions.cached')}</p>
+                        )}
+                        <ControlButton
+                          variant="primary"
+                          type="button"
+                          onClick={() => setContextRowId(row.id)}
+                        >
+                          {t('interactions.context')}
+                        </ControlButton>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
-          </div>
-        ) : (
-          <div className="flex flex-1 items-center justify-center text-sm text-text-secondary">
-            {t(selected ? 'interactions.expired' : 'interactions.empty')}
-          </div>
-        )}
-      </section>
+          ) : (
+            <div className="flex flex-1 items-center justify-center text-sm text-text-secondary">
+              {t(selected ? 'interactions.expired' : 'interactions.empty')}
+            </div>
+          )}
+        </section>
+      </div>
     </main>
   )
 }

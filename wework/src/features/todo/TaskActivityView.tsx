@@ -20,7 +20,6 @@ import {
   IssueActivityFeed,
   IssueActivityThread,
   IssueStatusHistoryList,
-  issueThreadActivityTimestamp,
 } from '@wegent/collaboration'
 
 import { IssueActivityTools } from '@wegent/collaboration/issue-detail/IssueActivityTools'
@@ -125,7 +124,7 @@ function TaskActivityContent(props: TaskActivityViewProps) {
     visibleActivity,
   } = useTaskActivityController(props)
   const renderCommentChildAction = (message: ProjectChatMessage) =>
-    issueTimeline && commentAssignment?.createChild && client ? (
+    issueTimeline && commentAssignment?.createChild && client && message.content.trim() ? (
       <IssueCommentChildAction
         body={message.content}
         messageId={message.messageId}
@@ -178,7 +177,6 @@ function TaskActivityContent(props: TaskActivityViewProps) {
           taskAiState={task.ai_state}
           executionDeviceName={deviceNameForMessage(message)}
           taskSummary={taskSummaryForMessage(message)}
-          hideTime={issueTimeline && isRoot}
           onOpenExecution={
             address && onOpenRuntimeTask
               ? () => onOpenRuntimeTask(address)
@@ -480,7 +478,6 @@ function TaskActivityContent(props: TaskActivityViewProps) {
                     </div>
                     <IssueTimelineActions
                       rootId={rootId}
-                      createdAt={issueThreadActivityTimestamp(card)}
                       replyLabel={cardReplyLabel(card)}
                       active={replyTarget?.root.messageId === rootId}
                       onReply={
@@ -523,7 +520,6 @@ function TaskActivityContent(props: TaskActivityViewProps) {
                       {issueTimeline ? (
                         <IssueTimelineActions
                           rootId={rootId}
-                          createdAt={issueThreadActivityTimestamp(card)}
                           replyLabel={cardReplyLabel(card)}
                           active={replyTarget?.root.messageId === rootId}
                           onReply={() => beginReply(card)}

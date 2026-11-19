@@ -14,7 +14,13 @@ import { useRuntimeInteractions } from './RuntimeInteractionsContext'
 import { openWeworkScheme } from './schemeEvents'
 
 /** Compact reminders share the owning request; full processing belongs to its entity. */
-export function RuntimeInteractionReply({ item }: { item: RuntimeInteraction }) {
+export function RuntimeInteractionReply({
+  item,
+  autoFocus = true,
+}: {
+  item: RuntimeInteraction
+  autoFocus?: boolean
+}) {
   const { t } = useTranslation('common')
   const interactions = useRuntimeInteractions()
   const [custom, setCustom] = useState(false)
@@ -44,7 +50,7 @@ export function RuntimeInteractionReply({ item }: { item: RuntimeInteraction }) 
               key={`${index}:${option.value ?? option.label}`}
               data-testid={`interaction-answer-${index}`}
               variant={index === 0 ? 'primary' : 'secondary'}
-              autoFocus={index === 0 && !custom && !draft}
+              autoFocus={autoFocus && index === 0 && !custom && !draft}
               disabled={disabled}
               onClick={() => void respond(item, option.value ?? option.label!)}
             >
@@ -66,7 +72,7 @@ export function RuntimeInteractionReply({ item }: { item: RuntimeInteraction }) 
             data-testid="interaction-reply-input"
             aria-label={t('interactions.reply')}
             placeholder={t('interactions.reply_placeholder')}
-            autoFocus
+            autoFocus={autoFocus}
             value={draft}
             disabled={disabled}
             onChange={(event: ChangeEvent<HTMLInputElement>) =>

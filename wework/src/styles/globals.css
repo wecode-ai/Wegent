@@ -43,6 +43,15 @@ body:has(#wework-debug-panel [role='dialog']) .electron-titlebar-drag-region {
   -webkit-app-region: no-drag;
 }
 
+/* Match task and collaboration navigation text in every appearance. */
+.collaboration-platform-sidebar,
+.interaction-queue {
+  --color-text-primary: var(--color-sidebar-text-primary);
+  --color-text-secondary: var(--color-sidebar-text-secondary);
+  --color-text-muted: var(--color-sidebar-text-muted);
+  color: rgb(var(--color-sidebar-text-primary));
+}
+
 /* Chromium can omit promoted sidebar overlays from a backdrop filter. */
 body:has([data-testid='cloud-todo-create-panel'])
   :is([data-testid='desktop-sidebar'], [data-testid='collaboration-platform-sidebar'])
