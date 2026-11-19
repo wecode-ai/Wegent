@@ -155,6 +155,7 @@ it('lets an external-only task open a pane on a same-position drop without persi
   window.addEventListener(WORKBENCH_SIDEBAR_PANE_DRAG_END_EVENT, end)
   try {
     await mount(moved, true, false)
+    expect(container.querySelector('[data-slot="sortable-handle"]')).toBeNull()
     await pointer('pointerdown', find('title-a'), 30, 20)
     await pointer('pointermove', document.body, 260, 20)
     await pointer('pointerup', document.body, 260, 20)

@@ -5,7 +5,6 @@ import {
   SortableDragArea,
   type SortableChangeDetails,
 } from '@wegent/collaboration/controls/Sortable'
-import { GripVertical } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isSidebarDragActivatorTarget } from './sidebarDragActivator'
@@ -107,6 +106,7 @@ export function SidebarSortableList<T>({
           id => {
             const item = itemById.get(id)
             if (!item) return null
+            const reorderable = canDrag(item)
             return (
               <div
                 key={id}
@@ -117,25 +117,16 @@ export function SidebarSortableList<T>({
                 <SortableItem
                   value={id}
                   label={getLabel(item)}
-                  disabled={!canDrag(item) && !getExternalDragData?.(item)}
+                  disabled={!reorderable && !getExternalDragData?.(item)}
+                  className="rounded-lg has-[>[data-slot=sortable-handle]:focus-visible]:outline has-[>[data-slot=sortable-handle]:focus-visible]:outline-2 has-[>[data-slot=sortable-handle]:focus-visible]:-outline-offset-2 has-[>[data-slot=sortable-handle]:focus-visible]:outline-focus"
                 >
-                  <SortableHandle
-                    disabled={!canDrag(item)}
-                    onPointerDown={event => {
-                      if (
-                        event.isPrimary &&
-                        event.button === 0 &&
-                        canDrag(item) &&
-                        getExternalDragData
-                      )
-                        paneDrag.prepare(id, getExternalDragData(item), event.nativeEvent)
-                    }}
-                    aria-label={t('workbench.reorder_item', { name: getLabel(item) })}
-                    data-testid={`${testId}-handle-${id}`}
-                    className="pointer-events-none absolute inset-y-0 right-0 z-10 opacity-0 focus:pointer-events-auto focus:bg-background focus:opacity-100 md:h-full md:min-h-0"
-                  >
-                    <GripVertical aria-hidden="true" />
-                  </SortableHandle>
+                  {reorderable && (
+                    <SortableHandle
+                      aria-label={t('workbench.reorder_item', { name: getLabel(item) })}
+                      data-testid={`${testId}-handle-${id}`}
+                      className="sr-only pointer-events-none"
+                    />
+                  )}
                   <SortableDragArea className="touch-none">{renderItem(item)}</SortableDragArea>
                 </SortableItem>
               </div>
