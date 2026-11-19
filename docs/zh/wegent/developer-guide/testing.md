@@ -313,6 +313,14 @@ Wework 浏览器和桌面 E2E，以及 Wework macOS 内存门禁，适合路径�
 改动路径决定测试范围。Wework macOS 内存门禁仅在带有 `ci:all` 标签的非 Draft PR 中运行；
 普通 PR、定时任务和手动任务均不触发内存 E2E。
 
+Linux 桌面 E2E 分片从共享镜像获取原生测试工具。平台 E2E 在 Rust 后端构建期间准备依赖和服务，
+使用前等待同一次 CI 运行的后端产物。同仓库 PR 可复用该 PR 中构建输入完全匹配的 Linux 桌面包。普通 PR 的 macOS 桌面检查构建本地应用和 Executor。
+需要从 PR 提取完整 macOS 构建或原生后端产物时，使用 `ci:all` 运行。
+
+Rust 后端 E2E 先查找精确匹配的最终运行时，再按需构建。构建可复用依赖镜像和由主分支写入的
+GHCR BuildKit 层。缺少依赖镜像时，直接用真实源码编译，依赖预热任务才编译占位目标。
+Linux Core 的两个延迟基准保留专用分片，其余检查点在现有分片间均衡。
+
 Windows 桌面构建由 `build-wework-windows-e2e` 共享 action 负责，主分支缓存预热与
 PR 使用同一路径。只有 `main` 可以写入共享缓存；完整桌面包按源码输入、Node、
 Rust 和 runner 镜像版本精确匹配，不使用前缀匹配。命中后直接验证并上传原始构建包，
@@ -388,6 +396,11 @@ CI 稳定性依赖以下约束：
   在多个桌面 job 之间复用同一套完整二进制产物。
 - 平台 E2E、Release 和 Snapshot 的 Docker BuildKit cache 存放在对应 GHCR 镜像的
   build cache tag，不占用 GitHub Actions dependency cache 配额。
+  同仓 PR 的生产 Backend 镜像验证在独立的 `wegent-backend-delivery-ci` 包内按 PR
+  编号复用 BuildKit 缓存，发布和快照继续读取原有共享缓存。
+- 同仓 PR 的平台 Executor E2E 按 PR 编号和已发布镜像摘要在 GHCR 复用提取出的
+  Executor 二进制文件。每轮仍签发同一提交的运行时清单，Executor E2E 会将二进制
+  文件与实际下载的测试镜像比对。
 - 非 Wework E2E 的 Executor 和 Electron 系统依赖安装前先检查 runner 已安装的软件包；
   APT 下载缓存只有 `main` 写入，PR 只恢复。
 - Linux 上的真实 Electron 更新传输探针同时隔离 Xvfb 和 D-Bus 会话，避免继承无效的

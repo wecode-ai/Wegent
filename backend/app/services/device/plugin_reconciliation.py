@@ -89,7 +89,11 @@ def record_reconciliation_result(
             raise
         return None
 
-    return run_plugin_transaction(record, get_db_session, attempts=3, retry_busy=True)
+    # Background receipts can advance the account fence while this ACK commits.
+    # Revalidate the same device result in a fresh transaction on each conflict.
+    return run_plugin_transaction(
+        record, get_db_session, retry_busy=True, retry_conflicts=True
+    )
 
 
 def plugin_snapshot(payload: dict[str, Any]) -> list[dict[str, Any]]:

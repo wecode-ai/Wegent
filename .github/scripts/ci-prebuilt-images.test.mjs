@@ -134,14 +134,22 @@ test("publication normalizes registry caches and manual seeds cannot overwrite s
       '#!/usr/bin/env bash\nset -euo pipefail\nprintf "%s\\n" "$*" >> "$TEST_DOCKER_LOG"\nif [[ "$1 $2" == "buildx imagetools" ]]; then exit 1; fi\n',
     );
     chmodSync(docker, 0o755);
-    for (const ref of ["refs/heads/main", "refs/heads/topic"]) {
+    for (const [component, ref] of [
+      ["executor", "refs/heads/main"],
+      ["executor", "refs/heads/topic"],
+      ["backend-rs", "refs/heads/main"],
+      ["backend-rs", "refs/heads/topic"],
+    ]) {
+      const cache = component === "executor"
+        ? "ghcr.io/example/wegent-executor:buildcache-e2e"
+        : "ghcr.io/example/wegent-backend-rs-e2e:buildcache";
       const log = join(
         directory,
-        ref.endsWith("main") ? "main.log" : "manual.log",
+        component + "-" + (ref.endsWith("main") ? "main.log" : "manual.log"),
       );
       const result = spawnSync(
         "bash",
-        [".github/scripts/publish-ci-prebuild.sh", "executor"],
+        [".github/scripts/publish-ci-prebuild.sh", component],
         {
           cwd: root,
           env: {
@@ -163,13 +171,16 @@ test("publication normalizes registry caches and manual seeds cannot overwrite s
       const calls = readFileSync(log, "utf8").split("\n");
       const builds = calls.filter((line) => line.startsWith("buildx build "));
       assert.equal(builds.length, 2);
-      for (const build of builds) {
+      for (const [index, build] of builds.entries()) {
         assert.ok(
           build.includes(
-            "--cache-from type=registry,ref=ghcr.io/example/wegent-executor:buildcache-e2e",
+            "--cache-from type=registry,ref=" + cache,
           ),
         );
-        assert.equal(build.includes("--cache-to"), ref === "refs/heads/main");
+        assert.equal(
+          build.includes("--cache-to"),
+          ref === "refs/heads/main" && (component === "executor" || index === 0),
+        );
       }
       assert.equal(calls.filter((line) => line.startsWith("push ")).length, 2);
     }
@@ -190,6 +201,22 @@ test("fork and trusted PRs reuse image hits while missing images build exactly o
       .if,
     undefined,
   );
+  const restore = producer.steps.find(
+    (step) => step.id === "executor-pr-cache",
+  );
+  const publish = producer.steps.find(
+    (step) => step.name === "Publish same-PR Executor binary",
+  );
+  const check = producer.steps.find((step) => step.id === "image-check");
+  assert.ok(
+    check.env.CACHE_PR_NUMBER.includes(
+      "pull_request.head.repo.full_name == github.repository",
+    ),
+  );
+  assert.ok(check.run.includes("binary-amd64-v1-$digest-pr-$CACHE_PR_NUMBER"));
+  assert.ok(check.run.includes('sha256sum < "$manifest"'));
+  assert.equal(restore.if, "steps.image-check.outputs.cache-ref != ''");
+  assert.equal(restore.env.CACHE_REF, publish.env.CACHE_REF);
   for (const artifact of ["true", "false"]) {
     for (const exists of ["true", "false"]) {
       for (const pinned of [true, false]) {
@@ -216,13 +243,19 @@ test("fork and trusted PRs reuse image hits while missing images build exactly o
           access: { outputs: { artifact } },
           "image-check": { outputs: { exists } },
           transport: { outputs: { artifact: String(archive) } },
+          "executor-pr-cache": { outputs: { "cache-hit": "" } },
         };
         const enabled = (name) => {
           const step = producer.steps.find((item) => item.name === name);
           assert.ok(step, name);
           return step.if
             ? runInNewContext(
-                step.if.replaceAll("steps.image-check", 'steps["image-check"]'),
+                step.if
+                  .replaceAll("steps.image-check", 'steps["image-check"]')
+                  .replaceAll(
+                    "steps.executor-pr-cache.outputs.cache-hit",
+                    'steps["executor-pr-cache"].outputs["cache-hit"]',
+                  ),
                 { steps },
               )
             : true;
@@ -247,6 +280,11 @@ test("fork and trusted PRs reuse image hits while missing images build exactly o
         assert.equal(enabled("Archive fork Executor E2E runtime"), archive);
         assert.equal(enabled("Upload fork Executor E2E runtime"), archive);
         assert.equal(enabled("Log in to GHCR"), artifact !== "true");
+        if (exists === "true" && artifact === "false") {
+          steps["executor-pr-cache"].outputs["cache-hit"] = "true";
+          assert.equal(enabled("Restore published Executor runtime"), false);
+          assert.equal(enabled("Extract Executor binary"), false);
+        }
       }
     }
   }

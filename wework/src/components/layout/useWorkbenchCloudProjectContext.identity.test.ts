@@ -1,5 +1,7 @@
-import { renderHook, waitFor } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
+import type { CloudLoopItem } from '@/api/deliveries'
+import type { DeliveryApi } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo, RuntimeTaskAddress } from '@/types/api'
 import { cloudRuntimePort, loopItem, project } from './workbenchCloudProjectContextTestFixtures'
 import { useWorkbenchCloudProjectContext } from './useWorkbenchCloudProjectContext'
@@ -48,4 +50,36 @@ test('retains the same owner binding during alias refresh but isolates another d
   rerender({ task: address('another-device'), knownDevices: devices })
   expect(result.current.boundCloudProject).toBeNull()
   expect(result.current.boundCloudItem).toBeNull()
+})
+
+test('completes task association when the board items load during tracking', async () => {
+  const board = project('tracking-board')
+  const item = loopItem(board.id)
+  const items = Promise.withResolvers<{ items: CloudLoopItem[] }>()
+  const tracking = Promise.withResolvers<{ item: CloudLoopItem }>()
+  const services = {
+    deliveryApi: { listLoopItems: () => items.promise } as DeliveryApi,
+    workspaceRuntimePort: cloudRuntimePort({ trackProjectTask: () => tracking.promise }),
+  }
+  const { result } = renderHook(() =>
+    useWorkbenchCloudProjectContext({
+      active: true,
+      currentRuntimeTask: { deviceId: 'tracking-device', taskId: 'tracking-task' },
+      defaultProjectSpace: null,
+      paneKey: 'runtime:tracking-device:tracking-task',
+      runtimeTaskTitle: 'Tracking task',
+      services,
+      userId: 1,
+    })
+  )
+
+  act(() => result.current.handleSelectCloudProject(board))
+  act(() => result.current.associateRuntimeTaskWithNewItem())
+  await act(async () => items.resolve({ items: [item] }))
+  expect(result.current.taskBoardAssociation).toMatchObject({ items: [item], pending: true })
+
+  await act(async () => tracking.resolve({ item }))
+
+  expect(result.current.taskBoardAssociation).toBeNull()
+  expect(result.current.boundCloudItem?.id).toBe(item.id)
 })

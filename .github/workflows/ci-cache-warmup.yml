@@ -74,7 +74,7 @@ on:
         options: [linux, macos-runtimes, frontend]
         default: linux
       macos_runtime_source_run:
-        description: Optional upstream Wework CI run whose successful macOS producer supplies the native binaries.
+        description: Optional successful Wework CI run with both native macOS binaries (ci:all for pull requests).
         type: string
         default: ""
       promote_macos_build:
