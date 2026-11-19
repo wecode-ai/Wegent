@@ -212,6 +212,9 @@ class SubscriptionCallbackGateway(unittest.TestCase):
             self.assertEqual(before[field], "RUNNING", before)
         response = self.client.post(
             "/api/internal/callback",
+            headers={
+                "Authorization": f"Bearer {os.environ['E2E_INTERNAL_SERVICE_TOKEN']}"
+            },
             json={
                 "event_type": event_type,
                 "task_id": self.task_id,

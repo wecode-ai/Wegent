@@ -20,6 +20,7 @@ def test_ready_container_requires_binding_before_dispatch(status):
         "task_id": 42,
         "subtask_id": 43,
         "executor_binding_token": TOKEN,
+        "executor_callback_token": "callback-token",
     }
     task = {"metadata": metadata}
     dispatch = Mock(return_value={"status": "success"})
@@ -37,17 +38,32 @@ def test_ready_container_requires_binding_before_dispatch(status):
         dispatch.assert_not_called()
         return httpx.Response(status, json={"status": "bound"} if status == 200 else {})
 
-    with patch.object(
-        executor_binding,
-        "traced_sync_client",
-        return_value=httpx.Client(transport=httpx.MockTransport(handle)),
+    with (
+        patch.object(
+            executor_binding,
+            "traced_sync_client",
+            return_value=httpx.Client(transport=httpx.MockTransport(handle)),
+        ),
+        patch(
+            "executor_manager.services.sandbox.repository.get_sandbox_repository"
+        ) as repository_factory,
     ):
+        repository = repository_factory.return_value
+        repository.load_executor_callback_token.return_value = "callback-token"
         if status == 200:
             assert DockerExecutor.dispatch_task_to_instance(
                 executor, task, "executor-1", {"port": 8080}
             ) == {"status": "success"}
             dispatch.assert_called_once_with(
-                {"metadata": {"task_id": 42, "subtask_id": 43}}, "executor-1", 8080
+                {
+                    "metadata": {
+                        "task_id": 42,
+                        "subtask_id": 43,
+                        "executor_callback_token": "callback-token",
+                    }
+                },
+                "executor-1",
+                8080,
             )
         else:
             with pytest.raises(
@@ -60,6 +76,7 @@ def test_ready_container_requires_binding_before_dispatch(status):
 
     assert len(binding_requests) == 1
     assert task["metadata"]["executor_binding_token"] == TOKEN
+    repository.save_executor_binding.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -91,3 +108,44 @@ async def test_enqueue_accepts_binding_credential_only_from_dispatch_header(
 
     queued = queue.return_value.enqueue_task.call_args.args[0]
     assert queued["metadata"].get("executor_binding_token") == expected
+
+
+def test_dispatch_reuses_prepared_callback_credential():
+    task = {
+        "metadata": {
+            "task_id": 42,
+            "subtask_id": 43,
+            "executor_binding_token": TOKEN,
+            "executor_callback_token": "callback-token",
+        }
+    }
+    dispatch = Mock(return_value={"status": "success"})
+    executor = Mock(_dispatch_initial_task_to_new_container=dispatch)
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"status": "bound"})
+
+    repository = Mock(
+        load_executor_callback_token=Mock(return_value="callback-token"),
+        save_executor_binding=Mock(),
+    )
+    with (
+        patch.object(
+            executor_binding,
+            "traced_sync_client",
+            return_value=httpx.Client(transport=httpx.MockTransport(handle)),
+        ),
+        patch(
+            "executor_manager.services.sandbox.repository.get_sandbox_repository",
+            return_value=repository,
+        ),
+    ):
+        DockerExecutor.dispatch_task_to_instance(
+            executor, task, "executor-1", {"port": 8080}
+        )
+
+    repository.load_executor_callback_token.assert_called_once_with(42)
+    repository.save_executor_binding.assert_not_called()
+    dispatched_task = dispatch.call_args.args[0]
+    assert dispatched_task["metadata"]["executor_callback_token"] == "callback-token"
+    assert "executor_binding_token" not in dispatched_task["metadata"]

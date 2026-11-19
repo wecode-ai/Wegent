@@ -409,9 +409,14 @@ impl ExecutorManager {
     /// Prepare an executor with the normal execution request without dispatching it.
     pub async fn prepare_executor(&self, request: &impl Serialize) -> Result<PreparedExecutor> {
         let url = format!("{}/executor-manager/executors/prepare", self.base);
+        let internal_token = std::env::var("INTERNAL_SERVICE_TOKEN")
+            .unwrap_or_default()
+            .trim()
+            .to_owned();
         let response = self
             .recovery_client
             .post(url)?
+            .header("Authorization", format!("Bearer {internal_token}"))
             .json(request)
             .timeout(EXECUTOR_PREPARE_TIMEOUT)
             .send()

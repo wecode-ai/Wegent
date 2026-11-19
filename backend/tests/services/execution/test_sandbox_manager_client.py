@@ -33,7 +33,10 @@ async def test_create_sandbox_uses_plural_sandboxes_endpoint():
     with (
         patch(
             "app.core.config.settings",
-            SimpleNamespace(EXECUTOR_MANAGER_URL="http://localhost:8001"),
+            SimpleNamespace(
+                EXECUTOR_MANAGER_URL="http://localhost:8001",
+                INTERNAL_SERVICE_TOKEN="service-token",
+            ),
         ),
         patch("httpx.AsyncClient", return_value=client),
     ):
@@ -79,7 +82,10 @@ async def test_prepare_executor_uses_prepare_endpoint():
     with (
         patch(
             "app.core.config.settings",
-            SimpleNamespace(EXECUTOR_MANAGER_URL="http://localhost:8001"),
+            SimpleNamespace(
+                EXECUTOR_MANAGER_URL="http://localhost:8001",
+                INTERNAL_SERVICE_TOKEN="service-token",
+            ),
         ),
         patch("httpx.AsyncClient", return_value=client),
     ):
@@ -89,9 +95,11 @@ async def test_prepare_executor_uses_prepare_endpoint():
     assert executor.container_name == "wegent-task-test"
     assert executor.executor_namespace == "wegent-pod"
     client.post.assert_awaited_once()
-    assert (
-        client.post.await_args.args[0]
-        == "http://localhost:8001/executor-manager/executors/prepare"
+    assert client.post.await_args.args[0] == (
+        "http://localhost:8001/executor-manager/executors/prepare"
+    )
+    assert client.post.await_args.kwargs["headers"]["Authorization"] == (
+        "Bearer service-token"
     )
 
 
@@ -126,7 +134,10 @@ async def test_prepare_executor_returns_error_detail_from_http_response():
     with (
         patch(
             "app.core.config.settings",
-            SimpleNamespace(EXECUTOR_MANAGER_URL="http://localhost:8001"),
+            SimpleNamespace(
+                EXECUTOR_MANAGER_URL="http://localhost:8001",
+                INTERNAL_SERVICE_TOKEN="service-token",
+            ),
         ),
         patch("httpx.AsyncClient", return_value=client),
     ):
@@ -152,7 +163,10 @@ async def test_delete_sandbox_uses_task_scoped_endpoint():
     with (
         patch(
             "app.core.config.settings",
-            SimpleNamespace(EXECUTOR_MANAGER_URL="http://localhost:8001"),
+            SimpleNamespace(
+                EXECUTOR_MANAGER_URL="http://localhost:8001",
+                INTERNAL_SERVICE_TOKEN="service-token",
+            ),
         ),
         patch("httpx.AsyncClient", return_value=client),
     ):
@@ -181,7 +195,10 @@ async def test_get_sandbox_returns_none_on_not_found():
     with (
         patch(
             "app.core.config.settings",
-            SimpleNamespace(EXECUTOR_MANAGER_URL="http://localhost:8001"),
+            SimpleNamespace(
+                EXECUTOR_MANAGER_URL="http://localhost:8001",
+                INTERNAL_SERVICE_TOKEN="service-token",
+            ),
         ),
         patch("httpx.AsyncClient", return_value=client),
     ):

@@ -19,10 +19,15 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.models.kind import Kind
 from app.schemas.kind import Bot, Ghost
+from app.services.auth.internal_service_token import verify_internal_service_token
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/bots", tags=["internal-bots"])
+router = APIRouter(
+    prefix="/bots",
+    tags=["internal-bots"],
+    dependencies=[Depends(verify_internal_service_token)],
+)
 
 
 class MCPServersResponse(BaseModel):
@@ -33,6 +38,19 @@ class MCPServersResponse(BaseModel):
     mcp_servers: dict[str, Any] = Field(
         default_factory=dict, description="MCP servers configuration from Ghost CRD"
     )
+
+
+def redact_mcp_server_env(mcp_servers: dict[str, Any]) -> dict[str, Any]:
+    """Return MCP configuration without credential-bearing environment values."""
+    redacted: dict[str, Any] = {}
+    for name, config in mcp_servers.items():
+        if isinstance(config, dict):
+            redacted[name] = {
+                key: value for key, value in config.items() if key != "env"
+            }
+        else:
+            redacted[name] = config
+    return redacted
 
 
 @router.get("/{bot_name}/mcp", response_model=MCPServersResponse)
@@ -154,7 +172,7 @@ async def get_bot_mcp_servers(
 
         mcp_servers = {}
         if ghost_crd.spec and ghost_crd.spec.mcpServers:
-            mcp_servers = ghost_crd.spec.mcpServers
+            mcp_servers = redact_mcp_server_env(ghost_crd.spec.mcpServers)
 
         logger.info(
             "[internal/bots] Retrieved MCP config for %s/%s: %d servers",

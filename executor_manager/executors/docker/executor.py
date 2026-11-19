@@ -21,8 +21,11 @@ import httpx
 import requests
 
 from executor_manager.clients.executor_binding import (
+    BINDING_TOKEN,
+    CALLBACK_TOKEN,
     ObsoleteExecutorDispatch,
     bind_executor_for_dispatch,
+    prepare_callback_token,
 )
 from executor_manager.config.config import EXECUTOR_ENV, PORT_RANGE_MAX, PORT_RANGE_MIN
 from executor_manager.executors.base import Executor
@@ -418,6 +421,14 @@ class DockerExecutor(Executor):
         is_sandbox_task = get_metadata_field(task, "type") == "sandbox"
         prepare_only = bool(get_metadata_field(task, "prepare_only", False))
         executor_name = status["executor_name"]
+        callback_token = prepare_callback_token(
+            int(task_info["task_id"]), executor_name
+        )
+        metadata = task.get("metadata")
+        if isinstance(metadata, dict) and "task_id" in metadata:
+            metadata[CALLBACK_TOKEN] = callback_token
+        else:
+            task[CALLBACK_TOKEN] = callback_token
         self.create_instance(task, task_info, executor_name)
 
         if not is_sandbox_task:
@@ -1119,10 +1130,15 @@ class DockerExecutor(Executor):
             cmd.extend(["--network", network])
 
     def _add_callback_url(self, cmd: List[str], task: Dict[str, Any]) -> None:
-        """Add callback URL configuration"""
+        """Add callback URL and task-scoped authentication configuration."""
         callback_url = build_callback_url(task)
         if callback_url:
             cmd.extend(["-e", f"CALLBACK_URL={callback_url}"])
+        callback_token = get_metadata_field(
+            task, CALLBACK_TOKEN, get_metadata_field(task, BINDING_TOKEN)
+        )
+        if callback_token:
+            cmd.extend(["-e", f"EXECUTOR_CALLBACK_TOKEN={callback_token}"])
 
     def _add_heartbeat_env_vars(self, cmd: List[str], task: Dict[str, Any]) -> None:
         """Add environment variables for heartbeat service.

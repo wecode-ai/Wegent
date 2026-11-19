@@ -1271,6 +1271,7 @@ jobs:
         env:
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
           E2E_API_URL: http://localhost:8000
+          E2E_INTERNAL_SERVICE_TOKEN: ${{ env.E2E_INTERNAL_SERVICE_TOKEN }}
           WEGENT_HYBRID_STATE_FILE: ${{ github.workspace }}/backend/backend-hybrid.state
           E2E_REPORT_DIR: ${{ github.workspace }}/.ci-artifacts/subscription-notification-directives
           E2E_EXPECTED_SHA: ${{ github.event.pull_request.head.sha || github.sha }}

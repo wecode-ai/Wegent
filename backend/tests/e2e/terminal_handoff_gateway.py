@@ -321,10 +321,26 @@ class TerminalHandoffGateway(unittest.TestCase):
         # The single callback is Rust-owned. The batch still routes to Python.
         if rust:
             return self._json(
-                self.api.post("/api/internal/callback", json=event),
+                self.api.post(
+                    "/api/internal/callback",
+                    json=event,
+                    headers={
+                        "Authorization": (
+                            f"Bearer {os.environ['E2E_INTERNAL_SERVICE_TOKEN']}"
+                        )
+                    },
+                ),
                 500 if fail else 200,
             )
-        result = self._json(self.api.post("/api/internal/callback/batch", json=[event]))
+        result = self._json(
+            self.api.post(
+                "/api/internal/callback/batch",
+                json=[event],
+                headers={
+                    "Authorization": f"Bearer {os.environ['E2E_INTERNAL_SERVICE_TOKEN']}"
+                },
+            )
+        )
         self.assertEqual(result["status"], "partial" if fail else "ok", result)
         return result
 

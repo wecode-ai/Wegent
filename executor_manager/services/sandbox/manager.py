@@ -1083,12 +1083,16 @@ class SandboxManager(metaclass=SingletonMeta):
         sandbox: Sandbox,
     ) -> bool:
         """Post a sandbox archive/restore request to backend without raising."""
+        token = os.getenv("INTERNAL_SERVICE_TOKEN", "").strip()
         try:
             async with httpx.AsyncClient(timeout=130.0) as client:
                 response = await client.post(
                     url,
                     json=payload,
-                    headers={"Content-Type": "application/json"},
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {token}",
+                    },
                 )
                 response.raise_for_status()
                 data = response.json()

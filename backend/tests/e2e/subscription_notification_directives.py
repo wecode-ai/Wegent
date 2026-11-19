@@ -328,6 +328,9 @@ class SubscriptionNotificationDirectives(unittest.TestCase):
         start = len(_captured_paths(0))
         response = self.client.post(
             "/api/internal/callback",
+            headers={
+                "Authorization": (f"Bearer {os.environ['E2E_INTERNAL_SERVICE_TOKEN']}")
+            },
             json={
                 "event_type": "response.completed",
                 "task_id": task_id,
