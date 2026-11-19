@@ -523,7 +523,7 @@ jobs:
               .github/scripts/run-wework-executor-with-gdb.sh \
               -r /proc/self/fd/3 3</dev/null
             cp .github/scripts/run-wework-executor-with-gdb.sh "$WEWORK_E2E_EXECUTOR_BIN.gdb"
-            export WEWORK_E2E_EXECUTOR_BIN="$WEWORK_E2E_EXECUTOR_BIN.gdb"
+            export WEWORK_E2E_PLUGIN_DEVELOPMENT_EXECUTOR_BIN="$WEWORK_E2E_EXECUTOR_BIN.gdb"
           fi
           node .github/scripts/run-with-resource-logging.mjs \
             node wework/e2e/desktop/run-checkpoints.mjs \
