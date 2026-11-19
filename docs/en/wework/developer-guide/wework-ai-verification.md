@@ -149,6 +149,21 @@ The desktop CI `workspace-tabs` checkpoint covers detaching a fixed tab and rest
 
 An AI should start with `snapshot` to confirm the route and available `data-testid` values, make the smallest required interaction, and use `wait-for` plus `snapshot` or `text` to verify the result. Always call `stop` when finished. On failure, keep the session directory and inspect `app.log`.
 
+## Record verification video
+
+To keep a video of the verification steps, put FFmpeg with `libx264` on PATH. Use `start --record true` to begin recording when the main window is ready. The first frame is captured before the session path is returned. For an existing session, use `record-start` to begin a clip and `record-stop` to finish it. You can start another clip as needed.
+
+```bash
+pnpm --filter wework ai:verify start --record true
+pnpm --filter wework ai:verify record-stop --session SESSION
+pnpm --filter wework ai:verify record-start --session SESSION
+pnpm --filter wework ai:verify stop --session SESSION
+```
+
+`record-stop` saves the video and prints its path. If recording is still active, `stop` saves the video before closing the session and prints the video path. Each clip is a separate MP4 in its session directory under `wework/test-results/ai-verify/`. If frame capture fails mid-recording, the recorder finalizes the frames already captured and reports the saved path with the error.
+
+Recording samples the isolated Electron main window at five frames per second, including across page reloads, without macOS Screen Recording permission. It excludes OS dialogs, native menus, separate windows, and audio. Keep the video with the assertion results and review the footage for sensitive information before sharing it. Keep recordings and session files out of Git.
+
 ## General DevTools access and performance analysis
 
 Isolated verification instances expose authenticated CDP through the Electron main process. Commands remain available while the renderer is paused at a breakpoint. Ordinary application instances do not register this endpoint. Enumerate targets and substitute a returned `id` for `ID`:
