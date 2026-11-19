@@ -51,6 +51,10 @@ async function observePreview(page: Page, token: string): Promise<void> {
     if (window !== window.top) return
     // The real issued token also authenticates the frontend at the proxy origin.
     localStorage.setItem('auth_token', token)
+    localStorage.setItem(
+      'auth_token_expire',
+      String(JSON.parse(atob(token.split('.')[1])).exp * 1000)
+    )
     sessionStorage.setItem('preview-auth-marker', 'parent-authentication-state')
     const state = window as PreviewWindow
     state.previewAccess = []
