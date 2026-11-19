@@ -181,6 +181,8 @@ export const WINDOWS_NATIVE_DIALOG_STRUCTURE_SOURCE = `${WINDOWS_NATIVE_DIALOG_I
 }
 `
 
+export const WINDOWS_NATIVE_DECISION_ASSEMBLY = `native-window-decision-${createHash('sha256').update(WINDOWS_NATIVE_DIALOG_BUTTON_SOURCE).digest('hex')}.dll`
+
 export const WINDOWS_NATIVE_OBSERVER_ASSEMBLY = `native-window-observer-${createHash('sha256').update(WINDOWS_NATIVE_DIALOG_STRUCTURE_SOURCE).digest('hex')}.dll`
 
 /** Run only after the original input process failed; this observer never sends input. */

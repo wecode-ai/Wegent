@@ -4,6 +4,8 @@ import { withNativePluginDecision } from '../e2e/desktop/modules/native-plugin-a
 import {
   WINDOWS_UIA_STRUCTURE_DIAGNOSTICS,
   WINDOWS_NATIVE_DIALOG_STRUCTURE_SOURCE,
+  WINDOWS_NATIVE_DIALOG_BUTTON_SOURCE,
+  WINDOWS_NATIVE_DECISION_ASSEMBLY,
 } from '../e2e/desktop/modules/native-plugin-window-diagnostics.mjs'
 
 const native = vi.hoisted(() => ({ execute: vi.fn() }))
@@ -794,12 +796,18 @@ test.each([true, false])(
       '$window.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition)'
     )
     expect(script).toContain('DialogButtons($dialogHandle, $targetPid)')
-    expect(script).toContain('ClassMatches(dialog, "#32770")')
-    expect(script).toContain(
+    expect(script).toContain(WINDOWS_NATIVE_DECISION_ASSEMBLY)
+    expect(script).not.toContain('-TypeDefinition')
+    expect(WINDOWS_NATIVE_DIALOG_BUTTON_SOURCE).toContain('ClassMatches(dialog, "#32770")')
+    expect(WINDOWS_NATIVE_DIALOG_BUTTON_SOURCE).toContain(
       'String.Equals(name.ToString(), "Button", StringComparison.OrdinalIgnoreCase)'
     )
-    expect(script).toContain('IsWindowVisible(child) && IsWindowEnabled(child)')
-    expect(script).toContain('OwnedWindow(button, expectedPid) && IsChild(dialog, button)')
+    expect(WINDOWS_NATIVE_DIALOG_BUTTON_SOURCE).toContain(
+      'IsWindowVisible(child) && IsWindowEnabled(child)'
+    )
+    expect(WINDOWS_NATIVE_DIALOG_BUTTON_SOURCE).toContain(
+      'OwnedWindow(button, expectedPid) && IsChild(dialog, button)'
+    )
     expect(script).toContain('::FromHandle($buttonHandle)')
     expect(script).toContain('if ($matchingButtons.Count -gt 1)')
     expect(script).toContain('$button.Current.Name -notin $allowedButtonNames')

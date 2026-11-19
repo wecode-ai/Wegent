@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import {
   WINDOWS_DECISION_STAGE_DIAGNOSTICS,
-  WINDOWS_NATIVE_DIALOG_BUTTON_SOURCE,
+  WINDOWS_NATIVE_DECISION_ASSEMBLY,
   windowsNativeWindowDiagnosticScript,
   WINDOWS_NATIVE_DIAGNOSTIC_FIELDS,
   WINDOWS_UIA_STRUCTURE_DIAGNOSTICS,
@@ -47,6 +47,9 @@ export async function clickNativeDecision(pid, allow, signal, evidenceDirectory,
     return
   }
   if (process.platform === 'win32') {
+    const directory = process.env.WEWORK_E2E_NATIVE_OBSERVER_DIRECTORY
+    assert.ok(directory, 'The shared runner must prepare the native decision assembly')
+    const assembly = join(directory, WINDOWS_NATIVE_DECISION_ASSEMBLY).replaceAll("'", "''")
     const script = `
 ${WINDOWS_DECISION_STAGE_DIAGNOSTICS}
 $targetPid = ${pid}
@@ -60,9 +63,7 @@ Add-Type -AssemblyName UIAutomationClient
 Write-DecisionStage 'client-loaded'
 Add-Type -AssemblyName UIAutomationTypes
 Write-DecisionStage 'types-loaded'
-Add-Type -ErrorAction Stop -ReferencedAssemblies ([System.Windows.Automation.AutomationElement].Assembly.Location) -TypeDefinition @'
-${WINDOWS_NATIVE_DIALOG_BUTTON_SOURCE}
-'@
+[void][System.Reflection.Assembly]::LoadFrom('${assembly}')
 Write-DecisionStage 'native-reader-loaded'
 Write-DecisionStage 'provider-register-started'
 try {
