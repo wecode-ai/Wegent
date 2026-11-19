@@ -116,6 +116,7 @@ export function DesktopSidebar(props: DesktopSidebarProps) {
     onArchiveRuntimeTask,
     markAllPriorityTasksRead,
     openPriorityArchiveDialog,
+    isArchivingPriority,
     splitGroupMemberships,
     visibleUnreadRuntimeTaskKeys,
     imNotificationSettings,
@@ -402,7 +403,9 @@ export function DesktopSidebar(props: DesktopSidebarProps) {
                   Boolean(onMarkRuntimeTaskRead) && unreadPriorityTaskItems.length > 0
                 }
                 canArchivePriority={
-                  Boolean(onArchiveRuntimeTask) && priorityView.priorityItems.length > 0
+                  !isArchivingPriority &&
+                  Boolean(onArchiveRuntimeTask) &&
+                  priorityView.priorityItems.length > 0
                 }
                 onMarkAllAsRead={markAllPriorityTasksRead}
                 onArchivePriority={openPriorityArchiveDialog}

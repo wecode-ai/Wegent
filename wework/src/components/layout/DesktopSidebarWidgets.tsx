@@ -26,7 +26,7 @@ export function ArchiveConversationsConfirmDialog({
   description,
   confirmLabel,
   cancelLabel,
-  submitting,
+  submitting = false,
   testId,
   onClose,
   onConfirm,

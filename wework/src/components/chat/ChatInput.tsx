@@ -812,10 +812,10 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
                 <div
                   data-testid="composer-context-rail"
                   className={[
-                    'mb-1 min-w-0 items-center text-sm text-text-secondary empty:hidden [&>*]:min-w-0 [&>*]:max-w-full',
+                    'mb-1 grid min-w-0 items-center text-sm text-text-secondary empty:hidden [&>*]:min-w-0 [&>*]:max-w-full',
                     contextHeader && displayedGoal && !goalDraftActive
-                      ? 'grid grid-cols-[minmax(0,1fr)_minmax(13rem,32%)]'
-                      : 'flex flex-wrap',
+                      ? 'grid-cols-[minmax(0,1fr)_minmax(13rem,32%)]'
+                      : 'grid-cols-1',
                   ].join(' ')}
                 >
                   <ConversationEventContext
