@@ -14,9 +14,11 @@ Narrow settings now use the shared SettingsShell, and model connection forms use
 
 In an isolated macOS arm64 Electron package, the account menu opened Settings and all 19 entries were reachable at 480, 768 and 1440 CSS pixels. Across 57 measurements, the settings content did not overflow horizontally and filled the window at 480 pixels. The narrow captures show shortcut titles, quick phrase row actions and execution environment buttons. Worktrees was still loading during capture and Runtime was disconnected from the cloud. The model settings E2E covered adding, editing and deleting a model connection.
 
-A second isolated package opened the task, Record Issue, and Create task composers using a local project. The project selectors in the last two modes measured 28 CSS pixels and showed the same project name. Captures showed the project in the bottom toolbar in Record Issue and above the editor in Create task. Record Issue now uses the same position above the editor. The final position and real model submission still need packaged verification.
+A second isolated package opened the task, Record Issue, and Create task composers using a local project and found the Record Issue selector in the bottom toolbar. After the layout change, isolated source Electron displayed Record Issue and Create task at 1440×869 CSS pixels. Both selectors measured 28 CSS pixels high, showed the same project, and ended 11 CSS pixels above the editor. The packaged collaboration Issue E2E now compares selector position and height. Model submission still needs packaged verification.
 
 After adopting the shared ScrollArea, the new content wrapper no longer filled the task home viewport. The fixed homepage fills the workbench and the composer is horizontally centered with an 8 CSS pixel bottom gap in isolated Electron at 1440×900, 1024×768 and 768×680. At 1440 pixels wide, the composer is 736 CSS pixels wide and the four quick-start cards share one row.
+
+The Collaboration Assistant notification prompt uses the shared compact icon button. In isolated Electron at 1440 and 1180 CSS pixels wide, the dismiss button measured 28 pixels high and sat at the top right of the prompt. The narrower panel placed both text actions on a second row, and pressing Dismiss hid the prompt.
 
 ## Scope and status
 
