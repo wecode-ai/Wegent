@@ -154,3 +154,72 @@ async fn uncertain_policy_commit_retains_the_bootstrap_lease_until_expiry() {
         .unwrap();
     assert_eq!(plugin_write_error_code(&error), Some("plugin_write_busy"));
 }
+
+#[tokio::test(start_paused = true)]
+async fn native_cold_policy_verification_stops_at_the_admission_deadline() {
+    let redis = LeaseRedis {
+        policy_get_delay: Duration::from_secs(2),
+        ..LeaseRedis::default()
+    };
+    let lease = PluginWriteLease::acquire_names(Some(&redis), 23, vec!["example".into()])
+        .await
+        .unwrap();
+    let mysql = PolicyMysql {
+        calls: AtomicUsize::new(0),
+        stall_at: usize::MAX,
+    };
+    let start = Instant::now();
+    let admission = NativeWriteAdmission {
+        deadline: start + Duration::from_millis(200),
+        is_cancelled: &|| false,
+    };
+    let mut timing = NativeAdmissionTiming::default();
+    let result = lease
+        .ensure_native_policy(&mysql, admission, &mut timing)
+        .await;
+    assert!(matches!(result, Err(NativeAdmissionError::Deadline)));
+    assert_eq!(start.elapsed(), Duration::from_millis(200));
+    assert_eq!(timing.policy_verify_redis_ms, Some(200));
+    assert_eq!(
+        mysql.calls.load(Ordering::SeqCst),
+        1,
+        "only the policy lookup ran"
+    );
+    assert!(
+        !redis
+            .owners
+            .lock()
+            .unwrap()
+            .contains_key("wegent:plugin-write:23:@account-policy"),
+        "an admission timeout must release a confirmed bootstrap lease"
+    );
+    lease.release().await;
+    assert!(redis.owners.lock().unwrap().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn native_cold_policy_retains_the_bootstrap_fence_if_commit_times_out() {
+    let redis = LeaseRedis::default();
+    let lease = PluginWriteLease::acquire_names(Some(&redis), 23, vec!["example".into()])
+        .await
+        .unwrap();
+    let mysql = PolicyMysql {
+        calls: AtomicUsize::new(0),
+        stall_at: 1,
+    };
+    let start = Instant::now();
+    let admission = NativeWriteAdmission {
+        deadline: start + Duration::from_millis(200),
+        is_cancelled: &|| false,
+    };
+    let result = lease
+        .ensure_native_policy(&mysql, admission, &mut NativeAdmissionTiming::default())
+        .await;
+    assert!(matches!(result, Err(NativeAdmissionError::PolicyTimedOut)));
+    assert_eq!(start.elapsed(), ACQUIRE_WAIT);
+    assert_eq!(mysql.calls.load(Ordering::SeqCst), 2);
+    lease.release().await;
+    let owners = redis.owners.lock().unwrap();
+    assert_eq!(owners.len(), 1);
+    assert!(owners.contains_key("wegent:plugin-write:23:@account-policy"));
+}

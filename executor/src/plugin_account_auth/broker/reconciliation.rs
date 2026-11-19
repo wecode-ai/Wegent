@@ -1,4 +1,5 @@
 //! Event-driven enrollment with a fixed low-frequency safety audit.
+use super::super::automation::{PendingLogins, Reconciler};
 use super::*;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -8,11 +9,12 @@ pub(super) async fn run<T: super::super::PluginAuthTransport>(
     home: PathBuf,
     connected: Arc<AtomicBool>,
     mut cancel: watch::Receiver<bool>,
-    mut requested: mpsc::Receiver<u64>,
+    mut requested: mpsc::Receiver<ReconciliationRequest>,
+    pending_logins: Arc<PendingLogins>,
     interval: Duration,
 ) {
     let mut inventory = crate::services::capability_activation::subscribe_changes();
-    let mut reconciler = super::super::automation::Reconciler::default();
+    let mut reconciler = Reconciler::new(pending_logins.clone());
     let mut audit = tokio::time::Instant::now();
     let mut cycle_retry = None;
     let mut failures = 0_u32;
@@ -20,7 +22,8 @@ pub(super) async fn run<T: super::super::PluginAuthTransport>(
         enum Trigger {
             Audit,
             Inventory,
-            Targets(Vec<u64>),
+            Login,
+            Requests(Vec<ReconciliationRequest>),
             Retry,
         }
         let retry = retry_deadline(
@@ -28,27 +31,35 @@ pub(super) async fn run<T: super::super::PluginAuthTransport>(
             reconciler.next_retry().map(tokio::time::Instant::from_std),
             transport.available(connected.load(Ordering::Acquire)),
         );
-        let trigger = tokio::select! {
+        let mut trigger = tokio::select! {
+            biased;
             _ = cancel.changed() => break,
+            _ = pending_logins.notified() => Trigger::Login,
+            target = requested.recv() => {
+                let Some(first) = target else { break; };
+                let mut events = vec![first];
+                while let Ok(event) = requested.try_recv() { events.push(event); }
+                Trigger::Requests(events)
+            },
             _ = tokio::time::sleep_until(audit) => Trigger::Audit,
             changed = inventory.changed() => {
                 if changed.is_err() { break; }
                 Trigger::Inventory
-            },
-            target = requested.recv() => {
-                let Some(id) = target else { break; };
-                let mut ids = vec![id];
-                while let Ok(id) = requested.try_recv() { ids.push(id); }
-                ids.sort_unstable(); ids.dedup();
-                if ids.contains(&0) { Trigger::Audit } else { Trigger::Targets(ids) }
             },
             _ = async { match retry {
                 Some(due) => tokio::time::sleep_until(due).await,
                 None => std::future::pending::<()>().await,
             }} => Trigger::Retry,
         };
+        if tokio::time::Instant::now() >= audit {
+            if let Trigger::Requests(events) = &mut trigger {
+                events.push(ReconciliationRequest::Audit);
+            }
+        }
+        let scheduled_audit = matches!(trigger, Trigger::Audit)
+            || matches!(&trigger, Trigger::Requests(events) if events.iter().any(|event| matches!(event, ReconciliationRequest::Audit)));
         // An event never postpones the audit deadline.
-        if matches!(trigger, Trigger::Audit) && tokio::time::Instant::now() >= audit {
+        if scheduled_audit && tokio::time::Instant::now() >= audit {
             audit = tokio::time::Instant::now() + interval;
         }
         if !transport.available(connected.load(Ordering::Acquire)) {
@@ -56,8 +67,7 @@ pub(super) async fn run<T: super::super::PluginAuthTransport>(
             continue;
         }
         let retry_all = cycle_retry.is_some_and(|due| due <= tokio::time::Instant::now());
-        let full_cycle =
-            matches!(trigger, Trigger::Audit) || matches!(trigger, Trigger::Retry) && retry_all;
+        let full_cycle = scheduled_audit || matches!(trigger, Trigger::Retry) && retry_all;
         if full_cycle {
             cycle_retry = None;
         }
@@ -67,9 +77,9 @@ pub(super) async fn run<T: super::super::PluginAuthTransport>(
                 match trigger {
                     Trigger::Audit => reconciler.reconcile(transport.clone(), &home).await,
                     Trigger::Inventory => reconciler.reconcile_changes(transport.clone(), &home).await,
-                    Trigger::Targets(ids) => {
-                        for id in &ids { reconciler.invalidate(*id); }
-                        reconciler.reconcile_selected(transport.clone(), &home, &ids).await
+                    Trigger::Login => reconciler.reconcile_logins(transport.clone(), &home).await,
+                    Trigger::Requests(events) => {
+                        reconcile_requested(&mut reconciler, transport.clone(), &home, events).await
                     },
                     Trigger::Retry if retry_all => reconciler.reconcile(transport.clone(), &home).await,
                     Trigger::Retry => reconciler.reconcile_due(transport.clone(), &home).await,
@@ -100,6 +110,34 @@ pub(super) async fn run<T: super::super::PluginAuthTransport>(
             }
         }
     }
+}
+
+async fn reconcile_requested<T: super::super::PluginAuthTransport>(
+    reconciler: &mut Reconciler,
+    transport: T,
+    home: &std::path::Path,
+    events: Vec<ReconciliationRequest>,
+) -> Result<(), AuthError> {
+    let mut ordinary = Vec::new();
+    let mut audit = false;
+    for event in events {
+        match event {
+            ReconciliationRequest::Audit => audit = true,
+            ReconciliationRequest::Target(id) => ordinary.push(id),
+        }
+    }
+    for id in &ordinary {
+        reconciler.invalidate(*id);
+    }
+    if audit {
+        return reconciler.reconcile(transport, home).await;
+    }
+    if !ordinary.is_empty() {
+        reconciler
+            .reconcile_selected(transport, home, &ordinary)
+            .await?;
+    }
+    Ok(())
 }
 
 fn retry_deadline(

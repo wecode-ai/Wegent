@@ -10,12 +10,13 @@ use crate::local::backend::LocalBackendTransport;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
+use tokio::sync::Notify;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -28,24 +29,138 @@ struct Intent {
 pub(super) struct Reconciler {
     retries: HashMap<(u64, String), Instant>,
     failures: HashMap<(u64, String), (u32, Instant)>,
+    foreground_registrations: HashSet<(u64, String)>,
+    foreground_revision: u64,
+    pending_logins: Arc<PendingLogins>,
     inventory: HashMap<u64, Value>,
     retry_signal: Option<PathBuf>,
     retry_signal_value: Option<Vec<u8>>,
 }
 
+#[derive(Default)]
+pub(super) struct PendingLogins {
+    state: Mutex<PendingLoginState>,
+    ready: Notify,
+}
+
+#[derive(Default)]
+struct PendingLoginState {
+    revision: u64,
+    entries: HashSet<(u64, String)>,
+    processing: HashMap<u64, usize>,
+}
+
+// Keep the login visible to other Native writers while its registration is being prepared.
+pub(super) struct PendingLoginBatch {
+    logins: Arc<PendingLogins>,
+    revision: u64,
+    entries: HashSet<(u64, String)>,
+}
+
+impl Drop for PendingLoginBatch {
+    fn drop(&mut self) {
+        let mut state = self
+            .logins
+            .state
+            .lock()
+            .expect("pending plugin logins lock poisoned");
+        if state.revision != self.revision {
+            return;
+        }
+        for (id, _) in &self.entries {
+            if let std::collections::hash_map::Entry::Occupied(mut entry) =
+                state.processing.entry(*id)
+            {
+                if *entry.get() == 1 {
+                    entry.remove();
+                } else {
+                    *entry.get_mut() -= 1;
+                }
+            }
+        }
+    }
+}
+
+impl PendingLogins {
+    pub(super) fn submit(&self, installed_id: u64, connector_slug: String) {
+        self.state
+            .lock()
+            .expect("pending plugin logins lock poisoned")
+            .entries
+            .insert((installed_id, connector_slug));
+        self.ready.notify_one();
+    }
+
+    pub(super) async fn notified(&self) {
+        self.ready.notified().await;
+    }
+
+    pub(super) fn clear_owner(&self) {
+        let mut state = self
+            .state
+            .lock()
+            .expect("pending plugin logins lock poisoned");
+        state.revision += 1;
+        state.entries.clear();
+        state.processing.clear();
+    }
+
+    fn revision(&self) -> u64 {
+        self.state
+            .lock()
+            .expect("pending plugin logins lock poisoned")
+            .revision
+    }
+
+    pub(super) fn take(self: &Arc<Self>) -> PendingLoginBatch {
+        let mut state = self
+            .state
+            .lock()
+            .expect("pending plugin logins lock poisoned");
+        let entries = std::mem::take(&mut state.entries);
+        for (id, _) in &entries {
+            *state.processing.entry(*id).or_default() += 1;
+        }
+        PendingLoginBatch {
+            logins: self.clone(),
+            revision: state.revision,
+            entries,
+        }
+    }
+
+    pub(super) fn contains_installation(&self, installed_id: u64) -> bool {
+        let state = self
+            .state
+            .lock()
+            .expect("pending plugin logins lock poisoned");
+        // Old revocation records may lack resolvable installation metadata.
+        if installed_id == 0 {
+            return !state.processing.is_empty() || !state.entries.is_empty();
+        }
+        state.processing.contains_key(&installed_id)
+            || state.entries.iter().any(|(id, _)| *id == installed_id)
+    }
+}
+
 impl Default for Reconciler {
     fn default() -> Self {
+        Self::new(Arc::default())
+    }
+}
+
+impl Reconciler {
+    pub(super) fn new(pending_logins: Arc<PendingLogins>) -> Self {
         Self {
             retries: HashMap::new(),
             failures: HashMap::new(),
+            foreground_registrations: HashSet::new(),
+            foreground_revision: 0,
+            pending_logins,
             inventory: HashMap::new(),
             retry_signal: super::e2e_retry_signal(),
             retry_signal_value: None,
         }
     }
-}
-
-impl Reconciler {
     pub async fn reconcile<T: super::PluginAuthTransport>(
         &mut self,
         transport: T,
@@ -108,21 +223,68 @@ impl Reconciler {
         home: &Path,
         requested: &[u64],
     ) -> Result<(), AuthError> {
+        let ids = self.select_targets(home, requested)?;
+        for selected in ids.chunks(16) {
+            self.reconcile_logins(transport.clone(), home).await?;
+            self.reconcile_batch(transport.clone(), home, selected, false)
+                .await?;
+        }
+        Ok(())
+    }
+
+    pub async fn reconcile_logins<T: super::PluginAuthTransport>(
+        &mut self,
+        transport: T,
+        home: &Path,
+    ) -> Result<(), AuthError> {
+        loop {
+            let batch = self.pending_logins.take();
+            let Some((id, _)) = batch.entries.iter().next() else {
+                return Ok(());
+            };
+            // Pin discovery and the subsequent writes to the login's Native owner.
+            let scoped = transport.for_plugin(*id, false);
+            if self.pending_logins.revision() != batch.revision {
+                continue;
+            }
+            self.sync_foreground_owner(batch.revision);
+            let requested: Vec<_> = batch.entries.iter().map(|(id, _)| *id).collect();
+            for key in &batch.entries {
+                self.retries.remove(key);
+                self.failures.remove(key);
+                self.foreground_registrations.insert(key.clone());
+            }
+            let ids = self.select_targets(home, &requested)?;
+            for selected in ids.chunks(16) {
+                self.reconcile_batch(scoped.clone(), home, selected, true)
+                    .await?;
+            }
+        }
+    }
+
+    fn sync_foreground_owner(&mut self, revision: u64) {
+        if self.foreground_revision != revision {
+            self.foreground_registrations.clear();
+            self.foreground_revision = revision;
+        }
+    }
+
+    fn select_targets(&mut self, home: &Path, requested: &[u64]) -> Result<Vec<u64>, AuthError> {
         self.consume_retry_signal();
         let owned = installed_ids(home)?;
         self.retries
             .retain(|(id, _), until| owned.contains(id) && *until > Instant::now());
         self.failures.retain(|(id, _), _| owned.contains(id));
-        let ids: Vec<_> = requested
+        self.foreground_registrations
+            .retain(|(id, _)| owned.contains(id));
+        let mut ids: Vec<_> = requested
             .iter()
             .copied()
             .filter(|id| owned.contains(id))
             .collect();
-        for selected in ids.chunks(16) {
-            self.reconcile_batch(transport.clone(), home, selected)
-                .await?;
-        }
-        Ok(())
+        ids.sort_unstable();
+        ids.dedup();
+        Ok(ids)
     }
 
     async fn reconcile_batch<T: super::PluginAuthTransport>(
@@ -130,7 +292,17 @@ impl Reconciler {
         transport: T,
         home: &Path,
         selected: &[u64],
+        foreground_only: bool,
     ) -> Result<(), AuthError> {
+        let Some(id) = selected.first() else {
+            return Ok(());
+        };
+        let revision = self.pending_logins.revision();
+        let transport = transport.for_plugin(*id, false);
+        if self.pending_logins.revision() != revision {
+            return Err(AuthError("plugin_auth_backend_unavailable"));
+        }
+        self.sync_foreground_owner(revision);
         let response = NativeAuthGateway::new(transport.clone())
             .call(
                 "plugin.auth.automatic",
@@ -153,42 +325,65 @@ impl Reconciler {
                 ],
             );
         }
-        self.failures.retain(|key, _| {
+        let still_eligible = |key: &(u64, String)| {
             !selected.contains(&key.0)
                 || packages.iter().any(|package| {
                     package.installed_plugin_id == key.0 && package.connector_slug == key.1
                 })
-        });
-        let mut pending = tokio::task::JoinSet::new();
-        let actions = Arc::new(tokio::sync::Semaphore::new(4));
+        };
+        self.failures.retain(|key, _| still_eligible(key));
+        self.foreground_registrations.retain(still_eligible);
+        let mut groups = BTreeMap::<_, Vec<_>>::new();
+        let mut seen = HashSet::new();
         for package in packages {
             let key = (package.installed_plugin_id, package.connector_slug.clone());
-            if !selected.contains(&key.0) || self.retries.contains_key(&key) {
+            let foreground = self.foreground_registrations.contains(&key);
+            if !selected.contains(&key.0)
+                || self.retries.contains_key(&key)
+                || foreground_only && !foreground
+                || !seen.insert(key.clone())
+            {
                 continue;
             }
+            groups
+                .entry(key.0)
+                .or_default()
+                .push((key, package, foreground));
+        }
+        let mut pending = tokio::task::JoinSet::new();
+        let actions = Arc::new(tokio::sync::Semaphore::new(4));
+        for (installed_id, mut group) in groups {
+            group.sort_by_key(|(_, _, foreground)| !foreground);
             let transport = transport.clone();
             let home = home.to_owned();
             let actions = actions.clone();
             pending.spawn(async move {
-                let result = reconcile_target(transport, &home, &package, &actions).await;
-                crate::logging::log_executor_event(
-                    "plugin auth automatic enrollment finished",
-                    &[
-                        ("installed_plugin_id", key.0.to_string()),
-                        ("connector_slug", key.1.clone()),
-                        ("ok", result.is_ok().to_string()),
-                        (
-                            "code",
-                            result.as_ref().err().map_or("", |error| error.0).to_owned(),
-                        ),
-                    ],
-                );
-                (key, result.map(|_| ()))
+                let mut results = Vec::with_capacity(group.len());
+                for (key, package, foreground) in group {
+                    let scoped = transport.for_plugin(installed_id, foreground);
+                    let result = reconcile_target(scoped, &home, &package, &actions).await;
+                    crate::logging::log_executor_event(
+                        "plugin auth automatic enrollment finished",
+                        &[
+                            ("installed_plugin_id", key.0.to_string()),
+                            ("connector_slug", key.1.clone()),
+                            ("ok", result.is_ok().to_string()),
+                            (
+                                "code",
+                                result.as_ref().err().map_or("", |error| error.0).to_owned(),
+                            ),
+                        ],
+                    );
+                    results.push((key, result));
+                }
+                results
             });
         }
         while let Some(result) = pending.join_next().await {
-            if let Ok((key, result)) = result {
-                self.record(key, result);
+            if let Ok(results) = result {
+                for (key, result) in results {
+                    self.record(key, result);
+                }
             }
         }
         Ok(())
@@ -200,10 +395,12 @@ impl Reconciler {
         if result == Err(AuthError("plugin_auth_migration_expired")) {
             self.retries.remove(&key);
             self.failures.remove(&key);
+            self.foreground_registrations.remove(&key);
             return;
         }
         let delay = if result.is_ok() {
             self.failures.remove(&key);
+            self.foreground_registrations.remove(&key);
             Duration::from_secs(60)
         } else {
             let attempt = self
@@ -356,6 +553,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn failed_login_discovery_releases_background_priority() {
+        let home = tempfile::tempdir().unwrap();
+        fs::create_dir(home.path().join("capabilities")).unwrap();
+        fs::write(
+            home.path().join("capabilities/manifest-v2.json"),
+            json!({"plugins":{
+                "mail":{"installed_plugin_id":42,"managed":true,"enabled":true},
+            }})
+            .to_string(),
+        )
+        .unwrap();
+        let transport = Transport(Arc::new(Mutex::new(VecDeque::from([(
+            "plugin.auth.automatic",
+            json!({"success":false,"error":"plugin_auth_invalid_request"}),
+        )]))));
+        let logins = Arc::new(PendingLogins::default());
+        logins.submit(42, "mail".into());
+
+        let error = Reconciler::new(logins.clone())
+            .reconcile_logins(transport, home.path())
+            .await
+            .unwrap_err();
+
+        assert_eq!(error, AuthError("plugin_auth_invalid_request"));
+        assert!(!logins.contains_installation(42));
+    }
+
+    #[tokio::test]
     async fn expired_intent_does_not_suppress_the_next_login() {
         let home = tempfile::tempdir().unwrap();
         fs::create_dir(home.path().join("capabilities")).unwrap();
@@ -394,7 +619,7 @@ mod tests {
         let calls = Arc::new(Mutex::new(VecDeque::from([
             (
                 "plugin.auth.automatic",
-                json!({"success":true,"packages":[package.clone()]}),
+                json!({"success":true,"packages":[package.clone(),package.clone()]}),
             ),
             ("plugin.auth.automatic", intents("a")),
             (
@@ -516,10 +741,8 @@ mod tests {
         let key = (12, "mail".to_owned());
         let mut reconciler = Reconciler {
             retries: HashMap::from([(key.clone(), Instant::now() + Duration::from_secs(60))]),
-            failures: HashMap::new(),
-            inventory: HashMap::new(),
             retry_signal: Some(signal.clone()),
-            retry_signal_value: None,
+            ..Reconciler::default()
         };
 
         fs::write(&signal, "1").unwrap();

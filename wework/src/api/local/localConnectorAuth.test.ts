@@ -6,6 +6,7 @@ import {
   clearLocalConnectorAuthHealthCache,
   isLocalBrowserConnector,
   isLocalConnector,
+  isLocalConnectorAuthBusy,
   isLocalQrConnector,
   localConnectorAuthHealth,
   localConnectorAuthPoll,
@@ -50,6 +51,18 @@ describe('pluginLocalConnectorAuthTarget', () => {
       new LocalConnectorAuthLogoutError({ status: 'error', errorCode: 'gh_logout_env_token' })
         .errorCode
     ).toBe('gh_logout_env_token')
+  })
+
+  test('recognizes exhausted Native contention across login and logout responses', () => {
+    const code = 'plugin_auth_busy_retry_later'
+    expect(isLocalConnectorAuthBusy(code)).toBe(true)
+    expect(isLocalConnectorAuthBusy(Object.assign(new Error('IPC error'), { code }))).toBe(true)
+    expect(
+      isLocalConnectorAuthBusy(
+        new LocalConnectorAuthLogoutError({ status: 'error', errorCode: code })
+      )
+    ).toBe(true)
+    expect(isLocalConnectorAuthBusy(new Error('plugin_write_busy'))).toBe(false)
   })
 })
 

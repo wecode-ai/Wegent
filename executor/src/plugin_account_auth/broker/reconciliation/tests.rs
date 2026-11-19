@@ -2,6 +2,7 @@
 use super::*;
 use crate::local::backend::{EventHandler, LocalBackendConfig, LocalBackendTransport};
 use std::{future::Future, pin::Pin};
+use tokio::sync::oneshot;
 
 type Reply<'a, T> = Pin<Box<dyn Future<Output = Result<T, String>> + Send + 'a>>;
 
@@ -51,22 +52,29 @@ async fn lifecycle_and_inventory_events_run_before_the_long_audit() {
     let (calls, mut received) = tokio::sync::mpsc::unbounded_channel();
     let (cancel, cancelled) = watch::channel(false);
     let (events, requested) = tokio::sync::mpsc::channel(16);
+    let logins = Arc::new(PendingLogins::default());
     let task = tokio::spawn(run(
         Transport(calls),
         home.path().to_owned(),
         Arc::new(AtomicBool::new(true)),
         cancelled,
         requested,
+        logins.clone(),
         Duration::from_secs(3600),
     ));
     assert_eq!(
         next(&mut received).await["installed_plugin_ids"],
         json!([42, 43])
     );
-    events.send(42).await.unwrap();
+    events.try_send(ReconciliationRequest::Target(43)).unwrap();
+    logins.submit(42, "mail".into());
     assert_eq!(
         next(&mut received).await["installed_plugin_ids"],
         json!([42])
+    );
+    assert_eq!(
+        next(&mut received).await["installed_plugin_ids"],
+        json!([43])
     );
     plugins["c"] = json!({"installed_plugin_id":44,"managed":true,"enabled":true});
     std::fs::write(&manifest, json!({"plugins":plugins}).to_string()).unwrap();
@@ -79,6 +87,79 @@ async fn lifecycle_and_inventory_events_run_before_the_long_audit() {
     assert!(
         received.try_recv().is_err(),
         "Successful events must not restart polling"
+    );
+    cancel.send_replace(true);
+    task.await.unwrap();
+}
+
+#[derive(Clone)]
+struct GatedDiscovery {
+    calls: mpsc::UnboundedSender<Value>,
+    first_batch: Arc<Mutex<Option<oneshot::Receiver<()>>>>,
+}
+
+impl super::super::super::PluginAuthTransport for GatedDiscovery {
+    fn exchange<'a>(&'a self, operation: &'a str, payload: Value, _: Duration) -> Reply<'a, Value> {
+        assert_eq!(operation, "plugin.auth.automatic");
+        self.calls.send(payload).unwrap();
+        let gate = self.first_batch.lock().unwrap().take();
+        Box::pin(async move {
+            if let Some(gate) = gate {
+                gate.await.unwrap();
+            }
+            Ok(json!({"success":true,"packages":[]}))
+        })
+    }
+}
+
+#[tokio::test]
+async fn login_during_audit_runs_before_the_next_batch() {
+    let home = tempfile::tempdir().unwrap();
+    std::fs::create_dir(home.path().join("capabilities")).unwrap();
+    let plugins: serde_json::Map<_, _> = (1..=18)
+        .map(|id| {
+            (
+                format!("plugin-{id}"),
+                json!({"installed_plugin_id":id,"managed":true,"enabled":true}),
+            )
+        })
+        .collect();
+    std::fs::write(
+        home.path().join("capabilities/manifest-v2.json"),
+        json!({"plugins":plugins}).to_string(),
+    )
+    .unwrap();
+    let (calls, mut received) = mpsc::unbounded_channel();
+    let (unblock, blocked) = oneshot::channel();
+    let (cancel, cancelled) = watch::channel(false);
+    let (_ordinary, requested) = mpsc::channel(16);
+    let logins = Arc::new(PendingLogins::default());
+    let task = tokio::spawn(run(
+        GatedDiscovery {
+            calls,
+            first_batch: Arc::new(Mutex::new(Some(blocked))),
+        },
+        home.path().to_owned(),
+        Arc::new(AtomicBool::new(true)),
+        cancelled,
+        requested,
+        logins.clone(),
+        Duration::from_secs(3600),
+    ));
+    assert_eq!(
+        next(&mut received).await["installed_plugin_ids"],
+        json!((1..=16).collect::<Vec<_>>())
+    );
+    logins.submit(17, "mail".into());
+    logins.submit(17, "mail".into());
+    unblock.send(()).unwrap();
+    assert_eq!(
+        next(&mut received).await["installed_plugin_ids"],
+        json!([17])
+    );
+    assert_eq!(
+        next(&mut received).await["installed_plugin_ids"],
+        json!([17, 18])
     );
     cancel.send_replace(true);
     task.await.unwrap();
@@ -129,13 +210,17 @@ async fn successful_partial_events_preserve_a_failed_full_cycle_retry() {
         Arc::new(AtomicBool::new(true)),
         cancelled,
         requested,
+        Arc::default(),
         Duration::from_secs(3600),
     ));
     assert_eq!(
         next(&mut received).await["installed_plugin_ids"],
         json!([42, 43])
     );
-    events.send(43).await.unwrap();
+    events
+        .send(ReconciliationRequest::Target(43))
+        .await
+        .unwrap();
     assert_eq!(
         next(&mut received).await["installed_plugin_ids"],
         json!([43])

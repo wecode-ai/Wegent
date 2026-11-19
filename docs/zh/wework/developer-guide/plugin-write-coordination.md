@@ -67,6 +67,17 @@ Native 与注册回执的查询、租约获取和事务共用 20 秒截止时间
 
 自动认证保留启动、重连、插件清单变更和本机登录／退出事件触发，以及 300 秒、每进程 ±30 秒抖动的补充巡检。准备和只读状态查询不占整批插件写租约，凭据提交时才取得目标安装的租约。
 
+Native 授权写请求携带 `X-Wegent-Plugin-Auth-Contention: 1` 时，前置查询、插件租约、首次账号策略租约及写入前的所有权校验共用 200 毫秒截止时间，每个键尝试一次。Redis 确认租约已占用时，携带 `X-Wegent-Plugin-Auth-Result: 1` 或 `2` 的请求收到 HTTP 200 和可重试业务码 `plugin_write_busy`，仅协商短取锁预算的客户端收到带标记的 503。若 Redis 的取锁回执在截止时间内未返回，且服务端能确认写事务尚未开始，协商 `X-Wegent-Plugin-Auth-Result: 2` 的请求收到 HTTP 200 和可重试业务码 `plugin_write_lease_timeout`。这两个 HTTP 200 业务响应均携带 `success:false`、`retryable:true` 及响应头 `X-Wegent-Plugin-Auth-Contention: busy-before-write`。启用短预算但未协商版本 2 的请求在回执超时时仍收到无标记的 503。取锁回执超时可按 `outcome=redis_set_reply_unknown`（回执未知）与 `outcome=redis_set_reply_late`（截止后确认取得）单独统计。依赖故障和事务结果未知沿用原有错误响应。
+
+即使客户端断开，服务端也会继续观察已发出的取锁请求，确认取得租约后按原 token 清理。已开始的事务遵循原有提交保护。Executor 对同一次前台操作最多发出三次 HTTP 请求，争用重试和结果确认共用这个额度及原调用截止时间。
+
+- **写前争用。** 普通占锁的重试须在首发后一秒内发出。收到取锁回执超时的业务码后，争用重试窗口延至首发后三秒，第三次争用尝试最早在首发 2.7 秒后发出。前台重试期间显示处理中。在已发请求均确认未写入的情况下，耗尽预算后提示稍后重试。支持续期补交的收尾操作收到写前重试标记时，只要账号、后端和设备密钥均一致，就可在原预算内用续期后的令牌补交原结果。
+- **写入回执丢失。** 对 `oauth.finish` 等支持幂等补交的收尾请求，Executor 可在原会话内用原操作 ID 和原请求体补交一次。即使已超过三秒争用窗口，只要还有剩余请求额度且未到原调用截止时间，仍可补交。会话变化、无剩余额度或补交也收到写前争用标记时，保留传输失败。
+
+巡检沿用现有退避并重新读取状态。Socket 请求沿用原有协议。
+
+排查 Native 授权的争用、503 或慢请求时，用 `api.log` 的请求 ID 在 Rust `info.log` 中找 `Native plugin authorization finished`。预期争用记录为 `outcome=lock_busy_before_write`，在启用业务响应后仍可单独统计。按 `operation`、`failure_stage` 和 `outcome` 核对前置 MySQL 查询、Redis 取锁、授权事务、事务内 Redis 所有权校验、解锁及通知的耗时。标为 `mixed` 的阶段包含 MySQL 和 Redis 调用，事务内所有权校验的耗时是事务耗时的子集。依赖故障用 `failure_dependency` 标记，可用 `mysql_error_kind` 和数字 `mysql_errno` 区分已识别的 MySQL 错误。
+
 ## 部署与已有开发库
 
 旧用户锁与插件锁不是同一协议。切换 Python／Rust 写入进程前，先停止受理并排空旧插件事务，再统一切换，避免新旧锁协议混跑。

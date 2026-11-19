@@ -53,26 +53,42 @@ pub(super) fn verify(app: &AppState, token: &str) -> Result<Principal, FastApiEr
 }
 
 impl Principal {
-    pub(super) async fn require_active(&self, app: &AppState) -> Result<(), FastApiError> {
+    pub(super) async fn is_active(&self, app: &AppState) -> MysqlResult<bool> {
         let user: Option<UserRow> = app
             .mysql
             .fetch_optional(USER_BY_NAME_QUERY, (self.sub.as_str(),))
-            .await
-            .map_err(|_| unauthorized())?;
-        if !user.is_some_and(|u| i64::from(u.id) == self.user_id && u.is_active != 0) {
-            return Err(unauthorized());
-        }
-        Ok(())
+            .await?;
+        Ok(user.is_some_and(|u| i64::from(u.id) == self.user_id && u.is_active != 0))
     }
 }
 
-pub(super) async fn open(app: &AppState, data: Value) -> Result<Value, FastApiError> {
+pub(super) fn require_active(
+    result: MysqlResult<bool>,
+    timing: &mut ExchangeTiming,
+) -> Result<(), FastApiError> {
+    match result {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(unauthorized()),
+        Err(error) => {
+            timing.outcome = Some("mysql_account_lookup_failed");
+            timing.record_mysql_error(&error);
+            Err(unauthorized())
+        }
+    }
+}
+
+pub(super) async fn open(
+    app: &AppState,
+    data: Value,
+    timing: &mut timing::ExchangeTiming,
+) -> Result<Value, FastApiError> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Proof {
         refresh_token: String,
         proof: String,
     }
+    timing.failure_stage = Some("session_proof_verify");
     let proof: Proof = serde_json::from_value(data).map_err(|_| unauthorized())?;
     let now = chrono::Utc::now().timestamp();
     let claims = verify_bound_native_request(
@@ -99,25 +115,38 @@ pub(super) async fn open(app: &AppState, data: Value) -> Result<Value, FastApiEr
         scope: TOKEN_USE.into(),
         exp: (now + SESSION_SECONDS).min(claims["exp"].as_i64().ok_or_else(unauthorized)?),
     };
-    principal.require_active(app).await?;
-    let redis = app.redis.as_ref().ok_or_else(unauthorized)?;
+    timing.failure_stage = Some("verify_active_mysql");
+    let active = timing::timed(&mut timing.verify_active_mysql_ms, principal.is_active(app)).await;
+    require_active(active, timing)?;
+    timing.failure_stage = Some("session_proof_redis");
+    let redis = app.redis.as_ref().ok_or_else(|| {
+        timing.record_redis_failure("redis_unavailable");
+        unauthorized()
+    })?;
     let key = format!(
         "wegent:plugin-auth:proof:{:x}",
         Sha256::digest(proof.proof.as_bytes())
     );
-    let fresh = redis
-        .set_with(
+    let fresh = timing::timed(
+        &mut timing.session_proof_redis_ms,
+        redis.set_with(
             key,
             "used",
             SetOptions::default()
                 .if_absent()
                 .with_expiration(SetExpiration::Seconds(330)),
-        )
-        .await
-        .map_err(|_| unauthorized())?;
+        ),
+    )
+    .await
+    .map_err(|_| {
+        timing.record_redis_failure("redis_proof_store_failed");
+        unauthorized()
+    })?;
     if !fresh {
+        timing.outcome = Some("proof_replayed");
         return Err(unauthorized());
     }
+    timing.failure_stage = Some("session_sign");
     let token = crate::wework_auth_tokens::create_token(
         &app.auth.jwt_key,
         &app.auth.algorithm,

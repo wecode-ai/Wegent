@@ -96,6 +96,17 @@ export function isPythonRuntimeUnavailableError(error: unknown): boolean {
   return error instanceof Error && 'code' in error && error.code === 'python_runtime_unavailable'
 }
 
+export function isLocalConnectorAuthBusy(error: unknown): boolean {
+  const code = 'plugin_auth_busy_retry_later'
+  if (error === code) return true
+  if (!(error instanceof Error)) return false
+  return (
+    ('code' in error && error.code === code) ||
+    (error instanceof LocalConnectorAuthLogoutError && error.errorCode === code) ||
+    error.message === code
+  )
+}
+
 /** Reuse recent success for management views; runtime authorization recovery bypasses it. */
 const OK_HEALTH_TTL_MS = 120_000
 const okHealthCache = new Map<string, number>()

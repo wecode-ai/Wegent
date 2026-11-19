@@ -11,6 +11,7 @@ import {
 import {
   isLocalBrowserConnector,
   isLocalConnector,
+  isLocalConnectorAuthBusy,
   isPythonRuntimeUnavailableError,
   localConnectorAuthHealth,
   localConnectorAuthLogout,
@@ -319,6 +320,10 @@ export function usePluginWorkspaceConnectors({
           connectorHealth.remember(slug, result.connected === true ? 'connected' : 'disconnected')
           if (githubCli) notifyLocalPluginSkillsChanged()
         } catch (error) {
+          if (isLocalConnectorAuthBusy(error)) {
+            reportDetailError(t('workbench.plugins_local_auth_busy'))
+            return
+          }
           reportDetailError(
             githubCli && error instanceof LocalConnectorAuthLogoutError && error.errorCode
               ? t(`workbench.${error.errorCode}`, { defaultValue: t('workbench.gh_logout_failed') })

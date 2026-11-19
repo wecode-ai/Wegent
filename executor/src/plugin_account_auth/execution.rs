@@ -56,7 +56,7 @@ async fn execute_inner<T: super::PluginAuthTransport>(
     executor_home: &Path,
     request: ExecutionRequest,
 ) -> Result<String, AuthError> {
-    let gateway = NativeAuthGateway::new(transport);
+    let gateway = NativeAuthGateway::new(transport.for_plugin(request.installed_plugin_id, true));
     let (package, credential) = execution_credential(&gateway, executor_home, &request).await?;
     if package.installed_plugin_id != request.installed_plugin_id
         || package.connector_slug != request.connector_slug

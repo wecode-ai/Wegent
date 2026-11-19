@@ -10,6 +10,12 @@ struct Installation {
     json: Value,
 }
 
+#[derive(FromMysqlRow)]
+struct InstallationIdentity {
+    id: i64,
+    name: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PluginRevision {
     pub(super) id: i64,
@@ -65,11 +71,7 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
         deadline: Instant,
     ) -> MysqlResult<Self> {
         let redis = redis.ok_or_else(|| coordination_error("plugin_write_unavailable"))?;
-        names.sort();
-        names.dedup();
-        if names.is_empty() {
-            names.push("@empty".to_owned());
-        }
+        normalize_names(&mut names);
         let one_attempt = names.len() > 1 || wait.is_zero();
         let acquire_deadline = (Instant::now() + wait).min(deadline);
         let mut acquired: Option<Self> = None;
@@ -143,6 +145,7 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
             .is_none_or(|ids| ids.contains(&id))
     }
 
+    #[cfg(test)]
     pub(crate) async fn acquire_installed<M: Mysql>(
         mysql: &M,
         redis: Option<&'a R>,
@@ -265,18 +268,43 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
     }
 }
 
-async fn installation_scope<T: MysqlTransaction>(
+pub(super) fn normalize_names(names: &mut Vec<String>) {
+    names.sort();
+    names.dedup();
+    if names.is_empty() {
+        names.push("@empty".to_owned());
+    }
+}
+
+pub(super) async fn installation_scope<T: MysqlTransaction>(
     tx: &mut T,
     user_id: i64,
     ids: Option<&[i64]>,
 ) -> MysqlResult<(Vec<String>, Vec<i64>)> {
-    if ids.is_some_and(<[i64]>::is_empty) {
-        return Ok((Vec::new(), Vec::new()));
-    }
-    let rows: Vec<Installation> = tx.fetch_all("SELECT id,name,json FROM kinds WHERE user_id=? AND kind='InstalledPlugin' AND namespace='default'", (user_id,)).await?;
-    Ok(rows
-        .into_iter()
-        .filter(|row| ids.is_none_or(|ids| ids.contains(&row.id)))
-        .map(|row| (row.name, row.id))
-        .unzip())
+    const QUERY: &str = "SELECT id,name FROM kinds WHERE user_id=? AND kind='InstalledPlugin' AND namespace='default'";
+    let rows: Vec<InstallationIdentity> = if let Some(ids) = ids {
+        let mut ids = ids.to_vec();
+        ids.sort_unstable();
+        ids.dedup();
+        let mut rows = Vec::new();
+        for ids in ids.chunks(1024) {
+            let markers = std::iter::repeat_n("?", ids.len())
+                .collect::<Vec<_>>()
+                .join(",");
+            let args: Vec<i64> = std::iter::once(user_id)
+                .chain(ids.iter().copied())
+                .collect();
+            rows.extend(
+                tx.fetch_all::<_, _, InstallationIdentity>(
+                    format!("{QUERY} AND id IN ({markers})"),
+                    args,
+                )
+                .await?,
+            );
+        }
+        rows
+    } else {
+        tx.fetch_all(QUERY, (user_id,)).await?
+    };
+    Ok(rows.into_iter().map(|row| (row.name, row.id)).unzip())
 }

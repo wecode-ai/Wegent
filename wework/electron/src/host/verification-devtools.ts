@@ -6,7 +6,7 @@ const MAX_EVENTS = 20_000
 
 type Target = Pick<
   WebContents,
-  'id' | 'debugger' | 'isDestroyed' | 'getURL' | 'getTitle' | 'getType'
+  'id' | 'debugger' | 'isDestroyed' | 'getURL' | 'getTitle' | 'getType' | 'emit'
 >
 interface ProtocolEvent {
   sequence: number
@@ -68,7 +68,21 @@ export class VerificationDevtools {
     if (input.sessionId !== undefined && typeof input.sessionId !== 'string') {
       throw new Error('DevTools sessionId must be a string')
     }
-    return connection.target.debugger.sendCommand(input.method, input.params, input.sessionId)
+    const result = await connection.target.debugger.sendCommand(
+      input.method,
+      input.params,
+      input.sessionId
+    )
+    if (
+      input.method === 'Page.handleJavaScriptDialog' &&
+      input.sessionId === undefined &&
+      !connection.target.isDestroyed()
+    ) {
+      // CDP resolves the renderer's decision, but Electron's dialog manager
+      // leaves its separate native message box open until this event.
+      connection.target.emit('-cancel-dialogs', { resetState: false })
+    }
+    return result
   }
 
   close(): void {

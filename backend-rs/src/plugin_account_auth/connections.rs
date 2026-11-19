@@ -106,14 +106,21 @@ pub(crate) async fn owner_row<T: MysqlTransaction>(
     transaction: &mut T,
     user_id: i64,
 ) -> Result<(), AuthFailure> {
-    let owner: Option<OwnerRow> = transaction
-        .fetch_optional(OWNER_QUERY, (user_id,))
+    if !owner_is_active(transaction, user_id)
         .await
-        .map_err(|_| AuthFailure::Internal)?;
-    if owner.is_none_or(|owner| owner.is_active != Some(true)) {
+        .map_err(|_| AuthFailure::Internal)?
+    {
         return Err(AuthFailure::Refusal("plugin_auth_owner_unavailable"));
     }
     Ok(())
+}
+
+pub(super) async fn owner_is_active<T: MysqlTransaction>(
+    transaction: &mut T,
+    user_id: i64,
+) -> MysqlResult<bool> {
+    let owner: Option<OwnerRow> = transaction.fetch_optional(OWNER_QUERY, (user_id,)).await?;
+    Ok(owner.is_some_and(|owner| owner.is_active == Some(true)))
 }
 
 /// `_installed_plugin`.

@@ -190,14 +190,29 @@ impl IntoHttpError for FastApiError {
         output.extend_from_slice(&body);
         let mut response =
             Response::bytes(self.status, output.freeze()).content_type("application/json");
-        for (name, value) in &self.headers {
-            let mut block = arena.alloc(name.len() + value.len() + 4);
-            block.extend_from_slice(name.as_bytes());
-            block.extend_from_slice(b": ");
-            block.extend_from_slice(value.as_bytes());
-            block.extend_from_slice(b"\r\n");
-            if let Ok(header) = brz_http_server::HeaderBlock::new(block.freeze()) {
-                response = response.headers(header);
+        if !self.headers.is_empty() {
+            let length = self
+                .headers
+                .iter()
+                .map(|(name, value)| name.len() + value.len() + 4)
+                .sum();
+            let mut headers = arena.alloc(length);
+            for (name, value) in &self.headers {
+                let parts = [name.as_bytes(), b": ", value.as_bytes(), b"\r\n"];
+                let mut field = arena.alloc(name.len() + value.len() + 4);
+                for part in parts {
+                    field.extend_from_slice(part);
+                }
+                if brz_http_server::HeaderBlock::new(field.freeze()).is_ok() {
+                    for part in parts {
+                        headers.extend_from_slice(part);
+                    }
+                }
+            }
+            if !headers.is_empty()
+                && let Ok(headers) = brz_http_server::HeaderBlock::new(headers.freeze())
+            {
+                response = response.headers(headers);
             }
         }
         if matches!(self.body, ErrorBody::Unhandled(_)) {

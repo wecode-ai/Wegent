@@ -314,16 +314,9 @@ async fn lifecycle(
         .as_ref()
         .map(|r| r.json["spec"].clone())
         .unwrap_or(json!({"enabled":true}));
-    let connections: Vec<_> = rows(tx, p.user_id, "ConnectorConnection")
-        .await?
-        .into_iter()
-        .filter(|r| {
-            r.json["spec"]["sourceIdentity"] == pkg.source()
-                && r.json["spec"]["connectorSlug"] == pkg.slug
-        })
-        .collect();
     match input.action.as_str() {
         "status" => {
+            let connections = lifecycle_connections(tx, p, &pkg).await?;
             if policy["enabled"] == false {
                 return Ok(json!({"status":"need_login"}));
             }
@@ -357,6 +350,7 @@ async fn lifecycle(
             Ok(json!({"status":"ok"}))
         }
         "logout" => {
+            let connections = lifecycle_connections(tx, p, &pkg).await?;
             for transfer in rows(tx, p.user_id, "ConnectorTransfer").await? {
                 if transfer.json["spec"]["source_identity"] == pkg.source()
                     && transfer.json["spec"]["connector_slug"] == pkg.slug
@@ -400,6 +394,22 @@ async fn lifecycle(
         }
         _ => Err(invalid()),
     }
+}
+
+async fn lifecycle_connections(
+    tx: &mut impl MysqlTransaction,
+    p: &Principal,
+    pkg: &Package,
+) -> MysqlResult<Vec<Row>> {
+    let source = pkg.source();
+    Ok(rows(tx, p.user_id, "ConnectorConnection")
+        .await?
+        .into_iter()
+        .filter(|row| {
+            row.json["spec"]["sourceIdentity"] == source
+                && row.json["spec"]["connectorSlug"] == pkg.slug
+        })
+        .collect())
 }
 
 async fn disconnect(tx: &mut impl MysqlTransaction, p: &Principal, row: &Row) -> MysqlResult<()> {
