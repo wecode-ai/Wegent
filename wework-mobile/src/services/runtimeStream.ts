@@ -93,6 +93,14 @@ export class RuntimeStream {
       )
   }
 
+  isAppDevice(deviceId: string): boolean {
+    return this.getDevices().some(
+      device =>
+        device.device_type === 'app' &&
+        (device.execution_target_id === deviceId || device.device_id === deviceId)
+    )
+  }
+
   updateBackend(config: RuntimeSessionConfig | null, userId = 0): void {
     const identity = config
       ? `${config.apiBaseUrl}\0${config.socketBaseUrl}\0${config.socketPath}\0${userId}`
