@@ -2,6 +2,7 @@ import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { assertManagerContinuedOnOriginalTask } from '../modules/collaboration-cloud-story-checks.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import {
   assistantMessage,
@@ -263,7 +264,7 @@ async function createGroup(control, request, projectId, ownerId, uiTimeoutMs) {
     value: GROUP,
   })
   await control.command('fill', scoped('[data-testid="collaboration-group-description"]'), {
-    value: '验证 AI 任务和人工任务并发完成后，由新的负责人运行继续评估。',
+    value: '验证 AI 任务和人工任务并发完成后，由负责人在原会话继续评估。',
   })
   await control.command('click', scoped('[data-testid="collaboration-group-create-add-members"]'))
   const leaderTestId = await waitForTestIdByText(
@@ -304,7 +305,7 @@ async function createGroup(control, request, projectId, ownerId, uiTimeoutMs) {
   )
   await control.command('click', scoped('[data-testid="collaboration-group-detail-tab-rules"]'))
   await control.command('fill', scoped('[data-testid="collaboration-group-detail-instructions"]'), {
-    value: `${MARKER}：AI 与人工任务可并发；整轮全部交付后必须启动新的负责人运行继续评估。`,
+    value: `${MARKER}：AI 与人工任务可并发；整轮全部交付后必须沿用原会话继续评估。`,
   })
   await control.command(
     'clickWhenEnabled',
@@ -317,7 +318,7 @@ async function createGroup(control, request, projectId, ownerId, uiTimeoutMs) {
       response.items?.find(
         value =>
           value.name === GROUP &&
-          value.instructions?.includes('AI 与人工任务可并发；整轮全部交付后必须启动新的负责人运行')
+          value.instructions?.includes('AI 与人工任务可并发；整轮全部交付后必须沿用原会话继续评估')
       ),
     '协作小组规则保存后未持久化',
     uiTimeoutMs
@@ -545,7 +546,10 @@ export function createDesktopScenario({
         ])
         return true
       }
-      if (requestContainsToolOutput(body, CALLS.plan)) {
+      if (
+        requestContainsToolOutput(body, CALLS.plan) &&
+        !serialized.includes('<collaboration_round_results>')
+      ) {
         managerStage = 'waiting-round'
         writeEvents(response, responseId, [
           assistantMessage('本轮智能体任务和人工任务已交给 Executor，等待全部交付。'),
@@ -555,7 +559,7 @@ export function createDesktopScenario({
 
       if (managerStage === 'initial') {
         assert.ok(
-          serialized.includes('AI 与人工任务可并发；整轮全部交付后必须启动新的负责人运行'),
+          serialized.includes('AI 与人工任务可并发；整轮全部交付后必须沿用原会话继续评估'),
           '项目协作规则没有作为负责人本轮用户消息的一部分传入'
         )
         const selection = managerToolEvents(body, 'submit_workflow_plan', CALLS.plan, planArguments)
@@ -568,23 +572,14 @@ export function createDesktopScenario({
       }
 
       if (managerStage === 'waiting-round') {
-        assert.equal(
-          requestContainsToolOutput(body, CALLS.plan),
-          false,
-          '整轮完成后负责人恢复了旧会话，而不是启动新的 Runtime Task'
-        )
-        assert.equal(
-          serialized.includes(CALLS.plan),
-          false,
-          '新的负责人 Runtime Task 仍携带上一轮 submit_workflow_plan 会话历史'
-        )
+        assert.ok(serialized.includes('<collaboration_round_results>'))
         assert.ok(
           serialized.includes(`${AI_TASK} 已完成：AI 证据已提交给负责人。`),
-          'barrier 后的新负责人运行没有收到 AI 执行结果'
+          '整轮交付后负责人在原会话的续跑没有收到 AI 执行结果'
         )
         assert.ok(
           serialized.includes(`${MARKER} 人工证据已核对，结果可供负责人继续评估。`),
-          'barrier 后的新负责人运行没有收到人工 Delivery'
+          '整轮交付后负责人在原会话的续跑没有收到人工 Delivery'
         )
         const selection = managerToolEvents(
           body,
@@ -930,15 +925,15 @@ export function createDesktopScenario({
       await waitForPromise(
         managerResumed,
         modelResponseTimeoutMs,
-        '人工 Delivery 后，Executor 没有越过整轮 barrier 并启动新的负责人运行'
+        '人工交付后，负责人没有在原会话继续评估'
       )
       await waitForValue(
         () => request(`/api/v1/loop-items/${rootIssue.id}`),
         value => value?.status === 'in_review',
-        '新负责人运行没有显式更新根 Issue 状态',
+        '负责人续跑后没有显式更新根 Issue 状态',
         modelResponseTimeoutMs
       )
-      assert.equal(managerRuns, 2, '整轮完成后没有且仅有一个新的负责人运行')
+      assert.equal(managerRuns, 2, '整轮完成后没有且仅有一次负责人续跑')
       await waitForValue(
         () => managerStage,
         value => value === 'complete',
@@ -949,7 +944,11 @@ export function createDesktopScenario({
         text: '负责人已综合智能体证据和人工交付，将 Issue 提交待确认。',
         timeoutMs: modelResponseTimeoutMs,
       })
-      await captureScreenshot(control, 'human-round-04-fresh-manager-completed.png', CONTENT)
+      await assertManagerContinuedOnOriginalTask(
+        cloudEnvironment.remoteDockerExecutorRuntimeLogPath,
+        ROUND_ID
+      )
+      await captureScreenshot(control, 'human-round-04-manager-resumed.png', CONTENT)
     },
 
     diagnostics() {

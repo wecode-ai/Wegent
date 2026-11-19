@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
 import { readProjectChatMessages } from './project-chat-snapshot.mjs'
 import { isTranscriptReadAdmissionBusy } from './runtime-read-admission.mjs'
 
@@ -244,4 +245,20 @@ export async function verifyRecordedMemberTranscript({
     timeoutMs
   )
   assert.equal(transcript.taskId, address.taskId)
+}
+
+export async function assertManagerContinuedOnOriginalTask(runtimeLogPath, roundId) {
+  const records = (await readFile(runtimeLogPath, 'utf8')).split('\n')
+  const resumed = records.find(line =>
+    line.includes('cloud collaboration manager continuation accepted round_id=' + roundId + ' ')
+  )
+  assert.ok(resumed, '没有原生负责人续跑回执')
+  const task = resumed.match(/ manager_task_id=(\S+)/)?.[1]
+  assert.ok(task?.endsWith('-manager-initial'), '负责人续跑创建了替代会话')
+  const turns = records.filter(line =>
+    line.includes(
+      'runtime native turn boundary applying local_task_id=' + task + ' method=turn/started '
+    )
+  )
+  assert.equal(turns.length, 2, '负责人规划与人工交付后的评估应属于同一个会话的两个回合')
 }
