@@ -2913,6 +2913,18 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="desktop-empty-composer-dock"]`
         )
       )
+      const [environmentSpacer] = JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="environment-info-panel-spacer"]`
+        )
+      )
+      const usableCenter = viewport.left + (viewport.width - environmentSpacer.width) / 2
+      const dockCenter = dock.left + dock.width / 2
+      assert.ok(
+        Math.abs(dockCenter - usableCenter) <= 2,
+        `The new-task composer must be centered in its workbench. Center offset: ${dockCenter - usableCenter}px`
+      )
       const bottomGap = viewport.bottom - dock.bottom
       assert.ok(
         bottomGap >= 0 && bottomGap <= 16,

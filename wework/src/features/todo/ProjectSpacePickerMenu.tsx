@@ -89,6 +89,10 @@ export function ProjectSpacePickerMenu({
       testId="project-space-picker-trigger"
       menuTestId="work-item-context-menu"
       searchTestId="project-space-picker-search"
+      clearSearch={{
+        label: t('workbench.project_picker_clear_search', '清空搜索'),
+        testId: 'project-space-picker-clear-search',
+      }}
       accessibleLabel={t('workbench.project_picker_title', '加入项目空间')}
       searchPlaceholder={t('workbench.project_picker_search', '搜索项目名称、空间或标识…')}
       emptyLabel={t('workbench.project_picker_empty', '没有匹配的项目，试试其他关键词或空间')}

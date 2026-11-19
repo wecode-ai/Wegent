@@ -7,10 +7,11 @@ import {
   ComboboxList,
   ComboboxTrigger,
 } from '@ui-sdk/react/combobox'
-import { Check, ChevronDown, Search } from 'lucide-react'
+import { Check, ChevronDown, Search, X } from 'lucide-react'
 import { Fragment, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
 import { Button } from '../markdown/Button'
+import { IconButton } from './IconButton'
 import { useCollaborationPortalTheme } from '../theme'
 import {
   controlOption,
@@ -49,6 +50,7 @@ interface SearchableSelectCommonProps<T extends string> {
   testId: string
   menuTestId?: string
   searchTestId?: string
+  clearSearch?: { label: string; testId: string }
   accessibleLabel: string
   className?: string
   density?: ControlDensity
@@ -106,6 +108,7 @@ export function SearchableSelect<T extends string>(props: SearchableSelectProps<
     testId,
     menuTestId,
     searchTestId,
+    clearSearch,
     accessibleLabel,
     className,
     density = 'default',
@@ -299,7 +302,7 @@ export function SearchableSelect<T extends string>(props: SearchableSelectProps<
         )}
       >
         {header}
-        <label className="flex min-h-11 shrink-0 items-center gap-2 rounded-lg bg-muted px-2.5 text-text-secondary md:min-h-9">
+        <div className="flex min-h-11 shrink-0 items-center gap-2 rounded-lg bg-muted px-2.5 text-text-secondary md:min-h-9">
           <Search aria-hidden="true" className="h-4 w-4 shrink-0" />
           <ComboboxInput
             autoFocus
@@ -311,7 +314,21 @@ export function SearchableSelect<T extends string>(props: SearchableSelectProps<
             aria-label={searchPlaceholder}
             className="min-h-11 min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-secondary md:min-h-9"
           />
-        </label>
+          {clearSearch && query && (
+            <IconButton
+              type="button"
+              density="compact"
+              aria-label={clearSearch.label}
+              data-testid={clearSearch.testId}
+              onClick={() => {
+                setQuery('')
+                searchRef.current?.focus()
+              }}
+            >
+              <X aria-hidden="true" />
+            </IconButton>
+          )}
+        </div>
         {searchStatus}
         {renderOptions(
           <ComboboxList

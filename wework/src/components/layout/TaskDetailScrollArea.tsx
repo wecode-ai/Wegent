@@ -52,7 +52,7 @@ export function TaskDetailScrollArea({
         <ScrollAreaContent
           className={cn(
             'relative flex min-h-full min-w-0 p-0',
-            hasConversation ? 'flex-col' : 'h-full'
+            hasConversation ? 'flex-col' : 'h-full flex-1'
           )}
         >
           {children}
