@@ -148,7 +148,7 @@ fn failed_goal_readmission_preserves_its_previous_recovery_intent() {
 #[test]
 fn goal_activation_acknowledges_only_durable_recovery_ownership() {
     run_goal_test(async {
-        for fail_persistence in [false, true] {
+        for (loaded, fail_persistence) in [(false, false), (true, false), (false, true)] {
             let (mut handler, root, request) = setup("native-goal-activation-ack");
             block_goal_admission(&handler);
             handler.store.update_task("task-1", |link| {
@@ -165,6 +165,21 @@ fn goal_activation_acknowledges_only_durable_recovery_ownership() {
                 .to_string(),
             )
             .unwrap();
+            if loaded {
+                fs::write(
+                    root.join("thread_resume.json"),
+                    json!({"thread":{"id":"11111111-1111-4111-8111-111111111111"}}).to_string(),
+                )
+                .unwrap();
+                handler
+                    .codex_app_server
+                    .request(
+                        "thread/resume",
+                        json!({"threadId":"11111111-1111-4111-8111-111111111111"}),
+                    )
+                    .await
+                    .unwrap();
+            }
             if fail_persistence {
                 let blocked = root.join("blocked-queue-parent");
                 fs::write(&blocked, "not a directory").unwrap();
@@ -187,7 +202,7 @@ fn goal_activation_acknowledges_only_durable_recovery_ownership() {
                 assert_eq!(response["success"], true, "{response}");
                 assert_eq!(
                     response["resumed"], false,
-                    "Goal activation prepares the native session before mutation and must not admit duplicate work"
+                    "Preparing a cold session must leave continuation owned by native Goal"
                 );
                 let repeated = handler
                     .set_task_goal(json!({

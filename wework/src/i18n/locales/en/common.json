@@ -4606,6 +4606,18 @@
     "source_unavailable": "The source conversation is unavailable. Existing messages can still be kept or removed."
   },
   "todo": {
+    "dispatch": {
+      "queued": "Assistant queued",
+      "waiting_device": "Waiting for a device",
+      "blocked_policy": "Automatic handling is off",
+      "tag_mismatch": "Issue tags do not match assistant scope",
+      "running": "Assistant running",
+      "waiting_user": "Waiting for input or publication",
+      "completed": "Assistant result published",
+      "failed": "Assistant failed",
+      "cancelled": "Assistant cancelled",
+      "repair": "Assistant settings"
+    },
     "comment_assignment_mode": "Assignment action",
     "assign_current_issue": "Assign current Issue",
     "create_child_issue": "Create child Issue",

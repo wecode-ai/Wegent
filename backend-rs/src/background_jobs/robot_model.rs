@@ -91,6 +91,9 @@ impl Execution {
     }
 
     pub fn can_cancel_without_runtime(&self) -> bool {
+        if self.execution_environment == "wegent" && !self.runtime_task_id.is_empty() {
+            return false;
+        }
         matches!(
             self.status.as_str(),
             "waiting_runtime" | "pending_approval" | "queued"
@@ -165,6 +168,10 @@ mod tests {
             let row = execution(status, start);
             assert_eq!(row.can_cancel_without_runtime(), expected, "{status}");
         }
+        let mut managed = execution("claimed", None);
+        managed.execution_environment = "wegent".into();
+        managed.runtime_task_id = "123".into();
+        assert!(!managed.can_cancel_without_runtime());
     }
 
     #[test]

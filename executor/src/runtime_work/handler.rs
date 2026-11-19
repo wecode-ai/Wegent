@@ -126,6 +126,7 @@ mod active_text;
 mod active_transcript;
 mod archives;
 mod assignment_receipts;
+mod assignment_runtime_states;
 mod async_questions;
 mod automatic_turns;
 mod automation_rpc;

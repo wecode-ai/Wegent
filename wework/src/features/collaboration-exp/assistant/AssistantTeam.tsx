@@ -1,7 +1,12 @@
 import { useState } from 'react'
 import { Settings, Trash2, UserRound } from 'lucide-react'
-import type { PersonalStandInSettings, StandInRole } from '@/api/personalStandIn'
-import { roleIncludesProject } from '@/api/personalStandIn'
+import type {
+  PersonalStandInSettings,
+  StandInHandlingPolicy,
+  StandInProjectRef,
+  StandInRole,
+} from '@/api/personalStandIn'
+import { roleIncludesProject, standInPolicy } from '@/api/personalStandIn'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { useTranslation } from '@/hooks/useTranslation'
 import { projectScopeOf, type ExperienceProjectData } from '../model'
@@ -11,21 +16,40 @@ export interface AssistantTeamProps {
   projects: readonly ExperienceProjectData[]
   onConfigure(roleId?: string): void
   onDelete(role: StandInRole): Promise<boolean>
+  onRegister?(
+    roleId: string | undefined,
+    roleName: string,
+    project: StandInProjectRef,
+    policy: StandInHandlingPolicy
+  ): Promise<boolean>
 }
 
-export function AssistantTeam({ settings, projects, onConfigure, onDelete }: AssistantTeamProps) {
+export function AssistantTeam({
+  settings,
+  projects,
+  onConfigure,
+  onDelete,
+  onRegister,
+}: AssistantTeamProps) {
   const { t } = useTranslation('collaborationExp')
   const [deleting, setDeleting] = useState<StandInRole | null>(null)
   const [pending, setPending] = useState(false)
+  const [registering, setRegistering] = useState<string | null>(null)
   const scopedProjects = [
     ...new Map(projects.map(row => [projectScopeOf(row.project).key, row])).values(),
   ]
   const rows = [
-    { id: '@primary', name: t('assistant.defaultAssistant'), role: null },
+    {
+      id: '@primary',
+      name: t('assistant.defaultAssistant'),
+      role: null,
+      collaboration: settings.primary?.collaboration,
+    },
     ...settings.roles.map(role => ({
       id: role.id,
       name: role.name || t('assistant.specialist'),
       role,
+      collaboration: role.collaboration,
     })),
   ]
   return (
@@ -41,10 +65,10 @@ export function AssistantTeam({ settings, projects, onConfigure, onDelete }: Ass
           {t('assistant.manage')}
         </button>
       </div>
-      {rows.map(({ id, name, role }) => (
+      {rows.map(({ id, name, role, collaboration }) => (
         <div
           key={id}
-          className="flex min-h-11 items-center gap-3 border-b border-border/50 px-4 py-3"
+          className="flex min-h-11 flex-wrap items-center gap-3 border-b border-border/50 px-4 py-3"
           data-testid={`collaboration-exp-assistant-role-${id}`}
         >
           <UserRound aria-hidden="true" className="size-4 shrink-0 text-text-muted" />
@@ -84,6 +108,51 @@ export function AssistantTeam({ settings, projects, onConfigure, onDelete }: Ass
               <Trash2 aria-hidden="true" className="size-4" />
             </button>
           )}
+          {onRegister && collaboration ? (
+            <div className="col-span-full flex flex-wrap gap-2 pl-7">
+              {scopedProjects
+                .filter(
+                  ({ project }) =>
+                    collaboration &&
+                    roleIncludesProject(
+                      { collaboration },
+                      {
+                        id: project.id,
+                        store: project.project_store === 'local' ? 'local' : 'cloud',
+                      }
+                    )
+                )
+                .filter(({ project }) => project.project_store !== 'local')
+                .map(({ project }) => (
+                  <button
+                    key={project.id}
+                    type="button"
+                    data-testid={`collaboration-exp-assistant-register-${id}-${project.id}`}
+                    disabled={registering !== null}
+                    onClick={() => {
+                      const projectRef = { id: project.id, store: 'cloud' as const }
+                      const key = `${id}:${project.id}`
+                      setRegistering(key)
+                      void onRegister(
+                        role?.id,
+                        name,
+                        projectRef,
+                        standInPolicy(
+                          role ?? {
+                            collaboration,
+                            enabled: settings.primary?.enabled ?? false,
+                          },
+                          projectRef
+                        )
+                      ).finally(() => setRegistering(current => (current === key ? null : current)))
+                    }}
+                    className="min-h-11 text-xs text-text-muted underline md:min-h-8"
+                  >
+                    {t('create.registerInProject', { project: project.name })}
+                  </button>
+                ))}
+            </div>
+          ) : null}
         </div>
       ))}
       <ConfirmDialog
