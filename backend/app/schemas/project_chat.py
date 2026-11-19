@@ -355,6 +355,7 @@ class LoopItemExecutionManagerStatus(ProjectChatSchema):
     round_id: str = Field(min_length=1, max_length=128)
     runtime_device_id: str = Field(min_length=1, max_length=255)
     runtime_task_id: str = Field(min_length=1, max_length=255)
+    refresh_runtime_profiles: bool = False
 
 
 class LoopItemExecutionView(ProjectChatSchema):

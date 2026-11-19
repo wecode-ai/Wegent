@@ -17,7 +17,7 @@ impl RuntimeWorkRpcHandler {
                 .local_task_link(&fresh_task_id)
                 .is_some_and(|link| fresh_cloud_manager_task_started(&link))
             {
-                self.publish_fresh_cloud_manager(command, &fresh_task_id)
+                self.publish_fresh_cloud_manager(command, &fresh_task_id, false)
                     .await?;
                 self.clear_cloud_collaboration_round(&command.manager_runtime_task_id);
                 return Ok(());
@@ -30,11 +30,13 @@ impl RuntimeWorkRpcHandler {
             let Some(source_link) = self.local_task_link(&command.manager_runtime_task_id) else {
                 return Err("Collaboration manager Runtime task was not found".to_owned());
             };
-            let payload = self.prepare_fresh_cloud_manager(&source_link, command, &outcomes)?;
+            let mut payload = self.prepare_fresh_cloud_manager(&source_link, command, &outcomes)?;
             // Publish ownership and transcript access before the new turn can
             // ask a blocking question or submit its next round.
-            self.publish_fresh_cloud_manager(command, &fresh_task_id)
+            let profiles = self
+                .publish_fresh_cloud_manager(command, &fresh_task_id, true)
                 .await?;
+            apply_fresh_cloud_manager_profiles(&mut payload, profiles)?;
 
             match self.create_task(payload).await {
                 Ok(value)
@@ -78,8 +80,9 @@ impl RuntimeWorkRpcHandler {
         &self,
         command: &CloudCollaborationRoundCommand,
         task_id: &str,
-    ) -> Result<(), String> {
-        let payload = json!({
+        refresh_profiles: bool,
+    ) -> Result<Value, String> {
+        let mut payload = json!({
             "role": "manager",
             "loop_item_id": command.item_id,
             "dispatch_id": command.dispatch_id,
@@ -87,12 +90,23 @@ impl RuntimeWorkRpcHandler {
             "runtime_device_id": self.device_id,
             "runtime_task_id": task_id,
         });
+        if refresh_profiles {
+            payload["refresh_runtime_profiles"] = json!(true);
+        }
         loop {
             match self
                 .report_cloud_collaboration_activity(command, &payload)
                 .await
             {
-                Ok(()) => return Ok(()),
+                Ok(response) => {
+                    if !refresh_profiles {
+                        return Ok(Value::Null);
+                    }
+                    let body: Value = response.json().await.map_err(|_| {
+                        "Could not read collaboration Runtime profiles from Backend".to_owned()
+                    })?;
+                    return Ok(body["runtime_profiles"].clone());
+                }
                 Err(error) => {
                     log_executor_event(
                         "cloud collaboration manager publication failed",
@@ -121,23 +135,30 @@ impl RuntimeWorkRpcHandler {
             &mut request,
             &source.runtime_handle,
         )?;
-        if let Some(config) = self.runtime_model_config(&source.local_task_id) {
-            request.model_config = config;
-        } else if !request.model_config.is_null()
-            && !request
-                .model_config
-                .as_object()
-                .is_some_and(|config| config.is_empty())
-        {
-            return Err("Collaboration manager model configuration is unavailable".to_owned());
-        }
-        // An empty model configuration selects the native Runtime default and
-        // needs no in-memory credentials, including after an Executor restart.
+        // Model credentials are fetched when publishing this manager's Issue session.
+        request.model_config = json!({});
         self.apply_backend_connection(&mut request);
         payload["executionRequest"] =
             serde_json::to_value(request).map_err(|error| error.to_string())?;
         Ok(payload)
     }
+}
+
+pub(super) fn apply_fresh_cloud_manager_profiles(
+    payload: &mut Value,
+    profiles: Value,
+) -> Result<(), String> {
+    #[derive(serde::Deserialize)]
+    struct RuntimeProfiles {
+        manager_model_config: serde_json::Map<String, Value>,
+        member_runtime_profiles: Vec<Value>,
+    }
+    let profiles: RuntimeProfiles = serde_json::from_value(profiles)
+        .map_err(|_| "Backend did not return collaboration Runtime profiles".to_owned())?;
+    payload["executionRequest"]["model_config"] = Value::Object(profiles.manager_model_config);
+    payload["runtimeHandle"]["collaborationMemberRuntimeProfiles"] =
+        Value::Array(profiles.member_runtime_profiles);
+    Ok(())
 }
 
 pub(super) fn fresh_cloud_manager_task_id(command: &CloudCollaborationRoundCommand) -> String {
@@ -215,11 +236,6 @@ pub(super) fn fresh_cloud_manager_payload(
                 .get("collaborationDispatchTaskId")
                 .cloned()
                 .unwrap_or(Value::Null),
-            "collaborationMemberRuntimeProfiles": source_link
-                .runtime_handle
-                .get("collaborationMemberRuntimeProfiles")
-                .cloned()
-                .unwrap_or_else(|| json!([])),
         },
     });
     if let Some(model_selection) = source_link

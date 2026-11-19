@@ -497,19 +497,6 @@ fn native_default_manager_resumes_after_human_delivery_without_model_credentials
         .contains("CPU evidence delivered"));
 }
 
-#[test]
-fn configured_manager_requires_credentials_after_restart() {
-    let handler = RuntimeWorkRpcHandler::new("device-1", "unused-runner");
-    let mut source = source_link();
-    source.runtime_handle["executionRequest"]["model_config"] = json!({"model_id": "cloud-model"});
-    assert_eq!(
-        handler
-            .prepare_fresh_cloud_manager(&source, &command(), &[])
-            .unwrap_err(),
-        "Collaboration manager model configuration is unavailable"
-    );
-}
-
 #[tokio::test]
 async fn unavailable_human_status_keeps_the_manager_round_pending() {
     let root = tempfile::tempdir().unwrap();
@@ -720,10 +707,7 @@ fn fresh_cloud_manager_payload_starts_new_session() {
         payload["runtimeHandle"]["collaborationDispatchTaskId"],
         "dispatch-task-1"
     );
-    assert_eq!(
-        payload["runtimeHandle"]["collaborationMemberRuntimeProfiles"],
-        source.runtime_handle["collaborationMemberRuntimeProfiles"]
-    );
+    assert!(payload["runtimeHandle"]["collaborationMemberRuntimeProfiles"].is_null());
 }
 
 #[test]
@@ -795,7 +779,7 @@ fn executor_materializes_member_task_from_root_profile() {
 }
 
 #[test]
-fn fresh_cloud_manager_reuses_the_in_memory_runtime_model_config() {
+fn fresh_cloud_manager_replaces_expired_credentials_for_manager_and_members() {
     let handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
     let source = source_link();
     let command = command();
@@ -804,13 +788,26 @@ fn fresh_cloud_manager_reuses_the_in_memory_runtime_model_config() {
         "base_url": "https://models.example.com/v1",
         "api_key": "runtime-secret",
     });
-    handler.retain_runtime_model_config(&source.local_task_id, &model_config);
+    handler.retain_runtime_model_config(&source.local_task_id, &json!({"api_key":"expired"}));
 
-    let payload = handler
+    let mut payload = handler
         .prepare_fresh_cloud_manager(&source, &command, &[])
         .unwrap();
+    let members = json!([{"memberIds":["agent-2"],"runtimePayload":{
+        "executionRequest":{"model_config":{"api_key":"fresh-member-secret"}}
+    }}]);
+    assert!(apply_fresh_cloud_manager_profiles(&mut payload, Value::Null).is_err());
+    apply_fresh_cloud_manager_profiles(
+        &mut payload,
+        json!({"manager_model_config":model_config,"member_runtime_profiles":members}),
+    )
+    .unwrap();
 
     assert_eq!(payload["executionRequest"]["model_config"], model_config);
+    assert_eq!(
+        payload["runtimeHandle"]["collaborationMemberRuntimeProfiles"],
+        members
+    );
     assert!(source.runtime_handle["executionRequest"]["model_config"].is_null());
 }
 
