@@ -481,12 +481,12 @@ export function createWorkbenchCloudProjectContextSource(
     const api = projectTaskRuntimeApiForProject(input.services, project)
     if (!api) return
     const scope = contextIdentity(address)
+    const revision = dialogRevision
     const title =
       input.runtimeTaskTitle ||
       truncateRuntimeTaskTitle(input.runtimeTaskDescription) ||
       input.t('workbench.untitled_task', '未命名任务')
-    const request = { ...association, pending: true }
-    publish({ taskBoardAssociation: request, todoBindingError: null })
+    publish({ taskBoardAssociation: { ...association, pending: true }, todoBindingError: null })
     try {
       const linked = item
         ? (await api.bindTask(
@@ -503,7 +503,7 @@ export function createWorkbenchCloudProjectContextSource(
               input.runtimeTaskDescription ?? ''
             )
           ).item
-      if (!current(scope) || snapshot.taskBoardAssociation !== request) return
+      if (!current(scope) || revision !== dialogRevision) return
       ++lookupRevision
       registry.publishBound({ task: address, project, item: linked })
       publish({
@@ -513,9 +513,10 @@ export function createWorkbenchCloudProjectContextSource(
         }),
       })
     } catch (cause) {
-      if (current(scope) && snapshot.taskBoardAssociation === request)
+      const currentAssociation = snapshot.taskBoardAssociation
+      if (current(scope) && revision === dialogRevision && currentAssociation)
         publish({
-          taskBoardAssociation: { ...request, pending: false },
+          taskBoardAssociation: { ...currentAssociation, pending: false },
           todoBindingError:
             cause instanceof Error
               ? cause.message
