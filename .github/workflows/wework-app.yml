@@ -277,7 +277,7 @@ jobs:
             cargo_target: x86_64-pc-windows-msvc
             codex_target: x86_64-pc-windows-msvc
           - name: Linux x64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
             platform: linux
             arch: x64
             cargo_target: x86_64-unknown-linux-gnu
@@ -698,7 +698,8 @@ jobs:
     needs: prepare-upgrade-inputs
     if: ${{ !cancelled() && needs.prepare-upgrade-inputs.result == 'success' }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 15
+    # macOS runs the round trip plus two fault-recovery checkpoints.
+    timeout-minutes: ${{ matrix.platform == 'macos' && 20 || 15 }}
     defaults:
       run:
         shell: bash

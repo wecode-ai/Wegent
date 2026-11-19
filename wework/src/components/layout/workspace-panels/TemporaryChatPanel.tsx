@@ -34,7 +34,10 @@ import {
   type SetStateAction,
 } from 'react'
 import { TemporaryConversationLayout } from '@wegent/collaboration/conversation'
-import { createCollaborationTranslator } from '@wegent/collaboration'
+import {
+  createCollaborationTranslator,
+  type AssistantInteractionRequest,
+} from '@wegent/collaboration'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
 import {
   RequestUserInputCard,
@@ -127,6 +130,13 @@ interface TemporaryChatPanelProps {
     message: string,
     options: RuntimeTaskComposerCreateOptions
   ) => Promise<RuntimeTaskAddress | false>
+  assistantSend?: (input: {
+    message: string
+    clientUserMessageId: string
+    attachmentIds?: number[]
+    interruptWhenBusy?: boolean
+    runtimeOptions?: AssistantInteractionRequest['runtimeOptions']
+  }) => Promise<{ sent: boolean; queued?: boolean; error?: string | null }>
   onAddressChange?: (address: RuntimeTaskAddress | null) => void
   runtimeContext?: Pick<
     RuntimeSendRequest,
@@ -181,6 +191,7 @@ export function TemporaryChatPanel({
   controlledAddress,
   draft,
   createTask,
+  assistantSend,
   onAddressChange,
   runtimeContext,
   sendEphemeral = true,
@@ -595,10 +606,7 @@ export function TemporaryChatPanel({
     const syncMessages = () => {
       const nextMessages = getRuntimeConversationMessages(address)
       setTurns(getRuntimeConversationTurns(address))
-      if (nextMessages.length > 0) {
-        setMessages(nextMessages)
-        setError(null)
-      }
+      if (nextMessages.length > 0) setMessages(nextMessages)
     }
     syncMessages()
     return subscribeRuntimeConversation(address, syncMessages)
@@ -794,25 +802,46 @@ export function TemporaryChatPanel({
       let error: string | null = null
       let queued = false
       const sendMessage = interrupt ? interruptAndSendRuntimePaneMessage : sendRuntimePaneMessage
-      const sent = await sendMessage(
-        runtimeQueuedMessageRequest(
-          {
-            address,
-            ...(nativeConversation && !interrupt ? { queueIfBusy: true } : {}),
-            ...(sendEphemeral ? { ephemeral: true } : {}),
-          },
-          message
-        ),
+      const request = runtimeQueuedMessageRequest(
         {
-          silentBusyRetry: nativeConversation,
-          onError: value => {
-            error = value
-          },
-          onQueued: () => {
-            queued = true
-          },
-        }
+          address,
+          ...(nativeConversation && !interrupt ? { queueIfBusy: true } : {}),
+          ...(sendEphemeral ? { ephemeral: true } : {}),
+        },
+        message
       )
+      const result: { sent: boolean; error?: string | null; queued?: boolean } = assistantSend
+        ? await assistantSend({
+            message: request.message,
+            clientUserMessageId: message.id,
+            attachmentIds: request.attachmentIds,
+            interruptWhenBusy: interrupt,
+            runtimeOptions: {
+              modelId: request.modelId,
+              modelType: request.modelType,
+              modelOptions: request.modelOptions,
+              modelSelection: request.modelSelection,
+              startNewSession: request.startNewSession,
+              expectedThreadId: request.expectedThreadId,
+              attachments: request.attachments,
+            },
+          })
+        : {
+            sent: await sendMessage(request, {
+              silentBusyRetry: nativeConversation,
+              onError: value => {
+                error = value
+              },
+              onQueued: () => {
+                queued = true
+              },
+            }),
+          }
+      const sent = result.sent
+      if (assistantSend) {
+        error = result.error ?? null
+        queued = result.queued === true
+      }
       if (sent && !queued)
         setMessages(
           appendAcceptedRuntimeConversationMessage(
@@ -829,6 +858,7 @@ export function TemporaryChatPanel({
     [
       address,
       active,
+      assistantSend,
       readOnly,
       interruptAndSendRuntimePaneMessage,
       lifecycleStore,
@@ -884,6 +914,16 @@ export function TemporaryChatPanel({
 
   const send = useCallback(
     async (valueOverride?: string, options: ChatSubmitOptions = {}): Promise<boolean> => {
+      if (runtimeContext?.conversationContext === 'private_discussion') {
+        console.debug('[runtime-v2] private conversation submit', {
+          taskId: address?.taskId,
+          active,
+          readOnly,
+          historyAvailable: !historySource || scopedHistory.available,
+          nativeSubmissionPending: nativeSubmission.current,
+          modelIdentityPending: taskModelIdentityPending,
+        })
+      }
       if (!active || readOnly) return false
       const draftValue = valueOverride ?? input
       const message = draftValue.trim()
@@ -1116,6 +1156,7 @@ export function TemporaryChatPanel({
       historySource,
       scopedHistory.available,
       paneStatus.isBusy,
+      taskModelIdentityPending,
       sendConversationMessage,
       t,
       goalDraftActive,

@@ -3,6 +3,14 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export * from "./automation";
+export * from "./assistant-interaction";
+export type {
+  CollaborationMetricEvidence,
+  CollaborationMetricReceipt,
+  MetricFact,
+  CollaborationMetrics,
+  CollaborationMetricsApi,
+} from "./metrics/types";
 export * from "./agent-form";
 export * from "./board";
 export * from "./CollaborationApp";
@@ -60,4 +68,8 @@ export type {
   MilestoneInput,
   MilestonesApi,
 } from "./milestones/types";
+export type {
+  MilestoneFilterProps,
+  MilestoneFilterValue,
+} from "./milestones/useMilestoneFilter";
 export * from "./issueParticipation";

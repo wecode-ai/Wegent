@@ -248,7 +248,8 @@ pub(super) async fn emit_project_chat(
     runtime: &SocketRuntime,
     projected: &Projected,
 ) {
-    let message = &projected.message;
+    let shared = super::project_chat_messages::shared_message_payload(&projected.message);
+    let message = &shared;
     let project_id = message
         .get("projectId")
         .and_then(Value::as_str)
