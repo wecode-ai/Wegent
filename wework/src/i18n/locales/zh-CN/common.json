@@ -2809,6 +2809,7 @@
     "plugins_openai_catalog_blocked": "OpenAI 目录请求被拒绝（403／安全验证）。请检查网络或代理后重试；修改客户端标识不保证解除拦截。",
     "plugins_openai_catalog_auth": "OpenAI 目录需要有效的 Codex 登录，请重新登录后重试。",
     "plugins_openai_catalog_timeout": "OpenAI 目录加载超时，已保留缓存内容。请检查网络后重试。",
+    "plugins_openai_catalog_storage": "无法在本机保存 OpenAI 目录。请检查本地存储后重试。",
     "plugins_openai_catalog_failed": "OpenAI 目录加载失败，已保留缓存内容。请稍后重试。",
     "plugins_openai_official_empty_refresh": "联网刷新",
     "plugins_view_all": "查看全部",
