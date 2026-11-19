@@ -300,19 +300,26 @@ describe('OpenAI official catalog persistence', () => {
     ).resolves.toMatchObject({ snapshot: { fetchedAt: now, items: [{ id: listing.id }] } })
   })
 
-  test('caches an explicit empty catalog on first load', async () => {
-    mocks.request.mockResolvedValueOnce({
-      ...liveResponse,
-      marketplaces: [{ ...liveResponse.marketplaces[0], plugins: [] }],
-    })
-    const options = { accountScope: cacheKey, forceRefetch: false, onCached: vi.fn() }
-    const api = createLocalCodexPluginApi()
-    await expect(api.readRemoteCatalog(options)).resolves.toMatchObject({
-      snapshot: { fetchedAt: now, items: [] },
-    })
-    await api.readRemoteCatalog(options)
-    expect(mocks.request).toHaveBeenCalledTimes(1)
-  })
+  test.each([false, true])(
+    'loads and persists an empty catalog on a cache miss with manual refresh %s',
+    async forceRefetch => {
+      mocks.request.mockResolvedValueOnce({
+        ...liveResponse,
+        marketplaces: [{ ...liveResponse.marketplaces[0], plugins: [] }],
+      })
+      const options = { accountScope: cacheKey, forceRefetch, onCached: vi.fn() }
+      const api = createLocalCodexPluginApi()
+      await expect(api.readRemoteCatalog(options)).resolves.toMatchObject({
+        snapshot: { fetchedAt: now, items: [] },
+      })
+      expect(JSON.parse(storedCatalog!)).toMatchObject({ fetchedAt: now, items: [] })
+      await api.readRemoteCatalog({ ...options, forceRefetch: false })
+      expect(mocks.request).toHaveBeenCalledExactlyOnceWith('codex.app_server_request', {
+        method: 'plugin/list',
+        params: { cwds: null, forceRefetch },
+      })
+    }
+  )
 
   test('retains the last official directory when a known official marketplace path fails', async () => {
     const officialRoot = '/official'

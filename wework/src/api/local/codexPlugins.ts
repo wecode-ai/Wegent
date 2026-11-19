@@ -2898,14 +2898,15 @@ async function readRemoteCatalogScope() {
 }
 
 async function fetchRemoteCatalogItems(
-  cachedItems: PluginMarketplaceItem[]
+  cachedItems: PluginMarketplaceItem[],
+  forceRefetch: boolean
 ): Promise<PluginMarketplaceItem[]> {
   // Codex has no remote-only kind or pagination. The Executor returns list summaries.
   const response = await codexAppServerRequest<{
     marketplaces: CodexPluginMarketplaceEntry[]
     featuredPluginIds?: string[]
     marketplaceLoadErrors?: Array<{ marketplacePath: string; message: string }>
-  }>('plugin/list', { cwds: null, forceRefetch: true })
+  }>('plugin/list', { cwds: null, forceRefetch })
   if (!Array.isArray(response?.marketplaces)) throw new Error('Invalid remote plugin catalog')
   const official = response.marketplaces.filter(marketplace =>
     isOpenAiOfficialRemoteMarketplaceId(marketplace.name)
@@ -2966,7 +2967,12 @@ const readRemoteCatalog: LocalCodexPluginApi['readRemoteCatalog'] = async option
     cacheOnly: options.cacheOnly === true,
     onCached: snapshot => options.onCached(snapshot, deviceId),
     load: async cached => {
-      const items = await fetchRemoteCatalogItems(cached?.items ?? [])
+      // An automatic cache miss can reuse Codex's directory. An expired snapshot
+      // or explicit refresh should fetch the latest official catalog.
+      const items = await fetchRemoteCatalogItems(
+        cached?.items ?? [],
+        options.forceRefetch || cached !== undefined
+      )
       const current = await readRemoteCatalogScope()
       if (
         current.deviceId !== deviceId ||
