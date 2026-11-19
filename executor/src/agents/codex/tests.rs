@@ -3956,6 +3956,43 @@ fn control_mcp_deadline_overrides_the_default_for_start_resume_and_fork() {
 }
 
 #[test]
+fn invalid_control_context_preserves_independent_managed_mcps() {
+    let _environment = environment::LaunchEnvironment::new();
+    let request = ExecutionRequest::default();
+    let mut launch = CodexLaunchConfig::default();
+    for name in [
+        crate::workbench_control::SERVER_NAME,
+        crate::task_runtime::mcp::SPACE_MCP_SERVER_NAME,
+    ] {
+        configure_managed_mcp_server(
+            &request,
+            name,
+            crate::task_runtime::mcp::SpaceMcpClientConfig {
+                url: "http://127.0.0.1/space/mcp".into(),
+                headers: BTreeMap::new(),
+                auto_approve: true,
+            },
+            &mut launch,
+        );
+    }
+    assert!(launch.control_mcp_execution.is_none());
+    for params in [
+        thread_start_params(&request, &launch),
+        thread_resume_params("thread", &request, &launch),
+        thread_fork_params("thread", None, &request, &launch),
+    ] {
+        let servers = &params["config"]["mcp_servers"];
+        assert!(servers.get(crate::workbench_control::SERVER_NAME).is_none());
+        assert_eq!(servers["wework_space"]["url"], "http://127.0.0.1/space/mcp");
+        assert_eq!(servers["wework_space"]["required"], false);
+        assert!(params["developerInstructions"]
+            .as_str()
+            .unwrap()
+            .contains(runtime_capabilities::mcp_environment::UNAVAILABLE_HINT));
+    }
+}
+
+#[test]
 fn unavailable_managed_mcps_are_omitted_instead_of_creating_invalid_transports() {
     let mut environment = environment::LaunchEnvironment::new();
     environment.without_browser_bridge();

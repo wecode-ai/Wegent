@@ -46,13 +46,10 @@ pub(super) fn configure_task_mcp(
     launch
         .config_overrides
         .extend(computer_use_mcp_config_overrides());
-    for (overrides, environment) in [
-        cdp_browser_mcp_config_overrides(request)?,
-        managed_wework_mcp_config_overrides(request)?,
-    ] {
-        launch.config_overrides.extend(overrides);
-        launch.env.extend(environment);
-    }
+    let (overrides, environment) = cdp_browser_mcp_config_overrides(request)?;
+    launch.config_overrides.extend(overrides);
+    launch.env.extend(environment);
+    configure_managed_wework_mcp(request, launch)?;
     launch.mcp_unavailable |=
         runtime_capabilities::configure_request_mcps(request, &mut launch.thread_config)?;
     if crate::runtime_work::stand_in_requires_confirmation(request)

@@ -4710,6 +4710,7 @@ struct CodexLaunchConfig {
     effort: Option<String>,
     summary: Option<String>,
     local_proxy_registration: Option<Arc<LocalProxyRegistration>>,
+    control_mcp_execution: Option<Arc<crate::task_runtime::mcp_http::ControlMcpExecution>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6121,10 +6122,10 @@ fn computer_use_mcp_config_overrides() -> Vec<String> {
     ]
 }
 
-fn managed_wework_mcp_config_overrides(
+fn configure_managed_wework_mcp(
     request: &ExecutionRequest,
-) -> Result<(Vec<String>, BTreeMap<String, String>), String> {
-    let mut overrides = Vec::new();
+    launch: &mut CodexLaunchConfig,
+) -> Result<(), String> {
     crate::task_runtime::mcp::has_bound_issue_context(request)?;
     let Some(endpoint) = crate::task_runtime::mcp_http::space_mcp_http_endpoint() else {
         runtime_capabilities::mcp_environment::log_server_unavailable(
@@ -6132,7 +6133,8 @@ fn managed_wework_mcp_config_overrides(
             "wework_space",
             "endpoint",
         );
-        return Ok((overrides, BTreeMap::new()));
+        launch.mcp_unavailable = true;
+        return Ok(());
     };
     let env = BTreeMap::from([(
         "WEGENT_CODEX_LOCAL_MCP_AUTHORIZATION".to_owned(),
@@ -6140,9 +6142,38 @@ fn managed_wework_mcp_config_overrides(
     )]);
     let configs = runtime_capabilities::managed_mcp_configs(request)?;
     for (name, config) in configs {
-        append_managed_mcp_config(name, config, &mut overrides);
+        configure_managed_mcp_server(request, name, config, launch);
     }
-    Ok((overrides, env))
+    launch.env.extend(env);
+    Ok(())
+}
+
+fn configure_managed_mcp_server(
+    request: &ExecutionRequest,
+    server_name: &str,
+    config: crate::task_runtime::mcp::SpaceMcpClientConfig,
+    launch: &mut CodexLaunchConfig,
+) {
+    if server_name == crate::workbench_control::SERVER_NAME {
+        let execution = config
+            .headers
+            .get("X-Wework-Mcp-Context")
+            .ok_or_else(|| "Wework control MCP context is unavailable".to_owned())
+            .and_then(|handle| crate::task_runtime::mcp_http::retain_control_mcp_context(handle));
+        match execution {
+            Ok(execution) => launch.control_mcp_execution = execution.map(Arc::new),
+            Err(_) => {
+                runtime_capabilities::mcp_environment::log_server_unavailable(
+                    request,
+                    server_name,
+                    "context",
+                );
+                launch.mcp_unavailable = true;
+                return;
+            }
+        }
+    }
+    append_managed_mcp_config(server_name, config, &mut launch.config_overrides);
 }
 
 fn append_managed_mcp_config(
