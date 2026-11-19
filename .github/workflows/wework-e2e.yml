@@ -265,10 +265,8 @@ jobs:
     if: (needs.changes.outputs.wework_desktop_core_e2e == 'true' || needs.changes.outputs.wework_desktop_cloud_e2e == 'true' || needs.changes.outputs.wework_desktop_other_e2e == 'true') && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
     runs-on: ubuntu-latest
     timeout-minutes: 35
-    permissions:
-      actions: read
-      contents: read
-      packages: write
+    outputs:
+      cache-publication-ref: ${{ steps.shared-build.outputs.cache-hit == 'false' && steps.shared-build.outputs.pr-reference || '' }}
     env:
       HOME: /root
     container:
@@ -358,14 +356,6 @@ jobs:
           sha256sum "$archive"
           zstd --version
           zstd -t "$archive"
-
-      - name: Publish PR-scoped Wework desktop build cache
-        if: steps.shared-build.outputs.cache-hit != 'true' && steps.shared-build.outputs.pr-reference != ''
-        env:
-          REFERENCE: ${{ steps.shared-build.outputs.pr-reference }}
-        run: |
-          .github/scripts/publish-wework-core-e2e-build-oci.sh \
-            .ci-artifacts/wework-core-e2e-build.tar.zst "$REFERENCE"
 
       - name: Upload Wework desktop Core E2E build
         uses: actions/upload-artifact@v4
@@ -1235,6 +1225,12 @@ jobs:
       - wework-desktop-memory-e2e
     if: always() && !cancelled() && (github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'ci:all')
     runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      packages: write
+    env:
+      CACHE_PUBLICATION_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && needs.build-wework-desktop-core-e2e.outputs.cache-publication-ref || '' }}
 
     steps:
       - name: Check Wework E2E results
@@ -1317,6 +1313,35 @@ jobs:
             "$MACOS_INSPECTOR_E2E_RESULT" != "success" ]]; then
             echo "Wework desktop macOS Inspector E2E completed with: $MACOS_INSPECTOR_E2E_RESULT"
             exit 1
+          fi
+
+      - name: Download verified Wework desktop build
+        if: env.CACHE_PUBLICATION_REF != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: wework-desktop-core-e2e-build
+          path: .ci-artifacts
+
+      - name: Set up ORAS for Wework desktop cache publication
+        if: env.CACHE_PUBLICATION_REF != ''
+        uses: oras-project/setup-oras@1d808f7d7f6995cc68b7bf507bfe5c5446e1dc9d
+        with:
+          version: 1.3.1
+
+      - name: Publish PR-scoped Wework desktop build cache
+        if: env.CACHE_PUBLICATION_REF != ''
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CACHE_PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          prefix="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wegent-wework-core-e2e-build:v1-"
+          [[ "$CACHE_PUBLICATION_REF" == "$prefix"* ]]
+          [[ "${CACHE_PUBLICATION_REF#"$prefix"}" =~ ^[a-f0-9]{64}-pr-$CACHE_PR_NUMBER$ ]]
+          echo "$GITHUB_TOKEN" | oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          if ! oras manifest fetch "$CACHE_PUBLICATION_REF" >/dev/null 2>&1; then
+            cd .ci-artifacts
+            oras push --artifact-type application/vnd.wegent.wework-core-e2e-build.v1 \
+              "$CACHE_PUBLICATION_REF" wework-core-e2e-build.tar.zst:application/zstd
           fi
 
   wework-desktop-memory-e2e:
