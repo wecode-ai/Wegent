@@ -95,6 +95,14 @@ export function createIssueDelegationModel({
         assert.ok(childName, 'Use the real native child task name')
         const completion = nativeSubagentCompletionPayload(body, childName)
         if (completion !== undefined) {
+          const developerMessages = body.input.filter(
+            item => item.type === 'message' && item.role === 'developer'
+          )
+          assert.equal(
+            nativeSubagentCompletionPayload({ input: developerMessages }, childName),
+            completion,
+            'The Responses model must receive the worker completion as a developer message'
+          )
           assert.equal(completion, privateEvidence, 'Verify the actual native completion envelope')
           assert.ok(state.childRan)
           state.completed = true
