@@ -319,7 +319,9 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
-      packages: read
+      packages: write
+    env:
+      DELIVERY_PR_CACHE: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && format('ghcr.io/{0}/wegent-backend-delivery-ci:buildcache-amd64-pr-{1}', github.repository_owner, github.event.pull_request.number) || '' }}
     steps:
       - name: Checkout code
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -332,6 +334,14 @@ jobs:
       - name: Set up Backend delivery Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
 
+      - name: Log in for PR-scoped Backend delivery cache
+        if: env.DELIVERY_PR_CACHE != ''
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
       - name: Build Backend delivery image
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25
         with:
@@ -342,7 +352,10 @@ jobs:
           push: false
           tags: wegent-backend-delivery:${{ github.event.pull_request.head.sha || github.sha }}
           labels: org.opencontainers.image.revision=${{ github.event.pull_request.head.sha || github.sha }}
-          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-backend:buildcache-amd64
+          cache-from: |
+            type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-backend:buildcache-amd64
+            ${{ env.DELIVERY_PR_CACHE != '' && format('type=registry,ref={0}', env.DELIVERY_PR_CACHE) || '' }}
+          cache-to: ${{ env.DELIVERY_PR_CACHE != '' && format('type=registry,ref={0},mode=max,ignore-error=true', env.DELIVERY_PR_CACHE) || '' }}
 
       - name: Verify Backend delivery image
         env:

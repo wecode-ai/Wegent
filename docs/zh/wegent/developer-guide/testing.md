@@ -396,6 +396,8 @@ CI 稳定性依赖以下约束：
   在多个桌面 job 之间复用同一套完整二进制产物。
 - 平台 E2E、Release 和 Snapshot 的 Docker BuildKit cache 存放在对应 GHCR 镜像的
   build cache tag，不占用 GitHub Actions dependency cache 配额。
+  同仓 PR 的生产 Backend 镜像验证在独立的 `wegent-backend-delivery-ci` 包内按 PR
+  编号复用 BuildKit 缓存，发布和快照继续读取原有共享缓存。
 - 非 Wework E2E 的 Executor 和 Electron 系统依赖安装前先检查 runner 已安装的软件包；
   APT 下载缓存只有 `main` 写入，PR 只恢复。
 - Linux 上的真实 Electron 更新传输探针同时隔离 Xvfb 和 D-Bus 会话，避免继承无效的

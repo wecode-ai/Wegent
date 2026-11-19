@@ -443,6 +443,9 @@ runs may restore the default-branch cache, but they do not save another copy:
 - Platform E2E, Release, and Snapshot Docker BuildKit caches live in
   corresponding GHCR build-cache tags instead of consuming GitHub Actions
   dependency cache storage.
+  Production Backend image verification on same-repository PRs reuses BuildKit
+  layers by PR number in the separate `wegent-backend-delivery-ci` package.
+  Release and Snapshot continue to use the existing shared cache.
 - Outside Wework E2E, Executor and Electron system dependency installers first
   check packages already present on the runner. Only `main` writes the APT
   download cache; PRs restore it read-only.
