@@ -36,10 +36,12 @@ export function issueTaskSummaryForMessage<
   const taskTitle = workflowTaskTitle || binding?.task_title?.trim();
   if (!taskTitle) return;
   const activityType = message.metadata.activity_type;
+  const issueId = message.taskId;
   const openProjectExecution =
     onOpenProjectExecution &&
     address?.deviceId &&
     address.taskId &&
+    issueId &&
     (activityType === "member_execution" ||
       activityType === "manager_execution")
       ? () =>
@@ -47,7 +49,7 @@ export function issueTaskSummaryForMessage<
             ...address,
             projectSession: {
               projectId: message.projectId,
-              issueId: message.taskId,
+              issueId,
             },
           })
       : undefined;
