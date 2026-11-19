@@ -7,6 +7,7 @@ import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
   DEFAULT_STEP_TIMEOUT_MS,
+  MODEL_REQUEST_TIMEOUT_MS,
 } from '../e2e/desktop/modules/shared.mjs'
 import { createDesktopScenario } from '../e2e/desktop/scenarios/responses-tool-compatibility.scenario.mjs'
 
@@ -47,7 +48,10 @@ test('gives each real tool round its model budget before the unchanged DOM asser
     expect(fixture.domWaits).toHaveLength(round)
     expect(fixture.domWaits[round - 1]).toEqual({
       selector: `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-      options: { text: `RESPONSES_TOOL_COMPLETED ${round}` },
+      options: {
+        text: `RESPONSES_TOOL_COMPLETED ${round}`,
+        timeoutMs: MODEL_REQUEST_TIMEOUT_MS,
+      },
     })
   }
   await verification
