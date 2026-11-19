@@ -230,6 +230,17 @@ export function createWeworkProjectSession({
           String(binding.taskUserId) === String(taskOwnerUserId)
       )
       if (!owned.length) throw new Error(current.t('todo.linked_task_unavailable'))
+      const dispatchBinding = owned.find(
+        binding =>
+          binding.deviceId === address.deviceId && binding.dispatchId && !binding.humanAssignmentId
+      )
+      if (project.project_store === 'backend' && dispatchBinding) {
+        openIssueExecutionConversation(
+          issue,
+          workspaceExecutionAddress(dispatchBinding, current.runtimeWork, issue.id, 'backend')
+        )
+        return
+      }
       const backendDeviceId =
         project.project_store === 'backend'
           ? (await current.standInApi!.deviceIdentity(address.deviceId)).backendDeviceId

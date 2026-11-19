@@ -944,6 +944,17 @@ export async function createDesktopScenario({
         }),
       })
       assert.equal(memberTranscript.taskId, memberTaskId, '成员详情指向了其他会话')
+      const memberLink = scoped(
+        `[data-testid="cloud-todo-open-task-conversation-${memberBinding.id}"]`
+      )
+      await control.command('clickWhenEnabled', memberLink)
+      const memberPanel = scoped('[data-testid="work-item-task-chat-panel"]')
+      await control.command('waitFor', `${memberPanel} [data-testid="message-assistant"]`, {
+        text: `${FIRST_TASK} 已完成：证据完整。`,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', scoped('[data-testid="ai-chat-modal-close"]'))
+      await control.command('waitFor', memberPanel, { visible: false, timeoutMs: uiTimeoutMs })
       await replyToActivity(control, memberCard, MEMBER_REPLY)
       await waitForActivityText(control, MEMBER_REPLY_RESULT, modelResponseTimeoutMs)
       const memberContinuation = await waitForValue(
