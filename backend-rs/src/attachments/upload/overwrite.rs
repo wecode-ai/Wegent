@@ -190,6 +190,29 @@ impl OverwriteState {
         context_id: i64,
     ) -> MysqlResult<()> {
         let changes = self.changes();
+        self.write(transaction, context_id, changes).await
+    }
+
+    /// The overwrite reset flush. A concurrent overwrite can commit another
+    /// name after this upload loaded its baseline, so assert this upload's name.
+    async fn flush_reset<T: MysqlTransaction>(
+        &mut self,
+        transaction: &mut T,
+        context_id: i64,
+    ) -> MysqlResult<()> {
+        let mut changes = self.changes();
+        if changes.first().is_none_or(|(column, _)| *column != "name") {
+            changes.insert(0, ("name", Param::Text(self.current.name.clone())));
+        }
+        self.write(transaction, context_id, changes).await
+    }
+
+    async fn write<T: MysqlTransaction>(
+        &mut self,
+        transaction: &mut T,
+        context_id: i64,
+        changes: Vec<(&'static str, Param)>,
+    ) -> MysqlResult<()> {
         if changes.is_empty() {
             return Ok(());
         }
@@ -383,7 +406,7 @@ pub(crate) async fn overwrite_attachment_internal(
                 transaction.execute(preflush.sql, preflush.params).await?;
             }
             // `_reset_attachment_context` + `db.flush()`.
-            attributes.flush(transaction, context_id).await?;
+            attributes.flush_reset(transaction, context_id).await?;
 
             // `StorageBackend.save`: the object write.
             let external = match backend
@@ -516,6 +539,44 @@ fn mysql_failure(error: MysqlError) -> FastApiError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sql_test_support::mysql_rows::MysqlRows;
+
+    /// A competing overwrite can commit while this upload parses. The reset
+    /// must assert this upload's name even when it equals the pre-parse value.
+    #[tokio::test]
+    async fn reset_flush_writes_the_target_name_after_a_concurrent_overwrite() {
+        let loaded = Columns {
+            name: "notes.md".to_string(),
+            status: "ready".to_string(),
+            error_message: Some(String::new()),
+            binary_data: Vec::new(),
+            image_base64: Some(String::new()),
+            extracted_text: Some("# old".to_string()),
+            text_length: 5,
+            type_data: None,
+        };
+        let mut state = OverwriteState::new(loaded);
+        state.current.name = "notes.md".to_string();
+        state.current.status = "uploading".to_string();
+        state.current.extracted_text = Some(String::new());
+        state.current.text_length = 0;
+        state.current.type_data = Some(Map::new());
+        let fixture = MysqlRows::start(|_| Vec::new()).await;
+
+        fixture
+            .mysql
+            .with_transaction(async |transaction| state.flush_reset(transaction, 42).await)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            fixture.queries(),
+            [
+                "UPDATE subtask_contexts SET name=?, status=?, extracted_text=?, \
+              text_length=?, type_data=?, updated_at=now() WHERE subtask_contexts.id = ?"
+            ]
+        );
+    }
 
     /// The recorded reset flush for a stored (`ready`) attachment:
     /// `status='uploading', extracted_text='', text_length=0, type_data=?` with
