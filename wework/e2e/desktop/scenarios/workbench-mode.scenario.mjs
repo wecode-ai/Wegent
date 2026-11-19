@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 
-import { createWorkbenchHomeMigrationScenario } from '../modules/workbench-home-migration.mjs'
+import { createWorkbenchHomeScenario } from '../modules/workbench-home.mjs'
 import { verifyCustomModelOutputBudget } from '../modules/custom-model-output-budget.mjs'
 
 const WORKBENCH_READY_TIMEOUT_MS = 120_000
@@ -67,12 +67,12 @@ async function assertHome(control, mode) {
 }
 
 export async function createDesktopScenario(options) {
-  const homeMigration = createWorkbenchHomeMigrationScenario(options)
+  const workbenchHome = createWorkbenchHomeScenario(options)
   return {
-    ...homeMigration,
+    ...workbenchHome,
 
     async verify(control) {
-      await homeMigration.verify(control)
+      await workbenchHome.verify(control)
       await verifyCustomModelOutputBudget(control)
       await openGeneralSettings(control)
       await assertMode(control, 'developer')
@@ -121,7 +121,7 @@ export async function createDesktopScenario(options) {
     },
 
     diagnostics() {
-      return { workbenchMode: true, homeMigration: homeMigration.diagnostics() }
+      return { workbenchMode: true, workbenchHome: workbenchHome.diagnostics() }
     },
   }
 }

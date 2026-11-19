@@ -1,5 +1,3 @@
-import { join } from 'node:path'
-
 export interface BrandRuntimeMetadata {
   weworkBackendUrl?: string
   weworkExecutorNamespace?: string
@@ -19,15 +17,9 @@ const SOCKET_ENVIRONMENT_KEYS = [
 
 export function applyBrandRuntimeEnvironment(
   environment: NodeJS.ProcessEnv,
-  metadata: BrandRuntimeMetadata,
-  homeDirectory: string
+  metadata: BrandRuntimeMetadata
 ): NodeJS.ProcessEnv {
   const resolved = { ...environment }
-  const executorNamespace = metadata.weworkExecutorNamespace?.trim()
-  if (!resolved.WEGENT_EXECUTOR_HOME?.trim() && executorNamespace) {
-    resolved.WEGENT_EXECUTOR_HOME = join(homeDirectory, '.wework', 'apps', executorNamespace)
-  }
-
   const backendUrl = metadata.weworkBackendUrl?.trim()
   if (!hasConfiguredValue(resolved, BACKEND_ENVIRONMENT_KEYS) && backendUrl) {
     resolved.WEWORK_BACKEND_URL = backendUrl

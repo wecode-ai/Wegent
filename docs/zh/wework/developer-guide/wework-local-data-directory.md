@@ -4,12 +4,15 @@ sidebar_position: 22
 
 # 本地数据目录
 
-Wework 的本地运行时数据统一存放在用户主目录下的 `~/.wework`，不再使用
-`~/.wecode/wegent-executor` 或 `~/.wegent-executor`。
-
 ## 目录结构
 
-默认 Executor Home 为 `~/.wework`，主要内容包括：
+桌面版默认使用 `~/.wegent/workbench/wework/<namespace>`。安装包决定命名空间，未指定时为
+`default`。Electron 应用数据存放在该目录下的 `user-data/`，可通过
+`WEWORK_USER_DATA_DIR` 覆盖。启动直接使用当前目录。仅存在于旧目录中的任务和本地设置
+不会显示在默认工作台中，原文件保留在原处。
+
+桌面 Executor Home 默认为同一命名空间目录，独立 Executor 默认使用 `~/.wework`。
+Executor Home 中包含以下数据，桌面工作区默认设在 `~/.wegent/workspace`。
 
 - `codex/`：Wework 独立的 Codex home（可通过 `WEGENT_CODEX_HOME` 覆盖）。
 - `workspace/projects/`、`workspace/worktrees/`：本地项目与托管工作树。
@@ -42,12 +45,6 @@ Wework 的本地运行时数据统一存放在用户主目录下的 `~/.wework`�
 身份读取不会搬动会话数据、改写会话引用，也不从旧工作树推断身份。
 未设置覆盖参数时，已有身份文件为空或不可读会导致启动报错，不会静默替换。仅生成新桌面身份时才要求有效硬件 UUID。
 隔离验证可通过非空的 `WEGENT_APP_IPC_DEVICE_ID` 显式指定有效 ID；该参数优先于文件读取和硬件查询，且不覆盖正常身份文件。
-
-## Home 迁移中的目录扫描
-
-迁移旧 Codex Home 到工作台目录时，相对符号链接扫描使用目录枚举提供的类型信息，
-只递归目录并校验符号链接，不额外读取普通文件的元数据。因此，后台 Git 操作在枚举
-后删除临时锁文件不会阻止启动；无法解析的相对符号链接仍会阻止迁移。
 
 ## 自动清理与保留策略
 

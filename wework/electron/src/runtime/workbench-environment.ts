@@ -1,15 +1,9 @@
-import { readFile } from 'node:fs/promises'
 import { isAbsolute, join, resolve } from 'node:path'
 
 import {
   applyBrandRuntimeEnvironment,
   type BrandRuntimeMetadata,
 } from './brand-runtime-environment.js'
-import { migrateWorkbenchHome } from './workbench-home-migration.js'
-import { assertExecutorWorkbenchCompatibility } from './workbench-executor-schema.js'
-import { assertCodexHomeCanMove } from './workbench-codex-migration.js'
-import { executorMigrationLock } from './workbench-migration-lock.js'
-import { migrateWorkbenchDataInWorker } from './workbench-data-worker.js'
 
 interface WorkbenchEnvironmentOptions {
   environment: NodeJS.ProcessEnv
@@ -25,7 +19,6 @@ export interface WorkbenchPaths {
   codexHome: string
   claudeHome: string
   capabilities: string
-  migrations: string
 }
 
 function resolveWorkbenchUserHome(options: WorkbenchEnvironmentOptions): string {
@@ -59,38 +52,33 @@ export function resolveWorkbenchPaths(options: WorkbenchEnvironmentOptions): Wor
     codexHome: join(desktop, 'codex'),
     claudeHome: join(desktop, 'claude'),
     capabilities: join(desktop, 'capabilities'),
-    migrations: join(desktop, 'migrations'),
   }
 }
 
-function defaultExecutorHome(options: WorkbenchEnvironmentOptions): string {
-  const home = resolveWorkbenchUserHome(options)
-  const namespace = options.metadata.weworkExecutorNamespace?.trim()
-  return namespace ? join(home, '.wework', 'apps', namespace) : join(home, '.wework')
+export function resolveWorkbenchUserData(options: WorkbenchEnvironmentOptions): string {
+  return resolve(
+    options.environment.WEWORK_USER_DATA_DIR?.trim() ||
+      join(resolveWorkbenchPaths(options).desktop, 'user-data')
+  )
 }
 
-/** Resolve the post-layout Home without opening or migrating any runtime data. */
 export function resolveWorkbenchCodexHome(options: WorkbenchEnvironmentOptions): string {
-  const explicit = options.environment.WEGENT_CODEX_HOME?.trim()
-  if (explicit) return explicit
-  const executorHome = options.environment.WEGENT_EXECUTOR_HOME?.trim()
-  return executorHome && resolve(executorHome) !== resolve(defaultExecutorHome(options))
-    ? join(executorHome, 'codex')
-    : resolveWorkbenchPaths(options).codexHome
+  const { environment } = options
+  const executorHome = environment.WEGENT_EXECUTOR_HOME?.trim()
+  return (
+    environment.WEGENT_CODEX_HOME?.trim() ||
+    (executorHome ? join(executorHome, 'codex') : resolveWorkbenchPaths(options).codexHome)
+  )
 }
 
-// Call before starting the managed executor, never while its Home is in use.
-export async function prepareWorkbenchEnvironment(
+export function prepareWorkbenchEnvironment(
   options: WorkbenchEnvironmentOptions
-): Promise<NodeJS.ProcessEnv> {
+): NodeJS.ProcessEnv {
   const { environment, metadata } = options
-  const homeDirectory = resolveWorkbenchUserHome(options)
-  const branded = applyBrandRuntimeEnvironment(environment, metadata, homeDirectory)
+  const branded = applyBrandRuntimeEnvironment(environment, metadata)
+  if (environment.WEGENT_EXECUTOR_HOME?.trim()) return branded
 
   const paths = resolveWorkbenchPaths(options)
-  const defaultHome = defaultExecutorHome(options)
-  const executorHome = branded.WEGENT_EXECUTOR_HOME?.trim() || defaultHome
-  if (resolve(executorHome) !== resolve(defaultHome)) return branded
   if (
     ![
       'WORKSPACE_ROOT',
@@ -99,70 +87,7 @@ export async function prepareWorkbenchEnvironment(
       'WEGENT_EXECUTOR_PROJECTS_DIR',
     ].some(key => environment[key]?.trim())
   ) {
-    branded.WORKSPACE_ROOT = join(homeDirectory, '.wegent', 'workspace')
-  }
-
-  await assertExecutorWorkbenchCompatibility(branded)
-  const acquireLock = executorMigrationLock(branded.WEWORK_EXECUTOR_PATH!)
-  if (!environment.WEGENT_CODEX_HOME?.trim())
-    await migrateWorkbenchHome({
-      acquireLock,
-      sourceHome: join(executorHome, 'codex'),
-      targetHome: paths.codexHome,
-      stateDirectory: join(paths.migrations, 'codex-home-v1'),
-      initialize: true,
-      beforeMove: home => assertCodexHomeCanMove(branded.WEWORK_EXECUTOR_PATH!, home),
-    })
-  if (!environment.WEGENT_CAPABILITIES_HOME?.trim()) {
-    await migrateWorkbenchHome({
-      acquireLock,
-      sourceHome: join(executorHome, 'capabilities'),
-      targetHome: paths.capabilities,
-      stateDirectory: join(paths.migrations, 'capabilities-v1'),
-      initialize: true,
-    })
-  }
-  const customClaudeHome =
-    environment.WEGENT_CLAUDE_HOME?.trim() || environment.CLAUDE_CONFIG_DIR?.trim()
-  let claudeHome = customClaudeHome || paths.claudeHome
-  if (!customClaudeHome) {
-    // The user's ~/.claude is not owned by Wework and must never be relocated.
-    await migrateWorkbenchHome({
-      acquireLock,
-      sourceHome: join(executorHome, 'claude'),
-      targetHome: paths.claudeHome,
-      stateDirectory: join(paths.migrations, 'claude-home-v1'),
-      initialize: true,
-      preserveExistingSource: true,
-    })
-    await migrateWorkbenchHome({
-      acquireLock,
-      sourceHome: join(executorHome, 'claude'),
-      targetHome: paths.claudeHome,
-      stateDirectory: join(paths.migrations, 'claude-home-v1'),
-    })
-    // Claude hashes the lexical CLAUDE_CONFIG_DIR for Keychain service identity.
-    // Keep its lexical spelling while physically relocating the backing data.
-    const legacyClaudeHome = join(executorHome, 'claude')
-    const journal = JSON.parse(
-      await readFile(
-        join(paths.migrations, 'claude-home-v1', 'workbench-home-migration.json'),
-        'utf8'
-      )
-    )
-    if (journal.strategy === 'relocate-source') claudeHome = legacyClaudeHome
-  }
-  const lock = await acquireLock([executorHome, paths.desktop])
-  try {
-    lock.assertHeld()
-    await migrateWorkbenchDataInWorker({
-      source: executorHome,
-      target: paths.desktop,
-      state: paths.migrations,
-    })
-    lock.assertHeld()
-  } finally {
-    await lock.release()
+    branded.WORKSPACE_ROOT = join(resolveWorkbenchUserHome(options), '.wegent', 'workspace')
   }
   return {
     ...branded,
@@ -170,6 +95,9 @@ export async function prepareWorkbenchEnvironment(
     WEGENT_WORKBENCH_HOME: paths.root,
     WEGENT_CODEX_HOME: resolveWorkbenchCodexHome(options),
     WEGENT_CAPABILITIES_HOME: environment.WEGENT_CAPABILITIES_HOME?.trim() || paths.capabilities,
-    WEGENT_CLAUDE_HOME: claudeHome,
+    WEGENT_CLAUDE_HOME:
+      environment.WEGENT_CLAUDE_HOME?.trim() ||
+      environment.CLAUDE_CONFIG_DIR?.trim() ||
+      paths.claudeHome,
   }
 }

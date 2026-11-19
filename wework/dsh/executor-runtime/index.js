@@ -18,9 +18,17 @@ const SLOW_CONSUMER_TIMEOUT_MS = 30_000
 const TRANSCRIPT_EXPORT_TIMEOUT_MS = 10 * 60 * 1000
 
 export async function apply(ctx) {
-  const client = ExecutorRuntimeClient.fromEnvironment()
-  await client.start()
-  ctx.effect(() => () => client.stop(), 'wework-executor-runtime: transport')
+  const unavailable = process.env.WEWORK_MANAGED_EXECUTOR_UNAVAILABLE === '1'
+  const refuse = () => {
+    throw new ExecutorRuntimeError('runtime_not_ready', 'Local execution is unavailable', true)
+  }
+  const client = unavailable
+    ? { describe: refuse, request: refuse }
+    : ExecutorRuntimeClient.fromEnvironment()
+  if (!unavailable) {
+    await client.start()
+    ctx.effect(() => () => client.stop(), 'wework-executor-runtime: transport')
+  }
   const transcriptSource = new TranscriptSource({
     onError: error => {
       console.error('[wework-executor-runtime] transcript subscriber failed', error)
@@ -45,15 +53,22 @@ export async function apply(ctx) {
       console.error('[wework-executor-runtime] DSH session projection failed', error)
     },
   })
-  ctx.effect(() => {
-    projectionStream.start()
-    return () => projectionStream.stop()
-  }, 'wework-executor-runtime: session projection')
+  if (!unavailable) {
+    ctx.effect(() => {
+      projectionStream.start()
+      return () => projectionStream.stop()
+    }, 'wework-executor-runtime: session projection')
+  }
   register(ctx, BASE_PATH, (req, res) => describe(req, res, client))
   register(ctx, `${BASE_PATH}/rpc`, (req, res) => handleExecutorRpc(req, res, client))
   register(ctx, `${BASE_PATH}/plugin-image`, (req, res) => handlePluginImage(req, res, client))
   register(ctx, `${BASE_PATH}/events`, (req, res) =>
-    handleExecutorEvents(req, res, undefined, { assertReady: () => client.describe() })
+    unavailable
+      ? sendError(
+          res,
+          new ExecutorRuntimeError('runtime_not_ready', 'Local execution is unavailable', true)
+        )
+      : handleExecutorEvents(req, res, undefined, { assertReady: () => client.describe() })
   )
 }
 
