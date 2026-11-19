@@ -61,7 +61,6 @@ export async function retainUpgradeReleaseDiagnostics({
   version,
   resultDir,
   electronUserDataDirectory,
-  legacyDataDirectory,
 }) {
   await retainStoppedPreparationDiagnostics(
     root,
@@ -73,9 +72,6 @@ export async function retainUpgradeReleaseDiagnostics({
   for (const [name, directory] of [
     ['electron-logs', join(dirname(electronUserDataDirectory), 'electron-logs')],
     ['release-logs', join(electronUserDataDirectory, 'logs')],
-    ...(legacyDataDirectory
-      ? [['release-logs/legacy-before-migration', join(legacyDataDirectory, 'logs')]]
-      : []),
   ]) {
     await cp(directory, join(resultDir, name), { recursive: true }).catch(error => {
       if (error.code !== 'ENOENT') throw error
