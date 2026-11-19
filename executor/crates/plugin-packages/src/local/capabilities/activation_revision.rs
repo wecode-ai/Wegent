@@ -4,7 +4,7 @@
 //! Invalidate native sessions only when published capabilities actually change.
 
 use super::*;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 mod file_digests;
 mod skill_packages;
@@ -93,7 +93,9 @@ pub(super) struct Changes {
     pub requires_restart: bool,
     pub plugins: Vec<String>,
     pub skills: Vec<String>,
-    pub detection_ms: u128,
+    // Keep 16-byte-aligned u128 values out of the async publication result.
+    // Optimized macOS x64 code can spill this result to a misaligned stack slot.
+    pub detection_time: Duration,
     pub inspected_plugins: usize,
     pub hashed_files: usize,
     pub hashed_bytes: u64,
@@ -104,7 +106,7 @@ pub(super) struct ActivationRevision<'a> {
     store: &'a GlobalCapabilityStore,
     paths: Paths,
     before: Option<Result<Snapshot, CapabilitySyncError>>,
-    detection_ms: u128,
+    detection_time: Duration,
     digests: FileDigests,
 }
 
@@ -129,7 +131,7 @@ impl<'a> ActivationRevision<'a> {
                 Err(error) => self.before = Some(Err(error)),
             }
         }
-        self.detection_ms += started.elapsed().as_millis();
+        self.detection_time += started.elapsed();
     }
 
     pub fn observe_plugin(&mut self, spec: &PluginSyncSpec) -> Result<(), CapabilitySyncError> {
@@ -174,7 +176,7 @@ impl<'a> ActivationRevision<'a> {
         self.paths.plugins.extend(paths.plugins);
         self.paths.skills.extend(paths.skills);
         self.paths.metadata.extend(paths.metadata);
-        self.detection_ms += started.elapsed().as_millis();
+        self.detection_time += started.elapsed();
     }
 
     // Create and drop inside both the activation and publication locks. Include
@@ -208,7 +210,7 @@ impl<'a> ActivationRevision<'a> {
             store,
             paths,
             before: Some(before),
-            detection_ms: started.elapsed().as_millis(),
+            detection_time: started.elapsed(),
             digests,
         })
     }
@@ -297,7 +299,7 @@ impl<'a> ActivationRevision<'a> {
                 }
             }
         };
-        changes.detection_ms = self.detection_ms + started.elapsed().as_millis();
+        changes.detection_time = self.detection_time + started.elapsed();
         changes.inspected_plugins = self.paths.plugins.len();
         changes.hashed_files = self.digests.hashed_files;
         changes.hashed_bytes = self.digests.hashed_bytes;
