@@ -511,14 +511,17 @@ function runtimeTask(overrides: Partial<RuntimeTaskSummary> = {}): RuntimeTaskSu
   }
 }
 
-function runtimeWork(tasks: RuntimeTaskSummary[]): RuntimeWorkListResponse {
+function runtimeWork(
+  tasks: RuntimeTaskSummary[],
+  deviceId = 'local-device'
+): RuntimeWorkListResponse {
   return {
     projects: [
       {
         project: { id: 1, key: 'project', name: 'Project' },
         deviceWorkspaces: [
           {
-            deviceId: 'local-device',
+            deviceId,
             workspacePath: '/tmp/project',
             available: true,
             tasks,
@@ -558,6 +561,7 @@ describe('Wework collaboration workspace API', () => {
       ReturnType<typeof createWeworkProjectSession>['openBoundConversation']
     >[0]
     const deviceIdentity = vi.fn().mockRejectedValue(new Error('executor-not-found:runtime-alias'))
+    const executionContext = { threadId: 'bound-thread', workspacePath: '/tmp/issue-worktree' }
     const bindings = [
       {
         ...address,
@@ -566,6 +570,7 @@ describe('Wework collaboration workspace API', () => {
         taskUserId: 52,
         dispatchId: 'group-dispatch',
         humanAssignmentId: null,
+        executionContext,
       },
     ]
     const session = createWeworkProjectSession({ project, userId: 52 })
@@ -579,7 +584,10 @@ describe('Wework collaboration workspace API', () => {
       runtimeAvailable: true,
       personalIssue: undefined,
       focusedItemId: issue.id,
-      runtimeWork: undefined,
+      runtimeWork: runtimeWork(
+        [runtimeTask({ taskId: address.taskId, threadId: 'catalog-thread' })],
+        address.deviceId
+      ),
       runtimeTaskLifecycle: undefined,
       detailExpanded: true,
       locationIssueId: issue.id,
@@ -593,6 +601,7 @@ describe('Wework collaboration workspace API', () => {
 
       expect(session.getSnapshot().taskComposer?.address).toMatchObject({
         ...address,
+        ...executionContext,
         projectSession: { projectId: project.id, issueId: issue.id },
       })
       expect(deviceIdentity).not.toHaveBeenCalled()

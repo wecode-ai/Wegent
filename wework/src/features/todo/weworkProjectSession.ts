@@ -230,32 +230,31 @@ export function createWeworkProjectSession({
           String(binding.taskUserId) === String(taskOwnerUserId)
       )
       if (!owned.length) throw new Error(current.t('todo.linked_task_unavailable'))
-      const dispatchBinding = owned.find(
+      let binding = owned.find(
         binding =>
-          binding.deviceId === address.deviceId && binding.dispatchId && !binding.humanAssignmentId
+          project.project_store === 'backend' &&
+          binding.deviceId === address.deviceId &&
+          binding.dispatchId &&
+          !binding.humanAssignmentId
       )
-      if (project.project_store === 'backend' && dispatchBinding) {
-        openIssueExecutionConversation(
-          issue,
-          workspaceExecutionAddress(dispatchBinding, current.runtimeWork, issue.id, 'backend')
+      if (!binding) {
+        const backendDeviceId =
+          project.project_store === 'backend'
+            ? (await current.standInApi!.deviceIdentity(address.deviceId)).backendDeviceId
+            : address.deviceId
+        if (!isCurrent()) return
+        const available = await requireIssueTaskAvailable(
+          owned.find(binding => binding.deviceId === backendDeviceId),
+          taskOwnerUserId,
+          current.standInApi,
+          key => current.t(key)
         )
-        return
+        if (!isCurrent()) return
+        binding = { ...available, deviceId: backendDeviceId }
       }
-      const backendDeviceId =
-        project.project_store === 'backend'
-          ? (await current.standInApi!.deviceIdentity(address.deviceId)).backendDeviceId
-          : address.deviceId
-      if (!isCurrent()) return
-      const available = await requireIssueTaskAvailable(
-        owned.find(binding => binding.deviceId === backendDeviceId),
-        taskOwnerUserId,
-        current.standInApi,
-        key => current.t(key)
-      )
-      if (!isCurrent()) return
       const resolved = workspaceExecutionAddress(
-        { ...available, deviceId: backendDeviceId },
-        input?.runtimeWork,
+        binding,
+        current.runtimeWork,
         issue.id,
         project.project_store
       )
