@@ -70,14 +70,15 @@ async fn unbound_discovery_fetches_backend_data_only_on_explicit_tool_call() {
     let projects = result_value(
         call_tool_with_runtime_context(&runtime, "list_spaces", json!({}), &context).await,
     );
-    // Local spaces can precede backend spaces when a device identity is available.
-    let backend = projects["items"]
+    let backend_projects = projects["items"]
         .as_array()
         .unwrap()
         .iter()
-        .find(|project| project["space"]["project_store"] == "backend")
-        .expect("Explicit discovery returns the authorized backend project");
-    assert_eq!(backend["id"], "12");
+        .filter(|project| project["space"]["project_store"] == "backend")
+        .collect::<Vec<_>>();
+    assert_eq!(backend_projects.len(), 1);
+    assert_eq!(backend_projects[0]["id"], "12");
+    assert_eq!(backend_projects[0]["space"]["space_id"], "12");
     assert_eq!(reads.load(Ordering::SeqCst), 1);
     server.abort();
 }

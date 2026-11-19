@@ -91,7 +91,22 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
         token: String,
         wait: Duration,
     ) -> MysqlResult<Self> {
-        Self::acquire_named_token(redis, user_id, "@account-policy", token, wait).await
+        let one_attempt = wait.is_zero();
+        let deadline = Instant::now()
+            + if one_attempt {
+                Duration::from_secs(1)
+            } else {
+                wait
+            };
+        Self::acquire_named_token(
+            redis,
+            user_id,
+            "@account-policy",
+            token,
+            deadline,
+            one_attempt,
+        )
+        .await
     }
 
     async fn acquire_named_token(
@@ -99,18 +114,16 @@ impl<'a, R: Redis> PluginWriteLease<'a, R> {
         user_id: i64,
         name: &str,
         token: String,
-        wait: Duration,
+        acquire_deadline: Instant,
+        one_attempt: bool,
     ) -> MysqlResult<Self> {
         let key = format!("wegent:plugin-write:{user_id}:{name}");
-        let acquire_deadline = Instant::now() + wait;
-        let one_attempt = wait.is_zero();
         loop {
+            if Instant::now() >= acquire_deadline {
+                return Err(coordination_error("plugin_write_busy"));
+            }
             let result = tokio::time::timeout_at(
-                if one_attempt {
-                    Instant::now() + Duration::from_secs(1)
-                } else {
-                    acquire_deadline
-                },
+                acquire_deadline,
                 redis.set_with(
                     key.as_str(),
                     token.as_str(),

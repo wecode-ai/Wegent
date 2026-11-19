@@ -154,6 +154,9 @@ COPY wework/dsh ./dsh
 RUN node scripts/package-connection-runtime.mjs \
       /build/runtime-cache/harness-runtime-dev /usr/local/bin/node /opt/wegent/connection-runtime
 
+FROM scratch AS connection-runtime-export
+COPY --from=connection-runtime-builder /opt/wegent/connection-runtime /connection-runtime
+
 FROM node-runtime AS device-runtime
 
 # Install the agent CLIs from the selected npm registry.

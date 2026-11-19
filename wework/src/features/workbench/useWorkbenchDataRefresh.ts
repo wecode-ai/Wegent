@@ -1,3 +1,5 @@
+import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import { updateRuntimeWorkProject, type RuntimeProjectUpdate } from '@/lib/runtime-project-update'
 import { mergeRuntimeWorkLists } from '@/features/workbench/runtimeWorkMerge'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -548,6 +550,18 @@ export function useWorkbenchDataRefresh({
         'runtimeWork',
         executorClient.runtime.listRuntimeWork(preferCached ? { preferCached: true } : undefined)
       )
+      const e2eConfig = getDesktopE2ERuntimeConfig()
+      if (e2eConfig.controlUrl && !e2eConfig.disabled) {
+        logRuntimeTaskCreateStage('local-work-snapshot-received', {
+          preferCached,
+          currentScope: isCurrent(),
+          revision,
+          currentRevision: workListRefreshRevisionRef.current,
+          generation,
+          currentGeneration: runtimeLoadGenerationRef.current,
+          status: result.status,
+        })
+      }
       if (!isCurrent()) return
       if (revision !== workListRefreshRevisionRef.current) {
         if (generation === runtimeLoadGenerationRef.current)

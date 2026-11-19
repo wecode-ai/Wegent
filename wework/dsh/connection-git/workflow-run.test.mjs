@@ -15,6 +15,14 @@ function fixture() {
     conclusion: null,
     run_attempt: 1,
   }
+  const pr = {
+    number: 4792,
+    url: 'https://github.com/org/repo/pull/4792',
+    headRefOid: SHA,
+    state: 'OPEN',
+    mergeable: 'MERGEABLE',
+    mergeStateStatus: 'CLEAN',
+  }
   let error
   const ctx = {
     git: {
@@ -26,6 +34,11 @@ function fixture() {
         assert.equal(input.repository, 'org/repo')
         if (input.operation === 'repository')
           return { profile, data: { id: 42, full_name: 'org/repo' } }
+        if (input.operation === 'change_request_status') {
+          assert.equal(input.number, pr.number)
+          assert.equal(input.entityKind, 'change_request')
+          return { profile, data: structuredClone(pr) }
+        }
         assert.equal(input.operation, 'api')
         assert.equal(input.path, 'actions/runs/44231414768')
         if (error) throw Object.assign(new Error(error), { code: error })
@@ -61,6 +74,7 @@ function fixture() {
   }
   return {
     run,
+    pr,
     calls,
     provider,
     discover,
@@ -70,6 +84,41 @@ function fixture() {
     },
   }
 }
+
+test('a manually dispatched run wakes for its verified PR conflict while CI is running', async () => {
+  const f = fixture()
+  const link = { number: f.pr.number, base: { repo: { id: 42 } }, head: { sha: SHA } }
+  f.run.event = 'workflow_dispatch'
+  f.run.pull_requests = [link]
+  const source = await f.discover()
+  const baseline = await f.collect(source)
+  assert.deepEqual(baseline.events, [])
+
+  f.pr.mergeStateStatus = 'DIRTY'
+  f.pr.headRefOid = 'b'.repeat(40)
+  const stale = await f.collect(source, baseline.checkpoint)
+  assert.deepEqual(stale.events, [])
+  f.pr.headRefOid = SHA
+  const conflict = await f.collect(source, stale.checkpoint)
+  assert.equal(conflict.events.length, 1)
+  const [event] = conflict.events
+  assert.equal(event.topicId, f.run.html_url)
+  assert.equal(event.external.eventType, 'tracked.workflow_run_pr_conflict')
+  assert.equal(event.external.url, f.pr.url)
+  assert.deepEqual(event.external.payload, { id: f.run.id, head_sha: SHA, run_attempt: 1 })
+  assert.equal(f.run.status, 'in_progress')
+  assert.deepEqual((await f.collect(source, conflict.checkpoint)).events, [])
+  assert.equal((await f.collect(source)).events.length, 1)
+
+  for (const unverified of [
+    [{ ...link, base: { repo: { id: 43 } } }],
+    [link, { ...link, number: link.number + 1 }],
+  ]) {
+    f.run.pull_requests = unverified
+    const result = await f.collect(source, stale.checkpoint)
+    assert.ok(result.events.every(event => event.external.eventType === 'tracked.workflow_run'))
+  }
+})
 
 for (const conclusion of ['success', 'failure', 'cancelled', 'timed_out', 'action_required']) {
   test(`exact workflow run wakes on ${conclusion}, deduplicates, and observes reruns`, async () => {

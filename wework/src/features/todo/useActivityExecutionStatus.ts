@@ -4,7 +4,9 @@ import {
   resolveActivityExecutionTurn,
 } from '@wegent/chat-core/activity-execution-turn'
 export { resolveActivityExecutionTurn } from '@wegent/chat-core/activity-execution-turn'
-import { useCallback, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
+import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
+import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import type { ProjectChatMessage } from '@/api/backend/projectChatSocket'
 import { useRuntimeTaskLifecycle } from '@/features/workbench/runtimeTaskLifecycle'
 import type { RuntimeConversationTurn } from '@/types/workbench'
@@ -75,11 +77,36 @@ export function useActivityExecutionDisplayStatus(
 ) {
   const turn = useActivityExecutionStatus(message, turnId, allowSingleTurn)
   const lifecycle = useRuntimeTaskLifecycle(message?.runtimeAddress)
+  const turns = message?.runtimeAddress
+    ? getRuntimeConversationTurns(message.runtimeAddress)
+    : EMPTY_TURNS
+  useEffect(() => {
+    const config = getDesktopE2ERuntimeConfig()
+    if (!config.controlUrl || config.disabled || !message?.runtimeAddress) return
+    logRuntimeTaskCreateStage('runtime-activity-execution', {
+      messageId: message.messageId,
+      recordedStatus: message.status,
+      triggerMessageId: message.triggerMessageId,
+      deviceId: message.runtimeAddress.deviceId,
+      taskId: message.runtimeAddress.taskId,
+      boundTurnId: turnId,
+      recordedTurnId: message.metadata?.runtime_turn_id,
+      resolvedTurn: turn ? { id: turn.id, status: turn.status } : null,
+      cachedTurns: turns.slice(-4).map(item => ({
+        id: item.id,
+        status: item.status,
+        clientUserMessageId: item.clientUserMessageId,
+      })),
+      execution: lifecycle?.execution,
+      nativeTurn: lifecycle?.turn,
+      busy: lifecycle?.derived.isBusy,
+    })
+  }, [message, turnId, turn, turns, lifecycle])
   return {
     turn,
     status: activityExecutionDisplayStatus(
       message,
-      message?.runtimeAddress ? getRuntimeConversationTurns(message.runtimeAddress) : EMPTY_TURNS,
+      turns,
       turn,
       Boolean(lifecycle?.execution.known && !lifecycle.derived.isBusy)
     ),

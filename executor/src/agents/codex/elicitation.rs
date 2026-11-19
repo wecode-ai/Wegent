@@ -17,6 +17,16 @@ fn now_ms() -> u64 {
         .as_millis() as u64
 }
 
+pub(super) fn drops_test_approval(message: &Value) -> bool {
+    let params = message_params(message);
+    message["method"] == "mcpServer/elicitation/request"
+        && params["_meta"]["codex_approval_kind"] == "mcp_tool_call"
+        && std::env::var("VITE_WEWORK_E2E").as_deref() == Ok("true")
+        && std::env::var("WEWORK_E2E_UNANSWERED_MCP_APPROVAL_SERVER")
+            .ok()
+            .is_some_and(|server| params["serverName"] == server)
+}
+
 pub(super) fn timeout_for(params: &Value) -> Duration {
     let variable = if params["mode"] == "url" {
         "WEGENT_CODEX_MCP_URL_TIMEOUT_MS"
@@ -55,7 +65,12 @@ pub(super) fn prepare(message: &mut Value) {
     {
         return;
     }
-    let deadline = now_ms().saturating_add(timeout_for(message_params(message)).as_millis() as u64);
+    let duration = if drops_test_approval(message) {
+        Duration::from_secs(1)
+    } else {
+        timeout_for(message_params(message))
+    };
+    let deadline = now_ms().saturating_add(duration.as_millis() as u64);
     if let Some(params) = message.get_mut("params").and_then(Value::as_object_mut) {
         params
             .entry("expiresAtUnixMs")
