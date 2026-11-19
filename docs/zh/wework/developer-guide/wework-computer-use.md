@@ -102,8 +102,6 @@ stdio EOF 会丢弃对应 HTTP 请求；Electron 在响应连接异常关闭时�
 以探针编号关联同一次查询。Codex 的进程启动及输出收集 trace 写入 Executor 日志，
 可以用调用和进程编号与 transcript 对时。探针仅记录时间和进程元数据。
 
-ChatGPT 官方订阅通过 HTTP POST 发送原生 Codex Responses 请求。恢复旧会话时，
-官方 WebSocket 服务可能拒绝输入项 ID，HTTP 路径可携带这些 ID 和完整上下文。
 桌面工具同时返回相同的文本 JSON 和结构化内容时，Executor 只保留结构化副本。
 
 ## 权限与设置
