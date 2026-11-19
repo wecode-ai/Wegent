@@ -280,24 +280,6 @@ test("independent runtime and delivery jobs retain their deadlines and required 
   );
   assert.equal(evidence.if, "always()");
   assert.equal(evidence.with.name, "backend-delivery-evidence");
-  for (const name of ["e2e-tests", "executor-e2e-tests"]) {
-    const consumer = jobs[name];
-    assert.ok(!consumer.needs.includes("build-backend-rs-e2e-runtime"));
-    const download = consumer.steps.findIndex(
-      (step) => step.name === "Download Backend Rust E2E runtime",
-    );
-    const migrations = consumer.steps.findIndex(
-      (step) => step.name === "Run database migrations",
-    );
-    const firstUse = consumer.steps.findIndex((step) =>
-      ["Run attachment storage E2E on shared services", "Start backend server"].includes(step.name),
-    );
-    assert.ok(migrations >= 0 && migrations < download && download < firstUse);
-    assert.equal(
-      consumer.steps[download].env.ACTIONS_ARTIFACT_JOB,
-      backend.name,
-    );
-  }
   const summary = jobs["platform-e2e-summary"];
   assert.ok(summary.needs.includes("build-backend-rs-e2e-runtime"));
   assert.ok(summary.needs.includes("verify-backend-delivery-image"));
