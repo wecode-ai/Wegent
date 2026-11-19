@@ -18,7 +18,11 @@ import {
 
 import { tmpdir } from 'node:os'
 import { startAsyncResourceDiagnostics } from '../../../../.github/scripts/node-async-resource-diagnostics.mjs'
-import { flushProcessOutput, processOutputDiagnostics } from '../process-output.mjs'
+import {
+  closeExitedProcessOutput,
+  flushProcessOutput,
+  processOutputDiagnostics,
+} from '../process-output.mjs'
 import { simulatedDeviceApplicationId } from './simulated-device-identity.mjs'
 import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from '../upgrade-suite.mjs'
 import { waitForColdPackageStartup } from './cold-package-startup.mjs'
@@ -5186,6 +5190,9 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     await runTeardownStep('process output', async () => {
       await recordTeardown({ phase: 'output-drain', outputs: processOutputDiagnostics() })
       try {
+        if (process.platform === 'win32' && desktopScenario?.usesReleasePackageRuntimeAssets) {
+          await closeExitedProcessOutput(appLogPath)
+        }
         await flushProcessOutput()
       } catch (error) {
         if (outputOwnership) {

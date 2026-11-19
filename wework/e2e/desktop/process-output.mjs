@@ -1,3 +1,4 @@
+import { once } from 'node:events'
 import { createWriteStream } from 'node:fs'
 import { finished } from 'node:stream/promises'
 import { basename } from 'node:path'
@@ -5,6 +6,7 @@ import { PROCESS_STOP_TIMEOUT_MS } from './process-lifecycle.mjs'
 
 const outputs = new Map()
 const owners = new WeakMap()
+const intentionallyClosedSources = new WeakSet()
 
 function completionOf(stream, options = {}) {
   return finished(stream, { cleanup: true, ...options }).then(
@@ -43,7 +45,17 @@ export function appendProcessOutput(stream, destination, owner) {
   const output = outputFor(destination)
   output.sources.add(stream)
   output.allSources.push(stream)
-  output.sourceCompletions.push(completionOf(stream, { readable: true, writable: false }))
+  output.sourceCompletions.push(
+    completionOf(stream, { readable: true, writable: false }).then(result => {
+      if (
+        intentionallyClosedSources.has(stream) &&
+        result.status === 'rejected' &&
+        result.reason.code === 'ERR_STREAM_PREMATURE_CLOSE'
+      )
+        return { status: 'fulfilled' }
+      return result
+    })
+  )
   const complete = () => output.sources.delete(stream)
   stream.once('end', complete)
   stream.once('close', complete)
@@ -54,6 +66,21 @@ export function appendProcessOutput(stream, destination, owner) {
       output.writer.once('drain', () => stream.resume())
     }
   })
+}
+
+// Only release handoff pipes may be closed after their launcher has exited.
+export async function closeExitedProcessOutput(destination) {
+  const output = outputs.get(destination)
+  if (!output) return
+  while (output.writer.writableNeedDrain) await once(output.writer, 'drain')
+  for (const source of output.sources) {
+    const owner = owners.get(source)
+    if (owner?.exitCode == null && owner?.signalCode == null) continue
+    if (source.readableLength > 0)
+      throw new Error('Exited launcher output still contains unread bytes')
+    intentionallyClosedSources.add(source)
+    source.destroy()
+  }
 }
 
 /** Lifecycle state only: never retain output contents, arguments, or environment. */

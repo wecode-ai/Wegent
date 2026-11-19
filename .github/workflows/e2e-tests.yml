@@ -1882,6 +1882,9 @@ jobs:
           ATTACHMENT_S3_USE_SSL: "false"
           WEGENT_RS_BINARY_PATH: ${{ github.workspace }}/.ci-artifacts/wegent-backend-rs
           WEGENT_HYBRID_STATE_FILE: ${{ github.workspace }}/backend/backend-hybrid.state
+          # Use the server's bounded drain before the intentional Backend restart.
+          WEGENT_PYTHON_RELOAD: "false"
+          GRACEFUL_SHUTDOWN_TIMEOUT: "20"
         run: |
           nohup backend-rs/scripts/start-hybrid-backend.sh \
             > backend/backend.log 2>&1 &
@@ -2118,6 +2121,8 @@ jobs:
           ATTACHMENT_S3_USE_SSL: "false"
           WEGENT_RS_BINARY_PATH: ${{ github.workspace }}/.ci-artifacts/wegent-backend-rs
           WEGENT_HYBRID_STATE_FILE: ${{ github.workspace }}/backend/backend-hybrid.state
+          WEGENT_PYTHON_RELOAD: "false"
+          GRACEFUL_SHUTDOWN_TIMEOUT: "20"
           TASK_STALLED_SWEEP_INTERVAL_SECONDS: "1"
           TASK_STALLED_TIMEOUT_SECONDS: "4"
           TASK_STALLED_HEARTBEAT_TIMEOUT_SECONDS: "4"
@@ -2127,9 +2132,13 @@ jobs:
           kill -TERM "$backend_pid"
           # The supervisor removes its state after waiting for both children.
           # Do not start a second Backend while the previous one is draining.
-          timeout 60 bash -c '
+          if ! timeout 60 bash -c '
             while kill -0 "$1" 2>/dev/null || [ -f "$2" ]; do sleep 1; done
-          ' _ "$backend_pid" "$WEGENT_HYBRID_STATE_FILE"
+          ' _ "$backend_pid" "$WEGENT_HYBRID_STATE_FILE"; then
+            echo "::error::The previous Backend did not finish shutting down"
+            ps -o pid,ppid,stat,comm -p "$backend_pid" || true
+            exit 1
+          fi
           nohup backend-rs/scripts/start-hybrid-backend.sh \
             > backend/backend-stalled.log 2>&1 &
           echo $! > backend/backend.pid
