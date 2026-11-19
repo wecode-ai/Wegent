@@ -269,8 +269,9 @@ impl LocalAuthContext {
     }
 
     fn route_matches(&self, state: &State) -> bool {
-        self.operation
-            .is_none_or(|scope| scope.route == Some(state.route()))
+        !self
+            .operation
+            .is_some_and(|scope| scope.route != Some(state.route()))
     }
 
     fn admit_write(
@@ -438,7 +439,7 @@ impl LocalAuthContext {
                 result_owner
             };
             if !self.still_bound(&session, generation)
-                && response_owner.is_none_or(|owner| !self.owner_bound(owner))
+                && !response_owner.is_some_and(|owner| self.owner_bound(owner))
             {
                 return Err(BACKEND_UNAVAILABLE.into());
             }
@@ -495,7 +496,7 @@ impl LocalAuthContext {
             tokio::select! {
                 biased;
                 _ = session_changes.changed() => {
-                    if retry_owner.is_none_or(|owner| !self.owner_bound(owner)) {
+                    if !retry_owner.is_some_and(|owner| self.owner_bound(owner)) {
                         return Err(BACKEND_UNAVAILABLE);
                     }
                 }
@@ -521,7 +522,7 @@ impl LocalAuthContext {
                     }
                     // An already-started idempotent result can finish on its
                     // original credential while the same owner renews it.
-                    if result_owner.is_none_or(|owner| !self.owner_bound(owner)) {
+                    if !result_owner.is_some_and(|owner| self.owner_bound(owner)) {
                         return Err(BACKEND_UNAVAILABLE);
                     }
                 }
