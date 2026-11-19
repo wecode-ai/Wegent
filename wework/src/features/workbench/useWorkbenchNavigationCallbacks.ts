@@ -298,7 +298,10 @@ export function useOpenStandaloneWorkspace({
         workspaceTabId,
         paneKey: getWorkbenchPaneKey(
           options.taskId
-            ? { currentRuntimeTask: { deviceId: targetDeviceId, taskId: options.taskId } }
+            ? {
+                currentRuntimeTask: { deviceId: targetDeviceId, taskId: options.taskId },
+                currentProject: null,
+              }
             : getSnapshot().state
         ),
       })
