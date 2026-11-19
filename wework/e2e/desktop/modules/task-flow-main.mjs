@@ -1343,12 +1343,13 @@ async function main() {
     appBundlePath = desktopApp.appBundlePath
     const resolvedAppCodexBinary = desktopApp.codexBinaryPath ?? codexBinary
     if (!RUNS_PLUGIN_E2E) {
+      const codexFixtureHome = desktopScenario?.codexFixtureHome ?? codexHome
       const usesModelRoutingSubscription = DESKTOP_SEGMENT === 'model-routing' || MODEL_SWITCH_ONLY
       const modelRoutingConfigToml = usesModelRoutingSubscription
         ? `openai_base_url = "${control.url}/backend-api/codex"\nchatgpt_base_url = "${control.url}/backend-api/"`
         : ''
       await writeCodexConfig(
-        codexHome,
+        codexFixtureHome,
         desktopScenario?.modelServerUrl ?? control.url,
         `${desktopScenario?.codexConfigToml ?? ''}\n${modelRoutingConfigToml}\n${
           shouldConfigureToolDetailsMcp() ? toolDetailsMcpConfigToml() : ''
@@ -1374,7 +1375,7 @@ async function main() {
           })
         ).toString('base64url')
         await writeFile(
-          join(codexHome, 'auth.json'),
+          join(codexFixtureHome, 'auth.json'),
           `${JSON.stringify({
             auth_mode: 'chatgpt',
             tokens: {
@@ -1389,7 +1390,7 @@ async function main() {
         )
       } else {
         await writeFile(
-          join(codexHome, 'auth.json'),
+          join(codexFixtureHome, 'auth.json'),
           `${JSON.stringify({ OPENAI_API_KEY: MODEL_API_KEY })}\n`,
           'utf8'
         )

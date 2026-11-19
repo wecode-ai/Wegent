@@ -217,7 +217,7 @@ pnpm --filter wework e2e:desktop -- --parallel-segments upgrade-and-rollback
 
 通过 `WEWORK_E2E_UPGRADE_PAIR` 提供已校验的版本对；runner 从来源包解析应用与 executor，不自动构建。设置 `WEWORK_E2E_REQUIRE_RELEASE_PACKAGE=1` 保留包身份和签名。真实应用标识的默认目录测试需要干净的操作系统用户；发现已有原生应用数据时立即停止，不能清理个人数据来运行测试。
 
-版本对测试按实际来源包的启动布局准备隔离数据。包含旧迁移模块的来源包从系统应用数据目录迁移，其他来源包直接打开 Workbench `user-data`。两个布局都先验证来源包读取模型和云端测试凭据，再验证升级、回退及适用的再升级。原生会话与压缩历史验证使用 Workbench 的 Codex Home。
+版本对测试按实际来源包的启动布局准备隔离数据。包含旧迁移模块的来源包从系统应用数据目录迁移，其他来源包直接打开 Workbench `user-data`。两个布局都先验证来源包读取模型和云端测试凭据，再验证升级、回退及适用的再升级。Codex 测试配置写入来源包启动时读取的位置；启动后的原生会话与压缩历史验证使用 Workbench 的 Codex Home。
 
 `Wework App` 的 `verification_writer_wait_seconds` 可配置原生独立写入进程的占锁观察时长，
 取 0–600 的整数，默认 0，不增加常规 CI 等待。设为 65 时，共享版本对的 `app-rollback`

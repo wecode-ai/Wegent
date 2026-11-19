@@ -52,6 +52,7 @@ import {
 } from '../modules/empty-capability-manifest-upgrade.mjs'
 import { assertDelayedRecoveryHandoffs } from '../modules/delayed-recovery-handoff.mjs'
 import { upgradeCredentials } from '../modules/upgrade-credentials.mjs'
+import { upgradeUserEnvironment } from '../modules/upgrade-user-environment.mjs'
 import { reupgradeAfterRollback } from '../modules/reupgrade-after-rollback.mjs'
 import { verifyRollbackProtection } from '../modules/rollback-protection.mjs'
 import { openAboutSettings } from '../modules/app-update-navigation.mjs'
@@ -133,6 +134,34 @@ export async function createDesktopScenario(options) {
     )
     assert.equal((await stat(asset.path)).size, asset.bytes)
   }
+  const { stdout } = await promisify(execFile)(
+    pair.from.executable,
+    [
+      '-e',
+      `const fs = require('node:fs'), { join } = require('node:path')
+       const archive = process.argv[1]
+       const metadata = JSON.parse(fs.readFileSync(join(archive, 'package.json'), 'utf8'))
+       const hasModule = name => fs.existsSync(join(archive, 'dist', 'runtime', name))
+       console.log(JSON.stringify({
+         migratesUserData: hasModule('workbench-desktop-data.js'),
+         migratesCodexHome: hasModule('workbench-home-migration.js'),
+         namespace: metadata.weworkExecutorNamespace?.trim() || '',
+       }))`,
+      join(sourceResources, 'app.asar'),
+    ],
+    {
+      env: { ...upgradeUserEnvironment(process.env, options.homePath), ELECTRON_RUN_AS_NODE: '1' },
+      timeout: 10_000,
+    }
+  )
+  const { migratesUserData, migratesCodexHome, namespace } = JSON.parse(stdout)
+  assert.equal(typeof migratesUserData, 'boolean')
+  assert.equal(typeof migratesCodexHome, 'boolean')
+  assert.match(namespace, /^(?:[a-zA-Z0-9][a-zA-Z0-9._-]*)?$/)
+  const legacyExecutorHome = namespace
+    ? join(options.homePath, '.wework', 'apps', namespace)
+    : join(options.homePath, '.wework')
+  console.log('[upgrade-e2e] Source startup migrations', { migratesUserData, migratesCodexHome })
   const channel = pair.channel || (pair.to.version.includes('-beta.') ? 'beta' : 'stable')
   const verifiesRefreshedUpdate = checkpoint === 'app-update-refresh'
   const verifiesRetry = checkpoint === 'app-update-retry'
@@ -200,6 +229,7 @@ export async function createDesktopScenario(options) {
   const send = text => continuity.send(text, `${ANSWER} ${modelRequests + 1}`)
   return {
     usesReleasePackageRuntimeAssets: true,
+    codexFixtureHome: migratesCodexHome ? join(legacyExecutorHome, 'codex') : options.codexHome,
     ...(!options.preparationOnly
       ? {
           electronLaunchArguments: ['--inspect-brk=127.0.0.1:0'],
@@ -336,20 +366,6 @@ export async function createDesktopScenario(options) {
     },
     async prepareUserDataLaunch() {
       await credentials.seed(electronUserDataDirectory)
-      // Historical hosts with the bundled migration module still start from
-      // native appData. Hosts without it open the installed Workbench profile.
-      const migrationEntry = join(
-        sourceResources,
-        'app.asar/dist/runtime/workbench-desktop-data.js'
-      )
-      const { stdout } = await promisify(execFile)(
-        pair.from.executable,
-        ['-p', "require('node:fs').existsSync(process.argv[1])", migrationEntry],
-        { env: { ...launchEnvironment, ELECTRON_RUN_AS_NODE: '1' }, timeout: 10_000 }
-      )
-      const migratesUserData = JSON.parse(stdout)
-      assert.equal(typeof migratesUserData, 'boolean')
-      console.log(`[upgrade-e2e] Source migrates native application data: ${migratesUserData}`)
       if (migratesUserData) {
         const applicationData = options.upgradeHome?.applicationData
         assert.ok(applicationData)
