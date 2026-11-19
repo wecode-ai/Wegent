@@ -1,6 +1,5 @@
 import { Button } from '@/components/ui/button'
 import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
-import { dequal } from 'dequal'
 import type { McpUiDisplayMode } from '@modelcontextprotocol/ext-apps/app-bridge'
 import { AlertCircle, Maximize2, Minimize2, RefreshCw, X } from 'lucide-react'
 import type { RuntimeMcpAppsApi } from '@/api/mcpApps'
@@ -40,10 +39,15 @@ export function McpAppHost({
     resource: createMcpAppState(api, address, block.id, turnId),
   }))
   if (
-    owner.api !== api ||
+    owner.api.requestMcpApp !== api.requestMcpApp ||
+    owner.api.getMcpAppSessionTarget !== api.getMcpAppSessionTarget ||
     owner.callId !== block.id ||
     owner.turnId !== turnId ||
-    !dequal(owner.address, address)
+    owner.address.deviceId !== address.deviceId ||
+    owner.address.taskId !== address.taskId ||
+    Boolean(owner.address.projectSession) !== Boolean(address.projectSession) ||
+    owner.address.projectSession?.projectId !== address.projectSession?.projectId ||
+    owner.address.projectSession?.issueId !== address.projectSession?.issueId
   ) {
     setOwner({
       api,
