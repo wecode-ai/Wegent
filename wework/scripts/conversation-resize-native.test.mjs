@@ -48,6 +48,7 @@ app.whenReady().then(async()=>{
   progress('fixture-loaded')
   const result=await window.webContents.executeJavaScript('window.runConversationResizeContract()')
   progress('conversation-finished')
+  result.scrollCapture=await window.webContents.executeJavaScript('window.runNativeScrollCaptureContract()')
   result.rangeClamp=await window.webContents.executeJavaScript('window.runNativeRangeClampContract()')
   result.navigation=await window.webContents.executeJavaScript('window.runTurnNavigationResizeContract()')
   require('fs').writeFileSync(${JSON.stringify(output)},JSON.stringify(result))
@@ -84,6 +85,7 @@ app.whenReady().then(async()=>{
       JSON.stringify(evidence)
     )
     assert.deepEqual(evidence.uncovered, [])
+    assert.deepEqual(evidence.scrollCapture, { requestedOffset: 3559, appliedOffset: 3527 })
     assert.deepEqual(evidence.rangeClamp, {
       appendButton: { before: false, after: true, offsetChange: 0 },
       clampedOffset: 2597,

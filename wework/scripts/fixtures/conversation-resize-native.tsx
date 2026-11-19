@@ -1,3 +1,5 @@
+import { synchronizeConversationScrollOffset } from '../../../packages/collaboration/src/conversation/conversationScrollWrite'
+import { flushSync } from 'react-dom'
 import { createConversationScrollState } from '../../../packages/collaboration/src/conversation/conversationScrollState'
 import './turn-navigation-resize-native'
 import { createRoot } from 'react-dom/client'
@@ -283,6 +285,34 @@ Object.assign(window, {
       clampReader = null
       root.unmount()
       host.remove()
+    }
+  },
+})
+
+Object.assign(window, {
+  async runNativeScrollCaptureContract() {
+    const viewport = viewportRef.current!
+    const engine = engineRef.current!
+    engine.resizeItem(0, 100)
+    engine.scrollToOffset(6000, { behavior: 'auto' })
+    await frame()
+    await frame()
+    let pending = true
+    const capture = (event: Event) => {
+      if (event.target !== viewport || !pending) return
+      pending = false
+      synchronizeConversationScrollOffset(viewport)
+      // A capture-phase Markdown render measures a row before the offset listener.
+      flushSync(() => engine.resizeItem(0, 68))
+    }
+    window.addEventListener('scroll', capture, true)
+    try {
+      viewport.scrollTop = 3559
+      viewport.dispatchEvent(new Event('scroll'))
+      const appliedOffset = viewport.scrollTop
+      return { requestedOffset: 3559, appliedOffset }
+    } finally {
+      window.removeEventListener('scroll', capture, true)
     }
   },
 })

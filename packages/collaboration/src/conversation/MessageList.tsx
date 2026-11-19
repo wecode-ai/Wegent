@@ -1,3 +1,4 @@
+import { synchronizeConversationScrollOffset } from './conversationScrollWrite'
 import type { UserMessageServices } from './UserMessage'
 import { MessageListMessage } from './MessageListMessage'
 import { isStandInActivityMessage, isCompletedStandInActivityTrace } from './standInActivity'
@@ -419,7 +420,9 @@ export const MessageList = memo(function MessageList({
     'scroll',
     event => {
       const scope = markdownWindowingState.scope
-      if (event.target !== scope.scrollElementRef?.current) return
+      const scroller = scope.scrollElementRef?.current
+      if (!scroller || event.target !== scroller) return
+      synchronizeConversationScrollOffset(scroller)
       const startedAt = isConversationDiagnosticsEnabled() ? performance.now() : null
       const renders = scope.getViewportRenders()
       if (renders.length > 0) flushSync(() => renders.forEach(render => render()))
