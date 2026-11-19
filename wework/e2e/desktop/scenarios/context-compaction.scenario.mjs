@@ -1,5 +1,6 @@
 import { readRequestBody as readJson } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
+import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import { createInterruptedCompactionScenario } from './interrupted-context-compaction.mjs'
 import { handleEmptyReplyPrediction } from '../modules/response-protocol.mjs'
 import { createCatalogAutoCompactionVerification } from './catalog-auto-compaction.mjs'
@@ -273,6 +274,12 @@ export function createDesktopScenario(options) {
       active = true
       try {
         await createLocalProject(control, workspacePath, uiTimeoutMs, workbenchReadyTimeoutMs)
+        await waitForValue(
+          async () => JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')),
+          snapshot => snapshot.workbench?.runtimeWorkSummary?.projectWorkspaceCount === 1,
+          'The new local project must register its workspace before the initial turn',
+          uiTimeoutMs
+        )
         await control.command('waitFor', COMPOSER_SELECTOR, { timeoutMs: uiTimeoutMs })
         await control.command('fill', COMPOSER_SELECTOR, { value: INITIAL_PROMPT })
         await control.command(
