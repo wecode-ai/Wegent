@@ -29,6 +29,13 @@ const INSERT_SPAN_SQL: &str = "INSERT INTO task_timing_spans \
     source = IF(source = '', VALUES(source), source), \
     metadata = IF(JSON_LENGTH(metadata) = 0, VALUES(metadata), metadata)";
 
+const CLOSE_WAITING_USER_SQL: &str = "UPDATE task_timing_spans \\
+    SET status = 'completed', \\
+        end_at_ms = IF(end_at_ms IS NULL, ?, end_at_ms), \\
+        duration_ms = IF(duration_ms IS NULL, ? - start_at_ms, duration_ms) \\
+    WHERE task_id = ? AND subtask_id = ? \\
+        AND kind = 'waiting_user' AND status = 'waiting'";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct NewTimingSpan {
     pub span_id: String,
@@ -55,6 +62,9 @@ pub(crate) async fn persist_callback_timing<M: Mysql>(
     executor_name: Option<&str>,
     executor_namespace: Option<&str>,
 ) -> Result<(), brz_mysql::MysqlError> {
+    if event.event_type == "start" {
+        close_waiting_user_span(mysql, event).await?;
+    }
     let mut spans = event_timing_spans(event);
     if let Some(timing) = event.data.get("timing").filter(|timing| timing.is_object()) {
         spans.extend(boundary_spans(event, timing));
@@ -98,7 +108,7 @@ pub(crate) async fn persist_callback_timing<M: Mysql>(
                     span.start_at_ms,
                     span.end_at_ms,
                     duration_ms,
-                span_clock.as_str(),
+                    span_clock.as_str(),
                     source.as_str(),
                     Json(span.metadata),
                 ),
@@ -188,6 +198,32 @@ fn subagent_span_id(event: &ExecutionEvent, agent_id: &str) -> String {
         "task-{}-subtask-{}-subagent-{agent_id}",
         event.task_id, event.subtask_id
     )
+}
+
+/// Close any open waiting-user interval when the next agent execution starts.
+///
+/// The next start event is the first authoritative boundary after the user
+/// replies, so it is also the first moment at which the wait can be closed
+/// without attributing the user's silence to the agent.
+async fn close_waiting_user_span<M: Mysql>(
+    mysql: &M,
+    event: &ExecutionEvent,
+) -> Result<(), brz_mysql::MysqlError> {
+    let Some(start_at_ms) = event
+        .data
+        .get("timing")
+        .and_then(|timing| timing.get("agentStartedAt"))
+        .and_then(Value::as_i64)
+    else {
+        return Ok(());
+    };
+    mysql
+        .execute(
+            CLOSE_WAITING_USER_SQL,
+            (start_at_ms, start_at_ms, event.task_id, event.subtask_id),
+        )
+        .await?;
+    Ok(())
 }
 
 fn waiting_user_span(event: &ExecutionEvent) -> Option<NewTimingSpan> {
@@ -431,6 +467,7 @@ fn push_boundary_span(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::internal_callback::parser;
     use serde_json::Map;
 
     fn event() -> ExecutionEvent {
@@ -515,6 +552,73 @@ mod tests {
         assert_eq!(waiting.start_at_ms, Some(20));
         assert_eq!(waiting.end_at_ms, None);
         assert_eq!(waiting.status, "waiting");
+    }
+
+    #[tokio::test]
+    async fn parser_output_persists_closed_agent_and_open_waiting_user_spans() {
+        let timing = json!({
+            "enqueuedAt": 1,
+            "dequeuedAt": 2,
+            "instanceCreateStartedAt": 3,
+            "taskDispatchedAt": 5,
+            "agentStartedAt": 6,
+            "agentFinishedAt": 20
+        });
+        let started = parser::shared()
+            .parse(7, 11, None, "response.created", &json!({"timing": timing}))
+            .expect("parse start")
+            .expect("start event");
+        let done = parser::shared()
+            .parse(
+                7,
+                11,
+                None,
+                "response.completed",
+                &json!({
+                    "response": {"silent_exit_reason": "waiting_for_user_input"},
+                    "timing": timing
+                }),
+            )
+            .expect("parse done")
+            .expect("done event");
+
+        let capture = crate::sql_test_support::KindQueryCapture::writing();
+        persist_callback_timing(&capture, &started, None, None)
+            .await
+            .expect("persist start timing");
+        assert_eq!(capture.writes().len(), 4);
+
+        persist_callback_timing(&capture, &done, None, None)
+            .await
+            .expect("persist done timing");
+        let writes = capture.writes();
+        assert_eq!(writes.len(), 8);
+        assert_eq!(writes[3].args, 16);
+        assert!(writes[3].sql.contains("INSERT INTO task_timing_spans"));
+        assert_eq!(writes[6].args, 16);
+        assert!(writes[6].sql.contains("INSERT INTO task_timing_spans"));
+
+        let next_started = parser::shared()
+            .parse(
+                7,
+                11,
+                None,
+                "response.created",
+                &json!({"timing": json!({"agentStartedAt": 30})}),
+            )
+            .expect("parse next start")
+            .expect("next start event");
+        persist_callback_timing(&capture, &next_started, None, None)
+            .await
+            .expect("persist next start timing");
+        let close_write = capture
+            .writes()
+            .into_iter()
+            .find(|write| write.sql.contains("UPDATE task_timing_spans"))
+            .expect("waiting-user close update");
+        assert_eq!(close_write.args, 4);
+        assert!(close_write.sql.contains("kind = 'waiting_user'"));
+        assert!(close_write.sql.contains("status = 'waiting'"));
     }
 
     #[test]

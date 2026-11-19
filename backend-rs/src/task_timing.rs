@@ -290,7 +290,6 @@ fn union_by_kinds(spans: &[SpanView], kinds: &[&str]) -> i64 {
     union_ms(&observable_intervals(&selected))
 }
 
-
 fn observable_intervals(spans: &[SpanView]) -> Vec<(i64, i64)> {
     spans
         .iter()
