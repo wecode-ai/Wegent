@@ -147,6 +147,122 @@ test('rejects unsafe session ids, relative cwd and invalid dimensions', async ()
   )
 })
 
+test('falls back from PowerShell 7 to Windows PowerShell to ComSpec', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-windows-terminal-'))
+  const pty = new FakePty()
+  const attempts = []
+  const runtime = new TerminalRuntime({
+    platform: 'win32',
+    environment: { ComSpec: 'C:\\Windows\\System32\\cmd.exe' },
+    spawn(executable, args) {
+      attempts.push({ executable, args })
+      if (executable === 'pwsh.exe' || executable === 'powershell.exe') {
+        throw new Error('File not found: ')
+      }
+      return pty
+    },
+  })
+
+  try {
+    await runtime.request('terminal.start', {
+      session_id: 'windows-fallback',
+      cwd: directory,
+    })
+
+    assert.deepEqual(attempts, [
+      { executable: 'pwsh.exe', args: ['-NoLogo'] },
+      { executable: 'powershell.exe', args: ['-NoLogo'] },
+      { executable: 'C:\\Windows\\System32\\cmd.exe', args: [] },
+    ])
+  } finally {
+    runtime.dispose()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('uses Windows PowerShell when PowerShell 7 is unavailable', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-windows-terminal-'))
+  const pty = new FakePty()
+  const attempts = []
+  const runtime = new TerminalRuntime({
+    platform: 'win32',
+    environment: { ComSpec: 'C:\\Windows\\System32\\cmd.exe' },
+    spawn(executable) {
+      attempts.push(executable)
+      if (executable === 'pwsh.exe') throw new Error('File not found: ')
+      return pty
+    },
+  })
+
+  try {
+    await runtime.request('terminal.start', {
+      session_id: 'windows-powershell-fallback',
+      cwd: directory,
+    })
+
+    assert.deepEqual(attempts, ['pwsh.exe', 'powershell.exe'])
+  } finally {
+    runtime.dispose()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('falls back to cmd.exe when ComSpec is unavailable', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-windows-terminal-'))
+  const pty = new FakePty()
+  const attempts = []
+  const runtime = new TerminalRuntime({
+    platform: 'win32',
+    environment: {},
+    spawn(executable) {
+      attempts.push(executable)
+      if (executable === 'pwsh.exe' || executable === 'powershell.exe') {
+        throw new Error('File not found: ')
+      }
+      return pty
+    },
+  })
+
+  try {
+    await runtime.request('terminal.start', {
+      session_id: 'windows-cmd-fallback',
+      cwd: directory,
+    })
+
+    assert.deepEqual(attempts, ['pwsh.exe', 'powershell.exe', 'cmd.exe'])
+  } finally {
+    runtime.dispose()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
+test('does not fall back when spawn fails for a non-missing executable', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'wework-windows-terminal-'))
+  const attempts = []
+  const runtime = new TerminalRuntime({
+    platform: 'win32',
+    environment: { ComSpec: 'C:\\Windows\\System32\\cmd.exe' },
+    spawn(executable) {
+      attempts.push(executable)
+      throw new Error('Access denied')
+    },
+  })
+
+  try {
+    await assert.rejects(
+      runtime.request('terminal.start', {
+        session_id: 'windows-spawn-error',
+        cwd: directory,
+      }),
+      error => error.code === 'spawn_failed' && error.message === 'Access denied'
+    )
+    assert.deepEqual(attempts, ['pwsh.exe'])
+  } finally {
+    runtime.dispose()
+    await rm(directory, { recursive: true, force: true })
+  }
+})
+
 test('starts an explicit Harness executable with arguments', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'wework-harness-runtime-'))
   const pty = new FakePty()
