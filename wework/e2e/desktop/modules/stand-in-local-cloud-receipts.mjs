@@ -56,12 +56,18 @@ export async function verifyLocalCloudStandInReceipt(
     )
     assert.equal(String(assignment.target_id), String(userId))
     assert.equal(assignment.human_read_at, null, 'Background execution is not a human detail read')
+    // Task completion can report awaiting publication before its public result is synced.
     const pending = await until(
       () => request(`/v1/loop-items/${issue.id}/assignments`),
       result =>
-        result.items.find(row => row.dispatch_receipt?.reasonCode === 'awaiting_publication'),
+        result.items.find(
+          row =>
+            row.id === assignment.id &&
+            row.dispatch_receipt?.reasonCode === 'awaiting_publication' &&
+            row.dispatch_receipt.publicMessageId
+        ),
       uiTimeoutMs,
-      'Unconfirmed output must wait for the owning human to publish it'
+      'The execution result must be ready for the owning human to publish it'
     )
     assert.equal(pending.dispatch_receipt.state, 'waiting_user')
     assert.equal(pending.dispatch_receipt.confirmedMessageId, null)
