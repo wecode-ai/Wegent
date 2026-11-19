@@ -682,10 +682,11 @@ export function createWorkspaceTabsSession(initial: SessionOptions) {
             unsubscribe()
             sessionObservers -= 1
             if (!sessionObservers) {
-              sessionActive = false
               // Same-commit configuration changes keep their original session ownership.
               queueMicrotask(() => {
-                if (!sessionObservers) publishSession()
+                if (sessionObservers) return
+                sessionActive = false
+                publishSession()
               })
             }
           }
