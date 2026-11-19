@@ -7,14 +7,14 @@ import {
   normalizeLocalProxyUrl,
 } from './shared/local-proxy-config.js'
 import { confirmCoreDshPluginInstall } from './host/core-dsh-plugin-approval.js'
+import './host/process-output-bootstrap.js'
+import { MCP_APP_SCHEME } from './host/mcp-app-documents.js'
 import { McpAppRuntime } from './host/mcp-app-runtime.js'
 import {
   readCloudConnection,
   requireCloudCredentialOwner,
 } from './host/cloud-connection-profile.js'
 import { settleMcpAppCleanup } from './host/mcp-app-sessions.js'
-import './host/process-output-bootstrap.js'
-import { MCP_APP_SCHEME } from './host/mcp-app-documents.js'
 import { SchemeQueue } from './host/scheme-queue.js'
 import { RuntimeDiagnosticsLog } from './host/runtime-diagnostics-log.js'
 import { buildStartupDiagnostics, type StartupFailureSnapshot } from './host/startup-diagnostics.js'
@@ -61,9 +61,9 @@ import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { fileURLToPath } from 'node:url'
 import { release } from 'node:os'
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import {
   captureWebContentsDataUrl,
@@ -90,10 +90,7 @@ import {
   resolvePopoutShortcut,
 } from './host/desktop-preferences-controller.js'
 import { PerformanceRecorder } from './host/performance-recorder.js'
-import {
-  initializeWorkbenchModePreference,
-  normalizeWorkbenchMode,
-} from './runtime/workbench-mode.js'
+import { normalizeWorkbenchMode } from './runtime/workbench-mode.js'
 import type { RendererStorageStore } from './host/renderer-storage-store.js'
 import { createDesktopRendererStorage } from './host/desktop-renderer-storage.js'
 import { OpenAiCatalogStore } from './host/openai-catalog-store.js'
@@ -135,7 +132,6 @@ import { createWeworkProcessExplorerService } from './host/process-explorer-serv
 import { DesktopRuntime } from './runtime/desktop-runtime.js'
 import { detectCoreDshStartupPluginFailure } from './host/core-dsh-startup-failure.js'
 import { startStartupMaintenance } from './host/startup-tasks.js'
-import { isolateDevelopmentEnvironment } from './runtime/development-isolation.js'
 import { prepareDevelopmentHistory } from './runtime/development-history-migration.js'
 import { FeedbackBundleManager } from './host/feedback-bundle-manager.js'
 import {
@@ -191,6 +187,7 @@ import {
   type ElectronNodeRuntime,
 } from './runtime/electron-node-runtime.js'
 import { PythonRuntimeManager } from './runtime/python-runtime.js'
+import { isolateDevelopmentEnvironment } from './runtime/development-isolation.js'
 import { desktopInstanceMayStart } from './runtime/plugin-development-command.js'
 import {
   fetchPythonRuntimeDownloads,
@@ -201,13 +198,12 @@ import type { BrandRuntimeMetadata } from './runtime/brand-runtime-environment.j
 import {
   prepareWorkbenchEnvironment,
   resolveWorkbenchPaths,
+  resolveWorkbenchUserData,
 } from './runtime/workbench-environment.js'
-import { migrateDesktopControlRegistry } from './runtime/workbench-desktop-data.js'
+import { desktopE2EApplicationName } from './host/e2e-application-name.js'
 import { initializeWorkbenchDesktopData } from './runtime/workbench-desktop-startup.js'
-import { executorMigrationLock } from './runtime/workbench-migration-lock.js'
 import { assertExecutorWorkbenchCompatibility } from './runtime/workbench-executor-schema.js'
 import { desktopE2EWindowOptions, keepDesktopE2EInBackground } from './host/e2e-window-policy.js'
-import { desktopE2EApplicationName } from './host/e2e-application-name.js'
 import {
   applyWorkbenchBackgroundPolicy,
   workbenchBackgroundThrottling,
@@ -241,6 +237,7 @@ import { resolveDevelopmentDockIdentity } from './host/development-dock-identity
 import { installedMacosReleaseResources } from './runtime/macos-release-installation.js'
 import { syncDockBadge } from './host/dock-badge.js'
 import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
+import { releaseActivationPending } from './release-bootstrap.js'
 import { normalizeWeworkSyncApiBaseUrl, requestWeworkSync } from './host/wework-sync-request.js'
 import { fixedWorkspaceWindowDescriptors } from './host/fixed-workspace-window-restore.js'
 
@@ -332,70 +329,30 @@ function commandLineValue(argv: string[], name: string): string | null {
 }
 
 const configuredUserDataPath = process.env.WEWORK_USER_DATA_DIR?.trim()
-let userDataPath = resolve(configuredUserDataPath || join(app.getPath('appData'), applicationId))
-const desktopDataPaths =
-  !configuredUserDataPath && packagedApplication
-    ? resolveWorkbenchPaths({
-        environment: process.env,
-        metadata: packageMetadata,
-        homeDirectory: app.getPath('home'),
-      })
-    : null
-const singleInstanceData = {
-  pluginDevelopmentCommand,
-  workspaceOpenRequest: startupWorkspaceOpenRequest,
-}
-let hasSingleInstanceLock: boolean
-if (desktopDataPaths) {
-  try {
-    const migrated = await initializeWorkbenchDesktopData({
-      app,
-      source: userDataPath,
-      desktop: desktopDataPaths.desktop,
-      additionalData: singleInstanceData,
-      acquireLock: executorMigrationLock(
-        process.env.WEWORK_EXECUTOR_PATH?.trim() ||
-          join(process.resourcesPath, 'bin', 'wegent-executor.exe'),
-        { wait: true }
-      ),
+const userDataPath = packagedApplication
+  ? resolveWorkbenchUserData({
+      environment: process.env,
+      metadata: packageMetadata,
+      homeDirectory: app.getPath('home'),
     })
-    hasSingleInstanceLock = migrated !== null
-    if (migrated) {
-      if (!process.env.WEWORK_DESKTOP_CONTROL_REGISTRY_DIR?.trim()) {
-        try {
-          migrateDesktopControlRegistry(
-            process.env.HOME?.trim() || app.getPath('home'),
-            desktopDataPaths.shared
-          )
-        } catch (error) {
-          console.warn('[startup] desktop control registry migration failed', error)
-        }
-      }
-      userDataPath = migrated.userData
-      app.setPath('userData', userDataPath)
-      app.setPath('sessionData', userDataPath)
-      app.setAppLogsPath(migrated.logs)
-    }
-  } catch (error) {
-    console.error('[startup] application data migration failed', error)
-    throw error
-  }
-} else {
-  app.setPath('userData', userDataPath)
-  hasSingleInstanceLock = app.requestSingleInstanceLock(singleInstanceData)
-  if (configuredUserDataPath) app.setAppLogsPath(join(userDataPath, 'logs'))
-}
-
-hasSingleInstanceLock = desktopInstanceMayStart(
+  : resolve(configuredUserDataPath || join(app.getPath('appData'), applicationId))
+const hasSingleInstanceLock = desktopInstanceMayStart(
   app,
-  hasSingleInstanceLock,
+  initializeWorkbenchDesktopData(
+    app,
+    userDataPath,
+    { pluginDevelopmentCommand, workspaceOpenRequest: startupWorkspaceOpenRequest },
+    packagedApplication && !configuredUserDataPath && process.platform === 'darwin'
+      ? join(dirname(userDataPath), 'electron-logs')
+      : undefined
+  ),
   pluginDevelopmentCommand
 )
 
 let mainWindow: BrowserWindow | null = null
 let mainWindowState: MainWindowStateController | null = null
 let startupSplashWindow: BrowserWindow | null = null
-await mainProcessLog.setPath(join(app.getPath('logs'), 'wework-main.log')).catch(error => {
+void mainProcessLog.setPath(join(app.getPath('logs'), 'wework-main.log')).catch(error => {
   console.warn('[logs] failed to open main process log', error)
 })
 const workspaceWindows = new Map<string, BrowserWindow>()
@@ -698,8 +655,11 @@ app.on('web-contents-created', (_event, contents) => {
 })
 const executorHome =
   process.env.WEGENT_EXECUTOR_HOME?.trim() ||
-  desktopDataPaths?.desktop ||
-  join(app.getPath('home'), '.wework')
+  resolveWorkbenchPaths({
+    environment: process.env,
+    metadata: packageMetadata,
+    homeDirectory: app.getPath('home'),
+  }).desktop
 const startupRendererLog = new RuntimeDiagnosticsLog(
   join(app.getPath('logs'), 'renderer-startup.log'),
   ''
@@ -2429,12 +2389,6 @@ function downloadsDirectory(): string {
 async function configureDesktopRuntime(): Promise<void> {
   if (desktopRuntime) return
   logStartupStep('runtime-configure', 'started')
-  logStartupStep('workbench-mode-initialize', 'started')
-  await initializeWorkbenchModePreference(requiredPreferences(), {
-    environment: process.env,
-    homeDirectory: app.getPath('home'),
-  })
-  logStartupStep('workbench-mode-initialize', 'completed')
   logStartupStep('desktop-environment', 'started')
   const environment = await desktopEnvironment()
   startupRuntimeEnvironment = environment
@@ -2635,14 +2589,12 @@ async function configureDesktopRuntime(): Promise<void> {
     appVersion: app.getVersion(),
     processSnapshot: () => processExplorerService.snapshot(),
   })
-  await desktopPreferences?.restorePerformanceRecording().catch(error => {
-    console.error(
-      '[performance] Could not resume performance recording; recording is disabled',
-      error
-    )
-  })
+  startStartupMaintenance('performance recording', () =>
+    desktopPreferences?.restorePerformanceRecording()
+  )
   desktopRuntime = new DesktopRuntime({
     applicationId,
+    requireExecutor: releaseActivationPending,
     confirmPluginInstall: request =>
       confirmCoreDshPluginInstall(request, mainWindow, nativeDialogLanguage),
     modelConfiguration,
@@ -3022,9 +2974,11 @@ function startDesktopRuntime(): Promise<void> {
     startStartupMaintenance('tray status', () => trayNativeStatus?.start())
     await loadPrimaryDshView()
     startStartupMaintenance('workspace window restoration', restoreFixedWorkspaceWindows)
-    startStartupMaintenance('component startup confirmation', () =>
-      componentUpdates?.confirmStartup()
-    )
+    if (!desktopRuntime?.state().executorUnavailable) {
+      startStartupMaintenance('component startup confirmation', () =>
+        componentUpdates?.confirmStartup()
+      )
+    }
     runtimePhase = lastStartupFailure ? 'failed' : 'ready'
     if (lastStartupFailure) return
     startStartupMaintenance('development watcher', () =>
@@ -3104,13 +3058,7 @@ if (hasSingleInstanceLock) {
         console.error('[window-state] Failed to save main window geometry', error)
       )
       appshots = new AppshotsService({
-        captureRoot: join(
-          process.env.WEGENT_EXECUTOR_HOME?.trim() || join(app.getPath('home'), '.wework'),
-          'workspace',
-          'attachments',
-          'draft',
-          'appshots'
-        ),
+        captureRoot: join(executorHome, 'workspace', 'attachments', 'draft', 'appshots'),
         events: desktopHostEvents,
         showMain: reactivateMainWindow,
         playSound: async () => {
@@ -3118,12 +3066,6 @@ if (hasSingleInstanceLock) {
           if (preferences.appshotsPlaySound !== false) shell.beep()
         },
       })
-      try {
-        const storedPreferences = await preferenceStore.read().catch(() => ({}))
-        appshots.configure(resolveAppshotsShortcut(storedPreferences))
-      } catch (error) {
-        console.warn('[appshots] Global shortcut is unavailable', error)
-      }
       desktopPreferences = new DesktopPreferencesController(preferences, {
         isShuttingDown: () => quitting,
         configurePopoutShortcut: shortcut => popoutShortcut?.configure(shortcut),
@@ -3200,7 +3142,6 @@ if (hasSingleInstanceLock) {
       installDshWindowLabelHeaders()
       installIpc()
       logStartupStep('desktop-ipc-install', 'completed')
-      systemResume.start()
       windowClosePolicy = new WindowClosePolicy({
         read: async () => {
           const current = await preferences?.read()
@@ -3217,24 +3158,6 @@ if (hasSingleInstanceLock) {
           await preferences?.update({ closeToTrayHintSeen: true })
         },
       })
-      if (!pluginDevelopmentInstance) {
-        const createdTrayManager = createTrayManager()
-        try {
-          createdTrayManager.create()
-          trayManager = createdTrayManager
-        } catch (error) {
-          console.warn('[tray] failed to create tray', error)
-        }
-      }
-      const startupPreferences = await preferences.read()
-      desktopAppearance.update(startupPreferences)
-      nativeTheme.on('updated', () => desktopAppearance.update())
-      logStartupStep('startup-preferences-read', 'completed')
-      try {
-        popoutShortcut?.configure(resolvePopoutShortcut(startupPreferences))
-      } catch (error) {
-        console.warn('[popout-window] failed to register global shortcut', error)
-      }
       // Install the menu before any window is created so the
       // browser-window-created focus hook covers every workbench window.
       try {
@@ -3243,12 +3166,52 @@ if (hasSingleInstanceLock) {
         console.warn('[menu] failed to install application menu', error)
       }
       await createWindow(
-        resolveStartupSplashTheme(
-          startupPreferences.appearanceMode,
-          nativeTheme.shouldUseDarkColors
-        ),
-        startupPreferences.mainWindowState
+        resolveStartupSplashTheme(undefined, nativeTheme.shouldUseDarkColors),
+        undefined
       )
+      const initialSplash = startupSplashWindow
+      const initialBounds = initialSplash?.getBounds()
+      startStartupMaintenance('desktop preferences', async () => {
+        const settings = await preferenceStore.read()
+        if (quitting) return
+        desktopAppearance.update(settings)
+        nativeTheme.on('updated', () => desktopAppearance.update())
+        logStartupStep('startup-preferences-read', 'completed')
+        const saved = settings.mainWindowState
+        if (saved && initialSplash && initialBounds && !initialSplash.isDestroyed()) {
+          const current = initialSplash.getBounds()
+          if (
+            current.x === initialBounds.x &&
+            current.y === initialBounds.y &&
+            current.width === initialBounds.width &&
+            current.height === initialBounds.height &&
+            !initialSplash.isMaximized()
+          ) {
+            const display = screen.getDisplayMatching(current)
+            const layout = startupWindowLayout(
+              display.workArea,
+              saved,
+              screen.getAllDisplays().map(display => display.workArea)
+            )
+            initialSplash.setBounds(layout.bounds)
+            if (layout.maximized) initialSplash.maximize()
+          }
+        }
+        startStartupMaintenance('Appshots shortcut', () =>
+          appshots?.configure(resolveAppshotsShortcut(settings))
+        )
+        startStartupMaintenance('popout shortcut', () =>
+          popoutShortcut?.configure(resolvePopoutShortcut(settings))
+        )
+      })
+      startStartupMaintenance('system resume', () => systemResume.start())
+      if (!pluginDevelopmentInstance) {
+        startStartupMaintenance('tray', () => {
+          const manager = createTrayManager()
+          manager.create()
+          trayManager = manager
+        })
+      }
       void startDesktopRuntime()
     })
     .catch(error => {
@@ -3293,11 +3256,9 @@ function runningDesktopComponents(): Promise<PreparedDesktopComponents> {
     isPackaged: packagedApplication,
     managerOptions: {
       bundledComponentDirectory: bundledComponentDirectory(process.env, app.getPath('userData')),
+      deferBundledExecutorValidation: true,
       validateExecutor: path =>
-        assertExecutorWorkbenchCompatibility({
-          ...process.env,
-          WEWORK_EXECUTOR_PATH: process.env.WEWORK_EXECUTOR_PATH?.trim() || path,
-        }),
+        assertExecutorWorkbenchCompatibility({ ...process.env, WEWORK_EXECUTOR_PATH: path }),
       log: event => appUpdateLogger.info(event),
       resourcesRoot: desktopComponentResourcesRoot(),
       dataDirectory: process.env.WEWORK_COMPONENT_DATA_DIRECTORY?.trim() || app.getPath('userData'),
@@ -3417,7 +3378,7 @@ async function desktopEnvironment(): Promise<NodeJS.ProcessEnv> {
       .join(delimiter)
   startupProgress.report('workspace')
   logStartupStep('workbench-environment', 'started')
-  const environment = await prepareWorkbenchEnvironment({
+  const environment = prepareWorkbenchEnvironment({
     environment: {
       ...runtimeEnvironment,
       WEWORK_HARNESS_RUNTIME_ROOT: runtimeRoot,

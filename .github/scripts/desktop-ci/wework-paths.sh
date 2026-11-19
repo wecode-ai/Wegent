@@ -215,11 +215,11 @@ classify_wework_path() {
       return
       ;;
 
-    # Workbench mode covers Home migration before the managed Git/settings flow.
+    # Workbench mode covers the Workbench Home before the managed Git/settings flow.
     wework/e2e/desktop/scenarios/workbench-mode.scenario.mjs | \
       wework/e2e/desktop/modules/custom-model-output-budget.mjs | \
       wework/e2e/desktop/modules/native-agent-mcp.mjs | \
-      wework/e2e/desktop/modules/workbench-home-migration.mjs | \
+      wework/e2e/desktop/modules/workbench-home.mjs | \
       wework/e2e/desktop/modules/workbench-schema-compatibility.mjs | \
       wework/e2e/desktop/modules/workbench-desktop-startup.mjs | \
       wework/e2e/desktop/modules/workbench-component-publication.mjs | \
@@ -227,10 +227,8 @@ classify_wework_path() {
       wework/electron/src/runtime/workbench-environment* | \
       wework/electron/src/runtime/development-isolation* | \
       wework/electron/src/runtime/workbench-executor-schema* | \
-      wework/electron/src/runtime/workbench-codex-migration* | \
       wework/electron/src/runtime/workbench-migration-lock* | \
       wework/electron/src/runtime/workbench-desktop-startup* | \
-      wework/electron/src/runtime/workbench-home-migration* | \
       wework/electron/src/runtime/workbench-mode* | \
       wework/src/features/workbench-mode/*)
       select_target "core:workbench-mode"

@@ -84,6 +84,7 @@ export function createCloudTodoProjectActions(data: CloudTodoWorkspaceData) {
     setArchiveBusy,
     setArchiveError,
     setRuntimeBatchArchiveItems,
+    setBatchArchiveError,
   } = data
   function applyProjectSelection(project: LocatedCloudProject | null) {
     const ref = project ? projectSpaceRef(project) : null
@@ -239,8 +240,9 @@ export function createCloudTodoProjectActions(data: CloudTodoWorkspaceData) {
   }
   async function archiveCompletedItems(completedItems: LocatedLoopItem[]) {
     if (!onArchiveRuntimeTasks || archiveBusy || completedItems.length === 0) return
+    setRuntimeBatchArchiveItems(null)
     setArchiveBusy(true)
-    setArchiveError(null)
+    setBatchArchiveError(null)
     const archivedItemKeys = new Set<string>()
     const failedItems: LocatedLoopItem[] = []
     try {
@@ -296,9 +298,8 @@ export function createCloudTodoProjectActions(data: CloudTodoWorkspaceData) {
           )
         )
       }
-      setRuntimeBatchArchiveItems(failedItems.length > 0 ? failedItems : null)
       if (failedItems.length > 0) {
-        setArchiveError(
+        setBatchArchiveError(
           t('todo.batch_archive_failed', '{{count}} 个任务归档失败，请稍后重试', {
             count: failedItems.length,
           })
@@ -306,8 +307,7 @@ export function createCloudTodoProjectActions(data: CloudTodoWorkspaceData) {
       }
     } catch (error) {
       console.error('[Wework my tasks] batch archive failed', error)
-      setRuntimeBatchArchiveItems(completedItems)
-      setArchiveError(
+      setBatchArchiveError(
         t('todo.batch_archive_failed', '{{count}} 个任务归档失败，请稍后重试', {
           count: completedItems.length,
         })
