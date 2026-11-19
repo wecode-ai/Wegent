@@ -5,6 +5,7 @@ import type {
   CollaborationIssue,
   CollaborationMember,
   CollaborationProject,
+  ProjectAssistantRosterEntry,
 } from '@wegent/collaboration'
 import { DEFAULT_WORK_ITEM_PROJECT_ID, isDefaultWorkItemProject } from '@/api/deliveries'
 import { DialogForm } from '@/components/common/DialogForm'
@@ -69,8 +70,21 @@ function CreateIssueForm({
   const [title, setTitle] = useState('')
   const [summary, setSummary] = useState('')
   const [dueDate, setDueDate] = useState(tomorrowDate)
+  const [riskLevel, setRiskLevel] = useState<'high' | 'low'>('high')
   const [selection, setSelection] = useState('standalone')
   const [assignee, setAssignee] = useState('self')
+  const [assistantRoster, setAssistantRoster] = useState<ProjectAssistantRosterEntry[]>([])
+  const [assistantRosterKey, setAssistantRosterKey] = useState('')
+  const [assistantRosterError, setAssistantRosterError] = useState<{
+    key: string
+    message: string
+  } | null>(null)
+  const [assistantRosterRetry, setAssistantRosterRetry] = useState(0)
+  const [selectedAssistants, setSelectedAssistants] = useState<string[]>([])
+  const [dispatchIntent, setDispatchIntent] = useState<{
+    id: string
+    fingerprint: string
+  } | null>(null)
   const [pending, setPending] = useState(false)
   const pendingRef = useRef(false)
   const mounted = useRef(true)
@@ -88,6 +102,7 @@ function CreateIssueForm({
   const targetStore = standalone ? 'local' : selectedProject?.project_store
   const targetId = standalone ? DEFAULT_WORK_ITEM_PROJECT_ID : selectedProject?.id
   const source = sources.find(candidate => candidate.store === targetStore)
+  const assistantRosterScopeKey = JSON.stringify([source?.store, targetId])
   const [loaded, setLoaded] = useState<{
     source: ExperienceSource
     id: string
@@ -141,6 +156,38 @@ function CreateIssueForm({
     }
   }, [source, targetId, retry, t])
 
+  useEffect(() => {
+    const currentKey = JSON.stringify([source?.store, targetId])
+    if (
+      !source ||
+      !targetId ||
+      source.store !== 'backend' ||
+      !source.api.projects.listAssistantRoster
+    ) {
+      return
+    }
+    let cancelled = false
+    void source.api.projects.listAssistantRoster(targetId).then(
+      entries => {
+        if (cancelled) return
+        setAssistantRosterError(current => (current?.key === currentKey ? null : current))
+        setAssistantRoster(entries)
+        setAssistantRosterKey(currentKey)
+        setSelectedAssistants(current =>
+          current.filter(id => entries.some(row => row.id === id && row.enabled))
+        )
+      },
+      cause => {
+        if (!cancelled) {
+          setAssistantRosterError({ key: currentKey, message: errorText(cause) })
+        }
+      }
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [source, targetId, retry, assistantRosterRetry])
+
   const members =
     current?.members.filter(
       member => selectableMember(member) && ![viewerId, selfId].includes(member.user_id)
@@ -152,10 +199,16 @@ function CreateIssueForm({
   const assigneeLabel =
     assigneeOptions.find(option => option.value === assignee)?.label ??
     t('create.assigneeUnavailable')
+  const assignableAssistantRoster = assistantRoster.filter(entry => entry.enabled)
+  const currentAssistantRosterError =
+    assistantRosterError?.key === assistantRosterScopeKey ? assistantRosterError.message : null
   const changeTarget = (update: () => void) => {
     update()
     setAssignee('self')
     setError(null)
+    setRiskLevel('high')
+    setSelectedAssistants([])
+    setDispatchIntent(null)
   }
 
   const submit = async () => {
@@ -189,13 +242,48 @@ function CreateIssueForm({
               member => String(member.user_id) === assignee && selectableMember(member)
             )?.user_id
       if (assigneeUserId === undefined) throw new Error(t('create.assigneeUnavailable'))
-      const issue = await source.api.issues.create(project.id, {
-        title: title.trim(),
-        description: summary.trim(),
-        assigneeUserId,
-        ...(dueDate ? { dueAt: dueDate } : {}),
-        ...(standalone && assignee === 'self' ? { personalTask: true } : {}),
-      })
+      const selectedRoster = assistantRoster.filter(entry => selectedAssistants.includes(entry.id))
+      let issue: CollaborationIssue
+      if (
+        selectedRoster.length > 0 &&
+        source.store === 'backend' &&
+        source.api.projects.createAssistantDispatch
+      ) {
+        const fingerprint = JSON.stringify([
+          title.trim(),
+          summary.trim(),
+          dueDate,
+          riskLevel,
+          assignee,
+          selectedAssistants,
+        ])
+        const intentId =
+          dispatchIntent?.fingerprint === fingerprint ? dispatchIntent.id : crypto.randomUUID()
+        setDispatchIntent({ id: intentId, fingerprint })
+        const dispatch = await source.api.projects.createAssistantDispatch(project.id, {
+          intentId,
+          goal: title.trim(),
+          riskLevel,
+          description: summary.trim(),
+          ...(dueDate ? { dueAt: dueDate } : {}),
+          managerUserId: assigneeUserId,
+          confirmationState: 'confirmed',
+          assignments: selectedRoster.map(entry => ({
+            rosterEntryId: entry.id,
+            userId: entry.userId,
+            brief: summary.trim() || title.trim(),
+          })),
+        })
+        issue = await source.api.issues.get(dispatch.rootIssueId)
+      } else {
+        issue = await source.api.issues.create(project.id, {
+          title: title.trim(),
+          description: summary.trim(),
+          assigneeUserId,
+          ...(dueDate ? { dueAt: dueDate } : {}),
+          ...(standalone && assignee === 'self' ? { personalTask: true } : {}),
+        })
+      }
       if (mounted.current) onCreated(projectScopeOf(project), issue)
     } catch (cause) {
       if (mounted.current) setError(errorText(cause))
@@ -322,7 +410,65 @@ function CreateIssueForm({
                   onChange={event => setSummary(event.target.value)}
                 />
               </label>
+              {assistantRosterKey === assistantRosterScopeKey &&
+              assignableAssistantRoster.length > 0 ? (
+                <label className="experience-create-field">
+                  <span>{t('create.riskLevel')}</span>
+                  {select(
+                    'riskLevel',
+                    riskLevel,
+                    t(`create.risk.${riskLevel}`),
+                    [
+                      { value: 'high', label: t('create.risk.high') },
+                      { value: 'low', label: t('create.risk.low') },
+                    ],
+                    value => {
+                      setRiskLevel(value === 'low' ? 'low' : 'high')
+                      setDispatchIntent(null)
+                    }
+                  )}
+                </label>
+              ) : null}
             </div>
+            {assistantRosterKey === assistantRosterScopeKey &&
+            assignableAssistantRoster.length > 0 ? (
+              <fieldset
+                className="experience-create-callout"
+                data-testid="collaboration-exp-create-assistant-roster"
+              >
+                <legend>{t('create.assistantRoster')}</legend>
+                {assignableAssistantRoster.map(entry => {
+                  const selected = selectedAssistants.includes(entry.id)
+                  return (
+                    <label key={entry.id}>
+                      <input
+                        type="checkbox"
+                        checked={selected}
+                        disabled={pending}
+                        data-testid={`collaboration-exp-create-assistant-${entry.id}`}
+                        onChange={() => {
+                          setDispatchIntent(null)
+                          setSelectedAssistants(current => {
+                            if (selected) return current.filter(id => id !== entry.id)
+                            return [
+                              ...current.filter(id => {
+                                const candidate = assistantRoster.find(item => item.id === id)
+                                return candidate?.userId !== entry.userId
+                              }),
+                              entry.id,
+                            ]
+                          })
+                        }}
+                      />
+                      <span>
+                        {entry.userName} · {entry.displayName}
+                      </span>
+                      <small>{t(`assistant.availability.${entry.availability}`)}</small>
+                    </label>
+                  )
+                })}
+              </fieldset>
+            ) : null}
             <div className="experience-create-callout">
               <ShieldCheck aria-hidden="true" />
               <span>{t('create.defaults')}</span>
@@ -349,6 +495,18 @@ function CreateIssueForm({
               <p role="alert">{t('create.permissionDenied')}</p>
             ) : null}
             {error ? <p role="alert">{error}</p> : null}
+            {currentAssistantRosterError ? (
+              <p role="alert">
+                {currentAssistantRosterError}{' '}
+                <button
+                  type="button"
+                  data-testid="collaboration-exp-create-assistant-roster-retry"
+                  onClick={() => setAssistantRosterRetry(value => value + 1)}
+                >
+                  {t('retry')}
+                </button>
+              </p>
+            ) : null}
           </div>
           <footer className="experience-create-footer">
             <button

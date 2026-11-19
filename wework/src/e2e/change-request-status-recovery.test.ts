@@ -5,6 +5,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { Worker } from 'node:worker_threads'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { linkedChangeRequestTarget, type TaskChangeRequestSnapshot } from '@/api/changeRequests'
 import { ChangeRequestUiObserver } from '@/features/workbench/changeRequestUiObserver'
@@ -477,5 +478,47 @@ test('does not expose a malformed native journal in its failure', async () => {
     'The native change-request observer journal could not be read'
   )
   expect((error as Error).message).not.toContain('synthetic-private-journal')
+  expect(error).toMatchObject({ code: 'ERR_SQLITE_ERROR', sqliteCode: 26 })
+  expect(JSON.stringify(error)).not.toContain('synthetic-private-journal')
   expect(fixture.control.command).not.toHaveBeenCalled()
+})
+
+test('reads the native observer journal across a bounded WAL lock', async () => {
+  vi.useRealTimers()
+  const fixture = await recoveryFixture()
+  const writer = new Worker(
+    `const { parentPort, workerData } = require('node:worker_threads')
+     const { DatabaseSync } = require('node:sqlite')
+     const db = new DatabaseSync(workerData)
+     db.exec('PRAGMA journal_mode=WAL; PRAGMA locking_mode=EXCLUSIVE; BEGIN EXCLUSIVE')
+     db.prepare("UPDATE records SET value=value WHERE section='observers'").run()
+     parentPort.postMessage('locked')
+     parentPort.once('message', () => {
+       // Hold a real lock briefly after the reader is ready to start.
+       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 75)
+       db.exec('COMMIT')
+       db.close()
+       parentPort.close()
+     })`,
+    { eval: true, workerData: fixture.journalPath }
+  )
+  try {
+    await new Promise<void>((resolve, reject) => {
+      writer.once('message', () => resolve())
+      writer.once('error', reject)
+    })
+    const probe = new DatabaseSync(fixture.journalPath, { readOnly: true })
+    try {
+      expect(() => probe.prepare('SELECT * FROM records').all()).toThrow('database is locked')
+    } finally {
+      probe.close()
+    }
+    writer.postMessage('read')
+    await expect(prepareChangeRequestRecovery(fixture.executorHome)).resolves.toMatchObject({
+      journalPath: fixture.journalPath,
+      activationCompleted: expect.any(Function),
+    })
+  } finally {
+    await writer.terminate()
+  }
 })

@@ -303,6 +303,30 @@ including threads previously persisted as disabled. Explicit single-agent
 executions still disable collaboration tools. Desktop requests no longer send
 the conflicting legacy single field alongside their native mode.
 
+When neither `agents.max_concurrent_threads_per_session` nor `agents.max_threads`
+is present, executor initialization adds `[agents] max_concurrent_threads_per_session = 6`.
+A non-table `agents` value is preserved for native configuration validation.
+In V2 this permits seven total threads including the root. Existing values of
+this field or the legacy `max_threads` field are preserved. The V2-specific
+`[features.multi_agent_v2] max_concurrent_threads_per_session` setting retains
+native precedence and counts the root. Later manual edits are preserved and
+take effect after restarting the runtime. Single-agent mode still disables
+subagents; the default capacity does not change delegation permissions.
+
+Project catalog synchronization in `projects.list` includes SQLite initialization
+and Git metadata discovery. It runs in a blocking worker rather than the IPC
+reactor. Catalog reads open only the project store, without initializing unrelated
+Issue or table providers. Concurrent listings share an asynchronous execution lock, which stays
+with an active worker after caller timeout or disconnect until the work finishes.
+Health queries and other IPC requests remain responsive during discovery; UI
+timeouts are not extended to hide blocking. The three Git probes for a new project share
+a 30-second deadline and reuse the native Git runner’s termination and reaping.
+A timeout does not persist that project’s catalog row; previously completed imports
+remain intact. Discovery errors are logged for the affected workspace and the scan continues
+with other entries; later listings can retry. Database and other non-discovery errors still propagate.
+
+E2E host-pipe diagnostics enabled for `clipboard-history-image` and `browser-toolbar-actions` record request IDs, send/receive/completion timestamps, and cumulative CPU and event-loop active/idle time in both processes. Correlate each request and compare adjacent samples to distinguish handler work, process activity, and scheduling waits. A single successful run is not evidence that an intermittent delay has been fixed.
+
 When the user sends guidance, Wework optimistically inserts the guidance
 message into the current turn before calling `runtime.tasks.guidance`. If
 Codex `turn/steer` explicitly reports that the expected turn ID differs from
@@ -509,6 +533,8 @@ execution that is continuing toward its Goal.
 Enqueue, cancellation, and dequeue advance the same execution revision only after queue
 persistence succeeds. Cancelling admission preserves the previous turn's result, and an
 older queued snapshot cannot make the cancelled task busy again.
+
+Prepare the model route before Goal activation. The prepared native session owns continuation after successful activation, so activation does not enqueue another recovery. Activation and the existing Goal journal still require durable persistence before admission can be acknowledged.
 
 `recovering` means the executor owns Goal recovery or bounded retry backoff. Recovery awaiting admission has no process binding; backoff retains process ownership and must settle when that process exits. Recovery remains busy without an active model turn; its queued legacy
 `task.running: false` must not present that owned recovery as stopped.
