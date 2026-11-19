@@ -1,5 +1,3 @@
-import type { DeviceCommandResponse } from '@/types/api'
-import changeRequestStatusQuery from '../../../shared/protocol/git-change-request-status-query.json'
 import type { ResourceObservation } from '@/features/workbench/resourceObservation'
 import type { ResourceEventFact } from '@/lib/runtime-connection-events'
 import type {
@@ -8,14 +6,7 @@ import type {
   ChangeRequestMergeQueueState,
   ChangeRequestProvider,
 } from '@/types/environment'
-import {
-  classifyChangeRequestCommandError,
-  type DeviceCommandApi,
-  outputAsArray,
-  outputAsRecord,
-  parseChangeRequest,
-  parseGitRemote,
-} from './environment'
+import { parseChangeRequest } from './environment'
 
 export interface TaskChangeRequestTarget {
   deviceId: string
@@ -38,62 +29,10 @@ export interface TaskChangeRequestSnapshot {
   resourceEvents?: ResourceEventFact[]
 }
 
-interface RepositoryTargetGroup {
-  deviceId: string
-  workspacePath: string
-  remoteUrl: string
-  provider: ChangeRequestProvider
-  owner: string
-  name: string
-  targets: TaskChangeRequestTarget[]
-}
-
 interface MergeQueueEvent {
   type: 'added' | 'removed'
   createdAt: string
   reason?: string | null
-}
-
-function commandError(response: DeviceCommandResponse): string {
-  return response.error || response.stderr || 'Failed to query pull requests'
-}
-
-function repositoryGroup(target: TaskChangeRequestTarget): RepositoryTargetGroup | null {
-  const remote = parseGitRemote(target.remoteUrl)
-  if (!remote) return null
-  const provider: ChangeRequestProvider | null = remote.host.includes('github')
-    ? 'github'
-    : remote.host.includes('gitlab')
-      ? 'gitlab'
-      : null
-  if (!provider) return null
-  const parts = remote.repoPath.split('/').filter(Boolean)
-  if (parts.length < 2) return null
-  return {
-    deviceId: target.deviceId,
-    workspacePath: target.workspacePath,
-    remoteUrl: target.remoteUrl,
-    provider,
-    owner: provider === 'github' ? parts[0] : parts.slice(0, -1).join('/'),
-    name: parts.at(-1)!,
-    targets: [target],
-  }
-}
-
-function groupTargets(targets: TaskChangeRequestTarget[]): RepositoryTargetGroup[] {
-  const groups = new Map<string, RepositoryTargetGroup>()
-  for (const target of targets) {
-    const candidate = repositoryGroup(target)
-    if (!candidate) continue
-    const key = `${candidate.deviceId}\0${candidate.provider}\0${candidate.remoteUrl}`
-    const current = groups.get(key)
-    if (current) {
-      current.targets.push(target)
-    } else {
-      groups.set(key, candidate)
-    }
-  }
-  return [...groups.values()]
 }
 
 function mergeQueueState(value: string): ChangeRequestMergeQueueState {
@@ -233,25 +172,6 @@ function applyGithubDetails(changeRequest: ChangeRequest, value: unknown): Chang
   )
 }
 
-function githubMergeQueueQuery(
-  group: RepositoryTargetGroup,
-  pullRequests: ChangeRequest[]
-): string {
-  const fields = pullRequests
-    .map(
-      (pullRequest, index) => `
-        pr${index}: pullRequest(number: ${pullRequest.number}) {
-          ${changeRequestStatusQuery.fields}
-        }`
-    )
-    .join('\n')
-  return `query {
-    repository(owner: ${JSON.stringify(group.owner)}, name: ${JSON.stringify(group.name)}) {
-      ${fields}
-    }
-  }`
-}
-
 export function observedChangeRequest(
   provider: ChangeRequestProvider,
   data: unknown,
@@ -260,141 +180,6 @@ export function observedChangeRequest(
   const request = parseChangeRequest(provider, data)
   if (!request || request.url !== url) return null
   return provider === 'github' ? applyGithubDetails(request, data) : request
-}
-
-async function loadGithubMergeQueue(
-  api: DeviceCommandApi,
-  group: RepositoryTargetGroup,
-  pullRequests: ChangeRequest[]
-): Promise<ChangeRequest[]> {
-  if (pullRequests.length === 0) return pullRequests
-  const response = await api.executeCommand(group.deviceId, {
-    command_key: 'git_github_pull_request_merge_queue_batch',
-    path: group.workspacePath,
-    args: ['-f', `query=${githubMergeQueueQuery(group, pullRequests)}`],
-    timeout_seconds: 20,
-    max_output_bytes: 256 * 1024,
-  })
-  if (!response.success) return pullRequests
-  const repository = outputAsRecord(response.stdout)?.data
-  const repositoryRecord =
-    repository && typeof repository === 'object' && !Array.isArray(repository)
-      ? (repository as Record<string, unknown>).repository
-      : null
-  if (
-    !repositoryRecord ||
-    typeof repositoryRecord !== 'object' ||
-    Array.isArray(repositoryRecord)
-  ) {
-    return pullRequests
-  }
-  const details = repositoryRecord as Record<string, unknown>
-  return pullRequests.map((pullRequest, index) =>
-    applyGithubDetails(pullRequest, details[`pr${index}`])
-  )
-}
-
-async function loadRepository(
-  api: DeviceCommandApi,
-  group: RepositoryTargetGroup
-): Promise<TaskChangeRequestSnapshot[]> {
-  const response = await api.executeCommand(group.deviceId, {
-    command_key:
-      group.provider === 'github'
-        ? 'git_github_pull_requests_batch'
-        : 'git_gitlab_merge_requests_batch',
-    path: group.workspacePath,
-    timeout_seconds: 20,
-    max_output_bytes: 1024 * 1024,
-  })
-  if (!response.success) {
-    const fetchedAt = new Date().toISOString()
-    const error = commandError(response)
-    const lookupState = classifyChangeRequestCommandError(response)
-    return group.targets.map(target => ({
-      target,
-      changeRequest: null,
-      fetchedAt,
-      provider: group.provider,
-      lookupState,
-      error,
-    }))
-  }
-  let pullRequests =
-    outputAsArray(response.stdout)
-      ?.map(value => parseChangeRequest(group.provider, value))
-      .filter((value): value is ChangeRequest => Boolean(value)) ?? []
-  const targetBranches = new Set(group.targets.map(target => target.branch))
-  pullRequests = pullRequests.filter(
-    pullRequest => Boolean(pullRequest.headBranch) && targetBranches.has(pullRequest.headBranch!)
-  )
-  if (group.provider === 'github') {
-    pullRequests = await loadGithubMergeQueue(api, group, pullRequests)
-  }
-  const byBranch = new Map<string, ChangeRequest[]>()
-  for (const pullRequest of pullRequests) {
-    if (!pullRequest.headBranch) continue
-    const values = byBranch.get(pullRequest.headBranch) ?? []
-    values.push(pullRequest)
-    byBranch.set(pullRequest.headBranch, values)
-  }
-  const fetchedAt = new Date().toISOString()
-  return group.targets.map(target => ({
-    target,
-    provider: group.provider,
-    lookupState: byBranch.has(target.branch) ? 'found' : 'not_found',
-    changeRequest:
-      byBranch.get(target.branch)?.sort((left, right) => {
-        if (left.state === 'open' && right.state !== 'open') return -1
-        if (right.state === 'open' && left.state !== 'open') return 1
-        return right.number - left.number
-      })[0] ?? null,
-    fetchedAt,
-  }))
-}
-
-export async function loadTaskChangeRequests(
-  api: DeviceCommandApi,
-  targets: TaskChangeRequestTarget[]
-): Promise<TaskChangeRequestSnapshot[]> {
-  const linkedTargets = targets.filter(target => target.changeRequestUrl)
-  const groups = groupTargets(targets.filter(target => !target.changeRequestUrl))
-  const [linkedResults, results] = await Promise.all([
-    loadLinkedChangeRequests(api, linkedTargets),
-    Promise.allSettled(groups.map(group => loadRepository(api, group))),
-  ])
-  return [
-    ...linkedResults,
-    ...results.flatMap<TaskChangeRequestSnapshot>((result, index) =>
-      result.status === 'fulfilled'
-        ? result.value
-        : groups[index].targets.map(target => ({
-            target,
-            changeRequest: null,
-            fetchedAt: new Date().toISOString(),
-            provider: groups[index].provider,
-            lookupState: 'error',
-            error: result.reason instanceof Error ? result.reason.message : String(result.reason),
-          }))
-    ),
-  ]
-}
-
-async function loadLinkedChangeRequests(
-  api: DeviceCommandApi,
-  targets: TaskChangeRequestTarget[]
-): Promise<TaskChangeRequestSnapshot[]> {
-  const keyFor = (target: TaskChangeRequestTarget) =>
-    JSON.stringify([target.deviceId, target.changeRequestUrl])
-  const unique = [...new Map(targets.map(target => [keyFor(target), target])).values()]
-  const results = new Map<string, TaskChangeRequestSnapshot>()
-  for (let offset = 0; offset < unique.length; offset += 4) {
-    const batch = await Promise.all(
-      unique.slice(offset, offset + 4).map(target => loadLinkedChangeRequest(api, target))
-    )
-    for (const result of batch) results.set(keyFor(result.target), result)
-  }
-  return targets.map(target => ({ ...results.get(keyFor(target))!, target }))
 }
 
 export function linkedChangeRequestTarget(
@@ -420,46 +205,5 @@ export function linkedChangeRequestTarget(
     }
   } catch {
     return null
-  }
-}
-
-async function loadLinkedChangeRequest(
-  api: DeviceCommandApi,
-  target: TaskChangeRequestTarget
-): Promise<TaskChangeRequestSnapshot> {
-  const provider = target.changeRequestUrl!.includes('/-/merge_requests/') ? 'gitlab' : 'github'
-  const base = {
-    target,
-    provider,
-    fetchedAt: new Date().toISOString(),
-    changeRequest: null,
-  } as const
-  try {
-    const response = await api.executeCommand(target.deviceId, {
-      command_key:
-        provider === 'github' ? 'git_github_pull_request_view' : 'git_gitlab_merge_request_view',
-      args:
-        provider === 'github'
-          ? [target.changeRequestUrl!]
-          : [target.changeRequestUrl!.split('/').at(-1)!, '--repo', target.remoteUrl],
-      timeout_seconds: 20,
-      max_output_bytes: 256 * 1024,
-    })
-    if (!response.success)
-      return {
-        ...base,
-        lookupState: classifyChangeRequestCommandError(response),
-        error: commandError(response),
-      }
-    const changeRequest = parseChangeRequest(provider, outputAsRecord(response.stdout))
-    if (!changeRequest)
-      return { ...base, lookupState: 'error', error: 'Invalid change request response' }
-    return { ...base, changeRequest, lookupState: 'found' }
-  } catch (error) {
-    return {
-      ...base,
-      lookupState: 'error',
-      error: error instanceof Error ? error.message : String(error),
-    }
   }
 }

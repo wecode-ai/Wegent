@@ -22,11 +22,7 @@ impl RuntimeWorkRpcHandler {
         }) {
             return Ok(());
         }
-        let user = self
-            .runtime_http(reqwest::Method::GET, "/users/me", None)
-            .await?["id"]
-            .as_i64()
-            .ok_or_else(|| AppIpcError::new("permission_denied", "Issue event owner is missing"))?;
+        let user = Self::connected_runtime_user(&connection).await?;
         if !settings
             .iter()
             .any(|settings| settings["userId"] == user && settings["lifecycle"]["status"].is_null())

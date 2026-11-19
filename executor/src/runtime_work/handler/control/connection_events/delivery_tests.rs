@@ -9,6 +9,11 @@ fn received_event_enters_the_message_queue_while_the_conversation_is_busy() {
         let root = tempfile::tempdir().unwrap();
         let _env = EnvGuard::home(root.path().to_str().unwrap());
         let handler = RuntimeWorkRpcHandler::new("control-test-device", "/bin/false");
+        *handler.backend_connection.lock().unwrap() = Some(ConnectionConfig {
+            backend_url: "http://127.0.0.1:1".into(),
+            auth_token: "test-session".into(),
+            ..Default::default()
+        });
         let mut link = seed(&handler,"caller");
         link.runtime_handle["executionRequest"]["user_id"] = json!(7);
         handler.store.upsert_task(link.clone());
@@ -28,7 +33,7 @@ fn received_event_enters_the_message_queue_while_the_conversation_is_busy() {
             state["observations"]["observation"] = json!({"events":[{"key":key,"sequence":1,"event":event}]}); Ok(())
         }).unwrap();
         assert!(handler.is_busy_local_task("caller"));
-        handler.collect_conversation_subscription(id,record,"cycle").await.unwrap();
+        handler.collect_conversation_subscription(id,record).await.unwrap();
         let saved = event_store::transact(&handler.event_subscription_path(),|state|Ok(state["operations"][id].clone())).unwrap();
         let receipt = handler.control_get_operation(&context("caller"),&json!({"operation_id":operation})).await.unwrap();
         assert_eq!(receipt["operation"]["delivery_status"],"accepted", "{receipt}");
@@ -36,7 +41,7 @@ fn received_event_enters_the_message_queue_while_the_conversation_is_busy() {
         let queued = handler.turn_scheduler.lock().unwrap().queued_turns.clone();
         assert_eq!(queued.len(),1);
         assert_eq!(queued[0].request.extra["resource_event_keys"],json!([key]));
-        handler.collect_conversation_subscription(id,saved,"cycle-2").await.unwrap();
+        handler.collect_conversation_subscription(id,saved).await.unwrap();
         assert_eq!(handler.turn_scheduler.lock().unwrap().queued_turns.clone().len(),1,"The accepted event must not be enqueued twice");
         let unrelated = handler.control_continue(
             &context("caller"), link, json!({

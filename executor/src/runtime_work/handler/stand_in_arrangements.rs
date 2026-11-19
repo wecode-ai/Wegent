@@ -400,7 +400,7 @@ impl RuntimeWorkRpcHandler {
         payload["executionRequest"]["standInSchedule"] = json!({"id":automation.id,"version":automation.version,"runId":run.id,"scheduledFor":run.scheduled_for,"userId":binding.user_id,"roleId":binding.role_id,"settingsVersion":settings["version"],"manual":run.trigger=="manual","claimedOneTime":matches!(automation.schedule, crate::runtime_work::automations::AutomationSchedule::OneTime { .. }),"continuation":matches!(automation.conversation_mode,ConversationMode::ContinueThread)});
         let response = match automation.conversation_mode {
             ConversationMode::Independent => self.create_task(payload).await?,
-            ConversationMode::ContinueThread => self.send_message(payload).await?,
+            ConversationMode::ContinueThread => self.send_message_from_event(payload).await?,
         };
         if response["accepted"] == false || response["success"] == false {
             return Err(arrangement_error("The scheduled command was rejected"));

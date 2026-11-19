@@ -5,7 +5,6 @@ from copy import deepcopy
 from typing import Any
 
 from fastapi import HTTPException
-from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db_session
@@ -18,7 +17,6 @@ from app.services.device.plugin_sync_protocol import (
     lock_plugin_sync_state,
 )
 from app.services.plugin_device_installation_service import (
-    _is_mysql_deadlock,
     plugin_device_installation_service,
 )
 from app.services.plugin_marketplace_service import plugin_marketplace_service
@@ -27,7 +25,6 @@ from app.services.plugin_write_coordination import (
     acquire_plugin_write_locks,
     configure_plugin_session,
 )
-from app.services.plugin_write_errors import PluginWriteError
 from app.services.plugin_write_operations import run_plugin_transaction
 from shared.telemetry.decorators import trace_async
 
@@ -77,16 +74,11 @@ def record_reconciliation_result(
             item.status == "superseded" for item in result.plugins
         ):
             return latest
-        try:
-            plugin_device_installation_service._record_device_sync_result(
-                db, user_id, result, installed_ids=scopes
-            )
-            state.json = deepcopy(state.json)
-            db.commit()
-        except OperationalError as error:
-            if _is_mysql_deadlock(error):
-                raise PluginWriteError("plugin_write_conflict") from error
-            raise
+        plugin_device_installation_service._record_device_sync_result(
+            db, user_id, result, installed_ids=scopes
+        )
+        state.json = deepcopy(state.json)
+        db.commit()
         return None
 
     # Background receipts can advance the account fence while this ACK commits.
