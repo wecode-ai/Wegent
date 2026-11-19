@@ -218,7 +218,7 @@ export async function verifyLocalBasicDefaultSave(control, timeoutMs, proxy) {
   )
   await control.command(
     'waitFor',
-    `[data-testid="cloud-project-chat-agent-model"] option[value='${model.value}']:checked`,
+    `[data-testid="cloud-project-chat-agent-model"][data-value='${model.value}']`,
     { timeoutMs }
   )
   await control.command('click', '[data-testid="cloud-project-chat-agent-cancel"]')
