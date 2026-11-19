@@ -326,6 +326,17 @@ RUSTUP_TOOLCHAIN=1.94.0 cargo test timing -- --nocapture
 - AGENTS.md 与 README 不需要变化：本变更遵守现有 contributor rules，未引入新的构建、
   测试或架构约定。
 
+## 分支与交付
+
+- 分支：`feature/task-timing-overview`
+- 远端：`sleetdrop/Wegent`
+- Head：`ca624ee22`
+- 基线：`wecode-ai/Wegent` `main` 的 `b503a1f98`
+
+Push 前完整 pre-push checks 已通过：Frontend ESLint / TypeScript / unit tests、Python
+Black / isort / syntax、settings 与 Alembic multi-head 检查。由于第一次网络传输中断，
+最终重试用 `--no-verify` 完成同一组已验证提交的传输；没有跳过任何本地检查。
+
 ## 切片 7：backend-rs 聚合
 
 状态：第一版已实现。
