@@ -607,9 +607,11 @@ pub struct RuntimeWorkRpcHandler {
     /// carry credentials, so turns fill them from here before launching the
     /// project-space MCP server.
     backend_connection: Arc<Mutex<Option<ConnectionConfig>>>,
+    stand_in_intake_workers: Arc<Mutex<stand_in_processing::StandInIntakeWorkers>>,
     backend_device_route: Option<Arc<Mutex<Option<String>>>>,
     cloud_connection_observations: Arc<AtomicBool>,
-    connection_scheduler_started: Arc<AtomicBool>,
+    connection_dispatcher_started: Arc<AtomicBool>,
+    connection_subscribers: Arc<Mutex<stand_in_ingress::ConnectionSubscribers>>,
     connection_observation_wakeup: Arc<tokio::sync::Notify>,
 }
 
@@ -1006,9 +1008,11 @@ impl RuntimeWorkRpcHandler {
                 crate::agents::wework_codex_home(),
             ),
             backend_connection,
+            stand_in_intake_workers: Arc::new(Mutex::new(Default::default())),
             backend_device_route,
             cloud_connection_observations: Arc::new(AtomicBool::new(false)),
-            connection_scheduler_started: Arc::new(AtomicBool::new(false)),
+            connection_dispatcher_started: Arc::new(AtomicBool::new(false)),
+            connection_subscribers: Arc::new(Mutex::new(Default::default())),
             connection_observation_wakeup: Arc::new(tokio::sync::Notify::new()),
         };
         for (local_task_id, turn) in handler
@@ -1110,7 +1114,7 @@ impl RuntimeWorkRpcHandler {
             .store(true, Ordering::Release);
         handler.start_automation_scheduler();
         handler.start_local_issue_scheduler();
-        handler.start_connection_scheduler();
+        handler.start_connection_dispatcher();
         if has_backend {
             handler.start_backend_services();
         }
@@ -1136,7 +1140,6 @@ impl RuntimeWorkRpcHandler {
     fn start_backend_services(&self) {
         crate::workbench_control::register(&self.device_id, Arc::new(self.clone()));
         self.start_local_stand_in_scheduler();
-        self.start_connection_scheduler();
         self.register_cloud_collaboration_dispatcher();
         self.register_stand_in_task_dispatcher();
         self.resume_cloud_collaboration_rounds();

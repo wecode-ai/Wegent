@@ -67,7 +67,8 @@ def _run_probe(
 
 def _write_fake_executor(path: Path) -> None:
     path.write_text(
-        textwrap.dedent("""\
+        textwrap.dedent(
+            """\
             #!/usr/bin/env python3
             import json
             import os
@@ -215,7 +216,8 @@ def _write_fake_executor(path: Path) -> None:
                     "result": result,
                 }
                 print(json.dumps(response, separators=(",", ":")), flush=True)
-            """),
+            """
+        ),
         encoding="utf-8",
     )
     path.chmod(0o755)
@@ -360,7 +362,8 @@ def test_remote_docker_acceptance_fails_explicitly_without_docker():
 
 def _write_delayed_fake_executor(path: Path) -> None:
     path.write_text(
-        textwrap.dedent("""\
+        textwrap.dedent(
+            """\
             #!/usr/bin/env python3
             import json
             import sys
@@ -386,7 +389,8 @@ def _write_delayed_fake_executor(path: Path) -> None:
             threading.Thread(target=respond, daemon=True).start()
             for _line in sys.stdin:
                 pass
-            """),
+            """
+        ),
         encoding="utf-8",
     )
     path.chmod(0o755)

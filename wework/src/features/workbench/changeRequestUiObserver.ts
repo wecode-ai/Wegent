@@ -1,6 +1,6 @@
 import { linkedChangeRequestTarget, observedChangeRequest } from '@/api/changeRequests'
 import type { TaskChangeRequestSnapshot, TaskChangeRequestTarget } from '@/api/changeRequests'
-import { outputAsRecord, type DeviceCommandApi } from '@/api/environment'
+import { outputAsRecord, parseGitRemote, type DeviceCommandApi } from '@/api/environment'
 import { observationErrorCode, observationFailureState } from './resourceObservation'
 
 interface Activation {
@@ -13,8 +13,9 @@ interface Activation {
   pending?: Promise<TaskChangeRequestSnapshot | null>
 }
 
-function resourceKey(target: TaskChangeRequestTarget): string {
-  return JSON.stringify([target.deviceId, target.changeRequestUrl])
+export function changeRequestObserverKey(target: TaskChangeRequestTarget): string {
+  const scope = target.changeRequestUrl ?? [target.remoteUrl, target.branch]
+  return JSON.stringify([target.deviceId, scope])
 }
 
 function lookupFailure(error: string) {
@@ -26,25 +27,38 @@ function lookupFailure(error: string) {
 }
 
 function selection(target: TaskChangeRequestTarget) {
-  const exact = linkedChangeRequestTarget(target.deviceId, target.changeRequestUrl ?? '')
-  if (!exact?.changeRequestUrl || exact.changeRequestUrl !== target.changeRequestUrl) return null
-  const url = new URL(exact.changeRequestUrl)
-  const platform = url.pathname.includes('/-/merge_requests/') ? 'gitlab' : 'github'
-  const repository = new URL(exact.remoteUrl).pathname.slice(1)
-  const number = url.pathname.split('/').at(-1)!
+  const exact = target.changeRequestUrl
+    ? linkedChangeRequestTarget(target.deviceId, target.changeRequestUrl)
+    : null
+  if (target.changeRequestUrl && exact?.changeRequestUrl !== target.changeRequestUrl) return null
+  const remote = parseGitRemote(target.remoteUrl)
+  if (!remote) return null
+  const url = exact?.changeRequestUrl ? new URL(exact.changeRequestUrl) : null
+  const platform = url
+    ? url.pathname.includes('/-/merge_requests/')
+      ? 'gitlab'
+      : 'github'
+    : remote.host.includes('github')
+      ? 'github'
+      : remote.host.includes('gitlab')
+        ? 'gitlab'
+        : null
+  if (!platform || (!url && !target.branch.trim())) return null
+  const instance = url?.origin ?? `https://${remote.host}`
+  const repository = exact ? new URL(exact.remoteUrl).pathname.slice(1) : remote.repoPath
+  const number = url ? Number(url.pathname.split('/').at(-1)) : undefined
+  const scope = number
+    ? { monitoredObjects: [{ entityKind: 'change_request', number }] }
+    : { branch: target.branch }
   return {
     platform,
-    instance: url.origin,
+    instance,
     repository,
-    number: Number(number),
+    number,
     discovery: {
       providerId: `@wegent/dsh-connection-git/${platform}`,
       kind: 'repository',
-      query: JSON.stringify({
-        instance: url.origin,
-        repository,
-        monitoredObjects: [{ entityKind: 'change_request', number: Number(number) }],
-      }),
+      query: JSON.stringify({ instance, repository, ...scope }),
     },
   } as const
 }
@@ -63,7 +77,7 @@ export class ChangeRequestUiObserver {
     targets: TaskChangeRequestTarget[],
     canRelease: (deviceId: string) => boolean = () => true
   ): void {
-    this.desired = new Set(targets.filter(selection).map(resourceKey))
+    this.desired = new Set(targets.filter(selection).map(changeRequestObserverKey))
     for (const [key, activation] of this.activations) {
       if (this.desired.has(key)) continue
       this.activations.delete(key)
@@ -74,14 +88,14 @@ export class ChangeRequestUiObserver {
   }
 
   has(target: TaskChangeRequestTarget): boolean {
-    return this.activations.has(resourceKey(target))
+    return this.activations.has(changeRequestObserverKey(target))
   }
 
   async read(
     target: TaskChangeRequestTarget,
     force: boolean
   ): Promise<TaskChangeRequestSnapshot | null> {
-    const key = resourceKey(target)
+    const key = changeRequestObserverKey(target)
     const selected = selection(target)
     if (!selected || !this.desired.has(key)) return null
     let activation = this.activations.get(key)
@@ -135,7 +149,7 @@ export class ChangeRequestUiObserver {
         const snapshot = this.project(target, activation, selected, output)
         activation.started = true
         if (!force) return snapshot
-        if (this.activations.get(resourceKey(target)) !== activation) return snapshot
+        if (this.activations.get(changeRequestObserverKey(target)) !== activation) return snapshot
       }
       const output = await this.command(target, activation, force ? 'refresh' : 'renew')
       return this.project(target, activation, selected, output)
@@ -226,10 +240,12 @@ export class ChangeRequestUiObserver {
       !profile[1] ||
       JSON.stringify(observation.source) !== JSON.stringify(source) ||
       (activation.source && activation.source !== JSON.stringify(source)) ||
-      !Array.isArray(objects) ||
-      !objects.some(
-        object => object?.entityKind === 'change_request' && object.number === selected.number
-      )
+      (selected.number
+        ? !Array.isArray(objects) ||
+          !objects.some(
+            object => object?.entityKind === 'change_request' && object.number === selected.number
+          )
+        : source.branch !== target.branch)
     )
       throw new Error('connection_observation_invalid_response')
     activation.observerId = observer.id
@@ -240,14 +256,17 @@ export class ChangeRequestUiObserver {
           state =>
             state?.kind === 'change_request' &&
             state.provider === selected.platform &&
-            state.topicId === target.changeRequestUrl &&
+            typeof state.topicId === 'string' &&
+            (!target.changeRequestUrl || state.topicId === target.changeRequestUrl) &&
             typeof state.observedAt === 'string' &&
             Number.isFinite(Date.parse(state.observedAt))
         )
       : undefined
-    const changeRequest = state
-      ? observedChangeRequest(selected.platform, state.data, target.changeRequestUrl!)
+    const projected = state
+      ? observedChangeRequest(selected.platform, state.data, state.topicId)
       : null
+    const changeRequest =
+      projected && (selected.number || projected.headBranch === target.branch) ? projected : null
     const error =
       typeof observation.errorCode === 'string'
         ? observation.errorCode
@@ -263,7 +282,13 @@ export class ChangeRequestUiObserver {
       target,
       changeRequest,
       provider: selected.platform,
-      lookupState: changeRequest ? 'found' : error ? lookupFailure(error) : undefined,
+      lookupState: changeRequest
+        ? 'found'
+        : error
+          ? lookupFailure(error)
+          : lastSuccess && !selected.number
+            ? 'not_found'
+            : undefined,
       fetchedAt: state?.observedAt ?? new Date(0).toISOString(),
       stale: Boolean(error),
       error,

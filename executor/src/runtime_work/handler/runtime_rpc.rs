@@ -8,12 +8,7 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
     fn connection_service_owner<'a>(
         &'a self,
     ) -> Pin<Box<dyn Future<Output = Result<i64, AppIpcError>> + Send + 'a>> {
-        Box::pin(async move {
-            let user = self.runtime_account_identity().await?;
-            user["id"].as_i64().filter(|id| *id > 0).ok_or_else(|| {
-                AppIpcError::new("permission_denied", "Connected account identity is invalid")
-            })
-        })
+        Box::pin(self.initialize_connection_service_owner())
     }
 
     fn handle_connection_read_rpc<'a>(

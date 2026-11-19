@@ -842,6 +842,7 @@ fn coordination_manager_round_retains_enabling_identity_instead_of_device_accoun
         backend_url: "https://backend.example.com".into(),
         socket_url: "wss://backend.example.com".into(),
         auth_token: "device-owner-session".into(),
+        authenticated_user_id: None,
         runtime_auth_token: "device-owner-runtime".into(),
     })));
     let handler =

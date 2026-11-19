@@ -403,8 +403,7 @@ impl RuntimeWorkRpcHandler {
         if !signal["deliveryId"].is_null()
             && matches!(record["status"].as_str(), Some("pending" | "resuming_goal"))
         {
-            self.collect_conversation_subscription(&id, record, "cloud-delivery")
-                .await?;
+            self.collect_conversation_subscription(&id, record).await?;
         }
         let record = event_store::read(
             &self.event_subscription_path(),
