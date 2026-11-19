@@ -118,6 +118,7 @@ export interface ComponentUpdateManagerOptions {
   retryDelay?: (attempt: number) => Promise<void>
   log?: (event: Record<string, unknown>) => void
   validateExecutor?: (path: string) => Promise<void>
+  deferBundledExecutorValidation?: boolean
 }
 
 export class ComponentUpdateManager {
@@ -140,10 +141,12 @@ export class ComponentUpdateManager {
   } | null = null
   private packaged: PackagedComponentManifest | null = null
   private readonly validateExecutor: (path: string) => Promise<void>
+  private readonly deferBundledExecutorValidation: boolean
   private usingPackagedFallback = false
 
   constructor(options: ComponentUpdateManagerOptions) {
     this.validateExecutor = options.validateExecutor ?? (async () => undefined)
+    this.deferBundledExecutorValidation = options.deferBundledExecutorValidation ?? false
     this.log = event => options.log?.({ stageId: this.activeStage?.id, ...event })
     this.resourcesRoot = resolve(options.resourcesRoot)
     this.root = join(resolve(options.dataDirectory), 'managed-components')
@@ -196,13 +199,18 @@ export class ComponentUpdateManager {
     const current = state.current?.appVersion === this.currentAppVersion ? state.current : undefined
     let paths: ComponentPaths
     try {
-      paths = await this.checkedPaths(packaged, current)
+      paths =
+        current || !this.deferBundledExecutorValidation
+          ? await this.checkedPaths(packaged, current)
+          : await this.resolvePaths(packaged)
     } catch (error) {
       if (!current) throw error
       console.error('[components] active component set is invalid; using packaged resources', error)
       // A local build may reject components that another installed build still needs.
       this.usingPackagedFallback = true
-      return this.checkedPaths(packaged)
+      return this.deferBundledExecutorValidation
+        ? this.resolvePaths(packaged)
+        : this.checkedPaths(packaged)
     }
     if (state !== saved) await this.writeState(state)
     return paths

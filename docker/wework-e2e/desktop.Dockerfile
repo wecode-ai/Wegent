@@ -89,3 +89,10 @@ RUN node --version \
   && cargo --version \
   && fc-match --format '%{family}\n' 'sans-serif:lang=zh-cn' \
   && fc-list :lang=zh family | grep -F 'Noto Sans CJK'
+
+# Share native test tools across every shard through the dependency image.
+RUN sed -i 's#http://mirrors.edge.kernel.org/ubuntu#https://mirrors.edge.kernel.org/ubuntu#g' \
+      /etc/apt/sources.list.d/ubuntu.sources \
+  && apt-get -o APT::Update::Error-Mode=any update \
+  && apt-get install -y --no-install-recommends gnome-keyring libsecret-tools xdotool \
+  && rm -rf /var/lib/apt/lists/*
