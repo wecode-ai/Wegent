@@ -160,10 +160,53 @@ mod tests {
         router_client_with_child(super::super::tests::spawn_idle_app_server_child()).await
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn shared_transport_expires_mcp_approval_without_a_turn_observer() {
+        let mut command = Command::new("sh");
+        command.args(["-c", r#"
+            IFS= read -r start || exit 1
+            printf '%s\n' '{"id":17,"method":"mcpServer/elicitation/request","params":{"threadId":"thread","turnId":"turn","mode":"form","serverName":"node_repl","requestedSchema":{"type":"object","properties":{}},"_meta":{"codex_approval_kind":"mcp_tool_call"},"expiresAtUnixMs":1}}'
+            IFS= read -r reply || exit 1
+            if test "$reply" != '{"id":17,"result":{"action":"cancel"}}'; then exit 2; fi
+            printf '%s\n' '{"method":"turn/completed","params":{"threadId":"thread","turn":{"id":"turn","status":"completed"}}}'
+            cat >/dev/null
+        "#]);
+        configure_codex_app_server_process_group(&mut command);
+        let child = command
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let client = router_client_with_child(child.into()).await;
+        let transport = client.existing_process().await.unwrap();
+        let mut runtime = transport.notifications.subscribe_runtime();
+        transport
+            .write_message(json!({"method":"test/start"}))
+            .await
+            .unwrap();
+        timeout(Duration::from_secs(3), async {
+            while let Some(message) = runtime.recv().await {
+                if message["method"] == "turn/completed" {
+                    assert_eq!(message["params"]["turn"]["id"], "turn");
+                    return;
+                }
+            }
+            panic!("native process did not finish after MCP cancellation");
+        })
+        .await
+        .expect("an unanswered approval must not hold the native turn");
+        assert!(!transport
+            .answer_mcp_elicitation(&json!(17), json!({"action":"accept"}))
+            .await
+            .unwrap());
+    }
+
     async fn router_client_with_child(mut child: CodexAppServerChild) -> CodexAppServerClient {
         let mut client = CodexAppServerClient::new("auth-mode-concurrency");
         client.state = Arc::new(Mutex::new(CodexAppServerSharedState::default()));
-        let stdin = child.stdin.take().unwrap();
+        let stdin = Arc::new(Mutex::new(child.stdin.take().unwrap()));
         let stdout = child.stdout.take().unwrap();
         let mut state = client.state.lock().await;
         state.auth_mode = CodexAuthMode::WeworkRouter;
@@ -175,13 +218,16 @@ mod tests {
         );
         state.process = Some(CodexAppServerProcess {
             child,
-            stdin: Arc::new(Mutex::new(stdin)),
+            stdin: Arc::clone(&stdin),
             pending: Arc::clone(&pending),
             notifications: notifications.clone(),
             reader_task: tokio::spawn(read_persistent_codex_app_server_stdout(
                 CodexStdout::new(stdout, None),
-                pending,
-                notifications,
+                CodexAppServerHandle {
+                    stdin,
+                    pending,
+                    notifications,
+                },
             )),
         });
         drop(state);
