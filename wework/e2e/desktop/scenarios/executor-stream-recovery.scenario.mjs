@@ -132,6 +132,7 @@ async function waitForDroppedEvent(control, eventName, timeoutMs) {
 export function createDesktopScenario({
   captureScreenshot,
   uiTimeoutMs,
+  modelResponseTimeoutMs,
   workbenchReadyTimeoutMs,
   workspacePath,
   resultDir,
@@ -185,7 +186,7 @@ export function createDesktopScenario({
         new Promise((_, reject) =>
           setTimeout(
             () => reject(new Error('The executor stream recovery request was not received')),
-            uiTimeoutMs
+            modelResponseTimeoutMs
           )
         ),
       ])
