@@ -51,6 +51,15 @@ fn public_subscription(record: &Value) -> Value {
         "observation_id":record["observation_id"],"refresh_pending":record["refresh_pending"]==true,"handled_events":record["handled_events"],"resource_events":record["resource_events"],"resource_states":record["resource_states"]})
 }
 
+fn mark_cloud_cancellation(record: &mut Value) {
+    if record["status"] == "cancelled"
+        && (record["cloud_registration"].is_object() || record["cloud_subscription"].is_object())
+        && record["cloud_cancel_acknowledged"] != true
+    {
+        record["cloud_cancel_pending"] = json!(true);
+    }
+}
+
 fn event_can_continue_goal(record: &Value, goal: &Value) -> bool {
     record["waiting_goal"] == goal_identity(goal)
         && (goal["status"] == "blocked"
@@ -153,7 +162,7 @@ impl RuntimeWorkRpcHandler {
                     "[]".to_owned()
                 } else {
                     format!(
-                        "Change requests bound to this conversation: {}\nIf the task needs to wait for checks or merge, verify the current status and exact head SHA. Reuse a matching waiting subscription if present. Otherwise discover the exact resource and call subscribe_connection_events with wait_for_event:true. After arming, recheck once and yield the turn if still waiting. Do not sleep or poll.",
+                        "Change requests bound to this conversation: {}\nIf the task needs to wait for checks or merge, verify the current status. Reuse the PR/MR merge wait across head changes. If no matching wait exists, discover the exact resource and call subscribe_connection_events with wait_for_event:true. Provide the exact head SHA for checks or workflow runs. After arming, recheck once and yield the turn if still waiting. Do not sleep or poll.",
                         json!(urls)
                     )
                 };
@@ -211,18 +220,32 @@ impl RuntimeWorkRpcHandler {
     }
 
     fn save_event_subscription(&self, id: &str, record: &Value) -> Result<(), AppIpcError> {
+        self.save_event_subscription_replacing(id, record, &[])
+    }
+
+    fn save_event_subscription_replacing(
+        &self,
+        id: &str,
+        record: &Value,
+        superseded: &[&str],
+    ) -> Result<(), AppIpcError> {
         let mut persisted = record.clone();
-        if record["status"] == "cancelled"
-            && (record["cloud_registration"].is_object()
-                || record["cloud_subscription"].is_object())
-            && record["cloud_cancel_acknowledged"] != true
-        {
-            persisted["cloud_cancel_pending"] = json!(true);
-        }
+        let task = record["task_id"].as_str().unwrap_or_default();
+        mark_cloud_cancellation(&mut persisted);
+        let scope = if superseded.is_empty() {
+            event_store::Scope::Row("operations", id)
+        } else {
+            event_store::Scope::Task(task)
+        };
         let projected = event_store::update_and_read(
             &self.event_subscription_path(),
-            event_store::Scope::Row("operations", id),
+            scope,
             |state| {
+                for old_id in superseded {
+                    let old = &mut state["operations"][*old_id];
+                    old["status"] = json!("cancelled");
+                    mark_cloud_cancellation(old);
+                }
                 if state["operations"][id]["status"] == "cancelled"
                     && record["status"] != "cancelled"
                 {
@@ -239,7 +262,7 @@ impl RuntimeWorkRpcHandler {
                 state["operations"][id] = persisted;
                 Ok(())
             },
-            event_store::Scope::TaskProjection(record["task_id"].as_str().unwrap_or_default()),
+            event_store::Scope::TaskProjection(task),
         )?;
         let subscriptions = projected["operations"]
             .as_object()
@@ -325,15 +348,7 @@ impl RuntimeWorkRpcHandler {
             return Ok(json!({"subscription":public_subscription(&record)}));
         }
         let mut filter = conditions::resolve(&args)?;
-        // Existing subscriptions keep their stored predicate on an idempotent retry.
-        let conflict = if records
-            .get(&id)
-            .is_some_and(|record| record["match"] == filter)
-        {
-            None
-        } else {
-            conditions::split_github_merge(&args, &mut filter)
-        };
+        let conflict = conditions::split_github_merge(&args, &mut filter);
         let subscription = self
             .arm_event_subscription(&link, &records, &args, key, filter)
             .await?;
@@ -366,15 +381,37 @@ impl RuntimeWorkRpcHandler {
         } else if intent["source"].get("observeCurrentStatus").is_some() {
             return Err(invalid("Current Git status observation requires git_wait"));
         }
+        let mut migrated_key = None;
+        let merge = args["git_wait"] == "merge";
         if let Some(record) = records.get(&id) {
-            if record["intent"] != intent && record["intent"] != previous_intent {
+            if record["intent"] == intent || record["intent"] == previous_intent {
+                session::validate(record, link)?;
+                return Ok(public_subscription(record));
+            }
+            if !merge
+                || !conditions::legacy_merge_retry(&record["intent"], &intent, &previous_intent)
+            {
                 return Err(invalid(
                     "subscription_key already belongs to different subscription arguments",
                 ));
             }
             session::validate(record, link)?;
-            return Ok(public_subscription(record));
+            // Cloud registrations are immutable and keyed by the subscription key.
+            let replacement = format!("merge-wait-v2:{id}");
+            if let Some(migrated) = records.get(&self.subscription_id(task, &replacement)) {
+                if migrated["intent"] != intent {
+                    return Err(invalid("Merge wait replacement key already exists"));
+                }
+                session::validate(migrated, link)?;
+                return Ok(public_subscription(migrated));
+            }
+            if !conditions::same_merge_wait(record, &intent, &record["session"]) {
+                return Ok(public_subscription(record));
+            }
+            migrated_key = Some(replacement);
         }
+        let key = migrated_key.as_deref().unwrap_or(key);
+        let id = self.subscription_id(task, key);
         if args["continuation"].as_str().unwrap().len() > 16_384 {
             return Err(invalid("Continuation exceeds 16384 bytes"));
         }
@@ -387,16 +424,16 @@ impl RuntimeWorkRpcHandler {
                 ));
             }
         }
-        source["enabledAfter"] = json!(chrono::Utc::now().to_rfc3339());
-        source["policy"] = json!({"automatic":false,"askBeforeAct":true});
-        let provider = source["providerId"].as_str().unwrap().to_owned();
-        self.connection_call("validate", Some(&provider), source.clone())
-            .await?;
-        // Publish a consumer before maintenance may reclaim its new collector.
-        let _activation = self.connection_observation_activations.read().await;
-        let (observation_id, after_sequence, initial_checkpoint) =
-            self.attach_event_observation(&mut source).await?;
-        let goal = if intent["wait_for_event"] == true {
+        let merge_waits: Vec<_> = records
+            .iter()
+            .filter(|(_, record)| merge && conditions::same_merge_wait(record, &intent, &session))
+            .collect();
+        let wants_goal_wait = intent["wait_for_event"] == true;
+        let goal = if wants_goal_wait
+            || merge_waits
+                .iter()
+                .any(|(_, record)| !record["waiting_goal"].is_null())
+        {
             let response = self.get_task_goal(json!({"taskId":task})).await?;
             if response["accepted"] != true {
                 return Err(invalid("Cannot read the current Goal"));
@@ -425,7 +462,34 @@ impl RuntimeWorkRpcHandler {
                         }))
                 },
             )?;
-        let waiting_goal = (goal["status"] == "active" || already_waiting).then_some(identity);
+        let inherits_goal_wait = already_waiting
+            && merge_waits
+                .iter()
+                .any(|(_, record)| record["waiting_goal"] == identity);
+        let waiting_goal = (inherits_goal_wait
+            || (wants_goal_wait && (goal["status"] == "active" || already_waiting)))
+            .then_some(identity);
+        let mut superseded = Vec::new();
+        for (old_id, record) in merge_waits {
+            if migrated_key.is_none()
+                && record["match"] == intent["match"]
+                && record["continuation"] == intent["continuation"]
+                && record["waiting_goal"] == json!(waiting_goal)
+                && (!wants_goal_wait || record["wait_for_event"] == true)
+            {
+                return Ok(public_subscription(record));
+            }
+            superseded.push(old_id.as_str());
+        }
+        source["enabledAfter"] = json!(chrono::Utc::now().to_rfc3339());
+        source["policy"] = json!({"automatic":false,"askBeforeAct":true});
+        let provider = source["providerId"].as_str().unwrap().to_owned();
+        self.connection_call("validate", Some(&provider), source.clone())
+            .await?;
+        // Publish a consumer before maintenance may reclaim its new collector.
+        let _activation = self.connection_observation_activations.read().await;
+        let (observation_id, after_sequence, initial_checkpoint) =
+            self.attach_event_observation(&mut source).await?;
         let mut record = json!({"subscription_key":key,"task_id":task,"device_id":self.device_id,"session":session,
             "intent":intent,"source":source,"match":intent["match"],"continuation":intent["continuation"],
             "wait_for_event":intent["wait_for_event"],"observation_id":observation_id,"after_sequence":after_sequence,"initial_sequence":after_sequence,"status":if waiting_goal.is_some() { "preparing" } else { "armed" },
@@ -447,7 +511,11 @@ impl RuntimeWorkRpcHandler {
             record["cloud_registration"] = json!({"owner_id":owner["id"],"device_id":device,"subscription_id":cloud_id,"initial_checkpoint":initial_checkpoint});
             record["status"] = json!("preparing");
         }
-        self.save_event_subscription(&id, &record)?;
+        self.save_event_subscription_replacing(&id, &record, &superseded)?;
+        for old_id in superseded {
+            self.remove_queued_event_continuation(&records[old_id])
+                .await?;
+        }
         if record["status"] == "preparing" {
             if let Err(error) = self.prepare_event_subscription(&id, &mut record).await {
                 record["error_code"] = json!(error.code);

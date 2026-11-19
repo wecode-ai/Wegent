@@ -149,18 +149,19 @@ fn github_merge_wait_captures_ci_failure_and_later_conflict_independently() {
     ));
 
     let different_head = "b".repeat(40);
-    let unrelated = event(
-        "other-head-conflict",
+    let mut unrelated = event(
+        "other-pr-conflict",
         "FAILURE",
         "CONFLICTING",
         &different_head,
     );
+    unrelated["topicId"] = json!("https://github.com/org/repo/pull/2");
     assert!(!capture_consumers(
         &mut state,
         "shared",
         &observation(3, unrelated)
     ));
-    let conflict = event("later-conflict", "FAILURE", "CONFLICTING", &sha);
+    let conflict = event("later-conflict", "PENDING", "CONFLICTING", &different_head);
     assert!(capture_consumers(
         &mut state,
         "shared",

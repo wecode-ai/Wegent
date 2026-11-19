@@ -253,3 +253,107 @@ async fn verify_preexisting_pr_failure_delivery() {
         .unwrap();
     server.abort();
 }
+
+#[test]
+fn merge_subscription_replaces_legacy_heads_and_reuses_the_pr_wait() {
+    let _lock = crate::test_env::lock();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+            let root = tempfile::tempdir().unwrap();
+            let _env = EnvGuard::home(root.path().to_str().unwrap());
+            let handler = RuntimeWorkRpcHandler::new("control-test-device", "/bin/false");
+            let link = seed(&handler, "caller");
+            let app = axum::Router::new().route(
+                "/wework/connections/v1/rpc",
+                axum::routing::post(|axum::Json(body): axum::Json<Value>| async move {
+                    let result = match body["method"].as_str().unwrap() {
+                        "validate" => body["input"].clone(),
+                        "initializeObservation" => json!({"source":body["input"],"checkpoint":{}}),
+                        method => panic!("Unexpected connection method: {method}"),
+                    };
+                    axum::Json(json!({"ok":true,"result":result}))
+                }),
+            );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            handler
+                .configure_connection_host(json!({
+                    "url":format!("http://{address}/wework/connections/v1/rpc"),
+                    "token":"a".repeat(64)
+                }))
+                .unwrap();
+
+            let mut request = json!({
+                "subscription_key":"legacy-a", "git_wait":"merge",
+                "source":{"providerId":"@wegent/dsh-connection-git/github",
+                    "profile":"[\"https://github.com\",\"7\"]", "kind":"repository","id":"42",
+                    "name":"org/repo","monitoredObjects":[{"entityKind":"change_request","number":1}]},
+                "continuation":"Check whether the PR can be merged"
+            });
+            let mut source = request["source"].clone();
+            source["observeCurrentStatus"] = json!(true);
+            let session = session::binding(&link).unwrap();
+            for (key, sha) in [("legacy-a", "a".repeat(40)), ("legacy-b", "b".repeat(40))] {
+                let mut filter = conditions::resolve(&request).unwrap();
+                filter["/external/payload/headRefOid"] = json!(sha);
+                handler.save_event_subscription(&handler.subscription_id("caller", key), &json!({
+                    "subscription_key":key, "task_id":"caller", "session":session, "source":source,
+                    "match":filter, "status":"armed",
+                    "intent":{"source":source,"match":filter,"continuation":request["continuation"],"wait_for_event":false},
+                    "cloud_registration":{"subscription_id":key}
+                })).unwrap();
+            }
+            let mut checks = request.clone();
+            checks["subscription_key"] = json!("checks");
+            checks["git_wait"] = json!("checks");
+            checks["head_sha"] = json!("b".repeat(40));
+            handler.control_operation(&context("caller"), "subscribe_connection_events", checks)
+                .await.unwrap();
+
+            let first = handler.control_operation(
+                &context("caller"), "subscribe_connection_events", request.clone()
+            ).await.unwrap();
+            assert_eq!(first["subscription"]["status"], "armed");
+            assert_ne!(first["subscription"]["subscription_key"], "legacy-a");
+            let retry = handler.control_operation(
+                &context("caller"), "subscribe_connection_events", request.clone()
+            ).await.unwrap();
+            assert_eq!(retry, first);
+            request["subscription_key"] = json!("another-key");
+            request["head_sha"] = json!("c".repeat(40));
+            let reused = handler.control_operation(
+                &context("caller"), "subscribe_connection_events", request.clone()
+            ).await.unwrap();
+            assert_eq!(reused, first);
+
+            request["continuation"] = json!("Report results without merging");
+            let updated = handler.control_operation(
+                &context("caller"), "subscribe_connection_events", request
+            ).await.unwrap();
+            assert_eq!(updated["subscription"]["continuation"], "Report results without merging");
+            assert_eq!(updated["subscription"]["status"], "armed");
+
+            let states = event_store::read(
+                &handler.event_subscription_path(), event_store::Scope::Task("caller"),
+                |state| Ok(state["operations"].clone()),
+            ).unwrap();
+            assert_eq!(states.as_object().unwrap().len(), 7);
+            let old_conflict_key = first["conflict_subscription"]["subscription_key"].as_str().unwrap();
+            let new_conflict_key = updated["conflict_subscription"]["subscription_key"].as_str().unwrap();
+            assert_eq!(states[&handler.subscription_id("caller", old_conflict_key)]["status"], "cancelled");
+            assert_eq!(states[&handler.subscription_id("caller", new_conflict_key)]["status"], "armed");
+            let first_key = first["subscription"]["subscription_key"].as_str().unwrap();
+            assert_eq!(states[&handler.subscription_id("caller", first_key)]["status"], "cancelled");
+            for key in ["legacy-a", "legacy-b"] {
+                let retired = &states[&handler.subscription_id("caller", key)];
+                assert_eq!(retired["status"], "cancelled");
+                assert_eq!(retired["cloud_cancel_pending"], true);
+            }
+            assert_eq!(states[&handler.subscription_id("caller", "checks")]["status"], "armed");
+            server.abort();
+        });
+}
