@@ -197,12 +197,16 @@ async function verifyHttpQuestionAttachment(cloud, request, address, fixture, ti
   const transcript = () =>
     request('/api/runtime-work/transcript', { ...address, limit: 100, includeFullContent: true })
   const question = value =>
-    runtimeTranscriptBlocks(value).find(
-      block =>
-        block.render_payload?.kind === 'request_user_input' &&
-        block.render_payload.questions?.some(item => item.question === fixture.prompt) &&
-        block.render_payload.interactionStatus === 'pending'
-    )?.render_payload
+    runtimeTranscriptBlocks(value).find(block => {
+      const payload = block.render_payload
+      return (
+        payload?.kind === 'request_user_input' &&
+        payload.questions?.some(item => item.question === fixture.prompt) &&
+        (fixture.async
+          ? payload.delivery === 'async' && payload.response == null
+          : payload.interactionStatus === 'pending')
+      )
+    })?.render_payload
   const pending = await until(
     transcript,
     value => Boolean(question(value)),
@@ -210,15 +214,14 @@ async function verifyHttpQuestionAttachment(cloud, request, address, fixture, ti
     timeoutMs
   )
   const payload = question(pending)
-  assert.ok(
-    payload.requestId !== undefined && payload.itemId && payload.interactionScope,
-    'HTTP answers require the real native question identity'
-  )
+  assert.ok(payload.itemId && payload.interactionScope, 'HTTP answers require question identity')
   if (fixture.async) {
     assert.equal(payload.delivery, 'async')
     // The answer starts a new execution after the native question turn settles.
     const waiting = await cloud.waitForRuntimeTask(address)
     assert.equal(waiting.status, 'done')
+  } else {
+    assert.ok(payload.requestId !== undefined, 'Blocking answers require the native request ID')
   }
   const id = await uploadQuestionFile(cloud, fixture, timeoutMs)
   const sent = await request('/api/runtime-work/send', {
@@ -226,7 +229,7 @@ async function verifyHttpQuestionAttachment(cloud, request, address, fixture, ti
     message: 'Review the remote brief',
     attachmentIds: [id],
     requestUserInputResponse: {
-      requestId: payload.requestId,
+      ...(!fixture.async ? { requestId: payload.requestId } : {}),
       itemId: payload.itemId,
       interactionScope: payload.interactionScope,
       ...(fixture.async ? { delivery: 'async' } : {}),
