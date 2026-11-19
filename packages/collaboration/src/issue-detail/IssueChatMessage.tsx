@@ -286,7 +286,15 @@ export function IssueChatMessage({
     : undefined
   const openExecution =
     onOpenExecution ?? (allowBackendExecutionFallback ? openBackendExecution : undefined)
-  if (compact && plain && isManager && !isManagerStatusComment && !message.replyToMessageId) {
+  const hasManagerOutput = isSucceeded && text.trim().length > 0
+  if (
+    compact &&
+    plain &&
+    isManager &&
+    !isManagerStatusComment &&
+    !hasManagerOutput &&
+    !message.replyToMessageId
+  ) {
     const presentation = managerActivityPresentation(
       t,
       message.metadata,

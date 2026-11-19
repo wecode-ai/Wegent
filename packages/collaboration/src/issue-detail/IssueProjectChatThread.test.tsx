@@ -368,6 +368,39 @@ describe("shared Issue threads", () => {
     ).toHaveLength(1);
   });
 
+  it("renders completed manager output as an Issue comment", () => {
+    act(() =>
+      root.render(
+        <IssueProjectChatThread
+          thread={{
+            root: {
+              ...message,
+              status: "completed",
+              content: "The manager reviewed the implementation.",
+              metadata: {
+                dispatch_role: "manager",
+                activity_type: "manager_execution",
+              },
+            },
+            replies: [],
+          }}
+          canComment
+          send={vi.fn()}
+          translate={translate}
+          executions={[]}
+        />,
+      ),
+    );
+
+    const comment = container.querySelector(
+      '[data-testid="collaboration-chat-message-root"]',
+    );
+    expect(comment?.textContent).toContain(
+      "The manager reviewed the implementation.",
+    );
+    expect(comment?.textContent).not.toContain("已完成本轮评估");
+  });
+
   it("renders an optional manager status comment as comment content", () => {
     act(() =>
       root.render(
