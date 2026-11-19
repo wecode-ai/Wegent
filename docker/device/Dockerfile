@@ -393,12 +393,23 @@ case "${WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED-true}" in
         if [ "$WEGENT_EXECUTOR_HOME" = "$LEGACY_EXECUTOR_HOME" ]; then
             storage_roots+=("$LEGACY_EXECUTOR_HOME")
         fi
+        resolved_executor_home="$(realpath -m -- "$WEGENT_EXECUTOR_HOME")"
+        executor_home_persisted=false
         for storage_root in "${storage_roots[@]}"; do
             if ! mountpoint -q "$storage_root"; then
                 echo "Verified Worktree persistence requires a volume at $storage_root" >&2
                 exit 1
             fi
+            resolved_storage_root="$(realpath -m -- "$storage_root")"
+            case "$resolved_executor_home/" in
+                "$resolved_storage_root/"*) executor_home_persisted=true ;;
+            esac
         done
+        # Resolve leaf and ancestor links before accepting persisted storage.
+        if [ "$executor_home_persisted" != true ]; then
+            echo "Verified Worktree persistence requires Executor Home inside a mounted storage root" >&2
+            exit 1
+        fi
         if [ -z "${WEGENT_EXECUTOR_HOME_ID:-}" ]; then
             echo "Verified Worktree persistence requires WEGENT_EXECUTOR_HOME_ID" >&2
             exit 1

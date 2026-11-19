@@ -47,6 +47,12 @@ print(
     command.chmod(0o755)
 
 
+def _executor_home(tmp_path: Path) -> Path:
+    executor_home = tmp_path / "data-root" / "workbench" / "executor"
+    executor_home.parent.mkdir(parents=True, exist_ok=True)
+    return executor_home
+
+
 def _run_entrypoint(
     *,
     tmp_path: Path,
@@ -159,7 +165,7 @@ def _run_entrypoint(
 def test_device_entrypoint_defaults_codex_homes_to_persisted_executor_home(
     tmp_path, legacy_executor_home
 ):
-    executor_home = tmp_path / "executor-home"
+    executor_home = _executor_home(tmp_path)
     expected_home = tmp_path / "legacy-home" if legacy_executor_home else executor_home
 
     result = _run_entrypoint(
@@ -177,7 +183,7 @@ def test_device_entrypoint_defaults_codex_homes_to_persisted_executor_home(
 
 
 def test_device_entrypoint_uses_canonical_legacy_home_for_existing_volume(tmp_path):
-    executor_home = tmp_path / "executor-home"
+    executor_home = _executor_home(tmp_path)
     legacy_home = tmp_path / "legacy-home"
 
     result = _run_entrypoint(
@@ -199,7 +205,7 @@ def test_device_entrypoint_uses_canonical_legacy_home_for_existing_volume(tmp_pa
 def test_device_entrypoint_starts_executor_from_selected_home(
     tmp_path: Path, legacy_executor_home: bool
 ) -> None:
-    executor_home = tmp_path / "executor-home"
+    executor_home = _executor_home(tmp_path)
     active_home = tmp_path / "legacy-home" if legacy_executor_home else executor_home
     active_bin = active_home / "bin"
     active_bin.mkdir(parents=True)
@@ -250,7 +256,7 @@ def test_device_entrypoint_preserves_explicit_codex_homes(
 ):
     result = _run_entrypoint(
         tmp_path=tmp_path,
-        executor_home=tmp_path / "executor-home",
+        executor_home=_executor_home(tmp_path),
         home_id="device-stable-1",
         codex_homes=codex_homes,
     )
@@ -293,7 +299,7 @@ def test_device_entrypoint_rejects_wrong_volume_and_multiple_writers():
 
 
 def test_verified_worktree_persistence_requires_a_stable_home_identity(tmp_path):
-    executor_home = tmp_path / "executor-home"
+    executor_home = _executor_home(tmp_path)
 
     missing_identity = _run_entrypoint(
         tmp_path=tmp_path,
@@ -320,7 +326,7 @@ def test_verified_worktree_persistence_requires_a_stable_home_identity(tmp_path)
 
 
 def test_device_entrypoint_rejects_workspace_root_escape(tmp_path):
-    executor_home = tmp_path / "executor-home"
+    executor_home = _executor_home(tmp_path)
 
     escaped = _run_entrypoint(
         tmp_path=tmp_path,
@@ -338,7 +344,7 @@ def test_device_entrypoint_preserves_home_across_instance_rebuild_and_rejects_re
     tmp_path,
     linked_home,
 ):
-    executor_home = tmp_path / "executor-home"
+    executor_home = _executor_home(tmp_path)
     if linked_home:
         active_home = tmp_path / "data-root" / "homes" / "device-a"
         active_home.mkdir(parents=True)
@@ -386,7 +392,7 @@ def test_device_entrypoint_preserves_home_across_instance_rebuild_and_rejects_re
 def test_device_entrypoint_requires_original_volume_for_legacy_home_link(
     tmp_path: Path, legacy_volume_mounted: bool
 ) -> None:
-    executor_home = tmp_path / "executor-home"
+    executor_home = _executor_home(tmp_path)
     legacy_home = tmp_path / "legacy-home"
     if legacy_volume_mounted:
         legacy_home.mkdir()
@@ -413,7 +419,10 @@ def test_device_entrypoint_requires_original_volume_for_legacy_home_link(
         assert result.returncode != 0
         assert "requires its original legacy volume" in result.stderr
         assert not legacy_home.exists()
-        assert not (tmp_path / "data-root").exists()
+        assert set((tmp_path / "data-root").rglob("*")) == {
+            executor_home.parent,
+            executor_home,
+        }
     assert executor_home.is_symlink()
     assert executor_home.resolve() == legacy_home
 
@@ -421,7 +430,7 @@ def test_device_entrypoint_requires_original_volume_for_legacy_home_link(
 def test_device_entrypoint_rejects_conflicting_home_link_without_mutating_data(
     tmp_path: Path,
 ) -> None:
-    executor_home = tmp_path / "executor-home"
+    executor_home = _executor_home(tmp_path)
     linked_home = tmp_path / "data-root" / "homes" / "device-a"
     legacy_home = tmp_path / "legacy-home"
     for home in (linked_home, legacy_home):
@@ -448,10 +457,59 @@ def test_device_entrypoint_rejects_conflicting_home_link_without_mutating_data(
     assert not (tmp_path / "codex-homes").exists()
 
 
+@pytest.mark.parametrize(
+    ("target_name", "link_parent", "persistence_verified"),
+    [
+        ("unmounted", False, "true"),
+        ("data-root-extra", False, "true"),
+        ("unmounted", True, "true"),
+        ("unmounted", False, "false"),
+    ],
+)
+def test_device_entrypoint_verifies_resolved_home_storage_before_writing(
+    tmp_path: Path, target_name: str, link_parent: bool, persistence_verified: str
+) -> None:
+    executor_home = _executor_home(tmp_path)
+    data_root = tmp_path / "data-root"
+    target_root = tmp_path / target_name
+    linked_home = target_root / "executor" if link_parent else target_root
+    linked_home.mkdir(parents=True)
+    for root in (data_root, linked_home):
+        (root / ".executor-home-id").write_text("device-stable-1")
+        (root / "persisted-session").write_text("original-session")
+    link = executor_home.parent if link_parent else executor_home
+    if link_parent:
+        link.rmdir()
+    link.symlink_to(target_root, target_is_directory=True)
+    entries = {root: set(root.rglob("*")) for root in (data_root, target_root)}
+
+    result = _run_entrypoint(
+        tmp_path=tmp_path,
+        executor_home=executor_home,
+        home_id="device-stable-1",
+        persistence_verified=persistence_verified,
+    )
+
+    assert link.is_symlink()
+    assert executor_home.resolve() == linked_home
+    for root in (data_root, linked_home):
+        assert (root / ".executor-home-id").read_text() == "device-stable-1"
+        assert (root / "persisted-session").read_text() == "original-session"
+    if persistence_verified == "true":
+        assert result.returncode != 0
+        assert "Executor Home inside a mounted storage root" in result.stderr
+        for root, original_entries in entries.items():
+            assert set(root.rglob("*")) == original_entries
+        assert not (tmp_path / "codex-homes").exists()
+    else:
+        assert result.returncode == 0, result.stderr
+        assert (linked_home / "runtime-work").is_dir()
+
+
 def test_device_entrypoint_rejects_missing_persistent_mount(tmp_path):
     result = _run_entrypoint(
         tmp_path=tmp_path,
-        executor_home=tmp_path / "executor-home",
+        executor_home=_executor_home(tmp_path),
         home_id="device-stable-1",
         volume_mounted=False,
     )
@@ -465,7 +523,7 @@ def test_device_entrypoint_rejects_data_volume_from_another_device(tmp_path):
     (data_root / ".executor-home-id").write_text("another-device")
     result = _run_entrypoint(
         tmp_path=tmp_path,
-        executor_home=tmp_path / "executor-home",
+        executor_home=_executor_home(tmp_path),
         home_id="device-stable-1",
     )
     assert result.returncode != 0
@@ -474,7 +532,7 @@ def test_device_entrypoint_rejects_data_volume_from_another_device(tmp_path):
 
 
 def test_device_entrypoint_preserves_explicit_legacy_workspace(tmp_path):
-    executor_home = tmp_path / "executor-home"
+    executor_home = _executor_home(tmp_path)
     legacy_workspace = executor_home / "workspace"
     legacy_workspace.mkdir(parents=True)
     sentinel = legacy_workspace / "historical-worktree"
@@ -492,7 +550,7 @@ def test_device_entrypoint_preserves_explicit_legacy_workspace(tmp_path):
 def test_project_override_cannot_escape_persistent_workspace(tmp_path):
     result = _run_entrypoint(
         tmp_path=tmp_path,
-        executor_home=tmp_path / "executor-home",
+        executor_home=_executor_home(tmp_path),
         home_id="device-stable-1",
         projects_root=tmp_path / "unpersisted-projects",
     )
