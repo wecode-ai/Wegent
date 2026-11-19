@@ -319,6 +319,29 @@ def test_manager_public_reply_hides_the_dispatch_envelopes_copy(group_scenario):
     assert next(row for row in comments if row["id"] == s.root.message_id)["body"] == ""
 
 
+def test_manager_public_reply_reuses_an_identical_published_status_comment(
+    group_scenario,
+):
+    s = group_scenario
+    s.root.runtime_task_id = f"{s.execution.runtime_task_id}-manager-initial"
+    s.root.content = "Ready for review"
+    s.db.commit()
+    reply = publish_collaboration_reply(
+        s.db,
+        user_id=s.owner.id,
+        project_id=str(s.project.id),
+        item_id=s.issue.id,
+        body=s.root.content,
+        identity=CollaborationPublicReply(
+            dispatch_id="group-dispatch-1",
+            device_id=s.execution.runtime_device_id,
+            task_id=s.root.runtime_task_id,
+            message_id="manager-status-echo",
+        ),
+    )
+    assert reply.message_id == s.root.message_id
+
+
 @pytest.mark.asyncio
 async def test_two_public_threads_guide_one_active_session_and_keep_their_replies(
     member_scenario,

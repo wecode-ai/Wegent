@@ -201,6 +201,31 @@ def publish_collaboration_reply(
                 409, "The public message identity has another reply target"
             )
         return public_reply_view(db, existing)
+    if not member_activity and not reply.reply_to_message_id:
+        status_comments = (
+            db.query(ProjectChatMessage)
+            .filter_by(
+                project_id=project_id,
+                task_id=item_id,
+                agent_id=agent_id,
+                runtime_task_id=identity.task_id,
+                content=body.strip(),
+            )
+            .filter(
+                loop_datetime_is_unset(ProjectChatMessage.deleted_at),
+                ProjectChatMessage.metadata_json["activity_type"].as_string()
+                == "manager_status_comment",
+                ProjectChatMessage.metadata_json["dispatch_id"].as_string()
+                == identity.dispatch_id,
+            )
+        )
+        if activity is not None:
+            status_comments = status_comments.filter(
+                ProjectChatMessage.id > activity.id
+            )
+        status_comment = status_comments.order_by(ProjectChatMessage.id.desc()).first()
+        if status_comment is not None:
+            return public_reply_view(db, status_comment)
     message_id = str(uuid.uuid4())
     row = ProjectChatMessage(
         message_id=message_id,
