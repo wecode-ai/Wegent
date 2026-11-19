@@ -184,7 +184,7 @@ args = ["<absolute fixture path>", "<absolute evidence path>"]
 default_tools_approval_mode = "approve"
 ```
 
-Do not change the base configuration to granular just to pass this test. After the user enables Full access in the UI, Executor must override `thread/start`, `thread/resume`, `thread/fork`, and `turn/start` with a granular policy that disables execution-safety approvals while preserving `mcp_elicitations: true`.
+Do not change the base configuration to granular just to pass this test. After the user enables Full access in the UI, Executor must override `thread/start`, `thread/resume`, `thread/fork`, and `turn/start` with a granular policy that enables `sandbox_approval: true` and preserves `mcp_elicitations: true`.
 
 ### Model and Protocol Steps
 
