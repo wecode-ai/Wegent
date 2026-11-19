@@ -34,7 +34,7 @@ export function createGuidedReplies({
   const answerAAllowed = new Promise(resolve => {
     releaseAnswerA = resolve
   })
-  let starts = 0
+  let nativeTurns = 0
 
   function toolEvents(body, toolName, toolCallId, argumentsValue) {
     return mcpToolRequestEvents(body, {
@@ -46,8 +46,8 @@ export function createGuidedReplies({
   }
 
   return {
-    get starts() {
-      return starts
+    get nativeTurns() {
+      return nativeTurns
     },
     async modelEvents(body, requestText, scope, listComments) {
       if (!requestText.includes(firstQuestion)) return null
@@ -56,7 +56,6 @@ export function createGuidedReplies({
       }
       if (!requestContainsToolOutput(body, listCall)) {
         if (!requestContainsToolOutput(body, `${listCall}-search`)) {
-          starts += 1
           enterFirstTurn()
           await listAllowed
         }
@@ -75,18 +74,29 @@ export function createGuidedReplies({
         body: secondDone ? firstAnswer : secondAnswer,
       })
     },
-    async verify({ control, reply, firstCard, secondCard, executorLog, listComments, timeoutMs }) {
+    async verify({
+      control,
+      reply,
+      firstCard,
+      secondCard,
+      executorLog,
+      memberTaskId,
+      listComments,
+      timeoutMs,
+    }) {
       const offset = (await readFile(executorLog, 'utf8')).length
       try {
         await reply(firstCard, firstQuestion)
         await waitForPromise(firstTurn, timeoutMs, 'A 楼回复没有启动原成员会话')
         await reply(secondCard, secondQuestion)
-        await waitForValue(
-          async () =>
-            (await readFile(executorLog, 'utf8'))
-              .slice(offset)
-              .includes('runtime guidance accepted'),
-          Boolean,
+        const taskRecords = async () =>
+          (await readFile(executorLog, 'utf8'))
+            .slice(offset)
+            .split('\n')
+            .filter(line => line.includes(`local_task_id=${memberTaskId} `))
+        const guidance = await waitForValue(
+          taskRecords,
+          lines => lines.find(line => line.includes('runtime guidance accepted')),
           'B 楼未被送入正在运行的主会话',
           timeoutMs
         )
@@ -123,6 +133,18 @@ export function createGuidedReplies({
           '未指定楼层的总结没有发到 Issue 主讨论',
           timeoutMs
         )
+        const records = await waitForValue(
+          taskRecords,
+          lines => lines.some(line => line.includes('method=turn/completed ')) && lines,
+          '原成员会话没有完成当前回合',
+          timeoutMs
+        )
+        const turns = records.filter(line => line.includes('method=turn/started '))
+        nativeTurns = turns.length
+        assert.equal(nativeTurns, 1, '两个评论发起了多个主会话轮次')
+        const guidedTurn = guidance.match(/(?:^| )turn_id=(\S+)/)?.[1]
+        assert.ok(guidedTurn, '原生引导没有返回回合 ID')
+        assert.equal(turns[0].match(/(?:^| )turn_id=(\S+)/)?.[1], guidedTurn)
         for (const [card, text] of [
           [firstCard, firstAnswer],
           [secondCard, secondAnswer],

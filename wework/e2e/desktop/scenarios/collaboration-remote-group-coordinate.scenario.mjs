@@ -955,6 +955,7 @@ export async function createDesktopScenario({
         firstCard: publicComment,
         secondCard: `cloud-task-activity-card-${secondPublicComment.id}`,
         executorLog: cloudEnvironment.remoteDockerExecutorRuntimeLogPath,
+        memberTaskId,
         listComments,
         timeoutMs: modelResponseTimeoutMs,
       })
@@ -971,7 +972,6 @@ export async function createDesktopScenario({
         modelResponseTimeoutMs
       )
       assert.equal(runtimeDeviceId(memberContinuation), REMOTE_DOCKER_DEVICE_ID)
-      assert.equal(guidedReplies.starts, 1, '两个评论发起了多个主会话轮次')
       assert.equal(childRequests, 2, '成员回复创建了新的协作分配任务')
       assert.equal(managerRuns, 2, '显式续聊不应重新运行协作调度')
       const bindingsAfterMemberReply = await request(`/api/v1/loop-items/${rootIssue.id}/tasks`)
@@ -997,7 +997,7 @@ export async function createDesktopScenario({
         issue: ISSUE,
         managerRuns,
         managerReplyRequests,
-        memberReplyRequests: guidedReplies.starts,
+        memberReplyNativeTurns: guidedReplies.nativeTurns,
         parentStage,
         projectId: project?.id ?? null,
         remoteDeviceId: remoteDevice?.device_id ?? null,
