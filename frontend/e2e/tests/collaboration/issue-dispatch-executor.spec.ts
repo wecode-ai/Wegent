@@ -266,7 +266,10 @@ test.describe('Collaboration group Executor coordination', () => {
       expect(modelToolNames(modelBodies).some(isNativeSubagentTool)).toBe(false)
 
       await page.reload()
-      await expect(page.getByTestId('cloud-todo-detail-status')).toHaveValue('in_review')
+      await expect(page.getByTestId('cloud-todo-detail-status')).toHaveAttribute(
+        'data-value',
+        'in_review'
+      )
       await expect(page.getByText(result, { exact: false }).first()).toBeVisible()
       await captureEvidence(page, testInfo, '02-direct-agent-in-review')
     } finally {
@@ -699,7 +702,10 @@ test.describe('Collaboration group Executor coordination', () => {
       )
 
       await page.reload()
-      await expect(page.getByTestId('cloud-todo-detail-status')).toHaveValue('in_review')
+      await expect(page.getByTestId('cloud-todo-detail-status')).toHaveAttribute(
+        'data-value',
+        'in_review'
+      )
       await expect(page.getByText(collectorTask, { exact: false }).first()).toBeVisible()
       await expect(page.getByText(reviewerTask, { exact: false }).first()).toBeVisible()
       await expect(page.getByText(synthesisTask, { exact: false }).first()).toBeVisible()

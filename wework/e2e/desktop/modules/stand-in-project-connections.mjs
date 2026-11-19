@@ -20,13 +20,13 @@ export async function verifyRemoteStandInProjectScope(control, localProjectId, c
   const local = `[data-testid="stand-in-connect-project-${localProjectId}"]`
   const cloud = `[data-testid="stand-in-connect-project-${cloudProjectId}"]`
   const all = '[data-testid="stand-in-all-projects"]'
-  await control.command('waitFor', `${all}:checked`)
+  await control.command('waitFor', `${all}[aria-checked="true"]`)
   await control.command('waitFor', local, { visible: false })
-  await control.command('waitFor', `${cloud}:checked`)
+  await control.command('waitFor', `${cloud}[aria-checked="true"]`)
   await control.command('click', all)
-  await control.command('waitFor', `${cloud}:not(:checked)`)
+  await control.command('waitFor', `${cloud}[aria-checked="false"]`)
   await control.command('click', all)
-  await control.command('waitFor', `${cloud}:checked`)
+  await control.command('waitFor', `${cloud}[aria-checked="true"]`)
   await control.command('waitFor', local, { visible: false })
   await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
 }
