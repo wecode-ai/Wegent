@@ -116,21 +116,32 @@ async fn run_jobs(
         in_flight.spawn(async move {
             match job {
                 DeviceJob::RegisterSync { user_id, device_id } => {
-                    sync_after_register(&state, &emitters, &callbacks, user_id, device_id).await;
-                }
-                DeviceJob::PluginRemoval { user_id, device_id } => {
-                    crate::plugins_installed::removal_sync::run_pending_removals(
-                        &state, user_id, &device_id,
+                    reconcile_device_capabilities(
+                        &state, &emitters, &callbacks, user_id, device_id,
                     )
                     .await;
+                }
+                DeviceJob::PluginRemoval { user_id, device_id } => {
+                    if crate::plugins_installed::removal_sync::has_pending_removals(
+                        &state, user_id, &device_id,
+                    )
+                    .await
+                    {
+                        // The authoritative snapshot removes inactive plugins and records
+                        // the device's acknowledgement using the existing sync protocol.
+                        reconcile_device_capabilities(
+                            &state, &emitters, &callbacks, user_id, device_id,
+                        )
+                        .await;
+                    }
                 }
             }
         });
     }
 }
 
-/// `_sync_global_capabilities_to_registered_device`.
-async fn sync_after_register(
+/// Reconcile a newly registered device or one with a persisted plugin removal.
+async fn reconcile_device_capabilities(
     state: &AppState,
     emitters: &SocketEmitters,
     callbacks: &CallbackIds,
@@ -159,7 +170,7 @@ async fn sync_after_register(
             user_id,
             device_id,
             error = result.error,
-            "capability sync after registration failed"
+            "device capability reconciliation failed"
         );
     }
     if include_plugins {

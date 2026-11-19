@@ -36,7 +36,7 @@ fn open(path: &Path) -> Result<Connection, AppIpcError> {
     std::fs::create_dir_all(path.parent().expect("event store parent")).map_err(storage)?;
     let mut connection = Connection::open(path).map_err(storage)?;
     connection
-        .busy_timeout(Duration::from_millis(250))
+        .busy_timeout(Duration::from_secs(5))
         .map_err(storage)?;
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))

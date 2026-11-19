@@ -14,6 +14,7 @@ import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 're
 import { CloudModelsSection, DisconnectedCloudModelsSection } from './CloudModelsSection'
 import { CodexOfficialModelsSection } from './CodexOfficialModelsSection'
 import { LocalCodexModelRow } from './LocalCodexModelRow'
+import { LocalCodexTransportSettings } from './LocalCodexTransportSettings'
 import { ProviderSettingsSection } from './ProviderSettingsSection'
 
 import { createDeviceApi } from '@/api/devices'
@@ -611,6 +612,7 @@ export function ModelSettingsPage({
                 void handleToggleLocalCodexSubscription(checked)
               }}
             />
+            {subscriptionLoaded && subscriptionEnabled && <LocalCodexTransportSettings />}
             <DisconnectedCloudCodexSyncSection
               status={localAuthStatus}
               accounts={localCodexAccounts}
@@ -677,6 +679,7 @@ export function ModelSettingsPage({
               void handleToggleLocalCodexSubscription(checked)
             }}
           />
+          {subscriptionLoaded && subscriptionEnabled && <LocalCodexTransportSettings />}
           {loading ? (
             <div className="py-8 text-center text-sm text-text-secondary">
               {t('common.loading', '加载中...')}
