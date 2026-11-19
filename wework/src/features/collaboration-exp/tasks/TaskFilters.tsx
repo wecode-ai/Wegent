@@ -41,10 +41,13 @@ export function TaskFilters({
   const controls = useRef<HTMLDivElement>(null)
   const searchInput = useRef<HTMLInputElement>(null)
   const clear = (field: 'status' | 'projectKey') => {
+    const remainingFilter = field === 'status' ? selectedProject : selectedStatus
+    const focusTarget =
+      searchOpen || remainingFilter
+        ? `collaboration-exp-filter-${field}`
+        : 'collaboration-exp-search-toggle'
     onChange({ ...value, [field]: '' })
-    controls.current
-      ?.querySelector<HTMLElement>(`[data-testid="collaboration-exp-filter-${field}"]`)
-      ?.focus()
+    controls.current?.querySelector<HTMLElement>(`[data-testid="${focusTarget}"]`)?.focus()
   }
   const selectedProject = projects.find(project => project.key === value.projectKey)
   const selectedStatus = statuses.find(status => status.value === value.status)
@@ -96,85 +99,92 @@ export function TaskFilters({
               onChange={event => onChange({ ...value, search: event.target.value })}
             />
           )}
-          <select
-            data-testid="collaboration-exp-filter-relevance"
-            aria-label={t('tasks.relevance')}
-            value={value.relevance}
-            onChange={event =>
-              onChange({ ...value, relevance: event.target.value as TaskFilterValue['relevance'] })
-            }
-            className="experience-task-relevance"
-          >
-            <option value="related">{t('tasks.related')}</option>
-            <option value="all">{t('tasks.allVisible')}</option>
-          </select>
-          <IssueDetailSearchableSelect
-            value={value.status}
-            options={[{ value: '', label: t('tasks.allStatuses') }, ...statuses]}
-            testId="collaboration-exp-filter-status"
-            accessibleLabel={t('tasks.status')}
-            searchPlaceholder={t('tasks.findStatus')}
-            emptyLabel={t('tasks.noMatches')}
-            className="experience-task-filter-select flex items-center gap-2"
-            triggerContent={
-              <>
-                <span className="min-w-0 flex-1 truncate text-left">
-                  {selectedStatus?.label ?? t('tasks.allStatuses')}
-                </span>
-                <ChevronDown size={14} className="shrink-0" aria-hidden="true" />
-              </>
-            }
-            onChange={status => onChange({ ...value, status })}
-          />
-          <IssueDetailSearchableSelect
-            value={value.projectKey}
-            options={[
-              { value: '', label: t('tasks.allProjects') },
-              ...projects.map(project => ({ value: project.key, label: project.name })),
-            ]}
-            testId="collaboration-exp-filter-projectKey"
-            accessibleLabel={t('tasks.project')}
-            searchPlaceholder={t('tasks.findProject')}
-            emptyLabel={t('tasks.noMatches')}
-            className="experience-task-filter-select flex items-center gap-2"
-            triggerContent={
-              <>
-                <span className="min-w-0 flex-1 truncate text-left">
-                  {selectedProject?.name ?? t('tasks.allProjects')}
-                </span>
-                <ChevronDown size={14} className="shrink-0" aria-hidden="true" />
-              </>
-            }
-            onChange={projectKey => onChange({ ...value, projectKey })}
-          />
-          {(selectedStatus || selectedProject) && (
-            <div
-              className="experience-task-filter-chips"
-              data-testid="collaboration-exp-filter-chips"
+          <div className="experience-task-filter-row">
+            <select
+              data-testid="collaboration-exp-filter-relevance"
+              aria-label={t('tasks.relevance')}
+              value={value.relevance}
+              onChange={event =>
+                onChange({
+                  ...value,
+                  relevance: event.target.value as TaskFilterValue['relevance'],
+                })
+              }
+              className="experience-task-relevance"
             >
-              {(
-                [
-                  ['status', selectedStatus?.label],
-                  ['projectKey', selectedProject?.name],
-                ] as const
-              ).map(([field, label]) =>
-                label ? (
-                  <Button
-                    key={field}
-                    type="button"
-                    variant="secondary"
-                    className="h-auto min-h-8 max-w-full gap-1 px-2 py-1"
-                    data-testid={`collaboration-exp-clear-${field}`}
-                    aria-label={t('tasks.clearFilter', { name: label })}
-                    onClick={() => clear(field)}
-                  >
-                    <span className="truncate">{label}</span>
-                    <X aria-hidden="true" />
-                  </Button>
-                ) : null
-              )}
+              <option value="related">{t('tasks.related')}</option>
+              <option value="all">{t('tasks.allVisible')}</option>
+            </select>
+            <div className="experience-task-filter-control">
+              <IssueDetailSearchableSelect
+                value={value.status}
+                options={[{ value: '', label: t('tasks.allStatuses') }, ...statuses]}
+                testId="collaboration-exp-filter-status"
+                accessibleLabel={t('tasks.status')}
+                searchPlaceholder={t('tasks.findStatus')}
+                emptyLabel={t('tasks.noMatches')}
+                className="experience-task-filter-select flex items-center gap-2"
+                triggerContent={
+                  <>
+                    <span className="min-w-0 flex-1 truncate text-left">
+                      {selectedStatus?.label ?? t('tasks.allStatuses')}
+                    </span>
+                    <ChevronDown size={14} className="shrink-0" aria-hidden="true" />
+                  </>
+                }
+                onChange={status => onChange({ ...value, status })}
+              />
+              {selectedStatus?.label ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="experience-task-filter-clear"
+                  data-testid="collaboration-exp-clear-status"
+                  aria-label={t('tasks.clearFilter', { name: selectedStatus?.label })}
+                  onClick={() => clear('status')}
+                >
+                  <X aria-hidden="true" />
+                </Button>
+              ) : null}
             </div>
-          )}
+          </div>
+          <div className="experience-task-filter-control">
+            <IssueDetailSearchableSelect
+              value={value.projectKey}
+              options={[
+                { value: '', label: t('tasks.allProjects') },
+                ...projects.map(project => ({ value: project.key, label: project.name })),
+              ]}
+              testId="collaboration-exp-filter-projectKey"
+              accessibleLabel={t('tasks.project')}
+              searchPlaceholder={t('tasks.findProject')}
+              emptyLabel={t('tasks.noMatches')}
+              className="experience-task-filter-select flex items-center gap-2"
+              triggerContent={
+                <>
+                  <span className="min-w-0 flex-1 truncate text-left">
+                    {selectedProject?.name ?? t('tasks.allProjects')}
+                  </span>
+                  <ChevronDown size={14} className="shrink-0" aria-hidden="true" />
+                </>
+              }
+              onChange={projectKey => onChange({ ...value, projectKey })}
+            />
+            {selectedProject?.name ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="experience-task-filter-clear"
+                data-testid="collaboration-exp-clear-projectKey"
+                aria-label={t('tasks.clearFilter', { name: selectedProject?.name })}
+                onClick={() => clear('projectKey')}
+              >
+                <X aria-hidden="true" />
+              </Button>
+            ) : null}
+          </div>
         </div>
       )}
     </div>

@@ -142,8 +142,8 @@
 
 .collaboration-exp-app .experience-task-filter-panel {
   display: grid;
-  gap: 10px;
-  padding: 12px;
+  gap: 8px;
+  padding: 4px 12px 12px;
   border-bottom: 1px solid rgb(var(--color-border));
   font-size: var(--text-xs);
 }
@@ -169,10 +169,38 @@
   font-size: var(--text-sm);
 }
 
-.collaboration-exp-app .experience-task-filter-chips {
+.collaboration-exp-app .experience-task-filter-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.collaboration-exp-app .experience-task-filter-control {
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
+  align-items: center;
+  min-width: 0;
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 6px;
+}
+
+.collaboration-exp-app .experience-task-filter-control .experience-task-filter-select {
+  flex: 1;
+  min-width: 0;
+  color: rgb(var(--color-text-primary));
+}
+
+.collaboration-exp-app .experience-task-filter-clear {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 28px;
+  color: rgb(var(--color-text-muted));
+}
+
+@media (width <= 767px) {
+  .collaboration-exp-app .experience-task-filter-clear {
+    min-width: 44px;
+    min-height: 44px;
+  }
 }
 
 .collaboration-exp-app .experience-task-scroll {

@@ -188,7 +188,56 @@ export function TaskTimeline(props: Props) {
     issue.assignee_agent_name ??
     issue.assignee_team_name ??
     (issue.assignee_user_id == null ? null : t('timeline.unknownMember'))
-  const security = issue.security_level ?? props.data.project.default_issue_security
+  const { project } = props.data
+  const security = issue.security_level ?? project.default_issue_security
+  const statusName =
+    project.board_config?.statuses.find(status => status.id === issue.status)?.name ?? issue.status
+  const description = issue.description?.trim() ?? ''
+  const preview = description.split(/\r?\n/, 1)[0].replace(/^#{1,6}\s+/, '')
+  const turn =
+    needsUser || conversations.items.length ? (
+      <section
+        className="experience-matter-turn"
+        data-testid="collaboration-exp-current-turn"
+        data-action-required={needsUser || undefined}
+      >
+        {needsUser ? (
+          <>
+            <h2 className="experience-matter-turn-label">
+              <Circle size={14} aria-hidden="true" />
+              {t('timeline.yourTurn')}
+            </h2>
+            {request?.question ? (
+              <div className="experience-matter-question">{request.question}</div>
+            ) : null}
+          </>
+        ) : null}
+        {conversations.items.length ? (
+          <div className="experience-matter-turn-actions">
+            {conversations.items.map(conversation => (
+              <Button
+                key={conversation.key}
+                className="experience-matter-process"
+                data-testid={`collaboration-exp-task-discussion-${conversation.address.taskId}`}
+                onClick={() => props.onDiscuss(null, conversation)}
+              >
+                <Sparkles size={16} aria-hidden="true" />
+                <span>
+                  {conversations.items.length === 1
+                    ? t('timeline.processWithAssistant')
+                    : (conversation.title ?? t('timeline.processWithAssistant'))}
+                </span>
+                <ArrowRight size={16} aria-hidden="true" />
+              </Button>
+            ))}
+          </div>
+        ) : null}
+        <small>
+          <Lock size={12} aria-hidden="true" />
+          {t(conversations.items.length ? 'timeline.privateHint' : 'timeline.discussionUnknown')}
+        </small>
+      </section>
+    ) : null
   return (
     <div
       className="experience-task-timeline"
@@ -196,18 +245,6 @@ export function TaskTimeline(props: Props) {
       data-read-state={timeline.state}
       aria-busy={loading}
     >
-      <div className="experience-matter-context">
-        <span>
-          {t(
-            security === 'related'
-              ? 'timeline.visibilityRelated'
-              : security === 'open'
-                ? 'timeline.visibilityOpen'
-                : 'timeline.visibilityUnknown'
-          )}
-        </span>
-        {assignee ? <span>{t('timeline.assignee', { name: assignee })}</span> : null}
-      </div>
       {props.anchorUnavailable ? (
         <p
           role="status"
@@ -219,12 +256,34 @@ export function TaskTimeline(props: Props) {
       ) : null}
       <div ref={contentRef} className="experience-matter-scroll">
         <div className="experience-matter-document">
-          {filter === 'all' && issue.description ? (
+          <div className="experience-matter-context">
+            <span className="experience-matter-status">{statusName}</span>
+            <span>
+              <Lock size={12} aria-hidden="true" />
+              {t(
+                security === 'related'
+                  ? 'timeline.visibilityRelated'
+                  : security === 'open'
+                    ? 'timeline.visibilityOpen'
+                    : 'timeline.visibilityUnknown'
+              )}
+            </span>
+            <span>
+              {assignee ? t('timeline.assignee', { name: assignee }) : t('timeline.unassigned')}
+            </span>
+          </div>
+          {needsUser ? turn : null}
+          {description ? (
             <details
               className="experience-matter-background"
               data-testid="collaboration-exp-background"
             >
-              <summary>{t('timeline.background')}</summary>
+              <summary data-testid="collaboration-exp-background-toggle">
+                {t('timeline.background')}
+                <span className="experience-matter-background-preview" aria-hidden="true">
+                  {preview}
+                </span>
+              </summary>
               <IssueActivityMarkdown
                 content={issue.description}
                 onOpenAttachment={(id, name) =>
@@ -362,46 +421,7 @@ export function TaskTimeline(props: Props) {
               </Button>
             </div>
           ) : null}
-          {needsUser || conversations.items.length ? (
-            <section
-              className="experience-matter-turn"
-              data-testid="collaboration-exp-current-turn"
-            >
-              {needsUser ? (
-                <>
-                  <div className="experience-matter-turn-label">
-                    <Circle size={14} aria-hidden="true" />
-                    {t('timeline.yourTurn')}
-                  </div>
-                  <h2>{request?.question ?? issue.title}</h2>
-                </>
-              ) : null}
-              <div className="experience-matter-turn-actions">
-                {conversations.items.map(conversation => (
-                  <Button
-                    key={conversation.key}
-                    className="experience-matter-process"
-                    data-testid={`collaboration-exp-task-discussion-${conversation.address.taskId}`}
-                    onClick={() => props.onDiscuss(null, conversation)}
-                  >
-                    <Sparkles size={16} aria-hidden="true" />
-                    <span>
-                      {conversations.items.length === 1
-                        ? t('timeline.processWithAssistant')
-                        : (conversation.title ?? t('timeline.processWithAssistant'))}
-                    </span>
-                    <ArrowRight size={16} aria-hidden="true" />
-                  </Button>
-                ))}
-              </div>
-              <small>
-                <Lock size={12} aria-hidden="true" />
-                {t(
-                  conversations.items.length ? 'timeline.privateHint' : 'timeline.discussionUnknown'
-                )}
-              </small>
-            </section>
-          ) : null}
+          {!needsUser ? turn : null}
         </div>
       </div>
     </div>

@@ -13,7 +13,7 @@ export function TimelineFilters({
   const { t } = useTranslation('collaborationExp')
   return (
     <div className="experience-timeline-tools">
-      <strong>{t('timeline.progress')}</strong>
+      <h2 className="text-base font-semibold">{t('timeline.progress')}</h2>
       <div role="group" aria-label={t('timeline.filters')}>
         {(['all', 'attachments', 'conclusions'] as const).map(filter => (
           <Button

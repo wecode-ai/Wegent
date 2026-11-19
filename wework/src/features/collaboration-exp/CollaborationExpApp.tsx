@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react'
-import { Circle, Ellipsis, FolderKanban, Lock, Paperclip } from 'lucide-react'
+import { Ellipsis, FolderKanban, Lock, Paperclip } from 'lucide-react'
 import {
   BrowserAttachmentPreview,
   IssueMarkdownProvider,
@@ -449,19 +449,32 @@ function ExperienceContent({ active, search }: { active: boolean; search: string
   if (view === 'tasks' && issueId)
     panes.push({
       id: 'timeline',
-      title: detail.data?.issue.title ?? t('timeline.title'),
+      title: detail.data ? (
+        <div className="experience-matter-heading">
+          <div className="experience-matter-breadcrumb">
+            <span>{detail.data.project.name}</span>
+            {detail.data.issue.sequence_number > 0 ? (
+              <>
+                <span aria-hidden="true">/</span>
+                <span>
+                  {detail.data.project.project_key
+                    ? `${detail.data.project.project_key}-${detail.data.issue.sequence_number}`
+                    : `#${detail.data.issue.sequence_number}`}
+                </span>
+              </>
+            ) : null}
+          </div>
+          <h1 className="heading-medium">{detail.data.issue.title}</h1>
+        </div>
+      ) : (
+        t('timeline.title')
+      ),
       scroll: false,
       minWidth: 360,
       defaultWidth: 620,
       backVisibility: 'collapsed-parent',
       actions: detail.data ? (
         <>
-          <Circle
-            size={16}
-            aria-label={detail.data.issue.status}
-            role="img"
-            className="experience-header-status"
-          />
           <button
             type="button"
             className="experience-header-tool"
