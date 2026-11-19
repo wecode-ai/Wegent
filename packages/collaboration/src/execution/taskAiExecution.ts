@@ -177,7 +177,8 @@ export function formatThreadHistory(
 
 export function mergeProjectChatMessages(
   current: ProjectChatMessage[],
-  incoming: ProjectChatMessage[]
+  incoming: ProjectChatMessage[],
+  verifiedSourceIds?: ReadonlySet<string>
 ): ProjectChatMessage[] {
   const byId = new Map(current.map(message => [message.messageId, message]))
   for (const message of incoming) {
@@ -193,24 +194,22 @@ export function mergeProjectChatMessages(
     const terminalTransition = agent && !previousTerminal && incomingTerminal
     // Snapshots and acknowledgements can arrive after live updates. A turn's
     // terminal result wins even when an acknowledgement has a later timestamp.
-    const rejected =
-      (order < 0 && !terminalTransition) || (agent && previousTerminal && !incomingTerminal)
-    if (
-      (previous.traceRef || message.traceRef) &&
-      Boolean(previous.runtimeAddress) !== Boolean(message.runtimeAddress)
-    ) {
-      console.debug('[Project chat source] Activity message merge', {
-        messageId: message.messageId,
-        rejected,
-        sameTrace: previous.traceRef === message.traceRef,
-        previousStatus: previous.status,
-        incomingStatus: message.status,
-        previousHasAddress: Boolean(previous.runtimeAddress),
-        incomingHasAddress: Boolean(message.runtimeAddress),
-        timestampOrder: order,
-      })
-    }
-    if (rejected) {
+    if ((order < 0 && !terminalTransition) || (agent && previousTerminal && !incomingTerminal)) {
+      // A current viewer snapshot can verify the source of newer live content.
+      if (
+        verifiedSourceIds?.has(message.messageId) &&
+        message.projectId === previous.projectId &&
+        message.taskId === previous.taskId &&
+        message.traceRef &&
+        message.traceRef === previous.traceRef &&
+        message.traceState
+      ) {
+        byId.set(message.messageId, {
+          ...previous,
+          traceState: message.traceState,
+          runtimeAddress: message.traceState === 'available' ? message.runtimeAddress : null,
+        })
+      }
       continue
     }
     // Active status projections carry empty placeholders, not content deletions.
