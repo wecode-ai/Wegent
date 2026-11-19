@@ -177,6 +177,7 @@ import { resolveSystemProxy } from './host/system-proxy.js'
 import { SystemResumeBridge } from './host/system-resume-bridge.js'
 import {
   prepareDesktopComponents,
+  bundledComponentDirectory,
   type DesktopComponentUpdateController,
   type PreparedDesktopComponents,
 } from './runtime/desktop-components.js'
@@ -708,8 +709,8 @@ const appUpdates = new AppUpdateService({
   },
   runtimeRoot:
     process.env.WEWORK_HARNESS_RUNTIME_ROOT?.trim() || packagedHarnessRuntimePaths().cache,
-  dataSchema: packageMetadata.weworkDataSchema ?? 1,
-  readableDataSchemas: packageMetadata.weworkReadableDataSchemas ?? [1],
+  dataSchema: packageMetadata.weworkDataSchema ?? 2,
+  readableDataSchemas: packageMetadata.weworkReadableDataSchemas ?? [1, 2],
   isPackaged: packagedApplication,
   log: event => appUpdateLogger.info(event),
   shutdown: async () => {
@@ -2383,6 +2384,7 @@ async function configureDesktopRuntime(): Promise<void> {
   logStartupStep('desktop-environment', 'completed')
   if (!pluginDevelopmentInstance && !pluginDevelopment) {
     pluginDevelopment = new PluginDevelopmentManager({
+      bundledComponentDirectory: bundledComponentDirectory(process.env, app.getPath('userData')),
       ...currentElectronLaunch(),
       environment,
       userDataDirectory: app.getPath('userData'),
@@ -3222,6 +3224,7 @@ function runningDesktopComponents(): Promise<PreparedDesktopComponents> {
   desktopComponentsPromise ??= prepareDesktopComponents({
     isPackaged: packagedApplication,
     managerOptions: {
+      bundledComponentDirectory: bundledComponentDirectory(process.env, app.getPath('userData')),
       validateExecutor: path =>
         assertExecutorWorkbenchCompatibility({
           ...process.env,

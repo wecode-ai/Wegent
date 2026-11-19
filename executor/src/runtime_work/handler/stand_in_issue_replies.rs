@@ -210,7 +210,8 @@ impl RuntimeWorkRpcHandler {
             {
                 return;
             }
-            let report = json!({"origin":origin,"body":text,"messageId":key});
+            let report =
+                json!({"origin":origin,"body":text,"messageId":key,"publicTurn":public_turn});
             if !link.runtime_handle["standInIssueReplies"].is_object() {
                 link.runtime_handle["standInIssueReplies"] = json!({});
             }
@@ -270,7 +271,7 @@ impl RuntimeWorkRpcHandler {
                 match handler.publish_stand_in_issue_reply(&task, &report).await {
                     Ok(()) => {
                         if let Err(error) = handler.store.try_update_task(&task, |link| {
-                            link.runtime_handle["standInIssueReplies"][&key] = json!({"sent":true});
+                            link.runtime_handle["standInIssueReplies"][&key] = json!({"sent":true,"messageId":report["messageId"],"origin":report["origin"],"publicTurn":report["publicTurn"]});
                         }) {
                             log_executor_event(
                                 "Stand-in public receipt persistence failed",

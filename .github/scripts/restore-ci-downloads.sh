@@ -19,8 +19,17 @@ if ! command -v umoci >/dev/null; then install_missing_apt_packages umoci; fi
 command -v umoci >/dev/null
 temporary="$(mktemp -d)"
 trap 'rm -rf "$temporary"' EXIT
-GITHUB_TOKEN='' GITHUB_ACTOR='' OCI_RUNTIME_WAIT_SECONDS=0 \
-  .github/scripts/restore-oci-runtime-binary.sh "$image" /downloads.tar.gz "$temporary/downloads.tar.gz"
+if GITHUB_TOKEN='' GITHUB_ACTOR='' OCI_RUNTIME_WAIT_SECONDS=0 \
+  .github/scripts/restore-oci-runtime-binary.sh "$image" /downloads.tar.gz "$temporary/downloads.tar.gz"; then
+  :
+else
+  restore_status=$?
+  if [[ "$restore_status" -eq 75 ]]; then
+    echo "CI download cache is unavailable; consumers will prepare locked dependencies: $image"
+    exit 0
+  fi
+  exit "$restore_status"
+fi
 tar -tzf "$temporary/downloads.tar.gz" > "$temporary/inventory"
 if grep -Ev '^(codex|electron-zips|minio)(/[^/]*)*/?$' "$temporary/inventory" |
   grep -q . || grep -Eq '(^|/)\.\.(/|$)' "$temporary/inventory"; then

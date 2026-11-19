@@ -4346,7 +4346,7 @@ class LoopItemExecutionService:
         limits = _agent_limits(
             db, {execution.agent_id for execution in rows if execution.agent_id}
         )
-        return [
+        items = [
             {
                 "id": execution.id,
                 "workspace_id": workspace_id_for_project(
@@ -4420,6 +4420,42 @@ class LoopItemExecutionService:
             }
             for execution in rows
         ]
+        agent_ids = {
+            str(row["agent_id"]) for row in items if row["agent_id"] is not None
+        }
+        private_agent_owners = (
+            {
+                agent.id: agent.created_by_user_id
+                for agent in db.query(ProjectChatAgent)
+                .filter(ProjectChatAgent.id.in_(agent_ids))
+                .all()
+                if isinstance(agent.metadata_json, dict)
+                and agent.metadata_json.get("visibility") == "private"
+            }
+            if agent_ids
+            else {}
+        )
+        for row in items:
+            if (
+                row["agent_id"] not in private_agent_owners
+                or row["executor_owner_user_id"] == viewer_user_id
+                or private_agent_owners[row["agent_id"]] == viewer_user_id
+            ):
+                continue
+            for key in (
+                "backend_task_id",
+                "execution_device_id",
+                "runtime_device_id",
+                "runtime_task_id",
+                "runtime_instance_id",
+                "runtime_profile_id",
+                "runtime_source",
+                "waiting_runtime_reason",
+            ):
+                row[key] = None
+            for key in ("error_message", "execution_note", "termination_reason"):
+                row[key] = ""
+        return items
 
     def active_for_item(
         self, db: Session, *, item_id: str

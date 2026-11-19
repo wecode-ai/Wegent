@@ -207,6 +207,7 @@ impl RuntimeWorkRpcHandler {
                 "projectId": project, "issueId": issue_id, "backendUrl": backend_url,
                 "assignmentId": super::stand_in::issue_assignment_event_id(binding)?, "userId": config["userId"],
                 "deviceId": device_id, "taskId": binding["taskId"],
+                "dispatch":{"state":"queued","reasonCode":"awaiting_runtime","observedAt":chrono::Utc::now(),"publicMessageId":null},
             }))
             .map_err(settings_error)?;
         self.log_stand_in_decision(config, issue, "receipt_queued", json!({"taskId":binding["taskId"],"issueAssignmentId":super::stand_in::issue_assignment_event_id(binding)?}));
@@ -223,6 +224,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn flush_assignment_receipts(&self) -> Result<(), AppIpcError> {
+        self.queue_assignment_runtime_states()?;
         self.flush_assignment_receipts_at(chrono::Utc::now()).await
     }
 
@@ -281,7 +283,8 @@ impl RuntimeWorkRpcHandler {
                 receipt["assignmentId"].as_str().unwrap_or_default()
             );
             match Self::runtime_request_on(&connection, reqwest::Method::POST, &path, Some(&json!({
-                "kind":"stand_in_received", "device_id":receipt["deviceId"], "task_id":receipt["taskId"],
+                "kind":if receipt["dispatch"].is_object() {"stand_in_state"} else {"stand_in_received"},
+                "device_id":receipt["deviceId"], "task_id":receipt["taskId"], "dispatch":receipt["dispatch"],
             }))).await {
                 Ok(response) if response.status().is_success() || response.status() == reqwest::StatusCode::CONFLICT => {
                     self.log_stand_in_receipt(&receipt, "completed", json!({"status":response.status().as_u16()}));

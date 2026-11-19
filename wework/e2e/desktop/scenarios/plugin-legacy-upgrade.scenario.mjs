@@ -153,14 +153,6 @@ export async function createDesktopScenario({
       configPath,
       `${await readFile(configPath, 'utf8')}\n[skills]\nconfig = [{ path = ${JSON.stringify(userSkill)}, enabled = false }]\n[mcp_servers.legacy-user-disabled]\ncommand = "node"\nargs = ["--version"]\nenabled = false\n`
     )
-    const installer = await startHistoricalPluginExecutor({
-      release,
-      cloud,
-      root,
-      userHome: userHomeFor(release),
-      directory: join(resultDir, 'historical-executors', release.version),
-      token: releaseAssetToken,
-    })
     const delivered = await historicalPluginPackages(
       HISTORICAL_PLUGIN_SOURCE,
       join(resultDir, 'historical-plugins', HISTORICAL_PLUGIN_SOURCE.version),
@@ -172,23 +164,37 @@ export async function createDesktopScenario({
       ...delivered.evidence,
     })
     const fixtures = {}
+    // The install endpoint selects the marketplace latest. Pin the account before
+    // the historical executor connects so an earlier baseline's latest cannot
+    // be materialized into this baseline's native cache.
+    for (const [role, original] of Object.entries(delivered.packages)) {
+      const fixture = await publish(original)
+      await pluginApi(cloud, `/plugins/marketplace/${fixture.pluginId}/install`, 'POST')
+      fixture.installedId = Number((await accountPlugin(cloud, fixture.slug)).metadata.labels.id)
+      await update(fixture, null, { releaseId: fixture.releaseId })
+      fixture.installState = {
+        updatePolicy: 'manual',
+        ...(role === 'disabled'
+          ? { enabled: false, componentStates: { [`skill:${fixture.skillName}`]: false } }
+          : {}),
+      }
+      await update(fixture, null, fixture.installState)
+      const desired = await accountPlugin(cloud, fixture.slug)
+      assert.equal(desired.spec.releaseId, fixture.releaseId)
+      assert.equal(desired.spec.version, fixture.version)
+      fixtures[role] = fixture
+    }
+    const installer = await startHistoricalPluginExecutor({
+      release,
+      cloud,
+      root,
+      userHome: userHomeFor(release),
+      directory: join(resultDir, 'historical-executors', release.version),
+      token: releaseAssetToken,
+    })
     try {
-      for (const [role, original] of Object.entries(delivered.packages)) {
-        const fixture = await publish(original)
-        await pluginApi(
-          cloud,
-          `/plugins/marketplace/${fixture.pluginId}/install?device_id=${installer.deviceId}`,
-          'POST'
-        )
-        fixture.installedId = Number((await accountPlugin(cloud, fixture.slug)).metadata.labels.id)
-        await update(fixture, installer.deviceId, { releaseId: fixture.releaseId })
-        await update(fixture, installer.deviceId, {
-          updatePolicy: 'manual',
-          ...(role === 'disabled'
-            ? { enabled: false, componentStates: { [`skill:${fixture.skillName}`]: false } }
-            : {}),
-        })
-        fixtures[role] = fixture
+      for (const fixture of Object.values(fixtures)) {
+        await update(fixture, installer.deviceId, fixture.installState)
       }
       let observedState
       const original = await until(

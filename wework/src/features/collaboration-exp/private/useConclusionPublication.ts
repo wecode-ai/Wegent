@@ -17,6 +17,7 @@ interface ConclusionPublicationInput {
   scopeKey: string
   expectedUserId: number
   active: boolean
+  assistantSource?: { deviceId: string; taskId: string } | null
   draft: Pick<
     ReturnType<typeof useExperienceDraftInput>,
     'value' | 'revision' | 'getValue' | 'beginSubmission'
@@ -126,9 +127,21 @@ export function useConclusionPublication(input: ConclusionPublicationInput) {
         return false
       }
       submission = request.draft.beginSubmission(request.draft.value)
-      await request.api.comments.create(issue.id, body, {
-        clientMessageId: submission.clientMessageId,
-      })
+      if (request.assistantSource) {
+        if (!request.api.comments.createAssistantPublication) {
+          throw new Error('Assistant publication service is unavailable')
+        }
+        await request.api.comments.createAssistantPublication(issue.id, body, {
+          clientMessageId: submission.clientMessageId,
+          projectId: project.id,
+          assistantSource: request.assistantSource,
+        })
+      } else {
+        await request.api.comments.create(issue.id, body, {
+          clientMessageId: submission.clientMessageId,
+          projectId: project.id,
+        })
+      }
       published = true
       submission.clearIfUnchanged()
       await request.onPublished()

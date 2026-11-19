@@ -110,9 +110,6 @@ export function IssueProjectChatThread({
     translate,
   );
   const rootId = thread.root.messageId;
-  const isExecutionTaskThread =
-    thread.root.sender.type === "agent" &&
-    thread.root.metadata.dispatch_role !== "manager";
   const displayReplies = thread.displayReplies ?? thread.replies;
   const runs = [thread.root, ...displayReplies].filter(
     (message) => message.sender.type === "agent",
@@ -268,10 +265,6 @@ export function IssueProjectChatThread({
       }
     />
   );
-
-  if (!isExecutionTaskThread) {
-    return activityThread;
-  }
 
   return (
     <div data-testid={`cloud-task-activity-card-${rootId}`}>

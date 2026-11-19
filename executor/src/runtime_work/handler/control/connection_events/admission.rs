@@ -26,8 +26,10 @@ impl RuntimeWorkRpcHandler {
             .task_send_gate(&format!("goal-status:{task}"))
             .lock_owned()
             .await;
-        let found =
-            workbench_control::journal::transact(&self.event_subscription_path(), |state| {
+        let found = event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::Task(task),
+            |state| {
                 let mut matches = state["operations"]
                     .as_object()
                     .into_iter()
@@ -61,8 +63,9 @@ impl RuntimeWorkRpcHandler {
                     return Err(invalid("Event turn has no durable host admission binding"));
                 }
                 Ok(found)
-            })
-            .map_err(|error| error.message)?;
+            },
+        )
+        .map_err(|error| error.message)?;
         let Some((id, mut record)) = found else {
             return Ok(None);
         };
@@ -202,10 +205,11 @@ impl RuntimeWorkRpcHandler {
             .stand_in_lifecycle_gate
             .lock()
             .expect("turn lifecycle gate poisoned");
-        let mut record =
-            workbench_control::journal::transact(&self.event_subscription_path(), |state| {
-                Ok(state["operations"][id].clone())
-            })?;
+        let mut record = event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::Row("operations", id),
+            |state| Ok(state["operations"][id].clone()),
+        )?;
         if record["operation_id"] != operation || record["status"] == "cancelled" {
             return Err(invalid(
                 "The event wait was cancelled before native admission",
@@ -250,8 +254,10 @@ impl RuntimeWorkRpcHandler {
         else {
             return;
         };
-        let result =
-            workbench_control::journal::transact(&self.event_subscription_path(), |state| {
+        let result = event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::Task(task),
+            |state| {
                 Ok(state["operations"]
                     .as_object()
                     .into_iter()
@@ -263,13 +269,14 @@ impl RuntimeWorkRpcHandler {
                     })
                     .map(|(id, _)| id.clone())
                     .collect::<Vec<_>>())
-            })
-            .and_then(|ids| {
-                for id in ids {
-                    self.update_event_goal_phase(&id, operation, "activated")?;
-                }
-                Ok(())
-            });
+            },
+        )
+        .and_then(|ids| {
+            for id in ids {
+                self.update_event_goal_phase(&id, operation, "activated")?;
+            }
+            Ok(())
+        });
         if let Err(error) = result {
             log_executor_event(
                 "connection event native receipt persistence failed",
@@ -291,8 +298,10 @@ impl RuntimeWorkRpcHandler {
         else {
             return;
         };
-        let result =
-            workbench_control::journal::transact(&self.event_subscription_path(), |state| {
+        let result = event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::Task(task),
+            |state| {
                 Ok(state["operations"]
                     .as_object()
                     .into_iter()
@@ -304,15 +313,16 @@ impl RuntimeWorkRpcHandler {
                     })
                     .map(|(id, record)| (id.clone(), record.clone()))
                     .collect::<Vec<_>>())
-            })
-            .and_then(|records| {
-                for (id, mut record) in records {
-                    record["status"] = json!("needs_attention");
-                    record["error_code"] = json!("event_admission_failed");
-                    self.save_event_subscription(&id, &record)?;
-                }
-                Ok(())
-            });
+            },
+        )
+        .and_then(|records| {
+            for (id, mut record) in records {
+                record["status"] = json!("needs_attention");
+                record["error_code"] = json!("event_admission_failed");
+                self.save_event_subscription(&id, &record)?;
+            }
+            Ok(())
+        });
         if let Err(error) = result {
             log_executor_event(
                 "connection event admission failure persistence failed",
@@ -384,13 +394,13 @@ mod tests {
             apply_runtime_payload_metadata(&mut request,&json!({"commandId":"event-operation","message":event_user_message_presentation(&record)["content"],"resourceEventKeys":record["resource_event_keys"]}));
             request.prompt=json!("Process the event. Original source facts and recalled context.");
             drop(handler.event_goal_admission("caller",&request).await.unwrap().unwrap());
-            record=workbench_control::journal::transact(&handler.event_subscription_path(),|state|Ok(state["operations"]["review"].clone())).unwrap();
+            record=event_store::transact(&handler.event_subscription_path(),|state|Ok(state["operations"]["review"].clone())).unwrap();
             let original=record["native_event_input"].clone();
             record["native_event_phase"]=json!("injected");
             handler.save_event_subscription("review",&record).unwrap();
             request.prompt=json!("Process the event. Original source facts and newer recalled context.");
             drop(handler.event_goal_admission("caller",&request).await.unwrap().unwrap());
-            let saved=workbench_control::journal::transact(&handler.event_subscription_path(),|state|Ok(state["operations"]["review"].clone())).unwrap();
+            let saved=event_store::transact(&handler.event_subscription_path(),|state|Ok(state["operations"]["review"].clone())).unwrap();
             assert_eq!(saved["native_event_input"],original);
             assert_eq!(saved["native_event_phase"],"injected");
         });
@@ -449,11 +459,10 @@ mod tests {
                 .code,
             "user_input_pending"
         );
-        let saved =
-            workbench_control::journal::transact(&handler.event_subscription_path(), |state| {
-                Ok(state["operations"]["review"].clone())
-            })
-            .unwrap();
+        let saved = event_store::transact(&handler.event_subscription_path(), |state| {
+            Ok(state["operations"]["review"].clone())
+        })
+        .unwrap();
         assert_eq!(saved["native_event_phase"], "injected");
         // An explicit owner reply retains the ordinary path for answering it.
         handler.mark_task_running_for_send(

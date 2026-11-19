@@ -193,7 +193,7 @@ fn direct_human_id(issue: &str, assignment: &str) -> String {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) async fn direct_human_on(
+pub(crate) async fn direct_human_on(
     tx: &mut impl MysqlTransaction,
     state: &AppState,
     project: &Node,

@@ -135,6 +135,7 @@ mod diagnostics;
 mod home;
 mod memory_review;
 mod native_provider;
+mod plugin_cache;
 mod provider_migration;
 mod stand_in_approval;
 mod stand_in_plugin_cli;
@@ -153,6 +154,7 @@ mod startup;
 mod turn_recovery;
 use child::CodexAppServerChild;
 pub(crate) use turn_recovery::same_goal_configuration;
+mod isolated_turn;
 #[path = "codex/thread_action.rs"]
 mod thread_action;
 mod thread_resume;
@@ -197,7 +199,8 @@ mod native_turn;
 use native_activity::{CodexNativeActivity, CodexNativeRequest};
 pub(crate) use native_turn::completed_native_codex_turn;
 pub use wegent_execution_contracts::notification::{CodexNotification, CodexNotificationSender};
-pub type CodexThreadStartedCallback = Box<dyn FnOnce(String) + Send + 'static>;
+pub type CodexThreadStartedCallback =
+    Box<dyn FnOnce(String, Option<String>, Option<String>) + Send + 'static>;
 pub type CodexActiveTurnCallback = Box<dyn Fn(String, String) + Send + 'static>;
 pub type CodexActiveTurnFinishedCallback = Box<dyn Fn() + Send + 'static>;
 pub type CodexInputAdmission = Box<dyn Fn() -> Result<(), String> + Send + Sync + 'static>;
@@ -317,6 +320,7 @@ pub struct CodexAppServerTurn {
     pub quota_recovery: Option<CodexQuotaRecovery>,
     pub thread_id: String,
     pub outcome: ExecutionOutcome,
+    pub error_type: Option<String>,
     pub response_item_id: Option<String>,
     pub response_value_origin: CodexResponseValueOrigin,
     pub goal_status: Option<String>,
@@ -328,6 +332,9 @@ pub struct CodexAppServerTurn {
 
 #[path = "codex/interaction.rs"]
 mod interaction;
+
+mod error_type;
+pub(crate) use error_type::codex_error_type;
 
 #[path = "codex/mcp_apps.rs"]
 mod mcp_apps;
@@ -1536,6 +1543,9 @@ pub(crate) async fn terminate_shared_codex_app_servers() -> usize {
 
 fn is_codex_cloud_config_error(error: &str) -> bool {
     error.contains("cloud config bundle")
+        || ((error.contains("failed to read configuration layers")
+            || error.contains("failed to load configuration:"))
+            && error.contains("Your authentication session could not be refreshed automatically. Please log out and sign in again."))
 }
 
 struct CodexAppServerSharedState {
@@ -2410,8 +2420,17 @@ async fn run_codex_app_server_turn_on_shared_client(
             }
             CodexThreadStart::Direct(_) => None,
         };
+        let mut resolved_model = (None, None);
         let thread_id = match thread_plan.start {
             CodexThreadStart::Direct(thread_id) => {
+                if let Some(process) = client.state.lock().await.process.as_ref() {
+                    resolved_model = process
+                        .notifications
+                        .native_activity
+                        .lock()
+                        .expect("native model registry lock")
+                        .model_identity(&thread_id);
+                }
                 let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
                 thread_fields.push(("operation", "thread/direct".to_owned()));
                 thread_fields.push(("thread_id", thread_id.clone()));
@@ -2450,6 +2469,7 @@ async fn run_codex_app_server_turn_on_shared_client(
                     &response,
                     launch_config.model_provider.as_deref(),
                 )?;
+                resolved_model = native_activity::model_identity(&response);
                 thread_fields.push(("thread_id", thread_id.clone()));
                 log_executor_event("codex shared thread request finished", &thread_fields);
                 thread_id
@@ -2495,7 +2515,12 @@ async fn run_codex_app_server_turn_on_shared_client(
             }
         };
         if let Some(callback) = thread_started {
-            callback(thread_id.clone());
+            let resolved_model = native_activity::reporting_model_identity(
+                resolved_model,
+                codex_request_model(request),
+                launch_config.inference_model_provider.as_deref(),
+            );
+            callback(thread_id.clone(), resolved_model.0, resolved_model.1);
         }
         notify_thread_started(notifications.as_ref(), &thread_id);
         if thread_plan.fork_requested && request.ephemeral {
@@ -2710,6 +2735,7 @@ async fn run_codex_app_server_turn_on_shared_client(
             quota_recovery: state.quota_recovery.take(),
             thread_id,
             outcome,
+            error_type: state.error_type.clone(),
             response_item_id,
             response_value_origin,
             goal_status,
@@ -2810,6 +2836,15 @@ async fn run_codex_app_server_turn_with_runtime(
     let mut capability_lease =
         Some(crate::services::capability_activation::begin_execution().await);
     let _home_lease = super::instance_home::acquire(&request)?;
+    let admission_client = CodexAppServerClient::new(binary).for_request(&request)?;
+    let mut thread_admission = match options
+        .resume_thread_id
+        .as_deref()
+        .or(options.direct_thread_id.as_deref())
+    {
+        Some(thread_id) => Some(admission_client.admit_isolated_thread(thread_id).await?),
+        None => None,
+    };
     super::environment_setup::prepare_execution_environment(&request).await?;
     super::runtime_capabilities::prepare_codex_runtime_locked(&request).await?;
     let CodexAppServerTurnOptions {
@@ -2908,6 +2943,7 @@ async fn run_codex_app_server_turn_with_runtime(
             bind_local_proxy_thread(&launch_config, thread_id)?;
             state.set_root_thread_id(thread_id.to_owned());
         }
+        let mut resolved_model = (None, None);
         let thread_id = match thread_plan.start {
             CodexThreadStart::Direct(thread_id) => {
                 let mut thread_fields = task_fields(&request.task_id, &request.subtask_id);
@@ -2931,11 +2967,17 @@ async fn run_codex_app_server_turn_with_runtime(
                     &response,
                     launch_config.model_provider.as_deref(),
                 )?;
+                resolved_model = native_activity::model_identity(&response);
                 thread_fields.push(("thread_id", thread_id.clone()));
                 log_executor_event("codex thread request finished", &thread_fields);
                 thread_id
             }
         };
+        if thread_admission.is_none() {
+            // New and forked identities become visible to prediction below.
+            let gate = admission_client.thread_lifecycle_gate(&thread_id).await;
+            thread_admission = Some(gate.lock_owned().await);
+        }
         state.set_root_thread_id(thread_id.clone());
         bind_local_proxy_thread(&launch_config, &thread_id)?;
         let local_notifications = local_notifications::LocalNotificationSource::new(
@@ -2947,7 +2989,12 @@ async fn run_codex_app_server_turn_with_runtime(
             Some(&local_notifications.sender),
         );
         if let Some(callback) = thread_started {
-            callback(thread_id.clone());
+            let resolved_model = native_activity::reporting_model_identity(
+                resolved_model,
+                codex_request_model(request),
+                launch_config.inference_model_provider.as_deref(),
+            );
+            callback(thread_id.clone(), resolved_model.0, resolved_model.1);
         }
         notify_thread_started(notifications.as_ref(), &thread_id);
         if thread_plan.fork_requested && request.ephemeral {
@@ -3115,6 +3162,7 @@ async fn run_codex_app_server_turn_with_runtime(
             quota_recovery: state.quota_recovery.take(),
             thread_id,
             outcome,
+            error_type: state.error_type.clone(),
             response_item_id,
             response_value_origin,
             goal_status,
@@ -3130,6 +3178,7 @@ async fn run_codex_app_server_turn_with_runtime(
         callback();
     }
     terminate_codex_app_server_child(&mut process.child).await;
+    drop(thread_admission);
     if let Some(runtime) = runtime_notifications.as_ref() {
         notify_shared_process_closed(runtime, "isolated Codex app-server stopped").await;
     }
@@ -4574,6 +4623,7 @@ struct CodexLaunchConfig {
     config_overrides: Vec<String>,
     thread_config: Map<String, Value>,
     model_provider: Option<String>,
+    inference_model_provider: Option<String>,
     auth_mode: Option<CodexAuthMode>,
     env: BTreeMap<String, String>,
     user_developer_instructions: String,
