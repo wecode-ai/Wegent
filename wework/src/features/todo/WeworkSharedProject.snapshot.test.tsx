@@ -441,7 +441,7 @@ describe('production project snapshot lifecycle', () => {
     await expectFresh()
     expect(screen.getByText('Project v1')).toBeInTheDocument()
     expect(screen.queryByText('Project v5')).not.toBeInTheDocument()
-    expect(second.get).toHaveBeenCalledOnce()
+    expect(second.get).toHaveBeenCalledTimes(2)
   })
 
   it('keeps a late mutation from the previous API out of a same-id project', async () => {

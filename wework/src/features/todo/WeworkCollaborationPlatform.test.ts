@@ -47,6 +47,15 @@ import {
   rememberProjectSpaceTaskBinding,
 } from './projectSpaceSelection'
 
+vi.mock('@/features/collaboration/projectSnapshotRefresh', () => ({
+  projectSnapshotRevalidateEnabled: false,
+  useProjectSnapshotRefresh: () => ({
+    state: 'fresh',
+    canWrite: true,
+    retry: async () => undefined,
+  }),
+}))
+
 type BoardIssueCardRenderer = NonNullable<
   ComponentProps<typeof CollaborationApp>['renderBoardIssueCard']
 >
@@ -654,6 +663,7 @@ describe('Wework collaboration workspace API', () => {
           id: 'local-project',
           name: 'Local project',
           project_store: 'local',
+          task_provider: 'local',
           automatic_processing_rules: [
             {
               id: 'local-automation',
