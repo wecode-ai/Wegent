@@ -261,6 +261,15 @@ def normalized_event_identity(event: NormalizedProjectEvent) -> str:
             or payload.get("merge_status")
             or event.subject.get("head_commit")
         )
+    if event.event_type == "change_request.updated":
+        import hashlib
+        import json
+
+        version = hashlib.sha256(
+            json.dumps(
+                _mapping(payload.get("quality_snapshot")), sort_keys=True, default=str
+            ).encode()
+        ).hexdigest()
     identity = "|".join(
         (
             event.source_type,
@@ -327,6 +336,11 @@ def _github_events(
                     "action": _text(payload.get("action")),
                     "conclusion": conclusion,
                     "check": dict(check),
+                    **(
+                        {"quality_snapshot": dict(payload["quality_snapshot"])}
+                        if isinstance(payload.get("quality_snapshot"), dict)
+                        else {}
+                    ),
                 },
             )
             for subject in subjects
@@ -362,7 +376,23 @@ def _github_events(
             "dirty",
             "conflicting",
         }:
-            return []
+            snapshot = _mapping(payload.get("quality_snapshot"))
+            if not snapshot:
+                return []
+            subject = _github_change_request(resource, change_request)
+            return (
+                [
+                    NormalizedProjectEvent(
+                        event_type="change_request.updated",
+                        source_type="github",
+                        resource=resource,
+                        subject=subject,
+                        payload={"raw_event": event_name, "quality_snapshot": snapshot},
+                    )
+                ]
+                if subject
+                else []
+            )
         subject = _github_change_request(resource, change_request)
         return (
             [
@@ -375,6 +405,11 @@ def _github_events(
                         "raw_event": event_name,
                         "action": _text(payload.get("action")),
                         "mergeable_state": mergeable_state,
+                        **(
+                            {"quality_snapshot": dict(payload["quality_snapshot"])}
+                            if isinstance(payload.get("quality_snapshot"), dict)
+                            else {}
+                        ),
                     },
                 )
             ]

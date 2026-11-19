@@ -31,6 +31,8 @@ struct WorkflowInput {
     approval_policy: Option<String>,
     ai_automation_rule_id: Option<OpaqueJson>,
     execution_config: Option<OpaqueJson>,
+    assignee_roles: Option<OpaqueJson>,
+    feature_flags: Option<OpaqueJson>,
     nodes: Option<Vec<OpaqueJson>>,
 }
 
@@ -79,6 +81,8 @@ struct WorkflowNodeInput {
     #[serde(default)]
     required_assignee_id: Option<String>,
     #[serde(default)]
+    required_assignee_role: Option<OpaqueJson>,
+    #[serde(default)]
     execution_config: Option<OpaqueJson>,
     #[serde(default)]
     execution_config_override: bool,
@@ -108,6 +112,7 @@ struct WorkflowNode {
     automation_rule_id: Option<String>,
     required_assignee_type: Option<OpaqueJson>,
     required_assignee_id: Option<String>,
+    required_assignee_role: Option<OpaqueJson>,
     execution_config: Option<OpaqueJson>,
     execution_config_override: bool,
 }
@@ -172,6 +177,7 @@ fn workflow_node_value(node: OpaqueJson) -> RawJson {
         automation_rule_id: input.automation_rule_id,
         required_assignee_type: input.required_assignee_type,
         required_assignee_id: input.required_assignee_id,
+        required_assignee_role: input.required_assignee_role,
         execution_config: input.execution_config,
         execution_config_override: input.execution_config_override,
     };
@@ -188,6 +194,8 @@ pub(crate) struct WorkflowDefinition {
     approval_policy: String,
     ai_automation_rule_id: Option<RawJson>,
     execution_config: Option<RawJson>,
+    assignee_roles: RawJson,
+    feature_flags: RawJson,
     nodes: Vec<RawJson>,
 }
 
@@ -207,6 +215,16 @@ pub(crate) fn workflow_definition_value(config: Option<&OpaqueJson>) -> Workflow
         approval_policy: input.approval_policy.unwrap_or_else(|| "required".into()),
         ai_automation_rule_id: input.ai_automation_rule_id.map(opaque),
         execution_config: input.execution_config.map(opaque),
+        assignee_roles: opaque(
+            input
+                .assignee_roles
+                .unwrap_or_else(default_dependency_context),
+        ),
+        feature_flags: opaque(
+            input
+                .feature_flags
+                .unwrap_or_else(default_dependency_context),
+        ),
         nodes: input
             .nodes
             .unwrap_or_default()
@@ -252,6 +270,9 @@ mod tests {
         assert_eq!(first["execution_config_override"], json!(false));
         assert_eq!(first["required_assignee_type"], Value::Null);
         assert_eq!(first["required_assignee_id"], Value::Null);
+        assert_eq!(first["required_assignee_role"], Value::Null);
+        assert_eq!(value["assignee_roles"], json!({}));
+        assert_eq!(value["feature_flags"], json!({}));
         // Explicit null keys are present, not omitted.
         assert!(first.get("start_config").is_some());
         assert_eq!(first["event_wait"], Value::Null);
@@ -268,5 +289,34 @@ mod tests {
     fn echoes_nodes_without_required_identity() {
         let value = render(json!({"nodes": [{"x": null}, {"id": "only-id"}]}));
         assert_eq!(value["nodes"], json!([{"x": null}, {"id": "only-id"}]));
+    }
+
+    #[test]
+    fn preserves_stage_assignee_configuration_from_stored_metadata() {
+        let roles = json!({
+            "qa": [
+                {"assignee_type": "user", "assignee_id": "yunpeng7"},
+                {"assignee_type": "user", "assignee_id": "sifang"}
+            ],
+            "engineering": [{"assignee_type": "team", "assignee_id": "123"}]
+        });
+        let flags = json!({"collab.enforceStageAssignee.v1": false});
+        let value = render(json!({
+            "assignee_roles": roles,
+            "feature_flags": flags,
+            "nodes": [
+                {"id": "quality", "name": "质量验收", "required_assignee_role": "qa"},
+                {
+                    "id": "build", "name": "开发实现",
+                    "required_assignee_type": "team", "required_assignee_id": "123"
+                }
+            ]
+        }));
+
+        assert_eq!(value["assignee_roles"], roles);
+        assert_eq!(value["feature_flags"], flags);
+        assert_eq!(value["nodes"][0]["required_assignee_role"], json!("qa"));
+        assert_eq!(value["nodes"][1]["required_assignee_type"], json!("team"));
+        assert_eq!(value["nodes"][1]["required_assignee_id"], json!("123"));
     }
 }

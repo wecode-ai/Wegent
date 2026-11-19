@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import type { ModelSelectionConfig } from '@/types/api'
+import type { ModelSelectionConfig, UnifiedModel } from '@/types/api'
 import {
+  captureComposerModelSelectionDiagnostics,
+  composerModelSelectionDiagnostics,
   modelSelectionIdentityDiagnostics,
   modelSelectionScopeFingerprint,
 } from './modelSelectionDiagnostics'
@@ -19,6 +21,69 @@ const selection: ModelSelectionConfig = {
 }
 
 describe('model selection diagnostics', () => {
+  it('preserves an explicit null ref selection instead of substituting the rendered target', () => {
+    const details = composerModelSelectionDiagnostics({
+      selectedModel: { name: 'rendered-target', type: 'runtime' } as UnifiedModel,
+      selectedModelOptions: {},
+      getSelectedModel: () => null,
+    })
+
+    expect(details).toMatchObject({
+      renderedModelName: 'rendered-target',
+      liveModelName: null,
+      liveFingerprint: null,
+      hasLiveModelGetter: true,
+      hasLiveOptionsGetter: false,
+    })
+  })
+
+  it('reports optional reader failures without retaining their error contents', () => {
+    expect(
+      captureComposerModelSelectionDiagnostics({
+        selectedModel: null,
+        selectedModelOptions: {},
+        getSelectedModel: () => {
+          throw new Error('PRIVATE_READER_ERROR')
+        },
+      })
+    ).toEqual({ modelSelectionCaptureFailed: true })
+  })
+
+  it('compares bounded render and ref identities without retaining raw scopes or options', () => {
+    const details = composerModelSelectionDiagnostics({
+      scopeKey: 'private-scope-content',
+      selectedModel: { name: 'rendered-model', type: 'runtime' } as UnifiedModel,
+      selectedModelOptions: { codexProviderId: 'rendered-provider', api_key: 'RENDER_SECRET' },
+      getSelectedModel: () => ({ name: 'live-model', type: 'runtime' }) as UnifiedModel,
+      getSelectedModelOptions: () => ({ codexProviderId: 'x'.repeat(200), api_key: 'LIVE_SECRET' }),
+      selectionRevision: 7,
+      isModelSelectionReady: true,
+      modelSelectionDiagnostics: {
+        scopeFingerprint: 13,
+        configured: modelSelectionIdentityDiagnostics(selection),
+        effective: null,
+        selected: null,
+        catalogReady: true,
+        selectionReady: true,
+      },
+    })
+
+    expect(details).toMatchObject({
+      scopeFingerprint: modelSelectionScopeFingerprint('private-scope-content'),
+      modelScopeFingerprint: 13,
+      selectionRevision: 7,
+      isModelSelectionReady: true,
+      configuredModelName: 'model-a',
+      renderedModelName: 'rendered-model',
+      renderedProviderId: 'rendered-provider',
+      liveModelName: 'live-model',
+      liveProviderId: 'x'.repeat(80),
+    })
+    expect(JSON.stringify(details)).not.toMatch(
+      /private-scope-content|RENDER_SECRET|LIVE_SECRET|SYNTHETIC_SECRET|api_key|headers/
+    )
+  })
+
   it('includes only the model identity and excludes arbitrary configuration', () => {
     const identity = modelSelectionIdentityDiagnostics(selection)
 

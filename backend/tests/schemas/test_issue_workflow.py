@@ -438,3 +438,54 @@ def test_workflow_node_infers_robot_execution_for_legacy_automation_rule() -> No
     )
 
     assert definition.nodes[0].execution_mode == "robot"
+
+
+def test_stage_assignee_configuration_survives_snapshot_roundtrip() -> None:
+    definition = ProjectWorkflowDefinition.model_validate(
+        {
+            "stage_mode": "dag",
+            "feature_flags": {"collab.enforceStageAssignee.v1": False},
+            "assignee_roles": {
+                "qa": [
+                    {"assignee_type": "user", "assignee_id": "yunpeng7"},
+                    {"assignee_type": "user", "assignee_id": "sifang"},
+                ]
+            },
+            "nodes": [
+                {"id": "quality", "name": "质量验收", "required_assignee_role": "qa"},
+                {
+                    "id": "build",
+                    "name": "开发实现",
+                    "required_assignee_type": "team",
+                    "required_assignee_id": "123",
+                },
+            ],
+        }
+    )
+    snapshot = IssueWorkflowInstance.model_validate(
+        instantiate_workflow(definition).model_dump(mode="json")
+    )
+    assert snapshot.assignee_roles == definition.assignee_roles
+    assert snapshot.feature_flags == definition.feature_flags
+    assert snapshot.nodes[0].required_assignee_role == "qa"
+    assert snapshot.nodes[1].required_assignee_type == "team"
+    assert snapshot.nodes[1].required_assignee_id == "123"
+
+
+@pytest.mark.parametrize(
+    "constraint",
+    [
+        {"required_assignee_type": "user"},
+        {"required_assignee_id": "123"},
+        {
+            "required_assignee_type": "user",
+            "required_assignee_id": "123",
+            "required_assignee_role": "qa",
+        },
+    ],
+)
+def test_stage_assignee_requires_a_complete_exclusive_constraint(constraint) -> None:
+    with pytest.raises(ValidationError):
+        ProjectWorkflowDefinition.model_validate(
+            {"nodes": [{"id": "build", "name": "Build", **constraint}]}
+        )

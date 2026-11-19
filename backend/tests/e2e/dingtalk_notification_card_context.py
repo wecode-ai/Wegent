@@ -942,7 +942,11 @@ async def run() -> None:
             external_item_id,
             owner.id,
             LoopItemAssign(
-                version=1,
+                version=int(
+                    external_loop_item_provider.get(db, external_item_id, owner.id)[
+                        "version"
+                    ]
+                ),
                 assignee_type="user",
                 assignee_id=str(external_assignee.id),
             ),
@@ -971,6 +975,7 @@ async def run() -> None:
         )
         assert external_notification.payload["itemTitle"] == external_title
         assert [(method, path) for method, path, _body in gitlab_server.requests] == [
+            ("GET", "/api/v4/projects/wegent%2Fcard-e2e/issues/1"),
             ("GET", "/api/v4/projects/wegent%2Fcard-e2e/issues/1"),
             ("PUT", "/api/v4/projects/wegent%2Fcard-e2e/issues/1"),
         ]

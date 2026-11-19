@@ -727,6 +727,51 @@ describe('shared IssueDetail', () => {
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ assignee_user_id: 5 }))
   })
 
+  it('explains a stage-owner rejection and restores the saved assignee', async () => {
+    const persistedIssue = {
+      ...issue,
+      assignee_user_id: member.user_id,
+      assignee_name: member.user_name,
+    }
+    const rejected = Object.assign(
+      new Error(
+        JSON.stringify({
+          detail: {
+            reason_code: 'stage_assignee_mismatch',
+            expected_assignee: { assignee_type: 'user', assignee_id: String(member.user_id) },
+            actual_assignee: { assignee_type: 'user', assignee_id: String(secondMember.user_id) },
+          },
+        })
+      ),
+      {
+        status: 422,
+        detail: {
+          reason_code: 'stage_assignee_mismatch',
+          expected_assignee: { assignee_type: 'user', assignee_id: String(member.user_id) },
+          actual_assignee: { assignee_type: 'user', assignee_id: String(secondMember.user_id) },
+        },
+      }
+    )
+    const assign = jest.fn().mockRejectedValue(rejected)
+    const api = createApi({ issues: { assign, update: jest.fn() } })
+    renderDetail(api, { issue: persistedIssue, allIssues: [persistedIssue] })
+
+    const selector = screen.getByTestId('cloud-todo-detail-assignee')
+    expect(selector).toHaveAttribute('data-value', `user:${member.user_id}`)
+    await userEvent.click(selector)
+    await userEvent.click(
+      await screen.findByTestId(`cloud-todo-detail-assignee-option-user:${secondMember.user_id}`)
+    )
+
+    const message = await screen.findByTestId('cloud-todo-save-error')
+    expect(message).toHaveTextContent(
+      '该成员不符合当前阶段的负责人要求，已恢复为当前保存的负责人。'
+    )
+    expect(message).not.toHaveTextContent('reason_code')
+    await waitFor(() => expect(selector).toHaveAttribute('data-value', `user:${member.user_id}`))
+    expect(selector).toHaveTextContent(member.user_name)
+  })
+
   it.each([true, false])(
     'allows assignment with notifyAssignee=%s without granting permission to edit Issue content',
     async notifyAssignee => {

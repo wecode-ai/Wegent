@@ -47,6 +47,18 @@ Rust Socket.IO 取消请求在记录取消意图或投递取消事件之前，�
 
 智能体成员抽屉的技能选择与保存使用同一组目标发布组。正常编辑和同命名空间克隆保留这些组；只有真实的跨命名空间克隆清除来源组上下文，命名空间缺省值统一为 `default`。绑定加载和重试属于当前编辑会话，未知或失败的绑定阻止成员保存并提供重试；关闭、新建、切换智能体和卸载使旧请求失效，不能覆盖后续会话的组、错误或加载状态。后端仍验证当前资源与目标组权限，客户端上下文不授予新权限，CP01–CP20 不变。父组件与 BotEdit 契约测试覆盖判定、空绑定和过期响应；现有 Chromium CI 套件发现 `settings-team-member-skills.spec.ts`，覆盖真实成员编辑、同命名空间克隆、持久化及绑定网络故障恢复，已有技能作用域套件保留跨命名空间克隆覆盖。
 
+阶段派发在 Issue 与协作轮次锁内复验 `required_assignee_type/id` 或当前职能映射，再创建 assignment、执行与通知。人类负责人身份和其默认助理的执行身份保持独立。直接 PATCH 不能通过修改流程指针绕过约束；修改负责人约束配置要求维护者权限。质量评审复用现有 Issue PATCH，只接受当前有效负责人对已记录 PR head 的版本化结论，下一负责人由服务端策略解析；成员设备离线不阻止异步验收。通知复用事务 outbox，失败回滚不发送，重放不重复改派。`test_stage_assignees.py`、`test_stage_assignee_mutations.py`、`test_collaboration_stage_assignees.py` 和 `test_quality_handoffs.py` 覆盖这些事务；CP01–CP20 不变。
+
+开发者在项目 `workflow_definition.assignee_roles` 中配置 `qa`、`product`、`ui`、`engineering` 和通知角色 `pmo`。每个角色的值是按主负责人、备用负责人排序的目标数组，目标包含 `assignee_type`（`user`、`agent` 或 `team`）与 `assignee_id`；服务端按顺序选择当前有效且具有项目权限的目标。人员必须是 active 成员，不要求绑定设备或设备在线。阶段节点可设置成对的 `required_assignee_type/id`，或设置 `required_assignee_role`（`qa`、`product`、`ui`、`engineering`），两者互斥。Issue 工作流快照保留角色映射和 feature flags。
+
+人类阶段负责人必须具有项目 Developer 权限；单个 Issue 的显式邀请不替代该资格。无约束 Issue 仍按 CP14 接受有效外部受邀人，assignment 删除也复验当前 Issue 权限；撤销邀请后立即拒绝，阶段约束在删除记录前校验。`test_issue_explicit_invitations.py` 覆盖邀请、撤销、删除及阶段资格的交叉边界。
+
+质量准入和人工评审在 Issue 锁后按稳定顺序锁定匹配的采集订阅；更新的 head、失败检查或不确定观察即使尚未投影到 Issue，也会阻止沿用旧证明。采集顺序水位与已验证 head 的时间分别保存，乱序或重放不能清除更新的阻塞；`test_project_quality_observations.py` 与 `test_quality_handoff_edges.py` 覆盖采集、事件处理和人工写入之间的边界。
+
+节点显式配置的 `required_assignee_type/id` 或 `required_assignee_role` 默认强制校验，不需要开启试点策略。固定试点规则需要在权威工作流的 `feature_flags['collab.enforceStageAssignee.v1']` 中显式设置 `true`：需求提出固定由产品 jiangyang7 负责，改派时原子进入共同评审，质量验收应用 PR 准入与 QA → 产品 → UI 交接。仅使用相同中文阶段名或标签、未启用策略的旧流程保持原有成员校验与派发行为，不会隐式绑定固定账号或增加 PR 门禁。
+
+项目在 `workflow_definition` 中启用后，新建或显式应用的工作流实例复制该标志。已有 Issue 的工作流快照独立决定策略范围：快照没有该标志时不视为已启用，不会因项目后来设为 `true` 而追溯应用；只有没有工作流快照的 Issue 才使用项目定义。维护者可显式更新或应用快照。紧急回滚时，将项目 `workflow_definition.feature_flags['collab.enforceStageAssignee.v1']` 设为 `false`，即可关闭本项目所有 Issue 的阶段负责人约束及试点交接；该项目级关闭优先于 Issue 快照。保留已持久化的负责人配置，无需删除角色映射或节点约束。
+
 手机与 PC 的个人项目、会话管理复用同一组 typed Runtime RPC：项目 upsert、重命名、移除、置顶，以及会话置顶、重命名、归档、归档列表、恢复与永久删除。Python HTTP、Rust Socket.IO、目标 Executor 均要求当前安装实例的个人远程任务同意；其他安装和项目只读授权不能代替。归档的 `cleanupWorktree` 仅由已解析任务 ID 查找受管工作树并保存快照；共享活跃工作树保留。清理失败返回 `accepted: true` 与独立 `cleanupError`，不能重新归档冒充恢复。继续禁止直接工作树删除、shell、终端和全局配置。归档列表中的设备标识投影到准确的登记路由，避免同名安装串线。三层权限矩阵、原生 Git 快照测试与现有 remote-task-access CI 检查点覆盖此链路；CP01–CP20 不变。
 
 个人任务的工作树能力查询和预检属于任务创建前的只读操作。Python HTTP、Rust Socket.IO 与目标 Executor 均要求目标电脑当前安装实例明确开启远程任务访问；项目转录读取授权和其他电脑的开关不能代替。预检的 `includeBranches` 仅返回所选源仓库的分支，执行固定 Git 查询；不开放 `device.execute_command`、工作树配置、直接创建或删除工作树。撤销开关立即拒绝后续检查。三层权限契约测试及现有 `remote-task-access` CI 场景覆盖 HTTP、Socket.IO、跨安装隔离和撤销；CP01–CP20 保持不变。

@@ -1,18 +1,30 @@
 import assert from 'node:assert/strict'
 import { createDevtoolsClient } from '../../../scripts/ai-verify-devtools.mjs'
 import { getSingleElementMetrics } from './conversation-layout.mjs'
+import {
+  collectScopedLongAnimationFrames,
+  ELEMENT_METRICS_MARKS,
+  startRendererTransitionTrace,
+} from './renderer-transition-trace.mjs'
 import { join, resultDir, writeFile } from './shared.mjs'
 
 async function sampleDrawerMotion(control, scope, action, direction, timeoutMs, reduced = false) {
+  const stopTrace =
+    direction === 'close' && !reduced
+      ? await startRendererTransitionTrace(resultDir, 'issue-drawers-close.trace.json', timeoutMs)
+      : undefined
+  let succeeded = false
   try {
     await captureDrawerMotion(control, scope, action, direction, timeoutMs, reduced)
-  } catch (error) {
-    await captureDrawerFailure(direction, timeoutMs)
-    throw error
+    succeeded = true
+  } finally {
+    await stopTrace?.()
+    if (!succeeded || (direction === 'close' && !reduced))
+      await captureDrawerTimings(direction, timeoutMs)
   }
 }
 
-async function captureDrawerFailure(direction, timeoutMs) {
+async function captureDrawerTimings(direction, timeoutMs) {
   let client
   let target
   try {
@@ -33,29 +45,7 @@ async function captureDrawerFailure(direction, timeoutMs) {
       params: {
         awaitPromise: true,
         returnByValue: true,
-        expression: `new Promise(resolve => {
-        const supported = PerformanceObserver.supportedEntryTypes.includes('long-animation-frame')
-        if (!supported) { resolve({ supported }); return }
-        const frames = []
-        const observer = new PerformanceObserver(list => frames.push(...list.getEntries()))
-        observer.observe({ type: 'long-animation-frame', buffered: true })
-        setTimeout(() => {
-          frames.push(...observer.takeRecords())
-          observer.disconnect()
-          resolve({ supported, timeOrigin: performance.timeOrigin, frames: frames.map(frame => ({
-            startTime: frame.startTime, duration: frame.duration,
-            blockingDuration: frame.blockingDuration,
-            renderStart: frame.renderStart, styleAndLayoutStart: frame.styleAndLayoutStart,
-            scripts: frame.scripts.map(script => ({
-              duration: script.duration, invoker: script.invoker, invokerType: script.invokerType,
-              sourceFunctionName: script.sourceFunctionName,
-              sourceURL: script.sourceURL ? new URL(script.sourceURL).origin + new URL(script.sourceURL).pathname : '',
-              sourceCharPosition: script.sourceCharPosition,
-              forcedStyleAndLayoutDuration: script.forcedStyleAndLayoutDuration
-            }))
-          })) })
-        }, 0)
-      })`,
+        expression: `(${collectScopedLongAnimationFrames.toString()})(${JSON.stringify(ELEMENT_METRICS_MARKS)})`,
       },
     })
     await writeFile(

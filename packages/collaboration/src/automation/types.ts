@@ -199,6 +199,7 @@ export interface WorkflowNodeDefinition {
   automation_rule_id?: string | null;
   required_assignee_type?: "user" | "agent" | "team" | null;
   required_assignee_id?: string | null;
+  required_assignee_role?: "qa" | "product" | "ui" | "engineering" | null;
   execution_config?: WorkflowExecutionConfig | null;
   execution_config_override?: boolean;
 }
@@ -211,7 +212,14 @@ export interface ProjectWorkflowDefinition {
   approval_policy?: "required" | "automatic";
   ai_automation_rule_id?: string | null;
   execution_config?: WorkflowExecutionConfig | null;
+  assignee_roles?: Record<string, WorkflowAssigneeTarget[]>;
+  feature_flags?: Record<string, boolean>;
   nodes: WorkflowNodeDefinition[];
+}
+
+export interface WorkflowAssigneeTarget {
+  assignee_type: "user" | "agent" | "team";
+  assignee_id: string;
 }
 
 export interface AutomationProject {

@@ -212,6 +212,12 @@ export interface WorkspaceIssueUpdateInput {
   startAt?: string | null;
   dueAt?: string | null;
   tags?: string[];
+  qualityReview?: {
+    decision: "no_objection" | "accepted" | "changes_requested";
+    evidence: string[];
+    idempotencyKey: string;
+    prHeadSha: string;
+  };
 }
 
 export interface WorkspaceIssueAssignmentInput {

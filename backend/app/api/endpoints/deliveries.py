@@ -89,6 +89,9 @@ from app.services.loop_item_events import publish_loop_item_changed
 from app.services.loop_item_status_history import (
     project_status_transition,
 )
+from app.services.loop_items.external_assignment_constraints import (
+    validate_external_assignment,
+)
 from app.services.loop_items.external_provider import external_loop_item_provider
 from app.services.loop_items.provider_router import (
     loop_item_attachment_provider_router,
@@ -892,12 +895,15 @@ async def create_issue_assignment(
 ) -> IssueAssignmentCreateResponse:
     is_external = external_loop_item_provider.is_external_item(db, item_id)
     if is_external:
-        external_loop_item_provider.ensure_shadow(db, item_id, current_user.id)
-    project, item = issue_assignment_service.project_for_issue(
-        db,
-        issue_id=item_id,
-        user_id=current_user.id,
-    )
+        project, item = external_loop_item_provider.assignment_stage_context(
+            db, item_id, current_user.id
+        )
+    else:
+        project, item = issue_assignment_service.project_for_issue(
+            db,
+            issue_id=item_id,
+            user_id=current_user.id,
+        )
     access = loop_item_service._require_item_access(db, item, current_user.id)
     require_issue_action(
         access,
@@ -925,6 +931,16 @@ async def create_issue_assignment(
         )
 
     if is_external:
+        validate_external_assignment(
+            db,
+            project=project,
+            item=item,
+            assignee_type=legacy_type,
+            assignee_id=legacy_id,
+            workflow_step=values.workflow_step,
+            user_id=current_user.id,
+        )
+        external_loop_item_provider.ensure_shadow(db, item_id, current_user.id)
         comment_values = None
         if values.comment_body:
             comment_values = external_loop_item_provider.add_comment(
@@ -1058,21 +1074,25 @@ def remove_issue_assignment(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user_jwt_apikey_tasktoken),
 ) -> None:
+    stage_metadata = None
     if external_loop_item_provider.is_external_item(db, item_id):
-        external_loop_item_provider.ensure_shadow(db, item_id, current_user.id)
+        _, remote_item = external_loop_item_provider.assignment_stage_context(
+            db, item_id, current_user.id
+        )
+        stage_metadata = remote_item.metadata_json
     project, item = issue_assignment_service.project_for_issue(
         db,
         issue_id=item_id,
         user_id=current_user.id,
     )
-    issue_assignment_service.remove(
+    issue_assignment_service.remove_and_project(
         db,
         project_id=int(project.id),
         issue_id=item_id,
         assignment_id=assignment_id,
         user_id=current_user.id,
+        stage_metadata=stage_metadata,
     )
-    issue_assignment_service.project_legacy_assignment(db, item=item)
     db.commit()
     publish_loop_item_changed(
         db, item=item, reason="assignment_removed", actor_user_id=current_user.id

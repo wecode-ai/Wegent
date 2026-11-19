@@ -2331,13 +2331,21 @@ async fn run_codex_app_server_turn_on_shared_client(
             Arc::clone(&state.thread_activity_changed),
         );
         drop(state);
-        return run_codex_app_server_turn_with_runtime(
+        let admission_client = client.for_request(&request)?;
+        let resumed_thread_id = options.resume_thread_id.clone();
+        let turn = run_codex_app_server_turn_with_runtime(
             &client.binary,
             request,
             options,
             Some(runtime_notifications),
-        )
-        .await;
+        );
+        // A background reader can temporarily own this Home's native writer.
+        // Admit isolated resumes through the same gate, and keep the source busy
+        // until the isolated process has released its writer on every exit path.
+        return match resumed_thread_id {
+            Some(thread_id) => admission_client.run_thread_action(&thread_id, turn).await,
+            None => turn.await,
+        };
     }
     let mut capability_lease =
         Some(crate::services::capability_activation::begin_execution().await);

@@ -4,16 +4,20 @@
 """Explicit Issue invitations never grant access to the containing project."""
 
 import uuid
+from copy import deepcopy
 
 import pytest
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.cloud_project import CloudProject
-from app.models.delivery import LoopItem
+from app.models.delivery import LoopItem, LoopItemComment
+from app.models.loop_item_execution import LoopItemExecution
 from app.models.user import User
+from app.schemas.project_chat import LoopItemAssign
 from app.services.cloud_projects.access import IssueAction, require_cloud_project_role
 from app.services.delivery.service import delivery_service
+from app.services.issue_assignments import issue_assignment_service
 from app.services.loop_items.service import loop_item_service
 from tests.api.test_deliveries_api import delivery_project
 
@@ -135,6 +139,151 @@ def test_inactive_recipient_cannot_be_invited(
         loop_item_service.add_collaborator(test_db, item.id, outsider.id, test_user.id)
     assert denied.value.status_code == 422
     assert loop_item_service.list_collaborators(test_db, item.id, test_user.id) == []
+
+
+@pytest.mark.parametrize("invitation", ["participant", "assignee"])
+def test_cp14_invitation_cannot_replace_required_stage_membership(
+    test_db: Session,
+    test_user: User,
+    delivery_project: CloudProject,
+    outsider: User,
+    invitation: str,
+) -> None:
+    item = make_issue(test_db, delivery_project, test_user)
+    if invitation == "participant":
+        loop_item_service.add_collaborator(test_db, item.id, outsider.id, test_user.id)
+    else:
+        item.assignee_user_id = outsider.id
+    item.metadata_json = {
+        **item.metadata_json,
+        "workflow": {
+            "current_stage_id": "build",
+            "nodes": [
+                {
+                    "id": "build",
+                    "name": "Build",
+                    "required_assignee_type": "user",
+                    "required_assignee_id": str(outsider.id),
+                }
+            ],
+        },
+    }
+    test_db.commit()
+    assert loop_item_service.get(test_db, item.id, outsider.id).id == item.id
+    before = (item.version, item.assignee_user_id, deepcopy(item.metadata_json))
+    comments = test_db.query(LoopItemComment).count()
+
+    with pytest.raises(HTTPException) as denied:
+        loop_item_service.assign(
+            test_db,
+            project_id=int(delivery_project.id),
+            item_id=item.id,
+            user_id=test_user.id,
+            values=LoopItemAssign(
+                version=item.version,
+                assignee_type="user",
+                assignee_id=str(outsider.id),
+                notify_assignee=False,
+            ),
+        )
+
+    assert denied.value.status_code == 422
+    assert denied.value.detail["reason_code"] == "stage_assignee_mismatch"
+    assert denied.value.detail["reason"] == "Required assignee lost project access"
+    assert (item.version, item.assignee_user_id, item.metadata_json) == before
+    assert test_db.query(LoopItemComment).count() == comments
+    assert test_db.query(LoopItemExecution).filter_by(loop_item_id=item.id).count() == 0
+
+
+def test_cp14_invitee_can_remove_unconstrained_assignment(
+    test_db: Session,
+    test_user: User,
+    delivery_project: CloudProject,
+    outsider: User,
+) -> None:
+    item = make_issue(test_db, delivery_project, test_user)
+    loop_item_service.add_collaborator(test_db, item.id, outsider.id, test_user.id)
+    loop_item_service.assign(
+        test_db,
+        project_id=int(delivery_project.id),
+        item_id=item.id,
+        user_id=test_user.id,
+        values=LoopItemAssign(
+            version=item.version,
+            assignee_type="user",
+            assignee_id=str(outsider.id),
+            notify_assignee=False,
+        ),
+    )
+    assert item.assignee_user_id == outsider.id
+    assignment = issue_assignment_service.active_for_issue(test_db, item.id)[0]
+    version = item.version
+
+    removed = issue_assignment_service.remove_and_project(
+        test_db,
+        project_id=int(delivery_project.id),
+        issue_id=item.id,
+        assignment_id=assignment.id,
+        user_id=outsider.id,
+    )
+
+    assert removed.id == assignment.id
+    assert item.assignee_user_id is None
+    assert item.version == version + 1
+    assert issue_assignment_service.active_for_issue(test_db, item.id) == []
+    assert loop_item_service.get(test_db, item.id, outsider.id).id == item.id
+    with pytest.raises(HTTPException) as denied:
+        require_cloud_project_role(test_db, delivery_project.id, outsider.id)
+    assert denied.value.status_code == 404
+
+
+def test_cp14_revoked_invitee_cannot_remove_assignment(
+    test_db: Session,
+    test_user: User,
+    delivery_project: CloudProject,
+    outsider: User,
+) -> None:
+    item = make_issue(test_db, delivery_project, test_user)
+    loop_item_service.add_collaborator(test_db, item.id, outsider.id, test_user.id)
+    loop_item_service.assign(
+        test_db,
+        project_id=int(delivery_project.id),
+        item_id=item.id,
+        user_id=test_user.id,
+        values=LoopItemAssign(
+            version=item.version,
+            assignee_type="user",
+            assignee_id=str(test_user.id),
+            notify_assignee=False,
+        ),
+    )
+    assignment = issue_assignment_service.active_for_issue(test_db, item.id)[0]
+    loop_item_service.remove_collaborator(test_db, item.id, outsider.id, test_user.id)
+    before = (
+        item.version,
+        item.assignee_user_id,
+        test_db.query(LoopItemComment).count(),
+    )
+
+    with pytest.raises(HTTPException) as denied:
+        issue_assignment_service.remove_and_project(
+            test_db,
+            project_id=int(delivery_project.id),
+            issue_id=item.id,
+            assignment_id=assignment.id,
+            user_id=outsider.id,
+        )
+
+    assert denied.value.status_code == 404
+    assert (
+        item.version,
+        item.assignee_user_id,
+        test_db.query(LoopItemComment).count(),
+    ) == before
+    assert [
+        event.id
+        for event in issue_assignment_service.active_for_issue(test_db, item.id)
+    ] == [assignment.id]
 
 
 def test_cp14_invitee_can_manage_people_but_not_project_execution(

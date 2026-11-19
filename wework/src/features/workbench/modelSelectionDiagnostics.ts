@@ -1,4 +1,4 @@
-import type { ModelSelectionConfig } from '@/types/api'
+import type { ModelOptions, ModelSelectionConfig, UnifiedModel } from '@/types/api'
 
 export interface ModelSelectionIdentityDiagnostics {
   modelName: string
@@ -45,5 +45,62 @@ export function modelSelectionIdentityDiagnostics(
   return {
     ...identity,
     fingerprint: modelSelectionScopeFingerprint(JSON.stringify(identity)),
+  }
+}
+
+interface ComposerModelSelectionSource {
+  scopeKey?: string
+  selectedModel: UnifiedModel | null
+  selectedModelOptions: ModelOptions
+  getSelectedModel?: () => UnifiedModel | null
+  getSelectedModelOptions?: () => ModelOptions
+  modelSelectionDiagnostics?: ModelSelectionDiagnostics
+  selectionRevision?: number
+  isModelSelectionReady?: boolean
+}
+
+/** Capture render and ref identities without retaining options, prompts or scope contents. */
+export function composerModelSelectionDiagnostics(source: ComposerModelSelectionSource) {
+  const identity = (model: UnifiedModel | null, options: ModelOptions) =>
+    modelSelectionIdentityDiagnostics(
+      model ? { modelName: model.name, modelType: model.type, options } : null
+    )
+  const diagnostics = source.modelSelectionDiagnostics
+  const identities = {
+    configured: diagnostics?.configured,
+    effective: diagnostics?.effective,
+    selected: diagnostics?.selected,
+    rendered: identity(source.selectedModel, source.selectedModelOptions),
+    live: identity(
+      source.getSelectedModel ? source.getSelectedModel() : source.selectedModel,
+      source.getSelectedModelOptions
+        ? source.getSelectedModelOptions()
+        : source.selectedModelOptions
+    ),
+  }
+  const details: Record<string, boolean | number | string | null> = {
+    scopeFingerprint: modelSelectionScopeFingerprint(source.scopeKey ?? ''),
+    modelScopeFingerprint: diagnostics?.scopeFingerprint ?? null,
+    selectionRevision: source.selectionRevision ?? null,
+    isModelSelectionReady: source.isModelSelectionReady ?? null,
+    isModelCatalogReady: diagnostics?.catalogReady ?? null,
+    hasLiveModelGetter: Boolean(source.getSelectedModel),
+    hasLiveOptionsGetter: Boolean(source.getSelectedModelOptions),
+  }
+  for (const [prefix, value] of Object.entries(identities)) {
+    details[`${prefix}ModelName`] = value?.modelName.slice(0, 80) ?? null
+    details[`${prefix}ModelType`] = value?.modelType ?? null
+    details[`${prefix}ProviderId`] = value?.codexProviderId?.slice(0, 80) ?? null
+    details[`${prefix}Fingerprint`] = value?.fingerprint ?? null
+  }
+  return details
+}
+
+/** Optional diagnostics cannot prevent admission when an inspected reader fails. */
+export function captureComposerModelSelectionDiagnostics(source: ComposerModelSelectionSource) {
+  try {
+    return composerModelSelectionDiagnostics(source)
+  } catch {
+    return { modelSelectionCaptureFailed: true }
   }
 }

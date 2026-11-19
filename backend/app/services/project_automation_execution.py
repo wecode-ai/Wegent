@@ -41,6 +41,11 @@ from app.schemas.runtime_work import (
     RuntimeTaskAddress,
 )
 from app.services import runtime_work_service
+from app.services.automation_stage_assignees import (
+    AutomationAssignee,
+    preflight_automation_assignee,
+    project_agent_for_target,
+)
 from app.services.cloud_projects.service import cloud_project_service
 from app.services.device.identity import owned_device_aliases
 from app.services.loop_item_executions.service import loop_item_execution_service
@@ -134,10 +139,29 @@ class ProjectAutomationExecution:
                     "existing_issue" if run.task_id else "automation_created"
                 )
                 run.metadata_json = run_metadata
-            self._ensure_run_task(db, project=project, owner=owner, rule=rule, run=run)
             dispatch_target = metadata(rule).get("dispatch_target")
             if not isinstance(dispatch_target, dict):
                 raise RuntimeError("Automation dispatch target is unavailable")
+            assignee = preflight_automation_assignee(
+                db,
+                project=project,
+                rule=rule,
+                run=run,
+                owner=owner,
+                dispatch_target=dispatch_target,
+            )
+            created = self._ensure_run_task(
+                db,
+                project=project,
+                owner=owner,
+                rule=rule,
+                run=run,
+                assignee=assignee,
+                dispatch_target=dispatch_target,
+            )
+            if created:
+                self._finish_created_target(db, run=run, assignee=assignee)
+                return
             await self._dispatch_configured_target(
                 db,
                 owner=owner,
@@ -175,7 +199,9 @@ class ProjectAutomationExecution:
         owner: User,
         rule: ProjectAutomationRule,
         run: ProjectAutomationRun,
-    ) -> None:
+        assignee: AutomationAssignee,
+        dispatch_target: dict[str, Any],
+    ) -> bool:
         if run.task_id:
             task = loop_item_execution_service.resolve_task_context(
                 db,
@@ -187,7 +213,7 @@ class ProjectAutomationExecution:
             )
             if task is None:
                 raise RuntimeError("Automation event task is unavailable")
-            return
+            return False
 
         scheduled_for = self._scheduled_for(run)
         timezone_name = str(metadata(rule).get("timezone") or "Asia/Shanghai")
@@ -198,6 +224,14 @@ class ProjectAutomationExecution:
         except ZoneInfoNotFoundError:
             local_time = scheduled_for
         context = self._automation_context(db, rule, run)
+        context["runner_selection"] = dispatch_target.get("runner_selection")
+        if device_id := text(dispatch_target.get("execution_device_id")):
+            context["execution_device_id"] = device_id
+        if assignee.assignee_type == "agent":
+            agent = project_agent(db, str(project.id), assignee.assignee_id)
+            context = self._project_robot_context(
+                agent=agent, owner=owner, context=context
+            )
         instruction = self._run_instruction(rule, run)
         routed = loop_item_provider_router.create(
             db,
@@ -208,10 +242,12 @@ class ProjectAutomationExecution:
                 description=instruction,
                 priority="medium",
                 tags=["automation"],
+                **assignee.creation_fields(),
             ),
             automation_context=context,
             instruction=instruction,
             assign_creator_if_unassigned=False,
+            commit=False,
         )
         item_id = routed.values.get("id")
         if not item_id:
@@ -220,25 +256,31 @@ class ProjectAutomationExecution:
         item_title = routed.values.get("title")
         run.task_title = str(item_title) if item_title else ""
         run.version += 1
-        db.commit()
-        db.refresh(run)
+        return True
 
-    def _assign_project_robot(
-        self,
-        db: Session,
-        *,
-        owner: User,
-        rule: ProjectAutomationRule,
-        run: ProjectAutomationRun,
-        agent_id: str | None,
-        context: dict,
-        instruction: str,
+    def _finish_created_target(
+        self, db: Session, *, run: ProjectAutomationRun, assignee: AutomationAssignee
     ) -> None:
-        agent = project_agent(db, str(rule.cloud_project_id), agent_id)
-        if not run.task_id:
-            raise RuntimeError("Automation task carrier is unavailable")
+        execution = self._execution_for_run(db, str(run.id))
+        if assignee.assignee_type in {"agent", "team"} and execution is None:
+            raise RuntimeError("The automatic-processing Run was not created")
+        if assignee.assignee_type == "agent":
+            run.assignee_agent_id = assignee.assignee_id
+        if execution is not None:
+            run.device_id = execution.execution_device_id
+        waiting = execution is not None and assignee.assignee_type != "user"
+        run.status = "queued" if waiting else "succeeded"
+        if not waiting:
+            run.completed_at = utcnow()
+        run.version += 1
+        db.commit()
+
+    @staticmethod
+    def _project_robot_context(
+        *, agent: ProjectChatAgent, owner: User, context: dict[str, Any]
+    ) -> dict[str, Any]:
         uses_workflow_snapshot = "workspace_binding" in context
-        robot_context = {
+        return {
             **context,
             "runtime_source": (
                 context.get("runtime_source")
@@ -259,6 +301,24 @@ class ProjectAutomationExecution:
                 or owner.id
             ),
         }
+
+    def _assign_project_robot(
+        self,
+        db: Session,
+        *,
+        owner: User,
+        rule: ProjectAutomationRule,
+        run: ProjectAutomationRun,
+        agent_id: str | None,
+        context: dict,
+        instruction: str,
+    ) -> None:
+        agent = project_agent(db, str(rule.cloud_project_id), agent_id)
+        if not run.task_id:
+            raise RuntimeError("Automation task carrier is unavailable")
+        robot_context = self._project_robot_context(
+            agent=agent, owner=owner, context=context
+        )
         item = db.get(LoopItem, run.task_id)
         if item is not None:
             loop_item_service.assign(
@@ -388,27 +448,7 @@ class ProjectAutomationExecution:
     def _project_agent_for_group_member(
         db: Session, *, project_id: str, member_id: str
     ) -> ProjectChatAgent | None:
-        rows = (
-            db.query(ProjectChatAgent)
-            .filter(
-                ProjectChatAgent.cloud_project_id == project_id,
-                ProjectChatAgent.status == "active",
-            )
-            .all()
-        )
-        return next(
-            (
-                agent
-                for agent in rows
-                if str(agent.id) == member_id
-                or (
-                    member_id.isdigit()
-                    and isinstance(agent.metadata_json, dict)
-                    and agent.metadata_json.get("wegent_team_id") == int(member_id)
-                )
-            ),
-            None,
-        )
+        return project_agent_for_target(db, project_id=project_id, member_id=member_id)
 
     def _assign_human_target(
         self,
@@ -1028,6 +1068,9 @@ class ProjectAutomationProcessor:
         *,
         automation_id: str | None = None,
     ) -> list[ProjectAutomationRun]:
+        from app.services.quality_handoffs import process_quality_event
+
+        process_quality_event(db, event)
         if not supported_event_type(event.event_type):
             logger.info(
                 "[ProjectAutomation] Ignoring unsupported event=%s", event.event_type

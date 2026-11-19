@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
+from typing import Any
 
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
@@ -326,6 +327,60 @@ class IssueAssignmentService:
         self._refresh_active_index(db, issue_id)
         return assignment
 
+    def remove_and_project(
+        self,
+        db: Session,
+        *,
+        project_id: int,
+        issue_id: str,
+        assignment_id: str,
+        user_id: int,
+        stage_metadata: dict[str, Any] | None = None,
+    ) -> AssignmentEvent:
+        """Validate the resulting owner before recording a public unassignment."""
+        from app.services.stage_assignee_mutations import effective_assignee, lock_issue
+        from app.services.stage_assignees import validate_stage_assignee
+
+        item = self._require_issue_project(db, project_id, issue_id)
+        lock_issue(db, item)
+        from app.services.loop_items.service import loop_item_service
+
+        access = loop_item_service._require_item_access(db, item, user_id)
+        require_issue_action(
+            access,
+            action=IssueAction.ASSIGN,
+            issue_creator_user_id=item.created_by_user_id,
+            user_id=user_id,
+        )
+        active = list(self._active_events(db, issue_id, for_update=True).values())
+        if not any(event.id == str(assignment_id) for event in active):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Assignment not found")
+        remaining = [event for event in active if event.id != str(assignment_id)]
+        metadata = stage_metadata if stage_metadata is not None else item.metadata_json
+        target_type, target_id = effective_assignee(
+            item,
+            self._legacy_assignment_values(db, remaining),
+            metadata or {},
+        )
+        validate_stage_assignee(
+            db,
+            project=access.project,
+            item=item,
+            assignee_type=target_type,
+            assignee_id=target_id,
+            metadata=metadata,
+            actor_user_id=user_id,
+        )
+        assignment = self.remove(
+            db,
+            project_id=project_id,
+            issue_id=issue_id,
+            assignment_id=assignment_id,
+            user_id=user_id,
+        )
+        self.project_legacy_assignment(db, item=item)
+        return assignment
+
     @staticmethod
     def _lock_issue(db: Session, issue_id: str) -> None:
         db.query(LoopItem.id).filter(LoopItem.id == issue_id).with_for_update().one()
@@ -470,23 +525,34 @@ class IssueAssignmentService:
 
     def project_legacy_assignment(self, db: Session, *, item: LoopItem) -> None:
         active = list(self._active_events(db, item.id).values())
+        for field, value in self._legacy_assignment_values(db, active).items():
+            setattr(item, field, value)
+        item.version += 1
+
+    @staticmethod
+    def _legacy_assignment_values(
+        db: Session, active: list[AssignmentEvent]
+    ) -> dict[str, int | str | None]:
+        """Preview the same legacy owner projection used after assignment writes."""
         latest = active[-1] if active else None
-        item.assignee_user_id = None
-        item.assignee_agent_id = ""
-        item.assignee_team_id = None
+        values: dict[str, int | str | None] = {
+            "assignee_user_id": None,
+            "assignee_agent_id": "",
+            "assignee_team_id": None,
+        }
         if latest is not None and latest.member_type == "human":
             try:
-                item.assignee_user_id = int(latest.member_id)
+                values["assignee_user_id"] = int(latest.member_id)
             except ValueError:
                 pass
         elif latest is not None and db.get(ProjectChatAgent, latest.member_id):
-            item.assignee_agent_id = latest.member_id
+            values["assignee_agent_id"] = latest.member_id
         elif latest is not None:
             try:
-                item.assignee_team_id = int(latest.member_id)
+                values["assignee_team_id"] = int(latest.member_id)
             except ValueError:
                 pass
-        item.version += 1
+        return values
 
     def _active_events(
         self, db: Session, issue_id: str, *, for_update: bool = False

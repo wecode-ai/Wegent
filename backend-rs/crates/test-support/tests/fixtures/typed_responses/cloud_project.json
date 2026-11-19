@@ -79,6 +79,8 @@
       "approval_policy": "required",
       "ai_automation_rule_id": null,
       "execution_config": null,
+      "assignee_roles": {},
+      "feature_flags": {},
       "nodes": []
     },
     "workflow_automation_id": null,
@@ -182,6 +184,8 @@
       "approval_policy": "required",
       "ai_automation_rule_id": null,
       "execution_config": null,
+      "assignee_roles": {},
+      "feature_flags": {},
       "nodes": []
     },
     "workflow_automation_id": null,
@@ -285,6 +289,8 @@
       "approval_policy": "required",
       "ai_automation_rule_id": null,
       "execution_config": null,
+      "assignee_roles": {},
+      "feature_flags": {},
       "nodes": []
     },
     "workflow_automation_id": null,
@@ -389,6 +395,8 @@
       "approval_policy": "required",
       "ai_automation_rule_id": null,
       "execution_config": null,
+      "assignee_roles": {},
+      "feature_flags": {},
       "nodes": []
     },
     "workflow_automation_id": null,
@@ -473,6 +481,8 @@
       "approval_policy": "required",
       "ai_automation_rule_id": null,
       "execution_config": null,
+      "assignee_roles": {},
+      "feature_flags": {},
       "nodes": []
     },
     "workflow_automation_id": null,
@@ -576,6 +586,8 @@
       "approval_policy": "required",
       "ai_automation_rule_id": null,
       "execution_config": null,
+      "assignee_roles": {},
+      "feature_flags": {},
       "nodes": [
         {
           "x": null

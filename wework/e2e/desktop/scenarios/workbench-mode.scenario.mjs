@@ -13,7 +13,10 @@ async function openGeneralSettings(control) {
 async function switchMode(control, mode) {
   const readyCount = control.readyCount
   await control.command('clickWhenEnabled', `[data-testid="general-workbench-mode-${mode}-button"]`)
-  await control.command('clickWhenEnabled', '[data-testid="general-workbench-mode-confirm-button"]')
+  const confirmButton = '[data-testid="general-workbench-mode-confirm-button"]'
+  await control.command('waitFor', confirmButton, { enabled: true })
+  // Acknowledge the command before this click reloads the renderer.
+  await control.command('deferredClick', confirmButton)
 
   let timeout
   const reconnectTimeout = new Promise((_, reject) => {

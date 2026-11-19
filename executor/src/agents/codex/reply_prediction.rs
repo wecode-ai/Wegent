@@ -428,18 +428,23 @@ while IFS= read -r line; do
       elif [ '__MODE__' = 'goal-error' ]; then
         printf '{"id":%s,"error":{"code":-32603,"message":"goal read failed"}}\n' "$id"
       else printf '{"id":%s,"result":{"goal":null}}\n' "$id"; fi ;;
-    *'"method":"thread/resume"'*) printf '{"id":%s,"result":{"thread":{"id":"source"},"model":"parent-model","modelProvider":"openai"}}\n' "$id" ;;
+    *'"method":"thread/resume"'*)
+      provider=$(printf '%s' "$line" | sed -n 's/.*"modelProvider":"\([^"]*\)".*/\1/p')
+      printf '{"id":%s,"result":{"thread":{"id":"source"},"model":"parent-model","modelProvider":"%s"}}\n' "$id" "${provider:-openai}" ;;
     *'"method":"thread/turns/list"'*)
       if [ '__MODE__' = 'interrupted' ]; then
         printf '{"id":%s,"result":{"data":[{"id":"latest","status":"interrupted"}]}}\n' "$id"
       else printf '{"id":%s,"result":{"data":[{"id":"latest","status":"completed"}]}}\n' "$id"; fi ;;
     *'"method":"thread/fork"'*)
-      if [ '__MODE__' = 'fork-error' ]; then
+      if [ '__MODE__' = 'fork-error' ] || [ '__MODE__' = 'fork-error-close' ]; then
         printf '{"id":%s,"error":{"code":-32602,"message":"prediction unsupported"}}\n' "$id"
       else printf '{"id":%s,"result":{"thread":{"id":"prediction"}}}\n' "$id"; fi ;;
     *'"method":"turn/start"'*)
       printf '{"id":%s,"result":{"turn":{"id":"prediction-turn","status":"inProgress"}}}\n' "$id"
-      if [ '__MODE__' = 'complete' ]; then
+      if printf '%s' "$line" | grep -q '"threadId":"source"'; then
+        printf '%s\n' '{"method":"item/completed","params":{"threadId":"source","turnId":"prediction-turn","item":{"type":"agentMessage","text":"Real turn completed"}}}'
+        printf '%s\n' '{"method":"turn/completed","params":{"threadId":"source","turn":{"id":"prediction-turn","status":"completed"}}}'
+      elif [ '__MODE__' = 'complete' ] || [ '__MODE__' = 'complete-close' ]; then
         printf '%s\n' '{"method":"item/completed","params":{"threadId":"unrelated","item":{"type":"agentMessage","text":"wrong"}}}'
         printf '%s\n' '{"method":"item/completed","params":{"threadId":"prediction","turnId":"prediction-turn","item":{"type":"agentMessage","text":"{\"suggestion\":\"请继续\"}"}}}'
         printf '%s\n' '{"method":"turn/completed","params":{"threadId":"prediction","turn":{"id":"prediction-turn","status":"completed"}}}'
@@ -447,7 +452,10 @@ while IFS= read -r line; do
         printf '%s\n' '{"method":"turn/started","params":{"threadId":"source","turn":{"id":"new-parent-turn"}}}'
       fi ;;
     *'"method":"turn/interrupt"'*) printf '{"id":%s,"result":{}}\n' "$id" ;;
-    *'"method":"thread/unsubscribe"'*) printf '{"id":%s,"result":{"status":"notLoaded"}}\n' "$id" ;;
+    *'"method":"thread/unsubscribe"'*)
+      if { [ '__MODE__' = 'complete-close' ] || [ '__MODE__' = 'fork-error-close' ]; } && printf '%s' "$line" | grep -q '"threadId":"source"'; then
+        printf '{"id":%s,"result":{"status":"unsubscribed"}}\n' "$id"
+      else printf '{"id":%s,"result":{"status":"notLoaded"}}\n' "$id"; fi ;;
   esac
 done
 "#;
@@ -696,6 +704,118 @@ done
             .unwrap();
         assert!(release < start);
         fixture.stop().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn isolated_resume_waits_for_prediction_writer_close_even_after_a_failed_fork() {
+        for (mode, fail_execution) in [
+            ("complete-close", false),
+            ("fork-error-close", false),
+            ("complete-close", true),
+        ] {
+            let mut fixture = Fixture::new(mode);
+            let request: ExecutionRequest = serde_json::from_value(json!({
+                "task_id": "named-home-turn", "subtask_id": "resume",
+                "user_name": "synthetic", "user_id": 1, "team_namespace": "default",
+                "team_name": "prediction-agent", "team_id": 12,
+                "bot": [{"id": 31, "shell_type": "Codex"}]
+            }))
+            .unwrap();
+            let client = CodexAppServerClient::new(fixture.client.binary.clone());
+            fixture.client = client.for_request(&request).unwrap();
+            assert!(crate::agents::instance_home::request_home(&request).is_some());
+            assert!(!Arc::ptr_eq(&client.state, &fixture.client.state));
+            let (_cancel, receiver) = oneshot::channel();
+            let mut prediction = Box::pin(fixture.predict(None, receiver));
+            let release_requested = async {
+                loop {
+                    if fixture.log.exists()
+                        && fixture.calls().iter().any(|call| {
+                            call["method"] == "thread/unsubscribe"
+                                && call["params"]["threadId"] == "source"
+                        })
+                    {
+                        return;
+                    }
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            };
+            tokio::select! {
+                result = &mut prediction => panic!("Prediction bypassed native close: {result:?}"),
+                result = timeout(Duration::from_secs(DEFAULT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS), release_requested) => {
+                    result.expect("Prediction never released its source subscription");
+                }
+            }
+
+            let activity = Arc::clone(&fixture.client.state);
+            let mut resumed = Box::pin(client.run_turn_with_cancel(
+                request,
+                CodexAppServerTurnOptions {
+                    resume_thread_id: Some("source".into()),
+                    input_admission: Some(Box::new(move || {
+                        assert_eq!(
+                            activity.try_lock().unwrap().active_threads.get("source"),
+                            Some(&1),
+                            "Isolated execution must retain activity until its writer exits"
+                        );
+                        if fail_execution {
+                            Err("isolated admission failed".into())
+                        } else {
+                            Ok(())
+                        }
+                    })),
+                    ..Default::default()
+                },
+            ));
+            assert!(timeout(Duration::from_millis(100), &mut resumed)
+                .await
+                .is_err());
+            assert_eq!(
+                fixture
+                    .calls()
+                    .iter()
+                    .filter(|call| call["method"] == "thread/resume")
+                    .count(),
+                1,
+                "The unsubscribe ACK does not release the parent's native writer"
+            );
+
+            let notifications = fixture
+                .client
+                .state
+                .lock()
+                .await
+                .process
+                .as_ref()
+                .unwrap()
+                .notifications
+                .clone();
+            notifications
+                .send(json!({"method":"thread/closed","params":{"threadId":"source"}}))
+                .await;
+            let (prediction, resumed) = timeout(
+                Duration::from_secs(DEFAULT_CODEX_TURN_STARTUP_TIMEOUT_SECONDS),
+                async { tokio::join!(prediction, resumed) },
+            )
+            .await
+            .expect("Prediction and isolated resume did not finish after native close");
+            if mode == "fork-error-close" {
+                assert!(prediction.unwrap_err().contains("prediction unsupported"));
+            } else {
+                assert!(prediction.is_ok());
+            }
+            if fail_execution {
+                assert!(resumed.unwrap_err().contains("isolated admission failed"));
+            } else {
+                assert!(matches!(
+                    resumed.unwrap().outcome,
+                    ExecutionOutcome::Completed { .. }
+                ));
+            }
+            assert!(fixture.client.state.lock().await.active_threads.is_empty());
+            fixture.stop().await;
+        }
     }
 
     #[cfg(unix)]

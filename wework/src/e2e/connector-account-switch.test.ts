@@ -1,5 +1,6 @@
 // @vitest-environment node
 
+import { join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vitest'
 import { verifyConnectorAccountSwitch } from '../../e2e/desktop/modules/connector-account-switch.mjs'
 import {
@@ -45,7 +46,7 @@ function fixture(polluteOldSync = false) {
   let account = backend.authToken
   let oldSyncCompleted = false
   const apps = () => [
-    { slug, skillPath: `/runtime/skills/wegent-connector-${slug}/SKILL.md` },
+    { slug, skillPath: join('/runtime/skills', `wegent-connector-${slug}`, 'SKILL.md') },
     ...(account === backend.authToken || (oldSyncCompleted && polluteOldSync)
       ? [{ slug: restrictedSlug }]
       : []),
@@ -101,7 +102,7 @@ test('connector account switching establishes both identity and settings page pr
 
   expect(switchPersonalPluginAccount).toHaveBeenCalledTimes(2)
   expect(pathExists).toHaveBeenCalledWith(
-    '/runtime/skills/wegent-connector-desktop-connector-oauth-admin-only/SKILL.md'
+    join('/runtime/skills', 'wegent-connector-desktop-connector-oauth-admin-only', 'SKILL.md')
   )
   expect(input.control.command).toHaveBeenCalledWith(
     'waitFor',

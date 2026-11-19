@@ -196,6 +196,8 @@ interface WorkbenchComposerDebugSnapshot {
   scopeKey: string
   standaloneChatKey: number
   availableModelNames: string[]
+  isModelSelectionReady: boolean
+  modelSelection?: Record<string, boolean | number | string | null>
   currentInputLength: number
   scopedInputLengths: Record<string, number>
   attachmentCount: number
