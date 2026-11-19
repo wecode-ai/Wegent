@@ -195,6 +195,39 @@ impl RuntimeWorkRpcHandler {
         })
     }
 
+    /// Standalone Runtimes resolve their account at service startup. Desktop
+    /// Runtimes receive an authenticated identity in the connection snapshot.
+    pub(super) async fn initialize_connection_service_owner(&self) -> Result<i64, AppIpcError> {
+        let connection = self.require_runtime_connection()?;
+        let owner = if !connection.auth_token.starts_with("wg-")
+            && connection.authenticated_user_id.is_none()
+        {
+            Self::runtime_http_on(&connection, reqwest::Method::GET, "/users/me", None).await?["id"]
+                .as_i64()
+                .filter(|id| *id > 0)
+                .ok_or_else(|| {
+                    AppIpcError::new(
+                        "permission_denied",
+                        "Connected account identity is unavailable",
+                    )
+                })?
+        } else {
+            Self::connected_runtime_user(&connection).await?
+        };
+        let mut snapshot = self.backend_connection.lock().map_err(|_| {
+            AppIpcError::new(
+                "cloud_unavailable",
+                "Runtime connection state is unavailable",
+            )
+        })?;
+        let current = snapshot
+            .as_mut()
+            .filter(|current| **current == connection)
+            .ok_or_else(|| AppIpcError::new("cloud_unavailable", "Runtime connection changed"))?;
+        current.authenticated_user_id = Some(owner);
+        Ok(owner)
+    }
+
     pub(super) fn verify_local_stand_in_owner(&self, user: i64) -> Result<(), AppIpcError> {
         if let Some(connection) = self.backend_connection_snapshot()? {
             if connection.authenticated_user_id != Some(user) {

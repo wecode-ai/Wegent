@@ -82,6 +82,40 @@ async fn runtime_owner_uses_the_credential_route_and_rejects_a_different_owner()
 }
 
 #[tokio::test]
+async fn standalone_session_initializes_an_owner_for_offline_event_processing() {
+    let router = Router::new().route(
+        "/api/users/me",
+        get(|headers: HeaderMap| async move {
+            assert_eq!(headers["authorization"], "Bearer standalone-session");
+            Json(json!({"id": 7}))
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let handler = RuntimeWorkRpcHandler {
+        backend_connection: Arc::new(Mutex::new(Some(ConnectionConfig {
+            backend_url: format!("http://{}", listener.local_addr().unwrap()),
+            auth_token: "standalone-session".into(),
+            ..Default::default()
+        }))),
+        ..RuntimeWorkRpcHandler::new("remote-device", "unused")
+    };
+    let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });
+
+    assert_eq!(handler.connection_service_owner().await.unwrap(), 7);
+    server.abort();
+    assert!(server.await.unwrap_err().is_cancelled());
+    handler.verify_local_stand_in_owner(7).unwrap();
+    handler
+        .verify_runtime_user(&json!({"userId":7}))
+        .await
+        .unwrap();
+    assert_eq!(
+        handler.verify_local_stand_in_owner(8).unwrap_err().code,
+        "permission_denied"
+    );
+}
+
+#[tokio::test]
 async fn stand_in_device_identity_rpc_distinguishes_local_alias_and_owned_route() {
     let slot = Arc::new(Mutex::new(None));
     let handler = RuntimeWorkRpcHandler::new("electron-desktop", "unused")

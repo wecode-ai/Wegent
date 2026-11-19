@@ -8,26 +8,7 @@ impl RuntimeWorkHandler for RuntimeWorkRpcHandler {
     fn connection_service_owner<'a>(
         &'a self,
     ) -> Pin<Box<dyn Future<Output = Result<i64, AppIpcError>> + Send + 'a>> {
-        Box::pin(async move {
-            let connection = self.require_runtime_connection()?;
-            let owner = Self::connected_runtime_user(&connection).await?;
-            if connection.auth_token.starts_with("wg-") {
-                let mut snapshot = self.backend_connection.lock().map_err(|_| {
-                    AppIpcError::new(
-                        "cloud_unavailable",
-                        "Runtime connection state is unavailable",
-                    )
-                })?;
-                let current = snapshot
-                    .as_mut()
-                    .filter(|current| **current == connection)
-                    .ok_or_else(|| {
-                        AppIpcError::new("cloud_unavailable", "Runtime connection changed")
-                    })?;
-                current.authenticated_user_id = Some(owner);
-            }
-            Ok(owner)
-        })
+        Box::pin(self.initialize_connection_service_owner())
     }
 
     fn handle_connection_read_rpc<'a>(
