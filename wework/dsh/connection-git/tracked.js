@@ -1,5 +1,32 @@
 import { collectCiRun } from './ci-run.js'
 
+export function changeRequestState(platform, url, data, sha) {
+  return {
+    kind: 'change_request',
+    provider: platform,
+    topicId: url,
+    observedAt: new Date().toISOString(),
+    data:
+      platform === 'github'
+        ? data
+        : {
+            iid: data.iid,
+            web_url: data.web_url,
+            title: data.title,
+            state: data.state,
+            draft: data.draft,
+            merged_at: data.merged_at,
+            updated_at: data.updated_at,
+            source_branch: data.source_branch,
+            sha,
+            head_pipeline: data.head_pipeline?.sha === sha ? data.head_pipeline : undefined,
+            observedPipeline: data.head_pipeline,
+            detailed_merge_status: data.detailed_merge_status,
+            has_conflicts: data.has_conflicts,
+          },
+  }
+}
+
 export function createTrackedCollector(helpers) {
   return async function collectTracked(ctx, platform, source, next) {
     const {
@@ -141,30 +168,7 @@ export function createTrackedCollector(helpers) {
           throw invalid('Observed change request identity or revision changed during collection')
         const previousState = next.resourceStates?.[target.url]
         next.resourceStates ??= {}
-        next.resourceStates[target.url] = {
-          kind: 'change_request',
-          provider: platform,
-          topicId: target.url,
-          observedAt: new Date().toISOString(),
-          data:
-            platform === 'github'
-              ? data
-              : {
-                  iid: data.iid,
-                  web_url: data.web_url,
-                  title: data.title,
-                  state: data.state,
-                  draft: data.draft,
-                  merged_at: data.merged_at,
-                  updated_at: data.updated_at,
-                  source_branch: data.source_branch,
-                  sha,
-                  head_pipeline: data.head_pipeline?.sha === sha ? data.head_pipeline : undefined,
-                  observedPipeline: data.head_pipeline,
-                  detailed_merge_status: data.detailed_merge_status,
-                  has_conflicts: data.has_conflicts,
-                },
-        }
+        next.resourceStates[target.url] = changeRequestState(platform, target.url, data, sha)
         const projected = next.resourceStates[target.url]
         const sampleCurrentStatus = source.observeCurrentStatus === true
         if (

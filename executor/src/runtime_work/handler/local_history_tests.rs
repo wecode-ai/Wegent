@@ -85,6 +85,7 @@ done
                     backend_url: "https://backend.example.com".into(),
                     socket_url: "wss://backend.example.com".into(),
                     auth_token: "current-user-token".into(),
+                    authenticated_user_id: None,
                     runtime_auth_token: "current-runtime-token".into(),
                 }))));
             let link = RuntimeTaskLink::new_pending(

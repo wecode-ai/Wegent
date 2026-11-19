@@ -212,7 +212,7 @@ impl RuntimeWorkRpcHandler {
         if pending.is_empty() {
             return Ok(());
         }
-        let gate = self.task_send_gate(&format!("stand-in-processing:{user}"));
+        let gate = self.task_send_gate(&format!("stand-in-git-settings:{user}"));
         let _guard = gate.lock().await;
         let settings = store
             .personal_stand_in(user, &self.device_id)

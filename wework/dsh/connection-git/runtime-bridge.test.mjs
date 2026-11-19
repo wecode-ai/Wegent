@@ -190,3 +190,39 @@ test('GitHub authorization uses only its declared target, without invoking the G
   assert.equal(target.connectorSlug, 'wework-github-cli')
   assert.equal(calls, 0)
 })
+
+test('overlapping collections read one Git object and keep their own cancellation', async () => {
+  const first = new AbortController()
+  const second = new AbortController()
+  const shared = Promise.withResolvers()
+  let reads = 0
+  let nativeSignal
+  const provider = bindGitProvider(
+    providerId,
+    {
+      collect: (ctx, input) => ctx.git.read(input),
+    },
+    async (_method, _params, { signal }) => {
+      reads++
+      nativeSignal = signal
+      return shared.promise
+    }
+  )
+  const input = { operation: 'change_request', repository: 'org/repo', number: 7 }
+  const canceled = assert.rejects(
+    provider.collect({ providerId, signal: first.signal }, { ...input, baseline: true }),
+    {
+      name: 'AbortError',
+    }
+  )
+  const remaining = provider.collect(
+    { providerId, signal: second.signal },
+    { ...input, baseline: false }
+  )
+  first.abort()
+  await canceled
+  assert.equal(reads, 1)
+  assert.equal(nativeSignal.aborted, false)
+  shared.resolve({ data: { number: 7 } })
+  assert.deepEqual(await remaining, { data: { number: 7 } })
+})

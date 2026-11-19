@@ -204,7 +204,7 @@ fn response_error(method: &str, error: &Value) -> AppIpcError {
                     .all(|byte| byte.is_ascii_alphanumeric() || b"_-.:".contains(&byte))
         })
         .map(str::to_owned);
-    if method == "collect"
+    if method == "collectObservation"
         && !matches!(
             failure.code.as_str(),
             "connector_auth_required"
@@ -247,7 +247,7 @@ mod tests {
         let error =
             json!({"code":"plugin_transport_failed","message":"Offline","retryAfterMs":45000});
         assert_eq!(
-            response_error("collect", &error).retry_after_ms,
+            response_error("collectObservation", &error).retry_after_ms,
             Some(45000)
         );
         for code in [
@@ -261,7 +261,10 @@ mod tests {
         ] {
             let mut permanent = error.clone();
             permanent["code"] = json!(code);
-            assert_eq!(response_error("collect", &permanent).retry_after_ms, None);
+            assert_eq!(
+                response_error("collectObservation", &permanent).retry_after_ms,
+                None
+            );
         }
         for method in ["executeAction", "readSource", "initialize", "validate"] {
             assert_eq!(response_error(method, &error).retry_after_ms, None);
@@ -275,14 +278,17 @@ mod tests {
         ] {
             let mut invalid = error.clone();
             invalid["retryAfterMs"] = delay;
-            assert_eq!(response_error("collect", &invalid).retry_after_ms, None);
+            assert_eq!(
+                response_error("collectObservation", &invalid).retry_after_ms,
+                None
+            );
         }
     }
 
     #[test]
     fn cli_request_cause_survives_host_rpc_and_only_collection_can_back_off() {
         let error = json!({"code":"connection_cli_request_unavailable","message":"Plugin tool request failed (request_failed)","providerCode":"request_failed","retryAfterMs":30000});
-        let failure = response_error("collect", &error);
+        let failure = response_error("collectObservation", &error);
         assert_eq!(failure.retry_after_ms, Some(30000));
         assert_eq!(failure.provider_code.as_deref(), Some("request_failed"));
         for method in ["executeAction", "readSource", "initialize", "validate"] {
@@ -291,7 +297,10 @@ mod tests {
         for code in ["", "private token", "invalid\ncode"] {
             let mut invalid = error.clone();
             invalid["providerCode"] = json!(code);
-            assert_eq!(response_error("collect", &invalid).provider_code, None);
+            assert_eq!(
+                response_error("collectObservation", &invalid).provider_code,
+                None
+            );
         }
     }
 
@@ -299,7 +308,7 @@ mod tests {
     fn runtime_timeouts_retry_collection_only_without_provider_retry_metadata() {
         let error = json!({"code":"request_timeout","message":"Executor read timed out"});
         assert_eq!(
-            response_error("collect", &error).retry_after_ms,
+            response_error("collectObservation", &error).retry_after_ms,
             Some(30_000)
         );
         for method in ["executeAction", "readSource", "initialize", "validate"] {
