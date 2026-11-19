@@ -90,6 +90,9 @@
 }
 
 .collaboration-platform-brand {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   padding: 4px 10px 12px;
   font-size: 16px;
   font-weight: 600;

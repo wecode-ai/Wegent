@@ -1,7 +1,13 @@
-import { useEffect, useRef, useState } from 'react'
+import {
+  CollapsibleRoot,
+  CollapsibleTrigger,
+  CollapsiblePanel,
+} from '@wegent/collaboration/controls/Collapsible'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { Bell, CircleAlert } from 'lucide-react'
+import { CircleAlert, Radio } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
+import { connectionEventCondition } from '@/lib/connection-event-condition'
 import { connectionEventSubscriptions } from '@/lib/runtime-connection-events'
 import { ResourceObservationStatus } from '@/components/common/ResourceObservationStatus'
 import { connectionObservationHealth } from '@/features/workbench/resourceObservation'
@@ -115,7 +121,7 @@ export function ConnectionEventStatus({
         const executionFailed = ['error', 'needs_attention'].includes(item.status)
         const observing = item.status === 'armed'
         const failed = setupFailed || executionFailed || (observing && Boolean(observation.error))
-        const Icon = failed ? CircleAlert : Bell
+        const Icon = failed ? CircleAlert : Radio
         const label = setupFailed
           ? observation.state === 'auth_required'
             ? t('workbench.observation_auth_required', '连接需要重新授权')
@@ -154,6 +160,7 @@ export function ConnectionEventStatus({
                 · {sourceName}
               </span>
             </div>
+            <EventCondition match={item.match} />
             {onCancel && (
               <Button
                 type="button"
@@ -198,3 +205,26 @@ export function ConnectionEventStatus({
     </div>
   )
 }
+
+const EventCondition = memo(function EventCondition({ match }: { match: unknown }) {
+  const { t } = useTranslation('common')
+  const condition = useMemo(() => connectionEventCondition(match, t), [match, t])
+  return (
+    <CollapsibleRoot className="order-last w-full min-w-0 pl-5">
+      <CollapsibleTrigger
+        className="w-fit hover:text-text-primary"
+        data-testid="connection-event-condition-toggle"
+      >
+        {t('workbench.event_condition_label', '等待条件')}
+      </CollapsibleTrigger>
+      <CollapsiblePanel>
+        <p
+          className="whitespace-pre-wrap break-words pb-1"
+          data-testid="connection-event-condition"
+        >
+          {condition}
+        </p>
+      </CollapsiblePanel>
+    </CollapsibleRoot>
+  )
+})

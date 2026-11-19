@@ -2425,8 +2425,7 @@ def test_claimed_run_builds_runtime_payload_for_executor(
         f"看板任务数据位于 cloud://projects/{project.id}/todos/{item.id}，"
         "请通过看板工具自行查看。"
     )
-    assert execution_request["prompt"].endswith(visible_prompt)
-    assert "projectSpaceCapability" in execution_request["prompt"]
+    assert execution_request["prompt"] == visible_prompt
     assert payload["message"] == visible_prompt
     assert payload["additionalContext"] == {}
     assert payload["projectPlugins"][0]["id"] == "github@openai"
@@ -3224,9 +3223,9 @@ def test_issue_cloud_moonshot_intent_overrides_local_robot_default_immutably(
     )
     assert payload["executionRequest"]["project_plugin_ids"] == ["github@openai"]
     assert payload["executionRequest"]["ephemeral"] is True
-    assert (
-        "Implement and verify the selected Issue"
-        in payload["executionRequest"]["prompt"]
+    assert payload["executionRequest"]["prompt"] == payload["message"]
+    assert payload["executionRequest"]["additional_context"] == (
+        runtime_capabilities["additional_context"]
     )
     assert "gpt-5.6-sol" not in json.dumps(payload)
     assert "dispatch-only-secret" not in execution.execution_payload

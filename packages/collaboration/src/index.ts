@@ -4,6 +4,14 @@
 
 export * from './agent-form'
 export * from './automation'
+export * from './assistant-interaction'
+export type {
+  CollaborationMetricEvidence,
+  CollaborationMetricReceipt,
+  MetricFact,
+  CollaborationMetrics,
+  CollaborationMetricsApi,
+} from './metrics/types'
 export * from './board'
 export * from './CollaborationApp'
 export * from './CollaborationProjectSummary'
@@ -62,3 +70,8 @@ export type {
 } from './milestones/types'
 
 export { Tooltip, type TooltipProps } from './controls/Tooltip'
+
+export type {
+  MilestoneFilterProps,
+  MilestoneFilterValue,
+} from './milestones/useMilestoneFilter'

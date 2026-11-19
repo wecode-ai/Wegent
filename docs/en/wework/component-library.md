@@ -142,7 +142,7 @@ The public entry audit below excludes type-only exports. Parts are shown in vali
 
 | Category                        | Count | Missing examples                                         |
 | ------------------------------- | ----- | -------------------------------------------------------- |
-| Direct production examples      | 99    | 0                                                        |
+| Direct production examples      | 100   | 0                                                        |
 | Production composition examples | 5     | 0                                                        |
 | Nonvisual APIs                  | 7     | Contexts, controllers and toaster; used with their roots |
 
@@ -152,4 +152,4 @@ Index, format and type checks do not replace browser interaction verification of
 
 Use `InlinePanel` for a step inside an existing dialog. It owns Escape layering and focus recovery without adding a modal role. The example composes the real `TemplatePanel`; the parent dialog retains background isolation and overall cancellation.
 
-The catalog currently contains 52 Story files. Of 111 public value exports, 99 have direct examples, 5 have production composition examples, and 7 are nonvisual APIs. `SortableDragArea` is demonstrated with an independent keyboard handle and text fields excluded from pointer activation. This inventory comes from public exports and Story source. Source review, running Story checks, and native production-page acceptance are separate evidence.
+The catalog currently contains 52 Story files. Of 112 public value exports, 100 have direct examples, 5 have production composition examples, and 7 are nonvisual APIs. `SortableDragArea` is demonstrated with an independent keyboard handle and text fields excluded from pointer activation. This inventory comes from public exports and Story source. Source review, running Story checks, and native production-page acceptance are separate evidence.

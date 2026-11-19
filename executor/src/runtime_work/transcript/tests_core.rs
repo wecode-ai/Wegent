@@ -5,19 +5,20 @@
 use super::super::*;
 
 #[test]
-fn visible_user_request_skips_nested_application_context_from_referenced_conversations() {
-    let content = concat!(
-        "<application_context>\n",
-        "[referencedConversations]\n",
-        "[{\"role\":\"user\",\"content\":\"<application_context>\\n",
-        "[source]\\nstate\\n</application_context>\\n\\nOriginal question\"}]\n",
-        "</application_context>\n\n",
-        "Continue with the referenced conversation"
+fn transcript_preserves_structured_terminal_error_type_for_turns_and_messages() {
+    let projection = project_transcript(
+        &json!({"id": "thread", "turns": [{
+            "id": "turn", "status": "failed", "error": {
+                "message": "connection interrupted", "codexErrorInfo": "serverOverloaded"
+            }, "items": []
+        }]}),
+        "device",
+        true,
     );
-
+    assert_eq!(projection.turns[0]["errorType"], "server_overloaded");
     assert_eq!(
-        normalized_user_request_content(content),
-        "Continue with the referenced conversation"
+        projection.messages.last().unwrap()["errorType"],
+        "server_overloaded"
     );
 }
 

@@ -96,10 +96,43 @@ pub fn event_identity(source: &Value, event: &Value) -> Value {
 }
 
 pub fn matches_event(filter: &Value, event: &Value) -> bool {
-    filter.as_object().map_or(true, |fields| {
-        fields
-            .iter()
-            .all(|(pointer, value)| event.pointer(pointer) == Some(value))
+    if filter.is_null() {
+        return true;
+    }
+    let Some(fields) = filter.as_object().filter(|fields| fields.len() <= 32) else {
+        return false;
+    };
+    // Full pointer/size validation happens on activation and recovery, not per event.
+    let mut condition_count = fields.len() - usize::from(fields.contains_key("$any"));
+    if let Some(alternatives) = fields.get("$any") {
+        let Some(branches) = alternatives
+            .as_array()
+            .filter(|rows| !rows.is_empty() && rows.len() <= 32)
+        else {
+            return false;
+        };
+        for branch in branches {
+            let Some(branch) = branch.as_object().filter(|row| !row.is_empty()) else {
+                return false;
+            };
+            condition_count += branch.len();
+            if condition_count > 32 || branch.keys().any(|key| !key.starts_with('/')) {
+                return false;
+            }
+        }
+    }
+    fields.iter().all(|(pointer, value)| {
+        if pointer == "$any" {
+            value.as_array().unwrap().iter().any(|branch| {
+                branch
+                    .as_object()
+                    .unwrap()
+                    .iter()
+                    .all(|(key, expected)| event.pointer(key) == Some(expected))
+            })
+        } else {
+            pointer.starts_with('/') && event.pointer(pointer) == Some(value)
+        }
     })
 }
 
@@ -126,15 +159,53 @@ pub fn matches_activation(
         .is_some_and(|(enabled, received)| received >= enabled)
 }
 
+/// Retain events collected during activation, even when a shared cursor advanced.
+/// Earlier source events remain excluded by the original activation contract.
+pub fn activation_sequence(
+    source: &Value,
+    observation: &Value,
+    parse_time: impl Fn(&Value) -> Option<i64>,
+) -> u64 {
+    observation["events"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|entry| matches_activation(source, &entry["event"], &parse_time))
+        .filter_map(|entry| entry["sequence"].as_u64())
+        .min()
+        .map(|sequence| sequence.saturating_sub(1))
+        .unwrap_or_else(|| observation["sequence"].as_u64().unwrap_or_default())
+}
+
 pub fn validate_filter(filter: &Value) -> Result<(), &'static str> {
     if filter.is_null() {
         return Ok(());
     }
     let fields = filter.as_object().ok_or("match must be an object")?;
-    if fields.len() > 32 {
+    let mut conditions = Vec::new();
+    for (pointer, value) in fields {
+        if pointer == "$any" {
+            let branches = value
+                .as_array()
+                .ok_or("$any must be an array of condition objects")?;
+            if branches.is_empty() || branches.len() > 32 {
+                return Err("$any requires between 1 and 32 alternatives");
+            }
+            for branch in branches {
+                let branch = branch
+                    .as_object()
+                    .filter(|fields| !fields.is_empty())
+                    .ok_or("$any alternatives must be nonempty condition objects")?;
+                conditions.extend(branch.keys());
+            }
+        } else {
+            conditions.push(pointer);
+        }
+    }
+    if conditions.len() > 32 {
         return Err("At most 32 event conditions are supported");
     }
-    for pointer in fields.keys() {
+    for pointer in conditions {
         if !pointer.starts_with('/') || pointer.len() > 512 {
             return Err("match keys must be RFC6901 JSON pointers");
         }
@@ -154,6 +225,74 @@ pub fn validate_filter(filter: &Value) -> Result<(), &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn activation_replays_retained_events_without_replaying_older_source_history() {
+        let observation = json!({"sequence":3,"events":[{"sequence":1,"event":{"at":90}},{"sequence":2,"event":{"at":100}},{"sequence":3,"event":{"at":101}}]});
+        assert_eq!(
+            activation_sequence(&json!({"enabledAfter":100}), &observation, Value::as_i64),
+            1
+        );
+        assert_eq!(
+            activation_sequence(&json!({"enabledAfter":102}), &observation, Value::as_i64),
+            3
+        );
+        let positioned = json!({"sequence":4,"events":[{"sequence":3,"event":{"position":{"partition":"other","sequence":8}}},{"sequence":4,"event":{"position":{"partition":"chosen","sequence":8}}}]});
+        assert_eq!(
+            activation_sequence(
+                &json!({"boundary":{"partition":"chosen","sequence":7}}),
+                &positioned,
+                Value::as_i64
+            ),
+            3
+        );
+    }
+
+    #[test]
+    fn alternatives_keep_common_scope_and_exact_json_types() {
+        let filter = json!({"/topicId":"pr-4749", "/sha":"head", "$any":[{"/state":"SUCCESS"},{"/state":"FAILURE"}]});
+        assert!(validate_filter(&filter).is_ok());
+        for state in ["SUCCESS", "FAILURE"] {
+            assert!(matches_event(
+                &filter,
+                &json!({"topicId":"pr-4749","sha":"head","state":state})
+            ));
+        }
+        for event in [
+            json!({"topicId":"other","sha":"head","state":"FAILURE"}),
+            json!({"topicId":"pr-4749","sha":"old","state":"SUCCESS"}),
+            json!({"topicId":"pr-4749","sha":"head","state":"PENDING"}),
+        ] {
+            assert!(!matches_event(&filter, &event));
+        }
+        assert!(!matches_event(
+            &json!({"$any":[{"/missing":null},{"/id":7}]}),
+            &json!({"id":"7"})
+        ));
+        assert!(matches_event(
+            &json!({"/value":{"items":[1,2]}}),
+            &json!({"value":{"items":[1,2]}})
+        ));
+    }
+
+    #[test]
+    fn invalid_alternatives_fail_closed_and_share_the_condition_budget() {
+        for filter in [
+            json!({"$any":[]}),
+            json!({"$any":[{}]}),
+            json!({"$any":"SUCCESS"}),
+            json!({"$any":[null]}),
+            json!({"$any":[{"$any":[{"/state":"SUCCESS"}]}]}),
+            json!({"$any":[{"/bad~2":true}]}),
+            json!(7),
+        ] {
+            assert!(validate_filter(&filter).is_err());
+            assert!(!matches_event(&filter, &json!({})));
+        }
+        let branches: Vec<_> = (0..33).map(|i| json!({format!("/field{i}"):i})).collect();
+        assert!(validate_filter(&json!({"$any":branches})).is_err());
+        assert!(validate_filter(&json!({"/scope":1,"$any":branches[..32]})).is_err());
+    }
+
     #[test]
     fn initialization_receipts_bind_the_selected_source_and_bounded_event_boundary() {
         let source = json!({"providerId":"documents","profile":"account","id":"release"});

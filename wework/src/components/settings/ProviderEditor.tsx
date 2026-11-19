@@ -248,7 +248,7 @@ export function ProviderEditor({
                   }}
                 >
                   <SelectTrigger
-                    density="compact"
+                    density="default"
                     data-testid="provider-preset"
                     className="w-full min-w-0"
                   />
@@ -285,7 +285,7 @@ export function ProviderEditor({
                     <label className="space-y-1 text-sm text-text-secondary">
                       {t('name')}
                       <ControlInput
-                        density="compact"
+                        density="default"
                         data-testid="provider-name"
                         className="w-full min-w-0"
                         required
@@ -308,7 +308,7 @@ export function ProviderEditor({
                         }}
                       >
                         <SelectTrigger
-                          density="compact"
+                          density="default"
                           data-testid="provider-protocol"
                           className="w-full min-w-0"
                         />
@@ -326,7 +326,7 @@ export function ProviderEditor({
                     <label className="space-y-1 text-sm text-text-secondary">
                       Base URL
                       <ControlInput
-                        density="compact"
+                        density="default"
                         data-testid="provider-base-url"
                         className="w-full min-w-0"
                         type="url"
@@ -341,7 +341,7 @@ export function ProviderEditor({
                     API Key
                     <div className="relative">
                       <ControlInput
-                        density="compact"
+                        density="default"
                         data-testid="provider-api-key"
                         className="w-full min-w-0 pr-12"
                         type={showKey ? 'text' : 'password'}
@@ -386,7 +386,7 @@ export function ProviderEditor({
                           <label className="space-y-1 text-sm text-text-secondary">
                             Base URL
                             <ControlInput
-                              density="compact"
+                              density="default"
                               className="w-full min-w-0"
                               type="url"
                               required
@@ -408,7 +408,7 @@ export function ProviderEditor({
                               }}
                             >
                               <SelectTrigger
-                                density="compact"
+                                density="default"
                                 className="w-full min-w-0"
                                 data-testid="provider-protocol"
                               />
@@ -428,7 +428,7 @@ export function ProviderEditor({
                         <label className="space-y-1 text-sm text-text-secondary">
                           {t('requestPath')}
                           <ControlInput
-                            density="compact"
+                            density="default"
                             data-testid="provider-request-path"
                             className="w-full min-w-0"
                             value={draft.request_path ?? ''}
@@ -441,7 +441,7 @@ export function ProviderEditor({
                         <label className="space-y-1 text-sm text-text-secondary">
                           {t('modelsPath')}
                           <ControlInput
-                            density="compact"
+                            density="default"
                             data-testid="provider-models-path"
                             className="w-full min-w-0"
                             value={draft.models_path ?? ''}
@@ -467,7 +467,7 @@ export function ProviderEditor({
                             }}
                           >
                             <SelectTrigger
-                              density="compact"
+                              density="default"
                               data-testid="provider-models-auth"
                               className="w-full min-w-0"
                             />
@@ -636,7 +636,7 @@ export function ProviderEditor({
                           <CollapsiblePanel>
                             <div className="mt-3 flex flex-wrap gap-2">
                               <ControlInput
-                                density="compact"
+                                density="default"
                                 className="w-full min-w-0 flex-1"
                                 data-testid={`provider-model-id-${model.id}`}
                                 aria-label={t('modelId')}
@@ -648,7 +648,7 @@ export function ProviderEditor({
                                 }
                               />
                               <ControlInput
-                                density="compact"
+                                density="default"
                                 className="w-full min-w-0 flex-1"
                                 data-testid={`provider-model-name-${model.id}`}
                                 aria-label={t('displayName')}

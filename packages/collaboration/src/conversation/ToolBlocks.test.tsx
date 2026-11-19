@@ -4,11 +4,15 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createCollaborationTranslator } from '../i18n'
 import { ConversationTranslationProvider } from './ConversationTranslation'
+import { ToolBlockItem } from './blocks/ToolBlockItem'
 import { ToolBlocksDisplay } from './blocks/ToolBlocksDisplay'
 import { WebSearchSourcesChip } from './blocks/WebSearchSources'
 import type { ToolBlock } from './blocks/types'
 import { getBlockLabel } from './blocks/toolBlockLabels'
-import { MarkdownServicesProvider, browserMarkdownServices } from '../markdown/MarkdownServices'
+import {
+  MarkdownServicesProvider,
+  browserMarkdownServices,
+} from '../markdown/MarkdownServices'
 
 let container: HTMLDivElement
 let root: Root
@@ -25,10 +29,12 @@ afterEach(() => {
 function render(children: ReactNode) {
   act(() =>
     root.render(
-      <ConversationTranslationProvider translate={createCollaborationTranslator('en')}>
+      <ConversationTranslationProvider
+        translate={createCollaborationTranslator('en')}
+      >
         {children}
-      </ConversationTranslationProvider>
-    )
+      </ConversationTranslationProvider>,
+    ),
   )
 }
 function block(id: string): ToolBlock {
@@ -51,8 +57,12 @@ describe('shared tool output without a desktop host', () => {
     ['error', 'Command failed: pwd'],
   ] as const)('localizes command labels for %s tools', (status, expected) => {
     const tool = { ...block('localized-command'), status }
-    expect(getBlockLabel(tool, createCollaborationTranslator('en')).label).toBe(expected)
-    expect(getBlockLabel(tool, createCollaborationTranslator('zh-CN')).label).toMatch(/运行/)
+    expect(getBlockLabel(tool, createCollaborationTranslator('en')).label).toBe(
+      expected,
+    )
+    expect(
+      getBlockLabel(tool, createCollaborationTranslator('zh-CN')).label,
+    ).toMatch(/运行/)
   })
 
   it('localizes file reads and file fallbacks through the conversation catalog', () => {
@@ -72,7 +82,7 @@ describe('shared tool output without a desktop host', () => {
 
   it.each(['done', 'error', 'pending'] as const)(
     'shows native AI review evidence for %s decisions',
-    status => {
+    (status) => {
       render(
         <ToolBlocksDisplay
           blocks={[
@@ -87,31 +97,41 @@ describe('shared tool output without a desktop host', () => {
           ]}
           isStreaming={status === 'pending'}
           forceExpanded
-        />
+        />,
       )
-      expect(container.querySelector('[data-testid="auto-approval-review"]')).not.toBeNull()
-      expect(container.textContent).toContain('Check the authorized destination')
+      expect(
+        container.querySelector('[data-testid="auto-approval-review"]'),
+      ).not.toBeNull()
+      expect(container.textContent).toContain(
+        'Check the authorized destination',
+      )
       expect(container.textContent).toContain(
         status === 'done'
           ? 'AI review approved'
           : status === 'error'
             ? 'Not executed: AI review denied or incomplete'
-            : 'AI is reviewing the action'
+            : 'AI is reviewing the action',
       )
-    }
+    },
   )
 
-  it.each([1, 2])('preserves count-aware summaries for %s tools', count => {
+  it.each([1, 2])('preserves count-aware summaries for %s tools', (count) => {
     render(
       <ToolBlocksDisplay
-        blocks={Array.from({ length: count }, (_, index) => block(`call-${index}`))}
+        blocks={Array.from({ length: count }, (_, index) =>
+          block(`call-${index}`),
+        )}
         isStreaming={false}
-      />
+      />,
     )
-    const summary = container.querySelector('[data-testid="processing-summary-header"]')
-    expect(summary?.textContent).toContain(count === 1 ? 'Called 1 tool' : 'Called 2 tools')
+    const summary = container.querySelector(
+      '[data-testid="processing-summary-header"]',
+    )
+    expect(summary?.textContent).toContain(
+      count === 1 ? 'Called 1 tool' : 'Called 2 tools',
+    )
     const toggle = container.querySelector<HTMLButtonElement>(
-      '[data-testid="processing-summary-toggle"]'
+      '[data-testid="processing-summary-toggle"]',
     )!
     act(() => toggle.click())
     expect(toggle.getAttribute('aria-expanded')).toBe('true')
@@ -120,7 +140,9 @@ describe('shared tool output without a desktop host', () => {
   it('uses the host URL service and shared locale for search sources', async () => {
     const openExternalUrl = vi.fn()
     render(
-      <MarkdownServicesProvider value={{ ...browserMarkdownServices, openExternalUrl }}>
+      <MarkdownServicesProvider
+        value={{ ...browserMarkdownServices, openExternalUrl }}
+      >
         <WebSearchSourcesChip
           sources={[
             {
@@ -132,22 +154,23 @@ describe('shared tool output without a desktop host', () => {
             },
           ]}
         />
-      </MarkdownServicesProvider>
+      </MarkdownServicesProvider>,
     )
-    expect(container.querySelector('[data-testid="web-search-sources-chip"]')?.textContent).toBe(
-      'Sources'
-    )
+    expect(
+      container.querySelector('[data-testid="web-search-sources-chip"]')
+        ?.textContent,
+    ).toBe('Sources')
     vi.useFakeTimers()
     try {
       await act(async () => {
         const trigger = container.querySelector<HTMLButtonElement>(
-          '[data-testid="web-search-sources-chip"]'
+          '[data-testid="web-search-sources-chip"]',
         )!
         trigger.dispatchEvent(
           new PointerEvent('pointerenter', {
             bubbles: true,
             pointerType: 'mouse',
-          })
+          }),
         )
       })
       await act(async () => {
@@ -157,10 +180,12 @@ describe('shared tool output without a desktop host', () => {
       vi.useRealTimers()
     }
     const link = document.querySelector<HTMLAnchorElement>(
-      '[data-testid="web-search-source-popup-row"]'
+      '[data-testid="web-search-source-popup-row"]',
     )!
     await act(async () => link.click())
-    expect(openExternalUrl).toHaveBeenCalledExactlyOnceWith('https://example.com/docs')
+    expect(openExternalUrl).toHaveBeenCalledExactlyOnceWith(
+      'https://example.com/docs',
+    )
   })
   it('does not expose a working ignore button without a runtime handler', () => {
     const request: ToolBlock = {
@@ -181,7 +206,7 @@ describe('shared tool output without a desktop host', () => {
     }
     render(<ToolBlocksDisplay blocks={[request]} isStreaming forceExpanded />)
     const ignore = container.querySelector<HTMLButtonElement>(
-      '[data-testid="request-user-input-ignore-button"]'
+      '[data-testid="request-user-input-ignore-button"]',
     )
     expect(ignore).not.toBeNull()
     expect(ignore?.disabled).toBe(true)
@@ -194,10 +219,16 @@ describe('shared tool output without a desktop host', () => {
       toolOutput: { rationale: 'Private data is outside the task' },
     }
     const show = () =>
-      render(<ToolBlocksDisplay blocks={[review]} isStreaming={false} forceExpanded />)
+      render(
+        <ToolBlocksDisplay
+          blocks={[review]}
+          isStreaming={false}
+          forceExpanded
+        />,
+      )
     show()
     const details = container.querySelector<HTMLElement>(
-      '[data-testid="auto-approval-review-details"]'
+      '[data-testid="auto-approval-review-details"]',
     )!
     expect(details.getAttribute('aria-expanded')).toBe('false')
     act(() => details.click())
@@ -205,11 +236,121 @@ describe('shared tool output without a desktop host', () => {
     show()
     expect(
       container
-        .querySelector<HTMLElement>('[data-testid="auto-approval-review-details"]')
-        ?.getAttribute('aria-expanded')
+        .querySelector<HTMLElement>(
+          '[data-testid="auto-approval-review-details"]',
+        )
+        ?.getAttribute('aria-expanded'),
     ).toBe('true')
     expect(
-      container.querySelector('[data-testid="auto-approval-review-evidence"]')?.textContent
+      container.querySelector('[data-testid="auto-approval-review-evidence"]')
+        ?.textContent,
     ).toContain('Private data is outside the task')
+  })
+})
+
+describe('automatic retry presentation', () => {
+  it.each([
+    ['custom', 'overload', 'Server is busy, reconnecting…'],
+    ['codex-official', 'overload', 'Server is busy, reconnecting…'],
+    ['codex-official', 'rate_limit', 'Model rate limited. Waiting to retry…'],
+    ['codex-official', 'unknown', 'Retrying automatically…'],
+  ])('shows classified progress for %s / %s', (modelKind, reason, expected) => {
+    const retry: ToolBlock = {
+      ...block('classified-retry'),
+      toolName: 'runtime_reconnecting',
+      status: 'streaming',
+      toolInput: {
+        model_kind: modelKind,
+        retry_reason: reason,
+        retry_attempt: 2,
+        retry_max_attempts: 5,
+      },
+    }
+    render(
+      <ToolBlocksDisplay
+        blocks={[block('completed-command'), retry]}
+        isStreaming
+        forceExpanded
+      />,
+    )
+    expect(
+      container.querySelector('[data-testid="processing-summary-header"]')
+        ?.textContent,
+    ).toContain(expected + ' (2/5)')
+    expect(
+      container.querySelector(
+        '[data-testid="runtime-reconnecting-open-proxy-settings"]',
+      ),
+    ).toBeNull()
+    expect(
+      container.querySelector('[data-testid="assistant-error-card"]'),
+    ).toBeNull()
+    render(
+      <ToolBlocksDisplay
+        blocks={[block('completed-command'), { ...retry, status: 'done' }]}
+        isStreaming
+        forceExpanded
+      />,
+    )
+    expect(container.textContent).not.toContain('(2/5)')
+  })
+  it('uses native reconnect progress without showing the raw message', () => {
+    render(
+      <ToolBlocksDisplay
+        blocks={[
+          block('completed-command'),
+          {
+            ...block('native-retry'),
+            toolName: 'runtime_reconnecting',
+            status: 'streaming',
+            toolInput: {
+              retry_reason: 'connection',
+              message: 'Reconnecting... 3/5',
+            },
+          },
+        ]}
+        isStreaming
+      />,
+    )
+    expect(
+      container.querySelector('[data-testid="processing-summary-header"]')
+        ?.textContent,
+    ).toContain('Reconnecting… (3/5)')
+    expect(container.textContent).not.toContain('Reconnecting... 3/5')
+  })
+  it('keeps overload progress through its countdown and clears it on completion', () => {
+    vi.useFakeTimers()
+    try {
+      const retry: ToolBlock = {
+        ...block('countdown-retry'),
+        toolName: 'runtime_reconnecting',
+        status: 'streaming',
+        toolInput: {
+          retry_reason: 'overload',
+          retry_at: Date.now() + 10_000,
+          retry_attempt: 2,
+          retry_max_attempts: 4,
+          model_kind: 'codex-official',
+        },
+      }
+      render(<ToolBlockItem block={retry} />)
+      const status = () =>
+        container.querySelector('[data-testid="runtime-overload-wait-status"]')
+      expect(status()?.textContent).toContain('10s')
+      expect(status()?.textContent).toContain('(2/4)')
+      expect(
+        container.querySelector(
+          '[data-testid="runtime-reconnecting-open-proxy-settings"]',
+        ),
+      ).toBeNull()
+      act(() => vi.advanceTimersByTime(10_000))
+      expect(status()?.textContent).toContain('Retrying the same model')
+      expect(status()?.textContent).toContain('(2/4)')
+      render(<ToolBlockItem block={{ ...retry, status: 'done' }} />)
+      expect(status()).toBeNull()
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

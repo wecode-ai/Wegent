@@ -1,16 +1,27 @@
-import { CollapsibleRoot, CollapsibleTrigger, CollapsiblePanel } from '../../controls/Collapsible'
+import {
+  CollapsibleRoot,
+  CollapsibleTrigger,
+  CollapsiblePanel,
+} from '../../controls/Collapsible'
 import { isRuntimeRateLimitWaitBlock } from '@wegent/chat-core/runtime-conversation-turns'
-import { useEffect, useLayoutEffect, useState } from 'react'
+import { useLayoutEffect } from 'react'
 import { ActivityShimmerText } from '../../issue-card/ActivityShimmerText'
 import { AssistantMarkdown } from '../../markdown/AssistantMarkdown'
 import { Button as ControlButton } from '../../markdown/Button'
 import type { MarkdownFileOpenOptions as WorkspaceFileOpenOptions } from '../../markdown/MarkdownServices'
-import { AssistantPlanCard, type AssistantPlanOpenRequest } from '../AssistantPlanCard'
+import {
+  AssistantPlanCard,
+  type AssistantPlanOpenRequest,
+} from '../AssistantPlanCard'
 import { AutomaticRetryStatus } from '../AutomaticRetryStatus'
 import { useConversationTranslation } from '../ConversationTranslation'
 import { useToolInteractionServices } from '../ToolInteractionServices'
 import { usePersistentProcessingExpansion } from './processingExpansionState'
-import { getWorkspaceFilePath, hasBlockDetail, renderBlockDetail } from './ToolBlockDetails'
+import {
+  getWorkspaceFilePath,
+  hasBlockDetail,
+  renderBlockDetail,
+} from './ToolBlockDetails'
 import { getBlockLabel } from './toolBlockLabels'
 import {
   ProcessFileChangesBlockItem,
@@ -18,8 +29,7 @@ import {
   type FileEditDurationsByBlock,
 } from './ToolFileChanges'
 import type { ProcessingBlock, SubagentBlock } from './types'
-
-const RECONNECTING_DISPLAY_DELAY_MS = 10_000
+import { runtimeRetryStatus, runtimeRetryProgress } from './runtimeRetryStatus'
 
 function reviewReason(output: unknown): string | undefined {
   try {
@@ -39,7 +49,10 @@ interface ToolBlockItemProps {
   forceExpanded?: boolean
   showThinkingContent?: boolean
   stateKey?: string
-  onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
+  onOpenWorkspaceFile?: (
+    path: string,
+    options?: WorkspaceFileOpenOptions,
+  ) => void
   onOpenAssistantPlan?: (request: AssistantPlanOpenRequest) => void
   onExpandedChange?: (expanded: boolean) => void
 }
@@ -63,17 +76,9 @@ export function ToolBlockItem({
     stateKey ??
       (block.type === 'tool' && block.toolName === 'auto_approval_review'
         ? `approval-review:${block.id}`
-        : undefined)
+        : undefined),
   )
   const isRunning = block.status !== 'done' && block.status !== 'error'
-  const reconnectingBlockId =
-    block.type === 'tool' && block.toolName === 'runtime_reconnecting' && isRunning
-      ? block.id
-      : null
-  const showReconnectingStatus = useDelayedBlockVisibility(
-    reconnectingBlockId,
-    RECONNECTING_DISPLAY_DELAY_MS
-  )
   const hasDetail = block.type === 'tool' && hasBlockDetail(block)
   const expanded = hasDetail && (forceExpanded || userExpanded)
 
@@ -92,7 +97,9 @@ export function ToolBlockItem({
     )
   }
   if (block.type === 'plan') {
-    return <PlanBlockItem block={block} onOpenAssistantPlan={onOpenAssistantPlan} />
+    return (
+      <PlanBlockItem block={block} onOpenAssistantPlan={onOpenAssistantPlan} />
+    )
   }
   if (block.type === 'file_changes') {
     return (
@@ -111,7 +118,7 @@ export function ToolBlockItem({
         ? 'tool_activity.review_approved'
         : block.status === 'error'
           ? 'tool_activity.review_blocked'
-          : 'tool_activity.review_running'
+          : 'tool_activity.review_running',
     )
     return (
       <CollapsibleRoot
@@ -119,7 +126,7 @@ export function ToolBlockItem({
         data-testid="auto-approval-review"
         data-processing-block-id={block.id}
         open={forceExpanded || userExpanded}
-        onOpenChange={nextOpen => {
+        onOpenChange={(nextOpen) => {
           if (nextOpen !== userExpanded) setUserExpanded(nextOpen)
         }}
       >
@@ -135,7 +142,9 @@ export function ToolBlockItem({
             className="mt-2 space-y-2 whitespace-pre-wrap break-words"
             data-testid="auto-approval-review-evidence"
           >
-            {reviewReason(block.toolOutput) && <p>{reviewReason(block.toolOutput)}</p>}
+            {reviewReason(block.toolOutput) && (
+              <p>{reviewReason(block.toolOutput)}</p>
+            )}
           </div>
         </CollapsiblePanel>
       </CollapsibleRoot>
@@ -143,12 +152,14 @@ export function ToolBlockItem({
   }
 
   if (block.toolName === 'runtime_reconnecting') {
+    if (!isRunning) return null
+    const status = runtimeRetryStatus(block, t)
     if (block.toolInput?.retry_reason === 'overload') {
-      if (!isRunning) return null
       return (
         <AutomaticRetryStatus
           reason="overload"
           retryAt={Number(block.toolInput.retry_at) || null}
+          progress={runtimeRetryProgress(block)}
           translate={translate}
         />
       )
@@ -160,20 +171,19 @@ export function ToolBlockItem({
           data-testid="runtime-rate-limit-wait-status"
           role="status"
         >
-          {t('tool_activity.rate_limit_wait')}
+          {status}
         </div>
       )
     }
-    if (!showReconnectingStatus) return null
     const isChatGPTModel = block.toolInput?.model_kind === 'codex-official'
-    if (isChatGPTModel) {
+    if (isChatGPTModel && block.toolInput?.retry_reason === 'connection') {
       return (
         <div
           className="flex min-w-0 flex-wrap items-center gap-x-1 gap-y-0.5 py-1 text-sm text-text-muted"
           data-testid="runtime-reconnecting-chatgpt-status"
           role="status"
         >
-          <span>{t('tool_activity.chatgpt_network_unavailable')}</span>
+          <span>{status}</span>
           <ControlButton
             variant="unstyled"
             type="button"
@@ -193,7 +203,7 @@ export function ToolBlockItem({
         data-testid="runtime-reconnecting-status"
         role="status"
       >
-        <ActivityShimmerText variant="tool">{t('tool_activity.reconnecting')}</ActivityShimmerText>
+        <ActivityShimmerText variant="tool">{status}</ActivityShimmerText>
       </div>
     )
   }
@@ -210,12 +220,17 @@ export function ToolBlockItem({
       ) : (
         <span className="min-w-0 truncate">{label}</span>
       )}
-      {isRunning && <span className="animate-pulse text-xs will-change-opacity">...</span>}
+      {isRunning && (
+        <span className="animate-pulse text-xs will-change-opacity">...</span>
+      )}
     </>
   )
 
   return (
-    <div className="min-w-0 overflow-x-clip text-sm" data-processing-block-id={block.id}>
+    <div
+      className="min-w-0 overflow-x-clip text-sm"
+      data-processing-block-id={block.id}
+    >
       <div
         className={`flex w-full max-w-full items-center gap-1.5 text-text-muted ${compact ? 'min-h-8' : ''}`}
       >
@@ -237,20 +252,22 @@ export function ToolBlockItem({
             type="button"
             data-tool-detail-toggle
             aria-expanded={expanded}
-            onClick={() => setUserExpanded(value => !value)}
+            onClick={() => setUserExpanded((value) => !value)}
             className="flex min-w-0 items-center gap-1.5 hover:text-text-primary"
           >
             {labelContent}
           </ControlButton>
         ) : (
-          <span className="flex min-w-0 items-center gap-1.5">{labelContent}</span>
+          <span className="flex min-w-0 items-center gap-1.5">
+            {labelContent}
+          </span>
         )}
         {hasDetail ? (
           <ControlButton
             variant="unstyled"
             type="button"
             data-tool-detail-toggle
-            onClick={() => setUserExpanded(value => !value)}
+            onClick={() => setUserExpanded((value) => !value)}
             className="flex h-5 w-5 shrink-0 items-center justify-center rounded text-text-secondary hover:bg-muted hover:text-text-primary"
             aria-label={expanded ? '收起工具详情' : '展开工具详情'}
             aria-expanded={expanded}
@@ -262,7 +279,11 @@ export function ToolBlockItem({
               stroke="currentColor"
               strokeWidth={2}
             >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                d="M19 9l-7 7-7-7"
+              />
             </svg>
           </ControlButton>
         ) : null}
@@ -278,7 +299,9 @@ export function ToolBlockItem({
         </span>
       </div>
       {expanded ? (
-        <div className="mt-2 min-w-0 overflow-x-clip">{renderBlockDetail(block)}</div>
+        <div className="mt-2 min-w-0 overflow-x-clip">
+          {renderBlockDetail(block)}
+        </div>
       ) : null}
     </div>
   )
@@ -306,24 +329,13 @@ function PlanBlockItem({
 
   return (
     <div data-processing-block-id={block.id}>
-      <AssistantPlanCard content={block.content} isStreaming={isStreaming} onOpenPlan={openPlan} />
+      <AssistantPlanCard
+        content={block.content}
+        isStreaming={isStreaming}
+        onOpenPlan={openPlan}
+      />
     </div>
   )
-}
-
-function useDelayedBlockVisibility(blockId: string | null, delayMs: number): boolean {
-  const [visibleBlockId, setVisibleBlockId] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!blockId) return
-    const timer = window.setTimeout(() => setVisibleBlockId(blockId), delayMs)
-    return () => {
-      window.clearTimeout(timer)
-      setVisibleBlockId(null)
-    }
-  }, [blockId, delayMs])
-
-  return blockId !== null && visibleBlockId === blockId
 }
 
 function ProcessTextBlockItem({
@@ -333,7 +345,10 @@ function ProcessTextBlockItem({
 }: {
   block: Extract<ProcessingBlock, { type: 'text' | 'thinking' }>
   isRunning: boolean
-  onOpenWorkspaceFile?: (path: string, options?: WorkspaceFileOpenOptions) => void
+  onOpenWorkspaceFile?: (
+    path: string,
+    options?: WorkspaceFileOpenOptions,
+  ) => void
 }) {
   const { t } = useConversationTranslation()
 
@@ -348,7 +363,11 @@ function ProcessTextBlockItem({
       role={isRunning ? 'status' : undefined}
       aria-live={isRunning ? 'polite' : undefined}
       aria-label={isRunning ? t('process_text.running') : undefined}
-      data-testid={block.type === 'thinking' ? 'process-thinking-block' : 'process-text-block'}
+      data-testid={
+        block.type === 'thinking'
+          ? 'process-thinking-block'
+          : 'process-text-block'
+      }
     >
       <div className="min-w-0">
         <AssistantMarkdown

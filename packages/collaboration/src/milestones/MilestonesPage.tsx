@@ -1,21 +1,22 @@
-import { ProgressBar } from "../controls/ProgressBar";
-import { Flag } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { TextField as ControlInput } from "../controls/TextField";
-import { Textarea as ControlTextarea } from "../controls/Textarea";
-import { Button as ControlButton } from "../markdown/Button";
-import { canManageCollaborationIssueSecurity } from "../permissions";
-import { useIssueAssignmentsByIssueId } from "../platform/useIssueAssignmentsByIssueId";
-import type { SharedWorkspaceApi } from "../ports/SharedWorkspaceApi";
+import { ProgressBar } from '../controls/ProgressBar'
+import { Flag } from 'lucide-react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { TextField as ControlInput } from '../controls/TextField'
+import { Textarea as ControlTextarea } from '../controls/Textarea'
+import { Button as ControlButton } from '../markdown/Button'
+import { canManageCollaborationIssueSecurity } from '../permissions'
+import { useIssueAssignmentsByIssueId } from '../platform/useIssueAssignmentsByIssueId'
+import type { SharedWorkspaceApi } from '../ports/SharedWorkspaceApi'
 import type {
   CollaborationAssignment,
   CollaborationIssue,
   CollaborationProject,
-} from "../types";
-import { milestoneMessages } from "./messages";
-import "./milestones.css";
-import type { Milestone, MilestoneInput } from "./types";
-import { milestoneVisibilityScope, useMilestones } from "./useMilestones";
+} from '../types'
+import { milestoneMessages } from './messages'
+import './milestones.css'
+import type { Milestone, MilestoneInput } from './types'
+import { milestoneVisibilityScope, useMilestones } from './useMilestones'
+import type { MilestoneFilterProps } from './useMilestoneFilter'
 
 export function MilestonesPage({
   api,
@@ -25,65 +26,72 @@ export function MilestonesPage({
   renderIssues,
   onChanged,
   onOpenArchive,
-}: {
-  api: SharedWorkspaceApi;
-  project: CollaborationProject;
-  issues: CollaborationIssue[];
-  locale: "zh-CN" | "en";
-  onChanged?(): Promise<unknown>;
-  onOpenArchive?(): void;
+  filter,
+  onFilterChange,
+}: MilestoneFilterProps & {
+  api: SharedWorkspaceApi
+  project: CollaborationProject
+  issues: CollaborationIssue[]
+  locale: 'zh-CN' | 'en'
+  onChanged?(): Promise<unknown>
+  onOpenArchive?(): void
   renderIssues(
     issues: CollaborationIssue[],
     assignments: Record<string, CollaborationAssignment[]>,
     emptyLabel: string,
     milestoneId: string,
-  ): ReactNode;
+  ): ReactNode
 }) {
-  const m = milestoneMessages[locale];
+  const m = milestoneMessages[locale]
   const query = useMilestones(
     api.milestones,
     project.id,
     true,
-    issues.map((issue) => `${issue.id}:${issue.version}`).join("|"),
+    issues.map((issue) => `${issue.id}:${issue.version}`).join('|'),
     milestoneVisibilityScope(project),
-  );
-  const [state, setState] = useState<"open" | "closed">("open");
-  const [selected, setSelected] = useState<string | null>(null);
-  const [editing, setEditing] = useState<Milestone | "new" | null>(null);
-  const [deleting, setDeleting] = useState<Milestone | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [failed, setFailed] = useState(false);
-  const canManage = canManageCollaborationIssueSecurity(project);
+  )
+  const [state, setState] = useState<'open' | 'closed'>('open')
+  const [selection, setSelection] = useState<string | null>(null)
+  const selected = filter !== undefined ? filter.milestoneId : selection
+  function setSelected(value: string | null) {
+    if (filter === undefined) setSelection(value)
+    onFilterChange?.(value)
+  }
+  const [editing, setEditing] = useState<Milestone | 'new' | null>(null)
+  const [deleting, setDeleting] = useState<Milestone | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [failed, setFailed] = useState(false)
+  const canManage = canManageCollaborationIssueSecurity(project)
   useEffect(() => {
     if (!canManage) {
-      setEditing(null);
-      setDeleting(null);
+      setEditing(null)
+      setDeleting(null)
     }
-  }, [canManage]);
-  const active = query.items.find((item) => item.id === selected);
+  }, [canManage])
+  const active = query.items.find((item) => item.id === selected)
   const linkedIssues = useMemo(
     () => issues.filter((issue) => issue.milestone_id === selected),
     [issues, selected],
-  );
+  )
   const { assignmentsByIssueId } = useIssueAssignmentsByIssueId({
     assignmentsApi: api.assignments,
     issues: linkedIssues,
     enabled: selected !== null,
-  });
+  })
 
   async function mutate(action: () => Promise<unknown>) {
-    setBusy(true);
-    setFailed(false);
+    setBusy(true)
+    setFailed(false)
     try {
-      await action();
-      await onChanged?.();
-      setEditing(null);
-      setDeleting(null);
-      query.reload();
+      await action()
+      await onChanged?.()
+      setEditing(null)
+      setDeleting(null)
+      query.reload()
     } catch {
-      setFailed(true);
+      setFailed(true)
     } finally {
-      setBusy(false);
+      setBusy(false)
     }
   }
 
@@ -124,7 +132,7 @@ export function MilestonesPage({
                 role="group"
                 aria-label={m.title}
               >
-                {(["open", "closed"] as const).map((value) => (
+                {(['open', 'closed'] as const).map((value) => (
                   <ControlButton
                     variant="unstyled"
                     type="button"
@@ -133,11 +141,11 @@ export function MilestonesPage({
                     key={value}
                     aria-pressed={value === state}
                     onClick={() => {
-                      setState(value);
-                      setSelected(null);
+                      setState(value)
+                      setSelected(null)
                     }}
                   >
-                    {m[value]}{" "}
+                    {m[value]}{' '}
                     <span className="ml-2 text-xs text-text-muted">
                       {
                         query.items.filter((item) => item.state === value)
@@ -153,8 +161,8 @@ export function MilestonesPage({
                   type="button"
                   data-testid="milestone-create"
                   onClick={() => {
-                    setEditing("new");
-                    setFailed(false);
+                    setEditing('new')
+                    setFailed(false)
                   }}
                   size="sm"
                 >
@@ -166,16 +174,16 @@ export function MilestonesPage({
         </header>
         {query.error || failed ? (
           <p role="alert" className="mb-3 text-sm text-red-600">
-            {m.error}{" "}
+            {m.error}{' '}
             <ControlButton
               variant="outline"
               type="button"
               data-testid="milestones-retry"
               onClick={() => {
-                setFailed(false);
-                setEditing(null);
-                setDeleting(null);
-                query.reload();
+                setFailed(false)
+                setEditing(null)
+                setDeleting(null)
+                query.reload()
               }}
               size="sm"
             >
@@ -186,14 +194,14 @@ export function MilestonesPage({
         {query.loading ? <p role="status">{m.loading}</p> : null}
         {editing && canManage ? (
           <MilestoneForm
-            key={editing === "new" ? "new" : editing.id}
-            milestone={editing === "new" ? null : editing}
+            key={editing === 'new' ? 'new' : editing.id}
+            milestone={editing === 'new' ? null : editing}
             messages={m}
             busy={busy}
             onCancel={() => setEditing(null)}
             onSave={(input) =>
               void mutate(() =>
-                editing === "new"
+                editing === 'new'
                   ? api.milestones!.create(project.id, input)
                   : api.milestones!.update(project.id, editing.id, {
                       ...input,
@@ -252,10 +260,10 @@ export function MilestonesPage({
           >
             <Flag className="h-6 w-6 text-text-muted" aria-hidden="true" />
             <h2 className="heading-small">
-              {state === "closed" ? m.emptyClosed : m.empty}
+              {state === 'closed' ? m.emptyClosed : m.empty}
             </h2>
             <p className="max-w-md text-sm text-text-muted">
-              {state === "closed" ? m.emptyClosedHint : m.emptyHint}
+              {state === 'closed' ? m.emptyClosedHint : m.emptyHint}
             </p>
           </div>
         ) : null}
@@ -297,9 +305,9 @@ export function MilestonesPage({
             .filter((item) => item.state === state)
             .map((item) => {
               const overdue =
-                item.state === "open" &&
+                item.state === 'open' &&
                 item.due_on &&
-                item.due_on < new Date().toLocaleDateString("sv-SE");
+                item.due_on < new Date().toLocaleDateString('sv-SE')
               return (
                 <article
                   key={item.id}
@@ -318,7 +326,7 @@ export function MilestonesPage({
                     </ControlButton>
                     {item.due_on ? (
                       <span className="text-xs text-text-muted">
-                        {m.due}: {item.due_on} {overdue ? `· ${m.overdue}` : ""}
+                        {m.due}: {item.due_on} {overdue ? `· ${m.overdue}` : ''}
                       </span>
                     ) : null}
                     {canManage ? (
@@ -346,13 +354,13 @@ export function MilestonesPage({
                                 due_on: item.due_on,
                                 version: item.version,
                                 state:
-                                  item.state === "open" ? "closed" : "open",
+                                  item.state === 'open' ? 'closed' : 'open',
                               }),
                             )
                           }
                           size="sm"
                         >
-                          {item.state === "open" ? m.close : m.reopen}
+                          {item.state === 'open' ? m.close : m.reopen}
                         </ControlButton>
                         <ControlButton
                           variant="destructive-ghost"
@@ -374,12 +382,12 @@ export function MilestonesPage({
                     <MilestoneProgress item={item} messages={m} />
                   </div>
                 </article>
-              );
+              )
             })
         )}
       </div>
     </section>
-  );
+  )
 }
 
 function MilestoneForm({
@@ -389,27 +397,27 @@ function MilestoneForm({
   onCancel,
   onSave,
 }: {
-  milestone: Milestone | null;
+  milestone: Milestone | null
   messages:
-    | (typeof milestoneMessages)["en"]
-    | (typeof milestoneMessages)["zh-CN"];
-  busy: boolean;
-  onCancel(): void;
-  onSave(input: MilestoneInput): void;
+    | (typeof milestoneMessages)['en']
+    | (typeof milestoneMessages)['zh-CN']
+  busy: boolean
+  onCancel(): void
+  onSave(input: MilestoneInput): void
 }) {
   return (
     <form
       data-testid="milestone-form"
       className="milestone-form mb-4 max-w-2xl space-y-3 rounded-md border border-border p-3"
       onSubmit={(event) => {
-        event.preventDefault();
-        const form = new FormData(event.currentTarget);
+        event.preventDefault()
+        const form = new FormData(event.currentTarget)
         onSave({
-          title: String(form.get("title")).trim(),
-          description: String(form.get("description")),
-          due_on: String(form.get("due_on")) || null,
-          state: milestone?.state ?? "open",
-        });
+          title: String(form.get('title')).trim(),
+          description: String(form.get('description')),
+          due_on: String(form.get('due_on')) || null,
+          state: milestone?.state ?? 'open',
+        })
       }}
     >
       <label className="block text-sm">
@@ -420,7 +428,7 @@ function MilestoneForm({
           name="title"
           required
           maxLength={255}
-          defaultValue={milestone?.title ?? ""}
+          defaultValue={milestone?.title ?? ''}
           className="milestone-form-field mt-1 w-full"
         />
       </label>
@@ -429,7 +437,7 @@ function MilestoneForm({
         <ControlTextarea
           data-testid="milestone-description"
           name="description"
-          defaultValue={milestone?.description ?? ""}
+          defaultValue={milestone?.description ?? ''}
           className="milestone-form-field mt-1 min-h-20 w-full rounded-md bg-background p-2"
         />
       </label>
@@ -440,7 +448,7 @@ function MilestoneForm({
           data-testid="milestone-due"
           name="due_on"
           type="date"
-          defaultValue={milestone?.due_on ?? ""}
+          defaultValue={milestone?.due_on ?? ''}
           className="milestone-form-field ml-2"
         />
       </label>
@@ -466,20 +474,20 @@ function MilestoneForm({
         </ControlButton>
       </div>
     </form>
-  );
+  )
 }
 
 function MilestoneProgress({
   item,
   messages: m,
 }: {
-  item: Milestone;
+  item: Milestone
   messages:
-    | (typeof milestoneMessages)["en"]
-    | (typeof milestoneMessages)["zh-CN"];
+    | (typeof milestoneMessages)['en']
+    | (typeof milestoneMessages)['zh-CN']
 }) {
-  const total = item.open_issues + item.closed_issues;
-  const progress = total ? Math.round((item.closed_issues * 100) / total) : 0;
+  const total = item.open_issues + item.closed_issues
+  const progress = total ? Math.round((item.closed_issues * 100) / total) : 0
   return (
     <>
       <ProgressBar
@@ -488,12 +496,12 @@ function MilestoneProgress({
         indicatorTestId={`milestone-progress-fill-${item.id}`}
       />
       <p className="mt-1 text-xs text-text-muted">
-        {progress}% · {item.closed_issues} {m.completed} · {item.open_issues}{" "}
+        {progress}% · {item.closed_issues} {m.completed} · {item.open_issues}{' '}
         {m.remaining}
         {(item.archived_issues ?? 0) > 0
           ? ` · ${item.archived_issues} ${m.archived}`
-          : ""}
+          : ''}
       </p>
     </>
-  );
+  )
 }

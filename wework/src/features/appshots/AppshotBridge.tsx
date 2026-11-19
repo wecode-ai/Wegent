@@ -23,8 +23,8 @@ export function AppshotBridge({ onOpenWework }: AppshotBridgeProps) {
 
     subscribeToAppshots(attachments => {
       if (!active) return
-      onOpenWework()
       attachments.forEach(attachment => addExistingAttachment(attachment))
+      onOpenWework()
       if (attachments.length > 0) {
         track('appshot_received', {
           attachment_count: attachmentCountBucket(attachments.length),

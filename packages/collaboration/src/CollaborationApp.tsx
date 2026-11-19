@@ -4,7 +4,10 @@ import { MilestonePicker } from './milestones/MilestonePicker'
 import { MilestonesPage } from './milestones/MilestonesPage'
 import { milestoneMessages } from './milestones/messages'
 import { useMilestoneFilter } from './milestones/useMilestoneFilter'
-import { milestoneVisibilityScope, useMilestones } from './milestones/useMilestones'
+import {
+  milestoneVisibilityScope,
+  useMilestones,
+} from './milestones/useMilestones'
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -34,7 +37,10 @@ import { IssueArchiveDialog, IssueArchiveDrawer } from './issue-archive'
 import { prepareIssueArchiveSubtree } from './issue-archive/prepareIssueArchive'
 import { canEditCollaborationIssue } from './permissions'
 import { ProjectIssueTable, useIssueAssignmentsByIssueId } from './platform'
-import type { SharedWorkspaceApi, WorkspaceTaskBinding } from './ports/SharedWorkspaceApi'
+import type {
+  SharedWorkspaceApi,
+  WorkspaceTaskBinding,
+} from './ports/SharedWorkspaceApi'
 import { executeStandardCloudBoardMutation } from './project-board/useStandardCloudBoardController'
 import { ProjectCreateDialog, projectCreateLabels } from './project-create'
 import {
@@ -45,10 +51,19 @@ import {
   ProjectExecutionEnvironments,
   ProjectSettingsShell,
 } from './project-manage'
-import { ProjectCalendarView, ProjectGanttView } from './project-schedule/ProjectScheduleViews'
-import { scheduleViewConfigFromOptions, type ScheduleViewOptions } from './project-schedule/model'
+import {
+  ProjectCalendarView,
+  ProjectGanttView,
+} from './project-schedule/ProjectScheduleViews'
+import {
+  scheduleViewConfigFromOptions,
+  type ScheduleViewOptions,
+} from './project-schedule/model'
 import { useProjectScheduleViewOptions } from './project-schedule/useProjectScheduleViewOptions'
-import { CollaborationProjectViewShell, ProjectLoadingSkeleton } from './project-shell'
+import {
+  CollaborationProjectViewShell,
+  ProjectLoadingSkeleton,
+} from './project-shell'
 import { collaborationTestIds } from './testIds'
 import type {
   CollaborationAssignment,
@@ -110,11 +125,14 @@ interface CollaborationAppProps {
   onPrepareIssueArchive?(issue: CollaborationIssue): Promise<void>
   onCreateTask?(project: CollaborationProject, issue: CollaborationIssue): void
   renderIssueDetail?(context: CollaborationIssueDetailRenderContext): ReactNode
-  isIssueRunning?(issue: CollaborationIssue, bindings: WorkspaceTaskBinding[]): boolean
+  isIssueRunning?(
+    issue: CollaborationIssue,
+    bindings: WorkspaceTaskBinding[],
+  ): boolean
   renderBoardIssueCard?(
     context: ProjectBoardIssueCardRenderContext & {
       onMarkRead(): Promise<void>
-    }
+    },
   ): ReactNode
 }
 
@@ -140,7 +158,10 @@ export function CollaborationApp({
 }: CollaborationAppProps) {
   const messages = collaborationMessages[locale]
   const templateStore = useCollaborationTemplateStore()
-  const translate = useMemo(() => createCollaborationTranslator(locale), [locale])
+  const translate = useMemo(
+    () => createCollaborationTranslator(locale),
+    [locale],
+  )
   const [createProjectOpen, setCreateProjectOpen] = useState(false)
   const issueBoardRef = useRef<{
     issueId: string
@@ -148,18 +169,28 @@ export function CollaborationApp({
     board: import('./issue-detail/issueCommentActions').IssueCommentBoardContext
   } | null>(null)
   const [createIssueOpen, setCreateIssueOpen] = useState(false)
-  const [createIssueDefaults, setCreateIssueDefaults] = useState<BoardIssueCreateDefaults>()
-  const [settingsSectionId, setSettingsSectionId] = useState<ProjectSettingsSectionId>(
-    host.location.projectSettingsSection ?? 'project'
-  )
-  const [archiveIssueTargets, setArchiveIssueTargets] = useState<CollaborationIssue[] | null>(null)
+  const [createIssueDefaults, setCreateIssueDefaults] =
+    useState<BoardIssueCreateDefaults>()
+  const [settingsSectionId, setSettingsSectionId] =
+    useState<ProjectSettingsSectionId>(
+      host.location.projectSettingsSection ?? 'project',
+    )
+  const [archiveIssueTargets, setArchiveIssueTargets] = useState<
+    CollaborationIssue[] | null
+  >(null)
   const [archiveIssueBusy, setArchiveIssueBusy] = useState(false)
-  const [archiveIssueError, setArchiveIssueError] = useState<string | null>(null)
+  const [archiveIssueError, setArchiveIssueError] = useState<string | null>(
+    null,
+  )
   const [archiveDrawerOpen, setArchiveDrawerOpen] = useState(false)
   const [archivedIssues, setArchivedIssues] = useState<CollaborationIssue[]>([])
-  const [archiveNextCursor, setArchiveNextCursor] = useState<string | null>(null)
+  const [archiveNextCursor, setArchiveNextCursor] = useState<string | null>(
+    null,
+  )
   const [archiveDrawerLoading, setArchiveDrawerLoading] = useState(false)
-  const [archiveDrawerError, setArchiveDrawerError] = useState<string | null>(null)
+  const [archiveDrawerError, setArchiveDrawerError] = useState<string | null>(
+    null,
+  )
   const archiveLoadGeneration = useRef(0)
   const [restoringIssueId, setRestoringIssueId] = useState<string | null>(null)
   const { state, commands } = useCollaborationWorkspaceController({
@@ -188,11 +219,12 @@ export function CollaborationApp({
     loading,
     error,
   } = state
-  const { assignmentsByIssueId, replaceIssueAssignments } = useIssueAssignmentsByIssueId({
-    assignmentsApi: api.assignments,
-    issues,
-    enabled: project !== null && host.location.view === 'table',
-  })
+  const { assignmentsByIssueId, replaceIssueAssignments } =
+    useIssueAssignmentsByIssueId({
+      assignmentsApi: api.assignments,
+      issues,
+      enabled: project !== null && host.location.view === 'table',
+    })
   const environmentReadiness = useProjectExecutionEnvironmentReadiness({
     api,
     project,
@@ -247,7 +279,7 @@ export function CollaborationApp({
     setSettingsSectionId(
       host.location.view === 'manage'
         ? (host.location.projectSettingsSection ?? 'project')
-        : 'project'
+        : 'project',
     )
   }, [host.location.projectSettingsSection, host.location.view, project?.id])
 
@@ -284,20 +316,22 @@ export function CollaborationApp({
     setArchiveIssueBusy(true)
     setArchiveIssueError(null)
     const results = await Promise.allSettled(
-      archiveIssueTargets.map(async issue => {
+      archiveIssueTargets.map(async (issue) => {
         await prepareIssueArchiveSubtree(issues, issue, onPrepareIssueArchive)
         const archived = await commands.archiveIssue(issue.id, {
           throwOnError: true,
         })
         if (!archived) throw new Error('Issue could not be archived')
         return issue
-      })
+      }),
     )
     const failed = results.flatMap((result, index) =>
-      result.status === 'rejected' ? [archiveIssueTargets[index]] : []
+      result.status === 'rejected' ? [archiveIssueTargets[index]] : [],
     )
     const archivedIds = new Set(
-      results.flatMap(result => (result.status === 'fulfilled' ? [result.value.id] : []))
+      results.flatMap((result) =>
+        result.status === 'fulfilled' ? [result.value.id] : [],
+      ),
     )
     if (host.location.issueId && archivedIds.has(host.location.issueId)) {
       host.navigate({
@@ -311,9 +345,13 @@ export function CollaborationApp({
     } else {
       setArchiveIssueTargets(failed)
       setArchiveIssueError(
-        translate('todo.archive_issue_failed_count', '{{count}} 个任务归档失败，请重试。', {
-          count: failed.length,
-        })
+        translate(
+          'todo.archive_issue_failed_count',
+          '{{count}} 个任务归档失败，请重试。',
+          {
+            count: failed.length,
+          },
+        ),
       )
     }
     setArchiveIssueBusy(false)
@@ -329,14 +367,16 @@ export function CollaborationApp({
         limit: 50,
       })
       if (generation !== archiveLoadGeneration.current) return
-      setArchivedIssues(current => (cursor ? [...current, ...page.items] : page.items))
+      setArchivedIssues((current) =>
+        cursor ? [...current, ...page.items] : page.items,
+      )
       setArchiveNextCursor(page.nextCursor)
     } catch (error) {
       if (generation !== archiveLoadGeneration.current) return
       setArchiveDrawerError(
         error instanceof Error
           ? error.message
-          : translate('todo.archive_box_load_failed', '加载归档任务失败')
+          : translate('todo.archive_box_load_failed', '加载归档任务失败'),
       )
     } finally {
       if (generation === archiveLoadGeneration.current) {
@@ -361,13 +401,15 @@ export function CollaborationApp({
     setArchiveDrawerError(null)
     try {
       await api.issues.restore(issue.id)
-      setArchivedIssues(current => current.filter(candidate => candidate.id !== issue.id))
+      setArchivedIssues((current) =>
+        current.filter((candidate) => candidate.id !== issue.id),
+      )
       await commands.loadProjectSnapshot(project.id, { invalidate: true })
     } catch (error) {
       setArchiveDrawerError(
         error instanceof Error
           ? error.message
-          : translate('todo.restore_issue_failed', '恢复任务失败')
+          : translate('todo.restore_issue_failed', '恢复任务失败'),
       )
     } finally {
       setRestoringIssueId(null)
@@ -376,7 +418,9 @@ export function CollaborationApp({
   const issueArchiveAvailable = issueArchiveEnabled
   const environmentNotice = project ? (
     <IssueExecutionEnvironmentNotice
-      canManage={project.access_role === 'Owner' || project.access_role === 'Maintainer'}
+      canManage={
+        project.access_role === 'Owner' || project.access_role === 'Maintainer'
+      }
       onOpenEnvironmentSettings={() =>
         host.navigate({
           projectId: project.id,
@@ -390,18 +434,24 @@ export function CollaborationApp({
     />
   ) : null
 
-  const milestoneFilter = useMilestoneFilter(project?.id, host.location.view, issues)
+  const milestoneFilter = useMilestoneFilter(
+    project?.id,
+    host.location.view,
+    issues,
+  )
   const { value: currentMilestoneFilter, filteredIssues } = milestoneFilter
   const milestoneLabels = milestoneMessages[locale]
   const milestonesEnabled = Boolean(
-    api.milestones && project && ['local', 'backend'].includes(project.task_provider)
+    api.milestones &&
+    project &&
+    ['local', 'backend'].includes(project.task_provider),
   )
   const boardMilestones = useMilestones(
     api.milestones,
     project?.id ?? '',
     milestonesEnabled && ['board', 'table'].includes(host.location.view),
-    issues.map(issue => `${issue.id}:${issue.version}`).join('|'),
-    project ? milestoneVisibilityScope(project) : ''
+    issues.map((issue) => `${issue.id}:${issue.version}`).join('|'),
+    project ? milestoneVisibilityScope(project) : '',
   )
   const hasHeaderCreateAction =
     host.location.view === 'board' ||
@@ -433,8 +483,11 @@ export function CollaborationApp({
   const renderIssueTable = (
     tableIssues: CollaborationIssue[],
     view: CollaborationView,
-    tableAssignments: Record<string, CollaborationAssignment[]> = assignmentsByIssueId,
-    options: { emptyLabel?: string; milestoneId?: string } = {}
+    tableAssignments: Record<
+      string,
+      CollaborationAssignment[]
+    > = assignmentsByIssueId,
+    options: { emptyLabel?: string; milestoneId?: string } = {},
   ) => {
     if (!project) return null
     return (
@@ -443,7 +496,7 @@ export function CollaborationApp({
         toolbarAction={view === 'table' ? milestoneFilterControl : null}
         renderBulkActions={
           milestonesEnabled
-            ? selected => (
+            ? (selected) => (
                 <MilestoneBulkAction
                   api={api}
                   projectId={project.id}
@@ -471,26 +524,32 @@ export function CollaborationApp({
         actionsLabel={translate('common.actions', '操作')}
         deleteLabel={translate('todo.archive_issue', '归档任务')}
         selectAllLabel={
-          locale === 'zh-CN' ? '选择当前筛选结果中的全部任务' : 'Select all visible issues'
+          locale === 'zh-CN'
+            ? '选择当前筛选结果中的全部任务'
+            : 'Select all visible issues'
         }
         selectIssueLabel={locale === 'zh-CN' ? '选择任务' : 'Select issue'}
         selectedLabel={locale === 'zh-CN' ? '项已选择' : 'selected'}
         batchStatusLabel={locale === 'zh-CN' ? '批量修改状态' : 'Change status'}
         batchApplyLabel={locale === 'zh-CN' ? '应用' : 'Apply'}
         batchDeleteLabel={locale === 'zh-CN' ? '批量归档' : 'Archive selected'}
-        availableStatuses={projectStatuses(project, messages, translate).map(status => status.id)}
-        canDelete={issue => issue.status === 'completed'}
+        availableStatuses={projectStatuses(project, messages, translate).map(
+          (status) => status.id,
+        )}
+        canDelete={(issue) => issue.status === 'completed'}
         onDelete={
           issueArchiveAvailable
-            ? issue => {
+            ? (issue) => {
                 if (issue.status === 'completed') requestIssueArchive(issue)
               }
             : undefined
         }
         onBulkDelete={
           issueArchiveAvailable
-            ? selectedIssues => {
-                const completedIssues = selectedIssues.filter(issue => issue.status === 'completed')
+            ? (selectedIssues) => {
+                const completedIssues = selectedIssues.filter(
+                  (issue) => issue.status === 'completed',
+                )
                 if (completedIssues.length === 0) return
                 setArchiveIssueError(null)
                 setArchiveIssueTargets(completedIssues)
@@ -499,25 +558,26 @@ export function CollaborationApp({
         }
         batchFailedLabel={translate(
           'todo.batch_status_failed',
-          '部分任务更新失败，请查看以下原因并重试。'
+          '部分任务更新失败，请查看以下原因并重试。',
         )}
         onBulkStatusChange={(selectedIssues, status) =>
           bulkIssueStatus(
             selectedIssues,
-            issue =>
+            (issue) =>
               commands.updateIssue(
                 issue.id,
                 { version: issue.version, status },
-                { throwOnError: true }
+                { throwOnError: true },
               ),
-            error =>
+            (error) =>
               runnerEnvironmentError(error, translate) ??
-              (error instanceof Error ? error.message : messages.saveFailed)
+              (error instanceof Error ? error.message : messages.saveFailed),
           )
         }
-        statusName={status =>
-          projectStatuses(project, messages, translate).find(candidate => candidate.id === status)
-            ?.name ?? status
+        statusName={(status) =>
+          projectStatuses(project, messages, translate).find(
+            (candidate) => candidate.id === status,
+          )?.name ?? status
         }
         onCreate={
           options.milestoneId
@@ -533,7 +593,7 @@ export function CollaborationApp({
               }
             : requestIssueCreate
         }
-        onOpen={issue =>
+        onOpen={(issue) =>
           host.navigate({
             projectId: project.id,
             issueId: issue.id,
@@ -564,7 +624,9 @@ export function CollaborationApp({
           }}
           onChange={commands.replaceIssue}
           onRead={commands.confirmIssueRead}
-          onCommentsChange={next => commands.replaceComments(selectedIssue.id, next)}
+          onCommentsChange={(next) =>
+            commands.replaceComments(selectedIssue.id, next)
+          }
           onConflict={async () => {
             await commands.loadSelectedIssue(selectedIssue.id)
           }}
@@ -599,11 +661,17 @@ export function CollaborationApp({
           data-testid={collaborationTestIds.root}
         >
           {error && (
-            <div className="collaboration-alert" role="alert" data-testid="collaboration-error">
+            <div
+              className="collaboration-alert"
+              role="alert"
+              data-testid="collaboration-error"
+            >
               {error}
             </div>
           )}
-          {!project && host.capabilities.myWork === true && host.location.rootView === 'my-work' ? (
+          {!project &&
+          host.capabilities.myWork === true &&
+          host.location.rootView === 'my-work' ? (
             <MyWorkAdapter
               items={myWork}
               locale={locale}
@@ -615,7 +683,7 @@ export function CollaborationApp({
                   rootView: 'home',
                 })
               }
-              onSelectItem={item =>
+              onSelectItem={(item) =>
                 host.navigate({
                   projectId: item.cloud_project_id,
                   issueId: item.id,
@@ -630,14 +698,14 @@ export function CollaborationApp({
               projectMembers={projectMembers}
               myWork={host.capabilities.myWork === true ? myWork : []}
               onCreateProject={() => setCreateProjectOpen(true)}
-              onSelectProject={nextProject =>
+              onSelectProject={(nextProject) =>
                 host.navigate({
                   projectId: nextProject.id,
                   issueId: null,
                   view: 'board',
                 })
               }
-              onManageProject={nextProject =>
+              onManageProject={(nextProject) =>
                 host.navigate({
                   projectId: nextProject.id,
                   issueId: null,
@@ -655,7 +723,9 @@ export function CollaborationApp({
                       })
                   : undefined
               }
-              onUnavailable={() => commands.reportError(messages.capabilitiesUnavailable)}
+              onUnavailable={() =>
+                commands.reportError(messages.capabilitiesUnavailable)
+              }
               locale={locale}
             />
           ) : (
@@ -683,17 +753,40 @@ export function CollaborationApp({
                         project={project}
                         issues={issues}
                         locale={locale}
-                        onOpenArchive={issueArchiveAvailable ? openArchiveDrawer : undefined}
+                        filter={{
+                          milestoneId:
+                            currentMilestoneFilter === 'all'
+                              ? null
+                              : currentMilestoneFilter,
+                        }}
+                        onFilterChange={(id) =>
+                          id === null
+                            ? milestoneFilter.clear()
+                            : milestoneFilter.select(id)
+                        }
+                        onOpenArchive={
+                          issueArchiveAvailable ? openArchiveDrawer : undefined
+                        }
                         onChanged={() =>
                           commands.loadProjectSnapshot(project.id, {
                             invalidate: true,
                           })
                         }
-                        renderIssues={(linkedIssues, linkedAssignments, emptyLabel, milestoneId) =>
-                          renderIssueTable(linkedIssues, 'milestones', linkedAssignments, {
-                            emptyLabel,
-                            milestoneId,
-                          })
+                        renderIssues={(
+                          linkedIssues,
+                          linkedAssignments,
+                          emptyLabel,
+                          milestoneId,
+                        ) =>
+                          renderIssueTable(
+                            linkedIssues,
+                            'milestones',
+                            linkedAssignments,
+                            {
+                              emptyLabel,
+                              milestoneId,
+                            },
+                          )
                         }
                       />
                     ) : null,
@@ -712,8 +805,10 @@ export function CollaborationApp({
                       savingProjectViewOptions={savingScheduleView}
                       onViewOptionsChange={scheduleView.changeOptions}
                       onResetViewOptions={scheduleView.resetOptions}
-                      onSaveProjectViewOptions={canSaveScheduleView ? saveScheduleView : undefined}
-                      onOpen={issue =>
+                      onSaveProjectViewOptions={
+                        canSaveScheduleView ? saveScheduleView : undefined
+                      }
+                      onOpen={(issue) =>
                         host.navigate({
                           projectId: project.id,
                           issueId: issue.id,
@@ -744,8 +839,10 @@ export function CollaborationApp({
                       savingProjectViewOptions={savingScheduleView}
                       onViewOptionsChange={scheduleView.changeOptions}
                       onResetViewOptions={scheduleView.resetOptions}
-                      onSaveProjectViewOptions={canSaveScheduleView ? saveScheduleView : undefined}
-                      onOpen={issue =>
+                      onSaveProjectViewOptions={
+                        canSaveScheduleView ? saveScheduleView : undefined
+                      }
+                      onOpen={(issue) =>
                         host.navigate({
                           projectId: project.id,
                           issueId: issue.id,
@@ -771,7 +868,7 @@ export function CollaborationApp({
               }}
               switcherAriaLabel={messages.title}
               compactSwitcherIcon={<span aria-hidden="true">▾</span>}
-              onViewChange={view => navigateView(view as CollaborationView)}
+              onViewChange={(view) => navigateView(view as CollaborationView)}
               assistantOpen={false}
               backAction={
                 showProjectBack ? (
@@ -801,7 +898,8 @@ export function CollaborationApp({
                 <span className="collaboration-project-heading">
                   <strong>{project.name}</strong>
                   <small>
-                    {locale === 'zh-CN' ? '协作项目' : 'Collaboration project'} · {members.length}{' '}
+                    {locale === 'zh-CN' ? '协作项目' : 'Collaboration project'}{' '}
+                    · {members.length}{' '}
                     {locale === 'zh-CN' ? '位成员' : 'members'}
                   </small>
                 </span>
@@ -830,7 +928,7 @@ export function CollaborationApp({
                       {showLabels ? messages.createIssue : null}
                     </ControlButton>
                   ) : null}
-                  {host.projectActions?.map(action => (
+                  {host.projectActions?.map((action) => (
                     <ControlButton
                       variant="outline"
                       size="sm"
@@ -863,7 +961,9 @@ export function CollaborationApp({
                           data-testid="collaboration-empty-project"
                         >
                           <div className="collaboration-empty-project-content">
-                            <span className="collaboration-empty-project-icon">◇</span>
+                            <span className="collaboration-empty-project-icon">
+                              ◇
+                            </span>
                             <span className="collaboration-empty-project-progress">
                               {messages.emptyProjectProgress}
                             </span>
@@ -904,7 +1004,7 @@ export function CollaborationApp({
                       }
                       filterAction={milestoneFilterControl}
                       toolbarAction={host.renderBoardToolbarAction?.(project)}
-                      onMarkRead={issue => void commands.markIssueRead(issue)}
+                      onMarkRead={(issue) => void commands.markIssueRead(issue)}
                       runtime={api.runtime}
                       previewDisabled={Boolean(selectedIssue)}
                       translate={translate}
@@ -952,13 +1052,18 @@ export function CollaborationApp({
                                 {
                                   version: target.version,
                                   position: input.position,
-                                  ...(input.status !== undefined ? { status: input.status } : {}),
+                                  ...(input.status !== undefined
+                                    ? { status: input.status }
+                                    : {}),
                                   ...(input.priority !== undefined
                                     ? {
-                                        priority: input.priority as CollaborationIssue['priority'],
+                                        priority:
+                                          input.priority as CollaborationIssue['priority'],
                                       }
                                     : {}),
-                                  ...(input.tags !== undefined ? { tags: input.tags } : {}),
+                                  ...(input.tags !== undefined
+                                    ? { tags: input.tags }
+                                    : {}),
                                   ...(input.assignee_user_id !== undefined
                                     ? {
                                         assigneeUserId: input.assignee_user_id,
@@ -966,7 +1071,8 @@ export function CollaborationApp({
                                     : {}),
                                   ...(input.assignee_agent_id !== undefined
                                     ? {
-                                        assigneeAgentId: input.assignee_agent_id,
+                                        assigneeAgentId:
+                                          input.assignee_agent_id,
                                       }
                                     : {}),
                                   ...(input.assignee_team_id !== undefined
@@ -975,7 +1081,7 @@ export function CollaborationApp({
                                       }
                                     : {}),
                                 },
-                                { throwOnError: true }
+                                { throwOnError: true },
                               )
                               if (!updated) throw new Error(messages.saveFailed)
                               return updated
@@ -987,36 +1093,43 @@ export function CollaborationApp({
                                 {
                                   version: target.version,
                                   ...assignment,
-                                }
+                                },
                               )
                               if (!updated) throw new Error(messages.saveFailed)
                               return updated
                             },
-                            refreshOrder: async target => {
-                              await commands.loadProjectSnapshot(target.cloud_project_id, {
-                                invalidate: true,
-                                throwOnError: true,
-                              })
+                            refreshOrder: async (target) => {
+                              await commands.loadProjectSnapshot(
+                                target.cloud_project_id,
+                                {
+                                  invalidate: true,
+                                  throwOnError: true,
+                                },
+                              )
                             },
                           },
                         })
                       }}
                       onCreateIssue={requestIssueCreate}
-                      onCreateUnmatchedIssue={defaults => {
+                      onCreateUnmatchedIssue={(defaults) => {
                         setCreateIssueDefaults(defaults)
                         setCreateIssueOpen(true)
                       }}
-                      onDeleteIssue={issueArchiveAvailable ? requestIssueArchive : undefined}
+                      onDeleteIssue={
+                        issueArchiveAvailable ? requestIssueArchive : undefined
+                      }
                       onArchiveCompleted={
                         issueArchiveAvailable
-                          ? completedIssues => {
+                          ? (completedIssues) => {
                               if (completedIssues.length === 0) return
                               setArchiveIssueError(null)
                               setArchiveIssueTargets(completedIssues)
                             }
                           : undefined
                       }
-                      onOpenArchive={issueArchiveAvailable ? openArchiveDrawer : undefined}
+                      onOpenArchive={
+                        issueArchiveAvailable ? openArchiveDrawer : undefined
+                      }
                       onSaveViews={async (boardViews, settings) => {
                         await saveProjectBoardViews({
                           api: api.projects,
@@ -1030,7 +1143,7 @@ export function CollaborationApp({
                       }}
                       renderIssueCard={
                         renderBoardIssueCard
-                          ? context =>
+                          ? (context) =>
                               renderBoardIssueCard({
                                 ...context,
                                 onMarkRead: async () => {
@@ -1049,7 +1162,11 @@ export function CollaborationApp({
                 ),
                 files: (
                   <div className="collaboration-project-content">
-                    <CollaborationFilesAdapter api={api} project={project} locale={locale} />
+                    <CollaborationFilesAdapter
+                      api={api}
+                      project={project}
+                      locale={locale}
+                    />
                   </div>
                 ),
                 manage: (
@@ -1057,8 +1174,9 @@ export function CollaborationApp({
                     pageRenderer={host.settingsPages}
                     scopeKey={`${project.project_store}:${project.id}`}
                     ariaLabel={messages.settings}
-                    onSectionChange={sectionId => {
-                      const nextSectionId = sectionId as ProjectSettingsSectionId
+                    onSectionChange={(sectionId) => {
+                      const nextSectionId =
+                        sectionId as ProjectSettingsSectionId
                       setSettingsSectionId(nextSectionId)
                       host.navigate({
                         projectId: project.id,
@@ -1079,7 +1197,9 @@ export function CollaborationApp({
                             key={project.id}
                             project={project}
                             onChange={commands.replaceProject}
-                            onError={() => commands.reportError(messages.saveFailed)}
+                            onError={() =>
+                              commands.reportError(messages.saveFailed)
+                            }
                             translate={translate}
                             section="overview"
                           />
@@ -1093,7 +1213,9 @@ export function CollaborationApp({
                               testId: 'collaboration-project-settings-sharing',
                               content: (
                                 <ProjectTemplateSettings
-                                  agentConfiguration={host.projectAgentConfiguration}
+                                  agentConfiguration={
+                                    host.projectAgentConfiguration
+                                  }
                                   key={project.id}
                                   onChange={commands.replaceProject}
                                   api={api}
@@ -1117,21 +1239,31 @@ export function CollaborationApp({
                             embedded
                             project={project}
                             onChange={commands.replaceProject}
-                            onError={() => commands.reportError(messages.saveFailed)}
+                            onError={() =>
+                              commands.reportError(messages.saveFailed)
+                            }
                             translate={translate}
                             section="members"
                           />
                         ),
                         agentsContent: (
                           <CollaborationSettings
-                            agentConfigurationHost={host.projectAgentConfiguration}
-                            agentResourceContext={host.projectAgentResourceContext}
+                            agentConfigurationHost={
+                              host.projectAgentConfiguration
+                            }
+                            agentResourceContext={
+                              host.projectAgentResourceContext
+                            }
                             api={api}
                             embedded
                             project={project}
                             onChange={commands.replaceProject}
-                            onError={() => commands.reportError(messages.saveFailed)}
-                            onAgentsChange={() => void commands.refreshProjectAgents(project.id)}
+                            onError={() =>
+                              commands.reportError(messages.saveFailed)
+                            }
+                            onAgentsChange={() =>
+                              void commands.refreshProjectAgents(project.id)
+                            }
                             translate={translate}
                             section="agents"
                           />
@@ -1139,8 +1271,14 @@ export function CollaborationApp({
                         groupsContent: api.projects.listCollaborationGroups ? (
                           <ProjectCollaborationGroups
                             agentConfiguration={host.projectAgentConfiguration}
-                            agentResourceContext={host.projectAgentResourceContext}
-                            location={project.project_store === 'local' ? 'local' : 'cloud'}
+                            agentResourceContext={
+                              host.projectAgentResourceContext
+                            }
+                            location={
+                              project.project_store === 'local'
+                                ? 'local'
+                                : 'cloud'
+                            }
                             onProjectChanged={commands.replaceProject}
                             api={api}
                             currentUserId={templateStore?.library.ownerId}
@@ -1161,7 +1299,7 @@ export function CollaborationApp({
                           >
                             {translate(
                               'todo.collaboration_groups_unavailable_description',
-                              '协作小组服务当前不可用。'
+                              '协作小组服务当前不可用。',
                             )}
                           </div>
                         ),
@@ -1180,7 +1318,7 @@ export function CollaborationApp({
                                 ? () => host.manageResource?.('environments')
                                 : undefined
                             }
-                            onProjectChange={nextProject => {
+                            onProjectChange={(nextProject) => {
                               commands.replaceProject(nextProject)
                               onProjectChange?.(nextProject)
                             }}
@@ -1194,7 +1332,8 @@ export function CollaborationApp({
                             {
                               id: 'automatic-processing',
                               label: messages.automaticProcessing,
-                              testId: 'collaboration-project-settings-automatic-processing',
+                              testId:
+                                'collaboration-project-settings-automatic-processing',
                               content: (
                                 <ProjectAutomaticProcessing
                                   onProjectChange={commands.replaceProject}
@@ -1233,7 +1372,7 @@ export function CollaborationApp({
               }}
               host={host.projectCreate}
               onClose={() => setCreateProjectOpen(false)}
-              onCreated={created => {
+              onCreated={(created) => {
                 setCreateProjectOpen(false)
                 host.navigate({
                   projectId: created.id,
@@ -1254,13 +1393,15 @@ export function CollaborationApp({
               messages={messages}
               translate={translate}
               onClose={() => setCreateIssueOpen(false)}
-              onCreated={created => {
+              onCreated={(created) => {
                 commands.appendIssue(created)
                 setCreateIssueOpen(false)
                 host.navigate({
                   projectId: project.id,
                   issueId: created.id,
-                  view: createIssueDefaults?.milestoneId ? 'milestones' : 'board',
+                  view: createIssueDefaults?.milestoneId
+                    ? 'milestones'
+                    : 'board',
                 })
               }}
               onError={() => commands.reportError(messages.saveFailed)}
@@ -1280,7 +1421,9 @@ export function CollaborationApp({
                 issue: selectedIssue,
                 allIssues: issues,
                 assignments,
-                taskBindings: taskBindings.filter(binding => binding.issueId === selectedIssue.id),
+                taskBindings: taskBindings.filter(
+                  (binding) => binding.issueId === selectedIssue.id,
+                ),
                 defaultAssistant: host.defaultAssistant,
                 onClose: () => {
                   commands.clearSelectedIssue()
@@ -1292,8 +1435,11 @@ export function CollaborationApp({
                 },
                 onChange: commands.replaceIssue,
                 onRead: commands.confirmIssueRead,
-                onOpenRelatedIssue: related => {
-                  if (related.can_view_detail === false || related.cloud_project_id !== project.id)
+                onOpenRelatedIssue: (related) => {
+                  if (
+                    related.can_view_detail === false ||
+                    related.cloud_project_id !== project.id
+                  )
                     return
                   host.navigate({
                     projectId: project.id,
@@ -1304,7 +1450,9 @@ export function CollaborationApp({
                 onAddChild: canEditCollaborationIssue(selectedIssue)
                   ? () => {
                       setCreateIssueDefaults({
-                        status: projectStatuses(project, messages, translate)[0]?.id ?? 'inbox',
+                        status:
+                          projectStatuses(project, messages, translate)[0]
+                            ?.id ?? 'inbox',
                         tags: [],
                         draftScope: `child:${selectedIssue.id}`,
                         parent: selectedIssue,
@@ -1312,9 +1460,12 @@ export function CollaborationApp({
                       setCreateIssueOpen(true)
                     }
                   : undefined,
-                onCreateTask: onCreateTask ? () => onCreateTask(project, selectedIssue) : undefined,
+                onCreateTask: onCreateTask
+                  ? () => onCreateTask(project, selectedIssue)
+                  : undefined,
                 onDelete:
-                  issueArchiveAvailable && canEditCollaborationIssue(selectedIssue)
+                  issueArchiveAvailable &&
+                  canEditCollaborationIssue(selectedIssue)
                     ? () => requestIssueArchive(selectedIssue)
                     : undefined,
               })
@@ -1349,16 +1500,21 @@ export function CollaborationApp({
                 }}
                 onChange={commands.replaceIssue}
                 onRead={commands.confirmIssueRead}
-                onCommentsChange={nextComments =>
+                onCommentsChange={(nextComments) =>
                   commands.replaceComments(selectedIssue.id, nextComments)
                 }
-                onAssignmentsChange={nextAssignments => {
+                onAssignmentsChange={(nextAssignments) => {
                   commands.replaceAssignments(selectedIssue.id, nextAssignments)
                   replaceIssueAssignments(selectedIssue.id, nextAssignments)
                 }}
-                onCreateTask={onCreateTask ? () => onCreateTask(project, selectedIssue) : undefined}
+                onCreateTask={
+                  onCreateTask
+                    ? () => onCreateTask(project, selectedIssue)
+                    : undefined
+                }
                 onDelete={
-                  issueArchiveAvailable && canEditCollaborationIssue(selectedIssue)
+                  issueArchiveAvailable &&
+                  canEditCollaborationIssue(selectedIssue)
                     ? () => requestIssueArchive(selectedIssue)
                     : undefined
                 }
@@ -1373,7 +1529,8 @@ export function CollaborationApp({
               count={archiveIssueTargets.length}
               error={archiveIssueError}
               hasChildren={issues.some(
-                candidate => candidate.parent_id === archiveIssueTargets[0]?.id
+                (candidate) =>
+                  candidate.parent_id === archiveIssueTargets[0]?.id,
               )}
               onCancel={closeIssueArchive}
               onConfirm={() => void confirmIssueArchive()}
@@ -1390,7 +1547,7 @@ export function CollaborationApp({
               nextCursor={archiveNextCursor}
               onClose={closeArchiveDrawer}
               onLoadMore={() => void loadArchivedIssues(archiveNextCursor)}
-              onRestore={issue => void restoreArchivedIssue(issue)}
+              onRestore={(issue) => void restoreArchivedIssue(issue)}
               translate={translate}
             />
           ) : null}

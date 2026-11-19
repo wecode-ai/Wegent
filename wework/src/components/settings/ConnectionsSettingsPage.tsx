@@ -1,14 +1,8 @@
+import { SettingsShell } from './SettingsShell'
 import { IconButton } from '@wegent/collaboration/controls/IconButton'
 import { ActionMenu } from '@/components/common/ActionMenu'
-import { DesktopTopBar } from '@/components/layout/DesktopTopBar'
-import { useResizableSidebar } from '@/components/layout/useResizableSidebar'
 import { RemoteTerminal } from '@/components/layout/workspace-panels/RemoteTerminal'
 import { stripAppBasePath } from '@/config/runtime'
-import {
-  defaultAppearance,
-  getWorkbenchBackground,
-  useOptionalAppearance,
-} from '@/features/appearance'
 import { CloudConnectionDialog } from '@/features/cloud-connection/CloudConnectionDialog'
 import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import {
@@ -56,7 +50,6 @@ import { TextField as ControlInput } from '@wegent/collaboration/controls/TextFi
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import {
   AlertCircle,
-  ArrowLeft,
   Check,
   Cloud,
   Code2,
@@ -1350,10 +1343,6 @@ export function ConnectionsSettingsPage({
 }: ConnectionsSettingsPageProps) {
   const { t } = useTranslation('common')
   const experimentalFeaturesEnabled = useExperimentalFeaturesEnabled()
-  const appearanceContext = useOptionalAppearance()
-  const appearance = appearanceContext?.appearance ?? defaultAppearance
-  const background = getWorkbenchBackground(appearance, appearanceContext?.resolvedMode ?? 'light')
-  const { sidebarWidth, handleResizeStart } = useResizableSidebar()
   const isDesktopRuntime = isElectronRuntime()
   const settingsContributions = useDshSlotEntries<WeworkDshSettingsPage>(
     WEWORK_DSH_SLOTS.settingsPage
@@ -1406,41 +1395,17 @@ export function ConnectionsSettingsPage({
     settingsContributions.find(item => item.id === 'general')
 
   return (
-    <div
-      data-testid="wework-settings-page"
-      className={cn(
-        'relative flex h-full min-w-0 flex-1 overflow-hidden text-text-primary',
-        background.imagePath && (background.inMain || background.inSidebar || background.inTopBar)
-          ? 'bg-transparent'
-          : 'bg-background'
-      )}
-    >
-      <aside
-        className={cn(
-          'relative flex shrink-0 flex-col border-r border-border/70 px-1.5 pb-4 shadow-[inset_-1px_0_0_rgb(var(--color-border))]',
-          background.imagePath && background.inSidebar
-            ? 'bg-background/25'
-            : 'bg-[rgb(var(--color-sidebar))] backdrop-blur-xl backdrop-saturate-150'
-        )}
-        style={{ width: sidebarWidth }}
-      >
-        <DesktopTopBar
-          testId="settings-sidebar-topbar"
-          className="-mx-1.5 mb-1 w-[calc(100%+0.75rem)] shrink-0 bg-transparent pr-2 pl-2"
-          left={
-            <ControlButton
-              variant="unstyled"
-              type="button"
-              data-testid="settings-back-button"
-              onClick={onBack}
-              className="flex h-7 items-center gap-1.5 rounded-md px-2 text-sm text-text-secondary hover:bg-[rgb(var(--color-sidebar-hover))] max-md:min-h-11"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              {t('workbench.settings_back_to_app', '返回')}
-            </ControlButton>
-          }
-        />
-
+    <SettingsShell
+      onBack={onBack}
+      activeLabel={
+        activeContribution
+          ? t(
+              `workbench.${activeContribution.labelKey ?? activeContribution.id}`,
+              activeContribution.label
+            )
+          : t('workbench.settings', '设置')
+      }
+      navigation={closeNavigation => (
         <nav
           data-testid="settings-sidebar-nav"
           className="scrollbar-soft min-h-0 flex-1 space-y-1 overflow-y-auto px-1.5"
@@ -1465,7 +1430,9 @@ export function ConnectionsSettingsPage({
                   variant="unstyled"
                   type="button"
                   data-testid={`settings-nav-${item.id}`}
+                  aria-current={effectiveActiveNav === item.id ? 'page' : undefined}
                   onClick={() => {
+                    closeNavigation()
                     setActiveNav(item.id)
                     navigateTo(item.path)
                   }}
@@ -1494,52 +1461,36 @@ export function ConnectionsSettingsPage({
             )
           })}
         </nav>
-
-        <ControlButton
-          variant="unstyled"
-          type="button"
-          data-testid="settings-sidebar-resize-handle"
-          onPointerDown={handleResizeStart}
-          className="absolute right-[-4px] top-0 z-20 h-full w-3 cursor-col-resize bg-transparent"
-          aria-label={t('workbench.resize_sidebar', '调整侧边栏宽度')}
+      )}
+    >
+      {activeContribution?.module ? (
+        <DshSettingsSurface
+          page={activeContribution}
+          services={services}
+          devices={devices}
+          onBack={onBack}
+          onOpenCloudSettings={openCloudSettings}
+          onOpenRuntimeTask={onOpenRuntimeTask}
+          onRefreshWorkLists={onRefreshWorkLists}
+          autoOpenAddCloudDeviceDialog={shouldAutoOpenAddCloudDeviceDialog}
         />
-      </aside>
-
-      <main
-        className={cn(
-          'min-w-0 flex-1 overflow-auto px-8 pt-8 pb-8',
-          background.imagePath && background.inMain ? 'bg-background/20' : 'bg-background'
-        )}
-      >
-        {activeContribution?.module ? (
-          <DshSettingsSurface
-            page={activeContribution}
-            services={services}
-            devices={devices}
-            onBack={onBack}
-            onOpenCloudSettings={openCloudSettings}
-            onOpenRuntimeTask={onOpenRuntimeTask}
-            onRefreshWorkLists={onRefreshWorkLists}
-            autoOpenAddCloudDeviceDialog={shouldAutoOpenAddCloudDeviceDialog}
-          />
-        ) : activeContribution ? (
-          <DshSlotSurface
-            className="contents"
-            entryId={activeContribution.id}
-            props={{
-              services,
-              devices,
-              onBack,
-              onOpenCloudSettings: openCloudSettings,
-              onOpenRuntimeTask,
-              onRefreshWorkLists,
-              autoOpenAddCloudDeviceDialog: shouldAutoOpenAddCloudDeviceDialog,
-            }}
-            slot={WEWORK_DSH_SLOTS.settingsPage}
-            testId={`dsh-settings-surface-${activeContribution.id}`}
-          />
-        ) : null}
-      </main>
-    </div>
+      ) : activeContribution ? (
+        <DshSlotSurface
+          className="contents"
+          entryId={activeContribution.id}
+          props={{
+            services,
+            devices,
+            onBack,
+            onOpenCloudSettings: openCloudSettings,
+            onOpenRuntimeTask,
+            onRefreshWorkLists,
+            autoOpenAddCloudDeviceDialog: shouldAutoOpenAddCloudDeviceDialog,
+          }}
+          slot={WEWORK_DSH_SLOTS.settingsPage}
+          testId={`dsh-settings-surface-${activeContribution.id}`}
+        />
+      ) : null}
+    </SettingsShell>
   )
 }

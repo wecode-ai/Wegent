@@ -1,4 +1,4 @@
-import type { StandInRole } from '@/api/personalStandIn'
+import { standInPolicy, type StandInRole } from '@/api/personalStandIn'
 import { formatNotificationTime } from '@/features/notifications/notificationTime'
 import { StandInProposalCard } from '@/features/todo/StandInProposalCard'
 import { useWorkbench } from '@/features/workbench/useWorkbench'
@@ -23,6 +23,7 @@ import { AssistantWorkSnapshot } from './AssistantWorkSnapshot'
 import { RecentDiscussions } from './RecentDiscussions'
 import { TeamRelay } from './TeamRelay'
 import { selectAssistantConversations } from './assistantConversationIdentity'
+import { experienceAssistantEndpoint } from '../model/assistantEndpoint'
 import type { AssistantHomePanel, AssistantHomeProps } from './types'
 import { useExperienceTeamState } from './useExperienceTeamState'
 
@@ -152,6 +153,72 @@ export function AssistantHome({
     })
     navigateTo(`/stand-in?${query}`)
   }
+  const registerAssistant = async (
+    roleId: string | undefined,
+    roleName: string,
+    project: { id: string; store: 'cloud' },
+    policy: ReturnType<typeof standInPolicy>
+  ) => {
+    const shared = services.sharedWorkspaceApi
+    if (!shared?.projects.saveAssistantRosterEntry) return false
+    const configuredRole = source.settings?.roles.find(role => role.id === roleId)
+    const endpoint = experienceAssistantEndpoint(
+      state.devices,
+      configuredRole?.executionDeviceId ?? source.settings?.executionDeviceId ?? source.deviceId,
+      {
+        ownerUserId: ownerId,
+        roleId: roleId ?? '@primary',
+        displayName: roleName,
+        capabilities: { attachments: true, cancel: true, trace: true },
+      }
+    )
+    if (!endpoint) {
+      setError(t('assistant.deviceUnavailable'))
+      return false
+    }
+    try {
+      const current = shared.projects.listAssistantRoster
+        ? await shared.projects.listAssistantRoster(project.id)
+        : []
+      const stale = current.filter(
+        entry =>
+          entry.userId === ownerId &&
+          entry.roleId === (roleId ?? '@primary') &&
+          entry.endpointRef !== endpoint.id &&
+          entry.enabled
+      )
+      for (const entry of stale) {
+        await shared.projects.saveAssistantRosterEntry(project.id, {
+          userId: entry.userId,
+          roleId: entry.roleId,
+          endpointRef: entry.endpointRef,
+          displayName: entry.displayName,
+          enabled: false,
+          capabilityTags: entry.capabilityTags,
+          autonomyPolicy: entry.autonomyPolicy,
+          availability: entry.availability,
+          version: entry.version,
+        })
+      }
+      const saved = current.find(entry => entry.endpointRef === endpoint.id)
+      await shared.projects.saveAssistantRosterEntry(project.id, {
+        userId: ownerId,
+        roleId: roleId ?? '@primary',
+        endpointRef: endpoint.id,
+        displayName: roleName,
+        enabled: true,
+        capabilityTags: configuredRole?.collaboration.tags ?? [],
+        autonomyPolicy: policy as unknown as Record<string, unknown>,
+        availability: endpoint.availability,
+        ...(saved ? { version: saved.version } : {}),
+      })
+      setError(null)
+      return true
+    } catch (cause) {
+      setError(getStandInErrorMessage(cause))
+      return false
+    }
+  }
   const deleteRole = async (role: StandInRole) => {
     if (
       !source.settings ||
@@ -162,6 +229,38 @@ export function AssistantHome({
     )
       return false
     try {
+      const shared = services.sharedWorkspaceApi
+      const entries = (
+        await Promise.all(
+          projects
+            .filter(({ project }) => project.project_store !== 'local')
+            .map(async ({ project }) => {
+              if (!shared?.projects.listAssistantRoster) return []
+              return (await shared.projects.listAssistantRoster(project.id)).filter(
+                candidate => candidate.userId === ownerId && candidate.roleId === role.id
+              )
+            })
+        )
+      ).flat()
+      const disability = await Promise.allSettled(
+        entries.map(async entry => {
+          if (!shared?.projects.saveAssistantRosterEntry)
+            throw new Error('Assistant roster update is unavailable')
+          await shared.projects.saveAssistantRosterEntry(entry.projectId, {
+            userId: entry.userId,
+            roleId: entry.roleId,
+            endpointRef: entry.endpointRef,
+            displayName: entry.displayName,
+            enabled: false,
+            capabilityTags: entry.capabilityTags,
+            autonomyPolicy: entry.autonomyPolicy,
+            availability: entry.availability,
+            version: entry.version,
+          })
+        })
+      )
+      const failed = disability.find(result => result.status === 'rejected')
+      if (failed?.status === 'rejected') throw failed.reason
       await services.standInApi.personalSave(
         ownerId,
         { ...source.settings, roles: source.settings.roles.filter(item => item.id !== role.id) },
@@ -171,10 +270,12 @@ export function AssistantHome({
       setError(null)
       return true
     } catch (cause) {
+      source.refresh()
       setError(getStandInErrorMessage(cause))
       return false
     }
   }
+
   const resolveProposal = async (accept: boolean) => {
     if (
       !selectedProposal ||
@@ -289,6 +390,7 @@ export function AssistantHome({
               projects={projects}
               onConfigure={configure}
               onDelete={deleteRole}
+              onRegister={registerAssistant}
             />
           )}
           <section

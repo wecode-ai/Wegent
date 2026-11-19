@@ -96,7 +96,7 @@ export function ProviderModelFields({
             }}
           >
             <SelectTrigger
-              density="compact"
+              density="default"
               data-testid={`provider-model-web-search-${model.id}`}
               className="w-full min-w-0"
             />
@@ -127,7 +127,7 @@ export function ProviderModelFields({
             }}
           >
             <SelectTrigger
-              density="compact"
+              density="default"
               data-testid={`provider-model-vision-${model.id}`}
               className="w-full min-w-0"
             />
@@ -156,7 +156,7 @@ export function ProviderModelFields({
         <label className="grid gap-1 text-sm text-text-secondary md:col-span-2">
           {common('workbench.local_model_group_label')}
           <ControlInput
-            density="compact"
+            density="default"
             data-testid={`provider-model-group-${model.id}`}
             className="w-full min-w-0"
             value={model.group ?? ''}
@@ -188,7 +188,7 @@ export function ProviderModelFields({
                 }}
               >
                 <SelectTrigger
-                  density="compact"
+                  density="default"
                   className="w-full min-w-0"
                   data-testid={`provider-model-protocol-${model.id}`}
                 />
@@ -205,7 +205,7 @@ export function ProviderModelFields({
             <label className="space-y-1 text-sm text-text-secondary">
               {t('requestPath')}
               <ControlInput
-                density="compact"
+                density="default"
                 className="w-full min-w-0"
                 data-testid={`provider-model-path-${model.id}`}
                 value={model.request_path ?? ''}
@@ -225,7 +225,7 @@ export function ProviderModelFields({
                 }}
               >
                 <SelectTrigger
-                  density="compact"
+                  density="default"
                   className="w-full min-w-0"
                   data-testid={`provider-model-tools-${model.id}`}
                 />
@@ -256,7 +256,7 @@ export function ProviderModelFields({
                   }}
                 >
                   <SelectTrigger
-                    density="compact"
+                    density="default"
                     className="w-full min-w-0"
                     data-testid={`provider-model-compatibility-${model.id}`}
                   />

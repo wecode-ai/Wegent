@@ -8,7 +8,10 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.schemas.issue_activity_comment import StandInPublicReply
+from app.schemas.issue_activity_comment import (
+    AssistantPublicationSource,
+    StandInPublicReply,
+)
 from app.schemas.project_chat import (
     ProjectChatMention,
     ProjectChatMessageView,
@@ -30,6 +33,13 @@ def _comment_view(message: ProjectChatMessageView) -> dict[str, Any]:
         "sequence_number": message.sequence_number,
         "mentions": message.metadata.get("mentions", []),
         "stand_in_reply_to": message.metadata.get("stand_in_reply_to"),
+        "actor_user_id": message.actor_user_id,
+        "actor_display_name": message.actor_display_name,
+        "generation_source": message.generation_source,
+        "publication_source": message.publication_source,
+        "confirmation_state": message.confirmation_state,
+        "trace_ref": message.trace_ref,
+        "trace_state": message.trace_state,
     }
 
 
@@ -65,7 +75,17 @@ def list_issue_comments(
             )
             .first()
         )
-        return [_comment_view(project_chat_service.to_view(row, db=db))] if row else []
+        return (
+            [
+                _comment_view(
+                    project_chat_service.to_shared_view(
+                        row, db=db, viewer_user_id=user_id
+                    )
+                )
+            ]
+            if row
+            else []
+        )
     messages = project_chat_service.subscribe(
         db,
         user_id=user_id,
@@ -87,8 +107,10 @@ def add_issue_comment(
     project_id: str,
     item_id: str,
     body: str,
+    client_message_id: str | None = None,
     mentions: list[ProjectChatMention] | None = None,
     stand_in: StandInPublicReply | None = None,
+    assistant_source: AssistantPublicationSource | None = None,
 ) -> dict[str, Any]:
     if stand_in is not None:
         from app.services.project_chat.stand_in_replies import publish_stand_in_reply
@@ -108,12 +130,14 @@ def add_issue_comment(
         user_id=user_id,
         user_name=user_name,
         request=ProjectChatSend(
-            client_message_id=str(uuid.uuid4()),
+            client_message_id=client_message_id or str(uuid.uuid4()),
             project_id=project_id,
             task_id=item_id,
             content=body,
             mentions=mentions or [],
         ),
+        assistant_source=assistant_source,
     )
-    push_project_chat_message(result.message.model_dump(mode="json", by_alias=True))
-    return _comment_view(result.message)
+    message = result.message
+    push_project_chat_message(message.model_dump(mode="json", by_alias=True))
+    return _comment_view(message)

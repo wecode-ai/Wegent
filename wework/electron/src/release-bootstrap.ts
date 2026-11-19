@@ -1,8 +1,8 @@
 import { app, dialog } from 'electron'
-import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
 import { existsSync } from 'node:fs'
 import { realpath } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
+import { isEffectivePackagedApplication } from './host/application-packaging-mode.js'
 import {
   resolveWorkbenchCodexHome,
   resolveWorkbenchPaths,

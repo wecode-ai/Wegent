@@ -7,6 +7,7 @@ import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import { ArrowUpRight, ChevronDown, LayoutDashboard, ListChecks } from 'lucide-react'
 import { useCallback, useEffect, useId, useState } from 'react'
 import { ProjectSpacePickerMenu } from './ProjectSpacePickerMenu'
+import { useWorkItemPickerOpen } from './workItemPickerOpenState'
 
 type TaskBinding = Awaited<ReturnType<ProjectSpaceApi['listTaskBindings']>>[number]
 
@@ -55,7 +56,30 @@ function WorkItemComposerGuideContent({
 }: WorkItemComposerGuideProps) {
   const { t } = useTranslation('common')
   const [trigger, setTrigger] = useState<HTMLButtonElement | null>(null)
-  const [open, setOpen] = useState(false)
+  const canChangeProject = Boolean(onSelectProject)
+  const pickerStoreKey = currentTask
+    ? `task:${currentTask.deviceId}:${currentTask.taskId}`
+    : (item?.id ?? null)
+  // Open state outlives this component: a pane remount during restore must
+  // re-render an open picker instead of silently closing it (issue #4637).
+  // Persisted only for identity-stable guides; project-only guides keep
+  // local state so a project storage change still resets their picker.
+  const [persistedOpen, setPersistedOpen] = useWorkItemPickerOpen(
+    canChangeProject ? pickerStoreKey : null
+  )
+  const [localOpen, setLocalOpen] = useState(false)
+  const open = pickerStoreKey !== null ? persistedOpen : localOpen
+  const setOpen = useCallback(
+    (update: boolean | ((current: boolean) => boolean)) => {
+      const next = typeof update === 'function' ? update(open) : update
+      if (pickerStoreKey !== null) {
+        setPersistedOpen(next)
+      } else {
+        setLocalOpen(next)
+      }
+    },
+    [open, pickerStoreKey, setPersistedOpen]
+  )
   const traceId = useId()
   const [bindingRetry, setBindingRetry] = useState(0)
   const [bindingResult, setBindingResult] = useState<{
@@ -67,13 +91,12 @@ function WorkItemComposerGuideContent({
     retry: number
   } | null>(null)
   const itemId = item?.id
-  const canChangeProject = Boolean(onSelectProject)
   const menuOpen = open && canChangeProject
   const closeMenu = useCallback(() => {
     if (import.meta.env.VITE_WEWORK_E2E === 'true')
       console.debug('[Wework] Project picker lifecycle', { event: 'close-requested', traceId })
     setOpen(false)
-  }, [traceId])
+  }, [setOpen, traceId])
 
   useEffect(() => {
     if (import.meta.env.VITE_WEWORK_E2E !== 'true') return

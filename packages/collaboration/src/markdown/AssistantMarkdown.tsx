@@ -151,7 +151,9 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
   const renderVisualization = renderVisualizationOverride ?? services.renderVisualization
   const bufferedContent = useBufferedStreamingText(content, isStreaming)
   const streamdownMode =
-    variant === 'default' || isStreaming ? ('streaming' as const) : ('static' as const)
+    variant === 'default' || variant === 'process' || isStreaming
+      ? ('streaming' as const)
+      : ('static' as const)
   // Resolve opaque content markers before Streamdown splits paragraphs into
   // independent blocks; a marker may span more than one Markdown paragraph.
   const displayContent = useMemo(
@@ -167,15 +169,20 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
       ),
     [bufferedContent, variant]
   )
+  // Only unfinished annotation syntax depends on the stream lifecycle. Plain text keeps
+  // the same plugin identities so completed blocks retain their parsed trees.
+  const annotationsStreaming =
+    isStreaming && /:(?:codex-file-citation|codex-followup)[[{][^\n}]*$/.test(displayContent)
   const remarkPlugins = useMemo<StreamdownProps['remarkPlugins']>(() => {
     const plugins: NonNullable<StreamdownProps['remarkPlugins']> = [
       ...Object.values(defaultRemarkPlugins),
       remarkMathDelimiters,
     ]
-    if (variant !== 'user') plugins.push([remarkAssistantAnnotations, { isStreaming }])
+    if (variant !== 'user')
+      plugins.push([remarkAssistantAnnotations, { isStreaming: annotationsStreaming }])
     if (preserveLineBreaks) plugins.push(remarkBreaks)
     return plugins
-  }, [variant, isStreaming, preserveLineBreaks])
+  }, [variant, annotationsStreaming, preserveLineBreaks])
   const windowMarkdown = Boolean(services.windowMarkdown) && variant === 'default'
   const contentParts = useMemo(() => {
     const parts =
@@ -426,6 +433,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
               >
                 <Streamdown
                   mode={streamdownMode}
+                  parseIncompleteMarkdown={variant === 'default' || isStreaming}
                   plugins={markdownPlugins}
                   parseMarkdownIntoBlocksFn={part.wholeSource ? completeMarkdownSource : undefined}
                   isAnimating={false}
@@ -448,6 +456,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
             <MarkdownStreamingContext.Provider key={`markdown-${index}`} value={isStreaming}>
               <Streamdown
                 mode={streamdownMode}
+                  parseIncompleteMarkdown={variant === 'default' || isStreaming}
                 plugins={markdownPlugins}
                 parseMarkdownIntoBlocksFn={part.wholeSource ? completeMarkdownSource : undefined}
                 isAnimating={false}
