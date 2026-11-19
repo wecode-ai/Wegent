@@ -313,6 +313,10 @@ Wework 浏览器和桌面 E2E，以及 Wework macOS 内存门禁，适合路径�
 改动路径决定测试范围。Wework macOS 内存门禁仅在带有 `ci:all` 标签的非 Draft PR 中运行；
 普通 PR、定时任务和手动任务均不触发内存 E2E。
 
+Linux 桌面 E2E 分片从共享镜像获取原生测试工具。平台 E2E 在 Rust 后端构建期间准备依赖和服务，
+使用前等待同一次 CI 运行的后端产物。普通 PR 的 macOS 桌面检查构建本地应用和 Executor。
+需要从 PR 提取完整 macOS 构建或原生后端产物时，使用 `ci:all` 运行。
+
 Windows 桌面构建由 `build-wework-windows-e2e` 共享 action 负责，主分支缓存预热与
 PR 使用同一路径。只有 `main` 可以写入共享缓存；完整桌面包按源码输入、Node、
 Rust 和 runner 镜像版本精确匹配，不使用前缀匹配。命中后直接验证并上传原始构建包，

@@ -532,7 +532,6 @@ jobs:
     needs:
       [
         build-frontend-e2e,
-        build-backend-rs-e2e-runtime,
         build-executor-e2e-runtime,
         prepare-platform-e2e-image,
       ]
@@ -727,15 +726,6 @@ jobs:
             frontend-next-build \
             .ci-artifacts
 
-      - name: Download Backend Rust E2E runtime
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          .github/scripts/download-actions-artifact.sh \
-            backend-rs-e2e-runtime \
-            .ci-artifacts
-          chmod 0755 .ci-artifacts/wegent-backend-rs
-
       - name: Download Executor E2E binary
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -773,6 +763,18 @@ jobs:
           DATABASE_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
         run: |
           uv run --no-sync alembic upgrade head
+
+      - name: Download Backend Rust E2E runtime
+        env:
+          ACTIONS_ARTIFACT_WAIT_SECONDS: "1500"
+          ACTIONS_ARTIFACT_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ACTIONS_ARTIFACT_JOB: Build Backend Rust E2E Runtime
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/download-actions-artifact.sh \
+            backend-rs-e2e-runtime \
+            .ci-artifacts
+          chmod 0755 .ci-artifacts/wegent-backend-rs
 
       # Runs 40548056927 and 40547828678: shard 1 was slowest; shard 3
       # had the shortest browser phase and shard 4 had room for remote indexing.
@@ -1579,7 +1581,6 @@ jobs:
       packages: read
     needs:
       [
-        build-backend-rs-e2e-runtime,
         build-executor-e2e-runtime,
         prepare-platform-e2e-image,
       ]
@@ -1777,15 +1778,6 @@ jobs:
             frontend-next-build \
             .ci-artifacts
 
-      - name: Download Backend Rust E2E runtime
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          .github/scripts/download-actions-artifact.sh \
-            backend-rs-e2e-runtime \
-            .ci-artifacts
-          chmod 0755 .ci-artifacts/wegent-backend-rs
-
       - name: Download Executor E2E binary
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -1849,6 +1841,18 @@ jobs:
           echo "E2E_CLAUDE_MODEL_SERVER_URL=http://$DOCKER_BRIDGE_HOST:9999" >> "$GITHUB_ENV"
           echo "E2E_CODEX_MODEL_SERVER_URL=http://$DOCKER_BRIDGE_HOST:9999" >> "$GITHUB_ENV"
           echo "Docker bridge host: $DOCKER_BRIDGE_HOST"
+
+      - name: Download Backend Rust E2E runtime
+        env:
+          ACTIONS_ARTIFACT_WAIT_SECONDS: "1500"
+          ACTIONS_ARTIFACT_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          ACTIONS_ARTIFACT_JOB: Build Backend Rust E2E Runtime
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          .github/scripts/download-actions-artifact.sh \
+            backend-rs-e2e-runtime \
+            .ci-artifacts
+          chmod 0755 .ci-artifacts/wegent-backend-rs
 
       - name: Start backend server
         env:

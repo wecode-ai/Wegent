@@ -1312,6 +1312,7 @@ jobs:
       packages: write
     env:
       CI: true
+      MACOS_COMPLETE_BUILD: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:all') }}
 
     steps:
       - name: Checkout code
@@ -1319,18 +1320,12 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
-      - name: Set up macOS Inspector backend runtime
-        if: github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')
-        uses: ./.github/actions/setup-python-uv-cache
-        with:
-          python-version: "3.12"
-
       - name: Prepare shared macOS desktop E2E build
         uses: ./.github/actions/build-wework-macos-e2e
         with:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
           publish: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
-          prepare-script: ${{ (github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')) && '.github/scripts/prepare-macos-inspector-e2e.sh' || '' }}
+          include-backend: ${{ env.MACOS_COMPLETE_BUILD }}
 
       - name: Run Wework desktop memory E2E
         if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:all')
@@ -1352,7 +1347,6 @@ jobs:
           test -x "$CODEX_BIN"
           test -x "$WEWORK_E2E_APP_BIN"
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
-          test -x "$WEWORK_E2E_BACKEND_RS_BIN"
           segments=tray-lifecycle
           if [[ "$COMPONENT_UPDATE_E2E" == "true" ]]; then
             segments+=,component-update
@@ -1378,6 +1372,7 @@ jobs:
           compression-level: 6
 
       - name: Describe verified native macOS runtimes
+        if: env.MACOS_COMPLETE_BUILD == 'true'
         env:
           RUNTIME_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           RUNTIME_TARGET: darwin-arm64
@@ -1401,6 +1396,7 @@ jobs:
           done
 
       - name: Upload verified macOS Executor runtime
+        if: env.MACOS_COMPLETE_BUILD == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: macos-executor-e2e-binary
@@ -1412,6 +1408,7 @@ jobs:
           compression-level: 0
 
       - name: Upload verified macOS Backend runtime
+        if: env.MACOS_COMPLETE_BUILD == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: macos-backend-rs-e2e-runtime
@@ -1423,6 +1420,7 @@ jobs:
           compression-level: 0
 
       - name: Archive verified complete macOS E2E build
+        if: env.MACOS_COMPLETE_BUILD == 'true'
         env:
           MACOS_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
@@ -1435,6 +1433,7 @@ jobs:
           node .github/scripts/macos-e2e-build.mjs describe "$artifact_dir"
 
       - name: Upload verified complete macOS E2E build
+        if: env.MACOS_COMPLETE_BUILD == 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: macos-desktop-e2e-build
