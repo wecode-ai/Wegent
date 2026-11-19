@@ -2298,6 +2298,7 @@ async fn read_persistent_codex_app_server_stdout(
                 .await;
                 fail_all_pending(
                     pending,
+                    &notifications.pending_changed,
                     "codex app-server exited while shared process was running".to_owned(),
                 )
                 .await;
@@ -2313,6 +2314,7 @@ async fn read_persistent_codex_app_server_stdout(
                     .await;
                     fail_all_pending(
                         pending,
+                        &notifications.pending_changed,
                         format!("failed to parse codex JSON-RPC message: {error}"),
                     )
                     .await;
@@ -2327,6 +2329,7 @@ async fn read_persistent_codex_app_server_stdout(
                 .await;
                 fail_all_pending(
                     pending,
+                    &notifications.pending_changed,
                     format!("failed to read codex JSON-RPC message: {error}"),
                 )
                 .await;

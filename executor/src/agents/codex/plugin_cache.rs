@@ -13,18 +13,12 @@ impl CodexAppServerClient {
             "marketplaceKinds": ["local"],
             "forceRefetch": true,
         });
-        let (request_id, handle, response_rx) = self
+        let request = self
             .prepare_request_with_process(false, None, method, &params)
             .await?;
-        Self::send_request_and_wait(
-            method,
-            params,
-            codex_rpc_timeout_seconds(),
-            request_id,
-            handle,
-            response_rx,
-        )
-        .await?;
+        request
+            .write_and_wait(method, params, codex_rpc_timeout_seconds())
+            .await?;
         Ok(())
     }
 }
