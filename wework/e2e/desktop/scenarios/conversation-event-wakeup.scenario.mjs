@@ -6,6 +6,8 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 import {
   createConversationEventModel,
   findEventFact as find,
+  PREEXISTING_CHECKS_HEAD,
+  PREEXISTING_CHECKS_TOPIC,
   WORKFLOW_CONFLICT_TOPIC,
 } from '../modules/conversation-event-model.mjs'
 import { modelRequestTexts } from '../modules/model-tool-output.mjs'
@@ -89,12 +91,34 @@ export function createDesktopScenario(options) {
     },
   })
   let events = []
+  const failedAt = new Date(Date.now() - 60000).toISOString()
+  const failedChecks = {
+    id: 'preexisting-checks-failure',
+    objectId: PREEXISTING_CHECKS_TOPIC,
+    version: PREEXISTING_CHECKS_HEAD,
+    eventType: 'git.event',
+    topicId: PREEXISTING_CHECKS_TOPIC,
+    text: `${MARKER}_preexisting_checks_EVENT_RECEIVED`,
+    at: failedAt,
+    external: {
+      eventType: 'tracked.status',
+      payload: {
+        headRefOid: PREEXISTING_CHECKS_HEAD,
+        statusCheckRollup: { state: 'FAILURE' },
+        failedAt,
+      },
+    },
+  }
   const saveEvents = () =>
     writeFile(
       recordsPath,
-      JSON.stringify(
-        ['archive-record', 'long-archive-record'].map(id => ({ id, value: JSON.stringify(events) }))
-      )
+      JSON.stringify([
+        ...['archive-record', 'long-archive-record'].map(id => ({
+          id,
+          value: JSON.stringify(events),
+        })),
+        { id: 'preexisting-checks-record', value: JSON.stringify([failedChecks]) },
+      ])
     )
   const event = (
     id,
@@ -231,6 +255,33 @@ export function createDesktopScenario(options) {
       active = true
       let originalAddress
       try {
+        phase = 'preexisting_checks'
+        const marker = `${MARKER}_${phase}`
+        await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
+          value: `${marker} 订阅这次提交的 PR 检查结果。`,
+        })
+        await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, { enabled: true })
+        await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+        const assistant = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`
+        await control.command('waitFor', assistant, {
+          text: `${marker}_WAITING`,
+          timeoutMs: modelResponseTimeoutMs,
+        })
+        const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+        originalAddress = snapshot.workbench.currentRuntimeTask
+        assert.ok(originalAddress?.taskId)
+        const getTask = () => rpc(control, 'runtime.tasks.get', { address: originalAddress })
+        const initialThread = (await getTask()).task.threadId
+        assert.ok(initialThread)
+        await control.command('waitFor', assistant, {
+          text: `${marker}_DONE`,
+          timeoutMs: 30000,
+        })
+        assert.equal((await getTask()).task.threadId, initialThread)
+        const delivery = `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="connection-event-message"]`
+        await control.command('waitFor', delivery, { text: 'PR 检查结果', timeoutMs: uiTimeoutMs })
+        assert.ok(completed.has(phase))
+
         for (const story of [
           'ordinary',
           'workflow',

@@ -166,16 +166,23 @@ export function createTrackedCollector(helpers) {
                 },
         }
         const projected = next.resourceStates[target.url]
+        const sampleCurrentStatus = source.observeCurrentStatus === true
         if (
-          previousState &&
-          fingerprint(stableValue(previousState.data)) !== fingerprint(stableValue(projected.data))
+          sampleCurrentStatus ||
+          (previousState &&
+            fingerprint(stableValue(previousState.data)) !==
+              fingerprint(stableValue(projected.data)))
         ) {
+          // Each fresh read is eligible for consumers activated since the previous poll.
+          if (sampleCurrentStatus) next.statusSample = (next.statusSample ?? 0) + 1
           const version = objectVersion(
             platform,
             source,
             target.repository,
-            'change_request_state',
-            projected.data,
+            sampleCurrentStatus ? 'change_request_status_observation' : 'change_request_state',
+            sampleCurrentStatus
+              ? [projected.observedAt, next.statusSample, projected.data]
+              : projected.data,
             target.number
           )
           stateEvents.push({

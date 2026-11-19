@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { ConnectionRegistry } from '../plugin-runtime/connections.js'
+import { collectObservation } from '../plugin-runtime/connection-observations.js'
 import { createProvider } from './provider.js'
 
 const HEAD = 'a'.repeat(40)
@@ -347,4 +349,45 @@ test('GitHub aggregate merge status remains distinct from each successful check'
     assert.equal(aggregate[0].external.payload.mergeStateStatus, stage.mergeStateStatus)
   }
   assert.deepEqual((await drain(f, source, { ...checkpoint, nextCheckAt: 0 })).events, [])
+})
+
+test('PR waits observe a failure already present at activation and on later polls', async t => {
+  const f = fixture('github')
+  f.state.nativeStatus = { statusCheckRollup: { state: 'FAILURE' } }
+  const registry = new ConnectionRegistry({
+    inventory: async () => [],
+    satisfies: () => true,
+    context: () => f.ctx,
+  })
+  t.after(
+    await registry.register({ effect() {} }, new URL('./package.json', import.meta.url), {
+      github: createProvider('github'),
+      gitlab: createProvider('gitlab'),
+    })
+  )
+  const source = {
+    ...(await f.discover([pr(1)])),
+    providerId: '@wegent/dsh-connection-git/github',
+    enabledAfter: new Date().toISOString(),
+  }
+  const collect = (source, checkpoint) =>
+    collectObservation(registry, source.providerId, { source, checkpoint })
+  const waitSource = { ...source, observeCurrentStatus: true }
+  const first = await collect(waitSource, {})
+  const firstStatus = first.events.find(event => event.external.eventType === 'tracked.status')
+  assert.equal(firstStatus?.external.payload.statusCheckRollup.state, 'FAILURE')
+  assert.equal(firstStatus.external.payload.headRefOid, HEAD)
+  assert.ok(Date.parse(firstStatus.at) >= Date.parse(source.enabledAfter))
+
+  const second = await collect(waitSource, { ...first.nextCheckpoint, nextCheckAt: 0 })
+  const secondStatus = second.events.find(event => event.external.eventType === 'tracked.status')
+  assert.equal(secondStatus?.external.payload.statusCheckRollup.state, 'FAILURE')
+  assert.equal(secondStatus.objectId, firstStatus.objectId)
+  assert.notEqual(secondStatus.version, firstStatus.version)
+
+  const historical = await collect(source, {})
+  assert.equal(
+    historical.events.some(event => event.external.eventType === 'tracked.status'),
+    false
+  )
 })
