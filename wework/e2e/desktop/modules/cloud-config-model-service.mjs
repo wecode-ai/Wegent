@@ -43,6 +43,7 @@ export function createCloudConfigModelService({ readUsage } = {}) {
   let codexHome
   let nativeHome
   let unavailable = false
+  let bootstrapBundles = 0
   let bundleFailures = 0
   let bundleSuccesses = 0
   let accountChecks = 0
@@ -112,11 +113,12 @@ export function createCloudConfigModelService({ readUsage } = {}) {
           return
         }
         if (request.url?.endsWith('/config/bundle')) {
-          if (unavailable) {
+          if (unavailable && bootstrapBundles === 0) {
             bundleFailures += 1
             response.writeHead(503, { 'content-type': 'application/json' })
             response.end(JSON.stringify({ error: 'Model subscription service unavailable' }))
           } else {
+            bootstrapBundles = Math.max(0, bootstrapBundles - 1)
             bundleSuccesses += 1
             response.writeHead(200, { 'content-type': 'application/json' })
             response.end('{}')
@@ -193,11 +195,16 @@ export function createCloudConfigModelService({ readUsage } = {}) {
         rejectModelWebSocketUpgrade(modelServer, socket)
       })
     },
-    async failBundle() {
+    async failBundle({ allowBootstrap = true } = {}) {
       unavailable = true
       // The CLI override keeps the isolated subscription origin through native
       // default-config fallback. Every loader sees the same unavailable service,
       // including background processes that start before the intentional restart.
+      // Codex first loads bootstrap settings, then installs its long-lived cloud
+      // loader. Drop the service between those two real requests so the configured
+      // local origin survives and the second loader caches the genuine failure.
+      // Disable that success to cover the defaults used after a startup failure.
+      bootstrapBundles = allowBootstrap ? 1 : 0
       // This is solely the isolated fixture's Codex cache. A cold process must
       // consult the failing service instead of reusing an identity-matched bundle.
       await rm(join(codexHome, 'cloud-config-bundle-cache.json'), { force: true })

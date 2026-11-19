@@ -27,7 +27,7 @@ test('keeps synthetic subscription refresh local while configuration bundles fai
     expect(refreshUrl.pathname).toBe('/oauth/token')
     await service.failBundle()
     const bundleUrl = new URL('/backend-api/config/bundle', refreshUrl)
-    expect((await fetch(bundleUrl)).status).toBe(503)
+    expect((await fetch(bundleUrl)).status).toBe(200)
     expect((await fetch(bundleUrl)).status).toBe(503)
 
     const refresh = await fetch(refreshUrl, {
@@ -45,7 +45,7 @@ test('keeps synthetic subscription refresh local while configuration bundles fai
     })
     expect(service.diagnostics().tokenRefreshes).toBe(1)
     expect((await fetch(bundleUrl)).status).toBe(503)
-    expect(service.diagnostics().bundleFailures).toBe(3)
+    expect(service.diagnostics().bundleFailures).toBe(2)
   } finally {
     await service.close()
     await rm(root, { recursive: true, force: true })

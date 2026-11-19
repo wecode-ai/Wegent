@@ -228,6 +228,32 @@ describe("collaboration workspace controller", () => {
     expect(state.error).toBeNull();
   });
 
+  it.each(["cached home snapshot", "project metadata only"])(
+    "keeps initial loading for a project opened from %s",
+    async (source) => {
+      const { api, commands } = createController();
+      await commands.loadProject(project.id);
+      state =
+        source === "cached home snapshot"
+          ? { ...state, project: null }
+          : { ...state, projectItems: {} };
+      const snapshot = await api.issues.getBoardSnapshot(project.id);
+      const pending = deferred<typeof snapshot>();
+      vi.mocked(api.issues.getBoardSnapshot).mockReturnValueOnce(
+        pending.promise,
+      );
+
+      const loading = commands.loadProject(project.id);
+      try {
+        expect(state.loading).toBe(true);
+      } finally {
+        pending.resolve(snapshot);
+        await loading;
+      }
+      expect(state.loading).toBe(false);
+    },
+  );
+
   it("shares an in-flight board load with refresh requests and fetches again after completion", async () => {
     state = { ...state, projects: [project] };
     const { api, commands } = createController();

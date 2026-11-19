@@ -1043,12 +1043,16 @@ export function createCollaborationWorkspaceControllerCommands({
     const isCurrent = () =>
       revision === projectLoadRevision && (options?.isCurrent?.() ?? true);
     const mutationGeneration = projectMutationGeneration(projectId);
+    const hasCurrentSnapshot =
+      getExternalBoardState().project?.id === projectId &&
+      getProjectSnapshot(projectId) !== null;
     const cachedProject = catalogProjects.find((item) => item.id === projectId);
     const cachedSettings = options?.loadSnapshot === false && cachedProject;
     if (cachedSettings) {
       dispatch({ type: "project-metadata-loaded", project: cachedSettings });
       dispatch({ type: "loading", value: false });
-    } else if (showLoading) {
+    } else if (showLoading && !hasCurrentSnapshot) {
+      // Refreshing a loaded project must not unmount its editors or pending exit animations.
       dispatch({ type: "loading", value: true });
     }
     const settingsRead = options?.settingsRead;

@@ -7,6 +7,7 @@ import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 import { createCloudConfigModelService } from '../e2e/desktop/modules/cloud-config-model-service.mjs'
+import { resolveRealNodeExecutable } from '../electron/scripts/real-node-executable.mjs'
 import {
   cloudConfigNativeArguments,
   cloudConfigNativeLauncher,
@@ -29,7 +30,7 @@ test('every loader observes the same bundle outage until the model service recov
   const baseUrl = config.match(/chatgpt_base_url = "([^"]+)"/)[1]
   const bundle = () => fetch(`${baseUrl}wham/config/bundle`)
   assert.equal((await bundle()).status, 200)
-  assert.equal(await model.failBundle(), 0)
+  assert.equal(await model.failBundle({ allowBootstrap: false }), 0)
   for (const loader of ['background bootstrap', 'tested bootstrap', 'tested long-lived']) {
     const response = await bundle()
     assert.equal(response.status, 503, loader)
@@ -59,12 +60,13 @@ test('the native relay preserves protocol bytes and the actual child exit status
   const relay = fileURLToPath(
     new URL('../e2e/desktop/modules/cloud-config-native-process.mjs', import.meta.url)
   )
+  const { executable: nodeExecutable } = await resolveRealNodeExecutable()
   const script =
     'process.stdin.pipe(process.stdout); process.stdin.on("end", () => {' +
     'process.stderr.write("native-stderr"); process.exitCode = 7 })'
   const child = spawn(
-    process.execPath,
-    [relay, process.execPath, 'http://127.0.0.1:4000/backend-api/', '-e', script],
+    nodeExecutable,
+    [relay, nodeExecutable, 'http://127.0.0.1:4000/backend-api/', '-e', script],
     { stdio: ['pipe', 'pipe', 'pipe'] }
   )
   const input = '{"id":1,"method":"initialize","params":{"name":"native fixture"}}\n'
