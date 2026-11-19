@@ -148,11 +148,13 @@ The Wework composer provides three permission modes for local Codex tasks and pe
 | --------------- | ------------------------ | --------------- | ------------------------------------------------------------------------------------------------------------------------------- |
 | Read only       | `:read-only`             | `on-request`    | Reads the workspace; file writes, commands outside the permission boundary, and additional permission requests require approval |
 | Workspace       | `:workspace`             | `on-request`    | Reads and writes inside the workspace; access outside it or permission expansion requires approval                              |
-| Full access     | `:danger-full-access`    | granular        | Runs file, terminal, and network operations without approval; MCP plugin business forms can still request user input            |
+| Full access     | `:danger-full-access`    | granular        | Risky commands can use manual confirmation, AI review, or automatic execution. MCP business forms can still request input. |
 
 The frontend sends `runtime_permission_profile` with every local runtime request. The Executor applies the corresponding `permissions` and `approvalPolicy` to `thread/start`, `thread/resume`, `thread/fork`, and `turn/start`. Resuming or continuing from a task runtime handle must reconstruct the same profile from the persisted permission mode and must not fall back to a more permissive profile.
 
-Full access uses granular approval policy. It disables `sandbox_approval`, `rules`, `skill_approval`, and `request_permissions`, while preserving `mcp_elicitations: true`. MCP elicitation is plugin-initiated business interaction rather than an execution-safety approval for commands, files, or permission escalation, so it must not be disabled by setting `approvalPolicy: "never"`.
+Requests that explicitly select Full access use granular approval policy. That policy enables `sandbox_approval` and `mcp_elicitations` and disables `rules`, `skill_approval`, and `request_permissions`. MCP elicitation is plugin-initiated business interaction rather than an execution-safety approval for commands, files, or permission escalation, so it must not be disabled by setting `approvalPolicy: "never"`.
+
+Risky command handling is saved in `modelSelection.options.commandApproval`. Manual confirmation is the default, and AI review uses native Codex `auto_review`. Automatic execution grants one-time approval for command requests from the Codex risk check. Explicit rules and additional permission requests still follow the native policy.
 
 Ordinary Wework Claude Code conversations run as non-interactive child processes and cannot display or complete Claude CLI approval prompts. On this execution path, the Claude Code `default` setting therefore maps to `bypassPermissions`; explicit `acceptEdits`, `plan`, `auto`, and `bypassPermissions` selections are still passed through unchanged. Interactive local terminals do not use this mapping.
 
