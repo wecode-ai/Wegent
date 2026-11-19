@@ -122,13 +122,14 @@ export function WindowedMarkdownChunk({
     (placeholder: HTMLDivElement | null) => {
       const chunk = placeholder?.parentElement
       if (!placeholder || !chunk) return
-      // Parent virtual rows measure in the same commit, before this chunk's
-      // retained-layout state update can render. Restore its width-matched height now.
+      // Capture native range loss before restoring the width-matched placeholder height.
+      // Parent rows measure in this commit; growing the placeholder first would hide that clamp.
+      scope?.captureNativeScrollRange()
       const height = retainPlaceholderLayout(chunk.getBoundingClientRect(), content)
       chunk.style.minHeight = `${height}px`
       placeholder.style.maxHeight = `${height}px`
     },
-    [content, retainPlaceholderLayout]
+    [content, retainPlaceholderLayout, scope]
   )
   const viewportRender = useCallback((viewport: DOMRect): (() => void) | undefined => {
     const chunk = chunkRef.current

@@ -54,21 +54,27 @@ export function createReaderViewportAnchor(
 
   // With overflow-anchor:none, Chromium preserves scrollTop across content and viewport resizing.
   // Only our own writes and the native range clamp must be excluded from the reader's movement.
+  const clampReaderScrollRange = (maximumOffset: number): number => {
+    const anchor = state.anchor
+    if (!anchor) return 0
+    const believedScrollTop = anchor.scrollTopPx + state.selfScrollOffset
+    // A shrinking layout removes offsets the sample used to have. Record that range before
+    // a placeholder can grow it again, so native clamping never becomes reader movement.
+    const clampedScrollTop = Math.min(maximumOffset, Math.max(0, believedScrollTop))
+    state.selfScrollOffset += clampedScrollTop - believedScrollTop
+    return clampedScrollTop
+  }
+
+  const captureNativeScrollRange = () => {
+    const scroller = readScroller()
+    if (scroller) clampReaderScrollRange(getMaximumScrollOffset(scroller))
+  }
+
   const readReaderScrollOffsetSinceAnchor = (
     scroller: HTMLElement,
     maximumOffset: number
-  ): number => {
-    const anchor = state.anchor
-    if (!anchor) return scroller.scrollTop
-    const believedScrollTop = anchor.scrollTopPx + state.selfScrollOffset
-    // A shrinking layout also removes offsets the sample used to have: the clamp is the layout's
-    // own doing exactly like the height change, so the belief is moved with it rather than counted
-    // as the reader's scrolling, which would make the next correction ask for an offset that does
-    // not exist.
-    const clampedScrollTop = Math.min(maximumOffset, Math.max(0, believedScrollTop))
-    state.selfScrollOffset += clampedScrollTop - believedScrollTop
-    return scroller.scrollTop - clampedScrollTop
-  }
+  ): number =>
+    state.anchor ? scroller.scrollTop - clampReaderScrollRange(maximumOffset) : scroller.scrollTop
 
   // With native anchoring disabled, correction = ΔanchorOffset + ΔreaderScrollTop.
   // Pure reader motion cancels out because moving scrollTop by x moves text by -x
@@ -172,6 +178,7 @@ export function createReaderViewportAnchor(
 
   return {
     captureUserViewportAnchor,
+    captureNativeScrollRange,
     restoreReaderPositionFromLayout,
     dispose: () => stopConversationFrameProbe(readProbeState),
   }

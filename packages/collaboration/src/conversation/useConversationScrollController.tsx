@@ -182,6 +182,7 @@ export function useConversationScrollController(options: Options) {
     preserveUserMessagePosition: resource.preserveUserMessagePosition,
     renderTranscriptGapAfterMessage,
     onVirtualScrollAdjustment: resource.onVirtualScrollAdjustment,
+    captureNativeScrollRange: resource.captureNativeScrollRange,
     virtualAnchorToEnd:
       snapshot.mode === 'follow' &&
       !messages.some(message => message.status === 'streaming') &&

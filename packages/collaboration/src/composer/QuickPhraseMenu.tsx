@@ -270,11 +270,7 @@ export function QuickPhraseMenu({
           data-testid="quick-phrase-button"
           disabled={disabled}
           onClick={() => setOpen(value => !value)}
-          className={
-            compact
-              ? 'flex h-11 w-11 items-center justify-center rounded-full text-text-primary hover:bg-muted disabled:opacity-40'
-              : 'flex h-8 w-8 max-md:h-11 max-md:w-11 items-center justify-center rounded-lg text-text-primary hover:bg-muted disabled:opacity-40'
-          }
+          className={`flex h-8 w-8 max-md:h-11 max-md:w-11 items-center justify-center text-text-primary hover:bg-muted disabled:opacity-40 ${compact ? 'rounded-full' : 'rounded-lg'}`}
           aria-label={t('workbench.quick_phrases', '快捷短语')}
           aria-expanded={open}
         >

@@ -100,7 +100,7 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
       ? runtimeTaskLoadTargetFromAddress(external.currentRuntimeTask)
       : null
     const retained = state.retainedRuntimeTaskLoadTarget
-    const candidate = current?.key === retained?.key ? retained : (current ?? retained)
+    const candidate = current ?? retained
     return candidate && !isRuntimeConversationArchived(candidate.address) ? candidate : null
   }
   const readPort = () => {
@@ -485,7 +485,7 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
       const retained = current.ownerArchived
         ? null
         : (current.currentRuntimeTaskLoadTarget ?? state.retainedRuntimeTaskLoadTarget)
-      if (retained?.key !== state.retainedRuntimeTaskLoadTarget?.key) {
+      if (retained?.address !== state.retainedRuntimeTaskLoadTarget?.address) {
         state = { ...state, retainedRuntimeTaskLoadTarget: retained }
         current = frame()
       }
@@ -582,7 +582,7 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
         next.t,
         next.workbench.state.devices,
         next.currentRuntimeTask ? runtimeTaskLoadAddressKey(next.currentRuntimeTask) : null,
-        next.currentRuntimeTask?.runtime,
+        next.currentRuntimeTask?.workspacePath,
         next.workbench.state.runtimeWork,
         inputScope,
         chat.inputByScope[inputScope],

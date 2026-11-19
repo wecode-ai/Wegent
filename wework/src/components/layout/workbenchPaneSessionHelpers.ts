@@ -2,8 +2,6 @@ import type { GuidanceWorkbenchMessage } from '@/types/workbench'
 export const EMPTY_PANE_GUIDANCE_MESSAGES: GuidanceWorkbenchMessage[] = []
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 
-import { getRuntimeTaskRouteKey } from '@/features/workbench/workbenchRuntimeHelpers'
-
 import type { RuntimeGoal, RuntimeTaskAddress } from '@/types/api'
 import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
 import type {
@@ -81,7 +79,8 @@ export function runtimeTaskLoadAddressKey(address: RuntimeTaskAddress): string {
         : ''
 
   return JSON.stringify({
-    route: getRuntimeTaskRouteKey(address),
+    // Workspace discovery can enrich the address without replacing the transcript.
+    identity: runtimeTranscriptPaneIdentityKey(address),
     projectSession: address.projectSession ?? null,
     runtime: address.runtime ?? null,
     threadId: address.threadId?.trim() || runtimeHandleThreadId || null,

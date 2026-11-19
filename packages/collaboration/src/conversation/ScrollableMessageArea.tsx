@@ -108,6 +108,7 @@ function ScrollableMessagePaneContent({
     preserveUserMessagePosition,
     renderTranscriptGapAfterMessage,
     onVirtualScrollAdjustment,
+    captureNativeScrollRange,
     virtualAnchorToEnd,
     virtualAnchor,
     virtualScrollAdjustmentEnabled,
@@ -329,6 +330,7 @@ function ScrollableMessagePaneContent({
                 virtualizerRef={virtualizerRef}
                 scrollTailHeight={scrollTailHeight}
                 onVirtualScrollAdjustment={onVirtualScrollAdjustment}
+                onNativeScrollRange={captureNativeScrollRange}
                 renderGapAfterMessage={renderMessageGap}
               />
               {contentFooter ? (

@@ -119,6 +119,7 @@ export interface MessageListProps {
   virtualAnchorToEnd?: boolean
   virtualizerRef?: RefObject<ConversationVirtualizer | null>
   onVirtualScrollAdjustment?: (delta: number) => void
+  onNativeScrollRange?: () => void
   renderGapAfterMessage?: (
     message: WorkbenchMessage,
     nextMessage: WorkbenchMessage | undefined
@@ -188,6 +189,7 @@ export const MessageList = memo(function MessageList({
   virtualScrollAdjustmentEnabled = true,
   virtualizerRef,
   onVirtualScrollAdjustment,
+  onNativeScrollRange,
   renderGapAfterMessage,
 }: MessageListProps) {
   const listRef = useRef<HTMLDivElement>(null)
@@ -403,10 +405,18 @@ export const MessageList = memo(function MessageList({
     const scope = createMarkdownWindowingScope(
       scrollElementRef,
       element => viewportPort.chunkLayout(scope, element),
-      layout.typography.rootFontSize
+      layout.typography.rootFontSize,
+      onNativeScrollRange
     )
     return { conversationKey, layoutKey, scope }
-  }, [conversationKey, scrollElementRef, layoutKey, layout.typography.rootFontSize, viewportPort])
+  }, [
+    conversationKey,
+    scrollElementRef,
+    layoutKey,
+    layout.typography.rootFontSize,
+    viewportPort,
+    onNativeScrollRange,
+  ])
   useWindowEvent(
     'scroll',
     event => {

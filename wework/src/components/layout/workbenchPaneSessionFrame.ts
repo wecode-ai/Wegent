@@ -166,9 +166,7 @@ export function createPaneSessionFrame(
     currentRuntimeTask ? runtimeTaskLoadTargetFromAddress(currentRuntimeTask) : null)()
   const retainedRuntimeTaskLoadTarget = state.retainedRuntimeTaskLoadTarget
   const candidateRuntimeTaskLoadTarget =
-    currentRuntimeTaskLoadTarget?.key === retainedRuntimeTaskLoadTarget?.key
-      ? retainedRuntimeTaskLoadTarget
-      : (currentRuntimeTaskLoadTarget ?? retainedRuntimeTaskLoadTarget)
+    currentRuntimeTaskLoadTarget ?? retainedRuntimeTaskLoadTarget
   const ownerArchived = candidateRuntimeTaskLoadTarget
     ? isRuntimeConversationArchived(candidateRuntimeTaskLoadTarget.address)
     : false

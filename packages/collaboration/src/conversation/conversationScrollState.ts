@@ -785,6 +785,10 @@ export function createConversationScrollState(
         })
       }
     },
+    captureNativeScrollRange() {
+      if (!owned() || command || inputActive || state.mode !== 'read') return
+      reader.captureNativeScrollRange()
+    },
     markInput,
     scroll,
     endInput,
