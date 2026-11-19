@@ -7,8 +7,7 @@ set -euo pipefail
 test "${CI:-}" = true
 test -f /.dockerenv
 test -n "${GITHUB_ENV:-}"
-bash "$(dirname "${BASH_SOURCE[0]}")/install-e2e-apt-packages.sh" \
-  iproute2 ca-certificates openssl
+command -v ip openssl update-ca-certificates
 ip addr add 11.255.255.254/32 dev lo
 tls_dir="$(mktemp -d /tmp/wegent-dingtalk-tls.XXXXXX)"
 chmod 700 "$tls_dir"

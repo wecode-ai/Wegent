@@ -334,6 +334,13 @@ macOS desktop checks on ordinary PRs build the local app and Executor. Use a
 `ci:all` run when you need the complete macOS build or native backend artifact
 from a PR.
 
+Rust backend E2E first looks up the exact runtime. On a miss, the build can
+reuse a prebuilt dependency image and GHCR BuildKit layers written by main.
+Without a prebuilt dependency image, it compiles the real targets directly.
+Only dependency prewarming compiles placeholder targets. The two Linux Core
+latency benchmarks keep their dedicated shards, while the scheduler distributes
+the remaining checkpoints across the existing shards.
+
 Windows desktop builds share the `build-wework-windows-e2e` action between PRs
 and main-branch cache warmup. Only `main` writes shared caches. Complete packages
 require an exact match of source inputs, Node, Rust, and runner image versions;

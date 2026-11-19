@@ -1,7 +1,8 @@
 {
-  "description": "Conservative Core checkpoint costs from three successful same-product CI observations: upper quartile with linear interpolation, rounded up; existing runner and worker counts are unchanged. Cloud costs retain the original successful baseline.",
+  "description": "Conservative Core checkpoint costs from three successful same-product CI observations: upper quartile with linear interpolation, rounded up; existing runner and worker counts are unchanged. Cloud costs retain the original successful baseline. Three Core costs use the later shard 10 observation.",
   "run": "https://github.com/wecode-ai/Wegent/actions/runs/41664748816",
   "headSha": "d2464703681da8542657ff5e02c0464ac29c148c",
+  "coreShard10Observation": "https://github.com/wecode-ai/Wegent/actions/runs/44477794083/job/135408742636",
   "workers": 4,
   "scopes": {
     "core": {
@@ -50,7 +51,7 @@
       "collaboration-remote-group-coordinate": 218,
       "collaboration-remote-group-planning-details": 119,
       "collaboration-runtime-reconciliation": 220,
-      "collaboration-shared-core": 345,
+      "collaboration-shared-core": 653,
       "collaboration-template-lifecycle": 87,
       "collaboration-templates": 142,
       "collaboration-worktree-policy": 106,
@@ -96,7 +97,8 @@
       "office-file-preview": 71,
       "offline-local-project-space": 53,
       "permission-modes": 332,
-      "plugin-development": 77,
+      "plugin-development": 122,
+      "python-runtime": 132,
       "priority-filter": 126,
       "project-ai-settings": 83,
       "project-assignment-notification": 213,

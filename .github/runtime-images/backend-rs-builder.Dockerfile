@@ -1,4 +1,4 @@
-ARG DEPS_IMAGE=dependencies
+ARG DEPS_IMAGE=dependency-sources
 FROM ubuntu:24.04 AS toolchain
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 COPY .github/ci/rust-toolchain /tmp/rust-toolchain
@@ -17,11 +17,13 @@ ENV CARGO_PROFILE_RELEASE_STRIP=false
 ENV CARGO_PROFILE_RELEASE_BUILD_OVERRIDE_STRIP=false
 WORKDIR /workspace/backend-rs
 
-FROM toolchain AS dependencies
+FROM toolchain AS dependency-sources
 COPY backend-rs/Cargo.toml backend-rs/Cargo.lock ./
 COPY shared/rust /workspace/shared/rust
 COPY shared/assets/calendars /workspace/shared/assets/calendars
 COPY backend-rs/crates ./crates
+
+FROM dependency-sources AS dependencies
 RUN mkdir -p src examples && printf 'pub fn placeholder() {}\n' > src/lib.rs \
     && printf 'fn main() {}\n' > src/main.rs \
     && printf 'fn main() {}\n' > examples/attachment_s3_e2e.rs \

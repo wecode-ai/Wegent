@@ -124,6 +124,12 @@ Dir.mktmpdir("backend-rs-runtime-contract") do |directory|
   File.write(File.join(bin, "docker"), <<~'SH')
     #!/usr/bin/env bash
     set -euo pipefail
+    if [[ "$1" == buildx ]]; then
+      shift
+      test "$1 $2" = "build --load"
+      shift 2
+      set -- build "$@"
+    fi
     case "$1" in
       build)
         context="${@: -1}"
@@ -131,7 +137,7 @@ Dir.mktmpdir("backend-rs-runtime-contract") do |directory|
         while (($# > 1)); do
           case "$1" in
             --file) recipe="$2"; shift 2 ;;
-            --tag|--platform|--target|--build-arg) shift 2 ;;
+            --tag|--platform|--target|--build-arg|--cache-from|--cache-to) shift 2 ;;
             *) exit 1 ;;
           esac
         done
@@ -161,6 +167,7 @@ Dir.mktmpdir("backend-rs-runtime-contract") do |directory|
   environment = {
     "PATH" => "#{bin}:#{ENV.fetch('PATH')}",
     "GITHUB_REPOSITORY_OWNER" => "example",
+    "GITHUB_REF" => "refs/pull/42/merge",
     "CARGO_TARGET_DIR" => File.join(directory, "target"),
     "IMAGE" => "contract-image",
     "TEST_IMAGE" => File.join(directory, "image"),

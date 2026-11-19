@@ -225,6 +225,10 @@ jobs:
             exit 1
           fi
 
+      - name: Set up Backend E2E Buildx
+        if: steps.image-check.outputs.exists != 'true'
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+
       - name: Build Backend Rust E2E runtime
         if: steps.image-check.outputs.exists != 'true'
         env:
@@ -232,11 +236,12 @@ jobs:
         run: |
           metadata="$(node .github/scripts/ci-prebuilt-images.mjs backend-rs-deps "$GITHUB_REPOSITORY_OWNER")"
           dependencies="$(jq -r .restoreImage <<< "$metadata")"
-          arguments=()
+          cache="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/wegent-backend-rs-e2e:buildcache"
+          arguments=(--cache-from "type=registry,ref=$cache")
           if docker manifest inspect "$dependencies" >/dev/null 2>&1; then
             arguments+=(--build-arg "DEPS_IMAGE=$dependencies")
           fi
-          docker build --platform linux/amd64 \
+          docker buildx build --load --platform linux/amd64 \
             --file .github/runtime-images/backend-rs-builder.Dockerfile \
             --target runtime --tag "$IMAGE" "${arguments[@]}" .
           container_id="$(docker create "$IMAGE")"

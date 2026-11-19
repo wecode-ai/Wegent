@@ -134,14 +134,22 @@ test("publication normalizes registry caches and manual seeds cannot overwrite s
       '#!/usr/bin/env bash\nset -euo pipefail\nprintf "%s\\n" "$*" >> "$TEST_DOCKER_LOG"\nif [[ "$1 $2" == "buildx imagetools" ]]; then exit 1; fi\n',
     );
     chmodSync(docker, 0o755);
-    for (const ref of ["refs/heads/main", "refs/heads/topic"]) {
+    for (const [component, ref] of [
+      ["executor", "refs/heads/main"],
+      ["executor", "refs/heads/topic"],
+      ["backend-rs", "refs/heads/main"],
+      ["backend-rs", "refs/heads/topic"],
+    ]) {
+      const cache = component === "executor"
+        ? "ghcr.io/example/wegent-executor:buildcache-e2e"
+        : "ghcr.io/example/wegent-backend-rs-e2e:buildcache";
       const log = join(
         directory,
-        ref.endsWith("main") ? "main.log" : "manual.log",
+        component + "-" + (ref.endsWith("main") ? "main.log" : "manual.log"),
       );
       const result = spawnSync(
         "bash",
-        [".github/scripts/publish-ci-prebuild.sh", "executor"],
+        [".github/scripts/publish-ci-prebuild.sh", component],
         {
           cwd: root,
           env: {
@@ -163,13 +171,16 @@ test("publication normalizes registry caches and manual seeds cannot overwrite s
       const calls = readFileSync(log, "utf8").split("\n");
       const builds = calls.filter((line) => line.startsWith("buildx build "));
       assert.equal(builds.length, 2);
-      for (const build of builds) {
+      for (const [index, build] of builds.entries()) {
         assert.ok(
           build.includes(
-            "--cache-from type=registry,ref=ghcr.io/example/wegent-executor:buildcache-e2e",
+            "--cache-from type=registry,ref=" + cache,
           ),
         );
-        assert.equal(build.includes("--cache-to"), ref === "refs/heads/main");
+        assert.equal(
+          build.includes("--cache-to"),
+          ref === "refs/heads/main" && (component === "executor" || index === 0),
+        );
       }
       assert.equal(calls.filter((line) => line.startsWith("push ")).length, 2);
     }
