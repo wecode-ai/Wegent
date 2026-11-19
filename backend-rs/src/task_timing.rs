@@ -335,12 +335,21 @@ fn top_suspects(spans: &[SpanView]) -> Vec<TopSuspect> {
 }
 
 fn suspect_label(span: &SpanView) -> String {
-    let name = span
-        .metadata
-        .get("command")
+    let block = span.metadata.get("block");
+    let name = block
+        .and_then(|block| block.get("command"))
+        .or_else(|| {
+            block
+                .and_then(|block| block.get("tool_input"))
+                .and_then(|input| input.get("command"))
+        })
+        .or_else(|| block.and_then(|block| block.get("toolName")))
+        .or_else(|| block.and_then(|block| block.get("tool_name")))
+        .or_else(|| span.metadata.get("command"))
         .or_else(|| span.metadata.get("toolName"))
         .or_else(|| span.metadata.get("tool_name"))
-        .and_then(Value::as_str);
+        .and_then(Value::as_str)
+        .filter(|name| !name.trim().is_empty());
     if let Some(name) = name {
         name.to_string()
     } else if !span.actor_label.is_empty() {
@@ -413,6 +422,22 @@ mod tests {
             source: "test".to_string(),
             metadata: brz_mysql::Json(json!({})),
         }
+    }
+
+    #[test]
+    fn top_suspects_prefer_command_from_tool_blocks() {
+        let mut row = span("tool", 0, 150);
+        row.metadata = brz_mysql::Json(json!({
+            "block": {
+                "tool_name": "bash",
+                "tool_input": {"command": "pnpm test"}
+            }
+        }));
+        row.actor_label = "bash".to_string();
+
+        let suspect = &aggregate(1, 7, vec![row]).top_suspects[0];
+        assert_eq!(suspect.label, "pnpm test");
+        assert_eq!(suspect.suggestion, "检查 registry/mirror 或网络");
     }
 
     #[test]

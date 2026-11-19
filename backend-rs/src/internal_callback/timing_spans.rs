@@ -141,12 +141,12 @@ fn subagent_activity_spans(event: &ExecutionEvent) -> Vec<NewTimingSpan> {
         .and_then(Value::as_str)
         .and_then(|status| match status {
             "running" => Some("running"),
-            "done" => Some("done"),
-            "error" => Some("error"),
+            "done" => Some("completed"),
+            "error" | "interrupted" | "cancelled" | "canceled" => Some("failed"),
             _ => None,
         })
         .unwrap_or("running");
-    let end_at_ms = if status == "done" || status == "error" {
+    let end_at_ms = if status != "running" {
         occurred_at
     } else {
         None
@@ -255,6 +255,9 @@ fn updated_block_spans(event: &ExecutionEvent) -> Vec<NewTimingSpan> {
         .get("block_id")
         .and_then(Value::as_str)
         .unwrap_or_default();
+    if block_id.starts_with("subagent-") {
+        return Vec::new();
+    }
     if block_id.is_empty() {
         return Vec::new();
     }
@@ -545,13 +548,26 @@ mod tests {
             json!({
                 "agent_thread_id": "worker-1",
                 "agent_path": "/root/worker",
-                "status": "done",
+                "status": "interrupted",
                 "occurred_at_ms": 200
             }),
         );
         let spans = event_timing_spans(&done);
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].end_at_ms, Some(200));
+        assert_eq!(spans[0].status, "failed");
+    }
+
+    #[test]
+    fn subagent_block_updates_do_not_create_tool_spans() {
+        let event = block_event(
+            super::super::event::EventType::BlockUpdated,
+            json!({
+                "block_id": "subagent-worker-1",
+                "updates": {"completedAt": 250, "durationMs": 150}
+            }),
+        );
+        assert!(event_timing_spans(&event).is_empty());
     }
 
     #[test]

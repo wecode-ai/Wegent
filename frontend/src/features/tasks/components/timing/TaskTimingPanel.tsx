@@ -188,7 +188,10 @@ function TimingContent({ data }: { data: TaskTimingResponse }) {
                   {formatDuration(category.duration_ms)}
                 </span>
               </div>
-              <DurationBar durationMs={category.duration_ms} totalMs={categoryTotal(data.triage)} />
+              <DurationBar
+                durationMs={category.duration_ms}
+                totalMs={data.wall_time_ms ?? categoryTotal(data.triage)}
+              />
             </li>
           ))}
         </ul>
@@ -349,7 +352,7 @@ function DurationBar({ durationMs, totalMs }: { durationMs: number; totalMs: num
   )
 }
 
-function categoryTotal(categories: TaskTimingResponse['triage']): number {
+export function categoryTotal(categories: TaskTimingResponse['triage']): number {
   return categories.reduce((total, category) => total + category.duration_ms, 0)
 }
 

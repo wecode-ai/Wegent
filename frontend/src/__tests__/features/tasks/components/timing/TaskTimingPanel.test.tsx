@@ -129,6 +129,8 @@ describe('TaskTimingPanel', () => {
     expect(screen.getByText('pnpm test')).toBeInTheDocument()
     expect(screen.getByText('检查 registry/mirror 或网络')).toBeInTheDocument()
     expect(screen.getByText('timing.summary.wall_time:17s')).toBeInTheDocument()
+    const bars = screen.getAllByTestId('task-timing-triage-item')
+    expect(bars[0]).toBeInTheDocument()
   })
 
   it('shows loading, empty, and error states without inventing timing', async () => {
