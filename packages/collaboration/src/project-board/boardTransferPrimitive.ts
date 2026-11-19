@@ -13,7 +13,7 @@ interface BoardTransferState {
   moving: TransferDraft | null
 }
 interface Options {
-  lists: TransferLists
+  readLists(): TransferLists
   onCommit(lists: TransferLists, details: Commit): boolean
   recover(itemId: string): HTMLElement | undefined
   onStart(draft: TransferDraft): void
@@ -23,17 +23,17 @@ interface Options {
 export const boardTransferPrimitive = definePrimitive({
   name: 'issue-board-transfer',
   options: {
-    lists: 'value',
+    readLists: 'callback',
     onCommit: 'callback',
     onStart: 'callback',
     recover: 'action',
     onCancel: 'callback',
   },
   state: (options: Options): BoardTransferState => ({
-    lists: options.lists,
+    lists: options.readLists(),
     moving: null,
   }),
-  sync: options => ({ lists: options.lists }),
+  sync: options => ({ lists: options.readLists() }),
   api: context => {
     let committed = false
     let last: TransferDraft | null = null
@@ -59,7 +59,11 @@ export const boardTransferPrimitive = definePrimitive({
     const recovery = createFocusRecovery<{ itemId: string }>({
       fallback: lost => context.options().recover(lost.props.itemId),
     })
-    return { transfer, recovery }
+    const prepareMove = () => {
+      // Keyed cards keep their refs when React changes their displayed order.
+      if (!context.store.get().moving) context.store.set({ lists: context.options().readLists() })
+    }
+    return { transfer, recovery, prepareMove }
   },
   slots: slot => ({
     root: slot<Record<never, never>, BoardTransferState>({

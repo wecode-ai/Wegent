@@ -293,3 +293,47 @@ test('focus recovery does not steal a new external focus while persistence is pe
   expect(document.activeElement).toBe(external)
   external.remove()
 })
+
+test('pointer transfer follows the displayed card order after an in-place sort change', async () => {
+  const anchor = { ...item, id: 'anchor' }
+  const first = { ...item, id: 'first' }
+  const onDrop = vi.fn()
+  function Board({ items }: { items: StandardCloudBoardItem[] }) {
+    return (
+      <ProjectBoardTransfer onDrop={onDrop}>
+        <Column column={columns[0]} items={items} enabled />
+      </ProjectBoardTransfer>
+    )
+  }
+  vi.mocked(HTMLElement.prototype.getBoundingClientRect).mockImplementation(function (
+    this: HTMLElement
+  ) {
+    if (this.matches('section')) return new DOMRect(0, 0, 160, 300)
+    const lane = this.closest('section')
+    const index = lane ? Array.from(lane.children).findIndex(child => child.contains(this)) : -1
+    return new DOMRect(10, 20 + index * 80, 100, 40)
+  })
+  await act(async () => root.render(<Board items={[anchor, item, first]} />))
+  const source = card()
+  await act(async () => root.render(<Board items={[first, anchor, item]} />))
+  expect(card()).toBe(source)
+  await act(async () => {
+    pointer(source, 'pointerdown', 20, 190)
+    pointer(document, 'pointermove', 40, 190)
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+  })
+  await act(async () => {
+    pointer(document, 'pointermove', 40, 110)
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+  })
+  await act(async () => {
+    pointer(document, 'pointerup', 40, 110)
+  })
+  expect(onDrop).toHaveBeenCalledExactlyOnceWith({
+    activeItemId: item.id,
+    beforeItemId: anchor.id,
+    sourceColumnKey: 'pending',
+    columnDropKey: 'pending',
+    groupBy: 'status',
+  })
+})

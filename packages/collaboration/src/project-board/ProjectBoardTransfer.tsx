@@ -3,7 +3,7 @@ import { TransferContext, type Item } from './projectBoardTransferContext'
 import { useCollaborationPortalTheme } from '../theme'
 import { applyCollaborationPortalTheme } from '../theme/applyPortalTheme'
 import { usePart, usePrimitive } from '@ui-sdk/react/primitive'
-import { useCallback, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useRef, useState, type ReactNode } from 'react'
 import { keepFocus, type TransferLists } from '@ui-sdk/core'
 import { boardTransferPrimitive } from './boardTransferPrimitive'
 import type { ProjectBoardDrop, ProjectBoardDragItem } from './projectBoardDnd'
@@ -47,7 +47,7 @@ export function ProjectBoardTransfer({
       })
     }
   }, [])
-  const lists = useMemo(() => {
+  const readLists = useCallback(() => {
     const next: TransferLists = {}
     for (const key of containers.keys()) next[key] = []
     const ordered = Array.from(items).sort(([, a], [, b]) =>
@@ -65,7 +65,7 @@ export function ProjectBoardTransfer({
     ...items.get(key)?.data,
   })
   const handle = usePrimitive(boardTransferPrimitive, {
-    lists,
+    readLists,
     onStart: ({ key, pointer }) => {
       release.current = null
       if (pointer) {

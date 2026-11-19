@@ -54,6 +54,7 @@ export function useProjectBoardCardTransfer(
   const register = context?.registerItem
   const transfer = context?.handle.api.transfer
   const recovery = context?.handle.api.recovery
+  const prepareMove = context?.handle.api.prepareMove
   const setElement = useCallback(
     (node: HTMLElement | null) => {
       if (!node || !register || !transfer || !enabled) return
@@ -86,10 +87,13 @@ export function useProjectBoardCardTransfer(
     buttonProps:
       enabled && transfer
         ? {
-            onPointerDown: (event: PointerEvent<HTMLButtonElement>) =>
-              transfer.pointerdown(event.nativeEvent, key),
+            onPointerDown: (event: PointerEvent<HTMLButtonElement>) => {
+              prepareMove?.()
+              transfer.pointerdown(event.nativeEvent, key)
+            },
             onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => {
               if (event.key === 'Enter' && !moving) return
+              if (event.key === ' ') prepareMove?.()
               transfer.keydown(event.nativeEvent, key)
             },
             'aria-pressed': moving?.key === key,
