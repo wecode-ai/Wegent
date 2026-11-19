@@ -1001,7 +1001,7 @@ projectTest(
     await page.getByTestId('board-view-lane-value-0').scrollIntoViewIfNeeded()
     for (const index of [0, 1]) {
       const field = page.getByTestId(`board-view-lane-value-${index}`)
-      const arrow = index === 0 ? field.locator('..').locator('svg') : field.locator('svg')
+      const arrow = field.locator('svg.lucide-chevron-down')
       const fieldBox = await field.boundingBox()
       const arrowBox = await arrow.boundingBox()
       expect(fieldBox).not.toBeNull()

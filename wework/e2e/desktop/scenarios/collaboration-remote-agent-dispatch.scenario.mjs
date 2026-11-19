@@ -360,12 +360,12 @@ async function verifyConfiguredExecutionEnvironment(
   await verifyExecutionEnvironmentConflict(control, request, projectId, CONTENT)
   await control.command(
     'waitFor',
-    scoped(`[data-testid="${ENVIRONMENT_PREFIX}-preparation"]:not([open])`)
+    scoped(`[data-testid="${ENVIRONMENT_PREFIX}-preparation-toggle"][aria-expanded="false"]`)
   )
   await control.command('click', scoped(`[data-testid="${ENVIRONMENT_PREFIX}-preparation-toggle"]`))
   await control.command(
     'waitFor',
-    scoped(`[data-testid="${ENVIRONMENT_PREFIX}-preparation"][open]`)
+    scoped(`[data-testid="${ENVIRONMENT_PREFIX}-preparation-toggle"][aria-expanded="true"]`)
   )
   await control.command('click', scoped(`[data-testid="${ENVIRONMENT_PREFIX}-add-repository"]`))
   await control.command('fill', scoped(`[data-testid="${ENVIRONMENT_PREFIX}-repository-url-0"]`), {
