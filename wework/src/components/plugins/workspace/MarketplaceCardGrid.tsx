@@ -1,4 +1,6 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useMediaQuery } from '@wegent/collaboration/media-query'
+import { memo, useCallback, useRef } from 'react'
+import { useElementGeometry } from '@wegent/collaboration/dom-events'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type { PluginMarketplaceItem } from '@/types/api'
 import { PluginMarketplaceRow } from './PluginMarketplaceRow'
@@ -64,37 +66,25 @@ function VirtualizedMarketplaceCardGrid(props: GridProps) {
   const listRef = useRef<HTMLDivElement>(null)
   const scrollElement = () =>
     listRef.current?.closest<HTMLElement>('[data-plugin-market-scroll-region]') ?? null
-  const [columnCount, setColumnCount] = useState(() =>
-    window.innerWidth > GRID_BREAKPOINT_PX ? 2 : 1
-  )
-  const [scrollMargin, setScrollMargin] = useState(0)
+  const columnCount = useMediaQuery(`(max-width: ${GRID_BREAKPOINT_PX}px)`) ? 1 : 2
+  const viewportRef = useRef<HTMLElement>(null)
+  const bindList = useCallback((list: HTMLDivElement | null) => {
+    listRef.current = list
+    viewportRef.current = list?.closest<HTMLElement>('[data-plugin-market-scroll-region]') ?? null
+  }, [])
+  const geometry = useElementGeometry([listRef, viewportRef])
+  const listBounds = geometry?.elements[0]
+  const viewportBounds = geometry?.elements[1]
+  const scrollMargin =
+    listBounds && viewportBounds
+      ? Math.round(listBounds.top - viewportBounds.top + (viewportRef.current?.scrollTop ?? 0))
+      : 0
   const getItemKey = useCallback(
     (index: number) => `${columnCount}:${items[index * columnCount].id}`,
     [columnCount, items]
   )
-  useEffect(() => {
-    const media = window.matchMedia(`(max-width: ${GRID_BREAKPOINT_PX}px)`)
-    const update = () => setColumnCount(media.matches ? 1 : 2)
-    update()
-    media.addEventListener('change', update)
-    return () => media.removeEventListener('change', update)
-  }, [])
   // Headers, installed strips, and dialog padding live before the grid. Keep
   // measurements in the viewport's coordinate system without a second scroller.
-  useLayoutEffect(() => {
-    const list = listRef.current
-    const viewport = list?.closest<HTMLElement>('[data-plugin-market-scroll-region]')
-    if (!viewport || !list) return
-    const measure = () => {
-      const margin = list.getBoundingClientRect().top - viewport.getBoundingClientRect().top
-      setScrollMargin(Math.round(margin + viewport.scrollTop))
-    }
-    measure()
-    const observer = new ResizeObserver(measure)
-    observer.observe(viewport)
-    observer.observe(list)
-    return () => observer.disconnect()
-  }, [props])
   const virtualizer = useVirtualizer({
     count: Math.ceil(items.length / columnCount),
     getScrollElement: scrollElement,
@@ -107,7 +97,7 @@ function VirtualizedMarketplaceCardGrid(props: GridProps) {
     useAnimationFrameWithResizeObserver: true,
   })
   return (
-    <div ref={listRef} className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
+    <div ref={bindList} className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
       {virtualizer.getVirtualItems().map(row => (
         <div
           key={row.key}

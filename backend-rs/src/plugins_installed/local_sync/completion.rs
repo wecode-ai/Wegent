@@ -39,7 +39,7 @@ async fn complete(
     validate(body.protocol_version, &body.instance_id)?;
     let mysql = state.mysql.clone();
     let redis = state.redis.clone();
-    crate::plugins_installed::auto_update::complete_auto_update(async move {
+    crate::plugins_installed::write_coordination::complete_plugin_write(async move {
         record(&mysql, redis.as_ref(), i64::from(user.id), body.completion).await
     })
     .await

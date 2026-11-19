@@ -1,5 +1,5 @@
 {
   "order": 185000,
   "groupOrder": 7000,
-  "members": ["streaming-content"]
+  "members": ["streaming-content", "streaming-conversation-switching"]
 }

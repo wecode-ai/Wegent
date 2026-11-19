@@ -1,11 +1,15 @@
+import {
+  createAsyncResource,
+  getIdleResourceSnapshot,
+  subscribeIdleResource,
+} from '@wegent/chat-core/async-resource'
 import * as Popover from '@radix-ui/react-popover'
 import { Bot, Plus, Search, UserRound, UsersRound } from 'lucide-react'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 import {
   CollaborationParticipantsTabs,
   type ParticipantTab,
 } from '../project-manage/ProjectCollaborationParticipants'
-import { runActiveMemberSearch } from '../project-manage/memberSearch'
 import { useCollaborationPortalTheme } from '../theme'
 import type { CollaborationUser } from '../types'
 import type { ProjectCreateLabels, ProjectCreateResourceSetup } from './types'
@@ -40,40 +44,40 @@ export function ProjectCollaboratorPicker({
   const theme = useCollaborationPortalTheme()
   const [query, setQuery] = useState('')
   const [activeTab, setActiveTab] = useState<ParticipantTab>('members')
-  const [response, setResponse] = useState<{
-    query: string
-    searchUsers: typeof searchUsers
-    users: CollaborationUser[]
-    failed: boolean
-  } | null>(null)
-  const current = response?.query === query && response.searchUsers === searchUsers
-  const loading = Boolean(query.trim() && searchUsers && !current)
-  const failed = current && response.failed
-  useEffect(() => {
+  const [previousOpen, setPreviousOpen] = useState(open)
+  if (previousOpen !== open) {
+    setPreviousOpen(open)
     if (!open) {
       setQuery('')
-      setResponse(null)
       setActiveTab('members')
-      return
     }
-    if (activeTab !== 'members' || !query.trim() || !searchUsers) return
-    let active = true
-    const timer = window.setTimeout(() => {
-      void runActiveMemberSearch({
-        query: query.trim(),
-        existingUserIds: new Set<number>(),
-        search: async value => ({ users: await searchUsers(value) }),
-        userId: user => user.id,
-        isActive: () => active,
-        onResults: users => setResponse({ query, searchUsers, users, failed: false }),
-        onError: () => setResponse({ query, searchUsers, users: [], failed: true }),
-      })
-    }, 180)
-    return () => {
-      active = false
-      window.clearTimeout(timer)
-    }
-  }, [open, activeTab, query, searchUsers])
+  }
+  const resource = useMemo(
+    () =>
+      query.trim() && searchUsers
+        ? createAsyncResource(
+            query,
+            async () => {
+              try {
+                return { users: await searchUsers(query.trim()), failed: false }
+              } catch {
+                return { users: [] as CollaborationUser[], failed: true }
+              }
+            },
+            { delayMs: 180, refreshOnSubscribe: true }
+          )
+        : null,
+    [query, searchUsers]
+  )
+  const snapshot = useSyncExternalStore(
+    open && activeTab === 'members' && resource ? resource.subscribe : subscribeIdleResource,
+    resource?.getSnapshot ?? getIdleResourceSnapshot,
+    getIdleResourceSnapshot
+  )
+  const response = snapshot.data
+  const current = response !== undefined
+  const loading = Boolean(query.trim() && searchUsers && !snapshot.settled)
+  const failed = current && response.failed
   const matches = (...values: (string | null | undefined)[]) =>
     values.some(value => value?.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
   const users = [

@@ -1,10 +1,10 @@
 import { BrowserTaskDraftContext } from './browserTaskDraftContext'
 import { runtimeContinuationRequest } from '../execution/runtimeContinuationRequest'
-import { useContext, useEffect, useMemo, useState } from 'react'
+import { useContext, useMemo, useSyncExternalStore } from 'react'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import { useRuntimeConversationSession } from '../conversation/useRuntimeConversationSession'
 import { useBrowserConversationActions } from './useBrowserConversationActions'
 import type { Attachment, RuntimeTaskAddress } from '@wegent/chat-core/runtime'
-import type { RuntimeWorkListResponse } from '@wegent/chat-core/runtime-task-api-types'
 import { findRuntimeTask, findRuntimeTaskWorkspace } from '@wegent/chat-core/runtime-task-lookup'
 import { splitAbsoluteWorkspaceFilePath } from '@wegent/chat-core/workspace-file-contract'
 import type { SharedWorkspaceRuntimeApi } from '../ports/SharedWorkspaceApi'
@@ -19,7 +19,7 @@ import {
 import { findFileChangesBySubtaskId } from '@wegent/chat-core/runtime-stream-handlers'
 import type { TurnFileChangesSummary } from '@wegent/chat-core/runtime'
 
-/** Host effects for the shared execution and side-conversation presentations. */
+/** Shared runtime data and actions for execution and side-conversation presentations. */
 export function useBrowserRuntimeConversation(
   runtime: SharedWorkspaceRuntimeApi,
   address: RuntimeTaskAddress,
@@ -51,34 +51,24 @@ export function useBrowserRuntimeConversation(
     }),
     [runtime, address, session]
   )
-  const [metadataRevision, setMetadataRevision] = useState(0)
-  const [metadata, setMetadata] = useState<{
-    owner: SharedWorkspaceRuntimeApi
-    address: RuntimeTaskAddress
-    work: RuntimeWorkListResponse | null
-    error: string | null
-  } | null>(null)
-  useEffect(() => {
-    const controller = new AbortController()
-    void runtime.work
-      .listRuntimeWork({ signal: controller.signal })
-      .then(work => {
-        if (!controller.signal.aborted) setMetadata({ owner: runtime, address, work, error: null })
-      })
-      .catch(cause => {
-        if (!controller.signal.aborted)
-          setMetadata({
-            owner: runtime,
-            address,
-            work: null,
-            error: cause instanceof Error ? cause.message : String(cause),
-          })
-      })
-    return () => controller.abort()
-  }, [runtime, address, metadataRevision])
-  const current = metadata?.owner === runtime && metadata.address === address ? metadata : null
-  const task = findRuntimeTask(current?.work, address)
-  const workspace = findRuntimeTaskWorkspace(current?.work, address)
+  const metadataKey = JSON.stringify([
+    address.deviceId,
+    address.taskId,
+    address.projectSession?.projectId,
+    address.projectSession?.issueId,
+  ])
+  const metadata = useMemo(
+    () => createAsyncResource(metadataKey, signal => runtime.work.listRuntimeWork({ signal })),
+    [runtime, metadataKey]
+  )
+  const metadataSnapshot = useSyncExternalStore(
+    metadata.subscribe,
+    metadata.getSnapshot,
+    metadata.getSnapshot
+  )
+  const work = metadataSnapshot.status === 'error' ? undefined : metadataSnapshot.data
+  const task = findRuntimeTask(work, address)
+  const workspace = findRuntimeTaskWorkspace(work, address)
   const drafts = useContext(BrowserTaskDraftContext)
   const draft = drafts?.drafts[`${address.deviceId}:${address.taskId}`]
   const actions = useBrowserConversationActions(
@@ -145,10 +135,17 @@ export function useBrowserRuntimeConversation(
     task,
     workspace,
     markdown,
-    metadataError: current?.error,
+    metadataError:
+      metadataSnapshot.status === 'error'
+        ? metadataSnapshot.error instanceof Error
+          ? metadataSnapshot.error.message
+          : String(metadataSnapshot.error)
+        : metadataSnapshot.settled
+          ? null
+          : undefined,
     actionError: actions.error,
     reload() {
-      setMetadataRevision(value => value + 1)
+      void metadata.reload()
       return session.reload()
     },
     conversation: {

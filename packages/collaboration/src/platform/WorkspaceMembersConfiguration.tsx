@@ -1,11 +1,8 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useMemo, useRef, useState } from 'react'
-import {
-  clearMemberResultsForEmptyQuery,
-  runActiveMemberSearch,
-} from '../project-manage/memberSearch'
+import { useMemo, useState, useSyncExternalStore } from 'react'
+import { createAsyncResource, subscribeIdleResource } from '@wegent/chat-core/async-resource'
 import type {
   CollaborationWorkspace,
   CollaborationWorkspaceMember,
@@ -82,31 +79,28 @@ function MemberInviteDialog({
   onClose(): void
 }) {
   const [query, setQuery] = useState('')
-  const [results, setResults] = useState<CollaborationUser[]>([])
   const [role, setRole] = useState<MemberRole>('Developer')
-  const [error, setError] = useState<string | null>(null)
+  const [operationError, setError] = useState<string | null>(null)
   const [savingUserId, setSavingUserId] = useState<number | null>(null)
-  const searchVersion = useRef(0)
   const existingUserIds = useMemo(() => new Set(members.map(member => member.user_id)), [members])
 
-  useEffect(() => {
-    const version = ++searchVersion.current
-    if (clearMemberResultsForEmptyQuery(query, setResults)) return
-    const timeout = window.setTimeout(() => {
-      void runActiveMemberSearch({
-        query,
-        existingUserIds,
-        search: async value => ({
-          users: await commands.searchUsers(value),
-        }),
-        userId: user => user.id,
-        isActive: () => searchVersion.current === version,
-        onResults: setResults,
-        onError: () => setError(messages.operationFailed),
-      })
-    }, 180)
-    return () => window.clearTimeout(timeout)
-  }, [commands, existingUserIds, messages.operationFailed, query])
+  const searchResource = useMemo(
+    () =>
+      createAsyncResource<CollaborationUser[]>(
+        'workspace-member-search',
+        () => commands.searchUsers(query),
+        { delayMs: 180 }
+      ),
+    [commands, query]
+  )
+  const searchSnapshot = useSyncExternalStore(
+    query.trim() ? searchResource.subscribe : subscribeIdleResource,
+    searchResource.getSnapshot,
+    searchResource.getSnapshot
+  )
+  const results = (searchSnapshot.data ?? []).filter(user => !existingUserIds.has(user.id))
+  const error =
+    operationError ?? (searchSnapshot.status === 'error' ? messages.operationFailed : null)
 
   return (
     <div className="collaboration-dialog-backdrop">
@@ -197,7 +191,7 @@ export function WorkspaceMembersConfiguration({
   commands: WorkspaceResourceCommands
 }) {
   const messages = copy[locale]
-  const [dialogOpen, setDialogOpen] = useState(false)
+  const [inviteDialog, setInviteDialog] = useState<symbol | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [pendingUserId, setPendingUserId] = useState<number | null>(null)
   const [transferUserId, setTransferUserId] = useState('')
@@ -223,7 +217,9 @@ export function WorkspaceMembersConfiguration({
               type="button"
               className="collaboration-primary-button"
               data-testid="collaboration-workspace-member-invite"
-              onClick={() => setDialogOpen(true)}
+              onClick={() =>
+                setInviteDialog(current => current ?? Symbol('workspace-member-invite'))
+              }
             >
               ＋ {messages.inviteMember}
             </button>
@@ -353,12 +349,12 @@ export function WorkspaceMembersConfiguration({
           <div className="collaboration-resource-empty">{messages.noMembers}</div>
         )}
       </section>
-      {dialogOpen ? (
+      {inviteDialog ? (
         <MemberInviteDialog
           members={members}
           messages={messages}
           commands={commands}
-          onClose={() => setDialogOpen(false)}
+          onClose={() => setInviteDialog(current => (current === inviteDialog ? null : current))}
         />
       ) : null}
     </>

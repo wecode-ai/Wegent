@@ -1,68 +1,23 @@
-import { useEffect, useState } from 'react'
-import {
-  APP_PREFERENCES_CHANGED_EVENT,
-  getAppPreferences,
-  type AppPreferences,
-} from '@/desktop/appPreferences'
+import { useMemo, useSyncExternalStore } from 'react'
 import { useAppPreferencesState } from '@/features/app-preferences/useAppPreferencesState'
+import { createAppPreferencesStore } from '@/features/app-preferences/appPreferencesStore'
 
 export interface AppPreferenceFeatureState {
   enabled: boolean
   loaded: boolean
 }
 
+const noSubscription = () => () => {}
+
 export function useAppPreferenceFeatureState(
   preference: 'experimentalFeaturesEnabled' | 'collaborationExperienceEnabled'
 ): AppPreferenceFeatureState {
   const appPreferences = useAppPreferencesState()
-  const [fallbackState, setFallbackState] = useState<AppPreferenceFeatureState>({
-    enabled: false,
-    loaded: false,
-  })
-
-  useEffect(() => {
-    if (appPreferences) return undefined
-
-    let cancelled = false
-    let preferenceChanged = false
-
-    void getAppPreferences()
-      .then(preferences => {
-        if (!cancelled && !preferenceChanged) {
-          setFallbackState({
-            enabled: preferences[preference] === true,
-            loaded: true,
-          })
-        }
-      })
-      .catch(error => {
-        console.error('[Wework] Failed to load experimental feature preference', error)
-        if (!cancelled && !preferenceChanged) {
-          setFallbackState({ enabled: false, loaded: true })
-        }
-      })
-
-    const handlePreferencesChanged = (event: Event) => {
-      preferenceChanged = true
-      setFallbackState({
-        enabled: (event as CustomEvent<AppPreferences>).detail[preference] === true,
-        loaded: true,
-      })
-    }
-    window.addEventListener(APP_PREFERENCES_CHANGED_EVENT, handlePreferencesChanged)
-
-    return () => {
-      cancelled = true
-      window.removeEventListener(APP_PREFERENCES_CHANGED_EVENT, handlePreferencesChanged)
-    }
-  }, [appPreferences, preference])
-
-  if (appPreferences) {
-    return {
-      enabled: appPreferences.preferences[preference] === true,
-      loaded: appPreferences.loaded,
-    }
-  }
-
-  return fallbackState
+  const store = useMemo(() => createAppPreferencesStore(), [])
+  const externalState = useSyncExternalStore(
+    appPreferences ? noSubscription : store.subscribe,
+    store.getSnapshot
+  )
+  const state = appPreferences ?? externalState
+  return { enabled: state.preferences[preference] === true, loaded: state.loaded }
 }

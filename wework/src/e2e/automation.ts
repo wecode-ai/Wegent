@@ -3302,6 +3302,7 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'expandProcessingSummaries':
       return expandDesktopProcessingSummaries()
     case 'scrollIntoViewAsUser': {
+      startConversationDiagnosticCapture()
       const elements = findDesktopControlElements(command.selector)
       const element = command.text
         ? elements.find(candidate => candidate.textContent?.includes(command.text ?? ''))

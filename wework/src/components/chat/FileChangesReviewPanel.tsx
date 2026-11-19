@@ -18,11 +18,13 @@ import {
 import { Virtualizer } from '@pierre/diffs/react'
 import { PierreCodeProvider } from '@/components/code/PierreCodeProvider'
 import type { CSSProperties, RefObject } from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { defaultAppearance, useOptionalAppearance } from '@/features/appearance'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { cn } from '@/lib/utils'
+import { useDOMEvent, useScrollRequest } from '@wegent/collaboration/dom-events'
+import { createTransientFeedback } from '@/components/common/transientFeedback'
 import type { CodeCommentContext } from '@/types/workspace-files'
 import type { GitPatchAction } from '@/api/environment'
 import {
@@ -155,11 +157,13 @@ export function FileChangesReviewPanel({
     [focusFilePath, scrollToSection, sections]
   )
 
-  useEffect(() => {
-    if (focusSectionIndex < 0) return
-    const section = sections[focusSectionIndex]
-    requestAnimationFrame(() => scrollToSection(section, 'instant'))
-  }, [focusFilePath, focusSectionIndex, scrollToSection, sections])
+  const focusScrollRequest = useMemo(() => ({ focusFilePath, sections }), [focusFilePath, sections])
+  useScrollRequest(diffLinesRef, `[data-review-index="${focusSectionIndex}"]`, focusScrollRequest, {
+    enabled: focusSectionIndex >= 0,
+    block: 'start',
+    behavior: 'instant',
+    animationFrame: true,
+  })
 
   const applyPatch = useCallback(
     async (action: GitPatchAction, patch: string, operationKey: string) => {
@@ -399,16 +403,14 @@ function ReviewToolbar({
     switcherRef
   )
 
-  useEffect(() => {
-    if (!menuOpen) return
-    const handlePointerDown = (event: PointerEvent) => {
+  useDOMEvent<PointerEvent>(
+    'document',
+    'pointerdown',
+    event => {
       if (!switcherRef.current?.contains(event.target as Node)) setMenuOpen(false)
-    }
-    document.addEventListener('pointerdown', handlePointerDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-    }
-  }, [menuOpen])
+    },
+    { enabled: menuOpen }
+  )
 
   return (
     <div
@@ -589,26 +591,13 @@ function ToolbarButton({
 }
 
 function useTransientFlag(durationMs: number) {
-  const [active, setActive] = useState(false)
-  const timeoutRef = useRef<number | null>(null)
-
-  useEffect(
-    () => () => {
-      if (timeoutRef.current !== null) window.clearTimeout(timeoutRef.current)
-    },
-    []
+  const feedback = useMemo(() => createTransientFeedback(durationMs), [durationMs])
+  const active = useSyncExternalStore(
+    feedback.subscribe,
+    feedback.getSnapshot,
+    feedback.getServerSnapshot
   )
-
-  const show = useCallback(() => {
-    if (timeoutRef.current !== null) window.clearTimeout(timeoutRef.current)
-    setActive(true)
-    timeoutRef.current = window.setTimeout(() => {
-      timeoutRef.current = null
-      setActive(false)
-    }, durationMs)
-  }, [durationMs])
-
-  return [active, show] as const
+  return [active, feedback.show] as const
 }
 
 function AllDiffSections({
@@ -757,6 +746,7 @@ function FileDiffSection({
     <article
       data-testid="file-changes-review-file-diff-section"
       data-review-path={section.path}
+      data-review-index={index}
       className="group/file-diff overflow-clip border-b border-border bg-background last:border-b-0"
     >
       <div className="group/diff-header sticky top-0 z-10 flex h-8 items-center gap-1 border-b border-border bg-background px-2 text-xs font-medium text-text-primary">

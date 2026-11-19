@@ -1,3 +1,4 @@
+import { useDocumentEvent, useWindowEvent } from '@wegent/collaboration/dom-events'
 import {
   Check,
   ChevronDown,
@@ -8,15 +9,7 @@ import {
   Sparkles,
   X,
 } from 'lucide-react'
-import {
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type FormEvent,
-} from 'react'
+import { useCallback, useMemo, useRef, useState, type FormEvent } from 'react'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import {
   calculateFloatingMenuLayout,
@@ -126,43 +119,33 @@ export function BranchSelector({
     )
   }, [open, useMobileSheet, variant])
 
-  useEffect(() => {
-    if (!open) return
-
-    function handlePointerDown(event: PointerEvent) {
+  useDocumentEvent(
+    'pointerdown',
+    event => {
       if (!rootRef.current?.contains(event.target as Node)) close()
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
+    },
+    { enabled: open && !useMobileSheet }
+  )
+  useWindowEvent(
+    'keydown',
+    event => {
       if (event.key === 'Escape') close()
-    }
+    },
+    { enabled: open }
+  )
 
-    if (!useMobileSheet) {
-      document.addEventListener('pointerdown', handlePointerDown)
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-      window.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [close, open, useMobileSheet])
+  const bindMenu = useCallback(
+    (menu: HTMLDivElement | null) => {
+      if (menu) updateDesktopMenuLayout()
+    },
+    [updateDesktopMenuLayout]
+  )
 
-  useLayoutEffect(() => {
-    if (!open || useMobileSheet) return
-
-    updateDesktopMenuLayout()
-  }, [open, updateDesktopMenuLayout, useMobileSheet])
-
-  useEffect(() => {
-    if (!open || useMobileSheet) return
-
-    window.addEventListener('resize', updateDesktopMenuLayout)
-    window.addEventListener('scroll', updateDesktopMenuLayout, true)
-    return () => {
-      window.removeEventListener('resize', updateDesktopMenuLayout)
-      window.removeEventListener('scroll', updateDesktopMenuLayout, true)
-    }
-  }, [open, updateDesktopMenuLayout, useMobileSheet])
+  useWindowEvent('resize', updateDesktopMenuLayout, { enabled: open && !useMobileSheet })
+  useWindowEvent('scroll', updateDesktopMenuLayout, {
+    enabled: open && !useMobileSheet,
+    capture: true,
+  })
 
   async function handleToggle() {
     if (open) {
@@ -321,6 +304,7 @@ export function BranchSelector({
 
       {open && (
         <div
+          ref={bindMenu}
           data-testid={`${prefix}-branch-menu`}
           data-mobile={useMobileSheet ? 'true' : undefined}
           className={cn(

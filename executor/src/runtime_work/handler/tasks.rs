@@ -1055,12 +1055,20 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn send_message(&self, payload: Value) -> Result<Value, AppIpcError> {
+        self.send_message_from_owner(payload, false).await
+    }
+
+    pub(super) async fn send_message_from_owner(
+        &self,
+        payload: Value,
+        owner_input: bool,
+    ) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let prepared = self.prepare_question_reply(&payload).await?;
         let gate = self.task_send_gate(&local_task_id);
         let _guard = gate.lock().await;
-        self.send_message_after_local_checks(payload, prepared)
+        self.send_message_with_activity_checks(payload, false, owner_input, prepared)
             .await
     }
 
@@ -1133,7 +1141,7 @@ impl RuntimeWorkRpcHandler {
         payload: Value,
         prepared: Option<PreparedQuestionReply>,
     ) -> Result<Value, AppIpcError> {
-        self.send_message_with_activity_checks(payload, false, prepared)
+        self.send_message_with_activity_checks(payload, false, false, prepared)
             .await
     }
 
@@ -1146,7 +1154,7 @@ impl RuntimeWorkRpcHandler {
         let prepared = self.prepare_question_reply(&payload).await?;
         let gate = self.task_send_gate(&task);
         let _guard = gate.lock().await;
-        self.send_message_with_activity_checks(payload, true, prepared)
+        self.send_message_with_activity_checks(payload, true, false, prepared)
             .await
     }
 
@@ -1154,12 +1162,13 @@ impl RuntimeWorkRpcHandler {
         &self,
         payload: Value,
         activity: bool,
+        owner_input: bool,
         prepared: Option<PreparedQuestionReply>,
     ) -> Result<Value, AppIpcError> {
         // All callers hold the task send gate until acceptance is recorded.
         let question = self.unanswered_async_question_reply(&payload)?;
         let result = self
-            .dispatch_message_with_activity_checks(payload, activity, prepared)
+            .dispatch_message_with_activity_checks(payload, activity, owner_input, prepared)
             .await;
         if let (Some((task_id, key)), Ok(receipt)) = (question, &result) {
             if receipt["accepted"] == true {
@@ -1178,6 +1187,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         mut payload: Value,
         activity: bool,
+        owner_input: bool,
         prepared: Option<PreparedQuestionReply>,
     ) -> Result<Value, AppIpcError> {
         let requested_task_id = runtime_task_id(&payload)
@@ -1258,7 +1268,14 @@ impl RuntimeWorkRpcHandler {
         {
             return Ok(json!({"pending":true,"accepted":false,"code":"stand_in_waiting_for_user"}));
         }
-        if let Some(response) = request_user_input_response(&payload) {
+        let question_response = request_user_input_response(&payload);
+        // The desktop delivers an async answer as the next ordinary user message.
+        let owner_input = owner_input
+            && question_response.is_none()
+            && !existing_link.as_ref().is_some_and(|link| {
+                link.interaction_status.as_deref() == Some(INTERACTION_AWAITING_USER_REPLY)
+            });
+        if let Some(response) = question_response {
             if response["delivery"] == "async" {
                 self.apply_prepared_async_question_reply(
                     &local_task_id,
@@ -1543,6 +1560,11 @@ impl RuntimeWorkRpcHandler {
             .filter(|_| ephemeral && !start_new_session);
         let resume_thread_id = thread_id.filter(|_| !ephemeral && !start_new_session);
         let initial_thread_goal = initial_thread_goal_from_payload(&payload);
+        payload[super::control::connection_events::OWNER_INPUT] = json!(
+            owner_input
+                && !super::automatic_turns::is_automatic_input(&request)
+                && !start_new_session
+        );
 
         self.stamp_stand_in_owner_request(&local_task_id, &mut request, activity)?;
         let turn = SpawnTurnRequest {
@@ -2058,8 +2080,21 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn send_guidance(&self, payload: Value) -> Result<Value, AppIpcError> {
+        self.send_guidance_with_context(payload, None, false).await
+    }
+
+    pub(super) async fn send_guidance_with_context(
+        &self,
+        payload: Value,
+        event_operation: Option<&str>,
+        owner_input: bool,
+    ) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
+        let owner_input = owner_input
+            && self.store.read_task(&local_task_id, |link| {
+                link.interaction_status.as_deref() == Some(INTERACTION_AWAITING_USER_REPLY)
+            }) != Some(true);
         let message = string_field(&payload, "message")
             .or_else(|| string_field(&payload, "guidance"))
             .map(|value| value.trim().to_owned())
@@ -2102,6 +2137,7 @@ impl RuntimeWorkRpcHandler {
         {
             return Ok(failure);
         }
+        self.validate_event_guidance(&local_task_id, &thread_id, event_operation)?;
         let guidance_id = string_field(&payload, "client_guidance_id")
             .or_else(|| string_field(&payload, "clientGuidanceId"))
             .unwrap_or_else(|| format!("guidance-{}", now_ms()));
@@ -2143,6 +2179,7 @@ impl RuntimeWorkRpcHandler {
                 {
                     return Ok(failure);
                 }
+                self.validate_event_guidance(&local_task_id, &thread_id, event_operation)?;
                 log_executor_event(
                     "runtime guidance active turn corrected",
                     &[
@@ -2167,7 +2204,12 @@ impl RuntimeWorkRpcHandler {
         };
         match steer_result {
             Ok(turn_id) => {
-                self.set_interaction_status(&local_task_id, None);
+                if event_operation.is_none() {
+                    self.set_interaction_status(&local_task_id, None);
+                }
+                if owner_input {
+                    self.resume_goal_after_owner_input(&local_task_id, &thread_id);
+                }
                 log_executor_event(
                     "runtime guidance accepted",
                     &[
@@ -2193,6 +2235,35 @@ impl RuntimeWorkRpcHandler {
                 error,
             )),
         }
+    }
+
+    fn validate_event_guidance(
+        &self,
+        task: &str,
+        thread: &str,
+        operation: Option<&str>,
+    ) -> Result<(), AppIpcError> {
+        let Some(operation) = operation else {
+            return Ok(());
+        };
+        let link = self
+            .store
+            .get_task_summary(task)
+            .ok_or_else(|| AppIpcError::new("not_found", "Event conversation is unavailable"))?;
+        self.validate_event_input_session(task, Some(operation), &link)?;
+        if runtime_session_id_from_link(&link).as_deref() != Some(thread) {
+            return Err(AppIpcError::new(
+                "native_session_changed",
+                "The event's native session changed",
+            ));
+        }
+        if link.interaction_status.is_some() {
+            return Err(AppIpcError::new(
+                "user_input_pending",
+                "Event guidance must wait for the conversation's human participation",
+            ));
+        }
+        Ok(())
     }
 
     fn guidance_conversation_context_failure(&self, task: &str, payload: &Value) -> Option<Value> {

@@ -1,63 +1,43 @@
 import { Loader2, Square } from 'lucide-react'
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { subscribeIdleResource } from '@wegent/chat-core/async-resource'
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
+import { createComputerUseStatusStore } from './computerUseStatusStore'
 import { CompositedSpinner } from '@/components/common/CompositedSpinner'
-import {
-  getComputerUseStatus,
-  stopComputerUseCurrentAction,
-  type ComputerUseStatus,
-} from '@/desktop/computerUse'
+import { stopComputerUseCurrentAction } from '@/desktop/computerUse'
 import { useTranslation } from '@/hooks/useTranslation'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 
 export function ComputerUseActivityIndicator() {
   const { t } = useTranslation('common')
-  const [status, setStatus] = useState<ComputerUseStatus | null>(null)
+  const store = useMemo(() => createComputerUseStatusStore(), [])
+  const status = useSyncExternalStore(
+    isElectronRuntime() ? store.subscribe : subscribeIdleResource,
+    store.getSnapshot,
+    store.getSnapshot
+  )
   const [stopping, setStopping] = useState(false)
-  const refreshing = useRef(false)
-
-  const refresh = useCallback(async () => {
-    if (refreshing.current) return
-    refreshing.current = true
-    try {
-      setStatus(await getComputerUseStatus())
-    } catch (error) {
-      console.error('[Wework] Failed to load computer use activity:', error)
-    } finally {
-      refreshing.current = false
-    }
-  }, [])
-
-  useEffect(() => {
-    if (!isElectronRuntime()) return
-    const initial = window.setTimeout(() => void refresh(), 0)
-    const timer = window.setInterval(() => void refresh(), 1_000)
-    return () => {
-      window.clearTimeout(initial)
-      window.clearInterval(timer)
-    }
-  }, [refresh])
 
   const stop = useCallback(async () => {
     setStopping(true)
     try {
-      setStatus(await stopComputerUseCurrentAction())
+      store.update(await stopComputerUseCurrentAction())
     } catch (error) {
       console.error('[Wework] Failed to stop computer use action:', error)
     } finally {
       setStopping(false)
     }
-  }, [])
+  }, [store])
 
-  useLayoutEffect(() => {
-    if (!status?.currentTool) return
-    const onKeyDown = (event: KeyboardEvent) => {
+  useWindowEvent(
+    'keydown',
+    event => {
       if (event.key !== 'Escape') return
       event.preventDefault()
       void stop()
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [status?.currentTool, stop])
+    },
+    { enabled: Boolean(status?.currentTool) }
+  )
 
   if (!status?.currentTool) return null
 

@@ -33,6 +33,21 @@ run_apt_with_diagnostics() {
   return "$apt_status"
 }
 
+update_apt_package_indexes() {
+  local update_log apt_status=0
+  update_log=$(run_apt_with_diagnostics "$@" apt-get -o APT::Update::Error-Mode=any update 2>&1) || apt_status=$?
+  printf '%s\n' "$update_log" >&2
+  if ((apt_status == 0)); then return 0; fi
+
+  if grep -Eq '^E: Failed to fetch .* (File has unexpected size|Hash Sum mismatch)' <<< "$update_log"; then
+    printf 'Refreshing APT metadata after an inconsistent mirror index.\n' >&2
+    run_apt_with_diagnostics "$@" apt-get -o APT::Update::Error-Mode=any \
+      -o Acquire::http::No-Cache=true -o Acquire::https::No-Cache=true update
+  else
+    return "$apt_status"
+  fi
+}
+
 install_missing_apt_packages() {
   local package
   local missing=()
@@ -43,6 +58,6 @@ install_missing_apt_packages() {
 
   local privileged=()
   if ((EUID != 0)); then privileged=(sudo); fi
-  run_apt_with_diagnostics "${privileged[@]}" apt-get -o APT::Update::Error-Mode=any update || return
+  update_apt_package_indexes "${privileged[@]}" || return
   run_apt_with_diagnostics "${privileged[@]}" apt-get install --yes --no-install-recommends "${missing[@]}"
 }

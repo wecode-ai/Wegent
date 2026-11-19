@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Menu } from 'lucide-react'
 import { DesktopSidebar } from '@/components/layout/DesktopSidebar'
 import { DesktopWindowControls } from '@/components/layout/DesktopWindowControls'
@@ -15,8 +15,6 @@ import { useIsMobile } from '@/hooks/useIsMobile'
 import { useTranslation } from '@/hooks/useTranslation'
 import { navigateTo } from '@/lib/navigation'
 import { isElectronRuntime } from '@/lib/runtime-environment'
-import { track } from '@/telemetry/client'
-import { prefetchPluginsWorkspace } from '@/components/plugins/workspace/prefetchPluginsWorkspace'
 import {
   initializePluginDevelopmentProject,
   pluginDevelopmentInitialInput,
@@ -67,11 +65,6 @@ export function PluginManagementPage() {
   const { sidebarCollapsed, setSidebarCollapsed } = useDesktopSidebarCollapsed()
   const isDesktop = isElectronRuntime()
   const handleOpenRuntimeTask = createPluginRouteRuntimeTaskOpener(openRuntimeTask)
-
-  useEffect(() => {
-    track('plugin_center_opened', { surface: 'management' })
-    prefetchPluginsWorkspace()
-  }, [])
 
   const handleSelectProject = (projectId: number) => {
     navigateTo('/')

@@ -97,6 +97,32 @@ impl RuntimeWorkRpcHandler {
             }
         }
         let mut distinct = HashSet::new();
+        let guided = event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::Task(task),
+            |state| {
+                Ok(state["operations"]
+                    .as_object()
+                    .into_iter()
+                    .flat_map(|records| records.values())
+                    .filter(|record| {
+                        matches!(
+                            record["native_guidance"].as_str(),
+                            Some("requested" | "accepted")
+                        )
+                    })
+                    .flat_map(|record| {
+                        record["resource_event_keys"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                    })
+                    .filter_map(Value::as_str)
+                    .map(str::to_owned)
+                    .collect::<HashSet<_>>())
+            },
+        )?;
+        owned.extend(guided);
         let fresh: Vec<_> = keys
             .iter()
             .filter(|key| !owned.contains(*key) && distinct.insert((*key).clone()))

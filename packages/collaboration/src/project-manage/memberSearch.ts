@@ -2,43 +2,20 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-export interface ActiveMemberSearchOptions<User> {
-  query: string;
-  existingUserIds: ReadonlySet<number>;
-  search(query: string): Promise<{ users: User[] }>;
-  userId(user: User): number;
-  isActive(): boolean;
-  onResults(users: User[]): void;
-  onError(cause: unknown): void;
-}
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
 
-export function clearMemberResultsForEmptyQuery<User>(
+export function createMemberSearchResource<User>(
+  key: string,
   query: string,
-  onResults: (users: User[]) => void,
-): boolean {
-  if (query.trim()) return false;
-  onResults([]);
-  return true;
+  search: (query: string) => Promise<{ users: User[] }>
+) {
+  return createAsyncResource(key, async () => (await search(query)).users, { delayMs: 250 })
 }
 
-export async function runActiveMemberSearch<User>({
-  query,
-  existingUserIds,
-  search,
-  userId,
-  isActive,
-  onResults,
-  onError,
-}: ActiveMemberSearchOptions<User>): Promise<void> {
-  try {
-    const response = await search(query);
-    if (!isActive()) return;
-    onResults(
-      response.users.filter((user) => !existingUserIds.has(userId(user))),
-    );
-  } catch (cause) {
-    if (!isActive()) return;
-    onResults([]);
-    onError(cause);
-  }
+export function filterMemberSearchResults<User extends { id: number }>(
+  users: User[],
+  members: { user_id: number }[]
+): User[] {
+  const existing = new Set(members.map(member => member.user_id))
+  return users.filter(user => !existing.has(user.id))
 }

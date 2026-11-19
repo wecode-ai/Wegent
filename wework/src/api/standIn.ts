@@ -14,6 +14,7 @@ import type {
 import type { RuntimeTaskSummary } from '@/types/api'
 import type { Automation } from '@/types/automation'
 import { createRuntimeTaskCommandsApi, type RuntimeTaskCommandsApi } from './runtimeTaskCommands'
+import { LOCAL_USER } from './local/localSession'
 
 export interface StandInOnboardingResult {
   settings?: PersonalStandInSettings | null
@@ -31,6 +32,10 @@ export interface StandInInstanceBinding {
   version: number
   status: 'unbound' | 'active' | 'stopping' | 'stopped'
   target: StandInBindingTarget | null
+}
+
+export function isStandInBindingOwner(targetUserId: number, userId: number): boolean {
+  return targetUserId === LOCAL_USER.id || targetUserId === userId
 }
 
 export interface ConnectionProviderDescriptor {

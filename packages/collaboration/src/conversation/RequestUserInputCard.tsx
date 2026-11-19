@@ -102,7 +102,9 @@ function RequestUserInputForm({
 }: RequestUserInputCardProps & { remainingTime: string | null }) {
   const { t } = useConversationTranslation()
   const formId = useId()
-  const formRef = useRef<HTMLFormElement | null>(null)
+  const focusForm = useCallback((node: HTMLFormElement | null) => {
+    node?.focus({ preventScroll: true })
+  }, [])
   const submitInFlightRef = useRef(false)
   const questions = useMemo(
     () => normalizeQuestions(localizeApprovalQuestions(payload, t)),
@@ -210,10 +212,6 @@ function RequestUserInputForm({
   const skipped = skippedQuestionIds === questionIds
   const [submissionError, setSubmissionError] = useState<string | null>(null)
   const isDisabled = disabled || submitted
-
-  useEffect(() => {
-    formRef.current?.focus({ preventScroll: true })
-  }, [])
 
   const submitAnswers = async (
     answers: RequestUserInputResponse['answers'],
@@ -430,7 +428,7 @@ function RequestUserInputForm({
       <form
         hidden={skipped}
         inert={skipped}
-        ref={formRef}
+        ref={focusForm}
         data-testid="request-user-input-card"
         onSubmit={handleFormSubmit}
         onKeyDown={handleKeyDown}

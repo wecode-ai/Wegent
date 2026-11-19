@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { fetchJson, resultDir } from './shared.mjs'
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 import { cleanupPluginUpgradeFixtures } from './plugin-upgrade-fixture-cleanup.mjs'
+import { waitForValue } from './workspace-agent-setup.mjs'
 
 const pluginKey = 'desktop-e2e-upgrade'
 const oldVersion = '0.1.1'
@@ -33,15 +34,6 @@ async function waitForManagedPlugin(manifestPath, managedKey, timeoutMs = PLUGIN
     await new Promise(resolve => setTimeout(resolve, 100))
   }
   throw new Error(`Timed out waiting for plugin sync: ${managedKey} in ${manifestPath}`)
-}
-
-async function waitForManagedPluginRemoval(readCapabilities, managedKey) {
-  const deadline = Date.now() + 10_000
-  while (Date.now() < deadline) {
-    if ((await readCapabilities()).plugins[managedKey] === undefined) return
-    await new Promise(resolve => setTimeout(resolve, 100))
-  }
-  throw new Error(`Timed out waiting for local plugin removal: ${managedKey}`)
 }
 
 export async function verifyPluginUpgrade({ cloudEnvironment: env, control, codexHome, setPhase }) {
@@ -277,7 +269,12 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
     false,
     'Uninstall left the cloud install active'
   )
-  await waitForManagedPluginRemoval(readCapabilities, managedKey)
+  await waitForValue(
+    readCapabilities,
+    capabilities => capabilities.plugins[managedKey] === undefined,
+    'Uninstall did not remove the managed plugin from the local capability manifest',
+    PLUGIN_SYNC_TIMEOUT_MS
+  )
   // Immutable packages remain available to running agents; Codex owns its cache.
   await access(removedEntry.store_path)
   setPhase('plugin-refresh-cleans-cloud-uninstall-residue')

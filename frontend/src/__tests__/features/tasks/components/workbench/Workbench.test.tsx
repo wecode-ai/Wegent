@@ -41,6 +41,7 @@ jest.mock('@/hooks/useTranslation', () => ({
       }
 
       const translations: Record<string, string> = {
+        'common:appPreview.unavailable': 'App preview unavailable',
         'tasks:workbench.overview': 'Overview',
         'tasks:workbench.files_changed': 'Files Changed',
         'tasks:workbench.status.completed': 'Completed',
@@ -155,6 +156,91 @@ describe('Workbench', () => {
     expect(screen.getByText('Pipeline task')).toBeInTheDocument()
     expect(screen.getByText('Awaiting confirmation')).toBeInTheDocument()
     expect(screen.queryByText('Running')).not.toBeInTheDocument()
+  })
+
+  test('embeds an app preview without granting it the application origin', () => {
+    render(
+      <Workbench
+        {...props}
+        taskStatus="RUNNING"
+        app={{
+          name: 'Generated app',
+          address: '127.0.0.1:3000',
+          previewUrl: 'https://preview.example.test/app?path=/demo',
+        }}
+      />
+    )
+
+    expect(screen.getByTestId('app-preview-frame')).toBeInTheDocument()
+    expect(screen.getByTestId('app-preview-frame')).toHaveAttribute(
+      'src',
+      'https://preview.example.test/app?path=/demo'
+    )
+    expect(screen.getByTestId('app-preview-frame')).toHaveAttribute(
+      'sandbox',
+      'allow-scripts allow-forms allow-popups allow-modals'
+    )
+  })
+
+  test('rejects unsafe app preview URLs instead of loading them', () => {
+    render(
+      <Workbench
+        {...props}
+        taskStatus="RUNNING"
+        app={{
+          name: 'Generated app',
+          address: '127.0.0.1:3000',
+          previewUrl: 'javascript:alert(document.cookie)',
+        }}
+      />
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'common:appPreview.button' }))
+
+    expect(screen.queryByTestId('app-preview-frame')).not.toBeInTheDocument()
+    expect(screen.getByTestId('app-preview-unavailable')).toHaveTextContent(
+      'App preview unavailable'
+    )
+  })
+
+  test('removes a loaded preview immediately when its URL becomes unsafe', () => {
+    const app = {
+      name: 'Generated app',
+      address: '127.0.0.1:3000',
+      previewUrl: 'https://preview.example.test/app',
+    }
+    const { rerender } = render(<Workbench {...props} taskStatus="RUNNING" app={app} />)
+    expect(screen.getByTestId('app-preview-frame')).toBeInTheDocument()
+
+    rerender(
+      <Workbench
+        {...props}
+        taskStatus="RUNNING"
+        app={{ ...app, previewUrl: 'data:text/html,<script>alert(1)</script>' }}
+      />
+    )
+
+    expect(screen.queryByTestId('app-preview-frame')).not.toBeInTheDocument()
+    expect(screen.getByTestId('app-preview-unavailable')).toBeInTheDocument()
+  })
+
+  test('opens the preview when an existing app receives its first safe URL', () => {
+    const app = { name: 'Generated app', address: '127.0.0.1:3000', previewUrl: '' }
+    const { rerender } = render(<Workbench {...props} taskStatus="RUNNING" app={app} />)
+    expect(screen.queryByTestId('app-preview-frame')).not.toBeInTheDocument()
+
+    rerender(
+      <Workbench
+        {...props}
+        taskStatus="RUNNING"
+        app={{ ...app, previewUrl: 'https://preview.example.test/app' }}
+      />
+    )
+
+    expect(screen.getByTestId('app-preview-frame')).toHaveAttribute(
+      'src',
+      'https://preview.example.test/app'
+    )
+    expect(screen.queryByTestId('app-preview-unavailable')).not.toBeInTheDocument()
   })
 
   test('uses the task repository when workbench metadata is missing', () => {
