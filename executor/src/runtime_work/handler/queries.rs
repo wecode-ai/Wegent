@@ -57,6 +57,7 @@ impl RuntimeWorkRpcHandler {
                         | "queuePosition"
                         | "modelProviderRouting"
                         | "quotaWait"
+                        | "connectionEventSubscriptions"
                         | "startupFailure"
                 )
             });

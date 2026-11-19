@@ -154,6 +154,9 @@ pub async fn heartbeat(
     socket_id: &str,
     data: Value,
 ) -> Result<Reply<Value>, ClientError> {
+    let Some(_online_write) = session.online_write().await else {
+        return Ok(Reply::payload(error_ack("Device connection is closed")));
+    };
     let payload = match HeartbeatPayload::parse(&data) {
         Ok(payload) => payload,
         Err(error) => return Ok(Reply::payload(error_ack(&error))),

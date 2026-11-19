@@ -12,16 +12,65 @@ use std::{
     collections::HashMap,
     path::PathBuf,
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Condvar, Mutex,
     },
 };
 use tokio::sync::Notify;
 
+mod completion_tests;
 mod digest_tests;
 mod journal_tests;
 mod runtime_token_tests;
 mod scanning_tests;
+
+/// Upper bound for event-driven waits. The waits are notification-based, but
+/// full-suite parallel runs schedule the spawned scan tasks seconds late under
+/// CPU contention, so the guard must tolerate runner slowness instead of
+/// failing at interactive latency.
+const EVENT_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[tokio::test]
+async fn foreground_and_recovery_use_only_the_registered_record_route_as_source() {
+    for registered in [false, true] {
+        let fixture = Fixture::new(Plan::Valid, false).await;
+        *fixture.controller.device_route_id.lock().unwrap() =
+            registered.then(|| "app-record-92".to_owned());
+        fixture
+            .controller
+            .connection_status
+            .store(registered, Ordering::Release);
+        let lease = fixture
+            .controller
+            .acquire_local_sync_lease(&fixture.connection, &fixture.path)
+            .await
+            .unwrap();
+        let recovery = fixture
+            .controller
+            .schedule_local_recovery(
+                &fixture.connection,
+                "native",
+                &fixture.path,
+                &mut load_journal(&fixture.path).unwrap(),
+            )
+            .unwrap()
+            .unwrap();
+        drop(lease);
+        fixture.recovery_entered.notified().await;
+        fixture.recovery_release.notify_one();
+        recovery.await.unwrap().unwrap();
+        let result = fixture
+            .sync(json!({"action":"update","targetId":8,"payload":{"enabled":true}}))
+            .await
+            .unwrap();
+        assert_eq!(result["localCompleted"], true);
+        let submitted = fixture.submissions.lock().unwrap();
+        assert_eq!(submitted.len(), 2);
+        assert!(submitted.iter().all(
+            |query| query["source_device_id"] == if registered { "app-record-92" } else { "" }
+        ));
+    }
+}
 
 #[derive(Default)]
 struct DigestGate {
@@ -43,11 +92,13 @@ impl Drop for HeldDigest {
 #[derive(Clone, Copy, Debug)]
 enum Plan {
     Valid,
+    SupersededOriginal,
     HttpFailure,
     InvalidSnapshot,
     UnexpectedUnchanged,
     FailedApplication,
     HeldHttp,
+    HeldTargetHttp,
     HeldApplication,
 }
 
@@ -103,7 +154,10 @@ impl CapabilitySyncRpcHandler for Installer {
             let removed = payload["removed_plugins"]
                 .as_array()
                 .is_some_and(|items| !items.is_empty());
-            json!({"success":success,"scope":payload["scope"],"plugin_sync":payload["plugin_sync"],"plugins":[{"id":8,"status":if !success {"failed"}else if removed {"removed"}else{"synced"}}]})
+            let id = payload["plugins"][0]["installed_plugin_id"]
+                .as_u64()
+                .unwrap_or(8);
+            json!({"success":success,"scope":payload["scope"],"plugin_sync":payload["plugin_sync"],"plugins":[{"id":id,"status":if !success {"failed"}else if removed {"removed"}else{"synced"}}]})
         })
     }
 }
@@ -118,6 +172,13 @@ struct Fixture {
     recovery_release: Arc<Notify>,
     probe_entered: Arc<Notify>,
     plans: Arc<Mutex<Vec<Value>>>,
+    submissions: Arc<Mutex<Vec<HashMap<String, String>>>>,
+    completions: Arc<Mutex<Vec<Value>>>,
+    completion_failures: Arc<Mutex<usize>>,
+    completion_error: Arc<Mutex<String>>,
+    completion_hold: Arc<AtomicBool>,
+    completion_entered: Arc<Notify>,
+    completion_release: Arc<Notify>,
     server: tokio::task::JoinHandle<()>,
 }
 
@@ -155,12 +216,22 @@ impl Fixture {
         let recovery_release = Arc::new(Notify::new());
         let probe_entered = Arc::new(Notify::new());
         let plans = Arc::new(Mutex::new(Vec::new()));
+        let submissions = Arc::new(Mutex::new(Vec::new()));
+        let completions = Arc::new(Mutex::new(Vec::new()));
+        let completion_failures = Arc::new(Mutex::new(0usize));
+        let completion_error = Arc::new(Mutex::new("completion_unavailable".to_string()));
+        let completion_hold = Arc::new(AtomicBool::new(false));
+        let completion_entered = Arc::new(Notify::new());
+        let completion_release = Arc::new(Notify::new());
         let removals = Arc::new(Mutex::new(HashMap::<String, bool>::new()));
         let accept_intent = {
             let removals = removals.clone();
+            let submissions = submissions.clone();
             move |method: axum::http::Method, Query(query): Query<HashMap<String, String>>| {
                 let removals = removals.clone();
+                let submissions = submissions.clone();
                 async move {
+                    submissions.lock().unwrap().push(query.clone());
                     removals.lock().unwrap().insert(
                         query["operation_id"].clone(),
                         method == axum::http::Method::DELETE,
@@ -202,7 +273,7 @@ impl Fixture {
                             return Json(json!({"enabled":true,"protocolVersion":1,"contractRevision":3,"accountId":1})).into_response();
                         }
                         plans.lock().unwrap().push(body.clone());
-                        if matches!(plan, Plan::HeldHttp) {
+                        if matches!(plan, Plan::HeldHttp) || (matches!(plan, Plan::HeldTargetHttp) && body["installedPluginId"] == 8) {
                             entered.notify_one();
                             release.notified().await;
                         }
@@ -217,21 +288,64 @@ impl Fixture {
                         }
                         let targeted = body["targeted"] == true;
                         if !targeted && body["knownRevision"] == "a".repeat(64) && body["actualRevision"] == body["knownRevision"] && body["recoveryPending"] != true {
-                            return Json(json!({"protocolVersion":1,"revision":"a".repeat(64),"unchanged":true})).into_response();
+                            return Json(json!({"protocolVersion":1,"revision":"a".repeat(64),"unchanged":true,"generation":1,"installedRevisions":{"8":1}})).into_response();
                         }
                         let operation = body["operationId"].as_str();
-                        let removed = operation.is_some_and(|id| removals.lock().unwrap().get(id) == Some(&true));
-                        Json(json!({"protocolVersion":1,"revision":"a".repeat(64),"generation":1,"operation":operation.map(|id|json!({"operationId":id,"state":"intent_saved","installedPluginId":8})),"payload":{"mode":"merge","scope":if targeted {"plugin_delta"}else{"plugins"},"plugins":if removed {json!([])}else{json!([{"installed_plugin_id":8}])},"removed_plugins":if removed {json!([{"installed_plugin_id":8}])}else{json!([])},"plugin_sync":{"version":2,"generation":1,"complete":!targeted}}})).into_response()
+                        let removed = matches!(plan, Plan::SupersededOriginal)
+                            || operation.is_some_and(|id| removals.lock().unwrap().get(id) == Some(&true));
+                        let installed_id = body["installedPluginId"].as_u64().unwrap_or(8);
+                        let mut response = json!({"protocolVersion":1,"revision":"a".repeat(64),"generation":1,"installedRevisions":{installed_id.to_string():1},"operation":operation.map(|id|json!({"operationId":id,"state":"intent_saved","installedPluginId":8})),"payload":{"mode":"merge","scope":if targeted {"plugin_delta"}else{"plugins"},"plugins":if removed {json!([])}else{json!([{"installed_plugin_id":installed_id}])},"removed_plugins":if removed {json!([{"installed_plugin_id":installed_id}])}else{json!([])},"plugin_sync":{"version":2,"generation":1,"complete":!targeted}}});
+                        if matches!(plan, Plan::SupersededOriginal) {
+                            response["currentOperationIds"] = json!([]);
+                        }
+                        Json(response).into_response()
+                    }
+                }
+            }))
+            .route("/api/plugins/local-sync/complete", post({
+                let completions = completions.clone();
+                let failures = completion_failures.clone();
+                let failure_code = completion_error.clone();
+                let hold = completion_hold.clone();
+                let entered = completion_entered.clone();
+                let release = completion_release.clone();
+                move |Json(body): Json<Value>| {
+                    let completions = completions.clone();
+                    let failure_code = failure_code.clone();
+                    let failures = failures.clone();
+                    let hold = hold.clone();
+                    let entered = entered.clone();
+                    let release = release.clone();
+                    async move {
+                        let recorded: Vec<Value> = body["completion"]["result"]["plugins"].as_array().unwrap().iter().map(|item| item["id"].clone()).collect();
+                        completions.lock().unwrap().push(body);
+                        let fail = {
+                            let mut remaining = failures.lock().unwrap();
+                            let fail = *remaining > 0;
+                            *remaining = remaining.saturating_sub(1);
+                            fail
+                        };
+                        if hold.swap(false, Ordering::SeqCst) {
+                            entered.notify_one();
+                            release.notified().await;
+                        }
+                        if fail {
+                            return (axum::http::StatusCode::SERVICE_UNAVAILABLE, Json(json!({"detail":*failure_code.lock().unwrap()}))).into_response();
+                        }
+                        Json(json!({"recorded":recorded,"superseded":[]})).into_response()
                     }
                 }
             }))
             .route("/api/plugins/marketplace/7/install", post({
                 let entered = recovery_entered.clone();
                 let release = recovery_release.clone();
+                let submissions = submissions.clone();
                 move |Query(query): Query<HashMap<String,String>>| {
                     let entered = entered.clone();
                     let release = release.clone();
+                    let submissions = submissions.clone();
                     async move {
+                        submissions.lock().unwrap().push(query.clone());
                         assert_eq!(query["operation_id"], "original");
                         assert_eq!(query["local_intent_order"], "7");
                         assert_eq!(query["release_id"], "3");
@@ -289,6 +403,13 @@ impl Fixture {
             recovery_release,
             probe_entered,
             plans,
+            submissions,
+            completions,
+            completion_failures,
+            completion_error,
+            completion_hold,
+            completion_entered,
+            completion_release,
             server,
         }
     }
@@ -308,6 +429,7 @@ impl Fixture {
                     capabilities: &json!({"enabled":true}),
                     instance: "native",
                     path: &self.path,
+                    progress: None,
                 },
                 load_journal(&self.path)?,
                 &mut lease,
@@ -316,7 +438,7 @@ impl Fixture {
     }
 
     async fn wait_for_merge(&self, unconfirmed: bool) -> Value {
-        tokio::time::timeout(Duration::from_secs(3), async {
+        tokio::time::timeout(EVENT_WAIT_TIMEOUT, async {
             loop {
                 let state = load_journal(&self.path).unwrap();
                 if (unconfirmed
@@ -456,4 +578,49 @@ async fn a_targeted_update_does_not_replay_unrelated_pending_work() {
     let state = load_journal(&fixture.path).unwrap();
     assert!(state["pending"][0]["lastAttemptAt"].is_null());
     assert_eq!(state["pending"][0]["operationId"], "original");
+}
+
+#[tokio::test]
+async fn targeted_http_wait_does_not_hold_another_plugins_journal() {
+    let fixture = Arc::new(Fixture::new(Plan::HeldTargetHttp, true).await);
+    let slow = tokio::spawn({
+        let fixture = fixture.clone();
+        async move { fixture.sync(json!({"installedPluginId":8})).await }
+    });
+    tokio::time::timeout(Duration::from_secs(3), fixture.installer.entered.notified())
+        .await
+        .unwrap();
+    let fast = tokio::time::timeout(
+        Duration::from_secs(3),
+        fixture.sync(json!({"installedPluginId":9})),
+    )
+    .await
+    .expect("An unrelated plugin waited for the slow HTTP request")
+    .unwrap();
+    assert_eq!(fast["localCompleted"], true);
+    assert!(!slow.is_finished());
+    assert_eq!(
+        load_journal(&fixture.path).unwrap()["pending"][0]["operationId"],
+        "original"
+    );
+    fixture.installer.release.notify_one();
+    assert_eq!(slow.await.unwrap().unwrap()["localCompleted"], true);
+}
+
+#[tokio::test]
+async fn foreground_scope_is_released_on_cancellation_and_full_sync_defers() {
+    let fixture = Fixture::new(Plan::Valid, true).await;
+    let foreground = scanning::ForegroundOperation::begin(
+        fixture.controller.local_sync_foreground.clone(),
+        &fixture.path,
+    );
+    assert_eq!(
+        fixture.sync(json!({"full":true})).await.unwrap_err().code,
+        "plugin_local_sync_busy"
+    );
+    drop(foreground);
+    assert!(!fixture
+        .controller
+        .has_foreground_plugin_operation(&fixture.path));
+    assert!(fixture.sync(json!({"installedPluginId":9})).await.is_ok());
 }

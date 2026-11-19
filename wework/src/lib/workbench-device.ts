@@ -6,7 +6,12 @@ import {
   type WorkbenchDeviceResolver as SharedWorkbenchDeviceResolver,
 } from '@wegent/chat-core/runtime-device-identity'
 import { getLocalRuntimeSourceIdentity } from './local-runtime-sidebar-identity'
-import type { DeviceInfo, ProjectWithTasks, RuntimeWorkListResponse } from '@/types/api'
+import type {
+  DeviceInfo,
+  ProjectWithTasks,
+  RuntimeWorkListResponse,
+  RuntimeTaskAddress,
+} from '@/types/api'
 
 export {
   AmbiguousExecutorIdentityError,
@@ -196,6 +201,7 @@ function extractNetworkHost(value?: string | null): string | null {
 }
 
 export function getWorkbenchDeviceUnavailableDisplayName(device: DeviceInfo | null): string {
+  if (device?.device_type === 'remote' && device.name?.trim()) return device.name.trim()
   return (
     extractNetworkHost(device?.client_ip) ?? extractNetworkHost(device?.runtime_transfer_host) ?? ''
   )
@@ -206,4 +212,17 @@ export function getExecutorOfflineDeviceId(error?: string | null): string | null
   if (!error?.startsWith(prefix)) return null
   const deviceId = error.slice(prefix.length).trim()
   return deviceId || null
+}
+
+/** Compare task owners only through an exact address or unambiguous discovery proof. */
+export function runtimeTasksShareOwner(
+  previous: RuntimeTaskAddress | null | undefined,
+  current: RuntimeTaskAddress | null | undefined,
+  devices: DeviceInfo[]
+): boolean {
+  if (!previous || !current || previous.taskId !== current.taskId) return false
+  if (previous.deviceId === current.deviceId) return true
+  const before = findWorkbenchDevice(devices, previous.deviceId)
+  const after = findWorkbenchDevice(devices, current.deviceId)
+  return Boolean(before && after && before.device_id === after.device_id)
 }

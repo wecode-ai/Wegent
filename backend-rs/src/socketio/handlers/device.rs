@@ -55,6 +55,11 @@ async fn status(
     #[inject(app)] app: &Arc<AppState>,
     #[inject(runtime)] runtime: &Arc<SocketRuntime>,
 ) -> Result<Reply<Value>, ClientError> {
+    let Some(_online_write) = session.online_write().await else {
+        return Ok(Reply::payload(
+            serde_json::json!({"error":"Device connection is closed"}),
+        ));
+    };
     Ok(Reply::payload(
         crate::socketio::device_status::status(
             app,
@@ -98,7 +103,7 @@ async fn upgrade_status(
 async fn runtime_event(
     data: Value,
     session: &DeviceSession,
-    app: &AppState,
+    app: &Arc<AppState>,
     runtime: &Arc<SocketRuntime>,
     turn: Turn,
 ) -> Result<Reply<Value>, ClientError> {

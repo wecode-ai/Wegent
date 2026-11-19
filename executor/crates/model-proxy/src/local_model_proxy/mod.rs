@@ -16,6 +16,7 @@ mod harness_protocol;
 mod history;
 mod image_budget;
 mod long_context;
+mod openai_reasoning;
 mod passthrough_stream;
 mod progressive_tools;
 mod request_body;
@@ -53,6 +54,9 @@ pub const API_KEY: &str = "wework-local-router";
 pub const ROUTE: &str = "/v1/codex-router/responses";
 pub const TOKEN_ROUTE: &str = "/v1/codex-router/{token}/responses";
 pub const HARNESS_MESSAGES_ROUTE: &str = "/v1/harness-router/{token}/v1/messages";
+pub const OFFICIAL_CHATGPT_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
+pub const PROVIDER_SWITCH_BOUNDARY_TEXT: &str =
+    "<model_switch>Wework provider boundary.</model_switch>";
 const MAX_REQUEST_BODY_BYTES: usize = 64 * 1024 * 1024;
 const NORMALIZED_API_ID_PREFIX_LENGTH: usize = 48;
 const DEFAULT_MAX_OUTPUT_TOKENS: u64 = 96_000;
@@ -84,6 +88,21 @@ const FORWARDED_CODEX_REQUEST_HEADERS: [&str; 16] = [
     "openai-beta",
     "x-responsesapi-include-timing-metrics",
 ];
+
+/// Developer-visible history item that marks a durable provider boundary.
+/// Codex emits its native `<model_switch>` only when the model string changes,
+/// so Wework injects this item when provider identity changes with the same
+/// model ID. The proxy can then recover the boundary after an executor restart.
+pub fn provider_switch_boundary_item() -> Value {
+    json!({
+        "type": "message",
+        "role": "developer",
+        "content": [{
+            "type": "input_text",
+            "text": PROVIDER_SWITCH_BOUNDARY_TEXT,
+        }],
+    })
+}
 
 pub fn route<S>() -> MethodRouter<S>
 where
@@ -170,6 +189,7 @@ pub fn register_harness(route_scope: &str, mut upstream: LocalModelProxyUpstream
             thread_ids: HashSet::new(),
             last_routed_model: None,
             pending_model_switch_cleanup: false,
+            foreign_history_keys: HashSet::new(),
             last_used: Instant::now(),
             active_references: 1,
         },
@@ -207,6 +227,15 @@ impl LocalModelProxyUpstream {
             };
             format!("{}{path}", self.base_url.trim_end_matches('/'))
         })
+    }
+
+    pub fn is_official_chatgpt_codex(&self) -> bool {
+        self.api_format == "openai-responses"
+            && is_official_chatgpt_codex_endpoint(&self.resolved_request_url())
+    }
+
+    fn uses_native_chatgpt_auth(&self) -> bool {
+        self.is_official_chatgpt_codex() && self.api_key.is_empty()
     }
 
     fn responses_tool_capabilities(&self) -> ResponsesToolCapabilities {
@@ -251,6 +280,19 @@ impl LocalModelProxyUpstream {
             function_tools_only: false,
         }
     }
+}
+
+pub fn is_official_chatgpt_codex_endpoint(value: &str) -> bool {
+    let Ok(url) = url::Url::parse(value.trim()) else {
+        return false;
+    };
+    let trusted_host = matches!(
+        url.host_str(),
+        Some("chatgpt.com" | "localhost" | "127.0.0.1" | "::1")
+    );
+    let path = url.path().trim_end_matches('/');
+    trusted_host
+        && (path.ends_with("/backend-api/codex") || path.ends_with("/backend-api/codex/responses"))
 }
 
 fn canonical_upstream_api_format(api_format: &str) -> String {
@@ -394,6 +436,7 @@ struct RegisteredUpstream {
     thread_ids: HashSet<String>,
     last_routed_model: Option<String>,
     pending_model_switch_cleanup: bool,
+    foreign_history_keys: HashSet<String>,
     last_used: Instant,
     active_references: usize,
 }
@@ -480,6 +523,11 @@ pub fn register_with_vision_sidecar(
         .routes
         .get(&token)
         .is_some_and(|registered| registered.pending_model_switch_cleanup);
+    let foreign_history_keys = registry
+        .routes
+        .get(&token)
+        .map(|registered| registered.foreign_history_keys.clone())
+        .unwrap_or_default();
     registry.routes.insert(
         token.clone(),
         RegisteredUpstream {
@@ -490,6 +538,7 @@ pub fn register_with_vision_sidecar(
             thread_ids,
             last_routed_model,
             pending_model_switch_cleanup,
+            foreign_history_keys,
             last_used: Instant::now(),
             active_references,
         },
@@ -623,6 +672,36 @@ pub fn bind_thread(token: &str, thread_id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Prediction forks inherit the parent's provider URL and must retain its route.
+/// Restored parents use the prepared route through existing stale-token recovery.
+pub fn bind_prediction_thread(
+    prepared_token: &str,
+    source_thread_id: &str,
+    thread_id: &str,
+) -> Result<String, String> {
+    let mut registry = registry()
+        .lock()
+        .expect("local model proxy registry should not be poisoned");
+    let mut parents = registry.routes.iter().filter_map(|(token, route)| {
+        route
+            .thread_ids
+            .contains(source_thread_id)
+            .then_some(token.clone())
+    });
+    let token = parents.next().unwrap_or_else(|| prepared_token.to_owned());
+    if parents.next().is_some() {
+        return Err("prediction parent has multiple local model proxy routes".to_owned());
+    }
+    let route = registry
+        .routes
+        .get_mut(&token)
+        .ok_or("prediction model proxy route is not registered")?;
+    route.thread_ids.insert(thread_id.to_owned());
+    route.active_references += 1;
+    route.last_used = Instant::now();
+    Ok(token)
+}
+
 pub fn bind_fork_thread(token: &str, thread_id: &str) -> Result<(), String> {
     bind_thread(token, thread_id)?;
     let mut registry = registry()
@@ -729,6 +808,7 @@ pub(super) async fn handle(headers: HeaderMap, body: Bytes) -> Result<Response, 
 
 struct RequestThreadIdentity {
     thread_id: String,
+    turn_id: Option<String>,
     parent_thread_id: Option<String>,
 }
 

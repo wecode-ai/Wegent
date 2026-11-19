@@ -9,13 +9,14 @@ vi.mock('../e2e/desktop/scenarios/model-overload-recovery.scenario.mjs', () => (
   createDesktopScenario: () => ({
     verify: async () => {},
     handleHttp: async () => false,
-    overloadTerminalGate: { release: async () => {} },
+    overloadTerminalGate: { arm: async () => {}, wait: async () => {}, release: async () => {} },
   }),
 }))
 vi.mock('../e2e/desktop/modules/goal-admission-recovery.mjs', () => ({
   createGoalAdmissionRecovery: () => ({ active: false }),
 }))
-vi.mock('../e2e/desktop/modules/shared.mjs', () => ({
+vi.mock('../e2e/desktop/modules/shared.mjs', async importOriginal => ({
+  ...(await importOriginal()),
   ACTIVE_COMPOSER_SELECTOR: 'composer',
   ACTIVE_WORKBENCH_SELECTOR: 'workbench',
   createSingleRootLocalProject: async () => {},

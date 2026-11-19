@@ -1,5 +1,6 @@
 import { showAllCollaborationIssues } from '../modules/collaboration-board-flows.mjs'
 import assert from 'node:assert/strict'
+import { withLegacyBoardGrouping } from '../modules/base-board-status-grouping.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { createCollaborationBoardIssue } from '../modules/collaboration-board-issue.mjs'
@@ -311,7 +312,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       })
       await request(`/api/v1/loop-items/${hidden.id}`, 'DELETE')
     },
-    async verify(control) {
+    verify: withLegacyBoardGrouping(async control => {
       await ensureExperimentalFeaturesEnabled(control)
       await control.command('openWeworkScheme', 'body', { value: `wework://boards/${project.id}` })
       await control.command('waitFor', collaborationProjectViewSelector(CONTENT, 'board'), {
@@ -607,6 +608,21 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         text: '协作交付目标',
       })
       await assertToolbarTypography(control)
+      await selectCollaborationProjectView(control, CONTENT, 'milestones')
+      await control.command('waitFor', scoped('milestones-back'))
+      await selectCollaborationProjectView(control, CONTENT, 'table')
+      assert.equal(
+        await control.command('getAttribute', scoped('milestone-filter'), { value: 'data-value' }),
+        localId,
+        'Milestones and table must use the same selected milestone'
+      )
+      await selectCollaborationProjectView(control, CONTENT, 'board')
+      assert.equal(
+        await control.command('getAttribute', scoped('milestone-filter'), { value: 'data-value' }),
+        localId,
+        'Returning to board must retain the shared milestone'
+      )
+      await showAllCollaborationIssues(control, CONTENT)
       await selectMilestone(control, 'all', 'milestone-filter')
       await control.command('click', scoped('cloud-board-parent-layout'))
       await control.command('waitFor', scoped('cloud-board-parent-rows'))
@@ -673,6 +689,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       )
       await selectMilestone(control, localId, 'milestone-filter')
       await openMilestones(control)
+      await control.command('clickWhenEnabled', scoped('milestones-back'))
       await deleteMilestone(control, localId)
       await captureScreenshot(control, 'milestones-09-local-deleted.png', 'body')
       await selectCollaborationProjectView(control, CONTENT, 'board')
@@ -704,7 +721,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       })
       await captureScreenshot(control, 'milestones-10-local-dark-form.png', 'body')
       await control.command('click', scoped('milestone-cancel'))
-    },
+    }),
     async cleanup() {
       if (project) {
         const current = await request(`/api/v1/cloud-projects/${project.id}`)

@@ -5,26 +5,35 @@ import { SourceMap } from 'node:module'
 
 const repositoryDirectory = fileURLToPath(new URL('../../', import.meta.url))
 
-export async function createDevtoolsClient(directory, timeoutMs = 30_000) {
+export async function createDesktopControlClient(directory, endpoint, timeoutMs = 30_000) {
   const registry = join(directory, 'desktop-control')
   const files = (await readdir(registry)).filter(name => name.endsWith('.json'))
   if (files.length !== 1) throw new Error('Expected exactly one isolated desktop control instance')
   const record = JSON.parse(await readFile(join(registry, files[0]), 'utf8'))
   if (!/^127\.0\.0\.1:\d+$/.test(record.address))
-    throw new Error('DevTools requires loopback transport')
+    throw new Error('Desktop control requires loopback transport')
   return async input => {
-    const response = await fetch(`http://${record.address}/devtools`, {
+    const response = await fetch(`http://${record.address}${endpoint}`, {
       method: 'POST',
       headers: { authorization: `Bearer ${record.token}`, 'content-type': 'application/json' },
       body: JSON.stringify(input),
       signal: AbortSignal.timeout(timeoutMs),
     })
     const body = await response.json()
-    if (!response.ok || !body.ok) throw new Error(body.error ?? `DevTools HTTP ${response.status}`)
+    if (!response.ok || !body.ok)
+      throw new Error(body.error ?? `Desktop control HTTP ${response.status}`)
+    return body.data
+  }
+}
+
+export async function createDevtoolsClient(directory, timeoutMs) {
+  const dispatch = await createDesktopControlClient(directory, '/devtools', timeoutMs)
+  return async input => {
+    const result = await dispatch(input)
     if (input.action === 'detach' && Number.isInteger(input.target)) {
       await rm(join(directory, `performance-${input.target}.json`), { force: true })
     }
-    return body.data
+    return result
   }
 }
 

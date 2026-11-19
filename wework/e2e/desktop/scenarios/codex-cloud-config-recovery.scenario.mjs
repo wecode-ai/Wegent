@@ -5,6 +5,7 @@ import { createCloudConfigModelService } from '../modules/cloud-config-model-ser
 import { assertCloudConfigRecovery } from '../modules/cloud-config-recovery-evidence.mjs'
 import { restartCloudConfigDesktop } from '../modules/cloud-config-restart-readiness.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { restartCodexWhenIdle } from '../modules/executor-restart-readiness.mjs'
 import {
   ACTIVE_WORKBENCH_SELECTOR,
   DEFAULT_MODEL_ID,
@@ -170,8 +171,24 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
         evidence.push({ taskId, status: persisted.status, threadId: persisted.threadId })
         return history
       }
-      const startFault = async () => {
-        const failureCount = await model.failBundle()
+      const restartWhenIdle = async () => {
+        const result = await restartCodexWhenIdle(
+          async () => JSON.parse(await control.command('restartLocalCodexAppServerIfIdle', 'body')),
+          RECOVERY_TIMEOUT_MS
+        )
+        assert.equal(result.requiresConfirmation, false)
+        assert.equal(result.activeTaskCount, 0)
+        // The restart gate only succeeds when the app-server has no in-flight
+        // request; assert that precondition before starting a turn or fault.
+        assert.equal(result.pendingRequestCount, 0)
+        return result
+      }
+      const startFault = async (options = {}) => {
+        // A persisted reply can still own a native background prediction. Admit
+        // the cold-process fixture only after that work has actually finished.
+        const idleRestart = await restartWhenIdle()
+        evidence.push({ beforeFault: true, idleRestart })
+        const failureCount = await model.failBundle(options)
         const offset = (await readFile(logPath, 'utf8')).length
         const result = await rpc(
           'runtime.codex.app_server.restart',
@@ -201,17 +218,7 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
         model.recoverBundle()
         // A completed task can still have a native composer prediction or read
         // in flight. Reuse the idle-only restart gate before changing auth modes.
-        const idleRestart = await waitForValue(
-          async () => JSON.parse(await control.command('restartLocalCodexAppServerIfIdle', 'body')),
-          value => value.restarted === true,
-          'The native Codex process did not become idle before restoring official auth',
-          RECOVERY_TIMEOUT_MS
-        )
-        assert.equal(idleRestart.activeTaskCount, 0)
-        // The restart gate only succeeds when the app-server has no in-flight
-        // request; assert that precondition before the first turn instead of
-        // retrying a task that the busy check rejected.
-        assert.equal(idleRestart.pendingRequestCount, 0)
+        const idleRestart = await restartWhenIdle()
         evidence.push({ officialRestore: name, idleRestart })
         const marker = `${PREFIX}_${name}`
         model.plan(marker)
@@ -322,6 +329,14 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       const newTask = await create('NEW_RECOVERED')
       await completed(newTask, `${PREFIX}_NEW_RECOVERED`)
       await assertDegraded(startFaultState, { methods: ['thread/start', 'plugin/installed'] })
+
+      // A startup failure can make native Codex use defaults before the first task RPC.
+      await restoreOfficial('OFFICIAL_BEFORE_BOOTSTRAP')
+      const bootstrapFault = await startFault({ allowBootstrap: false })
+      model.plan(`${PREFIX}_BOOTSTRAP_RECOVERED`)
+      const bootstrapTask = await create('BOOTSTRAP_RECOVERED')
+      await completed(bootstrapTask, `${PREFIX}_BOOTSTRAP_RECOVERED`)
+      await assertDegraded(bootstrapFault, { methods: ['thread/start', 'plugin/installed'] })
 
       await restoreOfficial('OFFICIAL_BEFORE_GOAL')
       const goalMarker = `${PREFIX}_GOAL`

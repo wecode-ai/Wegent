@@ -33,8 +33,8 @@ export async function startRealObjectStorage(resultDir, timeoutMs) {
     spawnError = error
   })
   await Promise.all([
-    appendProcessOutput(server.stdout, join(resultDir, 'minio.log')),
-    appendProcessOutput(server.stderr, join(resultDir, 'minio.log')),
+    appendProcessOutput(server.stdout, join(resultDir, 'minio.log'), server),
+    appendProcessOutput(server.stderr, join(resultDir, 'minio.log'), server),
   ])
   try {
     const deadline = Date.now() + timeoutMs

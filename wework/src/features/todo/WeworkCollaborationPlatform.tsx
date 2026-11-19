@@ -1,4 +1,7 @@
+import { GlobalTodoSearch } from './GlobalTodoSearch'
+import { resolveIssueReference } from './resolveIssueReference'
 import { DefaultRunnerSetting } from '@/components/settings/DefaultRunnerSetting'
+import { DesktopProjectSettingsPages } from './DesktopProjectSettingsPages'
 import { IndependentIssuesProvider } from './IndependentIssuesProvider'
 import { createPersonalIssuesApi } from '@/api/personalIssues'
 import { PersonalIssuesView } from './PersonalIssuesView'
@@ -6,7 +9,6 @@ import { migrateLocalProject } from './localProjectMigration'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { prepareIssueRuntimeTask } from './prepareIssueRuntimeTask'
 import { PersonalHomeTaskComposer } from './PersonalHomeTaskComposer'
-import { usePersonalHomeTaskDrafts } from './personalHomeTaskDrafts'
 import { issueRuntimePort } from './issueRuntimePort'
 import { IssueChangeRequestBadges } from '@/features/change-requests/IssueChangeRequestBadges'
 import { requireIssueTaskAvailable } from './issueTaskAvailability'
@@ -20,7 +22,7 @@ import { LOCAL_USER } from '@/api/local/localSession'
 import { WorkspaceRunnerRegistrationDialog } from '@/features/collaboration/WorkspaceRunnerRegistrationDialog'
 import { ProjectCoordinatorConversation } from './ProjectCoordinatorConversation'
 import { ProjectSpaceChatSidebar } from './ProjectSpaceChatSidebar'
-import { ArrowUpRight, Maximize2, Minimize2, MessageSquare } from 'lucide-react'
+import { ArrowUpRight, Maximize2, Minimize2, MessageSquare, Search } from 'lucide-react'
 import { Tooltip } from '@/components/ui/tooltip'
 import { StandInPopover } from './StandInPopover'
 import { navigateTo } from '@/lib/navigation'
@@ -142,7 +144,7 @@ import {
 } from './runtimeTaskConversationStatus'
 import { TodoEditor } from './TodoEditor'
 import { WeworkCollaborationEmbeddedBrowserHost } from './WeworkCollaborationEmbeddedBrowserHost'
-import { updateIssueWhenPersonalTaskStarts, workItemComposerReference } from './workItemTaskInput'
+import { workItemComposerReference } from './workItemTaskInput'
 import {
   loadProjectSpaceCodeWorkspacePreference,
   saveProjectSpaceCodeWorkspacePreference,
@@ -326,6 +328,10 @@ export interface WeworkCollaborationPlatformProps {
   services: WorkbenchServices
   startupActive?: boolean
   workspaceActive?: boolean
+  homeDraft: Pick<
+    WorkbenchContextValue['projectChat'],
+    'inputByScope' | 'setInputForScope' | 'getInputRevisionForScope' | 'personalHomeTaskDraftStore'
+  >
   activeProjectRef?: RuntimeProjectSpaceRef | null
   defaultProjectRequested?: boolean
   focusedItemId?: string | null
@@ -601,6 +607,7 @@ export function WeworkSharedProject({
   )
   const projectHost = useMemo<CollaborationHostAdapter>(
     () => ({
+      settingsPages: DesktopProjectSettingsPages,
       renderBoardToolbarAction: onOpenProjectConversation
         ? () => (
             <Tooltip label={t('workbench.project_space_chat.open')} side="bottom">
@@ -977,6 +984,25 @@ export function WeworkSharedProject({
       userId,
     ]
   )
+  const openIssueExecutionConversation = (
+    issue: CollaborationIssue,
+    address: RuntimeTaskAddress
+  ) => {
+    taskComposerSequenceRef.current += 1
+    const issueExecution = { projectId: String(project.id), issueId: issue.id }
+    const resolvedAddress = {
+      ...hydrateRuntimeTaskAddress(runtimeWork, address),
+      issueExecution,
+      ...(project.project_store === 'backend' ? { projectSession: issueExecution } : {}),
+    }
+    setTaskComposer({
+      issue,
+      address: resolvedAddress,
+      conversationKey: `${issue.id}:${resolvedAddress.deviceId}:${resolvedAddress.taskId}`,
+    })
+    projectHost.navigate({ ...projectHost.location, issueId: issue.id })
+  }
+
   const openBoundTaskConversation = useCallback(
     async (issue: CollaborationIssue, address: RuntimeTaskAddress) => {
       const requestSequence = ++taskComposerSequenceRef.current
@@ -1182,6 +1208,8 @@ export function WeworkSharedProject({
             port: runtimePort,
             project,
             address,
+            issues: scopedApi.issues,
+            onStatusError: error => notify(error || t('task_board_status_update_failed'), 'error'),
             issueId: taskComposer.issue.id,
             title: taskComposer.dispatch?.taskTitle ?? taskComposer.issue.title,
             dispatch: taskComposer.dispatch
@@ -1195,17 +1223,6 @@ export function WeworkSharedProject({
           })
         }
         onTaskCreated={async (address, localProject, deviceWorkspaceId) => {
-          const statusError = await updateIssueWhenPersonalTaskStarts(
-            scopedApi.issues,
-            taskComposer.issue.id,
-            {
-              projectStore: project.project_store,
-              dispatchRoundId:
-                taskComposer.dispatch?.roundId ?? taskComposer.humanTaskBinding?.dispatchRoundId,
-            }
-          )
-          if (statusError !== null)
-            notify(statusError || t('task_board_status_update_failed'), 'error')
           if (localProject) {
             saveProjectSpaceCodeWorkspacePreference(
               userId,
@@ -1325,6 +1342,7 @@ export function WeworkSharedProject({
         taskComposer?.issue.id === issue.id ? (taskComposer.address?.taskId ?? null) : null
       }
       aitableApi={project.task_provider === 'dingtalk_aitable' ? services.aitableApi : undefined}
+      existingTaskSource={runtimePort ? { work: runtimeWork, port: runtimePort } : undefined}
       onCreateTask={onCreateTask}
       onDelete={onDelete}
       deleteLabel={createCollaborationTranslator(locale)('todo.archive_issue')}
@@ -1332,6 +1350,9 @@ export function WeworkSharedProject({
         String(issueId) === String(issue.id)
           ? openNewTaskConversation(issue, humanTaskDispatchInput(dispatch))
           : undefined
+      }
+      onOpenRuntimeTask={
+        runtimePort ? address => openIssueExecutionConversation(issue, address) : onOpenRuntimeTask
       }
       onOpenTaskConversation={
         runtimePort
@@ -1561,6 +1582,19 @@ export function WeworkCollaborationPlatform(props: WeworkCollaborationPlatformPr
 /** Binds project navigation and stand-in indicators to the current account and project catalog. */
 function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformProps) {
   const { i18n, t } = useTranslation('common')
+  const [issueSearchOpen, setIssueSearchOpen] = useState(false)
+  const [issueSearchQuery, setIssueSearchQuery] = useState('')
+  useEffect(() => {
+    if (props.workspaceActive === false) return
+    const handleSearch = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault()
+        setIssueSearchOpen(true)
+      } else if (event.key === 'Escape') setIssueSearchOpen(false)
+    }
+    window.addEventListener('keydown', handleSearch)
+    return () => window.removeEventListener('keydown', handleSearch)
+  }, [props.workspaceActive])
   const standInProjects = useStandInProjects(props.services, props.devices, Number(props.user.id))
   const cloudConnection = useOptionalCloudConnection()
   const templateOwnerId =
@@ -1614,7 +1648,13 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
       cloudConnection.token,
     ]
   )
-  const [cloudLoginOpen, setCloudLoginOpen] = useState(false)
+  const [cloudLoginIntent, setCloudLoginIntent] = useState<
+    'general' | 'issue' | 'resume-issue' | null
+  >(null)
+  if (cloudLoginIntent === 'resume-issue' && personalIssuesApi) {
+    setIndependentSelection({ scope: templateScope, selection: null })
+    setCloudLoginIntent(null)
+  }
   const [migrationProject, setMigrationProject] = useState<CollaborationProject>()
   const [migrationPending, setMigrationPending] = useState(false)
   const [migrationError, setMigrationError] = useState('')
@@ -1713,12 +1753,26 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
       locale,
     ]
   )
-  const personalHomeTaskDrafts = usePersonalHomeTaskDrafts(templateScope, [
+  const personalHomeTaskDrafts = props.homeDraft.personalHomeTaskDraftStore.get(templateScope, [
     api,
     props.services.projectSpaceApis?.local,
   ])
+  const activeProject =
+    String(props.activeProjectRef?.projectId) === DEFAULT_WORK_ITEM_PROJECT_ID
+      ? null
+      : (props.activeProjectRef ?? null)
+  const routedProjectId = activeProject ? String(activeProject.projectId) : null
+  const routedProjectStore = activeProject?.projectStore
+  const [location, setLocation] = useState<CollaborationPlatformLocation>(() => ({
+    ...(routeProjectLocation(activeProject, props.focusedItemId ?? null) ?? initialLocation),
+  }))
+  const getProjectStore = useStableEvent((projectId: string) => {
+    if (String(location.projectId ?? '') === projectId) return location.collaborationDomain
+    if (routedProjectId === projectId) return routedProjectStore === 'local' ? 'local' : 'cloud'
+    return undefined
+  })
   const platformApi = useMemo(() => {
-    const platform = createWeworkPlatformApi(api, localProjectApi)
+    const platform = createWeworkPlatformApi(api, localProjectApi, getProjectStore)
     if (!platform || !props.services.standInApi || !props.services.getLocalRuntimeSidebarIdentity)
       return platform
     const standIn = async (projectId: string) => {
@@ -1744,7 +1798,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
           (await standIn(projectId)).run!(projectId, issueId, deviceId, id),
       },
     }
-  }, [api, localProjectApi, props.services, props.user.id])
+  }, [api, localProjectApi, getProjectStore, props.services, props.user.id])
   const navigationApis = useMemo(
     () =>
       [
@@ -1755,15 +1809,6 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
       ].filter((candidate): candidate is SharedWorkspaceApi => Boolean(candidate)),
     [api, cloudConnection.isConnected, localProjectApi]
   )
-  const activeProject =
-    String(props.activeProjectRef?.projectId) === DEFAULT_WORK_ITEM_PROJECT_ID
-      ? null
-      : (props.activeProjectRef ?? null)
-  const routedProjectId = activeProject ? String(activeProject.projectId) : null
-  const routedProjectStore = activeProject?.projectStore
-  const [location, setLocation] = useState<CollaborationPlatformLocation>(() => ({
-    ...(routeProjectLocation(activeProject, props.focusedItemId ?? null) ?? initialLocation),
-  }))
   const [navigationSyncRevision, setNavigationSyncRevision] = useState(0)
   const [personalHomeEntryKey, setPersonalHomeEntryKey] = useState(0)
   const startupReadySent = useRef(false)
@@ -1892,7 +1937,10 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
     )
   }
 
-  const navigatePlatform = (nextLocation: CollaborationPlatformLocation) => {
+  const navigatePlatform = (
+    nextLocation: CollaborationPlatformLocation,
+    resolvedProject?: LocatedProjectSpace
+  ) => {
     const navigationRevision = ++navigationRequestRevisionRef.current
     if (
       !nextLocation.projectId &&
@@ -1918,8 +1966,11 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
       return
     }
     const requestedProjectId = String(nextLocation.projectId)
-    void platformApi.projects
-      .get(requestedProjectId)
+    void (
+      resolvedProject
+        ? Promise.resolve(resolvedProject)
+        : platformApi.projects.get(requestedProjectId)
+    )
       .then(project => {
         if (navigationRequestRevisionRef.current !== navigationRevision) return
         publishActiveProject({
@@ -1996,6 +2047,37 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
 
   return (
     <div className="h-full min-h-0 flex-1" data-testid="wework-collaboration-platform">
+      {issueSearchOpen && props.workspaceActive !== false && (
+        <GlobalTodoSearch
+          key={`issue-reference-search:${templateScope}`}
+          referenceOnly
+          projects={[]}
+          projectItems={{}}
+          projectMembers={{}}
+          query={issueSearchQuery}
+          onQueryChange={setIssueSearchQuery}
+          onClose={() => setIssueSearchOpen(false)}
+          onSelectProject={() => {}}
+          onResolveReference={reference =>
+            resolveIssueReference(reference, [
+              ...(localProjectApi ? [{ location: 'local' as const, api: localProjectApi }] : []),
+              ...(cloudConnection.isConnected && api ? [{ location: 'cloud' as const, api }] : []),
+            ])
+          }
+          onSelectItem={(project, item) => {
+            if (item.can_view_detail === false) return
+            const next = routeProjectLocation(
+              { projectStore: project.project_store, projectId: String(project.id) },
+              item.id
+            )
+            if (next) {
+              navigatePlatform(next, project)
+              setIssueSearchOpen(false)
+            }
+          }}
+        />
+      )}
+
       <ConfirmDialog
         open={Boolean(migrationProject && cloudConnection.isConnected)}
         title={t('localProjectMigration.title')}
@@ -2079,13 +2161,17 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
           }
         }}
       />
-      {cloudLoginOpen && (
+      {cloudLoginIntent && cloudLoginIntent !== 'resume-issue' && (
         <CloudConnectionDialog
           open
+          intent={cloudLoginIntent === 'issue' ? 'independent-issue' : undefined}
           onlineCloudDeviceCount={0}
-          onClose={() => setCloudLoginOpen(false)}
+          onClose={() => setCloudLoginIntent(null)}
+          onConnected={() =>
+            setCloudLoginIntent(current => (current === 'issue' ? 'resume-issue' : null))
+          }
           onOpenSettings={() => {
-            setCloudLoginOpen(false)
+            setCloudLoginIntent(null)
             props.onOpenSettings?.({ settingsPage: 'connections' })
           }}
         />
@@ -2097,7 +2183,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
         userId={Number(cloudConnection.user?.id ?? props.user.id)}
         selection={independentIssueSelection}
         onSelect={setIndependentIssueSelection}
-        onLogin={() => setCloudLoginOpen(true)}
+        onLogin={() => setCloudLoginIntent('issue')}
         onOpenProjectIssue={(projectId, issueId) => {
           const next = routeProjectLocation({ projectStore: 'backend', projectId }, issueId)
           if (next) navigatePlatform(next)
@@ -2111,16 +2197,31 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
           onReady={handleReady}
           normalizePastedFiles={normalizeClipboardImageFiles}
           host={{
+            settingsPages: DesktopProjectSettingsPages,
             convertLocalProjectToCloud: project => {
               setMigrationError('')
               setMigrationProject(project)
-              if (!cloudConnection.isConnected) setCloudLoginOpen(true)
+              if (!cloudConnection.isConnected) setCloudLoginIntent('general')
             },
             accountScope: templateScope,
+            issueHomeDraft: {
+              getRevision: () =>
+                props.homeDraft.getInputRevisionForScope(`collaboration-home:${templateScope}`),
+              projectId:
+                props.homeDraft.inputByScope[`collaboration-home-project:${templateScope}`] ?? null,
+              onSelectProject: projectId =>
+                props.homeDraft.setInputForScope(
+                  `collaboration-home-project:${templateScope}`,
+                  projectId
+                ),
+              value: props.homeDraft.inputByScope[`collaboration-home:${templateScope}`] ?? '',
+              onChange: value =>
+                props.homeDraft.setInputForScope(`collaboration-home:${templateScope}`, value),
+            },
             templateStore,
             templateNavigation: true,
             createIndependentIssue: () =>
-              personalIssuesApi ? setIndependentIssueSelection(null) : setCloudLoginOpen(true),
+              personalIssuesApi ? setIndependentIssueSelection(null) : setCloudLoginIntent('issue'),
             renderIssueList: list => (
               <PersonalIssuesView
                 key={list.scope}
@@ -2141,7 +2242,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
                 active={props.workspaceActive ?? true}
               />
             ),
-            renderPersonalHome: home => (
+            renderPersonalHome: ({ contentVisible, ...home }) => (
               <WeworkPersonalHome
                 key={templateScope}
                 entryRequestKey={personalHomeEntryKey}
@@ -2149,7 +2250,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
                 localUserIds={
                   props.services.localParticipationIdentity?.viewerUserIds ?? [LOCAL_USER.id]
                 }
-                active={props.workspaceActive ?? true}
+                active={(props.workspaceActive ?? true) && contentVisible}
                 {...home}
                 sources={navigationApis}
                 draftScope={personalHomeTaskDrafts}
@@ -2194,7 +2295,7 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
             },
             cloudAccess: {
               authenticated: cloudConnection.isConnected,
-              requestLogin: () => setCloudLoginOpen(true),
+              requestLogin: () => setCloudLoginIntent('general'),
             },
             renderExecutionEnvironmentPreferences: () => <DefaultRunnerSetting />,
             renderIssueComposer: composerProps => (
@@ -2398,6 +2499,19 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
                   })
                 }
               : undefined,
+            sidebarHeaderActions: (
+              <Tooltip label={t('todo.search_issues', '搜索 Issue')}>
+                <button
+                  type="button"
+                  data-testid="collaboration-issue-search-open"
+                  aria-label={t('todo.search_issues', '搜索 Issue')}
+                  onClick={() => setIssueSearchOpen(true)}
+                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-text-secondary hover:bg-muted focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-focus"
+                >
+                  <Search className="h-4 w-4" />
+                </button>
+              </Tooltip>
+            ),
             workspaceOwnerOptions,
             projectAgentConfiguration,
           }}

@@ -2,7 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-use super::tasks::runtime_model_selection_changed;
+use super::tasks::{
+    mark_runtime_model_switch, runtime_model_provider_changed, runtime_model_selection_changed,
+};
 use super::turns::{read_runtime_turn_queue, write_runtime_turn_queue};
 use super::*;
 
@@ -24,6 +26,7 @@ fn connection_mcp_transport_and_discovery_never_resume_persisted_model_turns() {
         "runtime.connections.host",
         "runtime.connections.catalog",
         "runtime.connections.resources",
+        "runtime.connections.observations.collect",
         "runtime.connections.dependencies.inventory",
         "runtime.python.has_demand",
     ] {
@@ -340,6 +343,7 @@ fn deferred_worktree_preparation_can_be_cancelled_before_runtime_start() {
             .expect("preparing turn map lock should not be poisoned")
             .get("task-1"),
         Some(&PreparingTurn {
+            owner_request: None,
             cancellation_requested: true
         })
     );
@@ -1186,6 +1190,8 @@ pub(super) fn isolated_runtime_work_handler(label: &str) -> (RuntimeWorkRpcHandl
     let root = temp_runtime_work_index_path(label).with_extension("directory");
     let runtime_work_dir = root.join("runtime-work");
     let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.codex_app_server =
+        CodexAppServerClient::isolated_for_test("/bin/false", root.join("codex"));
     handler.transcript_test_workers = Some(Arc::new(tokio::sync::Semaphore::new(2)));
     handler.store = RuntimeWorkStore::new(runtime_work_dir.join("index.json"));
     handler.worktrees = WorktreeManager::new(runtime_work_dir.join("worktrees.json"));
@@ -2212,6 +2218,7 @@ fn turn_result_persists_goal_status_before_native_execution_settles() {
         }),
         Ok(crate::agents::CodexAppServerTurn {
             quota_recovery: None,
+            error_type: None,
             thread_id: "thread-1".to_owned(),
             outcome: ExecutionOutcome::Completed {
                 content: "done".to_owned(),
@@ -2324,6 +2331,7 @@ fn stale_terminal_result_cannot_emit_or_finish_replacement_execution() {
         }),
         Ok(crate::agents::CodexAppServerTurn {
             quota_recovery: None,
+            error_type: None,
             thread_id: "thread-stale".to_owned(),
             outcome: ExecutionOutcome::Completed {
                 content: "stale".to_owned(),
@@ -2892,6 +2900,7 @@ fn failed_responses_emit_runtime_turn_duration() {
         }),
         Ok(crate::agents::CodexAppServerTurn {
             quota_recovery: None,
+            error_type: Some("server_overloaded".to_owned()),
             thread_id: "thread-failed-duration".to_owned(),
             outcome: ExecutionOutcome::Failed {
                 message: "upstream failed".to_owned(),
@@ -2910,6 +2919,7 @@ fn failed_responses_emit_runtime_turn_duration() {
         .try_recv()
         .expect("failed response should be emitted");
     assert_eq!(event["event"], "response.failed");
+    assert_eq!(event["payload"]["data"]["type"], "server_overloaded");
     assert_eq!(event["payload"]["subtaskId"], "turn-failed-duration");
     assert_eq!(event["payload"]["data"]["startedAt"], 1_780_000_000_000_i64);
     assert_eq!(event["payload"]["data"]["durationMs"], 2_500);
@@ -4616,7 +4626,7 @@ async fn create_task_keeps_board_comment_session_persistent_across_store_reload(
 }
 
 #[test]
-fn runtime_model_selection_change_detects_model_and_provider_type_boundaries() {
+fn runtime_model_selection_change_detects_model_and_provider_boundaries() {
     let mut link = RuntimeTaskLink::new_pending(
         "task-1".to_owned(),
         "/tmp/project".to_owned(),
@@ -4658,6 +4668,55 @@ fn runtime_model_selection_change_detects_model_and_provider_type_boundaries() {
             }
         })
     ));
+
+    link.runtime_handle["modelSelection"]["options"] = json!({
+        "runnerModelProvider": "company-a",
+        "reasoningEffort": "high"
+    });
+    let provider_switch = json!({
+        "modelSelection": {
+            "modelName": "gpt-5.6-sol",
+            "modelType": "runtime",
+            "options": {
+                "runnerModelProvider": "company-b",
+                "reasoningEffort": "high"
+            }
+        }
+    });
+    assert!(runtime_model_selection_changed(&link, &provider_switch));
+    assert!(runtime_model_provider_changed(&link, &provider_switch));
+
+    let mut request = ExecutionRequest::default();
+    mark_runtime_model_switch(&mut request, &link, &provider_switch);
+    assert_eq!(request.extra["wework_model_switched"], true);
+    assert_eq!(request.extra["wework_model_provider_switched"], true);
+
+    link.runtime_handle["modelSelection"]["options"] = json!({
+        "codexProviderId": "openai"
+    });
+    assert!(runtime_model_provider_changed(
+        &link,
+        &json!({
+            "modelSelection": {
+                "modelName": "gpt-5.6-sol",
+                "modelType": "runtime",
+                "options": {"codexProviderId": "company"}
+            }
+        })
+    ));
+
+    link.runtime_handle["modelSelection"]["options"] = json!({
+        "runnerModelProvider": "company-a"
+    });
+    let model_only_switch = json!({
+        "modelSelection": {
+            "modelName": "kimi-k3",
+            "modelType": "runtime",
+            "options": {"runnerModelProvider": "company-a"}
+        }
+    });
+    assert!(runtime_model_selection_changed(&link, &model_only_switch));
+    assert!(!runtime_model_provider_changed(&link, &model_only_switch));
 }
 
 #[test]
@@ -5545,8 +5604,33 @@ fn temp_runtime_work_index_path(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!(
         "wegent-runtime-work-{label}-{}-{}.json",
         std::process::id(),
-        now_ms()
+        uuid::Uuid::new_v4()
     ))
+}
+
+#[test]
+fn same_label_fixture_paths_are_unique_under_parallel_creation() {
+    let paths = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..4)
+            .map(|_| {
+                scope.spawn(|| {
+                    (0..32)
+                        .map(|_| temp_runtime_work_index_path("preparation-terminal-state"))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|worker| worker.join().unwrap())
+            .collect::<Vec<_>>()
+    });
+    let unique: std::collections::HashSet<_> = paths.iter().collect();
+    assert_eq!(
+        unique.len(),
+        paths.len(),
+        "Parallel fixtures must never share a runtime store"
+    );
 }
 
 fn initialize_test_repository(path: &Path) {
@@ -5798,4 +5882,102 @@ async fn decision_proxy_unregister_is_idempotent() {
         assert_eq!(result["unregistered"], true);
     }
     assert!(crate::server::local_decision_proxy::lookup_route(&token).is_none());
+}
+
+#[tokio::test]
+async fn task_bound_archive_snapshots_only_its_managed_worktree() {
+    let root = temp_runtime_work_index_path("task-bound-archive").with_extension("directory");
+    let source = root.join("source");
+    initialize_test_repository(&source);
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
+    handler.worktrees = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    handler
+        .worktrees
+        .update_settings(WorktreeSettingsPatch {
+            worktree_root: Some(root.join("managed").display().to_string()),
+            ..WorktreeSettingsPatch::default()
+        })
+        .unwrap();
+    let prepared = handler
+        .worktrees
+        .prepare(&source, "archive-owned", None, false)
+        .unwrap();
+    let path = PathBuf::from(&prepared.path);
+    fs::write(path.join("uncommitted.txt"), "preserve me").unwrap();
+    let task = RuntimeTaskLink::new_pending(
+        "archive-owned".to_owned(),
+        prepared.path.clone(),
+        "Archive owned".to_owned(),
+    );
+    handler.upsert_local_task(task);
+    let result = handler
+        .archive_task(json!({"taskId":"archive-owned", "cleanupWorktree":true, "path":source}))
+        .await
+        .unwrap();
+    assert_eq!(result["accepted"], true, "{result}");
+    assert!(result["cleanupError"].is_null(), "{result}");
+    assert!(!path.exists());
+    assert!(source.join("tracked.txt").exists());
+    handler.worktrees.restore(&path).unwrap();
+    assert_eq!(
+        fs::read_to_string(path.join("uncommitted.txt")).unwrap(),
+        "preserve me"
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn task_bound_archive_keeps_regular_project_files_and_live_shared_worktrees() {
+    let root =
+        temp_runtime_work_index_path("task-bound-archive-shared").with_extension("directory");
+    let source = root.join("source");
+    initialize_test_repository(&source);
+    let mut handler = RuntimeWorkRpcHandler::new("device-1", "/bin/false");
+    handler.store = RuntimeWorkStore::new(root.join("runtime-work/index.json"));
+    handler.worktrees = WorktreeManager::new(root.join("runtime-work/worktrees.json"));
+    handler
+        .worktrees
+        .update_settings(WorktreeSettingsPatch {
+            worktree_root: Some(root.join("managed").display().to_string()),
+            ..WorktreeSettingsPatch::default()
+        })
+        .unwrap();
+    let prepared = handler
+        .worktrees
+        .prepare(&source, "shared-a", None, false)
+        .unwrap();
+    let unrelated = handler
+        .worktrees
+        .prepare(&source, "regular", None, false)
+        .unwrap();
+    for (id, path) in [
+        ("regular", source.display().to_string()),
+        ("shared-a", prepared.path.clone()),
+        ("shared-b", prepared.path.clone()),
+    ] {
+        handler.upsert_local_task(RuntimeTaskLink::new_pending(
+            id.to_owned(),
+            path,
+            id.to_owned(),
+        ));
+    }
+    for id in ["regular", "shared-a"] {
+        let result = handler
+            .archive_task(json!({"taskId":id, "cleanupWorktree":true}))
+            .await
+            .unwrap();
+        assert_eq!(result["accepted"], true, "{result}");
+        assert!(result["cleanupError"].is_null(), "{result}");
+    }
+    assert!(source.join("tracked.txt").exists());
+    assert!(Path::new(&unrelated.path).exists());
+    assert!(Path::new(&prepared.path).exists());
+    let result = handler
+        .archive_task(json!({"taskId":"shared-b", "cleanupWorktree":true}))
+        .await
+        .unwrap();
+    assert_eq!(result["accepted"], true, "{result}");
+    assert!(!Path::new(&prepared.path).exists());
+    let _ = fs::remove_dir_all(root);
 }

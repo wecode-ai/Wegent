@@ -22,6 +22,7 @@ fn session_recovery_uses_native_receipts_and_never_restarts_unresolved_commands(
         state: CommandState::Settled,
         accepted_at: 1,
         owner_resolution: None,
+        resource_event_keys: Vec::new(),
         native: None,
         turn: SpawnTurnRequest {
             task_kind: None,

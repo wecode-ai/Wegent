@@ -21,7 +21,42 @@ import {
   resolveStartupTimeout,
   startupFailureMessage,
   validateStartOptions,
+  waitForFreshControlClient,
 } from './ai-verify.mjs'
+
+test('waits for the requested renderer even when workspace windows register first or last', async () => {
+  vi.useFakeTimers()
+  const status = windowClients => ({
+    ok: true,
+    json: async () => ({ windowClients, readyInfo: { clientId: 'workspace-new' } }),
+  })
+  const fetchStatus = vi
+    .fn()
+    .mockResolvedValueOnce(status({ main: 'main-old', workspace: 'workspace-new' }))
+    .mockResolvedValueOnce(status({ main: 'main-new', workspace: 'workspace-new' }))
+  vi.stubGlobal('fetch', fetchStatus)
+  try {
+    let complete = false
+    const pending = waitForFreshControlClient(
+      { controlUrl: 'http://127.0.0.1:1234' },
+      'test-token',
+      'main-old',
+      1000
+    ).then(() => {
+      complete = true
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(complete).toBe(false)
+    expect(fetchStatus).toHaveBeenCalledTimes(1)
+    await vi.advanceTimersByTimeAsync(100)
+    await pending
+    expect(complete).toBe(true)
+    expect(fetchStatus).toHaveBeenCalledTimes(2)
+  } finally {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  }
+})
 
 describe('AI_VERIFY_ACTIONS', () => {
   test('preserves the complete legacy command surface', () => {
@@ -64,6 +99,7 @@ describe('AI_VERIFY_ACTIONS', () => {
       'select-file': 'selectFile',
       'drop-paths': 'dropPaths',
       fill: 'fill',
+      select: 'select',
       'get-attribute': 'getAttribute',
       hover: 'hover',
       metrics: 'getElementMetrics',
@@ -266,6 +302,14 @@ describe('resolveOptionalBoolean', () => {
 })
 
 describe('validateStartOptions', () => {
+  test('accepts an explicit boolean for startup video recording', () => {
+    expect(() => validateStartOptions({ record: 'true' })).not.toThrow()
+    expect(() => validateStartOptions({ record: 'false' })).not.toThrow()
+    expect(() => validateStartOptions({ record: 'yes' })).toThrow(
+      '--record must be "true" or "false"'
+    )
+  })
+
   test('accepts the Electron start options', () => {
     expect(() =>
       validateStartOptions({

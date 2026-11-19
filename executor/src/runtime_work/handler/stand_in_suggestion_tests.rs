@@ -82,6 +82,7 @@ fn accept_activity(handler: &RuntimeWorkRpcHandler, command_id: &str) {
         state: CommandState::Settled,
         accepted_at: 1,
         owner_resolution: None,
+        resource_event_keys: Vec::new(),
         native: None,
         turn: SpawnTurnRequest {
             task_kind: None,

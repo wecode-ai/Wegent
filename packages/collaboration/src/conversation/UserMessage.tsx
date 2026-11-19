@@ -16,6 +16,7 @@ import {
   MessageSquare,
   Package,
   PackageOpen,
+  Radio,
   Target,
 } from 'lucide-react'
 import type { Attachment } from '@wegent/chat-core/runtime'
@@ -172,6 +173,27 @@ export function UserMessage({
   const codeCommentCount = message.codeComments?.length ?? 0
 
   if (isStandInActivityMessage(message)) return null
+  if (message.source?.source === 'connection_event') {
+    return (
+      <div
+        data-testid="connection-event-message"
+        className="flex w-full min-w-0 items-start gap-2 text-sm text-text-secondary"
+      >
+        <Radio aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0" />
+        <span
+          className="min-w-0 truncate"
+          title={
+            typeof message.source.sourceName === 'string' ? message.source.sourceName : undefined
+          }
+        >
+          {t('connection_event_received')}
+          {typeof message.source.sourceName === 'string' && message.source.sourceName
+            ? ` · ${message.source.sourceName}`
+            : ''}
+        </span>
+      </div>
+    )
+  }
 
   return (
     <div

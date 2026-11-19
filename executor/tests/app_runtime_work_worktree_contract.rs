@@ -190,6 +190,68 @@ async fn worktree_preflight_rpc_reports_git_identity_without_creating_a_worktree
 }
 
 #[tokio::test]
+async fn worktree_preflight_enumerates_branches_only_when_requested_without_checkout() {
+    let _lock = env_lock().await;
+    let executor_home = temp_path("runtime-branch-read-home");
+    let source = temp_path("runtime-branch-read-source");
+    let _home = EnvGuard::set("WEGENT_EXECUTOR_HOME", executor_home.to_str().unwrap());
+    let (_device_type, _persistent_storage) = verified_cloud_worktree_env();
+    initialize_repository(&source);
+    run_git(&source, &["branch", "feature/mobile"]);
+    let head_before = fs::read_to_string(source.join(".git/HEAD")).unwrap();
+    let handler = RuntimeWorkRpcHandler::new("device-1", "unused");
+    for include_branches in [false, true] {
+        let response = handler
+            .handle_runtime_rpc(json!({
+                "method": "runtime.worktrees.preflight",
+                "payload": { "sourcePath": source, "includeBranches": include_branches }
+            }))
+            .await
+            .unwrap();
+        assert_eq!(response["gitRepository"], true);
+        if include_branches {
+            assert!(response["branches"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("feature/mobile")));
+            assert!(response["branches"]
+                .as_array()
+                .unwrap()
+                .contains(&response["currentBranch"]));
+        } else {
+            assert!(response.get("branches").is_none());
+        }
+    }
+    assert_eq!(
+        fs::read_to_string(source.join(".git/HEAD")).unwrap(),
+        head_before
+    );
+    let response = handler
+        .handle_runtime_rpc(json!({
+            "method": "runtime.worktrees.preflight",
+            "payload": { "sourcePath": source, "ref": "feature/mobile", "includeBranches": true }
+        }))
+        .await
+        .unwrap();
+    assert_eq!(response["gitRef"], "feature/mobile");
+    assert_eq!(
+        response["currentBranch"],
+        head_before.trim().strip_prefix("ref: refs/heads/").unwrap()
+    );
+    run_git(&source, &["checkout", "--detach"]);
+    let detached = handler.handle_runtime_rpc(json!({
+        "method": "runtime.worktrees.preflight", "payload": { "sourcePath": source, "includeBranches": true }
+    })).await.unwrap();
+    assert_eq!(detached["currentBranch"], serde_json::Value::Null);
+    assert!(detached["branches"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("feature/mobile")));
+    let _ = fs::remove_dir_all(source);
+    let _ = fs::remove_dir_all(executor_home);
+}
+
+#[tokio::test]
 async fn worktree_task_create_rejects_non_git_source_without_fallback() {
     let _lock = env_lock().await;
     let executor_home = temp_path("runtime-worktree-create-home");

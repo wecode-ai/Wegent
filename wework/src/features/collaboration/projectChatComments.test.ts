@@ -5,6 +5,41 @@ import { experienceMessageFixture } from '@/features/collaboration-exp/model/fix
 import { createProjectChatComments } from './projectChatComments'
 
 describe('canonical project chat comments adapter', () => {
+  it('uses the local verified publication capability and preserves its provenance', async () => {
+    const publishAssistantMessage = vi.fn().mockResolvedValue(
+      experienceMessageFixture({
+        generationSource: 'ai',
+        publicationSource: 'human',
+        confirmationState: 'authorized',
+        content: 'Public conclusion',
+        actorUserId: '7',
+      })
+    )
+    const send = vi.fn()
+    const comments = createProjectChatComments(
+      { send, publishAssistantMessage } as unknown as ProjectChatClient,
+      async () => 'project-1'
+    )
+    const published = await comments.createAssistantPublication!('EXP-1', 'Public conclusion', {
+      clientMessageId: 'publication-1',
+      projectId: 'project-1',
+      assistantSource: { deviceId: 'device-1', taskId: 'task-1' },
+    })
+    expect(publishAssistantMessage).toHaveBeenCalledExactlyOnceWith({
+      projectId: 'project-1',
+      taskId: 'EXP-1',
+      text: 'Public conclusion',
+      clientMessageId: 'publication-1',
+      source: { deviceId: 'device-1', taskId: 'task-1' },
+    })
+    expect(published).toMatchObject({
+      generation_source: 'ai',
+      publication_source: 'human',
+      confirmation_state: 'authorized',
+      actor_user_id: '7',
+    })
+    expect(send).not.toHaveBeenCalled()
+  })
   it('preserves explicit request ids while ordinary equal-body comments remain distinct intents', async () => {
     const send = vi.fn().mockResolvedValue(experienceMessageFixture())
     const comments = createProjectChatComments(
@@ -62,5 +97,44 @@ describe('canonical project chat comments adapter', () => {
     ])
     expect(subscribe).toHaveBeenCalledWith('project-1', 'EXP-1', 0, expect.any(Function))
     expect(unsubscribe).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps verified assistant publication on the activity transport', async () => {
+    const publishActivity = vi.fn().mockResolvedValue({ id: 'comment-1' })
+    const comments = createProjectChatComments(
+      { send: vi.fn() } as unknown as ProjectChatClient,
+      async () => 'project-1',
+      publishActivity
+    )
+    await comments.createAssistantPublication!('EXP-1', 'Public conclusion', {
+      clientMessageId: 'publication-1',
+      projectId: 'project-1',
+      assistantSource: { deviceId: 'device-1', taskId: 'task-1' },
+    })
+    expect(publishActivity).toHaveBeenCalledExactlyOnceWith('EXP-1', 'Public conclusion', {
+      clientMessageId: 'publication-1',
+      projectId: 'project-1',
+      assistantSource: { deviceId: 'device-1', taskId: 'task-1' },
+    })
+  })
+
+  it('forwards assistant provenance to a local activity transport', async () => {
+    const message = experienceMessageFixture({ content: 'Public conclusion' })
+    const send = vi.fn().mockResolvedValue(message)
+    const comments = createProjectChatComments(
+      { send } as unknown as ProjectChatClient,
+      async () => 'project-1'
+    )
+    await comments.create('EXP-1', 'Public conclusion', {
+      clientMessageId: 'publication-1',
+      assistantSource: { deviceId: 'device-1', taskId: 'task-1' },
+    })
+    expect(send).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      taskId: 'EXP-1',
+      clientMessageId: 'publication-1',
+      text: 'Public conclusion',
+      assistantSource: { deviceId: 'device-1', taskId: 'task-1' },
+    })
   })
 })

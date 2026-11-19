@@ -1,3 +1,21 @@
+vi.mock('./ConversationMenu', () => ({
+  ConversationMenu: (props: {
+    renderRow?: (input: object) => React.ReactNode
+    onArchive: () => void
+  }) =>
+    React.createElement(
+      'ConversationMenu',
+      props,
+      props.renderRow?.({ disabled: false, onArchive: props.onArchive, onLongPress: vi.fn() })
+    ),
+}))
+vi.mock('./SwipeArchiveRow', () => ({
+  SwipeArchiveRow: (props: {
+    children: (onPress: () => void) => React.ReactNode
+    onPress: () => void
+  }) => React.createElement('SwipeRow', props, props.children(props.onPress)),
+}))
+vi.mock('./ProjectMenu', () => ({ ProjectMenu: 'ProjectMenu' }))
 import React from 'react'
 import { FlatList, Keyboard, StyleSheet, View } from 'react-native'
 import { act, create, type ReactTestRenderer } from 'react-test-renderer'
@@ -5,6 +23,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { ConversationItem, DeviceInfo, RuntimeDeviceWorkspace } from '@/types/runtime'
 import { ConversationListScreen } from './ConversationListScreen'
+import { setDiagnosticRecording } from '@/services/mobileDiagnostics'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -104,22 +123,29 @@ describe('new conversation controls', () => {
   let renderer: ReactTestRenderer
   afterEach(async () => {
     if (renderer) await act(() => renderer.unmount())
+    setDiagnosticRecording(false)
     environment.platform = 'ios'
     environment.keyboardVisible = false
     vi.clearAllMocks()
+    vi.restoreAllMocks()
   })
 
   async function render(
     devices: DeviceInfo[],
     workspaces: Array<{ projectName: string; workspace: RuntimeDeviceWorkspace }> = [],
-    conversations: ConversationItem[] = []
+    conversations: ConversationItem[] = [],
+    overrides: Partial<React.ComponentProps<typeof ConversationListScreen>> = {}
   ) {
     const onNewConversation = vi.fn()
     const onSearch = vi.fn()
     const onSettings = vi.fn()
     const onSelectDevice = vi.fn()
+    const onRefresh = vi.fn(async () => {})
+    const onRefreshDevices = vi.fn(async () => {})
     const element = (
       <ConversationListScreen
+        failures={[]}
+        onRetryFailure={vi.fn()}
         devices={devices}
         conversations={conversations}
         workspaces={workspaces}
@@ -130,25 +156,84 @@ describe('new conversation controls', () => {
         loading={false}
         refreshing={false}
         onSearch={onSearch}
-        onRefresh={vi.fn()}
+        onRefresh={onRefresh}
+        onRefreshDevices={onRefreshDevices}
         onSelectDevice={onSelectDevice}
         onSelectAllDevices={vi.fn()}
         onSelectConversation={vi.fn()}
         onNewConversation={onNewConversation}
         onNewProject={vi.fn()}
         onSettings={onSettings}
+        {...overrides}
       />
     )
     await act(() => {
       renderer = create(element)
     })
-    const rerender = () => act(() => renderer.update(React.cloneElement(element)))
+    const rerender = (patch: Partial<React.ComponentProps<typeof ConversationListScreen>> = {}) =>
+      act(() => renderer.update(React.cloneElement(element, patch)))
     const pressable = (testID: string) =>
       renderer.root.findAll(
         node => node.type === ('Pressable' as React.ElementType) && node.props.testID === testID
       )[0]!
-    return { onNewConversation, onSearch, onSettings, onSelectDevice, pressable, rerender }
+    return {
+      onNewConversation,
+      onSearch,
+      onSettings,
+      onSelectDevice,
+      onRefresh,
+      onRefreshDevices,
+      pressable,
+      rerender,
+    }
   }
+
+  it('finishes list diagnostics only after a real snapshot is committed without loading', async () => {
+    const output = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    setDiagnosticRecording(true)
+    const { rerender } = await render([computer])
+    const completed = () =>
+      output.mock.calls.filter(
+        ([event, details]) =>
+          event === '[MobileLifecycle]' &&
+          details.operation === 'conversation-list' &&
+          details.phase === 'complete'
+      )
+    expect(completed()).toHaveLength(0)
+    await rerender({ loading: true, snapshotReady: true })
+    expect(completed()).toHaveLength(0)
+    await rerender({ loading: false, snapshotReady: true })
+    expect(completed()).toHaveLength(1)
+    expect(completed()[0]?.[1]).toMatchObject({ conversations: 0, snapshotReady: 1, loading: 0 })
+  })
+
+  it('does not attach list layout diagnostics while recording is disabled', async () => {
+    setDiagnosticRecording(false)
+    await render([computer])
+    expect(renderer.root.findAllByType(FlatList).every(list => !list.props.onLayout)).toBe(true)
+  })
+
+  it('refreshes the device inventory independently without refreshing conversations', async () => {
+    const { pressable, onRefresh, onRefreshDevices } = await render([computer])
+    let finish!: () => void
+    onRefreshDevices.mockImplementation(
+      () =>
+        new Promise<void>(resolve => {
+          finish = resolve
+        })
+    )
+    await act(() => pressable('drawer-actions').props.onPress())
+    await act(() => {
+      pressable('drawer-refresh-devices').props.onPress()
+      pressable('drawer-refresh-devices').props.onPress()
+    })
+    expect(onRefreshDevices).toHaveBeenCalledOnce()
+    expect(onRefresh).not.toHaveBeenCalled()
+    expect(pressable('drawer-refresh-devices').props.disabled).toBe(true)
+    expect(pressable('drawer-settings').props.disabled).toBe(false)
+    await act(() => finish())
+    expect(pressable('drawer-refresh-devices').props.disabled).toBe(false)
+  })
 
   it('opens a new conversation with only the opted-in computer present', async () => {
     const { onNewConversation, pressable } = await render([computer])
@@ -183,7 +268,7 @@ describe('new conversation controls', () => {
     expect(icon.props.color).toBe('gray')
   })
 
-  it('allows new chat inside an existing computer workspace while keeping project creation disabled', async () => {
+  it('allows both project creation and new chat on the opted-in computer', async () => {
     const workspace: RuntimeDeviceWorkspace = {
       deviceId: 'app-record-11',
       deviceName: 'My only computer',
@@ -201,7 +286,7 @@ describe('new conversation controls', () => {
     await act(() => button.props.onPress())
     expect(onNewConversation).toHaveBeenCalledWith(workspace)
     await act(() => pressable('drawer-actions').props.onPress())
-    expect(pressable('drawer-new-project').props.disabled).toBe(true)
+    expect(pressable('drawer-new-project').props.disabled).toBe(false)
   })
 
   it('moves search into the header and restores the new-chat dock when dismissed', async () => {
@@ -333,5 +418,43 @@ describe('new conversation controls', () => {
         node => node.type === ('View' as never) && node.props.testID === 'device-carousel'
       )
     ).toHaveLength(1)
+  })
+  it('allows one revealed archive row and closes it on native scrolling or a scope change', async () => {
+    const conversations: ConversationItem[] = ['first', 'second'].map(taskId => ({
+      address: { deviceId: computer.device_id, taskId },
+      sourceWorkspacePath: '/repo',
+      title: taskId,
+      deviceName: computer.name,
+      projectName: null,
+      updatedAt: 1,
+      running: false,
+    }))
+    const actions = {
+      threadId: 'thread',
+      canPin: true,
+      pinned: false,
+      onPin: vi.fn(),
+      onRename: vi.fn(),
+      onArchive: vi.fn(),
+      onSettings: vi.fn(),
+    }
+    const state = await render([computer], [], conversations, {
+      conversationActions: () => actions,
+    })
+    const rows = () => renderer.root.findAllByType('SwipeRow' as never)
+    expect(rows()).toHaveLength(2)
+    await act(() => rows()[0]!.props.onOpen())
+    expect(rows().map(row => row.props.open)).toEqual([true, false])
+    await act(() => {
+      rows()[1]!.props.onSwipeStart()
+      rows()[1]!.props.onOpen()
+    })
+    expect(rows().map(row => row.props.open)).toEqual([false, true])
+    await act(() => renderer.root.findByType(FlatList).props.onScrollBeginDrag())
+    expect(rows().every(row => !row.props.open)).toBe(true)
+    await act(() => rows()[0]!.props.onOpen())
+    await state.rerender({ search: 'first' })
+    expect(rows().every(row => !row.props.open)).toBe(true)
+    expect(renderer.root.findAllByProps({ name: 'ellipsis-horizontal' })).toHaveLength(0)
   })
 })

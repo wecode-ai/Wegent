@@ -39,6 +39,9 @@ class RuntimeWorktreePreflightRequest(RuntimeWorktreeDeviceRequest):
 
     source_path: str = Field(..., alias="sourcePath", min_length=1)
     ref: Optional[str] = None
+    include_branches: Optional[bool] = Field(
+        default=None, alias="includeBranches", strict=True
+    )
 
 
 class RuntimeWorktreeSettingsPatch(RuntimeWorktreeDeviceRequest):
@@ -88,6 +91,12 @@ class RuntimeTaskAddress(BaseModel):
         default=None,
         alias="runtimeHandle",
     )
+
+
+class RuntimeTaskArchiveRequest(RuntimeTaskAddress):
+    """Archive a task and optionally snapshot its exclusively owned managed worktree."""
+
+    cleanup_worktree: bool = Field(default=False, alias="cleanupWorktree", strict=True)
 
 
 class RuntimeModelSelection(BaseModel):
@@ -212,6 +221,12 @@ class RuntimeMessageSource(BaseModel):
     message_id: Optional[str] = None
 
 
+class RuntimeConnectionEventSource(BaseModel):
+    """Attribution for a host-delivered connection event."""
+
+    source: Literal["connection_event"]
+
+
 class NormalizedRuntimeMessage(BaseModel):
     """Normalized message rendered by Wework for native runtime transcripts."""
 
@@ -228,7 +243,7 @@ class NormalizedRuntimeMessage(BaseModel):
     subtask_id: Optional[str | int] = Field(default=None, alias="subtaskId")
     status: Optional[str] = None
     created_at: Optional[str | int] = Field(default=None, alias="createdAt")
-    source: Optional[RuntimeMessageSource] = None
+    source: Optional[RuntimeMessageSource | RuntimeConnectionEventSource] = None
     attachments: list[dict[str, Any]] = Field(default_factory=list)
     blocks: list[dict[str, Any]] = Field(default_factory=list)
     file_changes: Optional[dict[str, Any]] = Field(default=None, alias="fileChanges")
@@ -628,6 +643,15 @@ class RuntimeWorkSearchResponse(BaseModel):
     items: list[RuntimeWorkSearchItem] = Field(default_factory=list)
 
 
+class RuntimeIMQuestionAnswer(BaseModel):
+    """An answer interpreted from one authenticated private IM message."""
+
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
+
+    reply_token: str = Field(..., alias="replyToken", min_length=1)
+    question_id: str = Field(..., alias="questionId", min_length=1)
+
+
 class RuntimeSendRequest(BaseModel):
     """Request to continue a native runtime task."""
 
@@ -636,6 +660,9 @@ class RuntimeSendRequest(BaseModel):
     address: RuntimeTaskAddress
     message: str = Field(..., min_length=1)
     queue_if_busy: bool = Field(default=False, alias="queueIfBusy")
+    resource_event_keys: Optional[list[str]] = Field(
+        default=None, alias="resourceEventKeys", max_length=1000
+    )
     conversation_context: Optional[Literal["private_discussion"]] = Field(
         default=None, alias="conversationContext"
     )
@@ -648,10 +675,13 @@ class RuntimeSendRequest(BaseModel):
         default=None,
         alias="modelSelection",
     )
-    source: Optional[RuntimeMessageSource] = None
+    source: Optional[RuntimeMessageSource | RuntimeConnectionEventSource] = None
     request_user_input_response: Optional[dict[str, Any]] = Field(
         default=None,
         alias="requestUserInputResponse",
+    )
+    im_question_answer: Optional[RuntimeIMQuestionAnswer] = Field(
+        default=None, alias="imQuestionAnswer"
     )
     additional_context: Optional[dict[str, dict[str, Any]]] = Field(
         default=None,
@@ -874,6 +904,7 @@ class RuntimeTaskArchiveResponse(BaseModel):
     accepted: bool
     local_task_id: str = Field(..., alias="taskId")
     workspace_path: Optional[str] = Field(default=None, alias="workspacePath")
+    cleanup_error: Optional[str] = Field(default=None, alias="cleanupError")
     error: Optional[str] = None
 
 

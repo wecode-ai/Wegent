@@ -59,6 +59,8 @@ pub(super) struct IssueAssignmentResponse {
     receipt_tracking: bool,
     human_read_at: Option<String>,
     stand_in_received_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) dispatch_receipt: Option<serde_json::Value>,
 }
 
 /// `IssueAssignmentListResponse`.
@@ -83,7 +85,14 @@ pub(super) async fn list_assignments(
     current_user: &FlexibleUser,
 ) -> Result<IssueAssignmentListResponse, FastApiError> {
     require_issue_read(state, item_id, current_user).await?;
-    list_assignment_items(&state.mysql, item_id, current_user).await
+    let mut result = list_assignment_items(&state.mysql, item_id, current_user).await?;
+    for item in &mut result.items {
+        if let Some(receipt) = item.dispatch_receipt.as_mut() {
+            super::assignment_receipts::project_delivery(state, receipt).await?;
+            super::assignment_receipts::project_device_wait(state, receipt).await;
+        }
+    }
+    Ok(result)
 }
 
 /// Read and render assignments after the existing Issue access checks.
@@ -137,7 +146,19 @@ pub(crate) async fn require_issue_read_for_user(
         .map_err(internal)?
         .ok_or_else(|| FastApiError::detail(StatusCode::NOT_FOUND, "Project not found"))?;
     // `issue_assignment_service.list`.
-    let access = require_cloud_project_role(state, &project.id, user_id).await?;
+    let access = match require_cloud_project_role(state, &project.id, user_id).await {
+        Ok(access) => access,
+        Err(error) => {
+            if error.status() == StatusCode::NOT_FOUND
+                && super::issue_invitation::permits_read(&state.mysql, item_id, user_id)
+                    .await
+                    .map_err(internal)?
+            {
+                return Ok(());
+            }
+            return Err(error);
+        }
+    };
     // `_require_issue_project` re-reads the item through the session's identity
     // map, so it issues no statement.
     if is_external_provider(&access.project) {
@@ -460,6 +481,7 @@ async fn assignment_response(
         receipt_tracking: metadata.receipt_tracking.unwrap_or(false),
         human_read_at: metadata.human_read_at.clone(),
         stand_in_received_at: metadata.stand_in_received_at.clone(),
+        dispatch_receipt: metadata.dispatch_receipt.clone(),
     })
 }
 
@@ -640,6 +662,7 @@ mod tests {
             receipt_tracking: false,
             human_read_at: None,
             stand_in_received_at: None,
+            dispatch_receipt: None,
         };
         let value = crate::json_contract_tests::serialized(&row).unwrap();
         assert_eq!(

@@ -4,6 +4,7 @@ import {
   evictConversationViewport,
   getConversationViewportCacheStats,
 } from '@wegent/collaboration/conversation/conversationViewportCache'
+import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
 import { getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
 import type {
   DeviceInfo,
@@ -283,6 +284,29 @@ export function notifyRuntimeConversation(
 
 export function cacheRuntimeConversationTurns(key: string, turns: RuntimeConversationTurn[]): void {
   if (archivedConversationKeys.has(key)) return
+  if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+    const retryState = (entries: RuntimeConversationTurn[]) =>
+      entries.flatMap(turn => {
+        const blocks = turn.items.flatMap(item =>
+          item.type === 'block' &&
+          item.block.type === 'tool' &&
+          item.block.toolName === 'runtime_reconnecting'
+            ? [
+                {
+                  id: item.id,
+                  status: item.block.status,
+                  reason: item.block.toolInput?.retry_reason,
+                },
+              ]
+            : []
+        )
+        return blocks.length ? [{ id: turn.id, status: turn.status, blocks }] : []
+      })
+    const previous = retryState(turnsByConversation.get(key) ?? [])
+    const next = retryState(turns)
+    if ((previous.length || next.length) && JSON.stringify(previous) !== JSON.stringify(next))
+      console.debug('[Wework] Runtime retry conversation state', { key, previous, next })
+  }
   projectedMessagesByConversation.delete(key)
   cacheBoundedEntry(turnsByConversation, key, turns, evictedKey => {
     projectedMessagesByConversation.delete(evictedKey)
@@ -363,8 +387,24 @@ export function unmarkRuntimeConversationArchived(key: string): void {
   archivedConversationKeys.delete(key)
 }
 
+function terminalConversationIdleTtlMs(): number {
+  const config = getDesktopE2ERuntimeConfig()
+  const configured = config.conversationCacheIdleTtlMs
+  return config.controlUrl &&
+    !config.disabled &&
+    typeof configured === 'number' &&
+    Number.isInteger(configured) &&
+    configured > 0
+    ? configured
+    : TERMINAL_CONVERSATION_IDLE_TTL_MS
+}
+
 export function getRuntimeConversationCacheStats() {
-  return { messageEntries: turnsByConversation.size, ...getConversationViewportCacheStats() }
+  return {
+    messageEntries: turnsByConversation.size,
+    idleTtlMs: terminalConversationIdleTtlMs(),
+    ...getConversationViewportCacheStats(),
+  }
 }
 
 export function clearRuntimeConversationCacheStore(): void {
@@ -395,7 +435,7 @@ export function scheduleTerminalConversationEviction(key: string): void {
     if (!canEvictTerminalConversation(key)) return
     evictRuntimeConversationKey(key)
     notifyRuntimeConversation(key)
-  }, TERMINAL_CONVERSATION_IDLE_TTL_MS)
+  }, terminalConversationIdleTtlMs())
   terminalConversationEvictionTimers.set(key, timer)
 }
 

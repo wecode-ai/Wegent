@@ -6,6 +6,16 @@ sidebar_position: 11
 
 Use Wework Mobile on iPhone or Android to view and control projects and conversations on the selected device. iPhone builds containing the local runtime can also run the Executor and official Codex directly on the phone. To access a computer's tasks, enable remote access as described in [Devices and cloud work](./devices.md) and keep that computer online.
 
+## Managing projects and conversations
+
+Choose **Wework ▾ → New project** on the home screen, select an online execution device, and enter an existing absolute project directory on that device and a project name. This supports the phone-local environment, cloud devices, and computers with remote task access enabled. The project and name are saved together through the PC interface. Computer paths are validated on that computer.
+
+The **…** menu beside a project offers **Pin / Unpin, Rename, Archive all project chats, and Remove project**. Removal requires confirmation and removes only the Wework listing, preserving files and conversations. A multi-root project keeps one identity; same-name projects on different computers remain independent.
+
+Swipe a conversation row left to reveal the red **Archive** button. Archival requires tapping that button; a full swipe does not archive. Only one row stays revealed, and scrolling, searching, or changing devices closes it. Long-press a conversation row to open the native menu with **Pin / Unpin, Rename, Copy thread ID, and Archive**. Open **Wework ▾ → Archived conversations** to search, restore, or permanently delete archives on the selected device. Permanent deletion requires confirmation and cannot be undone; ordinary project files remain. Archiving delegates managed-worktree snapshot cleanup to the owning executor. Worktrees shared by unarchived conversations remain; restoring a conversation restores its saved worktree.
+
+Remote computer operations require the same account and current consent on the target installation. Revocation blocks subsequent requests. Failed operations preserve content and show native errors. If an accepted write is followed by a failed list read, retry the list read through its error entry without repeating the mutation.
+
 ## Run on this phone
 
 The app opens directly into the task list without Backend login. Builds with the runtime prepare
@@ -48,14 +58,14 @@ iOS uses the system's limited background execution allowance to let foreground-s
 The app opens directly to **Pinned / Projects / Tasks**, with **Ask Wework** at the bottom.
 The current mobile interface uses the Chinese labels shown below.
 
-| Entry                                    | Action                                                                                                                                                      |
-| ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Top-left menu                            | Open the sidebar; tap **Wework** to return home, settings beside the account to configure connections, or the avatar failure badge to retry                 |
-| **Wework ▾** at the top                  | Open **New project (新建项目)**, **Settings (设置)**, or **Show all devices (显示全部设备)**; project creation depends on the current device's capabilities |
-| Top-right search icon                    | Filter conversations in the current scope by conversation title, project name, or device name; the close button exits search and clears the query           |
-| Device strip                             | Appears after Wegent login; tap **All (全部)** for online devices' conversations, or a device name to narrow the scope                                      |
-| **Pinned (置顶)**                        | Expand or collapse pinned conversations, using the pinned state and order saved on desktop                                                                  |
-| **Projects (项目)** and **Tasks (任务)** | Expand or collapse a section; tap a conversation title to open it, or pull down to refresh the list                                                         |
+| Entry                                    | Action                                                                                                                                                                                               |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Top-left menu                            | Open the sidebar; tap **Wework** to return home, settings beside the account to configure connections, or the avatar failure badge to retry                                                          |
+| **Wework ▾** at the top                  | Open **New project (新建项目)**, **Archived conversations (已归档会话)**, **Settings (设置)**, or **Show all devices (显示全部设备)**; project creation depends on the current device's capabilities |
+| Top-right search icon                    | Filter conversations in the current scope by conversation title, project name, or device name; the close button exits search and clears the query                                                    |
+| Device strip                             | Appears after Wegent login; tap **All (全部)** for online devices' conversations, or a device name to narrow the scope                                                                               |
+| **Pinned (置顶)**                        | Expand or collapse pinned conversations, using the pinned state and order saved on desktop                                                                                                           |
+| **Projects (项目)** and **Tasks (任务)** | Expand or collapse a section; tap a conversation title to open it, or pull down to refresh the list                                                                                                  |
 
 The device strip shows online devices by default and scrolls horizontally on its own. When you scroll the home list upward, the strip moves off screen with the list. Use **Wework ▾ → Show all devices (显示全部设备)** to inspect offline device status. Offline devices cannot execute a new conversation.
 
@@ -64,6 +74,10 @@ Projects with the same name remain separate for each device and workspace. Gray 
 ## Start or continue a conversation
 
 Tap **Ask Wework (向 Wework 提问)** at the bottom of the home screen to open a new conversation. Once the page transition finishes and the composer is available, it receives focus and opens the keyboard so you can type immediately. Choose a device and project above the composer. After selecting a workspace, you can use the existing workspace or create a Git worktree. Starting a conversation requires an online device in the current scope that supports task creation.
+
+After selecting a project, tap **Work locally → New worktree (在本地工作 → 新建工作树)**, then tap the branch row to open **Starting branch (启动分支)** and search existing branches. The current branch is the default. Sending the first message creates an independent worktree without checking out another branch in the original directory. Follow-up messages continue in that worktree. Selecting another project or device, or starting a new conversation, resets the launch mode and branch selection.
+
+The workspace-owning device checks worktree capabilities, the repository, and write access using the same rules as PC Wework. An unavailable **New worktree** option displays the reason. Failed reads can be explicitly retried, and current-workspace execution remains available. Phone-local execution and authorized remote devices use the same worktree protocol.
 
 Tap the composer to expand its toolbar, enter a message, and tap the up arrow to send. Use **Follow up (跟进)** to continue an existing conversation. While it runs, the square stop button cancels the current response. The top-left back button returns to the list; the compose icon at the top right of a conversation starts another conversation.
 

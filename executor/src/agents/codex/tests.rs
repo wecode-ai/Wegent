@@ -7,6 +7,27 @@ use serde_json::json;
 use super::*;
 
 #[test]
+fn provider_switch_boundary_uses_a_trusted_developer_item() {
+    let mut request = ExecutionRequest::default();
+    request
+        .extra
+        .insert("wework_model_provider_switched".to_owned(), json!(true));
+
+    assert!(request_model_provider_switched(&request));
+    let params = provider_switch_boundary_inject_params("thread-1");
+    assert_eq!(params["threadId"], "thread-1");
+    assert_eq!(
+        params["items"][0],
+        local_model_proxy::provider_switch_boundary_item()
+    );
+    assert_eq!(params["items"][0]["role"], "developer");
+    assert_eq!(
+        params["items"][0]["content"][0]["text"],
+        local_model_proxy::PROVIDER_SWITCH_BOUNDARY_TEXT
+    );
+}
+
+#[test]
 fn effective_git_credentials_are_pinned_in_app_server_and_tool_shells() {
     let environment = HashMap::from([
         ("GH_CONFIG_DIR".into(), "/device/git-auth/current/gh".into()),
@@ -44,6 +65,9 @@ fn cloud_config_bundle_failures_are_detected() {
     assert!(is_codex_cloud_config_error(
         "failed to reload config: timed out waiting for cloud config bundle after 20s"
     ));
+    assert!(is_codex_cloud_config_error("failed to read configuration layers: Your authentication session could not be refreshed automatically. Please log out and sign in again."));
+    assert!(is_codex_cloud_config_error("failed to load configuration: Your authentication session could not be refreshed automatically. Please log out and sign in again."));
+    assert!(!is_codex_cloud_config_error("Your authentication session could not be refreshed automatically. Please log out and sign in again."));
     assert!(!is_codex_cloud_config_error("model not found"));
 }
 

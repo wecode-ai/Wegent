@@ -23,26 +23,54 @@ import {
   runtimeProjectUiId,
   standaloneRuntimeProjectKey,
 } from '@/lib/runtime-project'
-import { workbenchDeviceMatchesId } from '@/lib/workbench-device'
+import { findWorkbenchDevice, workbenchDeviceMatchesId } from '@/lib/workbench-device'
 import {
   findRuntimeTaskProjectWork,
   getDefaultProjectDeviceWorkspaceId,
   mergeRuntimeTaskAddresses,
   mergeRuntimeTaskHandles,
   removeRuntimeTasks,
+  runtimeWorkContainsTask,
   updateRuntimeWorkTask,
   updateRuntimeWorkTaskPinned,
   updateRuntimeWorkTaskTitle,
 } from './workbenchRuntimeHelpers'
 import {
   normalizeRuntimeTaskSummary,
+  mergeRuntimeTaskSnapshotMetadata,
   shouldReplaceRuntimeTaskProjection,
 } from './runtimeTaskLifecycle/projection'
 import { debugRuntimeSidebarState, summarizeRuntimeWorkTaskIds } from './runtimeSidebarDiagnostics'
+import { removeRuntimeProject, type RuntimeProjectRemoval } from './workbenchDataRefreshHelpers'
 
 type WorkbenchDeviceStatus = DeviceInfo['status']
 
 const OPTIMISTIC_TASK_PRESERVE_MS = 2 * 60 * 1000
+
+export function isRuntimeProjectSelectionRemoved(
+  state: Pick<WorkbenchState, 'currentProject' | 'currentRuntimeTask' | 'runtimeWork'>,
+  projectId: number,
+  runtimeWork: RuntimeWorkListResponse | null
+): boolean {
+  const currentProjectId = state.currentProject?.id
+  if (currentProjectId === projectId) return true
+  if (
+    currentProjectId != null &&
+    state.runtimeWork?.projects.some(
+      project => runtimeProjectUiId(project.project) === currentProjectId
+    ) &&
+    !runtimeWork?.projects.some(project => runtimeProjectUiId(project.project) === currentProjectId)
+  ) {
+    return true
+  }
+  return Boolean(
+    state.currentRuntimeTask &&
+    state.runtimeWork &&
+    runtimeWorkContainsTask(state.runtimeWork, state.currentRuntimeTask) &&
+    (!runtimeWork || !runtimeWorkContainsTask(runtimeWork, state.currentRuntimeTask))
+  )
+}
+
 export const initialWorkbenchState: WorkbenchState = {
   user: null,
   projects: [],
@@ -123,7 +151,10 @@ export type WorkbenchAction =
       defaultProjectSpace: RuntimeProjectSpaceRef | null
       aiSettings: RuntimeProjectAiSettings | null
     }
-  | { type: 'runtime_project_removed'; projectId: number }
+  | {
+      type: 'runtime_project_removed'
+      removal: RuntimeProjectRemoval
+    }
   | { type: 'device_workspace_prepared'; mapping: DeviceWorkspaceResponse }
   | {
       type: 'runtime_workspace_opened'
@@ -392,7 +423,7 @@ function mergeRuntimeTasks(
       const nextTask = nextById.get(task.taskId)
       if (nextTask) {
         return shouldReplaceRuntimeTaskProjection(task, nextTask)
-          ? nextTask
+          ? mergeRuntimeTaskSnapshotMetadata(nextTask, task)
           : mergeRuntimeTaskListState(task, nextTask)
       }
       if (
@@ -418,7 +449,7 @@ function mergeRuntimeTaskListState(
   next: RuntimeTaskSummary
 ): RuntimeTaskSummary {
   return {
-    ...current,
+    ...mergeRuntimeTaskSnapshotMetadata(current, next),
     ...(next.threadId ? { threadId: next.threadId } : {}),
     ...(next.pinned === undefined ? {} : { pinned: next.pinned }),
     ...(next.pinnedOrder === undefined ? {} : { pinnedOrder: next.pinnedOrder }),
@@ -695,7 +726,7 @@ function removeOptimisticRuntimeTask(
 function findRuntimeTaskAddressByTaskId(
   runtimeWork: RuntimeWorkListResponse | null | undefined,
   taskId: string,
-  deviceId?: string
+  deviceId: string
 ): RuntimeTaskAddress | null {
   if (!runtimeWork) return null
 
@@ -706,7 +737,7 @@ function findRuntimeTaskAddressByTaskId(
   ]
 
   for (const workspace of workspaces) {
-    if (deviceId && workspace.deviceId !== deviceId) continue
+    if (workspace.deviceId !== deviceId) continue
     const task = workspace.tasks.find(task => task.taskId === taskId)
     if (!task) continue
 
@@ -718,9 +749,6 @@ function findRuntimeTaskAddressByTaskId(
       ...(task.taskId ? { taskId: task.taskId } : {}),
       ...(task.threadId ? { threadId: task.threadId } : {}),
       ...(task.runtimeHandle ? { runtimeHandle: task.runtimeHandle } : {}),
-    }
-    if (match && match.deviceId !== address.deviceId) {
-      return null
     }
     match = address
   }
@@ -734,34 +762,29 @@ function reconcileCurrentRuntimeTaskAddress(
   runtimeWork: RuntimeWorkListResponse | null | undefined
 ): RuntimeTaskAddress | null {
   if (!currentRuntimeTask) return null
-  const hydratedCurrentDeviceTask = findRuntimeTaskAddressByTaskId(
+  const deviceId =
+    findWorkbenchDevice(devices, currentRuntimeTask.deviceId)?.device_id ??
+    currentRuntimeTask.deviceId
+  const hydratedTask = findRuntimeTaskAddressByTaskId(
     runtimeWork,
     currentRuntimeTask.taskId,
-    currentRuntimeTask.deviceId
+    deviceId
   )
-  if (hydratedCurrentDeviceTask) {
-    const runtimeHandle = mergeRuntimeTaskHandles(
-      currentRuntimeTask.runtimeHandle,
-      hydratedCurrentDeviceTask.runtimeHandle
-    )
-    return {
-      ...currentRuntimeTask,
-      workspacePath: hydratedCurrentDeviceTask.workspacePath,
-      ...(hydratedCurrentDeviceTask.threadId
-        ? { threadId: hydratedCurrentDeviceTask.threadId }
-        : {}),
-      ...(hydratedCurrentDeviceTask.workspacePath
-        ? { workspacePath: hydratedCurrentDeviceTask.workspacePath }
-        : {}),
-      ...(runtimeHandle ? { runtimeHandle } : {}),
-    }
-  }
-  if (devices.some(device => device.device_id === currentRuntimeTask.deviceId)) {
-    return currentRuntimeTask
-  }
-  return (
-    findRuntimeTaskAddressByTaskId(runtimeWork, currentRuntimeTask.taskId) ?? currentRuntimeTask
+  if (!hydratedTask) return currentRuntimeTask
+  const runtimeHandle = mergeRuntimeTaskHandles(
+    currentRuntimeTask.runtimeHandle,
+    hydratedTask.runtimeHandle
   )
+  return {
+    ...currentRuntimeTask,
+    ...(!currentRuntimeTask.runtime && hydratedTask.runtime
+      ? { runtime: hydratedTask.runtime }
+      : {}),
+    deviceId,
+    workspacePath: hydratedTask.workspacePath,
+    ...(hydratedTask.threadId ? { threadId: hydratedTask.threadId } : {}),
+    ...(runtimeHandle ? { runtimeHandle } : {}),
+  }
 }
 
 function resolveCurrentProjectAfterRefresh(
@@ -1268,20 +1291,17 @@ function reduceWorkbenchState(state: WorkbenchState, action: WorkbenchAction): W
           : state.runtimeWork,
       }
     case 'runtime_project_removed': {
-      const removedCurrentProject = state.currentProject?.id === action.projectId
       const runtimeWork = state.runtimeWork
-        ? {
-            ...state.runtimeWork,
-            projects: state.runtimeWork.projects.filter(
-              project => runtimeProjectUiId(project.project) !== action.projectId
-            ),
-          }
-        : state.runtimeWork
+        ? removeRuntimeProject(state.runtimeWork, action.removal)
+        : null
+      const removedCurrentProject = isRuntimeProjectSelectionRemoved(
+        state,
+        action.removal.projectId,
+        runtimeWork
+      )
       return {
         ...state,
-        runtimeWork: runtimeWork
-          ? { ...runtimeWork, totalTasks: countRuntimeWorkTasks(runtimeWork) }
-          : runtimeWork,
+        runtimeWork,
         currentProject: removedCurrentProject ? null : state.currentProject,
         selectedDeviceWorkspaceId: removedCurrentProject ? null : state.selectedDeviceWorkspaceId,
         pendingProjectWorkspaceProjectId: removedCurrentProject

@@ -14,11 +14,13 @@ export function TemplateSaveDialog({
   store,
   locale,
   onClose,
+  sourceDescription,
 }: {
   document: CollaborationTemplate
   store: CollaborationTemplateStore
   locale: CollaborationLocale
   onClose(): void
+  sourceDescription?: string
 }) {
   const m = templateMessages[locale]
   const [name, setName] = useState(document.spec.displayName)
@@ -31,7 +33,7 @@ export function TemplateSaveDialog({
   return (
     <TemplateDialog
       title={saved ? (publishing ? m.publishTitle : m.saved) : m.saveTitle}
-      description={publishing ? m.publishHint : m.saveHint}
+      description={publishing ? m.publishHint : (sourceDescription ?? m.saveHint)}
       closeLabel={m.close}
       busy={busy}
       onClose={onClose}

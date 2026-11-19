@@ -3,6 +3,7 @@ import { test } from 'node:test'
 import { intervalUpgradeCatalog } from '../e2e/desktop/modules/interval-upgrade-policy.mjs'
 import { planUpgrade, validateUpgradeCatalog } from '../electron/src/runtime/upgrade-policy.mjs'
 import { verifiedUpgradeEdge } from './lib/upgrade-evidence.mjs'
+import { UPGRADE_SUITE_VERSION } from '../e2e/desktop/upgrade-suite.mjs'
 
 function pairFixture() {
   const asset = (version, digit) => ({
@@ -39,7 +40,7 @@ test('discovery fixture metadata cannot become production package-pair evidence'
   const evidence = {
     schemaVersion: 1,
     kind: 'release',
-    suiteVersion: 22,
+    suiteVersion: UPGRADE_SUITE_VERSION,
     runId: '123',
     source: pair.from.sha256,
     target: target.sha256,
@@ -52,6 +53,22 @@ test('discovery fixture metadata cannot become production package-pair evidence'
     channel: catalog.channel,
     upgrade: 'passed',
     rollback: 'passed',
+    reupgrade: 'not-run',
+    credentials: ['source', 'upgraded', 'rolled-back'].map(stage => ({
+      stage,
+      format: 2,
+      storageVersion: 2,
+      modelAuthenticated: true,
+      cloudDeviceSignature: true,
+      writeAuthenticated: true,
+    })),
+    rollbackProtection: {
+      version: target.version,
+      packageSha256: target.sha256,
+      kind: 'blocked',
+      historyPreserved: true,
+      downloadPrevented: true,
+    },
     manifestRecovery: {
       schemaVersion: 2,
       restarted: true,

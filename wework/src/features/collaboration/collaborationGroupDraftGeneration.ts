@@ -1,3 +1,9 @@
+import {
+  appendCollaborationGroupResponsibility,
+  IncompleteCollaborationGroupGenerationError,
+  missingGeneratedCollaborationGroupSections,
+} from '@wegent/collaboration'
+
 import type {
   ProjectCreateCollaborationGroupDraft,
   ProjectCreateCollaborationGroupDraftInput,
@@ -65,13 +71,13 @@ function parseGenerationEvent(
       leader: event.leader === true,
     }
   }
-  if (type === 'participant_delta') {
+  if (type === 'participant_responsibility') {
     const id = requiredString(event.id, '成员 ID')
     return {
       type,
       kind: participantKey(event.kind, id, allowed),
       id,
-      delta: requiredString(event.delta, '职责增量'),
+      text: requiredString(event.text, '职责条目'),
     }
   }
   if (type === 'principle') {
@@ -254,7 +260,7 @@ function parseGenerationResponse(
 
 function collaborationGroupOutputSchema(input: ProjectCreateCollaborationGroupDraftInput) {
   const participantEventSchema = (
-    type: 'participant_started' | 'participant_delta',
+    type: 'participant_started' | 'participant_responsibility',
     kind: 'human' | 'agent',
     ids: string[]
   ) => ({
@@ -265,12 +271,12 @@ function collaborationGroupOutputSchema(input: ProjectCreateCollaborationGroupDr
       id: { type: 'string', enum: ids },
       ...(type === 'participant_started'
         ? { leader: { type: 'boolean' } }
-        : { delta: { type: 'string' } }),
+        : { text: { type: 'string', minLength: 1 } }),
     },
     required:
       type === 'participant_started'
         ? ['type', 'kind', 'id', 'leader']
-        : ['type', 'kind', 'id', 'delta'],
+        : ['type', 'kind', 'id', 'text'],
     additionalProperties: false,
   })
   const humanIds = [
@@ -278,12 +284,12 @@ function collaborationGroupOutputSchema(input: ProjectCreateCollaborationGroupDr
     ...input.members.map(member => String(member.user_id)),
   ]
   const agentIds = input.agents.map(agent => agent.id)
-  const participantEvents = (['participant_started', 'participant_delta'] as const).flatMap(
-    type => [
-      ...(humanIds.length > 0 ? [participantEventSchema(type, 'human', humanIds)] : []),
-      ...(agentIds.length > 0 ? [participantEventSchema(type, 'agent', agentIds)] : []),
-    ]
-  )
+  const participantEvents = (
+    ['participant_started', 'participant_responsibility'] as const
+  ).flatMap(type => [
+    ...(humanIds.length > 0 ? [participantEventSchema(type, 'human', humanIds)] : []),
+    ...(agentIds.length > 0 ? [participantEventSchema(type, 'agent', agentIds)] : []),
+  ])
   return {
     type: 'object',
     properties: {
@@ -345,9 +351,12 @@ export function parseCollaborationGroupDraft(
   ]
   const responsibilities = new Map<string, string>()
   events.forEach(event => {
-    if (event.type !== 'participant_delta') return
+    if (event.type !== 'participant_responsibility') return
     const key = `${event.kind}:${event.id}`
-    responsibilities.set(key, `${responsibilities.get(key) ?? ''}${event.delta}`)
+    responsibilities.set(
+      key,
+      appendCollaborationGroupResponsibility(responsibilities.get(key), event.text)
+    )
   })
   const requestedLeader = events.find(event => event.type === 'participant_started' && event.leader)
   const preferredLeaderId = currentDeviceAgentId(input)
@@ -440,22 +449,22 @@ export async function generateCollaborationGroupDraft(options: {
   const prompt = [
     '你是项目协作架构师。请为以下新项目生成一个可直接执行的协作小组分工。',
     '输出必须严格匹配系统提供的 JSON Schema，只输出一个 JSON 对象，禁止输出 Markdown、说明文字或思考过程。',
-    '顶层对象只包含 events。events 严格按以下顺序排列：group；每个成员依次输出 participant_started 和多个 participant_delta；2 到 3 个 principle；2 到 4 个 stage。',
+    '顶层对象只包含 events。events 严格按以下顺序排列：group；每个成员依次输出 participant_started 和多个 participant_responsibility；2 到 3 个 principle；2 到 4 个 stage。',
     'participant_started 结构：{"type":"participant_started","kind":"human|agent","id":"string","leader":true|false}。',
-    'participant_delta 结构：{"type":"participant_delta","kind":"human|agent","id":"string","delta":"职责片段"}。将每个成员职责拆成 2 到 4 个语义完整的短片段逐行输出。',
+    'participant_responsibility 结构：{"type":"participant_responsibility","kind":"human|agent","id":"string","text":"完整职责条目"}。每个事件表达一个完整、独立、可执行的职责条目。每个成员输出 2 到 4 个条目，不得把一个词语或句子拆到多个事件。条目之间由应用统一换行，不要依赖首尾空格，不加序号或列表标记。',
     'group 结构：{"type":"group","name":"string"}。',
     'principle 结构：{"type":"principle","text":"string"}。每条只表达一个规则。',
     'stage 结构：{"type":"stage","id":"string","name":"string"}。',
     '必须严格使用给定的 kind 和 id，不得新增、删除或重复协作者。',
-    'leader 只负责拆解、分派、验收、综合判断和更新 Issue 状态，不得执行任何成员任务；leader 的 participant_delta 只描述协调职责。',
+    'leader 只负责拆解、分派、验收、综合判断和更新 Issue 状态，不得执行任何成员任务；leader 的 participant_responsibility 只描述协调职责。',
     '每个成员的 responsibility 必须精炼、具体且可执行，避免重复项目背景和分配原则。',
     '每条 principle 只表达一个规则；只保留负责人如何分派、成员如何反馈、阻塞如何升级，不要重复项目背景、职责或执行流程。',
     preferredLeaderId
       ? `优先让 agent:${preferredLeaderId} 担任 leader，因为它是当前设备智能体且具备通用执行能力。`
       : '从现有协作者中选择最适合拆解、分派和验收工作的 leader；人类和智能体都可以担任 leader。',
-    '每个协作者都必须输出一次 participant_started，并紧接着输出其全部 participant_delta。',
+    '每个协作者都必须输出一次 participant_started，并紧接着输出其全部 participant_responsibility。',
     '生成 2 到 4 个阶段。',
-    '所有 name、delta、text 字段必须使用与“用户补充要求”相同的语言书写（Use the language of the user request for all generated text）。',
+    '所有 name、text 字段必须使用与“用户补充要求”相同的语言书写（Use the language of the user request for all generated text）。',
     '',
     `项目名称：${input.projectName || '未命名项目'}`,
     `项目说明：${input.projectDescription || '暂无说明，请按通用项目协作设计'}`,
@@ -475,5 +484,8 @@ export async function generateCollaborationGroupDraft(options: {
   const events = parseGenerationResponse(content, input)
   eventParser.finish(events)
   const draft = parseCollaborationGroupDraft(content, input)
+  const missingSections = missingGeneratedCollaborationGroupSections(draft)
+  if (missingSections.length > 0)
+    throw new IncompleteCollaborationGroupGenerationError(missingSections)
   return draft
 }

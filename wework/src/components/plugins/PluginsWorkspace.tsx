@@ -53,7 +53,13 @@ import {
   listPersonalMarketplacePluginsFromDisk,
   peekLocalCodexPluginsReadState,
 } from '@/api/local/codexPlugins'
-import { authorizeWegentConnector, listWegentConnectorApps } from '@/api/cloud/connectorApps'
+import {
+  authorizeWegentConnector,
+  connectorAuthorizationErrorMessage,
+  listWegentConnectorApps,
+  notifyConnectorAuthorizationChanged,
+  refreshWegentConnector,
+} from '@/api/cloud/connectorApps'
 import { trackPluginEvent as track } from '@/telemetry/businessEvents'
 import {
   installedPluginTelemetryIdentity,
@@ -86,7 +92,7 @@ import { openExternalUrl } from '@/lib/external-links'
 import { getErrorMessage } from '@/lib/error-message'
 import { isDesktopRuntime } from '@/lib/runtime-environment'
 import { navigateTo } from '@/lib/navigation'
-import { openCloudAuthorizationWindow } from '@/lib/cloud-authorization-window'
+import { openConnectorAuthorizationWindow } from '@/lib/connector-authorization-window'
 import {
   ensureLocalExecutorAvailable,
   getKnownLocalExecutorDeviceId,
@@ -140,6 +146,7 @@ import {
   usePluginDetailSelection,
 } from './hooks/usePluginDetailSelection'
 import { usePluginInstallActions } from './hooks/usePluginInstallActions'
+import { usePluginRecoveryNotice } from './hooks/usePluginRecoveryNotice'
 import { InstalledPluginStrip } from './workspace/InstalledPluginStrip'
 import { MarketplaceCatalogView } from './workspace/MarketplaceCatalogView'
 import {
@@ -170,6 +177,10 @@ import {
   runPluginAutoUpdate,
 } from '@/features/plugins/pluginAutoUpdate'
 import { PLUGIN_AUTO_UPDATE_COMPLETED_EVENT } from '@/features/plugins/PluginAutoUpdateCoordinator'
+import {
+  pendingPluginRecoveryId,
+  type PluginOperationPhase,
+} from '@/features/plugins/pluginLocalSync'
 import type {
   InstalledPlugin,
   PluginAccessResponse,
@@ -516,17 +527,22 @@ export function PluginsWorkspace({
     subPath: '',
   })
   const [isAddingMarket, setIsAddingMarket] = useState(false)
-  const pluginApi = useMemo(() => {
-    const profile = {
+  const pluginRuntimeProfile = useMemo(
+    () => ({
       apiBaseUrl: cloudApiBaseUrl || getRuntimeConfig().apiBaseUrl,
       token: cloudToken === undefined ? getToken() : cloudToken,
-    }
-    return createLocalDevicePluginApi(
-      createDefaultPluginApi(profile.apiBaseUrl, cloudToken),
-      deviceId => resolveLocalPluginDeviceRouteId(deviceId, profile),
-      profile
-    )
-  }, [cloudApiBaseUrl, cloudToken])
+    }),
+    [cloudApiBaseUrl, cloudToken]
+  )
+  const pluginApi = useMemo(
+    () =>
+      createLocalDevicePluginApi(
+        createDefaultPluginApi(pluginRuntimeProfile.apiBaseUrl, cloudToken),
+        deviceId => resolveLocalPluginDeviceRouteId(deviceId, pluginRuntimeProfile),
+        pluginRuntimeProfile
+      ),
+    [cloudToken, pluginRuntimeProfile]
+  )
   useEffect(() => {
     let disposed = false
     void pluginApi
@@ -641,6 +657,38 @@ export function PluginsWorkspace({
     const lifetime = publicationLifetime.current
     return () => lifetime !== null && publicationLifetime.current === lifetime
   }
+  const pluginRecoveryScopeKey = pluginMarketplaceCacheKey(
+    pluginRuntimeProfile.apiBaseUrl,
+    pluginRuntimeProfile.token
+  )
+  usePluginRecoveryNotice(pluginRecoveryScopeKey, pluginOperationNotice, setPluginOperationNotice)
+  const showPendingLocalPluginRecovery = (error: unknown) => {
+    const progressId = pendingPluginRecoveryId(error)
+    if (!progressId) return false
+    setPluginOperationNotice({
+      id: `plugin-recovery-${progressId}`,
+      kind: 'progress',
+      message: getErrorMessage(error, t('workbench.plugins_local_sync_processing')),
+    })
+    return true
+  }
+  const reportLocalPluginProgress =
+    (id: string, isCurrent: () => boolean) => (phase: PluginOperationPhase) => {
+      if (!isCurrent()) return
+      if (phase === 'settled') {
+        setPluginOperationNotice(current => (current?.id === id ? null : current))
+        return
+      }
+      setPluginOperationNotice({
+        id,
+        kind: 'progress',
+        message: t(
+          phase === 'confirming'
+            ? 'workbench.plugins_local_sync_confirmation_pending'
+            : 'workbench.plugins_local_sync_processing'
+        ),
+      })
+    }
   const refreshPublicationRequests = useCallback(
     async (sourcePluginId?: number): Promise<PluginPublicationRequestItem[]> => {
       const lifetime = publicationLifetime.current
@@ -819,6 +867,9 @@ export function PluginsWorkspace({
     setPluginPublishTarget(null)
     setPluginPublishError(null)
     setPluginPublishShareRecovery(false)
+    setPluginOperationNotice(null)
+    connectorActionInFlight.current = false
+    setConnectorActionSlug(null)
     setPendingInstall(null)
     setPendingPluginUpdate(null)
     preparingInstallPluginIdsRef.current.clear()
@@ -1817,7 +1868,7 @@ export function PluginsWorkspace({
   const uninstallInstalledPlugin = (id: string | number, pluginName: string) => {
     const isCurrent = capturePluginScope()
     if (!isCurrent()) return
-    if (isReconcilingPlugins) {
+    if (reconciliationBlocksActions) {
       setPluginOperationNotice({
         id: 'plugin-reconciliation-busy',
         kind: 'error',
@@ -1868,6 +1919,7 @@ export function PluginsWorkspace({
     }
 
     const noticeUninstallError = (id: string | number, error: unknown) => {
+      if (showPendingLocalPluginRecovery(error)) return
       const rawErrorMessage = getErrorMessage(
         error,
         t('workbench.plugins_uninstall_failed', '卸载失败，请稍后重试')
@@ -1892,7 +1944,11 @@ export function PluginsWorkspace({
       logoutLocal: (resolvedPlugin: InstalledPlugin) =>
         logoutLocalConnectorsForPlugin(resolvedPlugin),
       uninstallCloud: (pluginId: string | number, deviceId?: string) =>
-        pluginApi.uninstallInstalledPlugin(pluginId, deviceId),
+        pluginApi.uninstallInstalledPlugin(
+          pluginId,
+          deviceId,
+          reportLocalPluginProgress(`uninstall-progress-${id}`, isCurrent)
+        ),
       uninstallLocal: (pluginId: string | number) =>
         localPluginApi.uninstallInstalledPlugin(pluginId),
     }
@@ -1993,6 +2049,7 @@ export function PluginsWorkspace({
   })
 
   const isReconcilingPlugins = reconciliation.active
+  const reconciliationBlocksActions = isReconcilingPlugins && !reconciliation.waitingOnNative
   const isOfficialCatalogView =
     selectedDistributionTab === 'official' && !marketplaceSourceFilterKey
   const isCatalogRefreshBusy = isOfficialCatalogView
@@ -2290,7 +2347,7 @@ export function PluginsWorkspace({
   ) => {
     if (isMarketplacePluginUninstalling(item)) return
     const isCurrent = capturePluginScope()
-    if (isReconcilingPlugins) {
+    if (reconciliationBlocksActions) {
       setPluginOperationNotice({
         id: 'plugin-reconciliation-busy',
         kind: 'error',
@@ -2376,7 +2433,12 @@ export function PluginsWorkspace({
         )
         setInstallingMarketplacePluginIds(previous => new Set(previous).add(item.id))
         pluginApi
-          .updateMarketplacePlugin(item.installedPluginId, item.latestReleaseId, targetDeviceId)
+          .updateMarketplacePlugin(
+            item.installedPluginId,
+            item.latestReleaseId,
+            targetDeviceId,
+            reportLocalPluginProgress(`update-progress-${item.id}`, isCurrent)
+          )
           .then(plugin => {
             if (!isCurrent()) return
             const device = currentDeviceInstallation(plugin, targetDeviceId)
@@ -2403,6 +2465,7 @@ export function PluginsWorkspace({
           })
           .catch((error: unknown) => {
             if (!isCurrent()) return
+            if (showPendingLocalPluginRecovery(error)) return
             const message = getErrorMessage(error, 'Unknown error')
             setPluginOperationNotice({ id: `update-error-${item.id}`, kind: 'error', message })
           })
@@ -2473,7 +2536,7 @@ export function PluginsWorkspace({
   }
 
   function executeMarketplaceInstall(install: PendingMarketplaceInstall | null = pendingInstall) {
-    if (!install || isReconcilingPlugins) return
+    if (!install || reconciliationBlocksActions) return
     const { item: dialogItem, promptAfterInstall } = install
     if (installingMarketplacePluginIds.has(dialogItem.id)) return
 
@@ -2597,7 +2660,8 @@ export function PluginsWorkspace({
         }
         const response = await pluginApi.installMarketplacePlugin(
           preparedItem.id,
-          liveConnection.deviceId
+          liveConnection.deviceId,
+          reportLocalPluginProgress(`install-progress-${preparedItem.id}`, isCurrent)
         )
         requireCurrentScope()
         return {
@@ -2764,6 +2828,7 @@ export function PluginsWorkspace({
         installRequestAttempt?.fail('request')
         if (!isCurrent()) return
         if (error instanceof PluginInstallationSupersededError) return
+        if (showPendingLocalPluginRecovery(error)) return
         const errorCode =
           error && (typeof error === 'object' || typeof error === 'function')
             ? Reflect.get(error, 'code')
@@ -3125,7 +3190,8 @@ export function PluginsWorkspace({
           cloudApiBaseUrl,
           cloudToken,
           requirement.slug,
-          openCloudAuthorizationWindow
+          openConnectorAuthorizationWindow,
+          { isCurrent }
         )
         if (!isCurrent()) return
       } finally {
@@ -3217,7 +3283,8 @@ export function PluginsWorkspace({
     plugin?: InstalledPluginItem | PluginMarketplaceItem | null
   ) => {
     const detailId = selectedMarketplacePluginId ?? selectedPluginId
-    const detailIsCurrent = () => activeConnectorDetailRef.current === detailId
+    const scopeIsCurrent = capturePluginScope()
+    const detailIsCurrent = () => scopeIsCurrent() && activeConnectorDetailRef.current === detailId
     const reportDetailError = (message: string) => {
       const pluginId =
         selectedMarketplacePluginId ??
@@ -3411,6 +3478,7 @@ export function PluginsWorkspace({
     }
     try {
       const apps = await listWegentConnectorApps(cloudApiBaseUrl, cloudToken)
+      if (!detailIsCurrent()) return
       const app = apps.find(
         candidate => candidate.slug.trim().toLowerCase() === slug.trim().toLowerCase()
       )
@@ -3422,14 +3490,30 @@ export function PluginsWorkspace({
         navigateTo('/settings/connections')
         return
       }
+      if (app.connection.status === 'expired') {
+        try {
+          const connection = await refreshWegentConnector(cloudApiBaseUrl, cloudToken, app.slug)
+          if (!detailIsCurrent()) return
+          if (connection.status === 'connected') {
+            notifyConnectorAuthorizationChanged()
+            navigateTo('/settings/connections')
+            return
+          }
+        } catch {
+          if (!detailIsCurrent()) return
+          // Token refresh is an optimization. A provider that rejects it must
+          // still recover through the normal consent flow.
+        }
+      }
       await authorizeWegentConnector(
         cloudApiBaseUrl,
         cloudToken,
         app.slug,
-        openCloudAuthorizationWindow
+        openConnectorAuthorizationWindow,
+        { isCurrent: detailIsCurrent }
       )
     } catch (error) {
-      reportDetailError(error instanceof Error ? error.message : 'Connector authorization failed')
+      reportDetailError(connectorAuthorizationErrorMessage(error, connectorDisplayName(slug), t))
     }
   }
 
@@ -3438,15 +3522,18 @@ export function PluginsWorkspace({
     plugin?: InstalledPluginItem | PluginMarketplaceItem | null
   ) => {
     if (connectorActionInFlight.current || pendingCodexAuthorization) return
+    const isCurrent = capturePluginScope()
     connectorActionInFlight.current = true
     connectorAuthRevisionRef.current += 1
     setConnectorActionSlug(slug)
     try {
       await performManagePluginConnector(slug, plugin)
     } finally {
-      connectorActionInFlight.current = false
-      connectorAuthRevisionRef.current += 1
-      setConnectorActionSlug(null)
+      if (isCurrent()) {
+        connectorActionInFlight.current = false
+        connectorAuthRevisionRef.current += 1
+        setConnectorActionSlug(null)
+      }
     }
   }
 
@@ -5390,7 +5477,7 @@ export function PluginsWorkspace({
         cancelLabel={t('common.cancel', '取消')}
         confirmLabel={t('workbench.plugins_update', '更新')}
         confirmTestId="plugin-update-confirm-button"
-        pending={isReconcilingPlugins}
+        pending={reconciliationBlocksActions}
         onClose={() => setPendingPluginUpdate(null)}
         onConfirm={() => {
           const item = pendingPluginUpdate
@@ -5413,7 +5500,7 @@ export function PluginsWorkspace({
             componentCount: marketplaceComponentCount(pendingInstall.item),
             requiredConnectionNames: pendingInstall.requiredConnectionNames,
           }}
-          confirmDisabled={isReconcilingPlugins}
+          confirmDisabled={reconciliationBlocksActions}
           onCancel={() => setPendingInstall(null)}
           onConfirm={() => executeMarketplaceInstall()}
         />
@@ -5852,7 +5939,7 @@ export function PluginsWorkspace({
       selectedMarketplacePlugin.installedPluginId
     const primaryActionPending = pluginDetailPrimaryActionPending({
       operationPending: isActionPending,
-      reconciling: isReconcilingPlugins,
+      reconciling: reconciliationBlocksActions,
       readyToTry: isInstalled,
       updateAvailable: Boolean(canUpdate),
     })
@@ -6204,6 +6291,7 @@ export function PluginsWorkspace({
                 type="button"
                 data-testid="plugins-refresh-button"
                 data-reconciling={isReconcilingPlugins}
+                data-local-sync={localSyncAvailable}
                 data-catalog-loading={pluginMarketplaceState.isLoading}
                 data-marketplace-refreshing={isMarketplaceRefreshing}
                 data-official-catalog-loading={openAiCatalog.loading}
@@ -6285,7 +6373,7 @@ export function PluginsWorkspace({
           marketplaceCategorySections={marketplaceCategorySections}
           visibleSearchResultLimit={visibleSearchResultLimit}
           isLoggedIn={Boolean(cloudToken && (localSyncAvailable || currentDeviceId))}
-          isReconciling={isReconcilingPlugins}
+          isReconciling={reconciliationBlocksActions}
           installingMarketplacePluginIds={installingMarketplacePluginIds}
           isLocallyUninstalling={isMarketplacePluginLocallyUninstalling}
           allowPendingRetry={deviceAutoSyncSettled || !deviceCloudConnected}
@@ -6306,7 +6394,7 @@ export function PluginsWorkspace({
         <CategoryBrowseDialog
           section={browsingCategorySection}
           isLoggedIn={Boolean(cloudToken && (localSyncAvailable || currentDeviceId))}
-          isReconciling={isReconcilingPlugins}
+          isReconciling={reconciliationBlocksActions}
           installingMarketplacePluginIds={installingMarketplacePluginIds}
           isLocallyUninstalling={isMarketplacePluginLocallyUninstalling}
           allowPendingRetry={deviceAutoSyncSettled || !deviceCloudConnected}

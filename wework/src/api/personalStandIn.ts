@@ -104,7 +104,7 @@ export function connectionChangeEnablesIdentity(
 }
 
 export function standInPolicy(
-  role: StandInRole,
+  role: Pick<StandInRole, 'collaboration' | 'enabled'>,
   project?: StandInProjectRef
 ): StandInHandlingPolicy {
   return (
@@ -138,6 +138,19 @@ export function newStandInRole(deviceId: string, id: string = crypto.randomUUID(
       excludedProjects: [],
       tags: [],
       policy: { automatic: true, askBeforeAct: true, immediate: true },
+    },
+  }
+}
+
+/** Primary setup starts without a selected source until the user chooses its scope. */
+export function newStandInPrimaryRole(deviceId: string): StandInRole {
+  const role = newStandInRole(deviceId, '@primary')
+  return {
+    ...role,
+    collaboration: {
+      ...role.collaboration,
+      allProjects: false,
+      policy: { automatic: true, askBeforeAct: true, immediate: false },
     },
   }
 }

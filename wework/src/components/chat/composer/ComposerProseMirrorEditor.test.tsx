@@ -42,7 +42,8 @@ function renderEditor(
   value = GMAIL_REFERENCE,
   onBeforeInput: (event: InputEvent) => boolean = () => false,
   onOpenMentionPlugin: (reference: PluginReference) => void = vi.fn(),
-  onOpenMentionFile: (path: string) => void = vi.fn()
+  onOpenMentionFile: (path: string) => void = vi.fn(),
+  ariaLabel?: string
 ) {
   const editorRef = createRef<ComposerEditorHandle>()
   const textareaRef = createRef<HTMLElement>()
@@ -66,6 +67,7 @@ function renderEditor(
       onClick={vi.fn()}
       onFocus={vi.fn()}
       placeholder="Message"
+      ariaLabel={ariaLabel}
       testId="composer-editor"
       rows={2}
       textareaRef={textareaRef}
@@ -77,6 +79,22 @@ function renderEditor(
 }
 
 describe('ComposerProseMirrorEditor', () => {
+  test('keeps an explicit accessible name distinct from its localized input prompt', () => {
+    renderEditor('', undefined, undefined, undefined, '项目说明')
+    expect(screen.getByRole('textbox', { name: '项目说明' })).toHaveAttribute(
+      'aria-placeholder',
+      'Message'
+    )
+  })
+
+  test('exposes the localized input prompt as its accessible name', () => {
+    renderEditor('')
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveAttribute(
+      'aria-placeholder',
+      'Message'
+    )
+  })
+
   test('preserves user line breaks in an edited Markdown tail', () => {
     const { onChange } = renderEditor('')
     const editor = screen.getByTestId('composer-editor')

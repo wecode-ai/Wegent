@@ -143,6 +143,7 @@ export function IssueWebCommentComposer({
           onRemoveAttachment={id => void selection.removeAttachment(id)}
           imageServices={imageServices}
           labels={{
+            removeAttachment: translate('todo.remove_attachment'),
             showText: translate('todo.show_text_attachment'),
             addingText: translate('todo.adding_pasted_text_attachment'),
             pastedText: translate('todo.pasted_text_attachment'),

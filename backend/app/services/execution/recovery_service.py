@@ -153,6 +153,14 @@ class ExecutorRecoveryService:
         if isinstance(archive, dict) and archive.get("sessionFileIncluded"):
             return True
 
+        if (
+            request.is_subscription
+            or getattr(task, "is_active", None) == TaskResource.STATE_SUBSCRIPTION
+        ):
+            return subtask_store.has_executor_session_by_task(
+                db, task_id=task.id, owner_user_id=request.user_id
+            )
+
         assistant_subtasks = subtask_store.list_assistant_by_task(
             db,
             task_id=task.id,

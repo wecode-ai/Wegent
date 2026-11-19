@@ -65,6 +65,9 @@ pub(super) fn prepare_wework_codex_home_with_auth(
 fn normalize_wework_codex_config(codex_home: &Path) -> Result<(), String> {
     use toml_edit::{value, DocumentMut};
 
+    let _publication = crate::local::personal_marketplace_lock::acquire_personal_marketplace_lock(
+        &codex_home.join("plugins/cache/wework-personal"),
+    )?;
     let config_path = codex_home.join("config.toml");
     let content = crate::local::codex_home::read_optional_config(&config_path)?;
     let mut document = content.parse::<DocumentMut>().map_err(|error| {
@@ -97,6 +100,17 @@ fn normalize_wework_codex_config(codex_home: &Path) -> Result<(), String> {
         .is_none()
     {
         document["personality"] = value("pragmatic");
+    }
+
+    // Keep native config precedence: explicit V2 and profile limits override this default.
+    let agents = document.get("agents");
+    if agents.map_or(true, |item| item.is_table_like())
+        && agents
+            .and_then(|item| item.get("max_concurrent_threads_per_session"))
+            .is_none()
+        && agents.and_then(|item| item.get("max_threads")).is_none()
+    {
+        document["agents"]["max_concurrent_threads_per_session"] = value(6);
     }
 
     let next_content = document.to_string();
@@ -300,3 +314,7 @@ fn remove_managed_auth_marker(codex_home: &Path) -> Result<(), String> {
 pub(crate) fn executor_home() -> PathBuf {
     crate::config::paths::executor_home()
 }
+
+#[cfg(test)]
+#[path = "home_config_tests.rs"]
+mod config_tests;

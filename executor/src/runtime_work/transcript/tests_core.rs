@@ -5,19 +5,20 @@
 use super::super::*;
 
 #[test]
-fn visible_user_request_skips_nested_application_context_from_referenced_conversations() {
-    let content = concat!(
-        "<application_context>\n",
-        "[referencedConversations]\n",
-        "[{\"role\":\"user\",\"content\":\"<application_context>\\n",
-        "[source]\\nstate\\n</application_context>\\n\\nOriginal question\"}]\n",
-        "</application_context>\n\n",
-        "Continue with the referenced conversation"
+fn transcript_preserves_structured_terminal_error_type_for_turns_and_messages() {
+    let projection = project_transcript(
+        &json!({"id": "thread", "turns": [{
+            "id": "turn", "status": "failed", "error": {
+                "message": "connection interrupted", "codexErrorInfo": "serverOverloaded"
+            }, "items": []
+        }]}),
+        "device",
+        true,
     );
-
+    assert_eq!(projection.turns[0]["errorType"], "server_overloaded");
     assert_eq!(
-        normalized_user_request_content(content),
-        "Continue with the referenced conversation"
+        projection.messages.last().unwrap()["errorType"],
+        "server_overloaded"
     );
 }
 
@@ -156,6 +157,19 @@ fn transcript_merges_completed_command_timing_into_function_call_block() {
     assert_eq!(blocks[0]["timestamp"], 1_780_000_001_250_i64);
     assert_eq!(blocks[0]["completedAt"], 1_780_000_016_119_i64);
     assert_eq!(blocks[0]["tool_input"]["cmd"], "sleep 15");
+}
+
+#[test]
+fn transcript_preserves_pending_mcp_tool_with_null_result() {
+    let thread = json!({"id": "thread", "turns": [{
+        "id": "turn", "status": "inProgress", "items": [{
+            "id": "call", "type": "mcpToolCall", "server": "node_repl", "tool": "js",
+            "arguments": {}, "status": "inProgress", "result": null, "error": null
+        }]
+    }]});
+
+    let messages = transcript_messages(&thread, "device");
+    assert_eq!(messages[0]["blocks"][0]["status"], "pending");
 }
 
 #[test]

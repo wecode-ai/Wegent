@@ -2,7 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { ReactNode } from "react";
+import type { ComponentType, ReactNode } from "react";
+import type { ProjectSettingsPagesProps } from "./project-manage/ProjectSettingsPages";
 import type { ProjectAgentConfigurationHost } from "./project-agent-config/types";
 import type { ProjectCreateHostAdapter } from "./project-create/types";
 
@@ -181,6 +182,7 @@ export interface CollaborationIssue {
   updated_at: string;
   completed_at: string | null;
   archived_at?: string | null;
+  invited_only?: boolean;
   can_view_detail?: boolean;
   can_edit?: boolean;
   security_level?: "open" | "related";
@@ -194,7 +196,29 @@ export interface CollaborationIssue {
 
 export type CollaborationAssignmentTargetType = "human" | "agent";
 
+export interface DirectHumanAssignmentReceipt {
+  projectId: string;
+  issueId: string;
+  humanAssignmentId: string;
+  ownerUserId: number;
+  state:
+    | "queued"
+    | "waiting_device"
+    | "blocked_policy"
+    | "running"
+    | "waiting_user"
+    | "completed"
+    | "failed"
+    | "cancelled";
+  reasonCode: string | null;
+  runtimeTaskId: string | null;
+  deliveryId: string | null;
+  publicMessageId?: string | null;
+  updatedAt: string;
+}
+
 export interface CollaborationAssignmentReceipt {
+  dispatch_receipt?: DirectHumanAssignmentReceipt | null;
   id: string;
   target_type: string;
   target_id: string;
@@ -205,6 +229,7 @@ export interface CollaborationAssignmentReceipt {
 }
 
 export interface CollaborationAssignment {
+  dispatch_receipt?: DirectHumanAssignmentReceipt | null;
   automation?: IssueHistoryAutomation | null;
   receipt_tracking?: boolean;
   human_read_at?: string | null;
@@ -375,6 +400,7 @@ export interface IssueHistoryAutomation {
 export interface SharedIssueAssignmentHistoryEntry {
   automation?: IssueHistoryAutomation;
   by_user_id: number;
+  by_user_name?: string | null;
   to_type: "user" | "agent" | "team" | "group" | null;
   to_id: string | null;
   to_name?: string | null;
@@ -390,6 +416,7 @@ export interface SharedIssueStatusHistoryEntry {
   to_status_name?: string | null;
   trigger: string;
   by_user_id: number | null;
+  by_user_name?: string | null;
   at: string;
 }
 
@@ -556,6 +583,7 @@ export interface CollaborationLocation {
 }
 
 export interface CollaborationHostAdapter {
+  settingsPages?: ComponentType<ProjectSettingsPagesProps>;
   capabilities: CollaborationCapabilities;
   defaultAssistant?: CollaborationDefaultAssistant;
   location: CollaborationLocation;

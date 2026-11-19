@@ -3,7 +3,7 @@ import {
   AgentEnvironmentFields,
   AgentModelFields,
 } from '@/features/collaboration/AgentRoutingFields'
-import { useAgentRuntimeTab } from '@/features/collaboration/useAgentRuntimeTab'
+import { useAgentRuntimeSettings } from '@/features/collaboration/useAgentRuntimeSettings'
 import { useEffect, useMemo, useState } from 'react'
 import {
   AgentCapabilitiesSelector,
@@ -99,7 +99,7 @@ export function ProjectChatAgentEditor({
     defer: true,
     creation: !editing,
   })
-  const runtimeTab = useAgentRuntimeTab(routing)
+  const runtimeSettings = useAgentRuntimeSettings(routing)
   const loadRouting = routing.load
   const [selectedCapabilityMode, setCapabilityMode] =
     useState<UnifiedAgentCapabilityMode>('follow_device')
@@ -425,16 +425,20 @@ export function ProjectChatAgentEditor({
   return (
     <AgentFormDialog
       onAdvancedOpen={() => setCapabilitiesActive(true)}
-      runtimeTab={
+      runtimeSettings={
         defaultDeviceAgent
           ? {
-              ...runtimeTab,
-              summary: t('workbench.agent_creator_allowed_models_summary', {
-                count: allowedModels.length,
-              }),
+              ...runtimeSettings,
+              environment: undefined,
+              model: {
+                label: t('workbench.project_chat_agent_allowed_models'),
+                value: t('workbench.agent_creator_allowed_models_summary', {
+                  count: allowedModels.length,
+                }),
+              },
               error: null,
             }
-          : runtimeTab
+          : runtimeSettings
       }
       advancedSummary={{
         description:

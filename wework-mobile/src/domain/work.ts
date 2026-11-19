@@ -3,11 +3,37 @@ import type {
   RuntimeDeviceWorkspace,
   RuntimeTaskAddress,
   RuntimeTaskSummary,
+  ModelSelectionConfig,
   RuntimeWorkListResponse,
+  RuntimeProjectRef,
 } from '@/types/runtime'
 import { runtimeTaskKey } from './runtimeTaskLifecycle'
 
 const EMPTY_RUNNING_PROJECTION = new Map<string, boolean>()
+
+export function withRuntimeTaskModelSelection(
+  work: RuntimeWorkListResponse,
+  address: RuntimeTaskAddress,
+  modelSelection: ModelSelectionConfig
+): RuntimeWorkListResponse {
+  const updateWorkspace = (workspace: RuntimeDeviceWorkspace): RuntimeDeviceWorkspace =>
+    workspace.deviceId !== address.deviceId
+      ? workspace
+      : {
+          ...workspace,
+          tasks: workspace.tasks.map(task =>
+            task.taskId === address.taskId ? { ...task, modelSelection } : task
+          ),
+        }
+  return {
+    ...work,
+    chats: work.chats.map(updateWorkspace),
+    projects: work.projects.map(project => ({
+      ...project,
+      deviceWorkspaces: project.deviceWorkspaces.map(updateWorkspace),
+    })),
+  }
+}
 
 export function flattenConversations(
   work: RuntimeWorkListResponse,
@@ -16,7 +42,7 @@ export function flattenConversations(
   const items: ConversationItem[] = []
   for (const project of work.projects) {
     for (const workspace of project.deviceWorkspaces) {
-      items.push(...workspaceConversations(workspace, project.project.name, runningByTask))
+      items.push(...workspaceConversations(workspace, project.project, runningByTask))
     }
   }
   for (const workspace of work.chats) {
@@ -41,11 +67,13 @@ export function mergeRuntimeWorkForDevices(
     const work = workByDevice[deviceId]
     if (!work) continue
     for (const projectWork of work.projects) {
-      const existing = projectsByKey.get(projectWork.project.key)
+      const owner = projectWork.project.stateDeviceId || deviceId
+      const projectKey = JSON.stringify([owner, projectWork.project.key])
+      const existing = projectsByKey.get(projectKey)
       if (!existing) {
-        projectsByKey.set(projectWork.project.key, {
+        projectsByKey.set(projectKey, {
           ...projectWork,
-          project: { ...projectWork.project },
+          project: { ...projectWork.project, stateDeviceId: owner },
           deviceWorkspaces: mergeWorkspaces([], projectWork.deviceWorkspaces),
         })
         continue
@@ -127,6 +155,15 @@ export function taskAddress(
     deviceId: workspace.deviceId,
     taskId: task.taskId,
     runtime: task.runtime,
+    ...(task.threadId ? { threadId: task.threadId } : {}),
+    ...(task.runtimeHandle || task.modelSelection
+      ? {
+          runtimeHandle: {
+            ...task.runtimeHandle,
+            ...(task.modelSelection ? { modelSelection: task.modelSelection } : {}),
+          },
+        }
+      : {}),
     workspacePath: task.workspacePath || workspace.workspacePath,
     workspaceKind: task.workspaceKind ?? workspace.workspaceKind,
     worktreeId: task.worktreeId ?? workspace.worktreeId,
@@ -135,7 +172,7 @@ export function taskAddress(
 
 function workspaceConversations(
   workspace: RuntimeDeviceWorkspace,
-  projectName: string | null,
+  project: RuntimeProjectRef | null,
   runningByTask: ReadonlyMap<string, boolean>
 ): ConversationItem[] {
   return workspace.tasks.map(task => {
@@ -145,7 +182,13 @@ function workspaceConversations(
       sourceWorkspacePath: workspace.workspacePath,
       title: task.title || '新会话',
       deviceName: workspace.deviceName,
-      projectName,
+      projectName: project?.name ?? null,
+      ...(project
+        ? {
+            projectKey: project.sidebarStateKey || project.key,
+            projectStateDeviceId: project.stateDeviceId || workspace.deviceId,
+          }
+        : {}),
       updatedAt: timestamp(task.updatedAt ?? task.createdAt),
       running: runningByTask.get(runtimeTaskKey(address)) ?? Boolean(task.running),
       pinned: task.pinned,

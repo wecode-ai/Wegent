@@ -1,8 +1,14 @@
+import type { RuntimeTaskArchiveRequest } from '../../../../packages/chat-core/src/runtime-management-types'
 import {
   createLocalDevicePluginApi,
   resolveLocalPluginDeviceRouteId,
 } from '@/features/plugins/pluginDeviceApi'
 import { createReplyPredictionApi } from '@/api/runtime/replyPredictionApi'
+import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import {
+  hasNativeModelReference,
+  isNativeModelRuntimeMethod,
+} from '../../../electron/src/host/model-interface-runtime'
 import {
   assertLocalRuntimeSidebarIdentity,
   qualifyLocalRuntimeWork,
@@ -24,6 +30,7 @@ import {
 import { mergeRuntimeWorkLists as mergeRuntimeWorkPair } from '@/features/workbench/runtimeWorkMerge'
 import { createBackendWorkbenchServices } from '@/api/backend/backendServices'
 import { runtimeExecutionSnapshot } from '@wegent/chat-core/runtime-execution-snapshot'
+import { logRuntimeExecutionProjection } from './runtimeExecutionProjectionDiagnostics'
 import { ApiError, createHttpClient } from '@/api/http'
 import { createPluginApi } from '@/api/plugins'
 import {
@@ -41,7 +48,7 @@ import { createRuntimeChatStream } from '@/api/runtime/runtimeChatStream'
 import { REMOTE_TEAM_BACKEND_UNSUPPORTED } from '@/api/runtimeWork'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
 import { createCloudProjectSpaceApi } from './cloudProjectSpaceApi'
-import { createCloudModelCatalog } from './cloudModelCatalog'
+import { createModelCatalog } from './modelCatalog'
 import {
   canonicalCloudTaskPort,
   registeredCloudDeviceId,
@@ -82,6 +89,7 @@ import type {
   RuntimeSendRequest,
   RuntimeSidebarMutationResponse,
   RuntimeTaskAddress,
+  RuntimeTaskCancelRequest,
   RuntimeTaskCreateRequest,
   RuntimeTaskForkRequest,
   RuntimeTaskIMNotificationSubscriptionRequest,
@@ -367,11 +375,39 @@ function projectCloudRuntimeEventDeviceId(
 export function createHybridWorkbenchServices(
   options: HybridWorkbenchServicesOptions
 ): WorkbenchServices {
-  const cloudRuntimeIpc = createCloudRuntimeIpcClient({
+  const cloudRuntimeTransport = createCloudRuntimeIpcClient({
     socketBaseUrl: options.socketBaseUrl,
     socketPath: options.socketPath,
     token: options.token,
   })
+  const cloudRuntimeIpc = {
+    ...cloudRuntimeTransport,
+    request: <T>(
+      method: string,
+      params?: Record<string, unknown>,
+      deviceId?: string,
+      timeoutMs?: number
+    ): Promise<T> =>
+      isNativeModelRuntimeMethod(method) && hasNativeModelReference(params)
+        ? invokeDesktopHost<T>('modelConfiguration.requestRuntime', {
+            method,
+            params,
+            deviceId,
+            timeoutMs,
+            expectedUserId: options.user.id,
+            target: {
+              apiBaseUrl: options.apiBaseUrl,
+              socketBaseUrl: options.socketBaseUrl,
+              socketPath: options.socketPath,
+            },
+          })
+        : cloudRuntimeTransport.request<T>(
+            method,
+            params,
+            deviceId,
+            ...(timeoutMs === undefined ? [] : [timeoutMs])
+          ),
+  }
   const cloudServices = createBackendWorkbenchServices({
     apiBaseUrl: options.apiBaseUrl,
     socketBaseUrl: options.socketBaseUrl,
@@ -455,7 +491,11 @@ export function createHybridWorkbenchServices(
   let nextCloudDevicesRevision = 1
   let unscopedCloudDevicesRequest: Promise<DeviceInfo[]> | null = null
   const cloudDevicesRequestsBySignal = new WeakMap<AbortSignal, Promise<DeviceInfo[]>>()
-  const cloudModels = createCloudModelCatalog(async (signal, forceRefresh) => {
+  const localModels = createModelCatalog('local', async (signal, forceRefresh) => {
+    const response = await localServices.modelApi.listModels({ signal, forceRefresh })
+    return response.data
+  })
+  const cloudModels = createModelCatalog('cloud', async (signal, forceRefresh) => {
     const response = await cloudServices.modelApi.listModels({ signal, forceRefresh })
     console.info('[Wework] Cloud model catalog loaded', {
       count: response.data.length,
@@ -828,6 +868,12 @@ export function createHybridWorkbenchServices(
     (await listCloudDevices()).find(device => device.device_id === deviceId) ??
     null
   const resolveExecutorDevice = async (deviceId: string): Promise<RuntimeDeviceInfo | null> => {
+    const remoteDevice = createWorkbenchDeviceResolver(
+      mergeKnownDevices(rememberedLocalDevices, rememberedCloudDevices)
+    ).resolve(deviceId)
+    if (remoteDevice?.device_type === 'remote' || remoteDevice?.device_type === 'cloud') {
+      return remoteDevice
+    }
     const knownDevice = createWorkbenchDeviceResolver(await listKnownDevices()).resolve(deviceId)
     if (knownDevice) return knownDevice
 
@@ -1015,11 +1061,19 @@ export function createHybridWorkbenchServices(
       if (shouldUseCloudDeviceCommand(data.command_key)) {
         return cloudServices.deviceApi.executeCommand(deviceId, data)
       }
-      return cloudRuntimeIpc.request<DeviceCommandResponse>(
-        'device.execute_command',
-        { ...data },
-        deviceId
-      )
+      return cloudRuntimeIpc
+        .request<DeviceCommandResponse>('device.execute_command', { ...data }, deviceId)
+        .catch((error: unknown) => {
+          if (
+            error &&
+            typeof error === 'object' &&
+            'code' in error &&
+            error.code === 'device_offline'
+          ) {
+            throw new Error(`executor-offline:${deviceId}`, { cause: error })
+          }
+          throw error
+        })
     },
     upgradeDevice(deviceId, options) {
       return deviceApi(deviceId).upgradeDevice(deviceId, options)
@@ -1130,6 +1184,7 @@ export function createHybridWorkbenchServices(
           ? api.getRuntimeTranscript(data, options)
           : api.getRuntimeTranscript(data))
         const snapshot = runtimeExecutionSnapshot(data, response)
+        logRuntimeExecutionProjection('read', data, response, snapshot)
         if (
           snapshot &&
           response.origin?.projectStore !== 'local' &&
@@ -1139,12 +1194,17 @@ export function createHybridWorkbenchServices(
         ) {
           // Cloud write-back must not prevent an offline local history read.
           // A failed report is retried on the next read, never cached as saved.
-          void cloudServices.projectChatClient.reconcileExecutionSnapshot(snapshot).catch(error => {
-            console.error('[Wework] Failed to persist runtime execution status', {
-              address: runtimeAddressDebug(data),
-              error,
+          void cloudServices.projectChatClient
+            .reconcileExecutionSnapshot(snapshot)
+            .then(messages => {
+              logRuntimeExecutionProjection('acknowledged', data, response, snapshot, messages)
             })
-          })
+            .catch(error => {
+              console.error('[Wework] Failed to persist runtime execution status', {
+                address: runtimeAddressDebug(data),
+                error,
+              })
+            })
         }
         return response
       } catch (error) {
@@ -1363,7 +1423,7 @@ export function createHybridWorkbenchServices(
         rememberedCloudArchives.get(requestCacheKey(request)) ?? emptyArchiveList()
       return mergeArchiveLists(localResult, cloudResult)
     },
-    archiveConversation(address: RuntimeTaskAddress) {
+    archiveConversation(address: RuntimeTaskArchiveRequest) {
       const request = routeByAddress(address).archiveConversation(address)
       if (isLocalDeviceId(address.deviceId)) return request
       return request.then(response => {
@@ -1441,7 +1501,7 @@ export function createHybridWorkbenchServices(
         ? localServices.runtimeWorkApi!.cleanupArchivedConversations({ items: localItems })
         : emptyCleanupResponse()
     },
-    cancelRuntimeTask(address: RuntimeTaskAddress) {
+    cancelRuntimeTask(address: RuntimeTaskCancelRequest) {
       return routeByAddress(address).cancelRuntimeTask(address)
     },
     forceStartRuntimeTask(address: RuntimeTaskAddress) {
@@ -1790,20 +1850,25 @@ export function createHybridWorkbenchServices(
       listProjects: localServices.projectApi.listProjects,
     },
     modelApi: {
-      subscribe: cloudModels.subscribe,
-      refresh: cloudModels.refresh,
+      subscribe(listener) {
+        const unsubscribeLocal = localModels.subscribe(listener)
+        const unsubscribeCloud = cloudModels.subscribe(listener)
+        return () => {
+          unsubscribeLocal()
+          unsubscribeCloud()
+        }
+      },
+      refresh(options) {
+        localModels.refresh({ invalidate: options?.invalidateLocal })
+        cloudModels.refresh()
+      },
       getModel: cloudServices.modelApi.getModel,
       async listModels(): Promise<UnifiedModelListResponse> {
-        cloudModels.loadIfNeeded()
-        // Start the cloud catalog before awaiting the local one: the local
-        // catalog depends on the local executor and the desktop preferences,
-        // and a failure there must never keep the cloud models from loading.
-        const localModels = await localServices.modelApi.listModels().catch(error => {
-          console.warn('[Wework] Failed to list local models', error)
-          return { data: [] }
-        })
+        // Each source publishes independently; native startup cannot hold a
+        // ready cloud catalog, and cloud connectivity cannot hold local models.
+        await Promise.race([localModels.loadIfNeeded(), cloudModels.loadIfNeeded()])
         return {
-          data: mergeModelCatalogs(localModels.data, cloudModels.getModels()),
+          data: mergeModelCatalogs(localModels.getModels(), cloudModels.getModels()),
         }
       },
     },

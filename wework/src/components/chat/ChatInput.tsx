@@ -1,4 +1,5 @@
 import { isDeviceRuntimeProject } from '@/lib/runtime-project-state'
+import type { ProjectWorkBarProps } from '@wegent/collaboration/controls/ProjectWorkBar'
 import { PluginTrialTemplateStrip } from '@wegent/collaboration/composer/PluginTrialTemplateStrip'
 import { PluginTrialSelectionContext } from '@wegent/collaboration/composer/PluginTrialSelectionContext'
 import { ComposerErrorBanner } from '@wegent/collaboration/composer'
@@ -16,6 +17,7 @@ import {
 import { createPortal } from 'react-dom'
 import { Button } from '@/components/ui/button'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { visibleRuntimeGoal } from '@/lib/runtime-goal'
 import type {
   Attachment,
@@ -32,6 +34,7 @@ import type {
   RuntimeGoalExecutionStatus,
   RuntimePlanEventPayload,
   RuntimeTaskAddress,
+  RuntimeTaskInteractionStatus,
   RuntimeWorkListResponse,
   SkillRef,
   UnifiedModel,
@@ -49,7 +52,8 @@ import {
 } from '@/lib/conversation-mentions'
 import { ConversationQueuePanel } from './ConversationQueuePanel'
 import { CompactChatComposer } from './composer/CompactChatComposer'
-import { GoalStatusBar } from './composer/GoalStatusBar'
+import { ConversationEventContext } from './composer/ConversationEventContext'
+import { connectionEventSubscriptions } from '@/lib/runtime-connection-events'
 import { ProjectChatComposer } from './composer/ProjectChatComposer'
 import { TaskPlanProgress } from './composer/TaskPlanProgress'
 import { buildRefinedPluginPrompt, buildTrialTemplatePrompt } from '@/features/plugins/pluginTrial'
@@ -120,6 +124,8 @@ export interface ProjectChatControls {
 }
 
 export interface ProjectWorkControls {
+  projectSelectorLabel?: string
+  projectMenuLabels?: ProjectWorkBarProps['menuLabels']
   projects: ProjectWithTasks[]
   devices: DeviceInfo[]
   runtimeWork?: RuntimeWorkListResponse | null
@@ -237,6 +243,12 @@ export interface ChatInputProps {
   goal?: RuntimeGoal | null
   goalContinuing?: boolean
   goalExecutionStatus?: RuntimeGoalExecutionStatus | null
+  eventSubscriptions?: unknown
+  eventSubscriptionScope?: string
+  onCancelEventSubscription?: (key: string) => Promise<void>
+  eventCancellationUnavailable?: boolean
+  eventCancellationUnsupported?: boolean
+  interactionStatus?: RuntimeTaskInteractionStatus | null
   taskPlan?: RuntimePlanEventPayload | null
   goalDraftActive?: boolean
   onSetGoal?: () => void
@@ -371,6 +383,12 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
     goal,
     goalContinuing = false,
     goalExecutionStatus = null,
+    eventSubscriptions,
+    eventSubscriptionScope,
+    onCancelEventSubscription,
+    eventCancellationUnavailable,
+    eventCancellationUnsupported,
+    interactionStatus,
     taskPlan,
     goalDraftActive = false,
     onSetGoal,
@@ -386,6 +404,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
   ref
 ) {
   const { t } = useTranslation('common')
+  const isMobile = useIsMobile()
   const { t: tChat } = useTranslation('chat')
   const workbench = useContext(WorkbenchContext)
   const sendKey = workbench?.state?.user?.preferences?.send_key ?? 'enter'
@@ -682,7 +701,7 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
   if (variant === 'desktop') {
     return (
       <PluginTrialSelectionContext.Provider value={controls.showTrialGuide}>
-        <div className="w-full">
+        <div className="w-full min-w-0">
           <TaskPlanProgress plan={taskPlan} />
           {queuePanel}
           {quotaWaitStatus}
@@ -783,31 +802,40 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
             onPause={onPause}
             showWorkspaceMenu={showWorkspaceMenu}
             collapseWhenIdle={collapseWhenIdle}
-            alwaysShowComposerToolbar={alwaysShowComposerToolbar}
+            alwaysShowComposerToolbar={alwaysShowComposerToolbar || isMobile}
             contextHeader={
-              (contextHeader || (displayedGoal && !goalDraftActive)) && (
+              (contextHeader ||
+                onCancelEventSubscription ||
+                connectionEventSubscriptions(eventSubscriptions).length > 0 ||
+                (displayedGoal && !goalDraftActive)) && (
                 <div
                   data-testid="composer-context-rail"
                   className={[
-                    'mb-1 min-w-0 items-center text-sm text-text-secondary [&>*]:min-w-0 [&>*]:max-w-full',
+                    'mb-1 min-w-0 items-center text-sm text-text-secondary empty:hidden [&>*]:min-w-0 [&>*]:max-w-full',
                     contextHeader && displayedGoal && !goalDraftActive
                       ? 'grid grid-cols-[minmax(0,1fr)_minmax(13rem,32%)]'
-                      : 'flex',
+                      : 'flex flex-wrap',
                   ].join(' ')}
                 >
-                  {displayedGoal && !goalDraftActive && (
-                    <GoalStatusBar
-                      integrated
-                      goal={displayedGoal}
-                      continuing={goalContinuing}
-                      executionStatus={goalExecutionStatus}
-                      onEditGoal={onEditGoal}
-                      onPauseGoal={onPauseGoal}
-                      onResumeGoal={onResumeGoal}
-                      onClearGoal={onClearGoal}
-                    />
-                  )}
-                  {contextHeader}
+                  <ConversationEventContext
+                    integrated
+                    goal={goal}
+                    goalDraftActive={goalDraftActive}
+                    continuing={goalContinuing}
+                    executionStatus={goalExecutionStatus}
+                    subscriptions={eventSubscriptions}
+                    eventSubscriptionScope={eventSubscriptionScope}
+                    onCancelEventSubscription={onCancelEventSubscription}
+                    eventCancellationUnavailable={eventCancellationUnavailable}
+                    eventCancellationUnsupported={eventCancellationUnsupported}
+                    interactionStatus={interactionStatus}
+                    onEditGoal={onEditGoal}
+                    onPauseGoal={onPauseGoal}
+                    onResumeGoal={onResumeGoal}
+                    onClearGoal={onClearGoal}
+                  >
+                    {contextHeader}
+                  </ConversationEventContext>
                 </div>
               )
             }
@@ -852,17 +880,22 @@ const ChatInputBody = forwardRef<ChatInputHandle, ChatInputProps>(function ChatI
           onApplyRefinedPrompt={applyRefinedPrompt}
           onDismiss={controls.onDismissTrialGuide ?? controls.dismissTrialGuide}
         />
-        {displayedGoal && !goalDraftActive && (
-          <GoalStatusBar
-            goal={displayedGoal}
-            continuing={goalContinuing}
-            executionStatus={goalExecutionStatus}
-            onEditGoal={onEditGoal}
-            onPauseGoal={onPauseGoal}
-            onResumeGoal={onResumeGoal}
-            onClearGoal={onClearGoal}
-          />
-        )}
+        <ConversationEventContext
+          goal={goal}
+          goalDraftActive={goalDraftActive}
+          continuing={goalContinuing}
+          executionStatus={goalExecutionStatus}
+          subscriptions={eventSubscriptions}
+          eventSubscriptionScope={eventSubscriptionScope}
+          onCancelEventSubscription={onCancelEventSubscription}
+          eventCancellationUnavailable={eventCancellationUnavailable}
+          eventCancellationUnsupported={eventCancellationUnsupported}
+          interactionStatus={interactionStatus}
+          onEditGoal={onEditGoal}
+          onPauseGoal={onPauseGoal}
+          onResumeGoal={onResumeGoal}
+          onClearGoal={onClearGoal}
+        />
         <CompactChatComposer
           ref={composerRef}
           {...composerProps}

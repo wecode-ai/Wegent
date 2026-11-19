@@ -42,7 +42,7 @@ def test_fetch_history_messages_uses_fork_resolver(monkeypatch):
         chat_namespace,
         "task_fork_history_resolver",
         SimpleNamespace(
-            resolve_for_task=lambda db, *, task_id, user_id, after_message_id=None: [
+            resolve_for_task=lambda db, *, task_id, user_id, after_message_id=None, **kwargs: [
                 item
             ]
         ),
@@ -76,7 +76,7 @@ def test_fetch_subtasks_for_task_join_incremental_uses_fork_resolver(monkeypatch
         chat_namespace,
         "task_fork_history_resolver",
         SimpleNamespace(
-            resolve_for_task=lambda db, *, task_id, user_id, after_message_id=None: [
+            resolve_for_task=lambda db, *, task_id, user_id, after_message_id=None, **kwargs: [
                 item
             ]
         ),
@@ -110,7 +110,7 @@ def test_fetch_subtasks_for_task_join_filters_incremental_conversation_contexts(
         chat_namespace,
         "task_fork_history_resolver",
         SimpleNamespace(
-            resolve_for_task=lambda db, *, task_id, user_id, after_message_id=None: [
+            resolve_for_task=lambda db, *, task_id, user_id, after_message_id=None, **kwargs: [
                 item
             ]
         ),

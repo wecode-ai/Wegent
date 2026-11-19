@@ -16,6 +16,7 @@ test.each([
   async (selectedLabel, expectedLabels) => {
     const command = vi.fn(
       async (action: string, _selector: string, options?: { value?: string }) => {
+        if (action === 'snapshot') return JSON.stringify({ testIds: [] })
         if (action === 'waitFor' || action === 'ensureLocalModelCatalogReady') return ''
         if (action === 'getText') return selectedLabel
         if (action === 'getAttribute' && options?.value === 'data-model-provider-id') {
@@ -28,6 +29,7 @@ test.each([
     await selectE2EModel({ command }, undefined, expectedLabels)
 
     expect(command.mock.calls.map(([action]) => action)).toEqual([
+      'snapshot',
       'waitFor',
       'ensureLocalModelCatalogReady',
       'getText',
@@ -42,6 +44,7 @@ test('waits for startup reconciliation before reading even an already selected l
     finish = resolve
   })
   const command = vi.fn(async (action: string) => {
+    if (action === 'snapshot') return JSON.stringify({ testIds: [] })
     if (action === 'waitFor') return ''
     if (action === 'ensureLocalModelCatalogReady') {
       await reconciliation
@@ -55,6 +58,7 @@ test('waits for startup reconciliation before reading even an already selected l
   const selection = selectE2EModel({ command })
   await vi.waitFor(() =>
     expect(command.mock.calls.map(([action]) => action)).toEqual([
+      'snapshot',
       'waitFor',
       'ensureLocalModelCatalogReady',
     ])
@@ -63,6 +67,7 @@ test('waits for startup reconciliation before reading even an already selected l
   await selection
 
   expect(command.mock.calls.map(([action]) => action)).toEqual([
+    'snapshot',
     'waitFor',
     'ensureLocalModelCatalogReady',
     'getText',
@@ -73,6 +78,7 @@ test('waits for startup reconciliation before reading even an already selected l
 test('preserves catalog reconciliation failures without opening or retrying the picker', async () => {
   const failure = new Error('Catalog reconciliation failed')
   const command = vi.fn(async (action: string) => {
+    if (action === 'snapshot') return JSON.stringify({ testIds: [] })
     if (action === 'waitFor') return ''
     if (action === 'ensureLocalModelCatalogReady') throw failure
     if (action === 'getText') return DEFAULT_MODEL_LABEL
@@ -83,6 +89,7 @@ test('preserves catalog reconciliation failures without opening or retrying the 
   await expect(selectE2EModel({ command })).rejects.toBe(failure)
 
   expect(command.mock.calls.map(([action]) => action)).toEqual([
+    'snapshot',
     'waitFor',
     'ensureLocalModelCatalogReady',
   ])
@@ -90,6 +97,7 @@ test('preserves catalog reconciliation failures without opening or retrying the 
 
 test('does not reconcile the local catalog for a selected model without a local provider constraint', async () => {
   const command = vi.fn(async (action: string) => {
+    if (action === 'snapshot') return JSON.stringify({ testIds: [] })
     if (action === 'waitFor' || action === 'getAttribute') return ''
     if (action === 'getText') return 'Cloud model'
     throw new Error(`Unexpected local catalog action: ${action}`)
@@ -98,6 +106,7 @@ test('does not reconcile the local catalog for a selected model without a local 
   await selectE2EModel({ command }, 'cloud-model', 'Cloud model')
 
   expect(command.mock.calls.map(([action]) => action)).toEqual([
+    'snapshot',
     'waitFor',
     'getText',
     'getAttribute',

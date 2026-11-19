@@ -200,9 +200,11 @@ ephemeral 临时线程的连续续聊依赖其在共享 Codex app-server 中保�
 
 Codex 引导通过共享 app-server 的活跃回合发送。若回合恰好在发送期间结束或切换，executor 会将该竞态报告为 `no_active_turn`；Wework 随后把同一内容作为普通后续消息发送，避免丢失用户输入或显示误导性的发送失败。
 
-同一对话可在回合之间切换模型和 provider。Wework 为每次续聊传递所选模型及其 provider 配置，Codex app-server 在 `thread/resume` 时应用新的 `modelProvider`。executor 为每个经 Wework router 运行的 task 分配一个稳定的本地模型代理地址，并在每轮开始时原子更新该 task 的上游配置。代理在 thread 创建后绑定根 thread ID，只接受该 thread 及其子 thread 的请求；executor 当前轮传入的上游和模型是实际路由的唯一权威来源。
+同一对话可在回合之间切换模型和 provider。Wework 为每次续聊传递所选模型及其 provider 配置，Codex app-server 在 `thread/resume` 时应用新的 `modelProvider`。executor 为每个经 Wework router 运行的 task 分配一个稳定的本地模型代理地址，并在每轮开始时原子更新该 task 的上游配置。代理在 thread 创建后绑定根 thread ID，只接受该 thread 及其子 thread 的请求；executor 当前轮传入的上游和模型是实际路由的唯一权威来源。普通对话和助理使用同一套 Codex 路由，不因入口不同而复制历史或创建新的会话。
 
-OpenAI 返回的推理和远程压缩条目可能包含只对原 provider 有效的 `encrypted_content`。runtime work 在续聊前比较任务摘要中的旧 `modelSelection` 与本次选择；发生模型或模型类型切换时，会将切换标记传入 executor。目标请求第一次经过 Wework router 时，代理会移除旧 provider 专属的加密推理/压缩条目以及 `previous_response_id`，并在请求成功后消费该标记。该清理也覆盖切换后先发生 compaction、请求中暂时没有 `<model_switch>` 标记的情况，避免把旧密文发送给 OpenAI Responses、Chat Completions 或 Anthropic Messages 上游。
+推理和远程压缩条目可能包含只对原 provider 有效的 `encrypted_content`。runtime work 在续聊前比较任务摘要中的旧 `modelSelection` 与本次选择，包括 `runnerModelProvider`/`codexProviderId`；发生模型、模型类型或 provider 切换时，会将切换标记传入 executor。目标请求第一次经过 Wework router 时，代理会移除旧 provider 专属的加密推理/压缩条目以及 `previous_response_id`，并在请求成功后消费该标记。若模型字符串不变但 provider 变化，executor 会在恢复线程上注入 developer `<model_switch>` 边界，使 executor 重启后仍能区分边界前后的密文。该清理也覆盖切换后先发生 compaction、请求中暂时没有 `<model_switch>` 标记的情况，避免把旧密文发送给 OpenAI Responses、Chat Completions 或 Anthropic Messages 上游。
+
+在使用官方 OAuth 的 Codex 会话中，官方 GPT 也经过同一兼容层，不再把官方 Responses endpoint 当作绕过清理的例外。第三方 Responses 历史把推理写在 `reasoning.content[].reasoning_text` 时，代理只在出站请求副本中把这些文本提升为 `summary_text`，把 `content` 置为空数组，并移除不可复用的推理 ID 和第三方密封状态；官方客户端产生的原生 sealed reasoning 保持不变。线程 rollout 和原始历史不修改，反复切换不会复制对话或累计额外上下文。
 
 收到明确错误后，用户通过“切换模型并重试”发起的是一个新的回合：它复用原 task 和 thread 的可移植上下文，并只向新选择的上游发送一次请求。executor 同时把本轮 `modelSelection` 写回任务摘要，保证刷新后界面展示的模型与实际请求一致。运行中发送的引导仍属于当前回合，不切换模型；新模型只用于新的普通回合或“打断并发送”创建的回合。
 
@@ -227,6 +229,16 @@ Wework 创建 Codex thread 时显式设置 `historyMode=paginated`。恢复 tran
 Wework 发起压缩前先解析目标会话保存的模型选择，并用当前凭据、模型请求头和执行设备的代理设置重新生成模型配置，再通过 App-IPC 交给 executor。持久化的执行配置已移除密钥和请求头，只能用于恢复身份，不能直接用于模型请求；没有 Wework 模型覆盖的会话继续使用原生 Codex 配置。
 
 手动上下文压缩以 Codex thread 中新的 `contextCompaction` 条目持久化为成功边界，而不是以 `thread/compact/start` 接受请求为成功。executor 在发起压缩前按任务模型配置注册并绑定本地模型路由（与发起一轮对话使用同一套判断和注册逻辑），因此空闲会话、executor 重启后或路由空闲回收后点击压缩同样能触达模型，而不是在 Codex app-server 内以“no local model proxy route is bound to the Codex thread”失败。随后记录最新 turn 并轮询近期 transcript；只有最新 turn 出现压缩条目后，才向 Wework 返回 `turnId` 和 `compactionItemId`。轮询按 wall-clock 预算停止（读取 RPC 的耗时也计入该预算），App-IPC 对 `runtime.tasks.compact` 的超时高于 executor 自身预算；若压缩轮已经结束却没有产生压缩条目（例如 provider 拒绝该轮），立即返回带原因的失败，而不是等满预算后回报超时。压缩期间 Wework 先显示单一的“正在自动压缩上下文”处理块，完成后将同一处理块收敛为“上下文已自动压缩”，失败时收敛为错误态。
+
+恢复已停止的 Goal 属于会消耗模型的操作：executor 必须在 `thread/goal/set` 激活目标前，使用任务当前模型配置注册并绑定线程路由。历史刷新只恢复原生线程，不能代替模型路由准备；executor 重启或空闲路由回收后尤其如此。路由引用由现有线程事件路由持有，持续到 Goal 暂停、阻塞、完成或清除，不能在激活 RPC 返回时释放；已有运行中的对话继续使用其当前路由和模型选择。桌面 `goal-state-sync` 检查点覆盖失败目标在隔离应用重启、历史刷新后的 UI 恢复，核对真实模型调用、`update_goal` 工具完成、会话身份与目标计数保留。
+
+可用 `pnpm --filter wework e2e:desktop -- --parallel-segments goal-resume-route` 单独运行此回归，复用 CI 的共享 runtime 准备流程；CI 仍在既有 `goal-state-sync` 检查点内执行它，不新增独立检查点进程或 job；用例自身执行一次受控应用重启。
+
+配额恢复在完成本地执行归属登记后释放发送锁，再进行可能阻塞的账号与额度读取；校验完成后重新获取锁，并复核该执行仍可继续。取消请求因此可以在外部读取未返回时发出取消信号，而不会等待恢复流程持有的同一把锁。既有配额协议测试通过挂起账号读取验证取消仍能完成。
+
+Goal 状态快照只在读取期间没有更新的目标操作或原生通知时投影到本地缓存。激活、暂停、清除及原生通知会使较早的读取失效，防止迟到的 blocked 或空目标快照释放新激活的路由；读取不持有目标修改锁，避免阻塞恢复或与条件更新形成嵌套锁。目标修改尚未返回时，原生通知仍可更新展示状态，但不能提前清理 Goal 执行记录或释放准备中的模型路由；由修改响应或后续权威快照确认非活动状态后再清理。
+
+“打断并发送”在请求停止后释放发送锁，使配额取消流程能够完成；等待停止绑定原 execution ID；超时但尚未收到停止确认时保留执行归属，不能强制清理后发送替换消息。重新拿锁后通过普通发送准入检查新的执行归属，不能取消或覆盖等待期间进入的新执行。
 
 压缩事件路由保留 `${taskId}-context-compact` 这一合成 subtask 身份，避免真实 Codex turn ID 把前端乐观处理块拆成另一条消息。executor 同时兼容 `item/completed` 和 `context/compaction` 两种通知形式：相同压缩项按 item ID 去重，不同压缩项必须分别发出。Wework 会按 subtask 对账乐观块和运行时块，避免同一次压缩显示两条指示器。桌面 E2E 通过受控的 mock 模型端点接收并阻塞 Wework 发出的压缩请求，验证确认、运行中、完成和后续消息四个阶段，并确认后续模型请求实际包含 mock 返回的压缩摘要，而不是只验证界面标记；同一 checkpoint 还会让 mock 端点拒绝一次压缩请求，断言失败在 App-IPC 截止之前自行暴露且不是超时文案。Codex transcript 持久化完成边界由 executor 回归测试覆盖，空闲线程的模型路由绑定由 executor 单测覆盖。
 

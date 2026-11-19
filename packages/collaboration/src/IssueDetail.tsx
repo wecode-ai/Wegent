@@ -68,7 +68,7 @@ interface IssueDetailProps {
     | "deliveries"
     | "automations"
   >;
-  project: CollaborationProject;
+  project?: CollaborationProject;
   issue: CollaborationIssue;
   allIssues: CollaborationIssue[];
   comments: CollaborationComment[];
@@ -244,7 +244,14 @@ function BrowserIssueDetail({
   const selectedExecution =
     selection?.issueId === issue.id ? selection.target : null;
   const closeExecution = () => setSelection(null);
-  const permissions = getCollaborationIssueActionPermissions(project, issue);
+  const permissions = project
+    ? getCollaborationIssueActionPermissions(project, issue)
+    : {
+        canEdit: issue.can_edit === true,
+        canComment: issue.invited_only === true,
+        canAssign: issue.invited_only === true,
+        canStartWork: false,
+      };
   const port = useMemo(
     () => createSharedIssueDetailPort(api, browserSave),
     [api],
@@ -267,7 +274,7 @@ function BrowserIssueDetail({
         conversation={
           selectedConversation && api.runtime ? (
             <IssueTaskConversation
-              projectStore={project.project_store}
+              projectStore={project?.project_store ?? "backend"}
               key={selectedConversation.id}
               binding={selectedConversation}
               issueId={issue.id}
@@ -381,7 +388,7 @@ function BrowserIssueDetail({
         <IssueMarkdownProvider
           attachments={api.attachments}
           issueId={issue.id}
-          projectId={project.id}
+          projectId={issue.cloud_project_id}
         >
           <BrowserAttachmentPreview
             key={`${issue.id}:${attachmentPreview.attachmentId}`}
@@ -403,7 +410,7 @@ function BrowserIssueDetail({
       {selectedExecution && api.runtime ? (
         <IssueExecutionDetails
           target={
-            project.project_store === "backend"
+            project?.project_store === "backend"
               ? {
                   ...selectedExecution,
                   address: {

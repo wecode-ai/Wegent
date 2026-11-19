@@ -30,6 +30,7 @@ from app.schemas.runtime_work import (
     RuntimeSendRequest,
     RuntimeSendResponse,
     RuntimeTaskAddress,
+    RuntimeTaskArchiveRequest,
     RuntimeTaskArchiveResponse,
     RuntimeTaskCancelResponse,
     RuntimeTaskCreateRequest,
@@ -505,7 +506,7 @@ async def unsubscribe_runtime_task_im_notification_endpoint(
 )
 @trace_async("runtime_work.archive_task", "runtime_work.api")
 async def archive_runtime_task_endpoint(
-    address: RuntimeTaskAddress,
+    address: RuntimeTaskArchiveRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -630,7 +631,7 @@ async def list_archived_conversations_endpoint(
     response_model_by_alias=True,
 )
 async def archive_conversation_endpoint(
-    address: RuntimeTaskAddress,
+    address: RuntimeTaskArchiveRequest,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):

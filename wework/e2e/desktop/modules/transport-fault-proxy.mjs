@@ -3,6 +3,21 @@ import { createHash, randomBytes } from 'node:crypto'
 import { createServer, request as httpRequest } from 'node:http'
 import { Transform } from 'node:stream'
 
+function withResponseTiming(headers, request, entry) {
+  if (!entry.responseTimingId) return headers
+  assert.match(entry.responseTimingId, /^[a-zA-Z0-9-]+$/)
+  return {
+    ...headers,
+    'server-timing': [
+      headers['server-timing'],
+      `wework-e2e-response;desc="${entry.responseTimingId}"`,
+    ]
+      .filter(Boolean)
+      .join(', '),
+    'timing-allow-origin': request.headers.origin ?? '*',
+  }
+}
+
 // Preserve original frames, including masks, while observing complete text messages.
 class WebSocketMessageFilter extends Transform {
   constructor(filter) {
@@ -248,21 +263,7 @@ export class TransportFaultProxy {
               }
               response.once('finish', () => resolve(true))
               response.once('close', () => resolve(entry.responseCompleted === true))
-              let headers = reply.headers
-              if (entry.responseTimingId) {
-                assert.match(entry.responseTimingId, /^[a-zA-Z0-9-]+$/)
-                headers = {
-                  ...headers,
-                  'server-timing': [
-                    headers['server-timing'],
-                    `wework-e2e-response;desc="${entry.responseTimingId}"`,
-                  ]
-                    .filter(Boolean)
-                    .join(', '),
-                  'timing-allow-origin': request.headers.origin ?? '*',
-                }
-              }
-              response.writeHead(reply.status, headers)
+              response.writeHead(reply.status, withResponseTiming(reply.headers, request, entry))
               response.end(reply.body)
               entry.released = true
             })
@@ -282,7 +283,7 @@ export class TransportFaultProxy {
         })
         return
       }
-      response.writeHead(incoming.statusCode, incoming.headers)
+      response.writeHead(incoming.statusCode, withResponseTiming(incoming.headers, request, entry))
       incoming.pipe(response)
       response.once('finish', () => {
         entry.delivered = true

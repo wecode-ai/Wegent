@@ -58,7 +58,7 @@ pnpm --filter wework e2e:desktop:cloud -- --segment plugin-periodic-reconcile
 
 模型目录覆盖等会被 Codex 缓存的配置必须在场景的 `prepareApp` 中写入，先于应用和共享 app-server 启动。`human-interactions` 在此阶段声明 `request_user_input_async`；不要等到 `verify` 才改配置或删除磁盘缓存，已经运行的进程可能仍使用旧目录。
 
-Windows CI 以普通账户执行桌面测试。DingTalk 协议 fixture 在切换账户前编译到工作区，通过 `WEWORK_E2E_DWS_FIXTURE_BIN` 交给分身场景复用，避免依赖普通账户的 Rust 工具链。未提供预编译文件的本地运行仍在场景准备阶段编译。覆盖属于协议集成测试，不代表真实钉钉兼容性已验证。
+Windows CI 以普通账户执行桌面测试。DingTalk 协议 fixture 在切换账户前编译到工作区，通过 `WEWORK_E2E_DWS_FIXTURE_BIN` 交给助理场景复用，避免依赖普通账户的 Rust 工具链。未提供预编译文件的本地运行仍在场景准备阶段编译。覆盖属于协议集成测试，不代表真实钉钉兼容性已验证。
 
 ## 共享 Codex 启动保护
 
@@ -156,6 +156,21 @@ Electron 不会为 WebContents 自动创建网页右键菜单。Wework 由 Elect
 ## AI 验证流程
 
 AI 应先执行 `snapshot` 确认路由和可用的 `data-testid`，再进行最小必要操作，并以 `wait-for` 加 `snapshot` 或 `text` 验证结果。结束时必须执行 `stop`；若失败，保留该会话目录中的 `app.log` 以便诊断。
+
+## 录制验证视频
+
+需要留存操作证据时，先确认 PATH 中的 FFmpeg 支持 `libx264`。用 `start --record true` 启动会话，主窗口就绪后开始录像，并在返回会话路径前采集首帧。也可以对已启动的会话执行 `record-start`，用 `record-stop` 结束当前片段，并按需开启下一段。
+
+```bash
+pnpm --filter wework ai:verify start --record true
+pnpm --filter wework ai:verify record-stop --session SESSION
+pnpm --filter wework ai:verify record-start --session SESSION
+pnpm --filter wework ai:verify stop --session SESSION
+```
+
+`record-stop` 保存视频并输出路径。若录像仍在进行，`stop` 会先保存视频，再关闭会话，并输出视频路径。每段录像以独立的 MP4 文件保存在对应的 `wework/test-results/ai-verify/` 会话目录中。如果采集中断，录制器会尽量保存已采集画面，并在停止命令的错误信息中给出已保存的路径。
+
+录像以每秒 5 帧采集隔离 Electron 主窗口内容，覆盖页面重载，无需 macOS 屏幕录制权限。采集范围不包含操作系统弹窗、原生菜单、独立窗口或音频。请将录像与实际断言结果一起作为验收证据，分享前检查画面中的敏感信息。录像和会话文件请保留在 Git 之外。
 
 ## 通用 DevTools 与性能分析
 

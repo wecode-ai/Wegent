@@ -90,8 +90,8 @@ it dispatches (`src/desktop/applicationMenu.ts` and
 - The host owns item ids, labels, and menu structure. Actions and capabilities
   are declared in both `src/desktop/applicationMenuModel.ts` (renderer) and
   `electron/src/host/application-menu.ts` (host); a contract test fails when
-  those two declarations drift, and the `application-menu` E2E checkpoint fails
-  when an item id disappears.
+  those two declarations drift. Keep declaration and native dispatch coverage
+  in the existing menu contract tests.
 - Declaring a capability is a promise that some code reports it. Only declare a
   capability when the renderer actually reports it for the focused window, and
   cover the item becoming _visible_ in the E2E checkpoint. An item whose
@@ -101,9 +101,10 @@ it dispatches (`src/desktop/applicationMenu.ts` and
   `visible: false` item whose accelerator is pressed. Never rely on the hidden
   state to block an action — the renderer handler must guard itself against the
   state where the action is not available.
-- Cover a new item in the `application-menu` desktop E2E checkpoint: assert it
-  exists, that its visibility matches the capability matrix, and that activating
-  it performs its action.
+- Extend the existing menu contracts when declarations or dispatch change. For
+  a new cross-boundary action, extend its feature's retained desktop checkpoint
+  and assert capability-driven visibility and the actual native effect. Follow
+  the repository policy for local E2E execution.
 
 This is a recommendation, not a requirement: a feature that only makes sense
 inside its own surface can stay without a menu entry.
@@ -119,6 +120,14 @@ inside its own surface can stay without a menu entry.
 - Review all affected surfaces: top tabs, sidebar, account/native menus, composer, project/Issue menus, right workspace, bottom panel and settings. Registered settings/sidebar entries have automatic coverage; controls outside those registries, nested controls, dynamic plugin entries and permissions-dependent paths still require explicit review against actual code and existing verification evidence.
 - Each `*Page.tsx` under `wework/src` and `packages/collaboration/src` must have one owning topic in both languages, declared with `<!-- ui-source: src/... -->` or `<!-- ui-source: ../packages/collaboration/src/... -->` in that topic. Keep source ownership identical across languages. The contract checks literal JSX field labels and General's literal helper labels against visible documentation; metadata alone does not count. Update the topic's purpose, visible path, action steps, activation/save behavior and restrictions when changing a field. Page ownership and literal-label coverage do not prove dynamic menus, delegated forms or all behaviors are documented: review non-Page first-party operation groups too, including shared collaboration UI, Applications, notifications, delivery, drag/stash, memory and conditional project-lead controls. Do not exclude an entry merely because it is experimental or permission-dependent. Keep the navigation page as links to topic sections, not a second copy of the procedures, and remove obsolete paths instead of appending competing instructions.
 - Run `pnpm --filter wework test scripts/wework-navigation-docs.test.mjs scripts/bundled-wework-docs.test.mjs` for navigation documentation changes. The existing Lint workflow's settings-configuration job runs them even for docs-only PRs; keep the index linked from both language READMEs and the bundled skill. Update maintained docs, not generated or installed `references/` copies. Do not claim a running UI was verified from a static documentation check.
+
+## Message submission contract
+
+- No behavior may block local message admission. Clicking Send must synchronously validate the current input and record it in the owning conversation or its queue before any asynchronous preparation, query, upload, analysis, or transport call. Render that state immediately and clear only the submitted draft revision; preserve newer drafts and other conversations.
+- Optional work must never gate sending. Project and Issue detail loading, conversation history reads, background refreshes, analytics, and suggestions do not belong in the send path. Moving those reads to a background cache is not a substitute for removing the dependency.
+- Send the user's message, explicit selections/attachments, and the minimum stable resource identifiers. Keep detailed project descriptions, Issue bodies/comments, referenced transcripts, and unrelated runtime configuration out of implicit context. Models must use the authorized source tools to read current details when needed. A cached preview is not evidence of the current source; failed, unavailable, or denied reads must remain explicit, never silently replaced with stale data or another access route.
+- Local admission is not a delivery receipt. Preserve permission/model checks, attachment integrity, server queue semantics, and truthful pending/failed/retry states. Any necessary asynchronous execution preparation happens after local admission; it must not freeze the composer or hide the accepted local message. A successful transport response alone does not prove model execution completed.
+- Review every send entry and branch against this contract: new and existing conversations, idle/busy/queued turns, guidance/interrupt, pending questions, attachments and references, failures, rapid repeats, draft edits, and pane switching/unmounting. Trace the full path through runtime transport and tool reads using a sequence diagram. Add focused state and boundary regressions, including stalled optional reads, latest source content, and rejected access. Follow the repository's E2E execution policy.
 
 ## Testing
 
@@ -170,6 +179,7 @@ E2E tests use real backend requests. Do not skip, silently fail, or replace a fa
 - Take consistent migration-data snapshots only after writers stop. Compatible rollback may switch directly; incompatible rollback requires explicit confirmation before restoring a snapshot and must preserve the failed release's newer data. Never restore user repositories, cloud records, or personal agent credentials.
 - Preserve active Goal recovery journals when the executor or app-server stops. A previous turn's completed outcome does not complete its still-active Goal; neither an exit notification nor a closed stream may finalize that Goal using the older outcome.
 - Maintain three layers of verification: pure policy/transaction tests, reusable real-package upgrade/rollback scenarios, and a release-edge matrix. Keep scenario behavior independent of version numbers: add a source/target pair to matrix data instead of copying a test for every release.
+- Select credential acceptance from the actual delivered host's native storage metadata and observed format, never from a version range. A format-preserving v2 pair must prove upgrade, authenticated writes after rollback, and preserved quarantine or explicit retry consent without downloading the target. Any pair involving v3 must additionally re-upgrade. Shared-store v3 pairs authenticate the rollback-written credential after re-upgrade. An `isolated-copy-once` host imports legacy credentials once into `protected-credentials`, retains legacy files unchanged for old releases, and never synchronizes later writes between stores: prove an authenticated target write, unchanged legacy files, an authenticated rollback write, and independent target credentials after re-upgrade. Keep all stages bound to the exact package identities; never clear rollback history or modify a historical package to force a retry.
 - Upgrade E2E must start the actual source package, perform the real UI update, restart into the actual target package, verify persisted task/plugin/configuration data and task continuation, then exercise rollback. Consume prebuilt release packages instead of building regression fixture packages. Release evidence must use the immutable delivered source and target archives without changing their package identity or signatures. Renaming or editing an existing archive is not cross-version verification. Pre-protocol legacy clients are outside this new E2E matrix.
 - Verify the complete selected release: host, Core runtime, executor, Codex, and DWS paths must match that slot's prepared composition. Do not carry fixed source-package binary overrides into the target or rollback process. Build an installed source's prerequisites through its shipped preparation entry, and keep test output separate from formal packages and unrelated checkpoints.
 - Maintain the scenario list, phase budgets, and acceptance version in `e2e/desktop/upgrade-suite.mjs`. Bound sequential preparation phases independently, reject stalled or regressing phases, and retain `logs/release-preparation.log` stage timings; never apply one operation's timeout to the entire serial preparation. Run the complete `upgrade-and-rollback` group on macOS arm64. Windows x64 certifies the core `app-rollback` checkpoint: real source-to-target UI upgrade, persisted task/configuration data, task continuation, and normal rollback. Interrupted rollback and failed-activation recovery remain covered by the macOS group and may be run as non-publishing Windows diagnostics. Use fixed A-to-B pairs with B newer than A; B need not be the newest release. Meaningful changes to the acceptance contract increment the suite version and invalidate older proof for new edges.

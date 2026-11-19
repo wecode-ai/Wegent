@@ -433,7 +433,7 @@ impl SocketRuntime {
         // `EventEmitter::new` requires the namespace to be registered, so this
         // runs after `handlers!` has exported every namespace.
         let emitters = Arc::new(
-            SocketEmitters::new(server)
+            SocketEmitters::new(server, Arc::downgrade(&state))
                 .map_err(|error| -> BoxError { format!("Socket.IO emitters: {error}").into() })?,
         );
         if self.emitters.set(Arc::clone(&emitters)).is_err() {
@@ -581,6 +581,12 @@ impl SocketRuntime {
                 tracing::warn!("inbound adapter broadcast queue is full; the frame is dropped");
             }
         })
+    }
+
+    /// Installs test emitter handles without starting production workers.
+    #[cfg(test)]
+    pub(crate) fn install_emitters(&self, emitters: Arc<SocketEmitters>) {
+        assert!(self.emitters.set(emitters).is_ok());
     }
 
     /// Installs the callback registry the adapter sink registers accepted

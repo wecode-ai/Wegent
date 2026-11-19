@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { issueCommentFormSelector } from '../modules/issue-comment-selectors.mjs'
 import { setTimeout as poll } from 'node:timers/promises'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { verifyStandInConversationAssignmentIndependence } from '../modules/stand-in-conversation-assignment-independence.mjs'
@@ -24,7 +25,7 @@ import {
 const MARKER = `ISSUE_ROOM_${process.pid}`
 const ACK = '收到，我会让子代理检查，完成后在这里回复。'
 const RESULT = '检查已完成，结果已核实。'
-const FOLLOWUP = '补充解释已完成，仍在同一个分身会话中。'
+const FOLLOWUP = '补充解释已完成，仍在同一个助理会话中。'
 const REOPENED = '已重新开始处理此 Issue。'
 const SUPPLEMENT = '补充信息已收到，会话历史保持连续。'
 const RAW_CHILD = 'ISSUE_ROOM_PRIVATE_CHILD_TRACE'
@@ -96,7 +97,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
       const workspace = await request('/v1/workspaces', { name: MARKER })
       project = await request('/v1/cloud-projects', {
         workspace_id: workspace.id,
-        name: '分身 Issue 对话验收',
+        name: '助理 Issue 对话验收',
         task_provider: 'local',
       })
     },
@@ -271,7 +272,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
             {
               ...initial.roles[0],
               id: ROLE,
-              name: '项目检查分身',
+              name: '项目检查助理',
               enabled: true,
               manual: true,
               intakeRouted: true,
@@ -310,7 +311,7 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, cap
         value: `wework://boards/${project.id}/issues/${issue.id}`,
       })
       const activity = `${ACTIVE} [data-testid="cloud-task-activity-${issue.id}"]`
-      const form = `${activity} [data-testid="task-comment-form"]`
+      const form = `${ACTIVE} ${issueCommentFormSelector(issue.id)}`
       const editor = `${form} [data-testid="cloud-task-activity-composer"]`
       await control.command('waitFor', editor)
       await control.command('fill', editor, {

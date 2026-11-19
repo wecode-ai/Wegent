@@ -27,7 +27,8 @@ struct Intent {
 
 pub(super) struct Reconciler {
     retries: HashMap<(u64, String), Instant>,
-    cursor: usize,
+    failures: HashMap<(u64, String), (u32, Instant)>,
+    inventory: HashMap<u64, Value>,
     retry_signal: Option<PathBuf>,
     retry_signal_value: Option<Vec<u8>>,
 }
@@ -36,7 +37,8 @@ impl Default for Reconciler {
     fn default() -> Self {
         Self {
             retries: HashMap::new(),
-            cursor: 0,
+            failures: HashMap::new(),
+            inventory: HashMap::new(),
             retry_signal: super::e2e_retry_signal(),
             retry_signal_value: None,
         }
@@ -49,28 +51,86 @@ impl Reconciler {
         transport: T,
         home: &Path,
     ) -> Result<(), AuthError> {
-        self.consume_retry_signal();
-        let ids = installed_ids(home)?;
-        if ids.is_empty() {
-            self.retries.clear();
-            self.cursor = 0;
-            return Ok(());
-        }
-        // Rotate batches so an unavailable source never starves a later plugin.
-        let selected: Vec<_> = ids
+        let inventory = installed_inventory(home)?;
+        let mut ids: Vec<_> = inventory.keys().copied().collect();
+        ids.sort_unstable();
+        self.inventory = inventory;
+        self.reconcile_selected(transport, home, &ids).await
+    }
+
+    pub async fn reconcile_changes<T: super::PluginAuthTransport>(
+        &mut self,
+        transport: T,
+        home: &Path,
+    ) -> Result<(), AuthError> {
+        let inventory = installed_inventory(home)?;
+        let ids: Vec<_> = inventory
             .iter()
-            .cycle()
-            .skip(self.cursor)
-            .take(ids.len().min(16))
-            .copied()
+            .filter_map(|(id, entry)| (self.inventory.get(id) != Some(entry)).then_some(*id))
             .collect();
-        self.cursor = if ids.is_empty() {
-            0
-        } else {
-            (self.cursor + selected.len()) % ids.len()
-        };
+        self.inventory = inventory;
+        for id in &ids {
+            self.invalidate(*id);
+        }
+        self.reconcile_selected(transport, home, &ids).await
+    }
+
+    pub fn invalidate(&mut self, id: u64) {
+        self.retries.retain(|(target, _), _| *target != id);
+        self.failures.retain(|(target, _), _| *target != id);
+    }
+
+    pub fn next_retry(&self) -> Option<Instant> {
+        self.failures.values().map(|(_, due)| *due).min()
+    }
+
+    pub async fn reconcile_due<T: super::PluginAuthTransport>(
+        &mut self,
+        transport: T,
+        home: &Path,
+    ) -> Result<(), AuthError> {
+        let ids: Vec<_> = self
+            .failures
+            .iter()
+            .filter_map(|((id, _), (_, due))| (*due <= Instant::now()).then_some(*id))
+            .collect();
+        for (key, (_, due)) in &mut self.failures {
+            if ids.contains(&key.0) {
+                *due = Instant::now() + Duration::from_secs(30);
+            }
+        }
+        self.reconcile_selected(transport, home, &ids).await
+    }
+
+    pub async fn reconcile_selected<T: super::PluginAuthTransport>(
+        &mut self,
+        transport: T,
+        home: &Path,
+        requested: &[u64],
+    ) -> Result<(), AuthError> {
+        self.consume_retry_signal();
+        let owned = installed_ids(home)?;
         self.retries
-            .retain(|(id, _), until| ids.contains(id) && *until > Instant::now());
+            .retain(|(id, _), until| owned.contains(id) && *until > Instant::now());
+        self.failures.retain(|(id, _), _| owned.contains(id));
+        let ids: Vec<_> = requested
+            .iter()
+            .copied()
+            .filter(|id| owned.contains(id))
+            .collect();
+        for selected in ids.chunks(16) {
+            self.reconcile_batch(transport.clone(), home, selected)
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn reconcile_batch<T: super::PluginAuthTransport>(
+        &mut self,
+        transport: T,
+        home: &Path,
+        selected: &[u64],
+    ) -> Result<(), AuthError> {
         let response = NativeAuthGateway::new(transport.clone())
             .call(
                 "plugin.auth.automatic",
@@ -93,6 +153,12 @@ impl Reconciler {
                 ],
             );
         }
+        self.failures.retain(|key, _| {
+            !selected.contains(&key.0)
+                || packages.iter().any(|package| {
+                    package.installed_plugin_id == key.0 && package.connector_slug == key.1
+                })
+        });
         let mut pending = tokio::task::JoinSet::new();
         let actions = Arc::new(tokio::sync::Semaphore::new(4));
         for package in packages {
@@ -133,12 +199,27 @@ impl Reconciler {
         // An obsolete intent says nothing about the new login's native credentials.
         if result == Err(AuthError("plugin_auth_migration_expired")) {
             self.retries.remove(&key);
+            self.failures.remove(&key);
             return;
         }
-        // Missing/locked credentials remain local. Retry after login without
-        // repeatedly prompting the OS on every scheduler tick.
-        self.retries
-            .insert(key, Instant::now() + Duration::from_secs(60));
+        let delay = if result.is_ok() {
+            self.failures.remove(&key);
+            Duration::from_secs(60)
+        } else {
+            let attempt = self
+                .failures
+                .get(&key)
+                .map_or(1, |(attempt, _)| attempt.saturating_add(1));
+            let delay = Duration::from_secs(match attempt {
+                1 => 30,
+                2 => 60,
+                _ => 300,
+            });
+            self.failures
+                .insert(key.clone(), (attempt, Instant::now() + delay));
+            delay
+        };
+        self.retries.insert(key, Instant::now() + delay);
     }
 
     fn consume_retry_signal(&mut self) {
@@ -153,6 +234,7 @@ impl Reconciler {
         }
         self.retry_signal_value = Some(value);
         self.retries.clear();
+        self.failures.clear();
     }
 }
 
@@ -198,9 +280,19 @@ fn installed_ids(home: &Path) -> Result<Vec<u64>, AuthError> {
 }
 
 fn installed_ids_at(path: &Path) -> Result<Vec<u64>, AuthError> {
+    let mut ids: Vec<_> = installed_inventory_at(path)?.into_keys().collect();
+    ids.sort_unstable();
+    Ok(ids)
+}
+
+fn installed_inventory(home: &Path) -> Result<HashMap<u64, Value>, AuthError> {
+    installed_inventory_at(&super::migration::manifest_path_for_home(home))
+}
+
+fn installed_inventory_at(path: &Path) -> Result<HashMap<u64, Value>, AuthError> {
     let metadata = match fs::symlink_metadata(path) {
         Ok(value) => value,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(vec![]),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(HashMap::new()),
         Err(_) => return Err(AuthError("plugin_auth_invalid_package")),
     };
     if !metadata.is_file() || metadata.len() > 8 * 1024 * 1024 {
@@ -210,16 +302,18 @@ fn installed_ids_at(path: &Path) -> Result<Vec<u64>, AuthError> {
         &fs::read(path).map_err(|_| AuthError("plugin_auth_invalid_package"))?,
     )
     .map_err(|_| AuthError("plugin_auth_invalid_package"))?;
-    let mut ids: Vec<u64> = manifest["plugins"]
+    Ok(manifest["plugins"]
         .as_object()
         .ok_or(AuthError("plugin_auth_invalid_package"))?
         .values()
         .filter(|entry| entry["managed"] == true && entry["enabled"] == true)
-        .filter_map(|entry| entry["installed_plugin_id"].as_u64().filter(|id| *id > 0))
-        .collect();
-    ids.sort_unstable();
-    ids.dedup();
-    Ok(ids)
+        .filter_map(|entry| {
+            entry["installed_plugin_id"]
+                .as_u64()
+                .filter(|id| *id > 0)
+                .map(|id| (id, entry.clone()))
+        })
+        .collect())
 }
 
 #[cfg(test)]
@@ -422,7 +516,8 @@ mod tests {
         let key = (12, "mail".to_owned());
         let mut reconciler = Reconciler {
             retries: HashMap::from([(key.clone(), Instant::now() + Duration::from_secs(60))]),
-            cursor: 0,
+            failures: HashMap::new(),
+            inventory: HashMap::new(),
             retry_signal: Some(signal.clone()),
             retry_signal_value: None,
         };
@@ -457,5 +552,54 @@ mod tests {
             installed_ids(home.path()),
             Err(AuthError("plugin_auth_invalid_package"))
         );
+    }
+    #[test]
+    fn failures_back_off_and_login_invalidates_only_its_own_target() {
+        let mut reconciler = Reconciler::default();
+        let key = (42, "mail".to_owned());
+        let other = (43, "mail".to_owned());
+        reconciler.record(other.clone(), Ok(()));
+        for seconds in [30, 60, 300, 300] {
+            let before = Instant::now();
+            reconciler.record(key.clone(), Err(AuthError("plugin_auth_owner_unavailable")));
+            let due = reconciler.next_retry().unwrap();
+            assert!(due >= before + Duration::from_secs(seconds));
+            assert!(due <= Instant::now() + Duration::from_secs(seconds));
+        }
+        reconciler.invalidate(42);
+        assert!(reconciler.next_retry().is_none());
+        assert!(reconciler.retries.contains_key(&other));
+        reconciler.record(key, Ok(()));
+        assert!(reconciler.next_retry().is_none());
+    }
+
+    #[tokio::test]
+    async fn unchanged_or_removed_inventory_does_not_rediscover_credentials() {
+        let home = tempfile::tempdir().unwrap();
+        fs::create_dir(home.path().join("capabilities")).unwrap();
+        let path = home.path().join("capabilities/manifest-v2.json");
+        let manifest =
+            json!({"plugins":{"mail":{"installed_plugin_id":42,"managed":true,"enabled":true}}});
+        fs::write(&path, manifest.to_string()).unwrap();
+        let calls = Arc::new(Mutex::new(VecDeque::new()));
+        let mut reconciler = Reconciler {
+            inventory: installed_inventory(home.path()).unwrap(),
+            ..Default::default()
+        };
+        reconciler
+            .reconcile_changes(Transport(calls.clone()), home.path())
+            .await
+            .unwrap();
+        fs::write(path, json!({"plugins":{}}).to_string()).unwrap();
+        reconciler.record(
+            (42, "mail".into()),
+            Err(AuthError("plugin_auth_owner_unavailable")),
+        );
+        reconciler
+            .reconcile_changes(Transport(calls.clone()), home.path())
+            .await
+            .unwrap();
+        assert!(reconciler.next_retry().is_none());
+        assert!(calls.lock().unwrap().is_empty());
     }
 }

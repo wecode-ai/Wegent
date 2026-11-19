@@ -63,6 +63,7 @@ from app.schemas.runtime_work import (
     RuntimeSessionReadRequest,
     RuntimeSupervisorCreateInput,
     RuntimeTaskAddress,
+    RuntimeTaskArchiveRequest,
     RuntimeTaskArchiveResponse,
     RuntimeTaskCancelResponse,
     RuntimeTaskCreatePayload,
@@ -779,6 +780,11 @@ async def send_runtime_message(
 
     address = _normalized_address(request.address)
     _ensure_owned_device(db, user_id, address.device_id)
+    if request.im_question_answer is not None:
+        from app.services.im.question_context import submit_interpreted_answer
+
+        return await submit_interpreted_answer(db, user_id, request)
+
     _touch_workspace_mapping(db, user_id, address)
     payload = {
         **_runtime_task_address_payload(address),
@@ -786,6 +792,8 @@ async def send_runtime_message(
     }
     if request.queue_if_busy:
         payload["queueIfBusy"] = True
+    if request.resource_event_keys is not None:
+        payload["resourceEventKeys"] = request.resource_event_keys
     _apply_runtime_user_message_identity(payload, request)
     attachments = _runtime_attachment_payloads(db, user_id, request.attachment_ids)
     if attachments:
@@ -869,11 +877,26 @@ async def _dispatch_runtime_send(
     model config, user info, skills, etc.). Backend clients use the same compiler
     as Wework's Team materialization, preserving the original task binding and
     selected model. Unbound tasks use the direct Wework execution builder.
-    Request-user-input responses use a dedicated executor channel and do not
-    spawn a new turn, so they intentionally omit ``executionRequest``.
+    Blocking question responses use a dedicated executor channel. Async answers
+    reauthorize the native origin and let the Executor continue with its saved
+    execution profile. Both omit ``executionRequest`` from the backend RPC.
     """
     if request.conversation_context is not None:
         payload["conversationContext"] = request.conversation_context
+    if (request.request_user_input_response or {}).get("delivery") == "async":
+        # Async answers may start a new execution. Reauthorize its native origin
+        # just like ordinary continuation, while the Executor restores its model.
+        address = await resolve_continuation_address(
+            db=db,
+            user_id=user_id,
+            address=address,
+            allow_app_device_task_messaging=allow_app_device_task_messaging,
+        )
+        handle = address.runtime_handle or {}
+        authorize_execution_origin(
+            db, user_id, handle.get("origin"), handle.get("cloudProjectId")
+        )
+        payload.update(_runtime_task_address_payload(address))
     if request.request_user_input_response is None:
         address = await resolve_continuation_address(
             db=db,
@@ -1087,7 +1110,15 @@ async def archive_runtime_task(
             user_id=user_id,
             device_id=normalized_address.device_id,
             method="runtime.tasks.archive",
-            payload=_runtime_task_address_payload(normalized_address),
+            payload={
+                **_runtime_task_address_payload(normalized_address),
+                **(
+                    {"cleanupWorktree": True}
+                    if isinstance(address, RuntimeTaskArchiveRequest)
+                    and address.cleanup_worktree
+                    else {}
+                ),
+            },
             timeout_seconds=RUNTIME_TRANSCRIPT_TIMEOUT_SECONDS,
         )
     except RuntimeRpcError as exc:
@@ -1568,13 +1599,7 @@ def _runtime_task_create_payload(
 ) -> dict[str, Any]:
     """Compile one validated create request into the Executor wire payload."""
 
-    runtime = request.runtime
-    bots = getattr(execution_request, "bot", [])
-    if request.wegent_team_id is not None and bots:
-        runtime = {
-            "Codex": "codex",
-            "ClaudeCode": "claude_code",
-        }.get(bots[0].get("shell_type"), runtime)
+    runtime = _runtime_execution_runtime(request, execution_request)
     payload: dict[str, Any] = {
         "runtime": runtime,
         "message": request.message,
@@ -2514,6 +2539,7 @@ def _runtime_archive_response(
         accepted=bool(result.get("accepted", True)),
         taskId=str(result.get("taskId") or address.local_task_id),
         workspacePath=result.get("workspacePath") or address.workspace_path,
+        cleanupError=result.get("cleanupError"),
         error=result.get("error"),
     )
 
@@ -4304,10 +4330,7 @@ def _build_team_runtime_execution_request(
     )
     task_id, subtask_id = _runtime_execution_ids()
     title = _runtime_task_title(request)
-    message = _message_with_application_context(
-        request.message,
-        request.additional_context,
-    )
+    message = request.message
     task = _transient_runtime_team_task(
         task_id=task_id,
         user_id=user.id,
@@ -4460,10 +4483,7 @@ def _build_direct_wework_runtime_execution_request(
         ),
         model_config=model_config,
         system_prompt=(request.project_instructions or "").strip(),
-        prompt=_message_with_application_context(
-            request.message,
-            request.additional_context,
-        ),
+        prompt=request.message,
         enable_tools=True,
         enable_web_search=False,
         enable_deep_thinking=False,
@@ -4543,6 +4563,8 @@ def _apply_runtime_create_request(
     execution_request.cloud_project_id = (
         str(request.cloud_project_id) if request.cloud_project_id is not None else None
     )
+    execution_request.prompt = _runtime_message(request, execution_request)
+    execution_request.additional_context = request.additional_context or {}
     execution_request.origin = request.origin
     if request.attachments:
         execution_request.attachments = list(request.attachments)
@@ -4550,7 +4572,27 @@ def _apply_runtime_create_request(
         execution_request.ephemeral = request.ephemeral
 
 
-def _message_with_application_context(
+def _runtime_execution_runtime(
+    request: RuntimeTaskCreateRequest, execution_request: Any
+) -> str:
+    bots = getattr(execution_request, "bot", [])
+    if request.wegent_team_id is not None and bots:
+        return {"Codex": "codex", "ClaudeCode": "claude_code"}.get(
+            bots[0].get("shell_type"), request.runtime
+        )
+    return request.runtime
+
+
+def _runtime_message(request: RuntimeTaskCreateRequest, execution_request: Any) -> str:
+    runtime = _runtime_execution_runtime(request, execution_request)
+    if runtime in ("claude", "claudecode", "claude_code"):
+        return _claude_message_with_application_context(
+            request.message, request.additional_context
+        )
+    return request.message
+
+
+def _claude_message_with_application_context(
     message: str, context: Optional[dict[str, dict[str, Any]]]
 ) -> str:
     entries: list[str] = []

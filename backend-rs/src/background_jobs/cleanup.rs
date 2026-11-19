@@ -121,9 +121,7 @@ impl Subtask {
 }
 
 fn column<T: FromMysqlCol>(row: &MysqlRow, name: &str) -> Result<Option<T>> {
-    let index = crate::task_store::subtask_column_index(name)
-        .context("unknown maintenance subtask field")?;
-    Ok(row.get_at::<Option<T>>(index)?)
+    Ok(row.get::<T>(name)?)
 }
 
 fn required<T: FromMysqlCol>(row: &MysqlRow, name: &str) -> Result<T> {
@@ -350,17 +348,27 @@ async fn cleanup_batch(
         .collect::<BTreeSet<_>>();
     let mut groups: BTreeMap<(String, String), Group> = BTreeMap::new();
     for id in valid {
-        let rows = state.task_store.list_subtasks_by_task(id).await?;
-        for subtask in rows.into_iter().map(Subtask::read) {
-            let subtask = subtask?;
-            if subtask.executor.is_empty() || subtask.deleted {
-                continue;
+        let mut after_id = 0;
+        loop {
+            let rows = state
+                .task_store
+                .list_executor_reference_page_on(&mut &state.mysql, id, after_id)
+                .await?;
+            if rows.is_empty() {
+                break;
             }
-            let group = groups
-                .entry((subtask.namespace.clone(), subtask.executor.clone()))
-                .or_default();
-            group.tasks.insert(id);
-            group.add(&subtask);
+            after_id = rows.last().unwrap().get_required("id")?;
+            for subtask in rows.into_iter().map(Subtask::read) {
+                let subtask = subtask?;
+                if subtask.executor.is_empty() || subtask.deleted {
+                    continue;
+                }
+                let group = groups
+                    .entry((subtask.namespace.clone(), subtask.executor.clone()))
+                    .or_default();
+                group.tasks.insert(id);
+                group.add(&subtask);
+            }
         }
     }
     if groups.is_empty() {

@@ -12,7 +12,7 @@ for mobile_subagent_path in \
   assert_desktop_case "mobile subagents select only the existing lifecycle and history checkpoint" \
     'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"streaming-subagents"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"streaming-subagent-guidance"}]}
 wework_desktop_cloud_e2e=false
 wework_desktop_cloud_e2e_matrix={"include":[]}
 wework_desktop_other_e2e=false
@@ -33,8 +33,6 @@ for mobile_file_path in \
   wework-mobile/src/services/mobileAbort.ts \
   wework-mobile/src/services/runtimeStream.test.ts \
   wework-mobile/src/types/runtimeCommand.ts \
-  wework-mobile/src/hooks/useMobileRuntime.ts \
-  wework-mobile/src/hooks/useMobileRuntime.test.tsx \
   wework-mobile/src/types/files.ts \
   wework-mobile/src/types/workspaceGit.ts \
   wework-mobile/src/domain/mobileWorkspaceGit.ts \
@@ -57,6 +55,23 @@ wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-3","name":"Cloud / shar
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
     "$mobile_file_path"
+done
+
+for mobile_runtime_path in \
+  wework-mobile/src/hooks/useMobileRuntime.ts \
+  wework-mobile/src/hooks/useMobileRuntime.test.tsx; do
+  assert_case "mobile runtime changes preserve their existing cloud protocol CI gate" \
+    "${all_false/wework_e2e=false/wework_e2e=true}" \
+    "$mobile_runtime_path"
+  assert_desktop_case "mobile runtime changes cover local lifecycle and cloud files" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"native-lifecycle"}]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-3","name":"Cloud / shard 3","segments":"workspace-attachments"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+    "$mobile_runtime_path"
 done
 
 assert_case "mobile API changes enable their existing protocol CI gate" \

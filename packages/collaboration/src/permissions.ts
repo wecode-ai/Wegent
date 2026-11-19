@@ -72,10 +72,17 @@ export function getCollaborationIssueActionPermissions(
   project: ProjectRoleSource & Pick<CollaborationProject, "current_user_id">,
   issue: Pick<
     CollaborationIssue,
-    "can_edit" | "can_view_detail" | "created_by_user_id"
+    "can_edit" | "can_view_detail" | "created_by_user_id" | "invited_only"
   >,
 ): CollaborationIssueActionPermissions {
   const canViewDetail = canStartWorkOnCollaborationIssue(issue);
+  if (issue.invited_only)
+    return {
+      canEdit: canViewDetail && issue.can_edit === true,
+      canComment: canViewDetail,
+      canAssign: canViewDetail,
+      canStartWork: false,
+    };
   const canWork = canViewDetail && canModifyIssues(resolveProjectRole(project));
   return {
     canEdit: canEditCollaborationIssue(issue),

@@ -310,7 +310,9 @@ change, a hairline, then elevation. Do not jump directly to a bordered card.
 
 Codex's interactive accent is blue:
 
-- focus/link blue: `#339CFF`;
+- focus/link blue: `#2563EB` on light surfaces and `#339CFF` on dark surfaces;
+- default focus indicators meet at least `3:1` against their adjacent surfaces;
+  default text links meet `4.5:1`;
 - light accent surface: `#E5F3FF`;
 - dark accent surface: `#00284D`.
 
@@ -1006,10 +1008,47 @@ component-level validation outlines to override the native-outline reset.
 - Use optimistic updates only when failure is clearly reversible.
 - Put status next to the affected object whenever possible; use a toast for a
   completed non-blocking result and a dialog only for a blocking decision.
+- Background runtime notices use the popover layer below modal dialogs. Their
+  progress, failure and recovery controls remain available after the dialog
+  closes; unrelated preparation failures must not cover the active dialog's
+  fields, keyboard focus or primary action.
 - Secondary controls may reveal progressively, but current status, errors, and
   required decisions remain visible.
 
 ### 7.1 Forms
+
+- Project settings share a `20px` horizontal gutter, `24px` top inset, a
+  `max-w-4xl` reading width and the small heading role. Human access belongs
+  under Project members; AI configuration groups Agents, Collaboration groups and execution environments.
+- Preserve drafts when moving between settings sections within one project.
+  Mount sections on first visit and suspend hidden effects; do not preload
+  unrelated settings or keep their requests active. Project changes reset
+  drafts. Explanatory settings text uses the secondary foreground so small
+  text remains readable, including on neutral surfaces.
+- The desktop host supplies its retained-page lifecycle through the collaboration
+  host adapter. The shared settings shell owns layout and navigation; Web uses
+  active-page rendering with its framework-owned React runtime.
+- Keep the settings frame mounted across project navigation and reset the
+  project-owned page drafts inside it by resource identity.
+- In narrow project settings, collapse collaboration navigation behind an
+  explicit disclosure while keeping project context and settings entries visible.
+  Preserve every navigation entry and clear its expanded state after navigation.
+- Keep group identity compact above independently expandable configuration
+  rows for members, rules, environment and sharing. Collapsed rows summarize
+  their current draft values. Keep save status and discard/save actions together.
+  Do not repeat avatars,
+  source labels, counters or bordered profile cards that push editing below
+  the first viewport. Template pickers replace their list with details in the
+  same dialog; role summaries give way to their editing controls.
+- Group member editing uses aligned compact rows, with responsibilities and
+  participant identity visible together. The save bar follows the actual
+  settings scroll container, including when multiple configuration regions open.
+  Returning with unsaved changes requires an explicit discard choice. Group
+  sharing identifies that its snapshot uses the saved version.
+- Settings placeholders use the secondary foreground and full opacity. Validation
+  associates errors with their fields and focuses the error summary. Dialogs
+  share keyboard ownership, preserve nested native or popover boundaries, and
+  restore their trigger after closing, including fields that autofocus on mount.
 
 - Every field has an accessible name; ordinary settings fields also have a
   persistent visible label.
@@ -2376,8 +2415,12 @@ flowchart LR
   actually deliver: in-app, system, and IM independently. Disabling in-app
   delivery prevents new unread items and acknowledges existing unread items in
   that category without deleting notification history. The sidebar IM control
-  may open this settings view or select an IM target, but must not maintain a
+  may open this settings view; tasks share the account’s existing private IM
+  connections without a recipient picker. The sidebar must not maintain a
   second notification toggle.
+  This switch governs proactive desktop-task notifications. A conversation
+  started in private IM still asks questions and receives answers in its
+  originating chat, independently of that notification preference.
 - Preserve the current local task list and read actions while disconnected.
   Show cloud unavailability in the popover rather than disabling the whole bell.
   Never discard already loaded cloud items because a refresh fails.

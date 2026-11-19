@@ -26,7 +26,6 @@ import {
   waitForPythonRuntimeEvent,
 } from '../modules/managed-python.mjs'
 import { verifyResponsesApiGateway } from './responses-api-gateway.scenario.mjs'
-import { DESKTOP_CHECKPOINT_CI_HOSTS } from '../checkpoints.mjs'
 import {
   createConversationAuthModelFixture,
   sendOrdinaryChat,
@@ -42,6 +41,7 @@ import {
   CLOUD_DEVICE_ID,
   REMOTE_DOCKER_DEVICE_ID,
   processIsAlive,
+  selectE2EModel,
 } from '../modules/shared.mjs'
 import {
   assistantMessage,
@@ -131,6 +131,10 @@ export async function createDesktopScenario({
       oauthSecret,
       transferSecret,
       recordPythonRuntime: checkpoint === 'plugin-account-auth-password',
+      // The row-lock probe observes an installation, not a connector. Keep its
+      // sole account adapter identical to the mail recovery assertion.
+      accountConnectorSlugs:
+        checkpoint === 'plugin-account-auth-coordination' ? ['mail'] : undefined,
     })
 
   async function api(path, method = 'GET', body) {
@@ -263,7 +267,7 @@ export async function createDesktopScenario({
         false,
         'Plugin account auth scenario must not start background reply predictions'
       )
-      if (checkpoint === DESKTOP_CHECKPOINT_CI_HOSTS.get('responses-api-gateway')) {
+      if (checkpoint === 'plugin-account-auth-dws') {
         await verifyResponsesApiGateway(control, cloud, {
           checkpoint,
           resultDir,
@@ -373,6 +377,12 @@ export async function createDesktopScenario({
               slug,
               homePath,
               installedId,
+              expectedDeviceId: local.execution_target_id,
+              expectedDeviceBinding: {
+                deviceRowId: local.id,
+                runtimeDeviceId: local.socket_device_id,
+                runtimeInstanceId: local.runtime_instance_id,
+              },
               connectionFor,
               signalAutomaticRetry,
               reconcileMarker,
@@ -794,6 +804,7 @@ export async function createDesktopScenario({
             for (const action of ['cancel', 'ordinary', 'resume']) {
               await control.command('click', '[data-testid="new-chat-button"]')
               await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR)
+              await selectE2EModel(control)
               const reference =
                 action === 'resume'
                   ? ''
@@ -879,6 +890,8 @@ export async function createDesktopScenario({
             businessWorkspace = join(homePath, 'native-plugin-chat')
             await mkdir(businessWorkspace, { recursive: true })
             await control.command('click', '[data-testid="new-chat-button"]')
+            await control.command('waitFor', ACTIVE_COMPOSER_SELECTOR)
+            await selectE2EModel(control)
             await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: prompt })
             await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
             await waitForValue(
