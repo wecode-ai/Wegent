@@ -248,7 +248,7 @@
     },
     "summary": {
       "title": "Triage",
-      "wall_time": "Observed window {{duration}}"
+      "wall_time": "Session {{duration}}"
     },
     "suspects": {
       "title": "Top suspects",

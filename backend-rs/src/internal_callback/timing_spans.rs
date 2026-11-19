@@ -59,6 +59,9 @@ pub(crate) async fn persist_callback_timing<M: Mysql>(
     if let Some(timing) = event.data.get("timing").filter(|timing| timing.is_object()) {
         spans.extend(boundary_spans(event, timing));
     }
+    if let Some(span) = waiting_user_span(event) {
+        spans.push(span);
+    }
     if spans.is_empty() {
         return Ok(());
     }
@@ -175,6 +178,43 @@ fn subagent_activity_spans(event: &ExecutionEvent) -> Vec<NewTimingSpan> {
         end_at_ms,
         metadata: json!({"activity": event.data.clone()}),
     }]
+}
+
+fn waiting_user_span(event: &ExecutionEvent) -> Option<NewTimingSpan> {
+    if event.event_type != "done" {
+        return None;
+    }
+    let result = event.result.as_ref()?;
+    if result.get("silent_exit_reason").and_then(Value::as_str) != Some("waiting_for_user_input") {
+        return None;
+    }
+    let timing = event.data.get("timing")?;
+    let start_at_ms = timing
+        .get("agentStartedAt")
+        .or_else(|| timing.get("agentFinishedAt"))
+        .and_then(Value::as_i64)?;
+    let end_at_ms = timing
+        .get("agentFinishedAt")
+        .or_else(|| timing.get("agentStartedAt"))
+        .and_then(Value::as_i64)?;
+    Some(NewTimingSpan {
+        span_id: format!(
+            "task-{}-subtask-{}-waiting-user",
+            event.task_id, event.subtask_id
+        ),
+        kind: "waiting_user",
+        parent_span_id: Some(format!(
+            "task-{}-subtask-{}-agent",
+            event.task_id, event.subtask_id
+        )),
+        actor_id: "user".to_string(),
+        actor_type: "user",
+        actor_label: "Waiting for user".to_string(),
+        status: "waiting",
+        start_at_ms: Some(start_at_ms),
+        end_at_ms: Some(end_at_ms),
+        metadata: json!({"result": result.clone()}),
+    })
 }
 
 fn block_event_spans(event: &ExecutionEvent) -> Vec<NewTimingSpan> {
@@ -434,6 +474,13 @@ mod tests {
         event
     }
 
+    fn done_event(data: Value, result: Value) -> ExecutionEvent {
+        let mut event = ExecutionEvent::new(super::super::event::EventType::Done, 7, 11);
+        event.data = data.as_object().cloned().unwrap_or_default();
+        event.result = Some(result);
+        event
+    }
+
     fn block_event(event_type: super::super::event::EventType, data: Value) -> ExecutionEvent {
         let mut event = ExecutionEvent::new(event_type, 7, 11);
         event.data = data.as_object().cloned().unwrap_or_default();
@@ -459,6 +506,25 @@ mod tests {
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].start_at_ms, Some(10));
         assert_eq!(spans[0].end_at_ms, Some(17));
+    }
+
+    #[test]
+    fn waiting_for_user_results_create_waiting_user_spans() {
+        let event = done_event(
+            json!({"timing": {"agentStartedAt": 10, "agentFinishedAt": 20}}),
+            json!({"silent_exit_reason": "waiting_for_user_input"}),
+        );
+        let spans = event_timing_spans(&event);
+        assert!(spans.is_empty());
+
+        let mut spans = boundary_spans(&event, event.data.get("timing").unwrap());
+        spans.extend(std::iter::once(waiting_user_span(&event).unwrap()));
+        assert_eq!(spans.len(), 2);
+        let waiting = spans.last().unwrap();
+        assert_eq!(waiting.kind, "waiting_user");
+        assert_eq!(waiting.start_at_ms, Some(10));
+        assert_eq!(waiting.end_at_ms, Some(20));
+        assert_eq!(waiting.status, "waiting");
     }
 
     #[test]

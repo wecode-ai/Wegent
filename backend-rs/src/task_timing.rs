@@ -18,8 +18,10 @@ async fn get_task_timing(
     #[auth] current_user: crate::auth::SessionUser,
 ) -> Result<TaskTimingResponse, ApiError> {
     let task = load_accessible_task(state, task_id, &current_user).await?;
+    let session = SessionBoundaries::from_task_row(task.repo_row());
+    let owner_user_id = task.user_id();
     let spans = load_spans(state, task_id).await?;
-    Ok(aggregate(task_id, task.user_id, spans))
+    Ok(aggregate(task_id, owner_user_id, session, spans))
 }
 
 #[derive(Debug, brz_mysql::FromMysqlRow)]
@@ -102,7 +104,34 @@ impl IntoHttpError for ApiError {
 }
 
 struct AccessibleTask {
-    user_id: i64,
+    task: task_repo::TaskRow,
+}
+
+impl AccessibleTask {
+    fn repo_row(&self) -> &task_repo::TaskRow {
+        &self.task
+    }
+
+    fn user_id(&self) -> i64 {
+        self.task.user_id
+    }
+}
+
+struct SessionBoundaries {
+    start_at_ms: Option<i64>,
+    end_at_ms: Option<i64>,
+}
+
+impl SessionBoundaries {
+    fn from_task_row(task: &task_repo::TaskRow) -> Self {
+        let timestamp = |value: Option<chrono::NaiveDateTime>| {
+            value.map(|value| value.and_utc().timestamp_millis())
+        };
+        Self {
+            start_at_ms: timestamp(task.created_at),
+            end_at_ms: timestamp(task.completed_at),
+        }
+    }
 }
 
 async fn load_accessible_task(
@@ -118,9 +147,7 @@ async fn load_accessible_task(
     };
     let user_id = i64::from(current_user.id);
     if task.user_id == user_id {
-        return Ok(AccessibleTask {
-            user_id: task.user_id,
-        });
+        return Ok(AccessibleTask { task });
     }
     #[derive(brz_mysql::FromMysqlRow)]
     struct MemberRow {
@@ -140,9 +167,7 @@ async fn load_accessible_task(
         .map_err(|error| dependency("read task member", error))?;
     member
         .is_some()
-        .then(|| AccessibleTask {
-            user_id: task.user_id,
-        })
+        .then(|| AccessibleTask { task })
         .ok_or_else(not_found)
 }
 
@@ -160,7 +185,12 @@ async fn load_spans(state: &AppState, task_id: i64) -> Result<Vec<TimingSpanRow>
         .map_err(|error| dependency("read timing spans", error))
 }
 
-fn aggregate(task_id: i64, owner_user_id: i64, rows: Vec<TimingSpanRow>) -> TaskTimingResponse {
+fn aggregate(
+    task_id: i64,
+    owner_user_id: i64,
+    session: SessionBoundaries,
+    rows: Vec<TimingSpanRow>,
+) -> TaskTimingResponse {
     let spans: Vec<SpanView> = rows
         .iter()
         .map(|row| SpanView {
@@ -183,7 +213,7 @@ fn aggregate(task_id: i64, owner_user_id: i64, rows: Vec<TimingSpanRow>) -> Task
         })
         .collect();
 
-    let wall_time_ms = wall_time(&rows);
+    let wall_time_ms = wall_time(&session, &rows);
     let triage = triage_categories(&spans, wall_time_ms);
     let coverage = coverage_categories(&spans);
     let top_suspects = top_suspects(&spans);
@@ -199,12 +229,19 @@ fn aggregate(task_id: i64, owner_user_id: i64, rows: Vec<TimingSpanRow>) -> Task
     }
 }
 
-fn wall_time(rows: &[TimingSpanRow]) -> Option<i64> {
-    let first = rows.iter().filter_map(|row| row.start_at_ms).min()?;
-    let last = rows
-        .iter()
-        .filter_map(|row| row.end_at_ms.or(row.start_at_ms))
-        .max()?;
+fn wall_time(session: &SessionBoundaries, rows: &[TimingSpanRow]) -> Option<i64> {
+    let first = session
+        .start_at_ms
+        .or_else(|| rows.iter().filter_map(|row| row.start_at_ms).min())?;
+    let last = session
+        .end_at_ms
+        .or_else(|| {
+            rows.iter()
+                .filter_map(|row| row.end_at_ms.or(row.start_at_ms))
+                .max()
+        })
+        .unwrap_or(first)
+        .max(first);
     Some((last - first).max(0))
 }
 
@@ -424,6 +461,13 @@ mod tests {
         }
     }
 
+    fn session(start: Option<i64>, end: Option<i64>) -> SessionBoundaries {
+        SessionBoundaries {
+            start_at_ms: start,
+            end_at_ms: end,
+        }
+    }
+
     #[test]
     fn top_suspects_prefer_command_from_tool_blocks() {
         let mut row = span("tool", 0, 150);
@@ -435,7 +479,7 @@ mod tests {
         }));
         row.actor_label = "bash".to_string();
 
-        let suspect = &aggregate(1, 7, vec![row]).top_suspects[0];
+        let suspect = &aggregate(1, 7, session(None, None), vec![row]).top_suspects[0];
         assert_eq!(suspect.label, "pnpm test");
         assert_eq!(suspect.suggestion, "检查 registry/mirror 或网络");
     }
@@ -443,7 +487,7 @@ mod tests {
     #[test]
     fn parallel_spans_do_not_double_wall_time() {
         let rows = vec![span("subagent", 0, 10), span("subagent", 0, 10)];
-        let response = aggregate(1, 7, rows);
+        let response = aggregate(1, 7, session(None, None), rows);
         let subagent = response
             .coverage
             .iter()
@@ -455,7 +499,7 @@ mod tests {
     #[test]
     fn triage_separates_tool_and_agent() {
         let rows = vec![span("agent", 0, 20), span("tool", 5, 15)];
-        let response = aggregate(1, 7, rows);
+        let response = aggregate(1, 7, session(None, None), rows);
         assert_eq!(response.wall_time_ms, Some(20));
         assert!(
             response
@@ -463,5 +507,25 @@ mod tests {
                 .iter()
                 .any(|item| item.kind == "tool" && item.duration_ms == 10)
         );
+    }
+
+    #[test]
+    fn task_boundaries_define_session_wall_time() {
+        let rows = vec![span("agent", 20, 50)];
+        let response = aggregate(1, 7, session(Some(10), Some(100)), rows);
+        assert_eq!(response.wall_time_ms, Some(90));
+        let gap = response
+            .triage
+            .iter()
+            .find(|item| item.kind == "gap")
+            .unwrap();
+        assert_eq!(gap.duration_ms, 60);
+    }
+
+    #[test]
+    fn running_task_uses_creation_time_as_start() {
+        let rows = vec![span("agent", 20, 50)];
+        let response = aggregate(1, 7, session(Some(10), None), rows);
+        assert_eq!(response.wall_time_ms, Some(40));
     }
 }

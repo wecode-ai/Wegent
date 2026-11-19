@@ -244,7 +244,7 @@
     },
     "summary": {
       "title": "耗时归因",
-      "wall_time": "观测区间 {{duration}}"
+      "wall_time": "会话 {{duration}}"
     },
     "suspects": {
       "title": "主要耗时点",
