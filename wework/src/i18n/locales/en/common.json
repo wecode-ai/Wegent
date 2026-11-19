@@ -822,7 +822,7 @@
     "project": "Project",
     "pin_project": "Pin project",
     "unpin_project": "Unpin project",
-    "collaboration_project_pin_save_failed": "Could not save the project pin. Try again.",
+    "collaboration_project_pin_save_failed": "Could not update the project pin. Try again.",
     "change_project_appearance": "Change project color",
     "project_list_actions": "Project list actions",
     "project_actions": "Project actions",

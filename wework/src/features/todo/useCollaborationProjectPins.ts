@@ -42,7 +42,11 @@ export function useCollaborationProjectPins(accountScope: string) {
       const stored = parsePins(await readCommittedLocalStorageValue(storageKey))
       const remaining = stored.filter(existing => existing !== key)
       const next = pinned ? [key, ...remaining] : remaining
-      await commitLocalStorageValue(storageKey, JSON.stringify(next))
+      const snapshot = JSON.stringify(next)
+      await commitLocalStorageValue(storageKey, snapshot)
+      if (read() !== snapshot) {
+        throw new Error('Could not publish committed collaboration project pins')
+      }
       window.dispatchEvent(new Event(changedEvent))
     })
     pendingWrite = write.catch(() => {})

@@ -821,7 +821,7 @@
     "project": "项目",
     "pin_project": "置顶项目",
     "unpin_project": "取消置顶项目",
-    "collaboration_project_pin_save_failed": "无法保存项目置顶状态，请重试。",
+    "collaboration_project_pin_save_failed": "无法更新项目置顶状态，请重试。",
     "change_project_appearance": "更改项目颜色",
     "project_list_actions": "项目列表操作",
     "project_actions": "项目操作",

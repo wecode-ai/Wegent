@@ -418,6 +418,7 @@ export function CollaborationPlatformNavigation({
             icon: pinned ? PinOff : Pin,
             testId: `collaboration-project-pin-${project.id}`,
             onSelect: async () => {
+              const focusOwner = document.activeElement
               try {
                 await projectPins.setPinned(key, !pinned)
               } catch {
@@ -428,7 +429,13 @@ export function CollaborationPlatformNavigation({
                 setWorkspaceExpansion(current => new Map(current).set(workspaceId, true))
               }
               setPinErrorScope(undefined)
-              setPinFocusRequest({ key, scope: host.accountScope })
+              if (
+                focusOwner &&
+                (document.activeElement === focusOwner ||
+                  (!focusOwner.isConnected && document.activeElement === document.body))
+              ) {
+                setPinFocusRequest({ key, scope: host.accountScope })
+              }
             },
           }
         }
