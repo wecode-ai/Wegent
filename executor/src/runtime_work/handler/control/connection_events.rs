@@ -5,6 +5,7 @@ mod admission;
 mod cloud;
 mod conditions;
 mod goal_reconciliation;
+mod guidance;
 mod observations;
 mod observers;
 mod poll_schedule;
@@ -13,6 +14,9 @@ mod resource_delivery;
 mod session;
 pub(in crate::runtime_work::handler) mod store;
 use self::store as event_store;
+
+pub(in crate::runtime_work::handler) const OWNER_INPUT: &str =
+    "resume_event_goal_after_owner_input";
 
 #[cfg(test)]
 mod delivery_tests;
@@ -45,6 +49,22 @@ fn public_subscription(record: &Value) -> Value {
         "error_code":record["error_code"],"operation_id":record["operation_id"],
         "observed_events":record["observed_events"],"last_collected_at":record["last_collected_at"],
         "observation_id":record["observation_id"],"refresh_pending":record["refresh_pending"]==true,"handled_events":record["handled_events"],"resource_events":record["resource_events"],"resource_states":record["resource_states"]})
+}
+
+fn event_can_continue_goal(record: &Value, goal: &Value) -> bool {
+    record["waiting_goal"] == goal_identity(goal)
+        && (goal["status"] == "blocked"
+            || (record["status"] == "pending" && goal["status"] == "active"))
+}
+
+fn handled_event_summaries(record: &Value) -> Value {
+    json!(record["events"].as_array().into_iter().flatten().map(|event| json!({
+        "topicId":event["topicId"],"version":event["version"],"external":{
+            "headSha":event["external"]["headSha"],"objectKind":event["external"]["objectKind"],
+            "eventType":event["external"]["eventType"],"conclusion":event["external"]["payload"]["conclusion"],
+            "status":event["external"]["payload"]["status"],
+        },
+    })).collect::<Vec<_>>())
 }
 
 impl RuntimeWorkRpcHandler {
@@ -579,6 +599,7 @@ impl RuntimeWorkRpcHandler {
             |state| Ok(state["operations"][id].clone()),
         )?;
         if record["status"] == "resuming_goal" {
+            drop(guard);
             return self.resume_event_goal(id, &mut record).await;
         }
         if !matches!(record["status"].as_str(), Some("armed" | "pending")) {
@@ -586,7 +607,7 @@ impl RuntimeWorkRpcHandler {
         }
         if !record["waiting_goal"].is_null() {
             let current = self.read_event_goal(&task).await?;
-            if current["status"] != "blocked" || goal_identity(&current) != record["waiting_goal"] {
+            if !event_can_continue_goal(&record, &current) {
                 record["status"] = json!("cancelled");
                 return self.save_event_subscription(id, &record);
             }
@@ -653,9 +674,7 @@ impl RuntimeWorkRpcHandler {
             if current["accepted"] != true {
                 return Err(invalid("Cannot revalidate waiting Goal"));
             }
-            if current["goal"]["status"] != "blocked"
-                || goal_identity(&current["goal"]) != waiting_goal
-            {
+            if !event_can_continue_goal(&record, &current["goal"]) {
                 record["status"] = json!("cancelled");
                 return self.save_event_subscription(id, &record);
             }
@@ -672,6 +691,16 @@ impl RuntimeWorkRpcHandler {
             &request_key
         ));
         self.save_event_subscription(id, &record)?;
+        if self
+            .steer_connection_event(id, &mut record, &link, &context)
+            .await?
+        {
+            drop(goal_guard);
+            if record["status"] == "resuming_goal" {
+                self.resume_event_goal(id, &mut record).await?;
+            }
+            return Ok(());
+        }
         let message = record["continuation"].as_str().unwrap().to_owned();
         let result = self
             .control_continue(
@@ -684,7 +713,7 @@ impl RuntimeWorkRpcHandler {
             .await?;
         record["operation_id"] = result["operation"]["operation_id"].clone();
         if result["operation"]["delivery_status"] == "accepted" {
-            record["handled_events"] = json!(record["events"].as_array().into_iter().flatten().map(|event| json!({"topicId":event["topicId"],"version":event["version"],"external":{"headSha":event["external"]["headSha"],"objectKind":event["external"]["objectKind"],"eventType":event["external"]["eventType"],"conclusion":event["external"]["payload"]["conclusion"],"status":event["external"]["payload"]["status"]}})).collect::<Vec<_>>());
+            record["handled_events"] = handled_event_summaries(&record);
         }
         record["status"] = json!(if result["operation"]["delivery_status"] == "accepted" {
             if waiting_goal.is_null() {
@@ -740,15 +769,35 @@ impl RuntimeWorkRpcHandler {
     }
 
     async fn resume_event_goal(&self, id: &str, record: &mut Value) -> Result<(), AppIpcError> {
-        // Acceptance can precede actual worker capacity. Only that worker may
-        // inject the source input and activate accounting; collection never
-        // restarts a Goal whose event turn may already have finished.
-        let current = event_store::read(
+        // Queued event turns activate their own Goals at native input admission.
+        if record["native_guidance"] != "accepted" {
+            return Ok(());
+        }
+        *record = event_store::read(
             &self.event_subscription_path(),
             event_store::Scope::Row("operations", id),
             |state| Ok(state["operations"][id].clone()),
         )?;
-        *record = current;
+        if record["status"] != "resuming_goal" {
+            return Ok(());
+        }
+        let task = record["task_id"].as_str().unwrap();
+        let current = self.read_event_goal(task).await?;
+        if current["status"] == "blocked"
+            && current["threadId"] == record["session"]["id"]
+            && goal_identity(&current) == record["waiting_goal"]
+        {
+            let result = self
+                .set_task_goal(
+                    json!({"taskId": task, "status": "active", "eventGoalExpected": current}),
+                )
+                .await?;
+            if result["accepted"] != true {
+                return Err(invalid("Cannot resume the Goal after event guidance"));
+            }
+        }
+        record["status"] = json!("delivered");
+        self.save_event_subscription(id, record)?;
         Ok(())
     }
 

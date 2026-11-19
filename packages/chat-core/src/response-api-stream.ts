@@ -165,6 +165,8 @@ export function emitResponseApiEvent(
   }
 
   if (eventName === "response.guidance.applied") {
+    const source = recordField(data, "source");
+    const sourceKind = source && stringField(source, "source");
     handlers.onGuidanceApplied?.({
       ...base,
       guidanceId:
@@ -175,6 +177,7 @@ export function emitResponseApiEvent(
         stringField(data, "clientGuidanceId") ??
         stringField(data, "client_guidance_id"),
       message: stringField(data, "message") ?? "",
+      ...(sourceKind && { source: { ...source, source: sourceKind } }),
       appliedAtMs:
         optionalNumberField(data, "appliedAtMs") ??
         optionalNumberField(data, "applied_at_ms") ??

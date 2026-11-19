@@ -1536,6 +1536,10 @@ impl RuntimeWorkRpcHandler {
         }
         let recovery_turn = turn.clone();
         let recovery_account = codex_accounts::quota_account_identity(&turn.request);
+        let owner_input = turn
+            .send_payload
+            .as_ref()
+            .is_some_and(|payload| payload[super::control::connection_events::OWNER_INPUT] == true);
         let SpawnTurnRequest {
             task_kind: _,
             local_task_id,
@@ -1800,6 +1804,10 @@ impl RuntimeWorkRpcHandler {
                         .lock()
                         .expect("turn presentation lock should not be poisoned")
                         .clone();
+                    if owner_input && presentation.is_some() {
+                        active_turn_handler
+                            .resume_goal_after_owner_input(&active_turn_local_task_id, &thread_id);
+                    }
                     active_turn_handler.bind_command_turn(
                         &active_turn_local_task_id,
                         &active_turn_request,

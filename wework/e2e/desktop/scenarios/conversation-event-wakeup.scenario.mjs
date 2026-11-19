@@ -66,6 +66,7 @@ export function createDesktopScenario(options) {
   let sequence = 0
   let busyResponse
   let busyStarted = false
+  let ownerResponse
   const releaseBusy = () => {
     if (!busyResponse) return
     const { response, id } = busyResponse
@@ -160,6 +161,20 @@ export function createDesktopScenario(options) {
       if (!modelRequestTexts(body).includes(MARKER)) return false
       modelRequests++
       if (
+        phase === 'owner' &&
+        !ownerResponse &&
+        modelRequestTexts(body).includes(`${MARKER}_owner_CONTINUE`)
+      ) {
+        ownerResponse = () => {
+          const id = `conversation-owner-${++sequence}`
+          response.writeHead(200, { 'content-type': 'text/event-stream' })
+          response.end(
+            createSse([responseCreated(id), ...modelEvents(body, phase), responseCompleted(id)])
+          )
+        }
+        return true
+      }
+      if (
         phase === 'workflow' &&
         !busyStarted &&
         modelRequestTexts(body).includes(`${MARKER}_workflow_BUSY_HOLD`)
@@ -223,6 +238,7 @@ export function createDesktopScenario(options) {
           'goal',
           'human',
           'cancel',
+          'owner',
           'pause',
         ]) {
           phase = story
@@ -429,6 +445,32 @@ export function createDesktopScenario(options) {
             await rpc(control, 'runtime.tasks.goal.clear', { address })
             continue
           }
+          if (phase === 'owner') {
+            await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
+              value: `${MARKER}_owner_CONTINUE`,
+            })
+            await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, {
+              enabled: true,
+              timeoutMs: uiTimeoutMs,
+            })
+            await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+            try {
+              await waitForValue(
+                () => rpc(control, 'runtime.tasks.goal.get', { address }),
+                result => ownerResponse && result.goal?.status === 'active',
+                'A user follow-up must reactivate the original event-blocked Goal',
+                modelResponseTimeoutMs
+              )
+            } finally {
+              ownerResponse?.()
+            }
+            await control.command(
+              'waitFor',
+              `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+              { text: `${MARKER}_owner_DONE`, timeoutMs: modelResponseTimeoutMs }
+            )
+            continue
+          }
           if (phase === 'pause') {
             await control.command('click', '[data-testid="pause-goal-button"]')
             await control.command('waitFor', '[data-testid="connection-event-status"]', {
@@ -491,15 +533,16 @@ export function createDesktopScenario(options) {
             assert.equal(modelRequests, requestsBefore, 'Waiting must not poll through model turns')
             await new Promise(resolve => setTimeout(resolve, 100))
           }
+          let busyTurnId
           if (phase === 'workflow') {
             await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
               value: `${MARKER}_workflow_BUSY_HOLD`,
             })
             await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, { enabled: true })
             await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
-            await waitForValue(
+            busyTurnId = await waitForValue(
               getTask,
-              result => busyStarted && result.task.running,
+              result => busyStarted && result.task.running && result.task.executionState?.turnId,
               'A real model turn must remain active while the event is delivered',
               modelResponseTimeoutMs
             )
@@ -517,14 +560,14 @@ export function createDesktopScenario(options) {
                     item.status === 'delivered' &&
                     item.operation_id
                 ),
-              'A received event must enter the existing message queue before the busy turn finishes',
+              'The running turn must accept guidance before its held response ends',
               30000
             )
             assert.equal((await getTask()).task.running, true)
             assert.equal(
               completed.has('workflow'),
               false,
-              'The queued event must not interrupt the active turn'
+              'Native guidance must preserve the active turn'
             )
             releaseBusy()
           }
@@ -560,6 +603,13 @@ export function createDesktopScenario(options) {
             before.task.threadId,
             'The event must resume the original native thread'
           )
+          if (busyTurnId) {
+            assert.equal(
+              after.task.executionState.turnId ?? after.task.executionState.latestTurnId,
+              busyTurnId,
+              'Native guidance must deliver the event within the running turn'
+            )
+          }
           await control.command('waitFor', '[data-testid="connection-event-status"]', {
             visible: false,
           })
