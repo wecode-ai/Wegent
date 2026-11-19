@@ -252,6 +252,16 @@ export class StartupSplash {
     contents.send(STARTUP_PROGRESS_CHANNEL, update)
   }
 
+  /** Apply saved appearance after opening, without making preferences a startup gate. */
+  async setTheme(theme: StartupSplashTheme): Promise<void> {
+    const contents = this.options.window.webContents
+    if (this.state === 'closed' || contents.isDestroyed() || theme === this.options.theme) return
+    await contents.executeJavaScript(
+      `document.documentElement.dataset.theme = ${JSON.stringify(theme)}`
+    )
+    this.options.theme = theme
+  }
+
   showError(pluginName: string | null = null): Promise<void> {
     if (this.showErrorPromise) return this.showErrorPromise
     const target = this.options.window

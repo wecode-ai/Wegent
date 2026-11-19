@@ -3175,6 +3175,14 @@ if (hasSingleInstanceLock) {
         const settings = await preferenceStore.read()
         if (quitting) return
         desktopAppearance.update(settings)
+        const theme = resolveStartupSplashTheme(
+          settings.appearanceMode,
+          nativeTheme.shouldUseDarkColors
+        )
+        if (startupSplashWindow && !startupSplashWindow.isDestroyed()) {
+          startupSplashWindow.setBackgroundColor(theme === 'dark' ? '#05070d' : '#fafafa')
+          await startupSplash?.setTheme(theme)
+        }
         nativeTheme.on('updated', () => desktopAppearance.update())
         logStartupStep('startup-preferences-read', 'completed')
         const saved = settings.mainWindowState
