@@ -1,7 +1,10 @@
+import { supportsConnectionEvents } from '@/lib/device-capabilities'
+import { cancelConnectionEventSubscription } from '@/api/connectionEventSubscriptions'
 import {
   isQuestionDiscussionTab,
   useQuestionDiscussionWorkspacePanel,
 } from '@/features/notifications/questionDiscussion'
+import { ConversationEventContext } from '@/components/chat/composer/ConversationEventContext'
 import { RequestUserInputComposer } from '@/components/chat/RequestUserInputComposer'
 import {
   getMcpAppPanel,
@@ -19,6 +22,7 @@ import {
   workspaceFileTabId,
   type WorkspaceFileTabs,
 } from './workspace-panels/workspaceFileTabs'
+import { resolveWorkspaceFilePath } from './workspace-panels/workspaceFilePaths'
 import {
   memo,
   type MouseEvent as ReactMouseEvent,
@@ -46,7 +50,8 @@ import type { ProjectChatControls } from '@/components/chat/ChatInput'
 import type { AssistantPlanOpenRequest } from '@/components/chat/AssistantPlanCard'
 import { RequestUserInputCard } from '@/components/chat/RequestUserInputCard'
 import { useRuntimeInteractions } from '@/features/notifications/RuntimeInteractionsContext'
-import { ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
+import { CloudConnectorAuthCard, ConnectorAuthCard } from '@/components/chat/ConnectorAuthCard'
+import { useOptionalCloudConnection } from '@/features/cloud-connection/useCloudConnection'
 import { PluginWorkspaceConversationResult } from '@/components/plugins/PluginWorkspaceConversationResult'
 import { useLocalConnectorAuthRecovery } from '@/features/plugins/useLocalConnectorAuthRecovery'
 import { ScrollableMessageArea } from '@/components/chat/ScrollableMessageArea'
@@ -1063,6 +1068,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   )
   const paneStack = splitGroups ? (
     <SplitWorkbenchPaneStack
+      devices={state.devices}
       activePane={props.activePane}
       layout={splitGroups.activeLayout}
       showWorkbenchBackground={hasMainBackground}
@@ -1083,6 +1089,7 @@ export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
   ) : (
     <SingleWorkbenchPane
       pane={props.activePane}
+      devices={state.devices}
       visible={props.visible ?? true}
       renderPane={renderWorkbenchPane}
     />
@@ -1531,7 +1538,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         currentRuntimeTask || options?.runtime === 'claude_code' ? null : pendingSupervisorConfig
       const description = value ?? paneSession.input
       const draftEditVersion = getDraftEditVersion()
-      const cloudSubmission = await prepareSubmission(description)
+      const cloudSubmission = prepareSubmission(description)
       return sendPaneInput(value, {
         ...options,
         draftEditVersion,
@@ -1563,24 +1570,41 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     ]
   )
 
+  const cloudConnection = useOptionalCloudConnection()
   const connectorAuthRecovery = useLocalConnectorAuthRecovery({
     active: paneActive && paneVisible && workbenchVisible,
     onError: message => paneSession.setError(message),
     messages: paneSession.messages,
+    cloudConnection: {
+      apiBaseUrl: cloudConnection.apiBaseUrl,
+      token: cloudConnection.token,
+    },
     onResumeSend: async input => {
       await paneSession.sendContinuation(input)
     },
   })
 
   const connectorAuthCard = connectorAuthRecovery.pending ? (
-    <ConnectorAuthCard
-      target={connectorAuthRecovery.pending.target}
-      title={connectorAuthRecovery.pending.title}
-      onSuccess={() => {
-        void connectorAuthRecovery.completePending()
-      }}
-      onCancel={connectorAuthRecovery.clearPending}
-    />
+    connectorAuthRecovery.pending.cloud ? (
+      <CloudConnectorAuthCard
+        slug={connectorAuthRecovery.pending.cloud.slug}
+        apiBaseUrl={cloudConnection.apiBaseUrl}
+        token={cloudConnection.token}
+        onSuccess={() => {
+          void connectorAuthRecovery.completePending()
+        }}
+        onCancel={connectorAuthRecovery.clearPending}
+      />
+    ) : (
+      <ConnectorAuthCard
+        target={connectorAuthRecovery.pending.target}
+        title={connectorAuthRecovery.pending.title}
+        onSuccess={() => {
+          void connectorAuthRecovery.completePending()
+        }}
+        onCancel={connectorAuthRecovery.clearPending}
+      />
+    )
   ) : null
 
   const submitPaneInput = useCallback(
@@ -4399,7 +4423,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [setOpenFileRequest, openRightPanelTab, setSelectedFileWorkspaceTargetKey]
   )
   const openFileTab = useCallback(
-    (target: WorkspaceTarget, path: string) => {
+    (target: WorkspaceTarget, path: string, options?: WorkspaceFileOpenOptions) => {
       const tab = workspaceFileTabId(target, path)
       if (
         rightPanelTabs.includes('files') &&
@@ -4407,13 +4431,34 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
         !selectedWorkspaceFile.isDirectory &&
         workspaceFileTabId(selectedWorkspaceFile.target, selectedWorkspaceFile.path) === tab
       ) {
+        if (options) {
+          setOpenFileRequest(current => ({
+            ...options,
+            id: (current?.id ?? 0) + 1,
+            path,
+            target,
+          }))
+        }
         openRightPanelTab('files')
         return
       }
-      setFileTabs(current => (current[tab] ? current : { ...current, [tab]: { target, path } }))
+      setFileTabs(current => {
+        const existing = current[tab]
+        if (existing && !options) return current
+        return {
+          ...current,
+          [tab]: {
+            target,
+            path,
+            openRequest: options
+              ? { ...options, id: (existing?.openRequest?.id ?? 0) + 1, path }
+              : undefined,
+          },
+        }
+      })
       openRightPanelTab(tab)
     },
-    [openRightPanelTab, rightPanelTabs, selectedWorkspaceFile, setFileTabs]
+    [openRightPanelTab, rightPanelTabs, selectedWorkspaceFile, setFileTabs, setOpenFileRequest]
   )
   const handleFileWorkspaceSelectionChange = useCallback(
     (selection: { path: string; isDirectory: boolean }) => {
@@ -4520,21 +4565,28 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
             pathStyleSource: workspaceTarget?.path,
           })
         }
-        setOpenFileRequest(current => ({
-          id: (current?.id ?? 0) + 1,
-          path: trimmedPath,
-          lineStart: options?.lineStart,
-          lineEnd: options?.lineEnd,
-          isDirectory,
-          traceId,
-          target: localTarget ?? undefined,
-        }))
+        const target = localTarget ?? effectiveWorkspaceTarget
+        if (target && !isDirectory) {
+          const resolvedPath = resolveWorkspaceFilePath(target, trimmedPath)
+          if (!resolvedPath) return
+          openFileTab(target, resolvedPath, { ...options, isDirectory, traceId })
+        } else {
+          setOpenFileRequest(current => ({
+            id: (current?.id ?? 0) + 1,
+            path: trimmedPath,
+            lineStart: options?.lineStart,
+            lineEnd: options?.lineEnd,
+            isDirectory,
+            traceId,
+            target: localTarget ?? undefined,
+          }))
+          openRightPanelTab('files')
+        }
         logFilePreviewDiagnostic(traceId, 'open_file_request_queued', {
           ...pathMetadata,
           hasLocalTarget: Boolean(localTarget),
           isDirectory: isDirectory ?? null,
         })
-        openRightPanelTab('files')
         logFilePreviewDiagnostic(traceId, 'right_panel_open_requested')
         scheduleFilePreviewMainThreadProbe(traceId, 'right_panel_open_requested')
       } catch (error) {
@@ -4547,6 +4599,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
       fileWorkspaceTargets,
       getDeviceHomeDirectory,
       workspaceTarget,
+      openFileTab,
       openRightPanelTab,
       setOpenFileRequest,
       setFileOpenError,
@@ -4818,6 +4871,29 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
     [compactContextAction]
   )
   const setCurrentGoal = useCallback(() => void setCurrentGoalAction(), [setCurrentGoalAction])
+  const eventCancellationUnsupported =
+    !activeDeviceUnavailable && !supportsConnectionEvents(activeDevice)
+  const cancelCurrentEventSubscription = async (key: string) => {
+    if (!deviceApi || !currentRuntimeTask || activeDeviceUnavailable) {
+      throw new Error(t('workbench.connection_event_cancel_unavailable', '设备离线，恢复后可取消'))
+    }
+    if (eventCancellationUnsupported) {
+      throw new Error(
+        t('workbench.connection_event_upgrade_required', '此设备需升级执行器以使用事件监听')
+      )
+    }
+    await cancelConnectionEventSubscription(deviceApi, currentRuntimeTask, key, activeDevice)
+  }
+  const eventSubscriptionScope = currentRuntimeTask
+    ? JSON.stringify([
+        currentRuntimeTask.deviceId,
+        currentRuntimeTask.taskId,
+        currentRuntimeTask.workspacePath,
+        activeDevice?.runtime_instance_id,
+        activeDevice?.executor_version,
+        eventCancellationUnsupported,
+      ])
+    : ''
   const pauseCurrentGoal = useCallback(
     () => void pauseCurrentGoalAction(),
     [pauseCurrentGoalAction]
@@ -5517,6 +5593,30 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                   <RequestUserInputComposer
                                     payload={pendingRequestUserInput}
                                     source={currentRuntimeTask}
+                                    questionContext={
+                                      <ConversationEventContext
+                                        integrated
+                                        goal={paneSession.goal}
+                                        goalDraftActive={paneSession.goalDraftActive}
+                                        continuing={paneSession.goalContinuing}
+                                        executionStatus={paneSession.goalExecutionStatus}
+                                        eventSubscriptionScope={eventSubscriptionScope}
+                                        onCancelEventSubscription={cancelCurrentEventSubscription}
+                                        eventCancellationUnsupported={eventCancellationUnsupported}
+                                        eventCancellationUnavailable={
+                                          activeDeviceUnavailable || !deviceApi
+                                        }
+                                        subscriptions={
+                                          currentRuntimeConversationSource?.runtimeHandle
+                                            ?.connectionEventSubscriptions
+                                        }
+                                        interactionStatus={runtimeTaskSummary?.interactionStatus}
+                                        onEditGoal={paneSession.editCurrentGoal}
+                                        onPauseGoal={pauseCurrentGoal}
+                                        onResumeGoal={resumeCurrentGoal}
+                                        onClearGoal={clearCurrentGoal}
+                                      />
+                                    }
                                     renderQuestion={onCollapse =>
                                       pendingRequestUserInput ? (
                                         <RequestUserInputCard
@@ -5620,6 +5720,17 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                                         goal={paneSession.goal}
                                         goalContinuing={paneSession.goalContinuing}
                                         goalExecutionStatus={paneSession.goalExecutionStatus}
+                                        eventSubscriptionScope={eventSubscriptionScope}
+                                        onCancelEventSubscription={cancelCurrentEventSubscription}
+                                        eventCancellationUnsupported={eventCancellationUnsupported}
+                                        eventCancellationUnavailable={
+                                          activeDeviceUnavailable || !deviceApi
+                                        }
+                                        eventSubscriptions={
+                                          currentRuntimeConversationSource?.runtimeHandle
+                                            ?.connectionEventSubscriptions
+                                        }
+                                        interactionStatus={runtimeTaskSummary?.interactionStatus}
                                         taskPlan={paneSession.taskPlan}
                                         goalDraftActive={paneSession.goalDraftActive}
                                         onSetGoal={
@@ -5922,6 +6033,15 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
                           goal={paneSession.goal}
                           goalContinuing={paneSession.goalContinuing}
                           goalExecutionStatus={paneSession.goalExecutionStatus}
+                          eventSubscriptionScope={eventSubscriptionScope}
+                          onCancelEventSubscription={cancelCurrentEventSubscription}
+                          eventCancellationUnsupported={eventCancellationUnsupported}
+                          eventCancellationUnavailable={activeDeviceUnavailable || !deviceApi}
+                          eventSubscriptions={
+                            currentRuntimeConversationSource?.runtimeHandle
+                              ?.connectionEventSubscriptions
+                          }
+                          interactionStatus={runtimeTaskSummary?.interactionStatus}
                           taskPlan={paneSession.taskPlan}
                           goalDraftActive={paneSession.goalDraftActive}
                           onSetGoal={composerSupportsGoal ? setCurrentGoal : undefined}
@@ -6115,6 +6235,7 @@ const DesktopWorkbenchPane = memo(function DesktopWorkbenchPane({
               onCloseTab={closeRightPanelTab}
               onHarnessSessionExit={onLocalHarnessSessionExit}
               onRefreshReview={reviewState.reloadDiff ? refreshReview : undefined}
+              onOpenWorkspaceFile={openWorkspaceFileFromMessage}
               onOpenReviewSourceFile={(path, lineStart, lineEnd) =>
                 void openWorkspaceFileFromMessage(path, { lineStart, lineEnd })
               }

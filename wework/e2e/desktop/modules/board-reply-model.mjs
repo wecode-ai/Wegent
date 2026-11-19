@@ -1,3 +1,4 @@
+import { modelApplicationContextText } from './application-context-model.mjs'
 import assert from 'node:assert/strict'
 import { issueCommentFormSelector } from './issue-comment-selectors.mjs'
 import { readFile } from 'node:fs/promises'
@@ -224,6 +225,7 @@ async function readPersistedExecutions(
 async function verifyExecutionDetail(control, scope, run, expectedText, timeoutMs) {
   const badge = scope(`[data-testid="cloud-task-activity-execution-badge-${run.messageId}"]`)
   // Activity visibility precedes delivery of its runtime address to the renderer.
+  await control.command('scrollIntoView', badge)
   await control.command('clickWhenEnabled', badge, { timeoutMs })
   const conversation = scope('[data-testid="ai-chat-modal"]')
   await control.command('waitFor', conversation, {
@@ -250,6 +252,7 @@ async function verifyExecutionDetail(control, scope, run, expectedText, timeoutM
     'The removed execution overlay must not open from Collaboration'
   )
   await control.command('click', scope('[data-testid="ai-chat-modal-close"]'))
+  await control.command('scrollIntoView', badge)
   await control.command('waitFor', `${badge}[data-status="succeeded"]`, { timeoutMs })
   return badge
 }
@@ -286,7 +289,10 @@ export function createBoardReplyModelRegression({
       const text = latestModelInputText(body)
       if (!active && linkedIssueTask) {
         const { projectId, issue, held, requests } = linkedIssueTask
-        assert.ok(text.includes(`[projectSpaceIssue]`), 'The linked Task lost its Issue context')
+        const context = modelApplicationContextText(body, 'projectSpaceIssue')
+        assert.ok(context.includes(projectId), 'The linked Task lost its project context')
+        assert.ok(context.includes(issue.id), 'The linked Task lost its Issue context')
+        assert.ok(context.includes(issue.title), 'The linked Task lost its contextual Issue title')
         assert.ok(
           text.includes(`wework-issue://${projectId}/${issue.id}`),
           'The linked Task lost its Issue reference'
@@ -446,6 +452,7 @@ export function createBoardReplyModelRegression({
         const [replyRun] = await readPersistedExecutions(cloud, issue.id, [REPLY], uiTimeoutMs)
         assert.deepEqual(replyRun.runtimeAddress, initialRun.runtimeAddress)
         await verifyExecutionDetail(control, scope, replyRun, `${REPLY}_DONE`, uiTimeoutMs)
+        await control.command('scrollIntoView', initialBadge)
         await control.command('waitFor', `${initialBadge}[data-status="succeeded"]`, {
           timeoutMs: uiTimeoutMs,
         })

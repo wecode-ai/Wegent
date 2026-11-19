@@ -43,15 +43,20 @@ impl RuntimeWorkRpcHandler {
         }
         let handler = self.clone();
         let task_id = task_id.to_owned();
-        let revision = state.revision.clone();
+        let settled = state.clone();
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             runtime.spawn(async move {
                 let operation = handler.turn_queue_operation.clone().lock_owned().await;
                 // Recheck after admission: a newer local or native turn may now
                 // own this task, so an older completion must not free its slot.
+                // Snapshot revisions also include metadata, which does not transfer native ownership.
                 let still_settled = handler.store.read_task(&task_id, |link| {
                     native_execution_state(link).is_some_and(|state| {
-                        state.phase == NativeExecutionPhase::Idle && state.revision == revision
+                        state.phase == NativeExecutionPhase::Idle
+                            && state.epoch == settled.epoch
+                            && state.process_generation == settled.process_generation
+                            && state.native_sequence == settled.native_sequence
+                            && state.latest_turn_id == settled.latest_turn_id
                     })
                 }) == Some(true);
                 if still_settled && !handler.is_active_local_task(&task_id) {
@@ -339,7 +344,9 @@ impl RuntimeWorkRpcHandler {
                 && previous.as_ref().is_some_and(|state| {
                     state.turn_id.as_ref().is_some_and(|id| id != &turn_id)
                         || (state.latest_turn_id.as_ref() == Some(&turn_id)
-                            && state.outcome.is_some())
+                            && (state.outcome.is_some()
+                                || state.execution_outcome.is_some()
+                                || state.phase == NativeExecutionPhase::Starting))
                 })
             {
                 return;
@@ -444,6 +451,7 @@ impl RuntimeWorkRpcHandler {
                 "response.completed"
             }
             ExecutionOutcome::Failed { message } => {
+                data["type"] = json!(result.error_type);
                 data["error"] = json!({"message": message});
                 "response.failed"
             }

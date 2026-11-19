@@ -1,5 +1,6 @@
 //! A single device-owned personal stand-in with reusable, independently configured roles.
 use super::*;
+use sha2::{Digest, Sha256};
 
 #[path = "personal_stand_in_connections.rs"]
 mod connections;
@@ -212,29 +213,59 @@ fn bind_personal_device(personal: &mut Value, device: &str) -> bool {
     changed
 }
 
-/// Read the account document or project-era rows and normalize their legacy configuration.
 pub(super) fn read_personal(
     connection: &Connection,
     user: i64,
     device: &str,
 ) -> Result<Value, TaskRuntimeError> {
+    read_personal_state(connection, user, device).map(|(settings, _)| settings)
+}
+
+fn personal_snapshot(
+    connection: &Connection,
+    user: i64,
+    device: &str,
+) -> Result<(Value, bool), TaskRuntimeError> {
+    let (mut settings, original) = read_personal_state(connection, user, device)?;
+    bind_personal_device(&mut settings, device);
+    let needs_persistence = match original {
+        Some(original) => original != settings,
+        None => settings["roles"].as_array().is_some_and(|roles| {
+            roles
+                .iter()
+                .any(|role| role["version"].as_i64().unwrap_or(0) > 0)
+        }),
+    };
+    Ok((settings, needs_persistence))
+}
+
+/// Read the account document or project-era rows and normalize their legacy configuration.
+fn read_personal_state(
+    connection: &Connection,
+    user: i64,
+    device: &str,
+) -> Result<(Value, Option<Value>), TaskRuntimeError> {
     if let Some(row) = get_item_from(connection, &personal_key(user), "personal_stand_in")? {
-        let mut settings = row.metadata;
+        let original = row.metadata;
+        let mut settings = original.clone();
         if let Some(fields) = settings.as_object_mut() {
             fields.remove("autoSelect");
             fields.remove("selectionErrors");
         }
         migrate_personal_settings(&mut settings)?;
-        return Ok(settings);
+        return Ok((settings, Some(original)));
     }
     let mut personal = empty_personal(user, device);
     let mut statement = connection.prepare(
-        "SELECT metadata FROM loop_items WHERE resource_type='stand_in_settings' AND json_extract(metadata, '$.userId')=?1 ORDER BY id",
+        "SELECT id, metadata FROM loop_items WHERE resource_type='stand_in_settings' AND json_extract(metadata, '$.userId')=?1 ORDER BY id",
     )?;
-    let rows = statement.query_map(params![user], |row| row.get::<_, String>(0))?;
+    let rows = statement.query_map(params![user], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
     let mut roles = Vec::new();
     for row in rows {
-        let mut role: Value = serde_json::from_str(&row?)
+        let (source_id, metadata) = row?;
+        let mut role: Value = serde_json::from_str(&metadata)
             .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))?;
         role["name"] = json!(role["name"].as_str().unwrap_or_default());
         role["legacyStandInId"] = role["id"].clone();
@@ -248,7 +279,9 @@ pub(super) fn read_personal(
             .iter()
             .any(|previous: &Value| previous["id"] == role["id"])
         {
-            role["id"] = json!(Uuid::new_v4().to_string());
+            // Read-only views and eventual migration must expose the same identity.
+            let digest = Sha256::digest(source_id.as_bytes());
+            role["id"] = json!(format!("{:x}", digest));
         }
         role.as_object_mut().unwrap().remove("projectId");
         role.as_object_mut().unwrap().remove("projectStore");
@@ -263,7 +296,7 @@ pub(super) fn read_personal(
         personal["roles"] = json!(roles);
     }
     migrate_personal_settings(&mut personal)?;
-    Ok(personal)
+    Ok((personal, None))
 }
 
 pub(super) fn write_personal(
@@ -434,7 +467,7 @@ pub fn stand_in_identities(settings: &Value) -> Vec<Value> {
     if settings["primary"].is_object() {
         let mut primary = settings["primary"].clone();
         primary["id"] = json!("@primary");
-        primary["name"] = json!("我的分身");
+        primary["name"] = json!("我的助理");
         primary["version"] = settings["version"].clone();
         identities.push(primary);
     }
@@ -501,32 +534,36 @@ impl LocalTaskStore {
         Ok(())
     }
 
-    /// Transactionally migrate stored settings and bind them to their owning Executor identity.
+    /// Publish a coherent read view without persisting migrations or reserving a writer.
+    pub fn read_personal_stand_in(
+        &self,
+        user: i64,
+        device: &str,
+    ) -> Result<Value, TaskRuntimeError> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
+        let (settings, _) = personal_snapshot(&transaction, user, device)?;
+        transaction.commit()?;
+        Ok(settings)
+    }
+
+    /// Reconcile execution-owned identity and permission migrations only when needed.
     pub fn personal_stand_in(&self, user: i64, device: &str) -> Result<Value, TaskRuntimeError> {
-        let mut guard = self.connection()?;
-        let connection = guard.transaction_with_behavior(TransactionBehavior::Immediate)?;
-        if let Some(row) = get_item_from(&connection, &personal_key(user), "personal_stand_in")? {
-            let mut personal = row.metadata;
-            // Device-owned settings follow their Executor, not a stale desktop identity.
-            let migrated = migrate_personal_settings(&mut personal)?;
-            if bind_personal_device(&mut personal, device) || migrated {
-                write_personal(&connection, &personal)?;
-            }
-            connection.commit()?;
-            return Ok(personal);
+        let mut connection = self.connection()?;
+        let snapshot = connection.transaction_with_behavior(TransactionBehavior::Deferred)?;
+        let (settings, needs_persistence) = personal_snapshot(&snapshot, user, device)?;
+        snapshot.commit()?;
+        if !needs_persistence {
+            return Ok(settings);
         }
-        let mut personal = read_personal(&connection, user, device)?;
-        bind_personal_device(&mut personal, device);
-        // Migrate old rows atomically, without changing their enable timestamps or versions.
-        if personal["roles"].as_array().is_some_and(|roles| {
-            roles
-                .iter()
-                .any(|role| role["version"].as_i64().unwrap_or(0) > 0)
-        }) {
-            write_personal(&connection, &personal)?;
+        let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        // Re-read under the writer reservation so a concurrent save is never overwritten.
+        let (settings, needs_persistence) = personal_snapshot(&transaction, user, device)?;
+        if needs_persistence {
+            write_personal(&transaction, &settings)?;
         }
-        connection.commit()?;
-        Ok(personal)
+        transaction.commit()?;
+        Ok(settings)
     }
 
     pub fn save_personal_stand_in(

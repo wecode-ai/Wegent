@@ -114,6 +114,19 @@ export interface CoreDshPluginManagerOptions {
   nodeCommand: string
   environment: NodeJS.ProcessEnv
   runCommand?: CommandRunner
+  confirmInstall?: (request: CoreDshPluginInstallRequest) => Promise<boolean>
+}
+
+export interface CoreDshPluginInstallRequest {
+  action: 'install' | 'update'
+  spec: string
+}
+
+export async function authorizeCoreDshPluginInstall(
+  request: CoreDshPluginInstallRequest,
+  confirm: CoreDshPluginManagerOptions['confirmInstall']
+): Promise<void> {
+  if (!(await confirm?.(request))) throw new Error('Core plugin installation was cancelled')
 }
 
 export class CoreDshPluginManager {
@@ -132,29 +145,37 @@ export class CoreDshPluginManager {
 
   install(spec: string): Promise<CoreDshPlugin[]> {
     logPluginCommand(this.options.environment, { stage: 'install-requested' })
-    return this.mutate(async () => {
-      validateSpec(spec)
-      const before = await this.readManifest()
-      const beforeNames = new Set(Object.keys(before.dependencies ?? {}))
-      await this.runPnpm(['add', spec.trim()])
-      const after = await this.readManifest()
-      const added = Object.keys(after.dependencies ?? {}).filter(name => !beforeNames.has(name))
-      if (added.length !== 1) {
-        throw new Error(
-          added.length === 0
-            ? 'The requested DSH plugin is already installed'
-            : 'Installing one DSH plugin added multiple direct dependencies'
+    return this.mutate(
+      async () => {
+        const before = await this.readManifest()
+        const beforeNames = new Set(Object.keys(before.dependencies ?? {}))
+        await this.runPnpm(['add', spec.trim()])
+        const after = await this.readManifest()
+        const added = Object.keys(after.dependencies ?? {}).filter(name => !beforeNames.has(name))
+        if (added.length !== 1) {
+          throw new Error(
+            added.length === 0
+              ? 'The requested DSH plugin is already installed'
+              : 'Installing one DSH plugin added multiple direct dependencies'
+          )
+        }
+        const [name] = added
+        await this.requireBundle(name)
+        const state = await this.readState(after)
+        state.order = [...state.order.filter(item => item !== name), name]
+        state.disabled = state.disabled.filter(item => item !== name)
+        await this.writeState(state)
+        await this.writeActiveBundles(after, state)
+        await this.preflight()
+      },
+      async () => {
+        validateSpec(spec)
+        await authorizeCoreDshPluginInstall(
+          { action: 'install', spec: spec.trim() },
+          this.options.confirmInstall
         )
       }
-      const [name] = added
-      await this.requireBundle(name)
-      const state = await this.readState(after)
-      state.order = [...state.order.filter(item => item !== name), name]
-      state.disabled = state.disabled.filter(item => item !== name)
-      await this.writeState(state)
-      await this.writeActiveBundles(after, state)
-      await this.preflight()
-    })
+    )
   }
 
   ensureDevelopmentPlugin(sourceRoot: string): Promise<CoreDshDevelopmentPlugin> {
@@ -187,14 +208,23 @@ export class CoreDshPluginManager {
   }
 
   update(name: string): Promise<CoreDshPlugin[]> {
-    return this.mutate(async () => {
-      validateMutableName(name)
-      const manifest = await this.readManifest()
-      if (!manifest.dependencies?.[name]) throw new Error(`${name} is not installed`)
-      await this.runPnpm(['update', name])
-      await this.requireBundle(name)
-      await this.preflight()
-    })
+    return this.mutate(
+      async () => {
+        await this.runPnpm(['update', name])
+        await this.requireBundle(name)
+        await this.preflight()
+      },
+      async () => {
+        validateMutableName(name)
+        const manifest = await this.readManifest()
+        const source = manifest.dependencies?.[name]
+        if (!source) throw new Error(`${name} is not installed`)
+        await authorizeCoreDshPluginInstall(
+          { action: 'update', spec: `${name}@${source}` },
+          this.options.confirmInstall
+        )
+      }
+    )
   }
 
   setEnabled(name: string, enabled: boolean): Promise<CoreDshPlugin[]> {
@@ -239,8 +269,13 @@ export class CoreDshPluginManager {
     return next
   }
 
-  private mutate(action: () => Promise<void>): Promise<CoreDshPlugin[]> {
+  private mutate(
+    action: () => Promise<void>,
+    authorize?: () => Promise<void>
+  ): Promise<CoreDshPlugin[]> {
     return this.serial(async () => {
+      // Cancellation must happen before the snapshot/restore transaction can run pnpm.
+      await authorize?.()
       logPluginCommand(this.options.environment, { stage: 'snapshot-started' })
       const snapshot = await this.snapshot()
       try {
@@ -411,12 +446,7 @@ export class CoreDshPluginManager {
     try {
       await this.runCommand(command, commandArgs, this.pnpmCommandOptions())
     } catch (error) {
-      const matcher = parseBlockedBuildMatcher(commandOutput(error))
-      if (!matcher) throw commandError('pnpm', error)
-      await allowBuild(this.profileRoot, matcher)
-      await this.runCommand(command, commandArgs, this.pnpmCommandOptions()).catch(reason => {
-        throw commandError('pnpm', reason)
-      })
+      throw commandError('pnpm', error)
     } finally {
       await this.logManagedAssets('after-pnpm')
     }
@@ -524,27 +554,6 @@ export async function validateCoreDshDevelopmentPlugin(
   sourceRoot: string
 ): Promise<CoreDshDevelopmentPlugin> {
   return readDevelopmentPlugin(sourceRoot)
-}
-
-export function parseBlockedBuildMatcher(output: string): string | null {
-  if (!output.includes('ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED')) return null
-  const matches = [...output.matchAll(/^\s{2}("[^"]+"|'[^']+'|[^:\n]+):\s*(?:true|false)\s*$/gm)]
-  const raw = matches.at(-1)?.[1]?.trim()
-  return raw ? raw.replace(/^(['"])(.*)\1$/, '$2') : null
-}
-
-async function allowBuild(profileRoot: string, matcher: string): Promise<void> {
-  const path = join(profileRoot, 'pnpm-workspace.yaml')
-  let workspace = await readFile(path, 'utf8')
-  if (workspace.includes(`${JSON.stringify(matcher)}: true`)) return
-  if (!/^allowBuilds:\s*$/m.test(workspace)) {
-    workspace = `${workspace.trimEnd()}\n\nallowBuilds:\n`
-  }
-  workspace = workspace.replace(
-    /^allowBuilds:\s*$/m,
-    `allowBuilds:\n  ${JSON.stringify(matcher)}: true`
-  )
-  await writeFile(path, `${workspace.trimEnd()}\n`, { mode: 0o600 })
 }
 
 function validateSpec(spec: string): void {

@@ -55,7 +55,8 @@ export function GitHostingSettingsPage() {
   const [statuses, setStatuses] = useState<
     Partial<Record<GitHostingCliProvider, GitHostingCliStatus>>
   >({})
-  const [loading, setLoading] = useState(true)
+  const [loadingProviders, setLoadingProviders] = useState({ github: true, gitlab: true })
+  const loading = PROVIDERS.some(provider => loadingProviders[provider])
   const detectionRevision = useRef(0)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -63,21 +64,25 @@ export function GitHostingSettingsPage() {
 
   const detect = useCallback(async () => {
     const revision = ++detectionRevision.current
-    setLoading(true)
+    setLoadingProviders({ github: true, gitlab: true })
     setError(null)
-    const results = await Promise.allSettled(PROVIDERS.map(getGitHostingCliStatus))
-    if (revision !== detectionRevision.current) return
-    const nextStatuses: Partial<Record<GitHostingCliProvider, GitHostingCliStatus>> = {}
-    results.forEach((result, index) => {
-      if (result.status === 'fulfilled') {
-        nextStatuses[PROVIDERS[index]] = result.value
-      }
-    })
-    setStatuses(nextStatuses)
-    if (results.some(result => result.status === 'rejected')) {
-      setError(t('workbench.git_hosting_cli_detection_failed', 'CLI 状态检测失败'))
-    }
-    setLoading(false)
+    await Promise.all(
+      PROVIDERS.map(async provider => {
+        try {
+          const status = await getGitHostingCliStatus(provider)
+          if (revision !== detectionRevision.current) return
+          setStatuses(current => ({ ...current, [provider]: status }))
+        } catch {
+          if (revision !== detectionRevision.current) return
+          setStatuses(current => ({ ...current, [provider]: undefined }))
+          setError(t('workbench.git_hosting_cli_detection_failed', 'CLI 状态检测失败'))
+        } finally {
+          if (revision === detectionRevision.current) {
+            setLoadingProviders(current => ({ ...current, [provider]: false }))
+          }
+        }
+      })
+    )
   }, [t])
 
   useEffect(() => {
@@ -147,7 +152,7 @@ export function GitHostingSettingsPage() {
           label={t('workbench.git_hosting_status_switch', '显示 PR / MR 状态')}
           description={t(
             'workbench.git_hosting_status_switch_description',
-            '开启后，Wework 会通过当前设备上的 gh 或 glab 查询当前分支状态。关闭后不会执行这些查询。'
+            '开启后，任务与 Issue 列表会自动更新 PR / MR 状态。关闭后不再为这些视图更新状态；本页仍会检测 CLI 的可用性，AI 已设置的事件等待不受影响。'
           )}
           control={
             <SettingsSwitch
@@ -164,7 +169,9 @@ export function GitHostingSettingsPage() {
         {PROVIDERS.map(provider => {
           const config = PROVIDER_CONFIG[provider]
           const status = statuses[provider]
-          const ready = !status?.detectionError && status?.installed && status.authenticated
+          const providerLoading = loadingProviders[provider]
+          const ready =
+            !providerLoading && !status?.detectionError && status?.installed && status.authenticated
           return (
             <section
               key={provider}
@@ -182,7 +189,7 @@ export function GitHostingSettingsPage() {
                       data-testid={`git-hosting-cli-${provider}-status`}
                       className={`text-xs ${ready ? 'text-success wework:text-green-500' : 'text-text-muted'}`}
                     >
-                      {statusLabel(t, status, loading)}
+                      {statusLabel(t, status, providerLoading)}
                     </span>
                   </div>
                   <p className="mt-1 text-xs leading-4 text-text-secondary">
@@ -192,15 +199,34 @@ export function GitHostingSettingsPage() {
                         defaultValue: `命令：${config.tool}`,
                       })}
                   </p>
+                  {!providerLoading && status?.detectionError ? (
+                    <p
+                      data-testid={`git-hosting-cli-${provider}-error-help`}
+                      className="mt-1 text-xs leading-4 text-text-secondary"
+                    >
+                      {status.detectionError === 'timeout'
+                        ? t(
+                            'workbench.git_hosting_cli_timeout_help',
+                            'CLI 响应超时。请检查当前设备的网络或代理后重新检测。'
+                          )
+                        : t('workbench.git_hosting_cli_error_help', {
+                            tool: config.tool,
+                            defaultValue: `请在当前设备确认 ${config.tool} 命令可运行，并检查网络或代理后重新检测。`,
+                          })}
+                    </p>
+                  ) : null}
                   {status?.executablePath ? (
-                    <p className="mt-1 truncate text-code text-text-muted">
+                    <p
+                      title={status.executablePath}
+                      className="mt-1 truncate text-code text-text-muted"
+                    >
                       {status.executablePath}
                     </p>
                   ) : null}
                 </div>
               </div>
 
-              {!loading && status && !status.detectionError && !ready ? (
+              {!providerLoading && status && !status.detectionError && !ready ? (
                 <div className="mt-4 flex flex-wrap gap-2 pl-8">
                   {!status.installed ? (
                     <button

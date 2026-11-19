@@ -1033,6 +1033,7 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
         'gitRepositories',
         'projects',
         'myWork',
+        'metrics',
         'milestones',
         'issues',
         'comments',
@@ -1052,6 +1053,16 @@ describe('createWeworkDeliverySharedWorkspaceApi', () => {
       ].sort()
     )
     expect(WEWORK_SHARED_WORKSPACE_MISSING_METHODS).toEqual([])
+
+    const metrics = { definition_version: 'collab-v2' }
+    client.get.mockResolvedValueOnce(metrics)
+    await expect(api.metrics.project('project/1')).resolves.toEqual(metrics)
+    expect(client.get).toHaveBeenLastCalledWith(
+      '/v1/cloud-projects/project%2F1/collaboration-metrics'
+    )
+    client.get.mockResolvedValueOnce(metrics)
+    await expect(api.metrics.personal()).resolves.toEqual(metrics)
+    expect(client.get).toHaveBeenLastCalledWith('/v1/collaboration-metrics/me')
 
     await expect(api.workspaces?.list()).resolves.toEqual([mappedWorkspace])
     await expect(api.workspaces?.get('workspace-1')).resolves.toEqual(mappedWorkspace)

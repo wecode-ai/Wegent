@@ -1,11 +1,30 @@
-import { useCallback, useLayoutEffect, useMemo, useReducer, useRef } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef } from 'react'
 import { runnerModelCatalog } from '../../../packages/collaboration/src/agent-form/runnerModelCatalog'
 import { isSameModelSelection } from '../../../packages/collaboration/src/controls/model-ui'
+import { resolveAutomaticModel } from '../../../packages/collaboration/src/controls/runtimeModelSelection'
 
-import { defaultModel, defaultModelOptions } from '@/domain/modelSelection'
+import {
+  continuationSelection,
+  defaultModel,
+  defaultModelOptions,
+  executionFields,
+} from '@/domain/modelSelection'
+import {
+  findModelForSelection,
+  modelFromTaskSnapshot,
+  modelSelectionFromRuntimeHandle,
+} from '../../../packages/chat-core/src/runtime-model-selection'
+import { runtimeTaskKey } from '@/domain/runtimeTaskLifecycle'
 import type { RuntimeApi } from '@/services/runtimeApi'
 import { isPhoneLocalDeviceId } from '@/services/localRuntime'
-import type { DeviceInfo, ModelOptions, UnifiedModel } from '@/types/runtime'
+import { beginMobileDiagnostic } from '@/services/mobileDiagnostics'
+import type {
+  DeviceInfo,
+  ModelOptions,
+  RuntimeTaskAddress,
+  RuntimeTaskSummary,
+  UnifiedModel,
+} from '@/types/runtime'
 
 interface DeviceCatalog {
   models: UnifiedModel[]
@@ -21,7 +40,16 @@ export function useDeviceModels(
   device: DeviceInfo | undefined,
   cloudModels: UnifiedModel[],
   backendSession: string | null = null,
-  localGeneration?: number
+  localGeneration?: number,
+  {
+    address,
+    task,
+    autoLoad = false,
+  }: {
+    address?: RuntimeTaskAddress | null
+    task?: RuntimeTaskSummary | null
+    autoLoad?: boolean
+  } = {}
 ) {
   const [, render] = useReducer(value => value + 1, 0)
   const catalogs = useMemo(() => new Map<string, DeviceCatalog>(), [api])
@@ -46,16 +74,40 @@ export function useDeviceModels(
   const deviceKey = device ? `${device.device_type}:${device.device_id}` : ''
   const catalog = device ? catalogs.get(deviceKey) : undefined
   const models = [...(catalog?.models ?? []), ...cloudModels]
-  const selection = device ? selections.get(deviceKey) : undefined
+  const selectionKey = address ? runtimeTaskKey(address) : deviceKey
+  const selection = device ? selections.get(selectionKey) : undefined
+  const taskSelection = task
+    ? (task.modelSelection ?? null)
+    : modelSelectionFromRuntimeHandle(address?.runtimeHandle)
+  const taskModel =
+    findModelForSelection(models, taskSelection) ?? modelFromTaskSnapshot(taskSelection)
+  const automaticModel = address && task && !taskSelection ? resolveAutomaticModel(models) : null
   const selectedModel = selection
-    ? (models.find(model => isSameModelSelection(model, selection.model)) ?? null)
-    : (catalog?.defaultModel ?? defaultModel(models))
+    ? (models.find(model => isSameModelSelection(model, selection.model)) ??
+      (address ? selection.model : null))
+    : address
+      ? (taskModel ?? automaticModel)
+      : (catalog?.defaultModel ?? defaultModel(models))
   const selectedModelOptions =
     selection && isSameModelSelection(selection.model, selectedModel)
       ? selection.options
-      : selectedModel
-        ? defaultModelOptions(selectedModel)
-        : {}
+      : taskSelection
+        ? (taskSelection.options ?? {})
+        : selectedModel
+          ? defaultModelOptions(selectedModel)
+          : {}
+  const modelSelection =
+    selection || !address || automaticModel
+      ? selectedModel
+        ? address && !models.some(model => isSameModelSelection(model, selectedModel))
+          ? {
+              modelName: selectedModel.name,
+              modelType: selectedModel.type,
+              options: selectedModelOptions,
+            }
+          : continuationSelection(executionFields(selectedModel, selectedModelOptions))
+        : null
+      : taskSelection
 
   const loadDeviceModels = useCallback(
     async (target: DeviceInfo | undefined | null, force = false): Promise<void> => {
@@ -77,17 +129,24 @@ export function useDeviceModels(
         phoneOwned,
       }
       catalogs.set(key, entry)
+      const diagnostic = beginMobileDiagnostic('device-models', phoneOwned ? 'phone' : 'cloud')
       entry.pending = api
         .listNativeModels(target.id, target.device_id)
         .then(response => {
-          if (catalogs.get(key) !== entry || (!phoneOwned && session !== currentSession.current))
+          if (catalogs.get(key) !== entry || (!phoneOwned && session !== currentSession.current)) {
+            diagnostic.cancel()
             return
+          }
+          diagnostic.step('project-model-catalog')
           const native = runnerModelCatalog(response.models, [], 'codex')
           entry.models = native.map(item => item.model)
           entry.defaultModel = native.find(item => item.isDefault)?.model ?? null
           entry.error = response.catalog_error || null
+          if (entry.error) diagnostic.fail(new Error())
+          else diagnostic.complete({ models: entry.models.length })
         })
         .catch(cause => {
+          diagnostic.fail(cause)
           if (catalogs.get(key) !== entry || (!phoneOwned && session !== currentSession.current))
             return
           entry.error = cause instanceof Error ? cause.message : String(cause)
@@ -105,10 +164,18 @@ export function useDeviceModels(
     (force = false) => loadDeviceModels(device, force),
     [device, loadDeviceModels]
   )
+  useEffect(() => {
+    if (autoLoad) void loadModels()
+  }, [autoLoad, loadModels, localGeneration])
 
   const selectModel = (model: UnifiedModel, options?: ModelOptions) => {
-    if (!device || !models.some(candidate => isSameModelSelection(candidate, model))) return
-    selections.set(deviceKey, {
+    if (
+      !device ||
+      (!models.some(candidate => isSameModelSelection(candidate, model)) &&
+        !isSameModelSelection(taskModel, model))
+    )
+      return
+    selections.set(selectionKey, {
       model,
       options: options ?? defaultModelOptions(model),
       phoneOwned: isPhoneLocalDeviceId(device.device_id),
@@ -120,6 +187,7 @@ export function useDeviceModels(
     models,
     selectedModel,
     selectedModelOptions,
+    modelSelection,
     selectModel,
     loadModels,
     loadDeviceModels,

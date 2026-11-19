@@ -57,6 +57,8 @@ const HANGING_FIXTURE_PATH = '/embedded-browser-toolbar-actions-fixture-hanging'
 const HANGING_FIXTURE_RELEASE_PATH = '/embedded-browser-toolbar-actions-fixture-hanging-release'
 const BRIDGE_RUNTIME_FILE = 'embedded-browser-bridge.json'
 const BROWSER_LABEL = 'workspace-browser'
+// Match the host's bounded layout (5s), native open (15s), frame (5s), and close (5s) stages.
+const DETACHED_INSPECTOR_VERIFICATION_TIMEOUT_MS = 30_000
 const FIXTURE_WORD = 'Fixture'
 const BROWSER_OPEN_EXTERNAL_SELECTOR =
   ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-open-external-button"]'
@@ -452,7 +454,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) 
           const inspector = JSON.parse(
             await control.command('verifyEmbeddedBrowserDetachedInspector', 'body', {
               value: BROWSER_LABEL,
-              timeoutMs: uiTimeoutMs,
+              timeoutMs: Math.max(uiTimeoutMs, DETACHED_INSPECTOR_VERIFICATION_TIMEOUT_MS),
             })
           )
           assert.equal(

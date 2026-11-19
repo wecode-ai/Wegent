@@ -1,0 +1,12 @@
+{
+  "order": 193510,
+  "scenario": "./scenarios/paste-image-send.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": { "core": { "order": 141510, "shard": 2, "position": 7510 } },
+  "paths": [
+    "wework/src/components/chat/composer/desktopComposerServices.*",
+    "packages/collaboration/src/composer/useComposerTransfers.*",
+    "wework/src/api/local/localAttachments.*",
+    "wework/e2e/desktop/scenarios/paste-image-send.scenario.mjs"
+  ]
+}

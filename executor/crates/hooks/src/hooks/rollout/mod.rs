@@ -191,7 +191,12 @@ fn subscribed_plugins(registry: &HookRegistryStore) -> Subscribers {
         delivering: Vec::new(),
     };
     for plugin in registry.discover() {
-        if !plugin.manifest.subscribes(CODEX_ROLLOUT_SUBSCRIPTION) {
+        if !plugin.manifest.subscribes(CODEX_ROLLOUT_SUBSCRIPTION)
+            || !plugin
+                .hooks
+                .iter()
+                .any(|hook| hook.event_name == super::model::HookEventName::PostToolUse)
+        {
             continue;
         }
         subscribers.installed = true;
@@ -220,11 +225,10 @@ async fn deliver(
     for plugin in subscribers.delivering {
         let plugin_dir = plugin.directory.clone();
         let plugin_id = plugin.manifest.id.clone();
-        for hook in plugin
-            .hooks
-            .into_iter()
-            .filter(|hook| matches_tool(&hook.matcher, &input.tool_name))
-        {
+        for hook in plugin.hooks.into_iter().filter(|hook| {
+            hook.event_name == super::model::HookEventName::PostToolUse
+                && matches_tool(&hook.matcher, &input.tool_name)
+        }) {
             deliveries += 1;
             let started = Instant::now();
             let started_at = now();

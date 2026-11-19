@@ -135,6 +135,9 @@ def can_restore_reconciled_completion(
     sequence = runtime_event_sequence(payload)
     if sequence is None:
         return False
+    from app.services.loop_items.locking import lock_existing_issue
+
+    lock_existing_issue(db, execution.loop_item_id)
     # Keep the aggregate -> activity lock order and read the concurrent winner.
     db.refresh(execution, with_for_update=True)
     if execution.status != "completed" or sequence <= execution.last_event_seq:
@@ -329,8 +332,11 @@ def _persist_outcome(
     status = TERMINAL_STATUSES[turn.status]
     metadata = dict(row.metadata_json or {})
     execution_id = metadata.get("execution_id")
-    # Match the event projection's lock order: execution root, then activity.
+    # Match the event projection's lock order: Issue, execution root, activity.
     # Include terminal roots so a stale report cannot contradict their outcome.
+    from app.services.loop_items.locking import lock_existing_issue
+
+    lock_existing_issue(db, row.task_id)
     execution = (
         db.query(LoopItemExecution)
         .filter(LoopItemExecution.id == execution_id)

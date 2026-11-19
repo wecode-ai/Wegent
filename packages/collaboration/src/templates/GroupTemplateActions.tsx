@@ -14,8 +14,10 @@ export function GroupTemplateActions({
   group,
   locale,
   loadAgents,
+  hasUnsavedChanges = false,
 }: {
   group: CollaborationGroup
+  hasUnsavedChanges?: boolean
   locale: CollaborationLocale
   loadAgents(
     group: CollaborationGroup
@@ -23,6 +25,10 @@ export function GroupTemplateActions({
 }) {
   const store = useCollaborationTemplateStore()
   const m = templateMessages[locale]
+  const savedConfigurationHint =
+    locale === 'zh-CN'
+      ? '此模板使用小组已保存的配置，不包含未保存的更改。'
+      : 'This template uses the group’s saved configuration and excludes unsaved changes.'
   const [saving, setSaving] = useState<CollaborationTemplate | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -36,9 +42,19 @@ export function GroupTemplateActions({
       await loadAgents(group)
     )
   return (
-    <section className="collaboration-template-settings" data-testid="group-template-settings">
-      <h3>{m.configuration}</h3>
-      <p>{m.saveHint}</p>
+    <section className="space-y-3 text-sm" data-testid="group-template-settings">
+      <p className="text-text-secondary">{savedConfigurationHint}</p>
+      {hasUnsavedChanges ? (
+        <p
+          className="text-sm text-text-secondary"
+          role="note"
+          data-testid="group-template-saved-version-hint"
+        >
+          {locale === 'zh-CN'
+            ? '当前有未保存的更改。此处使用上次保存的版本；若要包含这些更改，请先保存小组。'
+            : 'There are unsaved changes. Sharing uses the last saved version; save the group first to include these changes.'}
+        </p>
+      ) : null}
       {error && <p role="alert">{error}</p>}
       <button
         type="button"
@@ -59,8 +75,8 @@ export function GroupTemplateActions({
       >
         {m.saveTitle}
       </button>
-      <section>
-        <p>{m.exportHint}</p>
+      <section className="space-y-2 border-t border-border pt-3">
+        <p className="text-text-secondary">{m.exportHint}</p>
         <button
           type="button"
           className="collaboration-template-choice"
@@ -84,6 +100,7 @@ export function GroupTemplateActions({
       {saving && (
         <TemplateSaveDialog
           document={saving}
+          sourceDescription={savedConfigurationHint}
           store={store}
           locale={locale}
           onClose={() => setSaving(null)}

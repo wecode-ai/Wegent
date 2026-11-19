@@ -7,6 +7,7 @@ import type {
 import {
   getControlsForModel,
   getModelDisplayLabel,
+  getSelectedReasoningOption,
   normalizeModelOptions,
 } from '../../../packages/collaboration/src/controls/model-ui'
 
@@ -15,7 +16,6 @@ const CLOUD_RESOURCE_USER = 'weworkCloudModelResourceUserId'
 const CLOUD_CONTEXT_WINDOW = 'weworkCloudModelContextWindow'
 const CLOUD_MAX_OUTPUT = 'weworkCloudModelMaxOutputTokens'
 const CLOUD_API_FORMAT = 'weworkCloudModelUpstreamApiFormat'
-const STANDARD_REASONING_EFFORTS = ['low', 'medium', 'high', 'xhigh']
 
 export function selectableModels(models: UnifiedModel[]): UnifiedModel[] {
   return models.filter(model => model.isActive !== false && !model.compatibilityDisabled)
@@ -44,7 +44,7 @@ export function defaultModelOptions(model: UnifiedModel): ModelOptions {
   const options: ModelOptions = {}
   if (modelSupportsSpeed(model)) options.speed = 'standard'
   if (!efforts.length) return options
-  const reasoning = defaultReasoningEffort(model, efforts)
+  const reasoning = getSelectedReasoningOption(model, {})?.value
   if (reasoning) options.reasoning = reasoning
   return options
 }
@@ -54,34 +54,18 @@ export function modelLabel(model: UnifiedModel): string {
 }
 
 export function reasoningEfforts(model: UnifiedModel): string[] {
-  const ui = record(model.config?.ui)
-  const configured = ui.reasoningEfforts ?? ui.supportedReasoningEfforts
-  const efforts = uniqueStrings(configured)
-  const kind = modelKind(model)
-  const isModelInterface = kind === 'model-interface' || kind.startsWith('model-interface:')
-
-  if (Array.isArray(configured) && isModelInterface) return efforts
-  if (efforts.length) return efforts
-  if (
-    kind === 'codex-official' ||
-    kind === 'codex-provider' ||
-    kind.startsWith('codex-provider:') ||
-    isModelInterface ||
-    kind === 'gpt'
-  ) {
-    return STANDARD_REASONING_EFFORTS
-  }
-  return []
+  return (
+    getControlsForModel(model)
+      .find(control => control.id === 'reasoning')
+      ?.options.map(option => option.value) ?? []
+  )
 }
 
 export function resolvedReasoningEffort(
   model: UnifiedModel | null,
   value: string | undefined
 ): string | undefined {
-  if (!model) return undefined
-  const efforts = reasoningEfforts(model)
-  if (value && efforts.includes(value)) return value
-  return defaultReasoningEffort(model, efforts)
+  return getSelectedReasoningOption(model, value ? { reasoning: value } : {})?.value
 }
 
 export function reasoningLabel(value: string | undefined): string {
@@ -155,12 +139,6 @@ function modelKind(model: UnifiedModel): string {
   return (stringValue(model.config?.weworkModelKind) ?? stringValue(ui.family) ?? '').toLowerCase()
 }
 
-function defaultReasoningEffort(model: UnifiedModel, efforts: string[]): string | undefined {
-  const configured = stringValue(record(model.config?.ui).defaultReasoningEffort)?.toLowerCase()
-  if (configured && efforts.includes(configured)) return configured
-  return efforts.includes('high') ? 'high' : efforts[0]
-}
-
 function upstreamApiFormat(model: UnifiedModel): string | null {
   const config = record(model.config)
   const family = normalized(model.runtime?.family)
@@ -213,18 +191,6 @@ function record(value: unknown): Record<string, unknown> {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
-}
-
-function uniqueStrings(value: unknown): string[] {
-  if (!Array.isArray(value)) return []
-  return Array.from(
-    new Set(
-      value
-        .filter((item): item is string => typeof item === 'string')
-        .map(item => item.trim().toLowerCase())
-        .filter(Boolean)
-    )
-  )
 }
 
 function normalized(value: unknown): string {

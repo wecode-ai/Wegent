@@ -64,7 +64,7 @@ async fn loop_item_tasks(
 
 /// `LoopItemService._require_item_access` with no issue action:
 /// `require_cloud_project_role(Viewer)` then `can_view_item`.
-async fn require_item_access(
+pub(super) async fn require_item_access(
     state: &AppState,
     item: &TaskItemFullRow,
     user_id: i32,
@@ -81,6 +81,12 @@ async fn require_item_access(
         .await
         .map_err(HttpError::internal)?
     else {
+        if super::issue_invitation::permits_read(&state.mysql, &item.id, user_id)
+            .await
+            .map_err(HttpError::internal)?
+        {
+            return Ok(());
+        }
         return Err(HttpError::cloud_project_not_found().into());
     };
     let Some(role) = role_for_priority(access.priority) else {

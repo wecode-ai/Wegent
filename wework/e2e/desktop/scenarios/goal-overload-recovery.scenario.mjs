@@ -8,6 +8,7 @@ import {
   ACTIVE_WORKBENCH_SELECTOR,
   createSingleRootLocalProject,
   selectE2EModel,
+  withTimeout,
 } from '../modules/shared.mjs'
 import {
   assistantMessage,
@@ -29,12 +30,14 @@ export function createDesktopScenario(options) {
   const admission = createGoalAdmissionRecovery(options)
   let active = false
   let requests = 0
+  let firstFailureSent
   let releaseRecovered
   let releaseContinuation
   let recoveredHeld
   let continuationHeld
   const reset = () => {
     requests = 0
+    firstFailureSent = Promise.withResolvers()
     recoveredHeld = new Promise(resolve => {
       releaseRecovered = resolve
     })
@@ -73,6 +76,7 @@ export function createDesktopScenario(options) {
             },
           ])
         )
+        firstFailureSent.resolve()
         return true
       }
       await Promise.race([
@@ -120,7 +124,15 @@ export function createDesktopScenario(options) {
           // UI commands must not race the native retry deadline.
           if (!continuing) await existing.overloadTerminalGate.arm()
           await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
-          if (!continuing) await existing.overloadTerminalGate.wait()
+          if (continuing) {
+            await withTimeout(
+              firstFailureSent.promise,
+              options.modelResponseTimeoutMs,
+              'The model fixture did not send the first overload response for the Goal'
+            )
+          } else {
+            await existing.overloadTerminalGate.wait()
+          }
           const stopped = await waitForWorkbenchDebugState(
             control,
             snapshot =>

@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'vitest'
 import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
+import { createRuntimeProjectRemoval } from './workbenchDataRefreshHelpers'
 
 describe('workbenchReducer', () => {
   test('moves a fresh composer source selection to the new primary after refresh', () => {
@@ -123,7 +124,10 @@ describe('workbenchReducer', () => {
           taskId: 'runtime-a',
         },
       },
-      { type: 'runtime_project_removed', projectId: 7 }
+      {
+        type: 'runtime_project_removed',
+        removal: createRuntimeProjectRemoval(runtimeWork, 7),
+      }
     )
 
     expect(state.runtimeWork?.projects).toEqual([])

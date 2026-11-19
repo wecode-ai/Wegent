@@ -91,7 +91,22 @@
     "background": "Background and goals",
     "unknownTime": "Time unavailable",
     "unknownSource": "Source unknown",
+    "traceRestricted": "Private source restricted",
+    "assistantSources": "Assistant participation sources",
+    "openAssistantSource": "Open original private workspace",
+    "participation": {
+      "unverified": "Source available",
+      "restricted": "Source visible to participant only",
+      "history-unavailable": "Historical source unavailable"
+    },
     "system": "System",
+    "unknownMember": "Unknown member (historical data)",
+    "provenance": {
+      "humanPublished": "Human generated · Human published",
+      "aiPending": "AI generated · Pending confirmation",
+      "aiHumanPublished": "AI generated · Human published",
+      "aiPublished": "AI generated · AI published"
+    },
     "statusChanged": "Status: {{from}} → {{to}}",
     "handoff": "{{action}}: {{target}}",
     "handoffActions": {
@@ -165,6 +180,11 @@
     "continueDiscussion": "Continue discussion"
   },
   "assistant": {
+    "availability": {
+      "online": "Online",
+      "offline": "Offline",
+      "unknown": "Unknown"
+    },
     "runtimeWorkUnavailable": "The work list could not be loaded. Retry to confirm the team's current status.",
     "snapshot": {
       "title": "Current work",
@@ -234,6 +254,7 @@
     "paused": "Paused",
     "unavailable": "Assistant team is not available yet.",
     "managementUnavailable": "Assistant configuration is unavailable. Retry loading it before managing the team.",
+    "deviceUnavailable": "The configured assistant device is unavailable. Refresh devices and retry.",
     "state": {
       "waiting": "Awaiting confirmation",
       "running": "In progress",
@@ -260,6 +281,13 @@
     "summary": "Delivery summary",
     "summaryPlaceholder": "Briefly describe the problem and the deliverable.",
     "defaults": "Project, assignee and date have defaults. You can change them in the task details after creation.",
+    "assistantRoster": "Assign scoped work to project assistants",
+    "riskLevel": "Execution risk",
+    "risk": {
+      "high": "Higher risk · confirm before acting",
+      "low": "Low risk · policy may act automatically"
+    },
+    "registerInProject": "Register in {{project}}",
     "cancel": "Cancel",
     "submit": "Create and open task",
     "search": "Search options",

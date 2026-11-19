@@ -6,6 +6,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useMessageListDiagnostics } from './useMessageListDiagnostics'
+import { recordMobileDiagnostic, setDiagnosticRecording } from '@/services/mobileDiagnostics'
 
 const cache = vi.hoisted(() => ({ record: vi.fn() }))
 vi.mock('@/services/chatLayoutDiagnostics', () => ({
@@ -64,11 +65,13 @@ describe('opt-in message list diagnostics', () => {
   beforeEach(() => {
     renderer = null
     time = 1000
-    vi.stubEnv('EXPO_PUBLIC_CHAT_LAYOUT_DIAGNOSTICS', '1')
+    setDiagnosticRecording(true)
     vi.spyOn(Date, 'now').mockImplementation(() => time)
     vi.spyOn(console, 'info').mockImplementation(output)
     output.mockClear()
-    cache.record.mockClear()
+    cache.record
+      .mockReset()
+      .mockImplementation(record => recordMobileDiagnostic('[ChatLayout]', record))
     getState.mockClear()
     options = {
       listRef: { current: { getState } as unknown as LegendListRef },
@@ -111,31 +114,44 @@ describe('opt-in message list diagnostics', () => {
   afterEach(async () => {
     if (renderer) await act(() => renderer!.unmount())
     vi.restoreAllMocks()
-    vi.unstubAllEnvs()
+    setDiagnosticRecording(false)
   })
 
-  it.each([undefined, '0'])(
-    'does not attach callbacks or read state when disabled (%s)',
-    async flag => {
-      vi.stubEnv('EXPO_PUBLIC_CHAT_LAYOUT_DIAGNOSTICS', flag)
-      const readInset = vi.fn(() => 96)
-      const inset = Object.defineProperty({}, 'value', { get: readInset }) as SharedValue<number>
-      await render({ contentInsetEndAdjustment: inset })
+  it('does not attach callbacks or read state when disabled', async () => {
+    setDiagnosticRecording(false)
+    const readInset = vi.fn(() => 96)
+    const inset = Object.defineProperty({}, 'value', { get: readInset }) as SharedValue<number>
+    await render({ contentInsetEndAdjustment: inset })
 
-      expect(diagnostics.onReady).toBeUndefined()
-      expect(diagnostics.onScroll).toBeUndefined()
-      expect(diagnostics.onItemSizeChanged).toBeUndefined()
-      expect(diagnostics.onLayout).toBeUndefined()
-      expect(diagnostics.onContentSizeChange).toBeUndefined()
-      diagnostics.reportSend()
-      diagnostics.reportUserScroll()
-      await render({ running: false, dataKey: 'another-private-conversation' })
-      expect(output).not.toHaveBeenCalled()
-      expect(cache.record).not.toHaveBeenCalled()
-      expect(getState).not.toHaveBeenCalled()
-      expect(readInset).not.toHaveBeenCalled()
-    }
-  )
+    expect(diagnostics.onReady).toBeUndefined()
+    expect(diagnostics.onScroll).toBeUndefined()
+    expect(diagnostics.onItemSizeChanged).toBeUndefined()
+    expect(diagnostics.onLayout).toBeUndefined()
+    expect(diagnostics.onContentSizeChange).toBeUndefined()
+    diagnostics.reportSend()
+    diagnostics.reportUserScroll()
+    await render({ running: false, dataKey: 'another-private-conversation' })
+    expect(output).not.toHaveBeenCalled()
+    expect(cache.record).not.toHaveBeenCalled()
+    expect(getState).not.toHaveBeenCalled()
+    expect(readInset).not.toHaveBeenCalled()
+  })
+
+  it('updates mounted callbacks immediately and silences stale callbacks after disabling', async () => {
+    setDiagnosticRecording(false)
+    await render()
+    expect(diagnostics.onScroll).toBeUndefined()
+    await act(() => setDiagnosticRecording(true))
+    const previousScroll = diagnostics.onScroll!
+    expect(previousScroll).toBeTypeOf('function')
+    output.mockClear()
+    getState.mockClear()
+    await act(() => setDiagnosticRecording(false))
+    previousScroll(scrollEvent)
+    expect(diagnostics.onScroll).toBeUndefined()
+    expect(output).not.toHaveBeenCalled()
+    expect(getState).not.toHaveBeenCalled()
+  })
 
   it('records only selected geometry and tail metadata without content or identifiers', async () => {
     await render()

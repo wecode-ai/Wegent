@@ -17,13 +17,7 @@ use tokio::sync::oneshot;
 #[path = "auto_update_replica_mysql_tests.rs"]
 mod replica;
 
-const SCHEMA: &[&str] = &[
-    r#"CREATE TABLE kinds (`id` BIGINT NOT NULL AUTO_INCREMENT, `user_id` BIGINT NOT NULL DEFAULT 0, `kind` VARCHAR(1000) NOT NULL DEFAULT '', `name` VARCHAR(1000) NOT NULL DEFAULT '', `namespace` VARCHAR(1000) NOT NULL DEFAULT '', `json` JSON NOT NULL DEFAULT (JSON_OBJECT()), `is_active` BOOLEAN NOT NULL DEFAULT 0, `created_at` DATETIME NOT NULL DEFAULT '2026-01-01 00:00:00', `updated_at` DATETIME NOT NULL DEFAULT '2026-01-01 00:00:00', PRIMARY KEY (`id`)) ENGINE=InnoDB"#,
-    r#"CREATE TABLE plugins (`id` BIGINT NOT NULL DEFAULT 0, `catalog_namespace` VARCHAR(1000) NOT NULL DEFAULT '', `slug` VARCHAR(1000) NOT NULL DEFAULT '', `name` VARCHAR(1000) NOT NULL DEFAULT '', `display_name` VARCHAR(1000) NOT NULL DEFAULT '', `summary` VARCHAR(1000) NOT NULL DEFAULT '', `description_md` VARCHAR(1000) NOT NULL DEFAULT '', `listing_type` VARCHAR(1000) NOT NULL DEFAULT '', `source_type` VARCHAR(1000) NOT NULL DEFAULT '', `source_provider` VARCHAR(1000) NOT NULL DEFAULT '', `owner_user_id` BIGINT NOT NULL DEFAULT 0, `origin_plugin_id` BIGINT NOT NULL DEFAULT 0, `category` VARCHAR(1000) NOT NULL DEFAULT '', `keywords_json` JSON NOT NULL DEFAULT (JSON_OBJECT()), `interface_json` JSON NOT NULL DEFAULT (JSON_OBJECT()), `visibility` VARCHAR(1000) NOT NULL DEFAULT '', `allow_copy` BOOLEAN NOT NULL DEFAULT 0, `status` VARCHAR(1000) NOT NULL DEFAULT '', `latest_release_id` BIGINT NOT NULL DEFAULT 0, `featured_rank` BIGINT NOT NULL DEFAULT 0, `created_at` DATETIME NOT NULL DEFAULT '2026-01-01 00:00:00', `updated_at` DATETIME NOT NULL DEFAULT '2026-01-01 00:00:00', `published_at` DATETIME NOT NULL DEFAULT '2026-01-01 00:00:00', PRIMARY KEY (`id`)) ENGINE=InnoDB"#,
-    r#"CREATE TABLE plugin_releases (`id` BIGINT NOT NULL DEFAULT 0, `plugin_id` BIGINT NOT NULL DEFAULT 0, `version` VARCHAR(1000) NOT NULL DEFAULT '', `manifest_json` JSON NOT NULL DEFAULT (JSON_OBJECT()), `interface_json` JSON NOT NULL DEFAULT (JSON_OBJECT()), `release_notes` VARCHAR(1000) NOT NULL DEFAULT '', `storage_key` VARCHAR(1000) NOT NULL DEFAULT '', `sha256` VARCHAR(1000) NOT NULL DEFAULT '', `size_bytes` BIGINT NOT NULL DEFAULT 0, `status` VARCHAR(1000) NOT NULL DEFAULT '', `scan_status` VARCHAR(1000) NOT NULL DEFAULT '', `scan_report_json` JSON NOT NULL DEFAULT (JSON_OBJECT()), `created_by_user_id` BIGINT NOT NULL DEFAULT 0, `publication_revision_id` BIGINT NOT NULL DEFAULT 0, `source_commit_sha` VARCHAR(1000) NOT NULL DEFAULT '', `created_at` DATETIME NOT NULL DEFAULT '2026-01-01 00:00:00', `published_at` DATETIME NOT NULL DEFAULT '2026-01-01 00:00:00', PRIMARY KEY (`id`)) ENGINE=InnoDB"#,
-    r#"CREATE TABLE resource_members (`id` BIGINT NOT NULL DEFAULT 0, `resource_type` VARCHAR(1000) NOT NULL DEFAULT '', `resource_id` BIGINT NOT NULL DEFAULT 0, `entity_type` VARCHAR(1000) NOT NULL DEFAULT '', `entity_id` VARCHAR(1000) NOT NULL DEFAULT '', `entity_display_name` VARCHAR(1000) NOT NULL DEFAULT '', `user_id` BIGINT NOT NULL DEFAULT 0, `role` VARCHAR(1000) NOT NULL DEFAULT '', `status` VARCHAR(1000) NOT NULL DEFAULT '', `invited_by_user_id` BIGINT NOT NULL DEFAULT 0, `share_link_id` BIGINT NOT NULL DEFAULT 0, `reviewed_by_user_id` BIGINT NOT NULL DEFAULT 0, `reviewed_at` DATETIME NOT NULL DEFAULT '2026-01-01 00:00:00', `copied_resource_id` BIGINT NOT NULL DEFAULT 0, `requested_at` DATETIME NOT NULL DEFAULT '2026-01-01 00:00:00', `created_at` DATETIME NOT NULL DEFAULT '2026-01-01 00:00:00', `updated_at` DATETIME NOT NULL DEFAULT '2026-01-01 00:00:00', PRIMARY KEY (`id`)) ENGINE=InnoDB"#,
-    r#"CREATE TABLE namespace (`id` BIGINT NOT NULL DEFAULT 0, `name` VARCHAR(1000) NOT NULL DEFAULT '', `is_active` BOOLEAN NOT NULL DEFAULT true, PRIMARY KEY (`id`)) ENGINE=InnoDB"#,
-];
+use super::super::test_support::CATALOG_SCHEMA as SCHEMA;
 
 fn registry() -> EntityResolvers<brz_redis::RedisService> {
     EntityResolvers::public(MysqlService::connect_lazy("mysql://unused@127.0.0.1/unused").unwrap())
@@ -140,8 +134,7 @@ async fn verify_rollback(
     redis: &RedisService,
     resolvers: &EntityResolvers<brz_redis::RedisService>,
 ) -> MysqlResult<()> {
-    let lease = PluginWriteLease::acquire(Some(redis), 7).await?;
-    lease.ensure_policy(mysql).await?;
+    let lease = PluginWriteLease::acquire_installed(mysql, Some(redis), 7, Some(&[1])).await?;
     let installed = mysql
         .with_transaction(async |tx| list_installed_kinds(tx, 7).await)
         .await?;
@@ -149,12 +142,12 @@ async fn verify_rollback(
         .await?
         .expect("fixture installation is eligible");
     let failure: MysqlResult<()> = mysql.with_transaction(async |tx| {
-            let revision = lease.read_revision(tx).await?;
+            let revision = lease.read_plugin_revisions(tx).await?;
             let installed = list_installed_kinds(tx, 7).await?;
             assert_eq!(apply_auto_update_batch(tx, &catalog, &installed, 7).await?.updated_count, 1);
             let id: i64 = tx.fetch_one("SELECT CAST(JSON_UNQUOTE(JSON_EXTRACT(json,'$.spec.releaseId')) AS SIGNED) FROM kinds WHERE id=1", ()).await?;
             assert_eq!(id, 2);
-            lease.commit_revision(tx, revision).await?;
+            lease.commit_plugin_revisions(tx, revision).await?;
             Err(MysqlError::InvalidQuery { reason: "forced rollback after actual batch UPDATE".into() })
         }).await;
     lease.release().await;
@@ -171,13 +164,13 @@ async fn verify_rollback(
     assert_eq!(id, 1, "failed batch must roll back UPDATE");
     let revision: i64 = mysql
         .fetch_one(
-            "SELECT CAST(JSON_EXTRACT(json, '$.spec.revision') AS SIGNED) FROM kinds \
-             WHERE user_id=7 AND kind='ConnectorAuthPolicy' AND namespace='plugin-auth' \
-             AND name='account'",
+            "SELECT COALESCE(CAST(JSON_EXTRACT(json, '$.spec.writeRevision') AS SIGNED),0) FROM kinds \
+             WHERE user_id=7 AND kind='InstalledPlugin' AND namespace='default' \
+             AND name='example'",
             (),
         )
         .await?;
-    assert_eq!(revision, 0, "failed batch must roll back the policy CAS");
+    assert_eq!(revision, 0, "failed batch must roll back the plugin CAS");
 
     Ok(())
 }
@@ -206,7 +199,9 @@ async fn verify_stale_batch(mysql: &MysqlService, redis: &RedisService) -> Mysql
     snapshot_rx.await.unwrap();
     let current = auto_update_batch(mysql, Some(redis), &registry(), 7).await;
     resume_tx.send(()).unwrap();
-    let stale_error = stale.await.unwrap().unwrap_err();
+    let stale = stale.await.unwrap();
+    assert!(stale.is_err(), "current={current:?}; stale={stale:?}");
+    let stale_error = stale.unwrap_err();
     assert_eq!(current?.updated_count, 1);
     assert_eq!(
         http_error(stale_error).detail_message(),

@@ -14,9 +14,11 @@ import {
   HISTORICAL_PLUGIN_UPDATE,
   HISTORICAL_PLUGIN_SOURCE,
   LEGACY_PLUGIN_RELEASES,
+  assertHistoricalPackageUncached,
   historicalPluginPackages,
   prepareHistoricalPluginTools,
   readHistoricalPluginState,
+  seedHistoricalRuntimeBytecode,
   startHistoricalPluginExecutor,
 } from '../modules/legacy-plugin-executor.mjs'
 import {
@@ -111,9 +113,21 @@ export async function createDesktopScenario({
     return { ...fixture, ...release }
   }
 
+  async function verifyDeliveredFiles(fixture, root) {
+    for (const [path, checksum] of Object.entries(fixture.files))
+      assert.equal(
+        createHash('sha256')
+          .update(await readFile(join(root, path)))
+          .digest('hex'),
+        checksum,
+        `Migration changed a delivered plugin file: ${path}`
+      )
+  }
+
   async function update(fixture, device, data) {
+    const query = device ? `?device_id=${encodeURIComponent(device)}` : ''
     const response = await fetch(
-      `${cloud.backendUrl}/api/plugins/installed/${fixture.installedId}?device_id=${encodeURIComponent(device)}`,
+      `${cloud.backendUrl}/api/plugins/installed/${fixture.installedId}${query}`,
       {
         method: 'PUT',
         headers: { Authorization: `Bearer ${cloud.authToken}`, 'Content-Type': 'application/json' },
@@ -139,14 +153,6 @@ export async function createDesktopScenario({
       configPath,
       `${await readFile(configPath, 'utf8')}\n[skills]\nconfig = [{ path = ${JSON.stringify(userSkill)}, enabled = false }]\n[mcp_servers.legacy-user-disabled]\ncommand = "node"\nargs = ["--version"]\nenabled = false\n`
     )
-    const installer = await startHistoricalPluginExecutor({
-      release,
-      cloud,
-      root,
-      userHome: userHomeFor(release),
-      directory: join(resultDir, 'historical-executors', release.version),
-      token: releaseAssetToken,
-    })
     const delivered = await historicalPluginPackages(
       HISTORICAL_PLUGIN_SOURCE,
       join(resultDir, 'historical-plugins', HISTORICAL_PLUGIN_SOURCE.version),
@@ -158,23 +164,37 @@ export async function createDesktopScenario({
       ...delivered.evidence,
     })
     const fixtures = {}
+    // The install endpoint selects the marketplace latest. Pin the account before
+    // the historical executor connects so an earlier baseline's latest cannot
+    // be materialized into this baseline's native cache.
+    for (const [role, original] of Object.entries(delivered.packages)) {
+      const fixture = await publish(original)
+      await pluginApi(cloud, `/plugins/marketplace/${fixture.pluginId}/install`, 'POST')
+      fixture.installedId = Number((await accountPlugin(cloud, fixture.slug)).metadata.labels.id)
+      await update(fixture, null, { releaseId: fixture.releaseId })
+      fixture.installState = {
+        updatePolicy: 'manual',
+        ...(role === 'disabled'
+          ? { enabled: false, componentStates: { [`skill:${fixture.skillName}`]: false } }
+          : {}),
+      }
+      await update(fixture, null, fixture.installState)
+      const desired = await accountPlugin(cloud, fixture.slug)
+      assert.equal(desired.spec.releaseId, fixture.releaseId)
+      assert.equal(desired.spec.version, fixture.version)
+      fixtures[role] = fixture
+    }
+    const installer = await startHistoricalPluginExecutor({
+      release,
+      cloud,
+      root,
+      userHome: userHomeFor(release),
+      directory: join(resultDir, 'historical-executors', release.version),
+      token: releaseAssetToken,
+    })
     try {
-      for (const [role, original] of Object.entries(delivered.packages)) {
-        const fixture = await publish(original)
-        await pluginApi(
-          cloud,
-          `/plugins/marketplace/${fixture.pluginId}/install?device_id=${installer.deviceId}`,
-          'POST'
-        )
-        fixture.installedId = Number((await accountPlugin(cloud, fixture.slug)).metadata.labels.id)
-        await update(fixture, installer.deviceId, { releaseId: fixture.releaseId })
-        await update(fixture, installer.deviceId, {
-          updatePolicy: 'manual',
-          ...(role === 'disabled'
-            ? { enabled: false, componentStates: { [`skill:${fixture.skillName}`]: false } }
-            : {}),
-        })
-        fixtures[role] = fixture
+      for (const fixture of Object.values(fixtures)) {
+        await update(fixture, installer.deviceId, fixture.installState)
       }
       let observedState
       const original = await until(
@@ -252,6 +272,7 @@ export async function createDesktopScenario({
             'Historical fixture has the wrong real layout'
           )
         assert.ok((await lstat(source)).isDirectory())
+        await verifyDeliveredFiles(fixture, source)
       }
       evidence.push({
         ...installer.evidence,
@@ -261,9 +282,35 @@ export async function createDesktopScenario({
     } finally {
       await installer.stop()
     }
+    let initialUpdate = fixtures.update
+    let bytecode
+    if (release.source === 'store') {
+      bytecode = await seedHistoricalRuntimeBytecode(root, release, fixtures.update.slug)
+      await assertHistoricalPackageUncached(workbenchFor(release), bytecode.checksum)
+      initialUpdate = {
+        ...(await publish(updatePackages.update)),
+        installedId: fixtures.update.installedId,
+      }
+      assert.notEqual(initialUpdate.version, fixtures.update.version)
+      // The old executor is stopped. Change account intent before the first modern sync,
+      // so preparation cannot cache the old archive and bypass the runtime witness.
+      await update(initialUpdate, null, { releaseId: initialUpdate.releaseId })
+      const desired = await accountPlugin(cloud, initialUpdate.slug)
+      assert.equal(desired.spec.releaseId, initialUpdate.releaseId)
+      assert.equal(desired.spec.version, initialUpdate.version)
+      evidence.push({
+        phase: 'legacy-runtime-bytecode',
+        sourceVersion: release.version,
+        plugin: fixtures.update.slug,
+        targetVersion: initialUpdate.version,
+        ...bytecode,
+      })
+    }
     return {
       release,
       fixtures,
+      initialUpdate,
+      bytecode,
       legacyManifest: await readFile(
         join(root, 'capabilities', release.schema === 1 ? 'manifest.json' : 'manifest-v2.json')
       ),
@@ -285,15 +332,7 @@ export async function createDesktopScenario({
   async function invoke(control, fixture) {
     const { version } = fixture
     const record = await waitRuntime(fixture, version)
-    for (const [path, checksum] of Object.entries(fixture.files)) {
-      assert.equal(
-        createHash('sha256')
-          .update(await readFile(join(record.runtime.codex_link, path)))
-          .digest('hex'),
-        checksum,
-        `Migration changed a delivered plugin file: ${path}`
-      )
-    }
+    await verifyDeliveredFiles(fixture, record.runtime.codex_link)
     const id = `legacy-business-${Date.now()}`
     active = {
       id,
@@ -346,7 +385,12 @@ export async function createDesktopScenario({
     const device = (await cloud.waitForConnectedAppDevice()).device_id
     await createSingleRootLocalProject(control, workspacePath, `legacy-${current.release.version}`)
     const { fixtures, release } = current
-    await waitRuntime(fixtures.update, fixtures.update.version)
+    await waitRuntime(current.initialUpdate, current.initialUpdate.version)
+    if (current.bytecode) {
+      await assertHistoricalPackageUncached(workbenchFor(release), current.bytecode.checksum)
+      const original = JSON.parse(current.legacyManifest).plugins[`${fixtures.update.slug}@wegent`]
+      await verifyDeliveredFiles(fixtures.update, original.store_path)
+    }
     assert.equal((await entry(fixtures.disabled)).enabled, false)
     assert.equal(
       (await entry(fixtures.disabled)).component_states[`skill:${fixtures.disabled.skillName}`],
@@ -371,11 +415,13 @@ export async function createDesktopScenario({
         current.legacyManifest,
         'Legacy evidence was rewritten'
       )
-    await invoke(control, fixtures.update)
+    await invoke(control, current.initialUpdate)
     const latest = await publish(updatePackages.update)
-    await update(fixtures.update, device, { releaseId: latest.releaseId })
     latest.installedId = fixtures.update.installedId
-    await invoke(control, latest)
+    if (current.initialUpdate.version !== latest.version) {
+      await update(fixtures.update, device, { releaseId: latest.releaseId })
+      await invoke(control, latest)
+    }
     await uninstallInUi(control, latest)
     await assertInstallButton(control, latest)
     await until(

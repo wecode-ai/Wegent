@@ -1,6 +1,7 @@
 import { DEFAULT_WORK_ITEM_PROJECT_ID, type DeliveryApi } from '@/api/deliveries'
 import { ApiError } from '@/api/http'
 import { createLocalProjectChatAgentApi } from '@/api/local/localDelivery'
+import { createPersonalHomeTaskDraftStore } from './personalHomeTaskDrafts'
 import {
   CloudConnectionContext,
   DISCONNECTED_STATE,
@@ -13,7 +14,7 @@ import type {
   ProjectSpaceDetailServices,
 } from '@/features/workbench/workbenchServices'
 import i18n from '@/i18n'
-import type { RuntimeTaskSummary, RuntimeWorkListResponse } from '@/types/api'
+import type { RuntimeTaskAddress, RuntimeTaskSummary, RuntimeWorkListResponse } from '@/types/api'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import type {
   CollaborationApp,
@@ -525,10 +526,20 @@ function deferred<T>() {
   return { promise, reject, resolve }
 }
 
+function createHomeDraft() {
+  return {
+    inputByScope: {},
+    setInputForScope: vi.fn(),
+    getInputRevisionForScope: vi.fn(() => 0),
+    personalHomeTaskDraftStore: createPersonalHomeTaskDraftStore(),
+  }
+}
+
 describe('Wework collaboration workspace API', () => {
   it('keeps the cloud project choice available before cloud login', () => {
     render(
       createElement(WeworkCollaborationPlatform, {
+        homeDraft: createHomeDraft(),
         user: {
           id: 1,
           user_name: 'admin',
@@ -575,6 +586,7 @@ describe('Wework collaboration workspace API', () => {
             CloudConnectionContext.Provider,
             { value: cloudConnection },
             createElement(WeworkCollaborationPlatform, {
+              homeDraft: createHomeDraft(),
               user: { id: 7, user_name: 'local-owner', email: '' } as never,
               localProjects: [],
               services: { projectSpaceApis: { local: createLocalDeliveryApi() } } as never,
@@ -670,6 +682,7 @@ describe('Wework collaboration workspace API', () => {
 
     render(
       createElement(WeworkCollaborationPlatform, {
+        homeDraft: createHomeDraft(),
         user: {
           id: 1,
           user_name: 'admin',
@@ -764,6 +777,7 @@ describe('Wework collaboration workspace API', () => {
 
     render(
       createElement(WeworkCollaborationPlatform, {
+        homeDraft: createHomeDraft(),
         user: {
           id: 1,
           user_name: 'admin',
@@ -808,6 +822,7 @@ describe('Wework collaboration workspace API', () => {
 
     render(
       createElement(WeworkCollaborationPlatform, {
+        homeDraft: createHomeDraft(),
         user: {
           id: 1,
           user_name: 'admin',
@@ -872,6 +887,7 @@ describe('Wework collaboration workspace API', () => {
 
     render(
       createElement(WeworkCollaborationPlatform, {
+        homeDraft: createHomeDraft(),
         user: {
           id: 1,
           user_name: 'admin',
@@ -934,6 +950,7 @@ describe('Wework collaboration workspace API', () => {
     }
     render(
       createElement(WeworkCollaborationPlatform, {
+        homeDraft: createHomeDraft(),
         user: { id: 1, user_name: 'admin', email: 'admin@example.com' } as never,
         localProjects: [],
         services: {
@@ -1008,6 +1025,7 @@ describe('Wework collaboration workspace API', () => {
         )
       const onActiveProjectChange = vi.fn()
       const props = {
+        homeDraft: createHomeDraft(),
         user: {
           id: 1,
           user_name: 'admin',
@@ -1039,6 +1057,7 @@ describe('Wework collaboration workspace API', () => {
 
       view.rerender(
         createElement(WeworkCollaborationPlatform, {
+          homeDraft: createHomeDraft(),
           ...props,
           activeProjectRef: { ...props.activeProjectRef, projectId: route.projectId },
           focusedItemId: 'notification-issue',
@@ -1070,6 +1089,7 @@ describe('Wework collaboration workspace API', () => {
 
   it.each([
     'active',
+    'activity',
     'archived',
     'foreign',
     'unlinked',
@@ -1099,6 +1119,9 @@ describe('Wework collaboration workspace API', () => {
         linkedAt: '2026-10-20T00:00:00Z',
       }
       const pendingRead = deferred<{ success: boolean; code?: string }>()
+      const listBindings = vi
+        .fn()
+        .mockResolvedValue(status === 'unlinked' || status === 'activity' ? [] : [binding])
       const delayed =
         status === 'superseded' || status === 'superseded-error' || status === 'dismissed'
       const laterBinding = { ...binding, id: 'later', taskId: 'later-task' }
@@ -1115,7 +1138,10 @@ describe('Wework collaboration workspace API', () => {
             projects: { list: vi.fn().mockResolvedValue([project]) },
             issues: {},
             taskBindings: {
-              list: vi.fn().mockResolvedValue(status === 'unlinked' ? [] : [binding, laterBinding]),
+              list:
+                status === 'activity'
+                  ? listBindings
+                  : vi.fn().mockResolvedValue(status === 'unlinked' ? [] : [binding, laterBinding]),
             },
           } as unknown as SharedWorkspaceApi,
           localProjects: [],
@@ -1163,6 +1189,25 @@ describe('Wework collaboration workspace API', () => {
           }
         }
       const editor = detail().props.children(vi.fn())
+      expect(editor.props.existingTaskSource?.port.bindTask).toBeTypeOf('function')
+      if (status === 'activity') {
+        expect(editor.props.onOpenRuntimeTask).toBeTypeOf('function')
+        await act(async () => {
+          editor.props.onOpenRuntimeTask?.({ deviceId: 'device', taskId: 'task' })
+        })
+        const conversation = detail().props.conversation as {
+          props: { initialAddress: RuntimeTaskAddress }
+        }
+        expect(conversation.props.initialAddress).toMatchObject({
+          deviceId: 'device',
+          taskId: 'task',
+          projectSession: { projectId: project.id, issueId: issue.id },
+          issueExecution: { projectId: project.id, issueId: issue.id },
+        })
+        expect(listBindings).not.toHaveBeenCalled()
+        expect(readTask).not.toHaveBeenCalled()
+        return
+      }
       await act(async () => {
         editor.props.onOpenTaskConversation?.(toWeworkIssueTaskBinding(binding))
       })

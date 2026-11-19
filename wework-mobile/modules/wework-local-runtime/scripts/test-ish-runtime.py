@@ -69,6 +69,52 @@ def native_exit_probe(args: argparse.Namespace) -> dict:
     }
 
 
+def native_kernel_probe(
+    args: argparse.Namespace,
+    name: str,
+    summary: str,
+    with_rootfs: bool = False,
+    sources: tuple[str, ...] = (),
+) -> dict:
+    build = args.ish.resolve().parent
+    binary = args.output / name
+    subprocess.run(
+        [
+            args.host_cc,
+            "-DWWR_EMBEDDED_ISH=1",
+            "-DGUEST_ARM64=1",
+            "-DENGINE_ASBESTOS=1",
+            "-DISH_JIT=1",
+            "-DISH_JIT_NO_EMIT=1",
+            f"-I{args.native_source}",
+            f"-I{build}",
+            str(MODULE / "native/tests" / f"{name}.c"),
+            *(str(MODULE / "ios" / source) for source in sources),
+            str(build / "libish.a"),
+            str(build / "libish_emu.a"),
+            str(build / "libfakefs.a"),
+            "-lsqlite3",
+            "-lpthread",
+            "-framework",
+            "Foundation",
+            "-o",
+            str(binary),
+        ],
+        check=True,
+    )
+    command = [str(binary)]
+    if with_rootfs:
+        command.append(str(args.output / "rootfs/data"))
+    result = subprocess.run(command, capture_output=True, text=True, timeout=20)
+    return {
+        "name": name,
+        "passed": result.returncode == 0 and summary in result.stdout,
+        "hostExit": result.returncode,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+    }
+
+
 def run_probe(name: str, assertions: int, args: argparse.Namespace) -> dict:
     binary = args.output / name
     source = MODULE / "native/tests" / f"{name}.c"
@@ -163,6 +209,33 @@ def main() -> None:
         print(
             f"{'PASS' if result['passed'] else 'FAIL'} native lifecycle: 4 assertions"
         )
+        result = native_kernel_probe(
+            args, "regress_memory_resume", "PASS memory resume:"
+        )
+        results.append(result)
+        print(f"{'PASS' if result['passed'] else 'FAIL'} native memory resume")
+        result = native_kernel_probe(
+            args,
+            "regress_listener_recovery",
+            "PASS listener recovery:",
+            with_rootfs=True,
+        )
+        results.append(result)
+        print(f"{'PASS' if result['passed'] else 'FAIL'} native listener recovery")
+        for name, summary, with_rootfs, sources in [
+            ("regress_poll_waiters", "PASS poll waiter lifetime", True, ()),
+            ("regress_idle_poll", "PASS idle poll process lifetime", True, ()),
+            ("regress_diagnostics", "PASS native diagnostic toggle", False, ()),
+            (
+                "regress_storage",
+                "PASS native catalog cleanup",
+                True,
+                ("RuntimeStorage.c",),
+            ),
+        ]:
+            result = native_kernel_probe(args, name, summary, with_rootfs, sources)
+            results.append(result)
+            print(f"{'PASS' if result['passed'] else 'FAIL'} {name}")
     (args.output / "results.json").write_text(json.dumps(results, indent=2) + "\n")
     raise SystemExit(not all(result["passed"] for result in results))
 

@@ -1,19 +1,10 @@
 import { execFileSync } from 'child_process'
 import { resolve } from 'path'
 
-import { expect, test } from '@playwright/test'
-
 import { ADMIN_USER, REGULAR_USER } from '../../config/test-users'
+import { expect, test } from '../../fixtures/test-fixtures'
 import { ApiClient, createApiClient } from '../../utils/api-client'
-
-type TeamItem = {
-  id: number
-  bots: Array<{ bot_id: number }>
-}
-
-type TeamListResponse = {
-  items: TeamItem[]
-}
+import { deleteDedicatedBotModel } from '../../utils/cleanup-dedicated-bot-model'
 
 type CurrentUserResponse = {
   id: number
@@ -83,13 +74,40 @@ test.describe('Task member access through Rust routes', () => {
   let memberApi: ApiClient
   let createdTaskId: number | null = null
   let memberFixture: MemberFixture | null = null
+  let teamId: number | null = null
+  let botId: number | null = null
+  let teamName: string
+  let botName: string
 
-  test.beforeEach(async ({ request }) => {
+  test.beforeEach(async ({ request, testPrefix }) => {
     ownerApi = createApiClient(request)
     memberApi = createApiClient(request)
 
     expect((await ownerApi.login(ADMIN_USER.username, ADMIN_USER.password)).status).toBe(200)
     expect((await memberApi.login(REGULAR_USER.username, REGULAR_USER.password)).status).toBe(200)
+
+    botName = `${testPrefix}-member-access-bot`
+    teamName = `${testPrefix}-member-access-team`
+    const bot = await ownerApi.post<{ id: number }>('/api/bots', {
+      name: botName,
+      shell_name: 'Chat',
+      agent_config: {},
+      system_prompt: 'Task member access fixture.',
+      namespace: 'default',
+      is_active: true,
+    })
+    expect(bot.status, JSON.stringify(bot.data)).toBe(201)
+    botId = bot.data!.id
+    const team = await ownerApi.post<{ id: number }>('/api/teams', {
+      name: teamName,
+      bots: [{ bot_id: botId, role: 'leader' }],
+      bind_mode: ['code'],
+      namespace: 'default',
+      requires_workspace: false,
+      workflow: { mode: 'solo' },
+    })
+    expect(team.status, JSON.stringify(team.data)).toBe(201)
+    teamId = team.data!.id
   })
 
   test.afterEach(async () => {
@@ -101,6 +119,19 @@ test.describe('Task member access through Rust routes', () => {
       await ownerApi.deleteTask(String(createdTaskId))
       createdTaskId = null
     }
+    if (teamId !== null) {
+      const deleted = await ownerApi.delete(
+        `/api/teams/${teamId}?force=true&confirm_name=${encodeURIComponent(teamName)}`
+      )
+      expect.soft(deleted.status, JSON.stringify(deleted.data)).toBe(200)
+      teamId = null
+    }
+    if (botId !== null) {
+      const deleted = await ownerApi.delete(`/api/bots/${botId}`)
+      expect.soft(deleted.status, JSON.stringify(deleted.data)).toBe(200)
+      botId = null
+      await deleteDedicatedBotModel(ownerApi, botName)
+    }
   })
 
   test('enforces approved membership for task detail and remote workspace status', async () => {
@@ -111,13 +142,6 @@ test.describe('Task member access through Rust routes', () => {
     expect(ownerResponse.data).toBeTruthy()
     expect(memberResponse.data).toBeTruthy()
 
-    const teamsResponse = await ownerApi.get<TeamListResponse>(
-      '/api/teams?page=1&limit=100&scope=all'
-    )
-    expect(teamsResponse.status).toBe(200)
-    const team = teamsResponse.data?.items.find(item => item.bots.length > 0)
-    expect(team).toBeTruthy()
-
     const reserved = await ownerApi.post<{ task_id: number }>('/api/tasks')
     expect(reserved.status).toBe(200)
     expect(reserved.data?.task_id).toEqual(expect.any(Number))
@@ -127,7 +151,7 @@ test.describe('Task member access through Rust routes', () => {
     const prompt = `e2e approved task member access ${taskId}`
     const created = await ownerApi.post(`/api/tasks/${taskId}`, {
       prompt,
-      team_id: team!.id,
+      team_id: teamId,
       type: 'offline',
       task_type: 'code',
       git_url: '',

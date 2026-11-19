@@ -16,7 +16,10 @@ use thiserror::Error;
 use uuid::Uuid;
 
 mod assignment_receipts;
+pub mod board_receipts;
 mod code_projects;
+#[cfg(test)]
+mod empty_write_tests;
 pub mod execution_workspace;
 mod human_requests;
 mod stand_in_dispatches;
@@ -99,6 +102,15 @@ mod stand_in_inbox;
 #[path = "stand_in_processing.rs"]
 mod stand_in_processing;
 
+#[path = "stand_in_processing_queries.rs"]
+mod stand_in_processing_queries;
+
+#[path = "stand_in_retention.rs"]
+mod stand_in_retention;
+
+#[path = "stand_in_history_index.rs"]
+mod stand_in_history_index;
+
 #[path = "coordination_store.rs"]
 mod coordination_store;
 
@@ -120,6 +132,8 @@ pub enum TaskRuntimeError {
     Database(#[from] rusqlite::Error),
     #[error("invalid task data: {0}")]
     Invalid(String),
+    #[error("project discovery failed: {0}")]
+    ProjectDiscovery(String),
     #[error("project not found")]
     ProjectNotFound,
     #[error("task not found")]
@@ -163,10 +177,6 @@ impl LocalTaskStore {
         use wegent_runtime_logging::project_index_diagnostics::{trace, Stage};
 
         let _stage = Stage::start("task_store.open");
-        let _initialization = trace("task_store.initialization_lock", || {
-            LOCAL_TASK_STORE_INITIALIZATION.lock()
-        })
-        .map_err(|_| TaskRuntimeError::LockPoisoned)?;
         let path = path.as_ref().to_path_buf();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
@@ -175,6 +185,21 @@ impl LocalTaskStore {
         let connection = trace("task_store.sqlite_open", || Connection::open(&path))?;
         connection.busy_timeout(Duration::from_secs(5))?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
+        // Current stores can be read while another connection owns the writer slot.
+        // Only schema initialization and default-board repair need serialization.
+        if schema_is_current(&connection)?
+            && default_work_item_project_is_current(&connection)?
+            && stand_in_history_index::schema_is_current(&connection)?
+        {
+            return Ok(Self {
+                connection: Arc::new(Mutex::new(connection)),
+                path,
+            });
+        }
+        let _initialization = trace("task_store.initialization_lock", || {
+            LOCAL_TASK_STORE_INITIALIZATION.lock()
+        })
+        .map_err(|_| TaskRuntimeError::LockPoisoned)?;
         trace("task_store.journal_mode", || {
             connection.pragma_update(None, "journal_mode", "WAL")
         })?;
@@ -401,8 +426,8 @@ use record_rows::map_chat_agent;
 use record_rows::map_comment;
 use record_rows::map_execution;
 use record_rows::move_runtime_comment_task_to_in_progress;
-use schema::migrate;
 use schema::unused_project_key;
+use schema::{default_work_item_project_is_current, migrate, schema_is_current};
 use validation::validate_chat_agent_runtime;
 use validation::validate_mcp_servers;
 use validation::validate_name;

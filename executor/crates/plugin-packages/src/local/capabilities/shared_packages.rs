@@ -88,7 +88,8 @@ fn occupied_unmanaged(path: &Path, entry: Option<&Value>, field: &str) -> bool {
     })
 }
 
-fn same_entry(left: &Path, right: &Path) -> bool {
+// Canonicalize parents, never leaf entries, when comparing native directory links.
+pub(super) fn same_entry(left: &Path, right: &Path) -> bool {
     if left == right {
         return true;
     }

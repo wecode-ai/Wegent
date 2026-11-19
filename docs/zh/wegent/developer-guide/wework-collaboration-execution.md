@@ -13,6 +13,10 @@ flowchart LR
   Binding --> Access[项目所属空间的有效资源授权]
   Access --> Compile[按 Team 所有者解析 Bot、Ghost 和 Shell]
   Compile --> Queue[持久化执行队列]
+  Queue --> Managed[原生托管作业与授权校验]
+  Managed --> Task[真实 Backend Task]
+  Task --> Activity[同事务绑定共享活动节点]
+  Activity --> Status
   Queue --> Routing[重新检查环境授权、模型能力和 Issue 设备绑定]
   Routing --> Wake[向实际设备所有者发送唤醒]
   Wake --> Pull[设备领取任务]
@@ -31,13 +35,23 @@ flowchart LR
 
 ## 任务领取
 
+Wegent 托管 Issue 执行使用默认启用的原生作业 `wegent.managed_issue.scan` 和 `wegent.managed_issue.execute`。扫描按队列轮询周期运行，通过独立分布式锁创建真实 Task；执行前及状态投影继续校验当前授权。该链路不依赖可选的 Python 作业迁移开关。显式设置 `WEGENT_RS_JOB_ALLOWLIST` 时，需包含这两个作业；调度和嵌入式 worker 的现有开关仍然有效。
+
+普通指派无需填写额外提示词：托管 Task 使用统一的项目、Issue 与执行编号引用，附加指令和续聊评论保留为补充正文。每个 Task 轮次通过可续租的执行锁保护；进程在提交 `RUNNING` 后中断，持久化作业重新投递时可恢复同一轮次，不能仅凭 `RUNNING` 跳过。HTTP Executor 复用自动流水线的轮次幂等键，Chat 消费者恢复前清理旧流缓存并保留终态恢复；终态和身份不匹配的轮次不会重新派发。
+
+视频和研究类轮询任务在外部提交前持久化交接记录。已保存视频任务 ID 的轮次由现有视频轮询恢复；交接中断且没有可恢复任务 ID 时，执行明确失败并说明接收结果未知，不会自动再次提交给不支持请求去重的提供方。
+
+服务端托管 Task 使用 `frontend` 来源，与返回的 `/chat?taskId=...` 入口及默认 Task 读取 API 一致。项目来源继续由 `project_automation` 和绑定标签记录，不以桌面来源过滤隔离这类服务端会话。
+
+托管 Task 与共享活动节点在同一事务中绑定。普通指派没有现成评论或自动化活动时，按执行编号创建唯一节点；已有活动直接复用。终态投影按稳定编号找到节点，不受最近消息窗口影响，后续回复通过该节点继续同一 Task。托管节点不伪造设备地址。
+
 设备领取仍由持久化队列、原子认领和 Runtime 接收确认控制。唤醒通知只提示有工作，不携带任务，也不证明任务已经启动。
 路由任务向满足当前授权、模型和 Issue 绑定的设备发送通知，并使用设备所有者的连接身份。
 `LOCAL_RUNTIME_WORK_POLL_INTERVAL` 可覆盖默认 5 秒间隔；连接恢复和通知仍触发立即领取。
 
 Runtime 运行态和终态事件在写回前都锁定并刷新同一执行记录，按“执行 → 活动”顺序更新投影。接收确认或租约更新不能使已经收到的 `response.created` 因旧版本而丢失；设备与所有者匹配、事件序列单调性和终态保护保持不变。
 
-## 分身接单身份
+## 助理接单身份
 
 普通人工分配的 `human_task_binding.assignmentId` 是 Issue 分配事件 ID。
 协作轮次中的该字段是负责人分配的成员任务 ID；额外的 `issueAssignmentId`
@@ -45,8 +59,8 @@ Runtime 运行态和终态事件在写回前都锁定并刷新同一执行记录
 并在任务绑定元数据中保存为 `issue_assignment_id`，保留原有成员任务 ID 供轮次汇总使用。
 接收回执仍要求当前接收人、本人设备及本人任务绑定全部匹配。
 
-通知尚无执行任务时，手动交给分身省略分身 ID，由 Executor 选择已连接该项目的身份，
-不能假定身份名为 `default`。普通重新转派产生新的分配事件及独立分身任务。
+通知尚无执行任务时，手动交给助理省略助理 ID，由 Executor 选择已连接该项目的身份，
+不能假定身份名为 `default`。普通重新转派产生新的分配事件及独立助理任务。
 CI 的 `stand-in-assignment-notifications` 套件同时验证通知触发、手动接单、
 处理完成后转派回来，以及轮次任务接收回执。
 

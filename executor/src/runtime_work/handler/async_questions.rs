@@ -70,20 +70,26 @@ impl RuntimeWorkRpcHandler {
             return;
         };
         let mut changed = false;
-        self.store.update_task(task_id, |link| {
-            if !question_belongs_to_current_turn(
-                link,
-                thread.as_deref(),
-                turn.as_deref(),
-                message.process_generation(),
-            ) || link.interaction_status.as_deref() == Some(INTERACTION_AWAITING_USER_REPLY)
-            {
-                return;
-            }
-            link.interaction_status = Some(INTERACTION_AWAITING_USER_REPLY.to_owned());
-            link.updated_at = now_ms().max(link.updated_at);
-            changed = true;
-        });
+        {
+            let _guard = self
+                .stand_in_lifecycle_gate
+                .lock()
+                .expect("turn lifecycle gate poisoned");
+            self.store.update_task(task_id, |link| {
+                if !question_belongs_to_current_turn(
+                    link,
+                    thread.as_deref(),
+                    turn.as_deref(),
+                    message.process_generation(),
+                ) || link.interaction_status.as_deref() == Some(INTERACTION_AWAITING_USER_REPLY)
+                {
+                    return;
+                }
+                link.interaction_status = Some(INTERACTION_AWAITING_USER_REPLY.to_owned());
+                link.updated_at = now_ms().max(link.updated_at);
+                changed = true;
+            });
+        }
         if changed {
             emit_runtime_work_changed(&self.event_tx, &self.device_id, task_id);
         }

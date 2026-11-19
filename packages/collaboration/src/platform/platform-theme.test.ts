@@ -88,17 +88,22 @@ describe("collaboration surface theme", () => {
   it("scrolls only the project area and keeps primary and management entries fixed", () => {
     installTheme("light");
     document.body.innerHTML = `<aside class="collaboration-platform-sidebar">
+      <button class="collaboration-mobile-navigation-toggle">Navigation</button>
+      <div class="collaboration-navigation-content">
       <nav class="collaboration-primary-navigation"></nav>
       <div class="collaboration-projects-scroll"><div class="collaboration-workspace-tree"><section class="collaboration-workspace-project-list"></section></div></div>
       <nav class="collaboration-management-navigation"></nav>
+      </div>
     </aside>`;
     const sidebar = document.querySelector("aside")!;
+    const content = sidebar.querySelector(".collaboration-navigation-content")!;
     const scroller = sidebar.querySelector(".collaboration-projects-scroll")!;
     expect(getComputedStyle(sidebar).overflowY).toBe("hidden");
     expect(getComputedStyle(scroller).overflowY).toBe("auto");
     expect(getComputedStyle(scroller).minHeight).toBe("0px");
-    expect(getComputedStyle(sidebar.firstElementChild!).flexShrink).toBe("0");
-    expect(getComputedStyle(sidebar.lastElementChild!).flexShrink).toBe("0");
+    expect(getComputedStyle(content).display).toBe("contents");
+    expect(getComputedStyle(content.firstElementChild!).flexShrink).toBe("0");
+    expect(getComputedStyle(content.lastElementChild!).flexShrink).toBe("0");
     expect(getComputedStyle(scroller.firstElementChild!).overflowY).not.toBe(
       "auto",
     );

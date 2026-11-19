@@ -281,7 +281,9 @@ async function assertMemoryReviewHiddenFromSidebar(control, rpc, taskId) {
   const stored = await rpc('runtime.tasks.get', { taskId })
   assert.equal(stored.task.runtimeHandle.origin.type, 'stand_in_schedule')
   assert.equal(stored.task.runtimeHandle.origin.memoryReview, true)
-  const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
+  const debug = JSON.parse(
+    await control.command('getWorkbenchDebugSnapshot', 'body', { value: 'state-only' })
+  )
   assert.equal(
     debug.workbench?.currentRuntimeTask?.taskId,
     taskId,

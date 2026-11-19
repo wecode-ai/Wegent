@@ -15,8 +15,9 @@ import {
 } from './conversation-navigation.mjs'
 
 import { waitForBlankConversation } from './memory-tool-flows.mjs'
-import { logDesktopE2eSignal } from '../process-lifecycle.mjs'
+import { logDesktopE2eSignal, processExitDiagnostics } from '../process-lifecycle.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
+import { collectRuntimeQueueEvidence } from './runtime-queue-evidence.mjs'
 
 import {
   ACTIVE_SWITCH_MODEL_RETRY_SELECTOR,
@@ -90,7 +91,8 @@ async function waitForProcessExitWithin(processId, timeoutMs, message) {
     if (!processIsAlive(processId)) return Date.now() - startedAt
     await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
   }
-  throw new Error(message)
+  const diagnostics = processExitDiagnostics({ pid: processId, exitCode: null, signalCode: null })
+  throw new Error(`${message}: ${JSON.stringify(diagnostics)}`)
 }
 
 function desktopWindowLogPath() {
@@ -284,10 +286,28 @@ async function verifyCrossProviderSwitchRetry(control, composerSelector) {
     'The embedded browser remained blocked after the model switch dialog closed'
   )
   await captureVerificationScreenshot(control, 'model-switch-browser-dialog-closed.png')
-  await control.command('waitFor', '[data-testid="message-assistant"]', {
-    text: PROVIDER_SWITCH_COMPLETION,
-    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
-  })
+  try {
+    await control.command('waitFor', '[data-testid="message-assistant"]', {
+      text: PROVIDER_SWITCH_COMPLETION,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+  } catch (error) {
+    try {
+      const evidence = await collectRuntimeQueueEvidence(
+        control,
+        source.task.taskId,
+        DEFAULT_STEP_TIMEOUT_MS
+      )
+      await writeFile(
+        join(resultDir, 'provider-switch-queue-evidence.json'),
+        `${JSON.stringify({ stage: 'completion-failed', ...evidence }, null, 2)}\n`,
+        'utf8'
+      )
+    } catch {
+      console.error('[desktop-e2e] Provider-switch queue evidence could not be written')
+    }
+    throw error
+  }
   assert.equal(
     control.scenarioRequests.get('provider_switch_retry')?.length,
     2,

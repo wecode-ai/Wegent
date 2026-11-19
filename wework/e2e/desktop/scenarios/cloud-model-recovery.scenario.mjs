@@ -32,12 +32,15 @@ async function cleanupFixtures(cleanups) {
 }
 
 function connectorRefresh(rpc, request, configure) {
+  let syncRevision = Date.now() * 1_000
   return async () => {
+    syncRevision = Math.max(syncRevision + 1, Date.now() * 1_000)
     const issuedAt = Date.now()
     const token = await request('/api/connector-runtime/token', { method: 'POST' })
-    await configure(token.access_token, issuedAt + token.expires_in * 1_000)
+    await configure(token.access_token, issuedAt + token.expires_in * 1_000, syncRevision)
     const installed = await request('/api/apps/installed')
     return rpc('runtime.connectors.apps.sync', {
+      syncRevision,
       apps: installed.apps
         .filter(app => app.enabled && app.callable)
         .map(app => ({
@@ -77,18 +80,24 @@ async function assertConnectorCallable(mcp, name) {
     .filter(item => item.type === 'text')
     .map(item => item.text)
     .join('\n')
-  assert.ok(Array.isArray(JSON.parse(text)), 'The real project-space tool did not return a list')
+  const page = JSON.parse(text)
+  assert.ok(Array.isArray(page.items), 'The real project-space tool did not return page items')
+  assert.ok(Number.isInteger(page.matched_total) && page.matched_total >= page.items.length)
+  if (page.matched_total > page.items.length) assert.equal(typeof page.next_cursor, 'string')
+  else assert.equal(page.next_cursor, null)
+  assert.equal(page.coverage.complete, true)
 }
 
 function connectorRuntime(control, cloud, request, resultDir, timeoutMs) {
   const rpc = (method, params) => requestExecutor(control, method, params, timeoutMs)
-  const configure = async (connectorToken, expiresAtMs) => {
+  const configure = async (connectorToken, expiresAtMs, syncRevision) => {
     const configured = JSON.parse(
       await control.command('configureLocalExecutorConnectors', 'body', {
         value: JSON.stringify({
           apiBaseUrl: `${cloud.backendUrl}/api`,
           connectorToken,
           expiresAtMs,
+          syncRevision,
         }),
         timeoutMs,
       })

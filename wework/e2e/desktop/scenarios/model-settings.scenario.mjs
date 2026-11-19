@@ -12,7 +12,7 @@ export function createDesktopScenario({ captureScreenshot }) {
         visible: false,
       })
       await control.command('navigate', 'body', { value: '/settings/personal/models' })
-      await control.command('waitFor', selector('provider-add'), { text: '添加服务商' })
+      await control.command('waitFor', selector('provider-add'), { text: '添加模型' })
       const page = JSON.parse(await control.command('snapshot', selector('model-settings-page')))
       assert.ok(page.text.includes('自定义模型'))
       assert.ok(!page.text.includes('Provider'))
@@ -23,6 +23,17 @@ export function createDesktopScenario({ captureScreenshot }) {
 
       await control.command('click', selector('provider-add'))
       await control.command('waitFor', selector('provider-editor'))
+      await control.command('waitFor', selector('provider-api-key'))
+      await control.command('waitFor', selector('provider-discover'))
+      await control.command('waitFor', selector('provider-model-add'))
+      assert.equal(
+        Number(await control.command('getElementCount', selector('provider-stage-connection'))),
+        0
+      )
+      assert.equal(
+        Number(await control.command('getElementCount', selector('provider-editor-next'))),
+        0
+      )
       await control.command('select', selector('provider-preset'), { value: 'deepseek' })
       await control.command('waitFor', selector('provider-api-key'))
       await control.command('fill', selector('provider-name'), { value: 'DeepSeek work account' })
@@ -33,7 +44,7 @@ export function createDesktopScenario({ captureScreenshot }) {
       await control.command('fill', selector('provider-base-url'), {
         value: 'https://model-settings.example/v1',
       })
-      await control.command('click', selector('provider-editor-next'))
+      await control.command('waitFor', selector('provider-api-key'))
       await control.command('waitFor', selector('provider-model-search'))
       await control.command('click', selector('provider-model-add'))
       const editor = JSON.parse(await control.command('snapshot', selector('provider-editor')))

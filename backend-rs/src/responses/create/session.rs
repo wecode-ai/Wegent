@@ -74,6 +74,8 @@ pub struct SetupChatSessionInput<'a> {
     /// request session at `openapi_responses.py:522-547`'s position, before
     /// team and model resolution. `None` creates a new Task.
     pub continuation: Option<continuation::Continuation>,
+    /// Subscription-only DB window. None preserves ordinary chat preparation.
+    pub history_window: Option<i64>,
     pub team_id: i64,
     pub bot_ids: &'a [i64],
     pub create_assistant: bool,
@@ -164,16 +166,24 @@ pub async fn setup_chat_session(
         // `prepare_execution_session`'s `get_task_with_access_check`
         // (`lifecycle.py:287`) re-reads the resumed Task on the request
         // session; its row is what the pending CRD rewrite flushes.
-        let row = store
-            .get_active_task_owned_on(&mut *transaction, continuation.task_id, input.owner_user_id)
-            .await
-            .map_err(internal)?
-            .ok_or_else(|| {
-                FastApiError::detail(
-                    brz_http_server::StatusCode::NOT_FOUND,
-                    format!("Task {} not found", continuation.task_id),
-                )
-            })?;
+        let task_id = continuation.task_id;
+        let owner_user_id = input.owner_user_id;
+        let row = if continuation.is_subscription {
+            store
+                .get_active_states_task_owned_on(&mut *transaction, task_id, owner_user_id)
+                .await
+        } else {
+            store
+                .get_active_task_owned_on(&mut *transaction, task_id, owner_user_id)
+                .await
+        }
+        .map_err(internal)?
+        .ok_or_else(|| {
+            FastApiError::detail(
+                brz_http_server::StatusCode::NOT_FOUND,
+                format!("Task {task_id} not found"),
+            )
+        })?;
         let mut task_json = task_column::<brz_mysql::Json<serde_json::Value>>(&row, "json")
             .map(|json| json.0)
             .unwrap_or(serde_json::Value::Null);
@@ -206,6 +216,7 @@ pub async fn setup_chat_session(
             task_json,
             project_id,
             raw_project_id,
+            task_column::<i64>(&row, "is_active") == Some(2),
         )
         .await;
     }
@@ -256,6 +267,7 @@ pub async fn setup_chat_session(
         task_json,
         input.project_id,
         (input.project_id != 0).then_some(input.project_id),
+        false,
     )
     .await
 }
@@ -296,16 +308,30 @@ async fn append_subtasks(
     task_json: serde_json::Value,
     workspace_project_id: i64,
     raw_project_id: Option<i64>,
+    retained_subscription: bool,
 ) -> Result<ChatSessionSetup, FastApiError> {
     // `task_fork_history_resolver.resolve_for_task` (`lifecycle.py:363-370`):
     // `subtask_store.list_by_task_ordered(task_id, owner_user_id)` reads the
     // task's subtasks in `message_id, created_at` order before the next
     // message id is computed. A new task has none.
-    let existing_subtasks = store
-        .list_subtasks_by_task_ordered_on(&mut *transaction, task_id, input.user_id)
-        .await
-        .map_err(internal)?
-        .rows;
+    let history_window = super::subscription_window::resolve_on(
+        &mut *transaction,
+        &task_json,
+        input.user_id,
+        input.history_window,
+        retained_subscription,
+    )
+    .await
+    .map_err(internal)?;
+    let existing_subtasks = load_existing_subtasks(
+        store,
+        &mut *transaction,
+        task_id,
+        input.user_id,
+        history_window,
+    )
+    .await
+    .map_err(internal)?;
     // `resolve_lineage`'s depth-0 read for the created task (qs25): the
     // source's `_lineage_task` reads the current task through the owner guard
     // before it breaks on `fork is None`. It is a distinct business read from
@@ -414,6 +440,36 @@ async fn append_subtasks(
         assistant_created_at: inserted.assistant_created_at,
         existing_subtasks,
     })
+}
+
+/// Keep subscription preparation bounded without changing ordinary chat reads.
+pub(crate) async fn load_existing_subtasks(
+    store: &dyn TaskStore,
+    sql: &mut dyn crate::request_sql::RequestSql,
+    task_id: i64,
+    user_id: i64,
+    history_window: Option<i64>,
+) -> brz_mysql::MysqlResult<Vec<brz_mysql::MysqlRow>> {
+    if let Some(limit) = history_window {
+        store
+            .list_subtasks_history_window_on(
+                sql,
+                task_id,
+                user_id,
+                crate::task_store::SubtaskHistoryWindow {
+                    limit,
+                    before_message_id: None,
+                    summary_checkpoint_only: false,
+                    selection: wegent_task_store::task_store_history::HistorySelection::All,
+                },
+            )
+            .await
+    } else {
+        Ok(store
+            .list_subtasks_by_task_ordered_on(sql, task_id, user_id)
+            .await?
+            .rows)
+    }
 }
 
 /// `setup_chat_session`'s dependency failure: the source propagates the
