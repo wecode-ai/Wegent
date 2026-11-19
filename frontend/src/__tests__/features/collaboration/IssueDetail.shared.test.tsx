@@ -569,7 +569,11 @@ describe('shared IssueDetail', () => {
       })
       expect(screen.getByTestId('runtime-execution-detail-overlay')).toBeInTheDocument()
       expect(screen.getByTestId('runtime-execution-detail-close')).toHaveFocus()
-      fireEvent.keyDown(window, { key: 'Escape' })
+      fireEvent.keyDown(screen.getByTestId('runtime-execution-detail-close'), {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      })
       expect(screen.queryByTestId('runtime-execution-detail-overlay')).not.toBeInTheDocument()
       expect(screen.getByTestId('cloud-todo-detail')).toBe(editor)
       expect(comment).toHaveValue('保留这条草稿')
@@ -582,7 +586,11 @@ describe('shared IssueDetail', () => {
       expect(track).toHaveAttribute('data-has-conversation', 'true')
       fireEvent.click(screen.getByTestId('collaboration-open-execution-92'))
       expect(await screen.findByTestId('runtime-execution-detail-overlay')).toBeInTheDocument()
-      fireEvent.keyDown(window, { key: 'Escape' })
+      fireEvent.keyDown(screen.getByTestId('runtime-execution-detail-close'), {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+      })
       expect(screen.queryByTestId('runtime-execution-detail-overlay')).not.toBeInTheDocument()
       expect(screen.getByTestId('ai-chat-modal')).toBeInTheDocument()
       fireEvent.click(screen.getByTestId('ai-chat-modal-close'))
@@ -636,9 +644,8 @@ describe('shared IssueDetail', () => {
     fireEvent.change(screen.getByTestId('cloud-todo-detail-description'), {
       target: { value: created.description },
     })
-    fireEvent.change(screen.getByTestId('cloud-todo-create-priority'), {
-      target: { value: 'high' },
-    })
+    await userEvent.click(screen.getByTestId('cloud-todo-create-priority'))
+    await userEvent.click(await screen.findByRole('option', { name: '高' }))
     fireEvent.click(screen.getByTestId('cloud-todo-create-confirm'))
 
     await waitFor(() =>
@@ -690,9 +697,8 @@ describe('shared IssueDetail', () => {
       target: { value: '新描述' },
     })
     await openIssueProperties()
-    fireEvent.change(screen.getByTestId('cloud-todo-detail-priority'), {
-      target: { value: 'high' },
-    })
+    await userEvent.click(screen.getByTestId('cloud-todo-detail-priority'))
+    await userEvent.click(await screen.findByRole('option', { name: '高' }))
     await waitFor(() =>
       expect(update).toHaveBeenNthCalledWith(1, 'issue-1', {
         version: 1,

@@ -4,6 +4,7 @@
 
 import '@testing-library/jest-dom'
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { BoardViewEditor, type SavedBoardView } from '@wegent/collaboration/project-board'
 import { createCollaborationTranslator } from '@wegent/collaboration'
 
@@ -49,12 +50,16 @@ it('saves a named Backlog, prevents a second one, and restores its editor', asyn
   }
   const rendered = render(<BoardViewEditor {...props} />)
   fireEvent.click(screen.getByTestId('board-view-add-lane'))
-  fireEvent.change(screen.getByTestId('board-view-lane-type-1'), { target: { value: 'unmatched' } })
+  await userEvent.click(screen.getByTestId('board-view-lane-type-1'))
+  await userEvent.click(await screen.findByRole('option', { name: '其它（未匹配）' }))
   expect(screen.getByTestId('board-view-lane-value-1')).toHaveValue('Backlog')
   fireEvent.change(screen.getByTestId('board-view-lane-value-1'), { target: { value: '待规划' } })
-  expect(
-    screen.getByTestId('board-view-lane-type-0').querySelector('option[value="unmatched"]')
-  ).toBeDisabled()
+  await userEvent.click(screen.getByTestId('board-view-lane-type-0'))
+  expect(await screen.findByRole('option', { name: '其它（未匹配）' })).toHaveAttribute(
+    'aria-disabled',
+    'true'
+  )
+  await userEvent.keyboard('{Escape}')
   fireEvent.click(screen.getByTestId('board-view-save'))
   await waitFor(() => expect(save).toHaveBeenCalledTimes(1))
   const saved = save.mock.calls[0][0]

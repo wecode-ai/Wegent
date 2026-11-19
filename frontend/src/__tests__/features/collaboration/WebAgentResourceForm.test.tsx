@@ -3,7 +3,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import '@testing-library/jest-dom'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 
 import { apiClient } from '@/apis/client'
 import { botApis } from '@/apis/bots'
@@ -106,6 +107,7 @@ describe('WebAgentResourceForm', () => {
 
   it('uses the shared form and submits display name, skills, and plugins', async () => {
     const onCreated = jest.fn().mockResolvedValue(undefined)
+    const user = userEvent.setup()
 
     render(
       <WebAgentResourceForm
@@ -130,10 +132,10 @@ describe('WebAgentResourceForm', () => {
     expect(screen.queryByTestId('web-agent-resource-name')).not.toBeInTheDocument()
     expect(screen.queryByTestId('web-agent-runtime')).not.toBeInTheDocument()
     expect(screen.getByText('能力：跟随运行设备')).toBeInTheDocument()
-    expect(screen.getByTestId('web-agent-owner')).toHaveValue('default')
-    fireEvent.change(screen.getByTestId('web-agent-owner'), {
-      target: { value: 'engineering' },
-    })
+    const owner = screen.getByTestId('web-agent-owner')
+    expect(owner).toHaveTextContent('个人空间')
+    fireEvent.click(owner)
+    fireEvent.click(await screen.findByRole('option', { name: 'Engineering' }))
     await waitFor(() =>
       expect(modelApis.getUnifiedModels).toHaveBeenCalledWith(
         'Codex',
@@ -150,14 +152,16 @@ describe('WebAgentResourceForm', () => {
     fireEvent.change(screen.getByTestId('web-agent-display-name'), {
       target: { value: '代码评审' },
     })
-    fireEvent.change(screen.getByTestId('web-agent-model'), {
-      target: { value: 'public:default:gpt-5' },
-    })
+    fireEvent.click(screen.getByTestId('web-agent-model'))
+    fireEvent.click(await screen.findByRole('option', { name: 'GPT-5' }))
     await waitFor(() => expect(screen.getByTestId('web-agent-resource-create')).toBeEnabled())
     fireEvent.click(screen.getByTestId('web-agent-skills-add'))
     fireEvent.click(await screen.findByTestId('web-agent-skill-7'))
-    fireEvent.click(screen.getByTestId('web-agent-plugins-add'))
-    fireEvent.click(await screen.findByTestId('web-agent-plugin-company-mail@official'))
+    await user.click(screen.getByTestId('web-agent-plugins-add'))
+    await user.click(await screen.findByRole('checkbox', { name: /Company Mail/ }))
+    expect(
+      within(screen.getByTestId('web-agent-plugins')).getByText('Company Mail')
+    ).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('web-agent-resource-create'))
 
     await waitFor(() =>

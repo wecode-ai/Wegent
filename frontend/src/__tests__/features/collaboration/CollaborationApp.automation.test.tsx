@@ -5,6 +5,7 @@
 import '@testing-library/jest-dom'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import React from 'react'
+import { sdkSelectValue } from '../../../../../packages/collaboration/src/test/selectControl'
 import type {
   CollaborationGroup,
   CollaborationHostAdapter,
@@ -316,18 +317,16 @@ describe('CollaborationApp project collaboration groups', () => {
     fireEvent.click(await screen.findByTestId('automatic-processing-create'))
     fireEvent.click(screen.getByTestId('automatic-processing-trigger-schedule'))
 
-    expect(screen.getByTestId('automatic-processing-schedule-frequency')).toHaveValue('weekdays')
+    expect(
+      await sdkSelectValue(screen.getByTestId('automatic-processing-schedule-frequency'))
+    ).toBe('weekdays')
     expect(screen.getByTestId('automatic-processing-schedule-time')).toHaveValue('09:00')
     expect(screen.getByTestId('automatic-processing-preview')).toHaveTextContent('周一至周五 09:00')
     expect(screen.getByTestId('automatic-processing-workday-only')).not.toBeChecked()
     fireEvent.click(screen.getByTestId('automatic-processing-workday-only'))
 
-    fireEvent.change(screen.getByTestId('automatic-processing-schedule-frequency'), {
-      target: { value: 'weekly' },
-    })
-    fireEvent.change(screen.getByTestId('automatic-processing-schedule-weekday'), {
-      target: { value: '3' },
-    })
+    await sdkSelectValue(screen.getByTestId('automatic-processing-schedule-frequency'), 'weekly')
+    await sdkSelectValue(screen.getByTestId('automatic-processing-schedule-weekday'), '3')
     fireEvent.change(screen.getByTestId('automatic-processing-schedule-time'), {
       target: { value: '14:30' },
     })
