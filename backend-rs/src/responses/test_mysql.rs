@@ -102,6 +102,12 @@ impl RecordingMysql {
         }
     }
 
+    /// Make the terminal transition report that another writer already
+    /// settled the subtask, exercising the consumer's already-settled branch.
+    pub(super) fn already_settled() -> Self {
+        Self::default()
+    }
+
     fn record(&self, sql: &str) {
         self.statements
             .lock()

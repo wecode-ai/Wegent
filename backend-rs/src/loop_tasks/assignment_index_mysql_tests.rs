@@ -508,6 +508,13 @@ async fn initializes_nullable_and_sentinel_indexes_without_changing_assignment_e
                 "listing must preserve the initialized index's complete response"
             );
             assert_rollback_and_recovery(&test_mysql).await;
+            let receipt = json!({"state":"completed", "runtimeTaskId":"runtime-task", "publicMessageId":"published"});
+            test_mysql.with_transaction(async |tx| {
+                super::super::assignment_receipts::persist_dispatch_receipt(tx, "issue-1", "12", receipt.clone()).await
+            }).await.unwrap();
+            let stored = list_assignment_items(&test_mysql, "issue-1", &reader()).await.unwrap();
+            let stored = crate::json_contract_tests::serialized(stored).unwrap();
+            assert_eq!(stored["items"].as_array().unwrap().iter().find(|row| row["id"] == "12").unwrap()["dispatch_receipt"], receipt);
             assert_automation_maintains_index(&test_mysql).await;
             assert_explicit_issue_invitation_scope(&test_mysql).await;
             test_mysql

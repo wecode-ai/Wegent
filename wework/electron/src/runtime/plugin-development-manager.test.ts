@@ -125,6 +125,7 @@ describe('PluginDevelopmentManager', () => {
     const environment = pluginDevelopmentEnvironment(
       {
         CODEX_HOME: '/parent/codex',
+        WEWORK_COMPONENT_DATA_DIRECTORY: '/parent/components',
         ELECTRON_RUN_AS_NODE: '1',
         WEGENT_CODEX_HOME: '/parent/wegent-codex',
         WEGENT_EXECUTOR_LOG_DIR: '/parent/executor-logs',
@@ -149,9 +150,14 @@ describe('PluginDevelopmentManager', () => {
       },
       'development-id',
       userDataDirectory,
-      join(userDataDirectory, '..', 'state.json')
+      join(userDataDirectory, '..', 'state.json'),
+      '/parent/components/managed-components'
     )
 
+    expect(environment).not.toHaveProperty('WEWORK_COMPONENT_DATA_DIRECTORY')
+    expect(environment.WEWORK_BUNDLED_COMPONENT_DIRECTORY).toBe(
+      '/parent/components/managed-components'
+    )
     expect(environment).not.toHaveProperty('CODEX_HOME')
     expect(environment).not.toHaveProperty('ELECTRON_RUN_AS_NODE')
     expect(environment).not.toHaveProperty('WEGENT_CODEX_HOME')

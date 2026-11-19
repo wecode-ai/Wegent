@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
+import { DatabaseSync } from 'node:sqlite'
 import { execFile } from 'node:child_process'
-import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
 import { delimiter, join } from 'node:path'
 import { isDeepStrictEqual, promisify } from 'node:util'
 import { waitForAttribute } from '../modules/workspace-flows.mjs'
@@ -181,6 +182,11 @@ if (endpoint === 'user') {
     await chmod(executablePath, 0o755)
   }
   process.env.PATH = `${binPath}${delimiter}${process.env.PATH ?? ''}`
+  if (process.platform === 'win32') return {}
+  // Keep the CLI fixture ahead of developer tools after login-shell hydration.
+  const nodePath = join(binPath, 'node')
+  await symlink(process.execPath, nodePath)
+  return { WEWORK_NODE_PATH: nodePath }
 }
 
 async function createLocalProject(control, workspacePath, timeoutMs) {
@@ -272,14 +278,27 @@ async function refreshEnvironment(control) {
 
 async function readNativeUiObservers(journalPath) {
   try {
-    const { observers } = JSON.parse(await readFile(journalPath, 'utf8'))
-    assert.ok(observers && typeof observers === 'object' && !Array.isArray(observers))
-    return Object.entries(observers).map(([id, observer]) => {
-      assert.ok(observer && typeof observer === 'object' && observer.id === id)
-      return observer
+    const database = new DatabaseSync(journalPath, { readOnly: true })
+    try {
+      // Match the native event store's lock budget during concurrent WAL recovery.
+      database.exec('PRAGMA busy_timeout = 250')
+      return database
+        .prepare("SELECT id,value FROM records WHERE section='observers'")
+        .all()
+        .map(({ id, value }) => {
+          const observer = JSON.parse(value)
+          assert.ok(observer && typeof observer === 'object' && observer.id === id)
+          return observer
+        })
+    } finally {
+      database.close()
+    }
+  } catch (error) {
+    // Keep diagnostic codes without exposing journal contents or native error text.
+    throw Object.assign(new Error('The native change-request observer journal could not be read'), {
+      code: error.code,
+      sqliteCode: error.errcode,
     })
-  } catch {
-    throw new Error('The native change-request observer journal could not be read')
   }
 }
 
@@ -314,14 +333,20 @@ function newChangeRequestObserverPredicate(before) {
     ).length === 1
 }
 
+export async function prepareChangeRequestRecovery(executorHome) {
+  const journalPath = join(executorHome, 'runtime-work', 'conversation-event-subscriptions.sqlite')
+  return {
+    journalPath,
+    activationCompleted: newChangeRequestObserverPredicate(
+      await readNativeUiObservers(journalPath)
+    ),
+  }
+}
+
 export async function recoverChangeRequestStatus(
   control,
-  { statePath, executorHome, uiTimeoutMs }
+  { statePath, uiTimeoutMs, journalPath, activationCompleted }
 ) {
-  const journalPath = join(executorHome, 'runtime-work', 'conversation-event-subscriptions.json')
-  const activationCompleted = newChangeRequestObserverPredicate(
-    await readNativeUiObservers(journalPath)
-  )
   // Repair the provider before re-enabling its observer. Start may return cached facts.
   await writeFile(statePath, 'merged\n')
   await control.command('click', '[data-testid="change-request-status-switch"]')
@@ -345,7 +370,12 @@ export async function recoverChangeRequestStatus(
   await control.command('waitFor', '[data-testid="environment-info-popover"]')
 
   await control.command('waitFor', CHANGE_REQUEST_BUTTON, { text: '#2631' })
-  await control.command('waitFor', '[data-testid="change-request-state"]', { text: '已合并' })
+  await control.command('waitFor', CHANGE_REQUEST_BUTTON, { text: '已合并' })
+  assert.match(
+    await control.command('getAttribute', CHANGE_REQUEST_BUTTON, { value: 'aria-label' }),
+    /已合并/,
+    'The recovered PR control did not expose its merged status'
+  )
   await control.command('waitFor', '[data-testid="change-request-checks"]', { text: '检查通过' })
   await control.command('click', '[data-testid="environment-change-request-status"]')
   await control.command(
@@ -364,7 +394,7 @@ export async function createDesktopScenario({
   workspacePath,
 }) {
   await configureGitFixture(workspacePath)
-  await createGitHubCliFixture(homePath)
+  const appEnvironment = await createGitHubCliFixture(homePath)
   const queryLogPath = join(homePath, QUERY_LOG_FILE)
   const statePath = join(homePath, STATE_FILE)
   const gitSyncRequests = []
@@ -375,6 +405,7 @@ export async function createDesktopScenario({
     captureScreenshot(control, name, selector)
 
   return {
+    appEnvironment,
     async handleHttp(request, response, url) {
       if (request.method === 'GET' && url.pathname === '/api/auth/wework/config') {
         json(response, 200, {
@@ -637,6 +668,7 @@ export async function createDesktopScenario({
         { text: '状态同步正常' }
       )
       await capture(control, 'change-request-status-04-checks-passed.png')
+      const recovery = await prepareChangeRequestRecovery(executorHome)
       await control.command('click', '[data-testid="environment-change-request-status"]')
 
       await writeFile(statePath, 'unavailable\n')
@@ -756,7 +788,7 @@ export async function createDesktopScenario({
       })
       await capture(control, 'change-request-status-07-settings-disabled.png', 'body')
 
-      await recoverChangeRequestStatus(control, { statePath, executorHome, uiTimeoutMs })
+      await recoverChangeRequestStatus(control, { statePath, uiTimeoutMs, ...recovery })
       await capture(control, 'change-request-status-08-recovered-merged.png')
       await control.command('click', '[data-testid="environment-change-request-status"]')
     },

@@ -4,6 +4,8 @@ import {
 } from './cloud-environment.mjs'
 
 import { tmpdir } from 'node:os'
+import { startAsyncResourceDiagnostics } from '../../../../.github/scripts/node-async-resource-diagnostics.mjs'
+import { flushProcessOutput } from '../process-output.mjs'
 import { simulatedDeviceApplicationId } from './simulated-device-identity.mjs'
 import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from '../upgrade-suite.mjs'
 import { waitForColdPackageStartup } from './cold-package-startup.mjs'
@@ -151,6 +153,7 @@ import {
   observeWindowsSocketExhaustion,
 } from './windows-network-diagnostics.mjs'
 import { collectCodexSqliteDiagnostics } from './codex-sqlite-diagnostics.mjs'
+import { collectPluginRuntimeDiagnostics } from './plugin-runtime-diagnostics.mjs'
 import { captureFailureFollowup, failedWaitCondition } from './failure-followup.mjs'
 import { startRendererCpuProfile } from './renderer-cpu-profile.mjs'
 import {
@@ -1270,6 +1273,9 @@ async function main() {
   let phase = 'startup'
   let desktopScenarioVerified = false
   let testFailed = false
+  const stopAsyncDiagnostics = startAsyncResourceDiagnostics(
+    join(resultDir, 'node-async-resource-diagnostics.jsonl')
+  )
   try {
     await control.start()
     // Publish bound ports for scenarios without releasing the listening sockets.
@@ -1344,6 +1350,8 @@ async function main() {
         authToken: cloudEnvironment.authToken,
         backendUrl: cloudEnvironment.backendUrl,
         executeDatabase: (sql, params) => cloudEnvironment.executeDatabase(sql, params),
+        executeDatabaseTransaction: statements =>
+          cloudEnvironment.executeDatabaseTransaction(statements),
         queryDatabase: (sql, params) => cloudEnvironment.queryDatabase(sql, params),
         publishPluginRelease: options => cloudEnvironment.publishPluginRelease(options),
         publishOfficialSmartApp: sourcePath => cloudEnvironment.publishOfficialSmartApp(sourcePath),
@@ -4993,6 +5001,11 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     }
     const networkDiagnostics = collectWindowsNetworkDiagnostics()
     await writeFile(
+      join(resultDir, 'plugin-runtime-diagnostics.json'),
+      `${JSON.stringify(await collectPluginRuntimeDiagnostics(homePath, executorHome, cloudEnvironment), null, 2)}\n`,
+      'utf8'
+    )
+    await writeFile(
       join(resultDir, 'codex-sqlite-diagnostics.json'),
       `${JSON.stringify(await collectCodexSqliteDiagnostics(codexSqliteHome), null, 2)}\n`,
       'utf8'
@@ -5112,6 +5125,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     }
     throw error
   } finally {
+    stopAsyncDiagnostics()
     const teardownFailures = []
     const runTeardownStep = async (label, action) => {
       try {
@@ -5138,6 +5152,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     await runTeardownStep('blocking network proxy', async () => blockingNetworkProxy?.stop())
     await runTeardownStep('cloud history search proxy', async () => cloudHistorySearch?.cleanup())
     await runTeardownStep('cloud environment', async () => cloudEnvironment?.stop())
+    await runTeardownStep('process output', flushProcessOutput)
     await runTeardownStep('Codex SQLite home', async () =>
       rm(codexSqliteHome, {
         recursive: true,

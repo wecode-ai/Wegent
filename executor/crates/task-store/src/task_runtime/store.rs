@@ -18,6 +18,8 @@ use uuid::Uuid;
 mod assignment_receipts;
 pub mod board_receipts;
 mod code_projects;
+#[cfg(test)]
+mod empty_write_tests;
 pub mod execution_workspace;
 mod human_requests;
 mod stand_in_dispatches;
@@ -130,6 +132,8 @@ pub enum TaskRuntimeError {
     Database(#[from] rusqlite::Error),
     #[error("invalid task data: {0}")]
     Invalid(String),
+    #[error("project discovery failed: {0}")]
+    ProjectDiscovery(String),
     #[error("project not found")]
     ProjectNotFound,
     #[error("task not found")]

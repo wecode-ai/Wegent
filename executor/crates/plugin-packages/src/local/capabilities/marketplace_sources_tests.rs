@@ -260,10 +260,9 @@ async fn copied_marketplace_sources_roll_back_a_failed_configuration_commit() {
         let fixture = Fixture::new(true).await;
         uninstall(&fixture.store).await;
         let original = fixture.store.manifest.load().unwrap();
-        let target = fixture
-            .store
-            .codex_plugins_dir
-            .join("cache/wegent/demo/0.9.12");
+        let receipt = &original[RECEIPTS]["demo@wegent"];
+        let version = receipt["version"].as_str().unwrap();
+        let target = PathBuf::from(receipt["runtime"]["codex_link"].as_str().unwrap());
         if !retained_target {
             remove_existing_path(&target).unwrap();
         }
@@ -275,7 +274,7 @@ async fn copied_marketplace_sources_roll_back_a_failed_configuration_commit() {
             .unwrap()
             .join("config.toml");
         fs::write(&config, "invalid [ config").unwrap();
-        let result = sync(&fixture.store, "0.9.12", 69).await;
+        let result = sync(&fixture.store, version, 69).await;
         assert_eq!(result["success"], false, "{result}");
         fixture.assert_version("0.1.6");
         assert!(
@@ -290,4 +289,18 @@ async fn copied_marketplace_sources_roll_back_a_failed_configuration_commit() {
             assert_eq!(tree_fingerprint(&target).unwrap(), before);
         }
     }
+}
+
+#[test]
+fn native_directory_link_target_matches_only_its_managed_entry() {
+    let root = tempfile::tempdir().unwrap();
+    let managed = root.path().join("native/demo/local");
+    let foreign = root.path().join("foreign/demo/local");
+    let link = root.path().join("marketplace-entry");
+    fs::create_dir_all(&managed).unwrap();
+    fs::create_dir_all(&foreign).unwrap();
+    crate::directory_link::create(&managed, &link).unwrap();
+    let target = fs::read_link(&link).unwrap();
+    assert!(shared_packages::same_entry(&target, &managed));
+    assert!(!shared_packages::same_entry(&target, &foreign));
 }

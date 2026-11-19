@@ -777,6 +777,17 @@ export function CollaborationApp({
                         project={project}
                         issues={issues}
                         locale={locale}
+                        filter={{
+                          milestoneId:
+                            currentMilestoneFilter === "all"
+                              ? null
+                              : currentMilestoneFilter,
+                        }}
+                        onFilterChange={(id) =>
+                          id === null
+                            ? milestoneFilter.clear()
+                            : milestoneFilter.select(id)
+                        }
                         onOpenArchive={
                           issueArchiveAvailable ? openArchiveDrawer : undefined
                         }
