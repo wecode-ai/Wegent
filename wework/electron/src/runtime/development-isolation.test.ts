@@ -249,6 +249,8 @@ describe('development data isolation', () => {
       'packaged: packagedApplication'
     )
     expect(guard).toBeLessThan(source.indexOf('const applicationId ='))
-    expect(guard).toBeLessThan(source.indexOf("app.setPath('userData'"))
+    const userData = source.indexOf('const userDataPath =')
+    expect(userData).toBeGreaterThan(guard)
+    expect(source.indexOf('initializeWorkbenchDesktopData(')).toBeGreaterThan(userData)
   })
 })

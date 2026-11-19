@@ -10,7 +10,6 @@ import {
 import type { DshRuntimeOptions } from './dsh-runtime.js'
 import { assertExecutorWorkbenchCompatibility } from './workbench-executor-schema.js'
 import { migrateCodexProviderState } from './codex-provider-upgrade.js'
-import { resolveDesktopDeviceId } from './desktop-device-id.js'
 import { CoreDshPluginManager } from './core-dsh-plugin-manager.js'
 import type { ModelConfigurationStore } from '../host/model-configuration-store.js'
 
