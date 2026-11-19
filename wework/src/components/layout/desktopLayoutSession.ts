@@ -181,6 +181,12 @@ export function createDesktopLayoutSession(
       retire()
       return
     }
+    if (attached) {
+      const path = stripAppBasePath(window.location.pathname)
+      previousPath = path
+      state.setCurrentPath(path)
+      state.setSettingsOpen(isSettingsRoute(path))
+    }
     const changedServices = previousServices !== input.services
     const changedSurface = previousWorkItems !== input.workItemSurfaceOpen
     if (attached || changedServices || changedSurface) {
