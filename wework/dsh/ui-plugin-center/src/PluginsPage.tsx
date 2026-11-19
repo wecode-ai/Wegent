@@ -296,6 +296,7 @@ export function PluginsPage({ routeSearch = '' }: { routeSearch?: string }) {
             cloudMarketplaceAvailable={true}
             cloudApiBaseUrl={cloudConnection.apiBaseUrl || getRuntimeConfig().apiBaseUrl}
             cloudToken={cloudConnection.token}
+            cloudUserId={cloudConnection.user?.id}
             sidebarCollapsed={sidebarCollapsed && !isMobile}
             topBarLeftActions={
               !isMobile && sidebarCollapsed && !isDesktop ? (
