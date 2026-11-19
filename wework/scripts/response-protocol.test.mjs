@@ -411,6 +411,52 @@ describe('selectMcpTool', () => {
 })
 
 describe('selectMcpToolRequest', () => {
+  test('discovers a newly announced native namespace without replaying a failed call ID', () => {
+    const step = {
+      toolName: 'read_task',
+      directToolName: 'mcp__wework_stand_in__read_task',
+      argumentsValue: { taskId: 'child-task' },
+      searchCallId: 'search-child',
+      toolCallId: 'read-child',
+    }
+    const failure = {
+      type: 'custom_tool_call_output',
+      call_id: step.searchCallId,
+      output: 'Native discovery requires one exact capability',
+    }
+    const announcement = {
+      type: 'message',
+      role: 'developer',
+      content: [
+        {
+          type: 'input_text',
+          text: '<tools>\nAdded deferred tool namespaces:\n- wework_stand_in\n</tools>',
+        },
+      ],
+    }
+    const request = { tools: [{ type: 'custom', name: 'exec' }], input: [failure, announcement] }
+    const response = mcpToolRequestEvents(request, step)
+    const call = response.events.find(event => event.type === 'response.output_item.done').item
+    expect(response.mode).toBe('search')
+    expect(call.call_id).not.toBe(step.searchCallId)
+    expect(call.input).toContain('wework_stand_in__read_task')
+    expect(() =>
+      mcpToolRequestEvents(
+        { ...request, input: [failure, announcement, { ...failure, call_id: call.call_id }] },
+        step
+      )
+    ).toThrow('Native discovery did not expose')
+    expect(() =>
+      mcpToolRequestEvents({ ...request, input: [announcement, failure] }, step)
+    ).toThrow('Native discovery did not expose')
+    expect(() =>
+      mcpToolRequestEvents(
+        { ...request, input: [failure, { ...announcement, role: 'user' }] },
+        step
+      )
+    ).toThrow('Native discovery did not expose')
+  })
+
   test('reports the exact failed discovery instead of repeating it until the UI times out', () => {
     const request = {
       tools: [{ type: 'custom', name: 'exec' }],
