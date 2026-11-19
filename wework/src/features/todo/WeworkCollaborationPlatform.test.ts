@@ -432,7 +432,7 @@ afterEach(() => {
 })
 
 function createLocalDeliveryApi() {
-  return {
+  const api = {
     listCloudProjects: vi.fn().mockResolvedValue({
       items: [
         {
@@ -467,6 +467,14 @@ function createLocalDeliveryApi() {
       },
     }),
   } as unknown as LocalProjectSpaceApi
+  api.getCloudProject = vi.fn(async function (this: LocalProjectSpaceApi, projectId) {
+    const found = (await this.listCloudProjects()).items.find(
+      candidate => String(candidate.id) === String(projectId)
+    )
+    if (!found) throw new Error(`Project ${projectId} was not found`)
+    return found
+  })
+  return api
 }
 
 function createLocalDetailServices() {
@@ -2089,6 +2097,10 @@ describe('Wework collaboration workspace API', () => {
     }
     const deliveryApi = {
       listCloudProjects: vi.fn(async () => ({ items: [project] })),
+      getCloudProject: vi.fn(async projectId => {
+        if (String(projectId) !== project.id) throw new Error(`Project ${projectId} was not found`)
+        return project
+      }),
       updateCloudProject: vi.fn(async (_projectId: string, input: Record<string, unknown>) => {
         project = {
           ...project,
@@ -2364,6 +2376,11 @@ describe('Wework collaboration workspace API', () => {
       createLocalWorkspaceApi(
         {
           listCloudProjects: vi.fn(async () => ({ items: records })),
+          getCloudProject: vi.fn(async projectId => {
+            const found = records.find(record => String(record.id) === String(projectId))
+            if (!found) throw new Error(`Project ${projectId} was not found`)
+            return found
+          }),
           updateCloudProject: update,
         } as unknown as DeliveryApi,
         1,
