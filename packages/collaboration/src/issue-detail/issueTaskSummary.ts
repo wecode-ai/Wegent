@@ -1,4 +1,5 @@
 import type { ProjectChatMessage } from "@wegent/chat-core";
+import type { RuntimeTaskAddress } from "@wegent/chat-core/runtime";
 import type { ExecutionTaskSummary } from "./IssueChatMessage";
 
 export function issueTaskSummaryForMessage<
@@ -12,6 +13,7 @@ export function issueTaskSummaryForMessage<
   bindings: Binding[],
   _issueTitle: string,
   onOpen?: (binding: Binding) => void,
+  onOpenProjectExecution?: (address: RuntimeTaskAddress) => void,
 ): ExecutionTaskSummary | undefined {
   const address = message.runtimeAddress;
   if (
@@ -33,9 +35,20 @@ export function issueTaskSummaryForMessage<
       : undefined;
   const taskTitle = workflowTaskTitle || binding?.task_title?.trim();
   if (!taskTitle) return;
+  const activityType = message.metadata.activity_type;
+  const openProjectExecution =
+    onOpenProjectExecution &&
+    address?.deviceId &&
+    address.taskId &&
+    typeof message.metadata.dispatch_id === "string" &&
+    message.metadata.dispatch_id.trim() &&
+    (activityType === "member_execution" ||
+      activityType === "manager_execution")
+      ? () => onOpenProjectExecution(address)
+      : undefined;
   return {
     title: taskTitle,
     stageName: null,
-    onOpen: binding && onOpen ? () => onOpen(binding) : undefined,
+    onOpen: binding && onOpen ? () => onOpen(binding) : openProjectExecution,
   };
 }

@@ -580,7 +580,13 @@ export function useTaskActivityController({
     return address
   }
   function taskSummaryForMessage(message: ProjectChatMessage): ExecutionTaskSummary | undefined {
-    return issueTaskSummaryForMessage(message, taskBindings, task.title, onOpenTask)
+    return issueTaskSummaryForMessage(
+      message,
+      taskBindings,
+      task.title,
+      onOpenTask,
+      issueTimeline && project.project_store === 'backend' ? onOpenRuntimeTask : undefined
+    )
   }
   function deviceNameForMessage(message: ProjectChatMessage): string | null {
     const deviceId = message.runtimeAddress?.deviceId

@@ -750,6 +750,11 @@ export async function createDesktopScenario({
         `${LEADER} 将「${FIRST_TASK}」分配给${COLLECTOR}`,
         modelResponseTimeoutMs
       )
+      const assignedIssue = await request(`/api/v1/loop-items/${rootIssue.id}`)
+      const assignment = assignedIssue.assignment_history.find(
+        entry => entry.to_type === 'agent' && entry.to_name === COLLECTOR
+      )
+      assert.equal(assignment?.by_agent_name, LEADER, '分派记录应显示发起分派的智能体')
       assert.equal(
         await control.command('getValue', scoped('[data-testid="cloud-todo-detail-status"]')),
         'in_progress',

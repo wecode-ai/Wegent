@@ -1,5 +1,5 @@
 import type { ProjectChatMessage } from "@wegent/chat-core";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { issueTaskSummaryForMessage } from "./issueTaskSummary";
 
 const message = (
@@ -19,6 +19,39 @@ const message = (
 });
 
 describe("issueTaskSummaryForMessage", () => {
+  it("opens a recorded project execution without an owner-only task binding", () => {
+    const address = { deviceId: "shared-executor", taskId: "member-task" };
+    const open = vi.fn();
+    const activity = {
+      ...message({
+        activity_type: "member_execution",
+        dispatch_id: "group-dispatch",
+        workflow_task_title: "Review the plan",
+      }),
+      runtimeAddress: address,
+    };
+    const summary = issueTaskSummaryForMessage(
+      activity,
+      [],
+      "Issue",
+      undefined,
+      open,
+    );
+
+    summary?.onOpen?.();
+
+    expect(open).toHaveBeenCalledExactlyOnceWith(address);
+    expect(
+      issueTaskSummaryForMessage(
+        { ...activity, metadata: { workflow_task_title: "Personal task" } },
+        [],
+        "Issue",
+        undefined,
+        open,
+      )?.onOpen,
+    ).toBeUndefined();
+  });
+
   it("uses the persisted workflow task title before a runtime binding is visible", () => {
     expect(
       issueTaskSummaryForMessage(
