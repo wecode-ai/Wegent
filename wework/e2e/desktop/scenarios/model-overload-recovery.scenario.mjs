@@ -417,7 +417,13 @@ export function createDesktopScenario({
         uiTimeoutMs,
         'The cancellation task did not enter overload backoff'
       )
-      await control.command('click', `${WORKBENCH} [data-testid="pause-response-button"]`)
+      await control.command(
+        'clickWhenEnabled',
+        `${WORKBENCH} [data-testid="pause-response-button"]`,
+        {
+          timeoutMs: uiTimeoutMs,
+        }
+      )
       await waitUntil(
         async () => {
           const state = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
