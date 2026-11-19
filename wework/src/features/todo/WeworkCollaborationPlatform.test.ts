@@ -3,6 +3,7 @@ import { DEFAULT_WORK_ITEM_PROJECT_ID, type DeliveryApi } from '@/api/deliveries
 import { ApiError } from '@/api/http'
 import { createLocalProjectChatAgentApi } from '@/api/local/localDelivery'
 import { createPersonalHomeTaskDraftStore } from './personalHomeTaskDrafts'
+import { createWeworkProjectSession, type ProjectSessionInput } from './weworkProjectSession'
 import {
   CloudConnectionContext,
   DISCONNECTED_STATE,
@@ -510,14 +511,17 @@ function runtimeTask(overrides: Partial<RuntimeTaskSummary> = {}): RuntimeTaskSu
   }
 }
 
-function runtimeWork(tasks: RuntimeTaskSummary[]): RuntimeWorkListResponse {
+function runtimeWork(
+  tasks: RuntimeTaskSummary[],
+  deviceId = 'local-device'
+): RuntimeWorkListResponse {
   return {
     projects: [
       {
         project: { id: 1, key: 'project', name: 'Project' },
         deviceWorkspaces: [
           {
-            deviceId: 'local-device',
+            deviceId,
             workspacePath: '/tmp/project',
             available: true,
             tasks,
@@ -550,6 +554,62 @@ function createHomeDraft() {
 }
 
 describe('Wework collaboration workspace API', () => {
+  it('opens the linked group execution with Issue scope when its device alias is unavailable', async () => {
+    const project = { id: 'project', project_store: 'backend' } as ProjectSessionInput['project']
+    const address = { deviceId: 'runtime-alias', taskId: 'group-member-task' }
+    const issue = { id: 'issue' } as Parameters<
+      ReturnType<typeof createWeworkProjectSession>['openBoundConversation']
+    >[0]
+    const deviceIdentity = vi.fn().mockRejectedValue(new Error('executor-not-found:runtime-alias'))
+    const executionContext = { threadId: 'bound-thread', workspacePath: '/tmp/issue-worktree' }
+    const bindings = [
+      {
+        ...address,
+        id: 'binding',
+        projectId: project.id,
+        taskUserId: 52,
+        dispatchId: 'group-dispatch',
+        humanAssignmentId: null,
+        executionContext,
+      },
+    ]
+    const session = createWeworkProjectSession({ project, userId: 52 })
+    const release = session.subscribe(vi.fn(), {
+      project,
+      api: {
+        taskBindings: { list: async () => bindings },
+      } as unknown as ProjectSessionInput['api'],
+      projectChatClient: undefined,
+      standInApi: { deviceIdentity } as ProjectSessionInput['standInApi'],
+      runtimeAvailable: true,
+      personalIssue: undefined,
+      focusedItemId: issue.id,
+      runtimeWork: runtimeWork(
+        [runtimeTask({ taskId: address.taskId, threadId: 'catalog-thread' })],
+        address.deviceId
+      ),
+      runtimeTaskLifecycle: undefined,
+      detailExpanded: true,
+      locationIssueId: issue.id,
+      navigateIssue: vi.fn(),
+      onOpenRuntimeTask: undefined,
+      t: key => key,
+    })
+
+    try {
+      await session.openBoundConversation(issue, address)
+
+      expect(session.getSnapshot().taskComposer?.address).toMatchObject({
+        ...address,
+        ...executionContext,
+        projectSession: { projectId: project.id, issueId: issue.id },
+      })
+      expect(deviceIdentity).not.toHaveBeenCalled()
+    } finally {
+      release()
+    }
+  })
+
   it('keeps the cloud project choice available before cloud login', () => {
     render(
       createElement(WeworkCollaborationPlatform, {
