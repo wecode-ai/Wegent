@@ -70,11 +70,29 @@ export function TimelineNode({
       : running
         ? t('assistant.status.running')
         : node.status
+  const historyText =
+    node.kind === 'status' && node.transition
+      ? t('timeline.statusChanged', node.transition)
+      : node.kind === 'handoff' && node.handoff
+        ? t('timeline.handoff', {
+            action: t(
+              `timeline.handoffActions.${['assign', 'reassign', 'unassign'].includes(node.handoff.action) ? node.handoff.action : 'unknown'}`
+            ),
+            target:
+              node.handoff.targetName ??
+              t(
+                node.handoff.targetType === 'user'
+                  ? 'timeline.unknownMember'
+                  : 'timeline.unknownSource'
+              ),
+          })
+        : null
   return (
     <article
       tabIndex={-1}
       className="experience-timeline-node"
       data-state={completed ? 'completed' : failed ? 'failed' : running ? 'running' : 'recorded'}
+      data-compact={Boolean(historyText) || undefined}
       data-linked={selected || undefined}
       data-self={hasDiscussion || undefined}
       data-testid={`collaboration-exp-timeline-node-${node.id}`}
@@ -86,31 +104,11 @@ export function TimelineNode({
         <strong>{node.kind === 'system' ? userName : `【${userName}】`}</strong>
         {node.kind === 'comment' ? <span>{t(`timeline.provenance.${sourceLabel}`)}</span> : null}
         <span className="experience-timeline-node-state">
-          {execution ? status : t(hasDiscussion ? 'timeline.sent' : 'timeline.recorded')}
+          {historyText ??
+            (execution ? status : t(hasDiscussion ? 'timeline.sent' : 'timeline.recorded'))}
         </span>
         <time dateTime={node.at ?? undefined}>{time}</time>
       </header>
-      {node.kind === 'status' && node.transition ? (
-        <p className="experience-timeline-summary">
-          {t('timeline.statusChanged', node.transition)}
-        </p>
-      ) : null}
-      {node.kind === 'handoff' && node.handoff ? (
-        <p className="experience-timeline-summary">
-          {t('timeline.handoff', {
-            action: t(
-              `timeline.handoffActions.${['assign', 'reassign', 'unassign'].includes(node.handoff.action) ? node.handoff.action : 'unknown'}`
-            ),
-            target:
-              node.handoff.targetName ??
-              t(
-                node.handoff.targetType === 'user'
-                  ? 'timeline.unknownMember'
-                  : 'timeline.unknownSource'
-              ),
-          })}
-        </p>
-      ) : null}
       {node.body ? (
         <div className="experience-timeline-summary">
           <IssueActivityMarkdown
@@ -186,9 +184,9 @@ export function TimelineNode({
           </span>
         ) : null}
         {node.conversation.state === 'hidden' && node.kind === 'comment' ? (
-          <span className="experience-timeline-source-note">
+          <span className="experience-timeline-source-note" title={t('timeline.discussionOther')}>
             <Lock size={12} aria-hidden="true" />
-            {t('timeline.discussionOther')}
+            {t('timeline.privateSource')}
           </span>
         ) : null}
       </div>

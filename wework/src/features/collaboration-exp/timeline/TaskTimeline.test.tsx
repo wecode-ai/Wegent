@@ -48,8 +48,10 @@ it.each([
   }
 )
 
-it('keeps background collapsed and presents the current reader question after the shared events', () => {
+it('presents the current reader question before progress and retains the expanded background across filters', () => {
   const props = fixture()
+  props.data.issue.description =
+    'Review **scope** and  \n[spec](wegent://attachments/design).\n\nFull background details'
   props.data.issue.human_requests = [
     experienceHumanRequestFixture({
       id: 'another-person',
@@ -72,18 +74,25 @@ it('keeps background collapsed and presents the current reader question after th
   )
   const background = view.getByTestId('collaboration-exp-background')
   expect(background).not.toHaveAttribute('open')
-  fireEvent.click(background.querySelector('summary')!)
+  const backgroundToggle = view.getByTestId('collaboration-exp-background-toggle')
+  expect(backgroundToggle).toHaveTextContent('Review scope and spec.')
+  expect(backgroundToggle).not.toHaveTextContent('wegent://attachments/design')
+  fireEvent.click(backgroundToggle)
   expect(background).toHaveAttribute('open')
-  expect(view.getByText('Task background')).toBeVisible()
   const turn = view.getByTestId('collaboration-exp-current-turn')
   expect(turn).toHaveTextContent('Approve the actual task scope?')
   expect(turn).not.toHaveTextContent('Another person must decide this')
   expect(
-    view.getByTestId('collaboration-exp-timeline-node-message-1').compareDocumentPosition(turn) &
+    turn.compareDocumentPosition(view.getByTestId('collaboration-exp-timeline-node-message-1')) &
       Node.DOCUMENT_POSITION_FOLLOWING
   ).toBeTruthy()
   fireEvent.click(view.getByTestId('collaboration-exp-task-discussion-task-1'))
   expect(onDiscuss).toHaveBeenCalledWith(null, props.stream.conversations.items[0])
+
+  fireEvent.click(view.getByTestId('collaboration-exp-timeline-filter-conclusions'))
+  expect(view.getByTestId('collaboration-exp-background')).toBe(background)
+  expect(background).toHaveAttribute('open')
+  expect(background).toHaveTextContent('Full background details')
 })
 
 it('never presents another reader request as the current decision or exposes their private entry', () => {
@@ -110,6 +119,7 @@ it('never presents another reader request as the current decision or exposes the
   expect(view.queryByTestId('collaboration-exp-current-turn')).toBeNull()
   expect(view.queryByText('Foreign private decision')).toBeNull()
   expect(view.queryByTestId('collaboration-exp-node-discussion-message-1-task-1')).toBeNull()
+  expect(view.getByTitle('对方的私人讨论，仅本人可见')).toHaveTextContent('源自私人讨论')
   expect(
     view.getByTestId('collaboration-exp-timeline-node-message-1').querySelector('time')
   ).toHaveAttribute('dateTime', '2026-11-02T00:00:00Z')
@@ -148,7 +158,7 @@ it('keeps pane focus for source selection and focuses only an explicit external 
 function fixture() {
   const data: ExperienceIssueData = {
     project: experienceProjectFixture(),
-    issue: experienceIssueFixture({ description: 'Task background' }),
+    issue: experienceIssueFixture({ description: 'Task background\n\nFull background details' }),
     taskBindings: [experienceBindingFixture()],
   }
   const messages = [
@@ -206,7 +216,9 @@ it('renders safe shared content and a compact execution entry without private me
     />
   )
   await waitFor(() => expect(view.getByTestId('collaboration-exp-attachment-index')).toBeTruthy())
-  expect(view.getByText('Task background')).toBeTruthy()
+  expect(view.getByTestId('collaboration-exp-background-toggle')).toHaveTextContent(
+    'Task background'
+  )
   expect(view.queryByText('Private assistant name')).toBeNull()
   expect(view.queryByText('Private prompt and execution arguments')).toBeNull()
   expect(view.queryByText('SECRET')).toBeNull()

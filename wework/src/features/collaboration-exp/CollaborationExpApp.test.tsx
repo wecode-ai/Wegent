@@ -869,6 +869,10 @@ describe('CollaborationExpApp integration', () => {
   })
 
   test('opens the summary before native configuration and reloads authoritative task data after save', async () => {
+    currentIssue = {
+      ...issue,
+      description: 'Task background.\n\n验收  \n标准\n======\n\nConfirm the task details.',
+    }
     open({
       projectStore: 'backend',
       projectId: project.id,
@@ -880,6 +884,9 @@ describe('CollaborationExpApp integration', () => {
     fireEvent.click(screen.getByTestId('collaboration-exp-header-details'))
     const summary = await screen.findByTestId('collaboration-exp-issue-summary')
     expect(summary).toHaveTextContent(issue.title)
+    expect(
+      within(summary).getByTestId('collaboration-exp-issue-summary-acceptance')
+    ).toHaveTextContent('Confirm the task details.')
     expect(screen.queryByTestId('issue-details-leaf')).not.toBeInTheDocument()
     expect(new URLSearchParams(window.location.search).get('inspector')).toBe('summary')
     expect(screen.queryByTestId('private-leaf')).not.toBeInTheDocument()

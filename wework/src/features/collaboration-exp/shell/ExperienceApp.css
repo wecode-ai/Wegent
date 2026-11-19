@@ -85,11 +85,6 @@
   outline-offset: -2px;
 }
 
-.experience-header-status {
-  margin-right: 8px;
-  color: rgb(var(--color-text-muted));
-}
-
 .experience-panes[data-mobile='true'] .experience-header-tool {
   min-width: 44px;
   min-height: 44px;
