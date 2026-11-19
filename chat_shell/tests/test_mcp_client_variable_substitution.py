@@ -33,8 +33,9 @@ class TestBuildConnectionsVariableSubstitution:
 
     @pytest.mark.parametrize("backend_url", [None, "", " \t\n"])
     @pytest.mark.parametrize("path", ["backend_url", "backend_api_url"])
+    @pytest.mark.parametrize("templated_transport", [False, True])
     def test_missing_backend_skips_only_dependent_servers(
-        self, backend_url: str | None, path: str
+        self, backend_url: str | None, path: str, templated_transport: bool
     ) -> None:
         config = {
             "connector": {
@@ -43,13 +44,17 @@ class TestBuildConnectionsVariableSubstitution:
                 "headers": {"Authorization": "Bearer ${{task_token}}"},
             },
             "backend-command": {
-                "type": "stdio",
+                "type": "${{task_data.transport}}" if templated_transport else "stdio",
                 "command": "tool",
                 "args": [f"${{{{{path}}}}}"],
             },
             "web": {"type": "sse", "url": "https://example.test/mcp"},
         }
-        request = ExecutionRequest(backend_url=backend_url, auth_token="synthetic")
+        request = ExecutionRequest(
+            backend_url=backend_url,
+            auth_token="synthetic",
+            task_data={"transport": "stdio"},
+        )
         for task_data in [request, None]:
             connections = build_connections(config, task_data)
             assert set(connections) == {"web"}
@@ -77,23 +82,33 @@ class TestBuildConnectionsVariableSubstitution:
         conn = connections["my-server"]
         assert conn["headers"] == {"X-User": "zhangsan"}
 
-    def test_unused_transport_fields_do_not_require_backend_context(self) -> None:
+    @pytest.mark.parametrize("templated_transport", [False, True])
+    def test_unused_transport_fields_do_not_require_backend_context(
+        self, templated_transport: bool
+    ) -> None:
         config = {
             "http": {
-                "type": "http",
+                "type": "${{task_data.http}}" if templated_transport else "http",
                 "url": "https://example.test/mcp",
                 "args": ["${{backend_api_url}}"],
                 "timeout": "${{backend_url}}",
                 "env": {"UNUSED": "${{backend_url}}"},
             },
             "stdio": {
-                "type": "stdio",
+                "type": "${{task_data.stdio}}" if templated_transport else "stdio",
                 "command": "tool",
                 "url": "${{backend_api_url}}/mcp",
                 "headers": {"UNUSED": "${{backend_url}}"},
             },
         }
-        assert set(build_connections(config, ExecutionRequest())) == {"http", "stdio"}
+        request = ExecutionRequest(task_data={"http": "http", "stdio": "stdio"})
+        connections = build_connections(config, request)
+        assert set(connections) == {"http", "stdio"}
+        assert connections["stdio"]["command"] == "tool"
+        assert connections["http"]["url"] == "https://example.test/mcp"
+        assert config["stdio"]["type"] == (
+            "${{task_data.stdio}}" if templated_transport else "stdio"
+        )
 
     def test_streamable_http_headers_placeholder_replaced(self) -> None:
         """${{user.name}} in streamable-http headers should be replaced."""

@@ -66,11 +66,19 @@ pub fn validate_mcp_server_definition(server: &Value) -> Result<(), String> {
             "oauthClientId",
             "oauth_resource",
             "oauthResource",
-            "default_tools_approval_mode",
-            "defaultToolsApprovalMode",
         ],
         Value::is_string,
     )?;
+    validate_mcp_fields(
+        object,
+        &["default_tools_approval_mode", "defaultToolsApprovalMode"],
+        valid_mcp_approval_mode,
+    )?;
+    validate_mcp_fields(object, &["tools"], |value| {
+        value
+            .as_object()
+            .is_some_and(|tools| tools.values().all(valid_mcp_tool_settings))
+    })?;
     validate_mcp_fields(
         object,
         &["headers", "http_headers", "env_http_headers", "env"],
@@ -126,6 +134,27 @@ fn valid_mcp_env_variable(item: &Value) -> bool {
                     .get("source")
                     .map_or(true, |value| value.is_null() || value.is_string())
         })
+}
+
+fn valid_mcp_approval_mode(value: &Value) -> bool {
+    matches!(
+        value.as_str(),
+        Some("auto" | "prompt" | "writes" | "approve")
+    )
+}
+
+fn valid_mcp_tool_settings(value: &Value) -> bool {
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    validate_mcp_fields(object, &["approval_mode"], valid_mcp_approval_mode).is_ok()
+        && validate_mcp_fields(object, &["output_token_limit"], |value| {
+            value
+                .as_u64()
+                .and_then(|limit| usize::try_from(limit).ok())
+                .is_some_and(|limit| limit > 0)
+        })
+        .is_ok()
 }
 
 pub fn extract_mcp_servers_config(config: &Value) -> Option<&Value> {

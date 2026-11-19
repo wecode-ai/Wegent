@@ -347,6 +347,65 @@ fn invalid_config_or_request_is_not_overwritten() {
 }
 
 #[test]
+fn invalid_mcp_approval_modes_preserve_healthy_native_services() {
+    for field in ["default_tools_approval_mode", "defaultToolsApprovalMode"] {
+        for mode in ["auto", "prompt", "writes", "approve"] {
+            let home = tempfile::tempdir().unwrap();
+            let path = home.path().join("config.toml");
+            fs::write(
+                &path,
+                toml_edit::ser::to_document(&json!({
+                    "model": "keep",
+                    "mcp_servers": {
+                        "saved-bad": {"command":"node", "default_tools_approval_mode":"invalid"},
+                        "bad-tool-mode": {"command":"node", "tools":{"read":{"approval_mode":"invalid"}}},
+                        "bad-tool-budget": {"command":"node", "tools":{"read":{"output_token_limit":0}}},
+                        "healthy-tools": {"command":"node", "tools":{"read":{"approval_mode":mode, "output_token_limit":100}}}
+                    }
+                }))
+                .unwrap()
+                .to_string(),
+            )
+            .unwrap();
+            let request = ExecutionRequest {
+                mcp_servers: vec![
+                    json!({"name":"bad", "command":"node", (field):"invalid"}),
+                    json!({"name":"healthy", "command":"node", (field):mode}),
+                ],
+                ..Default::default()
+            };
+            let mut runtime = Map::new();
+            assert!(prepare(home.path(), &request, &mut runtime).unwrap());
+            assert!(!runtime.contains_key("mcp_servers.bad"));
+            assert!(!runtime.contains_key("mcp_servers.saved-bad"));
+            assert!(!runtime.contains_key("mcp_servers.bad-tool-mode"));
+            assert!(!runtime.contains_key("mcp_servers.bad-tool-budget"));
+            assert_eq!(runtime["mcp_servers.healthy"]["command"], "node");
+            assert_eq!(runtime["mcp_servers.healthy"]["required"], false);
+            assert_eq!(
+                runtime["mcp_servers.healthy"]["default_tools_approval_mode"],
+                mode
+            );
+            assert_eq!(
+                runtime["mcp_servers.healthy-tools"]["tools"]["read"],
+                json!({"approval_mode":mode, "output_token_limit":100})
+            );
+            let persisted: Value =
+                toml_edit::de::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+            assert_eq!(persisted["model"], "keep");
+            assert!(persisted["mcp_servers"].get("bad").is_none());
+            assert!(persisted["mcp_servers"].get("saved-bad").is_none());
+            assert!(persisted["mcp_servers"].get("bad-tool-mode").is_none());
+            assert!(persisted["mcp_servers"].get("bad-tool-budget").is_none());
+            assert_eq!(
+                persisted["mcp_servers"]["healthy"]["default_tools_approval_mode"],
+                mode
+            );
+        }
+    }
+}
+
+#[test]
 fn managed_grants_are_not_persisted_and_agent_homes_do_not_share_servers() {
     let first = tempfile::tempdir().unwrap();
     let second = tempfile::tempdir().unwrap();
