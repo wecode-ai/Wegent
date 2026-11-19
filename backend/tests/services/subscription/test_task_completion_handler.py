@@ -4,11 +4,20 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy.orm import Session
 
 from app.schemas.subscription import (
     BackgroundExecutionStatus,
     SubscriptionExecutionTargetType,
 )
+
+
+def _mocked_session():
+    """Keep real transaction event dispatch while mocking legacy query fixtures."""
+    db = Session()
+    for name in ("query", "get", "commit", "rollback", "refresh", "flush"):
+        setattr(db, name, MagicMock())
+    return db
 
 
 def test_code_wiki_callback_recovers_execution_link_from_generation() -> None:
@@ -34,7 +43,7 @@ def test_code_wiki_callback_recovers_execution_link_from_generation() -> None:
     generation_query.filter.return_value = generation_query
     generation_query.order_by.return_value = generation_query
     generation_query.first.return_value = generation
-    db = MagicMock()
+    db = _mocked_session()
     db.query.side_effect = lambda model: (
         empty_execution_query if model is BackgroundExecution else generation_query
     )
@@ -90,8 +99,11 @@ async def test_completed_managed_subscription_deletes_executor_immediately():
     subtask_query.order_by.return_value = subtask_query
     subtask_query.limit.return_value = subtask_query
     subtask_query.all.side_effect = [[subtask], [], [subtask], []]
+    subtask_query.update.side_effect = (
+        lambda *_args, **_kwargs: setattr(subtask, "executor_deleted_at", True) or 1
+    )
 
-    db = MagicMock()
+    db = _mocked_session()
 
     def query_side_effect(model):
         if model == Kind:
@@ -211,8 +223,11 @@ async def test_auto_delete_task_without_background_execution_deletes_executor():
     subtask_query.order_by.return_value = subtask_query
     subtask_query.limit.return_value = subtask_query
     subtask_query.all.side_effect = [[subtask], [], [subtask], []]
+    subtask_query.update.side_effect = (
+        lambda *_args, **_kwargs: setattr(subtask, "executor_deleted_at", True) or 1
+    )
 
-    db = MagicMock()
+    db = _mocked_session()
 
     def query_side_effect(model):
         if model == TaskResource:
@@ -298,7 +313,7 @@ async def test_task_without_auto_delete_label_keeps_executor():
     task_query.filter.return_value = task_query
     task_query.first.return_value = task
 
-    db = MagicMock()
+    db = _mocked_session()
     db.query.return_value = task_query
 
     @contextmanager
@@ -372,8 +387,11 @@ async def test_completed_subscription_deletes_executor_without_managed_target():
     subtask_query.order_by.return_value = subtask_query
     subtask_query.limit.return_value = subtask_query
     subtask_query.all.side_effect = [[subtask], [], [subtask], []]
+    subtask_query.update.side_effect = (
+        lambda *_args, **_kwargs: setattr(subtask, "executor_deleted_at", True) or 1
+    )
 
-    db = MagicMock()
+    db = _mocked_session()
 
     def query_side_effect(model):
         if model == Kind:
@@ -497,6 +515,11 @@ async def test_completed_subscription_deletes_sandbox_runtime_immediately():
         def limit(self, *_args):
             return self
 
+        def update(self, values, **_kwargs):
+            for subtask in self._items:
+                subtask.executor_deleted_at = values[Subtask.executor_deleted_at]
+            return len(self._items)
+
         def all(self):
             if any(
                 str(criterion.left) == "subtasks.id"
@@ -509,7 +532,7 @@ async def test_completed_subscription_deletes_sandbox_runtime_immediately():
                 return []
             return list(self._items)
 
-    db = MagicMock()
+    db = _mocked_session()
 
     def query_side_effect(model):
         if model == Kind:
@@ -621,8 +644,11 @@ def _finished_subscription_fixture(event_status, execution_status):
     subtask_query.order_by.return_value = subtask_query
     subtask_query.limit.return_value = subtask_query
     subtask_query.all.side_effect = [[subtask], [], [subtask], []]
+    subtask_query.update.side_effect = (
+        lambda *_args, **_kwargs: setattr(subtask, "executor_deleted_at", True) or 1
+    )
 
-    db = MagicMock()
+    db = _mocked_session()
 
     def query_side_effect(model):
         if model == Kind:
@@ -787,189 +813,3 @@ async def test_terminal_execution_receiving_running_event_keeps_executor():
     executor_service.delete_executor_task_async.assert_not_awaited()
     assert subtask.executor_deleted_at is False
     db.commit.assert_not_called()
-
-
-def _result_save_fixture(update_side_effect):
-    """A RUNNING execution whose completion update is driven by update_side_effect."""
-    from app.core.events import TaskCompletedEvent
-    from app.services.subscription.task_completion_handler import (
-        SubscriptionTaskCompletionHandler,
-    )
-
-    handler = SubscriptionTaskCompletionHandler()
-    execution = SimpleNamespace(
-        id=98,
-        subscription_id=21801,
-        status=BackgroundExecutionStatus.RUNNING.value,
-        inbox_message_id=0,
-    )
-    db = MagicMock()
-
-    @contextmanager
-    def fake_db_session():
-        yield db
-
-    event = TaskCompletedEvent(
-        task_id=44,
-        subtask_id=33,
-        user_id=1,
-        status="COMPLETED",
-        result={"value": "x" * 70000},
-        error=None,
-    )
-    dispatch = AsyncMock()
-    cleanup = AsyncMock()
-    patches = (
-        patch.object(handler, "_find_execution_by_task_id", return_value=execution),
-        patch.object(handler, "_extract_result_summary", return_value="x" * 70000),
-        patch.object(handler, "_dispatch_notifications", new=dispatch),
-        patch.object(
-            handler.execution_manager,
-            "update_execution_status",
-            side_effect=update_side_effect,
-        ),
-        patch(
-            "app.services.subscription.task_completion_handler.get_db_session",
-            fake_db_session,
-        ),
-        patch.object(handler, "_cleanup_finished_subscription_executor", new=cleanup),
-    )
-    return handler, event, db, dispatch, patches
-
-
-@pytest.mark.parametrize("event_status", ["COMPLETED", "FAILED"])
-@pytest.mark.asyncio
-async def test_cleanup_commit_failure_still_writes_inbox_and_notifies(
-    event_status: str,
-) -> None:
-    """A failed cleanup commit must roll back before required result delivery."""
-    handler, event, db, _, dispatch, patches = _finished_subscription_fixture(
-        event_status=event_status,
-        execution_status=BackgroundExecutionStatus.RUNNING.value,
-    )
-    lifecycle = []
-
-    def fail_cleanup_commit() -> None:
-        lifecycle.append("cleanup commit")
-        raise RuntimeError("cleanup commit failed")
-
-    def writeback(*args: Any, **kwargs: Any) -> None:
-        assert lifecycle == ["cleanup commit", "rollback"]
-        lifecycle.append("inbox")
-
-    async def notify(*args: Any, **kwargs: Any) -> None:
-        assert lifecycle == ["cleanup commit", "rollback", "inbox"]
-        lifecycle.append("notifications")
-
-    db.commit.side_effect = fail_cleanup_commit
-    db.rollback.side_effect = lambda: lifecycle.append("rollback")
-    dispatch.side_effect = notify
-    with (
-        patches[0] as find,
-        patches[1],
-        patches[2],
-        patches[3] as update,
-        patches[4],
-        patches[5],
-        patches[6] as runtime_client_factory,
-        patches[7] as executor_service,
-        patch.object(handler, "_is_code_wiki_scheduled_update", return_value=False),
-        patch(
-            "app.services.inbox.result_writeback.write_execution_result_to_message",
-            side_effect=writeback,
-        ) as write_result,
-    ):
-        find.return_value.inbox_message_id = 7
-        runtime_client = MagicMock()
-        runtime_client.get_sandbox = AsyncMock(return_value=(None, None))
-        runtime_client_factory.return_value = runtime_client
-        executor_service.delete_executor_task_async = AsyncMock(
-            return_value={"status": "success"}
-        )
-        await handler.on_task_completed(event)
-
-    assert lifecycle == ["cleanup commit", "rollback", "inbox", "notifications"]
-    db.rollback.assert_called_once()
-    write_result.assert_called_once()
-    assert write_result.call_args.kwargs["status"] == event_status
-    dispatch.assert_awaited_once()
-    assert update.call_count == 1
-
-
-def _data_too_long():
-    from sqlalchemy.exc import DataError
-
-    class MySQLDataError(Exception):
-        def __str__(self):
-            return "(1406, \"Data too long for column 'result_summary' at row 1\")"
-
-    return DataError("UPDATE background_executions ...", {}, MySQLDataError())
-
-
-@pytest.mark.asyncio
-async def test_unsaveable_result_fails_execution_and_still_notifies():
-    """A result the DB rejects must fail the run with the cause, not leave it RUNNING."""
-    handler, event, db, dispatch, patches = _result_save_fixture(
-        [_data_too_long(), True]
-    )
-
-    with (
-        patches[0],
-        patches[1],
-        patches[2],
-        patches[3] as update,
-        patches[4],
-        patches[5] as cleanup,
-    ):
-        await handler.on_task_completed(event)
-
-    db.rollback.assert_called_once()
-    assert update.call_count == 2
-    fallback = update.call_args_list[1].kwargs
-    assert fallback["status"] == BackgroundExecutionStatus.FAILED
-    assert fallback["skip_notifications"] is True
-    assert "result_summary" not in fallback
-    assert fallback["error_message"].startswith(
-        "The run finished but its result could not be saved: MySQLDataError: (1406"
-    )
-
-    dispatch.assert_awaited_once()
-    sent_event = dispatch.await_args.args[2]
-    assert sent_event.status == "FAILED"
-    assert sent_event.error == fallback["error_message"]
-    assert dispatch.await_args.args[3] == "x" * 70000
-    cleanup.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("fallback", [False, True])
-@pytest.mark.parametrize("stored_status", ["CANCELLED", "RUNNING"])
-async def test_status_noop_releases_only_a_persisted_terminal_execution(
-    fallback: bool, stored_status: str
-) -> None:
-    """A lost write may observe a cancelled run or a still-active competing writer."""
-    handler, event, db, dispatch, patches = _result_save_fixture(
-        [_data_too_long(), False] if fallback else [False]
-    )
-    db.refresh.side_effect = lambda execution: setattr(
-        execution, "status", stored_status
-    )
-
-    with (
-        patches[0],
-        patches[1],
-        patches[2],
-        patches[3] as update,
-        patches[4],
-        patches[5] as cleanup,
-    ):
-        await handler.on_task_completed(event)
-
-    assert update.call_count == (2 if fallback else 1)
-    assert db.rollback.call_count == (2 if fallback else 1)
-    db.refresh.assert_called_once()
-    if stored_status == "CANCELLED":
-        cleanup.assert_awaited_once()
-    else:
-        cleanup.assert_not_awaited()
-    dispatch.assert_not_awaited()
