@@ -175,6 +175,10 @@ limit, and delay in milliseconds. The `model-overload-recovery` desktop checkpoi
 uses real Electron, Codex, and executor processes to verify tool-history retention,
 automatic continuation, no duplicate user messages, and cancellation.
 
+### Codex external context conversion
+
+When continuing a conversation, Codex can represent external context as `function_call_output` without a usable `call_id`. For Chat Completions and Anthropic Messages, the executor converts these records to user content before normalizing tool IDs. Results with a usable ID keep their association with the original call through `tool_call_id` or `tool_use_id`, respectively.
+
 ### Anthropic Empty-Output Recovery
 
 For every Anthropic Messages upstream, the executor normalizes Codex subagent `agent_message` items to messages with the `developer` role. The Anthropic adapter then places their content in the upstream request's `system` field. The `model-sse-parsing` checkpoint uses real Codex parent and child agents with a simulated upstream to verify that both the child task and the completion reach that field.

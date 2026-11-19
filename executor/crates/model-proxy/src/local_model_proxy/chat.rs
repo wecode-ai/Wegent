@@ -769,6 +769,7 @@ use input_translation::append_input;
 use input_translation::append_tool_image_content;
 use input_translation::backfill_kimi_tool_call_reasoning;
 use input_translation::collapse_system_messages;
+pub(super) use input_translation::detached_context_message;
 use input_translation::flush_tool_image_content_to_responses;
 pub(super) use input_translation::friendly_apply_patch_output;
 use input_translation::json_string;
