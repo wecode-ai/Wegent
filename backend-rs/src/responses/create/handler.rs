@@ -192,6 +192,7 @@ struct PreparedCreate {
     bot_ids: Vec<i64>,
     model_type: Option<String>,
     project_id: i64,
+    device_id: Option<String>,
     setup: ChatSessionSetup,
 }
 
@@ -299,6 +300,19 @@ async fn resolve_create_scope(
         ));
     };
 
+    let device_id = super::device::resolve(
+        &mut &mut *transaction,
+        user_id,
+        input
+            .execution
+            .as_ref()
+            .and_then(|execution| execution.device_id()),
+        continuation
+            .as_ref()
+            .map(|continuation| &continuation.task_json),
+    )
+    .await?;
+
     // `create_new_task`'s API source group (`params.is_api_call`): the group
     // id is written to the placeholder Task row. A `previous_response_id`
     // reuse skips task creation, so the source resolves no group.
@@ -352,7 +366,7 @@ async fn resolve_create_scope(
                 is_api_call: true,
                 auto_delete_executor,
                 omit_mcp_binary_output: input.omit_mcp_binary_output,
-                device_id: None,
+                device_id: device_id.as_deref(),
                 git_workspace: false,
                 created_at: crd_timestamp,
                 updated_at: crd_timestamp,
@@ -390,6 +404,7 @@ async fn resolve_create_scope(
         bot_ids: bots.bot_ids,
         model_type,
         project_id,
+        device_id,
         setup,
     })
 }
@@ -485,6 +500,7 @@ async fn create_response_flow(
             team,
             bot,
             bot_ids,
+            device_id,
             setup,
             ..
         },
@@ -646,6 +662,7 @@ async fn create_response_flow(
         previous_response_id: input.previous_response_id.clone(),
         model_string: &input.model,
         task_project_id,
+        device_id,
         executor_name: &setup.assistant_executor_name,
         executor_namespace: &setup.assistant_executor_namespace,
         // `enable_tools`: `enable_chat_bot or current/inherited KB refs`

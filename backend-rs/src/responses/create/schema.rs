@@ -17,6 +17,9 @@ const MAX_ATTACHMENT_IDS: usize = 100;
 #[derive(Debug, Deserialize)]
 pub struct ResponseCreateInput {
     pub model: String,
+    /// Optional placement for ordinary Wegent Team execution.
+    #[serde(default)]
+    pub execution: Option<WegentExecution>,
     #[serde(default)]
     pub input: serde_json::Value,
     // Pydantic coerces `"false"`/`"true"`/`"1"`/`"0"` (and `0`/`1`) to `bool`,
@@ -46,6 +49,40 @@ pub struct ResponseCreateInput {
     /// ids linked to the request's user subtask.
     #[serde(default, deserialize_with = "attachment_ids")]
     pub attachment_ids: Vec<i64>,
+}
+
+/// The Wework discriminator is handled before this ordinary request is parsed.
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase", deny_unknown_fields)]
+pub enum WegentExecution {
+    Wegent {
+        #[serde(default, deserialize_with = "device_id")]
+        device_id: Option<String>,
+    },
+}
+
+impl WegentExecution {
+    pub fn device_id(&self) -> Option<&str> {
+        match self {
+            Self::Wegent { device_id } => device_id.as_deref(),
+        }
+    }
+}
+
+fn device_id<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<String>, D::Error> {
+    use serde::de::Error;
+    Option::<String>::deserialize(deserializer)?
+        .map(|value| {
+            let value = value.trim();
+            if value.is_empty() {
+                Err(Error::custom("execution.device_id must not be empty"))
+            } else {
+                Ok(value.to_string())
+            }
+        })
+        .transpose()
 }
 
 /// Match Pydantic's optional, positive, bounded attachment id list.
@@ -369,6 +406,56 @@ fn content_text(item: &serde_json::Value) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn wegent_execution_selects_a_device_and_remains_optional() {
+        for execution in [json!(null), json!({"type": "wegent"})] {
+            let input: ResponseCreateInput = serde_json::from_value(json!({
+                "model": "default#team", "execution": execution
+            }))
+            .unwrap();
+            assert_eq!(
+                input
+                    .execution
+                    .as_ref()
+                    .and_then(WegentExecution::device_id),
+                None
+            );
+        }
+        let input: ResponseCreateInput = serde_json::from_value(json!({
+            "model": "default#team", "stream": true,
+            "execution": {"type": "wegent", "device_id": "  executor-1  "}
+        }))
+        .unwrap();
+        assert_eq!(input.execution.unwrap().device_id(), Some("executor-1"));
+        assert!(input.stream);
+    }
+
+    #[test]
+    fn invalid_device_selection_is_rejected_instead_of_becoming_cloud_execution() {
+        for device_id in [json!(""), json!("  "), json!(12), json!({})] {
+            assert!(
+                serde_json::from_value::<ResponseCreateInput>(json!({
+                    "model": "default#team",
+                    "execution": {"type": "wegent", "device_id": device_id}
+                }))
+                .is_err()
+            );
+        }
+        assert!(
+            serde_json::from_value::<ResponseCreateInput>(json!({
+                "model": "default#team", "execution": {"type": "unsupported"}
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<ResponseCreateInput>(json!({
+                "model": "default#team",
+                "execution": {"type": "wegent", "device_id": "device", "foo": true}
+            }))
+            .is_err()
+        );
+    }
 
     /// `parse_wegent_tools` collects the `knowledge_base` tool's normalized
     /// refs and their name-only projection (`helpers.py:131-190`).

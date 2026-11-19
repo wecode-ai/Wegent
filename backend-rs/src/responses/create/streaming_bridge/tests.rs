@@ -40,7 +40,7 @@ fn the_callback_consumer_keeps_the_source_side_effect_sequence() {
 
     let cleanup_start = source.find("async fn cleanup(&mut self)").expect("cleanup");
     let cleanup_end = source[cleanup_start..]
-        .find("self.registered = false;")
+        .find("\n    }\n}")
         .map(|offset| cleanup_start + offset)
         .expect("cleanup end");
     let cleanup = &source[cleanup_start..cleanup_end];
@@ -58,7 +58,7 @@ fn the_callback_consumer_keeps_the_source_side_effect_sequence() {
     );
     assert!(
         !cleanup.contains("self.callback_mode()"),
-        "both modes run raw_chat_stream's single outer unregister"
+        "chat-shell and executor callbacks retain their outer unregister"
     );
     assert!(
         cleanup.find("subscription.close()").is_some_and(|close| {
@@ -186,6 +186,14 @@ fn a_failure_carries_its_own_classified_error_type() {
         BridgeFailure::generic("boom".to_string()).error_code,
         Some("generic_error")
     );
+    let settled = FastApiError::detail(
+        brz_http_server::StatusCode::CONFLICT,
+        "Assistant subtask is no longer dispatchable",
+    );
+    assert!(BridgeFailure::dispatch(&settled).terminal_winner);
+    let unrelated = FastApiError::detail(brz_http_server::StatusCode::CONFLICT, "Device busy");
+    assert!(!BridgeFailure::dispatch(&unrelated).terminal_winner);
+    assert!(!BridgeFailure::network("Connection error.".to_owned()).terminal_winner);
 }
 
 #[test]
@@ -237,10 +245,13 @@ fn callback_bridge(payloads: Vec<Vec<u8>>) -> (Bridge, std::sync::Arc<std::sync:
             .expect("executor manager"),
         emitter: None,
         cancel_key: "chat:cancel:test".to_string(),
-        mode: Mode::Callback { dispatch_url: None },
+        mode: Mode::Callback {
+            target: CallbackDispatchTarget::Executor { url: None },
+        },
         response: None,
         subscription: Some(subscription),
         callback_dispatch: None,
+        callback_dispatch_attempted: true,
         frames: SseFrames::default(),
         poll,
         queue,
@@ -251,6 +262,7 @@ fn callback_bridge(payloads: Vec<Vec<u8>>) -> (Bridge, std::sync::Arc<std::sync:
             None,
         ),
         tool_states: HashMap::new(),
+        device_text: DeviceTextOffsets::default(),
         registered: false,
         inner_unregistered: false,
         terminal: false,
@@ -379,6 +391,375 @@ async fn a_callback_error_event_fails_the_stream() {
     assert!(body.contains("response.failed"), "{body}");
     assert!(body.contains("boom"), "{body}");
     assert!(!*connected.lock().unwrap());
+}
+
+#[tokio::test]
+async fn device_terminal_snapshots_preserve_text_and_block_identity() {
+    for delta in [None, Some("部分🙂")] {
+        let mut payloads = vec![event(json!({
+            "type": "block_created", "task_id": TEST_TASK_ID, "subtask_id": TEST_SUBTASK_ID,
+            "data": {"block": {"id": "text-1", "type": "text", "content": ""}}
+        }))];
+        if let Some(delta) = delta {
+            payloads.push(event(json!({
+                "type": "chunk", "task_id": TEST_TASK_ID, "subtask_id": TEST_SUBTASK_ID,
+                "content": delta, "offset": 0, "data": {"block_id": "text-1", "block_offset": 0}
+            })));
+        }
+        payloads.push(event(json!({
+            "type": "done", "task_id": TEST_TASK_ID, "subtask_id": TEST_SUBTASK_ID,
+            "result": {"value": "完整回复🙂", "blocks": [
+                {"id": "text-1", "type": "text", "content": "完整回复🙂", "status": "done"}
+            ]}
+        })));
+        let (mut bridge, connected) = callback_bridge(payloads);
+        bridge.mode = Mode::Callback {
+            target: CallbackDispatchTarget::Device {
+                route: "test-device".to_owned(),
+            },
+        };
+
+        let body = drain(&mut bridge).await;
+        let frames: Vec<Value> = body
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .map(|line| serde_json::from_str(line).expect("SSE frame"))
+            .collect();
+        let completed = frames
+            .iter()
+            .find(|frame| frame["type"] == "response.completed")
+            .expect("completed frame");
+        assert_eq!(
+            completed["response"]["output"][0]["content"][0]["text"],
+            "完整回复🙂"
+        );
+        assert_eq!(
+            frames
+                .iter()
+                .filter(|frame| frame["type"] == "response.output_text.delta")
+                .count(),
+            1
+        );
+        assert_eq!(
+            frames
+                .iter()
+                .filter(|frame| frame["type"] == "response.block.created")
+                .count(),
+            1
+        );
+        assert_eq!(
+            frames
+                .iter()
+                .filter(|frame| frame["type"] == "response.block.updated")
+                .count(),
+            1
+        );
+        assert!(!*connected.lock().unwrap());
+    }
+}
+
+#[tokio::test]
+async fn device_cancellation_waits_for_the_canonical_terminal_event() {
+    use crate::responses::test_redis::RecordingRedis;
+
+    let redis = RecordingRedis::default();
+    redis.mark_cancelled();
+    for (device, terminal) in [(false, "done"), (true, "done"), (true, "cancelled")] {
+        let (mut bridge, connected) = callback_bridge(Vec::new());
+        bridge.cancel_key = format!("chat:cancel:{}", crate::responses::test_mysql::SUBTASK_ID);
+        if device {
+            bridge.mode = Mode::Callback {
+                target: CallbackDispatchTarget::Device {
+                    route: "test-device".to_owned(),
+                },
+            };
+        }
+        let chunk = ExecutionEvent::from_value(&json!({
+            "type": "chunk", "content": "部分🙂"
+        }));
+        assert_eq!(
+            bridge.handle_parsed_from_source(chunk, Some(&redis)).await,
+            !device
+        );
+        assert_eq!(bridge.finished, !device);
+        assert_eq!(*connected.lock().unwrap(), device);
+        if device {
+            let terminal = ExecutionEvent::from_value(&json!({
+                "type": terminal, "result": {"value": "已提交回复🙂"}
+            }));
+            bridge
+                .handle_parsed_from_source(terminal, Some(&redis))
+                .await;
+        }
+
+        let frames: Vec<Value> = drain(&mut bridge)
+            .await
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .map(|line| serde_json::from_str(line).expect("SSE frame"))
+            .collect();
+        let completed = frames
+            .iter()
+            .find(|frame| frame["type"] == "response.completed")
+            .expect("completed frame");
+        if device {
+            assert_eq!(
+                completed["response"]["output"][0]["content"][0]["text"],
+                "已提交回复🙂"
+            );
+        } else {
+            assert!(
+                frames
+                    .iter()
+                    .all(|frame| frame["type"] != "response.output_text.delta")
+            );
+        }
+        assert!(!*connected.lock().unwrap());
+    }
+}
+
+#[tokio::test]
+async fn an_unsettled_device_dispatch_keeps_its_reader_for_cancellation() {
+    let (mut bridge, connected) = callback_bridge(vec![event(json!({
+        "type": "cancelled", "result": {"value": "取消时已提交的回复🙂"}
+    }))]);
+    bridge.mode = Mode::Callback {
+        target: CallbackDispatchTarget::Device {
+            route: "test-device".to_owned(),
+        },
+    };
+
+    bridge.finish_committed_winner_result(Ok(None)).await;
+
+    assert!(!bridge.finished);
+    assert!(*connected.lock().unwrap());
+    let body = drain(&mut bridge).await;
+    assert!(body.contains("response.completed"), "{body}");
+    assert!(body.contains("取消时已提交的回复🙂"), "{body}");
+    assert!(!body.contains("response.failed"), "{body}");
+    assert!(!*connected.lock().unwrap());
+}
+
+#[tokio::test]
+async fn a_committed_device_dispatch_winner_replaces_partial_text() {
+    let (mut bridge, connected) = callback_bridge(Vec::new());
+    bridge.mode = Mode::Callback {
+        target: CallbackDispatchTarget::Device {
+            route: "test-device".to_owned(),
+        },
+    };
+    bridge
+        .handle_parsed(ExecutionEvent::from_value(&json!({
+            "type": "chunk", "content": "部分🙂"
+        })))
+        .await;
+
+    bridge
+        .finish_committed_winner_result(Ok(Some(completion::StoredTerminal {
+            status: "COMPLETED".to_owned(),
+            result: Some(json!({"value": "竞争方已提交🙂"})),
+            error: None,
+        })))
+        .await;
+
+    let frames: Vec<Value> = drain(&mut bridge)
+        .await
+        .lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .map(|line| serde_json::from_str(line).expect("SSE frame"))
+        .collect();
+    let completed = frames
+        .iter()
+        .find(|frame| frame["type"] == "response.completed")
+        .expect("completed frame");
+    assert_eq!(
+        completed["response"]["output"][0]["content"][0]["text"],
+        "竞争方已提交🙂"
+    );
+    assert_eq!(
+        frames
+            .iter()
+            .filter(|frame| frame["type"] == "response.output_text.delta")
+            .count(),
+        1
+    );
+    assert!(!*connected.lock().unwrap());
+}
+
+#[tokio::test]
+async fn device_text_replays_and_overlaps_use_unicode_item_offsets() {
+    for gap in [false, true] {
+        let mut deltas = vec![
+            ("one", 0, "检查🙂"),
+            ("one", 0, "检查🙂"),
+            ("one", 2, "🙂中"),
+        ];
+        if gap {
+            deltas.push(("one", 6, "尾"));
+        }
+        deltas.extend([("two", 0, "完成"), ("two", 0, "完成"), ("two", 1, "成🚀")]);
+        let streamed = if gap {
+            "检查🙂中尾完成🚀"
+        } else {
+            "检查🙂中完成🚀"
+        };
+        let canonical = if gap {
+            "检查🙂中缺失尾完成🚀"
+        } else {
+            streamed
+        };
+        let mut payloads: Vec<_> = deltas
+            .into_iter()
+            .map(|(id, offset, text)| {
+                event(json!({
+                    "type": "chunk", "task_id": TEST_TASK_ID, "subtask_id": TEST_SUBTASK_ID,
+                    "content": text, "data": {"block_id": id, "block_offset": offset}
+                }))
+            })
+            .collect();
+        payloads.push(event(json!({
+            "type": "done", "task_id": TEST_TASK_ID, "subtask_id": TEST_SUBTASK_ID,
+            "result": {"value": canonical}
+        })));
+        let (mut bridge, _) = callback_bridge(payloads);
+        bridge.mode = Mode::Callback {
+            target: CallbackDispatchTarget::Device {
+                route: "test-device".to_owned(),
+            },
+        };
+
+        let body = drain(&mut bridge).await;
+        let frames: Vec<Value> = body
+            .lines()
+            .filter_map(|line| line.strip_prefix("data: "))
+            .map(|line| serde_json::from_str(line).expect("SSE frame"))
+            .collect();
+        let deltas: Vec<_> = frames
+            .iter()
+            .filter(|frame| frame["type"] == "response.output_text.delta")
+            .map(|frame| frame["delta"].as_str().expect("text delta"))
+            .collect();
+        assert_eq!(deltas.concat(), streamed);
+        assert_eq!(
+            deltas.len(),
+            if gap { 5 } else { 4 },
+            "terminal snapshots must not add deltas"
+        );
+        let completed = frames
+            .iter()
+            .find(|frame| frame["type"] == "response.completed")
+            .expect("completed frame");
+        assert_eq!(
+            completed["response"]["output"][0]["content"][0]["text"],
+            canonical
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_immediate_dispatch_reply_is_retained_after_subscription() {
+    use super::super::callback_source::{CallbackSourceError, CallbackSubscriptions};
+    struct LiveSubscriptions(tokio::sync::broadcast::Sender<Vec<u8>>);
+    struct LiveSource(tokio::sync::broadcast::Receiver<Vec<u8>>);
+    #[async_trait::async_trait]
+    impl CallbackSubscriptions for LiveSubscriptions {
+        async fn subscribe(
+            &self,
+            _channel: &str,
+        ) -> Result<Box<dyn CallbackEventSource>, CallbackSourceError> {
+            Ok(Box::new(LiveSource(self.0.subscribe())))
+        }
+    }
+    #[async_trait::async_trait]
+    impl CallbackEventSource for LiveSource {
+        async fn next_message(&mut self) -> Result<Option<CallbackMessage>, CallbackSourceError> {
+            self.0
+                .recv()
+                .await
+                .map(|payload| {
+                    Some(CallbackMessage {
+                        payload: Bytes::from(payload),
+                    })
+                })
+                .map_err(|error| CallbackSourceError {
+                    message: error.to_string(),
+                })
+        }
+        async fn close(self: Box<Self>) {}
+    }
+    let (sender, initial) = tokio::sync::broadcast::channel(1);
+    drop(initial);
+    let provider = LiveSubscriptions(sender);
+    let terminal = event(json!({"type": "done", "result": {"value": "立即完成🙂"}}));
+    let mut subscription = None;
+
+    callback::subscribe_before_dispatch(
+        &provider,
+        "callback:channel:test",
+        &mut subscription,
+        || async {
+            let _ = provider.0.send(terminal.clone());
+            Ok(())
+        },
+    )
+    .await
+    .expect("subscribe and dispatch");
+
+    let reply = tokio::time::timeout(
+        Duration::from_secs(1),
+        subscription.as_mut().unwrap().next_message(),
+    )
+    .await
+    .expect("first event must be retained")
+    .expect("read")
+    .expect("reply");
+    assert_eq!(reply.payload.as_ref(), terminal.as_slice());
+    subscription.take().unwrap().close().await;
+}
+
+#[tokio::test]
+async fn dropping_a_device_stream_closes_its_reader() {
+    struct CloseSignal(tokio::sync::oneshot::Sender<()>);
+    #[async_trait::async_trait]
+    impl CallbackEventSource for CloseSignal {
+        async fn next_message(&mut self) -> Result<Option<CallbackMessage>, CallbackSourceError> {
+            std::future::pending().await
+        }
+        async fn close(self: Box<Self>) {
+            let _ = self.0.send(());
+        }
+    }
+    let (closed, close_received) = tokio::sync::oneshot::channel();
+    let (mut bridge, _) = callback_bridge(Vec::new());
+    bridge.subscription.take().unwrap().close().await;
+    bridge.subscription = Some(Box::new(CloseSignal(closed)));
+    bridge.mode = Mode::Callback {
+        target: CallbackDispatchTarget::Device {
+            route: "test-device".to_owned(),
+        },
+    };
+
+    drop(bridge);
+
+    tokio::time::timeout(Duration::from_secs(1), close_received)
+        .await
+        .expect("reader teardown must finish")
+        .expect("reader closed");
+}
+
+#[tokio::test]
+async fn an_unavailable_callback_reader_prevents_submission() {
+    let provider = super::super::callback_source::test_support::ScriptedSubscriptions::failing();
+    let mut subscription = None;
+    let result = callback::subscribe_before_dispatch(
+        &provider,
+        "callback:channel:test",
+        &mut subscription,
+        || async { panic!("A device turn cannot start without its callback reader") },
+    )
+    .await;
+    assert!(result.is_err());
+    assert!(subscription.is_none());
 }
 
 /// The recorded payload carries every `ExecutionEvent` member;

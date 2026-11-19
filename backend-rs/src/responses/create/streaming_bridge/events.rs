@@ -556,6 +556,15 @@ impl ResponseState {
         result: Option<&Value>,
     ) {
         self.response_blocks.clear();
+        self.use_callback_result(queue, result);
+    }
+
+    /// Apply the producer's canonical terminal snapshot without replaying text deltas.
+    pub(super) fn use_callback_result(
+        &mut self,
+        queue: &mut VecDeque<Bytes>,
+        result: Option<&Value>,
+    ) {
         self.result_blocks(queue, result);
         if let Some(text) = result
             .and_then(|result| result.get("value"))

@@ -28,6 +28,7 @@ pub(crate) mod callback_source;
 mod connectors;
 pub mod contexts;
 pub mod continuation;
+mod device;
 pub use wegent_protocol::dispatch;
 pub mod executor_client;
 pub mod ghost;
