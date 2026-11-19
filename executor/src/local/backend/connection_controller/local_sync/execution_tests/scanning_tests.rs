@@ -265,7 +265,11 @@ async fn terminal_recovery_during_either_scan_completes_without_rescanning() {
             (RecoveryReply::Rejected, "rejectedOperations"),
         ] {
             let fixture = Arc::new(Fixture::with_recovery(Plan::Valid, reply).await);
-            let original = load_journal(&fixture.path).unwrap()["pending"][0].clone();
+            let mut seeded = load_journal(&fixture.path).unwrap();
+            let progress_id = "2947a853-06e7-48a7-9ca2-122738754793";
+            seeded["pending"][0]["progressId"] = json!(progress_id);
+            persist(&fixture.path, &seeded).unwrap();
+            let original = seeded["pending"][0].clone();
             let (fixture, held, full) = held_scan_for(fixture, phase).await;
             tokio::time::timeout(EVENT_WAIT_TIMEOUT, fixture.recovery_entered.notified())
                 .await
@@ -285,7 +289,18 @@ async fn terminal_recovery_during_either_scan_completes_without_rescanning() {
             .await
             .expect("Recovery could not archive while scanning");
             drop(held);
-            assert_eq!(full.await.unwrap().unwrap()["localCompleted"], true);
+            let result = full.await.unwrap().unwrap();
+            assert_eq!(result["localCompleted"], true);
+            let outcomes = result["recoveryOutcomes"].as_array().unwrap();
+            assert_eq!(outcomes.len(), 1);
+            assert_eq!(outcomes[0]["operationId"], "original");
+            assert_eq!(outcomes[0]["progressId"], progress_id);
+            if archive == "rejectedOperations" {
+                assert_eq!(outcomes[0]["status"], "rejected");
+                assert_eq!(outcomes[0]["httpStatus"], 404);
+            } else {
+                assert_eq!(outcomes[0]["status"], "superseded");
+            }
             let journal = load_journal(&fixture.path).unwrap();
             assert_eq!(journal["pending"], json!([]));
             assert_eq!(journal["nextIntentOrder"], 7);
@@ -296,6 +311,7 @@ async fn terminal_recovery_during_either_scan_completes_without_rescanning() {
             };
             for field in [
                 "operationId",
+                "progressId",
                 "intentOrder",
                 "action",
                 "targetId",
@@ -319,6 +335,37 @@ async fn terminal_recovery_during_either_scan_completes_without_rescanning() {
             assert_eq!(fixture.plans.lock().unwrap().len(), 1);
         }
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn full_recovery_reports_superseded_even_when_original_replay_is_slow() {
+    let fixture =
+        Arc::new(Fixture::with_recovery(Plan::SupersededOriginal, RecoveryReply::Superseded).await);
+    let mut journal = load_journal(&fixture.path).unwrap();
+    let progress_id = "2947a853-06e7-48a7-9ca2-122738754793";
+    journal["pending"][0]["progressId"] = json!(progress_id);
+    journal["pending"][0]["accepted"] = json!(true);
+    persist(&fixture.path, &journal).unwrap();
+    let full = tokio::spawn({
+        let fixture = fixture.clone();
+        async move { fixture.sync(json!({"full":true})).await }
+    });
+    tokio::time::timeout(EVENT_WAIT_TIMEOUT, fixture.recovery_entered.notified())
+        .await
+        .unwrap();
+    let result = tokio::time::timeout(EVENT_WAIT_TIMEOUT, full)
+        .await
+        .expect("Full reconciliation must not wait for the original replay")
+        .unwrap()
+        .unwrap();
+    let outcomes = result["recoveryOutcomes"].as_array().unwrap();
+    assert_eq!(outcomes.len(), 1);
+    assert_eq!(outcomes[0]["operationId"], "original");
+    assert_eq!(outcomes[0]["progressId"], progress_id);
+    assert_eq!(outcomes[0]["status"], "superseded");
+    assert_eq!(result["result"]["plugins"][0]["status"], "removed");
+    assert_eq!(result["pendingCount"], 0);
+    fixture.recovery_release.notify_one();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

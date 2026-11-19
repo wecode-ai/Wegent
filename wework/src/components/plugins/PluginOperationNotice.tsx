@@ -3,7 +3,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 
 export type PluginOperationNoticeState = {
   id: string
-  kind: 'authorization' | 'success' | 'error'
+  kind: 'authorization' | 'progress' | 'success' | 'error'
   message: string
   iconUrl?: string | null
   actionLabel?: string
@@ -29,7 +29,7 @@ export function PluginOperationNotice({
       <span className="plugin-operation-notice-icon" aria-hidden="true">
         {notice.iconUrl ? (
           <img src={notice.iconUrl} alt="" />
-        ) : notice.kind === 'authorization' ? (
+        ) : notice.kind === 'authorization' || notice.kind === 'progress' ? (
           <Loader2 className="animate-spin" />
         ) : notice.kind === 'success' ? (
           <Check />
