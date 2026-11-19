@@ -488,7 +488,11 @@ def test_device_entrypoint_rejects_conflicting_home_link_without_mutating_data(
         ("unmounted", False, "false", None),
         ("separately-mounted", False, "true", "home"),
         ("separately-mounted", True, "true", "home"),
+        ("mounted-parent", False, "true", "parent"),
         ("mounted-parent", True, "true", "parent"),
+        ("mounted-ancestor", False, "true", "ancestor"),
+        ("mounted-ancestor", True, "true", "ancestor"),
+        ("unmounted", False, "true", "container-root"),
     ],
 )
 def test_device_entrypoint_verifies_resolved_home_storage_before_writing(
@@ -501,7 +505,11 @@ def test_device_entrypoint_verifies_resolved_home_storage_before_writing(
     executor_home = _executor_home(tmp_path)
     data_root = tmp_path / "data-root"
     target_root = tmp_path / target_name
-    linked_home = target_root / "executor" if link_parent else target_root
+    linked_home = target_root
+    if link_parent or mounted_root == "parent":
+        linked_home = target_root / "executor"
+    if mounted_root == "ancestor":
+        linked_home = target_root / "homes" / "executor"
     linked_home.mkdir(parents=True)
     for root in (data_root, linked_home):
         (root / ".executor-home-id").write_text("device-stable-1")
@@ -509,9 +517,16 @@ def test_device_entrypoint_verifies_resolved_home_storage_before_writing(
     link = executor_home.parent if link_parent else executor_home
     if link_parent:
         link.rmdir()
-    link.symlink_to(target_root, target_is_directory=True)
+    link.symlink_to(
+        linked_home.parent if link_parent else linked_home, target_is_directory=True
+    )
     entries = {root: set(root.rglob("*")) for root in (data_root, target_root)}
-    mount_paths = {"home": linked_home, "parent": target_root}
+    mount_paths = {
+        "home": linked_home,
+        "parent": target_root,
+        "ancestor": target_root,
+        "container-root": Path("/"),
+    }
 
     result = _run_entrypoint(
         tmp_path=tmp_path,
@@ -526,7 +541,11 @@ def test_device_entrypoint_verifies_resolved_home_storage_before_writing(
     for root in (data_root, linked_home):
         assert (root / ".executor-home-id").read_text() == "device-stable-1"
         assert (root / "persisted-session").read_text() == "original-session"
-    if persistence_verified == "true" and mounted_root != "home":
+    if persistence_verified == "true" and mounted_root not in {
+        "home",
+        "parent",
+        "ancestor",
+    }:
         assert result.returncode != 0
         assert "Executor Home inside a mounted storage root" in result.stderr
         for root, original_entries in entries.items():
@@ -564,6 +583,7 @@ def test_device_entrypoint_rejects_container_root_before_identity_and_writes(
     assert not (tmp_path / "codex-homes").exists()
 
 
+@pytest.mark.parametrize("mounted_parent", [False, True])
 @pytest.mark.parametrize(
     ("blocked_home", "expected_error"),
     [
@@ -573,11 +593,17 @@ def test_device_entrypoint_rejects_container_root_before_identity_and_writes(
     ],
 )
 def test_separately_mounted_executor_home_enforces_identity_and_writer_locks(
-    tmp_path: Path, blocked_home: str | None, expected_error: str
+    tmp_path: Path,
+    blocked_home: str | None,
+    expected_error: str,
+    mounted_parent: bool,
 ) -> None:
     executor_home = _executor_home(tmp_path)
-    linked_home = tmp_path / "mounted-home"
-    linked_home.mkdir()
+    mounted_root = tmp_path / "mounted-home"
+    linked_home = (
+        mounted_root / "homes" / "executor" if mounted_parent else mounted_root
+    )
+    linked_home.mkdir(parents=True)
     data_root = tmp_path / "data-root"
     identities = {
         data_root: "device-stable-1",
@@ -597,7 +623,7 @@ def test_separately_mounted_executor_home_enforces_identity_and_writer_locks(
             tmp_path=tmp_path,
             executor_home=executor_home,
             home_id="device-stable-1",
-            additional_mounts=(linked_home,),
+            additional_mounts=(mounted_root,),
         )
 
     assert result.returncode != 0

@@ -394,20 +394,18 @@ case "${WEGENT_WORKTREE_PERSISTENT_STORAGE_VERIFIED-true}" in
             storage_roots+=("$LEGACY_EXECUTOR_HOME")
         fi
         resolved_executor_home="$(realpath -m -- "$WEGENT_EXECUTOR_HOME")"
-        executor_home_persisted=false
         for storage_root in "${storage_roots[@]}"; do
             if ! mountpoint -q "$storage_root"; then
                 echo "Verified Worktree persistence requires a volume at $storage_root" >&2
                 exit 1
             fi
-            resolved_storage_root="$(realpath -m -- "$storage_root")"
-            case "$resolved_executor_home/" in
-                "$resolved_storage_root/"*) executor_home_persisted=true ;;
-            esac
         done
-        # Container root is not a Home volume; external homes need an exact mount.
-        if [ "$resolved_executor_home" = / ] ||
-            { [ "$executor_home_persisted" != true ] && ! mountpoint -q "$resolved_executor_home"; }; then
+        # Resolve links first, then require a Home volume below container root.
+        home_mount="$resolved_executor_home"
+        while [ "$home_mount" != / ] && ! mountpoint -q "$home_mount"; do
+            home_mount="$(dirname -- "$home_mount")"
+        done
+        if [ "$home_mount" = / ]; then
             echo "Verified Worktree persistence requires Executor Home inside a mounted storage root" >&2
             exit 1
         fi
