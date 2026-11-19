@@ -4604,6 +4604,18 @@
     "source_unavailable": "来源会话不可用，已收录的内容仍可保留或移除。"
   },
   "todo": {
+    "dispatch": {
+      "queued": "助理排队中",
+      "waiting_device": "等待设备上线",
+      "blocked_policy": "尚未开启自动处理",
+      "tag_mismatch": "事项标签不在助理处理范围",
+      "running": "助理处理中",
+      "waiting_user": "等待输入或发布结果",
+      "completed": "助理结果已发布",
+      "failed": "助理处理失败",
+      "cancelled": "助理处理已取消",
+      "repair": "助理设置"
+    },
     "comment_assignment_mode": "分派方式",
     "assign_current_issue": "分派当前事项",
     "create_child_issue": "创建子事项",

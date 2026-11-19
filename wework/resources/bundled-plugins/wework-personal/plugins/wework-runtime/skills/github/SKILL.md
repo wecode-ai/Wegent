@@ -1,11 +1,11 @@
 ---
 name: github
-description: 'Read or change GitHub repositories, pull requests, issues or CI using the local gh CLI.'
+description: 'Read and change GitHub repositories, pull requests, issues and workflows with gh. Subscribe to pending GitHub checks and runs through Wework.'
 ---
 
 Wework GitHub CLI mode:
 
-- GitHub tasks in this host use the local `gh` CLI, not `codex_apps.github` or ChatGPT GitHub connectors. This host rule overrides connector-first instructions in installed GitHub skills, including older versions.
+- GitHub reads and writes in this host use the local `gh` CLI, not `codex_apps.github` or ChatGPT GitHub connectors. This host rule overrides connector-first instructions in installed GitHub skills, including older versions.
 - Resolve the requested hosting provider from the user request and repository remote before checking authentication. GitLab operations and ordinary Git commit/push operations do not require GitHub authentication; never block them on a GitHub login check.
 - Check `gh api user --silent --hostname github.com` before GitHub operations. A request to run `gh auth login` or HTTP 401 means login is required; network errors and HTTP 403 are not proof of missing authentication. Do not read auth files, print tokens, call `gh auth token`, or request tokens in chat.
 - If gh is missing, tell the user to install GitHub CLI on the execution device. Do not install software without permission.
@@ -13,8 +13,12 @@ Wework GitHub CLI mode:
 - Network errors, missing repository permissions, and unsupported operations are not login success or reasons to switch to the official connector. Report the specific problem and keep the user's requested scope.
 - Use `gh repo`, `gh pr`, `gh issue`, `gh run`, and `gh api` for supported operations. Repository listing can use `gh api user/repos --paginate --jq '.[] | {name: .full_name, url: .html_url}'`. Select the intended repository explicitly and require the usual user authorization for writes.
 
-- When waiting for GitHub CI, PR checks or a workflow run, discover `wework_control` event providers and resources before choosing a wait mechanism. Use `gh` to resolve the exact resource and read its current state; use `subscribe_connection_events` for supported future changes instead of `sleep`, `gh run watch`, or repeated status queries. Follow provider assistance and put the wake condition in `match`. For a main-branch build after merge, monitor the exact workflow run ID and merge commit SHA, not the PR head checks. Wake on completed status so failures and cancellations are handled too. If already complete, report immediately. After arming, read current state once to close the initial-read/activation gap; if already satisfied cancel the wait and handle it, otherwise finish the turn; set `wait_for_event:true` for an active Goal. If unavailable or unsupported, explain the precise limitation instead of claiming a subscription is active.
+## Waiting for GitHub
 
-- Prefer the tool's standard GitHub/GitLab waits: select exactly one discovered PR/MR or workflow run/pipeline in source, set the exact 40-character `head_sha`, and choose `git_wait:"merge"` for a goal to merge, `"checks"` for CI results only, or `"run"` for a run's completion. Omit `match`: the host generates it, including pending-CI merge conflicts and closed/merged PRs for `merge`. After wake, inspect current checks, reviews and merge gates before acting. A wake never proves merge readiness. If a blocking condition already exists, handle it immediately rather than arming a future-change wait.
+A request to merge, release, or verify a workflow includes waiting for the required pending checks or runs. Use `gh` to identify the exact resource and read its current state. Handle an existing failure, merge conflict or completed run immediately.
 
-- For other alternative outcomes use one custom `match` with common exact resource/head constraints and `$any` containing AND maps. At least one alternative must match with all common fields. The budget is 32 comparisons, without nested alternatives. The UI describes the actual generated or custom predicate.
+1. Discover `wework_control.list_connection_event_providers` and `list_connection_event_resources`. Select one `change_request` by PR number for merge or check waits, or one `workflow_run` by Actions run ID for workflow completion. After merging, resolve the main-branch run and its own head SHA.
+2. Call `subscribe_connection_events` with the returned source, the full `head_sha`, and `git_wait` set to `merge`, `checks`, or `run`. The host generates the predicate, so omit `match`. Set `wait_for_event: true` to suspend Goal continuation. Use a stable subscription key and describe what to do after wake in `continuation`.
+3. Confirm the wait is armed and read current state once to close the activation gap. If the condition is already actionable, cancel the subscription and handle it. Otherwise finish the turn. The host watches for success, failure and other terminal outcomes. After wake, verify current checks, reviews and branch protection before merging.
+
+Use subscriptions for waiting. Do not use `gh run watch`, `gh pr checks --watch`, sleeps or repeated status queries. If discovery or activation fails, report the exact limitation.

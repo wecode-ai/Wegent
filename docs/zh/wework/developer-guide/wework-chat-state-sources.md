@@ -248,6 +248,23 @@ Goal 的原生续跑可能超过本地请求的生命周期，即使请求控制
 因此此前误写为 disabled 的原线程可以继续使用 subagent；明确指定的单代理执行仍禁用
 协作工具。桌面请求不再同时写入冲突的旧 single 字段。
 
+`agents.max_concurrent_threads_per_session` 和 `agents.max_threads` 均不存在时，
+executor 初始化配置会补入
+`[agents] max_concurrent_threads_per_session = 6`。在 V2 中这对应包含主线程的
+7 个总线程。已配置的该字段或旧字段 `max_threads` 不会被覆盖；V2 专属配置
+`[features.multi_agent_v2] max_concurrent_threads_per_session` 仍按原生优先级生效，
+其数值包含主线程。之后手动调整配置也会保留，重启运行时后生效。
+非表类型的 `agents` 值保留给原生配置校验。单代理模式仍禁用子 agent；默认额度不改变委派权限。
+
+`projects.list` 的项目目录同步包含 SQLite 初始化和 Git 元数据探测，必须在阻塞
+worker 中执行，不能占用 IPC reactor。目录读取只打开项目存储，不初始化无关的 Issue 和表格 provider。并发枚举共用一个异步执行锁；请求超时或断开后，
+已启动的 worker 继续持有该锁直到结束，避免遗留查询叠加。枚举期间健康查询及其他
+IPC 请求仍可处理；不通过延长 UI 超时规避阻塞。单个新项目的三次 Git 探测共用
+30 秒期限，复用原生 Git runner 的终止与回收机制。超时不写入该项目目录记录，
+保留此前完成的导入，并记录该工作区的发现错误后继续处理其余目录；后续枚举可重试。数据库等非发现错误继续向调用方传播。
+
+为 `clipboard-history-image` 和 `browser-toolbar-actions` 开启的 E2E host-pipe 诊断会记录请求 ID、发送/接收/完成时间，以及两端进程的累计 CPU 时间和事件循环活动/空闲时间。出现延迟时应关联同一请求并比较相邻采样，区分处理耗时、进程忙碌和调度等待；单轮未复现不能作为已修复的证据。
+
 用户发送引导时，Wework 先把引导消息乐观插入当前 turn，再调用
 `runtime.tasks.guidance`。如果 Codex `turn/steer` 明确返回预期 turn ID 与实际活跃
 turn ID 不一致，executor 用返回的实际 ID 纠正本次引导目标并只重试一次，不回写
@@ -406,6 +423,8 @@ Codex 执行状态由执行器的统一生命周期转换维护，独立于单�
 `queued` 表示调度器尚未接纳执行，不表示模型轮次正在运行。入队、取消、出队在
 队列持久化成功后推进同一份执行状态版本；取消排队不会改写上一轮的结果，旧排队
 快照也不能把取消后的任务重新变成忙碌。
+
+激活 Goal 前先准备模型路由，由准备好的原生会话在激活成功后继续推进，不再额外排队恢复。激活结果和既有 Goal 日志仍须先持久化，失败不能返回已接纳。
 
 `recovering` 表示执行器已持有既有 Goal 的恢复或正在执行有界重试退避。等待名额的恢复尚未绑定进程；退避保留进程归属，进程退出必须结算它。恢复期间没有活动模型轮次，排队中的旧 `task.running: false` 不能把它显示为已停止。
 

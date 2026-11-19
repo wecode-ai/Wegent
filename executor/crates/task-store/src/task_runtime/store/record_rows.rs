@@ -1,4 +1,5 @@
 use super::*;
+use sha2::{Digest, Sha256};
 
 pub(super) fn map_chat_agent(row: LoopItem) -> ChatAgent {
     let metadata = row.metadata;
@@ -217,18 +218,109 @@ pub(super) fn move_runtime_comment_task_to_in_progress(
 }
 
 pub(super) fn map_comment(row: &Row<'_>) -> rusqlite::Result<LocalComment> {
+    let sender_type: String = row.get(5)?;
+    let metadata: Value = serde_json::from_str(&row.get::<_, String>(10)?).unwrap_or(Value::Null);
+    let project_id: String = row.get(3)?;
+    let task_id: String = row.get(4)?;
+    let runtime_device_id = metadata["runtime_address"]["deviceId"]
+        .as_str()
+        .unwrap_or_default();
+    let runtime_task_id = metadata["runtime_address"]["taskId"]
+        .as_str()
+        .unwrap_or_default();
+    let trace_ref = (!runtime_device_id.is_empty() && !runtime_task_id.is_empty()).then(|| {
+        format!(
+            "{:x}",
+            Sha256::digest(
+                format!("{project_id}\0{task_id}\0{runtime_device_id}\0{runtime_task_id}")
+                    .as_bytes()
+            )
+        )
+    });
+    let historical = metadata
+        .get("history_import")
+        .is_some_and(|value| !value.is_null())
+        || metadata
+            .get("imported_from")
+            .is_some_and(|value| !value.is_null());
+    let assistant_publication = metadata
+        .get("assistant_publication")
+        .filter(|value| value.get("verified").and_then(Value::as_bool) == Some(true));
+    let published_by = assistant_publication
+        .and_then(|value| value.get("published_by"))
+        .and_then(Value::as_str);
+    let source = if historical {
+        "human"
+    } else if assistant_publication.is_some() {
+        "ai"
+    } else {
+        match sender_type.as_str() {
+            "user" => "human",
+            "agent" => "ai",
+            _ => "system",
+        }
+    };
+    let actor_user_id = if sender_type == "user" {
+        Some(row.get::<_, String>(6)?)
+    } else {
+        metadata["stand_in"]["user_id"]
+            .as_i64()
+            .map(|id| id.to_string())
+    };
     Ok(LocalComment {
+        runtime_owner_user_id: if assistant_publication.is_some() {
+            metadata["assistant_publication"]["runtime_owner_user_id"]
+                .as_i64()
+                .map(|id| id.to_string())
+        } else {
+            actor_user_id.clone()
+        },
+        actor_user_id,
+        actor_display_name: if sender_type == "user" {
+            Some(row.get(7)?)
+        } else {
+            None
+        },
+        runtime_shared: false,
+        generation_source: source.into(),
+        publication_source: if published_by == Some("ai") {
+            "ai"
+        } else if assistant_publication.is_some() {
+            "human"
+        } else {
+            source
+        }
+        .into(),
+        confirmation_state: if historical {
+            "unknown"
+        } else if published_by == Some("ai") {
+            "not_required"
+        } else if assistant_publication.is_some() {
+            "authorized"
+        } else if source == "ai" {
+            "pending"
+        } else {
+            "not_required"
+        }
+        .into(),
+        trace_ref: trace_ref.clone(),
+        trace_state: if trace_ref.is_some() {
+            "available"
+        } else {
+            "history-unavailable"
+        }
+        .into(),
         id: row.get(0)?,
         message_id: row.get(1)?,
         client_message_id: row.get(2)?,
-        project_id: row.get(3)?,
-        task_id: row.get(4)?,
-        sender_type: row.get(5)?,
+        project_id,
+        task_id,
+        sender_type,
         sender_id: row.get(6)?,
         sender_name: row.get(7)?,
         message_type: row.get(8)?,
         content: row.get(9)?,
-        metadata: serde_json::from_str(&row.get::<_, String>(10)?).unwrap_or(Value::Null),
+        metadata,
         trigger_message_id: row.get(11)?,
         reply_to_message_id: row.get(12)?,
         thread_root_message_id: row.get(13)?,
@@ -239,11 +331,93 @@ pub(super) fn map_comment(row: &Row<'_>) -> rusqlite::Result<LocalComment> {
     })
 }
 
+/// Resolve authorship and Runtime visibility from persisted project identities.
+pub(super) fn enrich_comment_actor(
+    connection: &Connection,
+    comment: &mut LocalComment,
+) -> rusqlite::Result<()> {
+    if comment.sender_type != "agent" {
+        return Ok(());
+    }
+    let agent = if comment.metadata.get("stand_in").is_some() {
+        None
+    } else {
+        connection
+            .query_row(
+                "SELECT created_by_user_id, \
+                    NULLIF(JSON_EXTRACT(metadata,'$.visibility'),'null') \
+                 FROM loop_items \
+                 WHERE id=?1 AND cloud_project_id=?2 AND resource_type='chat_agent'",
+                params![comment.sender_id, comment.project_id],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<i64>>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                    ))
+                },
+            )
+            .optional()?
+    };
+    if let Some((Some(owner_user_id), visibility)) = &agent {
+        comment.runtime_owner_user_id = Some(owner_user_id.to_string());
+        comment.runtime_shared = visibility.as_deref() != Some("private");
+    }
+    let trigger = comment
+        .trigger_message_id
+        .as_deref()
+        .or(comment.reply_to_message_id.as_deref());
+    let trigger = trigger
+        .map(|message_id| {
+            connection
+                .query_row(
+                    "WITH RECURSIVE ancestors(message_id, sender_type, sender_id, sender_name,
+                                          next_message_id, depth) AS (
+                     SELECT message_id, sender_type, sender_id, sender_name,
+                            COALESCE(trigger_message_id, reply_to_message_id), 0
+                     FROM loop_item_comments
+                     WHERE message_id=?1 AND project_id=?2 AND task_id=?3
+                       AND deleted_at IS NULL
+                     UNION ALL
+                     SELECT c.message_id, c.sender_type, c.sender_id, c.sender_name,
+                            COALESCE(c.trigger_message_id, c.reply_to_message_id), a.depth + 1
+                     FROM loop_item_comments c
+                     JOIN ancestors a ON c.message_id=a.next_message_id
+                     WHERE c.project_id=?2 AND c.task_id=?3 AND c.deleted_at IS NULL
+                       AND a.depth < 32
+                 )
+                 SELECT sender_id,sender_name FROM ancestors
+                 WHERE sender_type='user' ORDER BY depth ASC LIMIT 1",
+                    params![message_id, comment.project_id, comment.task_id],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )
+                .optional()
+        })
+        .transpose()?
+        .flatten();
+    if let Some((id, name)) = &trigger {
+        let actor_matches_trigger = match comment.actor_user_id.as_deref() {
+            None => true,
+            Some(actor) => actor == id,
+        };
+        if actor_matches_trigger {
+            comment.actor_user_id = Some(id.clone());
+            comment.actor_display_name = Some(name.clone());
+            return Ok(());
+        }
+    }
+    if comment.actor_user_id.is_none() {
+        comment.actor_user_id = agent
+            .as_ref()
+            .and_then(|(owner_user_id, _)| owner_user_id.map(|id| id.to_string()));
+    }
+    Ok(())
+}
+
 pub(super) fn comment_row(
     connection: &Connection,
     message_id: &str,
 ) -> Result<LocalComment, TaskRuntimeError> {
-    connection
+    let mut comment = connection
         .query_row(
             "SELECT id, message_id, client_message_id, project_id, task_id,
                     sender_type, sender_id, sender_name, message_type, content,
@@ -254,7 +428,9 @@ pub(super) fn comment_row(
             params![message_id],
             map_comment,
         )
-        .map_err(TaskRuntimeError::from)
+        .map_err(TaskRuntimeError::from)?;
+    enrich_comment_actor(connection, &mut comment)?;
+    Ok(comment)
 }
 
 pub(super) fn map_execution(row: &Row<'_>) -> rusqlite::Result<LocalExecution> {
