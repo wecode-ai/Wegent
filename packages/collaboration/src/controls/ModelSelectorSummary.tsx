@@ -47,6 +47,7 @@ export function ModelSelectorSummary({
               aria-pressed={fastModeState.enabled}
               aria-label={t('workbench.speed_fast', '快速')}
               title={t('workbench.speed_fast', '快速')}
+              showTooltip={false}
               onClick={onToggleFastMode}
               data-enabled={fastModeState.enabled ? 'true' : 'false'}
               className={`${styles.fastModeToggle} flex h-7 w-7 items-center justify-center rounded-md hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring`}
@@ -61,6 +62,7 @@ export function ModelSelectorSummary({
               data-testid="model-reset-default-button"
               aria-label={t('workbench.reset_default_model_settings', '重置模型设置')}
               title={t('workbench.reset_default_model_settings', '重置模型设置')}
+              showTooltip={false}
               onClick={onReset}
               className="flex h-7 w-7 items-center justify-center rounded-md text-text-muted hover:bg-muted hover:text-text-primary focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring"
             >

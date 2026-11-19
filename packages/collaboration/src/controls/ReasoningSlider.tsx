@@ -113,6 +113,8 @@ export function ReasoningSlider({
             size="icon"
             data-testid={step.dataTestId}
             aria-label={step.label}
+            title={step.label}
+            showTooltip={false}
             onFocus={clear}
             onClick={() => choose(step.value)}
             style={{ left: steps.length < 2 ? '50%' : (position / (steps.length - 1)) * 100 + '%' }}
