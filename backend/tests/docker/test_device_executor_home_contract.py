@@ -388,6 +388,10 @@ def test_device_entrypoint_requires_original_volume_for_legacy_home_link(
 ) -> None:
     executor_home = tmp_path / "executor-home"
     legacy_home = tmp_path / "legacy-home"
+    if legacy_volume_mounted:
+        legacy_home.mkdir()
+        (legacy_home / ".executor-home-id").write_text("device-stable-1")
+        (legacy_home / "persisted-session").write_text("original-session")
     executor_home.symlink_to(legacy_home, target_is_directory=True)
 
     result = _run_entrypoint(
@@ -400,10 +404,48 @@ def test_device_entrypoint_requires_original_volume_for_legacy_home_link(
     if legacy_volume_mounted:
         assert result.returncode == 0, result.stderr
         assert (legacy_home / ".executor-home-id").read_text() == "device-stable-1"
+        assert (legacy_home / "persisted-session").read_text() == "original-session"
+        assert (tmp_path / "codex-homes").read_text().splitlines() == [
+            str(legacy_home / "codex"),
+            str(legacy_home / "codex"),
+        ]
     else:
         assert result.returncode != 0
         assert "requires its original legacy volume" in result.stderr
         assert not legacy_home.exists()
+        assert not (tmp_path / "data-root").exists()
+    assert executor_home.is_symlink()
+    assert executor_home.resolve() == legacy_home
+
+
+def test_device_entrypoint_rejects_conflicting_home_link_without_mutating_data(
+    tmp_path: Path,
+) -> None:
+    executor_home = tmp_path / "executor-home"
+    linked_home = tmp_path / "data-root" / "homes" / "device-a"
+    legacy_home = tmp_path / "legacy-home"
+    for home in (linked_home, legacy_home):
+        home.mkdir(parents=True)
+        (home / ".executor-home-id").write_text("device-stable-1")
+        (home / "persisted-session").write_text("original-session")
+    executor_home.symlink_to(linked_home, target_is_directory=True)
+
+    result = _run_entrypoint(
+        tmp_path=tmp_path,
+        executor_home=executor_home,
+        home_id="device-stable-1",
+        legacy_volume_mounted=True,
+    )
+
+    assert result.returncode != 0
+    assert "Unified Executor Home points to a different volume" in result.stderr
+    assert executor_home.is_symlink()
+    assert executor_home.resolve() == linked_home
+    for home in (linked_home, legacy_home):
+        assert (home / ".executor-home-id").read_text() == "device-stable-1"
+        assert (home / "persisted-session").read_text() == "original-session"
+        assert not (home / ".writer.lock").exists()
+    assert not (tmp_path / "codex-homes").exists()
 
 
 def test_device_entrypoint_rejects_missing_persistent_mount(tmp_path):
