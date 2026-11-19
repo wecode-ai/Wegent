@@ -733,13 +733,20 @@ asyncio.run(mark_busy())`,
         text: 'gitlab · git.example.test',
         timeoutMs: uiTimeoutMs,
       })
+      const eligibleTargetCount = await until(
+        async () =>
+          Number(
+            await control.command(
+              'getElementCount',
+              '[data-testid="git-device-sync-select"] option[value="desktop-e2e-git-target"]'
+            )
+          ),
+        count => count === 1,
+        'The eligible remote Git sync target did not finish loading',
+        uiTimeoutMs
+      )
       assert.equal(
-        Number(
-          await control.command(
-            'getElementCount',
-            '[data-testid="git-device-sync-select"] option[value="desktop-e2e-git-target"]'
-          )
-        ),
+        eligibleTargetCount,
         1,
         'The eligible remote device was not available as a Git sync target'
       )
