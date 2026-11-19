@@ -152,7 +152,8 @@ function EvidenceContent({
   }
 
   const [token] = useState(() => Array.from(crypto.getRandomValues(new Uint32Array(4))).join('-'))
-  const remarkPlugins = useMemo(() => [() => evidenceRemark(token)], [token])
+  const streaming = evidence?.streaming
+  const remarkPlugins = useMemo(() => [() => evidenceRemark(token, streaming)], [token, streaming])
   if (answerDenied) return <p role="alert">{t('evidence.answer_denied')}</p>
   return (
     <>

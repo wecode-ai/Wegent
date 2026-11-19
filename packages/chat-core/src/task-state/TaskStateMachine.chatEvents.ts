@@ -346,18 +346,28 @@ export function reduceChatDoneEvent({
       ? 'FAILED'
       : 'COMPLETED'
 
+  const resultValue = typeof event.result?.value === 'string' ? event.result.value : undefined
   const incomingContent =
     !hasTerminalLifecycle || terminalTaskStatus === 'COMPLETED'
-      ? event.content || (typeof event.result?.value === 'string' ? event.result.value : '')
+      ? event.content || resultValue || ''
       : ''
-  const finalContent =
-    incomingContent.length > existingMessage.content.length
+  const incomingBlocks = event.result?.blocks ?? []
+  // Evidence binding adds the citation array even when every citation is unavailable.
+  const replaceDraftText =
+    finalStatus === 'completed' &&
+    !event.hasError &&
+    Array.isArray(event.result?.answer_citations) &&
+    incomingBlocks.some(block => block.type === 'text')
+  const finalContent = replaceDraftText
+    ? (resultValue ?? incomingContent)
+    : incomingContent.length > existingMessage.content.length
       ? incomingContent
       : existingMessage.content || incomingContent
 
   const mergedBlocks = mergeBlocksForDone(
     existingMessage.result?.blocks || [],
-    event.result?.blocks || []
+    incomingBlocks,
+    replaceDraftText
   )
   const mergedResult =
     event.result || existingMessage.result?.blocks

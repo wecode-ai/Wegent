@@ -622,6 +622,7 @@ const MessageBubble = memo(
       generationId: msg.result?.answer_generation_id,
       citations,
       committed,
+      streaming: isStreaming || msg.status === 'streaming',
       visitOnly: committed && isVisitOnlyAnswer(sourceContext, permissions.access),
       permissionScope: permissions.scope,
       sourceAccess: permissions.access,

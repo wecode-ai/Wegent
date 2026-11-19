@@ -507,6 +507,73 @@ describe('TaskStateMachine', () => {
     expect(blocks.every(block => block.status === 'done')).toBe(true)
   })
 
+  it('replaces draft text with the saved answer when evidence is unavailable', () => {
+    const machine = new TaskStateMachine(100, createRuntimeActions())
+    const draft = 'Answer.[[evidence:0123456789abcdef0123456789abcdef]]'
+    const saved = 'Intro. Answer.[[evidence-unavailable]]'
+
+    machine.handleChatStart(42, 'Chat', 7)
+    machine.handleChatChunk(42, '', { reasoning_chunk: 'Thought.' })
+    machine.handleChatChunk(42, draft, undefined, undefined, 'draft-text')
+    machine.handleChatBlockUpdated(42, {
+      id: 'search',
+      type: 'tool',
+      tool_use_id: 'search',
+      tool_name: 'Search',
+      tool_output: 'Result',
+      status: 'done',
+    })
+    machine.handleChatBlockUpdated(42, {
+      id: 'stream-only-tool',
+      type: 'tool',
+      tool_name: 'Read',
+      status: 'done',
+    })
+
+    machine.handleChatDone(
+      42,
+      saved,
+      {
+        answer_citations: [],
+        value: saved,
+        blocks: [
+          { id: 'saved-intro', type: 'text', content: 'Intro.', status: 'done' },
+          {
+            id: 'search',
+            type: 'tool',
+            tool_use_id: 'search',
+            tool_name: 'Search',
+            status: 'done',
+          },
+          {
+            id: 'saved-text',
+            type: 'text',
+            content: 'Answer.[[evidence-unavailable]]',
+            status: 'done',
+          },
+        ],
+      },
+      7
+    )
+
+    const message = machine.getState().messages.get('ai-42')
+    expect(message).toMatchObject({
+      status: 'completed',
+      content: saved,
+      result: {
+        answer_citations: [],
+        value: saved,
+        blocks: [
+          { type: 'thinking', content: 'Thought.', status: 'done' },
+          { id: 'stream-only-tool', type: 'tool' },
+          { id: 'saved-intro', type: 'text', content: 'Intro.' },
+          { id: 'search', type: 'tool', tool_output: 'Result' },
+          { id: 'saved-text', type: 'text', content: 'Answer.[[evidence-unavailable]]' },
+        ],
+      },
+    })
+  })
+
   it('does not duplicate done text blocks after unicode offset streaming', () => {
     const machine = new TaskStateMachine(100, {
       joinTask: vi.fn(),

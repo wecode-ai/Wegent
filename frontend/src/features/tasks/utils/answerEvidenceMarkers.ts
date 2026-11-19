@@ -34,6 +34,20 @@ export function shouldHideAnswerMarker(
 export const answerEvidenceMarker =
   /\[\[(?:citation:([0-9]+)|evidence:[^\]\n]+|evidence-unavailable)\]\]/g
 
+export const temporaryEvidenceMarkerPrefix = '[[evidence:'
+
+export function trimPartialEvidenceMarker(value: string): string {
+  const suffix = /\[{1,2}[^\[\]\n]*\]?$/.exec(value)
+  if (
+    suffix &&
+    (temporaryEvidenceMarkerPrefix.startsWith(suffix[0]) ||
+      suffix[0].startsWith(temporaryEvidenceMarkerPrefix))
+  ) {
+    return value.slice(0, suffix.index)
+  }
+  return value
+}
+
 export interface MarkdownNode {
   type: string
   value?: string

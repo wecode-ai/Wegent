@@ -34,6 +34,13 @@ export interface SourceReference {
   source_name?: string
 }
 
+export interface AnswerCitation {
+  citation_id: string
+  title: string
+  knowledge_base_id: number
+  document_id: number
+}
+
 export interface RetrievalSummaryPayload {
   searched_source_ids?: string[]
   ignored_source_ids?: string[]
@@ -76,6 +83,7 @@ export interface UnifiedMessage {
   isReasoningStreaming?: boolean
   result?: {
     value?: string
+    answer_citations?: AnswerCitation[]
     thinking?: unknown[]
     workbench?: Record<string, unknown>
     shell_type?: string

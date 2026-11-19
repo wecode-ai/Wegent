@@ -2,14 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { apiClient, ApiError } from '@/apis/client'
+import type { AnswerCitation } from '@wegent/chat-core'
 import type { SourceAccessMap } from './sourceAccess'
 
-export interface AnswerCitation {
-  citation_id: string
-  title: string
-  knowledge_base_id: number
-  document_id: number
-}
+export type { AnswerCitation } from '@wegent/chat-core'
 
 export interface EvidenceScope {
   taskId?: number
@@ -24,6 +20,7 @@ export interface EvidenceScope {
   generationId?: string
   citations?: AnswerCitation[]
   committed: boolean
+  streaming?: boolean
   visitOnly?: boolean
 }
 

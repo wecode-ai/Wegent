@@ -377,6 +377,60 @@ function Answer({
   )
 }
 
+test('streaming text hides split evidence markers and preserves literal Markdown', () => {
+  const marker = '[[evidence:0123456789abcdef0123456789abcdef]]'
+  const { rerender, container } = render(<ChatEvidenceHost>{null}</ChatEvidenceHost>)
+
+  for (const withBlocks of [false, true]) {
+    for (const length of [1, 2, 5, 11, marker.length - 1, marker.length]) {
+      const source = '流式正文 `[[evidence:literal]]` 补充' + marker.slice(0, length)
+      rerender(
+        <ChatEvidenceHost>
+          <Answer
+            msg={{
+              ...message,
+              status: 'streaming',
+              subtaskStatus: 'RUNNING',
+              content: source,
+              result: withBlocks
+                ? { blocks: [{ id: 'draft', type: 'text', content: source, status: 'streaming' }] }
+                : undefined,
+            }}
+          />
+        </ChatEvidenceHost>
+      )
+      expect(container.querySelector('.markdown-content p')?.textContent).toBe(
+        '流式正文 [[evidence:literal]] 补充'
+      )
+      expect(screen.getByText('[[evidence:literal]]', { selector: 'code' })).toBeInTheDocument()
+      expect(screen.queryByTestId('answer-evidence-unavailable')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('answer-citation-42')).not.toBeInTheDocument()
+    }
+  }
+
+  const saved = '正式正文[[evidence-unavailable]]'
+  rerender(
+    <ChatEvidenceHost>
+      <Answer
+        msg={{
+          ...message,
+          content: saved,
+          result: {
+            ...message.result,
+            answer_citations: [],
+            sources: [],
+            retrieval_summary: undefined,
+            blocks: [{ id: 'saved', type: 'text', content: saved, status: 'done' }],
+          },
+        }}
+      />
+    </ChatEvidenceHost>
+  )
+  expect(screen.getByText('正式正文')).toBeInTheDocument()
+  expect(screen.getByTestId('answer-evidence-unavailable')).toBeInTheDocument()
+  expect(get).not.toHaveBeenCalled()
+})
+
 test('ordinary chat resolves mixed sources independently and preserves the visible source index', async () => {
   get.mockImplementation((url: string) =>
     Promise.resolve(

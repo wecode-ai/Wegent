@@ -35,8 +35,9 @@ function CitationMarker({
 }
 
 export function CitationMarkup({ components, ...props }: ComponentProps<typeof EnhancedMarkdown>) {
+  const streaming = useContext(AnswerEvidenceContext)?.evidence.streaming
   const [token] = useState(() => Array.from(crypto.getRandomValues(new Uint32Array(4))).join('-'))
-  const remarkPlugins = useMemo(() => [() => evidenceRemark(token)], [token])
+  const remarkPlugins = useMemo(() => [() => evidenceRemark(token, streaming)], [token, streaming])
   const renderers = useMemo(
     () => ({ ...components, 'answer-citation': CitationMarker }),
     [components]

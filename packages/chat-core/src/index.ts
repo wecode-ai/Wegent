@@ -46,6 +46,7 @@ export {
   TaskStateMachine,
 } from './task-state'
 export type {
+  AnswerCitation,
   MessageStatus,
   StateListener,
   StreamingRecoveryPayload,

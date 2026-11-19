@@ -6,6 +6,8 @@ import {
   answerEvidenceMarker,
   getRenderedCitationIds,
   mapEvidenceText,
+  temporaryEvidenceMarkerPrefix,
+  trimPartialEvidenceMarker,
   type MarkdownNode,
 } from '../../../utils/answerEvidenceMarkers'
 
@@ -23,26 +25,35 @@ export function getDisplayedCitationIds(markdown: string | readonly string[]) {
 }
 
 // Work on Markdown text nodes before raw HTML is parsed. Code and links are opaque.
-export function evidenceRemark(token: string) {
-  return (root: unknown) => {
-    mapEvidenceText(root as MarkdownNode, node => {
+export function evidenceRemark(token: string, streaming?: boolean) {
+  return (tree: unknown) => {
+    const root = tree as MarkdownNode
+    mapEvidenceText(root, node => {
       const value = node.value ?? ''
       const parts: MarkdownNode[] = []
       let start = 0
       for (const match of value.matchAll(answerEvidenceMarker)) {
         parts.push({ type: 'text', value: value.slice(start, match.index) })
-        parts.push({
-          type: 'text',
-          value: '',
-          data: {
-            hName: 'answer-citation',
-            hProperties: { citationId: match[1] || '', evidenceToken: token },
-          },
-        })
+        if (!streaming || !match[0].startsWith(temporaryEvidenceMarkerPrefix)) {
+          parts.push({
+            type: 'text',
+            value: '',
+            data: {
+              hName: 'answer-citation',
+              hProperties: { citationId: match[1] || '', evidenceToken: token },
+            },
+          })
+        }
         start = match.index + match[0].length
       }
-      if (!start) return [node]
-      parts.push({ type: 'text', value: value.slice(start) })
+      const tail = value.slice(start)
+      const end = node.position?.end.offset
+      const visibleTail =
+        streaming && end !== undefined && end === root.position?.end.offset
+          ? trimPartialEvidenceMarker(tail)
+          : tail
+      if (!start && visibleTail === value) return [node]
+      parts.push({ type: 'text', value: visibleTail })
       return parts
     })
   }

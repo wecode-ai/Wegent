@@ -93,7 +93,8 @@ export function finalizeStreamingBlocks(
 
 export function mergeBlocksForDone(
   existingMessageBlocks: MessageBlock[],
-  incomingBlocks: MessageBlock[]
+  incomingBlocks: MessageBlock[],
+  replaceDraftText = false
 ): MessageBlock[] {
   const existingBlocks = finalizeStreamingBlocks(nestMessageBlocks(existingMessageBlocks), [
     'text',
@@ -107,6 +108,20 @@ export function mergeBlocksForDone(
 
   if (normalizedIncomingBlocks.length === 0) {
     return existingBlocks
+  }
+
+  if (replaceDraftText) {
+    const incomingIds = new Set(normalizedIncomingBlocks.map(block => block.id))
+    const streamOnlyBlocks = existingBlocks.filter(
+      block =>
+        block.type !== 'text' &&
+        !incomingIds.has(block.id) &&
+        !hasDuplicateBlockContent(normalizedIncomingBlocks, block)
+    )
+    return nestMessageBlocks([
+      ...streamOnlyBlocks,
+      ...mergeDoneBlocksWithBackendOrder(existingBlocks, normalizedIncomingBlocks),
+    ])
   }
 
   if (existingBlocks.some(block => block.type === 'thinking')) {
