@@ -602,14 +602,15 @@ test('multiple searches keep same-title documents distinct across grey refresh a
       prompt,
       '多资料{{answer_evidence_all}} 重复{{answer_evidence}} 坏引用[[evidence:unknown-generation]][[citation:123]]'
     )
-    await page.setViewportSize({ width: 1440, height: 900 })
+    await page.setViewportSize({ width: 1920, height: 900 })
     await page.addInitScript(teamId => {
       localStorage.setItem('user_onboarding_completed', 'true')
       localStorage.setItem('wegent_last_team_id_knowledge', String(teamId))
     }, team.id)
     await page.goto(`/knowledge/document/${kb.id}?view=notebook&teamId=${team.id}`)
     await expect(page.getByTestId('knowledge-detail-notebook')).toBeVisible()
-    await expect(page.getByTestId('knowledge-workspace-chat')).toBeVisible()
+    const chat = page.getByTestId('knowledge-workspace-chat')
+    await expect(chat).toBeVisible()
     const sources = page.getByTestId('knowledge-source-panel')
     await expect(sources).toBeVisible()
     const knowledge = new ProviderNativeKnowledgePage(page)
@@ -625,29 +626,63 @@ test('multiple searches keep same-title documents distinct across grey refresh a
     ]
     expect(ids.length).toBeGreaterThanOrEqual(2)
     expect(await buttons.count()).toBeGreaterThan(ids.length)
-    const seenDocuments = new Set<number>()
-    for (const id of ids) {
-      const responsePromise = page.waitForResponse(
-        response =>
-          response.url().includes(`/citations/${id.replace('answer-citation-', '')}?`) &&
-          response.ok()
-      )
-      await page.getByTestId(id).first().click()
-      const snapshot = await (await responsePromise).json()
-      seenDocuments.add(snapshot.document_id)
-      expect(snapshot.content).toContain(docs.find(doc => doc.id === snapshot.document_id)!.text)
-      await expect(page.getByTestId('answer-evidence-content')).toHaveText(snapshot.content)
-      await page.getByTestId('answer-evidence-close').click()
-    }
-    expect([...seenDocuments].sort()).toEqual(docs.map(doc => doc.id).sort())
+    await sources.getByTitle('folder-0', { exact: true }).click()
+    const sourceFolder = sources
+      .getByTestId('document-source-breadcrumb-row')
+      .getByText('folder-0', { exact: true })
+    await expect(sourceFolder).toBeVisible()
+    const selectedSource = sources.getByRole('checkbox')
+    await expect(selectedSource).toHaveCount(1)
+    await expect(selectedSource).not.toBeChecked()
+    await selectedSource.click()
+    await expect(selectedSource).toBeChecked()
+
+    const input = chat.getByTestId('message-input')
+    const generationDraft = '用选中的资料生成一份上线进度简报。'
+    await input.fill(generationDraft)
+    await expect(input).toHaveText(generationDraft)
+    const generationPanel = page.getByTestId('knowledge-generation-panel')
+    await expect(generationPanel).toBeVisible()
+    const userMessage = chat.getByText(prompt, { exact: true })
+    const answerText = chat.getByText('多资料', { exact: false }).first()
+    await expect(userMessage).toBeVisible()
+    await expect(answerText).toBeVisible()
+
     const first = page.getByTestId(ids[0]).first()
     await first.hover()
     await expect(page.getByTestId('answer-evidence-preview-content')).toBeVisible()
-    await first.click()
     const panel = page.getByTestId('answer-evidence-panel')
-    await expect(panel).toHaveCount(1)
-    const excerpt = page.getByTestId('answer-evidence-content')
-    await expect(excerpt).toBeVisible()
+    const fragment = panel.getByTestId('answer-evidence-select-fragment')
+    const excerpt = panel.getByTestId('answer-evidence-content')
+    const firstCitationId = ids[0].replace('answer-citation-', '')
+    const waitForFragment = (citationId: string) =>
+      page.waitForResponse(
+        response => response.url().includes(`/citations/${citationId}?`) && response.ok()
+      )
+    const firstLoad = waitForFragment(firstCitationId)
+    await first.click()
+    const openedPanel = await panel.elementHandle()
+    const seenDocuments = new Set<number>()
+    let firstExcerpt = ''
+    for (const [index, id] of ids.entries()) {
+      const citationId = id.replace('answer-citation-', '')
+      const loaded = index === 0 ? firstLoad : waitForFragment(citationId)
+      if (index > 0) await fragment.selectOption(citationId)
+      const snapshot = await (await loaded).json()
+      seenDocuments.add(snapshot.document_id)
+      expect(snapshot.content).toContain(docs.find(doc => doc.id === snapshot.document_id)!.text)
+      await expect(panel).toHaveCount(1)
+      await expect(panel).toHaveAttribute('data-layout', 'side')
+      await expect(fragment).toHaveValue(citationId)
+      await expect(excerpt).toHaveText(snapshot.content)
+      if (index === 0) firstExcerpt = snapshot.content
+      await expect(selectedSource).toBeChecked()
+    }
+    expect([...seenDocuments].sort()).toEqual(docs.map(doc => doc.id).sort())
+    await expect(generationPanel).toBeHidden()
+    await fragment.selectOption(firstCitationId)
+    await expect(excerpt).toHaveText(firstExcerpt)
+    expect(await openedPanel.evaluate(node => node.isConnected)).toBe(true)
     const savedExcerpt = await excerpt.innerText()
     await page.getByTestId('answer-evidence-open-original').click()
     await expect(panel.getByText(savedExcerpt, { exact: false })).toBeVisible()
@@ -656,6 +691,21 @@ test('multiple searches keep same-title documents distinct across grey refresh a
     await page.getByTestId('answer-evidence-close').click()
     await expect(first).toBeFocused()
     await expect(sources).toBeVisible()
+    await expect(selectedSource).toBeChecked()
+    await expect(sourceFolder).toBeVisible()
+    await expect(generationPanel).toBeVisible()
+    await expect(userMessage).toBeVisible()
+    await expect(answerText).toBeVisible()
+    await expect(input).toHaveText(generationDraft)
+    expect(await knowledge.waitForTaskId()).toBe(taskId)
+    await generationPanel.getByTestId('artifact-type-briefing').click()
+    const generationDialog = page.getByTestId('artifact-create-dialog')
+    await expect(generationDialog).toContainText(
+      /1 selected documents will be used|将使用已选中的 1 篇文档/
+    )
+    await generationDialog.getByTestId('artifact-create-cancel').click()
+    await expect(input).toHaveText(generationDraft)
+    await input.fill('')
     await page.reload()
     await expect(page.getByTestId('knowledge-workspace-chat')).toBeVisible()
     await first.click()
