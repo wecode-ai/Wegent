@@ -133,11 +133,31 @@ async fn recovered_manager_publishes_its_issue_session_before_clearing_the_round
 
 #[tokio::test]
 async fn rejected_manager_publication_keeps_the_round_without_starting_a_hidden_run() {
+    use axum::{body::Body, response::IntoResponse};
+
     let root = tempfile::tempdir().unwrap();
-    let app = Router::new().route(
-        "/api/v1/cloud-projects/7/executions/assignment-status",
-        post(|| async { StatusCode::FORBIDDEN }),
-    );
+    let requests = Arc::new(AtomicUsize::new(0));
+    let app = Router::new()
+        .route(
+            "/api/v1/cloud-projects/7/executions/assignment-status",
+            post(
+                |State(requests): State<Arc<AtomicUsize>>, Json(payload): Json<Value>| async move {
+                    assert_eq!(payload["refresh_runtime_profiles"], true);
+                    if requests.fetch_add(1, Ordering::SeqCst) == 0 {
+                        let stream = futures_util::stream::iter([
+                            Ok(axum::body::Bytes::from_static(b"{")),
+                            Err(std::io::Error::new(
+                                std::io::ErrorKind::ConnectionReset,
+                                "interrupted response",
+                            )),
+                        ]);
+                        return (StatusCode::OK, Body::from_stream(stream)).into_response();
+                    }
+                    StatusCode::FORBIDDEN.into_response()
+                },
+            ),
+        )
+        .with_state(requests.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -152,6 +172,7 @@ async fn rejected_manager_publication_keeps_the_round_without_starting_a_hidden_
         .unwrap_err();
 
     assert!(error.contains("403"));
+    assert_eq!(requests.load(Ordering::SeqCst), 2);
     assert!(handler
         .local_task_link(&fresh_cloud_manager_task_id(&command))
         .is_none());
@@ -799,11 +820,14 @@ fn fresh_cloud_manager_replaces_expired_credentials_for_manager_and_members() {
     assert!(apply_fresh_cloud_manager_profiles(&mut payload, Value::Null).is_err());
     apply_fresh_cloud_manager_profiles(
         &mut payload,
-        json!({"manager_model_config":model_config,"member_runtime_profiles":members}),
+        json!({"manager_model_config":model_config,
+            "manager_model_selection":{"modelName":"cloud-model","modelType":"group"},
+            "member_runtime_profiles":members}),
     )
     .unwrap();
 
     assert_eq!(payload["executionRequest"]["model_config"], model_config);
+    assert_eq!(payload["modelSelection"]["modelName"], "cloud-model");
     assert_eq!(
         payload["runtimeHandle"]["collaborationMemberRuntimeProfiles"],
         members

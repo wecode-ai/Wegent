@@ -18,7 +18,10 @@ from app.services.collaboration_manager_activity import (
     project_collaboration_manager_activity,
 )
 from app.services.collaboration_round_assignment import assign_round_owner
-from app.services.loop_item_executions.service import loop_item_execution_service
+from app.services.loop_item_executions.service import (
+    WeworkRuntimeConfigurationError,
+    loop_item_execution_service,
+)
 from app.services.project_chat.runtime_binding import resumed_manager_task_id
 from app.services.project_chat.session_access import resolve_project_transcript
 from app.services.runner_recovery import runner_recovery_available
@@ -70,12 +73,15 @@ def test_replayed_resume_refreshes_profiles_only_while_authorized(
     values.refresh_runtime_profiles = True
     credentials = iter(("first", "renewed"))
     authorized = True
+    available = False
 
     def compile_payload(db, *, execution, execution_target_id, executor_device_id):
         assert execution.id == s.execution.id
         assert execution.assigner_user_id == s.member.id
         assert execution_target_id == "admin-cloud"
         assert executor_device_id == s.execution.runtime_device_id
+        if not available:
+            raise WeworkRuntimeConfigurationError("Model unavailable")
         return {
             "managerRuntimeRequest": {
                 "executionRequest": {"model_config": {"api_key": next(credentials)}}
@@ -110,6 +116,11 @@ def test_replayed_resume_refreshes_profiles_only_while_authorized(
     assert wrong_session.value.status_code == 403
 
     session = create_access_token({"sub": s.owner.user_name})
+    with pytest.raises(HTTPException) as unavailable:
+        request(session)
+    assert unavailable.value.status_code == 503
+
+    available = True
     first = request(session)
     replay = request(session)
     assert http_response.headers["Cache-Control"] == "no-store"

@@ -102,10 +102,23 @@ impl RuntimeWorkRpcHandler {
                     if !refresh_profiles {
                         return Ok(Value::Null);
                     }
-                    let body: Value = response.json().await.map_err(|_| {
-                        "Could not read collaboration Runtime profiles from Backend".to_owned()
-                    })?;
-                    return Ok(body["runtime_profiles"].clone());
+                    match response.bytes().await {
+                        Ok(body) => {
+                            let mut envelope: Value =
+                                serde_json::from_slice(&body).map_err(|_| {
+                                    "Backend returned invalid collaboration Runtime profiles"
+                                        .to_owned()
+                                })?;
+                            return Ok(envelope
+                                .get_mut("runtime_profiles")
+                                .map(Value::take)
+                                .unwrap_or_default());
+                        }
+                        Err(_) => log_executor_event(
+                            "cloud collaboration manager profile response interrupted",
+                            &[("manager_task_id", task_id.to_owned())],
+                        ),
+                    }
                 }
                 Err(error) => {
                     log_executor_event(
@@ -151,11 +164,15 @@ pub(super) fn apply_fresh_cloud_manager_profiles(
     #[derive(serde::Deserialize)]
     struct RuntimeProfiles {
         manager_model_config: serde_json::Map<String, Value>,
+        manager_model_selection: Option<serde_json::Map<String, Value>>,
         member_runtime_profiles: Vec<Value>,
     }
     let profiles: RuntimeProfiles = serde_json::from_value(profiles)
         .map_err(|_| "Backend did not return collaboration Runtime profiles".to_owned())?;
     payload["executionRequest"]["model_config"] = Value::Object(profiles.manager_model_config);
+    if let Some(selection) = profiles.manager_model_selection {
+        payload["modelSelection"] = Value::Object(selection);
+    }
     payload["runtimeHandle"]["collaborationMemberRuntimeProfiles"] =
         Value::Array(profiles.member_runtime_profiles);
     Ok(())

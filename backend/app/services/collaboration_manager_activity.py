@@ -159,11 +159,12 @@ def _refresh_runtime_profiles(
         )
     except (WeworkRuntimeConfigurationError, WeworkExecutionProfileError) as exc:
         raise HTTPException(
-            409, "Collaboration Runtime profiles are unavailable"
+            503, "Collaboration Runtime profiles are unavailable"
         ) from exc
-    manager = payload["managerRuntimeRequest"]["executionRequest"]
+    manager = payload["managerRuntimeRequest"]
     return {
-        "manager_model_config": manager.get("model_config") or {},
+        "manager_model_config": manager["executionRequest"].get("model_config") or {},
+        "manager_model_selection": manager.get("modelSelection"),
         "member_runtime_profiles": payload["memberRuntimeProfiles"],
     }
 
