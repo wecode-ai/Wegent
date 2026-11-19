@@ -21,7 +21,6 @@ export function createDesktopScenario({
   modelResponseTimeoutMs,
   resultDir,
   executorHome,
-  startupRecoveryOnly = false,
 }) {
   let cloud, user, other, otherToken, project, environment, settings
   const evidence = []
@@ -151,20 +150,6 @@ export function createDesktopScenario({
           ],
         },
       })
-      if (startupRecoveryOnly) {
-        await verifyStandInStartupRecovery({
-          request,
-          rpc,
-          project,
-          user,
-          settings,
-          until,
-          control,
-          resultDir,
-          timeoutMs: modelResponseTimeoutMs,
-        })
-        return
-      }
       await verifyOrphanStandInRecovery({
         cloud,
         request,
@@ -307,6 +292,25 @@ export function createDesktopScenario({
       assert.ok(firstConversation.task.executionState?.latestTurnId)
       assert.ok(secondConversation.task.executionState?.latestTurnId)
       await expectPublicResults(issue, 2)
+      const pendingPath = `/v1/cloud-projects/${project.id}/loop-items/${issue.id}/activity-comments`
+      const beforePending = await request(`/v1/loop-items/${issue.id}`)
+      const pending = await request(pendingPath, {
+        body: 'TOOL_GENERATED_PENDING_RESULT',
+        assistant_source: {
+          device_id: secondBindings[0].device_id,
+          task_id: secondTask,
+          requires_confirmation: true,
+        },
+      })
+      assert.equal(pending.generation_source, 'ai')
+      assert.equal(pending.publication_source, 'ai')
+      assert.equal(pending.confirmation_state, 'pending')
+      const observerPending = (await request(pendingPath, undefined, otherToken)).find(
+        row => row.id === pending.id
+      )
+      assert.equal(observerPending?.generation_source, 'ai')
+      assert.equal(observerPending?.confirmation_state, 'pending')
+      assert.equal((await request(`/v1/loop-items/${issue.id}`)).status, beforePending.status)
       const manual = await rpc('runtime.stand_in.run', { ...params, issueId: issue.id })
       assert.equal(
         manual.taskId,

@@ -409,7 +409,12 @@ async function verifyModelServiceConnectionError({ composerSelector, control }) 
     MODEL_REQUEST_TIMEOUT_MS
   )
   const messageId = failedSnapshot.pane.messageSummary.lastMessage.id
-  const messageSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-message-id=${JSON.stringify(messageId)}]`
+  const turnId = failedSnapshot.workbench?.activeLifecycle?.turn?.latestId
+  assert.equal(typeof turnId, 'string', 'The failed assistant lost its native turn identity')
+  const messagePrefix = `runtime-view:${turnId}:`
+  assert.ok(messageId.startsWith(messagePrefix), 'The error belongs to a different model turn')
+  // Transcript hydration replaces the optimistic row id while preserving the native turn.
+  const messageSelector = `${ACTIVE_WORKBENCH_SELECTOR} [data-message-id^=${JSON.stringify(messagePrefix)}]`
   const titleSelector = `${messageSelector} [data-testid="assistant-error-title"]`
   const descriptionSelector = `${messageSelector} [data-testid="assistant-error-description"]`
   await control.command('waitFor', titleSelector, {

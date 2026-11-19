@@ -74,7 +74,6 @@ import { StartupTelemetryLifecycle, StartupTelemetrySuccessGate } from './host/s
 import { requiresMacosQuitWorkaround } from './host/macos-quit-workaround.mjs'
 import { RendererHealthService } from './host/renderer-health.js'
 import { RendererStartupLoader } from './host/renderer-startup-loader.js'
-import { installStartupNetworkFault } from './host/e2e-startup-network-fault.js'
 import { SmartAppManager, type SmartAppRuntimeHost } from './host/smart-app-manager.js'
 import { resolveDownloadsDirectory } from './host/downloads-directory.js'
 import { SystemSleepController } from './host/system-sleep-controller.js'
@@ -177,6 +176,7 @@ import { resolveSystemProxy } from './host/system-proxy.js'
 import { SystemResumeBridge } from './host/system-resume-bridge.js'
 import {
   prepareDesktopComponents,
+  bundledComponentDirectory,
   type DesktopComponentUpdateController,
   type PreparedDesktopComponents,
 } from './runtime/desktop-components.js'
@@ -1092,25 +1092,16 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
       if (sourceRoot) targetUrl.searchParams.set('weworkDevWorktree', sourceRoot)
     }
     startupProgress.report('renderer')
-    const disposeFault =
-      process.env.VITE_WEWORK_E2E === 'true' &&
-      process.env.WEWORK_E2E_STARTUP_NETWORK_CHANGE === '1'
-        ? installStartupNetworkFault(contents.session, targetUrl.origin)
-        : undefined
-    try {
-      await rendererStartupLoader.load({
-        webContentsId: contents.id,
-        url: targetUrl.toString(),
-        load: () =>
-          contents.loadURL(targetUrl.toString(), {
-            extraHeaders: 'X-Wework-Window-Label: main',
-          }),
-        onRecovery: () =>
-          console.warn('[startup-network-recovery] reloading interrupted entry modules'),
-      })
-    } finally {
-      disposeFault?.()
-    }
+    await rendererStartupLoader.load({
+      webContentsId: contents.id,
+      url: targetUrl.toString(),
+      load: () =>
+        contents.loadURL(targetUrl.toString(), {
+          extraHeaders: 'X-Wework-Window-Label: main',
+        }),
+      onRecovery: () =>
+        console.warn('[startup-network-recovery] reloading interrupted entry modules'),
+    })
     primaryDshLoaded = true
     runtimeError = null
     rendererHealth.ready()
@@ -2383,6 +2374,7 @@ async function configureDesktopRuntime(): Promise<void> {
   logStartupStep('desktop-environment', 'completed')
   if (!pluginDevelopmentInstance && !pluginDevelopment) {
     pluginDevelopment = new PluginDevelopmentManager({
+      bundledComponentDirectory: bundledComponentDirectory(process.env, app.getPath('userData')),
       ...currentElectronLaunch(),
       environment,
       userDataDirectory: app.getPath('userData'),
@@ -3222,6 +3214,7 @@ function runningDesktopComponents(): Promise<PreparedDesktopComponents> {
   desktopComponentsPromise ??= prepareDesktopComponents({
     isPackaged: packagedApplication,
     managerOptions: {
+      bundledComponentDirectory: bundledComponentDirectory(process.env, app.getPath('userData')),
       validateExecutor: path =>
         assertExecutorWorkbenchCompatibility({
           ...process.env,

@@ -4,6 +4,7 @@ import {
   evictConversationViewport,
   getConversationViewportCacheStats,
 } from '@wegent/collaboration/conversation/conversationViewportCache'
+import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
 import { getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
 import type {
   DeviceInfo,
@@ -386,8 +387,24 @@ export function unmarkRuntimeConversationArchived(key: string): void {
   archivedConversationKeys.delete(key)
 }
 
+function terminalConversationIdleTtlMs(): number {
+  const config = getDesktopE2ERuntimeConfig()
+  const configured = config.conversationCacheIdleTtlMs
+  return config.controlUrl &&
+    !config.disabled &&
+    typeof configured === 'number' &&
+    Number.isInteger(configured) &&
+    configured > 0
+    ? configured
+    : TERMINAL_CONVERSATION_IDLE_TTL_MS
+}
+
 export function getRuntimeConversationCacheStats() {
-  return { messageEntries: turnsByConversation.size, ...getConversationViewportCacheStats() }
+  return {
+    messageEntries: turnsByConversation.size,
+    idleTtlMs: terminalConversationIdleTtlMs(),
+    ...getConversationViewportCacheStats(),
+  }
 }
 
 export function clearRuntimeConversationCacheStore(): void {
@@ -418,7 +435,7 @@ export function scheduleTerminalConversationEviction(key: string): void {
     if (!canEvictTerminalConversation(key)) return
     evictRuntimeConversationKey(key)
     notifyRuntimeConversation(key)
-  }, TERMINAL_CONVERSATION_IDLE_TTL_MS)
+  }, terminalConversationIdleTtlMs())
   terminalConversationEvictionTimers.set(key, timer)
 }
 

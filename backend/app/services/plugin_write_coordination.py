@@ -131,6 +131,7 @@ def acquire_plugin_write_lock(
     *,
     installed_id: int | None = None,
     name: str | None = None,
+    blocking_timeout: float = WAIT_SECONDS,
 ) -> None:
     """Acquire one installation's lease, including inactive reinstall records."""
     configure_plugin_session(db)
@@ -140,7 +141,9 @@ def acquire_plugin_write_lock(
         name = installed_write_name(db, user_id, installed_id)
     if name is None:
         raise ValueError("Plugin coordination requires an explicit installation")
-    _acquire_plugin_write_lock(db, user_id, name=name, blocking_timeout=WAIT_SECONDS)
+    _acquire_plugin_write_lock(
+        db, user_id, name=name, blocking_timeout=blocking_timeout
+    )
     if installed_id is not None:
         if installed_write_name(
             db, user_id, installed_id

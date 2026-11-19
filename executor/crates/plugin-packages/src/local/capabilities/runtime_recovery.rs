@@ -10,6 +10,8 @@ use crate::services::workbench::{read_plugin_package, LeasedPluginPackage};
 #[path = "runtime_recovery_journal.rs"]
 mod journal;
 use journal::RecoveryJournal;
+#[path = "runtime_cache_selection.rs"]
+mod cache_selection;
 #[path = "runtime_legacy_sources.rs"]
 pub(super) mod legacy_sources;
 #[path = "marketplace_sources.rs"]
@@ -117,6 +119,16 @@ impl GlobalCapabilityStore {
                     _ => continue,
                 }
             };
+            let cache_name = version;
+            let retained = field == "codex_link" && cache_selection::is_retained(path);
+            let version = if retained {
+                let Some(version) = cache_selection::archived_version(path) else {
+                    continue;
+                };
+                version
+            } else {
+                version
+            };
             let (name, marketplace) = split_plugin_key(key);
             let spec = PluginSyncSpec::from_manifest_entry(
                 key,
@@ -135,7 +147,13 @@ impl GlobalCapabilityStore {
                 ensure_object_field(manifest, "plugin_runtime_owners").remove(&old);
                 continue;
             }
-            let target = if field == "codex_link" {
+            let target = if retained {
+                self.codex_plugins_dir
+                    .join(cache_selection::RETAINED_CACHE)
+                    .join(&spec.marketplace)
+                    .join(&spec.name)
+                    .join(cache_name)
+            } else if field == "codex_link" {
                 self.plugin_codex_link(&spec)
             } else {
                 self.plugins_dir
@@ -182,6 +200,7 @@ impl GlobalCapabilityStore {
         manifest: &mut Value,
     ) -> Result<bool, CapabilitySyncError> {
         let spec = checked_spec(key, entry)?;
+        cache_selection::recover(self, key, manifest)?;
         for (path, _) in self.plugin_runtime_targets(&spec) {
             self.ensure_runtime_path(&path, true)?;
         }
@@ -194,7 +213,9 @@ impl GlobalCapabilityStore {
         }
         let mut next = entry.clone();
         self.rebase_plugin_entry(&mut next, true)?;
-        if self.plugin_paths_current(entry, &next, &spec)? {
+        if self.plugin_paths_current(entry, &next, &spec)?
+            && !cache_selection::has_conflicts(self, &spec)?
+        {
             let cleared_error = manifest["plugins"][key]
                 .as_object_mut()
                 .is_some_and(|entry| entry.remove("runtime_recovery_error").is_some());
@@ -348,13 +369,20 @@ impl GlobalCapabilityStore {
                 CapabilitySyncError::invalid_payload("Managed plugin identity is missing")
             })?;
         let spec = checked_spec(&key, entry)?;
+        let archived = (!active)
+            .then(|| self.recorded_runtime_at_current_home(&spec, entry, "codex_link"))
+            .flatten()
+            .filter(|path| cache_selection::is_retained(path));
         let runtime = ensure_object_field(entry, "runtime");
         if self.codex_only_plugins {
             runtime.remove("claude_link");
         } else {
             runtime.insert("claude_link".into(), json!(self.plugin_runtime_link(&spec)));
         }
-        runtime.insert("codex_link".into(), json!(self.plugin_codex_link(&spec)));
+        runtime.insert(
+            "codex_link".into(),
+            json!(archived.unwrap_or_else(|| self.plugin_codex_link(&spec))),
+        );
         if let Some(hash) = spec.checksum.as_deref() {
             match self.current_shared_plugin_path(hash) {
                 Ok(path) => entry["store_path"] = json!(path),
@@ -508,91 +536,6 @@ impl GlobalCapabilityStore {
             || self.matches_verified_legacy_contents(spec, target, package)?)
     }
 
-    pub(super) fn validate_marketplace_occupancy(
-        &self,
-        spec: &PluginSyncSpec,
-        entry: &Value,
-        manifest: &Value,
-    ) -> Result<(), CapabilitySyncError> {
-        self.validate_marketplace_preparation(spec, entry)?;
-        for (market, claude) in [
-            (self.codex_marketplace_dir(&spec.marketplace), false),
-            (self.claude_marketplace_dir(&spec.marketplace), true),
-        ] {
-            if claude && self.codex_only_plugins {
-                continue;
-            }
-            let target = market
-                .join("plugins")
-                .join(self.marketplace_plugin_name(spec, claude));
-            if !exists(&target) {
-                continue;
-            }
-            let (runtime, field) =
-                if claude && spec.marketplace != PERSONAL_SHARED_PLUGIN_MARKETPLACE {
-                    (self.plugin_runtime_link(spec), "claude_link")
-                } else {
-                    (self.plugin_codex_link(spec), "codex_link")
-                };
-            if target.is_symlink()
-                && fs::read_link(&target).ok().is_some_and(|link| {
-                    let linked = if link.is_absolute() {
-                        link
-                    } else {
-                        target.parent().unwrap().join(link)
-                    };
-                    // Uninstall retains versioned caches. A new install may replace
-                    // the source only when this exact cache still belongs to its key.
-                    let retained = self.shared_packages
-                        && linked.parent() == runtime.parent()
-                        && manifest
-                            .get("plugin_runtime_owners")
-                            .and_then(|owners| owners.get(linked.to_string_lossy().as_ref()))
-                            .and_then(Value::as_str)
-                            == Some(spec.key.as_str())
-                        && self.ensure_runtime_path(&linked, false).is_ok();
-                    linked == runtime
-                        || (spec.marketplace == PERSONAL_SHARED_PLUGIN_MARKETPLACE
-                            && !self.codex_only_plugins
-                            && linked == self.plugin_runtime_link(spec)
-                            && entry_owns_path(entry, &linked, "claude_link"))
-                        || retained
-                        || manifest
-                            .get("plugin_runtime_owner_origins")
-                            .and_then(|origins| origins.get(runtime.to_string_lossy().as_ref()))
-                            .is_some_and(|origin| {
-                                origin.get("key").and_then(Value::as_str) == Some(spec.key.as_str())
-                                    && origin.get("path").and_then(Value::as_str).map(Path::new)
-                                        == Some(linked.as_path())
-                            })
-                        || entry
-                            .get("runtime")
-                            .and_then(|value| value.get(field))
-                            .and_then(Value::as_str)
-                            .is_some_and(|old| Path::new(old) == linked)
-                })
-            {
-                continue;
-            }
-            if self.owns_legacy_marketplace_source(spec, &target, entry, manifest)? {
-                continue;
-            }
-            if self.owns_managed_marketplace_copy(spec, &target, field, manifest)? {
-                continue;
-            }
-            // Existing personal sources and directories are not implicitly managed.
-            let same_install = entry.get("managed").and_then(Value::as_bool) == Some(true)
-                && entry.get("installed_plugin_id").and_then(Value::as_i64)
-                    == spec.installed_plugin_id;
-            if !same_install || !self.matches_old_managed_copy(&target, entry, &spec.key)? {
-                return Err(CapabilitySyncError::invalid_payload(
-                    "Plugin marketplace entry is occupied by an unrelated source",
-                ));
-            }
-        }
-        Ok(())
-    }
-
     pub(super) fn install_plugin_runtime_metadata(
         &self,
         spec: &PluginSyncSpec,
@@ -635,6 +578,7 @@ impl GlobalCapabilityStore {
         publication: Option<&RecoveryJournal>,
         mut prepared: Option<&mut plugin_preparation::PreparedRuntime>,
     ) -> Result<(), CapabilitySyncError> {
+        cache_selection::recover(self, &spec.key, manifest)?;
         validate_package_identity(store_path, spec)?;
         checked_spec(
             &spec.key,
@@ -699,6 +643,7 @@ impl GlobalCapabilityStore {
         } else {
             BTreeSet::new()
         };
+        let selection = cache_selection::Selection::prepare(self, spec, manifest)?;
         let (files, mut moved) = self.runtime_state_paths(spec);
         if !self.shared_packages {
             if let Some(old) = &old {
@@ -782,6 +727,10 @@ impl GlobalCapabilityStore {
                     "checksum",
                     spec.checksum.as_deref(),
                 );
+                if let Some(selection) = &selection {
+                    selection.retire(self)?;
+                    selection.record_commit(manifest, &mut entry);
+                }
                 shared_packages::remember_plugin_runtime_owner(manifest, &spec.key, &entry);
                 for (path, _) in self.plugin_runtime_targets(spec) {
                     ensure_object_field(manifest, "plugin_runtime_relocated_owners")
@@ -804,15 +753,26 @@ impl GlobalCapabilityStore {
                 if let Some(id) = &superseded {
                     RecoveryJournal::archive_superseded(self, &spec.key, id)?;
                 }
+                if let Some(selection) = &selection {
+                    selection.finish()?;
+                }
                 Ok(())
             }
             Err(error) => {
                 *manifest = original;
-                if let Some(transaction) = &mut transaction {
-                    Err(transaction.add_rollback_context(error))
+                let error = if let Some(transaction) = &mut transaction {
+                    transaction.add_rollback_context(error)
                 } else {
-                    Err(error)
+                    error
+                };
+                if let Some(selection) = &selection {
+                    if let Err(rollback) = selection.rollback(self) {
+                        return Err(CapabilitySyncError::invalid_payload(format!(
+                            "{error}; native cache selection retained: {rollback}"
+                        )));
+                    }
                 }
+                Err(error)
             }
         }
     }

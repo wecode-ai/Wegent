@@ -157,18 +157,23 @@ export function createDesktopScenario({ uiTimeoutMs, modelResponseTimeoutMs, res
           // Real writer transaction coverage lives in assignment_index_mysql_tests.rs.
           const oldId = before.items[0].id
           const oldIndexId = createHash('sha256').update(`active-assignment:${oldId}`).digest('hex')
-          await cloud.executeDatabase(
-            "UPDATE loop_items SET id=%s,loop_item_id=%s WHERE parent_id=%s AND resource_type='assignment_index' AND loop_item_id=%s",
-            [oldIndexId, oldId, issue.id, issue.human_task_binding.assignmentId]
-          )
-          await cloud.executeDatabase(
-            "UPDATE loop_items SET version=1 WHERE parent_id=%s AND resource_type='assignment_index'",
-            [issue.id]
-          )
-          const stored = await cloud.queryDatabase(
-            "SELECT loop_item_id FROM loop_items WHERE parent_id=%s AND resource_type='assignment_index' AND loop_item_id=%s",
-            [issue.id, oldId]
-          )
+          // Hold the Issue lock until the corruption and its assertion are captured;
+          // the live receipt consumer may repair a v1 index immediately after commit.
+          const [, , , stored] = await cloud.executeDatabaseTransaction([
+            { sql: 'SELECT id FROM loop_items WHERE id=%s FOR UPDATE', params: [issue.id] },
+            {
+              sql: "UPDATE loop_items SET id=%s,loop_item_id=%s WHERE parent_id=%s AND resource_type='assignment_index' AND loop_item_id=%s",
+              params: [oldIndexId, oldId, issue.id, issue.human_task_binding.assignmentId],
+            },
+            {
+              sql: "UPDATE loop_items SET version=1 WHERE parent_id=%s AND resource_type='assignment_index'",
+              params: [issue.id],
+            },
+            {
+              sql: "SELECT loop_item_id FROM loop_items WHERE parent_id=%s AND resource_type='assignment_index' AND loop_item_id=%s",
+              params: [issue.id, oldId],
+            },
+          ])
           assert.equal(stored.length, 1, 'The fixture must retain the stale assignment index')
           if (automatic)
             settings = await rpc('runtime.stand_in.personal.save', {

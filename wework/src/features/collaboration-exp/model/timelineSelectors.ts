@@ -3,6 +3,7 @@ import { canStartWorkOnCollaborationIssue, markdownAttachmentRows } from '@wegen
 import type { RuntimeTaskAddress } from '@/types/api'
 import { selectPrivateConversations } from './conversationSelectors'
 import { mergeHistoryNodes, selectHistoryNodes } from './historySelectors'
+import { timelineMessageKind } from './messageLayer'
 import {
   knownRuntimeAddress,
   matchesExperienceViewer,
@@ -96,12 +97,7 @@ function timelineNode(
   input: ExperienceTimelineInput,
   conversations: ExperienceConversationSelection
 ): ExperienceTimelineNode {
-  const kind =
-    message.sender.type === 'agent'
-      ? 'execution'
-      : message.sender.type === 'user'
-        ? 'comment'
-        : 'system'
+  const kind = timelineMessageKind(message)
   const owner = humanSource(message, index)
   const attachments = new Map(
     (kind === 'execution' ? [] : markdownAttachmentRows(message.content)).map(attachment => [
@@ -115,12 +111,21 @@ function timelineNode(
   )
   return {
     id: message.messageId,
+    generationSource: message.generationSource,
+    publicationSource: message.publicationSource,
+    confirmationState: message.confirmationState,
+    traceRef: message.traceRef,
+    traceState: message.traceState,
     clientMessageId: message.clientMessageId ?? null,
     sequenceNumber: message.sequenceNumber,
     kind,
     at: validSourceTimestamp(message.createdAt),
     body: kind === 'execution' ? null : message.content,
-    author: owner ? { id: owner.sender.id, name: owner.sender.name } : null,
+    author: message.actorUserId
+      ? { id: message.actorUserId, name: message.actorDisplayName ?? null }
+      : owner
+        ? { id: owner.sender.id, name: owner.sender.name }
+        : null,
     status: message.status,
     attachments: [...attachments.values()],
     conversation: nodeConversations(message, index, input, conversations),

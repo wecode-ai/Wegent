@@ -365,10 +365,6 @@ impl CodexNativeActivity {
         }
     }
 
-    fn thread_is_loaded(&self, thread_id: &str) -> bool {
-        self.loaded_threads.contains(thread_id)
-    }
-
     pub(super) fn active_threads(&self) -> HashMap<String, usize> {
         let mut active: HashMap<_, _> = self
             .turns
@@ -408,23 +404,6 @@ pub(super) enum CodexNativeRequest {
         observation: u64,
         request_id: u64,
     },
-}
-
-impl CodexAppServerClient {
-    /// Reports whether the session was already resident before the caller's
-    /// mutation. Loading a thread only to apply an execution profile is not
-    /// native work and must stay distinguishable from a session the caller owns.
-    pub(crate) async fn thread_is_loaded(&self, thread_id: &str) -> bool {
-        let state = self.state.lock().await;
-        state.process.as_ref().is_some_and(|process| {
-            process
-                .notifications
-                .native_activity
-                .lock()
-                .expect("Codex native activity registry should not be poisoned")
-                .thread_is_loaded(thread_id)
-        })
-    }
 }
 
 impl CodexAppServerSharedState {

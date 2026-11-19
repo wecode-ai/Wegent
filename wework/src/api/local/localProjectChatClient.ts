@@ -8,6 +8,15 @@ import type { User } from '@/types/api'
 type LocalChatRequest = <T>(method: string, params?: Record<string, unknown>) => Promise<T>
 
 export interface LocalCommentRecord {
+  actor_user_id?: string | null
+  actor_display_name?: string | null
+  runtime_owner_user_id?: string | null
+  runtime_shared?: boolean
+  generation_source?: ProjectChatMessage['generationSource']
+  publication_source?: ProjectChatMessage['publicationSource']
+  confirmation_state?: ProjectChatMessage['confirmationState']
+  trace_ref?: string | null
+  trace_state?: ProjectChatMessage['traceState']
   id: number
   message_id: string
   client_message_id: string | null
@@ -29,8 +38,46 @@ export interface LocalCommentRecord {
 }
 
 const LOCAL_COMMENT_POLL_INTERVAL_MS = 3000
+const SHARED_METADATA_KEYS = new Set([
+  'mentions',
+  'stand_in_reply_to',
+  'stand_in',
+  'execution_dispatch',
+  'activity_type',
+  'dispatch_role',
+  'manager_display_name',
+  'run_status',
+  'activity_at',
+  'conversation_only',
+  'kind',
+  'dispatch_id',
+  'coordination_round_id',
+  'dispatch_assignments',
+  'summary',
+  'evidence_refs',
+  'next_action',
+  'publish_policy',
+  'imported_from',
+  'history_import',
+  'member_assistant_result',
+])
+const SHARED_RUNTIME_METADATA_KEYS = new Set([
+  'run_id',
+  'execution_id',
+  'executor_type',
+  'backend_task_id',
+  'execution_url',
+  'model',
+  'runtime_event_sequence',
+  'contentMode',
+  'runtime_turn_id',
+  'workflow_task_title',
+])
 
-function commentToMessage(record: LocalCommentRecord): ProjectChatMessage {
+function commentToMessage(
+  record: LocalCommentRecord,
+  viewerUserIds: ReadonlySet<string>
+): ProjectChatMessage {
   const senderType: ProjectChatMessage['sender']['type'] =
     record.sender_type === 'user' || record.sender_type === 'agent' ? record.sender_type : 'system'
   const status: ProjectChatMessage['status'] =
@@ -41,7 +88,24 @@ function commentToMessage(record: LocalCommentRecord): ProjectChatMessage {
     record.status === 'cancelled'
       ? record.status
       : 'completed'
-  const runtimeAddressRecord = record.metadata?.runtime_address
+  const owner =
+    record.runtime_owner_user_id != null
+      ? viewerUserIds.has(record.runtime_owner_user_id)
+      : record.sender_type === 'user'
+        ? viewerUserIds.has(record.sender_id)
+        : false
+  const runtimeVisible = owner || record.runtime_shared === true
+  const metadata = owner
+    ? (record.metadata ?? {})
+    : Object.fromEntries(
+        Object.entries(record.metadata ?? {}).filter(
+          ([key]) =>
+            SHARED_METADATA_KEYS.has(key) ||
+            (runtimeVisible && SHARED_RUNTIME_METADATA_KEYS.has(key))
+        )
+      )
+  const subagentProcess = record.metadata?.kind === 'task_ai_subagent'
+  const runtimeAddressRecord = runtimeVisible ? (record.metadata ?? {}).runtime_address : undefined
   const runtimeAddress =
     runtimeAddressRecord &&
     typeof runtimeAddressRecord === 'object' &&
@@ -53,19 +117,43 @@ function commentToMessage(record: LocalCommentRecord): ProjectChatMessage {
         }
       : undefined
   return {
+    actorUserId: record.actor_user_id,
+    actorDisplayName: record.actor_display_name,
+    generationSource: record.generation_source,
+    publicationSource: record.publication_source,
+    confirmationState: record.confirmation_state,
+    traceRef: record.trace_ref,
     sequenceNumber: record.sequence_number,
     messageId: record.message_id,
     clientMessageId: record.client_message_id ?? null,
     projectId: record.project_id,
     taskId: record.task_id,
     sender: { type: senderType, id: record.sender_id, name: record.sender_name },
-    type: record.message_type === 'agent_status' ? 'agent_status' : 'text',
-    content: record.content,
-    metadata: record.metadata ?? {},
+    type: subagentProcess
+      ? 'agent_chunk'
+      : record.message_type === 'agent_status' || record.message_type === 'agent_chunk'
+        ? record.message_type
+        : record.message_type === 'system'
+          ? 'system'
+          : 'text',
+    content:
+      !owner &&
+      (subagentProcess ||
+        record.message_type === 'agent_status' ||
+        record.message_type === 'agent_chunk')
+        ? ''
+        : record.content,
+    metadata,
     replyToMessageId: record.reply_to_message_id ?? null,
     rootMessageId: record.thread_root_message_id ?? null,
+    triggerMessageId: record.trigger_message_id ?? null,
     runtimeAddress,
     status,
+    traceState: runtimeAddress
+      ? 'available'
+      : record.trace_ref
+        ? 'restricted'
+        : 'history-unavailable',
     createdAt: record.created_at,
     updatedAt: record.updated_at,
   }
@@ -75,6 +163,7 @@ export function createLocalProjectChatClient(
   request: LocalChatRequest,
   options: {
     currentUser: Pick<User, 'id' | 'user_name'>
+    viewerUserIds?: readonly (string | number)[]
     prepareExecution?: (input: {
       projectId: string
       taskId: string
@@ -85,6 +174,7 @@ export function createLocalProjectChatClient(
   }
 ): ProjectChatClient {
   const currentUserId = String(options.currentUser.id)
+  const viewerUserIds = new Set([currentUserId, ...(options.viewerUserIds ?? []).map(String)])
   const currentUserName = options.currentUser.user_name
   const activeUnsubscribers = new Set<() => void>()
 
@@ -109,7 +199,7 @@ export function createLocalProjectChatClient(
           after_sequence: 0,
         })
         for (const record of records) {
-          const message = commentToMessage(record)
+          const message = commentToMessage(record, viewerUserIds)
           latestSequence = Math.max(latestSequence, message.sequenceNumber)
           const previous = knownMessages.get(message.messageId)
           knownMessages.set(message.messageId, message)
@@ -170,11 +260,12 @@ export function createLocalProjectChatClient(
         metadata: {
           mentions,
           ...(input.localProjectId != null ? { local_project_id: input.localProjectId } : {}),
+          ...(input.assistantSource ? { assistant_source: input.assistantSource } : {}),
         },
         reply_to_message_id: input.replyToMessageId ?? null,
       },
     })
-    return commentToMessage(created)
+    return commentToMessage(created, viewerUserIds)
   }
 
   const executeTaskComment: ProjectChatClient['executeTaskComment'] = async input => {
@@ -227,7 +318,7 @@ export function createLocalProjectChatClient(
       task_id: input.taskId,
       after_sequence: trigger.sequence_number,
     })
-    return updated.map(commentToMessage)
+    return updated.map(record => commentToMessage(record, viewerUserIds))
   }
 
   const startAgentResponse: ProjectChatClient['startAgentResponse'] = async input => {
@@ -241,7 +332,7 @@ export function createLocalProjectChatClient(
       prompt: input.prompt ?? null,
       model: input.model ?? null,
     })
-    return commentToMessage(created)
+    return commentToMessage(created, viewerUserIds)
   }
 
   const failAgentResponse: ProjectChatClient['failAgentResponse'] = async input => {
@@ -251,12 +342,32 @@ export function createLocalProjectChatClient(
       message_id: input.messageId,
       error: input.error ?? '执行失败',
     })
-    return commentToMessage(failed)
+    return commentToMessage(failed, viewerUserIds)
   }
 
   return {
     subscribe,
     send,
+    async publishAssistantMessage(input) {
+      return commentToMessage(
+        await request<LocalCommentRecord>('todos.comment.publish_assistant', {
+          device_id: input.source.deviceId,
+          runtime_task_id: input.source.taskId,
+          comment: {
+            project_id: input.projectId,
+            task_id: input.taskId,
+            client_message_id: input.clientMessageId,
+            sender_type: 'user',
+            sender_id: currentUserId,
+            sender_name: currentUserName,
+            content: input.text,
+            metadata: {},
+            reply_to_message_id: null,
+          },
+        }),
+        viewerUserIds
+      )
+    },
     ...(options.prepareExecution ? { executeTaskComment } : {}),
     startAgentResponse,
     failAgentResponse,
