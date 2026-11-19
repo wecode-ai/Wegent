@@ -52,6 +52,15 @@ export function createDesktopScenario({ workspacePath }) {
       const rpc = (method, params) =>
         requestExecutor(control, method, params, DEFAULT_STEP_TIMEOUT_MS)
       const task = async taskId => (await rpc('runtime.tasks.get', { taskId })).task
+      // Startup can recheck an expired wait before returning the task to the queue.
+      const waitForRestoredQuota = taskId =>
+        waitForValue(
+          () => task(taskId),
+          value =>
+            value?.runtimeHandle?.quotaWait && value.status === 'queued' && value.running === false,
+          `The durable quota wait for ${taskId} was not restored after desktop restart`,
+          RECOVERY_TIMEOUT_MS
+        )
       const create = async (
         taskId,
         delaySeconds,
@@ -211,28 +220,11 @@ export function createDesktopScenario({ workspacePath }) {
       await control.command('click', `[data-testid="runtime-local-task-row-${taskId}"]`)
       await control.command('waitFor', '[data-testid="runtime-quota-wait-status"]')
       await restartDesktopApp()
-      // Startup projects the saved wait before the due usage preflight parks it again.
-      // Observe the released runner as well as the durable wait metadata.
-      const restored = await waitForValue(
-        () => task(taskId),
-        value =>
-          value?.runtimeHandle?.quotaWait && value.status === 'queued' && !value.running && value,
-        'The durable quota wait was not restored after desktop restart',
-        RECOVERY_TIMEOUT_MS
-      )
-      assert.equal(restored.status, 'queued')
-      assert.equal(restored.running, false)
+      const restored = await waitForRestoredQuota(taskId)
       assert.equal(restored.threadId, beforeRestart.threadId)
       assert.equal(plan.count, 1, 'Recovery ran before the restored wait was observed')
-      const restoredGoal = await waitForValue(
-        () => task(continuingGoal.taskId),
-        value =>
-          value?.runtimeHandle?.quotaWait && value.status === 'queued' && !value.running && value,
-        'The ongoing Goal quota wait was not restored after desktop restart',
-        RECOVERY_TIMEOUT_MS
-      )
+      const restoredGoal = await waitForRestoredQuota(continuingGoal.taskId)
       assert.equal(restoredGoal.threadId, goalThreadId)
-      assert.equal(restoredGoal.running, false)
       assert.equal(continuingGoal.plan.count, 1)
       const stoppedAfterRestart = await task(stoppedPreparation.taskId)
       assert.equal(stoppedAfterRestart.status, 'cancelled')

@@ -593,6 +593,8 @@ async def install_marketplace_plugin(
         db.close()
         result = await run_plugin_operation(
             mutate_local_plugin,
+            retry_busy=True,
+            retry_conflicts=True,
             user_id=current_user.id,
             instance_id=local_instance_id,
             intent_order=local_intent_order,
@@ -666,6 +668,8 @@ async def ensure_builtin_plugin_installed(
         db.close()
         result = await run_plugin_operation(
             mutate_local_plugin,
+            retry_busy=True,
+            retry_conflicts=True,
             user_id=current_user.id,
             instance_id=local_instance_id,
             intent_order=local_intent_order,
@@ -791,6 +795,8 @@ async def update_installed_plugin(
         db.close()
         result = await run_plugin_operation(
             mutate_local_plugin,
+            retry_busy=True,
+            retry_conflicts=True,
             user_id=current_user.id,
             instance_id=local_instance_id,
             intent_order=local_intent_order,
@@ -863,6 +869,8 @@ async def uninstall_installed_plugin(
         db.close()
         result = await run_plugin_operation(
             mutate_local_plugin,
+            retry_busy=True,
+            retry_conflicts=True,
             user_id=current_user.id,
             instance_id=local_instance_id,
             intent_order=local_intent_order,
