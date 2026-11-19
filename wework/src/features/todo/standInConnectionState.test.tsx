@@ -1,13 +1,35 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
 import type { PersonalStandInSettings } from '@/api/personalStandIn'
-import type { StandInExecutorApi, StandInInboxWork, StandInInstanceBinding } from '@/api/standIn'
+import {
+  isStandInBindingOwner,
+  type StandInExecutorApi,
+  type StandInInboxWork,
+  type StandInInstanceBinding,
+} from '@/api/standIn'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { DeviceInfo } from '@/types/api'
 import { useStandInInbox } from './useStandInInbox'
 import { useStandInInstance } from './useStandInInstance'
 
 const devices: DeviceInfo[] = []
+const account = { userId: 1, username: 'alice', backendUrl: 'https://current.example/api' }
+
+it('matches ordinary accounts across addresses and keeps admin and legacy bindings at their original address', () => {
+  const target = { ...account, deviceId: 'device' }
+  const alias = { ...account, backendUrl: 'https://alias.example/api' }
+  expect(isStandInBindingOwner(target, alias)).toBe(true)
+  expect(isStandInBindingOwner(target, { ...account, username: 'other' })).toBe(false)
+  expect(isStandInBindingOwner(target, { ...account, userId: 2 })).toBe(false)
+  expect(
+    isStandInBindingOwner({ ...target, username: 'admin' }, { ...account, username: 'admin' })
+  ).toBe(true)
+  expect(
+    isStandInBindingOwner({ ...target, username: 'admin' }, { ...alias, username: 'admin' })
+  ).toBe(false)
+  expect(isStandInBindingOwner({ ...target, username: undefined }, account)).toBe(true)
+  expect(isStandInBindingOwner({ ...target, username: undefined }, alias)).toBe(false)
+})
 
 it('keeps old inbox items hidden while the same owner and device load on a new connection', async () => {
   const item: StandInInboxWork = {
@@ -65,7 +87,7 @@ it('only offers the stopped profile belonging to the current binding', async () 
   const original: StandInInstanceBinding = {
     status: 'stopped',
     version: 3,
-    target: { userId: 1, deviceId: 'first' },
+    target: { ...account, deviceId: 'first', backendUrl: 'https://previous.example/api' },
   }
   binding.mockResolvedValue(original)
   const services = {
@@ -74,7 +96,7 @@ it('only offers the stopped profile belonging to the current binding', async () 
       ({ deviceId: 'local', runtimeInstanceId: 'instance', provenance: 'local-ipc' }) as const,
   } satisfies Partial<WorkbenchServices>
   const { result } = renderHook(() =>
-    useStandInInstance(services as WorkbenchServices, 1, devices, true, true)
+    useStandInInstance(services as WorkbenchServices, account, devices, true, true)
   )
   await waitFor(() => expect(result.current.stoppedProfile).toBe(first))
 
@@ -85,11 +107,21 @@ it('only offers the stopped profile belonging to the current binding', async () 
   binding.mockResolvedValueOnce({
     status: 'stopped',
     version: 6,
-    target: { userId: 1, deviceId: 'second' },
+    target: { ...account, deviceId: 'second' },
   })
   personalGet.mockRejectedValueOnce(new Error('Second device unavailable'))
   act(() => result.current.reload())
   await waitFor(() => expect(result.current.binding?.target?.deviceId).toBe('second'))
   expect(result.current.stoppedProfile).toBeUndefined()
   await waitFor(() => expect(result.current.error).toBeTruthy())
+
+  binding.mockResolvedValueOnce({
+    status: 'stopped',
+    version: 7,
+    target: { ...account, username: 'different-account', deviceId: 'first' },
+  })
+  act(() => result.current.reload())
+  await waitFor(() => expect(result.current.binding?.version).toBe(7))
+  expect(result.current.stoppedProfile).toBeUndefined()
+  expect(personalGet).toHaveBeenCalledTimes(3)
 })
