@@ -80,10 +80,10 @@ const config: Config = {
 }
 
 // Next adds node_modules exclusions before custom patterns. Replace those
-// exclusions after resolution so the real shared Markdown parser runs in Jest,
+// exclusions after resolution so shared Markdown and UI SDK run in Jest,
 // including packages installed through pnpm's virtual store.
-const markdownPackages =
-  '(?:@chenglou[/+]pretext|@pierre[/+]highlights|@streamdown[/+]math|unified|react-markdown|remark-[^/]+|rehype-[^/]+|mdast-util-[^/]+|micromark[^/]*|unist-util-[^/]+|estree-util-[^/]+|vfile(?:-message|-location)?|bail|devlop|extend|is-plain-obj|trough|zwitch|decode-named-character-reference|character-entities[^/]*|ccount|escape-string-regexp|longest-streak|markdown-table|property-information|comma-separated-tokens|space-separated-tokens|hastscript|hast-util-[^/]+|html-void-elements|html-url-attributes|stringify-entities|trim-lines|web-namespaces)'
+const esmPackages =
+  '(?:@ui-sdk[/+](?:core|react)|@chenglou[/+]pretext|@pierre[/+]highlights|@streamdown[/+]math|unified|react-markdown|remark-[^/]+|rehype-[^/]+|mdast-util-[^/]+|micromark[^/]*|unist-util-[^/]+|estree-util-[^/]+|vfile(?:-message|-location)?|bail|devlop|extend|is-plain-obj|trough|zwitch|decode-named-character-reference|character-entities[^/]*|ccount|escape-string-regexp|longest-streak|markdown-table|property-information|comma-separated-tokens|space-separated-tokens|hastscript|hast-util-[^/]+|html-void-elements|html-url-attributes|stringify-entities|trim-lines|web-namespaces)'
 
 const resolveJestConfig = async () => {
   const resolved = await createJestConfig(config)()
@@ -93,7 +93,7 @@ const resolveJestConfig = async () => {
       pattern.startsWith('/node_modules/')
         ? pattern.replace(
             '/node_modules/',
-            `/node_modules/(?!${markdownPackages}/)(?!\\.pnpm/${markdownPackages}@)`
+            `/node_modules/(?!${esmPackages}/)(?!\\.pnpm/${esmPackages}@)`
           )
         : pattern
     ),
