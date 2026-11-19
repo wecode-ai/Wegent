@@ -766,8 +766,8 @@ test.describe('Collaboration cloud capabilities', () => {
 
       await page.getByRole('button', { name: folderName, exact: true }).click()
       await expect(page.getByTestId(`cloud-file-preview-${uploaded.id}`)).toBeVisible()
-      page.once('dialog', dialog => dialog.accept())
       await page.getByTestId(`cloud-file-delete-${uploaded.id}`).click()
+      await page.getByTestId('confirmation-request-confirm').click()
       await expect
         .poll(async () => {
           const response = await webApi<{ items: CloudFile[] }>(
@@ -783,8 +783,8 @@ test.describe('Collaboration cloud capabilities', () => {
         .getByRole('button', { name: /共享文件|Shared files/, exact: true })
         .click()
       const folder = files.find(file => file.path === folderName)!
-      page.once('dialog', dialog => dialog.accept())
       await page.getByTestId(`cloud-file-delete-${folder.id}`).click()
+      await page.getByTestId('confirmation-request-confirm').click()
       await expect(page.getByRole('button', { name: folderName, exact: true })).toHaveCount(0)
     } finally {
       if (projectId) await archiveProject(page, projectId)

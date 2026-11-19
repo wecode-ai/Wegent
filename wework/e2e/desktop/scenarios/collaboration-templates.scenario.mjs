@@ -21,30 +21,21 @@ const scoped = selector => `${CONTENT} ${selector}`
 const testId = name => scoped(`[data-testid="${name}"]`)
 
 export async function fillTemplateRoleBindings(control, count) {
-  await control.command('waitFor', testId('template-customize-main'))
-  if (
-    Number(
-      await control.command(
-        'getElementCount',
-        scoped('details:not([open]):has(> [data-testid="template-customize-main"])')
-      )
-    ) > 0
-  ) {
-    await control.command('clickWhenEnabled', testId('template-customize-main'))
+  const customize = testId('template-customize-main')
+  await control.command('waitFor', customize, { visible: true })
+  if ((await control.command('getAttribute', customize, { value: 'aria-expanded' })) === 'false') {
+    await control.command('clickWhenEnabled', customize, { visible: true })
   }
-  await control.command('waitFor', testId('template-role-main-role-0') + ' option[value^="human:"]')
+  const coordinator = testId('template-role-main-role-0')
+  await control.command('clickWhenEnabled', coordinator, { visible: true })
+  await control.command('waitFor', `${coordinator}[aria-expanded="true"]`, { visible: true })
+  const listId = await control.command('getAttribute', coordinator, { value: 'aria-controls' })
+  assert.ok(listId, 'The coordinator selector must identify its open listbox')
   // This scenario covers an explicit human coordinator; lifecycle coverage uses the agent default.
-  const human = await control.command(
-    'getAttribute',
-    testId('template-role-main-role-0') + ' option[value^="human:"]',
-    { value: 'value' }
-  )
-  await control.command('select', testId('template-role-main-role-0'), { value: human })
+  const humanOption = `[id=${JSON.stringify(listId)}] [role="option"][data-value^="human:"]`
+  await control.command('waitFor', humanOption, { visible: true })
+  await control.command('clickWhenEnabled', humanOption, { visible: true })
   for (let index = 1; index < count; index++) {
-    await control.command(
-      'waitFor',
-      `${testId(`template-role-main-role-${index}`)} option[value="agent:template-agent:main-role-${index}"]`
-    )
     await control.command('select', testId(`template-role-main-role-${index}`), {
       value: `agent:template-agent:main-role-${index}`,
     })
