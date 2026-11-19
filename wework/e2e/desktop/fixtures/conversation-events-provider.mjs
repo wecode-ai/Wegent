@@ -36,13 +36,22 @@ export async function apply(ctx) {
               name: `发布文档 · ${'跨部门协作与发布审核记录，等待相关变更后在原会话继续处理。'.repeat(5)}`,
               server: tools[0].server,
             },
+            {
+              id: 'preexisting-checks-record',
+              profile: 'fixture',
+              kind: 'record',
+              name: '发布文档 · PR 检查结果',
+              server: tools[0].server,
+            },
           ],
           hasMore: false,
         }
       },
       async validate(_context, source) {
         if (
-          !['archive-record', 'long-archive-record'].includes(source.id) ||
+          !['archive-record', 'long-archive-record', 'preexisting-checks-record'].includes(
+            source.id
+          ) ||
           source.profile !== 'fixture' ||
           source.kind !== 'record'
         )
@@ -50,12 +59,20 @@ export async function apply(ctx) {
         return source
       },
       async initialize(context, source) {
-        return { cursor: (await read(context, source)).length }
+        const events = await read(context, source)
+        // This resource exposes the currently stored result on its first observation.
+        return { cursor: source.id === 'preexisting-checks-record' ? 0 : events.length }
       },
       async collect(context, { source, checkpoint }) {
         const events = await read(context, source)
         return {
-          events: events.slice(checkpoint.cursor),
+          events: events
+            .slice(checkpoint.cursor)
+            .map(event =>
+              source.id === 'preexisting-checks-record'
+                ? { ...event, at: new Date().toISOString() }
+                : event
+            ),
           nextCheckpoint: { cursor: events.length },
           hasMore: false,
         }
