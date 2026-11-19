@@ -249,28 +249,18 @@ const WorkspaceBinaryFilePreview = memo(function WorkspaceBinaryFilePreview({
       ref={bindBinaryPreview}
       className="wework-diagram-preview relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background"
     >
-      {/\.(mp4|ogv|webm)$/i.test(file.name) ? (
-        <WorkspaceVideoPreview file={file.file} />
-      ) : /\.xmind$/i.test(file.name) ? (
-        <WorkspaceXMindPreview
+      <Profiler id="workspace-file-viewer" onRender={handleFileViewerRender}>
+        <FileViewer
           key={`${file.path}:${file.size}`}
           file={preparedFile}
-          name={file.name}
+          filename={file.name}
+          type={viewerType}
+          size={file.size}
+          data-viewer-theme={themeType}
+          className="wework-workspace-file-viewer scrollbar-soft h-full w-full overflow-auto"
+          options={viewerOptions}
         />
-      ) : (
-        <Profiler id="workspace-file-viewer" onRender={handleFileViewerRender}>
-          <FileViewer
-            key={`${file.path}:${file.size}`}
-            file={file.file}
-            filename={file.name}
-            type={viewerType}
-            size={file.size}
-            data-viewer-theme={themeType}
-            className="wework-workspace-file-viewer scrollbar-soft h-full w-full overflow-auto"
-            options={viewerOptions}
-          />
-        </Profiler>
-      )}
+      </Profiler>
       {isDiagram ? (
         <DiagramImageActions
           getArtifact={() => captureDiagramArtifact(containerRef.current)}
