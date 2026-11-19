@@ -1,7 +1,7 @@
 //! Reuse ordinary receipt writes after a local plan's revision was checked.
 use super::*;
 use crate::plugins_installed::plugin_sync_protocol::{
-    PluginSyncState, advance_plugin_snapshot_watermark,
+    PluginSyncState, merge_local_receipt_watermark, plugin_snapshot_watermark,
 };
 
 #[allow(clippy::too_many_arguments)]
@@ -14,6 +14,13 @@ pub(in crate::plugins_installed) async fn record_local_completion<Q: PluginQuery
     state: &PluginSyncState,
     guard: &dyn crate::device_identity::LeaseCheck,
 ) -> MysqlResult<()> {
+    // Source confirmation owns alias cleanup even when no other devices need
+    // background preparation. The caller already fenced the current intent.
+    crate::device_identity::reconcile_plugin_device_rows_for_installs_on::<
+        _,
+        PluginDeviceInstallationRow,
+    >(query, user_id, Some(guard), Some(&[installed.id]))
+    .await?;
     let mut flush = PendingFlush::default();
     if installed.is_active {
         record_installation_result(
@@ -36,14 +43,21 @@ pub(in crate::plugins_installed) async fn record_local_completion<Q: PluginQuery
             flush.push_delete(row.id);
         }
     }
-    let mut document = state.json.clone();
-    advance_plugin_snapshot_watermark(
-        &mut document,
-        &result.device_id,
-        generation,
-        false,
-        &[installed.id],
-    );
-    flush.assign_state(state.id, user_id, &document, document != state.json);
-    flush.flush_with_guard(query, Some(guard)).await
+    guard.check().await?;
+    // Lock dependent rows before taking the shared account-state row lock.
+    flush.lock_device_rows(query).await?;
+    if !flush.writes.is_empty()
+        || generation > plugin_snapshot_watermark(&state.json, &result.device_id, installed.id)
+    {
+        merge_local_receipt_watermark(
+            query,
+            user_id,
+            state,
+            &result.device_id,
+            installed.id,
+            generation,
+        )
+        .await?;
+    }
+    flush.flush_with_guard(query, None).await
 }

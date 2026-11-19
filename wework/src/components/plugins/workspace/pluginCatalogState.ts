@@ -1,3 +1,4 @@
+import { createPluginRecoveryNotice } from './pluginRecoveryNotice'
 import type { PluginMarketplaceItem, PluginAccessResponse } from '@/types/api'
 import { restorePluginComponentState } from '@/features/plugins/pluginSettingsRequest'
 import {
@@ -54,6 +55,7 @@ export interface PluginCatalogInput {
   pluginApi: ReturnType<typeof createLocalDevicePluginApi>
   localPluginApi: ReturnType<typeof createLocalCodexPluginApi>
   cloudMarketplaceAvailable: boolean
+  recoveryScopeKey?: string
   cloudToken: string | null | undefined
   knownExecutorDeviceId: string
   t: ReturnType<typeof useTranslation>['t']
@@ -159,6 +161,7 @@ export function createPluginCatalogState(key: string, initial: PluginCatalogInpu
   const listeners = new Set<() => void>()
   let epoch: symbol | null = null
   let stopCache: (() => void) | undefined
+  let stopRecovery: (() => void) | undefined
   let stopDevice: (() => void) | undefined
   let stopRead: (() => void) | undefined
   let stopLocal: (() => void) | undefined
@@ -167,6 +170,12 @@ export function createPluginCatalogState(key: string, initial: PluginCatalogInpu
   let noticeTimer: ReturnType<typeof setTimeout> | undefined
   let scheduled = false
   let requestedTick = -1
+  const recovery = createPluginRecoveryNotice({
+    scopeKey: () => input.recoveryScopeKey ?? key,
+    readNotice: () => state.pluginOperationNotice,
+    showNotice: pluginOperationNotice => publish({ pluginOperationNotice }),
+    t: message => input.t(message),
+  })
   const captureScope = () => {
     const owner = epoch
     return () =>
@@ -233,7 +242,10 @@ export function createPluginCatalogState(key: string, initial: PluginCatalogInpu
       for (const plugin of state.installedPlugins)
         reconcilePluginInstallation(plugin.raw, state.currentDeviceId)
     }
-    if (previous.pluginOperationNotice !== state.pluginOperationNotice) scheduleNotice()
+    if (previous.pluginOperationNotice !== state.pluginOperationNotice) {
+      scheduleNotice()
+      recovery.reconcile()
+    }
     listeners.forEach(listener => listener())
     schedule()
   }
@@ -368,6 +380,7 @@ export function createPluginCatalogState(key: string, initial: PluginCatalogInpu
                 }),
           })
         })
+        stopRecovery = recovery.subscribe()
         stopDevice = subscribePluginDeviceSync(schedule)
         requestedTick = state.marketplaceRefreshTick
         stopRead = loadPluginCatalog(context)
@@ -418,6 +431,8 @@ export function createPluginCatalogState(key: string, initial: PluginCatalogInpu
           stopLocal?.()
           stopCache?.()
           stopDevice?.()
+          stopRecovery?.()
+          stopRecovery = undefined
           stopRead = undefined
           stopLocal = undefined
           stopCache = undefined
@@ -530,6 +545,8 @@ export function createPluginCatalogState(key: string, initial: PluginCatalogInpu
         ),
       })
     },
+    showPendingRecovery: recovery.showPending,
+    reportLocalProgress: recovery.reportProgress,
     dismissNotice(id: string) {
       if (state.pluginOperationNotice?.id === id) publish({ pluginOperationNotice: null })
     },

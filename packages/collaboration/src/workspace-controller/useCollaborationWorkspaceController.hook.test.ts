@@ -214,9 +214,55 @@ describe('useCollaborationWorkspaceController location effects', () => {
     )
     expect(RenderControllerFixture(api, opened).state.loading).toBe(false)
     RenderControllerFixture(api, location)
-    await vi.waitFor(() => expect(RenderControllerFixture(api, location).state.selectedIssue).toBeNull())
+    await vi.waitFor(() =>
+      expect(RenderControllerFixture(api, location).state.selectedIssue).toBeNull()
+    )
     expect(RenderControllerFixture(api, location).state.loading).toBe(false)
     expect(api.issues.getBoardSnapshot).toHaveBeenCalledTimes(reads)
+  })
+
+  it('keeps a loaded Issue mounted while its API refreshes the current project', async () => {
+    const api = createApi()
+    const location: CollaborationLocation = {
+      projectId: projectA.id,
+      issueId: issueA.id,
+      view: 'board',
+    }
+    await vi.waitFor(() => {
+      const controller = RenderControllerFixture(api, location)
+      expect(controller.state.project?.id).toBe(projectA.id)
+      expect(controller.state.selectedIssue?.id).toBe(issueA.id)
+      expect(controller.state.loading).toBe(false)
+    })
+    const snapshot = await api.issues.getBoardSnapshot(projectA.id)
+    const refresh = deferred<typeof snapshot>()
+    const refreshedApi = api
+    vi.mocked(refreshedApi.issues.getBoardSnapshot)
+      .mockReset()
+      .mockImplementation(() => refresh.promise)
+    const closedLocation = { ...location, issueId: null }
+
+    let refreshing: Promise<void> | undefined
+    try {
+      refreshing = RenderControllerFixture(refreshedApi, location).commands.loadProject(projectA.id)
+      await vi.waitFor(() => {
+        RenderControllerFixture(refreshedApi, location)
+        expect(refreshedApi.issues.getBoardSnapshot).toHaveBeenCalled()
+      })
+      const controller = RenderControllerFixture(refreshedApi, location)
+      // A loading screen would unmount the drawer and cancel its pending close.
+      expect(controller.state.loading).toBe(false)
+      expect(controller.state.selectedIssue?.id).toBe(issueA.id)
+      expect(RenderControllerFixture(refreshedApi, closedLocation).state.selectedIssue).toBeNull()
+    } finally {
+      refresh.resolve(snapshot)
+      await refreshing
+    }
+    await vi.waitFor(() => {
+      const controller = RenderControllerFixture(refreshedApi, closedLocation)
+      expect(controller.state.loading).toBe(false)
+      expect(controller.state.selectedIssue).toBeNull()
+    })
   })
 
   it('loads an invited Issue without requesting project authority', async () => {

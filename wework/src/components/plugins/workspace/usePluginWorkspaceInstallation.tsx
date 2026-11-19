@@ -342,7 +342,12 @@ export function usePluginWorkspaceInstallation({
         catalog.dismissNotice(`update-error-${item.id}`)
         operations.beginInstall(item.id)
         pluginApi
-          .updateMarketplacePlugin(item.installedPluginId, item.latestReleaseId, targetDeviceId)
+          .updateMarketplacePlugin(
+            item.installedPluginId,
+            item.latestReleaseId,
+            targetDeviceId,
+            catalog.reportLocalProgress(`update-progress-${item.id}`, isCurrent)
+          )
           .then(plugin => {
             if (!isCurrent()) return
             const device = currentDeviceInstallation(plugin, targetDeviceId)
@@ -369,6 +374,7 @@ export function usePluginWorkspaceInstallation({
           })
           .catch((error: unknown) => {
             if (!isCurrent()) return
+            if (catalog.showPendingRecovery(error)) return
             const message = getErrorMessage(error, 'Unknown error')
             catalog.showNotice({ id: `update-error-${item.id}`, kind: 'error', message })
           })
@@ -560,7 +566,8 @@ export function usePluginWorkspaceInstallation({
         }
         const response = await pluginApi.installMarketplacePlugin(
           preparedItem.id,
-          liveConnection.deviceId
+          liveConnection.deviceId,
+          catalog.reportLocalProgress(`install-progress-${preparedItem.id}`, isCurrent)
         )
         requireCurrentScope()
         return {
@@ -725,6 +732,7 @@ export function usePluginWorkspaceInstallation({
         installRequestAttempt?.fail('request')
         if (!isCurrent()) return
         if (error instanceof PluginInstallationSupersededError) return
+        if (catalog.showPendingRecovery(error)) return
         const errorCode =
           error && (typeof error === 'object' || typeof error === 'function')
             ? Reflect.get(error, 'code')

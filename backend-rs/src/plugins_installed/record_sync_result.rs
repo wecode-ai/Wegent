@@ -604,6 +604,11 @@ impl PendingFlush {
         {
             guard.check().await?;
         }
+        if self.state.is_some() {
+            // Wait for device rows before taking the shared account-state
+            // write lock. The CAS still precedes every deferred device write.
+            self.lock_device_rows(session).await?;
+        }
         if let Some(state) = self.state.take() {
             // Even an unchanged watermark must fence device writes against
             // a newer dispatch committed after the ACK read its state.
@@ -664,6 +669,47 @@ impl PendingFlush {
                         .await?;
                 }
             }
+        }
+        Ok(())
+    }
+
+    async fn lock_device_rows<Q: PluginQuery>(&self, session: &mut Q) -> MysqlResult<()> {
+        let mut ids = self
+            .writes
+            .iter()
+            .filter_map(|write| match write {
+                PendingWrite::Update { id, .. } | PendingWrite::Delete(id) => Some(*id),
+                PendingWrite::Insert(_) => None,
+            })
+            .collect::<Vec<_>>();
+        ids.sort_unstable();
+        ids.dedup();
+        for id in ids {
+            let _: Option<i64> = session
+                .fetch_optional(
+                    "SELECT id FROM plugin_device_installations WHERE id=? FOR UPDATE",
+                    (id,),
+                )
+                .await?;
+        }
+        let mut inserts = self
+            .writes
+            .iter()
+            .filter_map(|write| match write {
+                PendingWrite::Insert(insert) => Some((
+                    insert.user_id,
+                    insert.installed_kind_id,
+                    insert.device_id.as_str(),
+                )),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        inserts.sort_unstable();
+        inserts.dedup();
+        for identity in inserts {
+            let _: Option<i64> = session.fetch_optional(
+                "SELECT id FROM plugin_device_installations WHERE user_id=? AND installed_kind_id=? AND device_id=? FOR UPDATE", identity,
+            ).await?;
         }
         Ok(())
     }

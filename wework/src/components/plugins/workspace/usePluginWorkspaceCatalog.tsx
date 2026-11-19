@@ -53,17 +53,26 @@ export function usePluginWorkspaceCatalog({
   >['pendingLocalConnectorAuth']
   onReconciliationComplete(): void
 }) {
-  const pluginApi = useMemo(() => {
-    const profile = {
+  const pluginRuntimeProfile = useMemo(
+    () => ({
       apiBaseUrl: cloudApiBaseUrl || getRuntimeConfig().apiBaseUrl,
       token: cloudToken === undefined ? getToken() : cloudToken,
-    }
-    return createLocalDevicePluginApi(
-      createDefaultPluginApi(profile.apiBaseUrl, cloudToken),
-      deviceId => resolveLocalPluginDeviceRouteId(deviceId, profile),
-      profile
-    )
-  }, [cloudApiBaseUrl, cloudToken])
+    }),
+    [cloudApiBaseUrl, cloudToken]
+  )
+  const recoveryScopeKey = pluginMarketplaceCacheKey(
+    pluginRuntimeProfile.apiBaseUrl,
+    pluginRuntimeProfile.token
+  )
+  const pluginApi = useMemo(
+    () =>
+      createLocalDevicePluginApi(
+        createDefaultPluginApi(pluginRuntimeProfile.apiBaseUrl, cloudToken),
+        deviceId => resolveLocalPluginDeviceRouteId(deviceId, pluginRuntimeProfile),
+        pluginRuntimeProfile
+      ),
+    [cloudToken, pluginRuntimeProfile]
+  )
   const localSyncResource = useMemo(
     () => createAsyncResource('local-plugin-sync', () => pluginApi.supportsLocalSync()),
     [pluginApi]
@@ -94,6 +103,7 @@ export function usePluginWorkspaceCatalog({
     uninstallingPluginIds.size > 0 ||
     updatingPluginPolicyIds.size > 0
   const catalogInitial = {
+    recoveryScopeKey,
     pluginApi,
     localPluginApi,
     cloudMarketplaceAvailable,
@@ -172,6 +182,7 @@ export function usePluginWorkspaceCatalog({
   })
   const catalogInput = useMemo(
     () => ({
+      recoveryScopeKey,
       pluginApi,
       localPluginApi,
       cloudMarketplaceAvailable,
@@ -185,6 +196,7 @@ export function usePluginWorkspaceCatalog({
       pendingLocalConnectorAuth,
     }),
     [
+      recoveryScopeKey,
       pluginApi,
       localPluginApi,
       cloudMarketplaceAvailable,

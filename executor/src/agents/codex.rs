@@ -118,6 +118,8 @@ const IMAGE_MIME_TYPES: &[&str] = &[
     "image/bmp",
 ];
 
+#[cfg(test)]
+mod cloud_config_error_tests;
 #[path = "codex/debug_stdout.rs"]
 mod debug_stdout;
 mod external_work;
@@ -1543,7 +1545,8 @@ pub(crate) async fn terminate_shared_codex_app_servers() -> usize {
 
 fn is_codex_cloud_config_error(error: &str) -> bool {
     error.contains("cloud config bundle")
-        || (error.contains("failed to read configuration layers")
+        || ((error.contains("failed to read configuration layers")
+            || error.contains("failed to load configuration:"))
             && error.contains("Your authentication session could not be refreshed automatically. Please log out and sign in again."))
 }
 
@@ -7455,11 +7458,19 @@ fn response_id(message: &Value) -> Option<u64> {
 
 fn response_result(message: Value) -> Result<Value, String> {
     if let Some(error) = message.get("error") {
-        return Err(error
+        let message = error
             .get("message")
             .and_then(Value::as_str)
             .map(str::to_owned)
-            .unwrap_or_else(|| error.to_string()));
+            .unwrap_or_else(|| error.to_string());
+        // Startup failures can replace the bundle wording with an auth error.
+        // Keep the native failure reason visible to the existing recovery gate.
+        if error.pointer("/data/reason").and_then(Value::as_str) == Some("cloudConfigBundle")
+            && !is_codex_cloud_config_error(&message)
+        {
+            return Err(format!("cloud config bundle: {message}"));
+        }
+        return Err(message);
     }
     Ok(message.get("result").cloned().unwrap_or_else(|| json!({})))
 }

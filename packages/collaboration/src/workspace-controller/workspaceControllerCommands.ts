@@ -201,8 +201,10 @@ export function createCollaborationWorkspaceControllerCommands(
       ownerIsCurrent() && revision === projectLoadRevision && (options?.isCurrent?.() ?? true)
     const mutationGeneration = projectMutationGeneration(projectId)
     const cachedProject = catalogProjects.find(item => item.id === projectId)
-    // Cached settings metadata commits synchronously and must retain its mounted shell.
-    if (showLoading && (options?.loadSnapshot !== false || !cachedProject))
+    const hasCurrentSnapshot =
+      getExternalBoardState().project?.id === projectId && getProjectSnapshot(projectId) !== null
+    // Retain loaded editors during refresh and cached settings during navigation.
+    if (showLoading && !hasCurrentSnapshot && (options?.loadSnapshot !== false || !cachedProject))
       dispatch({ type: 'loading', value: true })
     try {
       const project = cachedProject ?? (await api.projects.get(projectId))

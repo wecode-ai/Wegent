@@ -179,16 +179,20 @@ export function createTaskActivityState(
     const epoch = ++feedGeneration
     unsubscribeFeed?.()
     unsubscribeFeed = undefined
+    const liveMessageIds = new Set<string>()
     void client
       .subscribe(
         projectId,
         issueId,
         0,
         message => {
-          if (epoch === feedGeneration) receiveMessages([message])
+          if (epoch !== feedGeneration || !active()) return
+          if (!unsubscribeFeed) liveMessageIds.add(message.messageId)
+          receiveMessages([message])
         },
         chunk => {
           if (epoch !== feedGeneration || !active()) return
+          if (!unsubscribeFeed) liveMessageIds.add(chunk.messageId)
           const existing = snapshot.messages.find(message => message.messageId === chunk.messageId)
           receiveMessages([
             existing
@@ -211,9 +215,14 @@ export function createTaskActivityState(
           return
         }
         unsubscribeFeed = subscription.unsubscribe
+        const incoming = subscription.snapshot.messages
+        const verifiedSourceIds = new Set(
+          incoming.map(message => message.messageId).filter(id => !liveMessageIds.has(id))
+        )
+        liveMessageIds.clear()
         publish({
           chatCurrentUserId: subscription.snapshot.currentUserId,
-          messages: mergeProjectChatMessages(snapshot.messages, subscription.snapshot.messages),
+          messages: mergeProjectChatMessages(snapshot.messages, incoming, verifiedSourceIds),
           loading: false,
           loadedVersion: version,
         })

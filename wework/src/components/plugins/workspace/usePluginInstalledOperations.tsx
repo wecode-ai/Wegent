@@ -217,6 +217,7 @@ export function usePluginInstalledOperations({
     }
 
     const noticeUninstallError = (id: string | number, error: unknown) => {
+      if (catalog.showPendingRecovery(error)) return
       const rawErrorMessage = getErrorMessage(
         error,
         t('workbench.plugins_uninstall_failed', '卸载失败，请稍后重试')
@@ -241,7 +242,11 @@ export function usePluginInstalledOperations({
       logoutLocal: (resolvedPlugin: InstalledPlugin) =>
         logoutLocalConnectorsForPlugin(resolvedPlugin),
       uninstallCloud: (pluginId: string | number, deviceId?: string) =>
-        pluginApi.uninstallInstalledPlugin(pluginId, deviceId),
+        pluginApi.uninstallInstalledPlugin(
+          pluginId,
+          deviceId,
+          catalog.reportLocalProgress(`uninstall-progress-${id}`, isCurrent)
+        ),
       uninstallLocal: (pluginId: string | number) =>
         localPluginApi.uninstallInstalledPlugin(pluginId),
     }

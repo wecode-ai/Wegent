@@ -160,12 +160,12 @@ for (const [surface, createScenario] of [
         assert.equal(call.name, 'exec_command')
         command = JSON.parse(call.arguments)
       }
-      assert.equal(
-        command.cmd,
+      const createFile = `touch '${workspacePath}/stand-in-approved.txt'`
+      const expectedCommand =
         surface === 'action'
-          ? `touch '${workspacePath}/stand-in-approved.txt' && rm '${workspacePath}/stand-in-firm.tmp'`
-          : `touch '${workspacePath}/stand-in-approved.txt'`
-      )
+          ? `${createFile} && rm '${workspacePath}/stand-in-firm.tmp'`
+          : createFile
+      assert.equal(command.cmd, expectedCommand)
       assert.equal(command.workdir, workspacePath)
       assert.equal(command.sandbox_permissions, 'require_escalated')
       assert.equal(command.justification, '确认后创建隔离测试工作区中的验证文件。')
