@@ -1,0 +1,442 @@
+// SPDX-FileCopyrightText: 2026 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+//! `GET /api/tasks/:task_id/timing` — task time triage and detailed spans.
+
+use brz_http_server::{EphemeralBytesArena, IntoHttpError, Response, StatusCode};
+use serde::Serialize;
+use serde_json::Value;
+
+use crate::state::AppState;
+use crate::task_pipeline_stage_info_repo as task_repo;
+
+#[brz_http_server::get("/api/tasks/:task_id/timing")]
+async fn get_task_timing(
+    #[inject(state)] state: &AppState,
+    task_id: i64,
+    #[auth] current_user: crate::auth::SessionUser,
+) -> Result<TaskTimingResponse, ApiError> {
+    let task = load_accessible_task(state, task_id, &current_user).await?;
+    let spans = load_spans(state, task_id).await?;
+    Ok(aggregate(task_id, task.user_id, spans))
+}
+
+#[derive(Debug, brz_mysql::FromMysqlRow)]
+struct TimingSpanRow {
+    id: i64,
+    subtask_id: Option<i64>,
+    turn_id: String,
+    parent_span_id: String,
+    span_id: String,
+    kind: String,
+    actor_id: String,
+    actor_type: String,
+    actor_label: String,
+    status: String,
+    start_at_ms: Option<i64>,
+    end_at_ms: Option<i64>,
+    duration_ms: Option<i64>,
+    clock: String,
+    source: String,
+    metadata: brz_mysql::Json<Value>,
+}
+
+#[derive(Debug, Serialize)]
+struct TaskTimingResponse {
+    task_id: i64,
+    owner_user_id: i64,
+    wall_time_ms: Option<i64>,
+    triage: Vec<TimingCategory>,
+    coverage: Vec<TimingCategory>,
+    top_suspects: Vec<TopSuspect>,
+    spans: Vec<SpanView>,
+}
+
+#[derive(Debug, Serialize)]
+struct TimingCategory {
+    kind: &'static str,
+    label: &'static str,
+    duration_ms: i64,
+}
+
+#[derive(Debug, Serialize)]
+struct TopSuspect {
+    span_id: String,
+    label: String,
+    category: String,
+    duration_ms: i64,
+    status: String,
+    suggestion: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct SpanView {
+    id: i64,
+    subtask_id: Option<i64>,
+    turn_id: String,
+    parent_span_id: String,
+    span_id: String,
+    kind: String,
+    actor_id: String,
+    actor_type: String,
+    actor_label: String,
+    status: String,
+    start_at_ms: Option<i64>,
+    end_at_ms: Option<i64>,
+    duration_ms: Option<i64>,
+    clock: String,
+    source: String,
+    metadata: Value,
+}
+
+struct ApiError {
+    status: StatusCode,
+    detail: String,
+}
+
+impl IntoHttpError for ApiError {
+    fn into_http_error(self, arena: &EphemeralBytesArena) -> Response {
+        crate::http_compat::FastApiError::detail(self.status, self.detail).into_http_error(arena)
+    }
+}
+
+struct AccessibleTask {
+    user_id: i64,
+}
+
+async fn load_accessible_task(
+    state: &AppState,
+    task_id: i64,
+    current_user: &crate::auth::SessionUser,
+) -> Result<AccessibleTask, ApiError> {
+    let Some(task) = task_repo::get_active_task(&*state.task_store, task_id)
+        .await
+        .map_err(|error| dependency("read task", error))?
+    else {
+        return Err(not_found());
+    };
+    let user_id = i64::from(current_user.id);
+    if task.user_id == user_id {
+        return Ok(AccessibleTask {
+            user_id: task.user_id,
+        });
+    }
+    #[derive(brz_mysql::FromMysqlRow)]
+    struct MemberRow {
+        #[allow(dead_code)]
+        id: i64,
+    }
+    let member: Option<MemberRow> = state
+        .mysql
+        .fetch_optional(
+            "SELECT id FROM resource_members \
+             WHERE resource_type='Task' AND resource_id=? \
+             AND entity_type='user' AND entity_id=? \
+             AND status='approved' AND copied_resource_id=0 LIMIT 1",
+            (task_id, user_id.to_string()),
+        )
+        .await
+        .map_err(|error| dependency("read task member", error))?;
+    member
+        .is_some()
+        .then(|| AccessibleTask {
+            user_id: task.user_id,
+        })
+        .ok_or_else(not_found)
+}
+
+async fn load_spans(state: &AppState, task_id: i64) -> Result<Vec<TimingSpanRow>, ApiError> {
+    state
+        .mysql
+        .fetch_all(
+            "SELECT id, subtask_id, turn_id, parent_span_id, span_id, kind, actor_id, \
+             actor_type, actor_label, status, start_at_ms, end_at_ms, duration_ms, \
+             clock, source, metadata FROM task_timing_spans WHERE task_id=? \
+             ORDER BY COALESCE(start_at_ms, 0), id",
+            (task_id,),
+        )
+        .await
+        .map_err(|error| dependency("read timing spans", error))
+}
+
+fn aggregate(task_id: i64, owner_user_id: i64, rows: Vec<TimingSpanRow>) -> TaskTimingResponse {
+    let spans: Vec<SpanView> = rows
+        .iter()
+        .map(|row| SpanView {
+            id: row.id,
+            subtask_id: row.subtask_id,
+            turn_id: row.turn_id.clone(),
+            parent_span_id: row.parent_span_id.clone(),
+            span_id: row.span_id.clone(),
+            kind: row.kind.clone(),
+            actor_id: row.actor_id.clone(),
+            actor_type: row.actor_type.clone(),
+            actor_label: row.actor_label.clone(),
+            status: row.status.clone(),
+            start_at_ms: row.start_at_ms,
+            end_at_ms: row.end_at_ms,
+            duration_ms: row.duration_ms,
+            clock: row.clock.clone(),
+            source: row.source.clone(),
+            metadata: row.metadata.0.clone(),
+        })
+        .collect();
+
+    let wall_time_ms = wall_time(&rows);
+    let triage = triage_categories(&spans, wall_time_ms);
+    let coverage = coverage_categories(&spans);
+    let top_suspects = top_suspects(&spans);
+
+    TaskTimingResponse {
+        task_id,
+        owner_user_id,
+        wall_time_ms,
+        triage,
+        coverage,
+        top_suspects,
+        spans,
+    }
+}
+
+fn wall_time(rows: &[TimingSpanRow]) -> Option<i64> {
+    let first = rows.iter().filter_map(|row| row.start_at_ms).min()?;
+    let last = rows
+        .iter()
+        .filter_map(|row| row.end_at_ms.or(row.start_at_ms))
+        .max()?;
+    Some((last - first).max(0))
+}
+
+fn triage_categories(spans: &[SpanView], wall_time_ms: Option<i64>) -> Vec<TimingCategory> {
+    let mut categories = vec![
+        category("tool", "命令/工具", union_by_kinds(spans, &["tool"])),
+        category("subagent", "子 Agent", union_by_kinds(spans, &["subagent"])),
+        category("agent", "Agent/模型", union_by_kinds(spans, &["agent"])),
+        category(
+            "waiting_user",
+            "等待用户",
+            union_by_kinds(spans, &["waiting_user"]),
+        ),
+        category(
+            "runtime",
+            "Infra",
+            union_by_kinds(spans, &["queue", "provision"]),
+        ),
+    ];
+    let observed = union_ms(&observable_intervals(spans));
+    if let Some(wall_time_ms) = wall_time_ms {
+        categories.push(category("gap", "未观测", (wall_time_ms - observed).max(0)));
+    }
+    categories
+}
+
+fn coverage_categories(spans: &[SpanView]) -> Vec<TimingCategory> {
+    vec![
+        category(
+            "agent",
+            "Agent active",
+            union_by_kinds(spans, &["agent", "subagent"]),
+        ),
+        category("tool", "Tool busy", union_by_kinds(spans, &["tool"])),
+        category(
+            "subagent",
+            "Subagent busy",
+            union_by_kinds(spans, &["subagent"]),
+        ),
+        category(
+            "waiting_user",
+            "等待用户",
+            union_by_kinds(spans, &["waiting_user"]),
+        ),
+        category(
+            "runtime",
+            "Infra",
+            union_by_kinds(spans, &["queue", "provision"]),
+        ),
+    ]
+}
+
+fn category(kind: &'static str, label: &'static str, duration_ms: i64) -> TimingCategory {
+    TimingCategory {
+        kind,
+        label,
+        duration_ms,
+    }
+}
+
+fn union_by_kinds(spans: &[SpanView], kinds: &[&str]) -> i64 {
+    let selected: Vec<SpanView> = spans
+        .iter()
+        .filter(|span| kinds.contains(&span.kind.as_str()))
+        .cloned()
+        .collect();
+    union_ms(&observable_intervals(&selected))
+}
+
+fn observable_intervals(spans: &[SpanView]) -> Vec<(i64, i64)> {
+    spans
+        .iter()
+        .filter_map(|span| {
+            let start = span.start_at_ms?;
+            let end = span
+                .end_at_ms
+                .filter(|end| *end >= start)
+                .or_else(|| span.duration_ms.map(|duration| start + duration))?;
+            Some((start, end))
+        })
+        .collect()
+}
+
+fn union_ms(intervals: &[(i64, i64)]) -> i64 {
+    let mut normalized = intervals.to_vec();
+    if normalized.is_empty() {
+        return 0;
+    }
+    normalized.sort();
+    let mut total = 0;
+    let (mut current_start, mut current_end) = normalized[0];
+    for (start, end) in normalized.into_iter().skip(1) {
+        if start > current_end {
+            total += current_end - current_start;
+            current_start = start;
+            current_end = end;
+        } else {
+            current_end = current_end.max(end);
+        }
+    }
+    total += current_end - current_start;
+    total
+}
+
+fn top_suspects(spans: &[SpanView]) -> Vec<TopSuspect> {
+    let mut candidates: Vec<&SpanView> = spans
+        .iter()
+        .filter(|span| {
+            matches!(
+                span.kind.as_str(),
+                "tool" | "subagent" | "agent" | "waiting_user" | "queue" | "provision"
+            )
+        })
+        .collect();
+    candidates.sort_by_key(|span| -span.duration_ms.unwrap_or(0));
+    candidates
+        .into_iter()
+        .take(5)
+        .map(|span| TopSuspect {
+            span_id: span.span_id.clone(),
+            label: suspect_label(span),
+            category: span.kind.clone(),
+            duration_ms: span.duration_ms.unwrap_or(0),
+            status: span.status.clone(),
+            suggestion: suggestion(span),
+        })
+        .collect()
+}
+
+fn suspect_label(span: &SpanView) -> String {
+    let name = span
+        .metadata
+        .get("command")
+        .or_else(|| span.metadata.get("toolName"))
+        .or_else(|| span.metadata.get("tool_name"))
+        .and_then(Value::as_str);
+    if let Some(name) = name {
+        name.to_string()
+    } else if !span.actor_label.is_empty() {
+        span.actor_label.clone()
+    } else {
+        span.kind.clone()
+    }
+}
+
+fn suggestion(span: &SpanView) -> String {
+    let command = suspect_label(span).to_ascii_lowercase();
+    match span.kind.as_str() {
+        "tool" => {
+            if command.starts_with("npm ")
+                || command.starts_with("pnpm ")
+                || command.starts_with("uv ")
+                || command.starts_with("cargo ")
+            {
+                "检查 registry/mirror 或网络".to_string()
+            } else if command.starts_with("git ") {
+                "检查仓库网络或代理".to_string()
+            } else {
+                "查看具体命令执行日志".to_string()
+            }
+        }
+        "subagent" => "查看子 Agent 关键路径".to_string(),
+        "agent" => "查看模型/编排耗时".to_string(),
+        "waiting_user" => "确认是否仍在等待用户".to_string(),
+        "queue" | "provision" => "联系 Infra 检查排队或环境准备".to_string(),
+        _ => "查看详细时间线".to_string(),
+    }
+}
+
+fn not_found() -> ApiError {
+    ApiError {
+        status: StatusCode::NOT_FOUND,
+        detail: "Task not found".to_string(),
+    }
+}
+
+fn dependency(operation: &'static str, error: brz_mysql::MysqlError) -> ApiError {
+    tracing::error!(operation, %error, "[task_timing] database dependency failure");
+    ApiError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        detail: "Internal server error".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn span(kind: &str, start: i64, end: i64) -> TimingSpanRow {
+        TimingSpanRow {
+            id: 1,
+            subtask_id: None,
+            turn_id: String::new(),
+            parent_span_id: String::new(),
+            span_id: format!("{kind}-{start}"),
+            kind: kind.to_string(),
+            actor_id: String::new(),
+            actor_type: String::new(),
+            actor_label: String::new(),
+            status: "completed".to_string(),
+            start_at_ms: Some(start),
+            end_at_ms: Some(end),
+            duration_ms: Some(end - start),
+            clock: "executor".to_string(),
+            source: "test".to_string(),
+            metadata: brz_mysql::Json(json!({})),
+        }
+    }
+
+    #[test]
+    fn parallel_spans_do_not_double_wall_time() {
+        let rows = vec![span("subagent", 0, 10), span("subagent", 0, 10)];
+        let response = aggregate(1, 7, rows);
+        let subagent = response
+            .coverage
+            .iter()
+            .find(|item| item.kind == "subagent")
+            .unwrap();
+        assert_eq!(subagent.duration_ms, 10);
+    }
+
+    #[test]
+    fn triage_separates_tool_and_agent() {
+        let rows = vec![span("agent", 0, 20), span("tool", 5, 15)];
+        let response = aggregate(1, 7, rows);
+        assert_eq!(response.wall_time_ms, Some(20));
+        assert!(
+            response
+                .triage
+                .iter()
+                .any(|item| item.kind == "tool" && item.duration_ms == 10)
+        );
+    }
+}
