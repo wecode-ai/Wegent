@@ -193,25 +193,16 @@ export function createSystemDragPanelModel() {
       generation += 1
       captureSequence += 1
       pendingDrop = Promise.resolve()
-      const owner = generation
-      const expectedPresentationId = presentationId
+      const inputAt = Date.now()
       cancelFeedback()
       dropStatus = null
       activeAction = null
       publish()
-      void readContext()
-        .then(current => {
-          if (!listeners.size || owner !== generation) return
-          context.update(() => current)
-          if (
-            current.presentationId !== null &&
-            (expectedPresentationId === null || current.presentationId === expectedPresentationId)
-          )
-            return dismissHost(current.presentationId)
-        })
-        .catch(error => {
-          console.error('[Wework] Failed to read system drag context:', error)
-        })
+      // The host owns the visible presentation. A freshly reopened panel may
+      // receive input before its next context event arrives in this renderer.
+      void invokeDesktopHost('systemDrag.dismissPanel', { inputAt }).catch(error => {
+        console.error('[Wework] Failed to dismiss system drag panel:', error)
+      })
     },
     drop(action: DropAction, text: string, paths: string[], timestamp: number) {
       if (!listeners.size) return

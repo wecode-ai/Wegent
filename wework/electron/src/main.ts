@@ -386,6 +386,7 @@ let popoutShortcut: GlobalShortcutController | null = null
 let systemDragContext: { conversationTitle: string | null } = { conversationTitle: null }
 let systemDragPresentationSequence = 0
 let systemDragPresentationId: number | null = null
+let systemDragPresentedAt = 0
 let systemDragPresentationRequested = false
 const currentSystemDragContext = () => ({
   ...systemDragContext,
@@ -1427,6 +1428,7 @@ function resizePopoutWindow(previousMode: PopoutWindowMode, mode: PopoutWindowMo
 async function showSystemDragPanel(): Promise<number> {
   const presentationId = ++systemDragPresentationSequence
   systemDragPresentationId = presentationId
+  systemDragPresentedAt = Date.now()
   systemDragPresentationRequested = true
   publishSystemDragContext()
   let target: BrowserWindow
@@ -2802,8 +2804,13 @@ async function configureDesktopRuntime(): Promise<void> {
             return owner === systemDragPresentationId
           },
           dismissPopout: () => popoutWindow?.hide(),
-          dismissSystemDragPanel: presentationId => {
-            if (presentationId === null || presentationId !== systemDragPresentationId) return false
+          dismissSystemDragPanel: (presentationId, inputAt) => {
+            if (systemDragPresentationId === null) return false
+            const ownsPresentation =
+              presentationId !== null
+                ? presentationId === systemDragPresentationId
+                : inputAt !== undefined && inputAt >= systemDragPresentedAt
+            if (!ownsPresentation) return false
             // Native dragend may hide before the matching drop request reaches the host.
             // Keep its identity valid for that drop, while cancelling any pending show.
             systemDragPresentationRequested = false

@@ -290,7 +290,7 @@ export interface ElectronE2EHost {
     presentationId?: number
   ) => Promise<boolean | void>
   dismissPopout: () => void
-  dismissSystemDragPanel: (presentationId: number | null) => boolean | void
+  dismissSystemDragPanel: (presentationId: number | null, inputAt?: number) => boolean | void
   focusMainWindow: () => void | Promise<void>
   focusWindow: (windowLabel: string) => void
   hideMainWindow: () => Promise<void>
@@ -1486,7 +1486,10 @@ export function createElectronCapabilityRouter(
     )
   )
   router.register('systemDrag.dismissPanel', params =>
-    e2eHost.dismissSystemDragPanel(integerParam(params, 'presentationId') ?? null)
+    e2eHost.dismissSystemDragPanel(
+      integerParam(params, 'presentationId') ?? null,
+      integerParam(params, 'inputAt')
+    )
   )
   router.register('systemDrag.getContext', () => e2eHost.getSystemDragContext())
   router.register('systemDrag.panelVisible', () => e2eHost.systemDragPanelVisible())
