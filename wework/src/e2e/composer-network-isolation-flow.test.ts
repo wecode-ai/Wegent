@@ -51,15 +51,17 @@ test.each(['success', 'seed failure'])('the CI plugin flow handles %s', async ou
     else expect(proxy.release).toHaveBeenCalledOnce()
   })
   const control = {
-    command: vi.fn(async (action: string) => {
+    command: vi.fn(async (action: string, _selector?: string, options?: { value?: string }) => {
       if (outcome === 'seed failure' && action === 'removeLocalStorageItem')
         throw new Error('Renderer unavailable after restart failed')
       if (action === 'previewPluginImport') return JSON.stringify({ valid: true })
       if (action === 'getWorkbenchDebugSnapshot')
         return JSON.stringify({ workbench: { currentProject: { id: 'project' } } })
       if (action === 'getLocalExecutorStatus') return JSON.stringify({ deviceId: 'test-device' })
-      if (action === 'getLocalStorageItem')
+      if (action === 'getLocalStorageItem' && options?.value === 'wework.cloudConnection')
         return JSON.stringify({ apiBaseUrl: 'https://wework.example.test/api', user: { id: 1 } })
+      if (action === 'getLocalStorageItem' && options?.value === 'wework.plugins.openAiCatalog.v1')
+        return ''
       if (action === 'getComposerPluginInventoryDiagnostics')
         return JSON.stringify({
           composerApps: [{ id: `plugin:${pluginName}` }],

@@ -581,6 +581,11 @@ async function verifyComposerPluginNetworkIsolation({
       stableMs: COMPOSER_READY_STABILITY_MS,
       timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
     })
+    assert.equal(
+      await control.command('getLocalStorageItem', 'body', { value: officialCatalogStorageKey }),
+      '',
+      'The official catalog must stay outside Chromium localStorage after restart'
+    )
     const pluginName = 'composer-network-isolation-plugin'
     // Runtime-owned composer catalogs no longer initiate remote app/list reads.
     // Hold that real RPC explicitly before opening the local inventory.

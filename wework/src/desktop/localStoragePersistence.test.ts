@@ -1,4 +1,8 @@
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { RendererStorageStore } from '../../electron/src/host/renderer-storage-store'
 
 const mocks = vi.hoisted(() => ({
   invokeDesktopHost: vi.fn(),
@@ -15,6 +19,42 @@ vi.mock('@/lib/runtime-environment', () => ({
 async function loadPersistence() {
   vi.resetModules()
   return import('./localStoragePersistence')
+}
+
+class BoundedStorage implements Storage {
+  private entries = new Map<string, string>()
+
+  constructor(private readonly quota: number) {}
+
+  get length(): number {
+    return this.entries.size
+  }
+
+  clear(): void {
+    this.entries.clear()
+  }
+
+  getItem(key: string): string | null {
+    return this.entries.get(key) ?? null
+  }
+
+  key(index: number): string | null {
+    return [...this.entries.keys()][index] ?? null
+  }
+
+  removeItem(key: string): void {
+    this.entries.delete(key)
+  }
+
+  setItem(key: string, value: string): void {
+    let size = key.length + value.length
+    for (const [existingKey, existingValue] of this.entries) {
+      if (existingKey !== key) size += existingKey.length + existingValue.length
+    }
+    if (size > this.quota)
+      throw new DOMException('Browser storage quota exceeded', 'QuotaExceededError')
+    this.entries.set(key, value)
+  }
 }
 
 describe('desktop localStorage persistence', () => {
@@ -153,6 +193,55 @@ describe('committed localStorage commands', () => {
     expect(
       mocks.invokeDesktopHost.mock.calls.filter(([method]) => method === 'rendererStorage.update')
     ).toHaveLength(1)
+  })
+
+  it('restores the official catalog alongside concurrent browser writes at restart', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'wework-renderer-storage-quota-'))
+    let store = new RendererStorageStore(root)
+    const browserStorage = new BoundedStorage(1000)
+    const browser = vi.spyOn(window, 'localStorage', 'get').mockReturnValue(browserStorage)
+    const persistence = await loadPersistence()
+    const catalogKey = persistence.REMOTE_PLUGIN_CATALOG_STORAGE_KEY
+    const inventoryKey = 'wework.plugins.inventory.v2'
+    const catalog = 'a'.repeat(600)
+    const inventory = 'b'.repeat(600)
+    const began = Promise.withResolvers<void>()
+    const resume = Promise.withResolvers<void>()
+    mocks.invokeDesktopHost.mockImplementation(async (method: string, params) => {
+      if (method === 'rendererStorage.initialize') return store.initialize(params.entries)
+      if (Object.hasOwn(params.changes, catalogKey)) {
+        began.resolve()
+        await resume.promise
+      }
+      await store.update(params)
+      return { persisted: true }
+    })
+    try {
+      await store.initialize({ [catalogKey]: 'old catalog', appearance: 'dark' })
+      await persistence.initializeDesktopLocalStoragePersistence()
+
+      const refresh = persistence.commitLocalStorageValue(catalogKey, catalog)
+      await began.promise
+      expect(persistence.readOpenAiCatalogStorage()).toBe('old catalog')
+      browserStorage.setItem(inventoryKey, inventory)
+      resume.resolve()
+      await refresh
+      await persistence.flushDesktopLocalStoragePersistence()
+      await store.close()
+
+      store = new RendererStorageStore(root)
+      const restarted = await loadPersistence()
+      await restarted.initializeDesktopLocalStoragePersistence()
+      expect(browserStorage.getItem(inventoryKey)).toBe(inventory)
+      expect(browserStorage.getItem('appearance')).toBe('dark')
+      expect(browserStorage.getItem(catalogKey)).toBeNull()
+      expect(restarted.readOpenAiCatalogStorage()).toBe(catalog)
+    } finally {
+      resume.resolve()
+      browser.mockRestore()
+      await store.close()
+      await rm(root, { recursive: true, force: true })
+    }
   })
 
   it('does not publish or retry a failed command alongside a later successful command', async () => {

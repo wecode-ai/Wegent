@@ -31,14 +31,24 @@ export function useOpenAiPluginCatalog({
   restoreForAll: boolean
   readCatalog: LocalCodexPluginApi['readRemoteCatalog']
 }) {
-  const [refreshRequest, setRefreshRequest] = useState({ cacheKey, revision: 0 })
-  const revision = refreshRequest.cacheKey === cacheKey ? refreshRequest.revision : 0
-  const forcedRevision = useRef<string | null>(null)
   const authRevision = useSyncExternalStore(
     subscribePluginMarketplaceCache,
     getPluginMarketplaceAccountEpoch,
     getPluginMarketplaceAccountEpoch
   )
+  const [refreshRequest, setRefreshRequest] = useState<{
+    cacheKey: string
+    deviceId: string
+    authRevision: number
+    revision: number
+  }>()
+  const revision =
+    refreshRequest?.cacheKey === cacheKey &&
+    refreshRequest.deviceId === deviceId &&
+    refreshRequest.authRevision === authRevision
+      ? refreshRequest.revision
+      : 0
+  const admittedRefresh = useRef(0)
   const [identityRevision, setIdentityRevision] = useState(0)
   const [state, setState] = useState<{
     cacheKey: string
@@ -46,8 +56,14 @@ export function useOpenAiPluginCatalog({
     error: OpenAiPluginCatalogError | null
   } | null>(null)
   const refresh = useCallback(() => {
-    if (enabled) setRefreshRequest(value => ({ cacheKey, revision: value.revision + 1 }))
-  }, [cacheKey, enabled])
+    if (enabled)
+      setRefreshRequest(value => ({
+        cacheKey,
+        deviceId,
+        authRevision,
+        revision: (value?.revision ?? 0) + 1,
+      }))
+  }, [cacheKey, deviceId, authRevision, enabled])
 
   useEffect(() => {
     return () => {
@@ -63,12 +79,8 @@ export function useOpenAiPluginCatalog({
     const isCurrent = () => !cancelled && getPluginMarketplaceAccountEpoch() === authRevision
     void Promise.resolve().then(async () => {
       if (!isCurrent()) return
-      const requestKey = JSON.stringify([cacheKey, revision])
-      const force = enabled && revision > 0 && requestKey !== forcedRevision.current
-      if (enabled) {
-        forcedRevision.current = requestKey
-        setState({ cacheKey, loading: true, error: null })
-      }
+      const force = enabled && revision > admittedRefresh.current
+      if (enabled) setState({ cacheKey, loading: true, error: null })
       let cached: RemotePluginCatalogSnapshot | undefined
       try {
         const result = await readCatalog({
@@ -77,8 +89,11 @@ export function useOpenAiPluginCatalog({
           accountScope,
           canStart: isCurrent,
           onCached: (snapshot, resolvedDeviceId) => {
+            if (!isCurrent()) return
+            // The account probe has passed and the catalog will start or join the refresh.
+            if (force) admittedRefresh.current = revision
             cached = snapshot
-            if (isCurrent()) projectOpenAiRemoteCatalog(cacheKey, resolvedDeviceId, snapshot)
+            projectOpenAiRemoteCatalog(cacheKey, resolvedDeviceId, snapshot)
           },
         })
         if (!isCurrent()) return

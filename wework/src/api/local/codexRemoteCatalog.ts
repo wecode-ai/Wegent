@@ -1,14 +1,17 @@
 import { emptyComponents } from '@wegent/chat-core/codex-installed-plugins'
-import { compressToUTF16, decompressFromUTF16 } from 'lz-string'
-import { commitLocalStorageValue } from '@/desktop/localStoragePersistence'
+import { decompressFromUTF16 } from 'lz-string'
+import {
+  clearOpenAiCatalogStorage,
+  commitLocalStorageValue,
+  readOpenAiCatalogStorage,
+  REMOTE_PLUGIN_CATALOG_STORAGE_KEY,
+} from '@/desktop/localStoragePersistence'
 import type { PluginInterface, PluginMarketplaceItem } from '@/types/api'
 import { isOpenAiOfficialRemoteMarketplaceId } from '@/features/plugins/marketplaceIdentity'
 import { raceWithTimeout } from '@/lib/promise-timeout'
 
-export const REMOTE_PLUGIN_CATALOG_STORAGE_KEY = 'wework.plugins.openAiCatalog.v1'
 export const REMOTE_PLUGIN_CATALOG_FRESH_MS = 30 * 60_000
 const COMPACT_CATALOG_PREFIX = 'lz:'
-const MAX_INLINE_ASSET_LENGTH = 4096
 
 export interface RemotePluginCatalogSnapshot {
   items: PluginMarketplaceItem[]
@@ -112,7 +115,7 @@ function isCatalogItem(value: unknown): value is PluginMarketplaceItem {
 
 function readPersistedCatalog(scope: string): PersistedCatalog | undefined {
   try {
-    const raw = window.localStorage.getItem(REMOTE_PLUGIN_CATALOG_STORAGE_KEY)
+    const raw = readOpenAiCatalogStorage()
     if (!raw) return
     const serialized = raw.startsWith(COMPACT_CATALOG_PREFIX)
       ? decompressFromUTF16(raw.slice(COMPACT_CATALOG_PREFIX.length))
@@ -136,42 +139,14 @@ function readPersistedCatalog(scope: string): PersistedCatalog | undefined {
   }
 }
 
-function compactInterface(value: PluginInterface | null | undefined) {
-  if (!value) return value
-  const keepAsset = (asset: string | null | undefined) =>
-    asset?.startsWith('data:') && asset.length > MAX_INLINE_ASSET_LENGTH ? null : asset
-  return {
-    ...value,
-    logo: keepAsset(value.logo),
-    logoDark: keepAsset(value.logoDark),
-    composerIcon: keepAsset(value.composerIcon),
-    screenshots: value.screenshots?.filter(asset => keepAsset(asset) != null),
-  }
-}
-
 async function persistCatalog(
   snapshot: PersistedCatalog,
   assertCurrent: () => void
 ): Promise<void> {
-  const commit = (value: string) =>
-    commitLocalStorageValue(REMOTE_PLUGIN_CATALOG_STORAGE_KEY, value, {
-      checkBrowserQuota: true,
+  try {
+    await commitLocalStorageValue(REMOTE_PLUGIN_CATALOG_STORAGE_KEY, JSON.stringify(snapshot), {
       assertCurrent,
     })
-  try {
-    try {
-      await commit(JSON.stringify(snapshot))
-    } catch (error) {
-      if (!(error instanceof DOMException) || error.name !== 'QuotaExceededError') throw error
-      const compact = {
-        ...snapshot,
-        items: snapshot.items.map(item => ({
-          ...item,
-          interface: compactInterface(item.interface),
-        })),
-      }
-      await commit(COMPACT_CATALOG_PREFIX + compressToUTF16(JSON.stringify(compact)))
-    }
   } catch (error) {
     if (error instanceof RemotePluginCatalogIdentityChanged) throw error
     console.warn('[Wework] Failed to persist OpenAI plugin catalog', {
@@ -187,12 +162,7 @@ export function createSharedRemotePluginCatalog() {
   let latest: PersistedCatalog | undefined
 
   function hasSnapshotOrRefresh(): boolean {
-    if (latest || active?.pending) return true
-    try {
-      return window.localStorage.getItem(REMOTE_PLUGIN_CATALOG_STORAGE_KEY) !== null
-    } catch {
-      return false
-    }
+    return Boolean(latest || active?.pending || readOpenAiCatalogStorage())
   }
 
   function read({
@@ -254,14 +224,7 @@ export function createSharedRemotePluginCatalog() {
   function clear() {
     active = undefined
     latest = undefined
-    if (typeof window === 'undefined') return
-    try {
-      window.localStorage.removeItem(REMOTE_PLUGIN_CATALOG_STORAGE_KEY)
-    } catch (error) {
-      console.warn('[Wework] Failed to clear OpenAI plugin catalog', {
-        errorType: error instanceof Error ? error.name : typeof error,
-      })
-    }
+    clearOpenAiCatalogStorage()
   }
 
   return { read, clear, hasSnapshotOrRefresh }

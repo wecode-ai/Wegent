@@ -1,6 +1,8 @@
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 
+export const REMOTE_PLUGIN_CATALOG_STORAGE_KEY = 'wework.plugins.openAiCatalog.v1'
+
 interface PendingStorageUpdate {
   clear: boolean
   changes: Map<string, string | null>
@@ -14,6 +16,8 @@ interface StorageMethods {
 
 const STORAGE_METHODS = Symbol.for('wework.desktop.localStoragePersistence.methods')
 
+// The catalog shares the host file but never consumes Chromium storage quota.
+let openAiCatalogValue: string | null = null
 let installed = false
 let pending: PendingStorageUpdate = {
   clear: false,
@@ -35,7 +39,9 @@ export async function initializeDesktopLocalStoragePersistence(): Promise<void> 
       entries: storageEntries(localStorage),
     }
   )
-  replaceStorage(localStorage, durableEntries)
+  const { [REMOTE_PLUGIN_CATALOG_STORAGE_KEY]: catalog, ...browserEntries } = durableEntries
+  replaceStorage(localStorage, browserEntries)
+  openAiCatalogValue = catalog ?? null
   installPersistence(localStorage)
   installed = true
 }
@@ -57,11 +63,21 @@ export async function readCommittedLocalStorageValue(key: string): Promise<strin
   return Object.hasOwn(entries, key) ? entries[key] : null
 }
 
-/** Publish to browser windows only after the owning host has committed the value. */
+export function readOpenAiCatalogStorage(): string | null {
+  return openAiCatalogValue
+}
+
+export function clearOpenAiCatalogStorage(): void {
+  if (!isElectronRuntime()) return
+  openAiCatalogValue = null
+  queueChange(REMOTE_PLUGIN_CATALOG_STORAGE_KEY, null)
+}
+
+/** Publish the value only after the owning host has committed it. */
 export async function commitLocalStorageValue(
   key: string,
   value: string,
-  options?: { checkBrowserQuota?: boolean; assertCurrent?: () => void }
+  options?: { assertCurrent?: () => void }
 ): Promise<void> {
   if (!isElectronRuntime()) {
     localStorage.setItem(key, value)
@@ -70,7 +86,6 @@ export async function commitLocalStorageValue(
   if (flushScheduled) flushPendingChanges()
   const commit = writeQueue.then(async () => {
     options?.assertCurrent?.()
-    if (options?.checkBrowserQuota) verifyBrowserStorageCapacity(key, value)
     const update = { clear: false, changes: new Map([[key, value]]) }
     const persisted = retryUpdate ? mergeUpdates(retryUpdate, update) : update
     await invokeDesktopHost('rendererStorage.update', {
@@ -80,6 +95,10 @@ export async function commitLocalStorageValue(
     retryUpdate = null
     writeFailure = null
     options?.assertCurrent?.()
+    if (key === REMOTE_PLUGIN_CATALOG_STORAGE_KEY) {
+      openAiCatalogValue = value
+      return
+    }
     try {
       const storage = window.localStorage
       const prototype = storagePrototype(storage)
@@ -92,19 +111,6 @@ export async function commitLocalStorageValue(
   // A rejected command is not a queued write to retry alongside unrelated changes.
   writeQueue = commit.catch(() => {})
   await commit
-}
-
-function verifyBrowserStorageCapacity(key: string, value: string): void {
-  // The host file is restored into localStorage at launch. Reject a value
-  // that cannot fit there before committing it to the host.
-  const storage = window.localStorage
-  const previous = storage.getItem(key)
-  if (previous === value) return
-  const prototype = storagePrototype(storage)
-  const methods = prototype[STORAGE_METHODS] ?? prototype
-  methods.setItem.call(storage, key, value)
-  if (previous === null) methods.removeItem.call(storage, key)
-  else methods.setItem.call(storage, key, previous)
 }
 
 function storageEntries(storage: Storage): Record<string, string> {
@@ -174,6 +180,7 @@ function queueChange(key: string, value: string | null): void {
 }
 
 function queueClear(): void {
+  openAiCatalogValue = null
   pending = {
     clear: true,
     changes: new Map(),
