@@ -56,6 +56,8 @@ The provider `base_url` may be a service root, a versioned API base, or a comple
 | `standard`        | Use ordinary function tools, bridging `tool_search`, namespace and custom tools, and restoring tool identities on the return path to Codex. Use this for Kimi Responses and other services that do not support Codex's native tool types. |
 | `passthrough`     | Replace only the model ID and authentication needed for routing. Preserve all other request business fields and stream responses without protocol rewriting. Requires an OpenAI Responses upstream.                                       |
 
+OpenAI Responses upstreams in `auto` and `standard` receive Codex subagent items as `type: "message"` with `role: "developer"`. The outbound item uses standard message fields, with the sender and recipient preserved in the Codex message content.
+
 Passthrough retains reasoning, history, original call IDs, encrypted content, `previous_response_id`, `include`, `store` and extension fields. It also bypasses image budget trimming, vision sidecar replacement, history enhancement, fork/model-switch cleanup and output-limit injection. The proxy does not add the configured `max_output_tokens` to the request. The upstream must support the original Codex request contents directly.
 
 The internal official ChatGPT route is a separate passthrough path. It preserves the same native fields and stream behavior, but the compatibility layer still normalizes non-portable reasoning history and performs the first-request cleanup after a model switch. This keeps ordinary conversations and stand-in chats on one route without sending third-party `reasoning_text` or stale sealed state to the official endpoint.

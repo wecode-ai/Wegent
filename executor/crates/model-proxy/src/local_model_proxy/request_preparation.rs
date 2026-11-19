@@ -143,7 +143,10 @@ pub(super) fn prepare_request_with_model_hint(
         status: StatusCode::BAD_REQUEST,
         detail: format!("Invalid Codex Responses request: {error}"),
     })?;
-    normalize_responses_request_input(&mut responses_body, api_format == "anthropic-messages");
+    normalize_responses_request_input(
+        &mut responses_body,
+        matches!(api_format, "openai-responses" | "anthropic-messages"),
+    );
     image_budget::limit_request_images(&mut responses_body);
 
     if api_format == "openai-responses" {
@@ -235,6 +238,8 @@ fn normalize_responses_request_input(body: &mut Value, adapt_agent_messages: boo
         if adapt_agent_messages
             && object.get("type").and_then(Value::as_str) == Some("agent_message")
         {
+            // The message content carries the sender and recipient in its Codex envelope.
+            object.retain(|field, _| field == "content");
             object.insert("type".to_owned(), json!("message"));
             object.insert("role".to_owned(), json!("developer"));
         }

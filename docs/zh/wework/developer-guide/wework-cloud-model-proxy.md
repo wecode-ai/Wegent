@@ -54,6 +54,8 @@ Model CRD 的 `modelConfig.env.thinking_config.reasoning`（也接受 `thinkingC
 | `standard`      | 使用标准 function 工具格式，转换 `tool_search`、namespace 和 custom tools，并恢复返回给 Codex 的工具身份。适用于不支持 Codex 原生工具类型的 Kimi Responses 等服务。 |
 | `passthrough`   | 仅替换路由所需的模型 ID 和鉴权信息；其余请求业务字段原样保留，响应流也不做协议改写。仅适用于 OpenAI Responses 上游。                                                |
 
+OpenAI Responses 上游在 `auto` 和 `standard` 模式下会收到 `type: "message"`、`role: "developer"` 形式的 Codex 子代理消息。出站条目只发送标准消息字段，发送者和接收者保留在 Codex 的消息正文中。
+
 透传模式保留思考、历史、原始调用 ID、加密内容、`previous_response_id`、`include`、`store` 和扩展字段。它也跳过图片预算裁剪、视觉副模型替换、历史增强、fork/模型切换清理及输出上限注入；配置的 `max_output_tokens` 不会由代理添加到请求中。上游需要直接支持这些 Codex 请求内容。
 
 官方 ChatGPT 的内部路由是一条独立的透传路径。它保留相同的原生字段和响应流行为，但兼容层仍会规范化不可移植的推理历史，并在模型切换后的首个请求执行清理。这样普通对话和助理共用一条路由，同时不会把第三方 `reasoning_text` 或过期密封状态发送给官方 endpoint。
