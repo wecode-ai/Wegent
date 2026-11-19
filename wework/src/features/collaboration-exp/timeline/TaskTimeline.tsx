@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowRight, Circle, FileText, Lock, Sparkles } from 'lucide-react'
 import {
   IssueActivityMarkdown,
@@ -22,6 +22,7 @@ import { TimelineFilters, type TimelineFilter } from './TimelineFilters'
 import { TimelineNode } from './TimelineNode'
 import { matchesExperienceViewer, projectViewer } from '../model/sourceIdentity'
 import { isPublishedTimelineConclusion } from '../model/messageLayer'
+import { issueBackgroundPreview } from './issueSummaryContent'
 import './TimelineExperience.css'
 
 export interface TimelineAttachmentSelection {
@@ -193,7 +194,7 @@ export function TaskTimeline(props: Props) {
   const statusName =
     project.board_config?.statuses.find(status => status.id === issue.status)?.name ?? issue.status
   const description = issue.description?.trim() ?? ''
-  const preview = description.split(/\r?\n/, 1)[0].replace(/^#{1,6}\s+/, '')
+  const preview = useMemo(() => issueBackgroundPreview(description), [description])
   const turn =
     needsUser || conversations.items.length ? (
       <section
@@ -280,9 +281,11 @@ export function TaskTimeline(props: Props) {
             >
               <summary data-testid="collaboration-exp-background-toggle">
                 {t('timeline.background')}
-                <span className="experience-matter-background-preview" aria-hidden="true">
-                  {preview}
-                </span>
+                {preview ? (
+                  <span className="experience-matter-background-preview" aria-hidden="true">
+                    {preview}
+                  </span>
+                ) : null}
               </summary>
               <IssueActivityMarkdown
                 content={issue.description}

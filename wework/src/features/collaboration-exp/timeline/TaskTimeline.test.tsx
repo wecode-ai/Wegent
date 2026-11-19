@@ -50,6 +50,8 @@ it.each([
 
 it('presents the current reader question before progress and retains the expanded background across filters', () => {
   const props = fixture()
+  props.data.issue.description =
+    'Review **scope** and [spec](wegent://attachments/design).\n\nFull background details'
   props.data.issue.human_requests = [
     experienceHumanRequestFixture({
       id: 'another-person',
@@ -72,7 +74,10 @@ it('presents the current reader question before progress and retains the expande
   )
   const background = view.getByTestId('collaboration-exp-background')
   expect(background).not.toHaveAttribute('open')
-  fireEvent.click(view.getByTestId('collaboration-exp-background-toggle'))
+  const backgroundToggle = view.getByTestId('collaboration-exp-background-toggle')
+  expect(backgroundToggle).toHaveTextContent('Review scope and spec.')
+  expect(backgroundToggle).not.toHaveTextContent('wegent://attachments/design')
+  fireEvent.click(backgroundToggle)
   expect(background).toHaveAttribute('open')
   const turn = view.getByTestId('collaboration-exp-current-turn')
   expect(turn).toHaveTextContent('Approve the actual task scope?')
