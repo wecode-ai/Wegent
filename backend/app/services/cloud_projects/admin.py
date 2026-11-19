@@ -7,7 +7,7 @@
 import hashlib
 import json
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from copy import deepcopy
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -293,6 +293,8 @@ def update_project(
     values: CloudProjectUpdate,
     *,
     mutation: Callable[[], None] | None = None,
+    revoked_user_ids: Collection[int] = (),
+    revoked_agent_ids: Collection[str] = (),
 ) -> CloudProject:
     """Lock, validate, plan, apply and journal together, or roll everything back."""
     try:
@@ -329,7 +331,24 @@ def update_project(
         if values.dry_run:
             db.rollback()
         else:
-            _commit(db, project, operation_id, request_hash, result)
+            _commit(
+                db,
+                project,
+                operation_id,
+                request_hash,
+                result,
+                revoked_user_ids={
+                    *(change.user_id for change in values.member_changes or []),
+                    *revoked_user_ids,
+                },
+                revoked_agent_ids={
+                    *(
+                        change.agent_id
+                        for change in values.assistant_roster_changes or []
+                    ),
+                    *revoked_agent_ids,
+                },
+            )
         project._project_admin_result = result
         return project
     except ValidationError as exc:
@@ -367,6 +386,9 @@ def run_configuration_change(
     project_id: int,
     user_id: int,
     mutation: Callable[[], MutationResult],
+    *,
+    revoked_user_ids: Collection[int] = (),
+    revoked_agent_ids: Collection[str] = (),
 ) -> MutationResult:
     """Bring existing page mutations into the same locked audit transaction."""
     results: list[MutationResult] = []
@@ -384,6 +406,8 @@ def run_configuration_change(
             user_id,
             CloudProjectUpdate(version=project.version),
             mutation=apply_mutation,
+            revoked_user_ids=revoked_user_ids,
+            revoked_agent_ids=revoked_agent_ids,
         )
         return results[0]
     except Exception:
@@ -397,6 +421,9 @@ def _commit(
     operation_id: str,
     request_hash: str,
     result: dict,
+    *,
+    revoked_user_ids: Collection[int],
+    revoked_agent_ids: Collection[str],
 ) -> None:
     from app.services.collaboration_revocation import revoke_unauthorized_project_work
     from app.services.loop_item_executions.cancellation import (
@@ -416,7 +443,19 @@ def _commit(
     # Journaling is part of this write, not a second configuration timestamp.
     flag_modified(project, "updated_at")
     db.flush()
-    pending = revoke_unauthorized_project_work(db, project.id)
+    pending = []
+    for target_user_id in set(revoked_user_ids):
+        pending.extend(
+            revoke_unauthorized_project_work(
+                db, project.id, actor_user_id=target_user_id
+            )
+        )
+    if revoked_agent_ids:
+        pending.extend(
+            revoke_unauthorized_project_work(
+                db, project.id, agent_ids=set(revoked_agent_ids)
+            )
+        )
     db.commit()
     db.refresh(project)
     project._project_admin_response = snapshot

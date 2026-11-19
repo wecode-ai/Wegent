@@ -198,12 +198,19 @@ BOT_DEFAULT_WORKSPACE_POLICY = "project"
 BOT_ADMIN_ROLES = {BaseRole.Owner, BaseRole.Maintainer}
 
 
-def bot_runtime(row: ProjectChatAgent) -> str:
-    """Read one explicitly persisted project-agent runtime."""
+def bot_runtime_or_none(row: ProjectChatAgent) -> str | None:
+    """Read a persisted project-agent runtime without rejecting legacy rows."""
 
     metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
     runtime = metadata.get(BOT_RUNTIME_KEY)
-    if runtime not in {"codex", "claude_code", "wegent"}:
+    return runtime if runtime in {"codex", "claude_code", "wegent"} else None
+
+
+def bot_runtime(row: ProjectChatAgent) -> str:
+    """Require one valid runtime before executing or mutating an Agent."""
+
+    runtime = bot_runtime_or_none(row)
+    if runtime is None:
         raise ValueError(f"Project chat agent '{row.id}' has no valid runtime")
     return runtime
 
@@ -752,6 +759,7 @@ class ProjectChatService:
                     request=request,
                     commit=False,
                 ),
+                revoked_agent_ids=(agent_id,),
             )
         require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
         row = self._agent_row(db, project_id=project_id, agent_id=agent_id)

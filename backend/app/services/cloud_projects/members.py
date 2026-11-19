@@ -123,6 +123,7 @@ class CloudProjectMemberService:
                 lambda: self.add_member(
                     db, cloud_project_id, user_id, values, commit=False
                 ),
+                revoked_user_ids=(values.user_id,),
             )
         require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Maintainer)
         project = self._lock_project(db, cloud_project_id)
@@ -157,6 +158,7 @@ class CloudProjectMemberService:
                 lambda: self.update_member(
                     db, cloud_project_id, member_user_id, user_id, values, commit=False
                 ),
+                revoked_user_ids=(member_user_id,),
             )
         require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Maintainer)
         project = self._lock_project(db, cloud_project_id)
@@ -194,6 +196,7 @@ class CloudProjectMemberService:
                 lambda: self.remove_member(
                     db, cloud_project_id, member_user_id, user_id, commit=False
                 ),
+                revoked_user_ids=(member_user_id,),
             )
         require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Maintainer)
         project = self._lock_project(db, cloud_project_id)

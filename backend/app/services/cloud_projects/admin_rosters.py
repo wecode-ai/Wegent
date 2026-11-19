@@ -74,7 +74,7 @@ def roster_configuration(db: Session, project: CloudProject, user_id: int) -> di
 
 def _assistant_configuration(row: ProjectChatAgent) -> dict:
     """Allowlist binding identifiers without loading executable source content."""
-    from app.services.project_chat.service import bot_runtime
+    from app.services.project_chat.service import bot_runtime_or_none
 
     metadata = row.metadata_json or {}
     return {
@@ -83,7 +83,7 @@ def _assistant_configuration(row: ProjectChatAgent) -> dict:
         "name": row.name,
         "status": row.status,
         "capability_description": row.description or "",
-        "runtime": bot_runtime(row),
+        "runtime": bot_runtime_or_none(row),
         "wegent_team_id": metadata.get("wegent_team_id"),
         "execution_device_id": row.device_id or None,
         "default_runtime_profile_id": metadata.get("default_runtime_profile_id"),

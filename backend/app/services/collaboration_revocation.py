@@ -1,6 +1,7 @@
 """Current execution authority and revocation with Runtime-owned termination."""
 
 import logging
+from collections.abc import Collection
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -222,7 +223,11 @@ def execution_authorized(db: Session, execution: LoopItemExecution) -> bool:
 
 
 def revoke_unauthorized_project_work(
-    db: Session, project_id: str | int, actor_user_id: int | None = None
+    db: Session,
+    project_id: str | int,
+    actor_user_id: int | None = None,
+    *,
+    agent_ids: Collection[str] | None = None,
 ) -> list[LoopItemExecution]:
     """Return cancellation requests that callers publish after their commit."""
     from app.services.loop_item_executions.service import loop_item_execution_service
@@ -233,6 +238,8 @@ def revoke_unauthorized_project_work(
     )
     if actor_user_id is not None:
         rows = rows.filter(LoopItemExecution.assigner_user_id == actor_user_id)
+    if agent_ids is not None:
+        rows = rows.filter(LoopItemExecution.agent_id.in_(agent_ids))
     pending = []
     for row in rows.all():
         decision = execution_permission(db, row)
