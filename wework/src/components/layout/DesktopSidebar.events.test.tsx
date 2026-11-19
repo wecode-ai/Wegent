@@ -173,7 +173,7 @@ test('chat batch archive releases the sidebar while the request is pending', asy
   const dialog = 'runtime-chat-section-archive-conversations-dialog'
 
   await userEvent.click(menu)
-  expect(screen.getByTestId(action)).toBeEnabled()
+  expect(screen.getByTestId(action)).not.toHaveAttribute('aria-disabled', 'true')
   await userEvent.click(screen.getByTestId(action))
   await userEvent.click(screen.getByTestId(`${dialog}-confirm-button`))
 
@@ -182,8 +182,8 @@ test('chat batch archive releases the sidebar while the request is pending', asy
   await userEvent.click(screen.getByTestId('runtime-search-button'))
   expect(onOpenSearch).toHaveBeenCalledOnce()
   await userEvent.click(menu)
-  expect(screen.getByTestId(action)).toBeDisabled()
+  expect(screen.getByTestId(action)).toHaveAttribute('aria-disabled', 'true')
 
   await act(async () => archive.resolve())
-  expect(screen.getByTestId(action)).toBeEnabled()
+  expect(screen.getByTestId(action)).not.toHaveAttribute('aria-disabled', 'true')
 })
