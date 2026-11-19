@@ -565,13 +565,23 @@ async def _resolve_workspace_runtime_base_url(
     from executor_manager.services.sandbox import get_sandbox_manager
 
     sandbox_manager = get_sandbox_manager()
-    sandbox = await sandbox_manager.get_sandbox(str(task_id))
+    if require_executor_match:
+        sandbox = await sandbox_manager.get_sandbox(str(task_id), check_health=False)
+    else:
+        sandbox = await sandbox_manager.get_sandbox(str(task_id))
     if (
         sandbox
         and sandbox.base_url
         and (
             not require_executor_match
-            or getattr(sandbox, "container_name", None) == executor_name
+            or (
+                getattr(sandbox, "container_name", None) == executor_name
+                and (
+                    not executor_namespace
+                    or getattr(sandbox, "executor_namespace", None)
+                    == executor_namespace
+                )
+            )
         )
     ):
         return str(sandbox.base_url).rstrip("/")

@@ -141,6 +141,7 @@ async def test_workspace_artifact_prefers_sandbox_only_when_container_name_match
     sandbox = SimpleNamespace(
         base_url="http://sandbox.local:9000",
         container_name="sandbox-other",
+        executor_namespace="default",
     )
     sandbox_manager = mocker.MagicMock()
     sandbox_manager.get_sandbox = mocker.AsyncMock(return_value=sandbox)
@@ -174,11 +175,59 @@ async def test_workspace_artifact_prefers_sandbox_only_when_container_name_match
     )
     assert matched == "http://sandbox.local:9000"
 
+    wrong_namespace = await routers._resolve_workspace_runtime_base_url(
+        42, "executor-declared", executor_namespace="other", require_executor_match=True
+    )
+    assert wrong_namespace == "http://executor-declared.local:8080"
+
     sandbox.container_name = "sandbox-other"
     reused = await routers._resolve_workspace_runtime_base_url(
         42, "executor-declared", executor_namespace="default"
     )
     assert reused == "http://sandbox.local:9000"
+
+
+@pytest.mark.asyncio
+async def test_artifact_lookup_does_not_delete_an_unrelated_sandbox(
+    mocker: MockerFixture,
+) -> None:
+    from executor_manager.services.sandbox.manager import SandboxManager
+
+    sandbox = SimpleNamespace(
+        sandbox_id="42",
+        container_name="executor-active",
+        base_url="http://active.local",
+    )
+    cached = {"42": sandbox}
+    manager = object.__new__(SandboxManager)
+    manager._repository = SimpleNamespace(
+        load_sandbox=cached.get, delete_sandbox=cached.pop
+    )
+    manager._health_checker = SimpleNamespace(check_health_sync=lambda _: False)
+    mocker.patch(
+        "executor_manager.services.sandbox.get_sandbox_manager", return_value=manager
+    )
+    executor = mocker.MagicMock()
+    executor.get_container_address.return_value = {
+        "status": "success",
+        "base_url": "http://declared.local",
+    }
+    mocker.patch.object(
+        routers.ExecutorDispatcher, "get_executor", return_value=executor
+    )
+    _mock_stream_client(mocker, response=_FakeStreamResponse(chunks=[b"artifact"]))
+
+    response = await routers.get_executor_workspace_artifact(
+        task_id=42,
+        executor_name="executor-original",
+        binding_id="b" * 64,
+        subtask_id="7",
+        path="report.md",
+    )
+
+    assert response.body == b"artifact"
+    assert cached == {"42": sandbox}
+    executor.delete_executor.assert_not_called()
 
 
 @pytest.mark.parametrize(
