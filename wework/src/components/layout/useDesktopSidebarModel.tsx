@@ -465,14 +465,17 @@ export function useDesktopSidebarModel({
     }
   }
   const openPriorityArchiveDialog = () => {
-    if (!onArchiveRuntimeTask || priorityView.priorityItems.length === 0) return
+    if (isArchivingPriority || !onArchiveRuntimeTask || priorityView.priorityItems.length === 0)
+      return
     setPriorityArchiveItems(priorityView.priorityItems)
   }
   const runPriorityArchive = async (
     items: RuntimePriorityTaskItem[],
     options?: ArchiveRuntimeTaskOptions
   ) => {
-    if (!onArchiveRuntimeTask || items.length === 0) return
+    if (isArchivingPriority || !onArchiveRuntimeTask || items.length === 0) return
+    setPriorityArchiveItems(null)
+    setPriorityForceArchiveItems(null)
     setIsArchivingPriority(true)
     const dirtyItems: RuntimePriorityTaskItem[] = []
     try {
@@ -489,17 +492,16 @@ export function useDesktopSidebarModel({
           console.error('Failed to archive priority task', error)
         }
       }
-      setPriorityArchiveItems(null)
       setPriorityForceArchiveItems(dirtyItems.length > 0 ? dirtyItems : null)
     } finally {
       setIsArchivingPriority(false)
     }
   }
   const closePriorityArchiveDialog = () => {
-    if (!isArchivingPriority) setPriorityArchiveItems(null)
+    setPriorityArchiveItems(null)
   }
   const closePriorityForceArchiveDialog = () => {
-    if (!isArchivingPriority) setPriorityForceArchiveItems(null)
+    setPriorityForceArchiveItems(null)
   }
 
   const setRuntimeTaskPinnedOptimistically = async (data: RuntimeTaskPinRequest) => {
@@ -662,7 +664,6 @@ export function useDesktopSidebarModel({
     forceArchiveSectionMode,
     isArchivingProjectSection,
     isArchivingChatSection,
-    isArchiveSectionSubmitting,
     archiveSectionDialogTestId,
     archiveSectionDialogCount,
     closeArchiveSectionDialog,
@@ -857,6 +858,7 @@ export function useDesktopSidebarModel({
     onArchiveRuntimeTask,
     markAllPriorityTasksRead,
     openPriorityArchiveDialog,
+    isArchivingPriority,
     splitGroupMemberships,
     visibleUnreadRuntimeTaskKeys,
     imNotificationSettings,
@@ -937,14 +939,12 @@ export function useDesktopSidebarModel({
     archiveDialogs: {
       t,
       priorityArchiveItems,
-      isArchivingPriority,
       closePriorityArchiveDialog,
       runPriorityArchive,
       priorityForceArchiveItems,
       closePriorityForceArchiveDialog,
       archiveSectionMode,
       archiveSectionDialogCount,
-      isArchiveSectionSubmitting,
       archiveSectionDialogTestId,
       closeArchiveSectionDialog,
       confirmArchiveSectionConversations,
