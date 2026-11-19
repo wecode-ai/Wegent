@@ -142,6 +142,30 @@ describe('physical memory snapshots', () => {
     ).toEqual(['10', '11'])
   })
 
+  it('retains native allocation totals without arbitrary region labels', async () => {
+    const metrics = { dirty: 1024, swapped: 0, clean: 2048, reclaimable: 0, wired: 0, regions: 1 }
+    const nativeCategories = {
+      MALLOC_SMALL: metrics,
+      '/private/profile/credential-value': metrics,
+      'unknown native kind': metrics,
+    }
+    report.processes = [
+      { pid: 10, footprint: 102_400, categories: nativeCategories },
+      { pid: 11, footprint: 256_000 },
+    ]
+    const snapshot = await getElectronProcessSnapshot(10)
+    const categories = snapshot.processes.find(entry => entry.pid === 10)!.native_memory_categories
+    expect(categories).toEqual({
+      MALLOC_SMALL: metrics,
+      other: { ...metrics, dirty: 2048, clean: 4096, regions: 2 },
+    })
+    expect(JSON.stringify(categories)).not.toContain('credential-value')
+    nativeCategories.MALLOC_SMALL.dirty = -1
+    await expect(getElectronProcessSnapshot(10)).rejects.toThrow(
+      'Invalid native memory category metric'
+    )
+  })
+
   it.each([
     { unit: 'page', 'bytes per unit': 16_384 },
     {

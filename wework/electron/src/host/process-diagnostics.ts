@@ -13,6 +13,7 @@ export interface ProcessDiagnosticsProcess {
   rss_kib: number
   physical_footprint_kib: number
   cpu_percent: number
+  native_memory_categories: Record<string, Record<string, number>> | null
   command: string
   executable: string | null
 }
@@ -101,20 +102,41 @@ export function classifyElectronProcess(processInfo: RawProcessInfo, mainPid: nu
   return 'child'
 }
 
-async function readPhysicalFootprints(pids: number[]): Promise<Map<number, number>> {
+interface NativeFootprint {
+  footprintKiB: number
+  categories: Record<string, Record<string, number>> | null
+}
+
+function memoryCategories(value: unknown): NativeFootprint['categories'] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const result: NonNullable<NativeFootprint['categories']> = {}
+  // Only native region kinds are labels. Never retain process names or mapped paths.
+  const named =
+    /^(?:MALLOC(?:_[A-Z]+| metadata)?|__[A-Z_]+|app-specific tag \d+|stack|page table|mapped file|libdispatch|Activity Tracing|CoreServices|os_alloc_once|untagged \(VM_ALLOCATE\))$/
+  for (const [label, raw] of Object.entries(value)) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new Error('Invalid native memory category')
+    }
+    const kind = named.test(label) ? label : 'other'
+    const metrics = (result[kind] ??= {})
+    for (const key of ['dirty', 'swapped', 'clean', 'reclaimable', 'wired', 'regions']) {
+      const amount = (raw as Record<string, unknown>)[key]
+      if (!Number.isSafeInteger(amount) || (amount as number) < 0) {
+        throw new Error('Invalid native memory category metric')
+      }
+      metrics[key] = (metrics[key] ?? 0) + (amount as number)
+    }
+  }
+  return result
+}
+
+async function readPhysicalFootprints(pids: number[]): Promise<Map<number, NativeFootprint>> {
   const directory = await mkdtemp(join(tmpdir(), 'wework-process-footprint-'))
   try {
     const reportPath = join(directory, 'footprint.json')
     await execFileAsync(
       '/usr/bin/footprint',
-      [
-        '--noCategories',
-        '--format',
-        'bytes',
-        '--json',
-        reportPath,
-        ...pids.flatMap(pid => ['--pid', String(pid)]),
-      ],
+      ['--format', 'bytes', '--json', reportPath, ...pids.flatMap(pid => ['--pid', String(pid)])],
       { timeout: 10_000 }
     )
     const report = JSON.parse(await readFile(reportPath, 'utf8'))
@@ -125,7 +147,7 @@ async function readPhysicalFootprints(pids: number[]): Promise<Map<number, numbe
     ) {
       throw new Error('Invalid native physical footprint report')
     }
-    const footprints = new Map<number, number>()
+    const footprints = new Map<number, NativeFootprint>()
     for (const entry of report.processes) {
       if (
         !Number.isSafeInteger(entry?.pid) ||
@@ -136,7 +158,10 @@ async function readPhysicalFootprints(pids: number[]): Promise<Map<number, numbe
       ) {
         throw new Error('Invalid native physical footprint process metric')
       }
-      footprints.set(entry.pid, entry.footprint / 1024)
+      footprints.set(entry.pid, {
+        footprintKiB: entry.footprint / 1024,
+        categories: memoryCategories(entry.categories),
+      })
     }
     return footprints
   } finally {
@@ -237,7 +262,8 @@ export async function getElectronProcessSnapshot(
       ...processInfo,
       executable: executables.get(processInfo.pid) ?? null,
       group: classifyElectronProcess(processInfo, mainPid),
-      physical_footprint_kib: footprints.get(processInfo.pid)!,
+      physical_footprint_kib: footprints.get(processInfo.pid)!.footprintKiB,
+      native_memory_categories: footprints.get(processInfo.pid)!.categories,
     }))
     .sort((left, right) => right.physical_footprint_kib - left.physical_footprint_kib)
 

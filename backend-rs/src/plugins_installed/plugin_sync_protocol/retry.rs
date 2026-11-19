@@ -53,18 +53,31 @@ where
         if !retryable(outcome.as_ref().err(), retry_busy) {
             return outcome;
         }
+        if outcome
+            .as_ref()
+            .err()
+            .is_some_and(|error| error.database_code() == Some(1213))
+        {
+            tracing::warn!(
+                "Restarting rolled-back plugin metadata transaction after MySQL deadlock"
+            );
+        }
         tokio::time::sleep_until((Instant::now() + next_delay(&mut backoff)).min(deadline)).await;
     }
 }
 
 fn retryable(error: Option<&MysqlError>, retry_busy: bool) -> bool {
     error.is_some_and(|error| {
-        matches!(
-            super::super::write_coordination::plugin_write_error_code(error),
-            Some("plugin_write_conflict")
-        ) || retry_busy
-            && super::super::write_coordination::plugin_write_error_code(error)
-                == Some("plugin_write_busy")
+        // InnoDB has already rolled back all statements for 1213. Other database
+        // failures may have ambiguous outcomes and must not replay this work.
+        error.database_code() == Some(1213)
+            || matches!(
+                super::super::write_coordination::plugin_write_error_code(error),
+                Some("plugin_write_conflict")
+            )
+            || retry_busy
+                && super::super::write_coordination::plugin_write_error_code(error)
+                    == Some("plugin_write_busy")
     })
 }
 
@@ -110,6 +123,32 @@ mod tests {
         assert_eq!(value, 42);
         assert_eq!(attempts, 4);
         assert!(start.elapsed() > Duration::from_secs(9));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn rolled_back_deadlocks_restart_metadata_but_lock_timeouts_do_not() {
+        for (code, expected_attempts) in [(1213, 2), (1205, 1)] {
+            let mut attempts = 0;
+            let result = retry_sync_write(|| {
+                attempts += 1;
+                std::future::ready(if attempts == 1 {
+                    Err(MysqlError::Database {
+                        code: Some(code),
+                        sql_state: Some("40001".into()),
+                        message: "synthetic transaction failure".into(),
+                    })
+                } else {
+                    Ok(42)
+                })
+            })
+            .await;
+            if code == 1213 {
+                assert_eq!(result.unwrap(), 42);
+            } else {
+                assert_eq!(result.unwrap_err().database_code(), Some(code));
+            }
+            assert_eq!(attempts, expected_attempts);
+        }
     }
 
     #[tokio::test(start_paused = true)]

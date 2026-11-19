@@ -453,6 +453,8 @@ Playwright 用例使用 `e2e/fixtures/collected-test` 的自动采集 fixture，
 
 已有会话的历史读取和搜索沿用 `requestLocalExecutor` 的底层代理配置门禁，不等待模型目录准备，也不为读取历史改写目录或重启 Codex。模型准备仍由发送／模型操作路径负责；代理配置失败仍会阻止原生读取并完整报错。
 
+macOS 进程样本同时保留同一次原生 `footprint` 读取的 `native_memory_categories`，区分堆分配、代码段、栈及其他映射的 dirty／swapped／clean／reclaimable／wired 字节与 region 数量。只保留系统类别白名单；其他标签合并为 `other`，不记录进程名称、映射路径或堆内容。缺少分类时为 `null`，不能解释为零；分类总量不替代物理占用，也不独立证明对象泄漏。
+
 macOS 原生物理内存采样对缺值 PID 核对系统进程状态：已消失及明确的 `Z` 僵尸后代不属于活动内存，记录在 `exited_processes`／样本的 `exitedProcesses`，不伪造零内存。`kill(pid, 0)` 成功不能单独证明进程仍在运行。主进程缺值、活动后代缺值以及状态不可用仍失败，并只记录 PID、父 PID、分组、可执行文件名及状态；不记录命令参数、不用 RSS 替代，也不重采样求通过。
 
 MCP App 请求从来源核验、冷会话恢复到工具派发复用统一线程活动范围，自动空闲重启需等该操作完成，避免核验与调用落在不同 app-server 代次。该范围在操作完成或取消后释放；已派发调用的结果未知仍明确返回，禁止自动重放有副作用的工具。

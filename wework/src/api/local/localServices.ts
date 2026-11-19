@@ -2491,7 +2491,12 @@ export function createRuntimeWorkApiFromIpc(
     },
     async sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
-      if (!(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))) {
+      const userInputResponse = data.requestUserInputResponse ?? data.request_user_input_response
+      // Replies settle an existing native request; catalog synchronization is unrelated.
+      if (
+        !userInputResponse &&
+        !(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))
+      ) {
         throw modelCatalogSyncCancelled()
       }
       const payload = await createLocalRuntimeSendPayload(
