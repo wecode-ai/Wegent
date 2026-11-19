@@ -681,16 +681,21 @@ export function TaskActivityView({
     }
     let active = true
     let unsubscribe: (() => void) | undefined
+    const liveMessageIds = new Set<string>()
     void client
       .subscribe(
         project.id,
         task.id,
         0,
         message => {
-          if (active) setMessages(current => mergeProjectChatMessages(current, [message]))
+          if (!active) return
+          if (!unsubscribe) liveMessageIds.add(message.messageId)
+          setMessages(current => mergeProjectChatMessages(current, [message]))
         },
         chunk => {
-          if (active) setMessages(current => appendAgentChunk(current, chunk))
+          if (!active) return
+          if (!unsubscribe) liveMessageIds.add(chunk.messageId)
+          setMessages(current => appendAgentChunk(current, chunk))
         }
       )
       .then(subscription => {
@@ -706,7 +711,12 @@ export function TaskActivityView({
           version: task.version,
         })
         setChatCurrentUserId(subscription.snapshot.currentUserId)
-        setMessages(current => mergeProjectChatMessages(current, subscription.snapshot.messages))
+        const snapshot = subscription.snapshot.messages
+        const verifiedSourceIds = new Set(
+          snapshot.map(message => message.messageId).filter(id => !liveMessageIds.has(id))
+        )
+        liveMessageIds.clear()
+        setMessages(current => mergeProjectChatMessages(current, snapshot, verifiedSourceIds))
         setLoading(false)
       })
       .catch(cause => {

@@ -120,7 +120,7 @@ These links open runnable Story source. Examples use production controls or trac
 | [SearchableSelect](../../../wework/src/stories/SearchableSelect.stories.tsx)                   | Production component and applicable states                                                          |
 | [SegmentedControl](../../../wework/src/stories/SegmentedControl.stories.tsx)                   | Production component and applicable states                                                          |
 | [SelectField](../../../wework/src/stories/SelectField.stories.tsx)                             | Production component and applicable states                                                          |
-| [Settings](../../../wework/src/stories/Settings.stories.tsx)                                   | Production component and applicable states                                                          |
+| [Settings](../../../wework/src/stories/Settings.stories.tsx)                                   | Groups, responsive navigation and model connection form                                             |
 | [Switch](../../../wework/src/stories/Switch.stories.tsx)                                       | Production component and applicable states                                                          |
 | [Tabs](../../../wework/src/stories/Tabs.stories.tsx)                                           | Production component and applicable states                                                          |
 | [Field](../../../wework/src/stories/Field.stories.tsx)                                         | Form labels, descriptions, errors and default/outline controls                                      |

@@ -138,7 +138,7 @@ Business/BranchPicker 包含加载、空分支、目录失败后重试和分支�
 | [SearchableSelect](../../../wework/src/stories/SearchableSelect.stories.tsx)                   | 生产组件与适用状态                                                       |
 | [SegmentedControl](../../../wework/src/stories/SegmentedControl.stories.tsx)                   | 生产组件与适用状态                                                       |
 | [SelectField](../../../wework/src/stories/SelectField.stories.tsx)                             | 生产组件与适用状态                                                       |
-| [Settings](../../../wework/src/stories/Settings.stories.tsx)                                   | 生产组件与适用状态                                                       |
+| [Settings](../../../wework/src/stories/Settings.stories.tsx)                                   | 设置分组、响应式导航、真实模型连接表单（宽屏/窄屏）                      |
 | [Switch](../../../wework/src/stories/Switch.stories.tsx)                                       | 生产组件与适用状态                                                       |
 | [Tabs](../../../wework/src/stories/Tabs.stories.tsx)                                           | 生产组件与适用状态                                                       |
 | [Field](../../../wework/src/stories/Field.stories.tsx)                                         | 表单标签、说明和错误关联；default/outline 字段                           |

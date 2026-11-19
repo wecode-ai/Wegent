@@ -1,3 +1,5 @@
+import enModelConnections from '../src/i18n/locales/en/modelConnections.json'
+import zhModelConnections from '../src/i18n/locales/zh-CN/modelConnections.json'
 import enChat from '../src/i18n/locales/en/chat.json'
 import zhChat from '../src/i18n/locales/zh-CN/chat.json'
 import { CollaborationTheme } from '@wegent/collaboration/theme'
@@ -18,8 +20,18 @@ import '../src/styles/globals.css'
 const i18n = createInstance()
 void i18n.use(initReactI18next).init({
   resources: {
-    en: { common: enCommon, chat: enChat, componentCatalog: enCatalog },
-    'zh-CN': { common: zhCommon, chat: zhChat, componentCatalog: zhCatalog },
+    en: {
+      common: enCommon,
+      chat: enChat,
+      componentCatalog: enCatalog,
+      modelConnections: enModelConnections,
+    },
+    'zh-CN': {
+      common: zhCommon,
+      chat: zhChat,
+      componentCatalog: zhCatalog,
+      modelConnections: zhModelConnections,
+    },
   },
   lng: 'zh-CN',
   fallbackLng: 'en',

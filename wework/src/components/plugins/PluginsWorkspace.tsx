@@ -66,6 +66,7 @@ import {
   createLocalDevicePluginApi,
   resolveLocalPluginDeviceRouteId,
 } from '@/features/plugins/pluginDeviceApi'
+import { usePluginRecoveryNotice } from './hooks/usePluginRecoveryNotice'
 import {
   acquirePluginDeviceSync,
   beginPluginDeviceSync,
@@ -148,6 +149,10 @@ import {
   marketplacePluginTelemetryIdentity,
   pluginTelemetryIdentityFromParts,
 } from '@/telemetry/pluginIdentity'
+import {
+  pendingPluginRecoveryId,
+  type PluginOperationPhase,
+} from '@/features/plugins/pluginLocalSync'
 import type {
   InstalledPlugin,
   LocalDeviceApp,
@@ -527,17 +532,22 @@ export function PluginsWorkspace({
     subPath: '',
   })
   const [isAddingMarket, setIsAddingMarket] = useState(false)
-  const pluginApi = useMemo(() => {
-    const profile = {
+  const pluginRuntimeProfile = useMemo(
+    () => ({
       apiBaseUrl: cloudApiBaseUrl || getRuntimeConfig().apiBaseUrl,
       token: cloudToken === undefined ? getToken() : cloudToken,
-    }
-    return createLocalDevicePluginApi(
-      createDefaultPluginApi(profile.apiBaseUrl, cloudToken),
-      deviceId => resolveLocalPluginDeviceRouteId(deviceId, profile),
-      profile
-    )
-  }, [cloudApiBaseUrl, cloudToken])
+    }),
+    [cloudApiBaseUrl, cloudToken]
+  )
+  const pluginApi = useMemo(
+    () =>
+      createLocalDevicePluginApi(
+        createDefaultPluginApi(pluginRuntimeProfile.apiBaseUrl, cloudToken),
+        deviceId => resolveLocalPluginDeviceRouteId(deviceId, pluginRuntimeProfile),
+        pluginRuntimeProfile
+      ),
+    [cloudToken, pluginRuntimeProfile]
+  )
   useEffect(() => {
     let disposed = false
     void pluginApi
@@ -652,6 +662,38 @@ export function PluginsWorkspace({
     const lifetime = publicationLifetime.current
     return () => lifetime !== null && publicationLifetime.current === lifetime
   }
+  const pluginRecoveryScopeKey = pluginMarketplaceCacheKey(
+    pluginRuntimeProfile.apiBaseUrl,
+    pluginRuntimeProfile.token
+  )
+  usePluginRecoveryNotice(pluginRecoveryScopeKey, pluginOperationNotice, setPluginOperationNotice)
+  const showPendingLocalPluginRecovery = (error: unknown) => {
+    const progressId = pendingPluginRecoveryId(error)
+    if (!progressId) return false
+    setPluginOperationNotice({
+      id: `plugin-recovery-${progressId}`,
+      kind: 'progress',
+      message: getErrorMessage(error, t('workbench.plugins_local_sync_processing')),
+    })
+    return true
+  }
+  const reportLocalPluginProgress =
+    (id: string, isCurrent: () => boolean) => (phase: PluginOperationPhase) => {
+      if (!isCurrent()) return
+      if (phase === 'settled') {
+        setPluginOperationNotice(current => (current?.id === id ? null : current))
+        return
+      }
+      setPluginOperationNotice({
+        id,
+        kind: 'progress',
+        message: t(
+          phase === 'confirming'
+            ? 'workbench.plugins_local_sync_confirmation_pending'
+            : 'workbench.plugins_local_sync_processing'
+        ),
+      })
+    }
   const refreshPublicationRequests = useCallback(
     async (sourcePluginId?: number): Promise<PluginPublicationRequestItem[]> => {
       const lifetime = publicationLifetime.current
@@ -1882,6 +1924,7 @@ export function PluginsWorkspace({
     }
 
     const noticeUninstallError = (id: string | number, error: unknown) => {
+      if (showPendingLocalPluginRecovery(error)) return
       const rawErrorMessage = getErrorMessage(
         error,
         t('workbench.plugins_uninstall_failed', '卸载失败，请稍后重试')
@@ -1906,7 +1949,11 @@ export function PluginsWorkspace({
       logoutLocal: (resolvedPlugin: InstalledPlugin) =>
         logoutLocalConnectorsForPlugin(resolvedPlugin),
       uninstallCloud: (pluginId: string | number, deviceId?: string) =>
-        pluginApi.uninstallInstalledPlugin(pluginId, deviceId),
+        pluginApi.uninstallInstalledPlugin(
+          pluginId,
+          deviceId,
+          reportLocalPluginProgress(`uninstall-progress-${id}`, isCurrent)
+        ),
       uninstallLocal: (pluginId: string | number) =>
         localPluginApi.uninstallInstalledPlugin(pluginId),
     }
@@ -2391,7 +2438,12 @@ export function PluginsWorkspace({
         )
         setInstallingMarketplacePluginIds(previous => new Set(previous).add(item.id))
         pluginApi
-          .updateMarketplacePlugin(item.installedPluginId, item.latestReleaseId, targetDeviceId)
+          .updateMarketplacePlugin(
+            item.installedPluginId,
+            item.latestReleaseId,
+            targetDeviceId,
+            reportLocalPluginProgress(`update-progress-${item.id}`, isCurrent)
+          )
           .then(plugin => {
             if (!isCurrent()) return
             const device = currentDeviceInstallation(plugin, targetDeviceId)
@@ -2418,6 +2470,7 @@ export function PluginsWorkspace({
           })
           .catch((error: unknown) => {
             if (!isCurrent()) return
+            if (showPendingLocalPluginRecovery(error)) return
             const message = getErrorMessage(error, 'Unknown error')
             setPluginOperationNotice({ id: `update-error-${item.id}`, kind: 'error', message })
           })
@@ -2612,7 +2665,8 @@ export function PluginsWorkspace({
         }
         const response = await pluginApi.installMarketplacePlugin(
           preparedItem.id,
-          liveConnection.deviceId
+          liveConnection.deviceId,
+          reportLocalPluginProgress(`install-progress-${preparedItem.id}`, isCurrent)
         )
         requireCurrentScope()
         return {
@@ -2779,6 +2833,7 @@ export function PluginsWorkspace({
         installRequestAttempt?.fail('request')
         if (!isCurrent()) return
         if (error instanceof PluginInstallationSupersededError) return
+        if (showPendingLocalPluginRecovery(error)) return
         const errorCode =
           error && (typeof error === 'object' || typeof error === 'function')
             ? Reflect.get(error, 'code')

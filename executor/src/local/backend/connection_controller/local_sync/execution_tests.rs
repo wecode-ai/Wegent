@@ -12,7 +12,7 @@ use std::{
     collections::HashMap,
     path::PathBuf,
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Condvar, Mutex,
     },
 };
@@ -92,6 +92,7 @@ impl Drop for HeldDigest {
 #[derive(Clone, Copy, Debug)]
 enum Plan {
     Valid,
+    SupersededOriginal,
     HttpFailure,
     InvalidSnapshot,
     UnexpectedUnchanged,
@@ -173,7 +174,11 @@ struct Fixture {
     plans: Arc<Mutex<Vec<Value>>>,
     submissions: Arc<Mutex<Vec<HashMap<String, String>>>>,
     completions: Arc<Mutex<Vec<Value>>>,
-    completion_failures: Arc<AtomicUsize>,
+    completion_failures: Arc<Mutex<usize>>,
+    completion_error: Arc<Mutex<String>>,
+    completion_hold: Arc<AtomicBool>,
+    completion_entered: Arc<Notify>,
+    completion_release: Arc<Notify>,
     server: tokio::task::JoinHandle<()>,
 }
 
@@ -213,7 +218,11 @@ impl Fixture {
         let plans = Arc::new(Mutex::new(Vec::new()));
         let submissions = Arc::new(Mutex::new(Vec::new()));
         let completions = Arc::new(Mutex::new(Vec::new()));
-        let completion_failures = Arc::new(AtomicUsize::new(0));
+        let completion_failures = Arc::new(Mutex::new(0usize));
+        let completion_error = Arc::new(Mutex::new("completion_unavailable".to_string()));
+        let completion_hold = Arc::new(AtomicBool::new(false));
+        let completion_entered = Arc::new(Notify::new());
+        let completion_release = Arc::new(Notify::new());
         let removals = Arc::new(Mutex::new(HashMap::<String, bool>::new()));
         let accept_intent = {
             let removals = removals.clone();
@@ -282,24 +291,48 @@ impl Fixture {
                             return Json(json!({"protocolVersion":1,"revision":"a".repeat(64),"unchanged":true,"generation":1,"installedRevisions":{"8":1}})).into_response();
                         }
                         let operation = body["operationId"].as_str();
-                        let removed = operation.is_some_and(|id| removals.lock().unwrap().get(id) == Some(&true));
+                        let removed = matches!(plan, Plan::SupersededOriginal)
+                            || operation.is_some_and(|id| removals.lock().unwrap().get(id) == Some(&true));
                         let installed_id = body["installedPluginId"].as_u64().unwrap_or(8);
-                        Json(json!({"protocolVersion":1,"revision":"a".repeat(64),"generation":1,"installedRevisions":{installed_id.to_string():1},"operation":operation.map(|id|json!({"operationId":id,"state":"intent_saved","installedPluginId":8})),"payload":{"mode":"merge","scope":if targeted {"plugin_delta"}else{"plugins"},"plugins":if removed {json!([])}else{json!([{"installed_plugin_id":installed_id}])},"removed_plugins":if removed {json!([{"installed_plugin_id":installed_id}])}else{json!([])},"plugin_sync":{"version":2,"generation":1,"complete":!targeted}}})).into_response()
+                        let mut response = json!({"protocolVersion":1,"revision":"a".repeat(64),"generation":1,"installedRevisions":{installed_id.to_string():1},"operation":operation.map(|id|json!({"operationId":id,"state":"intent_saved","installedPluginId":8})),"payload":{"mode":"merge","scope":if targeted {"plugin_delta"}else{"plugins"},"plugins":if removed {json!([])}else{json!([{"installed_plugin_id":installed_id}])},"removed_plugins":if removed {json!([{"installed_plugin_id":installed_id}])}else{json!([])},"plugin_sync":{"version":2,"generation":1,"complete":!targeted}}});
+                        if matches!(plan, Plan::SupersededOriginal) {
+                            response["currentOperationIds"] = json!([]);
+                        }
+                        Json(response).into_response()
                     }
                 }
             }))
             .route("/api/plugins/local-sync/complete", post({
                 let completions = completions.clone();
                 let failures = completion_failures.clone();
+                let failure_code = completion_error.clone();
+                let hold = completion_hold.clone();
+                let entered = completion_entered.clone();
+                let release = completion_release.clone();
                 move |Json(body): Json<Value>| {
                     let completions = completions.clone();
+                    let failure_code = failure_code.clone();
                     let failures = failures.clone();
+                    let hold = hold.clone();
+                    let entered = entered.clone();
+                    let release = release.clone();
                     async move {
+                        let recorded: Vec<Value> = body["completion"]["result"]["plugins"].as_array().unwrap().iter().map(|item| item["id"].clone()).collect();
                         completions.lock().unwrap().push(body);
-                        if failures.swap(0, Ordering::SeqCst) != 0 {
-                            return (axum::http::StatusCode::SERVICE_UNAVAILABLE, Json(json!({"detail":"completion_unavailable"}))).into_response();
+                        let fail = {
+                            let mut remaining = failures.lock().unwrap();
+                            let fail = *remaining > 0;
+                            *remaining = remaining.saturating_sub(1);
+                            fail
+                        };
+                        if hold.swap(false, Ordering::SeqCst) {
+                            entered.notify_one();
+                            release.notified().await;
                         }
-                        Json(json!({"recorded":[8],"superseded":[]})).into_response()
+                        if fail {
+                            return (axum::http::StatusCode::SERVICE_UNAVAILABLE, Json(json!({"detail":*failure_code.lock().unwrap()}))).into_response();
+                        }
+                        Json(json!({"recorded":recorded,"superseded":[]})).into_response()
                     }
                 }
             }))
@@ -373,6 +406,10 @@ impl Fixture {
             submissions,
             completions,
             completion_failures,
+            completion_error,
+            completion_hold,
+            completion_entered,
+            completion_release,
             server,
         }
     }
@@ -392,6 +429,7 @@ impl Fixture {
                     capabilities: &json!({"enabled":true}),
                     instance: "native",
                     path: &self.path,
+                    progress: None,
                 },
                 load_journal(&self.path)?,
                 &mut lease,

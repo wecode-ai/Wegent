@@ -6,6 +6,12 @@ sidebar_position: 31
 
 This record separates source review, running Story checks and native production-page acceptance. Migrated imports, type checks and a successful build do not establish page-by-page product acceptance. Evidence is a snapshot as of 2026-11-19; initial findings refer to the inspected revision, while source remediations are recorded separately.
 
+## Verification baseline after main integration
+
+Main was merged and conflicts resolved on 2026-11-19. Application and Storybook type checks pass. Wework lint reports zero errors and six warnings; the control audit covers 2222 production TypeScript files with zero outstanding migrations. The focused settings navigation and search tests pass (29 cases). The latest static Storybook build contains 208 examples and 54 Docs entries. All 112 public value exports have a direct example, production composition or nonvisual API explanation.
+
+Narrow settings now use the shared SettingsShell, and model connection forms use the public field density. Both still require native verification with the integrated build. The earlier workspace-tabs E2E failed when replacing an Issue description: the new two lines were followed by the old description. No passing result has been obtained. Builds, source audits and earlier screenshots do not replace native acceptance.
+
 ## Scope and status
 
 The static entry inventory scanned 3311 production source files and identified 234 source owners: 80 popup owners, 45 Pages, 76 dialogs/drawers, 25 panels and 8 registered surfaces. A source owner is a file-level ownership entry, not an independently accepted page. The list below covers only the 45 Page files, retaining shells, re-exports and delegated wrappers as source records. The initial12 entry gaps have been classified in the following audit.

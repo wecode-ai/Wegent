@@ -63,7 +63,7 @@ export function createDesktopScenario({ captureScreenshot }) {
       assert.equal(Number(await control.command('getElementCount', selector('provider-editor'))), 0)
 
       const row = `[data-testid^="provider-row-"]:has(${selector(`provider-model-${modelId}`)})`
-      await control.command('click', `${row} > summary`)
+      await control.command('click', `${row} ${selector('provider-settings-section-toggle')}`)
       await control.command('waitFor', selector(`provider-model-edit-${modelId}`))
       await captureScreenshot(control, 'model-settings-04-added.png', 'body')
       await control.command('click', selector(`provider-model-edit-${modelId}`))

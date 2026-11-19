@@ -61,6 +61,7 @@ export const ResponsiveNavigation: Story = {
   render: function Example() {
     const { t } = useTranslation('common')
     const [active, setActive] = useState('quick-phrases')
+    const [selectedLanguage, setSelectedLanguage] = useState('en')
     const [phrases, setPhrases] = useState(() => defaultQuickPhrases.map(phrase => ({ ...phrase })))
     const entries = ['quick-phrases', 'model-settings', 'context']
     const label = (id: string) => t('workbench.settings_nav_' + id.replaceAll('-', '_'))
@@ -100,8 +101,8 @@ export const ResponsiveNavigation: Story = {
             <MenuSelect
               accessibleLabel={label(active)}
               testId="catalog-settings-shell-selection"
-              value="en"
-              onChange={() => {}}
+              value={selectedLanguage}
+              onChange={setSelectedLanguage}
               options={[
                 { value: 'en', label: 'English' },
                 { value: 'zh-CN', label: '中文' },
@@ -121,7 +122,7 @@ export const ModelConnectionForm: Story = {
     return (
       <>
         <Button data-testid="catalog-provider-open" onClick={() => setOpen(true)}>
-          {t('addDialogTitle')}
+          {t('addProvider')}
         </Button>
         {open && (
           <ProviderEditor

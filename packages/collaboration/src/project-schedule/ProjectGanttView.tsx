@@ -350,65 +350,69 @@ export function ProjectGanttView(props: ProjectScheduleViewProps) {
                         className={`sticky left-0 z-10 flex shrink-0 items-center border-r border-border bg-background ${taskColumnWidth}`}
                         data-depth={depth}
                       >
-                        {hasChildren ? (
-                          <ControlButton
-                            variant="unstyled"
-                            type="button"
-                            data-testid={`collaboration-gantt-toggle-${issue.id}`}
-                            aria-expanded={!collapsed.has(issue.id)}
-                            aria-label={`${locale === 'zh-CN' ? (collapsed.has(issue.id) ? '展开' : '收起') : collapsed.has(issue.id) ? 'Expand' : 'Collapse'} ${issue.title}`}
-                            onClick={() =>
-                              setCollapsed(current => {
-                                const next = new Set(current)
-                                if (next.has(issue.id)) next.delete(issue.id)
-                                else next.add(issue.id)
-                                return next
-                              })
-                            }
-                            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md hover:bg-muted max-md:h-11 max-md:w-11"
-                            style={taskColumnCollapsed ? undefined : { marginLeft: depth * 16 }}
-                          >
-                            {collapsed.has(issue.id) ? (
-                              <ChevronRight className="h-4 w-4" />
-                            ) : (
-                              <ChevronDown className="h-4 w-4" />
-                            )}
-                          </ControlButton>
-                        ) : (
-                          <span
-                            aria-hidden="true"
+                        <div
                             className="w-8 shrink-0 max-md:w-11"
-                            style={taskColumnCollapsed ? undefined : { marginLeft: depth * 16 }}
-                          />
-                        )}
-                        <Tooltip
-                          label={issue.title}
-                          align="start"
-                          side="bottom"
-                          testId={`collaboration-gantt-title-tooltip-${issue.id}`}
-                          className="h-full min-w-0 flex-1"
-                        >
-                          <ControlButton
-                            variant="unstyled"
-                            type="button"
-                            aria-label={issue.title}
-                            onClick={() => onOpen(issue)}
-                            className="flex h-full w-full items-center bg-background text-left hover:bg-muted"
+                            style={
+                              taskColumnCollapsed
+                                ? undefined
+                                : { marginLeft: depth * 16 }
+                            }
                           >
-                            <span className="w-10 shrink-0 text-center text-xs text-text-muted">
-                              {index + 1}
-                            </span>
-                            {taskColumnCollapsed ? null : (
-                              <>
-                                <FileText className="mr-2 h-4 w-4 shrink-0 text-text-muted" />
-                                <span className="min-w-0 flex-1 truncate pr-4 text-sm text-text-primary">
-                                  {issue.title}
-                                </span>
-                              </>
+                            {hasChildren && (
+                              <ControlButton
+                                variant="unstyled"
+                                type="button"
+                                data-testid={`collaboration-gantt-toggle-${issue.id}`}
+                                aria-expanded={!collapsed.has(issue.id)}
+                                aria-label={`${locale === "zh-CN" ? (collapsed.has(issue.id) ? "展开" : "收起") : collapsed.has(issue.id) ? "Expand" : "Collapse"} ${issue.title}`}
+                                onClick={() =>
+                                  setCollapsed((current) => {
+                                    const next = new Set(current);
+                                    if (next.has(issue.id))
+                                      next.delete(issue.id);
+                                    else next.add(issue.id);
+                                    return next;
+                                  })
+                                }
+                                className="flex h-8 w-full items-center justify-center rounded-md hover:bg-muted max-md:h-11"
+                              >
+                                {collapsed.has(issue.id) ? (
+                                  <ChevronRight className="h-4 w-4" />
+                                ) : (
+                                  <ChevronDown className="h-4 w-4" />
+                                )}
+                              </ControlButton>
                             )}
-                            <span className="sr-only">{statusLabel(statuses, issue)}</span>
-                          </ControlButton>
-                        </Tooltip>
+                          </div>
+                          <Tooltip
+                            label={issue.title}
+                            align="start"
+                            side="bottom"
+                            testId={`collaboration-gantt-title-tooltip-${issue.id}`}
+                          >
+                            <ControlButton
+                              variant="unstyled"
+                              type="button"
+                              aria-label={issue.title}
+                              onClick={() => onOpen(issue)}
+                              className="flex h-full min-w-0 flex-1 items-center bg-background text-left hover:bg-muted"
+                            >
+                              <span className="w-10 shrink-0 text-center text-xs text-text-muted">
+                                {index + 1}
+                              </span>
+                              {taskColumnCollapsed ? null : (
+                                <>
+                                  <FileText className="mr-2 h-4 w-4 shrink-0 text-text-muted" />
+                                  <span className="min-w-0 flex-1 truncate pr-4 text-sm text-text-primary">
+                                    {issue.title}
+                                  </span>
+                                </>
+                              )}
+                              <span className="sr-only">
+                                {statusLabel(statuses, issue)}
+                              </span>
+                            </ControlButton>
+                          </Tooltip>
                       </div>
                       <div className="relative" style={{ width: gridWidth }}>
                         {days.map(day => (
