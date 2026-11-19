@@ -19,6 +19,7 @@ from pydantic import (
 from app.schemas.cloud_project import SnowflakeId
 from app.schemas.issue_workflow import IssueWorkflowInstance, WorkflowExecutionConfig
 from app.schemas.loop_item_position import LoopItemPosition
+from app.schemas.project_admin import ProjectCollaborationPolicy
 from app.schemas.runner_routing import RunnerSelection
 from app.schemas.runtime_work import RuntimeModelSelection
 from app.schemas.tagging import MAX_TAGS_PER_ITEM, TagName
@@ -196,6 +197,7 @@ class LoopItemResponse(BaseModel):
     automation: dict[str, Any] | None = None
     workflow: IssueWorkflowInstance | None = None
     execution_config: WorkflowExecutionConfig | None = None
+    collaboration_policy_snapshot: ProjectCollaborationPolicy | None = None
     priority: str
     start_at: datetime | None = None
     due_at: datetime | None
@@ -226,6 +228,7 @@ class LoopItemResponse(BaseModel):
         """Fill tags and metadata-derived fields when the input has no tags key."""
         if isinstance(value, dict):
             metadata = value.get("metadata_json")
+            metadata = metadata if isinstance(metadata, dict) else {}
             value = {
                 **value,
                 "personal_task_assignment_at": (
@@ -235,6 +238,10 @@ class LoopItemResponse(BaseModel):
                     )
                     if isinstance(metadata, dict)
                     else value.get("personal_task_assignment_at")
+                ),
+                "collaboration_policy_snapshot": value.get(
+                    "collaboration_policy_snapshot",
+                    metadata.get("collaboration_policy_snapshot"),
                 ),
             }
         if isinstance(value, dict) and "tags" not in value:

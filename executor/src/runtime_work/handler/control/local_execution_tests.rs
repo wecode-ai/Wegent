@@ -44,6 +44,7 @@ fn run_native_control(cloud_bound: bool) {
             *'"method":"thread/unsubscribe"'*) printf '%s\n' '{{"id":'"$request_id"',"result":{{"status":"notLoaded"}}}}' ;;
             *'"method":"thread/resume"'*) active_thread=thread-target; printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-target"}}}}}}' ;;
             *'"method":"thread/start"'*) active_thread=thread-automation; printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-automation"}}}}}}' ;;
+            *'"method":"mcpServerStatus/list"'*) printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"name":"wework_space","runtimeStatus":"connected","tools":{{"get_current_context":{{}}}}}}]}}}}' ;;
             *'"method":"thread/read"'*) printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-target","cwd":"/tmp","status":"idle","turns":[]}}}}}}' ;;
             *'"method":"turn/start"'*)
               printf '%s\n' '{{"id":'"$request_id"',"result":{{"turn":{{"id":"turn-control"}}}}}}'
@@ -179,6 +180,27 @@ fn run_native_control(cloud_bound: bool) {
             assert!(unloaded_at < resumed_at);
             assert_eq!(calls[unloaded_at]["params"]["threadId"], "thread-target");
             assert_eq!(resumed["params"]["threadId"], "thread-target");
+            let discoveries: Vec<_> = calls
+                .iter()
+                .enumerate()
+                .filter(|(_, call)| call["method"] == "mcpServerStatus/list")
+                .collect();
+            if cloud_bound {
+                assert_eq!(discoveries.len(), 1);
+                let (discovered_at, discovery) = discoveries[0];
+                assert_eq!(discovery["params"], json!({
+                    "threadId": "thread-target",
+                    "serverName": "wework_space",
+                    "detail": "toolsAndAuthOnly"
+                }));
+                let turn_at = calls
+                    .iter()
+                    .position(|call| call["method"] == "turn/start")
+                    .unwrap();
+                assert!(resumed_at < discovered_at && discovered_at < turn_at);
+            } else {
+                assert!(discoveries.is_empty());
+            }
             assert_eq!(
                 resumed["params"]["config"]["mcp_servers.wework_control.enabled"],
                 true

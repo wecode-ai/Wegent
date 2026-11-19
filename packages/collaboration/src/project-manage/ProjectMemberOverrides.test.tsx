@@ -187,7 +187,7 @@ describe('Project member overrides', () => {
     expect(find('cloud-project-member-effective-role-2').textContent).toBe('管理员')
     expect(find('cloud-project-member-source-2').textContent).toBe('继承自 研发空间 · 成员')
     expect(find('cloud-project-member-remove-2')).not.toBeNull()
-    expect(api.getProject).not.toHaveBeenCalled()
+    expect(api.getProject).toHaveBeenCalledWith('project-1')
   })
 
   it('saves only responsibilities without creating a direct role', async () => {
@@ -203,7 +203,7 @@ describe('Project member overrides', () => {
       capability_description: '验收',
     })
     expect(find('cloud-project-member-remove-2')).toBeNull()
-    expect(api.getProject).not.toHaveBeenCalled()
+    expect(api.getProject).toHaveBeenCalledWith('project-1')
   })
 
   it('reloads the restored inherited row and discards an unsaved responsibility draft', async () => {

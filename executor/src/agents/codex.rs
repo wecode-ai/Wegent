@@ -351,6 +351,7 @@ mod mcp_config;
 mod mcp_recovery;
 #[path = "codex/mcp_reload.rs"]
 mod mcp_reload;
+mod required_mcp;
 #[cfg(test)]
 use mcp_reload::config_reload_resume_thread_id;
 
@@ -2554,6 +2555,16 @@ async fn run_codex_app_server_turn_on_shared_client(
         // keep capability publication or other task startups waiting.
         drop(turn_preparation);
         drop(capability_lease.take());
+
+        required_mcp::wait_for_project_space(
+            client,
+            &thread_id,
+            request,
+            &launch_config,
+            &mut turn_request_context,
+            &mut cancellation,
+        )
+        .await?;
 
         let awaits_event_goal_turn = event_goal.is_some();
         if let Some(admission) = event_goal.as_mut() {

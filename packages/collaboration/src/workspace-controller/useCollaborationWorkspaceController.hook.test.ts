@@ -373,6 +373,170 @@ describe("useCollaborationWorkspaceController location effects", () => {
     );
   });
 
+  it("refreshes the configuration version when switching project settings sections", async () => {
+    const api = createApi();
+    const location = {
+      projectId: projectA.id,
+      issueId: null,
+      view: "manage" as const,
+      projectSettingsSection: "automatic-processing" as const,
+    };
+    renderController(api, location, false, projectA);
+    await vi.waitFor(() =>
+      expect(
+        renderController(api, location, false, projectA).state.loading,
+      ).toBe(false),
+    );
+    const latest = { ...projectA, version: 3 };
+    vi.mocked(api.projects.get).mockResolvedValue(latest);
+    const environments = {
+      ...location,
+      projectSettingsSection: "environments" as const,
+    };
+
+    renderController(api, environments, false, projectA);
+
+    await vi.waitFor(() =>
+      expect(
+        renderController(api, environments, false, projectA).state.project,
+      ).toEqual(latest),
+    );
+    expect(api.issues.getBoardSnapshot).not.toHaveBeenCalled();
+  });
+
+  it.each(["project", "members", "environments"] as const)(
+    "loads the current project version for the %s editor",
+    async (projectSettingsSection) => {
+      const api = createApi();
+      const latest = { ...projectA, version: 3 };
+      vi.mocked(api.projects.get).mockResolvedValue(latest);
+      const location = {
+        projectId: projectA.id,
+        issueId: null,
+        view: "manage" as const,
+        projectSettingsSection,
+      };
+
+      renderController(api, location, false, projectA);
+
+      await vi.waitFor(() =>
+        expect(
+          renderController(api, location, false, projectA).state.project,
+        ).toEqual(latest),
+      );
+      expect(api.projects.get).toHaveBeenCalledExactlyOnceWith(projectA.id);
+      expect(api.issues.getBoardSnapshot).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["success", "error"] as const)(
+    "revalidates an active settings read invalidated by a mutation after %s",
+    async (outcome) => {
+      const api = createApi();
+      const old = deferred<CollaborationProject>();
+      const current = deferred<CollaborationProject>();
+      vi.mocked(api.projects.get)
+        .mockReturnValueOnce(
+          old.promise.then((project) => {
+            if (outcome === "error") throw new Error("Obsolete read failed");
+            return project;
+          }),
+        )
+        .mockReturnValueOnce(current.promise);
+      const location = {
+        projectId: projectA.id,
+        issueId: null,
+        view: "manage" as const,
+        projectSettingsSection: "environments" as const,
+      };
+      renderController(api, location, false, projectA);
+      let controller = renderController(api, location, false, projectA);
+      expect(controller.state.loading).toBe(false);
+      expect(controller.projectSettings.status).toBe("loading");
+      controller.commands.replaceProject({ ...projectA, version: 2 });
+      old.resolve(projectA);
+      await vi.waitFor(() => expect(api.projects.get).toHaveBeenCalledTimes(2));
+      controller = renderController(api, location, false, projectA);
+      expect(controller.state.project?.version).toBe(2);
+      expect(controller.projectSettings.status).toBe("loading");
+      current.resolve({ ...projectA, version: 3, access_role: null });
+      await vi.waitFor(() => {
+        controller = renderController(api, location, false, projectA);
+        expect(controller.projectSettings.status).toBe("ready");
+      });
+      expect(controller.state.project?.version).toBe(3);
+      expect(controller.state.project?.access_role).toBeNull();
+    },
+  );
+
+  it("isolates a settings retry from a later project and preserves revoked access", async () => {
+    const api = createApi();
+    const old = deferred<CollaborationProject>();
+    vi.mocked(api.projects.get)
+      .mockRejectedValueOnce(new Error("Unavailable"))
+      .mockReturnValueOnce(old.promise)
+      .mockResolvedValueOnce({ ...projectB, version: 4, access_role: null });
+    const location = {
+      projectId: projectA.id,
+      issueId: null,
+      view: "manage" as const,
+      projectSettingsSection: "environments" as const,
+    };
+    renderController(api, location, false, projectA);
+    await vi.waitFor(() =>
+      expect(
+        renderController(api, location, false, projectA).projectSettings.status,
+      ).toBe("error"),
+    );
+    renderController(api, location, false, projectA).projectSettings.reload();
+    expect(
+      renderController(api, location, false, projectA).projectSettings.status,
+    ).toBe("loading");
+    const next = { ...location, projectId: projectB.id };
+    renderController(api, next, false, projectA);
+    await vi.waitFor(() =>
+      expect(
+        renderController(api, next, false, projectA).projectSettings.status,
+      ).toBe("ready"),
+    );
+    old.resolve({ ...projectA, version: 9, access_role: "Owner" });
+    await Promise.resolve();
+    const controller = renderController(api, next, false, projectA);
+    expect(controller.state.project).toMatchObject({
+      id: projectB.id,
+      version: 4,
+      access_role: null,
+    });
+    expect(controller.projectSettings.status).toBe("ready");
+  });
+
+  it.each([
+    "groups",
+    "agents",
+    "automatic-processing",
+    "configuration-sharing",
+  ] as const)(
+    "opens cached %s without depending on a project metadata request",
+    async (projectSettingsSection) => {
+      const api = createApi();
+      vi.mocked(api.projects.get).mockReturnValue(new Promise(() => {}));
+      const location = {
+        projectId: projectA.id,
+        issueId: null,
+        view: "manage" as const,
+        projectSettingsSection,
+      };
+
+      renderController(api, location, false, projectA);
+      const { state } = renderController(api, location, false, projectA);
+
+      expect(state.project).toEqual(projectA);
+      expect(state.loading).toBe(false);
+      expect(api.projects.get).not.toHaveBeenCalled();
+      expect(api.issues.getBoardSnapshot).not.toHaveBeenCalled();
+    },
+  );
+
   it("retains the directly opened Issue when settings metadata arrives later", async () => {
     const api = createApi();
     let resolveProject!: (project: CollaborationProject) => void;

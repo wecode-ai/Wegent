@@ -24,6 +24,7 @@ from app.services.cloud_project_visibility import (
     workspace_project_ids,
 )
 from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.cloud_projects.admin_receipts import project_response_values
 from app.services.workspaces.storage import COLLABORATION_WORKSPACE_KIND
 
 
@@ -124,21 +125,40 @@ def _permission_sources(
 
 def _response(
     project: CloudProject,
-    role: BaseRole,
+    role: BaseRole | None,
     user: User,
     context: dict | None,
     all_user_role: str | None,
     sources: list[dict],
+    admin_config: dict | None = None,
+    project_values: dict | None = None,
 ) -> CloudProjectResponse:
+    from app.core.config import settings
+    from app.mcp_server.tool_catalog import build_project_admin_catalog
+
+    values = project_values if project_values is not None else project.__dict__
     return CloudProjectResponse.model_validate(
         {
-            **project.__dict__,
+            **values,
+            "project_admin_config": admin_config,
+            "project_admin_capabilities": (
+                build_project_admin_catalog(
+                    role,
+                    values["version"],
+                    admin_config["revision"],
+                    settings.WEWORK_PROJECT_ADMIN_TOOLS_V1,
+                )
+                if admin_config is not None
+                else None
+            ),
             "workspace_id": context["id"] if context else None,
             "workspace_context": context,
             "current_user_id": user.id,
             "current_user_name": user.user_name,
             "access_role": role,
-            "membership_mode": project.membership_mode,
+            "membership_mode": (values.get("metadata_json") or {}).get(
+                "membership_mode", "inherit"
+            ),
             "permission_sources": sources,
             "workspace_access_role": (
                 context.get("workspace_access_role") if context else None
@@ -199,20 +219,62 @@ def project_response(
     access = require_cloud_project_role(
         db, int(project.id), current_user.id, BaseRole.Viewer
     )
-    contexts = _parent_contexts(db, [str(project.id)])
-    all_user_roles = _all_user_grant_roles(db, [str(project.id)])
+    return _project_detail_response(
+        db, project, current_user, access.role, list(access.sources)
+    )
+
+
+def project_write_response(
+    db: Session, project: CloudProject, current_user: User
+) -> CloudProjectResponse:
+    """Complete an authorized write even when it removes the actor's own access."""
     from app.services.collaboration_permissions import collaboration_permission_service
 
+    receipt = getattr(project, "_project_admin_result", None)
+    if not receipt or receipt["actor"]["userId"] != current_user.id:
+        return project_response(db, project, current_user)
+    decision = collaboration_permission_service.check(
+        db, current_user.id, "read", project.id
+    )
+    return _project_detail_response(
+        db, project, current_user, decision.role, list(decision.sources), write=True
+    )
+
+
+def _project_detail_response(
+    db: Session,
+    project: CloudProject,
+    current_user: User,
+    role: BaseRole | None,
+    sources: list[dict],
+    *,
+    write: bool = False,
+) -> CloudProjectResponse:
+    from app.services.cloud_projects.admin import project_admin_config
+    from app.services.collaboration_permissions import collaboration_permission_service
+
+    contexts = _parent_contexts(db, [str(project.id)])
+    all_user_roles = _all_user_grant_roles(db, [str(project.id)])
     contexts[str(project.id)]["workspace_access_role"] = (
         collaboration_permission_service.workspace_role(
             db, project.workspace_id, current_user.id
         )
     )
+    admin_config = project_admin_config(project, db, current_user.id)
+    if write and getattr(project, "_project_admin_response", None) is not None:
+        receipt = project._project_admin_result
+        admin_config = {
+            "projectVersion": receipt["projectVersion"],
+            "revision": receipt["revision"],
+            "configuration": receipt["after"],
+        }
     return _response(
         project,
-        access.role,
+        role,
         current_user,
         contexts.get(str(project.id)),
         all_user_roles.get(str(project.id)),
-        list(access.sources),
+        sources,
+        admin_config,
+        project_response_values(project, write=True) if write else None,
     )

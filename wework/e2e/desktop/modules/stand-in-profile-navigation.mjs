@@ -22,6 +22,11 @@ export async function openStandInActivity(control) {
   await control.command('clickWhenEnabled', '[data-testid="stand-in-role-chat"]')
 }
 
+export async function closeStandInActivity(control) {
+  await control.command('clickWhenEnabled', '[data-testid="stand-in-work-dialog-close"]')
+  await control.command('waitFor', '[data-testid="stand-in-work-dialog"]', { visible: false })
+}
+
 export async function openStandInExamples(control) {
   await openStandInDetails(control)
   await control.command('clickWhenEnabled', '[data-testid="stand-in-guide-open"]')

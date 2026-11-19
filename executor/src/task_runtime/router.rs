@@ -71,6 +71,10 @@ impl TaskRuntime {
             .map(|projects| projects.into_iter().map(mask_project).collect())
     }
 
+    pub fn get_project(&self, project_id: &str) -> Result<LoopItem, TaskRuntimeError> {
+        self.local_store.get_project(project_id).map(mask_project)
+    }
+
     pub(crate) fn list_collaboration_projects(
         local_store: &LocalTaskStore,
     ) -> Result<Vec<LoopItem>, TaskRuntimeError> {

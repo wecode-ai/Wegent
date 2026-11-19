@@ -198,12 +198,19 @@ BOT_DEFAULT_WORKSPACE_POLICY = "project"
 BOT_ADMIN_ROLES = {BaseRole.Owner, BaseRole.Maintainer}
 
 
-def bot_runtime(row: ProjectChatAgent) -> str:
-    """Read one explicitly persisted project-agent runtime."""
+def bot_runtime_or_none(row: ProjectChatAgent) -> str | None:
+    """Read a persisted project-agent runtime without rejecting legacy rows."""
 
     metadata = row.metadata_json if isinstance(row.metadata_json, dict) else {}
     runtime = metadata.get(BOT_RUNTIME_KEY)
-    if runtime not in {"codex", "claude_code", "wegent"}:
+    return runtime if runtime in {"codex", "claude_code", "wegent"} else None
+
+
+def bot_runtime(row: ProjectChatAgent) -> str:
+    """Require one valid runtime before executing or mutating an Agent."""
+
+    runtime = bot_runtime_or_none(row)
+    if runtime is None:
         raise ValueError(f"Project chat agent '{row.id}' has no valid runtime")
     return runtime
 
@@ -569,7 +576,25 @@ class ProjectChatService:
         user_id: int,
         project_id: str,
         request: ProjectChatAgentCreate,
+        commit: bool = True,
     ) -> ProjectChatAgentView:
+        if commit:
+            from app.services.cloud_projects.admin import run_configuration_change
+            from app.services.cloud_projects.service import cloud_project_service
+
+            return run_configuration_change(
+                cloud_project_service,
+                db,
+                int(project_id),
+                user_id,
+                lambda: self.create_agent(
+                    db,
+                    user_id=user_id,
+                    project_id=project_id,
+                    request=request,
+                    commit=False,
+                ),
+            )
         project = self._require_scope(
             db,
             user_id=user_id,
@@ -705,8 +730,6 @@ class ProjectChatService:
             collaboration_permission_service.share_project_agent(
                 db, project, row, user_id
             )
-        self._commit(db)
-        db.refresh(row)
         return self.agent_to_view(row, db=db, viewer_user_id=user_id)
 
     def update_agent(
@@ -717,7 +740,27 @@ class ProjectChatService:
         project_id: str,
         agent_id: str,
         request: ProjectChatAgentUpdate,
+        commit: bool = True,
     ) -> ProjectChatAgentView:
+        if commit:
+            from app.services.cloud_projects.admin import run_configuration_change
+            from app.services.cloud_projects.service import cloud_project_service
+
+            return run_configuration_change(
+                cloud_project_service,
+                db,
+                int(project_id),
+                user_id,
+                lambda: self.update_agent(
+                    db,
+                    user_id=user_id,
+                    project_id=project_id,
+                    agent_id=agent_id,
+                    request=request,
+                    commit=False,
+                ),
+                revoked_agent_ids=(agent_id,),
+            )
         require_cloud_project_role(db, project_id, user_id, BaseRole.Maintainer)
         row = self._agent_row(db, project_id=project_id, agent_id=agent_id)
         require_project_agent_visibility(row, user_id)
@@ -925,17 +968,6 @@ class ProjectChatService:
         row.updated_by_user_id = user_id
         row.version += 1
         db.flush()
-        from app.services.collaboration_revocation import (
-            revoke_unauthorized_project_work,
-        )
-        from app.services.loop_item_executions.cancellation import (
-            request_execution_cancellations,
-        )
-
-        pending = revoke_unauthorized_project_work(db, row.cloud_project_id)
-        self._commit(db)
-        request_execution_cancellations(pending)
-        db.refresh(row)
         return self.agent_to_view(row, db=db, viewer_user_id=user_id)
 
     def subscribe(

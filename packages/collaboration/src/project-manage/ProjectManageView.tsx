@@ -260,7 +260,6 @@ export function ProjectManageView<
     api,
     host,
     projectId: project.id,
-    currentUserId: project.current_user_id,
     onProjectUpdated,
     projectScopeRef,
     canManage: canManageMembers,

@@ -6,7 +6,7 @@
 
 from typing import Annotated
 
-from pydantic import AfterValidator, Field
+from pydantic import AfterValidator, BeforeValidator, Field
 
 MAX_TAGS_PER_ITEM = 20
 MAX_TAG_LENGTH = 32
@@ -36,3 +36,17 @@ def normalize_tags(value: object) -> list[str]:
         if tag and tag not in tags:
             tags.append(tag)
     return tags
+
+
+def normalize_tag_write(value: object) -> list[str]:
+    """Reject malformed replacements before normalizing their tag values."""
+    if not isinstance(value, list):
+        raise ValueError("Tags must be an array")
+    return normalize_tags(value)
+
+
+NormalizedTags = Annotated[
+    list[TagName],
+    BeforeValidator(normalize_tag_write),
+    Field(max_length=MAX_TAGS_PER_ITEM),
+]

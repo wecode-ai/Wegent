@@ -14,11 +14,15 @@ import logging
 from io import BytesIO
 from typing import Any
 
+from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.db.session import SessionLocal
 from app.mcp_server.auth import MCPAuthInfo
+from app.mcp_server.project_admin_feature import require_project_admin_write_enabled
+from app.mcp_server.tool_catalog import ProjectAdminSpaceUpdate
 from app.mcp_server.tools.decorator import mcp_tool
 from app.models.cloud_project import LoopItemTaskBinding
 from app.models.delivery import (
@@ -47,6 +51,7 @@ from app.schemas.project_chat import LoopItemAssign, ProjectChatMention
 from app.services.board_tools import candidates
 from app.services.cloud_files import cloud_file_service
 from app.services.cloud_projects.access import require_cloud_project_role
+from app.services.cloud_projects.admin_receipts import project_response_values
 from app.services.cloud_projects.service import cloud_project_service
 from app.services.collaboration_manager_decisions import (
     apply_collaboration_manager_decision,
@@ -144,16 +149,17 @@ def _project(db: Session, project_id: str, user_id: int) -> CloudProject:
     return project
 
 
-def _project_view(project: CloudProject) -> dict[str, Any]:
-    metadata = project.metadata_json if isinstance(project.metadata_json, dict) else {}
+def _project_view(project: CloudProject, values: dict | None = None) -> dict[str, Any]:
+    values = project_response_values(project) if values is None else values
+    metadata = values.get("metadata_json") or {}
     return {
-        "id": str(project.id),
-        "project_key": project.project_key,
-        "name": project.title or project.name or "",
-        "description": project.description or "",
+        "id": str(values["id"]),
+        "project_key": values["project_key"],
+        "name": values.get("title") or values.get("name") or "",
+        "description": values.get("description") or "",
         "task_provider": metadata.get("task_provider", "local"),
         "tags": metadata.get("tags", []),
-        "version": project.version,
+        "version": values["version"],
     }
 
 
@@ -362,20 +368,39 @@ def create_space(
 @mcp_tool(server="wework_space")
 def update_space(
     token_info: MCPAuthInfo,
-    project: dict[str, Any],
+    project: ProjectAdminSpaceUpdate,
     space_id: str = "",
 ) -> dict[str, Any]:
     """Update the current Backend project space."""
 
-    with SessionLocal() as db:
-        resolved = _space_id(db, token_info, space_id)
-        updated = cloud_project_service.update(
-            db,
-            int(resolved),
-            token_info.user_id,
-            CloudProjectUpdate.model_validate(project),
+    from app.mcp_server.tools.wework_project_admin import project_admin_error
+
+    try:
+        require_project_admin_write_enabled(
+            space_fields=(
+                project.model_fields_set
+                if isinstance(project, ProjectAdminSpaceUpdate)
+                else project if isinstance(project, dict) else None
+            )
         )
-        return _project_view(updated)
+        with SessionLocal() as db:
+            resolved = _space_id(db, token_info, space_id)
+            updated = cloud_project_service.update(
+                db,
+                int(resolved),
+                token_info.user_id,
+                CloudProjectUpdate.model_validate(
+                    ProjectAdminSpaceUpdate.model_validate(project).model_dump(
+                        exclude_unset=True
+                    )
+                ),
+            )
+            return {
+                **_project_view(updated, project_response_values(updated, write=True)),
+                "project_admin_result": cloud_project_service.admin_result(updated),
+            }
+    except (HTTPException, ValidationError) as exc:
+        return project_admin_error(exc)
 
 
 @mcp_tool(

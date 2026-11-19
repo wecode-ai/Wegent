@@ -870,13 +870,16 @@ jobs:
           PYTHONPATH: ..:.
         run: uv run --no-sync python tests/integration/project_task_detachment_mysql.py
 
-      - name: Verify MySQL Issue assignment concurrency
+      - name: Verify MySQL Issue assignment and project configuration concurrency
         if: matrix.shardIndex == 1
         working-directory: ./backend
         env:
           ISSUE_ASSIGNMENT_TEST_MYSQL_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
+          PROJECT_ADMIN_TEST_MYSQL_URL: mysql+pymysql://root:test123@mysql:3306/wegent_test
           PYTHONPATH: ..:.
-        run: uv run --no-sync python tests/integration/issue_assignment_mysql.py
+        run: |
+          uv run --no-sync python tests/integration/issue_assignment_mysql.py
+          uv run --no-sync python tests/integration/cloud_project_admin_mysql.py
 
       - name: Prepare isolated DingTalk HTTPS download fixture
         if: matrix.dingtalkOAuth

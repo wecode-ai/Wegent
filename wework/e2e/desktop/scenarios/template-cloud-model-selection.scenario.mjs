@@ -2,9 +2,19 @@ import assert from 'node:assert/strict'
 import { createDesktopScenario as createCloudProjectFixture } from './collaboration-template-app-device-routing.scenario.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { selectCollaborationProjectView } from '../modules/workspace-flows.mjs'
+import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const selector = id => `${CONTENT} [data-testid="${id}"]`
+
+export async function waitForCloudTemplateImport(control, timeoutMs) {
+  await waitForValue(
+    () => control.command('getElementCount', selector('collaboration-template-dialog')),
+    count => Number(count) === 0,
+    'Cloud template import did not close its dialog',
+    timeoutMs
+  )
+}
 
 // User story: importing into an existing cloud project also offers a model choice.
 export function createDesktopScenario(options) {
@@ -78,7 +88,7 @@ export function createDesktopScenario(options) {
       })
       await options.captureScreenshot(control, 'template-cloud-model-selection-ready.png', CONTENT)
       await control.command('clickWhenEnabled', selector('template-bindings-apply'))
-      await control.command('waitFor', selector('template-bindings-apply'), { visible: false })
+      await waitForCloudTemplateImport(control, options.workbenchReadyTimeoutMs)
       const imported = (await agents(projectId)).filter(
         agent => !before.some(item => item.id === agent.id)
       )

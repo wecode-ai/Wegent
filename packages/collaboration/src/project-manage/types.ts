@@ -23,7 +23,7 @@ export interface ProjectManageCardDisplay {
 
 export interface ProjectManageProject {
   id: string
-  access_role?: ProjectManageRole
+  access_role?: ProjectManageRole | null
   workspace_context?: { id: string; name: string } | null
   current_user_id?: number
   name: string

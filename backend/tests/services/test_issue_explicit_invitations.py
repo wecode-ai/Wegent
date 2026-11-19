@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.models.cloud_project import CloudProject
 from app.models.delivery import LoopItem
 from app.models.user import User
+from app.schemas.delivery import LoopItemUpdate
 from app.services.cloud_projects.access import IssueAction, require_cloud_project_role
 from app.services.delivery.service import delivery_service
 from app.services.loop_items.service import loop_item_service
@@ -100,6 +101,13 @@ def test_cp14_current_invitation_is_issue_scoped_and_revocable(
     loop_item_service.add_comment(
         test_db, item.id, outsider.id, "Invited participant reply"
     )
+    updated = loop_item_service.update(
+        test_db,
+        item.id,
+        outsider.id,
+        LoopItemUpdate(version=item.version, tags=["invited-review"]),
+    )
+    assert updated.tags == ["invited-review"]
     for read in [
         lambda: require_cloud_project_role(test_db, delivery_project.id, outsider.id),
         lambda: loop_item_service.get(test_db, sibling.id, outsider.id),
@@ -120,6 +128,17 @@ def test_cp14_current_invitation_is_issue_scoped_and_revocable(
     with pytest.raises(HTTPException) as denied:
         loop_item_service.get(test_db, item.id, outsider.id)
     assert denied.value.status_code == 404
+    with pytest.raises(HTTPException) as denied_update:
+        loop_item_service.update(
+            test_db,
+            item.id,
+            outsider.id,
+            LoopItemUpdate(version=item.version, tags=["revoked-write"]),
+        )
+    assert denied_update.value.status_code == 404
+    test_db.rollback()
+    test_db.refresh(item)
+    assert item.tags == ["invited-review"]
 
 
 def test_inactive_recipient_cannot_be_invited(

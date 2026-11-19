@@ -37,7 +37,8 @@ export async function verifyConversationShortcuts(control, composerSelector, sea
 
   await control.command('nativePress', composerSelector, { key: 'Control+Shift+M' })
   await control.command('waitFor', '[data-testid="model-selector-menu"]')
-  await control.command('click', '[data-testid="model-selector-button"]')
+  await control.command('nativePress', '[data-model-selector-layer="true"]', { key: 'Escape' })
+  await control.command('waitFor', '[data-testid="model-selector-menu"]', { visible: false })
 
   await control.command('nativePress', composerSelector, { key: `${PRIMARY}+Alt+B` })
   await control.command('waitFor', '[data-testid="right-workspace-launcher"]')

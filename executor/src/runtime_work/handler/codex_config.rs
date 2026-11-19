@@ -6,6 +6,11 @@ use super::*;
 
 impl RuntimeWorkRpcHandler {
     pub(super) async fn ensure_codex_started(&self) -> Result<Value, AppIpcError> {
+        if let Err(error) =
+            crate::runtime_work::native_transcript::migrate_codex_thread_rollout_paths()
+        {
+            eprintln!("failed to migrate Codex thread rollout paths: {error}");
+        }
         let initialize_elapsed = self
             .codex_app_server
             .ensure_started()

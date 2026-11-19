@@ -20,7 +20,7 @@ export async function verifyCollaborationSettingsUx(control, { scoped, request, 
       String((persisted.visibility ?? 'private') === visibility)
     )
   }
-  await control.command('click', `${find('cloud-project-manage-tags')} > summary`)
+  await control.command('clickWhenEnabled', `${find('cloud-project-manage-tags')} > summary`)
   await control.command('clickWhenEnabled', find('cloud-project-tag-create-toggle'))
   await control.command(
     'waitFor',
@@ -89,7 +89,7 @@ export async function verifyCollaborationSettingsUx(control, { scoped, request, 
   await selectCollaborationProjectView(control, scoped('').trim(), 'board')
 }
 
-async function addProjectTag(control, scoped, tag) {
+export async function addProjectTag(control, scoped, tag) {
   const find = id => scoped(`[data-testid="${id}"]`)
   await control.command('click', find('collaboration-project-settings-project'))
   if (
@@ -97,7 +97,7 @@ async function addProjectTag(control, scoped, tag) {
       await control.command('getElementCount', `${find('cloud-project-manage-tags')}[open]`)
     ) === 0
   )
-    await control.command('click', `${find('cloud-project-manage-tags')} > summary`)
+    await control.command('clickWhenEnabled', `${find('cloud-project-manage-tags')} > summary`)
   await control.command('clickWhenEnabled', find('cloud-project-tag-create-toggle'))
   await control.command('fill', find('cloud-project-tag-create-input'), { value: tag })
   await control.command('clickWhenEnabled', find('cloud-project-tag-create-confirm'))

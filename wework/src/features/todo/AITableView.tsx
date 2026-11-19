@@ -382,9 +382,9 @@ export function AITableView({ api, project }: { api: AITableApi; project: CloudP
   const [loadingMore, setLoadingMore] = useState(false)
   const [mutationBusy, setMutationBusy] = useState(false)
   const [selectedViewId, setSelectedViewId] = useState(project.provider_config.view_id ?? '')
-  const canManageFields = ['Owner', 'Maintainer', 'Developer'].includes(
-    project.access_role ?? 'Owner'
-  )
+  const canManageFields =
+    project.access_role === undefined ||
+    ['Owner', 'Maintainer', 'Developer'].includes(project.access_role ?? '')
   const canEditRecords = canManageFields
 
   const load = useCallback(

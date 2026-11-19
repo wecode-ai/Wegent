@@ -109,7 +109,22 @@ class CloudProjectMemberService:
         cloud_project_id: int,
         user_id: int,
         values: CloudProjectMemberCreate,
+        *,
+        commit: bool = True,
     ):
+        if commit:
+            from app.services.cloud_projects.admin import run_configuration_change
+
+            return run_configuration_change(
+                self,
+                db,
+                cloud_project_id,
+                user_id,
+                lambda: self.add_member(
+                    db, cloud_project_id, user_id, values, commit=False
+                ),
+                revoked_user_ids=(values.user_id,),
+            )
         require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Maintainer)
         project = self._lock_project(db, cloud_project_id)
         target = db.get(User, values.user_id)
@@ -117,17 +132,7 @@ class CloudProjectMemberService:
             raise HTTPException(404, "User not found")
         self._set_direct_role(db, cloud_project_id, target.id, values.role)
         self._set_member_capability(project, target.id, values.capability_description)
-        from app.services.collaboration_revocation import (
-            revoke_unauthorized_project_work,
-        )
-        from app.services.loop_item_executions.cancellation import (
-            request_execution_cancellations,
-        )
-
         db.flush()
-        pending = revoke_unauthorized_project_work(db, project.id, target.id)
-        db.commit()
-        request_execution_cancellations(pending)
         return self._member_view(
             db, project, target, self._member_capabilities(project), True
         )
@@ -139,7 +144,22 @@ class CloudProjectMemberService:
         member_user_id: int,
         user_id: int,
         values: CloudProjectMemberUpdate,
+        *,
+        commit: bool = True,
     ):
+        if commit:
+            from app.services.cloud_projects.admin import run_configuration_change
+
+            return run_configuration_change(
+                self,
+                db,
+                cloud_project_id,
+                user_id,
+                lambda: self.update_member(
+                    db, cloud_project_id, member_user_id, user_id, values, commit=False
+                ),
+                revoked_user_ids=(member_user_id,),
+            )
         require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Maintainer)
         project = self._lock_project(db, cloud_project_id)
         target = db.get(User, member_user_id)
@@ -151,25 +171,33 @@ class CloudProjectMemberService:
             self._set_member_capability(
                 project, target.id, values.capability_description
             )
-        from app.services.collaboration_revocation import (
-            revoke_unauthorized_project_work,
-        )
-
         db.flush()
-        pending = revoke_unauthorized_project_work(db, project.id, member_user_id)
-        db.commit()
-        from app.services.loop_item_executions.cancellation import (
-            request_execution_cancellations,
-        )
-
-        request_execution_cancellations(pending)
         return self._member_view(
             db, project, target, self._member_capabilities(project), True
         )
 
     def remove_member(
-        self, db: Session, cloud_project_id: int, member_user_id: int, user_id: int
+        self,
+        db: Session,
+        cloud_project_id: int,
+        member_user_id: int,
+        user_id: int,
+        *,
+        commit: bool = True,
     ):
+        if commit:
+            from app.services.cloud_projects.admin import run_configuration_change
+
+            return run_configuration_change(
+                self,
+                db,
+                cloud_project_id,
+                user_id,
+                lambda: self.remove_member(
+                    db, cloud_project_id, member_user_id, user_id, commit=False
+                ),
+                revoked_user_ids=(member_user_id,),
+            )
         require_cloud_project_role(db, cloud_project_id, user_id, BaseRole.Maintainer)
         project = self._lock_project(db, cloud_project_id)
         grant = self._direct_member(db, cloud_project_id, member_user_id)
@@ -179,18 +207,7 @@ class CloudProjectMemberService:
             )
         db.delete(grant)
         self._set_member_capability(project, member_user_id, "")
-        from app.services.collaboration_revocation import (
-            revoke_unauthorized_project_work,
-        )
-
         db.flush()
-        pending = revoke_unauthorized_project_work(db, project.id, member_user_id)
-        db.commit()
-        from app.services.loop_item_executions.cancellation import (
-            request_execution_cancellations,
-        )
-
-        request_execution_cancellations(pending)
 
     @staticmethod
     def _set_direct_role(

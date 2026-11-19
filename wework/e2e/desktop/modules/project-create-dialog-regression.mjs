@@ -16,6 +16,7 @@ import {
   withProjectRenderer,
 } from './project-create-test-utils.mjs'
 import { verifyModelDialogKeyboard } from './project-create-interaction-checks.mjs'
+import { confirmProjectDraftDiscard as confirmDiscard } from './project-create-draft.mjs'
 import {
   assertCollaboratorAccessibilityIsolation,
   assertCollaboratorSearchLayout,
@@ -73,14 +74,6 @@ async function verifyProjectCreateFocusRestoration(control, scoped) {
   await control.command('nativePress', opener, { key: 'Enter' })
   await control.command('waitFor', DIALOG, { visible: true })
   await control.command('fill', nameInput, { value: draftName })
-}
-
-async function confirmDiscard(control) {
-  await control.command('waitFor', DISCARD, { visible: true })
-  await control.command(
-    'clickWhenEnabled',
-    `${DISCARD} ${testId('collaboration-project-create-discard-confirm')}`
-  )
 }
 
 async function keepDraft(control, resume, action = 'Escape') {

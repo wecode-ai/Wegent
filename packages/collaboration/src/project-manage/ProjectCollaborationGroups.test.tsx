@@ -354,6 +354,7 @@ it('keeps groups scoped when the real metadata-only controller switches cached p
   )
   const api = apiFor()
   api.projects.list = vi.fn(async () => projects)
+  api.projects.get = vi.fn(async id => projects.find(project => project.id === id)!)
   const a = deferred<CollaborationGroup[]>()
   vi.mocked(api.projects.listCollaborationGroups!)
     .mockReturnValueOnce(a.promise)
@@ -362,22 +363,29 @@ it('keeps groups scoped when the real metadata-only controller switches cached p
   function Harness({ projectId }: { projectId: string | null }) {
     const { state } = useCollaborationWorkspaceController({
       api,
-      location: { projectId, issueId: null, view: 'manage' },
+      location: {
+        projectId,
+        issueId: null,
+        view: 'manage',
+        projectSettingsSection: 'groups',
+      },
       messages,
       preloadHomeSnapshots: false,
       myWorkEnabled: false,
       pollIntervalMs: 0,
     })
     return state.loading || !state.project ? null : (
-      <ProjectCollaborationGroups
-        api={api}
-        projectId={state.project.id}
-        workspaceId={state.project.workspace_id}
-        members={state.members}
-        agents={state.agents}
-        locale="en"
-        canManage
-      />
+      <div data-testid="settings-panel">
+        <ProjectCollaborationGroups
+          api={api}
+          projectId={state.project.id}
+          workspaceId={state.project.workspace_id}
+          members={state.members}
+          agents={state.agents}
+          locale="en"
+          canManage
+        />
+      </div>
     )
   }
   container = document.createElement('div')
@@ -385,7 +393,13 @@ it('keeps groups scoped when the real metadata-only controller switches cached p
   root = createRoot(container)
   await act(async () => root!.render(<Harness projectId={null} />))
   await act(async () => root!.render(<Harness projectId="a" />))
+  const panel = container.querySelector('[data-testid="settings-panel"]')
+  expect(panel).not.toBeNull()
+  expect(api.projects.listCollaborationGroups).toHaveBeenNthCalledWith(1, 'a')
   await act(async () => root!.render(<Harness projectId="b" />))
+  expect(container.querySelector('[data-testid="settings-panel"]')).toBe(panel)
+  expect(api.projects.get).not.toHaveBeenCalled()
+  expect(api.projects.listCollaborationGroups).toHaveBeenNthCalledWith(2, 'b')
   await act(async () => a.resolve([group]))
   expect(view.props!.groups.map(value => value.id)).toEqual(['b-group'])
   expect(api.projects.list).toHaveBeenCalledOnce()

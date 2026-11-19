@@ -10,7 +10,10 @@ test('keeps synthetic subscription refresh local while configuration bundles fai
   const root = await mkdtemp(join(tmpdir(), 'wework-cloud-config-service-'))
   const service = createCloudConfigModelService()
   const codexHome = join(root, 'managed-codex')
-  const appEnvironment: Record<string, string> = { HOME: join(root, 'native-home') }
+  const appEnvironment: Record<string, string> = {
+    HOME: join(root, 'native-home'),
+    CODEX_BINARY_PATH: join(root, 'codex-binary'),
+  }
   try {
     await mkdir(codexHome, { recursive: true })
     await writeFile(join(codexHome, 'config.toml'), '')

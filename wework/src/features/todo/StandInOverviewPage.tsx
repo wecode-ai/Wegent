@@ -980,6 +980,7 @@ export function StandInOverviewPage({
         })
       }
       bypass={Boolean(props.initialProfileId || profile || (!saved && state.error))}
+      bypassWhenUnavailable={Boolean(saved?.roles.length)}
       onClose={props.onCancel}
     >
       {content}

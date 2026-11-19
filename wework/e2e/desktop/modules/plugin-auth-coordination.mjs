@@ -11,6 +11,7 @@ import {
   verifyIndependentPluginMutations,
 } from './plugin-write-coordination.mjs'
 import { pluginApi, until } from './plugin-regression-fixture.mjs'
+import { observePluginAuthEnrollment } from './plugin-auth-observation.mjs'
 import {
   assertBackgroundPluginAuthPaused,
   describePluginAuthRecovery,
@@ -166,6 +167,8 @@ export async function verifyPluginAuthCoordination({
     await otherLease.release()
   }
   const backgroundRow = await holdInstalledPluginRow(cloud, installedId)
+  const enrollment = observePluginAuthEnrollment(reconcileMarker, installedId, 'mail')
+  let attempt
   const executorLog = join(resultDir, 'executor.log')
   let recoveryBefore
   let recoveryOffset
@@ -188,12 +191,19 @@ export async function verifyPluginAuthCoordination({
     await signalAutomaticRetry()
     pendingWait = await backgroundRow.waitFor('blocked')
     assert.ok(pendingWait.requestingTransactionId && pendingWait.blockingTransactionId)
+    attempt = await until(
+      () => enrollment.pending(),
+      Boolean,
+      'Background authentication never started its target request',
+      timeoutMs
+    )
     await verifyIndependentPluginMutations(cloud, independent, evidence)
     assert.equal(
       await readPendingWait(),
       1,
       'The target database request stopped waiting before its row was released'
     )
+    await enrollment.assertPending(attempt)
     const after = { target: await readPluginAuthTarget(cloud, installedId) }
     assertBackgroundPluginAuthPaused({
       before,
@@ -203,7 +213,11 @@ export async function verifyPluginAuthCoordination({
     recoveryBefore = after.target
     recoveryOffset = (await readFile(executorLog, 'utf8')).length
     await backgroundRow.assertHeld()
-    evidence.push({ case: 'background-authentication-does-not-block-other-plugin', installedId })
+    evidence.push({
+      case: 'background-authentication-does-not-block-other-plugin',
+      installedId,
+      attempt,
+    })
   } finally {
     await backgroundRow.release()
   }
@@ -215,6 +229,7 @@ export async function verifyPluginAuthCoordination({
   await signalAutomaticRetry()
   let latestRecovery
   let recoveryLogCharacters
+  let targetAttemptSucceeded = false
   try {
     await until(
       async () => {
@@ -229,9 +244,10 @@ export async function verifyPluginAuthCoordination({
           expectedDeviceId,
           expectedDeviceBinding,
         }
+        targetAttemptSucceeded = await enrollment.succeeded(attempt)
         return latestRecovery
       },
-      isFreshPluginAuthRecovery,
+      value => targetAttemptSucceeded && isFreshPluginAuthRecovery(value),
       'Background authentication did not freshly enroll its target after the row was released'
     )
   } catch (error) {
@@ -253,6 +269,8 @@ export async function verifyPluginAuthCoordination({
         JSON.stringify(
           {
             observationAvailable: Boolean(latestRecovery),
+            attempt,
+            targetAttemptSucceeded,
             recoveryOffset,
             logCharacters: recoveryLogCharacters ?? null,
             ...description,

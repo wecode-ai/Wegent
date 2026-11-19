@@ -70,9 +70,28 @@ export async function reconcilePluginRefresh(options: {
     !response.sync.success ||
     response.sync.failed > 0 ||
     response.sync.errors.length > 0 ||
-    response.sync.plugins.some(item => item.status === 'failed')
+    response.sync.plugins.some(item => item.status === 'failed' || item.status === 'error')
   ) {
-    throw new Error('Plugin reconciliation did not complete; update the app or retry refresh')
+    const failedPlugin = response.sync.plugins.find(
+      item => item.status === 'failed' || item.status === 'error'
+    )
+    if (failedPlugin) {
+      const name = failedPlugin.name?.trim() || String(failedPlugin.id ?? 'unknown')
+      const reason =
+        failedPlugin.error_code?.trim() ||
+        failedPlugin.error?.trim() ||
+        failedPlugin.stage?.trim() ||
+        'unknown error'
+      throw new Error(`Plugin reconciliation failed for ${name}: ${reason}`)
+    }
+    const deviceError = response.sync.errors
+      .map(error => String(error.error ?? '').trim())
+      .find(Boolean)
+    throw new Error(
+      deviceError
+        ? `Plugin reconciliation failed: ${deviceError}`
+        : 'Plugin reconciliation did not complete; update the app or retry refresh'
+    )
   }
   options.onProgress?.('verifying')
   options.invalidate()

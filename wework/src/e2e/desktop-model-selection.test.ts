@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'vitest'
 import { selectE2EModel } from '../../e2e/desktop/modules/shared.mjs'
-import { openExplicitModelMenu } from '../../e2e/desktop/scenarios/stand-in-model-execution.scenario.mjs'
+import { openExplicitModelMenu } from '../../e2e/desktop/modules/model-menu-navigation.mjs'
 
 test('waits for selection resolution before opening the explicit model panel', async () => {
   let panel = 'advanced'

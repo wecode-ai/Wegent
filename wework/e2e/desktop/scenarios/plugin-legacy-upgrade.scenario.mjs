@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { accountCommandResult } from '../modules/account-auth-command.mjs'
 import { findNestedString, requestContainsSkillLocator } from '../modules/desktop-server.mjs'
+import { describeTargetSkillCatalog } from '../modules/target-skill-catalog-evidence.mjs'
 import {
   refreshPluginInventory,
   verifyPluginEnabledState,
@@ -343,6 +344,7 @@ export async function createDesktopScenario({
       expected: '"pnpmAvailable": true',
       skillPath: join(record.runtime.codex_link, 'skills', fixture.skillName, 'SKILL.md'),
       skillName: fixture.skillName,
+      skillCatalogName: `${fixture.slug}:${fixture.skillName}`,
     }
     await control.command('click', testId('new-chat-button'))
     await selectE2EModel(control)
@@ -513,8 +515,24 @@ export async function createDesktopScenario({
         events = [assistantMessage(`${active.id} completed`)]
       } else if (active && JSON.stringify(body.input ?? '').includes(active.prompt)) {
         assert.ok(requestAdvertisesShellCommand(body))
-        const discovered = requestContainsSkillLocator(body, active.skillPath, active.skillName)
-        if (!discovered) {
+        const advertised = requestContainsSkillLocator(body, active.skillPath, active.skillName)
+        if (!advertised) {
+          try {
+            await writeFile(
+              join(resultDir, `legacy-plugin-skill-catalog-${active.id}.json`),
+              JSON.stringify(
+                describeTargetSkillCatalog(body, {
+                  expectedSkillName: active.skillCatalogName,
+                  expectedPath: active.skillPath,
+                  parserResult: advertised,
+                }),
+                null,
+                2
+              )
+            )
+          } catch {
+            console.warn('[legacy-plugin-upgrade] Target skill catalog evidence could not be saved')
+          }
           const catalog =
             findNestedString(body, text => text.includes('### Available skills')) ?? ''
           await writeFile(
@@ -539,7 +557,7 @@ export async function createDesktopScenario({
           )
         }
         assert.ok(
-          discovered,
+          advertised,
           `Codex did not discover the historical plugin in its migrated native runtime: ${active.skillPath}`
         )
         events = shellCommandResponse(body, active.id, active.command, workspacePath)

@@ -92,6 +92,8 @@ class Settings(BaseSettings):
     MCP_ENABLE_DNS_REBINDING_PROTECTION: bool = False
     MCP_ALLOWED_HOSTS: list[str] = []
     MCP_ALLOWED_ORIGINS: list[str] = []
+    # Capability flag: wework.projectAdminTools.v1. Existing page writes remain available.
+    WEWORK_PROJECT_ADMIN_TOOLS_V1: bool = True
 
     # Standalone mode configuration
     # When enabled, Backend runs in a simplified single-process mode suitable for local development

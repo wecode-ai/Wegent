@@ -477,7 +477,30 @@ export function TemporaryChatPanel({
   const [historyLoadingMoreBefore, setHistoryLoadingMoreBefore] = useState(false)
   const historyRequest = useRef({ loadingMore: false })
   const [sending, setSending] = useState(false)
+  const [submissionStartTurnKey, setSubmissionStartTurnKey] = useState<string | null>(null)
+  const [submissionStartFailureCount, setSubmissionStartFailureCount] = useState(0)
   const nativeSubmission = useRef(false)
+  const terminalTurnSettled = Boolean(taskLifecycle?.turn?.outcome) && !taskLifecycle?.turn?.active
+  const lifecycleTurnKey = taskLifecycle
+    ? `${taskLifecycle.turn?.latestId ?? taskLifecycle.turn?.id ?? ''}|${
+        taskLifecycle.turn?.outcome ?? ''
+      }|${taskLifecycle.turn?.active ?? false}`
+    : null
+  const failedAssistantCount = presentation.messages.filter(
+    message =>
+      message.role === 'assistant' &&
+      (message.status === 'failed' || message.runtimeStatus === 'failed')
+  ).length
+  const submissionTurnSettled =
+    (terminalTurnSettled && lifecycleTurnKey !== submissionStartTurnKey) ||
+    failedAssistantCount > submissionStartFailureCount
+  const nativeSubmissionPending =
+    nativeConversation && sending && !submissionTurnSettled && failedAssistantCount === 0
+  const startSending = useCallback(() => {
+    setSubmissionStartTurnKey(lifecycleTurnKey)
+    setSubmissionStartFailureCount(failedAssistantCount)
+    setSending(true)
+  }, [failedAssistantCount, lifecycleTurnKey])
   const messageViewId = useId()
   const [goalDraftActive, setGoalDraftActive] = useState(false)
   const lifecycleStore = useRuntimeTaskLifecycleStore()
@@ -906,7 +929,10 @@ export function TemporaryChatPanel({
       const message = draftValue.trim()
       if (!message) return false
       if (historySource && !scopedHistory.available) return false
-      if (nativeConversation && nativeSubmission.current) return false
+      if (nativeConversation && nativeSubmission.current) {
+        if (!submissionTurnSettled) return false
+        nativeSubmission.current = false
+      }
       if (!canSendWithCurrentModel()) return false
       setError(null)
       const transactionalDraft = nativeConversation && address ? draft?.beginSubmission : undefined
@@ -934,7 +960,7 @@ export function TemporaryChatPanel({
       }
       if (nativeConversation && address) {
         nativeSubmission.current = true
-        setSending(true)
+        startSending()
         let submission: ReturnType<NonNullable<typeof transactionalDraft>> | undefined
         try {
           if (transactionalDraft) {
@@ -981,7 +1007,7 @@ export function TemporaryChatPanel({
         return true
       }
 
-      setSending(true)
+      startSending()
       const attachmentIds = remoteAttachmentIds(currentAttachments)
       const attachments = localRuntimeAttachments(currentAttachments)
       const handleError = (errorMessage: string) => {
@@ -1154,6 +1180,8 @@ export function TemporaryChatPanel({
       sendEphemeral,
       canSendWithCurrentModel,
       sessionStartFields,
+      startSending,
+      submissionTurnSettled,
       updateAddress,
       setInput,
     ]
@@ -1504,10 +1532,8 @@ export function TemporaryChatPanel({
                   }}
                   onSubmit={send}
                   clearOnSubmit={!(nativeConversation && address && draft?.beginSubmission)}
-                  disabled={
-                    (!modelControls && taskModelIdentityPending) || (nativeConversation && sending)
-                  }
-                  submitDisabled={taskModelIdentityPending}
+                  disabled={!modelControls && taskModelIdentityPending}
+                  submitDisabled={taskModelIdentityPending || nativeSubmissionPending}
                   showExecutionTools={showExecutionTools}
                   showModelSelector
                   pluginPickerIconOnly

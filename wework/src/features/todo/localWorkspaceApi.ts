@@ -41,6 +41,12 @@ import { loadWorkspaceCatalog } from './localWorkspaceCatalog'
 import { createProjectChatComments } from '@/features/collaboration/projectChatComments'
 export const LOCAL_WORKSPACE_ID = 'wework-local-workspace'
 
+/** Labels and errors can change independently of the local account and data services. */
+export interface LocalWorkspacePresentation {
+  locale: 'zh-CN' | 'en'
+  userName: string
+}
+
 function assertValidCollaborationGroup(
   leader: CollaborationGroup['leader'],
   members: CollaborationGroup['members'],
@@ -71,12 +77,16 @@ function assertValidCollaborationGroup(
 export function createLocalWorkspaceApi(
   deliveryApi: ProjectSpaceApis['local'] | undefined,
   userId: number,
-  userName: string,
+  presentationSource: string | (() => LocalWorkspacePresentation),
   userEmail: string | null,
   detailServices?: ProjectSpaceDetailServices,
   locale: 'zh-CN' | 'en' = 'zh-CN'
 ): SharedWorkspaceApi | null {
   if (!deliveryApi) return null
+  const getPresentation =
+    typeof presentationSource === 'string'
+      ? () => ({ locale, userName: presentationSource })
+      : presentationSource
   const delivery = createWeworkDeliverySharedWorkspaceApi(deliveryApi)
   const automation = createWeworkAutomationSharedWorkspaceApi(
     deliveryApi,
@@ -87,7 +97,7 @@ export function createLocalWorkspaceApi(
     ...project,
     workspace_id: LOCAL_WORKSPACE_ID,
     current_user_id: userId,
-    current_user_name: userName,
+    current_user_name: getPresentation().userName,
   })
   const projects = async () =>
     (await delivery.projects.list())
@@ -111,7 +121,7 @@ export function createLocalWorkspaceApi(
         coding_tools: ['codex'],
         owner_type: 'user' as const,
         owner_id: String(userId),
-        owner_name: userName,
+        owner_name: getPresentation().userName,
         status:
           device.status === 'online' || device.status === 'busy'
             ? ('online' as const)
@@ -162,7 +172,9 @@ export function createLocalWorkspaceApi(
     const deviceApi = detailServices?.deviceApi
     if (!deviceApi) {
       throw new Error(
-        locale === 'zh-CN' ? '当前设备执行服务不可用' : 'The current device executor is unavailable'
+        getPresentation().locale === 'zh-CN'
+          ? '当前设备执行服务不可用'
+          : 'The current device executor is unavailable'
       )
     }
     const [project, environments] = await Promise.all([
@@ -171,11 +183,15 @@ export function createLocalWorkspaceApi(
     ])
     const environment = environments.find(candidate => candidate.device_id === input.deviceId)
     if (!environment?.device_key?.trim()) {
-      throw new Error(locale === 'zh-CN' ? '未找到执行设备' : 'Execution device was not found')
+      throw new Error(
+        getPresentation().locale === 'zh-CN' ? '未找到执行设备' : 'Execution device was not found'
+      )
     }
     const deviceKey = environment.device_key.trim()
     if (environment.status !== 'online') {
-      throw new Error(locale === 'zh-CN' ? '执行设备当前不在线' : 'Execution device is offline')
+      throw new Error(
+        getPresentation().locale === 'zh-CN' ? '执行设备当前不在线' : 'Execution device is offline'
+      )
     }
     const configuration: CollaborationExecutionEnvironmentConfig =
       project.execution_environment ?? {
@@ -232,7 +248,7 @@ export function createLocalWorkspaceApi(
           error:
             response.error ||
             response.stderr ||
-            (locale === 'zh-CN'
+            (getPresentation().locale === 'zh-CN'
               ? '执行环境初始化失败'
               : 'Execution environment initialization failed'),
         })
@@ -251,7 +267,7 @@ export function createLocalWorkspaceApi(
         error:
           error instanceof Error
             ? error.message
-            : locale === 'zh-CN'
+            : getPresentation().locale === 'zh-CN'
               ? '执行环境初始化失败'
               : 'Execution environment initialization failed',
       })
@@ -270,10 +286,10 @@ export function createLocalWorkspaceApi(
     return {
       id: LOCAL_WORKSPACE_ID,
       location: 'local',
-      name: locale === 'zh-CN' ? '个人分组' : 'Personal group',
+      name: getPresentation().locale === 'zh-CN' ? '个人分组' : 'Personal group',
       namespace: 'default',
       description:
-        locale === 'zh-CN'
+        getPresentation().locale === 'zh-CN'
           ? '你的个人项目、Issue 与执行资源。'
           : 'Your personal projects, issues, and execution resources.',
       access_role: 'Owner',
@@ -290,14 +306,16 @@ export function createLocalWorkspaceApi(
   }
   const unavailable = async (): Promise<never> => {
     throw new Error(
-      locale === 'zh-CN' ? '当前分组不支持此操作' : 'This operation is not available in this group'
+      getPresentation().locale === 'zh-CN'
+        ? '当前分组不支持此操作'
+        : 'This operation is not available in this group'
     )
   }
   const currentMember = async (): Promise<CollaborationMember[]> => [
     {
       id: userId,
       user_id: userId,
-      user_name: userName,
+      user_name: getPresentation().userName,
       email: userEmail,
       role: 'Owner',
     },
@@ -333,7 +351,7 @@ export function createLocalWorkspaceApi(
           ensureDefaultLocalAgent(
             projectAgentApi,
             DEFAULT_WORK_ITEM_PROJECT_ID,
-            locale,
+            getPresentation().locale,
             listedAgents
           )
         ).catch(() => null)
@@ -342,7 +360,7 @@ export function createLocalWorkspaceApi(
       defaultAgent && !listedAgents.some(agent => agent.id === defaultAgent.id)
         ? [...listedAgents, defaultAgent]
         : listedAgents
-    const ownerName = locale === 'zh-CN' ? '个人分组' : 'Personal group'
+    const ownerName = getPresentation().locale === 'zh-CN' ? '个人分组' : 'Personal group'
     return agents.map(agent => ({
       id: agent.id,
       agent_id: agent.name,
@@ -565,12 +583,14 @@ export function createLocalWorkspaceApi(
       const current = rules.find(rule => rule.id === automationId)
       if (!current) {
         throw new Error(
-          locale === 'zh-CN' ? '未找到自动处理规则' : 'Automatic processing rule was not found'
+          getPresentation().locale === 'zh-CN'
+            ? '未找到自动处理规则'
+            : 'Automatic processing rule was not found'
         )
       }
       if (current.version !== input.version) {
         throw new Error(
-          locale === 'zh-CN'
+          getPresentation().locale === 'zh-CN'
             ? '自动处理规则已被更新，请刷新后重试'
             : 'The automatic processing rule changed. Refresh and try again.'
         )
@@ -596,7 +616,9 @@ export function createLocalWorkspaceApi(
       const nextRules = rules.filter(rule => rule.id !== automationId)
       if (nextRules.length === rules.length) {
         throw new Error(
-          locale === 'zh-CN' ? '未找到自动处理规则' : 'Automatic processing rule was not found'
+          getPresentation().locale === 'zh-CN'
+            ? '未找到自动处理规则'
+            : 'Automatic processing rule was not found'
         )
       }
       const projectVersion = await persistProjectAutomaticProcessingRules(projectId, nextRules)
@@ -606,7 +628,9 @@ export function createLocalWorkspaceApi(
       if (!detailServices?.localProjectAutomationApi) return unavailable()
       const runs = await detailServices.localProjectAutomationApi.run(projectId, automationId)
       if (!runs.length)
-        throw new Error(locale === 'zh-CN' ? '没有可处理的 Issue' : 'No open Issues to process')
+        throw new Error(
+          getPresentation().locale === 'zh-CN' ? '没有可处理的 Issue' : 'No open Issues to process'
+        )
       return runs[0]
     },
     listRuns: (projectId, automationId) =>
@@ -710,7 +734,9 @@ export function createLocalWorkspaceApi(
       async removeAgent(agent) {
         if (!projectAgentApi || agent.version == null) {
           throw new Error(
-            locale === 'zh-CN' ? '无法删除这个本地智能体' : 'This local agent cannot be deleted'
+            getPresentation().locale === 'zh-CN'
+              ? '无法删除这个本地智能体'
+              : 'This local agent cannot be deleted'
           )
         }
         if (
@@ -719,7 +745,7 @@ export function createLocalWorkspaceApi(
           isDefaultLocalAgentName(agent.name)
         ) {
           throw new Error(
-            locale === 'zh-CN'
+            getPresentation().locale === 'zh-CN'
               ? '默认本地智能体不能删除'
               : 'The default local Agent cannot be deleted'
           )
@@ -747,7 +773,7 @@ export function createLocalWorkspaceApi(
               )
               if (existing && isDefaultLocalAgent(existing)) {
                 throw new Error(
-                  locale === 'zh-CN'
+                  getPresentation().locale === 'zh-CN'
                     ? '默认本地智能体不能停用'
                     : 'The default local Agent cannot be archived'
                 )
@@ -776,7 +802,11 @@ export function createLocalWorkspaceApi(
         const { includeDefaultAgent = false, ...projectInput } = input
         const project = decorateProject(await delivery.projects.create(projectInput))
         if (projectAgentApi && includeDefaultAgent) {
-          await ensureDefaultLocalAgent(projectAgentApi, project.id, locale).catch(error => {
+          await ensureDefaultLocalAgent(
+            projectAgentApi,
+            project.id,
+            getPresentation().locale
+          ).catch(error => {
             console.warn(
               `[Wework] Failed to ensure the default local Agent for project ${project.id}`,
               error

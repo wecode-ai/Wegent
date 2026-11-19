@@ -28,6 +28,7 @@ export function StandInOnboarding({
   deviceId,
   active = true,
   bypass = false,
+  bypassWhenUnavailable = false,
   guideOpen = false,
   onGuideClose,
   onExampleSelect,
@@ -40,6 +41,7 @@ export function StandInOnboarding({
   deviceId: string
   active?: boolean
   bypass?: boolean
+  bypassWhenUnavailable?: boolean
   guideOpen?: boolean
   onGuideClose?(): void
   onExampleSelect?(prompt: string): void
@@ -59,10 +61,13 @@ export function StandInOnboarding({
     setPreviousActive(active)
     if (!active) setDismissed(false)
   }
-  const checking = active && !bypass && !dismissed && !result && !error
+  const pending = active && !bypass && !dismissed && !result && !error
+  const effectiveBypass = bypass || (bypassWhenUnavailable && (pending || Boolean(error)))
+  const checking = pending && !bypassWhenUnavailable
   const open =
     active &&
-    (guideOpen || (!bypass && !dismissed && !!(result || error) && !result?.state.completed))
+    (guideOpen ||
+      (!effectiveBypass && !dismissed && !!(result || error) && !result?.state.completed))
   const setupRef = useRef<Pick<StandInSettingsHandle, 'requestLeave'>>(null)
   const [setupBusy, setSetupBusy] = useState(false)
   const dismiss = () => {
@@ -127,7 +132,7 @@ export function StandInOnboarding({
         aria-hidden={open || undefined}
         data-testid="stand-in-onboarding-content"
       >
-        {result || dismissed || bypass || !active ? children : null}
+        {result || dismissed || effectiveBypass || !active ? children : null}
         {checking && !guideOpen ? (
           <p role="status" className="p-5 text-sm text-text-secondary">
             {t('standIn.onboarding.loading')}

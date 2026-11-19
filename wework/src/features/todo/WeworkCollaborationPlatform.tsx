@@ -26,7 +26,11 @@ import { ArrowUpRight, Maximize2, Minimize2, MessageSquare, Search } from 'lucid
 import { Tooltip } from '@/components/ui/tooltip'
 import { StandInPopover } from './StandInPopover'
 import { navigateTo } from '@/lib/navigation'
-import { createLocalWorkspaceApi, LOCAL_WORKSPACE_ID } from './localWorkspaceApi'
+import {
+  createLocalWorkspaceApi,
+  LOCAL_WORKSPACE_ID,
+  type LocalWorkspacePresentation,
+} from './localWorkspaceApi'
 import { createWeworkPlatformApi, withoutDefaultWorkItemProject } from './weworkPlatformApi'
 import {
   CollaborationTemplateStore,
@@ -1734,23 +1738,24 @@ function WeworkCollaborationPlatformContent(props: WeworkCollaborationPlatformPr
       active = false
     }
   }, [props.services.agentResourceApi])
+  const getLocalPresentation = useStableEvent(
+    (): LocalWorkspacePresentation => ({ locale, userName: collaborationUserName })
+  )
   const localProjectApi = useMemo(
     () =>
       createLocalWorkspaceApi(
         props.services.projectSpaceApis?.local,
         Number(props.user.id),
-        collaborationUserName,
+        getLocalPresentation,
         props.user.email ?? null,
-        props.services.projectSpaceDetailServices?.local,
-        locale
+        props.services.projectSpaceDetailServices?.local
       ),
     [
       props.services.projectSpaceApis?.local,
       props.services.projectSpaceDetailServices?.local,
       props.user.email,
       props.user.id,
-      collaborationUserName,
-      locale,
+      getLocalPresentation,
     ]
   )
   const personalHomeTaskDrafts = props.homeDraft.personalHomeTaskDraftStore.get(templateScope, [

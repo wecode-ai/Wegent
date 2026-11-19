@@ -5,9 +5,11 @@
 """Built-in DingTalk connector apps backfill once and respect deletions."""
 
 from copy import deepcopy
+from warnings import catch_warnings, simplefilter
 
 import pytest
 from sqlalchemy import event, inspect
+from sqlalchemy.exc import SAWarning
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
@@ -276,6 +278,43 @@ def test_failed_bootstrap_rolls_back_apps_and_marker_and_can_retry(
     test_db: Session, failed_slug: str | None
 ) -> None:
     verify_failed_bootstrap_rolls_back_and_can_retry(test_db, failed_slug)
+
+
+def test_failed_bootstrap_retry_keeps_orm_identity_consistent(test_db: Session) -> None:
+    failed_slug = BUILTIN_CONNECTOR_APPS[1].slug
+
+    def reject_insert(_mapper: object, _connection: object, row: Kind) -> None:
+        if row.name == failed_slug:
+            raise RuntimeError("test bootstrap write failure")
+
+    event.listen(Kind, "before_insert", reject_insert)
+    try:
+        with pytest.raises(
+            RuntimeError, match="test bootstrap write failure"
+        ) as failure:
+            ensure_builtin_connector_apps(test_db)
+    finally:
+        event.remove(Kind, "before_insert", reject_insert)
+
+    assert test_db.query(Kind).filter_by(kind="ConnectorApp", user_id=0).count() == 0
+    assert (
+        test_db.query(SystemConfig).filter_by(config_key=BUILTIN_COMPLETION_KEY).count()
+        == 0
+    )
+    # Error reporting can retain the failed attempt's traceback during a retry.
+    assert failure.value.__traceback__ is not None
+    with catch_warnings():
+        simplefilter("error", SAWarning)
+        assert ensure_builtin_connector_apps(test_db) == [
+            definition.slug for definition in BUILTIN_CONNECTOR_APPS
+        ]
+    assert test_db.query(Kind).filter_by(kind="ConnectorApp", user_id=0).count() == len(
+        BUILTIN_CONNECTOR_APPS
+    )
+    completion = (
+        test_db.query(SystemConfig).filter_by(config_key=BUILTIN_COMPLETION_KEY).one()
+    )
+    assert completion.config_value == {"completed": True}
 
 
 def test_incomplete_marker_is_retried(test_db: Session) -> None:

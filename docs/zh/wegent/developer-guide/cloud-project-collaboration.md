@@ -4,6 +4,9 @@ sidebar_position: 32
 
 # 云项目协作架构
 
+项目配置的能力发现、预检、版本锁、幂等与审计契约见
+[项目配置管理 MCP](./project-admin-mcp.md)。页面与 MCP 共享配置业务服务和权限边界。
+
 > UI 与交互实现以 `/Users/hongyu9/Downloads/wework-delivery-v4-TODO.pen` 为当前 V4 设计源，不根据本文重新推导页面布局。
 
 ## 目标

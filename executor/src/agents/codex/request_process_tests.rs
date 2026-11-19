@@ -4,6 +4,9 @@
 use super::*;
 use std::os::unix::fs::PermissionsExt;
 
+#[path = "required_mcp_tests.rs"]
+mod required_mcp_tests;
+
 struct Fixture {
     client: CodexAppServerClient,
     _directory: tempfile::TempDir,

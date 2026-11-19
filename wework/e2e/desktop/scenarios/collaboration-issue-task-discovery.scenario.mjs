@@ -34,6 +34,13 @@ const OTHER_APP_ID = `issue-other-app-${process.pid}`
 const COMPLETION = 'ISSUE_APP_RECORD_COMPLETE'
 const scoped = selector => `${CONTENT} ${selector}`
 
+export async function selectIssueHomeComposerProject(control, scope, projectId) {
+  await control.command('click', scope('[data-testid="collaboration-issue-project-trigger"]'), {
+    visible: true,
+  })
+  await control.command('click', `[data-testid="collaboration-issue-project-${projectId}"]`)
+}
+
 export function createDesktopScenario({
   workbenchReadyTimeoutMs,
   modelResponseTimeoutMs,
@@ -248,8 +255,7 @@ export function createDesktopScenario({
   }
   async function verifyDraftRecovery(control, project, otherProject) {
     await openCollaborationIssueCreation(control, scoped)
-    await control.command('click', scoped('[data-testid="collaboration-issue-project-trigger"]'))
-    await control.command('click', `[data-testid="collaboration-issue-project-${project.id}"]`)
+    await selectIssueHomeComposerProject(control, scoped, project.id)
     await control.command('click', scoped('[data-testid="personal-home-new-issue"]'))
     const prompt = `Personal home start work recover ${Date.now()}`
     await control.command('fill', scoped('[data-testid="personal-home-task-content"]'), {
@@ -291,8 +297,7 @@ export function createDesktopScenario({
     } finally {
       proxy.rule = previousRule
     }
-    await control.command('click', scoped('[data-testid="collaboration-issue-project-trigger"]'))
-    await control.command('click', `[data-testid="collaboration-issue-project-${otherProject.id}"]`)
+    await selectIssueHomeComposerProject(control, scoped, otherProject.id)
     await control.command('waitFor', scoped('[data-testid="personal-home-task-content"]'), {
       text: prompt,
     })
@@ -303,8 +308,7 @@ export function createDesktopScenario({
       0,
       "A new project must not reuse another project's prepared Issue"
     )
-    await control.command('click', scoped('[data-testid="collaboration-issue-project-trigger"]'))
-    await control.command('click', `[data-testid="collaboration-issue-project-${project.id}"]`)
+    await selectIssueHomeComposerProject(control, scoped, project.id)
     await control.command('waitFor', scoped('[data-testid="personal-home-task-draft"]'), {
       text: prompt,
     })

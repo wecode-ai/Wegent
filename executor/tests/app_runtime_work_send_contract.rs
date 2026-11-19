@@ -1690,6 +1690,29 @@ async fn runtime_tasks_reload_a_generic_codex_thread_when_project_space_is_bound
         unsubscribe_index < resume_index,
         "the thread must be unsubscribed before resume applies the project-space override"
     );
+    let discoveries: Vec<_> = calls
+        .iter()
+        .enumerate()
+        .filter(|(_, call)| call["method"] == "mcpServerStatus/list")
+        .collect();
+    assert_eq!(discoveries.len(), 1);
+    let (discovery_index, discovery) = discoveries[0];
+    assert_eq!(
+        discovery["params"],
+        json!({
+            "threadId": "thread-persistent",
+            "serverName": "wework_space",
+            "detail": "toolsAndAuthOnly"
+        })
+    );
+    let turns: Vec<_> = calls
+        .iter()
+        .enumerate()
+        .filter(|(_, call)| call["method"] == "turn/start")
+        .collect();
+    assert_eq!(turns.len(), 2);
+    assert!(turns[0].0 < unsubscribe_index);
+    assert!(resume_index < discovery_index && discovery_index < turns[1].0);
     let resume_call = &calls[resume_index];
     assert_eq!(
         resume_call["params"]["config"]["mcp_servers.wework_space.enabled"],
@@ -5839,6 +5862,9 @@ while IFS= read -r line; do
       ;;
     *'"method":"thread/resume"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-persistent"}}}}}}'
+      ;;
+    *'"method":"mcpServerStatus/list"'*)
+      printf '%s\n' '{{"id":'"$request_id"',"result":{{"data":[{{"name":"wework_space","runtimeStatus":"connected","tools":{{"get_current_context":{{}}}}}}]}}}}'
       ;;
     *'"method":"thread/read"'*)
       printf '%s\n' '{{"id":'"$request_id"',"result":{{"thread":{{"id":"thread-persistent","cwd":"/tmp/project","turns":[]}}}}}}'

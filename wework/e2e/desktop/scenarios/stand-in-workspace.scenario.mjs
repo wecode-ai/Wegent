@@ -3,6 +3,7 @@ import {
   openStandInActivity,
 } from '../modules/stand-in-profile-navigation.mjs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
+import { openExplicitModelMenu } from '../modules/model-menu-navigation.mjs'
 import {
   openProjectStandIn,
   discardStandInDraft,
@@ -272,8 +273,8 @@ export function createDesktopScenario({
       const catalog = await requestExecutor(control, 'runtime.runner.catalog', {}, uiTimeoutMs)
       const model = catalog.models.find(model => model.runtime === 'codex' && model.is_default)
       assert.ok(model, 'The real Codex model catalog must provide a default')
-      await control.command(
-        'clickWhenEnabled',
+      await openExplicitModelMenu(
+        control,
         '[data-testid="stand-in-settings"] [data-testid="model-selector-button"]'
       )
       const modelKey = JSON.stringify([model.runtime, model.provider, model.model_id])
@@ -296,6 +297,8 @@ export function createDesktopScenario({
         'The device model must not appear under cloud models'
       )
       await control.command('clickWhenEnabled', selector(`model-option-${modelKey}`))
+      await control.command('press', '[data-model-selector-layer="true"]', { key: 'Escape' })
+      await control.command('waitFor', '[data-testid="model-selector-menu"]', { visible: false })
       await control.command('clickWhenEnabled', '[data-testid="stand-in-save"]')
       await control.command('waitFor', '[data-testid="stand-in-role-name"]')
       assert.equal(await control.command('getElementCount', '[data-testid="stand-in-agent"]'), '0')

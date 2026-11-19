@@ -4,6 +4,10 @@ sidebar_position: 32
 
 # Cloud project collaboration architecture
 
+See [Project administration MCP](./project-admin-mcp.md) for configuration discovery, previews,
+versioning, idempotency, and audit contracts. The page and MCP share configuration services and
+authorization boundaries.
+
 > The current V4 UI source of truth is `/Users/hongyu9/Downloads/wework-delivery-v4-TODO.pen`. Implement the interaction from that design instead of deriving page layout from this document.
 
 ## Goal

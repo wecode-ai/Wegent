@@ -17,6 +17,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod observation;
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Intent {
@@ -31,6 +33,7 @@ pub(super) struct Reconciler {
     inventory: HashMap<u64, Value>,
     retry_signal: Option<PathBuf>,
     retry_signal_value: Option<Vec<u8>>,
+    enrollment_events: Option<PathBuf>,
 }
 
 impl Default for Reconciler {
@@ -41,19 +44,26 @@ impl Default for Reconciler {
             inventory: HashMap::new(),
             retry_signal: super::e2e_retry_signal(),
             retry_signal_value: None,
+            enrollment_events: None,
         }
     }
 }
 
 impl Reconciler {
+    pub(super) fn with_reconcile_marker(marker: Option<PathBuf>) -> Self {
+        Self {
+            enrollment_events: observation::path(marker),
+            ..Self::default()
+        }
+    }
+
     pub async fn reconcile<T: super::PluginAuthTransport>(
         &mut self,
         transport: T,
         home: &Path,
     ) -> Result<(), AuthError> {
         let inventory = installed_inventory(home)?;
-        let mut ids: Vec<_> = inventory.keys().copied().collect();
-        ids.sort_unstable();
+        let ids: Vec<_> = inventory.keys().copied().collect();
         self.inventory = inventory;
         self.reconcile_selected(transport, home, &ids).await
     }
@@ -113,11 +123,12 @@ impl Reconciler {
         self.retries
             .retain(|(id, _), until| owned.contains(id) && *until > Instant::now());
         self.failures.retain(|(id, _), _| owned.contains(id));
-        let ids: Vec<_> = requested
+        let mut ids: Vec<_> = requested
             .iter()
             .copied()
             .filter(|id| owned.contains(id))
             .collect();
+        ids.sort_unstable();
         for selected in ids.chunks(16) {
             self.reconcile_batch(transport.clone(), home, selected)
                 .await?;
@@ -169,8 +180,15 @@ impl Reconciler {
             let transport = transport.clone();
             let home = home.to_owned();
             let actions = actions.clone();
+            let mut observation = observation::Enrollment::start(
+                self.enrollment_events.clone(),
+                package.installed_plugin_id,
+                &package.connector_slug,
+            );
             pending.spawn(async move {
-                let result = reconcile_target(transport, &home, &package, &actions).await;
+                let result =
+                    reconcile_target(transport, &home, &package, &actions, &observation).await;
+                observation.finish(&result);
                 crate::logging::log_executor_event(
                     "plugin auth automatic enrollment finished",
                     &[
@@ -243,6 +261,7 @@ async fn reconcile_target<T: super::PluginAuthTransport>(
     home: &Path,
     package: &PreparedPackage,
     actions: &tokio::sync::Semaphore,
+    observation: &observation::Enrollment,
 ) -> Result<(), AuthError> {
     prepare_package_python(home, package).await?;
     // Waiting for Python must not occupy a provider slot or consume an intent's TTL.
@@ -250,6 +269,7 @@ async fn reconcile_target<T: super::PluginAuthTransport>(
         .acquire()
         .await
         .map_err(|_| AuthError("plugin_auth_owner_unavailable"))?;
+    observation.requesting();
     let response = NativeAuthGateway::new(transport.clone())
         .call(
             "plugin.auth.automatic",
@@ -520,6 +540,7 @@ mod tests {
             inventory: HashMap::new(),
             retry_signal: Some(signal.clone()),
             retry_signal_value: None,
+            enrollment_events: None,
         };
 
         fs::write(&signal, "1").unwrap();

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFile, realpath, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { requestContainsSkillLocator } from './desktop-server.mjs'
+import { readSkillCatalogs } from './target-skill-catalog-evidence.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
 import { managedRoot } from './managed-plugin-root.mjs'
 import {
@@ -27,22 +28,7 @@ import {
 import { waitForWorkbenchDebugState } from './workspace-flows.mjs'
 
 function latestSkillCatalog(body) {
-  const texts = typeof body.instructions === 'string' ? [body.instructions] : []
-  for (const message of body.input ?? []) {
-    if (!['developer', 'system', 'user'].includes(message.role)) continue
-    if (typeof message.content === 'string') texts.push(message.content)
-    else {
-      for (const content of message.content ?? []) {
-        if (typeof content.text === 'string') texts.push(content.text)
-      }
-    }
-  }
-  const catalogs = texts.flatMap(text =>
-    [...text.matchAll(/<skills_instructions>([\s\S]*?)<\/skills_instructions>/gu)].map(
-      match => match[1]
-    )
-  )
-  const catalog = catalogs.at(-1)
+  const catalog = readSkillCatalogs(body).at(-1)
   assert.ok(catalog?.trim(), 'The real model request has no current skill instructions')
   // An empty host-skills update supersedes earlier catalogs too.
   return catalog

@@ -59,8 +59,18 @@ describe("persistIssueDetailFields", () => {
 
   it.each([
     { code: "version_conflict" },
-    { status: 409, detail: { code: "version_conflict", message: "TODO changed" } },
+    {
+      status: 409,
+      detail: { code: "version_conflict", message: "TODO changed" },
+    },
     { errorCode: "version_conflict" },
+    {
+      status: 409,
+      detail: {
+        reason_code: "version_conflict",
+        message: "Reload the project.",
+      },
+    },
   ])("preserves a concurrent edit to the same field (%j)", async (conflict) => {
     const port = portFor(
       { ...issue, title: "Other editor", version: 2 },
@@ -83,15 +93,21 @@ describe("persistIssueDetailFields", () => {
     expect(port.update).toHaveBeenCalledOnce();
   });
 
-  it("does not classify a business denial as a version conflict", async () => {
-    const error = { status: 409, detail: "This action is unavailable" };
-    const port = portFor(issue, error);
-    await expect(
-      persistIssueDetailFields(issue, { status: "completed" }, port),
-    ).rejects.toBe(error);
-    expect(port.get).not.toHaveBeenCalled();
-    expect(port.update).toHaveBeenCalledOnce();
-  });
+  it.each([
+    { status: 409, detail: "This action is unavailable" },
+    { status: 409, detail: { reason_code: "idempotency_conflict" } },
+    { status: 409, detail: { reason_code: "partial_reference_conflict" } },
+  ])(
+    "does not classify a business denial as a version conflict (%j)",
+    async (error) => {
+      const port = portFor(issue, error);
+      await expect(
+        persistIssueDetailFields(issue, { status: "completed" }, port),
+      ).rejects.toBe(error);
+      expect(port.get).not.toHaveBeenCalled();
+      expect(port.update).toHaveBeenCalledOnce();
+    },
+  );
 
   it("stops if another version conflict arrives after rebasing", async () => {
     const port = portFor({ ...issue, version: 2 });

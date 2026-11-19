@@ -150,8 +150,16 @@ const deliveryFile: ProjectDeliveryFile = {
 }
 
 function createMockDeliveryApi() {
+  const listCloudProjects = vi.fn().mockResolvedValue({ items: [project] })
   return {
-    listCloudProjects: vi.fn().mockResolvedValue({ items: [project] }),
+    listCloudProjects,
+    getCloudProject: vi.fn(async (projectId: string) => {
+      const found = (await listCloudProjects()).items.find(
+        candidate => String(candidate.id) === String(projectId)
+      )
+      if (!found) throw new Error(`Project ${projectId} was not found`)
+      return found
+    }),
     createCloudProject: vi.fn().mockResolvedValue(project),
     updateCloudProject: vi.fn().mockResolvedValue(project),
     archiveCloudProject: vi.fn().mockResolvedValue(undefined),

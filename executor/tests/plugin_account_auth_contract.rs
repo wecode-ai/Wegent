@@ -175,8 +175,10 @@ raise SystemExit(adapter.main(sys.argv[1:]))
     )
     .unwrap();
     let adapter = NativeAdapter::load(root.path(), "mail", &declaration).unwrap();
+    // Windows cold-start of the managed Python SDK can exceed the Unix deadline.
+    let timeout = Duration::from_secs(if cfg!(windows) { 30 } else { 10 });
     let started = std::time::Instant::now();
-    let exported = adapter.export(&python(), Duration::from_secs(10)).await;
+    let exported = adapter.export(&python(), timeout).await;
     // Keep sanitized bootstrap timings visible for successful CI runs too.
     let _ = writeln!(
         std::io::stderr(),
@@ -200,7 +202,7 @@ raise SystemExit(adapter.main(sys.argv[1:]))
             exported.credential,
             &["read".into()],
             None,
-            Duration::from_secs(10),
+            timeout,
         )
         .await
         .unwrap();

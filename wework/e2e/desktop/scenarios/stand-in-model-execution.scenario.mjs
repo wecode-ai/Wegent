@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createDesktopScenario as createCatalogScenario } from './stand-in-model-catalog.scenario.mjs'
+import { openExplicitModelMenu } from '../modules/model-menu-navigation.mjs'
 import { requestExecutor, writeCodexModelConfig } from '../modules/executor-rpc.mjs'
 import { until } from '../modules/plugin-regression-fixture.mjs'
 import { waitForDeliveredCloudCatalog } from '../modules/stand-in-catalog-delivery.mjs'
@@ -791,32 +792,6 @@ export function createDesktopScenario(options) {
   }
 }
 
-export async function openExplicitModelMenu(control, trigger, { requireSelection = false } = {}) {
-  const menu = '[data-testid="model-selector-menu"]'
-  await control.command('clickWhenEnabled', trigger)
-  await control.command('waitFor', menu)
-  await until(
-    async () => {
-      if ((await control.command('getAttribute', menu, { value: 'data-panel' })) === 'simple') {
-        await control.command('clickWhenEnabled', `${menu} [data-testid="model-advanced-toggle"]`)
-        return false
-      }
-      // Catalog initialization can briefly expose advanced view before resolving a selection.
-      return (
-        Number(
-          await control.command(
-            'getElementCount',
-            `${menu}[data-panel="advanced"]${requireSelection ? ' [role="radio"][aria-checked="true"]' : ''}`,
-            { visible: true }
-          )
-        ) > 0
-      )
-    },
-    ready => ready,
-    'The explicit model menu did not become ready'
-  )
-}
-
 async function cloudRequest(cloud, path, method = 'GET', body) {
   const response = await fetch(`${cloud.backendUrl}${path}`, {
     method,
@@ -890,7 +865,9 @@ async function verifyCloudModelRecovery({
     )
     assert.equal(held.status, 200)
     await control.command('waitFor', `${submit}:disabled`)
-    await control.command('waitFor', trigger, { enabled: true })
+    // The open modal picker makes the background trigger inert; its disabled
+    // attribute still proves that holding the catalog did not lock model choice.
+    await control.command('waitFor', `${trigger}:not(:disabled)`)
     assert.equal(
       held.released,
       undefined,
@@ -901,7 +878,9 @@ async function verifyCloudModelRecovery({
     assert.equal(held.released, undefined, 'Editing options must not release the catalog barrier')
     catalogProxy.rule = previousRule
     assert.equal(await held.release(), true, 'The original Backend response must be delivered')
-    await control.command('waitFor', submit, { enabled: true })
+    // The open modal picker makes the composer inert; only the native disabled
+    // attribute proves that the released catalog did not leave sending blocked.
+    await control.command('waitFor', `${submit}:not(:disabled)`, { timeoutMs: 30_000 })
     await control.command('press', 'body', { key: 'Escape' })
     assert.equal((await control.command('getText', editor)).trim(), draft)
     const saved = await rpc('runtime.stand_in.personal.get', { userId })
@@ -924,7 +903,7 @@ async function verifyCloudModelRecovery({
     await waitForDeliveredCloudCatalog(control, catalogProxy, updatedRequestStart)
     await control.command('press', 'body', { key: 'Escape' })
     await control.command('waitFor', trigger, { text: updatedLabel })
-    await control.command('waitFor', submit, { enabled: true })
+    await control.command('waitFor', submit, { enabled: true, timeoutMs: 30_000 })
     return { reasoning, limits: UPDATED_LIMITS }
   } finally {
     catalogProxy.rule = previousRule

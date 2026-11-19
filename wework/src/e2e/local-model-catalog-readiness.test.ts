@@ -39,7 +39,7 @@ test('rejects a catalog that remains unready after reconciliation', async () => 
   prepareRuntimeModel.mockResolvedValue(true)
   listLocalModelConfigs.mockReturnValue([{ id: 'fixture', catalogEntry: {}, catalogReady: false }])
 
-  await expect(ensureLocalModelCatalogReady()).rejects.toThrow(
+  await expect(ensureLocalModelCatalogReady({ timeoutMs: 0 })).rejects.toThrow(
     'Local model catalog is not ready: fixture'
   )
 })

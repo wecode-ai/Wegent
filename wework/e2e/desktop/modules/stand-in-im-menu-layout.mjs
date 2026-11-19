@@ -35,7 +35,9 @@ export async function verifyNarrowImMenu(control) {
       String(channels.length),
       'The real empty-session fixture must offer all four known IM channels'
     )
-    await control.command('clickWhenEnabled', selector('stand-in-im-add-channels'))
+    await control.command('nativePress', selector('stand-in-im-add-channels-menu'), {
+      key: 'Escape',
+    })
     await control.command(
       'waitFor',
       `[role="menuitem"]${selector('stand-in-im-channel-dingtalk')}`,

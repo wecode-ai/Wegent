@@ -32,6 +32,7 @@ interface Props {
   deviceStates: Record<string, CollaborationExecutionEnvironmentDeviceState>
   initializingDeviceId: number | null
   configurationDirty: boolean
+  configurationReady: boolean
   statusFilter: 'all' | CollaborationExecutionEnvironment['status']
   onStatusFilterChange(value: 'all' | CollaborationExecutionEnvironment['status']): void
   pickerOpen: boolean
@@ -62,6 +63,7 @@ export function ProjectEnvironmentDevices({
   deviceStates,
   initializingDeviceId,
   configurationDirty,
+  configurationReady,
   statusFilter,
   onStatusFilterChange,
   pickerOpen,
@@ -257,7 +259,7 @@ export function ProjectEnvironmentDevices({
                           type="button"
                           className="collaboration-link-button px-2"
                           data-testid={`${testIdPrefix}-initialize-${environment.device_id}`}
-                          disabled={saving || configurationDirty}
+                          disabled={saving || configurationDirty || !configurationReady}
                           onClick={() => void createEnvironmentOnDevice(environment)}
                         >
                           {translate(

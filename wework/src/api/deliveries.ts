@@ -376,6 +376,8 @@ export interface CloudProject {
     }>
     schedule_view?: import('@wegent/collaboration').CollaborationScheduleViewConfig
   }
+  collaboration_policy?: import('@wegent/collaboration').ProjectCollaborationPolicy
+  project_admin_result?: import('@wegent/collaboration').ProjectAdminWriteResult | null
   ai_automation?: {
     auto_retry_on_failure: boolean
     max_retry_count: number
@@ -393,7 +395,7 @@ export interface CloudProject {
   created_by_user_id: number
   current_user_id?: number
   current_user_name?: string
-  access_role?: 'Owner' | 'Maintainer' | 'Developer' | 'Viewer'
+  access_role?: 'Owner' | 'Maintainer' | 'Developer' | 'Viewer' | null
   visibility?: 'private' | 'public'
   public_access?: { role: 'Viewer' } | null
   default_issue_security?: 'open' | 'related'
@@ -709,6 +711,11 @@ export function createDeliveryApi(client: HttpClient) {
     listCloudProjects(): Promise<{ items: CloudProject[] }> {
       return client.get('/v1/cloud-projects')
     },
+    getCloudProject(projectId: CloudProjectIdInput): Promise<CloudProject> {
+      return client.get(`/v1/projects/${encodeURIComponent(String(projectId))}`, {
+        cache: 'no-store',
+      })
+    },
     createCloudProject(data: {
       project_key?: string
       name: string
@@ -738,17 +745,24 @@ export function createDeliveryApi(client: HttpClient) {
     updateCloudProject(
       projectId: CloudProjectIdInput,
       data: {
-        tag_change?: { source: string; target: string | null }
         name?: string
         description?: string
         tags?: string[]
+        operation_id?: string
+        idempotency_key?: string
+        dry_run?: boolean
+        tag_change?: import('@wegent/collaboration').ProjectTagChange
+        board_views?: CloudProject['board_views']
+        collaboration_policy?: CloudProject['collaboration_policy']
+        member_changes?: import('@wegent/collaboration').ProjectMemberChange[]
+        assistant_roster_changes?: import('@wegent/collaboration').ProjectAssistantRosterChange[]
         visibility?: 'private' | 'public'
         membership_mode?: 'inherit' | 'restricted'
         public_access?: { role: 'Viewer' }
         default_issue_security?: 'open' | 'related'
         card_display?: CloudProject['card_display']
         board_config?: CloudProject['board_config']
-        board_views?: CloudProject['board_views']
+        ai_automation?: CloudProject['ai_automation']
         pull_request_automation?: CloudProject['pull_request_automation']
         workflow_definition?: CloudProject['workflow_definition']
         collaboration_groups?: CloudProject['collaboration_groups']

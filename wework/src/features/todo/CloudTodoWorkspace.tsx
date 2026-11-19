@@ -4694,9 +4694,10 @@ export function CloudTodoWorkspace({
                                   ? {}
                                   : { team_id: agent.wegentTeamId }),
                               }))}
-                              canManage={['Owner', 'Maintainer'].includes(
-                                selectedProject.access_role ?? 'Owner'
-                              )}
+                              canManage={
+                                selectedProject.access_role === undefined ||
+                                ['Owner', 'Maintainer'].includes(selectedProject.access_role ?? '')
+                              }
                               location={selectedProject.location}
                               agentConfiguration={projectAgentConfigurationHost}
                               agentResourceContext={{
@@ -5300,7 +5301,8 @@ export function CloudTodoWorkspace({
                       }
                       saveGlobalDisabled={
                         groupScopeBusy ||
-                        !['Owner', 'Maintainer'].includes(selectedProject.access_role ?? 'Owner')
+                        (selectedProject.access_role !== undefined &&
+                          !['Owner', 'Maintainer'].includes(selectedProject.access_role ?? ''))
                       }
                       saveGlobalLabel="应用到全局"
                       searchPlaceholder={
