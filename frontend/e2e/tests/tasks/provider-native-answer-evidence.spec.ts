@@ -682,7 +682,7 @@ test('multiple searches keep same-title documents distinct across grey refresh a
     await expect(generationPanel).toBeHidden()
     await fragment.selectOption(firstCitationId)
     await expect(excerpt).toHaveText(firstExcerpt)
-    expect(await openedPanel.evaluate(node => node.isConnected)).toBe(true)
+    expect(await openedPanel?.evaluate(node => node.isConnected)).toBe(true)
     const savedExcerpt = await excerpt.innerText()
     await page.getByTestId('answer-evidence-open-original').click()
     await expect(panel.getByText(savedExcerpt, { exact: false })).toBeVisible()
