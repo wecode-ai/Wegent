@@ -5,6 +5,7 @@ import { resolve } from 'node:path'
 import { verifyPluginDuplicateDelivery } from './plugin-duplicate-delivery.mjs'
 import { verifyPluginReconciliationBusy } from './plugin-reconciliation-busy.mjs'
 import { verifyPluginHttpReinstall } from './plugin-http-reinstall.mjs'
+import { verifyPluginLocalConfirmation } from './plugin-local-confirmation.mjs'
 import {
   accountPlugin,
   materializedPlugin,
@@ -70,6 +71,14 @@ export async function verifyPluginLocalSync({
       timeoutMs,
       evidence,
       captureScreenshot,
+    })
+    await verifyPluginLocalConfirmation({
+      cloud,
+      control,
+      apiProxy,
+      executorHome,
+      timeoutMs,
+      evidence,
     })
     apiProxy.disconnectWebSockets(true)
     for (const row of rows)
