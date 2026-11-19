@@ -67,7 +67,15 @@ export async function verifyLocalCloudStandInReceipt(
     assert.equal(pending.dispatch_receipt.confirmedMessageId, null)
     assert.equal(pending.dispatch_receipt.deliveryId, null)
     const commentPath = `/v1/cloud-projects/${settingsParams().projectId}/loop-items/${issue.id}/activity-comments`
-    const comments = await request(commentPath)
+    const comments = await until(
+      () => request(commentPath),
+      rows =>
+        rows.find(
+          comment => comment.id === pending.dispatch_receipt.publicMessageId && comment.body?.trim()
+        ),
+      uiTimeoutMs,
+      'The receipt public message did not expose the real execution result'
+    )
     const result = comments.find(comment => comment.id === pending.dispatch_receipt.publicMessageId)
     assert.ok(result?.body.trim(), 'The receipt must reference the real execution result')
     assert.equal(result.generation_source, 'ai')
