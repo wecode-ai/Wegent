@@ -210,6 +210,26 @@ impl ResponsesApiEventParser {
                 event.message_id = message_id;
                 Ok(Some(event))
             }
+            "response.subagent.activity" => {
+                let mut extra = Map::new();
+                for key in [
+                    "agent_path",
+                    "agent_id",
+                    "agent_thread_id",
+                    "agent_name",
+                    "kind",
+                    "status",
+                    "occurred_at_ms",
+                ] {
+                    if let Some(value) = data.get(key).filter(|value| !value.is_null()) {
+                        extra.insert(key.to_string(), value.clone());
+                    }
+                }
+                let mut event = ExecutionEvent::new(EventType::BlockUpdated, task_id, subtask_id);
+                event.data = extra;
+                event.message_id = message_id;
+                Ok(Some(event))
+            }
             "error" => {
                 {
                     let mut state = self.state.lock().expect("parser state poisoned");

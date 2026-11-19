@@ -99,6 +99,31 @@ fn response_events_preserve_timing_metadata() {
 }
 
 #[test]
+fn subagent_activity_maps_to_an_updatable_block_event() {
+    let event = parser::shared()
+        .parse(
+            1,
+            2,
+            None,
+            "response.subagent.activity",
+            &json!({
+                "agent_path": "/root/worker",
+                "agent_id": "worker",
+                "agent_thread_id": "thread-1",
+                "agent_name": "worker",
+                "kind": "started",
+                "status": "running",
+                "occurred_at_ms": 123
+            }),
+        )
+        .expect("parse")
+        .expect("event");
+    assert_eq!(event.event_type, "block_updated");
+    assert_eq!(event.data.get("agent_thread_id"), Some(&json!("thread-1")));
+    assert_eq!(event.data.get("occurred_at_ms"), Some(&json!(123)));
+}
+
+#[test]
 fn block_created_requires_object_block() {
     let missing = parser::shared()
         .parse(1, 2, None, "response.block.created", &json!({"block": "x"}))
