@@ -25,6 +25,7 @@ import { REMOTE_DOCKER_DEVICE_ID } from '../modules/shared.mjs'
 import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 import { createGuidedReplies } from '../modules/collaboration-guided-replies.mjs'
 import {
+  assertManagerComment,
   requestJson,
   waitForValue,
   waitForIssueStatus,
@@ -734,12 +735,13 @@ export async function createDesktopScenario({
         [COLLECTOR],
         '成员正文应作为一条独立 Issue 评论显示，并使用实际发言的智能体署名'
       )
-      assert.deepEqual(
-        comments
-          .filter(comment => comment.body === INITIAL_MANAGER_OUTPUT)
-          .map(comment => comment.author),
-        [LEADER],
-        '负责人正文应作为一条独立 Issue 评论显示'
+      await assertManagerComment(
+        cloudEnvironment,
+        project.id,
+        rootIssue.id,
+        comments,
+        INITIAL_MANAGER_OUTPUT,
+        LEADER
       )
       assert.equal(
         await control.command('getValue', scoped('[data-testid="cloud-todo-detail-status"]')),
@@ -941,17 +943,16 @@ export async function createDesktopScenario({
         MEMBER_PROGRESS,
         uiTimeoutMs
       )
-      const secondPublicComment = await waitForTestIdByText(
-        control,
-        CONTENT,
-        'cloud-task-activity-card-',
-        `${FIRST_TASK} 已完成：证据完整。`,
-        uiTimeoutMs
+      const secondPublicComment = await waitForValue(
+        listComments,
+        rows => rows.find(row => row.body === `${FIRST_TASK} 已完成：证据完整。`),
+        '成员最终答复没有发布成评论',
+        modelResponseTimeoutMs
       )
       await guidedReplies.verify({
         reply: (card, text) => replyToActivity(control, card, text),
         firstCard: publicComment,
-        secondCard: secondPublicComment,
+        secondCard: `cloud-task-activity-card-${secondPublicComment.id}`,
         executorLog: cloudEnvironment.remoteDockerExecutorRuntimeLogPath,
         listComments,
         timeoutMs: modelResponseTimeoutMs,

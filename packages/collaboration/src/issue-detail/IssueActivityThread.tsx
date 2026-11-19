@@ -14,7 +14,7 @@ export function groupIssueTimelineThreads(
 ): IssueActivityThreadModel<ProjectChatMessage>[] {
   const publishedResults = new Map<string, Set<string>>();
   for (const message of messages) {
-    const activity = message.metadata.collaboration_member_activity_id;
+    const activity = message.metadata.collaboration_execution_activity_id;
     if (typeof activity !== "string") continue;
     const results = publishedResults.get(activity) ?? new Set<string>();
     results.add(message.content);

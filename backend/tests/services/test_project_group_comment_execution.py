@@ -294,6 +294,31 @@ def test_member_public_reply_uses_recorded_author_and_is_idempotent(member_scena
     assert error.value.status_code == 403
 
 
+def test_manager_public_reply_hides_the_dispatch_envelopes_copy(group_scenario):
+    s = group_scenario
+    s.root.sender_id = "collaboration_group_dispatch:group-dispatch-1"
+    s.root.agent_id = ""
+    s.root.runtime_task_id = f"{s.execution.runtime_task_id}-manager-initial"
+    s.root.metadata_json = {"dispatch_role": "manager"}
+    s.root.content = "Assigned the first round"
+    s.db.commit()
+    identity = CollaborationPublicReply(
+        dispatch_id="group-dispatch-1",
+        device_id=s.execution.runtime_device_id,
+        task_id=s.root.runtime_task_id,
+        message_id="manager-output",
+    )
+    scope = dict(user_id=s.owner.id, project_id=str(s.project.id), item_id=s.issue.id)
+    published = publish_collaboration_reply(
+        s.db, **scope, body=s.root.content, identity=identity
+    )
+    comments = list_issue_comments(s.db, **scope)
+    assert [row["id"] for row in comments if row["body"] == s.root.content] == [
+        published.message_id
+    ]
+    assert next(row for row in comments if row["id"] == s.root.message_id)["body"] == ""
+
+
 @pytest.mark.asyncio
 async def test_two_public_threads_guide_one_active_session_and_keep_their_replies(
     member_scenario,

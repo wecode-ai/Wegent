@@ -37,8 +37,6 @@ def _reply_author(
     db: Session, *, dispatch: LoopItemExecution, identity: CollaborationPublicReply
 ) -> tuple[str, ProjectChatMessage | None]:
     manager_id = dispatch.runtime_origin_context.get("manager_agent_id")
-    if identity.task_id == execution_conversation_task_id(dispatch):
-        return manager_id or "", None
     activities = (
         db.query(ProjectChatMessage)
         .filter_by(
@@ -49,8 +47,20 @@ def _reply_author(
         .filter(loop_datetime_is_unset(ProjectChatMessage.deleted_at))
         .order_by(ProjectChatMessage.id.desc())
     )
+    initial_manager_session = identity.task_id == execution_conversation_task_id(
+        dispatch
+    )
     for activity in activities:
         metadata = activity.metadata_json or {}
+        if (
+            initial_manager_session
+            and metadata.get("dispatch_role") == "manager"
+            and (
+                not metadata.get("activity_type")
+                or metadata.get("activity_type") == "manager_execution"
+            )
+        ):
+            return manager_id or "", activity
         if metadata.get("dispatch_id") != identity.dispatch_id:
             continue
         if metadata.get("activity_type") == "member_execution":
@@ -67,7 +77,9 @@ def _reply_author(
             and collaboration_manager_task_id(db, dispatch, activity)
             == identity.task_id
         ):
-            return activity.agent_id, None
+            return activity.agent_id, activity
+    if initial_manager_session:
+        return manager_id or "", None
     # A member can speak before the Executor's running report creates the activity.
     raise HTTPException(425, "Collaboration session activity is not recorded")
 
@@ -157,7 +169,11 @@ def publish_collaboration_reply(
     collaboration_group_snapshot_for_dispatch(item=item, execution=dispatch)
     if not execution_authorized(db, dispatch):
         raise HTTPException(403, "Collaboration execution authority is revoked")
-    agent_id, member_activity = _reply_author(db, dispatch=dispatch, identity=identity)
+    agent_id, activity = _reply_author(db, dispatch=dispatch, identity=identity)
+    member_activity = (
+        activity is not None
+        and (activity.metadata_json or {}).get("activity_type") == "member_execution"
+    )
     agent = db.get(ProjectChatAgent, agent_id)
     if (
         agent is None
@@ -204,8 +220,13 @@ def publish_collaboration_reply(
             "collaboration_public_reply": True,
             "dispatch_id": identity.dispatch_id,
             **(
-                {"collaboration_member_activity_id": member_activity.message_id}
-                if member_activity is not None
+                {"collaboration_execution_activity_id": activity.message_id}
+                if activity
+                else {}
+            ),
+            **(
+                {"collaboration_member_activity_id": activity.message_id}
+                if member_activity
                 else {"manager_runtime_task_id": identity.task_id}
             ),
         },

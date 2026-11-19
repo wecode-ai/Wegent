@@ -1,6 +1,21 @@
 import assert from 'node:assert/strict'
 import { isTranscriptReadAdmissionBusy } from './runtime-read-admission.mjs'
 
+export async function assertManagerComment(cloud, projectId, issueId, comments, body, leader) {
+  const managerComments = comments.filter(comment => comment.body === body)
+  if (managerComments.length !== 1) {
+    const stored = await cloud.queryDatabase(
+      'SELECT message_id, sender_id, agent_id, message_type, runtime_task_id, ' +
+        "JSON_EXTRACT(metadata, '$.dispatch_role') AS dispatch_role, " +
+        "JSON_EXTRACT(metadata, '$.activity_type') AS activity_type, " +
+        "JSON_EXTRACT(metadata, '$.collaboration_public_reply') AS public_reply " +
+        'FROM project_chat_messages WHERE project_id = %s AND task_id = %s AND content = %s',
+      [String(projectId), issueId, body]
+    )
+    assert.fail(`负责人正文应作为一条独立 Issue 评论显示：${JSON.stringify(stored)}`)
+  }
+  assert.equal(managerComments[0].author, leader)
+}
 export async function requestJson(
   baseUrl,
   token,
