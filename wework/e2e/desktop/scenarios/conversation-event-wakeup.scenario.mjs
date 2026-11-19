@@ -35,7 +35,7 @@ const MARKER = 'WEWORK_CONVERSATION_EVENT'
 const PROVIDER = '@test/connection-source/records'
 
 export function createDesktopScenario(options) {
-  const base = createBridgeScenario(options)
+  const base = createBridgeScenario(options, { versionedEventTypes: ['git.event'] })
   const {
     resultDir,
     electronUserDataDirectory,
@@ -108,6 +108,8 @@ export function createDesktopScenario(options) {
         }
       : phase === 'workflow_conflict'
         ? {
+            objectId: WORKFLOW_CONFLICT_TOPIC,
+            version: id,
             external: {
               eventType: 'tracked.workflow_run_pr_conflict',
               url: 'https://github.com/org/repo/pull/17',
