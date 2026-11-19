@@ -944,10 +944,10 @@ export async function createDesktopScenario({
         }),
       })
       assert.equal(memberTranscript.taskId, memberTaskId, '成员详情指向了其他会话')
-      const memberLink = scoped(
-        `[data-testid="cloud-todo-open-task-conversation-${memberBinding.id}"]`
-      )
-      await control.command('clickWhenEnabled', memberLink)
+      const memberMessageId = memberCard.slice('cloud-task-activity-card-'.length)
+      const memberLink = scoped(`[data-testid="cloud-task-activity-open-task-${memberMessageId}"]`)
+      await control.command('scrollIntoView', scoped(`[data-testid="${memberCard}"]`))
+      await control.command('clickWhenEnabled', memberLink, { timeoutMs: uiTimeoutMs })
       const memberPanel = scoped('[data-testid="work-item-task-chat-panel"]')
       await control.command('waitFor', `${memberPanel} [data-testid="message-assistant"]`, {
         text: `${FIRST_TASK} 已完成：证据完整。`,
