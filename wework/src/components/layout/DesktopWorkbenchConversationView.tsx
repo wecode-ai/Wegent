@@ -503,7 +503,17 @@ export function DesktopWorkbenchConversationView({
                                     }
                                     onSelectCloudProject={handleSelectCloudProject}
                                     contextHeader={
-                                      paneSession.transcriptLoading ? null : projectSpaceContext
+                                      projectSpaceContext && (
+                                        <div
+                                          className={cn(
+                                            'flex',
+                                            paneSession.transcriptLoading && 'invisible'
+                                          )}
+                                          inert={paneSession.transcriptLoading}
+                                        >
+                                          {projectSpaceContext}
+                                        </div>
+                                      )
                                     }
                                     isStreaming={paneIsBusy}
                                     onPause={pauseCurrentResponse}
