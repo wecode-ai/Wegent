@@ -878,7 +878,9 @@ async function verifyCloudModelRecovery({
     assert.equal(held.released, undefined, 'Editing options must not release the catalog barrier')
     catalogProxy.rule = previousRule
     assert.equal(await held.release(), true, 'The original Backend response must be delivered')
-    await control.command('waitFor', submit, { enabled: true, timeoutMs: 30_000 })
+    // The open modal picker makes the composer inert; only the native disabled
+    // attribute proves that the released catalog did not leave sending blocked.
+    await control.command('waitFor', `${submit}:not(:disabled)`, { timeoutMs: 30_000 })
     await control.command('press', 'body', { key: 'Escape' })
     assert.equal((await control.command('getText', editor)).trim(), draft)
     const saved = await rpc('runtime.stand_in.personal.get', { userId })
@@ -901,7 +903,7 @@ async function verifyCloudModelRecovery({
     await waitForDeliveredCloudCatalog(control, catalogProxy, updatedRequestStart)
     await control.command('press', 'body', { key: 'Escape' })
     await control.command('waitFor', trigger, { text: updatedLabel })
-    await control.command('waitFor', submit, { enabled: true, timeoutMs: 30_000 })
+    await control.command('waitFor', `${submit}:not(:disabled)`, { timeoutMs: 30_000 })
     return { reasoning, limits: UPDATED_LIMITS }
   } finally {
     catalogProxy.rule = previousRule
