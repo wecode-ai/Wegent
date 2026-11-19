@@ -1,6 +1,8 @@
 import { planIntake } from './router.js'
 import { ASSESSMENT_INSTRUCTIONS, PROJECT_ASSESSMENT_INSTRUCTIONS } from './instructions.js'
 
+const MAX_COORDINATION_WORKERS = 4
+
 /** The plugin owns routing; all snapshots, decisions and effects remain Executor-owned. */
 export class CoordinationRuntime {
   constructor(executor, { onError = () => {}, intervalMs = 5000 } = {}) {
@@ -8,7 +10,9 @@ export class CoordinationRuntime {
     this.onError = onError
     this.intervalMs = intervalMs
     this.stopped = true
-    this.pending = false
+    this.queued = new Map()
+    this.workers = new Map()
+    this.discovery = null
     this.running = null
     this.timer = null
   }
@@ -31,7 +35,8 @@ export class CoordinationRuntime {
 
   stop() {
     this.stopped = true
-    this.pending = false
+    for (const job of this.queued.values()) job.resolve()
+    this.queued.clear()
     clearTimeout(this.timer)
     this.timer = null
   }
@@ -39,27 +44,21 @@ export class CoordinationRuntime {
   wake() {
     if (this.stopped) return Promise.resolve()
     clearTimeout(this.timer)
-    this.pending = true
-    if (this.running) return this.running
-    this.running = this.drain().finally(() => {
-      this.running = null
-      if (!this.stopped) {
-        this.timer = setTimeout(() => void this.wake(), this.intervalMs)
-        this.timer.unref?.()
-      }
-    })
-    return this.running
-  }
-
-  async drain() {
-    while (this.pending && !this.stopped) {
-      this.pending = false
-      try {
-        await this.pass()
-      } catch (error) {
-        this.onError(error)
-      }
+    if (!this.discovery) {
+      this.discovery = this.pass()
+        .catch(error => this.onError(error))
+        .finally(() => {
+          this.discovery = null
+          if (!this.stopped) {
+            this.timer = setTimeout(() => void this.wake(), this.intervalMs)
+            this.timer.unref?.()
+          }
+        })
     }
+    this.running = this.discovery.then(() =>
+      Promise.all([...this.workers.values(), ...this.queued.values()].map(job => job.done))
+    )
+    return this.running
   }
 
   async pass() {
@@ -70,14 +69,42 @@ export class CoordinationRuntime {
         failure.contextId
       )
     }
-    for (const context of contexts) {
+    const eligible = contexts.filter(context => context.enabled && context.needsProcessing)
+    const ids = new Set(eligible.map(context => context.id))
+    for (const [id, job] of this.queued) {
+      if (ids.has(id)) continue
+      this.queued.delete(id)
+      job.resolve()
+    }
+    for (const context of eligible) {
       if (this.stopped) return
-      try {
-        await this.process(context)
-      } catch (error) {
-        // A disconnected project must not block another authorized context.
-        this.onError(error, context.id)
+      if (this.workers.has(context.id)) continue
+      const previous = this.queued.get(context.id)
+      if (previous) {
+        previous.context = context
+      } else {
+        let resolve
+        const done = new Promise(settle => {
+          resolve = settle
+        })
+        this.queued.set(context.id, { context, done, resolve })
       }
+    }
+    this.dispatch()
+  }
+
+  dispatch() {
+    for (const [id, job] of this.queued) {
+      if (this.stopped || this.workers.size >= MAX_COORDINATION_WORKERS) return
+      this.queued.delete(id)
+      this.workers.set(id, job)
+      void this.process(job.context)
+        .catch(error => this.onError(error, id))
+        .finally(() => {
+          this.workers.delete(id)
+          job.resolve()
+          this.dispatch()
+        })
     }
   }
 
@@ -114,6 +141,8 @@ export class CoordinationRuntime {
 
   async check(contextId) {
     await this.executor.request('runtime.coordination.wake', { contextId })
-    await this.wake()
+    void this.wake()
+    await this.discovery
+    await (this.workers.get(contextId) ?? this.queued.get(contextId))?.done
   }
 }

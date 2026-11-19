@@ -63,7 +63,7 @@ export async function getLocalCodexTransport() {
 
 export type LocalCodexTransport = 'http' | 'websocket'
 
-export async function saveLocalCodexTransport(transport: LocalCodexTransport) {
+async function writeLocalCodexTransport(transport: LocalCodexTransport) {
   const layer = await readCodexTransportConfig()
   const provider = layer?.config.model_providers?.[WEWORK_CODEX_PROVIDER]
   await requestLocalExecutor('codex.app_server_request', {
@@ -78,4 +78,19 @@ export async function saveLocalCodexTransport(transport: LocalCodexTransport) {
       expectedVersion: layer?.version ?? null,
     },
   })
+}
+
+export async function saveLocalCodexTransport(transport: LocalCodexTransport) {
+  try {
+    await writeLocalCodexTransport(transport)
+  } catch (error) {
+    if (
+      !(error instanceof Error) ||
+      error.message !==
+        'Configuration was modified since last read. Fetch latest version and retry.'
+    ) {
+      throw error
+    }
+    await writeLocalCodexTransport(transport)
+  }
 }

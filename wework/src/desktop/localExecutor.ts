@@ -79,6 +79,7 @@ export interface LocalExecutorBackendConnection {
   socketBaseUrl: string
   authToken: string
   runtimeAuthToken?: string | null
+  authenticatedUserId?: number
   deviceType: 'app' | 'remote'
 }
 
@@ -714,6 +715,9 @@ export function connectLocalExecutorToBackend(
     socket_url: connection.socketBaseUrl,
     auth_token: connection.authToken,
     runtime_auth_token: connection.runtimeAuthToken ?? null,
+    ...(connection.authenticatedUserId === undefined
+      ? {}
+      : { authenticated_user_id: connection.authenticatedUserId }),
     device_type: connection.deviceType,
   })
 }

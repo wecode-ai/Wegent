@@ -314,6 +314,7 @@ impl RuntimeWorkRpcHandler {
     pub(super) async fn existing_payload_command(
         &self,
         payload: &Value,
+        from_event: bool,
     ) -> Result<Option<Value>, AppIpcError> {
         if payload.get("commandId").is_none() {
             return Ok(None);
@@ -336,7 +337,7 @@ impl RuntimeWorkRpcHandler {
             resume_thread_id: None,
             initial_thread_goal: None,
         };
-        if self.backend_connection_snapshot()?.is_some() {
+        if !from_event && self.backend_connection_snapshot()?.is_some() {
             self.verify_runtime_user(&json!({"userId":turn.request.extra.get("user_id")}))
                 .await?;
         }

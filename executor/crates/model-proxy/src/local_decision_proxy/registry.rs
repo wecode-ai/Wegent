@@ -269,6 +269,7 @@ mod tests {
             backend_url: "https://backend.example.com".to_owned(),
             socket_url: String::new(),
             auth_token: auth_token.to_owned(),
+            authenticated_user_id: None,
             runtime_auth_token: String::new(),
         }
     }

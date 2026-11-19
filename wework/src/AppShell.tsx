@@ -103,6 +103,7 @@ function AppShellContent() {
             socketBaseUrl: cloudConnection.socketBaseUrl,
             isConnected: cloudConnection.isConnected,
             token: cloudConnection.token,
+            user: cloudConnection.user,
             preferencesLoaded: appPreferences?.loaded ?? false,
           }
         : undefined,
@@ -114,6 +115,7 @@ function AppShellContent() {
       cloudConnection.socketBaseUrl,
       cloudConnection.isConnected,
       cloudConnection.token,
+      cloudConnection.user,
       appPreferences?.loaded,
     ]
   )
