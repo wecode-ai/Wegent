@@ -130,8 +130,7 @@ export async function selectDesktopControlChoice(
   timeoutMs = 1000
 ): Promise<string> {
   if (!element.isConnected) throw new Error('Selection target is no longer mounted')
-  if (element.matches(':disabled, [aria-disabled="true"]') || element.closest('[inert]'))
-    throw new Error('Selection target is disabled')
+  if (!desktopControlElementEnabled(element)) throw new Error('Selection target is disabled')
   if (element instanceof HTMLSelectElement) {
     const expected =
       Array.from(element.options).find(option =>
@@ -187,6 +186,10 @@ export async function selectDesktopControlChoice(
   return option.label.trim()
 }
 
+export function desktopControlElementEnabled(element: HTMLElement): boolean {
+  return !element.matches(':disabled, [aria-disabled="true"]') && !element.closest('[inert]')
+}
+
 export async function chooseDesktopControlChoice(
   element: HTMLElement,
   selection: string,
@@ -194,7 +197,6 @@ export async function chooseDesktopControlChoice(
 ): Promise<string> {
   if (element instanceof HTMLSelectElement || (await registeredSelection(element)))
     return selectDesktopControlChoice(element, selection, 'value', timeoutMs)
-  if (element.matches(':disabled, [aria-disabled="true"]') || element.closest('[inert]'))
-    throw new Error('Choice target is disabled')
+  if (!desktopControlElementEnabled(element)) throw new Error('Choice target is disabled')
   return chooseDesktopControlOption(element, selection)
 }

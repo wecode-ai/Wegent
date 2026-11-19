@@ -101,6 +101,7 @@ import { executeVerificationControlCommand } from './verification-control'
 import { verifyConnectorAuthorizationIsolation } from './connector-authorization-isolation'
 import { captureEmbeddedBrowserSnapshot, evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
 import {
+  desktopControlElementEnabled,
   desktopControlSelectionValue,
   chooseDesktopControlChoice,
   selectDesktopControlChoice,
@@ -1214,11 +1215,6 @@ function loadDesktopControlScreenshot(snapshot: string): Promise<HTMLImageElemen
     image.onerror = () => reject(new Error('Unable to decode main webview snapshot'))
     image.src = snapshot
   })
-}
-
-function desktopControlElementEnabled(element: HTMLElement): boolean {
-  if (element.getAttribute('aria-disabled') === 'true') return false
-  return !('disabled' in element) || !(element as HTMLButtonElement).disabled
 }
 
 function desktopControlElementRendered(element: HTMLElement): boolean {
