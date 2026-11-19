@@ -57,7 +57,6 @@ export function createConversationEventModel({
       return [assistantMessage(`${marker}_DONE`)]
     }
     if (modelRequestTexts(body).includes(`${marker}_EVENT_RECEIVED`)) {
-      if (phase === 'human') onEvent()
       const input = body.input.findLast(
         item =>
           item.role === 'user' && JSON.stringify(item.content).includes(`${marker}_EVENT_RECEIVED`)
@@ -109,6 +108,7 @@ export function createConversationEventModel({
         ['goal', 'human'].includes(phase) &&
         !requestContainsToolOutput(body, `${marker}_complete`)
       ) {
+        if (phase === 'human') onEvent()
         return selectedToolCall(
           `${marker}_complete`,
           selectTool(body, 'update_goal', { status: 'complete' })
