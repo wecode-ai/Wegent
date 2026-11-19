@@ -1,6 +1,10 @@
 import { BufferedChatInput } from '@/components/layout/BufferedChatInput'
 import { useTranslation } from '@/hooks/useTranslation'
-import { ComposerProjectSelector, type ComposerInputHandle } from '@wegent/collaboration/composer'
+import {
+  ComposerProjectSelector,
+  PROJECT_CHAT_WORK_BAR_CLASS,
+  type ComposerInputHandle,
+} from '@wegent/collaboration/composer'
 import { TabsList, TabsRoot, TabsTab } from '@wegent/collaboration/controls/Tabs'
 import { Button as ControlButton } from '@wegent/collaboration/markdown/Button'
 import type { IssueHomeTaskComposerProps } from '@wegent/collaboration/platform'
@@ -150,9 +154,17 @@ export function WeworkIssueHomeComposer({
             showProjectWorkBar={false}
             showWorkspaceMenu={false}
             showExecutionTools={false}
+            projectWorkBar={
+              <div
+                className={
+                  'flex w-full min-w-0 flex-wrap items-center gap-2 ' + PROJECT_CHAT_WORK_BAR_CLASS
+                }
+              >
+                {projectControl}
+              </div>
+            }
             toolbarLeadingContext={
               <>
-                {projectControl}
                 {(
                   [
                     { symbol: '@', Icon: AtSign, label: 'mention_member' },

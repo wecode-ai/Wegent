@@ -399,12 +399,17 @@ export function ModelSelector({
       return (
         <Radio
           value={'model:' + modelSelectionKey(model)}
-          disabled={modelDisabled}
+          aria-disabled={modelDisabled || undefined}
           key={modelSelectionKey(model)}
           type="button"
           data-testid={`model-option-${getModelOptionId?.(model) ?? model.name}`}
           data-model-provider-id={codexProviderId(model)}
           title={disabledMessage}
+          onClick={() => {
+            // Reapplying the current model can recover a session after its provider changed.
+            if (selected && modelDisabled) onBlockedModelSelect?.(model, disabledMessage)
+            else if (selected) selectDesktopModel(model)
+          }}
           className={[
             controlOption,
             'shrink-0',
@@ -485,7 +490,7 @@ export function ModelSelector({
               // Reapplying a preset is a business action even when its radio value is unchanged.
               if (selected) selectPowerPreset(preset)
             }}
-            className={`${controlOption} shrink-0 transition-colors`}
+            className={`${controlOption} shrink-0 transition-colors focus-visible:bg-muted`}
           >
             <span className="min-w-0 flex-1">
               <span className={styles.defaultTitle}>
@@ -566,6 +571,21 @@ export function ModelSelector({
     selectFixedMode()
     if (isMobile) closeMenu('selection')
     return applied
+  }
+
+  function selectDesktopModel(model: UnifiedModel) {
+    if (selectExplicitModel(model) === false) {
+      closeMenu('selection')
+      return false
+    }
+    setDesktopMenuView('simple')
+    keepFocus(
+      () =>
+        simplePanelRef.current?.querySelector<HTMLElement>(
+          'button:not([disabled]), input:not([disabled])',
+        ) ?? undefined,
+    )
+    return true
   }
 
   function selectPowerPreset(preset: (typeof powerPresets)[number]) {
@@ -822,18 +842,7 @@ export function ModelSelector({
                               )
                               return
                             }
-                            if (selectExplicitModel(model) === false) {
-                              details.cancel()
-                              closeMenu('selection')
-                              return
-                            }
-                            setDesktopMenuView('simple')
-                            keepFocus(
-                              () =>
-                                simplePanelRef.current?.querySelector<HTMLElement>(
-                                  'button:not([disabled]), input:not([disabled])',
-                                ) ?? undefined,
-                            )
+                            if (!selectDesktopModel(model)) details.cancel()
                           } else {
                             const preset = powerPresets.find(
                               (preset) => 'preset:' + preset.key === choice,

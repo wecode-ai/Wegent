@@ -348,26 +348,29 @@ export function ComposerToolbar({
               label={sendButtonLabel ?? t('workbench.send_message', '发送消息')}
               align="end"
               testId="composer-send-tooltip"
+              disabled={!canSend}
             >
-              <ControlButton
-                variant="unstyled"
-                type="submit"
-                data-composer-primary-action="true"
-                data-testid={sendButtonTestId}
-                disabled={!canSend}
-                onMouseDown={event => event.preventDefault()}
-                className={cn(
-                  composerActionDensity +
-                    ' flex shrink-0 items-center justify-center gap-1.5 bg-text-primary text-background disabled:cursor-not-allowed disabled:bg-text-muted/45',
-                  sendButtonLabel
-                    ? 'rounded-lg px-3 text-sm font-medium'
-                    : composerIconActionDensity + ' rounded-full'
-                )}
-                aria-label={sendButtonLabel ?? t('workbench.send_message', '发送消息')}
-              >
-                {sendButtonLabel}
-                <ArrowUp className="h-4 w-4" />
-              </ControlButton>
+              <span className="inline-flex">
+                <ControlButton
+                  variant="unstyled"
+                  type="submit"
+                  data-composer-primary-action="true"
+                  data-testid={sendButtonTestId}
+                  disabled={!canSend}
+                  onMouseDown={event => event.preventDefault()}
+                  className={cn(
+                    composerActionDensity +
+                      ' flex shrink-0 items-center justify-center gap-1.5 bg-text-primary text-background disabled:cursor-not-allowed disabled:bg-text-muted/45',
+                    sendButtonLabel
+                      ? 'rounded-lg px-3 text-sm font-medium'
+                      : composerIconActionDensity + ' rounded-full'
+                  )}
+                  aria-label={sendButtonLabel ?? t('workbench.send_message', '发送消息')}
+                >
+                  {sendButtonLabel}
+                  <ArrowUp className="h-4 w-4" />
+                </ControlButton>
+              </span>
             </Tooltip>
           ))}
       </div>

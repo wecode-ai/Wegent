@@ -11,6 +11,7 @@ import {
   MenuContent,
   MenuItem,
   MenuSeparator,
+  MenuShortcut,
   MenuSub,
   MenuSubContent,
   MenuSubTrigger,
@@ -19,6 +20,7 @@ import {
 import { Check, ChevronRight, MoreHorizontal } from 'lucide-react'
 import { useState, type ComponentType, type ReactNode } from 'react'
 import { Tooltip } from './Tooltip'
+import { KeyboardShortcut } from './KeyboardShortcut'
 import { useCollaborationPortalTheme } from '../theme'
 
 interface ActionMenuEntry {
@@ -114,6 +116,11 @@ function MenuEntries({
           )}
         </span>
         {item.checked && <Check className="h-4 w-4" />}
+        {item.shortcut && (
+          <MenuShortcut className="ml-auto text-text-secondary">
+            <KeyboardShortcut value={item.shortcut} className="bg-transparent px-0 text-xs" />
+          </MenuShortcut>
+        )}
       </>
     )
     const className = [itemStyle, itemClassName, item.danger ? 'text-destructive' : '']
@@ -241,7 +248,9 @@ export function ActionMenu({
     >
       {!hideTrigger &&
         (showTriggerTooltip && !triggerLabel && !disabled ? (
-          <Tooltip label={ariaLabel}>{trigger}</Tooltip>
+          <Tooltip label={ariaLabel} testId={testId ? `${testId}-tooltip` : undefined}>
+            {trigger}
+          </Tooltip>
         ) : (
           trigger
         ))}

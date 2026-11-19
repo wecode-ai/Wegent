@@ -8,9 +8,13 @@ This record separates source review, running Story checks and native production-
 
 ## Verification baseline after main integration
 
-Main was merged and conflicts resolved on 2026-11-19. Application and Storybook type checks pass. Wework lint reports zero errors and six warnings; the control audit covers 2222 production TypeScript files with zero outstanding migrations. The focused settings navigation and search tests pass (29 cases). The latest static Storybook build contains 208 examples and 54 Docs entries. All 112 public value exports have a direct example, production composition or nonvisual API explanation.
+Main was merged and conflicts resolved on 2026-11-19. Application and Storybook type checks pass. Wework lint reports zero errors and six warnings; the control audit covers 2223 production TypeScript files with zero outstanding migrations. The focused settings navigation and search tests pass (29 cases). The latest static Storybook build contains 208 examples and 54 Docs entries. All 112 public value exports have a direct example, production composition or nonvisual API explanation.
 
-Narrow settings now use the shared SettingsShell, and model connection forms use the public field density. Both still require native verification with the integrated build. The earlier workspace-tabs E2E failed when replacing an Issue description: the new two lines were followed by the old description. No passing result has been obtained. Builds, source audits and earlier screenshots do not replace native acceptance.
+Narrow settings now use the shared SettingsShell, and model connection forms use the public field density. Both changes were exercised in the packaged desktop review below. The earlier workspace-tabs E2E failed when replacing an Issue description: the new two lines were followed by the old description. No passing result has been obtained. Builds, source audits and earlier screenshots do not replace native acceptance.
+
+In an isolated macOS arm64 Electron package, the account menu opened Settings and all 19 entries were reachable at 480, 768 and 1440 CSS pixels. Across 57 measurements, the settings content did not overflow horizontally and filled the window at 480 pixels. The narrow captures show shortcut titles, quick phrase row actions and execution environment buttons. Worktrees was still loading during capture and Runtime was disconnected from the cloud. The model settings E2E covered adding, editing and deleting a model connection.
+
+A second isolated package opened the task, Record Issue, and Create task composers using a local project. The project selectors in the last two modes measured 28 CSS pixels and showed the same project name. Captures showed the project in the bottom toolbar in Record Issue and above the editor in Create task. Record Issue now uses the same position above the editor. The final position and real model submission still need packaged verification.
 
 ## Scope and status
 

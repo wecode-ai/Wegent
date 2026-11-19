@@ -161,21 +161,23 @@ describe("runtime execution details without a desktop host", () => {
     ).toBeNull();
   });
 
-  it("focuses the close control and restores focus when dismissed", () => {
+  it("focuses the close control and restores focus when dismissed", async () => {
     const trigger = document.createElement("button");
     document.body.append(trigger);
     trigger.focus();
     const close = vi.fn();
     renderDetails({ onClose: close });
-    expect(document.activeElement).toBe(
-      element("runtime-execution-detail-close"),
+    await vi.waitFor(() =>
+      expect(document.activeElement).toBe(element("runtime-execution-detail-close")),
     );
-    act(() =>
-      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })),
-    );
+    const escape = new KeyboardEvent("keydown", {
+      key: "Escape", bubbles: true, cancelable: true,
+    });
+    act(() => element("runtime-execution-detail-close").dispatchEvent(escape));
+    expect(escape.defaultPrevented).toBe(true);
     expect(close).toHaveBeenCalledOnce();
     act(() => root.render(null));
-    expect(document.activeElement).toBe(trigger);
+    await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
     trigger.remove();
   });
 });

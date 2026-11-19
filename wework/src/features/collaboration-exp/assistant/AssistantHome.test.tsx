@@ -942,7 +942,7 @@ describe('AssistantHome', () => {
     ).not.toBeInTheDocument()
     expect(screen.getByText('assistant.defaultProtected')).toBeInTheDocument()
     fireEvent.click(screen.getByTestId('collaboration-exp-assistant-delete-reviewer'))
-    expect(screen.getByRole('dialog')).toHaveTextContent('assistant.deleteRoleDescription')
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('assistant.deleteRoleDescription')
     expect(onDelete).not.toHaveBeenCalled()
     fireEvent.click(screen.getByTestId('collaboration-exp-assistant-delete-confirm'))
     await waitFor(() => expect(onDelete).toHaveBeenCalledWith(role))
@@ -1052,7 +1052,7 @@ describe('AssistantHome', () => {
     fireEvent.click(screen.getByTestId('collaboration-exp-assistant-delete-confirm'))
     await waitFor(() => expect(rosterSave).toHaveBeenCalledOnce())
     expect(api.personalSave).not.toHaveBeenCalled()
-    expect(screen.getByRole('dialog')).toHaveTextContent('assistant.deleteRoleDescription')
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('assistant.deleteRoleDescription')
   })
 
   it('registers the role filter tags that dispatch uses for scoped Issue intake', async () => {

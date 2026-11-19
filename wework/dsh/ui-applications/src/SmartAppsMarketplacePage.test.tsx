@@ -6,7 +6,7 @@ import { localHarnessModelOptionKey } from '@/features/local-harness/localHarnes
 import type { UnifiedModel } from '@/types/api'
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import JSZip from 'jszip'
-import { beforeEach, describe, expect, onTestFinished, test, vi } from 'vitest'
+import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { SmartAppPublishDialog, SmartAppsMarketplacePage } from './SmartAppsMarketplacePage'
 
 const navigateTo = vi.fn()
@@ -631,8 +631,6 @@ describe('SmartAppsMarketplacePage', () => {
       )
       listInstalled.mockResolvedValue([running])
       const smartAppsApi = api()
-      const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false)
-      onTestFinished(() => confirm.mockRestore())
       render(<SmartAppsMarketplacePage api={smartAppsApi} />)
 
       const card = await screen.findByTestId('smart-app-marketplace-item-7')
@@ -658,12 +656,16 @@ describe('SmartAppsMarketplacePage', () => {
       fireEvent.click(installButton)
       const submit = await screen.findByTestId('harness-app-install-confirm')
       fireEvent.click(submit)
-      expect(confirm).toHaveBeenCalledOnce()
+      const confirmation = screen.getByRole('alertdialog')
+      expect(confirmation).toHaveTextContent('更新需要先停止正在运行的工作台，是否继续？')
       expect(stopInstalled).not.toHaveBeenCalled()
+      fireEvent.click(within(confirmation).getByTestId('confirmation-request-cancel'))
       expect(installPackage).not.toHaveBeenCalled()
 
-      confirm.mockReturnValue(true)
       fireEvent.click(submit)
+      fireEvent.click(
+        within(screen.getByRole('alertdialog')).getByTestId('confirmation-request-confirm')
+      )
       await waitFor(() => expect(installPackage).toHaveBeenCalledOnce())
       expect(stopInstalled).toHaveBeenCalledWith(running.id)
       expect(stopInstalled.mock.invocationCallOrder[0]).toBeLessThan(
@@ -1026,7 +1028,8 @@ describe('SmartAppsMarketplacePage', () => {
       'v1.2.0 已上架到智能应用市场。'
     )
     const viewMarketplaceButton = screen.getByTestId('smart-app-access-view-marketplace')
-    expect(viewMarketplaceButton).toHaveClass('border-success/30', 'bg-background', 'shadow-sm')
+    expect(viewMarketplaceButton).toHaveAccessibleName('去市场查看')
+    expect(viewMarketplaceButton).toBeEnabled()
     fireEvent.click(viewMarketplaceButton)
     expect(navigateTo).toHaveBeenCalledWith('/sites?app_type=smart_app')
     expect(screen.queryByTestId('smart-app-access-success')).not.toBeInTheDocument()

@@ -127,7 +127,7 @@ describe('ProjectAgentPicker', () => {
     act(() => get('project-agent-search-clear').click())
     expect(get<HTMLInputElement>('project-agent-search').value).toBe('')
     expect(document.activeElement).toBe(get('project-agent-search'))
-    expect(get<HTMLInputElement>('project-agent-option-12').checked).toBe(true)
+    expect(get('project-agent-option-12').getAttribute('aria-checked')).toBe('true')
   })
 
   it('prevents duplicate additions and enables submission only after a usable selection', () => {
@@ -167,7 +167,7 @@ describe('ProjectAgentPicker', () => {
     expect(props.onCreate).toHaveBeenCalledOnce()
     render({ loadError: null, selectedId: '13', error: 'Unable to add' })
     expect(get('project-agent-dialog-error').textContent).toBe('Unable to add')
-    expect(get<HTMLInputElement>('project-agent-option-13').checked).toBe(true)
+    expect(get('project-agent-option-13').getAttribute('aria-checked')).toBe('true')
     expect(get<HTMLButtonElement>('project-agent-wegent-create').disabled).toBe(
       false,
     )

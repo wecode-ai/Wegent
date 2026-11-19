@@ -10,7 +10,7 @@ import {
   Square,
   X,
 } from 'lucide-react'
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { DialogSurface } from '../controls/DialogSurface'
 import type { CollaborationTranslate } from '../i18n'
@@ -57,20 +57,11 @@ export function RuntimeExecutionDetails({
   children,
 }: RuntimeExecutionDetailsProps) {
   const portalTheme = useCollaborationPortalTheme()
-  const closeButtonRef = useRef<HTMLButtonElement | null>(null)
   const [stopping, setStopping] = useState(false)
   const [stopError, setStopError] = useState<string | null>(null)
   const displayStatus = executionDisplayStatus(runStatus) ?? 'unknown'
   const cancellable =
     executionRunning !== false && Boolean(onStop) && isExecutionCancellable(displayStatus)
-  useEffect(() => {
-    const previouslyFocused = document.activeElement as HTMLElement | null
-    closeButtonRef.current?.focus()
-    return () => {
-      previouslyFocused?.focus?.()
-    }
-  }, [])
-
   const handleStop = async () => {
     if (stopping || !onStop) return
     setStopping(true)
@@ -138,6 +129,7 @@ export function RuntimeExecutionDetails({
 
   return createPortal(
     <DialogSurface
+      initialFocus='[data-testid="runtime-execution-detail-close"]'
       onClose={onClose}
       render={
         <div
@@ -192,7 +184,6 @@ export function RuntimeExecutionDetails({
           </div>
           <ControlButton
             variant="unstyled"
-            ref={closeButtonRef}
             type="button"
             data-testid="runtime-execution-detail-close"
             aria-label={t('activity.close_dialog', '关闭')}

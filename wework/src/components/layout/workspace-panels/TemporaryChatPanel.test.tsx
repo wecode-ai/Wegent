@@ -2200,6 +2200,8 @@ describe('TemporaryChatPanel', () => {
           await userEvent.click(await screen.findByTestId(`model-option-${official.name}`))
           expect(screen.queryByTestId('model-switch-warning-dialog')).not.toBeInTheDocument()
         }
+        if (screen.queryByTestId('model-selector-menu')) await userEvent.keyboard('{Escape}')
+        expect(screen.queryByTestId('model-selector-menu')).not.toBeInTheDocument()
         await userEvent.click(screen.getByTestId(retry ? 'mock-retry' : 'send-message-button'))
         const executionTarget = revertBeforeSend ? 'official' : target
         const execution = {

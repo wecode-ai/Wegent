@@ -188,6 +188,7 @@ Open the account menu in the lower-left corner of Wework and select **About** to
 The version shown in the About page is read from the running Electron application package metadata,
 so it matches the version shown by the macOS **About Wework** system menu. Release builds that
 inject a version through the Electron configuration use that value in both places.
+On the About page, **Downloading update** shows the current download progress.
 When an update is downloading from the same menu, its progress appears directly below **Check for updates**, separate from **About**.
 Wework finishes downloading the update package before it asks to restart. No restart confirmation
 appears while the download is in progress; the **Update and restart** confirmation appears only
@@ -420,6 +421,8 @@ Open **Settings → Personal → Context**:
 | Settings → Coding → Hooks → Add Hook | Set plugin ID, name, version, event, matcher, command, Windows command, timeout, asynchronous execution and status message; save | Lifecycle events always run asynchronously; configure trusted commands      |
 | Settings → Coding → Hooks → Import   | Select a local Hook directory and inspect health after import                                                                    | Fix invalid configuration or missing commands first                         |
 | Hook row                             | Enable/disable, edit, delete, reveal its folder or test and inspect the last result                                              | Testing actually executes the command, rather than merely validating syntax |
+
+In the Runtime creation form, **Device** identifies where the task runs and **Model** selects the model it uses.
 
 Choose `PostToolUse`, `TurnStarted`, `TurnCompleted` or `ExecutionCompleted`. Tool events match tool names; lifecycle events match status, with `.*` accepting every status. Lifecycle commands always run in the background without making the main agent wait.
 
