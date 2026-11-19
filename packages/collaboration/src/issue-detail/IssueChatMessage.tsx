@@ -22,7 +22,7 @@ import type { CollaborationTranslate } from '../i18n'
 import { CompositedSpinner } from './CompositedSpinner'
 import { Tooltip } from './Tooltip'
 import { activityClassNames as cn } from './activityClassNames'
-import { executionDisplayStatus } from './executionStatus'
+import { executionDisplayStatus, isExecutionTerminal } from './executionStatus'
 import {
   resolveMessageRunStatus,
   backendTaskExecution,
@@ -286,6 +286,7 @@ export function IssueChatMessage({
     : undefined
   const openExecution =
     onOpenExecution ?? (allowBackendExecutionFallback ? openBackendExecution : undefined)
+  const stopManagerExecution = isExecutionTerminal(runStatus) ? undefined : onStopExecution
   const hasManagerOutput = isSucceeded && text.trim().length > 0
   if (
     compact &&
@@ -320,7 +321,7 @@ export function IssueChatMessage({
             <div className="min-w-0 flex-1">
               <span className="font-medium">{activityAuthor}</span> {presentation.label}
             </div>
-            {openExecution || onStopExecution ? (
+            {openExecution || stopManagerExecution ? (
               <div className="flex shrink-0 items-center gap-3">
                 {openExecution ? (
                   <button
@@ -332,13 +333,13 @@ export function IssueChatMessage({
                     {t('activity.task_activity_view_execution')}
                   </button>
                 ) : null}
-                {onStopExecution ? (
+                {stopManagerExecution ? (
                   <button
                     type="button"
                     data-testid={`cloud-task-manager-cancel-${message.messageId}`}
                     disabled={stopping}
                     className="text-xs text-text-muted hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-45"
-                    onClick={onStopExecution}
+                    onClick={stopManagerExecution}
                   >
                     {stopping
                       ? t('activity.task_activity_stopping_workflow')
@@ -771,10 +772,10 @@ function ExecutionStatusBadge({
           {t('activity.task_activity_view_execution')}
         </span>
       </button>
-      {onStopExecution ? (
+      {onStopExecution && !terminal ? (
         <button
           type="button"
-          disabled={terminal || stopping}
+          disabled={stopping}
           title={t('activity.task_activity_stop_execution')}
           data-testid={`cloud-task-activity-stop-${messageId}`}
           aria-label={t('activity.task_activity_stop_execution')}

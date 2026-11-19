@@ -85,6 +85,7 @@ describe("shared Issue threads", () => {
             agentRole="manager"
             executionStatus={status}
             translate={translate}
+            onStopExecution={() => {}}
             onOpenAttachment={() => {}}
             onOpenUrl={() => {}}
           />,
@@ -93,6 +94,9 @@ describe("shared Issue threads", () => {
       expect(container.textContent).toContain(label);
       expect(container.textContent).not.toContain("正在规划任务");
       expect(container.querySelector(".animate-spin")).toBeNull();
+      expect(Boolean(container.querySelector('[data-testid="cloud-task-manager-cancel-root"]'))).toBe(
+        status !== "cancelled",
+      );
     },
   );
 
