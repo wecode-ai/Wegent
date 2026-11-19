@@ -302,9 +302,11 @@ export function createProjectChatClient(
                 (row.taskId ?? undefined) === taskId,
             )
             const currentRevision = revisions.get(message.messageId) ?? 0
+            const superseded = currentRevision !== revision
             logActivitySource('resolved', message, {
               revision,
               currentRevision,
+              superseded,
               active,
               elapsedMs: Date.now() - startedAt,
               matched: Boolean(resolved),
@@ -314,7 +316,8 @@ export function createProjectChatClient(
                 resolved.runtimeAddress.taskId,
               ),
               latestPresent: latestMessages.has(message.messageId),
-              traceMatches:
+              traceMatches: resolved?.traceRef === message.traceRef,
+              latestTraceMatches:
                 latestMessages.get(message.messageId)?.traceRef ===
                 message.traceRef,
             })
@@ -322,7 +325,7 @@ export function createProjectChatClient(
               leaveUnusedRoom(projectId, taskId)
               return
             }
-            if (currentRevision !== revision) return
+            if (superseded) return
             const latest = latestMessages.get(message.messageId)
             if (resolved && latest && latest.traceRef === message.traceRef) {
               resolvedSources.set(message.messageId, {

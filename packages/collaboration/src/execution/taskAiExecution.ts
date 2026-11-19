@@ -193,7 +193,24 @@ export function mergeProjectChatMessages(
     const terminalTransition = agent && !previousTerminal && incomingTerminal
     // Snapshots and acknowledgements can arrive after live updates. A turn's
     // terminal result wins even when an acknowledgement has a later timestamp.
-    if ((order < 0 && !terminalTransition) || (agent && previousTerminal && !incomingTerminal)) {
+    const rejected =
+      (order < 0 && !terminalTransition) || (agent && previousTerminal && !incomingTerminal)
+    if (
+      (previous.traceRef || message.traceRef) &&
+      Boolean(previous.runtimeAddress) !== Boolean(message.runtimeAddress)
+    ) {
+      console.debug('[Project chat source] Activity message merge', {
+        messageId: message.messageId,
+        rejected,
+        sameTrace: previous.traceRef === message.traceRef,
+        previousStatus: previous.status,
+        incomingStatus: message.status,
+        previousHasAddress: Boolean(previous.runtimeAddress),
+        incomingHasAddress: Boolean(message.runtimeAddress),
+        timestampOrder: order,
+      })
+    }
+    if (rejected) {
       continue
     }
     // Active status projections carry empty placeholders, not content deletions.

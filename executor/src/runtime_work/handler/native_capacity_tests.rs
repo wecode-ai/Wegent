@@ -20,7 +20,7 @@ fn quota_readmission_does_not_publish_a_stale_wait_with_running_state() {
 #[tokio::test]
 async fn native_continuation_retains_capacity_after_local_control_finishes() {
     for clear_during_turn in [false, true] {
-        let (handler, root, _) = setup("native-capacity-after-local-control");
+        let (handler, root, mut request) = setup("native-capacity-after-local-control");
         handler
             .turn_scheduler
             .lock()
@@ -37,15 +37,19 @@ async fn native_continuation_retains_capacity_after_local_control_finishes() {
         assert!(handler.native_task_holds_capacity("task-1"));
         assert_eq!(handler.get_runtime_capacity().await.unwrap()["active"], 1);
         assert!(!handler.is_active_local_task("task-1"));
-        let duplicate = handler
-            .send_message(json!({
-                "taskId":"task-1", "message":"duplicate recovery"
-            }))
-            .await
-            .unwrap();
-        assert_eq!(duplicate["success"], false);
-        assert_eq!(duplicate["code"], "bad_request");
-        assert_eq!(duplicate["error"], "runtime task is already running");
+        request
+            .extra
+            .insert("wegent_resume_goal_only".into(), json!(true));
+        for payload in [
+            json!({"taskId":"task-1", "message":"duplicate recovery"}),
+            json!({"taskId":"task-1", "message":"resume", "executionRequest":request}),
+        ] {
+            let duplicate = handler.send_message(payload).await.unwrap();
+            assert_eq!(duplicate["success"], false);
+            assert_eq!(duplicate["code"], "bad_request");
+            assert_eq!(duplicate["error"], "runtime task is already running");
+            assert_eq!(handler.queued_local_task_position("task-1"), None);
+        }
 
         handler.route_codex_notification(json!({"method":"thread/goal/cleared",
             "params":{"threadId":"thread-1"}}));
