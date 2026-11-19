@@ -5,6 +5,7 @@
 """Exercise terminal handoff through the real hybrid gateway and Chat Shell."""
 
 import asyncio
+import faulthandler
 import json
 import os
 import threading
@@ -1027,4 +1028,8 @@ if __name__ == "__main__":
     )
     for process in ("rust", "python"):
         os.kill(int(state[process]), 0)
-    unittest.main(verbosity=2)
+    faulthandler.dump_traceback_later(120, repeat=True)
+    try:
+        unittest.main(verbosity=2)
+    finally:
+        faulthandler.cancel_dump_traceback_later()

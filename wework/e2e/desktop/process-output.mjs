@@ -17,22 +17,22 @@ function outputFor(destination) {
     output = {
       writer,
       written: completionOf(writer),
-      sources: new Set(),
+      sources: new Map(),
       sourceCompletions: [],
     }
     const sources = output.sources
     output.writer.on('error', error => {
-      for (const source of sources) source.destroy(error)
+      for (const source of sources.keys()) source.destroy(error)
     })
     outputs.set(destination, output)
   }
   return output
 }
 
-export function appendProcessOutput(stream, destination) {
+export function appendProcessOutput(stream, destination, owner) {
   if (!stream) return
   const output = outputFor(destination)
-  output.sources.add(stream)
+  output.sources.set(stream, owner)
   output.sourceCompletions.push(completionOf(stream, { readable: true, writable: false }))
   const complete = () => output.sources.delete(stream)
   stream.once('end', complete)
@@ -46,35 +46,69 @@ export function appendProcessOutput(stream, destination) {
   })
 }
 
-export async function flushProcessOutput() {
-  const results = await Promise.allSettled(
-    [...outputs].map(async ([destination, output]) => {
-      try {
-        const [written, sources] = await Promise.all([
-          output.written,
-          Promise.all(output.sourceCompletions).then(results => {
-            output.writer.end()
-            return results
-          }),
-        ])
-        if (written.status === 'rejected') throw written.reason
-        const failures = sources.filter(result => result.status === 'rejected')
-        if (failures.length) {
-          throw new AggregateError(
-            failures.map(result => result.reason),
-            'Process output did not finish cleanly'
-          )
-        }
-      } finally {
-        outputs.delete(destination)
-      }
+function reportPendingOutput() {
+  console.error(
+    '[desktop-e2e-process-output]',
+    JSON.stringify({
+      pending: [...outputs].map(([destination, output]) => ({
+        destination,
+        writer: {
+          pendingBytes: output.writer.writableLength,
+          ended: output.writer.writableEnded,
+          finished: output.writer.writableFinished,
+          closed: output.writer.closed,
+          destroyed: output.writer.destroyed,
+        },
+        sources: [...output.sources].map(([source, owner]) => ({
+          pid: owner?.pid,
+          exitCode: owner?.exitCode,
+          signalCode: owner?.signalCode,
+          pendingBytes: source.readableLength,
+          ended: source.readableEnded,
+          closed: source.closed,
+          destroyed: source.destroyed,
+          paused: source.isPaused(),
+        })),
+      })),
     })
   )
-  const failures = results.filter(result => result.status === 'rejected')
-  if (failures.length) {
-    throw new AggregateError(
-      failures.map(result => result.reason),
-      'Process log drainage failed'
+}
+
+export async function flushProcessOutput() {
+  const diagnostic = setInterval(reportPendingOutput, 10_000)
+  diagnostic.unref()
+  try {
+    const results = await Promise.allSettled(
+      [...outputs].map(async ([destination, output]) => {
+        try {
+          const [written, sources] = await Promise.all([
+            output.written,
+            Promise.all(output.sourceCompletions).then(results => {
+              output.writer.end()
+              return results
+            }),
+          ])
+          if (written.status === 'rejected') throw written.reason
+          const failures = sources.filter(result => result.status === 'rejected')
+          if (failures.length) {
+            throw new AggregateError(
+              failures.map(result => result.reason),
+              'Process output did not finish cleanly'
+            )
+          }
+        } finally {
+          outputs.delete(destination)
+        }
+      })
     )
+    const failures = results.filter(result => result.status === 'rejected')
+    if (failures.length) {
+      throw new AggregateError(
+        failures.map(result => result.reason),
+        'Process log drainage failed'
+      )
+    }
+  } finally {
+    clearInterval(diagnostic)
   }
 }

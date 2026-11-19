@@ -6,7 +6,6 @@ import {
   getProviderConfigurationState,
   reloadProviderConfiguration,
 } from '@/features/model-settings/providerModelConfiguration'
-import { rendererCrashStore } from './rendererCrashStore'
 import { getMainWindowFocusDiagnostics } from '@/desktop/windowFocus'
 import { completeDesktopControlCommand, type DesktopControlResult } from './desktop-control-command'
 import { captureHarnessAppLaunchDiagnostics } from './harness-app-launch-diagnostics'
@@ -2193,9 +2192,6 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'verifyConnectorAuthorizationIsolation':
       await verifyConnectorAuthorizationIsolation(command.value ?? '')
       return 'true'
-    case 'crashRenderer':
-      rendererCrashStore.trigger()
-      return 'Renderer crash requested'
     case 'getRoute':
       return stripAppBasePath(window.location.pathname)
     case 'getDocumentVisibility':

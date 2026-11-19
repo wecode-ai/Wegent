@@ -42,6 +42,10 @@ vi.mock('../e2e/desktop/modules/cloud-question-attachments.mjs', () => ({
   }),
 }))
 
+vi.mock('../e2e/desktop/modules/task-feedback-model-identity.mjs', () => ({
+  assertFeedbackModelSnapshot: vi.fn(),
+}))
+
 vi.mock('../e2e/desktop/modules/shared.mjs', async importOriginal => ({
   ...(await importOriginal()),
   fetchJson: state.fetchJson,

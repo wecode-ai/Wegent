@@ -160,6 +160,19 @@ fn transcript_merges_completed_command_timing_into_function_call_block() {
 }
 
 #[test]
+fn transcript_preserves_pending_mcp_tool_with_null_result() {
+    let thread = json!({"id": "thread", "turns": [{
+        "id": "turn", "status": "inProgress", "items": [{
+            "id": "call", "type": "mcpToolCall", "server": "node_repl", "tool": "js",
+            "arguments": {}, "status": "inProgress", "result": null, "error": null
+        }]
+    }]});
+
+    let messages = transcript_messages(&thread, "device");
+    assert_eq!(messages[0]["blocks"][0]["status"], "pending");
+}
+
+#[test]
 fn mcp_tool_blocks_preserve_plugin_provenance() {
     let params = json!({
         "item": {
