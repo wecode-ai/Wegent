@@ -130,9 +130,11 @@ async def test_responses_preserve_optional_backend_context_for_each_queue(
 
     assert response.status_code == 200
     assert response.json()["status"] == "queued"
-    enqueue = (
-        queue.return_value.enqueue_pipeline_task
+    enqueue, unused_enqueue = (
+        (queue.return_value.enqueue_pipeline_task, queue.return_value.enqueue_task)
         if request_id.startswith("pipeline-")
-        else queue.return_value.enqueue_task
+        else (queue.return_value.enqueue_task, queue.return_value.enqueue_pipeline_task)
     )
+    enqueue.assert_called_once()
+    unused_enqueue.assert_not_called()
     assert enqueue.call_args.args[0]["metadata"] == metadata

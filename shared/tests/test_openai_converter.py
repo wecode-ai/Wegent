@@ -19,7 +19,7 @@ from shared.models.openai_converter import OpenAIRequestConverter
     [{}, {"backend_url": None}, {"backend_url": ""}, {"backend_url": " \t\n"}],
 )
 def test_missing_backend_context_is_accepted_in_both_wire_formats(
-    context: dict[str, object],
+    context: dict[str, str | None],
 ) -> None:
     direct = ExecutionRequest.from_dict(context)
     openai = OpenAIRequestConverter.to_execution_request(
