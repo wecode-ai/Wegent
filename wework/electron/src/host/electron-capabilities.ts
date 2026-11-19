@@ -795,7 +795,13 @@ export function createElectronCapabilityRouter(
     )
   })
   router.register('e2e.focusMainWindow', async () => {
+    const activation = () =>
+      process.platform === 'darwin'
+        ? { active: app.isActive(), hidden: app.isHidden(), dockVisible: app.dock?.isVisible() }
+        : null
+    const before = activation()
     await e2eHost.focusMainWindow()
+    const afterPresentation = activation()
     const target = requiredWindow(window)
     if (target.isMinimized()) target.restore()
     target.show()
@@ -828,7 +834,7 @@ export function createElectronCapabilityRouter(
           visible: window.isVisible(),
           modal: window.isModal(),
         })),
-        appHidden: process.platform === 'darwin' ? app.isHidden() : null,
+        appActivation: { before, afterPresentation, afterTimeout: activation() },
       })
       throw error
     }

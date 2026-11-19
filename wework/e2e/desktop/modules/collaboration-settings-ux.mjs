@@ -135,6 +135,11 @@ async function verifyAgentDialogKeyboard(control, scoped) {
   await control.command('waitFor', save + ':not(:disabled)', { visible: true })
   await control.command('nativePress', save, { key: 'Tab' })
   await assertKeyboardFocus(control, 'cloud-project-chat-agent-cancel')
+  const readLayers = () =>
+    control.command('getElementMetrics', '[data-slot$="-content"][data-open], :focus', {
+      value: JSON.stringify({ attributeNames: ['data-testid', 'data-slot', 'role', 'id'] }),
+    })
+  const beforeEscape = await readLayers()
   await control.command(
     'nativePress',
     `${editor} [data-testid="cloud-project-chat-agent-cancel"]`,
@@ -142,7 +147,15 @@ async function verifyAgentDialogKeyboard(control, scoped) {
       key: 'Escape',
     }
   )
-  await control.command('waitFor', editor, { visible: false })
+  try {
+    await control.command('waitFor', editor, { visible: false })
+  } catch (error) {
+    console.error('[desktop-e2e-agent-editor-dismissal]', {
+      beforeEscape,
+      afterEscape: await readLayers().catch(() => 'unavailable'),
+    })
+    throw error
+  }
   await assertKeyboardFocus(control, editId)
 }
 

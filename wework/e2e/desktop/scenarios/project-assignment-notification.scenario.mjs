@@ -333,6 +333,7 @@ async function verifyIssueTags(control, request, issue, uiTimeoutMs) {
   const properties = scoped('[data-testid="cloud-todo-more-properties-popover"]')
   const input = `${metadata} [data-testid="cloud-todo-detail-tag-input"]`
   const chip = `${metadata} [data-testid="cloud-todo-detail-tag-tag-${tag}"]`
+  const title = scoped('[data-testid="cloud-todo-detail-title"]')
   const assertCollapsed = async () => {
     await control.command('waitFor', properties, { visible: false, timeoutMs: uiTimeoutMs })
     await control.command('waitFor', input, { visible: true, timeoutMs: uiTimeoutMs })
@@ -357,7 +358,10 @@ async function verifyIssueTags(control, request, issue, uiTimeoutMs) {
   )
   await control.command('fill', input, { value: tag })
   assert.equal(await control.command('getValue', input), tag)
-  await control.command('pointerClick', scoped('[data-testid="cloud-todo-detail-title"]'))
+  await control.command('waitFor', `${input}:focus`)
+  await control.command('focus', title)
+  await control.command('waitFor', `${title}:focus`)
+  await control.command('pointerClick', title)
   await assertCollapsed()
   await control.command('click', trigger)
   await control.command('waitFor', properties, { visible: true, timeoutMs: uiTimeoutMs })
