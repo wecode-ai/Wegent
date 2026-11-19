@@ -140,6 +140,8 @@ Enable the preview, open **top tab strip → + → Collaboration exp**, or roll 
 
 Model selection during template import: [Collaboration templates and configuration sharing](./projects.md#collaboration-template-models).
 
+Default-assistant acceptance receipts, reasons automatic acceptance is blocked, device waiting states and the assignee's configuration entry: [Human assignees and default assistants](./projects.md#human-assignment-receipts).
+
 | Search terms                                                                      | Detailed steps                                                                       |
 | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
 | Space members, global agents/teams/devices, Runner, templates, milestones         | [Space and resource operations](./projects.md#workspace-resource-controls)           |

@@ -169,7 +169,7 @@ impl RuntimeWorkRpcHandler {
             }
             let is_reply = payload.get("runtimeAction").and_then(Value::as_str) == Some("send");
             let result = if is_reply {
-                self.send_message(payload).await
+                self.send_internal_message(payload).await
             } else {
                 self.create_task(payload).await
             };

@@ -30,6 +30,7 @@ export function messageRuntimeExecutionTarget(
   message: ProjectChatMessage,
   execution?: CollaborationExecution,
 ): RuntimeExecutionTarget | null {
+  if (message.metadata.activity_type === "human_assistant_result") return null;
   const address =
     message.runtimeAddress?.deviceId && message.runtimeAddress.taskId
       ? message.runtimeAddress

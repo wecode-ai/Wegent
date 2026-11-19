@@ -1,0 +1,51 @@
+{
+  "synthetic": true,
+  "issue": {
+    "id": "issue-example",
+    "assignee": { "type": "user", "id": "57" },
+    "status": "in_progress"
+  },
+  "direct_human_assignment_receipt": {
+    "dispatchId": "dispatch-example",
+    "projectId": "project-example",
+    "issueId": "issue-example",
+    "humanAssignmentId": "7263329c-279c-5c04-bd9e-59a7a1506272",
+    "assignmentVersion": 3,
+    "ownerUserId": 57,
+    "state": "waiting_device",
+    "executionId": "123456789",
+    "runtimeTaskId": null,
+    "deliveryId": null,
+    "reasonCode": "waiting_device",
+    "createdAt": "2026-11-16T08:00:00Z",
+    "updatedAt": "2026-11-16T08:00:00Z"
+  },
+  "recovery": {
+    "onDeviceReady": "claim_existing_execution_once",
+    "onReassign": "cancel_old_execution_and_reject_stale_results",
+    "onCompletion": "publish_summary_and_evidence_with_provenance",
+    "idempotencyKey": "project-example:issue-example:assignment-example:3",
+    "issueStatus": "unchanged",
+    "privateTranscript": "owner_only"
+  },
+  "runtimeIdentity": {
+    "taskId": "stable-private-issue-conversation",
+    "eventPayload": { "executionId": "123456789" },
+    "cancelPayload": {
+      "taskId": "stable-private-issue-conversation",
+      "deviceId": "device-example",
+      "executionId": "123456789"
+    },
+    "staleExecution": "rejected_without_touching_new_assignment"
+  },
+  "stateExamples": [
+    { "state": "queued", "reasonCode": null, "accepted": false },
+    { "state": "running", "reasonCode": null, "accepted": true },
+    { "state": "blocked_policy", "reasonCode": "assistant_disabled" },
+    { "state": "blocked_policy", "reasonCode": "project_not_authorized" },
+    { "state": "blocked_policy", "reasonCode": "automatic_disabled" },
+    { "state": "blocked_policy", "reasonCode": "tag_mismatch" },
+    { "state": "waiting_device", "reasonCode": "waiting_device" }
+  ],
+  "featureFlag": "collab.humanAssignmentReceipts.v1"
+}

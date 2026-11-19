@@ -828,6 +828,12 @@ pub(in crate::socketio) async fn finish_runtime_activity(
     sequence: Option<i64>,
     reconciled_at: Option<NaiveDateTime>,
 ) -> MysqlResult<Vec<Message>> {
+    if crate::socketio::human_assistant_execution::is_personal(execution) {
+        return crate::socketio::human_assistant_execution::publish_result(
+            tx, execution, status, detail,
+        )
+        .await;
+    }
     let Some(candidate) = linked_activity(tx, execution).await? else {
         return Ok(vec![]);
     };
@@ -881,6 +887,9 @@ pub(in crate::socketio) async fn open_runtime_activity(
     tx: &mut impl MysqlTransaction,
     row: &ExecutionRow,
 ) -> MysqlResult<Option<Message>> {
+    if crate::socketio::human_assistant_execution::is_personal(row) {
+        return Ok(None);
+    }
     let status = row.status_or_empty();
     if !matches!(status, "claimed" | "running" | "cancel_requested")
         || row.runtime_device_id.as_deref().is_none_or(str::is_empty)

@@ -1,7 +1,6 @@
 """Authorization, model matching, defaults, and Issue affinity contracts."""
 
 import json
-from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
@@ -9,6 +8,7 @@ from pydantic import ValidationError
 
 from app.models.delivery import LoopItem
 from app.models.kind import Kind
+from app.models.loop_item_execution import LoopItemExecution
 from app.models.user import User
 from app.schemas.runner_routing import ExecutionPolicy, ModelPolicy, RunnerCatalog
 from app.services.runner_routing import (
@@ -21,18 +21,20 @@ from tests.services.test_loop_item_executions import _make_project
 from tests.utils.collaboration import authorize_project_agent, authorize_resource
 
 
-def _execution_stub(**kwargs):
+def _execution_stub(**kwargs) -> LoopItemExecution:
+    intent = dict(kwargs.pop("execution_intent", {}))
+    if "runtime_selection" in kwargs:
+        intent["runtime_selection"] = kwargs.pop("runtime_selection")
     values = dict(
         agent_id="",
         team_id=None,
         execution_environment="local",
-        execution_intent={},
-        runtime_origin_context={},
+        execution_payload=json.dumps(intent),
         executor_owner_user_id=kwargs["assigner_user_id"],
         runtime_device_id="",
         execution_device_id="",
     )
-    return SimpleNamespace(**{**values, **kwargs})
+    return LoopItemExecution(**{**values, **kwargs})
 
 
 MODEL = {"runtime": "codex", "provider": "openai", "model_id": "model-x"}

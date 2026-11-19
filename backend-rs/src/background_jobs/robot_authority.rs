@@ -101,6 +101,10 @@ async fn require_on(
         access.priority,
     )
     .await?;
+    if row.selection()["executor_kind"] == "human_assistant" {
+        return crate::socketio::personal_assistant_dispatch::require_current_on(query, issue, row)
+            .await;
+    }
     let context = row.context();
     if context["comment_continue_task_id"].as_str().is_some()
         && context["dispatch_kind"] == "collaboration_group"

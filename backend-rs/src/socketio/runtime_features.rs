@@ -82,6 +82,16 @@ fn parse(object: &Map<String, Value>) -> Option<Map<String, Value>> {
     {
         document.insert("pluginSync".to_owned(), Value::Object(sync));
     }
+    if let Some(value) = field(
+        object,
+        "personalAssistantDispatch",
+        "personal_assistant_dispatch",
+    ) {
+        document.insert(
+            "personalAssistantDispatch".to_owned(),
+            super::personal_assistant_dispatch::normalize(value),
+        );
+    }
     // Members outside the declared contract belong to a distribution extension
     // normalizer, so their reported document is kept as it arrived.
     for (key, value) in object {
@@ -93,7 +103,7 @@ fn parse(object: &Map<String, Value>) -> Option<Map<String, Value>> {
 }
 
 /// Top-level members of `RuntimeFeatures`, by alias and by field name.
-const DECLARED: [&str; 13] = [
+const DECLARED: [&str; 15] = [
     "schemaVersion",
     "schema_version",
     "runtimeTaskCreate",
@@ -105,6 +115,8 @@ const DECLARED: [&str; 13] = [
     "project_editing",
     "pluginSync",
     "plugin_sync",
+    "personalAssistantDispatch",
+    "personal_assistant_dispatch",
     "connectionEvents",
     "connection_events",
 ];
@@ -113,9 +125,17 @@ const DECLARED: [&str; 13] = [
 fn fallback(object: &Map<String, Value>) -> Option<Value> {
     let editing_key = ["projectEditing", "project_editing"]
         .into_iter()
-        .find(|key| object.contains_key(*key))?;
-    let denied = object
-        .get(editing_key)
+        .find(|key| object.contains_key(*key));
+    let assistant = field(
+        object,
+        "personalAssistantDispatch",
+        "personal_assistant_dispatch",
+    );
+    if editing_key.is_none() && assistant.is_none() {
+        return None;
+    }
+    let denied = editing_key
+        .and_then(|key| object.get(key))
         .and_then(Value::as_object)
         .map(|editing| {
             editing
@@ -135,6 +155,12 @@ fn fallback(object: &Map<String, Value>) -> Option<Value> {
         "projectEditing".to_owned(),
         Value::Object(project_editing(&Value::Object(denied))),
     );
+    if assistant.is_some() {
+        document.insert(
+            "personalAssistantDispatch".to_owned(),
+            serde_json::json!({"version":1,"roles":[]}),
+        );
+    }
     Some(Value::Object(document))
 }
 
@@ -254,6 +280,48 @@ fn flag(object: &Map<String, Value>, alias: &str, name: &str, default: bool) -> 
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn connection_events_and_personal_consent_preserve_their_validation_boundaries() {
+        let assistant = json!({"version":1,"roles":[{"id":"@primary","userId":7,
+            "enabled":true,"collaboration":{"enabled":true,"allProjects":true},
+            "handlingPolicy":{"automatic":true},"prompt":"private"}]});
+        let empty = json!({"version":1,"roles":[]});
+        for (assistant_key, connection_key) in [
+            ("personalAssistantDispatch", "connectionEvents"),
+            ("personal_assistant_dispatch", "connection_events"),
+        ] {
+            let mut source = json!({"schemaVersion":4,"projectEditing":{"plugins":false}});
+            source[assistant_key] = assistant.clone();
+            source[connection_key] = json!({"protocolVersion":1,"unknown":true});
+            let normalized = normalize(&source).unwrap();
+            let consent = &normalized["personalAssistantDispatch"];
+            assert_eq!(normalized["connectionEvents"], json!({"protocolVersion":1}));
+            assert_eq!(consent["roles"][0]["id"], "@primary");
+            assert!(consent["roles"][0].get("prompt").is_none());
+            assert!(normalized.get("personal_assistant_dispatch").is_none());
+            assert!(normalized.get("connection_events").is_none());
+            assert_eq!(normalize(&normalized).unwrap(), normalized);
+
+            let mut invalid_connection = source.clone();
+            invalid_connection[connection_key] = json!({"protocolVersion":true});
+            let retained = normalize(&invalid_connection).unwrap();
+            assert!(retained.get("connectionEvents").is_none());
+            assert_eq!(&retained["personalAssistantDispatch"], consent);
+
+            let mut invalid_assistant = source.clone();
+            invalid_assistant[assistant_key] = json!({"version":2,"roles":[]});
+            let revoked = normalize(&invalid_assistant).unwrap();
+            assert_eq!(revoked["personalAssistantDispatch"], empty);
+            assert_eq!(revoked["connectionEvents"], normalized["connectionEvents"]);
+
+            source["schemaVersion"] = json!(0);
+            let denied = normalize(&source).unwrap();
+            assert_eq!(denied["personalAssistantDispatch"]["roles"], json!([]));
+            assert!(denied.get("connectionEvents").is_none());
+            assert_eq!(denied["projectEditing"]["plugins"], false);
+        }
+    }
 
     #[test]
     fn connection_event_protocol_survives_registration_and_malformed_optional_flags() {

@@ -14,7 +14,7 @@
 use brz_mysql::{MysqlResult, MysqlTransaction};
 
 use super::{
-    RuntimeIdentity, execution_for_runtime, handle_runtime_event, non_binding_runtime_event,
+    RuntimeIdentity, execution_for_event, handle_runtime_event, non_binding_runtime_event,
     owned_identity_ids,
 };
 use crate::state::AppState;
@@ -58,15 +58,14 @@ async fn write_back_in_transaction<T: MysqlTransaction>(
     device_id: &str,
     identity: &RuntimeIdentity<'_>,
 ) -> MysqlResult<Option<super::lifecycle::Effects>> {
-    let task_id = identity.runtime_task_id.clone();
     let ids = owned_identity_ids(transaction, user_id, device_id).await?;
     // `execution_for_runtime` returns early without a query when the device
     // identity did not resolve.
     if ids.is_empty() {
         return Ok(None);
     }
-    let execution =
-        execution_for_runtime(transaction, &ids, &task_id, Some(user_id), false).await?;
+    let execution = execution_for_event(transaction, &ids, identity, user_id).await?;
+    let previous_status = execution.as_ref().and_then(|row| row.status.clone());
     let version = super::lifecycle::item_version(transaction, execution.as_ref()).await?;
     // Source `handle_runtime_event` dismisses thread metadata, Goal and
     // lifecycle notifications before it re-resolves anything.
@@ -77,14 +76,19 @@ async fn write_back_in_transaction<T: MysqlTransaction>(
     if handle_ids.is_empty() {
         return Ok(None);
     }
-    let Some(row) =
-        execution_for_runtime(transaction, &handle_ids, &task_id, Some(user_id), false).await?
-    else {
+    let Some(row) = execution_for_event(transaction, &handle_ids, identity, user_id).await? else {
         return Ok(None);
     };
     let mut messages = Vec::new();
     let matched = handle_runtime_event(transaction, row, identity, &mut messages).await?;
-    super::lifecycle_effects(transaction, matched, version, identity, messages)
-        .await
-        .map(Some)
+    super::lifecycle::effects(
+        transaction,
+        matched,
+        version,
+        previous_status.as_deref(),
+        identity,
+        messages,
+    )
+    .await
+    .map(Some)
 }

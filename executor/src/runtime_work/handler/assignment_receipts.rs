@@ -94,6 +94,9 @@ impl RuntimeWorkRpcHandler {
         });
         binding["taskId"] = json!(self.stand_in_task_id(config, issue));
         binding["taskTitle"] = issue["title"].clone();
+        if let Some(dispatch) = super::human_assistant_dispatch::dispatch(config, issue, &binding) {
+            binding["humanAssistantDispatchId"] = dispatch["dispatchId"].clone();
+        }
         binding["standInPending"] = json!(self
             .store
             .get_task_summary(binding["taskId"].as_str().unwrap())
@@ -127,12 +130,19 @@ impl RuntimeWorkRpcHandler {
                 )
                 .map_err(settings_error)?;
         } else {
-            self.runtime_http(
-                reqwest::Method::POST,
-                &format!("/v1/loop-items/{issue_id}/tasks"),
-                Some(&binding),
-            )
-            .await?;
+            let admitted = self
+                .runtime_http(
+                    reqwest::Method::POST,
+                    &format!("/v1/loop-items/{issue_id}/tasks"),
+                    Some(&binding),
+                )
+                .await?;
+            if let Some(execution) = admitted
+                .get("execution_id")
+                .filter(|value| !value.is_null())
+            {
+                binding["executionId"] = execution.clone();
+            }
         }
         self.store
             .bind_issue_conversation(

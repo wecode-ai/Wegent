@@ -346,6 +346,22 @@ pub(crate) fn runtime_origin(runtime_handle: &Value) -> Option<&Value> {
         })
 }
 
+pub(crate) fn restore_prepared_origin(request: &mut ExecutionRequest, runtime_handle: &Value) {
+    // Prepared turns retain their execution identity even when a later owner turn
+    // updates the conversation. Live native authorization still checks that identity.
+    let frozen = request
+        .extra
+        .get("origin")
+        .filter(|origin| {
+            origin["humanAssistantDispatchId"].is_string() && origin["executionId"].is_string()
+        })
+        .cloned();
+    restore_origin(request, runtime_handle);
+    if let Some(origin) = frozen {
+        request.extra.insert("origin".into(), origin);
+    }
+}
+
 pub(crate) fn restore_origin(request: &mut ExecutionRequest, runtime_handle: &Value) {
     if let Some(delegation) = runtime_handle.pointer("/executionRequest/standInDelegation") {
         request

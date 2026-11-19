@@ -14,7 +14,7 @@ use std::{
 use serde_json::Map;
 use serde_json::{json, Value};
 
-use crate::{emitter::EventEnvelope, runner::EventSink, runtime_work::runtime_features};
+use crate::{emitter::EventEnvelope, runner::EventSink, runtime_work::runtime_features_for_device};
 
 use super::{
     capability::{CapabilityReportProvider, DefaultCapabilityReporter},
@@ -392,7 +392,12 @@ where
     }
 
     pub(super) fn runtime_features(&self) -> Value {
-        let mut features = runtime_features();
+        let device_id = if self.config.device_type == "app" {
+            &self.config.app_device_id
+        } else {
+            &self.config.device_id
+        };
+        let mut features = runtime_features_for_device(device_id);
         if self.config.device_type == "app" {
             features["remoteTaskAccess"] = json!({
                 "version": 1,

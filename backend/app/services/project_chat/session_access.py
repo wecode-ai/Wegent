@@ -120,6 +120,11 @@ def resolve_project_transcript(
         required_role=BaseRole.Viewer,
     )
     executions = _session_executions(db, request)
+    if any(
+        row.executor_type == "human_assistant" and row.executor_owner_user_id != user_id
+        for row in executions
+    ):
+        raise HTTPException(404, "Project session binding not found")
     bindings = active_task_binding_query(
         db,
         project_id=scope.project_id,

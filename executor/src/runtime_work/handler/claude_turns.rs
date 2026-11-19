@@ -322,6 +322,12 @@ impl RuntimeWorkRpcHandler {
         let (stopped_tx, stopped_rx) = oneshot::channel();
         let execution_id =
             self.start_local_task_execution(local_task_id.clone(), cancel_tx, stopped_rx);
+        self.active_local_executions
+            .lock()
+            .expect("active local execution map lock should not be poisoned")
+            .get_mut(&local_task_id)
+            .expect("the newly admitted execution must exist")
+            .request = Some(request.clone());
         if let Some(restore_startup) = restore_startup.as_ref() {
             self.schedule_restore_startup_timeout(
                 local_task_id.clone(),

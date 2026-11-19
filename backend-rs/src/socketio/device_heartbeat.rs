@@ -244,6 +244,22 @@ pub async fn heartbeat(
         }
     }
 
+    super::personal_assistant_dispatch::synchronize(
+        state,
+        runtime,
+        user_id,
+        &route_id,
+        payload.runtime_features.as_ref(),
+    )
+    .await
+    .map_err(|error| {
+        tracing::error!(%error, user_id, "personal assistant heartbeat synchronization failed");
+        ClientError::new(
+            "ASSISTANT_DECLARATION_FAILED",
+            "Personal assistant authorization is temporarily unavailable",
+        )
+    })?;
+
     if payload.capabilities.is_some() {
         store_capabilities_state(state, user_id, &route_id, payload.capabilities.as_ref()).await;
     }

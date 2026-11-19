@@ -23,6 +23,7 @@ import {
   IssueActivityThread,
   type IssueActivityThreadModel,
 } from "./IssueActivityThread";
+import type { SharedIssueDetailTaskBinding } from "./createSharedIssueDetailPort";
 
 function ActivityMessage({
   singleExecution,
@@ -59,6 +60,9 @@ export function IssueProjectChatThread({
   remove,
   members,
   agents,
+  currentUserId,
+  taskBindings = [],
+  onOpenTaskConversation,
 }: {
   thread: IssueActivityThreadModel<ProjectChatMessage>;
   upload?(file: File): Promise<CollaborationAttachment>;
@@ -77,6 +81,9 @@ export function IssueProjectChatThread({
   ): Promise<unknown>;
   members?: CollaborationMember[];
   agents?: CollaborationAgent[];
+  currentUserId?: number;
+  taskBindings?: SharedIssueDetailTaskBinding[];
+  onOpenTaskConversation?(binding: SharedIssueDetailTaskBinding): void;
   translate(
     key: string,
     fallback?: string,
@@ -112,6 +119,17 @@ export function IssueProjectChatThread({
       (run) => run.id === Number(message.metadata.execution_id),
     );
     const target = messageRuntimeExecutionTarget(message, execution);
+    const mine =
+      message.sender.type === "user" &&
+      String(message.sender.id) === String(currentUserId);
+    const assistantBinding =
+      mine && message.metadata.activity_type === "human_assistant_result"
+        ? taskBindings.find(
+            (binding) =>
+              binding.execution_id != null &&
+              binding.execution_id === String(message.metadata.execution_id),
+          )
+        : undefined;
     const singleExecution =
       singleExecutionForMessage?.(target?.activityMessage ?? message) ?? false;
     const dispatchRole =
@@ -153,9 +171,11 @@ export function IssueProjectChatThread({
             window.open(url, "_blank", "noopener,noreferrer");
           }}
           onOpenExecution={
-            target && onOpenExecution
-              ? () => onOpenExecution({ ...target, singleExecution })
-              : undefined
+            assistantBinding && onOpenTaskConversation
+              ? () => onOpenTaskConversation(assistantBinding)
+              : target && onOpenExecution
+                ? () => onOpenExecution({ ...target, singleExecution })
+                : undefined
           }
           onStopExecution={
             target && onStopExecution

@@ -133,6 +133,7 @@ fn the_final_text_prefers_the_runtime_value() {
 #[derive(Clone, Default)]
 struct RecordingTransaction {
     queries: Arc<Mutex<Vec<(String, usize)>>>,
+    writes: Arc<Mutex<Vec<(String, usize)>>>,
 }
 
 impl RecordingTransaction {
@@ -151,11 +152,15 @@ impl RecordingTransaction {
 }
 
 impl MysqlTransaction for RecordingTransaction {
-    async fn execute<S, A>(&mut self, _: S, _: A) -> MysqlResult<MysqlExecution>
+    async fn execute<S, A>(&mut self, sql: S, args: A) -> MysqlResult<MysqlExecution>
     where
         S: AsRef<str> + Send,
         A: MysqlArgs + Send,
     {
+        self.writes
+            .lock()
+            .unwrap()
+            .push((sql.as_ref().to_owned(), args.len()));
         Ok(MysqlExecution {
             rows_affected: 0,
             last_insert_id: 0,
@@ -404,6 +409,121 @@ fn execution_row(runtime_task_id: Option<&str>, payload: &str) -> ExecutionRow {
         execution_payload: Some(payload.to_owned()),
         version: Some(1),
     }
+}
+
+#[tokio::test]
+async fn blocking_interactions_are_persisted_in_the_existing_execution_observation() {
+    let mut tx = RecordingTransaction::default();
+    let row = execution_row(
+        Some("reused-task"),
+        r#"{"runtime_selection":{"executor_kind":"human_assistant"}}"#,
+    );
+    let payload = json!({"executionId":"41","data":{"state":"waiting_user"}});
+    let observed = crate::socketio::human_assistant_execution::observation_state(
+        &row,
+        "runtime.interaction.updated",
+        &payload,
+    );
+    assert_eq!(observed, "waiting_user");
+    accept_observation(&mut tx, &row, 7, Utc::now().naive_utc(), observed)
+        .await
+        .unwrap();
+    let writes = tx.writes.lock().unwrap();
+    assert_eq!(writes.len(), 1);
+    let (sql, count) = &writes[0];
+    assert!(sql.contains("observed_state=?"));
+    assert!(!sql.contains("observed_state='running'"));
+    assert!(sql.contains("WHERE id=? AND version=?"));
+    assert!(sql.contains("AND last_event_seq < ?"));
+    assert_eq!(*count, 11);
+}
+
+#[tokio::test]
+async fn personal_events_and_activity_require_a_frozen_execution_identity() {
+    let recorder = RecordingTransaction::default();
+    let mut tx = recorder.clone();
+    let row = execution_row(
+        Some("reused-task"),
+        r#"{"runtime_selection":{"executor_kind":"human_assistant"}}"#,
+    );
+    assert_eq!(execution_executor_type(&row), "human_assistant");
+    let identity = runtime_identity(json!({"taskId":"reused-task","eventSeq":1}));
+    let mut messages = Vec::new();
+    assert!(
+        handle_runtime_event(&mut tx, row, &identity, &mut messages)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let row = execution_row(
+        Some("reused-task"),
+        r#"{"runtime_selection":{"executor_kind":"human_assistant"}}"#,
+    );
+    assert!(
+        open_runtime_activity(&mut tx, &row)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        crate::socketio::device_reconcile::apply_snapshot(&mut tx, &row, "completed", false, None)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(messages.is_empty());
+    assert!(recorder.queries().is_empty());
+}
+
+#[tokio::test]
+async fn stale_personal_events_do_not_fall_back_to_the_shared_chat_stream() {
+    let recorder = RecordingTransaction::default();
+    let mut tx = recorder.clone();
+    let identity =
+        runtime_identity(json!({"taskId":"reused-task","executionId":"41","eventSeq":3}));
+    let (projected, effects) = project_in_transaction(&mut tx, 3, "owner-device", &identity)
+        .await
+        .unwrap();
+    assert!(projected.is_none());
+    assert!(effects.messages.is_empty());
+    assert!(
+        recorder
+            .queries()
+            .iter()
+            .all(|(sql, _)| !sql.contains("project_chat_messages"))
+    );
+}
+
+#[tokio::test]
+async fn personal_status_changes_invalidate_without_changing_the_issue_version() {
+    let mut tx = RecordingTransaction::default();
+    let identity =
+        runtime_identity(json!({"taskId":"reused-task","executionId":"41","eventSeq":1}));
+    let payload = r#"{"runtime_selection":{"executor_kind":"human_assistant"}}"#;
+    let row = execution_row(Some("reused-task"), payload);
+    let changed = lifecycle::effects(
+        &mut tx,
+        Some(row),
+        Some(4),
+        Some("claimed"),
+        &identity,
+        Vec::new(),
+    )
+    .await
+    .unwrap();
+    assert!(changed.changed);
+    let row = execution_row(Some("reused-task"), payload);
+    let unchanged = lifecycle::effects(
+        &mut tx,
+        Some(row),
+        Some(4),
+        Some("running"),
+        &identity,
+        Vec::new(),
+    )
+    .await
+    .unwrap();
+    assert!(!unchanged.changed);
 }
 
 /// The default variant keeps the recorded `LIMIT 1` and binds the task id as

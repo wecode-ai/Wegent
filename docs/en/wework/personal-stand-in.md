@@ -19,6 +19,8 @@ Reply directly to a stand-in comment without another mention to continue with th
 
 Stand-in replies on an Issue show the owning user followed by the role in parentheses, for example “Alex (Assistant)”, so participants can distinguish different users' stand-ins. A user ID appears while the member name is unavailable and updates to the name when member information loads.
 
+For default-assistant acceptance receipts, reasons automatic acceptance is blocked and **Configure my assistant** on Issues assigned to a person, see [Human assignees and default assistants](./projects.md#human-assignment-receipts).
+
 <!-- ui-source: src/features/todo/StandInSettingsPage.tsx -->
 <!-- ui-source: src/features/todo/StandInOverviewPage.tsx -->
 

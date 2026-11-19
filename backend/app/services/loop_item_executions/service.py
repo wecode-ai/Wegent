@@ -522,7 +522,7 @@ def _execution_is_claimable_by_device(
     from app.services.device.identity import resolve_owned_device_alias
     from app.services.runner_routing import execution_device_authorized
 
-    if execution.assignment_pending:
+    if execution.assignment_pending or execution.executor_type == "human_assistant":
         return False
 
     runner = resolve_owned_device_alias(
@@ -1868,6 +1868,21 @@ class LoopItemExecutionService:
         row = db.get(LoopItemExecution, execution_id)
         if row is None:
             return None
+        if row.executor_type == "human_assistant":
+            if (
+                row.status not in {STATUS_WAITING_RUNTIME, STATUS_CLAIMED}
+                or row.observed_state != OBSERVED_UNCONFIRMED
+            ):
+                return row
+            return self.fail(
+                db,
+                execution_id=row.id,
+                error=error,
+                note=note or "runtime_preflight_failed",
+                requeue=False,
+                expected_status=row.status,
+                expected_version=row.version,
+            )
         if (
             row.status != STATUS_CLAIMED
             or not loop_datetime_value_is_unset(row.start_requested_at)
@@ -2161,6 +2176,9 @@ class LoopItemExecutionService:
         from app.services.loop_items.locking import lock_existing_issue
 
         lock_existing_issue(db, execution.loop_item_id)
+        # Personal assistant work stays private until a final result is published.
+        if execution.executor_type == "human_assistant":
+            return None
         current = db.get(
             LoopItemExecution,
             execution.id,
@@ -2901,6 +2919,10 @@ class LoopItemExecutionService:
     ) -> ProjectChatMessage | None:
         """Apply the elected execution outcome without committing or pushing."""
 
+        if execution.executor_type == "human_assistant":
+            from app.services.human_assistant_dispatch import publish_result
+
+            return publish_result(db, execution, content, terminal_status)
         from app.models.delivery import ProjectAutomationRun
         from app.services.loop_items.locking import lock_existing_issue
         from app.services.project_chat.service import project_chat_service
@@ -3343,6 +3365,14 @@ class LoopItemExecutionService:
         )
         if row is None:
             return None
+        if row.executor_type == "human_assistant":
+            from app.services.human_assistant_dispatch import execution_current
+
+            db.query(LoopItem).filter(
+                LoopItem.id == row.loop_item_id
+            ).populate_existing().with_for_update().first()
+            if not execution_current(db, row) and row.status != STATUS_CANCEL_REQUESTED:
+                return None
         terminal = self._terminal_status(event_name, payload)
         raw_event_seq = payload.get("eventSeq", payload.get("event_seq"))
         if isinstance(raw_event_seq, bool):
@@ -4375,6 +4405,7 @@ class LoopItemExecutionService:
                 "runtime_source": execution.runtime_selection.get("runtime_source"),
                 "can_select_runtime": (
                     execution.executor_owner_user_id == viewer_user_id
+                    and execution.executor_type != "human_assistant"
                     and not execution.uses_runner_routing
                     and execution.status in {"waiting_runtime", "queued"}
                 ),

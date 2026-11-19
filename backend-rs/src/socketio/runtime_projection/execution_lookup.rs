@@ -9,6 +9,49 @@ use crate::socketio::execution_aggregate::CAPACITY_STATUSES;
 use crate::sql_support::StatementArg;
 use brz_mysql::{MysqlResult, MysqlTransaction};
 
+pub(in crate::socketio) async fn execution_for_event(
+    transaction: &mut impl MysqlTransaction,
+    device_ids: &[String],
+    identity: &super::RuntimeIdentity<'_>,
+    owner: i64,
+) -> MysqlResult<Option<ExecutionRow>> {
+    let Some(raw) = identity.payload.get("executionId") else {
+        return execution_for_runtime(
+            transaction,
+            device_ids,
+            &identity.runtime_task_id,
+            Some(owner),
+            false,
+        )
+        .await;
+    };
+    let Some(id) = raw
+        .as_str()
+        .and_then(|raw| raw.parse::<i64>().ok())
+        .filter(|id| *id > 0)
+    else {
+        return Ok(None);
+    };
+    if device_ids.is_empty() {
+        return Ok(None);
+    }
+    let row: Option<ExecutionRow> = transaction
+        .fetch_optional(
+            format!("SELECT {EXECUTION_COLUMNS} FROM loop_item_executions WHERE id=?"),
+            (id,),
+        )
+        .await?;
+    Ok(row.filter(|row| {
+        row.executor_owner_user_id == Some(owner)
+            && row.runtime_task_id.as_deref() == Some(identity.runtime_task_id.as_str())
+            && row
+                .runtime_device_id
+                .as_ref()
+                .is_some_and(|device| device_ids.contains(device))
+            && !row.is_terminal()
+    }))
+}
+
 /// Device/task identities are bound; only placeholder counts are structural.
 pub(super) fn execution_statement(
     device_count: usize,

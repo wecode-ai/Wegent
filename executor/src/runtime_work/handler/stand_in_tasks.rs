@@ -240,7 +240,7 @@ impl RuntimeWorkRpcHandler {
         request["standInDelegation"] = delegation;
         use sha2::{Digest, Sha256};
         let command = format!("stand-in-task:{:x}", Sha256::digest(client.as_bytes()));
-        Box::pin(self.send_message(json!({"taskId":id,"message":message,"executionRequest":request,"clientUserMessageId":client,"commandId":command,"queueIfBusy":true,"automaticStandIn":true}))).await
+        Box::pin(self.send_internal_message(json!({"taskId":id,"message":message,"executionRequest":request,"clientUserMessageId":client,"commandId":command,"queueIfBusy":true,"automaticStandIn":true}))).await
     }
 
     pub(super) async fn validate_primary_task_followup(

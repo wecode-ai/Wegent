@@ -18,6 +18,17 @@ impl ActiveCodexTranscriptItems {
         self.user_input_requests.values().any(|pending| *pending)
             || self.has_pending_mcp_elicitation()
     }
+
+    fn bind_interaction_request(&mut self, binding: Option<(String, String, ExecutionRequest)>) {
+        if self.frozen_interaction_request.is_some() {
+            return;
+        }
+        if let Some((_, _, request)) =
+            binding.filter(|(thread, turn, _)| thread == &self.thread_id && turn == &self.turn_id)
+        {
+            self.frozen_interaction_request = Some(request);
+        }
+    }
 }
 
 fn user_input_request_key(id: &Value) -> Option<String> {
@@ -29,11 +40,40 @@ fn user_input_request_key(id: &Value) -> Option<String> {
 }
 
 impl RuntimeWorkRpcHandler {
+    // Capture the native control before taking the transcript lock; never infer identity from Task.
+    fn frozen_interaction_request(
+        &self,
+        local_task_id: &str,
+    ) -> Option<(String, String, ExecutionRequest)> {
+        let executions = self.active_local_executions.lock().ok()?;
+        let control = executions.get(local_task_id)?;
+        let turn = control
+            .codex_turn
+            .as_ref()
+            .filter(|turn| turn.execution_id == control.execution_id)?;
+        let request = control.request.as_ref()?;
+        let origin = request.extra.get("origin")?;
+        if !origin["humanAssistantDispatchId"].is_string()
+            || !origin["executionId"]
+                .as_str()
+                .is_some_and(|id| !id.is_empty())
+        {
+            return None;
+        }
+        Some((
+            turn.thread_id.clone(),
+            turn.turn_id.clone(),
+            request.clone(),
+        ))
+    }
+
     pub(super) fn refresh_pending_user_input_status(&self, local_task_id: &str) {
-        let Ok(items) = self.active_codex_transcript_items.lock() else {
+        let request = self.frozen_interaction_request(local_task_id);
+        let Ok(mut items) = self.active_codex_transcript_items.lock() else {
             return;
         };
-        if let Some(active) = items.get(local_task_id) {
+        if let Some(active) = items.get_mut(local_task_id) {
+            active.bind_interaction_request(request);
             self.set_pending_user_input_status(local_task_id, active);
         }
     }
@@ -42,14 +82,28 @@ impl RuntimeWorkRpcHandler {
     fn set_pending_user_input_status(
         &self,
         local_task_id: &str,
-        active: &ActiveCodexTranscriptItems,
+        active: &mut ActiveCodexTranscriptItems,
     ) {
-        if active.has_pending_user_input() {
+        let pending = active.has_pending_user_input();
+        if pending {
             self.set_interaction_status(local_task_id, Some(INTERACTION_WAITING_FOR_USER_INPUT));
         } else if self.local_task_link(local_task_id).is_some_and(|link| {
             link.interaction_status.as_deref() == Some(INTERACTION_WAITING_FOR_USER_INPUT)
         }) {
             self.set_interaction_status(local_task_id, None);
+        }
+        if pending != active.published_waiting_for_user_input {
+            if let Some(request) = &active.frozen_interaction_request {
+                emit_response_event(
+                    &self.event_tx,
+                    &self.device_id,
+                    "runtime.interaction.updated",
+                    local_task_id,
+                    request,
+                    json!({"state": if pending { "waiting_user" } else { "running" }}),
+                );
+                active.published_waiting_for_user_input = pending;
+            }
         }
     }
 
@@ -158,6 +212,7 @@ impl RuntimeWorkRpcHandler {
         turn_id: &str,
     ) {
         let private_discussion = self.runtime_task_is_private_discussion(local_task_id);
+        let request = self.frozen_interaction_request(local_task_id);
         let Ok(mut active_items) = self.active_codex_transcript_items.lock() else {
             return;
         };
@@ -169,9 +224,12 @@ impl RuntimeWorkRpcHandler {
                 private_discussion,
                 items: Vec::new(),
                 user_input_requests: HashMap::new(),
+                frozen_interaction_request: None,
+                published_waiting_for_user_input: false,
             },
         );
-        if let Some(active) = active_items.get(local_task_id) {
+        if let Some(active) = active_items.get_mut(local_task_id) {
+            active.bind_interaction_request(request);
             self.set_pending_user_input_status(local_task_id, active);
         }
     }
@@ -337,7 +395,7 @@ impl RuntimeWorkRpcHandler {
                 if let Some(mut active) = active_items.remove(local_task_id) {
                     active.items.clear();
                     active.user_input_requests.clear();
-                    self.set_pending_user_input_status(local_task_id, &active);
+                    self.set_pending_user_input_status(local_task_id, &mut active);
                 }
             }
         }

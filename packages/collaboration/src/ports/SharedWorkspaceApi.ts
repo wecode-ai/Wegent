@@ -168,6 +168,7 @@ export interface WorkspaceTaskBinding {
   dispatchId?: string | null;
   dispatchRoundId?: string | null;
   assignmentId?: string | null;
+  executionId?: string | null;
   linkedAt: string;
 }
 

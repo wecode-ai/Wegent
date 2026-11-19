@@ -58,7 +58,11 @@ def _notify_execution_lifecycle(
     item = db.get(LoopItem, execution.loop_item_id)
     if item is None:
         return
-    recipient_id = item.assignee_user_id or item.created_by_user_id
+    recipient_id = (
+        execution.executor_owner_user_id
+        if execution.executor_type == "human_assistant"
+        else item.assignee_user_id or item.created_by_user_id
+    )
     if not recipient_id:
         return
     project = db.get(CloudProject, int(item.cloud_project_id or 0))

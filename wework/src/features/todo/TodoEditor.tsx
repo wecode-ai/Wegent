@@ -11,6 +11,7 @@ import {
   type CollaborationAssignment,
   createCollaborationTranslator,
   createSharedIssueDetailPort,
+  mapCollaborationIssueDto,
   IssueMarkdownProvider,
   type CollaborationAttachment,
   formatIssueAttachmentSize,
@@ -105,6 +106,7 @@ export type TodoEditorProps = TodoEditorApiProps & {
   showChildren?: boolean
   showCurrentTaskOnly?: boolean
   defaultAssistant?: import('@wegent/collaboration').CollaborationDefaultAssistant
+  onConfigureAssistant?: () => void
   taskRefreshKey?: string | number
   getRuntimeTranscript?: NonNullable<WorkbenchServices['runtimeWorkApi']>['getRuntimeTranscript']
   initialTaskBindings?: LoopItemTaskBinding[]
@@ -151,6 +153,8 @@ function canCreatePersonalTask(props: TodoEditorProps): boolean {
 
 export function TodoEditor(props: TodoEditorProps) {
   const { t, i18n } = useTranslation('common')
+  const item = props.mode === 'edit' ? props.item : null
+  const sharedItem = useMemo(() => (item ? mapCollaborationIssueDto(item) : null), [item])
   const [taskLinkRevision, setTaskLinkRevision] = useState(0)
   const taskOwnerUserId = props.project?.project_store === 'local' ? 0 : props.currentUserId
   const collaboratorEditingSupported = props.project?.project_store !== 'local'
@@ -398,6 +402,7 @@ export function TodoEditor(props: TodoEditorProps) {
     },
     loadTeams,
     allItems: props.allItems as SharedEditorIssue[],
+    currentUserId: props.currentUserId,
     onClose: props.onClose,
     onEscape: props.onEscape,
     presentation: props.presentation,
@@ -409,6 +414,7 @@ export function TodoEditor(props: TodoEditorProps) {
     showChildren: props.showChildren,
     showCurrentTaskOnly: props.showCurrentTaskOnly,
     defaultAssistant: props.defaultAssistant,
+    onConfigureAssistant: props.onConfigureAssistant,
     taskRefreshKey: `${props.taskRefreshKey ?? ''}:${taskLinkRevision}`,
     initialTaskBindings: props.initialTaskBindings?.filter(
       task => taskOwnerUserId !== undefined && String(task.task_user_id) === String(taskOwnerUserId)
@@ -473,7 +479,7 @@ export function TodoEditor(props: TodoEditorProps) {
       <SharedIssueDetailEditor
         {...commonProps}
         mode="edit"
-        item={props.item as SharedEditorIssue}
+        item={sharedItem as SharedEditorIssue}
         editable={canEditProjectSpaceIssue({
           ...props.item,
           project_store:

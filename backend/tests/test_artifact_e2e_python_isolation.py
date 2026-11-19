@@ -46,11 +46,6 @@ def test_artifact_python_command_preserves_mounted_service_environment(
         encoding="utf-8",
     )
     service_venv = project / ".venv"
-    service_venv.mkdir()
-    config = service_venv / "pyvenv.cfg"
-    config.write_text("home = /host-only-python\nversion = 3.10.0\n", encoding="utf-8")
-    canary = service_venv / "must-not-change.py"
-    canary.write_text("SERVICE_ENVIRONMENT_CANARY\n", encoding="utf-8")
     environment = {
         **os.environ,
         "UV_PROJECT_ENVIRONMENT": str(service_venv),
@@ -68,6 +63,12 @@ def test_artifact_python_command_preserves_mounted_service_environment(
         capture_output=True,
         timeout=30,
     )
+    # Prepare the lock before introducing the deliberately unusable service venv.
+    service_venv.mkdir()
+    config = service_venv / "pyvenv.cfg"
+    config.write_text("home = /host-only-python\nversion = 3.10.0\n", encoding="utf-8")
+    canary = service_venv / "must-not-change.py"
+    canary.write_text("SERVICE_ENVIRONMENT_CANARY\n", encoding="utf-8")
     lockfile = project / "uv.lock"
     before = {
         path: (path.read_bytes(), path.stat().st_mtime_ns)

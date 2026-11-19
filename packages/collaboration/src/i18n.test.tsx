@@ -24,6 +24,7 @@ describe("collaboration i18n", () => {
       "todo.create_automatic_processing": "Create automatic rule",
       "todo.schedule_advanced": "Advanced settings (Cron)",
       "todo.processing_target": "Processing target",
+      "human_assignment_receipt.state.running": "Accepted by assistant",
     };
     for (const [key, english] of Object.entries(labels)) {
       expect(en(key, "中文回退")).toBe(english);

@@ -224,12 +224,16 @@ impl RuntimeWorkRpcHandler {
         } else {
             "cloud"
         };
-        let prompt = format!(
+        let mut prompt = format!(
             "[项目空间 Issue] {protocol}://projects/{project}/todos/{issue_id}\n\n{}\n\n{}\n\n{}",
             issue["title"].as_str().unwrap_or_default(),
             issue["description"].as_str().unwrap_or_default(),
             config["prompt"].as_str().unwrap_or_default()
         );
+        let durable = super::human_assistant_dispatch::dispatch(config, issue, binding).is_some();
+        if durable {
+            prompt.push_str("\n\n[共享结果约束]\n最终回复将回写到共享 Issue。仅提供简洁的工作摘要、可核验的证据引用和仍需确认的事项；不要包含私人偏好、工作区私密信息、工具调用过程或内部推理。执行完成不代表 Issue 自动完成，状态变更、审批、合并、部署和外部发布继续遵守项目授权与门禁。");
+        }
         let origin = self.stand_in_issue_origin(config, issue, binding);
         let mut payload = json!({"taskId":task_id,"title":issue["title"],"message":prompt,"cloudProjectId":project,"origin":origin});
         if let Some(message) = config["triggerMessage"].as_str() {
@@ -246,7 +250,7 @@ impl RuntimeWorkRpcHandler {
             .as_str()
             .unwrap_or_default()
             .to_owned();
-        super::stand_in_conversations::append_conversation_instructions(&mut system, true);
+        super::stand_in_conversations::append_conversation_instructions(&mut system, !durable);
         prepared["executionRequest"]["system_prompt"] = json!(system);
         Ok(prepared)
     }
@@ -257,7 +261,15 @@ impl RuntimeWorkRpcHandler {
         issue: &Value,
         binding: &Value,
     ) -> Value {
-        let mut origin = json!({"type":"issue_dispatch","initiatedBy":"stand_in","publicConversation":true,"runtimeTaskId":self.stand_in_task_id(config, issue),"trigger":if config["triggerCommentId"].is_string() { "mention" } else if config["manual"] == true { "manual" } else { "assignment" },"triggerCommentId":config["triggerCommentId"],"standInId":config["id"],"roleName":config["name"],"userId":config["userId"],"deviceId":self.device_id,"askBeforeAct":config["handlingPolicy"]["askBeforeAct"] == true,"projectStore":config["projectStore"],"cloudProjectId":config["projectId"],"loopItemId":issue["id"],"humanAssignmentId":binding["humanAssignmentId"].as_str().unwrap_or_default(),"assignmentId":binding["assignmentId"],"dispatchId":binding["dispatchId"],"roundId":binding["dispatchRoundId"]});
+        let dispatch = super::human_assistant_dispatch::dispatch(config, issue, binding);
+        let mut origin = json!({"type":"issue_dispatch","initiatedBy":"stand_in","publicConversation":dispatch.is_none(),"runtimeTaskId":self.stand_in_task_id(config, issue),"trigger":if config["triggerCommentId"].is_string() { "mention" } else if config["manual"] == true { "manual" } else { "assignment" },"triggerCommentId":config["triggerCommentId"],"standInId":config["id"],"roleName":config["name"],"userId":config["userId"],"deviceId":self.device_id,"askBeforeAct":config["handlingPolicy"]["askBeforeAct"] == true,"projectStore":config["projectStore"],"cloudProjectId":config["projectId"],"loopItemId":issue["id"],"humanAssignmentId":binding["humanAssignmentId"].as_str().unwrap_or_default(),"assignmentId":binding["assignmentId"],"dispatchId":binding["dispatchId"],"roundId":binding["dispatchRoundId"]});
+        if let Some(dispatch) = dispatch {
+            origin["humanAssistantDispatchId"] = dispatch["dispatchId"].clone();
+            origin["executionId"] = binding
+                .get("executionId")
+                .unwrap_or(&dispatch["executionId"])
+                .clone();
+        }
         if config["projectStore"] == "cloud" {
             if let Ok(Some(connection)) = self.backend_connection_snapshot() {
                 origin["backendUrl"] = json!(connection.backend_url);
@@ -300,6 +312,17 @@ impl RuntimeWorkRpcHandler {
         issue: &Value,
         binding: &Value,
     ) -> Result<(), AppIpcError> {
+        if config["manual"] != true
+            && !config["triggerCommentId"].is_string()
+            && issue["direct_human_assignment_receipt"].is_object()
+            && (super::human_assistant_dispatch::dispatch(config, issue, binding).is_none()
+                || !matches!(
+                    issue["direct_human_assignment_receipt"]["state"].as_str(),
+                    Some("queued" | "waiting_device")
+                ))
+        {
+            return Ok(());
+        }
         let task_id = self.stand_in_task_id(config, issue);
         if !self.stand_in_issue_runs_here(config, issue) {
             self.log_stand_in_decision(
@@ -352,7 +375,16 @@ impl RuntimeWorkRpcHandler {
             return Ok(());
         }
         let result = async {
-            let payload = self.prepare_stand_in_task(config, issue, binding).await?;
+            let payload = match self.prepare_stand_in_task(config, issue, binding).await {
+                Ok(payload) => payload,
+                Err(error) => {
+                    if super::human_assistant_dispatch::dispatch(config, issue, binding).is_some() {
+                        self.report_assistant_preflight_failure(config, issue, &error)
+                            .await;
+                    }
+                    return Err(error);
+                }
+            };
             self.create_stand_in_task(config, issue, binding, payload)
                 .await
         }
@@ -435,8 +467,13 @@ impl RuntimeWorkRpcHandler {
                 "The previous Issue turn is still running",
             ));
         }
-        self.accept_stand_in_assignment(config, issue, binding)
+        let admitted = self
+            .accept_stand_in_assignment(config, issue, binding)
             .await?;
+        if let Some(execution) = admitted.get("executionId").filter(|value| !value.is_null()) {
+            payload["origin"]["executionId"] = execution.clone();
+            payload["executionRequest"]["origin"] = payload["origin"].clone();
+        }
         self.log_stand_in_decision(
             config,
             issue,
@@ -474,7 +511,19 @@ impl RuntimeWorkRpcHandler {
         }
         // A binding reserves ownership, not completion. Keep it on failure so
         // reconciliation can resume the same task without a compensating DELETE.
-        self.dispatch_stand_in_task(payload, retry).await?;
+        if let Err(error) = self.dispatch_stand_in_task(payload, retry).await {
+            let may_have_started = self.is_active_local_task(&task_id)
+                || self.local_task_link(&task_id).is_some_and(|link| {
+                    link.running || runtime_session_id_from_link(&link).is_some()
+                });
+            if !may_have_started
+                && super::human_assistant_dispatch::dispatch(config, issue, binding).is_some()
+            {
+                self.report_assistant_preflight_failure(config, issue, &error)
+                    .await;
+            }
+            return Err(error);
+        }
         self.record_stand_in_issue_wakeup(&task_id, binding);
         self.accept_stand_in_assignment(config, issue, binding)
             .await?;

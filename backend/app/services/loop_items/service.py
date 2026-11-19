@@ -357,6 +357,9 @@ class LoopItemService:
         )
         values["approval"] = self._approval_view(execution)
         values["human_task_binding"] = context.human_bindings.get(item.id)
+        values["direct_human_assignment_receipt"] = (
+            context.human_receipts.get(item.id) if can_view_detail else None
+        )
         if execution is not None:
             values["ai_state"] = execution_ai_state_from_resources(
                 execution,
@@ -2100,6 +2103,16 @@ class LoopItemService:
                 next_version=values.version + 1,
                 completed_at=updates.get("completed_at"),
             )
+            if next_status == "completed":
+                from app.services.human_assistant_dispatch import (
+                    cancel_assignment_dispatch,
+                )
+                from app.services.issue_assignments import issue_assignment_service
+
+                for assignment in issue_assignment_service.active_for_issue(
+                    db, item.id
+                ):
+                    cancel_assignment_dispatch(db, assignment, "issue_closed")
         if collaboration_group is not None:
             db.flush()
             db.refresh(item)
@@ -2954,6 +2967,13 @@ class LoopItemService:
                 db, item=item, values=values, user_id=user_id
             )
         self._require_item_access(db, item, user_id, action=IssueAction.EXECUTE)
+        db.query(LoopItem).filter(
+            LoopItem.id == item_id
+        ).populate_existing().with_for_update().first()
+        self._require_item_access(db, item, user_id, action=IssueAction.EXECUTE)
+        from app.services.human_assistant_dispatch import claim_for_binding
+
+        assistant_execution_id = claim_for_binding(db, item, values, user_id)
         self._validate_backend_task(db, values.backend_task_id, user_id)
         logger.info(
             "[LoopItem] Bind runtime session: item=%s runtime_task=%s team=%s model_selected=%s",
@@ -2986,6 +3006,11 @@ class LoopItemService:
                         ),
                         **metadata_updates,
                     }
+                if assistant_execution_id:
+                    active.metadata_json = {
+                        **(active.metadata_json or {}),
+                        "execution_id": assistant_execution_id,
+                    }
                 self.ensure_collaborator(
                     db, item, user_id, user_id, "task", commit=False
                 )
@@ -3009,6 +3034,11 @@ class LoopItemService:
             metadata_json=_task_binding_metadata(values) or None,
         )
         db.add(binding)
+        if assistant_execution_id:
+            binding.metadata_json = {
+                **(binding.metadata_json or {}),
+                "execution_id": assistant_execution_id,
+            }
         self.ensure_collaborator(db, item, user_id, user_id, "task", commit=False)
         if commit:
             db.commit()

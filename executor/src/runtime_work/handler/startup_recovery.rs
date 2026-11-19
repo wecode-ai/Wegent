@@ -10,6 +10,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         link: Option<&RuntimeTaskLink>,
         payload: Value,
+        request: ExecutionRequest,
         activity: bool,
     ) -> Result<Option<Value>, AppIpcError> {
         let Some(link) = link.filter(|link| {
@@ -28,11 +29,12 @@ impl RuntimeWorkRpcHandler {
             self.store.update_task(&link.local_task_id, |link| {
                 link.thread_id = Some(thread.clone());
             });
-            return Box::pin(self.send_message_with_activity_checks(payload, activity))
+            return Box::pin(self.send_message_with_activity_checks(payload, activity, false))
                 .await
                 .map(Some);
         }
-        Box::pin(self.create_task_after_local_checks(payload, activity))
+        // Preserve the prepared identity and original command input across recreation.
+        Box::pin(self.create_task_after_local_checks(payload, activity, Some(request)))
             .await
             .map(Some)
     }

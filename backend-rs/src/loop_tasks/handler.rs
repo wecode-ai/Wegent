@@ -178,6 +178,7 @@ struct BindingResponse {
     dispatch_id: Option<String>,
     dispatch_round_id: Option<String>,
     assignment_id: Option<String>,
+    execution_id: Option<String>,
     change_requests: Vec<serde_json::Value>,
     linked_by_user_id: i32,
     linked_at: String,
@@ -203,6 +204,7 @@ fn binding_response(binding: &BindingRow) -> BindingResponse {
         dispatch_id: binding.dispatch_id(),
         dispatch_round_id: binding.dispatch_round_id(),
         assignment_id: binding.assignment_id(),
+        execution_id: binding.execution_id(),
         change_requests: binding.change_requests(),
         linked_by_user_id: binding.linked_by_user_id,
         linked_at: datetime_value(binding.linked_at).unwrap_or_default(),
@@ -309,6 +311,7 @@ mod tests {
                 "dispatch_id": "dispatch-1",
                 "dispatch_round_id": "round-1",
                 "assignment_id": "assignment-1",
+                "execution_id": null,
                 "change_requests": [{"id": "cr-1"}],
                 "linked_by_user_id": 2230,
                 "linked_at": "2026-10-20T07:11:06",
@@ -324,6 +327,24 @@ mod tests {
         assert_eq!(value["executionContext"], serde_json::Value::Null);
         assert_eq!(value["change_requests"], serde_json::json!([]));
         assert_eq!(value["workflow_node_id"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn assistant_execution_reference_is_preserved_without_runtime_details() {
+        let value = binding_response(&binding(serde_json::json!({
+            "execution_id": "123456789",
+            "private_prompt": "private workroom content"
+        })));
+        assert_eq!(value["execution_id"], "123456789");
+        assert!(!value.to_string().contains("private workroom content"));
+        for invalid in [
+            serde_json::Value::Null,
+            serde_json::json!(5),
+            serde_json::json!(""),
+        ] {
+            let value = binding_response(&binding(serde_json::json!({"execution_id": invalid})));
+            assert_eq!(value["execution_id"], serde_json::Value::Null);
+        }
     }
 
     #[test]

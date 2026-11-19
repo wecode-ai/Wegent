@@ -714,12 +714,26 @@ export async function expandCompletedProcessing(control, timeoutMs) {
 export async function waitForBottom(control, description, timeoutMs, maxDistanceFromBottom = 8) {
   const startedAt = Date.now()
   let metrics
+  let firstSample
+  const samples = []
   while (Date.now() - startedAt < timeoutMs) {
     metrics = await getSingleElementMetrics(control, SCROLLER_SELECTOR, description)
     if (distanceFromBottom(metrics) <= maxDistanceFromBottom) return metrics
+    const sample = {
+      elapsedMs: Date.now() - startedAt,
+      scrollTop: metrics.scrollTop,
+      scrollHeight: metrics.scrollHeight,
+      clientHeight: metrics.clientHeight,
+      distanceFromBottom: distanceFromBottom(metrics),
+    }
+    firstSample ??= sample
+    samples.push(sample)
+    if (samples.length > 16) samples.shift()
     await new Promise(resolve => setTimeout(resolve, 100))
   }
-  throw new Error(`${description} remained ${distanceFromBottom(metrics)}px from the bottom`)
+  throw new Error(
+    `${description} remained ${distanceFromBottom(metrics)}px from the bottom; diagnostics=${JSON.stringify({ firstSample, samples })}`
+  )
 }
 
 export async function assertScrollPositionRemainsStable(

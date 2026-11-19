@@ -105,6 +105,10 @@ To delete an imported personal template, open **Collaboration → Templates → 
 
 Record an issue directly at the top of **Collaboration → My work**; choose the project and enter content. Type **@** to select an available member, agent or team; explicitly assign with the assignee control below. A manually chosen assignee takes precedence over mentions: mentioning multiple people does not assign them all.
 
+<a id="human-assignment-receipts"></a>
+
+Assigning a project Issue to a member, including at creation, keeps that member as the assignee. Their authorized default assistant accepts it automatically according to its connection settings. Cards and details show an acceptance receipt: **Awaiting acceptance** means queued before device acceptance, **Accepted by assistant** means the device accepted it, and **Work completed** requires actual completion. **Automatic acceptance blocked** explains a paused assistant, unauthorized project, disabled automatic processing or mismatched tags. The assignee can open **Issue details → Configure my assistant**, then **Connections → Collaboration projects**, review the current project, **Handle automatically** and **Limit task tags (optional)**, and save the settings. For **Waiting for device**, check the assistant's execution device and reconnect it; processing resumes after reconnection. Only the assignee can use **Open assistant conversation** to open the linked private conversation. **View delivery** opens an actual delivery when available. Finishing execution does not automatically complete the Issue.
+
 <a id="personal-collaboration-home"></a>
 
 ### Personal collaboration home

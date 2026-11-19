@@ -726,6 +726,13 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
         WARNINGS+=("Wework: node_modules not found, checks skipped")
     else
         collect_wework_check_scope
+        ELECTRON_INSTALL_EXIT=0
+        if [ "$WEWORK_ELECTRON_CHANGED" -eq 1 ]; then
+            # Preparation can replace root workspace dependencies used by static checks.
+            echo -e "   Preparing Electron dependencies before static checks..."
+            CI=true pnpm --filter wework run prepare:electron > "$TEMP_DIR/wework_electron_install.log" 2>&1
+            ELECTRON_INSTALL_EXIT=$?
+        fi
         echo -e "   Running static checks in parallel before unit tests..."
 
         run_wework_lint &
@@ -741,8 +748,6 @@ if [ "$WEWORK_COUNT" -gt 0 ] 2>/dev/null; then
         fi
 
         if [ "$WEWORK_ELECTRON_CHANGED" -eq 1 ]; then
-            CI=true pnpm --filter wework run prepare:electron > "$TEMP_DIR/wework_electron_install.log" 2>&1
-            ELECTRON_INSTALL_EXIT=$?
             if [ "$ELECTRON_INSTALL_EXIT" -eq 0 ]; then
                 # Both Electron package commands stage the same vendor directory.
                 # Finish typechecking before unit tests can replace those files.

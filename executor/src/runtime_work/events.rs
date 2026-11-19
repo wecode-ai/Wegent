@@ -79,6 +79,14 @@ pub(super) fn apply_runtime_event_conversation_context(
 ) {
     if let Some(payload) = payload.as_object_mut() {
         payload.remove("conversationContext");
+        payload.remove("executionId");
+    }
+    if let Some(origin) = request.extra.get("origin") {
+        if origin["humanAssistantDispatchId"].is_string() {
+            if let Some(execution) = origin["executionId"].as_str().filter(|id| !id.is_empty()) {
+                payload["executionId"] = json!(execution);
+            }
+        }
     }
     if super::util::is_private_discussion(request) {
         payload["conversationContext"] = json!("private_discussion");
@@ -2749,6 +2757,56 @@ mod tests {
     use crate::protocol::ExecutionRequest;
 
     use super::*;
+
+    #[test]
+    fn human_assistant_events_keep_the_execution_from_each_frozen_turn_request() {
+        let (event_tx, mut events) = broadcast::channel(8);
+        let mut first = ExecutionRequest::default();
+        first.extra.insert(
+            "origin".into(),
+            json!({"humanAssistantDispatchId":"old","executionId":"41"}),
+        );
+        let mut second = first.clone();
+        second.extra.insert(
+            "origin".into(),
+            json!({"humanAssistantDispatchId":"new","executionId":"42"}),
+        );
+        for request in [&second, &first] {
+            for event in [
+                "response.created",
+                "response.output_text.delta",
+                "response.completed",
+            ] {
+                emit_response_event(
+                    &Some(event_tx.clone()),
+                    "device",
+                    event,
+                    "same-task",
+                    request,
+                    json!({}),
+                );
+                assert_eq!(
+                    events.try_recv().unwrap()["payload"]["executionId"],
+                    request.extra["origin"]["executionId"]
+                );
+            }
+        }
+        let mut unrelated = ExecutionRequest::default();
+        unrelated
+            .extra
+            .insert("origin".into(), json!({"executionId":"42"}));
+        emit_response_event(
+            &Some(event_tx),
+            "device",
+            "response.completed",
+            "same-task",
+            &unrelated,
+            json!({}),
+        );
+        assert!(events.try_recv().unwrap()["payload"]
+            .get("executionId")
+            .is_none());
+    }
 
     #[test]
     fn emits_private_discussion_context_from_each_source_request_without_hiding_content() {

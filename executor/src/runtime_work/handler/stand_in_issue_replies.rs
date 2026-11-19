@@ -41,11 +41,9 @@ impl RuntimeWorkRpcHandler {
         &self,
         request: &ExecutionRequest,
     ) -> Result<(), String> {
-        let Some(origin) = request
-            .extra
-            .get("origin")
-            .filter(|origin| origin["publicConversation"] == true)
-        else {
+        let Some(origin) = request.extra.get("origin").filter(|origin| {
+            origin["publicConversation"] == true || origin["humanAssistantDispatchId"].is_string()
+        }) else {
             return Ok(());
         };
         let task = origin["runtimeTaskId"]
@@ -56,9 +54,24 @@ impl RuntimeWorkRpcHandler {
             .ok_or("Missing Issue conversation owner")?;
         let store = LocalTaskStore::open(self.task_store_path.as_ref())
             .map_err(|error| error.to_string())?;
-        let settings = store
-            .personal_stand_in(user, &self.device_id)
-            .map_err(|error| error.to_string())?;
+        let settings = if origin["humanAssistantDispatchId"].is_string() {
+            store
+                .declared_personal_stand_ins(&self.device_id)
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .find(|settings| {
+                    settings["userId"] == user && settings["lifecycle"]["status"].is_null()
+                })
+                .ok_or("Default assistant authorization is unavailable")?
+        } else if origin["privateOwnerFollowup"] == true {
+            store
+                .personal_stand_in(user, "")
+                .map_err(|error| error.to_string())?
+        } else {
+            store
+                .personal_stand_in(user, &self.device_id)
+                .map_err(|error| error.to_string())?
+        };
         let roles = crate::task_runtime::personal_stand_in::stand_in_identities(&settings);
         let link = self
             .local_task_link(task)
@@ -88,6 +101,26 @@ impl RuntimeWorkRpcHandler {
         if origin["projectStore"] != "local" && issue["permissions"]["execute"] != true {
             return Err("Issue execution permission is unavailable".into());
         }
+        if origin["privateOwnerFollowup"] == true {
+            self.validate_private_issue_owner_binding(origin, &issue, task)
+                .await
+                .map_err(|error| error.message)?;
+        }
+        if origin["humanAssistantDispatchId"].is_string() {
+            self.validate_human_assistant_grant(&settings, origin, &issue)?;
+            let dispatch = &issue["direct_human_assignment_receipt"];
+            if dispatch["dispatchId"] != origin["humanAssistantDispatchId"]
+                || dispatch["executionId"] != origin["executionId"]
+                || dispatch["projectId"] != origin["cloudProjectId"]
+                || dispatch["issueId"] != origin["loopItemId"]
+                || dispatch["ownerUserId"] != origin["userId"]
+                || dispatch["humanAssignmentId"] != origin["humanAssignmentId"]
+                || dispatch["reasonCode"] == "cancel_requested"
+                || !matches!(dispatch["state"].as_str(), Some("running" | "waiting_user"))
+            {
+                return Err("Assistant assignment is no longer current".into());
+            }
+        }
         Ok(())
     }
 
@@ -99,6 +132,7 @@ impl RuntimeWorkRpcHandler {
         if self.store.read_task(task, |link| {
             link.runtime_handle["origin"]["type"] == "issue_dispatch"
                 && link.runtime_handle["origin"]["initiatedBy"] == "stand_in"
+                && !link.runtime_handle["origin"]["humanAssistantDispatchId"].is_string()
                 && !super::super::util::is_private_discussion(&runtime_event_request_from_link(
                     link,
                 ))

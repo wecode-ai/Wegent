@@ -683,6 +683,26 @@ impl LocalTaskStore {
             .map(|user| self.personal_stand_in(user, device))
             .collect()
     }
+
+    /// Read endpoint grants without migrating settings or moving their owning device.
+    pub fn declared_personal_stand_ins(
+        &self,
+        device: &str,
+    ) -> Result<Vec<Value>, TaskRuntimeError> {
+        let connection = self.connection()?;
+        let mut statement = connection.prepare(
+            "SELECT metadata FROM loop_items WHERE resource_type='personal_stand_in' AND json_extract(metadata,'$.executionDeviceId')=?1",
+        )?;
+        let rows = statement
+            .query_map(params![device], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows.into_iter()
+            .map(|row| {
+                serde_json::from_str(&row)
+                    .map_err(|error| TaskRuntimeError::Invalid(error.to_string()))
+            })
+            .collect()
+    }
 }
 
 pub(super) fn stamp_stand_in_connections(identity: &mut Value, previous: &Value) {

@@ -457,13 +457,15 @@ impl RuntimeWorkRpcHandler {
             Some(gate) => Some(gate.lock().await),
             None => None,
         };
-        self.create_task_after_local_checks(payload, activity).await
+        self.create_task_after_local_checks(payload, activity, None)
+            .await
     }
 
     async fn create_task_after_local_checks(
         &self,
         mut payload: Value,
         activity: bool,
+        prepared_request: Option<ExecutionRequest>,
     ) -> Result<Value, AppIpcError> {
         let schema_version = payload
             .get("schemaVersion")
@@ -521,9 +523,16 @@ impl RuntimeWorkRpcHandler {
             .or_else(|| failed_start.as_ref().map(|link| link.title.clone()))
             .or_else(|| string_field(&payload, "message"))
             .unwrap_or_else(|| local_task_id.clone());
-        let mut request = execution_request(&payload)
-            .ok_or_else(|| AppIpcError::new("bad_request", "executionRequest is required"))?;
-        apply_runtime_payload_metadata(&mut request, &payload);
+        let mut request = match prepared_request {
+            Some(request) => request,
+            None => {
+                let mut request = execution_request(&payload).ok_or_else(|| {
+                    AppIpcError::new("bad_request", "executionRequest is required")
+                })?;
+                apply_runtime_payload_metadata(&mut request, &payload);
+                request
+            }
+        };
         let deferred_environment = project_preparation::configure(&mut request, &payload)?;
         if deferred_environment {
             payload_workspace_path = None;
@@ -1055,11 +1064,24 @@ impl RuntimeWorkRpcHandler {
     }
 
     pub(super) async fn send_message(&self, payload: Value) -> Result<Value, AppIpcError> {
+        self.send_message_with_source(payload, true).await
+    }
+
+    pub(super) async fn send_internal_message(&self, payload: Value) -> Result<Value, AppIpcError> {
+        self.send_message_with_source(payload, false).await
+    }
+
+    async fn send_message_with_source(
+        &self,
+        payload: Value,
+        owner_input: bool,
+    ) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let gate = self.task_send_gate(&local_task_id);
         let _guard = gate.lock().await;
-        self.send_message_after_local_checks(payload).await
+        self.send_message_with_activity_checks(payload, false, owner_input)
+            .await
     }
 
     pub(super) async fn send_coordination_assessment(
@@ -1117,7 +1139,7 @@ impl RuntimeWorkRpcHandler {
             self.bind_stand_in_owner_command(&mut payload, false);
             normalize_user_message_presentation(&mut payload)?;
             return self
-                .create_task_after_local_checks(payload, false)
+                .create_task_after_local_checks(payload, false, None)
                 .await
                 .map(Some);
         }
@@ -1127,7 +1149,8 @@ impl RuntimeWorkRpcHandler {
     }
 
     async fn send_message_after_local_checks(&self, payload: Value) -> Result<Value, AppIpcError> {
-        self.send_message_with_activity_checks(payload, false).await
+        self.send_message_with_activity_checks(payload, false, true)
+            .await
     }
 
     pub(super) async fn send_identity_activity(
@@ -1138,13 +1161,15 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let gate = self.task_send_gate(&task);
         let _guard = gate.lock().await;
-        self.send_message_with_activity_checks(payload, true).await
+        self.send_message_with_activity_checks(payload, true, false)
+            .await
     }
 
     async fn send_message_with_activity_checks(
         &self,
         mut payload: Value,
         activity: bool,
+        owner_input: bool,
     ) -> Result<Value, AppIpcError> {
         let requested_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
@@ -1337,8 +1362,16 @@ impl RuntimeWorkRpcHandler {
         }
         if let Some(link) = existing_link.as_ref() {
             restore_cloud_project_id(&mut request, &link.runtime_handle);
-            restore_origin(&mut request, &link.runtime_handle);
+            if owner_input {
+                restore_origin(&mut request, &link.runtime_handle);
+            } else {
+                super::super::util::restore_prepared_origin(&mut request, &link.runtime_handle);
+            }
             self.refresh_identity_conversation_origin(&mut request, link)?;
+            if owner_input {
+                self.admit_private_issue_followup(&mut request, link)
+                    .await?;
+            }
             self.refresh_stand_in_confirmation(&local_task_id, &mut request)?;
         }
         request.new_session = start_new_session;
@@ -1463,7 +1496,12 @@ impl RuntimeWorkRpcHandler {
             });
         if thread_id.is_none() && !retrying_preparation && !awaiting_identity_start {
             if let Some(result) = self
-                .recover_failed_session_start(existing_link.as_ref(), payload.clone(), activity)
+                .recover_failed_session_start(
+                    existing_link.as_ref(),
+                    payload.clone(),
+                    request.clone(),
+                    activity,
+                )
                 .await?
             {
                 return Ok(result);
@@ -2473,6 +2511,16 @@ impl RuntimeWorkRpcHandler {
         }
         let send_gate = self.task_send_gate(&local_task_id);
         let _send_guard = send_gate.lock().await;
+        if let Some(execution) = payload.get("executionId") {
+            let accepted = execution.as_str().is_some_and(|execution| {
+                self.request_human_assistant_execution_stop(&local_task_id, execution)
+            });
+            return Ok(json!({
+                "success":accepted,"accepted":accepted,"taskId":local_task_id,
+                "cleanupPending":accepted,
+                "code":if accepted { Value::Null } else { json!("execution_mismatch") },
+            }));
+        }
         if let Err(error) = self.invalidate_stand_in_owner_request(&local_task_id) {
             self.cancel_preparing_turn(&local_task_id);
             self.request_active_turn_stop(&local_task_id);

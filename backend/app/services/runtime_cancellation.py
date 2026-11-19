@@ -13,6 +13,8 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+CancellationIdentity = tuple[int, str, str] | tuple[int, str, str, str]
+
 
 @dataclass(frozen=True)
 class RuntimeCancellationTarget:
@@ -20,10 +22,12 @@ class RuntimeCancellationTarget:
     device_id: str
     task_id: str
     runtime_device_id: str
+    execution_id: str | None = None
 
     @property
-    def identity(self) -> tuple[int, str, str]:
-        return self.owner_user_id, self.device_id, self.task_id
+    def identity(self) -> CancellationIdentity:
+        base = self.owner_user_id, self.device_id, self.task_id
+        return (*base, self.execution_id) if self.execution_id else base
 
 
 def _internal_url() -> str:
@@ -43,7 +47,7 @@ def emit_runtime_cancellations(
     """
 
     accepted: set[RuntimeCancellationTarget] = set()
-    seen: set[tuple[int, str, str]] = set()
+    seen: set[CancellationIdentity] = set()
     for target in targets:
         if not target.owner_user_id or not target.device_id or not target.task_id:
             continue
@@ -66,6 +70,11 @@ def emit_runtime_cancellations(
                         "payload": {
                             "taskId": target.task_id,
                             "deviceId": target.runtime_device_id,
+                            **(
+                                {"executionId": target.execution_id}
+                                if target.execution_id
+                                else {}
+                            ),
                         },
                         "wait_ack": True,
                         "ack_timeout_seconds": 15,

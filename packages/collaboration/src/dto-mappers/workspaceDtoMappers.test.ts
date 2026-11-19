@@ -8,6 +8,7 @@ import {
   mapCollaborationAssignmentDto,
   mapCollaborationExecutionEnvironmentDto,
   mapCollaborationExecutionDto,
+  mapCollaborationIssueDto,
   mapCollaborationOwnedAgentDto,
   mapCollaborationWorkspaceDto,
   mapWorkspaceDeliveryDto,
@@ -16,6 +17,43 @@ import {
 } from "./workspaceDtoMappers";
 
 describe("workspace DTO mappers", () => {
+  it("maps the server assignment receipt without changing human ownership", () => {
+    const receipt = {
+      projectId: "project-1",
+      issueId: "issue-1",
+      humanAssignmentId: "human-1",
+      dispatchId: "dispatch-1",
+      ownerUserId: 7,
+      state: "queued",
+      reasonCode: null,
+      runtimeTaskId: null,
+      deliveryId: null,
+      updatedAt: "2026-11-16T00:00:00Z",
+    };
+    const issue = mapCollaborationIssueDto({
+      id: "issue-1",
+      cloud_project_id: "project-1",
+      assignee_user_id: 7,
+      assignee_name: "Ada",
+      direct_human_assignment_receipt: receipt,
+      project_name: "Project",
+      has_active_task: false,
+    });
+    expect(issue).toMatchObject({
+      assignee_user_id: 7,
+      assignee_name: "Ada",
+      directHumanAssignmentReceipt: receipt,
+      project_name: "Project",
+      has_active_task: false,
+    });
+    expect(issue).not.toHaveProperty("direct_human_assignment_receipt");
+    expect(
+      mapCollaborationIssueDto({
+        id: "issue-1",
+        cloud_project_id: "project-1",
+      }),
+    ).not.toHaveProperty("directHumanAssignmentReceipt");
+  });
   it("preserves the explicit system-default identity without inferring it from a name", () => {
     expect(
       mapCollaborationWorkspaceDto({
@@ -139,6 +177,7 @@ describe("workspace DTO mappers", () => {
           task_id: "task-1",
           task_title: "Task",
           backend_task_id: "99",
+          execution_id: "101",
           modelSelection: {
             modelName: "gpt-5.6-sol",
             modelType: "runtime",
@@ -165,6 +204,7 @@ describe("workspace DTO mappers", () => {
       dispatchId: null,
       dispatchRoundId: null,
       assignmentId: null,
+      executionId: "101",
       modelSelection: {
         modelName: "gpt-5.6-sol",
         modelType: "runtime",

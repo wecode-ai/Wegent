@@ -124,6 +124,34 @@ export type BackendCollaborationProject = CollaborationProject & {
   access_role: CollaborationRole;
 };
 
+export interface DirectHumanAssignmentReceipt {
+  projectId: string;
+  issueId: string;
+  humanAssignmentId: string;
+  dispatchId?: string | null;
+  ownerUserId: number;
+  state:
+    | "queued"
+    | "waiting_device"
+    | "blocked_policy"
+    | "running"
+    | "waiting_user"
+    | "completed"
+    | "failed"
+    | "cancelling"
+    | "cancelled"
+    | "superseded";
+  reasonCode: string | null;
+  runtimeTaskId: string | null;
+  deliveryId: string | null;
+  executionId?: string | null;
+  assignmentId?: string;
+  assignmentVersion?: number;
+  createdAt?: string;
+  updatedAt: string;
+  publicMessageId?: string | null;
+}
+
 export interface CollaborationIssue {
   resource_participants?: Array<{
     kind: "agent" | "group";
@@ -157,6 +185,7 @@ export interface CollaborationIssue {
     dispatchRoundId: string;
     assignmentId: string;
   } | null;
+  directHumanAssignmentReceipt?: DirectHumanAssignmentReceipt | null;
   ai_state?: {
     agent_name?: string | null;
     status?: string | null;
@@ -195,27 +224,6 @@ export interface CollaborationIssue {
 }
 
 export type CollaborationAssignmentTargetType = "human" | "agent";
-
-export interface DirectHumanAssignmentReceipt {
-  projectId: string;
-  issueId: string;
-  humanAssignmentId: string;
-  ownerUserId: number;
-  state:
-    | "queued"
-    | "waiting_device"
-    | "blocked_policy"
-    | "running"
-    | "waiting_user"
-    | "completed"
-    | "failed"
-    | "cancelled";
-  reasonCode: string | null;
-  runtimeTaskId: string | null;
-  deliveryId: string | null;
-  publicMessageId?: string | null;
-  updatedAt: string;
-}
 
 export interface CollaborationAssignmentReceipt {
   dispatch_receipt?: DirectHumanAssignmentReceipt | null;

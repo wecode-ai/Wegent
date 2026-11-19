@@ -1,6 +1,6 @@
 // @vitest-environment node
 import assert from 'node:assert/strict'
-import { test } from 'vitest'
+import { test, vi } from 'vitest'
 import { waitForBottom } from '../e2e/desktop/modules/streaming-text-fixture.mjs'
 import { verifyConversationSwitchPosition } from '../e2e/desktop/modules/streaming-text-switch-stability.mjs'
 
@@ -84,4 +84,32 @@ test('ordinary bottom readiness keeps its existing eight-pixel default', async (
   const metrics = await waitForBottom(control, 'Ordinary bottom readiness', 500)
   assert.equal(metrics.scrollTop, 392)
   assert.deepEqual(control.readings, [8])
+})
+
+test('bottom readiness failure reports only bounded geometry and sample timing', async () => {
+  vi.useFakeTimers()
+  try {
+    const control = readinessControl([9])
+    const failure = waitForBottom(control, 'Streaming bottom', 1700).catch(error => error)
+    await vi.advanceTimersByTimeAsync(1700)
+    const error = await failure
+
+    assert.match(error.message, /Streaming bottom remained 9px from the bottom/)
+    const diagnostics = JSON.parse(error.message.split('; diagnostics=')[1])
+    assert.equal(diagnostics.firstSample.elapsedMs, 0)
+    assert.equal(diagnostics.samples.length, 16)
+    assert.equal(diagnostics.samples.at(-1).elapsedMs, 1600)
+    for (const sample of [diagnostics.firstSample, ...diagnostics.samples]) {
+      assert.deepEqual(Object.keys(sample), [
+        'elapsedMs',
+        'scrollTop',
+        'scrollHeight',
+        'clientHeight',
+        'distanceFromBottom',
+      ])
+      assert.ok(Object.values(sample).every(value => typeof value === 'number'))
+    }
+  } finally {
+    vi.useRealTimers()
+  }
 })

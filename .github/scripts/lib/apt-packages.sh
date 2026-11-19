@@ -43,6 +43,18 @@ install_missing_apt_packages() {
 
   local privileged=()
   if ((EUID != 0)); then privileged=(sudo); fi
-  run_apt_with_diagnostics "${privileged[@]}" apt-get -o APT::Update::Error-Mode=any update || return
+  local update_attempt update_status delay
+  for update_attempt in 1 2 3 4; do
+    update_status=0
+    run_apt_with_diagnostics "${privileged[@]}" apt-get -o APT::Update::Error-Mode=any update ||
+      update_status=$?
+    if ((update_status == 0)); then break; fi
+    # Repository mirror rate limits surface as apt exit 100; other failures are
+    # configuration errors and should still fail immediately.
+    if ((update_status != 100 || update_attempt == 4)); then return "$update_status"; fi
+    delay=$((update_attempt * 10))
+    printf 'APT update failed (attempt %s/4); retrying in %ss.\n' "$update_attempt" "$delay" >&2
+    if command -v sleep >/dev/null 2>&1; then sleep "$delay"; fi
+  done
   run_apt_with_diagnostics "${privileged[@]}" apt-get install --yes --no-install-recommends "${missing[@]}"
 }

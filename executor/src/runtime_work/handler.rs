@@ -153,6 +153,7 @@ mod git_webhook_setup;
 mod goal_model_route;
 mod goal_status;
 mod hooks;
+mod human_assistant_dispatch;
 pub(super) mod lifecycle;
 mod mcp_app_source;
 mod mcp_approval_context;
@@ -668,6 +669,8 @@ struct ActiveCodexTranscriptItems {
     items: Vec<Value>,
     // Keep settled request IDs until the turn ends so replay cannot reopen them.
     user_input_requests: HashMap<String, bool>,
+    frozen_interaction_request: Option<ExecutionRequest>,
+    published_waiting_for_user_input: bool,
 }
 
 #[derive(Clone)]
