@@ -124,7 +124,7 @@ async function configureDefaultDeviceAgent(control, captureScreenshot, timeoutMs
     timeoutMs,
   })
   const defaultAgentOption =
-    '[data-testid="project-agent-wegent-team"] label:has(input[aria-label="当前设备智能体"])'
+    '[data-testid="project-agent-wegent-team"] label:has([role="radio"][aria-label="当前设备智能体"])'
   await control.command('waitFor', defaultAgentOption, { timeoutMs })
   await control.command('click', defaultAgentOption)
   await control.command('clickWhenEnabled', '[data-testid="project-agent-wegent-create"]', {

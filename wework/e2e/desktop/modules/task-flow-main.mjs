@@ -599,7 +599,7 @@ async function verifyProjectAiSettings({
   await control.command('fill', '[data-testid="local-project-instructions-input"]', {
     value: PROJECT_AI_INITIAL_INSTRUCTIONS,
   })
-  await control.command('fill', '[data-testid="local-project-model-select"]', {
+  await control.command('select', '[data-testid="local-project-model-select"]', {
     value: PROJECT_AI_MODEL_VALUE,
   })
   await waitForControlValue(
@@ -608,7 +608,7 @@ async function verifyProjectAiSettings({
     PROJECT_AI_MODEL_VALUE,
     'The project default model selection did not update'
   )
-  await control.command('fill', '[data-testid="local-project-reasoning-select"]', {
+  await control.command('select', '[data-testid="local-project-reasoning-select"]', {
     value: 'low',
   })
   await waitForControlValue(
@@ -741,7 +741,7 @@ async function verifyProjectAiSettings({
   await control.command('fill', '[data-testid="local-project-instructions-input"]', {
     value: PROJECT_AI_UPDATED_INSTRUCTIONS,
   })
-  await control.command('fill', '[data-testid="local-project-reasoning-select"]', {
+  await control.command('select', '[data-testid="local-project-reasoning-select"]', {
     value: 'high',
   })
   await waitForControlValue(

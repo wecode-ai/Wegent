@@ -245,8 +245,13 @@ export async function selectProjectRunnerModel(control, timeoutMs) {
   await control.command('clickWhenEnabled', firstDevice, { timeoutMs })
   const modelMenu = `[data-testid="${prefix}-model-menu"]`
   const nativeOption = `${modelMenu} [role="option"][data-value='${identity}']`
+  const revealNativeOption = async () => {
+    await control.command('waitFor', nativeOption, { timeoutMs })
+    await control.command('scrollIntoView', nativeOption, { visible: true })
+    await control.command('waitFor', nativeOption, { timeoutMs, visible: true })
+  }
   await control.command('setExpanded', model, { value: 'true', timeoutMs, visible: true })
-  await control.command('waitFor', nativeOption, { timeoutMs, visible: true })
+  await revealNativeOption()
   await control.command('select', model, { value: identity, timeoutMs })
   await control.command('waitFor', `${model}[data-value='${identity}']`, { timeoutMs })
   await selectAgentEnvironment(
@@ -267,7 +272,7 @@ export async function selectProjectRunnerModel(control, timeoutMs) {
   await control.command('waitFor', `${model}[aria-expanded="false"]`, { timeoutMs })
   await selectAgentEnvironment(control, `${prefix}-environment`, environmentId, timeoutMs)
   await control.command('setExpanded', model, { value: 'true', timeoutMs, visible: true })
-  await control.command('waitFor', nativeOption, { timeoutMs, visible: true })
+  await revealNativeOption()
   await control.command('select', model, { value: 'user_select' })
   await control.command('waitFor', `${model}[data-value="user_select"]`, { timeoutMs })
   assert.equal(

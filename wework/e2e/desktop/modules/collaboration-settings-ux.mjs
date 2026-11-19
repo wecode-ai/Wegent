@@ -4,6 +4,15 @@ import { requestExecutor } from './executor-rpc.mjs'
 import { DEFAULT_STEP_TIMEOUT_MS } from './shared.mjs'
 import { waitForBoardValue } from './collaboration-board-flows.mjs'
 
+async function openProjectTags(control, find) {
+  const toggle = find('cloud-project-manage-tags-toggle')
+  await control.command('waitFor', toggle, { visible: true })
+  if ((await control.command('getAttribute', toggle, { value: 'aria-expanded' })) === 'false') {
+    await control.command('clickWhenEnabled', toggle)
+  }
+  await control.command('waitFor', `${toggle}[aria-expanded="true"]`, { visible: true })
+}
+
 // Reuse shared-core's real project and backend; this flow never saves the environment draft.
 export async function verifyCollaborationSettingsUx(control, { scoped, request, project }) {
   const find = id => scoped(`[data-testid="${id}"]`)
@@ -20,7 +29,7 @@ export async function verifyCollaborationSettingsUx(control, { scoped, request, 
       String((persisted.visibility ?? 'private') === visibility)
     )
   }
-  await control.command('click', `${find('cloud-project-manage-tags')} > summary`)
+  await openProjectTags(control, find)
   await control.command('clickWhenEnabled', find('cloud-project-tag-create-toggle'))
   await control.command(
     'waitFor',
@@ -92,12 +101,7 @@ export async function verifyCollaborationSettingsUx(control, { scoped, request, 
 async function addProjectTag(control, scoped, tag) {
   const find = id => scoped(`[data-testid="${id}"]`)
   await control.command('click', find('collaboration-project-settings-project'))
-  if (
-    Number(
-      await control.command('getElementCount', `${find('cloud-project-manage-tags')}[open]`)
-    ) === 0
-  )
-    await control.command('click', `${find('cloud-project-manage-tags')} > summary`)
+  await openProjectTags(control, find)
   await control.command('clickWhenEnabled', find('cloud-project-tag-create-toggle'))
   await control.command('fill', find('cloud-project-tag-create-input'), { value: tag })
   await control.command('clickWhenEnabled', find('cloud-project-tag-create-confirm'))
