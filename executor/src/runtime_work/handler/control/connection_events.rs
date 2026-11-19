@@ -571,6 +571,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         maintenance: bool,
     ) -> Result<(), AppIpcError> {
+        self.poll_connection_observation_sources().await?;
         self.dispatch_conversation_connection_events(maintenance, true)
             .await
     }

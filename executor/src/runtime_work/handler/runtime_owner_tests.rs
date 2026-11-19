@@ -49,7 +49,14 @@ async fn runtime_owner_uses_the_credential_route_and_rejects_a_different_owner()
         .message
         .contains("401"));
 
-    connection.lock().unwrap().as_mut().unwrap().auth_token = "desktop-session".into();
+    {
+        let mut snapshot = connection.lock().unwrap();
+        *snapshot = Some(ConnectionConfig {
+            backend_url: snapshot.as_ref().unwrap().backend_url.clone(),
+            auth_token: "desktop-session".into(),
+            ..Default::default()
+        });
+    }
     server.abort();
     assert_eq!(
         handler.verify_runtime_user(&owner).await.unwrap_err().code,
