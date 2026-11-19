@@ -157,6 +157,21 @@ Electron 不会为 WebContents 自动创建网页右键菜单。Wework 由 Elect
 
 AI 应先执行 `snapshot` 确认路由和可用的 `data-testid`，再进行最小必要操作，并以 `wait-for` 加 `snapshot` 或 `text` 验证结果。结束时必须执行 `stop`；若失败，保留该会话目录中的 `app.log` 以便诊断。
 
+## 录制验证视频
+
+需要留存操作证据时，先确认 PATH 中的 FFmpeg 支持 `libx264`。用 `start --record true` 启动会话，主窗口就绪后开始录像，并在返回会话路径前采集首帧。也可以对已启动的会话执行 `record-start`，用 `record-stop` 结束当前片段，并按需开启下一段。
+
+```bash
+pnpm --filter wework ai:verify start --record true
+pnpm --filter wework ai:verify record-stop --session SESSION
+pnpm --filter wework ai:verify record-start --session SESSION
+pnpm --filter wework ai:verify stop --session SESSION
+```
+
+`record-stop` 保存视频并输出路径。若录像仍在进行，`stop` 会先保存视频，再关闭会话，并输出视频路径。每段录像以独立的 MP4 文件保存在对应的 `wework/test-results/ai-verify/` 会话目录中。如果采集中断，录制器会尽量保存已采集画面，并在停止命令的错误信息中给出已保存的路径。
+
+录像以每秒 5 帧采集隔离 Electron 主窗口内容，覆盖页面重载，无需 macOS 屏幕录制权限。采集范围不包含操作系统弹窗、原生菜单、独立窗口或音频。请将录像与实际断言结果一起作为验收证据，分享前检查画面中的敏感信息。录像和会话文件请保留在 Git 之外。
+
 ## 通用 DevTools 与性能分析
 
 隔离验证实例通过主进程提供鉴权的 CDP 通道。它不经过渲染线程，因此在断点暂停时仍能读取事件并恢复执行。普通应用实例不注册此入口。先启动实例并枚举目标，将返回的 `id` 用作下面的 `ID`：
