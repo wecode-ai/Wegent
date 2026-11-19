@@ -23,6 +23,7 @@ import {
 } from '../modules/response-protocol.mjs'
 import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 import { createGoalAdmissionRecovery } from '../modules/goal-admission-recovery.mjs'
+import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 
 const GOAL = 'WEWORK_OVERLOADED_GOAL'
 const RECOVERED = 'WEWORK_OVERLOADED_GOAL_RECOVERED'
@@ -123,6 +124,12 @@ export function createDesktopScenario(options) {
           // Neither the baseline read nor a user mutation may race native recovery.
           await existing.overloadTerminalGate.arm()
           await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+          await waitForValue(
+            () => requests,
+            count => count > 0,
+            `The overloaded Goal did not reach its first model request for ${action}`,
+            options.modelResponseTimeoutMs
+          )
           await existing.overloadTerminalGate.wait()
           const stopped = await waitForWorkbenchDebugState(
             control,

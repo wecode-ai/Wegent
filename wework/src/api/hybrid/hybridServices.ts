@@ -69,7 +69,7 @@ import { shouldUseCloudDeviceCommand } from '@extensions/device-command-routing'
 import { readElectronLocalFile } from '@/lib/electron-local-file'
 import { logRuntimeTaskCreateStage } from '@/lib/runtime-create-diagnostics'
 import type { LocalExecutorEvent } from '@/desktop/localExecutor'
-import { EMPTY_RUNTIME_WORK } from '@/features/workbench/workbenchCloudStatus'
+import { EMPTY_RUNTIME_WORK, nowMs } from '@/features/workbench/workbenchCloudStatus'
 import { supportsCloudExecution } from '@/features/cloud-connection/modelExecution'
 import type {
   Attachment,
@@ -891,15 +891,30 @@ export function createHybridWorkbenchServices(
       NonNullable<WorkbenchServices['runtimeWorkApi']>['listRuntimeWork']
     >[0]
   ) => {
+    const startedAt = nowMs()
     const identity = await getLocalRuntimeSidebarIdentity()
+    const identityReadyAt = nowMs()
     try {
       const work = requestOptions
         ? await localServices.runtimeWorkApi!.listRuntimeWork(requestOptions)
         : await localServices.runtimeWorkApi!.listRuntimeWork()
+      const workReadyAt = nowMs()
       if (identity)
         assertLocalRuntimeSidebarIdentity(identity, await getLocalRuntimeSidebarIdentity())
+      const ownerVerifiedAt = nowMs()
       const qualifiedWork = identity ? qualifyLocalRuntimeWork(work, identity) : work
       rememberLocalRuntimeWorkDevices(qualifiedWork)
+      const elapsedMs = Math.round(nowMs() - startedAt)
+      if (elapsedMs > 5000) {
+        console.warn(
+          `[Wework] Slow local runtime inventory ${JSON.stringify({
+            elapsedMs,
+            identityMs: Math.round(identityReadyAt - startedAt),
+            listMs: Math.round(workReadyAt - identityReadyAt),
+            ownerRecheckMs: Math.round(ownerVerifiedAt - workReadyAt),
+          })}`
+        )
+      }
       return qualifiedWork
     } catch (error) {
       if (isInvalidLocalRuntimeIdentityError(error)) revokeLocalRuntimeIdentity()
