@@ -318,6 +318,14 @@ RUSTUP_TOOLCHAIN=1.94.0 cargo test timing -- --nocapture
 - timing focused tests：10 passed
 - cargo fmt：通过
 
+### Pre-push documentation review
+
+- 本切片只新增内部诊断 API 和用户主动打开的面板，不改变现有用户指南中的任务创建或
+  对话操作流程；功能说明保留在本实施计划与设计文档中。
+- API ownership 已按 `backend-rs/config/routes.toml` 更新，未引入 Python fallback。
+- AGENTS.md 与 README 不需要变化：本变更遵守现有 contributor rules，未引入新的构建、
+  测试或架构约定。
+
 ## 切片 7：backend-rs 聚合
 
 状态：第一版已实现。
