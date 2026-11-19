@@ -18,24 +18,27 @@ pub(super) fn resolve(args: &Value) -> Result<Value, AppIpcError> {
         .filter(|s| matches!(*s, "merge" | "checks" | "run"))
         .ok_or_else(|| invalid("Choose git_wait: merge, checks or run"))?;
     let (topic, number, github) = selection(&args["source"], preset)?;
-    let sha = args["head_sha"]
-        .as_str()
-        .filter(|s| s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit()))
-        .ok_or_else(|| invalid("git_wait requires the exact 40-character head_sha"))?
-        .to_ascii_lowercase();
     let mut filter = json!({"/topicId":topic});
     if preset != "run" {
         filter["/external/eventType"] = json!("tracked.status");
     } else if !github {
         filter["/external/eventType"] = json!("tracked.pipeline");
     }
-    filter[if preset == "run" && github {
-        "/external/payload/head_sha"
-    } else if github {
-        "/external/payload/headRefOid"
-    } else {
-        "/external/payload/sha"
-    }] = json!(sha);
+    if preset != "merge" || args.get("head_sha").is_some() {
+        let sha = args["head_sha"]
+            .as_str()
+            .filter(|s| s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit()))
+            .ok_or_else(|| invalid("git_wait requires the exact 40-character head_sha"))?;
+        if preset != "merge" {
+            filter[if preset == "run" && github {
+                "/external/payload/head_sha"
+            } else if github {
+                "/external/payload/headRefOid"
+            } else {
+                "/external/payload/sha"
+            }] = json!(sha.to_ascii_lowercase());
+        }
+    }
     if preset == "run" {
         filter["/external/payload/id"] = json!(number);
         if github {
@@ -81,6 +84,28 @@ pub(super) fn resolve(args: &Value) -> Result<Value, AppIpcError> {
         filter["$any"] = alternatives;
     }
     Ok(filter)
+}
+
+pub(super) fn same_merge_wait(record: &Value, intent: &Value, session: &Value) -> bool {
+    if record["session"] != *session
+        || !matches!(
+            record["status"].as_str(),
+            Some("preparing" | "armed" | "pending")
+        )
+        || record["source"]["observeCurrentStatus"] != true
+        || !["providerId", "profile", "kind", "id"]
+            .iter()
+            .all(|field| record["source"][*field] == intent["source"][*field])
+    {
+        return false;
+    }
+    // Older merge waits stored the head as a common predicate.
+    let mut filter = record["match"].clone();
+    if let Some(fields) = filter.as_object_mut() {
+        fields.remove("/external/payload/headRefOid");
+        fields.remove("/external/payload/sha");
+    }
+    filter == intent["match"]
 }
 
 fn outcomes(pointer: &str, values: &[&str]) -> Value {
@@ -194,7 +219,7 @@ mod tests {
         }
         let mut wrong = event("PENDING", "CONFLICTING");
         wrong["external"]["payload"]["headRefOid"] = json!("other");
-        assert!(!matches_event(&filter, &wrong));
+        assert!(matches_event(&filter, &wrong));
         wrong = event("FAILURE", "MERGEABLE");
         wrong["topicId"] = json!("https://github.com/other/repo/pull/4749");
         assert!(!matches_event(&filter, &wrong));
