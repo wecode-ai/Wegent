@@ -104,7 +104,7 @@ impl ResponsesApiEventParser {
         match event_type {
             "response.created" => {
                 let mut start_data = Map::new();
-                for key in ["shell_type", "bot_name"] {
+                for key in ["shell_type", "bot_name", "timing"] {
                     if let Some(value) = data.get(key)
                         && !value.is_null()
                     {
@@ -119,6 +119,9 @@ impl ResponsesApiEventParser {
             "response.completed" => {
                 let response = data.get("response").cloned().unwrap_or(Value::Null);
                 let mut result = extract_completed_result(&response);
+                if let Some(timing) = data.get("timing").filter(|value| value.is_object()) {
+                    result.insert("timing".into(), timing.clone());
+                }
                 {
                     let mut state = self.state.lock().expect("parser state poisoned");
                     if let Some(buffered) = state

@@ -68,6 +68,37 @@ fn response_created_maps_to_start_with_shell_type() {
 }
 
 #[test]
+fn response_events_preserve_timing_metadata() {
+    let timing = json!({"agentStartedAt": 10, "agentFinishedAt": 20});
+    let created = parser::shared()
+        .parse(
+            1,
+            2,
+            None,
+            "response.created",
+            &json!({"shell_type": "claudecode", "timing": timing}),
+        )
+        .expect("parse")
+        .expect("event");
+    assert_eq!(created.data.get("timing"), Some(&timing));
+
+    let completed = parser::shared()
+        .parse(
+            1,
+            2,
+            None,
+            "response.completed",
+            &json!({"response": {}, "timing": timing}),
+        )
+        .expect("parse")
+        .expect("event");
+    assert_eq!(
+        completed.result.expect("result").get("timing"),
+        Some(&timing)
+    );
+}
+
+#[test]
 fn block_created_requires_object_block() {
     let missing = parser::shared()
         .parse(1, 2, None, "response.block.created", &json!({"block": "x"}))
