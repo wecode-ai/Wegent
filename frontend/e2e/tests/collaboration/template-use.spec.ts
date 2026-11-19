@@ -65,9 +65,9 @@ for (const destination of ['existing', 'new'] as const) {
       const bindMembers = async () => {
         await page.getByTestId('template-customize-' + group.key).click()
         for (const role of group.roles) {
-          await page
-            .getByTestId('template-role-' + group.key + '-' + role.key)
-            .selectOption('human:' + (role.key === group.leaderRole ? owner.id : executor.id))
+          await page.getByTestId(`template-role-${group.key}-${role.key}`).click()
+          const member = role.key === group.leaderRole ? owner : executor
+          await page.locator(`[role="option"][data-value="human:${member.id}"]`).click()
         }
       }
       if (destination === 'existing') {

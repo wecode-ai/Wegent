@@ -174,14 +174,15 @@ export async function initializeProjectExecutionEnvironment(page: Page): Promise
   await page.getByTestId('collaboration-project-settings-environments').click()
   const prefix = 'collaboration-project-execution-environment'
   const initialize = page.getByTestId(`${prefix}-initialize-${device!.id}`)
-  if ((await initialize.count()) === 0) {
+  const actions = page.getByTestId(`${prefix}-actions-toggle-${device!.id}`)
+  await expect(actions.or(page.getByTestId(`${prefix}-add`)).first()).toBeVisible()
+  if ((await actions.count()) === 0) {
     await page.getByTestId(`${prefix}-add`).click()
     const candidate = page.getByTestId(`${prefix}-candidate-${device!.id}`)
     await expect(candidate).toBeVisible()
     await candidate.click()
   }
-  await expect(initialize).toBeAttached()
-  await page.getByTestId(`${prefix}-actions-toggle-${device!.id}`).click()
+  await actions.click()
   await expect(initialize).toBeVisible()
   await initialize.click()
   await expect(page.getByTestId(`${prefix}-${device!.id}`)).toHaveAttribute(
