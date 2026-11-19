@@ -1,4 +1,4 @@
-import { act, render } from '@testing-library/react'
+import { act } from '@testing-library/react'
 import { afterEach, expect, test, vi } from 'vitest'
 import type { RuntimeTaskSummary, RuntimeTranscriptResponse } from '@/types/api'
 import type { ChatStreamHandlers } from '@/stream/chatStream'
@@ -8,7 +8,7 @@ import {
   getRuntimeConversationMessages,
 } from '../runtimeConversationCache'
 import { RuntimeTaskLifecycleStore } from './RuntimeTaskLifecycleStore'
-import { RuntimeTaskLifecycleStreamCoordinator } from './RuntimeTaskLifecycleStreamCoordinator'
+import { renderRuntimeTaskLifecycle } from './RuntimeTaskLifecycleStreamCoordinator.fixtures'
 import {
   runtimeTaskAddress,
   runtimeTranscript,
@@ -87,8 +87,7 @@ function setup() {
             result: {},
             ...(task ? { task } : {}),
           } as never),
-    mount: () =>
-      render(<RuntimeTaskLifecycleStreamCoordinator services={services} store={store} />),
+    mount: () => renderRuntimeTaskLifecycle({ services: services, store: store }),
   }
 }
 
@@ -324,7 +323,7 @@ test('preserves a pending catalog retry when services change during backoff', as
 
   const replacement = { ...services, executorClient: { ...services.executorClient! } }
   await act(async () => {
-    view.rerender(<RuntimeTaskLifecycleStreamCoordinator services={replacement} store={store} />)
+    view.rerender({ services: replacement, store: store })
   })
 
   expect(runtime.listRuntimeWork).toHaveBeenCalledTimes(2)

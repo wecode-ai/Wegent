@@ -1,4 +1,3 @@
-import { useE2ELifecycleTrace } from '@/e2e/useE2ELifecycleTrace'
 import { createElement, Suspense, use, type ComponentType } from 'react'
 import type { WorkspaceTab } from '@/features/workspace-tabs/workspaceTabs'
 import type { WeworkDshApp } from './dshApps'
@@ -32,12 +31,6 @@ export function DshAppSurface({
   app: WeworkDshApp
   tab: WorkspaceTab
 }) {
-  useE2ELifecycleTrace('DshAppSurface', {
-    appId: app.id,
-    hasModule: Boolean(app.module),
-    tabId: tab.id,
-    active,
-  })
   if (app.module) {
     return (
       <Suspense fallback={<DshSurfaceLoading testId="dsh-app-loading" />}>

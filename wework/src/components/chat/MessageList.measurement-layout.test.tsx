@@ -19,6 +19,7 @@ afterEach(() => {
   clearConversationViewportCache()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+  document.querySelectorAll('[data-measurement-test-viewport]').forEach(element => element.remove())
 })
 
 function fixture() {
@@ -41,6 +42,8 @@ function fixture() {
     }
   )
   const viewport = document.createElement('div')
+  viewport.setAttribute('data-measurement-test-viewport', '')
+  document.body.append(viewport)
   Object.defineProperties(viewport, {
     clientWidth: { value: 800 },
     clientHeight: { value: 200 },
@@ -114,7 +117,9 @@ function assistantFixture() {
 
 test('keeps Markdown observers when only the conversation column width changes', () => {
   const current = assistantFixture()
-  const view = render(<MessageList {...current.props} />)
+  const view = render(<MessageList {...current.props} />, {
+    container: current.props.scrollElementRef.current,
+  })
   const chunks = [...current.observedChunks]
   expect(chunks.length).toBeGreaterThan(0)
   const list = view.container.querySelector<HTMLElement>('[data-conversation-message-list]')!
@@ -130,7 +135,9 @@ test.each(['conversation', 'style'] as const)(
   'invalidates Markdown measurement scope for a different %s',
   change => {
     const current = assistantFixture()
-    const view = render(<MessageList {...current.props} />)
+    const view = render(<MessageList {...current.props} />, {
+      container: current.props.scrollElementRef.current,
+    })
     const observed = current.observedChunks.length
     expect(observed).toBeGreaterThan(0)
 
@@ -150,7 +157,9 @@ test.each(['conversation', 'style'] as const)(
 test('exposes only existing numeric virtualizer state for on-demand failure diagnostics', () => {
   const current = fixture()
   current.props.scrollElementRef.current.dataset.testid = 'diagnostic-viewport'
-  const view = render(<MessageList {...current.props} />)
+  const view = render(<MessageList {...current.props} />, {
+    container: current.props.scrollElementRef.current,
+  })
   const list = view.container.querySelector<HTMLElement>('[data-conversation-message-list]')!
   const engine = current.engine.current!
 
@@ -163,7 +172,9 @@ test('exposes only existing numeric virtualizer state for on-demand failure diag
   expect(list.dataset.conversationVirtualRowCount).toBe(String(engine.getVirtualItems().length))
   expect(JSON.parse(list.dataset.conversationVirtualRange!)).toEqual(engine.range)
   expect(JSON.parse(list.dataset.conversationScrollRect!)).toEqual(engine.scrollRect)
-  expect(list.dataset.conversationScrollConnected).toBe('false')
+  expect(list.dataset.conversationScrollConnected).toBe(
+    String(engine.scrollElement?.isConnected ?? false)
+  )
   expect(list.dataset.conversationScrollElement).toBe('diagnostic-viewport')
 })
 
@@ -172,7 +183,9 @@ test.each(['reopen', 'resize'] as const)(
   action => {
     const current = fixture()
     if (action === 'reopen') current.narrow()
-    const view = render(<MessageList {...current.props} />)
+    const view = render(<MessageList {...current.props} />, {
+      container: current.props.scrollElementRef.current,
+    })
     if (action === 'resize') {
       expect(current.engine.current!.itemSizeCache.get('message-0')).toBe(987)
       current.narrow(view.container.querySelector('[data-message-row]')!.parentElement!)
@@ -200,7 +213,9 @@ test.each([600, 24])(
             : 0
         )
       })
-    const view = render(<MessageList {...current.props} />)
+    const view = render(<MessageList {...current.props} />, {
+      container: current.props.scrollElementRef.current,
+    })
     const row = view.container.querySelector<HTMLElement>('[data-message-row]')!
     const index = Number(row.dataset.index)
     const message = current.props.messages[index]

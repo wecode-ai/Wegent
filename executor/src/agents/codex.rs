@@ -4686,6 +4686,7 @@ struct CodexLaunchConfig {
     effort: Option<String>,
     summary: Option<String>,
     local_proxy_registration: Option<Arc<LocalProxyRegistration>>,
+    control_mcp_execution: Option<Arc<crate::task_runtime::mcp_http::ControlMcpExecution>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6083,9 +6084,10 @@ fn computer_use_mcp_config_overrides() -> Vec<String> {
     ]
 }
 
-fn managed_wework_mcp_config_overrides(
+fn configure_managed_wework_mcp(
     request: &ExecutionRequest,
-) -> Result<(Vec<String>, BTreeMap<String, String>), String> {
+    launch: &mut CodexLaunchConfig,
+) -> Result<(), String> {
     let mut overrides = Vec::new();
     let endpoint = crate::task_runtime::mcp_http::space_mcp_http_endpoint()
         .ok_or_else(|| "Wework MCP endpoint is not ready".to_owned())?;
@@ -6094,6 +6096,10 @@ fn managed_wework_mcp_config_overrides(
         format!("Bearer {}", endpoint.token),
     )]);
     if let Some(config) = crate::task_runtime::mcp::control_mcp_client_config(request)? {
+        launch.control_mcp_execution = crate::task_runtime::mcp_http::retain_control_mcp_context(
+            &config.headers["X-Wework-Mcp-Context"],
+        )?
+        .map(Arc::new);
         append_managed_mcp_config(
             crate::workbench_control::SERVER_NAME,
             config,
@@ -6119,7 +6125,9 @@ fn managed_wework_mcp_config_overrides(
         crate::task_runtime::mcp::space_mcp_client_config(request)?,
         &mut overrides,
     );
-    Ok((overrides, env))
+    launch.config_overrides.extend(overrides);
+    launch.env.extend(env);
+    Ok(())
 }
 
 fn append_managed_mcp_config(

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { ArrowDown, ArrowUp, ChevronDown, Plus, X } from 'lucide-react'
-import { useEffect, useId, useRef, useState, type ComponentProps } from 'react'
+import { useCallback, useId, useRef, useState, type ComponentProps } from 'react'
 import { DialogForm } from '../controls/DialogForm'
 import { ActionMenu } from '../controls/ActionMenu'
 import type { CollaborationTranslate } from '../i18n'
@@ -88,15 +88,19 @@ export function BoardViewEditor({
       ...draft.filter.tags,
     ]),
   ]
-  useEffect(() => {
-    if (!dialog) return
-    const previous = returnFocus ?? document.activeElement
-    dialog.showModal()
-    return () => {
-      dialog.close()
-      if (previous instanceof HTMLElement && previous.isConnected) previous.focus()
-    }
-  }, [dialog, returnFocus])
+  const attachDialog = useCallback(
+    (node: HTMLDialogElement | null) => {
+      setDialog(node)
+      if (!node) return
+      const previous = returnFocus ?? document.activeElement
+      node.showModal()
+      return () => {
+        node.close()
+        if (previous instanceof HTMLElement && previous.isConnected) previous.focus()
+      }
+    },
+    [returnFocus]
+  )
   const submit = async (remove = false) => {
     if (lock.current) return
     if (
@@ -167,7 +171,7 @@ export function BoardViewEditor({
   }
   return (
     <dialog
-      ref={setDialog}
+      ref={attachDialog}
       aria-labelledby={titleId}
       aria-busy={pending}
       data-testid="board-view-editor"

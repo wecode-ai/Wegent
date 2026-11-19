@@ -1,5 +1,5 @@
 import { supportsConnectionEvents } from '@/lib/device-capabilities'
-import { useEffect, useSyncExternalStore } from 'react'
+import { useCallback, useSyncExternalStore } from 'react'
 import {
   loadTaskChangeRequests,
   observedChangeRequest,
@@ -678,27 +678,31 @@ export function useTaskChangeRequest(
   const branch = target?.branch ?? null
   const changeRequestUrl = target?.changeRequestUrl
 
-  useEffect(() => {
-    if (
-      !monitor ||
-      !deviceId ||
-      !taskId ||
-      !remoteUrl ||
-      (!changeRequestUrl && (!workspacePath || !branch))
-    )
-      return
-    return monitor.register({
-      deviceId,
-      taskId,
-      workspacePath: workspacePath ?? '',
-      remoteUrl,
-      branch: branch ?? '',
-      ...(changeRequestUrl ? { changeRequestUrl } : {}),
-    })
-  }, [branch, changeRequestUrl, deviceId, monitor, remoteUrl, taskId, workspacePath])
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      if (!monitor) return () => undefined
+      const unsubscribe = monitor.subscribe(listener)
+      const unregister =
+        deviceId && taskId && remoteUrl && (changeRequestUrl || (workspacePath && branch))
+          ? monitor.register({
+              deviceId,
+              taskId,
+              workspacePath: workspacePath ?? '',
+              remoteUrl,
+              branch: branch ?? '',
+              ...(changeRequestUrl ? { changeRequestUrl } : {}),
+            })
+          : undefined
+      return () => {
+        unsubscribe()
+        unregister?.()
+      }
+    },
+    [branch, changeRequestUrl, deviceId, monitor, remoteUrl, taskId, workspacePath]
+  )
 
   return useSyncExternalStore(
-    listener => monitor?.subscribe(listener) ?? (() => undefined),
+    subscribe,
     () => (monitor && target ? monitor.getSnapshot(target) : null),
     () => null
   )

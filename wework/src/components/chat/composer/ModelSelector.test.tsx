@@ -19,8 +19,9 @@ vi.mock('@/lib/navigation', () => ({
 }))
 
 const embeddedBrowserOcclusionMock = vi.hoisted(() => vi.fn())
-vi.mock('@/hooks/useEmbeddedBrowserOcclusion', () => ({
-  useEmbeddedBrowserOcclusion: embeddedBrowserOcclusionMock,
+vi.mock('@/lib/embedded-browser', async importOriginal => ({
+  ...(await importOriginal<typeof import('@/lib/embedded-browser')>()),
+  setEmbeddedBrowserOcclusion: embeddedBrowserOcclusionMock,
 }))
 
 const modelExecutionMock = vi.hoisted(() => ({

@@ -150,6 +150,17 @@ pub(crate) enum WeworkMcpSurface {
     Control,
 }
 
+impl WeworkMcpSurface {
+    pub(super) fn server_name(&self) -> &'static str {
+        match self {
+            WeworkMcpSurface::ProjectSpace => SPACE_MCP_SERVER_NAME,
+            WeworkMcpSurface::Notifications => NOTIFICATIONS_MCP_SERVER_NAME,
+            WeworkMcpSurface::StandIn => STAND_IN_MCP_SERVER_NAME,
+            WeworkMcpSurface::Control => crate::workbench_control::SERVER_NAME,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SpaceMcpClientConfig {
     pub(crate) url: String,
@@ -242,15 +253,6 @@ impl SpaceMcpRequestContext {
 
     pub(crate) fn surface(&self) -> WeworkMcpSurface {
         self.surface
-    }
-
-    fn server_name(&self) -> &'static str {
-        match self.surface {
-            WeworkMcpSurface::ProjectSpace => SPACE_MCP_SERVER_NAME,
-            WeworkMcpSurface::Notifications => NOTIFICATIONS_MCP_SERVER_NAME,
-            WeworkMcpSurface::StandIn => STAND_IN_MCP_SERVER_NAME,
-            WeworkMcpSurface::Control => crate::workbench_control::SERVER_NAME,
-        }
     }
 
     pub(crate) fn set_cloud_collaboration_dispatcher(
@@ -482,7 +484,7 @@ pub(crate) async fn handle_request_with_context(
                 "protocolVersion": protocol_version,
                 "capabilities": {"tools": {"listChanged": false}},
                 "serverInfo": {
-                    "name": context.server_name(),
+                    "name": context.surface().server_name(),
                     "version": env!("CARGO_PKG_VERSION")
                 }
             });

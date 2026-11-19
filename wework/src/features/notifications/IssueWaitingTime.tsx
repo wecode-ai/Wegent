@@ -1,14 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useClock } from '@wegent/collaboration/clock'
 import { useTranslation } from '@/hooks/useTranslation'
 
 export function IssueWaitingTime({ since }: { since: string | null }) {
   const { t } = useTranslation('common')
-  const [now, setNow] = useState(Date.now)
-  useEffect(() => {
-    if (!since) return
-    const timer = window.setInterval(() => setNow(Date.now()), 60_000)
-    return () => window.clearInterval(timer)
-  }, [since])
+  const now = useClock(Boolean(since), { resolutionMs: 60_000 })
   const start = since ? Date.parse(since) : NaN
   if (!Number.isFinite(start))
     return <span className="text-xs text-text-muted">{t('issueParticipation.wait_unknown')}</span>

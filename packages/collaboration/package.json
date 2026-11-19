@@ -457,6 +457,18 @@
     "./files/XMindPreview": {
       "types": "./src/files/XMindPreview.tsx",
       "import": "./src/files/XMindPreview.tsx"
+    },
+    "./clock": {
+      "types": "./src/clock.ts",
+      "import": "./src/clock.ts"
+    },
+    "./dom-events": {
+      "types": "./src/dom-events.ts",
+      "import": "./src/dom-events.ts"
+    },
+    "./media-query": {
+      "types": "./src/media-query.ts",
+      "import": "./src/media-query.ts"
     }
   },
   "scripts": {

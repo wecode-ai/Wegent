@@ -130,7 +130,9 @@ const desktopStorageReady = (async () => {
   try {
     await initializeDesktopLocalStoragePersistence()
     applyAppearance(readStoredAppearance())
-    await initializeProviderModelConfiguration()
+    void initializeProviderModelConfiguration().catch(error => {
+      console.error('[Wework] Failed to initialize model configuration:', error)
+    })
     logRendererStartupStep('renderer-storage-initialize', 'completed')
     return null
   } catch (error) {

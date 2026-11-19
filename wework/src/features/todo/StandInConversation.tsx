@@ -1,8 +1,8 @@
+import { createStandInOpenedReceipt } from '@/telemetry/standInOpenedReceipt'
 import { WorkbenchContext } from '@/features/workbench/useWorkbench'
 import { getUnambiguousWorkbenchDeviceAliases } from '@/lib/workbench-device'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { useStandInOpened } from '@/telemetry/useStandInOpened'
-import { useContext, useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useContext, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { standInConversationTaskId } from '@/api/personalStandIn'
 import type { StandInExecutorApi } from '@/api/standIn'
 import { TemporaryChatPanel } from '@/components/layout/workspace-panels/TemporaryChatPanel'
@@ -12,6 +12,7 @@ import { localRuntimeAttachments } from '@/lib/runtime-attachments'
 import type { WorkspaceStandInSettings } from '@wegent/collaboration'
 import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import { useStandInConversationModel } from './useStandInConversationModel'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
 
 export function StandInConversation({
   api,
@@ -42,17 +43,23 @@ export function StandInConversation({
   services?: WorkbenchServices
   scope?: 'collaboration'
 }) {
-  useStandInOpened('conversation', roleId ? 'role' : 'primary', active)
+  const [recordOpened] = useState(createStandInOpenedReceipt)
+  const openedIdentity = roleId ? 'role' : 'primary'
   const { t } = useTranslation('common')
-  const [address, setAddress] = useState<RuntimeTaskAddress | null>()
-  const [failure, setFailure] = useState<{
-    api: StandInExecutorApi
-    deviceId: string
-    taskId: string
-    message: string
-  } | null>(null)
-  const [attempt, setAttempt] = useState(0)
   const taskId = standInConversationTaskId(userId, roleId, scope)
+  const [owner, setOwner] = useState(() => createConversationSource(api, deviceId, taskId))
+  if (owner.api !== api || owner.deviceId !== deviceId || owner.taskId !== taskId) {
+    const sameConversation = owner.deviceId === deviceId && owner.taskId === taskId
+    setOwner(
+      createConversationSource(
+        api,
+        deviceId,
+        taskId,
+        sameConversation ? owner.resource.getSnapshot().data : undefined
+      )
+    )
+  }
+  const resource = owner.resource
   const workbench = useContext(WorkbenchContext)
   const modelControls = useStandInConversationModel(
     services ?? workbench?.services,
@@ -74,39 +81,23 @@ export function StandInConversation({
           (aliases.get(deviceId) ?? deviceId)
     )
   )
-  const error =
-    failure?.api === api && failure.deviceId === deviceId && failure.taskId === taskId
-      ? failure.message
-      : null
-  useEffect(() => {
-    let active = true
-    api
-      .readTask(deviceId, taskId)
-      .then(result => {
-        if (active) {
-          setAddress(
-            result.task
-              ? {
-                  deviceId,
-                  taskId,
-                  runtime: result.task.runtime,
-                  threadId: result.task.threadId,
-                  workspacePath: result.task.workspacePath,
-                  workspaceKind: result.task.workspaceKind,
-                  runtimeHandle: result.task.runtimeHandle,
-                }
-              : null
-          )
-          setFailure(null)
-        }
-      })
-      .catch(cause => {
-        if (active) setFailure({ api, deviceId, taskId, message: getStandInErrorMessage(cause) })
-      })
-    return () => {
-      active = false
-    }
-  }, [api, deviceId, taskId, attempt, persistedTaskExists])
+  const subscribe = useCallback(
+    (listener: () => void) => {
+      const release = resource.subscribe(listener, persistedTaskExists)
+      recordOpened('conversation', openedIdentity, active)
+      return release
+    },
+    [resource, persistedTaskExists, recordOpened, openedIdentity, active]
+  )
+  const snapshot = useSyncExternalStore(subscribe, resource.getSnapshot, resource.getSnapshot)
+  const address = snapshot.data
+  const error = snapshot.status === 'error' ? getStandInErrorMessage(snapshot.error) : null
+  const setAddress = useCallback(
+    (value: RuntimeTaskAddress | null) => {
+      resource.update(() => value)
+    },
+    [resource]
+  )
   const failureNotice = error ? (
     <div role="alert" className="p-5 text-sm text-error">
       <p>{error}</p>
@@ -115,8 +106,7 @@ export function StandInConversation({
         data-testid="stand-in-conversation-retry"
         className="mt-2 underline"
         onClick={() => {
-          setFailure(null)
-          setAttempt(value => value + 1)
+          void resource.reload()
         }}
       >
         {t('standIn.reload')}
@@ -191,4 +181,32 @@ export function StandInConversation({
       />
     </>
   )
+}
+
+/** API reconnects retain this conversation's accepted address while checking its metadata again. */
+function createConversationSource(
+  api: StandInExecutorApi,
+  deviceId: string,
+  taskId: string,
+  initialData?: RuntimeTaskAddress | null
+) {
+  const resource = createAsyncResource<RuntimeTaskAddress | null>(
+    JSON.stringify(['stand-in-conversation', deviceId, taskId]),
+    async () => {
+      const result = await api.readTask(deviceId, taskId)
+      return result.task
+        ? {
+            deviceId,
+            taskId,
+            runtime: result.task.runtime,
+            threadId: result.task.threadId,
+            workspacePath: result.task.workspacePath,
+            workspaceKind: result.task.workspaceKind,
+            runtimeHandle: result.task.runtimeHandle,
+          }
+        : null
+    },
+    { initialData }
+  )
+  return { api, deviceId, taskId, resource }
 }

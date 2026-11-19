@@ -1,11 +1,12 @@
+import { useLayoutEffect, useState } from 'react'
+import { createPluginAutoUpdateActor } from './pluginAutoUpdateActor'
 import { usePluginRefreshReconciliation } from '@/components/plugins/hooks/usePluginRefreshReconciliation'
 import { act, render, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 import {
   PLUGIN_RELEASE_AVAILABLE_EVENT,
   PLUGIN_AUTO_UPDATE_COMPLETED_EVENT,
-  PluginAutoUpdateCoordinator,
-} from './PluginAutoUpdateCoordinator'
+} from './pluginAutoUpdateEvents'
 import {
   beginPluginDeviceSync,
   clearPluginDeviceAutoSyncAttempts,
@@ -67,7 +68,8 @@ vi.mock('@/features/cloud-connection/useCloudConnection', () => ({
 }))
 
 vi.mock('@/features/cloud-connection/localExecutorCloudConnectionStatus', () => ({
-  useLocalExecutorCloudConnectionStatus: () => ({
+  subscribeLocalExecutorCloudConnectionStatus: () => () => {},
+  getLocalExecutorCloudConnectionStatus: () => ({
     apiBaseUrl: 'https://cloud.example.com/api',
     connected: mocks.runtimeConnected,
     configured: mocks.runtimeConfigured,
@@ -113,6 +115,22 @@ vi.mock('@/telemetry/businessEvents', () => ({ trackPluginEvent: mocks.track }))
 
 function emit(event: string, payload?: unknown) {
   for (const handler of mocks.handlers.get(event) ?? []) handler(payload)
+}
+
+// Exercise the account owner through the replacement actor, keeping existing contracts.
+function PluginAutoUpdateCoordinator() {
+  const [actor] = useState(createPluginAutoUpdateActor)
+  useLayoutEffect(() => {
+    actor.observe({
+      isConnected: true,
+      apiBaseUrl: 'https://cloud.example.com/api',
+      socketBaseUrl: mocks.socketBaseUrl,
+      socketPath: mocks.socketPath,
+      token: mocks.token,
+    })
+  })
+  useLayoutEffect(() => () => actor.disconnect(), [actor])
+  return null
 }
 
 describe('PluginAutoUpdateCoordinator', () => {

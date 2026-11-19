@@ -66,15 +66,31 @@ export function isAuthenticated(): boolean {
   return Date.now() < exp
 }
 
-export function createAuthApi(client: HttpClient) {
+export interface AuthApiOwnership {
+  captureOwnership(): () => boolean
+}
+
+function assertCredentialWriteOwner(isCurrent?: () => boolean): void {
+  if (isCurrent && !isCurrent()) {
+    throw new DOMException('Authentication operation was cancelled', 'AbortError')
+  }
+}
+
+export function createAuthApi(client: HttpClient, ownership?: AuthApiOwnership) {
   return {
     async login(data: LoginRequest): Promise<User> {
+      const isCurrent = ownership?.captureOwnership()
+      assertCredentialWriteOwner(isCurrent)
       const res = await client.post<LoginResponse>('/auth/login', data)
+      assertCredentialWriteOwner(isCurrent)
       setToken(res.access_token)
       return client.get('/users/me')
     },
     async setupAdminPassword(password: string): Promise<User> {
+      const isCurrent = ownership?.captureOwnership()
+      assertCredentialWriteOwner(isCurrent)
       const res = await client.post<LoginResponse>('/auth/admin-password/setup', { password })
+      assertCredentialWriteOwner(isCurrent)
       setToken(res.access_token)
       return client.get('/users/me')
     },
@@ -88,6 +104,7 @@ export function createAuthApi(client: HttpClient) {
       return client.get('/users/me', { redirectOnUnauthorized: false })
     },
     async loginWithOidcToken(accessToken: string): Promise<void> {
+      assertCredentialWriteOwner(ownership?.captureOwnership())
       setToken(accessToken)
     },
   }

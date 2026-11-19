@@ -1,9 +1,10 @@
 import { useStandInPanelNavigation } from './useStandInPanelNavigation'
 import { getStandInErrorMessage } from '@/lib/stand-in-error-message'
-import { useEffect, useImperativeHandle, useState, type Ref } from 'react'
+import { useImperativeHandle, useMemo, useState, useSyncExternalStore, type Ref } from 'react'
 import { Plus } from 'lucide-react'
 import { StandInSettingsHeader } from './StandInSettingsLayout'
 import { dequal } from 'dequal'
+import { createAsyncResource } from '@wegent/chat-core/async-resource'
 import type { CollaborationProject } from '@wegent/collaboration'
 import type { StandInExecutorApi, StandInMemory, StandInMemoryScope } from '@/api/standIn'
 import { standInRoleName, type PersonalStandInSettings } from '@/api/personalStandIn'
@@ -14,17 +15,7 @@ import type { StandInSettingsHandle } from './StandInSettingsPage'
 import { StandInMemoryEvidence } from './StandInMemoryEvidence'
 import { StandInMemoryRules } from './StandInMemoryRules'
 
-export function StandInMemoryPanel({
-  api,
-  settings,
-  projects,
-  fixedScope,
-  scopeLabel,
-  onClose,
-  onBack,
-  parentLabel,
-  ref,
-}: {
+interface StandInMemoryPanelProps {
   api: StandInExecutorApi
   settings: PersonalStandInSettings
   projects: CollaborationProject[]
@@ -34,11 +25,31 @@ export function StandInMemoryPanel({
   onBack?: () => void
   parentLabel?: string
   ref?: Ref<StandInSettingsHandle>
-}) {
+}
+
+export function StandInMemoryPanel(props: StandInMemoryPanelProps) {
+  const { api, settings, fixedScope } = props
+  const scope = JSON.stringify([settings.userId, settings.executionDeviceId, fixedScope])
+  const [owner, setOwner] = useState({ api, scope, revision: 0 })
+  if (owner.api !== api || owner.scope !== scope) {
+    setOwner({ api, scope, revision: owner.revision + 1 })
+  }
+  return <StandInMemoryPanelContent key={owner.revision} {...props} />
+}
+
+function StandInMemoryPanelContent({
+  api,
+  settings,
+  projects,
+  fixedScope,
+  scopeLabel,
+  onClose,
+  onBack,
+  parentLabel,
+  ref,
+}: StandInMemoryPanelProps) {
   const { t } = useTranslation('common')
-  const [items, setItems] = useState<StandInMemory[] | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [retry, setRetry] = useState(0)
   const [editing, setEditing] = useState<Partial<StandInMemory> | null>(null)
   const [deleting, setDeleting] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -89,29 +100,30 @@ export function StandInMemoryPanel({
   const selectedScope = scopes.find(row => dequal(row.scope, editing?.scope))
   const label = (scope: StandInMemoryScope) =>
     scopes.find(row => dequal(row.scope, scope))?.label ?? t('standIn.memory.disconnected')
-  useEffect(() => {
-    let active = true
-    api
-      .memories(settings.userId, settings.executionDeviceId)
-      .then(rows => {
-        if (active) {
-          setItems(
-            rows.filter(row =>
-              scopeKey
-                ? dequal(row.scope, JSON.parse(scopeKey))
-                : row.scope.kind !== 'project_coordinator'
-            )
+  const { userId, executionDeviceId } = settings
+  const resource = useMemo(
+    () =>
+      createAsyncResource(
+        JSON.stringify(['stand-in-memory', userId, executionDeviceId, scopeKey]),
+        async () => {
+          const rows = await api.memories(userId, executionDeviceId)
+          return rows.filter(row =>
+            scopeKey
+              ? dequal(row.scope, JSON.parse(scopeKey))
+              : row.scope.kind !== 'project_coordinator'
           )
-          setError(null)
         }
-      })
-      .catch(cause => {
-        if (active) setError(getStandInErrorMessage(cause))
-      })
-    return () => {
-      active = false
-    }
-  }, [api, settings.userId, settings.executionDeviceId, retry, scopeKey])
+      ),
+    [api, userId, executionDeviceId, scopeKey]
+  )
+  const snapshot = useSyncExternalStore(
+    resource.subscribe,
+    resource.getSnapshot,
+    resource.getSnapshot
+  )
+  const items = snapshot.data ?? null
+  const visibleError =
+    error ?? (snapshot.status === 'error' ? getStandInErrorMessage(snapshot.error) : null)
   const dirty =
     editing !== null &&
     !dequal(
@@ -165,21 +177,24 @@ export function StandInMemoryPanel({
         }
       />
       <p className="mb-5 text-sm text-text-muted">{t('standIn.memory.help')}</p>
-      {error && (
+      {visibleError && (
         <div role="alert" className="mb-4 text-sm text-error">
-          <p>{error}</p>
+          <p>{visibleError}</p>
           <button
             type="button"
             data-testid="stand-in-memory-retry"
             disabled={busy}
-            onClick={() => setRetry(value => value + 1)}
+            onClick={() => {
+              setError(null)
+              void resource.reload()
+            }}
             className="mt-2 underline"
           >
             {t('standIn.reload')}
           </button>
         </div>
       )}
-      {items === null && !error && <p role="status">{t('standIn.loading')}</p>}
+      {items === null && !visibleError && <p role="status">{t('standIn.loading')}</p>}
       {items !== null && (
         <>
           {!editing && (
@@ -206,7 +221,10 @@ export function StandInMemoryPanel({
                     content: editing.content ?? '',
                     scope: editing.scope ?? fixedScope ?? { kind: 'personal' },
                   })
-                  setItems(current => [row, ...(current ?? []).filter(item => item.id !== row.id)])
+                  resource.update(current => [
+                    row,
+                    ...(current ?? []).filter(item => item.id !== row.id),
+                  ])
                   setEditing(null)
                 })
               }}
@@ -322,7 +340,9 @@ export function StandInMemoryPanel({
                               row.id,
                               row.version
                             )
-                            setItems(current => current?.filter(item => item.id !== row.id) ?? [])
+                            resource.update(
+                              current => current?.filter(item => item.id !== row.id) ?? []
+                            )
                             setDeleting(null)
                           })
                         }

@@ -1,7 +1,7 @@
 import { ArrowRight, Bot, CheckCircle2, CircleDot, UserRound } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import type { User as UserProfile } from '@/types/api'
-import type { TodoDetailItem, TodoViewState } from './TodoDetailPanel'
+import type { TodoDetailItem, TodoViewState } from './todoViewTypes'
 import { todoStateColors } from './todoStateColors'
 
 interface TodoOverviewProps {

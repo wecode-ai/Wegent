@@ -1,8 +1,8 @@
 import type { SharedWorkspaceApi } from '@wegent/collaboration'
-import { ApiError } from '@/api/http'
 import { IndependentIssueProjectPicker } from './IndependentIssueProjectPicker'
 import { IndependentIssueTaskButton } from './IndependentIssueTaskButton'
-import { useEffect, useState } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
+import { createIndependentIssueDialogState } from './independentIssueDialogState'
 import { createPortal } from 'react-dom'
 import { X, Maximize2, Minimize2 } from 'lucide-react'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
@@ -10,29 +10,13 @@ import { useTranslation } from '@/hooks/useTranslation'
 import { useDialogKeyboard } from '@/hooks/useDialogKeyboard'
 import { ConfirmDialog } from '@/components/common/ConfirmDialog'
 import { DialogForm } from '@/components/common/DialogForm'
-import {
-  independentIssueInput,
-  type IndependentIssue,
-  type IndependentIssueComment,
-  type PersonalIssuesApi,
-} from '@/api/personalIssues'
-import { IndependentIssueEditor, type IssueCreationInput } from './IndependentIssueEditor'
+import type { IndependentIssue, PersonalIssuesApi } from '@/api/personalIssues'
+import { IndependentIssueEditor } from './IndependentIssueEditor'
 
 const action =
   'min-h-11 rounded-md border border-border px-3 text-sm hover:bg-muted disabled:opacity-50 md:min-h-8'
 
-export function IndependentIssueDialog({
-  api,
-  collaborationApi,
-  userId,
-  issueId,
-  onClose,
-  onSaved,
-  onOpenProjectIssue,
-  presentation = 'dialog',
-  expanded = false,
-  onExpandedChange,
-}: {
+type IndependentIssueDialogProps = {
   collaborationApi?: SharedWorkspaceApi
   api: PersonalIssuesApi
   userId: number
@@ -43,41 +27,56 @@ export function IndependentIssueDialog({
   presentation?: 'dialog' | 'drawer'
   expanded?: boolean
   onExpandedChange?(expanded: boolean): void
-}) {
+}
+
+export function IndependentIssueDialog(props: IndependentIssueDialogProps) {
+  const state = useMemo(
+    () => createIndependentIssueDialogState(props.api, props.userId, props.issueId),
+    [props.api, props.userId, props.issueId]
+  )
+  return <IndependentIssueDialogContent key={state.key} {...props} state={state} />
+}
+
+function IndependentIssueDialogContent({
+  state,
+  api,
+  collaborationApi,
+  userId,
+  issueId,
+  onClose,
+  onSaved,
+  onOpenProjectIssue,
+  presentation = 'dialog',
+  expanded = false,
+  onExpandedChange,
+}: IndependentIssueDialogProps & { state: ReturnType<typeof createIndependentIssueDialogState> }) {
   const { t } = useTranslation('common')
-  const [issue, setIssue] = useState<IndependentIssue | null>(null)
-  const [comments, setComments] = useState<IndependentIssueComment[]>([])
-  const [loading, setLoading] = useState(Boolean(issueId))
-  const [error, setError] = useState('')
-  const [errorKind, setErrorKind] = useState<'default' | 'conflict' | 'unconfirmed'>('default')
+  const subscribe = useCallback(
+    (listener: () => void) => state.subscribe(listener, { onClose, onSaved, onOpenProjectIssue }),
+    [state, onClose, onSaved, onOpenProjectIssue]
+  )
+  const {
+    issue,
+    comments,
+    loading,
+    error,
+    errorKind,
+    commentError,
+    editing,
+    busy,
+    body,
+    associationPending,
+  } = useSyncExternalStore(subscribe, state.getSnapshot, state.getSnapshot)
   const conflicted = errorKind === 'conflict'
   const saveUnconfirmed = errorKind === 'unconfirmed'
-  const [reloadIssueId, setReloadIssueId] = useState<string | null>(null)
-  const loadId = issueId ?? reloadIssueId
-  const [commentError, setCommentError] = useState('')
-  const [editing, setEditing] = useState(!issueId)
-  const [busy, setBusy] = useState(false)
   const [associating, setAssociating] = useState(false)
   const [deleting, setDeleting] = useState(false)
-  const [body, setBody] = useState('')
-  const [retry, setRetry] = useState(0)
   const [dirty, setDirty] = useState(false)
   const [discarding, setDiscarding] = useState<'close' | 'edit' | 'reload' | null>(null)
-  const [associationPending, setAssociationPending] = useState(false)
-  const refreshSavedIssue = () => {
-    if (associationPending && issue) onSaved(issue)
-  }
+  const refreshSavedIssue = state.refreshSavedIssue
   const reloadLatest = () => {
-    if (!issue) return
-    refreshSavedIssue()
-    setReloadIssueId(issue.id)
-    setEditing(false)
-    setLoading(true)
+    state.reloadLatest()
     setDirty(false)
-    setError('')
-    setErrorKind('default')
-    setAssociationPending(false)
-    setRetry(value => value + 1)
   }
   const requestClose = () => {
     if (busy) return
@@ -93,104 +92,6 @@ export function IndependentIssueDialog({
     '[data-testid="independent-issue-title"]'
   )
   useEscapeKey(requestClose, presentation === 'drawer' && !deleting && !discarding, ref)
-  useEffect(() => {
-    if (!loadId) return
-    let active = true
-    void api
-      .get(loadId)
-      .then(
-        row => {
-          if (active) {
-            setIssue(row)
-            setError('')
-            setErrorKind('default')
-          }
-        },
-        reason => {
-          if (active) {
-            setError(reason instanceof Error ? reason.message : String(reason))
-            if (reason instanceof ApiError && [403, 404].includes(reason.status)) {
-              setIssue(null)
-              setComments([])
-              setEditing(false)
-            }
-          }
-        }
-      )
-      .finally(() => {
-        if (active) setLoading(false)
-      })
-    void api.comments(loadId).then(
-      rows => {
-        if (active) {
-          setComments(rows)
-          setCommentError('')
-        }
-      },
-      reason => {
-        if (active) setCommentError(reason instanceof Error ? reason.message : String(reason))
-      }
-    )
-    return () => {
-      active = false
-    }
-  }, [api, loadId, retry])
-  const run = async (operation: () => Promise<void>) => {
-    if (busy) return
-    setBusy(true)
-    setError('')
-    setErrorKind('default')
-    try {
-      await operation()
-    } catch (reason) {
-      const unconfirmed =
-        editing &&
-        (reason instanceof TypeError || (reason instanceof ApiError && reason.status >= 500))
-      setError(reason instanceof Error ? reason.message : String(reason))
-      setErrorKind(
-        unconfirmed
-          ? 'unconfirmed'
-          : editing && reason instanceof ApiError && reason.status === 409
-            ? 'conflict'
-            : 'default'
-      )
-    } finally {
-      setBusy(false)
-    }
-  }
-  const save = ({ project_id, project_status, ...input }: IssueCreationInput) =>
-    run(async () => {
-      const row = issue
-        ? await api.update(issue.id, { ...input, version: issue.version })
-        : await api.create(input)
-      setIssue(row)
-      setAssociationPending(Boolean(project_id))
-      if (project_id) {
-        const target = await api.associate(row.id, project_id, row.version, project_status ?? '')
-        setAssociationPending(false)
-        onSaved(null)
-        onOpenProjectIssue?.(target.project_id, target.issue_id)
-        onClose()
-        return
-      }
-      setEditing(false)
-      onSaved(row)
-    })
-  const sendComment = () =>
-    run(async () => {
-      if (!issue || !body.trim()) return
-      await api.comment(issue.id, body.trim())
-      setBody('')
-      const row = await api.get(issue.id)
-      setIssue(row)
-      onSaved(row)
-      try {
-        setComments(await api.comments(issue.id))
-        setCommentError('')
-      } catch (reason) {
-        setCommentError(reason instanceof Error ? reason.message : String(reason))
-      }
-    })
   const name = (id: number | null) =>
     id == null
       ? t('independentIssues.unassigned')
@@ -288,7 +189,7 @@ export function IndependentIssueDialog({
                   <button
                     type="button"
                     data-testid="independent-issue-retry"
-                    onClick={() => setRetry(value => value + 1)}
+                    onClick={() => state.retry()}
                     className={action}
                   >
                     {t('independentIssues.retry')}
@@ -317,12 +218,12 @@ export function IndependentIssueDialog({
                 userId={userId}
                 busy={busy}
                 onDirtyChange={setDirty}
-                onSave={save}
+                onSave={state.save}
                 onCancel={() => {
                   if (dirty) setDiscarding(issue ? 'edit' : 'close')
                   else if (issue) {
                     refreshSavedIssue()
-                    setEditing(false)
+                    state.cancelEdit()
                   } else onClose()
                 }}
               />
@@ -333,7 +234,7 @@ export function IndependentIssueDialog({
                     type="button"
                     disabled={busy}
                     data-testid="independent-issue-edit"
-                    onClick={() => setEditing(true)}
+                    onClick={() => state.beginEdit()}
                     className={action}
                   >
                     {t('independentIssues.edit')}
@@ -343,16 +244,7 @@ export function IndependentIssueDialog({
                     disabled={busy}
                     data-testid="independent-issue-archive"
                     className={action}
-                    onClick={() =>
-                      void run(async () => {
-                        const row = await api.update(issue.id, {
-                          ...independentIssueInput(issue),
-                          archived: !issue.metadata.archived,
-                        })
-                        setIssue(row)
-                        onSaved(row)
-                      })
-                    }
+                    onClick={() => void state.toggleArchive()}
                   >
                     {t(
                       issue.metadata.archived
@@ -360,7 +252,11 @@ export function IndependentIssueDialog({
                         : 'independentIssues.archive'
                     )}
                   </button>
-                  <IndependentIssueTaskButton api={api} issue={issue} onError={setError} />
+                  <IndependentIssueTaskButton
+                    api={api}
+                    issue={issue}
+                    onError={state.reportTaskError}
+                  />
                   {issue.creator_id === userId && onOpenProjectIssue ? (
                     <button
                       type="button"
@@ -379,7 +275,7 @@ export function IndependentIssueDialog({
                       data-testid="independent-issue-delete"
                       className={`${action} text-destructive`}
                       onClick={() => {
-                        setError('')
+                        state.clearActionError()
                         setDeleting(true)
                       }}
                     >
@@ -393,18 +289,7 @@ export function IndependentIssueDialog({
                     issue={issue}
                     busy={busy}
                     onCancel={() => setAssociating(false)}
-                    onConfirm={(projectId, status) =>
-                      void run(async () => {
-                        const linked = await api.associate(
-                          issue.id,
-                          projectId,
-                          issue.version,
-                          status
-                        )
-                        onSaved(null)
-                        onOpenProjectIssue(linked.project_id, linked.issue_id)
-                      })
-                    }
+                    onConfirm={(projectId, status) => void state.associate(projectId, status)}
                   />
                 ) : null}
                 <dl className="mb-5 grid grid-cols-2 gap-4 text-sm">
@@ -459,7 +344,7 @@ export function IndependentIssueDialog({
                       type="button"
                       data-testid="independent-issue-comments-retry"
                       className={action}
-                      onClick={() => setRetry(value => value + 1)}
+                      onClick={() => state.retry()}
                     >
                       {t('independentIssues.retry')}
                     </button>
@@ -478,7 +363,7 @@ export function IndependentIssueDialog({
                   className="mt-4 grid gap-2"
                   onSubmit={event => {
                     event.preventDefault()
-                    void sendComment()
+                    void state.sendComment()
                   }}
                 >
                   <label className="grid gap-2 text-sm">
@@ -487,7 +372,7 @@ export function IndependentIssueDialog({
                       data-testid="independent-issue-comment"
                       disabled={busy}
                       value={body}
-                      onChange={event => setBody(event.target.value)}
+                      onChange={event => state.editComment(event.target.value)}
                       rows={3}
                       className="rounded-md border border-border bg-background p-3"
                     />
@@ -540,7 +425,7 @@ export function IndependentIssueDialog({
             return
           }
           refreshSavedIssue()
-          if (action === 'edit') setEditing(false)
+          if (action === 'edit') state.cancelEdit()
           else {
             onClose()
           }
@@ -559,11 +444,8 @@ export function IndependentIssueDialog({
           if (!busy) setDeleting(false)
         }}
         onConfirm={() =>
-          void run(async () => {
-            if (!issue) return
-            await api.remove(issue.id, issue.version)
-            setDeleting(false)
-            onSaved(null)
+          void state.remove().then(removed => {
+            if (removed && state.isOwned()) setDeleting(false)
           })
         }
       />

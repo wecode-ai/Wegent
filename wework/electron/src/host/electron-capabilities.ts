@@ -279,13 +279,16 @@ export interface ElectronE2EHost {
   cancelCloseToTray: () => Promise<void>
   closeToTray: () => Promise<void>
   closeStartupSplash: () => boolean
-  completeSystemDragDrop: (payload: {
-    action: 'new-chat' | 'follow-up' | 'stash'
-    text: string | null
-    paths: string[]
-  }) => Promise<void>
+  completeSystemDragDrop: (
+    payload: {
+      action: 'new-chat' | 'follow-up' | 'stash'
+      text: string | null
+      paths: string[]
+    },
+    presentationId?: number
+  ) => Promise<boolean | void>
   dismissPopout: () => void
-  dismissSystemDragPanel: () => void
+  dismissSystemDragPanel: (presentationId: number | null) => boolean | void
   focusMainWindow: () => void | Promise<void>
   focusWindow: (windowLabel: string) => void
   hideMainWindow: () => Promise<void>
@@ -295,7 +298,7 @@ export interface ElectronE2EHost {
   setProcessExplorerWindowSize: (width: number, height: number) => void
   closeProcessExplorerWindow: () => void
   dockVisible: () => boolean
-  getSystemDragContext: () => { conversationTitle: string | null }
+  getSystemDragContext: () => { conversationTitle: string | null; presentationId: number | null }
   runtimeDiagnostics: () => {
     coreDshPid: number | null
     executorPid: number | null
@@ -336,7 +339,7 @@ export interface ElectronE2EHost {
   setSystemSleepEnabled: (enabled: boolean) => void
   setSystemSleepTaskActive: (source: string, active: boolean) => void
   showPopout: () => Promise<void>
-  showSystemDragPanel: () => void | Promise<void>
+  showSystemDragPanel: () => number | void | Promise<number | void>
   systemDragPanelVisible: () => boolean
   takePendingSystemDrops: () => Array<{
     action: 'new-chat' | 'follow-up' | 'stash'
@@ -391,7 +394,7 @@ export function createElectronCapabilityRouter(
     setProcessExplorerWindowSize: () => undefined,
     closeProcessExplorerWindow: () => undefined,
     dockVisible: () => true,
-    getSystemDragContext: () => ({ conversationTitle: null }),
+    getSystemDragContext: () => ({ conversationTitle: null, presentationId: null }),
     runtimeDiagnostics: () => ({
       coreDshPid: null,
       developmentPlugin: null,
@@ -1483,9 +1486,14 @@ export function createElectronCapabilityRouter(
     requiredSmartApps(smartApps).verify(stringParam(params, 'installationId'))
   )
   router.register('systemDrag.complete', params =>
-    e2eHost.completeSystemDragDrop(systemDragPayload(params))
+    e2eHost.completeSystemDragDrop(
+      systemDragPayload(params),
+      integerParam(params, 'presentationId')
+    )
   )
-  router.register('systemDrag.dismissPanel', () => e2eHost.dismissSystemDragPanel())
+  router.register('systemDrag.dismissPanel', params =>
+    e2eHost.dismissSystemDragPanel(integerParam(params, 'presentationId') ?? null)
+  )
   router.register('systemDrag.getContext', () => e2eHost.getSystemDragContext())
   router.register('systemDrag.panelVisible', () => e2eHost.systemDragPanelVisible())
   router.register('systemDrag.setContext', params =>

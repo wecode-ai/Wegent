@@ -3,7 +3,7 @@ import {
   ScrollableMessageArea as SharedScrollableMessageArea,
   type ScrollableMessageAreaProps,
 } from '@wegent/collaboration/conversation'
-import { useDeferredValue, useEffect, useMemo, useState } from 'react'
+import { useDeferredValue, useMemo, useState } from 'react'
 import type {
   RuntimeTranscriptSearchMatch,
   RuntimeTranscriptSearchResponse,
@@ -74,12 +74,10 @@ export function ScrollableMessageArea({
       transcriptError,
       onSearchTranscript,
       onEnsureSearchMatch,
+      onReleaseSearchPage,
     },
     searchActive
   )
-  useEffect(() => {
-    if (!find.open || find.queryPending || !find.query.trim()) onReleaseSearchPage?.()
-  }, [find.open, find.queryPending, find.query, onReleaseSearchPage])
   const searchTarget = useDeferredValue(find.searchTarget)
   const visibleSearchPage = find.open && searchTarget?.source === 'page' ? searchPage : null
   const browsingContext =

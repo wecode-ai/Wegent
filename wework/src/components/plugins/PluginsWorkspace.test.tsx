@@ -20,7 +20,7 @@ import {
 } from '@/features/cloud-connection/localExecutorCloudConnectionStatus'
 import { CodexAuthorizationTimeoutError } from '@/features/plugins/codexConnectorAuthorization'
 import * as connectorCleanup from '@/features/plugins/logoutLocalQrConnectors'
-import { PLUGIN_AUTO_UPDATE_COMPLETED_EVENT } from '@/features/plugins/PluginAutoUpdateCoordinator'
+import { PLUGIN_AUTO_UPDATE_COMPLETED_EVENT } from '@/features/plugins/pluginAutoUpdateEvents'
 import {
   clearPluginDeviceAutoSyncAttempts,
   hasAttemptedPluginDeviceAutoSync,
