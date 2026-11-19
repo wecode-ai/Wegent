@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { desktopOwnerId as USER_ID } from '../modules/desktop-owner-fixture.mjs'
 
-const USER_ID = 9001
 const selector = id => `[data-testid="${id}"]`
 
 async function verifyProjectMenuDismissal(control, retainedView) {

@@ -8,11 +8,5 @@
       "shard": 4,
       "position": 6000
     }
-  },
-  "paths": [
-    "packages/collaboration/src/SharedIssueDetailEditor.*",
-    "packages/collaboration/src/issue-detail/useIssueFieldSaves.*",
-    "packages/collaboration/src/project-board/useBoardTagFilter.*",
-    "packages/collaboration/src/milestones/MilestonePicker.*"
-  ]
+  }
 }

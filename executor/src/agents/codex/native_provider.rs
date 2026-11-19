@@ -8,12 +8,11 @@
 use super::*;
 
 pub(super) fn process_overrides() -> Vec<String> {
-    let mut selected = defaults("openai");
     let base_url = codex_router_base_url();
+    let mut selected = proxy_profile(base_url.clone(), false);
     // Keep Codex's native account manager: command auth would replace it.
-    // Only unscoped model discovery uses this local, non-secret credential.
-    // Every inference thread replaces the complete table before it can run.
-    selected.insert("base_url".into(), json!(base_url));
+    // This non-secret credential authenticates loopback Router requests only;
+    // provider credentials remain task-owned, including after a cold resume.
     selected.insert(
         "model_catalog_url".into(),
         json!(format!("{base_url}/models")),
@@ -144,11 +143,15 @@ pub(super) fn api_overrides(base_url: String, command: &str, args: Vec<String>) 
 /// Routes official ChatGPT inference through the local compatibility proxy.
 /// The provider keeps Codex's native OAuth account manager and uses the selected transport.
 pub(super) fn official_proxy_overrides(base_url: String, supports_websockets: bool) -> Vec<String> {
+    serialize(proxy_profile(base_url, supports_websockets))
+}
+
+fn proxy_profile(base_url: String, supports_websockets: bool) -> Map<String, Value> {
     let mut selected = defaults("openai");
     selected.insert("base_url".into(), json!(base_url));
     selected.insert("supports_websockets".into(), json!(supports_websockets));
     selected.insert("supports_standalone_web_search".into(), json!(false));
-    serialize(selected)
+    selected
 }
 
 pub(super) fn official_websocket_enabled(home: &Path) -> Result<bool, String> {
@@ -289,6 +292,8 @@ mod tests {
     fn public_catalog_is_local_without_replacing_the_native_account_manager() {
         let _lock = crate::test_env::lock();
         let selected = profile_for_test(&process_overrides());
+        assert_eq!(selected["supports_websockets"], false);
+        assert_eq!(selected["supports_standalone_web_search"], false);
         assert_eq!(selected["name"], "OpenAI");
         assert_eq!(selected["requires_openai_auth"], true);
         assert!(selected.get("auth").is_none());
@@ -302,6 +307,8 @@ mod tests {
         );
         let home = tempfile::tempdir().unwrap();
         let thread = profile_for_test(&overrides(home.path(), "openai").unwrap());
+        assert_eq!(thread["supports_websockets"], false);
+        assert_eq!(thread["supports_standalone_web_search"], true);
         assert!(thread.get("experimental_bearer_token").is_none());
         assert!(thread.get("model_catalog_url").is_none());
         assert!(thread.get("base_url").is_none());

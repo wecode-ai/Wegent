@@ -17,6 +17,20 @@ async function returnTab(control, detached, tabId, draft, waitForDraft) {
   await detached.command('contextMenu', selector)
   await detached.command('click', '[data-testid="workspace-tab-return-to-main"]')
   control.activateWindow('main')
+  // A fixed editor may already be mounted. The source closes only after the
+  // target commits the transfer and acknowledges it, so wait for that boundary.
+  const deadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
+  let windows
+  do {
+    windows = JSON.parse(await control.command('getWindowFocusSnapshot', 'body')).workspaceWindows
+    if (!windows.length) break
+    await new Promise(resolve => setTimeout(resolve, 100))
+  } while (Date.now() < deadline)
+  assert.equal(
+    windows.length,
+    0,
+    `Returning the last tab did not close its window: ${JSON.stringify(windows)}`
+  )
   await control.command('waitFor', selector, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
   await control.command('waitFor', composer, { timeoutMs: DEFAULT_STEP_TIMEOUT_MS })
   assert.equal(await control.command('getValue', composer), draft)
@@ -26,14 +40,6 @@ async function returnTab(control, detached, tabId, draft, waitForDraft) {
     snapshot => snapshot.testIds.filter(id => id === `workspace-tab-${tabId}`).length === 1,
     'Returning the tab duplicated its identity'
   )
-  const deadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
-  let windows
-  do {
-    windows = JSON.parse(await control.command('getWindowFocusSnapshot', 'body')).workspaceWindows
-    if (!windows.length) return
-    await new Promise(resolve => setTimeout(resolve, 100))
-  } while (Date.now() < deadline)
-  assert.fail(`Returning the last tab did not close its window: ${JSON.stringify(windows)}`)
 }
 
 export async function verifyWorkspaceTabReturn(control, detached, tabId, waitForDraft) {

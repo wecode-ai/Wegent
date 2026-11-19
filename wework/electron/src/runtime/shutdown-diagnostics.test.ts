@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { e2eErrorLog } from '../host/e2e-error-log.js'
 import { recordReleaseDiagnostic } from './release-diagnostics.js'
 import { traceShutdownStep } from './shutdown-diagnostics.js'
 
@@ -29,6 +30,39 @@ describe('shutdown diagnostics', () => {
     vi.unstubAllEnvs()
     vi.restoreAllMocks()
     rmSync(root, { recursive: true, force: true })
+  })
+
+  it('records shutdown stages in ordinary E2E sessions without a release slot', async () => {
+    vi.stubEnv('WEWORK_RELEASE_ROOT', '')
+    const record = vi.spyOn(e2eErrorLog, 'record').mockImplementation(() => undefined)
+    await expect(traceShutdownStep('desktop-runtime', () => 42)).resolves.toBe(42)
+    expect(record).toHaveBeenNthCalledWith(
+      1,
+      'main',
+      'shutdown-step',
+      'info',
+      expect.objectContaining({ step: 'desktop-runtime', status: 'started', pid: process.pid })
+    )
+    expect(record).toHaveBeenNthCalledWith(
+      2,
+      'main',
+      'shutdown-step',
+      'info',
+      expect.objectContaining({ step: 'desktop-runtime', status: 'completed', pid: process.pid })
+    )
+    const failure = new TypeError('private service state')
+    await expect(
+      traceShutdownStep('service', () => {
+        throw failure
+      })
+    ).rejects.toBe(failure)
+    expect(record).toHaveBeenLastCalledWith(
+      'main',
+      'shutdown-step',
+      'error',
+      expect.objectContaining({ status: 'failed', errorType: 'TypeError' })
+    )
+    expect(JSON.stringify(record.mock.calls)).not.toContain(failure.message)
   })
 
   it('persists the pending phase before an operation finishes', async () => {
@@ -93,7 +127,9 @@ describe('shutdown diagnostics', () => {
 
   it('does not create diagnostic files outside an E2E session', async () => {
     vi.stubEnv('WEWORK_E2E_CONTROL_URL', '')
+    const record = vi.spyOn(e2eErrorLog, 'record').mockImplementation(() => undefined)
     await expect(traceShutdownStep('service', () => 42)).resolves.toBe(42)
+    expect(record).not.toHaveBeenCalled()
     expect(() => records()).toThrow()
   })
 })

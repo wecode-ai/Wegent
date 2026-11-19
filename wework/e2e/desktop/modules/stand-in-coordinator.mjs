@@ -1,3 +1,4 @@
+import { desktopOwnerId as USER } from './desktop-owner-fixture.mjs'
 import { openStandInSettings } from './stand-in-profile-navigation.mjs'
 import { verifyStandInScheduleActivity } from './stand-in-schedule-activity.mjs'
 import { openConnectionTypePicker } from './stand-in-flows.mjs'
@@ -18,7 +19,6 @@ import {
   responseCreated,
 } from './response-protocol.mjs'
 
-const USER = 9001
 const PROJECT = `负责人上下文验证-${process.pid}`
 const SCHEDULE = `已安排验证-${process.pid}`
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'

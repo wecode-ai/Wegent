@@ -1,3 +1,4 @@
+import { desktopOwnerId } from './desktop-owner-fixture.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 import { waitForValue } from './workspace-agent-setup.mjs'
@@ -19,7 +20,7 @@ export function createConcurrencyExecutionVerification({ workspacePath, uiTimeou
   const promptFor = (kind, index) => `${PREFIX}${kind}_${index}`
   const taskIdFor = (kind, index) =>
     kind === 'standIn'
-      ? `stand-in-chat-9001-role-concurrency-${index}`
+      ? `stand-in-chat-${desktopOwnerId}-role-concurrency-${index}`
       : `owner-concurrency-${kind}-${index}`
   const release = (kind, index) => releases.get(promptFor(kind, index))?.()
   return {
@@ -63,10 +64,12 @@ export function createConcurrencyExecutionVerification({ workspacePath, uiTimeou
       const catalog = await rpc(control, 'runtime.runner.catalog', {})
       const model = catalog.models.find(value => value.runtime === 'codex' && value.is_default)
       assert.ok(model, 'The concurrency fixture requires the configured real Codex model route')
-      const personal = await rpc(control, 'runtime.stand_in.personal.get', { userId: 9001 })
+      const personal = await rpc(control, 'runtime.stand_in.personal.get', {
+        userId: desktopOwnerId,
+      })
       try {
         await rpc(control, 'runtime.stand_in.personal.save', {
-          userId: 9001,
+          userId: desktopOwnerId,
           settings: {
             ...personal,
             roles: [
@@ -99,7 +102,7 @@ export function createConcurrencyExecutionVerification({ workspacePath, uiTimeou
                 ? {
                     type: 'stand_in_identity',
                     initiatedBy: 'stand_in_identity',
-                    userId: 9001,
+                    userId: desktopOwnerId,
                     deviceId: personal.executionDeviceId,
                     standInId: `concurrency-${index}`,
                   }
@@ -117,7 +120,7 @@ export function createConcurrencyExecutionVerification({ workspacePath, uiTimeou
               executionRequest: {
                 task_id: taskId,
                 subtask_id: `${taskId}-initial`,
-                user_id: 9001,
+                user_id: desktopOwnerId,
                 prompt,
                 new_session: true,
                 origin,
@@ -184,7 +187,7 @@ export function createConcurrencyExecutionVerification({ workspacePath, uiTimeou
             executionRequest: {
               task_id: taskId,
               subtask_id: `${taskId}-followup`,
-              user_id: 9001,
+              user_id: desktopOwnerId,
               prompt,
               new_session: false,
               bot: [{ shell_type: 'Codex', name: 'Concurrency verification' }],
@@ -221,9 +224,11 @@ export function createConcurrencyExecutionVerification({ workspacePath, uiTimeou
         for (const resolve of releases.values()) resolve()
         for (const taskId of taskIds) await rpc(control, 'runtime.tasks.cancel', { taskId })
         await rpc(control, 'runtime.settings.update', original)
-        const current = await rpc(control, 'runtime.stand_in.personal.get', { userId: 9001 })
+        const current = await rpc(control, 'runtime.stand_in.personal.get', {
+          userId: desktopOwnerId,
+        })
         await rpc(control, 'runtime.stand_in.personal.save', {
-          userId: 9001,
+          userId: desktopOwnerId,
           settings: { ...personal, version: current.version },
         })
       }

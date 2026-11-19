@@ -11,11 +11,7 @@ import {
   type LocalRuntimeSidebarIdentity,
 } from '@/lib/local-runtime-sidebar-identity'
 import { navigateTo } from '@/lib/navigation'
-import {
-  normalizeRuntimeWorkspacePath,
-  runtimeProjectToProject,
-  runtimeProjectUiId,
-} from '@/lib/runtime-project'
+import { normalizeRuntimeWorkspacePath, runtimeProjectUiId } from '@/lib/runtime-project'
 import {
   runtimeProjectSyncTargetKey,
   type RuntimeProjectSyncTarget,
@@ -362,14 +358,16 @@ export function useOpenStandaloneWorkspace({
             name: response.name,
           })
         )
-        await refreshWorkLists()
         dispatch({
-          type: 'project_workspace_selected',
-          project: runtimeProjectToProject({
+          type: 'runtime_project_registered',
+          projectWork: {
             project: {
               key: response.projectKey,
               stateDeviceId: response.deviceId,
               name: response.name,
+              kind: 'local',
+              source: 'local_project',
+              roots: response.roots.map(path => ({ kind: 'local', path })),
             },
             deviceWorkspaces: [
               {
@@ -379,8 +377,7 @@ export function useOpenStandaloneWorkspace({
                 tasks: [],
               },
             ],
-          }),
-          startFreshChat: true,
+          },
         })
         if (launchOptions)
           queueWorkbenchWorkspaceLaunch(
@@ -390,6 +387,9 @@ export function useOpenStandaloneWorkspace({
             launchOwner(response.deviceId, launchOptions)
           )
         navigateTo('/')
+        void refreshWorkLists().catch(error => {
+          console.error('[Wework] Failed to refresh work lists after creating project', error)
+        })
         return
       }
 

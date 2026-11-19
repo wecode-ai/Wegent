@@ -4,22 +4,18 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import { createLocalCollaborationProject, reloadMainWindow } from '../modules/workspace-flows.mjs'
 import { startRealObjectStorage } from '../modules/real-object-storage.mjs'
 import { createCloudDeliveryEditingRegression } from '../modules/delivery-cloud-editing.mjs'
-import { createTaskDeliveryIssueRegression } from '../modules/task-delivery-issue.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const scoped = selector => `${CONTENT} ${selector}`
 const panel = scoped('[data-testid="todo-detail-delivery-panel"]')
 
-export async function createDesktopScenario(options) {
-  const { resultDir, uiTimeoutMs, workbenchReadyTimeoutMs } = options
-  const taskDelivery = createTaskDeliveryIssueRegression(options)
+export async function createDesktopScenario({ resultDir, uiTimeoutMs, workbenchReadyTimeoutMs }) {
   const storage = await startRealObjectStorage(resultDir, workbenchReadyTimeoutMs)
   const cloud = createCloudDeliveryEditingRegression({ uiTimeoutMs })
   let project
   let issue
   let delivery
   return {
-    handleHttp: taskDelivery.handleHttp,
     requiresCloudEnvironment: true,
     backendEnv: storage.backendEnv,
     cleanup: storage.stop,
@@ -144,7 +140,6 @@ export async function createDesktopScenario(options) {
       await control.command('waitFor', panel, { text: '并发保存的备注' })
       await click('todo-detail-delivery-close')
       await cloud.verify(control)
-      await taskDelivery.verify(control, { project, issue })
       console.log(
         `[delivery-editing-e2e] Verified editing, cancellation, conflict and persistence for ${issue.id}`
       )

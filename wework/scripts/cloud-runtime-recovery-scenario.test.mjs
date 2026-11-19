@@ -34,10 +34,6 @@ vi.mock('../e2e/desktop/modules/runtime-im-questions.mjs', () => ({
   }),
 }))
 
-vi.mock('../e2e/desktop/modules/task-feedback-model-identity.mjs', () => ({
-  assertFeedbackModelSnapshot: vi.fn(),
-}))
-
 vi.mock('../e2e/desktop/modules/shared.mjs', async importOriginal => ({
   ...(await importOriginal()),
   fetchJson: state.fetchJson,

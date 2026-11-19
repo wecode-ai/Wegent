@@ -18,13 +18,7 @@
 //!    queue);
 //! 4. a separate read fills `workspace_cleanup_intents = pull_due(...)`.
 //!
-//! Claim delivery and the persisted Runtime request compilation are not ported
-//! yet (their Runtime payload builder and issue TaskBinding are separate source
-//! modules). The queue read is followed by the source's claimability and
-//! occupancy filters, so a pull that admits no eligible row acknowledges
-//! `task: null`; only a row that survives those filters reaches the unported
-//! delivery branch, which fails explicitly with `NOT_IMPLEMENTED` before
-//! reserving the selected execution.
+//! A negotiated catalog probe checks queue presence without reserving work.
 
 use std::sync::Arc;
 
@@ -60,6 +54,7 @@ pub(super) struct PullCommand<'a> {
     pub(super) runtime_instance_id: &'a str,
     pub(super) environment: &'static str,
     runner_catalog: Option<&'a Value>,
+    catalog_probe: bool,
 }
 
 /// `on_runtime_tasks_pull`: validate the session, run `pull_execution`, and
@@ -110,10 +105,14 @@ fn pull_command<'a>(
         runtime_instance_id,
         environment,
         runner_catalog,
+        catalog_probe: data.get("catalog_probe").and_then(Value::as_bool) == Some(true),
     })
 }
 
 async fn pull_execution(app: &AppState, command: &PullCommand<'_>) -> anyhow::Result<Value> {
+    if command.catalog_probe {
+        return probe_catalog(app, command).await;
+    }
     if let Some(catalog) = command.runner_catalog {
         let Some(normalized) = runner_catalog::normalize(catalog) else {
             return Ok(json!({"success": false, "error": "Invalid runner capability report"}));
@@ -146,6 +145,47 @@ async fn pull_execution(app: &AppState, command: &PullCommand<'_>) -> anyhow::Re
     ack["workspace_cleanup_intents"] =
         Value::Array(pull_due(app, command.owner_user_id, command.runtime_device_id).await?);
     Ok(ack)
+}
+
+/// Queue presence is only a hint: do not use stale model availability to
+/// suppress discovery, and never reserve or compile work during a probe.
+async fn probe_catalog(app: &AppState, command: &PullCommand<'_>) -> anyhow::Result<Value> {
+    let Some(device) = resolve_owned_device_alias(
+        &app.mysql,
+        command.owner_user_id,
+        command.execution_target_id,
+    )
+    .await?
+    else {
+        return Ok(json!({"success": false, "error": "Runner is no longer authorized"}));
+    };
+    let identities = device_identity_ids(&device);
+    // Admission needs the first published catalog before any work can be queued.
+    // A valid empty catalog is still a completed publication, not an idle retry.
+    let unpublished = runner_catalog::normalize(&device.json["spec"]["runnerCatalog"]).is_none();
+    let required = if unpublished || unconfirmed_claim(app, command).await?.is_some() {
+        true
+    } else {
+        let rows = claim::queue_rows_for_catalog_probe(
+            app,
+            command.owner_user_id,
+            &identities,
+            command.environment,
+        )
+        .await?;
+        claim::select_catalog_candidate(
+            app,
+            command.owner_user_id,
+            command.execution_target_id,
+            rows,
+        )
+        .await?
+        .is_some()
+    };
+    Ok(json!({
+        "success": true, "task": null, "catalog_required": required,
+        "workspace_cleanup_intents": pull_due(app, command.owner_user_id, command.runtime_device_id).await?
+    }))
 }
 
 /// `_claim_execution`: redeliver an unconfirmed claim, otherwise claim the

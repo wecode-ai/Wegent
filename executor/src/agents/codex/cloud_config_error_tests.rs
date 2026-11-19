@@ -21,7 +21,7 @@ fn cloud_config_auth_error_retains_its_native_failure_reason() {
                 "action": "relogin"
             }
         }
-    }))
+    }), "thread/start", CodexRpcOrigin::Shared(None))
     .unwrap_err();
     assert!(is_codex_cloud_config_error(&error), "{error}");
     assert!(error.contains(AUTH_ERROR));
@@ -34,23 +34,35 @@ fn cloud_config_recovery_requires_the_bundle_reason_or_explicit_bundle_error() {
         json!({"reason": "authentication", "statusCode": 401}),
         json!({"detail": "cloudConfigBundle", "statusCode": 401}),
     ] {
-        let error = response_result(json!({
-            "id": 1,
-            "error": {"code": -32600, "message": AUTH_ERROR, "data": data}
-        }))
+        let error = response_result(
+            json!({
+                "id": 1,
+                "error": {"code": -32600, "message": AUTH_ERROR, "data": data}
+            }),
+            "thread/start",
+            CodexRpcOrigin::Shared(None),
+        )
         .unwrap_err();
         assert_eq!(error, AUTH_ERROR);
         assert!(!is_codex_cloud_config_error(&error));
     }
     let message = "failed to load configuration: Failed to load cloud config bundle (workspace-managed policies).";
-    let error = response_result(json!({"error": {
-        "message": message,
-        "data": {"reason": "cloudConfigBundle"}
-    }}))
+    let error = response_result(
+        json!({"error": {
+            "message": message,
+            "data": {"reason": "cloudConfigBundle"}
+        }}),
+        "thread/start",
+        CodexRpcOrigin::Shared(None),
+    )
     .unwrap_err();
     assert_eq!(error, message);
     assert_eq!(
-        response_result(json!({"result": {"ready": true}})),
+        response_result(
+            json!({"result": {"ready": true}}),
+            "initialize",
+            CodexRpcOrigin::Shared(None)
+        ),
         Ok(json!({"ready": true}))
     );
 }
@@ -76,10 +88,14 @@ async fn cloud_config_errors_cannot_change_explicit_subscription_or_named_home_a
                 ..CodexAppServerSharedState::default()
             })),
         };
-        let error = response_result(json!({"error": {
-            "message": AUTH_ERROR,
-            "data": {"reason": "cloudConfigBundle"}
-        }}))
+        let error = response_result(
+            json!({"error": {
+                "message": AUTH_ERROR,
+                "data": {"reason": "cloudConfigBundle"}
+            }}),
+            "thread/start",
+            CodexRpcOrigin::Shared(None),
+        )
         .unwrap_err();
         let degraded = client
             .degrade_auth_after_cloud_config_failure(
@@ -88,6 +104,7 @@ async fn cloud_config_errors_cannot_change_explicit_subscription_or_named_home_a
                 None,
                 Some(&launch_config),
                 false,
+                None,
             )
             .await
             .unwrap();

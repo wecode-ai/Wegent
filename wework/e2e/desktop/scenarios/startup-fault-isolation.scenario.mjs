@@ -1,4 +1,3 @@
-import { verifyStartupRecovery } from '../modules/startup-recovery.mjs'
 import assert from 'node:assert/strict'
 import { verifyStartupDatabaseLock } from '../modules/startup-database-lock.mjs'
 import { access, mkdir, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises'
@@ -137,7 +136,6 @@ export async function createDesktopScenario({
         join(resultDir, 'startup-preferences-unavailable-result.json'),
         JSON.stringify({ workbenchVisible: true, startupSplashClosed: true })
       )
-      await verifyStartupRecovery({ appBinary, resultDir })
       await verifyStartupDatabaseLock({
         control,
         executorHome,

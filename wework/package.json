@@ -40,6 +40,7 @@
     "e2e:desktop:plugins": "node e2e/desktop/run-checkpoints.mjs --plugins-only",
     "e2e:desktop:memory": "node e2e/desktop/run-checkpoints.mjs --memory-only",
     "e2e:desktop:embedded-browser": "node e2e/desktop/run-checkpoints.mjs --segment embedded-browser",
+    "e2e:desktop:browser-toolbar-actions": "node e2e/desktop/run-checkpoints.mjs --segment browser-toolbar-actions",
     "e2e:desktop:local-terminal": "node e2e/desktop/run-checkpoints.mjs --segment local-harness",
     "e2e:desktop:streaming-text": "node e2e/desktop/run-checkpoints.mjs --segment streaming-text",
     "ai:verify": "node scripts/ai-verify.mjs",

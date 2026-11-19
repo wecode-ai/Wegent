@@ -54,7 +54,7 @@ export async function verifyStandInStartupRecovery({
       loopItemId: issue.id,
       ...issue.human_task_binding,
     }
-    // The shared runner removes result-directory workspaces after stopping the app.
+    // The shared runner removes workspace fixtures after stopping native sessions.
     const accepted = await rpc('runtime.tasks.create', {
       taskId,
       title: issue.title,
@@ -87,6 +87,7 @@ export async function verifyStandInStartupRecovery({
     )
     assert.equal(failed.task.threadId ?? null, null)
     const executorLogPath = join(resultDir, 'executor.log')
+    // Task state can settle before the supervisor forwards its failure log.
     await waitForLogPattern(
       executorLogPath,
       new RegExp(`required Skill deployment failed: ${requiredSkill}`)

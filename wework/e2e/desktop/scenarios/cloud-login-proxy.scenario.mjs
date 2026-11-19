@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 
 import { startCloudLoginProxyFixture } from '../modules/cloud-login-proxy-fixtures.mjs'
+import { requestJson } from '../modules/harness-app-fixture.mjs'
 
 const WORKBENCH_READY_TIMEOUT_MS = 120_000
 const CLOUD_CONNECTION_TIMEOUT_MS = 60_000
@@ -32,12 +33,31 @@ async function cloudConnectionError(control) {
 // when it travels through the same network stack as the renderer. Before that fix the renderer opened
 // the authorization page while the poll reported that the cloud was unreachable.
 export async function createDesktopScenario() {
-  const fixture = await startCloudLoginProxyFixture()
+  let fixture
+  const electronLaunchArguments = []
   return {
-    // Start the workbench without the harness stub cloud session so the checkpoint can drive the real
-    // authorization flow through the connection dialog.
-    authToken: '',
-    electronLaunchArguments: [`--proxy-server=${fixture.proxyUrl}`],
+    electronLaunchArguments,
+    async prepareApp({ appEnvironment }) {
+      appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL = ''
+    },
+    async prepareCloud({ backendUrl, authToken }) {
+      const password = 'desktop-e2e-cloud-login-password'
+      await requestJson(backendUrl, authToken, '/api/admin/users', {
+        method: 'POST',
+        body: JSON.stringify({
+          user_name: 'e2e-cloud-login',
+          password,
+          role: 'user',
+          auth_source: 'password',
+        }),
+      })
+      const login = await requestJson(backendUrl, null, '/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({ user_name: 'e2e-cloud-login', password }),
+      })
+      fixture = await startCloudLoginProxyFixture({ backendUrl, authToken: login.access_token })
+      electronLaunchArguments.push(`--proxy-server=${fixture.proxyUrl}`)
+    },
 
     async verify(control) {
       await control.command('waitFor', '[data-testid="sidebar-cloud-connection-button"]', {
@@ -110,7 +130,7 @@ export async function createDesktopScenario() {
     },
 
     async cleanup() {
-      await fixture.stop()
+      await fixture?.stop()
     },
   }
 }

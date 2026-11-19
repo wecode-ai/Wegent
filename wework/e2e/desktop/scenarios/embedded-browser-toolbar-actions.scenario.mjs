@@ -1,0 +1,689 @@
+import assert from 'node:assert/strict'
+import { mkdir, readFile, unlink, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { prepareExternalBrowserFixture } from '../modules/external-browser-fixture.mjs'
+
+const ACTIVE_WORKBENCH_SELECTOR =
+  '[data-testid="desktop-workbench-main"][data-active-workbench-pane="true"]'
+const RIGHT_PANEL_TOGGLE_SELECTOR =
+  '[data-workspace-tab-portal-owner]:not([hidden]) [data-testid="toggle-right-workspace-panel-button"]'
+const RIGHT_PANEL_EXPAND_SELECTOR = '[data-testid="toggle-right-workspace-panel-expanded-button"]'
+const RIGHT_BROWSER_OPTION_SELECTOR = '[data-testid="right-workspace-browser-option"]'
+const ACTIVE_BROWSER_PANEL_SELECTOR =
+  ACTIVE_WORKBENCH_SELECTOR +
+  ' [data-testid="right-workspace-panel"] div:not(.hidden) > [data-testid="workspace-browser-panel"]'
+const BROWSER_INPUT_SELECTOR =
+  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-url-input"]'
+const BROWSER_BACK_BUTTON_SELECTOR =
+  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-back-button"]'
+const BROWSER_FORWARD_BUTTON_SELECTOR =
+  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-forward-button"]'
+const BROWSER_RELOAD_BUTTON_SELECTOR =
+  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-reload-button"]'
+const BROWSER_MORE_BUTTON_SELECTOR =
+  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-more-button"]'
+const FIND_ITEM_SELECTOR = '[data-testid="workspace-browser-find-item"]'
+const FIND_BAR_SELECTOR = '[data-testid="workspace-browser-find-bar"]'
+const FIND_INPUT_SELECTOR = '[data-testid="workspace-browser-find-input"]'
+const FIND_COUNT_SELECTOR = '[data-testid="workspace-browser-find-count"]'
+const FIND_CLOSE_SELECTOR = '[data-testid="workspace-browser-find-close-button"]'
+const DEVICE_TOOLBAR_ITEM_SELECTOR = '[data-testid="workspace-browser-device-toolbar-item"]'
+const DEVICE_TOOLBAR_SELECTOR =
+  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-device-toolbar"]'
+const DEVICE_ROTATE_SELECTOR =
+  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-device-rotate-button"]'
+const DEVICE_WIDTH_SELECTOR =
+  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-device-width-input"]'
+const DEVICE_HEIGHT_SELECTOR =
+  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-device-height-input"]'
+const DEVICE_ZOOM_SELECTOR =
+  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-device-zoom-select"]'
+const DEVICE_ZOOM_200_SELECTOR = '[data-testid="workspace-browser-device-zoom-select-option-200"]'
+const DEVICE_RESIZE_LEFT_SELECTOR =
+  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-device-resize-left"]'
+const DEVICE_RESIZE_RIGHT_SELECTOR =
+  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-device-resize-right"]'
+const DEVICE_CLOSE_SELECTOR =
+  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-device-close-button"]'
+const BROWSER_PLACEHOLDER_SELECTOR =
+  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-electron-webview-placeholder"]'
+const BROWSER_HOST_SELECTOR = '[data-testid="workspace-browser-electron-webview"]'
+const SETTINGS_ITEM_SELECTOR = '[data-testid="workspace-browser-settings-item"]'
+const BROWSER_SETTINGS_PAGE_SELECTOR = '[data-testid="browser-settings-page"]'
+const FIXTURE_PATH = '/embedded-browser-toolbar-actions-fixture'
+const SECOND_FIXTURE_PATH = '/embedded-browser-toolbar-actions-fixture-second'
+const HANGING_FIXTURE_PATH = '/embedded-browser-toolbar-actions-fixture-hanging'
+const HANGING_FIXTURE_RELEASE_PATH = '/embedded-browser-toolbar-actions-fixture-hanging-release'
+const BRIDGE_RUNTIME_FILE = 'embedded-browser-bridge.json'
+const BROWSER_LABEL = 'workspace-browser'
+// Match the host's bounded layout (5s), native open (15s), frame (5s), and close (5s) stages.
+const DETACHED_INSPECTOR_VERIFICATION_TIMEOUT_MS = 30_000
+const FIXTURE_WORD = 'Fixture'
+const BROWSER_OPEN_EXTERNAL_SELECTOR =
+  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-open-external-button"]'
+const BROWSER_ERROR_SELECTOR =
+  ACTIVE_BROWSER_PANEL_SELECTOR + ' [data-testid="workspace-browser-error"]'
+
+function fixtureHtml(title, heading) {
+  return [
+    '<!doctype html>',
+    '<html>',
+    '  <head>',
+    '    <meta charset="utf-8" />',
+    `    <title>${title}</title>`,
+    '  </head>',
+    '  <body>',
+    `    <h1>${heading}</h1>`,
+    '    <p>Fixture paragraph one.</p>',
+    '    <p>Fixture paragraph two.</p>',
+    '  </body>',
+    '</html>',
+  ].join('\n')
+}
+
+async function waitForBridgeIdentity(executorHome, timeoutMs) {
+  const runtimePath = join(executorHome, 'runtime', BRIDGE_RUNTIME_FILE)
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const content = await readFile(runtimePath, 'utf8').catch(() => '')
+    if (content) {
+      const record = JSON.parse(content)
+      if (record.schemaVersion === 1 && record.address && record.token) {
+        return { baseUrl: 'http://' + record.address, token: record.token }
+      }
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error('Timed out waiting for authenticated embedded browser bridge runtime')
+}
+
+async function callBridge(identity, payload, label = BROWSER_LABEL) {
+  const response = await fetch(identity.baseUrl + '/browser', {
+    method: 'POST',
+    headers: {
+      authorization: 'Bearer ' + identity.token,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify({ label, ...payload }),
+  })
+  const body = await response.json()
+  assert.equal(response.ok, true, 'Bridge HTTP failed: ' + JSON.stringify(body))
+  assert.equal(body.ok, true, 'Bridge action failed: ' + JSON.stringify(body))
+  return body.data
+}
+
+async function evaluateFindState(identity) {
+  const result = await callBridge(identity, {
+    action: 'evaluate',
+    expression: 'window.__WEWORK_BROWSER_FIND__ ? window.__WEWORK_BROWSER_FIND__.state() : null',
+    timeoutMs: 5_000,
+  })
+  assert.equal(result.ok, true, 'Find state evaluation failed: ' + JSON.stringify(result))
+  return result.value
+}
+
+async function waitForFindMatches(identity, expected, timeoutMs, message) {
+  const startedAt = Date.now()
+  let lastState = null
+  while (Date.now() - startedAt < timeoutMs) {
+    lastState = await evaluateFindState(identity)
+    if (lastState?.matches === expected) return lastState
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`${message}; last state=${JSON.stringify(lastState)}`)
+}
+
+async function evaluatePageNumber(identity, expression, message) {
+  const result = await callBridge(identity, {
+    action: 'evaluate',
+    expression,
+    timeoutMs: 5_000,
+  })
+  assert.equal(result.ok, true, `${message}: ${JSON.stringify(result)}`)
+  return Number(result.value)
+}
+
+async function waitForPageNumber(identity, expression, expected, tolerance, timeoutMs, message) {
+  const startedAt = Date.now()
+  let lastValue = null
+  while (Date.now() - startedAt < timeoutMs) {
+    lastValue = await evaluatePageNumber(identity, expression, message)
+    if (Math.abs(lastValue - expected) <= tolerance) return lastValue
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`${message}; expected ~${expected}, last value=${lastValue}`)
+}
+
+async function waitForValue(control, selector, expected, timeoutMs, message) {
+  const startedAt = Date.now()
+  let lastValue = null
+  while (Date.now() - startedAt < timeoutMs) {
+    lastValue = await control.command('getValue', selector)
+    if (lastValue === expected) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`${message}; last value=${lastValue}`)
+}
+
+async function waitForElementGone(control, selector, timeoutMs, message) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const count = await control.command('getElementCount', selector)
+    if (count === '0') return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(message)
+}
+
+async function waitForElementCount(control, selector, expected, timeoutMs, message) {
+  const startedAt = Date.now()
+  let lastCount = null
+  while (Date.now() - startedAt < timeoutMs) {
+    lastCount = await control.command('getElementCount', selector)
+    if (lastCount === String(expected)) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`${message}; last count=${lastCount}`)
+}
+
+async function waitForButtonDisabled(control, selector, disabled, timeoutMs, message) {
+  await waitForElementCount(
+    control,
+    disabled ? `${selector}[disabled]` : `${selector}:not([disabled])`,
+    1,
+    timeoutMs,
+    message
+  )
+}
+
+function assertFramesEqual(before, after) {
+  assert.equal(before.length, 4, 'Inspector verification returned an invalid before frame')
+  assert.equal(after.length, 4, 'Inspector verification returned an invalid after frame')
+  before.forEach((value, index) => {
+    assert.ok(
+      Math.abs(value - after[index]) <= 0.5,
+      `Opening the Inspector changed child WebView frame index ${index}: ${value} -> ${after[index]}`
+    )
+  })
+}
+
+async function getSingleElementMetrics(control, selector, description) {
+  const metrics = JSON.parse(await control.command('getElementMetrics', selector))
+  assert.equal(metrics.length, 1, `${description} rendered ${metrics.length} matching elements`)
+  return metrics[0]
+}
+
+function frameDifference(left, right) {
+  return Math.max(
+    Math.abs(left.left - right.left),
+    Math.abs(left.top - right.top),
+    Math.abs(left.width - right.width),
+    Math.abs(left.height - right.height)
+  )
+}
+
+async function waitForBrowserFramesAligned(control, timeoutMs, message) {
+  const startedAt = Date.now()
+  let placeholder = null
+  let host = null
+  while (Date.now() - startedAt < timeoutMs) {
+    placeholder = await getSingleElementMetrics(
+      control,
+      BROWSER_PLACEHOLDER_SELECTOR,
+      'The embedded browser placeholder'
+    )
+    host = await getSingleElementMetrics(
+      control,
+      BROWSER_HOST_SELECTOR,
+      'The embedded browser host'
+    )
+    if (frameDifference(placeholder, host) <= 1) return placeholder
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(
+    `${message}; placeholder=${JSON.stringify(placeholder)}, host=${JSON.stringify(host)}`
+  )
+}
+
+async function waitForPositionOnlyBrowserFrameSync(control, before, timeoutMs) {
+  const startedAt = Date.now()
+  let placeholder = null
+  let host = null
+  while (Date.now() - startedAt < timeoutMs) {
+    placeholder = await getSingleElementMetrics(
+      control,
+      BROWSER_PLACEHOLDER_SELECTOR,
+      'The moved embedded browser placeholder'
+    )
+    host = await getSingleElementMetrics(
+      control,
+      BROWSER_HOST_SELECTOR,
+      'The moved embedded browser host'
+    )
+    const positionChanged = Math.abs(placeholder.left - before.left) > 100
+    const sizeStayedStable =
+      Math.abs(placeholder.width - before.width) <= 1 &&
+      Math.abs(placeholder.height - before.height) <= 1
+    if (positionChanged && sizeStayedStable && frameDifference(placeholder, host) <= 1) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(
+    'The embedded browser host did not follow a position-only panel layout change; ' +
+      `before=${JSON.stringify(before)}, placeholder=${JSON.stringify(placeholder)}, ` +
+      `host=${JSON.stringify(host)}`
+  )
+}
+
+export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs }) {
+  let externalBrowser
+  // Loading starts before the HTTP request arrives; retain an early release.
+  let releaseHangingFixture
+  const hangingFixtureReleased = new Promise(resolve => {
+    releaseHangingFixture = resolve
+  })
+  return {
+    async prepareApp({ appEnvironment }) {
+      if (process.platform !== 'linux') return
+      externalBrowser = await prepareExternalBrowserFixture(resultDir, uiTimeoutMs)
+      Object.assign(appEnvironment, externalBrowser.appEnvironment)
+    },
+
+    async cleanup() {
+      await externalBrowser?.dispose()
+    },
+
+    async handleHttp(request, response, url) {
+      if (request.method !== 'GET') return false
+      if (url.pathname === HANGING_FIXTURE_PATH) {
+        await hangingFixtureReleased
+        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+        response.end(fixtureHtml('Embedded Browser Hanging Fixture', 'Hanging fixture loaded'))
+        return true
+      }
+      if (url.pathname === HANGING_FIXTURE_RELEASE_PATH) {
+        releaseHangingFixture()
+        response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' })
+        response.end('released')
+        return true
+      }
+      if (url.pathname === SECOND_FIXTURE_PATH) {
+        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+        response.end(
+          fixtureHtml(
+            'Embedded Browser Toolbar Fixture Two',
+            'Embedded Browser Toolbar Fixture Two'
+          )
+        )
+        return true
+      }
+      if (url.pathname !== FIXTURE_PATH) return false
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+      response.end(
+        fixtureHtml('Embedded Browser Toolbar Fixture', 'Embedded Browser Toolbar Fixture')
+      )
+      return true
+    },
+
+    async verify(control) {
+      const bridgeIdentity = await waitForBridgeIdentity(executorHome, uiTimeoutMs)
+      const fixtureUrl = control.url + FIXTURE_PATH
+      const secondFixtureUrl = control.url + SECOND_FIXTURE_PATH
+      const hangingFixtureUrl = control.url + HANGING_FIXTURE_PATH
+
+      await control.command('waitFor', RIGHT_PANEL_TOGGLE_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await control.command('click', RIGHT_PANEL_TOGGLE_SELECTOR)
+      await control.command('click', RIGHT_BROWSER_OPTION_SELECTOR)
+      await control.command('waitFor', BROWSER_INPUT_SELECTOR, { timeoutMs: uiTimeoutMs })
+
+      await callBridge(bridgeIdentity, { action: 'open', url: fixtureUrl, timeoutMs: 8_000 })
+      await waitForValue(
+        control,
+        BROWSER_INPUT_SELECTOR,
+        fixtureUrl,
+        uiTimeoutMs,
+        'The browser tab did not load the toolbar fixture'
+      )
+
+      // --- Toolbar navigation button state ---
+      // The first navigation has no history, so back and forward stay disabled.
+      await waitForButtonDisabled(
+        control,
+        BROWSER_BACK_BUTTON_SELECTOR,
+        true,
+        uiTimeoutMs,
+        'Back stayed enabled without navigation history'
+      )
+      await waitForButtonDisabled(
+        control,
+        BROWSER_FORWARD_BUTTON_SELECTOR,
+        true,
+        uiTimeoutMs,
+        'Forward stayed enabled without forward history'
+      )
+      await waitForButtonDisabled(
+        control,
+        BROWSER_RELOAD_BUTTON_SELECTOR,
+        false,
+        uiTimeoutMs,
+        'Reload did not become enabled after the page loaded'
+      )
+
+      // A same-tab navigation creates history and enables back.
+      await control.command('submit', BROWSER_INPUT_SELECTOR, { value: secondFixtureUrl })
+      // Back becoming enabled implies the navigation finished and created history.
+      await waitForButtonDisabled(
+        control,
+        BROWSER_BACK_BUTTON_SELECTOR,
+        false,
+        uiTimeoutMs,
+        'Back did not become enabled after a same-tab navigation'
+      )
+
+      // Going back restores the fixture and enables forward.
+      await control.command('click', BROWSER_BACK_BUTTON_SELECTOR)
+      await waitForValue(
+        control,
+        BROWSER_INPUT_SELECTOR,
+        fixtureUrl,
+        uiTimeoutMs,
+        'The back button did not return to the toolbar fixture'
+      )
+      await waitForButtonDisabled(
+        control,
+        BROWSER_FORWARD_BUTTON_SELECTOR,
+        false,
+        uiTimeoutMs,
+        'Forward did not become enabled after going back'
+      )
+
+      // While a page is loading, back, forward, and reload are all disabled.
+      // The hanging fixture only responds once the release endpoint is hit.
+      await control.command('submit', BROWSER_INPUT_SELECTOR, { value: hangingFixtureUrl })
+      // The reload button turning disabled signals that the panel observed the
+      // loading state; the address bar keeps the previous URL while loading.
+      await waitForButtonDisabled(
+        control,
+        BROWSER_RELOAD_BUTTON_SELECTOR,
+        true,
+        uiTimeoutMs,
+        'Reload stayed enabled while the page was loading'
+      )
+      await waitForButtonDisabled(
+        control,
+        BROWSER_BACK_BUTTON_SELECTOR,
+        true,
+        uiTimeoutMs,
+        'Back stayed enabled while the page was loading'
+      )
+      await waitForButtonDisabled(
+        control,
+        BROWSER_FORWARD_BUTTON_SELECTOR,
+        true,
+        uiTimeoutMs,
+        'Forward stayed enabled while the page was loading'
+      )
+      await fetch(control.url + HANGING_FIXTURE_RELEASE_PATH)
+      await waitForButtonDisabled(
+        control,
+        BROWSER_RELOAD_BUTTON_SELECTOR,
+        false,
+        uiTimeoutMs,
+        'Reload did not recover once the hanging fixture finished loading'
+      )
+
+      // Return to the original fixture for the remaining toolbar checks.
+      await control.command('submit', BROWSER_INPUT_SELECTOR, { value: fixtureUrl })
+      await waitForButtonDisabled(
+        control,
+        BROWSER_RELOAD_BUTTON_SELECTOR,
+        false,
+        uiTimeoutMs,
+        'The browser tab did not return to the toolbar fixture'
+      )
+      await waitForValue(
+        control,
+        BROWSER_INPUT_SELECTOR,
+        fixtureUrl,
+        uiTimeoutMs,
+        'The address bar did not settle back on the toolbar fixture'
+      )
+
+      if (process.platform === 'darwin') {
+        for (const attempt of [1, 2]) {
+          const inspector = JSON.parse(
+            await control.command('verifyEmbeddedBrowserDetachedInspector', 'body', {
+              value: BROWSER_LABEL,
+              timeoutMs: Math.max(uiTimeoutMs, DETACHED_INSPECTOR_VERIFICATION_TIMEOUT_MS),
+            })
+          )
+          assert.equal(
+            inspector.visible,
+            true,
+            `The built-in browser Inspector did not open on attempt ${attempt}`
+          )
+          assert.ok(
+            inspector.afterWindowCount > inspector.beforeWindowCount,
+            `The built-in browser Inspector did not create a separate native window on attempt ${attempt}`
+          )
+          assert.ok(
+            !inspector.closedVisible,
+            `The detached Inspector window remained visible after close on attempt ${attempt}`
+          )
+          assertFramesEqual(inspector.beforeFrame, inspector.afterFrame)
+        }
+      }
+
+      // --- Find in page ---
+      await control.command('click', BROWSER_MORE_BUTTON_SELECTOR)
+      await control.command('waitFor', FIND_ITEM_SELECTOR, {
+        enabled: true,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', FIND_ITEM_SELECTOR)
+      await control.command('waitFor', FIND_INPUT_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await control.command('fill', FIND_INPUT_SELECTOR, { value: FIXTURE_WORD })
+      // The fixture contains three visible occurrences of the word.
+      {
+        const startedAt = Date.now()
+        let lastCount = null
+        while (Date.now() - startedAt < uiTimeoutMs) {
+          lastCount = await control.command('getValue', FIND_COUNT_SELECTOR)
+          if (lastCount.includes('1 / 3')) break
+          await new Promise(resolve => setTimeout(resolve, 100))
+        }
+        assert.ok(
+          lastCount.includes('1 / 3'),
+          `The find bar did not report all three fixture matches; last count=${lastCount}`
+        )
+      }
+      const initialFindState = await evaluateFindState(bridgeIdentity)
+      assert.deepEqual(
+        initialFindState,
+        { query: FIXTURE_WORD, matches: 3, active: 1 },
+        'The in-page find runtime did not highlight all fixture matches'
+      )
+      await control.command('press', FIND_INPUT_SELECTOR, { key: 'Enter' })
+      await control.command('waitFor', FIND_COUNT_SELECTOR, {
+        text: '2 / 3',
+        timeoutMs: uiTimeoutMs,
+      })
+      const nextFindState = await evaluateFindState(bridgeIdentity)
+      assert.equal(nextFindState.active, 2, 'Enter did not move to the next find match')
+      await control.command('click', FIND_CLOSE_SELECTOR)
+      await waitForFindMatches(
+        bridgeIdentity,
+        0,
+        uiTimeoutMs,
+        'Closing the find bar did not clear highlights'
+      )
+
+      // --- Device toolbar ---
+      await control.command('click', BROWSER_MORE_BUTTON_SELECTOR)
+      await control.command('waitFor', DEVICE_TOOLBAR_ITEM_SELECTOR, {
+        enabled: true,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', DEVICE_TOOLBAR_ITEM_SELECTOR)
+      await control.command('waitFor', DEVICE_TOOLBAR_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await waitForPageNumber(
+        bridgeIdentity,
+        'window.innerWidth',
+        390,
+        4,
+        uiTimeoutMs,
+        'The responsive preset did not emulate a 390px viewport'
+      )
+      const portraitBrowserFrame = await waitForBrowserFramesAligned(
+        control,
+        uiTimeoutMs,
+        'The embedded browser host was not aligned before expanding the panel'
+      )
+      await control.command('click', RIGHT_PANEL_EXPAND_SELECTOR)
+      await waitForPositionOnlyBrowserFrameSync(control, portraitBrowserFrame, uiTimeoutMs)
+      await control.command('click', DEVICE_ROTATE_SELECTOR)
+      await waitForPageNumber(
+        bridgeIdentity,
+        'window.innerWidth',
+        844,
+        4,
+        uiTimeoutMs,
+        'Rotating the device viewport did not emulate an 844px width'
+      )
+      await control.command('fill', DEVICE_WIDTH_SELECTOR, { value: '800' })
+      await control.command('fill', DEVICE_HEIGHT_SELECTOR, { value: '600' })
+      await waitForValue(
+        control,
+        DEVICE_WIDTH_SELECTOR,
+        '800',
+        uiTimeoutMs,
+        'The responsive device width did not update'
+      )
+      await control.command('click', DEVICE_ZOOM_SELECTOR)
+      await control.command('click', DEVICE_ZOOM_200_SELECTOR)
+      await control.command('waitFor', DEVICE_RESIZE_LEFT_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await control.command('waitFor', DEVICE_RESIZE_RIGHT_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await control.command('drag', DEVICE_RESIZE_RIGHT_SELECTOR, {
+        target: DEVICE_RESIZE_LEFT_SELECTOR,
+      })
+      await waitForValue(
+        control,
+        DEVICE_WIDTH_SELECTOR,
+        '240',
+        uiTimeoutMs,
+        'Device resizing incorrectly included the 200% page zoom in pointer scaling'
+      )
+      await control.command('click', DEVICE_CLOSE_SELECTOR)
+      await waitForElementGone(
+        control,
+        DEVICE_TOOLBAR_SELECTOR,
+        uiTimeoutMs,
+        'The device toolbar did not close'
+      )
+
+      // --- Browser settings navigation ---
+      await control.command('click', BROWSER_MORE_BUTTON_SELECTOR)
+      await control.command('waitFor', SETTINGS_ITEM_SELECTOR, {
+        enabled: true,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('click', SETTINGS_ITEM_SELECTOR)
+      await control.command('waitFor', BROWSER_SETTINGS_PAGE_SELECTOR, { timeoutMs: uiTimeoutMs })
+      await control.command('navigate', 'body', { value: '/' })
+
+      // --- Real external browser file opening and error recovery ---
+      if (process.platform === 'linux') {
+        assert.ok(externalBrowser, 'The checkpoint must prepare its external browser')
+        await externalBrowser.start()
+        let verificationError
+        try {
+          const localFilePath = join(resultDir, 'external-browser-fixture.html')
+          const localDirectoryPath = join(resultDir, 'external-browser-directory')
+          await mkdir(localDirectoryPath, { recursive: true })
+          await writeFile(
+            localFilePath,
+            fixtureHtml('External Browser Fixture', 'External file loaded')
+          )
+          await writeFile(
+            join(localDirectoryPath, 'directory-entry.txt'),
+            'External directory loaded'
+          )
+
+          const localFileUrl = pathToFileURL(localFilePath).href
+          await callBridge(bridgeIdentity, { action: 'open', url: localFileUrl, timeoutMs: 8_000 })
+          await callBridge(bridgeIdentity, {
+            action: 'waitFor',
+            options: { condition: { textVisible: 'External file loaded' } },
+            timeoutMs: 5_000,
+          })
+          await waitForValue(
+            control,
+            BROWSER_INPUT_SELECTOR,
+            localFileUrl,
+            uiTimeoutMs,
+            'The toolbar did not adopt the local file URL'
+          )
+          await unlink(localFilePath)
+          await control.command('click', BROWSER_OPEN_EXTERNAL_SELECTOR)
+          await control.command('waitFor', BROWSER_ERROR_SELECTOR, {
+            timeoutMs: uiTimeoutMs,
+          })
+          assert.match(
+            await control.command('getText', BROWSER_ERROR_SELECTOR),
+            /Unable to open in the external browser|无法在外部浏览器中打开/
+          )
+
+          await writeFile(
+            localFilePath,
+            fixtureHtml('External Browser Fixture', 'External file loaded')
+          )
+          await control.command('click', BROWSER_OPEN_EXTERNAL_SELECTOR)
+          await waitForElementGone(
+            control,
+            BROWSER_ERROR_SELECTOR,
+            uiTimeoutMs,
+            'Retrying external browser open did not clear its error'
+          )
+          await externalBrowser.waitForPage(localFileUrl, 'External file loaded')
+
+          const localDirectoryUrl = `${pathToFileURL(localDirectoryPath).href}/`
+          await callBridge(bridgeIdentity, {
+            action: 'open',
+            url: localDirectoryUrl,
+            timeoutMs: 8_000,
+          })
+          await callBridge(bridgeIdentity, {
+            action: 'waitFor',
+            options: { condition: { textVisible: 'directory-entry.txt' } },
+            timeoutMs: 5_000,
+          })
+          await waitForValue(
+            control,
+            BROWSER_INPUT_SELECTOR,
+            localDirectoryUrl,
+            uiTimeoutMs,
+            'The toolbar did not adopt the local directory URL'
+          )
+          await control.command('click', BROWSER_OPEN_EXTERNAL_SELECTOR)
+          await externalBrowser.waitForPage(localDirectoryUrl, 'directory-entry.txt')
+        } catch (error) {
+          verificationError = error
+          throw error
+        } finally {
+          try {
+            await externalBrowser.dispose()
+          } catch (cleanupError) {
+            if (verificationError) {
+              throw new AggregateError(
+                [verificationError, cleanupError],
+                'External browser verification and cleanup failed',
+                { cause: verificationError }
+              )
+            }
+            throw cleanupError
+          }
+        }
+      }
+    },
+  }
+}

@@ -4,22 +4,17 @@ import test from 'node:test'
 import * as scenario from '../e2e/desktop/scenarios/interrupted-context-compaction.mjs'
 
 test('recovery waits for its own rendered indicator instead of counting historical DOM', async () => {
-  const message =
-    '[data-testid="message-assistant"][data-message-id^="runtime-view:recovered-turn:"]'
+  const message = '[data-message-id="recovered-turn"]'
   let expanded = false
   let rendered = false
   const control = {
     async command(action, selector, options = {}) {
       if (action === 'getAttribute') {
         assert.equal(options.text, 'WEWORK_E2E_INTERRUPTED_COMPACTION_RECOVERED')
-        return 'runtime-view:recovered-turn:after:queued-user'
+        return 'recovered-turn'
       }
       assert.ok(selector.startsWith(message), 'Must scope recovery checks to its message')
-      if (action === 'clickWhenEnabled') {
-        assert.equal(options.timeoutMs, 1000)
-        assert.ok(selector.endsWith('[aria-expanded="false"]'))
-        return ''
-      }
+      if (action === 'click') return ''
       if (action === 'waitFor' && selector.includes('aria-expanded="true"')) {
         expanded = true
         return ''

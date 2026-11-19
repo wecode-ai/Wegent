@@ -12,7 +12,6 @@ import {
   withTimeout,
 } from './shared.mjs'
 import {
-  verifySitesAccessConfiguration,
   ensureExperimentalFeaturesDisabled,
   ensureExperimentalFeaturesEnabled,
 } from './preferences-automation-flows.mjs'
@@ -229,9 +228,6 @@ export async function verifyCoreDshUiPluginComposition({
       )
     )
     await assertInstalledFeatureVisible(control, plugin)
-    if (plugin.name === '@wegent/dsh-ui-applications') {
-      await verifySitesAccessConfiguration(control)
-    }
     if (plugin.name === '@wegent/dsh-ui-automations') {
       assert.equal(
         (await readSlots(control))['wework.sidebar.navigation']?.includes('automations.navigation'),

@@ -196,6 +196,43 @@ describe('process snapshot assembly', () => {
     expect([...collectDescendantPids(rows, [1])].sort()).toEqual([2, 3])
   })
 
+  it('excludes older process branches whose parent PID has been reused', () => {
+    const startedAt = Date.parse('2026-11-17T04:26:49Z')
+    const earlier = Date.parse('2026-11-17T04:00:21Z')
+    const rows = [
+      systemRow(1672, 6112, { startedAt: startedAt - 60_000 }),
+      systemRow(732, 1672, { startedAt: startedAt - 45_000 }),
+      systemRow(6232, 732, { startedAt }),
+      systemRow(7944, 6232, { startedAt }),
+      systemRow(8024, 7944, { startedAt: earlier }),
+      systemRow(7960, 7944, { startedAt: earlier }),
+      systemRow(8136, 8024, { startedAt: earlier }),
+      systemRow(8112, 8024, { startedAt: earlier }),
+      systemRow(8848, 6232, { startedAt: startedAt + 1000 }),
+      systemRow(7420, 8848, { startedAt: startedAt + 1000 }),
+    ]
+    const expected = [732, 1672, 6232, 7420, 7944, 8848]
+    expect([...collectDescendantPids(rows, [1672]), 1672].sort((a, b) => a - b)).toEqual(expected)
+    const snapshot = buildProcessSnapshot({
+      capturedAt: startedAt + 2000,
+      platform: 'win32',
+      applicationPid: 1672,
+      metrics: [metric(1672, 'Browser', { creationTime: startedAt - 60_000 })],
+      system: rows,
+      hostProcesses: [
+        {
+          pid: 732,
+          name: 'Executor',
+          kind: 'host-service',
+          owner: { id: 'executor', label: 'Executor' },
+          includeDescendants: true,
+        },
+      ],
+    })
+    expect(snapshot.processes.map(record => record.pid).sort((a, b) => a - b)).toEqual(expected)
+    expect(snapshot.processes.find(record => record.pid === 7420)?.owner.id).toBe('executor')
+  })
+
   it('passes structured degradations through unchanged', () => {
     const degraded = [{ code: 'system-process-table-failed' as const, detail: 'timeout' }]
     const snapshot = buildProcessSnapshot({

@@ -97,6 +97,53 @@ test('acknowledges native input retargeted through a shadow host', async () => {
   expect(vi.getTimerCount()).toBe(0)
 })
 
+test('requires every native key in a batch and rejects a missing final event', async () => {
+  vi.useFakeTimers()
+  const target = document.createElement('textarea')
+  let listener: ((event: KeyboardEvent) => void) | undefined
+  vi.spyOn(window, 'addEventListener').mockImplementation((type, callback) => {
+    if (type === 'keydown') listener = callback as (event: KeyboardEvent) => void
+  })
+  const acknowledged = vi.fn()
+  const result = sendNativeKeyAndWait(target, 'press', async () => {}, 2).then(acknowledged)
+  listener?.(nativeEvent(target))
+  for (let tick = 0; tick < 10; tick += 1) await Promise.resolve()
+  expect(acknowledged).not.toHaveBeenCalled()
+  listener?.(nativeEvent(target))
+  await result
+  expect(acknowledged).toHaveBeenCalledOnce()
+
+  const missing = sendNativeKeyAndWait(target, 'press', async () => {}, 2)
+  const rejected = expect(missing).rejects.toThrow('Native keydown did not reach its target')
+  listener?.(nativeEvent(target))
+  await vi.advanceTimersByTimeAsync(6000)
+  listener?.(nativeEvent(document.body))
+  listener?.(nativeEvent(target, target, false))
+  await vi.advanceTimersByTimeAsync(4000)
+  await rejected
+  expect(vi.getTimerCount()).toBe(0)
+})
+
+test('keeps the original per-key deadline while a native batch makes progress', async () => {
+  vi.useFakeTimers()
+  const target = document.createElement('textarea')
+  let listener: ((event: KeyboardEvent) => void) | undefined
+  vi.spyOn(window, 'addEventListener').mockImplementation((type, callback) => {
+    if (type === 'keydown') listener = callback as (event: KeyboardEvent) => void
+  })
+  const result = sendNativeKeyAndWait(target, 'press', async () => {}, 2)
+  const outcome = result.then(
+    () => 'delivered',
+    error => error.message
+  )
+  await vi.advanceTimersByTimeAsync(6000)
+  listener?.(nativeEvent(target))
+  await vi.advanceTimersByTimeAsync(6000)
+  listener?.(nativeEvent(target))
+  expect(await outcome).toBe('delivered')
+  expect(vi.getTimerCount()).toBe(0)
+})
+
 test.each(['native-first', 'host-first'])(
   'distinguishes host acknowledgement from trusted event delivery (%s)',
   async order => {
@@ -112,7 +159,7 @@ test.each(['native-first', 'host-first'])(
     })
     const observe = vi.fn()
     const completed = vi.fn()
-    const result = sendNativeKeyAndWait(target, 'press', () => sending, observe).then(completed)
+    const result = sendNativeKeyAndWait(target, 'press', () => sending, 1, observe).then(completed)
     const firstStage = order === 'native-first' ? 'native-event' : 'host-acknowledged'
     if (order === 'native-first') listener?.(nativeEvent(target))
     else sent()

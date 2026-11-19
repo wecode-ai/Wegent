@@ -1,4 +1,3 @@
-import { waitForStandInSchedulerCycle } from '../modules/stand-in-flows.mjs'
 import { openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
 import { verifyCloudAssignmentReceipts } from '../modules/issue-assignment-receipts.mjs'
 import { verifyLocalCloudStandInReceipt } from '../modules/stand-in-local-cloud-receipts.mjs'
@@ -429,8 +428,8 @@ export function createDesktopScenario({
           },
           uiTimeoutMs
         )
-        // Observe a full configured scheduler interval plus timer jitter.
-        await waitForStandInSchedulerCycle()
+        // Observe a full five-second scheduler interval plus timer jitter.
+        await new Promise(resolve => setTimeout(resolve, 5500))
         assert.equal((await bindings(issue)).length, 1, 'Another device duplicated existing work')
         assert.equal(requests, 1)
         assert.equal(

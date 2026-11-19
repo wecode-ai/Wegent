@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
+from sqlalchemy.exc import OperationalError
 
 from app.models.kind import Kind
 from app.services import plugin_write_operations as operations
@@ -210,13 +211,18 @@ def test_backoff_cannot_start_a_new_transaction_after_the_shared_deadline(monkey
         ("plugin_write_busy", False),
         ("plugin_write_lease_lost", True),
         ("plugin_write_unavailable", True),
+        (1205, True),
     ],
 )
 def test_snapshot_contention_policy_does_not_retry_other_failures(
     monkeypatch, code, retry_busy
 ):
     sessions = []
-    failure = PluginWriteError(code)
+    failure = (
+        OperationalError("UPDATE kinds", {}, Exception(code, "synthetic lock timeout"))
+        if isinstance(code, int)
+        else PluginWriteError(code)
+    )
 
     @contextmanager
     def session():
@@ -236,21 +242,25 @@ def test_snapshot_contention_policy_does_not_retry_other_failures(
         "time",
         SimpleNamespace(monotonic=lambda: 0, sleep=unexpected_backoff),
     )
-    with pytest.raises(PluginWriteError) as caught:
+    with pytest.raises(type(failure)) as caught:
         operations.run_plugin_transaction(fail, session, retry_busy=retry_busy)
     assert caught.value is failure
     assert len(sessions) == 1
     sessions[0].rollback.assert_called_once()
 
 
-@pytest.mark.parametrize("code", ["plugin_write_busy", "plugin_write_conflict"])
+@pytest.mark.parametrize("code", ["plugin_write_busy", "plugin_write_conflict", 1213])
 def test_snapshot_contention_releases_sessions_and_stops_at_shared_deadline(
     monkeypatch,
     code,
 ):
     clock = [0.0]
     sessions = []
-    failure = PluginWriteError(code)
+    failure = (
+        OperationalError("UPDATE kinds", {}, Exception(code, "synthetic deadlock"))
+        if isinstance(code, int)
+        else PluginWriteError(code)
+    )
 
     @contextmanager
     def session():
@@ -274,7 +284,7 @@ def test_snapshot_contention_releases_sessions_and_stops_at_shared_deadline(
     monkeypatch.setattr(
         operations, "time", SimpleNamespace(monotonic=lambda: clock[0], sleep=backoff)
     )
-    with pytest.raises(PluginWriteError) as caught:
+    with pytest.raises(type(failure)) as caught:
         operations.run_plugin_transaction(
             fail, session, retry_busy=True, retry_conflicts=True
         )

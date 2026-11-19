@@ -427,6 +427,7 @@ fn the_registration_ack_carries_the_canonical_route_id() {
         success: true,
         device_id: "reported-device",
         device_route_id: "canonical-route",
+        runtime_work_catalog_probe: true,
     })
     .expect("the acknowledgement serializes");
     assert_eq!(
@@ -435,6 +436,7 @@ fn the_registration_ack_carries_the_canonical_route_id() {
             "success": true,
             "device_id": "reported-device",
             "device_route_id": "canonical-route",
+            "runtime_work_catalog_probe": true,
         })
     );
 }

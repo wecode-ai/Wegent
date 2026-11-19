@@ -379,6 +379,10 @@ impl CodexNativeActivity {
         active
     }
 
+    pub(super) fn has_loaded_thread(&self, thread_id: &str) -> bool {
+        self.loaded_threads.contains(thread_id)
+    }
+
     fn has_active_turn(&self, thread_id: &str) -> bool {
         self.turns
             .get(thread_id)

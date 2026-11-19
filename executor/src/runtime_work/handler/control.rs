@@ -117,7 +117,9 @@ impl RuntimeWorkRpcHandler {
             "get_runtime_capacity" => {
                 boxed_rpc(move || async move { self.get_runtime_capacity().await })
             }
-            "list_models" => boxed_rpc(move || async move { self.runner_catalog().await }),
+            "list_models" => boxed_rpc(move || async move {
+                self.runner_catalog(concat!(file!(), ":", line!())).await
+            }),
             _ => boxed_rpc(move || async move {
                 let link = self.control_target(&args)?;
                 if operation == "continue_conversation" {

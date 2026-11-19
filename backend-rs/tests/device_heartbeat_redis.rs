@@ -21,6 +21,7 @@ use tokio::{net::TcpListener, sync::oneshot, time::timeout};
 use wegent_backend_rs::{build_app_state_with_clients, migrations, socketio};
 
 const USER_ID: i32 = 7;
+const RUNTIME_INSTANCE_ID: &str = "heartbeat-runtime";
 const NAMESPACE: &str = "/local-executor";
 const SHORT_TTL_SECONDS: u64 = 30;
 
@@ -158,10 +159,40 @@ async fn assert_heartbeats(
             &client,
             1,
             "device:register",
-            json!({"device_id": device_id, "name": "Heartbeat E2E", "device_type": "local"}),
+            json!({"device_id": device_id, "name": "Heartbeat E2E", "device_type": "local", "runtime_instance_id": RUNTIME_INSTANCE_ID}),
         )
         .await,
-        json!({"success": true, "device_id": device_id, "device_route_id": device_id})
+        json!({"success": true, "device_id": device_id, "device_route_id": device_id, "runtime_work_catalog_probe": true})
+    );
+    assert_eq!(
+        event_ack(
+            &client,
+            90,
+            "runtime.tasks.pull",
+            json!({"catalog_probe": true})
+        )
+        .await,
+        json!({"success": true, "task": null, "catalog_required": true, "workspace_cleanup_intents": []})
+    );
+    assert_eq!(
+        event_ack(
+            &client,
+            91,
+            "runtime.tasks.pull",
+            json!({"runner_catalog": {"runtimes": ["codex"], "models": [], "errors": []}})
+        )
+        .await,
+        json!({"success": true, "task": null, "workspace_cleanup_intents": []})
+    );
+    assert_eq!(
+        event_ack(
+            &client,
+            92,
+            "runtime.tasks.pull",
+            json!({"catalog_probe": true})
+        )
+        .await,
+        json!({"success": true, "task": null, "catalog_required": false, "workspace_cleanup_intents": []})
     );
     let registered = online(redis, key).await;
     assert_eq!(registered["socket_id"], client.socket_id());
@@ -173,7 +204,7 @@ async fn assert_heartbeats(
             &client,
             2,
             "device:heartbeat",
-            json!({"device_id": device_id, "running_task_ids": ["9007199254740993"]}),
+            json!({"device_id": device_id, "runtime_instance_id": RUNTIME_INSTANCE_ID, "running_task_ids": ["9007199254740993"]}),
         )
         .await,
         json!({"success": true})
@@ -194,7 +225,7 @@ async fn assert_heartbeats(
                 &client,
                 id,
                 "device:heartbeat",
-                json!({"device_id": device_id, "running_task_ids": ["123", invalid]}),
+                json!({"device_id": device_id, "runtime_instance_id": RUNTIME_INSTANCE_ID, "running_task_ids": ["123", invalid]}),
             )
             .await,
             json!({"error": "Invalid payload: running_task_ids must be integers"})
@@ -553,7 +584,7 @@ async fn assert_app_conflicts(
             registration("runtime-original", "electron-original")
         )
         .await,
-        json!({"success": true, "device_id": name, "device_route_id": route}),
+        json!({"success": true, "device_id": name, "device_route_id": route, "runtime_work_catalog_probe": true}),
     );
     assert_eq!(
         event_ack(

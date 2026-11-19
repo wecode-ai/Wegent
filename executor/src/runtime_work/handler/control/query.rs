@@ -142,9 +142,9 @@ impl RuntimeWorkRpcHandler {
                 Ok(result)
             };
         }
-        let (mut links, mut catalog_complete) = self.collect_query_links(false).await;
+        let (mut links, mut catalog_complete) = self.collect_query_links(false, None).await;
         if args["include_archived"].as_bool().unwrap_or(false) {
-            let (archived, complete) = self.collect_query_links(true).await;
+            let (archived, complete) = self.collect_query_links(true, None).await;
             append_unique_links(&mut links, archived);
             catalog_complete &= complete;
         }

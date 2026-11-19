@@ -32,6 +32,11 @@ export function observeConversationScrollWrites(
   }
 }
 
+// Capture-phase renders can measure rows before the element scroll listener runs.
+export function synchronizeConversationScrollOffset(element: HTMLElement) {
+  offsetObservers.get(element)?.(element.scrollTop)
+}
+
 export function recordConversationScrollWrite<T>(
   element: HTMLElement,
   writeSource: ScrollWriteSource,
@@ -48,7 +53,7 @@ export function recordConversationScrollWrite<T>(
     // Native scroll events arrive after ResizeObserver. Publish instant external
     // writes first so a virtualizer cannot compensate from its previous offset.
     if (writeSource !== CONVERSATION_SCROLL_WRITE_SOURCE.virtualizerOffset) {
-      offsetObservers.get(element)?.(scrollTop)
+      synchronizeConversationScrollOffset(element)
     }
     if (diagnosticsEnabled) {
       const clientHeight = element.clientHeight

@@ -217,7 +217,9 @@ impl RuntimeTurnScheduler {
     fn ready_queued_turns(&self, kind: RuntimeTaskKind) -> impl Iterator<Item = &SpawnTurnRequest> {
         let now = now_ms();
         self.queued_turns.iter().filter(move |turn| {
-            turn.task_kind() == kind && super::quota_recovery::is_ready(turn, now)
+            turn.task_kind() == kind
+                && super::quota_recovery::is_ready(turn, now)
+                && !self.automatic_waits(turn)
         })
     }
 

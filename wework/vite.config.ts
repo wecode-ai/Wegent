@@ -8,6 +8,7 @@ import { fileViewerRenderers } from '@file-viewer/vite-plugin'
 import { excalidrawAssets } from './vite/excalidrawAssets'
 import { lucideIconChunks } from './vite/lucideIconChunks'
 import { verificationSourceMaps } from './vite/verificationSourceMaps'
+import { verificationReactProfiling } from './vite/verificationReactProfiling'
 import {
   parseTelemetryIdentity,
   parseTelemetryContextFields,
@@ -121,7 +122,9 @@ export default defineConfig({
   base: appBasePath,
   customLogger: logger,
   plugins: [
-    ...(process.env.VITE_WEWORK_E2E === 'true' ? [verificationSourceMaps()] : []),
+    ...(process.env.VITE_WEWORK_E2E === 'true'
+      ? [verificationSourceMaps(), verificationReactProfiling()]
+      : []),
     {
       name: 'telemetry-collection-policy',
       configResolved(config) {

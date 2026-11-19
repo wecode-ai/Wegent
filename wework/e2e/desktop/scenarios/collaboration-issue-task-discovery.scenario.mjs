@@ -20,13 +20,7 @@ import {
   waitForWorkbenchDebugState,
 } from '../modules/workspace-flows.mjs'
 import { createSingleRootLocalProject, selectE2EModel } from '../modules/shared.mjs'
-import {
-  assistantMessage,
-  createSse,
-  readRequestBody,
-  responseCompleted,
-  responseCreated,
-} from '../modules/response-protocol.mjs'
+import { readRequestBody } from '../modules/response-protocol.mjs'
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const TITLE = `Issue AI assistance ${process.pid}`
@@ -383,20 +377,15 @@ export function createDesktopScenario({
     setCloudEnvironment(value) {
       environment = value
     },
-    async handleHttp(request, response, url) {
-      if (await handlePersonalHomeModel(request, response, url)) {
+    async handleHttp(request, response, url, modelRequest) {
+      if (await handlePersonalHomeModel(request, response, url, modelRequest)) {
         homeModelRequests += 1
         return true
       }
-      if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
-        return false
+      if (!modelRequest) return false
       const body = await readRequestBody(request)
       modelRequests.push(body)
-      const id = `issue-app-record-${modelRequests.length}`
-      response.writeHead(200, { 'content-type': 'text/event-stream' })
-      response.end(
-        createSse([responseCreated(id), assistantMessage(COMPLETION), responseCompleted(id)])
-      )
+      modelRequest.reply(COMPLETION)
       return true
     },
     async verify(control) {

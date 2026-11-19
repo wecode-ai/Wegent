@@ -2,8 +2,11 @@
 
 import { spawn, type ChildProcess } from 'node:child_process'
 import { EventEmitter } from 'node:events'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { PassThrough } from 'node:stream'
 import { afterEach, describe, expect, test, vi } from 'vitest'
 
 interface ProcessLifecycle {
@@ -17,6 +20,10 @@ interface ProcessLifecycle {
     processGroupId: number
   ) => boolean | null
   stopProcessGroup: (child: ChildProcess) => Promise<void>
+  stopWindowsProcessTree: (
+    child: ChildProcess,
+    options: { launch: () => EventEmitter }
+  ) => Promise<void>
   crashOwnedProcessTree: (child: ChildProcess, snapshot: unknown) => Promise<void>
   windowsTaskkillArguments: (processId: number) => string[]
   waitForOwnedProcessExit: (
@@ -177,25 +184,19 @@ describe('desktop process lifecycle', () => {
     expect(windowsTaskkillArguments(321)).toEqual(['/PID', '321', '/T', '/F'])
   })
 
-  test('preserves Windows application arguments containing spaces, quotes and trailing slashes', async () => {
-    const moduleUrl = pathToFileURL(
-      resolve(import.meta.dirname, '../../e2e/desktop/windows-owned-process.mjs')
-    ).href
-    const { windowsApplicationCommandLine } = await import(/* @vite-ignore */ moduleUrl)
-    const executable = String.raw`C:\Program Files\Wework\wework.exe`
-    expect(
-      windowsApplicationCommandLine(executable, [
-        '',
-        'space value',
-        '中文',
-        'C:\\work\\',
-        'say"hello',
-        String.raw`before\"after`,
-      ])
-    ).toBe(
-      String.raw`"C:\Program Files\Wework\wework.exe" "" "space value" "中文" "C:\work\\" "say\"hello" "before\\\"after"`
-    )
-    expect(() => windowsApplicationCommandLine(executable, ['bad\0argument'])).toThrow('NUL')
+  test('rejects partial Windows tree termination even when the parent exits', async () => {
+    const { stopWindowsProcessTree } = await loadProcessLifecycle()
+    const child = { pid: 8468, exitCode: null, signalCode: null } as ChildProcess
+    const killer = new EventEmitter()
+    Object.assign(killer, { stdout: new EventEmitter(), stderr: new EventEmitter() })
+    const stopped = stopWindowsProcessTree(child, { launch: () => killer })
+    child.exitCode = 1
+    killer.emit('close', 128)
+    await expect(stopped).rejects.toMatchObject({
+      code: 'ERR_WINDOWS_PROCESS_TREE_TERMINATION',
+      exitCode: 128,
+      processId: 8468,
+    })
   })
 
   test.each(['degraded', 'unowned', 'missing identity', 'future identity', 'stale'])(
@@ -432,4 +433,156 @@ describe('desktop process lifecycle', () => {
     expect(await waitForProcessToStop(childPid, 1_000)).toBe(true)
     ownedProcessGroups.delete(parent.pid!)
   })
+})
+
+interface SupervisedProcess extends EventEmitter {
+  pid: number
+  supervisorPid: number
+  exitCode: number | null
+  signalCode: NodeJS.Signals | null
+  stdout: PassThrough
+  stderr: PassThrough
+  supervisorOutput: PassThrough
+  supervisorCollection?: { enabled: boolean; failedWrites: number; sequence: number }
+  stopOwnedProcessTree(): Promise<{ rootExitCode: number; activeProcesses: number }>
+}
+
+async function supervisedFixture(errorLogPath?: string) {
+  const url = pathToFileURL(
+    resolve(import.meta.dirname, '../../e2e/desktop/windows-process-supervisor.mjs')
+  ).href
+  const { spawnSupervisedWindowsProcess } = (await import(/* @vite-ignore */ url)) as {
+    spawnSupervisedWindowsProcess: (
+      binary: string,
+      program: string,
+      args: string[],
+      options: object,
+      hooks: { launch: () => EventEmitter; token: string; errorLogPath?: string }
+    ) => Promise<SupervisedProcess>
+  }
+  const token = '11111111-1111-1111-1111-111111111111'
+  const native = Object.assign(new EventEmitter(), {
+    pid: 123,
+    stdin: new PassThrough(),
+    stdout: new PassThrough(),
+    stderr: new PassThrough(),
+    kill: () => true,
+  })
+  const app = await spawnSupervisedWindowsProcess(
+    'executor',
+    'app',
+    [],
+    {},
+    {
+      token,
+      errorLogPath,
+      launch: () => {
+        queueMicrotask(() => native.stderr.write('wework-process-tree ' + token + ' started 321\n'))
+        return native
+      },
+    }
+  )
+  return {
+    app,
+    native,
+    token,
+    finish: (frame = 'stopped 321 1 0', code = 0) => {
+      if (frame) native.stderr.write('wework-process-tree ' + token + ' ' + frame + '\n')
+      native.stdout.end()
+      native.stderr.end()
+      native.emit('close', code, null)
+    },
+  }
+}
+
+test('supervised Windows shutdown preserves application output and verifies native job exit', async () => {
+  const { app, native, finish, token } = await supervisedFixture()
+  const output: string[] = []
+  const errors: string[] = []
+  app.stdout.on('data', bytes => output.push(String(bytes)))
+  app.stderr.on('data', bytes => errors.push(String(bytes)))
+  native.stdout.write('real application output\n')
+  const stderrFrame =
+    'wework-process-tree ' +
+    token +
+    ' app-stderr ' +
+    Buffer.from('real application stderr\n').toString('base64') +
+    '\n'
+  native.stderr.write(stderrFrame.slice(0, 21))
+  native.stderr.write(stderrFrame.slice(21))
+  expect(app.pid).toBe(321)
+  expect(app.supervisorPid).toBe(123)
+  const stopped = Promise.all([app.stopOwnedProcessTree(), app.stopOwnedProcessTree()])
+  finish()
+  await expect(stopped).resolves.toEqual([
+    { rootExitCode: 1, activeProcesses: 0 },
+    { rootExitCode: 1, activeProcesses: 0 },
+  ])
+  expect(app.exitCode).toBe(1)
+  expect(output.join('')).toBe('real application output\n')
+  expect(errors.join('')).toBe('real application stderr\n')
+})
+
+test.each([
+  ['', 0],
+  ['stopped 321 1 1', 0],
+  ['stopped 999 1 0', 0],
+  ['stopped 321 1 0', 1],
+] as const)('rejects an unverified native shutdown frame %s, exit %s', async (frame, code) => {
+  const { app, finish } = await supervisedFixture()
+  const stopped = app.stopOwnedProcessTree()
+  finish(frame, code)
+  await expect(stopped).rejects.toMatchObject({
+    code: 'ERR_WINDOWS_PROCESS_TREE_TERMINATION',
+    processId: 321,
+    supervisorPid: 123,
+  })
+})
+
+test('supervisor journal acknowledges its own redacted observations without misattributing application stderr', async () => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'wework-supervisor-'))
+  try {
+    const path = resolve(directory, 'errors.jsonl')
+    const { app, native, finish, token } = await supervisedFixture(path)
+    native.stderr.write('helper Authorization: Bearer synthetic-secret\n')
+    const payload = Buffer.from('wework-process-tree ' + token + ' stopped 321 0 0\n')
+    const received: Buffer[] = []
+    app.stderr.on('data', bytes => received.push(bytes))
+    native.stderr.write(
+      'wework-process-tree ' + token + ' app-stderr ' + payload.toString('base64') + '\n'
+    )
+    const stopped = app.stopOwnedProcessTree()
+    finish()
+    await stopped
+    expect(Buffer.concat(received)).toEqual(payload)
+    expect(app.supervisorCollection).toMatchObject({ enabled: true, failedWrites: 0 })
+    const journal = readFileSync(path, 'utf8')
+    expect(journal).not.toContain('synthetic-secret')
+    const records = journal
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line))
+    expect(records.at(-1).type).toBe('checkpoint')
+    expect(records.at(-1).sequence).toBe(app.supervisorCollection?.sequence)
+    expect(
+      records
+        .filter(entry => entry.type === 'supervisor-output')
+        .every(entry => entry.details.ownerPid === 123)
+    ).toBe(true)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
+})
+
+test('supervisor refuses a successful native exit when its journal cannot be acknowledged', async () => {
+  const directory = mkdtempSync(resolve(tmpdir(), 'wework-supervisor-'))
+  try {
+    const { app, finish } = await supervisedFixture(directory)
+    const stopped = app.stopOwnedProcessTree()
+    finish()
+    await expect(stopped).rejects.toMatchObject({ code: 'ERR_WINDOWS_PROCESS_TREE_TERMINATION' })
+    expect(app.supervisorCollection?.failedWrites).toBeGreaterThan(0)
+  } finally {
+    rmSync(directory, { recursive: true, force: true })
+  }
 })

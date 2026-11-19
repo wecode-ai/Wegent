@@ -1,3 +1,4 @@
+import { getRuntimeTaskCreationDiagnostics } from '@/features/workbench/runtimeTaskCreation'
 import type {
   DesktopControlCommand,
   DesktopControlExtensionResult,
@@ -10,6 +11,8 @@ import {
 } from '@/features/cloud-connection/cloudConnectionStorage'
 import { applyLocalExecutorCloudConnection } from '@/features/cloud-connection/localExecutorCloudConnection'
 import { getDesktopE2ERuntimeConfig } from './runtime-config'
+import { reportE2EError } from './error-capture'
+import { startUiRefreshCapture, stopUiRefreshCapture } from './ui-refresh-capture'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import { createInteractionDraftStore } from '@/features/notifications/useInteractionDrafts'
@@ -266,6 +269,28 @@ export async function executeVerificationControlCommand(
   dependencies: VerificationControlDependencies
 ): Promise<DesktopControlExtensionResult> {
   switch (command.action) {
+    case 'getRuntimeTaskCreationDiagnostics':
+      return { handled: true, value: JSON.stringify(getRuntimeTaskCreationDiagnostics()) }
+    case 'startUiRefreshCapture':
+      return {
+        handled: true,
+        value: JSON.stringify(startUiRefreshCapture(JSON.parse(command.value ?? '{}'))),
+      }
+    case 'stopUiRefreshCapture':
+      return {
+        handled: true,
+        value: JSON.stringify(stopUiRefreshCapture(JSON.parse(command.value ?? '{}'))),
+      }
+    case 'probeUiRefreshCapture': {
+      const root = document.createElement('div')
+      root.dataset.testid = 'e2e-ui-refresh-probe'
+      root.hidden = true
+      document.body.append(root)
+      root.append(document.createElement('span'))
+      root.setAttribute('data-probe', 'updated')
+      root.remove()
+      return { handled: true, value: '' }
+    }
     case 'enqueueNativeNotificationReply':
       return {
         handled: true,
@@ -312,6 +337,19 @@ export async function executeVerificationControlCommand(
       const { ensureLocalModelCatalogReady } = await import('./local-model-catalog-readiness')
       await ensureLocalModelCatalogReady()
       return { handled: true, value: '' }
+    }
+    case 'probeErrorCollection':
+      reportE2EError('collector-probe', new Error('Desktop E2E error collection probe'))
+      return { handled: true, value: '' }
+    case 'getErrorCollectionCheckpoint': {
+      const bridge = (
+        window as Window & {
+          weworkElectronVerification?: { errorCollectionCheckpoint: () => Promise<unknown> }
+        }
+      ).weworkElectronVerification
+      if (!bridge?.errorCollectionCheckpoint)
+        throw new Error('Error collection verification bridge is unavailable')
+      return { handled: true, value: JSON.stringify(await bridge.errorCollectionCheckpoint()) }
     }
     case 'fetchLocalRuntime': {
       const bridge = (

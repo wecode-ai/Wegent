@@ -194,7 +194,7 @@ class AuthenticatedSocketClientImpl implements AuthenticatedSocketClient {
     try {
       const resolvedToken = token ?? this.options.getToken()
       if (!resolvedToken) {
-        this.options.logger?.error?.('[Socket.IO] No token found, skipping connection')
+        this.options.logger?.info?.('[Socket.IO] No token found, skipping connection')
         return
       }
 

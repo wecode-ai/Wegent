@@ -1,3 +1,4 @@
+import { flushSync } from 'react-dom'
 import {
   elementScroll,
   observeElementOffset,
@@ -33,6 +34,7 @@ interface Options extends Omit<
   listRef: RefObject<HTMLDivElement | null>
   virtualizerRef?: RefObject<ConversationVirtualizer | null>
   initialDistanceFromBottomPx: number
+  onNativeScrollRange?: () => void
   onScrollAdjustment?: (delta: number) => void
   scrollTailHeight?: number
 }
@@ -43,6 +45,7 @@ export function useConversationVirtualizer({
   listRef,
   virtualizerRef,
   initialDistanceFromBottomPx,
+  onNativeScrollRange,
   onScrollAdjustment,
   scrollTailHeight = 0,
   ...options
@@ -63,13 +66,18 @@ export function useConversationVirtualizer({
   // eslint-disable-next-line react-hooks/incompatible-library
   const virtualizer = useVirtualizer<HTMLDivElement, HTMLElement>({
     ...options,
+    // Resize observers must not flush unrelated React updates.
+    useFlushSync: false,
     enabled,
     scrollMargin: prefix,
     paddingEnd: (options.paddingEnd ?? 0) + scrollTailHeight,
     getScrollElement: () => scrollElementRef?.current ?? null,
     observeElementOffset: (instance, callback) => {
       readOffsetRef.current = callback
-      const dispose = observeElementOffset(instance, callback)
+      const dispose = observeElementOffset(instance, (offset, scrolling) => {
+        if (scrolling) flushSync(() => callback(offset, scrolling))
+        else callback(offset, scrolling)
+      })
       const element = instance.scrollElement
       const stopObservingWrites = element
         ? observeConversationScrollWrites(element, offset => callback(offset, false))
@@ -95,6 +103,8 @@ export function useConversationVirtualizer({
       ),
     scrollToFn: (offset, settings, instance) => {
       const element = instance.scrollElement
+      // Attribute native range clamping before adding our own size compensation.
+      onNativeScrollRange?.()
       const before = element?.scrollTop ?? 0
       if (element)
         recordConversationScrollWrite(

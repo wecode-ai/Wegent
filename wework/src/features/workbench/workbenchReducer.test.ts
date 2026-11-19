@@ -1,3 +1,4 @@
+import { qualifyLocalRuntimeSource } from '@/lib/local-runtime-sidebar-identity'
 import type { DeviceInfo, RuntimeWorkListResponse } from '@/types/api'
 import { describe, expect, test } from 'vitest'
 import { initialWorkbenchState, workbenchReducer } from './workbenchReducer'
@@ -1304,14 +1305,18 @@ describe('workbenchReducer', () => {
 })
 
 test('keeps an unresolved task owner until discovery proves its alias', () => {
-  const device: DeviceInfo = {
-    id: 79,
-    device_id: 'native-device',
-    name: 'Local',
-    status: 'online',
-    device_type: 'local',
-    is_default: true,
-  }
+  const device: DeviceInfo = qualifyLocalRuntimeSource(
+    {
+      id: 79,
+      device_id: 'native-device',
+      runtime_instance_id: 'native-epoch',
+      name: 'Local',
+      status: 'online',
+      device_type: 'local',
+      is_default: true,
+    },
+    { deviceId: 'native-device', runtimeInstanceId: 'native-epoch', provenance: 'local-ipc' }
+  )
   const address = {
     deviceId: 'app-record-79',
     taskId: 'same-task',

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import {
   MATRIX_PROVIDER_INSTRUCTIONS,
@@ -36,6 +37,15 @@ export const matrixDeferredPrompt = model => `${matrixHiCompletion(model)}_DEFER
 export const matrixDeferredCompletion = model => `${matrixDeferredPrompt(model)}_COMPLETE`
 export const matrixSkillPath = workspace =>
   join(workspace, '.agents', 'skills', 'model-matrix', 'SKILL.md')
+
+function observeSkillFile(path) {
+  try {
+    const content = readFileSync(path)
+    return { bytes: content.byteLength, sha256: createHash('sha256').update(content).digest('hex') }
+  } catch (error) {
+    return { errorCode: error.code ?? null }
+  }
+}
 
 let requestEncoding
 const require = createRequire(import.meta.url)
@@ -278,6 +288,7 @@ export function handleProgressiveMatrixTurn(control, response, model, body) {
     const path = matrixSkillPath(
       model.execution === 'cloud' ? control.cloudWorkspacePath : control.workspacePath
     )
+    state.deferAudit.skillReadEvidence = { before: observeSkillFile(path) }
     const quoted = `'${path.replaceAll("'", process.platform === 'win32' ? "''" : "'\\''")}'`
     const command =
       process.platform === 'win32' ? `Get-Content -Raw -LiteralPath ${quoted}` : `cat ${quoted}`
@@ -294,6 +305,15 @@ export function handleProgressiveMatrixTurn(control, response, model, body) {
   }
   if (state.progressive === 'skill') {
     const output = callOutput(body, model.protocol, 'matrix-skill')
+    const path = matrixSkillPath(
+      model.execution === 'cloud' ? control.cloudWorkspacePath : control.workspacePath
+    )
+    state.deferAudit.skillReadEvidence = {
+      ...state.deferAudit.skillReadEvidence,
+      after: observeSkillFile(path),
+      returnedTextBytes: Buffer.byteLength(output),
+      containsCanary: output.includes(MATRIX_SKILL_CANARY),
+    }
     assert.ok(output.includes(MATRIX_SKILL_CANARY), `Native skill read failed: ${output}`)
     state.deferAudit.skillRead = 'passed'
     state.progressive = 'rediscovery'

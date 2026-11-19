@@ -9,7 +9,7 @@ vi.mock('../e2e/desktop/scenarios/model-overload-recovery.scenario.mjs', () => (
   createDesktopScenario: () => ({
     verify: async () => {},
     handleHttp: async () => false,
-    overloadTerminalGate: { arm: async () => {}, wait: async () => {}, release: async () => {} },
+    overloadTerminalGate: { release: async () => {} },
   }),
 }))
 vi.mock('../e2e/desktop/modules/goal-admission-recovery.mjs', () => ({

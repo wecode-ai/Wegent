@@ -28,6 +28,64 @@ const disconnect = () =>
     { elementEnabled: () => true }
   )
 
+test('error collection verification requires an explicit native checkpoint acknowledgment', async () => {
+  const target = window as Window & { weworkElectronVerification?: unknown }
+  const original = target.weworkElectronVerification
+  const checkpoint = {
+    enabled: true,
+    instanceId: 'host',
+    sequence: 4,
+    failedWrites: 0,
+    byteLength: 500,
+  }
+  const errorCollectionCheckpoint = vi.fn().mockResolvedValue(checkpoint)
+  const command = {
+    id: 'collector-checkpoint',
+    action: 'getErrorCollectionCheckpoint',
+    selector: 'body',
+  }
+  try {
+    target.weworkElectronVerification = { errorCollectionCheckpoint }
+    await expect(
+      executeVerificationControlCommand(command, { elementEnabled: () => true })
+    ).resolves.toEqual({ handled: true, value: JSON.stringify(checkpoint) })
+    expect(errorCollectionCheckpoint).toHaveBeenCalledOnce()
+    delete target.weworkElectronVerification
+    await expect(
+      executeVerificationControlCommand(command, { elementEnabled: () => true })
+    ).rejects.toThrow('verification bridge is unavailable')
+  } finally {
+    if (original === undefined) delete target.weworkElectronVerification
+    else target.weworkElectronVerification = original
+  }
+})
+
+test('UI refresh commands measure transient DOM updates through the verification channel', async () => {
+  const invoke = async (action: string, value?: unknown) => {
+    const result = await executeVerificationControlCommand(
+      {
+        id: action,
+        action,
+        selector: 'body',
+        value: JSON.stringify(value),
+      },
+      { elementEnabled: () => true }
+    )
+    if (!result.handled) throw new Error('Verification command was not handled')
+    return result.value
+  }
+  const token = JSON.parse(
+    await invoke('startUiRefreshCapture', {
+      regions: [{ name: 'probe', selector: '[data-testid="e2e-ui-refresh-probe"]' }],
+      renderIds: [],
+    })
+  )
+  await invoke('probeUiRefreshCapture')
+  const result = JSON.parse(await invoke('stopUiRefreshCapture', token))
+  expect(result.regions.probe).toMatchObject({ observed: true, rootRemovals: 1, finalMatches: 0 })
+  expect(result.regions.probe.mutationBatches).toBeGreaterThanOrEqual(1)
+})
+
 beforeEach(async () => {
   request.mockReset()
   prepareCatalog.mockReset().mockResolvedValue(undefined)

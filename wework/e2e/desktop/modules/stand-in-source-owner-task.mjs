@@ -1,3 +1,4 @@
+import { desktopOwnerId } from './desktop-owner-fixture.mjs'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises'
@@ -312,7 +313,7 @@ export function createSourceOwnerTaskStory(options) {
           await readFile(join(options.workspacePath, 'source-owner-repair.cjs'), 'utf8'),
           'module.exports=n=>n+1'
         )
-        const works = await rpc('runtime.stand_in.work.list', { userId: 9001 })
+        const works = await rpc('runtime.stand_in.work.list', { userId: desktopOwnerId })
         const source = works.items.find(item => item.roleId === ROLE)
         assert.ok(source)
         assert.notEqual(source.taskId, state.child)
@@ -323,7 +324,7 @@ export function createSourceOwnerTaskStory(options) {
           'The source reply turn must complete before testing a different participant'
         )
         state.thirdParty = true
-        const settings = await rpc('runtime.stand_in.personal.get', { userId: 9001 })
+        const settings = await rpc('runtime.stand_in.personal.get', { userId: desktopOwnerId })
         const role = settings.roles.find(item => item.id === ROLE)
         role.connections[0].id = 'other-person'
         role.connections[0].name = 'Owner self channel'
@@ -334,7 +335,7 @@ export function createSourceOwnerTaskStory(options) {
             result: { hasMore: false, nextCursor: '0', conversationMessagesList: [] },
           })
         )
-        await rpc('runtime.stand_in.personal.save', { userId: 9001, settings })
+        await rpc('runtime.stand_in.personal.save', { userId: desktopOwnerId, settings })
         await writeFile(
           join(root, 'messages.json'),
           JSON.stringify({
@@ -361,7 +362,7 @@ export function createSourceOwnerTaskStory(options) {
           })
         )
         await storyUntil(
-          () => rpc('runtime.stand_in.work.list', { userId: 9001 }),
+          () => rpc('runtime.stand_in.work.list', { userId: desktopOwnerId }),
           value =>
             state.rejected &&
             value.items.some(

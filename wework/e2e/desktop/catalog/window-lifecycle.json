@@ -12,12 +12,5 @@
       "shard": 5,
       "position": 1000
     }
-  },
-  "paths": [
-    "packages/collaboration/src/theme/*",
-    "wework/src/features/appearance/*",
-    "wework/src/styles/*",
-    "wework/e2e/desktop/modules/appearance-theme.mjs",
-    "wework/electron/src/host/window-background-policy*"
-  ]
+  }
 }

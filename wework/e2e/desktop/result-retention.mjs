@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process'
 import { readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import { processGroupIsAlive, processIsAlive } from './process-lifecycle.mjs'
 
@@ -21,6 +22,7 @@ const RETAINED_TOP_LEVEL_DIRECTORIES = new Set([
   'backend-rs-logs',
   'electron-logs',
   'release-logs',
+  'scenario-diagnostics',
 ])
 const TRANSIENT_TOP_LEVEL_FILES = new Set(['wegent-executor', 'wegent-executor.exe'])
 const TRANSIENT_TOP_LEVEL_ARCHIVE_PATTERN = /\.(?:tar(?:\.(?:gz|zst))?|tgz|zip)$/iu
@@ -248,4 +250,9 @@ export async function compactInactiveDesktopE2EResults(
     removed += removedFromResult
   }
   return { compacted, removed }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  const root = resolve(process.argv[2] ?? 'wework/test-results/desktop-e2e')
+  console.log(JSON.stringify(await compactInactiveDesktopE2EResults(root)))
 }

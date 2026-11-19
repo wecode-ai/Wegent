@@ -23,7 +23,11 @@ import {
   runtimeProjectUiId,
   standaloneRuntimeProjectKey,
 } from '@/lib/runtime-project'
-import { findWorkbenchDevice, workbenchDeviceMatchesId } from '@/lib/workbench-device'
+import {
+  findNativeLocalWorkbenchDevice,
+  findWorkbenchDevice,
+  workbenchDeviceMatchesId,
+} from '@/lib/workbench-device'
 import {
   findRuntimeTaskProjectWork,
   getDefaultProjectDeviceWorkspaceId,
@@ -141,6 +145,7 @@ export type WorkbenchAction =
   | { type: 'bootstrap_failed'; error: string }
   | { type: 'project_created'; project: ProjectWithTasks }
   | { type: 'project_selected'; project: ProjectWithTasks }
+  | { type: 'runtime_project_registered'; projectWork: RuntimeProjectWork }
   | {
       type: 'runtime_local_project_updated'
       source?: 'local_project'
@@ -762,9 +767,12 @@ function reconcileCurrentRuntimeTaskAddress(
   runtimeWork: RuntimeWorkListResponse | null | undefined
 ): RuntimeTaskAddress | null {
   if (!currentRuntimeTask) return null
+  const resolvedDevice = findWorkbenchDevice(devices, currentRuntimeTask.deviceId)
+  // Cloud registration aliases do not prove the current native IPC owner.
   const deviceId =
-    findWorkbenchDevice(devices, currentRuntimeTask.deviceId)?.device_id ??
-    currentRuntimeTask.deviceId
+    resolvedDevice && findNativeLocalWorkbenchDevice(devices, resolvedDevice.device_id)
+      ? resolvedDevice.device_id
+      : currentRuntimeTask.deviceId
   const hydratedTask = findRuntimeTaskAddressByTaskId(
     runtimeWork,
     currentRuntimeTask.taskId,
@@ -1351,6 +1359,26 @@ function reduceWorkbenchState(state: WorkbenchState, action: WorkbenchAction): W
         pendingProjectWorkspaceProjectId: null,
         standaloneDeviceId: action.deviceId,
         standaloneWorkspacePath: normalizeRuntimeWorkspacePath(action.workspacePath),
+        currentRuntimeTask: null,
+        standaloneChatKey: state.standaloneChatKey + 1,
+      }
+    }
+    case 'runtime_project_registered': {
+      const project = runtimeProjectToProject(action.projectWork)
+      const runtimeWork = state.runtimeWork ?? { projects: [], chats: [], totalTasks: 0 }
+      return {
+        ...state,
+        runtimeWork: {
+          ...runtimeWork,
+          projects: [
+            action.projectWork,
+            ...runtimeWork.projects.filter(item => runtimeProjectUiId(item.project) !== project.id),
+          ],
+        },
+        currentProject: project,
+        selectedDeviceWorkspaceId: action.projectWork.deviceWorkspaces[0]?.id ?? null,
+        pendingProjectWorkspaceProjectId: null,
+        standaloneWorkspacePath: null,
         currentRuntimeTask: null,
         standaloneChatKey: state.standaloneChatKey + 1,
       }

@@ -1,3 +1,7 @@
+import {
+  desktopOwnerId as USER,
+  desktopOwnerPrimaryTaskId as PRIMARY,
+} from './desktop-owner-fixture.mjs'
 import { openStandInSettings } from './stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
@@ -18,8 +22,6 @@ import {
   responseCreated,
 } from './response-protocol.mjs'
 
-const USER = 9001
-const PRIMARY = `stand-in-chat-${USER}-primary`
 const REQUEST = 'WEEKLY_MONDAY_USER_STORY'
 const RESULT = 'WEEKLY_MONDAY_REPORT'
 const CHAT = '[data-testid="stand-in-conversation"]'

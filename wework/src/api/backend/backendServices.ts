@@ -1,3 +1,4 @@
+import { reportE2EDiagnostic } from '@/e2e/error-capture'
 import { createStandInExecutorApi } from '@/api/standIn'
 import { createIssueHumanRequestsApi } from '@/api/issueHumanRequests'
 import {
@@ -90,6 +91,7 @@ export function createBackendWorkbenchServices(
     logger: console,
   })
   const projectChatClient = createProjectChatClient({
+    onDiagnostic: reportE2EDiagnostic,
     requestRunnerSelection: request => requestRunnerSelection(request as RunnerSelectionRequest),
     socketBaseUrl,
     socketPath,

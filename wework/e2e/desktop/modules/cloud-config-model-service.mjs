@@ -1,3 +1,8 @@
+import { recordHttpRequest } from './http-request-diagnostics.mjs'
+import {
+  handleModelSubscriptionUsage,
+  modelSubscriptionUsage,
+} from './model-subscription-usage.mjs'
 import assert from 'node:assert/strict'
 import { once } from 'node:events'
 import { lstat, mkdir, readFile, readlink, rm, writeFile } from 'node:fs/promises'
@@ -37,7 +42,9 @@ async function authFileMetadata(path) {
 
 // The failure belongs to the model subscription service. Executor IPC, native
 // Codex requests, notifications, persistence and restart are never substituted.
-export function createCloudConfigModelService({ readUsage } = {}) {
+export function createCloudConfigModelService({
+  readUsage = () => modelSubscriptionUsage('enterprise'),
+} = {}) {
   let server
   let codexHome
   let nativeHome
@@ -70,7 +77,19 @@ export function createCloudConfigModelService({ readUsage } = {}) {
     },
     async prepareApp({ appEnvironment, codexHome: home, control }) {
       codexHome = home
+      assert.ok(Array.isArray(control.httpRequests), 'Shared HTTP diagnostics are unavailable')
       server = createServer(async (request, response) => {
+        recordHttpRequest(
+          request,
+          response,
+          new URL(request.url ?? '/', 'http://subscription-model.invalid'),
+          control.httpRequests,
+          {
+            service: 'subscription-configuration',
+            fixtureUnavailable: unavailable,
+            bootstrapBundlesRemaining: bootstrapBundles,
+          }
+        )
         if (request.method === 'POST' && request.url === '/oauth/token') {
           const body = await readRequestBody(request)
           assert.equal(body.grant_type, 'refresh_token')
@@ -80,21 +99,7 @@ export function createCloudConfigModelService({ readUsage } = {}) {
           response.end(JSON.stringify({ access_token: ACCESS, refresh_token: REFRESH }))
           return
         }
-        if (readUsage && request.url?.includes('/wham/usage')) {
-          try {
-            const usage = await readUsage()
-            if (response.destroyed) return
-            response.writeHead(200, { 'content-type': 'application/json' })
-            response.end(JSON.stringify(usage))
-          } catch (error) {
-            console.error('[desktop-e2e] Model usage fixture failed', error)
-            if (!response.destroyed) {
-              response.writeHead(500, { 'content-type': 'application/json' })
-              response.end(JSON.stringify({ error: 'Model usage fixture failed' }))
-            }
-          }
-          return
-        }
+        if (handleModelSubscriptionUsage(request, response, readUsage)) return
         if (request.url?.startsWith('/backend-api/wham/accounts/check')) {
           accountChecks += 1
           response.writeHead(200, { 'content-type': 'application/json' })

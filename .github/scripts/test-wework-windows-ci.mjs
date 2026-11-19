@@ -85,8 +85,8 @@ const cloudBlock = workflow
   .split(/\n  [\w-]+:\n/)[0];
 assert.match(
   cloudBlock,
-  /if: contains\(matrix.segments, 'plugin-write-coordination'\)[^\n]*\n\s+uses: \.\/\.github\/actions\/setup-minio-e2e/,
-  "Cloud plugin write coordination must use real object storage for sync recovery",
+  /- name: Set up real object storage for desktop E2E\n\s+uses: \.\/\.github\/actions\/setup-minio-e2e/,
+  "Every cloud checkpoint must use real object storage",
 );
 assert.doesNotMatch(
   cloudBlock,
@@ -98,10 +98,18 @@ for (const job of [
   "wework-desktop-windows-core-e2e",
 ]) {
   const block = workflow.split(`  ${job}:\n`)[1].split(/\n  [\w-]+:\n/)[0];
-  assert.match(
-    block,
-    /if: .*contains\(matrix.segments, 'collaboration-issue-mcp-comments'\).*contains\(matrix.segments, 'collaboration-delivery-editing'\)/,
-    `${job} must prepare real object storage for both collaboration segments`,
+  const setupName =
+    job === "wework-desktop-windows-core-e2e"
+      ? "Enable real object storage"
+      : "Set up real object storage for desktop E2E";
+  const setup = block
+    .split(`- name: ${setupName}\n`)[1]
+    ?.split(/\n      - name:/)[0];
+  assert.ok(setup, `${job} must prepare real object storage`);
+  assert.doesNotMatch(
+    setup,
+    /^\s+if:/m,
+    `${job} must prepare real object storage for every checkpoint`,
   );
   if (job === "wework-desktop-windows-core-e2e") {
     assert.match(
@@ -173,5 +181,34 @@ assert.ok(
   workflow.includes(
     "node wework/e2e/desktop/run-checkpoints.mjs --memory-only",
   ),
+);
+const windowsWorker = workflow
+  .split("  wework-desktop-windows-core-e2e:\n")[1]
+  .split(/\n  [\w-]+:\n/)[0];
+const stepBudget = Number(
+  windowsWorker.match(
+    /name: Run Windows Wework desktop Core shard E2E[\s\S]*?timeout-minutes: (\d+)/,
+  )?.[1],
+);
+const processWrapper = readFileSync(
+  new URL("./run-windows-standard-user-process.ps1", import.meta.url),
+  "utf8",
+);
+const processBudget = Number(
+  processWrapper.match(/\$remainingSeconds = (\d+) \* 60/)?.[1],
+);
+assert.ok(
+  processBudget > 0 && processBudget < stepBudget,
+  "The credentialed process must stop before CI cancellation so evidence can upload",
+);
+assert.match(
+  processWrapper,
+  /finally \{[\s\S]*stop-windows-standard-user-processes\.ps1/,
+  "Deadline failures must retain the existing SID-scoped cleanup",
+);
+assert.match(
+  workflow.split("  build-wework-desktop-windows-core-e2e:\n")[1],
+  /run: \.github\/scripts\/test-windows-standard-user-process\.ps1/,
+  "The shared Windows producer must verify the real process deadline contract",
 );
 console.log("Windows CI event coverage and required-result checks passed");

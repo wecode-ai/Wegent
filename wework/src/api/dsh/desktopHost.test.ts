@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 
 describe('desktop host events', () => {
+  let previousRuntimeConfig: Window['__WEWORK_RUNTIME_CONFIG__']
   beforeEach(() => {
+    previousRuntimeConfig = window.__WEWORK_RUNTIME_CONFIG__
+    window.__WEWORK_RUNTIME_CONFIG__ = { ...previousRuntimeConfig, desktopHost: 'electron' }
     vi.resetModules()
     window.sessionStorage.clear()
   })
@@ -11,6 +14,18 @@ describe('desktop host events', () => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
     vi.unstubAllEnvs()
+    window.__WEWORK_RUNTIME_CONFIG__ = previousRuntimeConfig
+  })
+
+  test('does not poll native events in browser mode', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = { desktopHost: 'browser' }
+    const fetch = vi.fn()
+    vi.stubGlobal('fetch', fetch)
+    const { subscribeDesktopHostEvents } = await import('./desktopHost')
+    const unsubscribe = subscribeDesktopHostEvents(() => {})
+    await Promise.resolve()
+    unsubscribe()
+    expect(fetch).not.toHaveBeenCalled()
   })
 
   test.each([
@@ -180,6 +195,7 @@ describe('desktop host events', () => {
 
   test('E2E can drop a completed real host response as a transport failure', async () => {
     vi.stubEnv('VITE_WEWORK_E2E', 'true')
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const gates = await import('@/e2e/runtime-transport-gates')
     gates.armRuntimeTransportGate({
       id: 'finish-drop',
@@ -199,6 +215,16 @@ describe('desktop host events', () => {
         deliveries: 0,
         dropped: true,
       })
+      const reports = errors.mock.calls
+        .filter(call => call[0] === '[wework-e2e-error]')
+        .map(call => JSON.parse(String(call[1])))
+      expect(reports).toContainEqual(
+        expect.objectContaining({
+          type: 'host:attachment.finish',
+          diagnostics: { invocationStack: expect.stringContaining('Electron host invocation') },
+        })
+      )
+      expect(JSON.stringify(reports)).not.toContain('upload-1')
     } finally {
       gates.resetRuntimeTransportGates()
     }

@@ -1,3 +1,5 @@
+import { readAppWorkerMemory } from './app-worker-memory'
+import { getModelLoadingDiagnostics } from '@/lib/model-loading-diagnostics'
 import { collectIssueDrawerDiagnostics } from './issue-drawer-diagnostics'
 import { waitForDomChange } from './waitForDomChange'
 import { readNativeModelFixtures, writeNativeModelFixtures } from './native-model-fixtures'
@@ -6,6 +8,7 @@ import {
   getProviderConfigurationState,
   reloadProviderConfiguration,
 } from '@/features/model-settings/providerModelConfiguration'
+import { rendererCrashStore } from './rendererCrashStore'
 import { getMainWindowFocusDiagnostics } from '@/desktop/windowFocus'
 import { completeDesktopControlCommand, type DesktopControlResult } from './desktop-control-command'
 import { captureHarnessAppLaunchDiagnostics } from './harness-app-launch-diagnostics'
@@ -50,6 +53,7 @@ import {
   recordNativeTerminalKey,
 } from './native-terminal-diagnostics'
 import { sendNativeKeyAndWait } from './native-key-acknowledgement'
+import { reportE2EDiagnostic } from './error-capture'
 import { fillNativeEditor } from './native-editor-fill'
 import {
   createNativeKeyObservation,
@@ -68,7 +72,9 @@ import {
   getDesktopControlDiagnostics,
   recordDesktopControlPhase,
 } from './desktop-control-diagnostics'
+import { getElementMotionDiagnostics } from './element-motion-diagnostics'
 import {
+  acquireConversationDiagnosticCapture,
   getConversationDiagnosticsSnapshot,
   setConversationFrameProbeEnabled,
   startConversationDiagnosticCapture,
@@ -98,6 +104,13 @@ import {
   releaseLocalExecutorRequestHoldForE2E,
 } from '@/desktop/localExecutor'
 import { executeVerificationControlCommand } from './verification-control'
+import {
+  isUiRefreshCaptureEnabled,
+  startUiRefreshCapture,
+  readUiRefreshCapture,
+  getUiResponsivenessDiagnostics,
+  stopUiRefreshCapture,
+} from './ui-refresh-capture'
 import { verifyConnectorAuthorizationIsolation } from './connector-authorization-isolation'
 import { captureEmbeddedBrowserSnapshot, evalEmbeddedBrowserJson } from '@/lib/embedded-browser'
 import { chooseDesktopControlOption, selectDesktopControlOption } from './desktop-control-select'
@@ -1764,14 +1777,23 @@ function desktopControlElementValue(element: HTMLElement): string {
 
 async function waitForDesktopControlElement(
   command: DesktopControlCommand,
-  onMatch?: (element: HTMLElement) => string
+  onMatch?: (element: HTMLElement) => string | Promise<string>
 ): Promise<string> {
   const timeoutMs = command.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS
   const startedAt = Date.now()
   let matchedAt: number | null = null
+  let polls = 0
+  let lastPollAtMs: number | null = null
+  let maxPollGapMs = 0
+  let lastMatchCount: number | null = null
 
   while (Date.now() - startedAt < timeoutMs) {
+    const pollAtMs = Date.now() - startedAt
+    maxPollGapMs = Math.max(maxPollGapMs, pollAtMs - (lastPollAtMs ?? 0))
+    lastPollAtMs = pollAtMs
+    polls += 1
     const elements = findDesktopControlElementsWithin(command.selector, command.target)
+    lastMatchCount = elements.length
     if (command.visible === false) {
       const visibleElements = elements.filter(desktopControlElementVisible)
       if (visibleElements.length === 0) {
@@ -1803,6 +1825,15 @@ async function waitForDesktopControlElement(
     await waitForDomChange(document)
   }
 
+  const elapsedMs = Date.now() - startedAt
+  const waitDiagnostics = {
+    timeoutMs,
+    elapsedMs,
+    polls,
+    lastPollAtMs,
+    lastMatchCount,
+    maxPollGapMs: lastPollAtMs === null ? null : Math.max(maxPollGapMs, elapsedMs - lastPollAtMs),
+  }
   const diagnostics = findDesktopControlElementsWithin(command.selector, command.target).map(
     element => ({
       className: element.className,
@@ -1814,12 +1845,13 @@ async function waitForDesktopControlElement(
       rendered: desktopControlElementRendered(element),
       visible: desktopControlElementVisible(element),
       rect: element.getBoundingClientRect().toJSON(),
+      motion: getElementMotionDiagnostics(element),
     })
   )
   throw new Error(
     `Timed out waiting for selector "${command.selector}"${
       command.target ? ` within "${command.target}"` : ''
-    }${command.text ? ` containing "${command.text}"` : ''}; matches=${JSON.stringify(diagnostics)}`
+    }${command.text ? ` containing "${command.text}"` : ''}; wait=${JSON.stringify(waitDiagnostics)}; matches=${JSON.stringify(diagnostics)}`
   )
 }
 
@@ -2187,6 +2219,9 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'verifyConnectorAuthorizationIsolation':
       await verifyConnectorAuthorizationIsolation(command.value ?? '')
       return 'true'
+    case 'crashRenderer':
+      rendererCrashStore.trigger()
+      return 'Renderer crash requested'
     case 'getRoute':
       return stripAppBasePath(window.location.pathname)
     case 'getDocumentVisibility':
@@ -2887,6 +2922,15 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
           .filter(message => message.role === 'assistant')
           .reduce((count, message) => count + (message.runtimeDisplayItems?.length ?? 0), 0),
         runtimeConversationCache: getRuntimeConversationCacheStats(),
+        appWorkerMemory: processMemory
+          ? await readAppWorkerMemory(
+              new URL(
+                joinAppPath(getRuntimeConfig().appBasePath, '/__e2e/process-memory'),
+                window.location.href
+              ),
+              processMemory
+            )
+          : null,
         processMemory,
         rendererHeap,
       })
@@ -2938,13 +2982,23 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       if (nextSize.maximized !== undefined && typeof nextSize.maximized !== 'boolean') {
         throw new Error('setMainWindowSize maximized must be a boolean')
       }
-      return JSON.stringify(
-        await invokeDesktopHost('e2e.setMainWindowSize', {
-          width: Number(nextSize.width),
-          height: Number(nextSize.height),
-          maximized: nextSize.maximized ?? false,
-        })
-      )
+      const previous = await invokeDesktopHost('e2e.setMainWindowSize', {
+        width: Number(nextSize.width),
+        height: Number(nextSize.height),
+        maximized: nextSize.maximized ?? false,
+      })
+      reportE2EDiagnostic('renderer-window-size', {
+        windowLabel: getDesktopWindowLabel(),
+        topFrame: window === window.top,
+        visibilityState: document.visibilityState,
+        focused: document.hasFocus(),
+        outerSize: { width: window.outerWidth, height: window.outerHeight },
+        requested: nextSize,
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        screen: { width: window.screen.width, height: window.screen.height },
+        devicePixelRatio: window.devicePixelRatio,
+      })
+      return JSON.stringify(previous)
     }
     case 'getWindowFocusSnapshot':
       return getWindowFocusSnapshot()
@@ -3426,30 +3480,33 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
     case 'sampleRapidMarkdownWindowing':
       return sampleRapidMarkdownWindowing(command)
     case 'click': {
-      const elements = findDesktopControlElementsWithin(command.selector, command.target)
-      const element = command.visible ? elements.find(desktopControlElementVisible) : elements[0]
-      if (!element)
-        throw new Error(
-          `Unable to find selector "${command.selector}"${
-            command.target ? ` within "${command.target}"` : ''
-          }`
-        )
-      if (!desktopControlElementEnabled(element)) {
-        throw new Error(`Selector "${command.selector}" is disabled`)
-      }
-      const startedAt = Date.now()
-      logRuntimeTaskCreateStage(
-        'desktop-control-click-started',
-        { commandId: command.id, selector: command.selector },
-        'debug'
+      return waitForDesktopControlElement(
+        {
+          ...command,
+          visible: command.visible === true ? true : undefined,
+          enabled: false,
+          text: undefined,
+          stableMs: undefined,
+        },
+        element => {
+          if (!desktopControlElementEnabled(element)) {
+            throw new Error(`Selector "${command.selector}" is disabled`)
+          }
+          const startedAt = Date.now()
+          logRuntimeTaskCreateStage(
+            'desktop-control-click-started',
+            { commandId: command.id, selector: command.selector },
+            'debug'
+          )
+          element.click()
+          logRuntimeTaskCreateStage(
+            'desktop-control-click-dispatched',
+            { commandId: command.id, elapsedMs: Date.now() - startedAt },
+            'debug'
+          )
+          return element.textContent?.trim() ?? ''
+        }
       )
-      element.click()
-      logRuntimeTaskCreateStage(
-        'desktop-control-click-dispatched',
-        { commandId: command.id, elapsedMs: Date.now() - startedAt },
-        'debug'
-      )
-      return element.textContent?.trim() ?? ''
     }
     case 'clickThenMacrotask': {
       const element = findDesktopControlElements(command.selector)[0]
@@ -3601,10 +3658,10 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
       )
     }
     case 'fill': {
-      const element = findDesktopControlElements(command.selector)[0]
-      if (!element) throw new Error(`Unable to find selector "${command.selector}"`)
-      await fillDesktopControlElement(element, command.value ?? '', command.id)
-      return element.textContent?.trim() ?? ''
+      return waitForDesktopControlElement(command, async element => {
+        await fillDesktopControlElement(element, command.value ?? '', command.id)
+        return element.textContent?.trim() ?? ''
+      })
     }
     case 'composeInput': {
       const element = findDesktopControlElements(command.selector)[0]
@@ -3644,6 +3701,8 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
         runtimeStream: getRuntimeStreamDiagnostics(),
         desktopControlTransport: getDesktopControlDiagnostics(),
         nativeTerminalKeys: getNativeTerminalDiagnostics(),
+        modelLoading: getModelLoadingDiagnostics(),
+        rendererResponsiveness: getUiResponsivenessDiagnostics(),
         timeOrigin: performance.timeOrigin,
         network: performance.getEntriesByType('resource').map(entry => {
           const timing = entry as PerformanceResourceTiming
@@ -4011,7 +4070,11 @@ async function executeDesktopControlCommand(command: DesktopControlCommand): Pro
   throw new Error(`Unsupported desktop control action: ${command.action}`)
 }
 
-async function postDesktopControlResult(url: string, result: DesktopControlResult): Promise<void> {
+async function postDesktopControlResult(
+  url: string,
+  result: DesktopControlResult,
+  performance?: ReturnType<typeof readUiRefreshCapture>
+): Promise<void> {
   const startedAt = Date.now()
   let lastTick = startedAt
   let maxEventLoopLagMs = 0
@@ -4024,7 +4087,7 @@ async function postDesktopControlResult(url: string, result: DesktopControlResul
     response = await fetch(`${url}/results`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
-      body: JSON.stringify(result),
+      body: JSON.stringify({ ...result, performance }),
     })
     await response.arrayBuffer()
     if (!response.ok) {
@@ -4052,7 +4115,8 @@ async function postDesktopControlResult(url: string, result: DesktopControlResul
 async function postDesktopControlStarted(
   url: string,
   command: DesktopControlCommand,
-  clientId: string
+  clientId: string,
+  performance?: ReturnType<typeof readUiRefreshCapture>
 ): Promise<void> {
   const startedAt = Date.now()
   let lastTick = startedAt
@@ -4066,7 +4130,7 @@ async function postDesktopControlStarted(
     response = await fetch(`${url}/started`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
-      body: JSON.stringify({ id: command.id, clientId }),
+      body: JSON.stringify({ id: command.id, clientId, performance }),
     })
     await response.arrayBuffer()
   } finally {
@@ -4094,6 +4158,23 @@ async function postDesktopControlStarted(
 }
 
 export async function runDesktopControlClient(url: string, windowLabel: string): Promise<void> {
+  const token = isUiRefreshCaptureEnabled() ? startUiRefreshCapture() : undefined
+  const releaseConversationCapture = token ? acquireConversationDiagnosticCapture() : undefined
+  try {
+    return await runDesktopControlLoop(url, windowLabel, () =>
+      token ? readUiRefreshCapture(token) : undefined
+    )
+  } finally {
+    releaseConversationCapture?.()
+    if (token) stopUiRefreshCapture(token)
+  }
+}
+
+async function runDesktopControlLoop(
+  url: string,
+  windowLabel: string,
+  performanceSnapshot: () => ReturnType<typeof readUiRefreshCapture> | undefined
+): Promise<void> {
   const clientId = crypto.randomUUID()
   const pollForCommand = () => {
     recordDesktopControlPhase('poll-started')
@@ -4106,7 +4187,12 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
   const readyResponse = await fetch(`${url}/ready`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...desktopControlHeaders() },
-    body: JSON.stringify({ clientId, location: window.location.href, windowLabel }),
+    body: JSON.stringify({
+      clientId,
+      location: window.location.href,
+      windowLabel,
+      performance: performanceSnapshot(),
+    }),
   })
   await readyResponse.arrayBuffer()
   if (!readyResponse.ok) {
@@ -4130,7 +4216,7 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
       recordDesktopControlPhase('command-decoded', command)
       const diagnostic = { commandId: command.id, action: command.action, clientId }
       logRuntimeTaskCreateStage('desktop-control-received', diagnostic, 'debug')
-      await postDesktopControlStarted(url, command, clientId)
+      await postDesktopControlStarted(url, command, clientId, performanceSnapshot())
       recordDesktopControlPhase('start-acknowledged', command)
       logRuntimeTaskCreateStage('desktop-control-start-acknowledged', diagnostic, 'debug')
       const completion = completeDesktopControlCommand(
@@ -4144,7 +4230,7 @@ export async function runDesktopControlClient(url: string, windowLabel: string):
           }
         },
         async result => {
-          await postDesktopControlResult(url, result)
+          await postDesktopControlResult(url, result, performanceSnapshot())
           recordDesktopControlPhase('result-acknowledged', command)
         }
       )

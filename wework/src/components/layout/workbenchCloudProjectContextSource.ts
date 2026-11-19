@@ -1,3 +1,5 @@
+import { reportE2EDiagnostic } from '@/e2e/error-capture'
+import { readAfterRuntimeTaskCreation } from '@/features/workbench/runtimeTaskCreation'
 import { runtimeTasksShareOwner } from '@/lib/workbench-device'
 import type { ComposerCloudMentionCandidate } from '@/components/chat/composer/composerMentionCandidates'
 import type { CloudLoopItem, CloudProject } from '@/api/deliveries'
@@ -11,6 +13,7 @@ import { hydrateLocalWorkItems, type LocalWorkItem } from '@/features/todo/todoM
 import {
   createCloudProjectTaskRuntimeApi,
   projectTaskRuntimeApiForProject,
+  requiresProjectTaskBinding,
   type ProjectTaskRuntimeApi,
 } from '@/features/workbench/projectTaskTracking'
 import {
@@ -128,12 +131,14 @@ export function createWorkbenchCloudProjectContextSource(
   let releases: Array<() => void> = []
 
   let lookupRevision = 0
+  let lookupController: AbortController | undefined
   let mentionRevision = 0
   let dialogRevision = 0
   let lookupKeys: readonly unknown[] | undefined
   let mentionKeys: readonly unknown[] | undefined
   let binding: PendingTodoBinding | null = null
-  let pendingAutoJoin: (PendingAutoJoinResolution & { binding?: PendingTodoBinding }) | null = null
+  let pendingAutoJoin: (PendingAutoJoinResolution & { binding?: PendingTodoBinding }) | null =
+    registry.takeAutoJoin(initial.currentRuntimeTask)
   let publication: ProjectSpaceTaskBindingChange | null = null
   const publish = (patch: Partial<ContextSnapshot>) => {
     if (
@@ -222,6 +227,9 @@ export function createWorkbenchCloudProjectContextSource(
   const resolve = async () => {
     const address = task()
     const scope = contextIdentity(address)
+    lookupController?.abort()
+    const controller = new AbortController()
+    lookupController = controller
     const revision = ++lookupRevision
     const valid = () => current(scope) && revision === lookupRevision && input.active
     if (!address || !input.active) return
@@ -248,14 +256,22 @@ export function createWorkbenchCloudProjectContextSource(
       for (let attempt = 0; attempt <= 50; attempt++) {
         if (!valid()) return
         try {
-          context = await find(runtimeTaskAddressForBinding(address, task(), input.devices))
+          context = await readAfterRuntimeTaskCreation(
+            address,
+            () => find(runtimeTaskAddressForBinding(address, task(), input.devices)),
+            controller.signal
+          )
           break
         } catch (error) {
           if (
             attempt === 50 ||
             error instanceof ProjectSpaceTaskContextUnavailableError ||
             !valid() ||
-            !registry.has(address)
+            !registry.get(address, input.paneKey) ||
+            !requiresProjectTaskBinding(
+              registry.get(address, input.paneKey)!.project,
+              registry.get(address, input.paneKey)!.item
+            )
           )
             throw error
           await new Promise(done => setTimeout(done, 100))
@@ -279,6 +295,34 @@ export function createWorkbenchCloudProjectContextSource(
       )
       if (registry.has(address)) clearPending(address)
     } catch (error) {
+      reportE2EDiagnostic('project-space-task-context-failed', {
+        taskId: address.taskId,
+        deviceId: address.deviceId,
+        active: valid(),
+        pendingBinding: (() => {
+          const pending = registry.get(address, input.paneKey)
+          return pending
+            ? {
+                projectId: pending.project.id,
+                projectStore: pending.project.project_store,
+                defaultProject: isDefaultWorkItemProject(pending.project),
+                itemId: pending.item?.id ?? null,
+                targetTaskId: pending.target?.taskId ?? null,
+              }
+            : null
+        })(),
+        generationMatches: revision === lookupRevision,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        elapsedMs: Math.round(performance.now() - started),
+        causes:
+          error instanceof AggregateError
+            ? error.errors.map(cause => ({
+                message: cause instanceof Error ? cause.message : String(cause),
+                stack: cause instanceof Error ? cause.stack : undefined,
+              }))
+            : undefined,
+      })
       if (!valid()) return
       if (error instanceof ProjectSpaceTaskContextUnavailableError)
         publish({
@@ -291,16 +335,6 @@ export function createWorkbenchCloudProjectContextSource(
             '关联项目空间失败'
           ),
         })
-      logRuntimeTaskCreateStage('project-space-context-failed', {
-        taskId: address.taskId,
-        deviceId: address.deviceId,
-        error: error instanceof Error ? error.message : String(error),
-        elapsedMs: Math.round(performance.now() - started),
-        causes:
-          error instanceof AggregateError
-            ? error.errors.map(cause => (cause instanceof Error ? cause.message : String(cause)))
-            : undefined,
-      })
       console.warn('[Wework] Failed to resolve project-space context for task', {
         task: address,
         error,
@@ -326,7 +360,7 @@ export function createWorkbenchCloudProjectContextSource(
     )
       return
     const api = projectTaskRuntimeApiForProject(input.services, project)
-    if (!api || (isDefaultWorkItemProject(project) && !value.item)) return
+    if (!api || !requiresProjectTaskBinding(project, value.item)) return
     binding = value
     const scope = contextIdentity(address)
     const title =
@@ -486,7 +520,24 @@ export function createWorkbenchCloudProjectContextSource(
       input.runtimeTaskTitle ||
       truncateRuntimeTaskTitle(input.runtimeTaskDescription) ||
       input.t('workbench.untitled_task', '未命名任务')
-    publish({ taskBoardAssociation: { ...association, pending: true }, todoBindingError: null })
+    const request = { ...association, pending: true }
+    const reportAssociation = (phase: string) =>
+      reportE2EDiagnostic('project-space-task-association', {
+        phase,
+        taskId: address.taskId,
+        deviceId: address.deviceId,
+        projectId: project.id,
+        projectStore: project.project_store,
+        existingItemId: item?.id ?? null,
+        observed: listeners.size > 0,
+        sameScope: current(scope),
+        sameRequest: snapshot.taskBoardAssociation === request,
+        sameDialog: revision === dialogRevision,
+        associationTaskKey: snapshot.taskBoardAssociation?.taskKey ?? null,
+        currentTaskKey: task() ? runtimeTaskKey(task()!) : null,
+      })
+    publish({ taskBoardAssociation: request, todoBindingError: null })
+    reportAssociation('started')
     try {
       const linked = item
         ? (await api.bindTask(
@@ -503,7 +554,11 @@ export function createWorkbenchCloudProjectContextSource(
               input.runtimeTaskDescription ?? ''
             )
           ).item
-      if (!current(scope) || revision !== dialogRevision) return
+      reportAssociation('runtime-committed')
+      if (!current(scope) || revision !== dialogRevision) {
+        reportAssociation('superseded')
+        return
+      }
       ++lookupRevision
       registry.publishBound({ task: address, project, item: linked })
       publish({
@@ -513,6 +568,15 @@ export function createWorkbenchCloudProjectContextSource(
         }),
       })
     } catch (cause) {
+      reportE2EDiagnostic('project-space-task-association-failed', {
+        taskId: address.taskId,
+        deviceId: address.deviceId,
+        projectId: project.id,
+        sameScope: current(scope),
+        sameRequest: snapshot.taskBoardAssociation === request,
+        error: cause instanceof Error ? cause.message : String(cause),
+        stack: cause instanceof Error ? cause.stack : undefined,
+      })
       const currentAssociation = snapshot.taskBoardAssociation
       if (current(scope) && revision === dialogRevision && currentAssociation)
         publish({
@@ -581,7 +645,10 @@ export function createWorkbenchCloudProjectContextSource(
             registry.get(address, frame.paneKey) === selected)
         )
           registry.store({ ...selected, target: address }, selected)
-        if (lateDefault && pendingAutoJoin === lateDefault) lateDefault.target = address
+        if (lateDefault && pendingAutoJoin === lateDefault) {
+          lateDefault.target = address
+          registry.deferAutoJoin(address, lateDefault)
+        }
         if (current(contextIdentity(task()))) {
           autoJoin()
           bindPending()
@@ -791,6 +858,7 @@ export function createWorkbenchCloudProjectContextSource(
         queueMicrotask(() => {
           if (listeners.size) return
           lookupRevision++
+          lookupController?.abort()
           mentionRevision++
           dialogRevision++
           lookupKeys = undefined

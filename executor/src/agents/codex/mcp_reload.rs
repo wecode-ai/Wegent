@@ -351,7 +351,7 @@ mod tests {
         let pending = Arc::new(Mutex::new(HashMap::new()));
         let notifications = CodexNotificationHub::new();
         client.state.lock().await.process = Some(CodexAppServerProcess {
-            stdin: Arc::new(Mutex::new(child.stdin.take().unwrap())),
+            stdin: Arc::new(Mutex::new(FrameWriter::new(child.stdin.take().unwrap()))),
             child,
             pending: Arc::clone(&pending),
             notifications: notifications.clone(),
@@ -444,7 +444,7 @@ mod tests {
         let pending = Arc::new(Mutex::new(HashMap::new()));
         let notifications = CodexNotificationHub::new();
         client.state.lock().await.process = Some(CodexAppServerProcess {
-            stdin: Arc::new(Mutex::new(child.stdin.take().unwrap())),
+            stdin: Arc::new(Mutex::new(FrameWriter::new(child.stdin.take().unwrap()))),
             child,
             pending: Arc::clone(&pending),
             notifications: notifications.clone(),

@@ -16,6 +16,37 @@ import {
 } from '../e2e/desktop/modules/shared.mjs'
 import { createDesktopScenario } from '../e2e/desktop/scenarios/stand-in-list-confirmation.scenario.mjs'
 import { createDesktopScenario as createActionScenario } from '../e2e/desktop/scenarios/stand-in-action-confirmation.scenario.mjs'
+import { createLoadedCompactionProfileVerification } from '../e2e/desktop/scenarios/loaded-compaction-profile.mjs'
+import { REPLY_PREDICTION_PROMPT } from '../e2e/desktop/modules/response-protocol.mjs'
+
+test('native compaction fixture handles prediction while retaining unexpected-turn assertions', async () => {
+  const profile = createLoadedCompactionProfileVerification({})
+  const request = content => {
+    const stream = Readable.from([
+      JSON.stringify({
+        input: [{ role: 'user', content }],
+        client_metadata: { 'x-codex-turn-metadata': JSON.stringify({ request_kind: 'turn' }) },
+      }),
+    ])
+    stream.method = 'POST'
+    stream.headers = { 'content-type': 'application/json' }
+    return stream
+  }
+  let result
+  const response = {
+    writeHead() {},
+    end(value) {
+      result = value
+    },
+  }
+  const url = new URL('http://localhost/loaded-compaction-native/v1/responses')
+  assert.equal(await profile.handleHttp(request(REPLY_PREDICTION_PROMPT), response, url), true)
+  assert.ok(result.includes('suggestion'))
+  await assert.rejects(
+    profile.handleHttp(request('unexpected turn'), response, url),
+    /Unexpected native request: turn/
+  )
+})
 
 for (const [encoding, compress] of [
   ['identity', value => value],
@@ -233,6 +264,8 @@ test('retains failed scenario model requests without recording authorization hea
     server.handle(request, new ServerResponse(request)),
     error => error === failure
   )
-  assert.deepEqual(server.modelRequests, [{ body, scenario: server.scenario, failed: true }])
+  assert.deepEqual(server.modelRequests, [
+    { body, scenario: server.scenario, protocol: 'responses', httpRequestIndex: 0, failed: true },
+  ])
   assert.equal(JSON.stringify(server.modelRequests).includes('synthetic-sensitive-header'), false)
 })

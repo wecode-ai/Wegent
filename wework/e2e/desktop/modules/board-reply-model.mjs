@@ -4,7 +4,7 @@ import { issueCommentFormSelector } from './issue-comment-selectors.mjs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createRequire } from 'node:module'
-import { CLOUD_PUBLIC_MODEL_NAME } from './shared.mjs'
+import { CLOUD_PUBLIC_MODEL_LABEL, CLOUD_PUBLIC_MODEL_NAME } from './shared.mjs'
 import { waitForValue } from './workspace-agent-setup.mjs'
 import {
   assistantMessage,
@@ -234,7 +234,7 @@ async function verifyExecutionDetail(control, scope, run, expectedText, timeoutM
   })
   const modelSelector = `${conversation} [data-testid="model-selector-button"]`
   await control.command('waitFor', modelSelector, {
-    text: PUBLIC_MODEL_ID,
+    text: CLOUD_PUBLIC_MODEL_LABEL,
     timeoutMs,
   })
   assert.doesNotMatch(

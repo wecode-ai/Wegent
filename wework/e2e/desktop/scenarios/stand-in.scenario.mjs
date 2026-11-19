@@ -1,4 +1,4 @@
-import { waitForStandInSchedulerCycle } from '../modules/stand-in-flows.mjs'
+import { desktopOwnerId as USER_ID } from '../modules/desktop-owner-fixture.mjs'
 import {
   openStandInActivity,
   openStandInSettings,
@@ -39,7 +39,6 @@ const PROJECT = `助理交互-${process.pid}`
 const MARKER = `STAND_IN_ASSIGNED_${process.pid}`
 const AGENT_PROMPT = `STAND_IN_AGENT_INSTRUCTIONS_${process.pid}`
 // The ordinary desktop fixture authenticates /api/users/me as this account.
-const USER_ID = 9001
 
 async function waitForExecution(control, issueId, timeoutMs, roleIds = ['default']) {
   const deadline = Date.now() + timeoutMs
@@ -560,8 +559,8 @@ export async function createDesktopScenario({
         },
         uiTimeoutMs
       )
-      // Observe a full configured scheduler interval plus timer jitter.
-      await waitForStandInSchedulerCycle()
+      // Observe a full five-second scheduler interval plus timer jitter.
+      await new Promise(resolve => setTimeout(resolve, 5500))
       assert.equal(requests, 2, 'Polling or editing duplicated a completed assignment')
       for (const excluded of [old, other, unassigned]) {
         assert.equal(
@@ -601,8 +600,8 @@ export async function createDesktopScenario({
         },
         uiTimeoutMs
       )
-      // Observe a full configured scheduler interval plus timer jitter.
-      await waitForStandInSchedulerCycle()
+      // Observe a full five-second scheduler interval plus timer jitter.
+      await new Promise(resolve => setTimeout(resolve, 5500))
       assert.equal(
         (
           await requestExecutor(
@@ -677,8 +676,8 @@ export async function createDesktopScenario({
         ])
       // Automatic intake selects one matching role in configured order.
       await waitForExecution(control, ambiguous.id, modelResponseTimeoutMs, ['review'])
-      // Observe a full configured scheduler interval plus timer jitter.
-      await waitForStandInSchedulerCycle()
+      // Observe a full five-second scheduler interval plus timer jitter.
+      await new Promise(resolve => setTimeout(resolve, 5500))
       assert.equal(requests, 5, 'Each assignment must execute once through its selected assistant')
       assert.equal(agentRequests, 0, 'Independent roles must not inherit agent prompts')
       assert.deepEqual(
@@ -804,8 +803,8 @@ export async function createDesktopScenario({
         },
         uiTimeoutMs
       )
-      // Observe a full configured scheduler interval plus timer jitter.
-      await waitForStandInSchedulerCycle()
+      // Observe a full five-second scheduler interval plus timer jitter.
+      await new Promise(resolve => setTimeout(resolve, 5500))
       assert.deepEqual(
         { requests, ...tagRequests },
         beforeReorder,

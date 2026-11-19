@@ -26,7 +26,7 @@ export function programmaticInput(name, args) {
   return [
     `const requested = ${JSON.stringify(name)}`,
     'const matches = ALL_TOOLS.filter(tool => tool.name === requested || tool.name.endsWith("__" + requested))',
-    `if (matches.length !== 1) throw new Error('Native capability is missing or ambiguous: ' + ${JSON.stringify(name)})`,
+    `if (matches.length !== 1) throw new Error('Native capability is missing or ambiguous: ' + JSON.stringify({ requested, matchedNames: matches.map(tool => tool.name), availableNames: ALL_TOOLS.map(tool => tool.name) }))`,
     `const result = await tools[matches[0].name](${JSON.stringify(args)})`,
     ...(shell
       ? [

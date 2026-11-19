@@ -28,6 +28,9 @@ import { mainProcessLog } from './host/main-process-log.js'
 import { desktopE2EStartupTiming, StartupProgressReporter } from './host/startup-progress.js'
 import { recordReleaseDiagnostic } from './runtime/release-diagnostics.js'
 import { rendererConsoleDiagnostic } from './host/renderer-console-diagnostic.js'
+import { e2eErrorLog } from './host/e2e-error-log.js'
+import { installE2EWebContentsErrors } from './host/e2e-web-contents-errors.js'
+import { installE2ENetworkErrors, recordE2ENetworkError } from './host/e2e-network-errors.js'
 import { traceShutdownStep } from './runtime/shutdown-diagnostics.js'
 import { installE2ERendererCpuProfiling } from './host/e2e-renderer-cpu-profile.js'
 import { VerificationDevtools } from './host/verification-devtools.js'
@@ -74,6 +77,7 @@ import { StartupTelemetryLifecycle, StartupTelemetrySuccessGate } from './host/s
 import { requiresMacosQuitWorkaround } from './host/macos-quit-workaround.mjs'
 import { RendererHealthService } from './host/renderer-health.js'
 import { RendererStartupLoader } from './host/renderer-startup-loader.js'
+import { installStartupNetworkFault } from './host/e2e-startup-network-fault.js'
 import { SmartAppManager, type SmartAppRuntimeHost } from './host/smart-app-manager.js'
 import { resolveDownloadsDirectory } from './host/downloads-directory.js'
 import { SystemSleepController } from './host/system-sleep-controller.js'
@@ -542,7 +546,18 @@ const localWorkspaceCatalogLog = new RuntimeDiagnosticsLog(
   join(app.getPath('logs'), 'local-workspace-catalog.log'),
   '[Wework] Local workspace catalog '
 )
+app.on('session-created', target => installE2ENetworkErrors(target))
+app.on('child-process-gone', (_event, details) => {
+  e2eErrorLog.record(
+    'electron-child',
+    'process-gone',
+    details.reason === 'clean-exit' ? 'info' : 'error',
+    { ...details }
+  )
+})
+e2eErrorLog.record('electron-child', 'collector-started', 'info', {})
 app.on('web-contents-created', (_event, contents) => {
+  installE2EWebContentsErrors(contents)
   const logLoadEvent = (event: string) => () => {
     const address = contents.getURL()
     const route =
@@ -952,6 +967,7 @@ function registerDshWindowLabel(contents: WebContents, label: string): void {
 }
 
 function installDshWindowLabelHeaders(): void {
+  installE2ENetworkErrors(session.defaultSession)
   const releaseRedirect = process.env.WEWORK_E2E_DSH_RELEASE_REDIRECT
   delete process.env.WEWORK_E2E_DSH_RELEASE_REDIRECT
   if (
@@ -962,8 +978,14 @@ function installDshWindowLabelHeaders(): void {
     installE2eDshReleaseRedirect(session.defaultSession.webRequest, releaseRedirect)
   }
   session.defaultSession.webRequest.onErrorOccurred(
-    { urls: ['http://127.0.0.1/*', 'http://localhost/*'] },
+    {
+      urls:
+        process.env.VITE_WEWORK_E2E === 'true'
+          ? ['<all_urls>']
+          : ['http://127.0.0.1/*', 'http://localhost/*'],
+    },
     details => {
+      recordE2ENetworkError(details, session.defaultSession)
       rendererStartupLoader.requestFailed(details)
       const diagnostic = {
         at: new Date().toISOString(),
@@ -1063,16 +1085,25 @@ const loadPrimaryDshView = createSingleFlight(async (): Promise<void> => {
       if (sourceRoot) targetUrl.searchParams.set('weworkDevWorktree', sourceRoot)
     }
     startupProgress.report('renderer')
-    await rendererStartupLoader.load({
-      webContentsId: contents.id,
-      url: targetUrl.toString(),
-      load: () =>
-        contents.loadURL(targetUrl.toString(), {
-          extraHeaders: 'X-Wework-Window-Label: main',
-        }),
-      onRecovery: () =>
-        console.warn('[startup-network-recovery] reloading interrupted entry modules'),
-    })
+    const disposeFault =
+      process.env.VITE_WEWORK_E2E === 'true' &&
+      process.env.WEWORK_E2E_STARTUP_NETWORK_CHANGE === '1'
+        ? installStartupNetworkFault(contents.session, targetUrl.origin)
+        : undefined
+    try {
+      await rendererStartupLoader.load({
+        webContentsId: contents.id,
+        url: targetUrl.toString(),
+        load: () =>
+          contents.loadURL(targetUrl.toString(), {
+            extraHeaders: 'X-Wework-Window-Label: main',
+          }),
+        onRecovery: () =>
+          console.warn('[startup-network-recovery] reloading interrupted entry modules'),
+      })
+    } finally {
+      disposeFault?.()
+    }
     primaryDshLoaded = true
     runtimeError = null
     rendererHealth.ready()
@@ -1496,6 +1527,7 @@ async function updateDesktopPreferences(
     patch = { ...patch, appearanceThemeSnapshot: snapshot }
   }
   const updated = await desktopPreferences.update(patch, expectedTelemetryConsentRevision)
+  void trayNativeStatus?.handlePreferencesChanged(patch)
   if (Object.hasOwn(patch, 'appearanceMode') || Object.hasOwn(patch, 'appearanceThemeSnapshot')) {
     desktopAppearance.update(updated)
   }
@@ -2010,6 +2042,12 @@ function installIpc(): void {
   if (process.env.VITE_WEWORK_E2E === 'true' && process.env.WEWORK_E2E_CONTROL_URL) {
     const downloadsPath = process.env.WEWORK_E2E_DOWNLOADS_DIR?.trim()
     if (downloadsPath) app.setPath('downloads', resolve(downloadsPath))
+    ipcMain.handle('e2e:error-collection-checkpoint', event => {
+      if (!dshWindowLabels.has(event.sender.id) || event.senderFrame !== event.sender.mainFrame) {
+        throw new Error('Error collection verification requires a Wework main frame')
+      }
+      return e2eErrorLog.checkpoint()
+    })
     ipcMain.handle('e2e:runtime-request', (event, input) => {
       if (!dshWindowLabels.has(event.sender.id) || event.senderFrame !== event.sender.mainFrame) {
         throw new Error('Runtime verification requires a Wework main frame')
@@ -2758,7 +2796,6 @@ async function configureDesktopRuntime(): Promise<void> {
           traySetState: state => {
             trayManager?.setState(state)
             syncDockBadge(app.dock, state.unreadCount, developmentDockIdentity?.badge)
-            void trayNativeStatus?.refresh()
           },
           traySnapshot: () => {
             const snapshot = trayManager?.snapshot()
@@ -3138,6 +3175,14 @@ if (hasSingleInstanceLock) {
         const settings = await preferenceStore.read()
         if (quitting) return
         desktopAppearance.update(settings)
+        const theme = resolveStartupSplashTheme(
+          settings.appearanceMode,
+          nativeTheme.shouldUseDarkColors
+        )
+        if (startupSplashWindow && !startupSplashWindow.isDestroyed()) {
+          startupSplashWindow.setBackgroundColor(theme === 'dark' ? '#05070d' : '#fafafa')
+          await startupSplash?.setTheme(theme)
+        }
         nativeTheme.on('updated', () => desktopAppearance.update())
         logStartupStep('startup-preferences-read', 'completed')
         const saved = settings.mainWindowState

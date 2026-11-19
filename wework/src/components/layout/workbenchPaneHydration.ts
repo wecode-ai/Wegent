@@ -1,3 +1,4 @@
+import { readAfterRuntimeTaskCreation } from '@/features/workbench/runtimeTaskCreation'
 import { SupersededConversationRead } from '@/features/workbench/runtimeConversationSynchronization'
 
 import { syncRuntimeGoal } from '@/features/workbench/runtimeTaskLifecycle/goalSynchronization'
@@ -41,7 +42,11 @@ export function hydrateRuntimePaneGoal(context: PaneCommandContext, signal: Abor
   }
 
   const snapshotVersion = beginRuntimeGoalSnapshot(runtimeTaskLoadTarget.address)
-  void getRuntimeGoal(runtimeTaskLoadTarget.address)
+  void readAfterRuntimeTaskCreation(
+    runtimeTaskLoadTarget.address,
+    () => getRuntimeGoal(runtimeTaskLoadTarget.address),
+    signal
+  )
     .then(response => {
       if (
         !signal.aborted &&

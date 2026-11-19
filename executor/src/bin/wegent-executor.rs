@@ -92,6 +92,24 @@ fn macos_max_files_per_process() -> Option<libc::rlim_t> {
 fn raise_open_files_soft_limit() {}
 
 fn main() {
+    if env::args().nth(1).as_deref() == Some("--supervise-process-tree") {
+        wegent_executor::logging::reserve_executor_stdout_for_protocol();
+        let runtime_instance = runtime();
+        let outcome = runtime_instance.block_on(wegent_executor::process_tree_supervisor::run(
+            env::args_os().skip(2).collect(),
+        ));
+        shutdown_runtime(runtime_instance);
+        match outcome {
+            Ok(code) => std::process::exit(code),
+            Err(error) => {
+                eprintln!(
+                    "wework-process-tree {} failed {error}",
+                    env::args().nth(2).unwrap_or_default()
+                );
+                std::process::exit(1);
+            }
+        }
+    }
     if env::args().nth(1).as_deref() == Some("--workbench-codex-providers-migrate") {
         wegent_executor::logging::reserve_executor_stdout_for_protocol();
         let args: Vec<_> = env::args().skip(2).collect();

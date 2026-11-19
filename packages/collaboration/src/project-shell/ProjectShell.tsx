@@ -135,6 +135,7 @@ export function ProjectShell({
   const searchRef = useRef<HTMLButtonElement>(null)
   const addRef = useRef<HTMLButtonElement>(null)
   const rightActionsRef = useRef<HTMLDivElement>(null)
+  const measureHeaderRef = useRef<(() => void) | null>(null)
   const naturalWidthsRef = useRef({
     add: 0,
     assistant: 0,
@@ -212,13 +213,21 @@ export function ProjectShell({
       )
     }
 
+    measureHeaderRef.current = compute
     compute()
-    if (typeof ResizeObserver === 'undefined') return
-    const observer = new ResizeObserver(compute)
+  })
+
+  useLayoutEffect(() => {
+    const header = headerRef.current
+    if (!header || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => measureHeaderRef.current?.())
     observer.observe(header)
     if (rightActionsRef.current) observer.observe(rightActionsRef.current)
-    return () => observer.disconnect()
-  })
+    return () => {
+      observer.disconnect()
+      measureHeaderRef.current = null
+    }
+  }, [])
 
   const assistantButton =
     assistantAction && !assistantOpen && level < 2 ? (

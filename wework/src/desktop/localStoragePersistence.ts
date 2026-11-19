@@ -46,7 +46,7 @@ export async function initializeDesktopLocalStoragePersistence(): Promise<void> 
 }
 
 export async function flushDesktopLocalStoragePersistence(): Promise<void> {
-  if (flushScheduled) flushPendingChanges()
+  if (flushScheduled || retryUpdate) flushPendingChanges(true)
   await writeQueue
   if (writeFailure !== null) throw writeFailure
 }
@@ -172,16 +172,18 @@ function scheduleFlush(): void {
   queueMicrotask(flushPendingChanges)
 }
 
-function flushPendingChanges(): void {
+function flushPendingChanges(retryFailed = false): void {
   flushScheduled = false
   const update = pending
   pending = {
     clear: false,
     changes: new Map(),
   }
-  if (!update.clear && update.changes.size === 0) return
+  const hasUpdate = update.clear || update.changes.size > 0
+  if (!hasUpdate && !(retryFailed && retryUpdate)) return
 
   writeQueue = writeQueue.then(async () => {
+    if (!hasUpdate && !retryUpdate) return
     const persistedUpdate = retryUpdate ? mergeUpdates(retryUpdate, update) : update
     retryUpdate = null
     try {

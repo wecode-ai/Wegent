@@ -58,6 +58,56 @@ describe('native MCP result text', () => {
     ).toEqual(result)
   })
 
+  test.each(['failed', 'terminated'])(
+    'preserves application text beginning with Script %s',
+    status => {
+      const text = `Script ${status}\nThe Issue describes a historical execution.`
+      const statusLikeText = `Script ${status}\nWall time 0.04 seconds\nOutput:\nHistorical log`
+      const completedHeader = 'Script completed\nWall time 0.04 seconds\nOutput:\n'
+      for (const [output, expected] of [
+        [text, text],
+        [[{ type: 'input_text', text }], text],
+        [`${completedHeader}${statusLikeText}`, statusLikeText],
+        [
+          [
+            { type: 'input_text', text: completedHeader },
+            { type: 'input_text', text: statusLikeText },
+          ],
+          statusLikeText,
+        ],
+        [`${header}\n${statusLikeText}`, statusLikeText],
+      ] as const) {
+        expect(readMcpToolOutput(request(output), callId)).toBe(expected)
+      }
+    }
+  )
+
+  test.each(['failed', 'terminated'])(
+    'retains the original native script %s cause before a consumer parses JSON',
+    status => {
+      const cause = 'Script error:\nNative capability is missing or ambiguous: get_current_context'
+      for (const timing of [
+        'Wall time 0.04 seconds',
+        'Wall time 0.040 seconds (code-mode 0.030 seconds; overhead 0.010 seconds)',
+      ]) {
+        const nativeHeader = `Script ${status}\n${timing}\nOutput:\n`
+        const failure = `${nativeHeader}${cause}`
+        for (const output of [
+          failure,
+          [{ type: 'input_text', text: failure }],
+          [
+            { type: 'input_text', text: nativeHeader },
+            { type: 'input_text', text: cause },
+          ],
+        ]) {
+          const read = () => JSON.parse(readMcpToolOutput(request(output), callId))
+          expect(read).toThrow(`Real MCP call ${callId} failed in native Code Mode:`)
+          expect(read).toThrow(cause)
+        }
+      }
+    }
+  )
+
   test.each([header, [], [{ type: 'input_text', text: header }]])(
     'rejects a result without application text: %j',
     output => {

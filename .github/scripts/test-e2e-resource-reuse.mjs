@@ -16,6 +16,24 @@ import { runtimeArtifact } from "./runtime-artifact.mjs";
 import { containerIPv4, runnerLoopbackHosts } from "./e2e-runner-network.mjs";
 import { fetchGithubReleaseAsset } from "../../wework/e2e/desktop/modules/github-release-asset.mjs";
 
+function runFixtureShell(script, directory, { env, ...options }) {
+  // Shell startup can rebuild PATH; select test commands after startup completes.
+  return spawnSync(
+    "bash",
+    [
+      "--noprofile",
+      "--norc",
+      "-e",
+      "-c",
+      'export PATH="$TEST_COMMAND_BIN:$PATH"\n' + script,
+    ],
+    {
+      ...options,
+      env: { ...env, BASH_ENV: "", TEST_COMMAND_BIN: directory },
+    },
+  );
+}
+
 test("CI package installation preserves distribution repositories and trust", (t) => {
   const root = resolve(import.meta.dirname, "../..");
   const installer = readFileSync(
@@ -74,6 +92,71 @@ test("CI package installation preserves distribution repositories and trust", (t
   );
   assert.notEqual(rejected.status, 0);
   assert.equal(readFileSync(calls, "utf8"), expected);
+
+  const sourceList = join(directory, "ubuntu.sources");
+  const sourceContent =
+    "Types: deb\nURIs: https://archive.ubuntu.com/ubuntu\nSuites: noble\nComponents: main universe\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n";
+  writeFileSync(sourceList, sourceContent);
+  writeFileSync(calls, "");
+  const scopedOptions = {
+    ...options,
+    env: { ...options.env, WEGENT_CI_APT_SOURCE_LIST: sourceList },
+  };
+  const scoped = spawnSync(
+    "bash",
+    [".github/scripts/install-e2e-apt-packages.sh", ...packages],
+    scopedOptions,
+  );
+  assert.equal(scoped.status, 0, scoped.stderr);
+  const sourceArguments =
+    "-o Dir::Etc::sourcelist=" + sourceList + " -o Dir::Etc::sourceparts=- ";
+  assert.equal(
+    readFileSync(calls, "utf8"),
+    [
+      sourceArguments + "-o APT::Update::Error-Mode=any update",
+      sourceArguments +
+        "install --yes --no-install-recommends " +
+        packages.join(" "),
+      "",
+    ].join("\n"),
+  );
+  assert.equal(readFileSync(sourceList, "utf8"), sourceContent);
+  writeFileSync(calls, "");
+  const missing = spawnSync(
+    "bash",
+    [".github/scripts/install-e2e-apt-packages.sh", ...packages],
+    {
+      ...scopedOptions,
+      env: {
+        ...scopedOptions.env,
+        WEGENT_CI_APT_SOURCE_LIST: join(directory, "absent.sources"),
+      },
+    },
+  );
+  assert.notEqual(missing.status, 0);
+  assert.equal(readFileSync(calls, "utf8"), "");
+  writeFileSync(
+    join(directory, "apt-get"),
+    '#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "$APT_TEST_COMMANDS"\nexit 42\n',
+  );
+  writeFileSync(join(directory, "getent"), "#!/usr/bin/env bash\nexit 0\n");
+  writeFileSync(
+    join(directory, "timeout"),
+    '#!/usr/bin/env bash\nshift\nexec "$@"\n',
+  );
+  for (const command of ["getent", "timeout"])
+    chmodSync(join(directory, command), 0o755);
+  const failedUpdate = spawnSync(
+    "bash",
+    [".github/scripts/install-e2e-apt-packages.sh", ...packages],
+    scopedOptions,
+  );
+  assert.equal(failedUpdate.status, 42);
+  assert.equal(
+    readFileSync(calls, "utf8"),
+    sourceArguments + "-o APT::Update::Error-Mode=any update\n",
+  );
+  assert.equal(readFileSync(sourceList, "utf8"), sourceContent);
 });
 
 test("historical fixtures use the exact GitHub release asset by ID", async () => {
@@ -371,14 +454,12 @@ fs.writeFileSync('.coverage', 'guard coverage')
     chmodSync(git, 0o755);
     const log = join(directory, "uv.log");
     const run = (step, extra = {}) =>
-      spawnSync("bash", ["--noprofile", "--norc", "-c", step.run], {
+      runFixtureShell(step.run, bin, {
         cwd: backend,
         encoding: "utf8",
         env: {
           ...process.env,
           ...job.env,
-          BASH_ENV: "",
-          PATH: `${bin}:${process.env.PATH}`,
           TEST_UV_LOG: log,
           TEST_HEAD: "a".repeat(40),
           ...extra,
@@ -573,20 +654,14 @@ test("platform image reuse checks the registry before starting a builder", () =>
         `#!/usr/bin/env node\nconst assert = require('node:assert/strict')\nassert.deepEqual(process.argv.slice(2), ['manifest', 'inspect', process.env.IMAGE])\nprocess.exit(${exists ? 0 : 1})\n`,
       );
       chmodSync(join(root, "docker"), 0o755);
-      const probe = spawnSync(
-        "bash",
-        ["--noprofile", "--norc", "-e", "-c", steps[checkIndex].run],
-        {
-          encoding: "utf8",
-          env: {
-            ...process.env,
-            BASH_ENV: "",
-            PATH: `${root}:${process.env.PATH}`,
-            IMAGE: image,
-            GITHUB_OUTPUT: output,
-          },
+      const probe = runFixtureShell(steps[checkIndex].run, root, {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          IMAGE: image,
+          GITHUB_OUTPUT: output,
         },
-      );
+      });
       assert.equal(probe.status, 0, probe.stderr);
       assert.equal(readFileSync(output, "utf8"), `exists=${exists}\n`);
     } finally {
@@ -671,7 +746,7 @@ test("Windows desktop shards consume packaged dependencies without reinstalling 
   );
   assert.equal(
     pnpm.if,
-    "contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'startup-fault-isolation')",
+    "contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')",
   );
   assert(
     steps.some(

@@ -251,7 +251,9 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       assert.equal(sent.accepted, true, JSON.stringify(sent))
       const continued = await completed(oldTask, `${PREFIX}_FOLLOWUP`)
       await assertDegraded(resumeFault, {
-        methods: ['thread/resume', 'plugin/installed'],
+        // Catalog reads share the restarted native process and can recover its
+        // auth before the follow-up resumes. The original thread is still required.
+        methods: ['thread/resume', 'plugin/installed', 'config/read'],
         taskId: oldTask,
         threadId: oldThread,
       })
@@ -328,7 +330,9 @@ export function createDesktopScenario({ resultDir, workspacePath }) {
       model.plan(`${PREFIX}_NEW_RECOVERED`)
       const newTask = await create('NEW_RECOVERED')
       await completed(newTask, `${PREFIX}_NEW_RECOVERED`)
-      await assertDegraded(startFaultState, { methods: ['thread/start', 'plugin/installed'] })
+      await assertDegraded(startFaultState, {
+        methods: ['thread/start', 'plugin/installed', 'config/read'],
+      })
 
       // A startup failure can make native Codex use defaults before the first task RPC.
       await restoreOfficial('OFFICIAL_BEFORE_BOOTSTRAP')

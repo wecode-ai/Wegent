@@ -1,3 +1,4 @@
+import { desktopOwnerId as USER } from '../modules/desktop-owner-fixture.mjs'
 import {
   openStandInActivity,
   openStandInDetails,
@@ -28,7 +29,6 @@ import {
 
 const PROVIDER = '@wegent/dsh-connection-runtime/email'
 const MARKER = 'EMAIL_INTAKE_USER_STORY'
-const USER = 9001
 const CARD = '[data-testid="request-user-input-card"]'
 
 export function createDesktopScenario({

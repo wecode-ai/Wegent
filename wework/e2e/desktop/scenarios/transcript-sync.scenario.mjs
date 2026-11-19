@@ -1,7 +1,7 @@
+import { TranscriptBackendEvidence } from '../modules/transcript-backend-evidence.mjs'
+import { nativeCloudAuthorizationFixture } from '../modules/native-cloud-authorization-client.mjs'
 import { readRequestBody as requestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
-import { createHash, generateKeyPairSync } from 'node:crypto'
-import { mkdirSync, writeFileSync } from 'node:fs'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -28,12 +28,6 @@ const OTHER_PROJECT_PROMPT = 'WEWORK_DESKTOP_E2E_NATIVE_TRANSCRIPT_OTHER_PROJECT
 const OTHER_PROJECT_COMPLETION = 'WEWORK_DESKTOP_E2E_NATIVE_TRANSCRIPT_OTHER_PROJECT_COMPLETE'
 const RESTORED_WORKSPACE_MARKER = 'restored-from-encrypted-cloud-segments'
 const SYNC_POLL_INTERVAL_MS = 5_000
-const TEST_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64')
-
-function json(response, status, body) {
-  response.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
-  response.end(JSON.stringify(body))
-}
 
 function sse(events) {
   return events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
@@ -67,64 +61,6 @@ function completedResponse(id, text) {
   ]
 }
 
-async function rawBody(request) {
-  const chunks = []
-  for await (const chunk of request) chunks.push(chunk)
-  return Buffer.concat(chunks)
-}
-
-async function multipartUpload(request) {
-  const contentType = String(request.headers['content-type'] || '')
-  const boundary = contentType.match(/boundary=([^;]+)/u)?.[1]
-  assert.ok(boundary, 'Transcript upload must include a multipart boundary')
-  const body = await rawBody(request)
-  const metadataHeader = body.indexOf(Buffer.from('name="metadata"'))
-  assert.notEqual(metadataHeader, -1, 'Transcript multipart upload must include metadata')
-  const metadataStart = body.indexOf(Buffer.from('\r\n\r\n'), metadataHeader) + 4
-  const metadataEnd = body.indexOf(Buffer.from(`\r\n--${boundary}`), metadataStart)
-  assert.ok(
-    metadataStart >= 4 && metadataEnd > metadataStart,
-    'Transcript metadata part is malformed'
-  )
-  const fileHeader = body.indexOf(Buffer.from('name="file"'))
-  assert.notEqual(fileHeader, -1, 'Transcript multipart upload must include the file field')
-  const contentStart = body.indexOf(Buffer.from('\r\n\r\n'), fileHeader) + 4
-  const contentEnd = body.indexOf(Buffer.from(`\r\n--${boundary}`), contentStart)
-  assert.ok(contentStart >= 4 && contentEnd > contentStart, 'Transcript file part is malformed')
-  return {
-    metadata: JSON.parse(body.subarray(metadataStart, metadataEnd).toString('utf8')),
-    file: body.subarray(contentStart, contentEnd),
-  }
-}
-
-function seedCloudCredential(electronUserDataDirectory, apiBaseUrl) {
-  const { publicKey, privateKey } = generateKeyPairSync('ec', {
-    namedCurve: 'prime256v1',
-  })
-  const publicJwk = publicKey.export({ format: 'jwk' })
-  mkdirSync(electronUserDataDirectory, { recursive: true, mode: 0o700 })
-  writeFileSync(
-    join(electronUserDataDirectory, 'cloud-credentials.json'),
-    `${JSON.stringify(
-      {
-        version: 2,
-        apiBaseUrl,
-        publicKey: {
-          kty: 'EC',
-          crv: 'P-256',
-          x: publicJwk.x,
-          y: publicJwk.y,
-        },
-        privateKey: privateKey.export({ format: 'pem', type: 'pkcs8' }).toString(),
-        refreshToken: 'desktop-e2e-transcript-sync-refresh',
-      },
-      null,
-      2
-    )}\n`,
-    { mode: 0o600 }
-  )
-}
-
 async function sendTranscriptPrompt(control, prompt, timeoutMs) {
   await control.command('fill', ACTIVE_COMPOSER_SELECTOR, { value: prompt })
   // A restored editor can mount before its model selection is ready to submit.
@@ -136,7 +72,7 @@ async function sendTranscriptPrompt(control, prompt, timeoutMs) {
   await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
 }
 
-async function waitFor(predicate, timeoutMs, message) {
+async function poll(predicate, timeoutMs, message) {
   const startedAt = Date.now()
   while (Date.now() - startedAt < timeoutMs) {
     const value = await predicate()
@@ -155,27 +91,6 @@ function sqliteOutboxCount(path) {
   }
 }
 
-function summary(transcriptId, transcript) {
-  const latestSnapshot = transcript.archives
-    .filter(archive => archive.format.includes('snapshot'))
-    .at(-1)
-  return {
-    transcriptId,
-    parentTranscriptId: transcript.parentTranscriptId,
-    forkedAtSequence: transcript.forkedAtSequence,
-    title: transcript.title,
-    state: 'active',
-    currentSequence: transcript.currentSequence,
-    archivedThroughSequence: latestSnapshot?.toSequence ?? 0,
-    writerClientId: transcript.writerClientId,
-    writerLeaseExpiresAt: null,
-    archives: transcript.archives,
-    createdAt: '2026-09-08T00:00:00.000Z',
-    updatedAt: '2026-09-08T00:00:00.000Z',
-    archivedAt: null,
-  }
-}
-
 export function createDesktopScenario({
   captureScreenshot,
   electronUserDataDirectory,
@@ -184,24 +99,41 @@ export function createDesktopScenario({
   workbenchReadyTimeoutMs,
   workspacePath,
 }) {
-  const port = process.env.WEWORK_E2E_MODEL_SERVER_PORT
-  assert.ok(port, 'Transcript sync E2E requires a reserved model server port')
-  const origin = `http://127.0.0.1:${port}`
-  const apiBaseUrl = `${origin}/api`
-  seedCloudCredential(electronUserDataDirectory, apiBaseUrl)
-
   const transcripts = new Map()
   const objects = new Map()
   const segmentUploadCounts = new Map()
   const requestLog = []
   const modelRequests = []
-  let activeTranscriptId = null
-  let preferenceValue = null
-  let fencingToken = 0
   const leases = new Map()
+  const appEnvironment = {}
+  const authorizations = []
+  let evidence
+  let cloud
+  let activeTranscriptId = null
   let firstCommitResponseDropped = false
   let restartDesktopApp = null
   let modelSequence = 0
+  async function authorizeUserData(directory, control) {
+    const fixture = nativeCloudAuthorizationFixture(
+      { backendUrl: evidence.proxy.url, authToken: cloud.authToken },
+      directory,
+      control
+    )
+    authorizations.push(fixture)
+    await fixture.authorize()
+  }
+  async function waitFor(predicate, timeoutMs, message) {
+    return poll(
+      async () => {
+        await evidence.refresh()
+        activeTranscriptId ??= evidence.activeTranscriptId
+        firstCommitResponseDropped = evidence.firstCommitResponseDropped
+        return predicate()
+      },
+      timeoutMs,
+      message
+    )
+  }
 
   function activeTranscript() {
     assert.ok(activeTranscriptId, 'The active transcript ID was not observed')
@@ -209,242 +141,32 @@ export function createDesktopScenario({
   }
 
   return {
-    appEnvironment: {
-      WEWORK_BACKEND_URL: apiBaseUrl,
+    appEnvironment,
+    requiresNativeCloudInspector: true,
+    setCloudEnvironment(environment) {
+      cloud = environment
     },
-
+    async prepareApp({ appEnvironment: environment }) {
+      evidence = await new TranscriptBackendEvidence(cloud).start()
+      evidence.transcripts = transcripts
+      evidence.objects = objects
+      evidence.segmentUploadCounts = segmentUploadCounts
+      evidence.requestLog = requestLog
+      evidence.leases = leases
+      environment.WEWORK_BACKEND_URL = evidence.proxy.url + '/api'
+      environment.WEWORK_E2E_CLOUD_BACKEND_URL = evidence.proxy.url
+    },
+    async cleanup() {
+      try {
+        for (const authorization of authorizations) await authorization.restore()
+      } finally {
+        await evidence?.stop()
+      }
+    },
     setRestartDesktopApp(restart) {
       restartDesktopApp = restart
     },
-
     async handleHttp(request, response, url) {
-      requestLog.push(`${request.method} ${url.pathname}${url.search}`)
-
-      if (request.method === 'POST' && url.pathname === '/api/auth/wework/refresh') {
-        const body = await requestBody(request)
-        assert.equal(body.refresh_token, 'desktop-e2e-transcript-sync-refresh')
-        json(response, 200, {
-          access_token: 'wework-desktop-e2e-cloud-token',
-          token_type: 'bearer',
-          expires_in: 3600,
-        })
-        return true
-      }
-      if (request.method === 'POST' && url.pathname.includes('/dsh-plugin-storage/units/')) {
-        json(response, 200, { global: preferenceValue })
-        return true
-      }
-      if (request.method === 'PUT' && url.pathname.includes('/dsh-plugin-storage/units/')) {
-        preferenceValue = (await requestBody(request)).value
-        json(response, 200, { global: preferenceValue })
-        return true
-      }
-      if (request.method === 'GET' && url.pathname === '/api/wework-transcripts') {
-        json(response, 200, {
-          items: [...transcripts].map(([id, transcript]) => summary(id, transcript)),
-        })
-        return true
-      }
-
-      const transcriptMatch = url.pathname.match(/^\/api\/wework-transcripts\/([^/]+)$/u)
-      if (request.method === 'GET' && transcriptMatch) {
-        const transcriptId = decodeURIComponent(transcriptMatch[1])
-        json(response, 200, summary(transcriptId, transcripts.get(transcriptId)))
-        return true
-      }
-      const encryptionKeyMatch = url.pathname.match(
-        /^\/api\/wework-transcripts\/([^/]+)\/encryption-key$/u
-      )
-      if (request.method === 'GET' && encryptionKeyMatch) {
-        json(response, 200, {
-          version: 1,
-          algorithm: 'aes-256-gcm',
-          key: TEST_ENCRYPTION_KEY,
-        })
-        return true
-      }
-      const leaseMatch = url.pathname.match(/^\/api\/wework-transcripts\/([^/]+)\/lease$/u)
-      if (request.method === 'POST' && leaseMatch) {
-        const transcriptId = decodeURIComponent(leaseMatch[1])
-        const body = await requestBody(request)
-        const currentLease = leases.get(transcriptId)
-        if (currentLease && currentLease.clientId !== body.clientId) {
-          json(response, 409, {
-            detail: {
-              code: 'lease_held',
-              message: 'Wework transcript is being edited on another device',
-            },
-          })
-          return true
-        }
-        activeTranscriptId ??= transcriptId
-        const transcript = transcripts.get(transcriptId) ?? {
-          title: body.title ?? transcriptId,
-          parentTranscriptId: body.parentTranscriptId ?? null,
-          forkedAtSequence: body.forkedAtSequence ?? null,
-          writerClientId: body.clientId,
-          currentSequence: 0,
-          archives: [],
-          turns: [],
-        }
-        transcript.writerClientId = body.clientId
-        transcripts.set(transcriptId, transcript)
-        fencingToken += 1
-        leases.set(transcriptId, { clientId: body.clientId, fencingToken })
-        json(response, 200, {
-          transcriptId,
-          clientId: body.clientId,
-          fencingToken,
-          expiresAt: '2026-09-08T01:00:00.000Z',
-          currentSequence: transcript.currentSequence,
-        })
-        return true
-      }
-      const commitMatch = url.pathname.match(/^\/api\/wework-transcripts\/([^/]+)\/segments$/u)
-      if (request.method === 'POST' && commitMatch) {
-        const transcriptId = decodeURIComponent(commitMatch[1])
-        assert.equal(
-          request.headers.authorization,
-          'bearer wework-desktop-e2e-cloud-token',
-          'Transcript upload must be authenticated through Backend'
-        )
-        const upload = await multipartUpload(request)
-        const body = upload.metadata
-        const transcript = transcripts.get(transcriptId)
-        assert.deepEqual(
-          { clientId: body.clientId, fencingToken: body.fencingToken },
-          leases.get(transcriptId)
-        )
-        const objectId = `${transcriptId}-${body.sequence}-${body.sha256}`
-        assert.equal(upload.file.byteLength, body.sizeBytes)
-        assert.equal(createHash('sha256').update(upload.file).digest('hex'), body.sha256)
-        const existing = transcript.archives.find(archive => archive.toSequence === body.sequence)
-        const existingTurn = transcript.turns.find(turn => turn.sequence === body.sequence)
-        if (!existing) assert.equal(body.baseSequence, transcript.currentSequence)
-        if (
-          !existing &&
-          body.format.includes('delta') &&
-          transcript.archives.some(archive => !objects.has(archive.objectId))
-        ) {
-          json(response, 409, {
-            detail: {
-              code: 'snapshot_required',
-              message: 'The cloud transcript recovery chain is incomplete',
-            },
-          })
-          return true
-        }
-        if (
-          existing &&
-          (existing.sha256 !== body.sha256 ||
-            existing.sizeBytes !== body.sizeBytes ||
-            existing.format !== body.format)
-        ) {
-          json(response, 409, {
-            detail: {
-              code: 'segment_conflict',
-              message: 'A different native segment already exists at this sequence',
-            },
-          })
-          return true
-        }
-        if (
-          existingTurn &&
-          (existingTurn.turnId !== body.turnId ||
-            JSON.stringify(existingTurn.payload) !== JSON.stringify(body.summary))
-        ) {
-          json(response, 409, {
-            detail: {
-              code: 'turn_conflict',
-              message: 'A different transcript summary already exists for this turn or sequence',
-            },
-          })
-          return true
-        }
-        objects.set(objectId, upload.file)
-        segmentUploadCounts.set(objectId, (segmentUploadCounts.get(objectId) ?? 0) + 1)
-        assert.equal(typeof body.turnId, 'string')
-        assert.equal(typeof body.summary, 'object')
-        if (!existing) {
-          transcript.archives.push({
-            id: transcript.archives.length + 1,
-            fromSequence: body.format.includes('snapshot') ? 0 : body.sequence,
-            toSequence: body.sequence,
-            sha256: body.sha256,
-            sizeBytes: body.sizeBytes,
-            format: body.format,
-            createdAt: '2026-09-08T00:00:00.000Z',
-            objectId,
-          })
-          transcript.turns.push({
-            turnId: body.turnId,
-            sequence: body.sequence,
-            payload: structuredClone(body.summary),
-            createdAt: '2026-09-08T00:00:00.000Z',
-          })
-          transcript.currentSequence = body.sequence
-        }
-        if (body.sequence === 1 && !firstCommitResponseDropped) {
-          firstCommitResponseDropped = true
-          // The commit is durable, but its object is lost and the client must never observe the
-          // response. A Chromium network stack replays a request that dies before any response byte
-          // arrives, so flush the response head and then drop the connection with the body missing.
-          objects.delete(objectId)
-          response.writeHead(200, { 'content-type': 'application/json; charset=utf-8' })
-          response.flushHeaders()
-          response.destroy()
-          return true
-        }
-        json(response, 200, {
-          currentSequence: transcript.currentSequence,
-          appended: existing ? 0 : 1,
-        })
-        return true
-      }
-      const turnsMatch = url.pathname.match(/^\/api\/wework-transcripts\/([^/]+)\/turns$/u)
-      if (request.method === 'GET' && turnsMatch) {
-        const transcript = transcripts.get(decodeURIComponent(turnsMatch[1]))
-        const after = Number(url.searchParams.get('after') ?? 0)
-        const limit = Number(url.searchParams.get('limit') ?? 100)
-        const selected = transcript.turns.filter(turn => turn.sequence > after)
-        json(response, 200, {
-          turns: selected.slice(0, limit),
-          currentSequence: transcript.currentSequence,
-          archivedThroughSequence:
-            transcript.archives.filter(archive => archive.fromSequence === 0).at(-1)?.toSequence ??
-            0,
-          hasMore: selected.length > limit,
-        })
-        return true
-      }
-      const releaseMatch = url.pathname.match(
-        /^\/api\/wework-transcripts\/([^/]+)\/lease\/release$/u
-      )
-      if (request.method === 'POST' && releaseMatch) {
-        const transcriptId = decodeURIComponent(releaseMatch[1])
-        const body = await requestBody(request)
-        assert.deepEqual(
-          { clientId: body.clientId, fencingToken: body.fencingToken },
-          leases.get(transcriptId)
-        )
-        leases.delete(transcriptId)
-        json(response, 200, { released: true })
-        return true
-      }
-      const downloadMatch = url.pathname.match(
-        /^\/api\/wework-transcripts\/([^/]+)\/archives\/(\d+)\/download$/u
-      )
-      if (request.method === 'GET' && downloadMatch) {
-        const transcript = transcripts.get(decodeURIComponent(downloadMatch[1]))
-        const archive = transcript.archives.find(item => item.id === Number(downloadMatch[2]))
-        const object = objects.get(archive.objectId)
-        response.writeHead(200, {
-          'content-type': 'application/octet-stream',
-          'content-length': String(object.byteLength),
-        })
-        response.end(object)
-        return true
-      }
       if (request.method === 'POST' && ['/responses', '/v1/responses'].includes(url.pathname)) {
         const body = await requestBody(request)
         modelRequests.push(structuredClone(body))
@@ -474,6 +196,7 @@ export function createDesktopScenario({
     },
 
     async verify(control) {
+      await authorizeUserData(electronUserDataDirectory, control)
       const transcriptRequestCount = () =>
         requestLog.filter(value => value.includes('/api/wework-transcripts')).length
       const enableTranscriptSync = async ({ verifyExperimentalGate = false } = {}) => {
@@ -583,7 +306,7 @@ export function createDesktopScenario({
       assert.equal(segmentUploadCounts.get(repairedSnapshotObjectId), 2)
       assert.ok(objects.get(repairedSnapshotObjectId)?.byteLength > 0)
       await captureScreenshot(control, 'transcript-sync-01-device-a-snapshot-uploaded.png', 'body')
-      objects.delete(repairedSnapshotObjectId)
+      await evidence.deleteObject(repairedSnapshotObjectId)
 
       await writeFile(
         join(workspacePath, 'transcript-sync-restore-marker.txt'),
@@ -643,7 +366,6 @@ export function createDesktopScenario({
             mkdir(deviceBCodexSqliteHome, { recursive: true }),
           ])
           await writeFile(join(deviceBHome, '.zshrc'), '# Wework simulated device B shell\n')
-          seedCloudCredential(deviceBUserDataDirectory, apiBaseUrl)
         },
         appEnvironmentOverrides: {
           CODEX_SQLITE_HOME: deviceBCodexSqliteHome,
@@ -657,6 +379,7 @@ export function createDesktopScenario({
         },
         expectNewDeviceIdentity: true,
       })
+      await authorizeUserData(deviceBUserDataDirectory, control)
       await control.command('waitFor', '[data-testid="telemetry-consent-overlay"]', {
         timeoutMs: uiTimeoutMs,
       })
@@ -712,7 +435,10 @@ export function createDesktopScenario({
         'Restored device did not continue and upload the next native delta'
       )
       assert.equal(activeTranscript().turns[2].payload.assistantMessage, RESTORED_COMPLETION)
-      assert.equal(activeTranscript().archives[2].format, 'codex-snapshot.v1.tgz.aes256gcm')
+      assert.equal(
+        activeTranscript().archives.find(archive => archive.toSequence === 3)?.format,
+        'codex-snapshot.v1.tgz.aes256gcm'
+      )
       const restoredRequest = modelRequests.find(request =>
         JSON.stringify(request).includes(RESTORED_PROMPT)
       )
@@ -776,7 +502,6 @@ export function createDesktopScenario({
             mkdir(deviceCCodexSqliteHome, { recursive: true }),
           ])
           await writeFile(join(deviceCHome, '.zshrc'), '# Wework simulated device C shell\n')
-          seedCloudCredential(deviceCUserDataDirectory, apiBaseUrl)
         },
         appEnvironmentOverrides: {
           CODEX_SQLITE_HOME: deviceCCodexSqliteHome,
@@ -790,6 +515,7 @@ export function createDesktopScenario({
         },
         expectNewDeviceIdentity: true,
       })
+      await authorizeUserData(deviceCUserDataDirectory, control)
       await control.command('waitFor', '[data-testid="telemetry-consent-overlay"]', {
         timeoutMs: uiTimeoutMs,
       })
@@ -855,10 +581,13 @@ export function createDesktopScenario({
         text: '同步已关闭',
         timeoutMs: uiTimeoutMs,
       })
-      leases.set(transcriptId, {
-        clientId: 'simulated-external-writer',
-        fencingToken: ++fencingToken,
-      })
+      const externalLease = await evidence.request(
+        '/api/wework-transcripts/' + encodeURIComponent(transcriptId) + '/lease',
+        {
+          method: 'POST',
+          body: JSON.stringify({ clientId: 'external-test-writer', ttlSeconds: 300 }),
+        }
+      )
       await control.command('click', '[data-testid="transcript-sync-enabled-checkbox"]')
       await control.command('waitFor', '[data-testid="transcript-sync-enabled-status"]', {
         text: '同步失败',
@@ -869,7 +598,16 @@ export function createDesktopScenario({
         timeoutMs: uiTimeoutMs,
       })
       assert.equal(sqliteOutboxCount(deviceBOutboxPath), 1)
-      leases.delete(transcriptId)
+      await evidence.request(
+        '/api/wework-transcripts/' + encodeURIComponent(transcriptId) + '/lease/release',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            clientId: externalLease.clientId,
+            fencingToken: externalLease.fencingToken,
+          }),
+        }
+      )
       await control.command('click', '[data-testid="transcript-sync-retry-button"]')
       const forkEntry = await waitFor(
         () =>

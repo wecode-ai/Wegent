@@ -28,17 +28,16 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "Windows background policy runs its native checkpoint" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-2","name":"Core / shard 2","segments":"window-lifecycle"}]}
-wework_desktop_cloud_e2e=true
-wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-5","name":"Cloud / shard 5","segments":"window-lifecycle"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-8","name":"Core / shard 8","segments":"window-background-policy"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
-  "wework/electron/src/host/window-background-policy.ts"
+  "wework/electron/src/host/window-background-policy.ts" \
+  "wework/e2e/desktop/scenarios/window-background-policy.scenario.mjs"
 
 assert_desktop_case "Issue navigation source changes retain existing coverage and select notification reads" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow"},{"id":"core-2","name":"Core / shard 2","segments":"project-assignment-notification,human-interactions"},{"id":"core-3","name":"Core / shard 3","segments":"stand-in-notifications"},{"id":"core-5","name":"Core / shard 5","segments":"human-interactions-issue"},{"id":"core-8","name":"Core / shard 8","segments":"collaboration-issue-comment-notification,stand-in-cloud,stand-in-assignment-notifications,collaboration-exp"},{"id":"core-9","name":"Core / shard 9","segments":"human-interactions-hidden"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"notification-tab-navigation"},{"id":"core-2","name":"Core / shard 2","segments":"project-assignment-notification,human-interactions"},{"id":"core-3","name":"Core / shard 3","segments":"stand-in-notifications,human-interactions-browser,human-interactions-hidden"},{"id":"core-5","name":"Core / shard 5","segments":"human-interactions-issue"},{"id":"core-8","name":"Core / shard 8","segments":"collaboration-issue-comment-notification,stand-in-cloud,stand-in-assignment-notifications,collaboration-exp"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/features/notifications/WeworkSchemeBridge.tsx" \
@@ -63,7 +62,7 @@ done
 assert_desktop_case "Issue read API changes retain board coverage and select notification reads" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow"},{"id":"core-6","name":"Core / shard 6","segments":"task-board-association"},{"id":"core-8","name":"Core / shard 8","segments":"collaboration-issue-comment-notification"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"task-status-sync"},{"id":"core-6","name":"Core / shard 6","segments":"task-board-association"},{"id":"core-8","name":"Core / shard 8","segments":"collaboration-issue-comment-notification"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/api/deliveries.ts"
@@ -84,13 +83,20 @@ for terminal_wiring_path in \
   wework/src/api/local/localServices.ts \
   wework/src/api/local/localServices.test.ts; do
   terminal_wiring_output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$terminal_wiring_path")"
-  if [[ "$terminal_wiring_output" != *"local-harness"* ]]; then
-    printf 'Terminal wiring changes must select retained terminal coverage: %s\n%s\n' \
+  if [[ "$terminal_wiring_output" != *"background-terminals"* ]]; then
+    printf 'Terminal wiring changes must select background-terminal coverage: %s\n%s\n' \
       "$terminal_wiring_path" "$terminal_wiring_output" >&2
     exit 1
   fi
 done
 
+assert_desktop_case "home preload race is invoked by its core CI checkpoint" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-4","name":"Core / shard 4","segments":"collaboration-home-preload"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/collaboration-home-preload.scenario.mjs"
 
 for board_transcript_path in \
   wework/e2e/desktop/scenarios/board-transcript-followup.scenario.mjs \
@@ -99,7 +105,7 @@ for board_transcript_path in \
   assert_desktop_case "board transcript follow-up regression is selected by CI" \
     'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"transcript-sync"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"board-transcript-followup"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
     "$board_transcript_path"
@@ -138,7 +144,7 @@ for voice_input_path in \
   assert_desktop_case "voice input runs in its core CI shard: $voice_input_path" \
     'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-4","name":"Core / shard 4","segments":"voice-input"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
     "$voice_input_path"
@@ -174,7 +180,25 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
     "$responses_gateway_path"
 done
 
+assert_desktop_case "deleted task model recovery runs in the cloud shard" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-5","name":"Cloud / shard 5","segments":"task-model-deletion"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/task-model-deletion.scenario.mjs"
 
+assert_desktop_case "cloud model preset regression runs in the cloud shard" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=false
+wework_desktop_core_e2e_matrix={"include":[]}
+wework_desktop_cloud_e2e=true
+wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-2","name":"Cloud / shard 2","segments":"cloud-model-presets"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/cloud-model-presets.scenario.mjs"
 
 assert_desktop_case "cloud history search selects its real cloud conversation checkpoint" \
   'wework_desktop_e2e=true
@@ -495,6 +519,13 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
     "$coordination_path"
 done
 
+assert_desktop_case "notification tab navigation runs in a Core CI shard" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"notification-tab-navigation"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/notification-tab-navigation.scenario.mjs"
 
 for notification_path in \
   "wework/e2e/desktop/scenarios/stand-in-notifications.scenario.mjs" \
@@ -504,7 +535,7 @@ do
   assert_desktop_case "stand-in notifications select local and cloud regressions: $notification_path" \
     'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"core-task-flow"},{"id":"core-2","name":"Core / shard 2","segments":"project-assignment-notification,human-interactions"},{"id":"core-3","name":"Core / shard 3","segments":"stand-in-notifications"},{"id":"core-5","name":"Core / shard 5","segments":"human-interactions-issue"},{"id":"core-8","name":"Core / shard 8","segments":"stand-in-cloud,stand-in-assignment-notifications"},{"id":"core-9","name":"Core / shard 9","segments":"human-interactions-hidden"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"notification-tab-navigation"},{"id":"core-2","name":"Core / shard 2","segments":"project-assignment-notification,human-interactions"},{"id":"core-3","name":"Core / shard 3","segments":"stand-in-notifications,human-interactions-browser,human-interactions-hidden"},{"id":"core-5","name":"Core / shard 5","segments":"human-interactions-issue"},{"id":"core-8","name":"Core / shard 8","segments":"stand-in-cloud,stand-in-assignment-notifications"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
     "$notification_path"

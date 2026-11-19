@@ -1,6 +1,5 @@
 import { openStandInSettings } from '../modules/stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
-import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createDesktopScenario as createCatalogScenario } from './stand-in-model-catalog.scenario.mjs'
@@ -185,11 +184,6 @@ export function createDesktopScenario(options) {
       cloud = environment
       await catalog.prepareCloud(cloud)
       catalogProxy = await new TransportFaultProxy(cloud.backendUrl).start()
-      catalogProxy.rule = entry => {
-        if (entry.method === 'GET' && entry.path === '/api/models/unified')
-          entry.responseTimingId = randomUUID()
-        return null
-      }
       appEnvironment.WEWORK_E2E_CLOUD_BACKEND_URL = catalogProxy.url
       const response = await fetch(`${cloud.backendUrl}/api/users/me`, {
         headers: { Authorization: `Bearer ${cloud.authToken}` },
@@ -884,12 +878,10 @@ async function verifyCloudModelRecovery({
     await control.command('waitFor', `${submit}:disabled`)
     await control.command('press', 'body', { key: 'Escape' })
     await update(true)
-    catalogProxy.rule = entry => {
-      const previousFault = previousRule(entry)
-      return entry.method === 'GET' && entry.path === '/api/models/unified'
+    catalogProxy.rule = entry =>
+      entry.method === 'GET' && entry.path === '/api/models/unified'
         ? 'hold-response'
-        : previousFault
-    }
+        : previousRule(entry)
     await control.command('clickWhenEnabled', trigger)
     const held = await until(
       () => catalogProxy.requests.slice(requestStart).find(entry => entry.committedResponseHeld),

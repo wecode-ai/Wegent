@@ -109,17 +109,15 @@ impl CodexAppServerClient {
         };
         self.mark_thread_active(&thread_id).await;
         let result = async {
-            let _prediction_route = launch_config
+            let prepared_token = launch_config
                 .and_then(|config| config.local_proxy_registration.as_deref())
-                .map(|registration| {
-                    local_model_proxy::bind_prediction_thread(
-                        &registration.0,
-                        source_thread_id,
-                        &thread_id,
-                    )
-                    .map(LocalProxyRegistration)
-                })
-                .transpose()?;
+                .map(|registration| registration.0.as_str());
+            let _prediction_route = local_model_proxy::bind_prediction_thread(
+                prepared_token,
+                source_thread_id,
+                &thread_id,
+            )?
+            .map(LocalProxyRegistration);
             self.run_prediction_turn(
                 &thread_id,
                 source_thread_id,
@@ -134,6 +132,8 @@ impl CodexAppServerClient {
         log_executor_event(
             "reply prediction finished",
             &[
+                ("source_thread_id", source_thread_id.to_owned()),
+                ("prediction_thread_id", thread_id.to_owned()),
                 ("duration_ms", started.elapsed().as_millis().to_string()),
                 (
                     "status",
@@ -160,16 +160,36 @@ impl CodexAppServerClient {
         let gate = self.thread_lifecycle_gate(source_thread_id).await;
         let _admission = gate.lock().await;
         let retained = {
-            let state = self.state.lock().await;
+            let mut state = self.state.lock().await;
             if state
                 .active_threads_snapshot()
                 .contains_key(source_thread_id)
             {
                 return Ok(None);
             }
-            state
-                .thread_context_configurations
-                .contains_key(source_thread_id)
+            let live_app = state.has_mcp_app_session(source_thread_id)
+                && state.process.as_ref().is_some_and(|process| {
+                    process
+                        .notifications
+                        .native_activity
+                        .lock()
+                        .expect("Codex native activity registry should not be poisoned")
+                        .has_loaded_thread(source_thread_id)
+                });
+            if live_app {
+                // App-only restoration has no model-turn activity to retire the subscription.
+                if !state.thread_generations.contains_key(source_thread_id) {
+                    state.renew_thread_generation(source_thread_id);
+                }
+                let generation = state.thread_generations[source_thread_id];
+                state
+                    .idle_thread_generations
+                    .insert(source_thread_id.to_owned(), generation);
+            }
+            live_app
+                || state
+                    .thread_context_configurations
+                    .contains_key(source_thread_id)
         };
         // Cold resume can immediately continue a persisted Goal. Read eligibility
         // without loading the runtime, before acquiring its native writer.
@@ -299,7 +319,18 @@ impl CodexAppServerClient {
 }
 
 fn parse_prediction(content: &str) -> Result<Value, String> {
-    let result: Value = serde_json::from_str(content).map_err(|_| "Invalid prediction JSON")?;
+    let result: Value = serde_json::from_str(content).map_err(|error| {
+        log_executor_event(
+            "reply prediction JSON rejected",
+            &[
+                ("content_bytes", content.len().to_string()),
+                ("json_category", format!("{:?}", error.classify())),
+                ("json_line", error.line().to_string()),
+                ("json_column", error.column().to_string()),
+            ],
+        );
+        "Invalid prediction JSON"
+    })?;
     let suggestion = result
         .get("suggestion")
         .ok_or("Prediction has no suggestion field")?;
@@ -723,6 +754,109 @@ done
         assert!(!calls.iter().any(|call| {
             call["method"] == "thread/unsubscribe" && call["params"]["threadId"] == "source"
         }));
+        fixture.stop().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn prediction_preserves_the_source_retained_by_a_live_mcp_app() {
+        let fixture = Fixture::new("complete");
+        fixture.client.subscribe_notifications().await.unwrap();
+        fixture
+            .client
+            .request("thread/resume", json!({"threadId":"source"}))
+            .await
+            .unwrap();
+        fixture
+            .client
+            .set_mcp_app_session("source", "app", "instance", true)
+            .await;
+        assert!(!fixture
+            .client
+            .state
+            .lock()
+            .await
+            .thread_context_configurations
+            .contains_key("source"));
+
+        let (_cancel, receiver) = oneshot::channel();
+        assert_eq!(
+            fixture.predict(None, receiver).await.unwrap(),
+            json!({"suggestion": "请继续"})
+        );
+        let calls = fixture.calls();
+        assert!(!calls.iter().any(|call| {
+            call["method"] == "thread/unsubscribe" && call["params"]["threadId"] == "source"
+        }));
+        assert!(calls
+            .iter()
+            .filter(|call| call["method"] == "thread/resume")
+            .all(|call| call["params"].get("config").is_none()));
+        assert!(calls.iter().any(|call| {
+            call["method"] == "thread/unsubscribe" && call["params"]["threadId"] == "prediction"
+        }));
+        let generation = fixture.client.state.lock().await.idle_thread_generations["source"];
+        assert!(!fixture
+            .client
+            .request_thread_unsubscribe_if_idle("source", generation)
+            .await
+            .unwrap());
+        fixture
+            .client
+            .set_mcp_app_session("source", "app", "instance", false)
+            .await;
+        assert!(fixture
+            .client
+            .request_thread_unsubscribe_if_idle("source", generation)
+            .await
+            .unwrap());
+        fixture.stop().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn prediction_restores_configuration_after_a_retained_apps_process_restarts() {
+        let fixture = Fixture::new("complete");
+        fixture
+            .client
+            .request("thread/resume", json!({"threadId":"source"}))
+            .await
+            .unwrap();
+        fixture
+            .client
+            .set_mcp_app_session("source", "app", "instance", true)
+            .await;
+        fixture.client.restart().await;
+        let launch = CodexLaunchConfig {
+            config_overrides: vec!["model_providers.official={requires_openai_auth=true}".into()],
+            ..Default::default()
+        };
+        let (_cancel, receiver) = oneshot::channel();
+        fixture
+            .client
+            .predict_reply_with_launch_config(
+                "source",
+                Some("latest"),
+                &ExecutionRequest::default(),
+                receiver,
+                Some(&launch),
+            )
+            .await
+            .unwrap();
+        let resumes: Vec<_> = fixture
+            .calls()
+            .into_iter()
+            .filter(|call| call["method"] == "thread/resume")
+            .collect();
+        assert_eq!(resumes.len(), 2);
+        assert_eq!(
+            resumes[1]["params"]["config"]["model_providers.official"]["requires_openai_auth"],
+            true
+        );
+        fixture
+            .client
+            .set_mcp_app_session("source", "app", "instance", false)
+            .await;
         fixture.stop().await;
     }
 

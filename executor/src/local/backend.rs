@@ -581,6 +581,22 @@ async fn poll_available_runtime_work<T>(
     }
 }
 
+async fn read_runtime_runner_catalog(handler: &Arc<dyn RuntimeWorkHandler>) -> Option<Value> {
+    match handler
+        .handle_runtime_rpc(json!({"method": "runtime.runner.catalog", "payload": {}}))
+        .await
+    {
+        Ok(catalog) => Some(catalog),
+        Err(error) => {
+            write_executor_error_line(&format_executor_log(
+                "runner catalog read failed",
+                &[("error", error.message)],
+            ));
+            None
+        }
+    }
+}
+
 async fn drain_available_runtime_work<T>(
     client: &LocalBackendClient<T>,
     handler: &Arc<dyn RuntimeWorkHandler>,
@@ -623,28 +639,27 @@ async fn drain_available_runtime_work<T>(
     if available == 0 {
         return;
     }
-    let catalog = match handler
-        .handle_runtime_rpc(json!({
-            "method": "runtime.runner.catalog", "payload": {},
-        }))
-        .await
-    {
-        Ok(catalog) => catalog,
-        Err(error) => {
-            write_executor_error_line(&format_executor_log(
-                "runner catalog read failed",
-                &[("error", error.message)],
-            ));
-            return;
-        }
-    };
-    for _ in 0..available {
+    let mut catalog: Option<Value> = None;
+    let mut remaining = available;
+    while remaining > 0 {
         let mut retried_failed_execution = false;
         let work = loop {
-            match client
-                .pull_runtime_work(client.config.heartbeat_timeout, catalog.clone())
-                .await
-            {
+            if catalog.is_none() && !client.supports_catalog_probe() {
+                let Some(value) = read_runtime_runner_catalog(handler).await else {
+                    return;
+                };
+                catalog = Some(value);
+            }
+            let result = if let Some(catalog) = &catalog {
+                client
+                    .pull_runtime_work(client.config.heartbeat_timeout, catalog.clone())
+                    .await
+            } else {
+                client
+                    .probe_runtime_work(client.config.heartbeat_timeout)
+                    .await
+            };
+            match result {
                 Ok(work) => break work,
                 Err(error) => {
                     write_executor_error_line(&format_executor_log(
@@ -709,9 +724,18 @@ async fn drain_available_runtime_work<T>(
                 ));
             }
         }
+        if work.catalog_required {
+            let Some(value) = read_runtime_runner_catalog(handler).await else {
+                return;
+            };
+            catalog = Some(value);
+            // Probing did not consume capacity or claim a task.
+            continue;
+        }
         let Some(task) = work.task else {
             return;
         };
+        remaining -= 1;
         let Some(payload) = task.get("payload").cloned() else {
             write_executor_error_line("runtime task pull returned no payload");
             return;

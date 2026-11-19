@@ -4,30 +4,30 @@
 
 """Managed device command for applying user Git credentials."""
 
+import base64
 import shlex
+import zlib
 
 from app.services.device.git_credential_paths import GIT_CREDENTIAL_PATHS_SCRIPT
+from app.services.device.git_credential_platform import GIT_CREDENTIAL_PLATFORM_SCRIPT
 
 GIT_CREDENTIALS_SECRET_ENV = "WEGENT_SECRET_GIT_CREDENTIALS"
 
 GIT_CREDENTIAL_SYNC_SCRIPT = (
     GIT_CREDENTIAL_PATHS_SCRIPT
     + "\n"
+    + GIT_CREDENTIAL_PLATFORM_SCRIPT
+    + "\n"
     + r'''
 from contextlib import ExitStack
-import fcntl
 import hashlib
 import json
-import os
 import re
 import shlex
 import shutil
-import stat
 import subprocess
 import sys
 import time
-import uuid
-from pathlib import Path
 
 
 SECRET_ENV = "WEGENT_SECRET_GIT_CREDENTIALS"
@@ -52,7 +52,7 @@ def fail(code):
 
 
 def ensure_mode(path, mode):
-    path.chmod(mode)
+    protect_credential_path(path, mode)
 
 
 def write_file(path, content, mode=0o600):
@@ -407,7 +407,7 @@ def update_global_git_config(global_config, include_path, enabled, home):
 
 
 def read_previous_domains(current, revisions):
-    if not current.is_symlink():
+    if not is_credential_link(current):
         return []
     try:
         target = current.resolve(strict=True)
@@ -550,9 +550,6 @@ def apply_accounts(home, root, current, revisions, global_config, profile_paths,
 
     tracked_paths = [path for path in [global_config, *profile_paths, root / "env.sh"] if path is not None]
     backups = {path: snapshot(path) for path in tracked_paths}
-    previous_target = os.readlink(current) if current.is_symlink() else None
-    switched = False
-    next_link = None
     try:
         include_path = root / "current" / "gitconfig"
         update_global_git_config(global_config, include_path, True, home)
@@ -565,19 +562,10 @@ def apply_accounts(home, root, current, revisions, global_config, profile_paths,
             if path == home / ".profile" or path.exists():
                 update_profile(path, bool(env_source), root)
 
-        next_link = root / (".current-" + uuid.uuid4().hex)
-        next_link.symlink_to(Path("revisions") / revision_name)
-        os.replace(next_link, current)
-        switched = True
+        publish_credential_revision(root, revision)
     except Exception:
         for path, saved in backups.items():
             restore(path, saved)
-        if next_link is not None:
-            next_link.unlink(missing_ok=True)
-        if switched:
-            current.unlink(missing_ok=True)
-            if previous_target:
-                current.symlink_to(previous_target)
         shutil.rmtree(revision, ignore_errors=True)
         raise
 
@@ -605,14 +593,14 @@ def apply_accounts(home, root, current, revisions, global_config, profile_paths,
 
 
 def previous_account_domains(home, current, revisions, global_config):
-    if global_config is not None and not current.is_symlink():
+    if global_config is not None and not is_credential_link(current):
         legacy = home / ".wecode" / "git-auth"
         return read_previous_domains(legacy / "current", legacy / "revisions")
     return read_previous_domains(current, revisions)
 
 
 def private_directory(path):
-    if path.is_symlink() or (path.exists() and not path.is_dir()):
+    if is_credential_link(path) or (path.exists() and not path.is_dir()):
         fail("credential_directory_invalid")
     path.mkdir(parents=True, exist_ok=True, mode=0o700)
     ensure_mode(path, 0o700)
@@ -623,7 +611,7 @@ def validate_legacy_store(root, error_code="legacy_credentials_unmanaged"):
         return
     current = root / "current"
     try:
-        if not current.is_symlink():
+        if not is_credential_link(current):
             raise ValueError
         current.resolve(strict=True).relative_to((root / "revisions").resolve(strict=True))
         manifest = json.loads((current / "manifest.json").read_text(encoding="utf-8"))
@@ -642,19 +630,21 @@ def validate_target_store(root):
         child.name not in {"current", "revisions", "env.sh"} for child in root.iterdir()
     ):
         fail("credential_directory_invalid")
-    if (root / "current").exists() or (root / "current").is_symlink():
+    if (root / "current").exists() or is_credential_link(root / "current"):
         validate_legacy_store(root, "credential_directory_invalid")
 
 
 def acquire_lock(stack, path):
-    descriptor = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    descriptor = open_credential_lock(path)
     lock = stack.enter_context(os.fdopen(descriptor, "r+"))
     if not stat.S_ISREG(os.fstat(lock.fileno()).st_mode):
         fail("credential_lock_invalid")
     try:
-        fcntl.flock(lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        fail("sync_in_progress")
+        lock_credentials(lock.fileno())
+    except OSError as error:
+        if error.errno in {errno.EACCES, errno.EAGAIN, errno.EDEADLK}:
+            fail("sync_in_progress")
+        raise
 
 
 def main():
@@ -678,10 +668,10 @@ def main():
     private_directory(workbench)
     private_directory(workbench / "runtime")
     private_directory(workbench / "runtime" / "git-auth")
-    if root.is_symlink():
+    if is_credential_link(root):
         fail("credential_directory_invalid")
     legacy_root = home / ".wecode" / "git-auth"
-    if not isolated and (legacy_root.is_symlink() or legacy_root.parent.is_symlink()):
+    if not isolated and (is_credential_link(legacy_root) or is_credential_link(legacy_root.parent)):
         fail("credential_directory_invalid")
     revisions = root / "revisions"
     current = root / "current"
@@ -742,4 +732,12 @@ main()
 )
 
 
-SYNC_GIT_CREDENTIALS_COMMAND = f"python3 -c {shlex.quote(GIT_CREDENTIAL_SYNC_SCRIPT)}"
+# Keep the self-contained script below Windows' native command-line limit.
+# Credentials remain in the secret environment and never enter this argument.
+_encoded_script = base64.b64encode(
+    zlib.compress(GIT_CREDENTIAL_SYNC_SCRIPT.encode("utf-8"), level=9)
+).decode("ascii")
+_bootstrap = (
+    f"import base64,zlib;exec(zlib.decompress(base64.b64decode({_encoded_script!r})))"
+)
+SYNC_GIT_CREDENTIALS_COMMAND = f"python3 -c {shlex.quote(_bootstrap)}"

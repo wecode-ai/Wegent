@@ -309,6 +309,47 @@ pub(crate) async fn candidates_for_snapshot_on(
     actor: i64,
     automatic: bool,
 ) -> Result<BTreeSet<i64>> {
+    Ok(
+        policy_candidates_for_snapshot_on(query, project, agent, snapshot, actor, automatic)
+            .await?
+            .into_iter()
+            .filter(|device| supports(&device.json.0, &snapshot["model"]))
+            .map(|device| device.id)
+            .collect(),
+    )
+}
+
+/// Catalog discovery must retain device policy checks without consulting a stale catalog.
+pub(crate) async fn catalog_probe_candidates(
+    state: &AppState,
+    project: &str,
+    agent: &str,
+    snapshot: &Value,
+    actor: i64,
+    automatic: bool,
+) -> Result<BTreeSet<i64>> {
+    Ok(policy_candidates_for_snapshot_on(
+        &mut &state.mysql,
+        project,
+        agent,
+        snapshot,
+        actor,
+        automatic,
+    )
+    .await?
+    .into_iter()
+    .map(|device| device.id)
+    .collect())
+}
+
+async fn policy_candidates_for_snapshot_on(
+    query: &mut impl PluginQuery,
+    project: &str,
+    agent: &str,
+    snapshot: &Value,
+    actor: i64,
+    automatic: bool,
+) -> Result<Vec<Device>> {
     let allowed = allowed_devices_on(query, project, agent).await?;
     let devices:Vec<Device>=query.fetch_all("SELECT id,user_id,json FROM kinds WHERE kind='Device' AND namespace='default' AND is_active=true",()).await?;
     let fixed = authority::integer(&snapshot["execution_policy"]["environment_id"]);
@@ -324,9 +365,7 @@ pub(crate) async fn candidates_for_snapshot_on(
                     device.id,
                 ))
                 && (snapshot["execution_policy"]["mode"] != "fixed" || Some(device.id) == fixed)
-                && supports(&device.json.0, &snapshot["model"])
         })
-        .map(|device| device.id)
         .collect())
 }
 
@@ -540,6 +579,23 @@ mod tests {
                 .unwrap(),
                 expected
             );
+            let policy = policy_candidates_for_snapshot_on(
+                &mut &database.mysql,
+                "project",
+                "",
+                &snapshot,
+                actor,
+                automatic,
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                policy
+                    .into_iter()
+                    .map(|device| device.id)
+                    .collect::<BTreeSet<_>>(),
+                expected
+            );
         }
         owner.store(8, Ordering::SeqCst);
         assert!(
@@ -547,6 +603,19 @@ mod tests {
                 .await
                 .unwrap()
                 .is_empty()
+        );
+        assert!(
+            policy_candidates_for_snapshot_on(
+                &mut &database.mysql,
+                "project",
+                "",
+                &snapshot,
+                7,
+                false
+            )
+            .await
+            .unwrap()
+            .is_empty()
         );
         owner.store(7, Ordering::SeqCst);
         snapshot["execution_policy"] = json!({"mode":"project_pool"});
@@ -558,6 +627,23 @@ mod tests {
         );
         snapshot["execution_policy"] = json!({"mode":"fixed","environment_id":"42"});
         snapshot["model"]["provider"] = json!("other-provider");
+        let policy = policy_candidates_for_snapshot_on(
+            &mut &database.mysql,
+            "project",
+            "",
+            &snapshot,
+            7,
+            false,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            policy
+                .into_iter()
+                .map(|device| device.id)
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([42])
+        );
         assert!(
             candidates_for_snapshot_on(&mut &database.mysql, "project", "", &snapshot, 7, false)
                 .await

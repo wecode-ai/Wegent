@@ -20,7 +20,6 @@ import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
 import { runtimeTransportGates } from '../modules/runtime-transport-gates.mjs'
 import { fetchLocalRuntime } from '../modules/runtime-request.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
-import { verifyWindowsOwnedProcess } from '../windows-owned-process-verification.mjs'
 
 const GOAL = 'WEWORK_NATIVE_LIFECYCLE_EXISTING_GOAL'
 const FOLLOW_UP = 'WEWORK_NATIVE_LIFECYCLE_ORDINARY_REQUEST'
@@ -49,9 +48,6 @@ export function createDesktopScenario(options) {
   let requestCount = 0
 
   return {
-    prepareApp() {
-      return verifyWindowsOwnedProcess(options.resultDir, options.uiTimeoutMs)
-    },
     cleanup() {
       initial.resolve()
       ordinary.resolve()

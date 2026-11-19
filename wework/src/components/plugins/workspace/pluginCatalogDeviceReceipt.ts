@@ -43,6 +43,7 @@ export function reconcilePluginCatalogDeviceReceipt(ctx: PluginCatalogContext) {
   if (ctx.catalog.isLoading) return
   // The foreground mutation owns its ACK; pending membership is not a repair gap yet.
   if (ctx.input.pluginMutationInFlight) return
+  if (ctx.ledger.deviceStatusReportRetryTimer !== null) return
   if (ctx.input.isReconcilingPlugins || ctx.ledger.manualReconciliationTick?.accountKey === ctx.key)
     return
   const deviceId = ctx.state.currentDeviceId

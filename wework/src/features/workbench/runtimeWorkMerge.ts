@@ -342,7 +342,8 @@ function canonicalizeRuntimeWorkspace(
   if (!device) return workspace
   return {
     ...workspace,
-    deviceId: device.device_id,
+    // Native IPC provenance owns the address independently of cloud registration inventory.
+    deviceId: localSource?.deviceId === workspace.deviceId ? workspace.deviceId : device.device_id,
     deviceName: device.name ?? workspace.deviceName,
     deviceStatus: device.status ?? workspace.deviceStatus,
     available: workspace.available || isRuntimeWorkspaceDeviceAvailable(device),

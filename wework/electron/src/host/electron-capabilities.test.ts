@@ -1568,6 +1568,7 @@ describe('registerPluginDevelopmentCapabilities', () => {
       deleteData: vi.fn(async () => undefined),
       focus: vi.fn(async () => undefined),
       list: vi.fn(async () => []),
+      observe: vi.fn(async () => null),
       openDevTools: vi.fn(async () => undefined),
       openLogDirectory: vi.fn(async () => undefined),
       restartCoreDsh: vi.fn(async () => undefined),
@@ -1581,6 +1582,15 @@ describe('registerPluginDevelopmentCapabilities', () => {
 
     registerPluginDevelopmentCapabilities(router, services)
     await handlers.get('pluginDevelopment.list')?.({}, { principal: 'test' })
+    await handlers.get('pluginDevelopment.observe')?.(
+      { sourceRoot: '/workspace/plugin' },
+      { principal: 'test' }
+    )
+    await handlers.get('pluginDevelopment.observe')?.({ sourceRoot: null }, { principal: 'test' })
+    await handlers.get('pluginDevelopment.observe')?.({}, { principal: 'test' })
+    expect(() =>
+      handlers.get('pluginDevelopment.observe')?.({ sourceRoot: 42 }, { principal: 'test' })
+    ).toThrow('sourceRoot is invalid')
     await handlers.get('pluginDevelopment.validate')?.(
       { sourceRoot: '/workspace/plugin' },
       { principal: 'test' }
@@ -1597,6 +1607,7 @@ describe('registerPluginDevelopmentCapabilities', () => {
     await handlers.get('pluginDevelopment.deleteData')?.({}, { principal: 'test' })
 
     expect(pluginDevelopment.validate).toHaveBeenCalledWith('/workspace/plugin')
+    expect(pluginDevelopment.observe.mock.calls).toEqual([['/workspace/plugin'], [null], [null]])
     expect(pluginDevelopment.start).toHaveBeenCalledWith('/workspace/plugin')
     expect(pluginDevelopment.focus).toHaveBeenCalledOnce()
     expect(pluginDevelopment.restartCoreDsh).toHaveBeenCalledOnce()

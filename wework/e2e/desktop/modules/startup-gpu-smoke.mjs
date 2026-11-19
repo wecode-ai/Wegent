@@ -27,14 +27,8 @@ const result = {
     quitObserved: false,
   },
   gpuParents: {},
-  stage: 'module-loaded',
 }
 const persist = () => writeFileSync(output, JSON.stringify(result))
-const markStage = stage => {
-  result.stage = stage
-  persist()
-}
-markStage('before-app-ready')
 app.on('child-process-gone', (_event, details) => {
   if (details.type !== 'GPU') return
   result.gpu.childProcessGone.push(details)
@@ -78,11 +72,8 @@ app
   .then(async () => {
     assert.equal(result.switches.gpuLauncher, process.env.WEWORK_E2E_GPU_LAUNCHER_VALUE)
     const deadline = Date.now() + 10_000
-    markStage('before-first-window')
     const original = new BrowserWindow({ show: false })
-    markStage('before-first-navigation')
     await original.loadURL('data:text/html,<title>GPU launch contract</title>')
-    markStage('before-initial-gpu')
     await recordGpu('initial', deadline)
     const companion = new BrowserWindow({ show: false })
     original.close()

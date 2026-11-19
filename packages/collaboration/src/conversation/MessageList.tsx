@@ -1,3 +1,4 @@
+import { synchronizeConversationScrollOffset } from './conversationScrollWrite'
 import type { UserMessageServices } from './UserMessage'
 import { MessageListMessage } from './MessageListMessage'
 import { isStandInActivityMessage, isCompletedStandInActivityTrace } from './standInActivity'
@@ -212,12 +213,9 @@ export const MessageList = memo(function MessageList({
     [nativeTypography, initialTypography, fontEpoch]
   )
   const layoutWidth = layout.width
-  const layoutKey = JSON.stringify([
-    layout.width,
-    className ?? null,
-    layout.typography,
-    layout.fontEpoch,
-  ])
+  const markdownLayout = [className ?? null, layout.typography, layout.fontEpoch]
+  const markdownLayoutKey = JSON.stringify(markdownLayout)
+  const layoutKey = JSON.stringify([layout.width, ...markdownLayout])
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null)
   const [submittingEditMessageId, setSubmittingEditMessageId] = useState<string | null>(null)
   const resolvedMessages = useMemo(() => resolveAsyncRequestUserInputAnswers(messages), [messages])
@@ -388,6 +386,7 @@ export const MessageList = memo(function MessageList({
     scrollElementRef,
     listRef,
     virtualizerRef,
+    onNativeScrollRange,
     onScrollAdjustment: onVirtualScrollAdjustment,
   })
   messageVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = virtualScrollAdjustmentEnabled
@@ -408,11 +407,11 @@ export const MessageList = memo(function MessageList({
       layout.typography.rootFontSize,
       onNativeScrollRange
     )
-    return { conversationKey, layoutKey, scope }
+    return { conversationKey, layoutKey: markdownLayoutKey, scope }
   }, [
     conversationKey,
     scrollElementRef,
-    layoutKey,
+    markdownLayoutKey,
     layout.typography.rootFontSize,
     viewportPort,
     onNativeScrollRange,
@@ -421,7 +420,9 @@ export const MessageList = memo(function MessageList({
     'scroll',
     event => {
       const scope = markdownWindowingState.scope
-      if (event.target !== scope.scrollElementRef?.current) return
+      const scroller = scope.scrollElementRef?.current
+      if (!scroller || event.target !== scroller) return
+      synchronizeConversationScrollOffset(scroller)
       const startedAt = isConversationDiagnosticsEnabled() ? performance.now() : null
       const renders = scope.getViewportRenders()
       if (renders.length > 0) flushSync(() => renders.forEach(render => render()))

@@ -1,3 +1,7 @@
+import {
+  desktopOwnerId as USER,
+  desktopOwnerPrimaryTaskId as SOURCE,
+} from './desktop-owner-fixture.mjs'
 import assert from 'node:assert/strict'
 import { openStandInSettings } from './stand-in-profile-navigation.mjs'
 import { requestExecutor } from './executor-rpc.mjs'
@@ -14,8 +18,6 @@ import {
 
 export const MEMORY_HISTORY_FACT = '我长期使用中文做项目汇报。'
 const CONTENT = `MEMORY_LEARNING：${MEMORY_HISTORY_FACT}`
-const USER = 9001
-const SOURCE = `stand-in-chat-${USER}-primary`
 
 export function assertMemoryReviewModelSelection(task, model, options = {}) {
   const selection = task.runtimeHandle.modelSelection

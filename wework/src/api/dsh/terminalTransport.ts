@@ -1,3 +1,5 @@
+import { reportE2EError } from '@/e2e/error-capture'
+
 const TERMINAL_BASE_PATH = '/wework/terminal/v1'
 
 let terminalEventSuspensionDepth = 0
@@ -37,6 +39,18 @@ export class DshTerminalTransportError extends Error {
 }
 
 export async function requestDshTerminal<T>(
+  method: string,
+  params: Record<string, unknown>
+): Promise<T> {
+  try {
+    return await performDshTerminalRequest<T>(method, params)
+  } catch (error) {
+    reportE2EError(`terminal:${method}`, error)
+    throw error
+  }
+}
+
+async function performDshTerminalRequest<T>(
   method: string,
   params: Record<string, unknown>
 ): Promise<T> {
@@ -99,6 +113,7 @@ function connectDshTerminalEventSource(): void {
       !Number.isSafeInteger(event.sequence) ||
       typeof event.event !== 'string'
     ) {
+      reportE2EError('terminal:event-protocol', new Error('Terminal event has an invalid envelope'))
       return
     }
     terminalEventCursor = Math.max(terminalEventCursor, event.sequence)
@@ -113,6 +128,7 @@ function connectDshTerminalEventSource(): void {
     }
   }
   terminalEventSource.onerror = () => {
+    reportE2EError('terminal:event-stream', new Error('Terminal event stream disconnected'))
     terminalEventSource?.close()
     terminalEventSource = null
     if (terminalEventListeners.size > 0) {

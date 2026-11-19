@@ -11,7 +11,7 @@ function fixture() {
   const log = vi.spyOn(console, 'info').mockImplementation(() => {})
   const native = vi.spyOn(desktopHost, 'invokeDesktopHost').mockResolvedValue(undefined as never)
   vi.spyOn(nativeKey, 'sendNativeKeyAndWait').mockImplementation(
-    async (_target, _phase, send, observe) => {
+    async (_target, _phase, send, _expectedCount, observe) => {
       observe?.('native-event')
       await send()
       observe?.('host-acknowledged')
@@ -67,7 +67,9 @@ test('keeps multiline input serialized behind native insertion and renderer comp
       })
   )
   const fill = fillNativeEditor(editor, 'first\r\n\r\nsecond', renderWait, 'serialized-fill')
-  await vi.waitFor(() => expect(trace().at(-1)?.stage).toBe('insert-text-started'))
+  await vi.waitFor(() =>
+    expect(trace().some(row => row.stage === 'insert-text-started')).toBe(true)
+  )
   expect(renderWait).not.toHaveBeenCalled()
   inserted()
   await vi.waitFor(() => expect(renderWait).toHaveBeenCalledOnce())
@@ -76,11 +78,11 @@ test('keeps multiline input serialized behind native insertion and renderer comp
   renderWait.mockResolvedValue(undefined)
   rendered()
   await fill
-  expect(native.mock.calls.filter(([, params]) => params?.key === 'Enter')).toHaveLength(2)
+  expect(native.mock.calls.filter(([, params]) => params?.key === 'Enter')).toHaveLength(0)
   expect(
     native.mock.calls
       .filter(([method]) => method === 'e2e.insertText')
       .map(([, params]) => params?.text)
-  ).toEqual(['first', 'second'])
-  expect(trace().at(-1)).toMatchObject({ stage: 'render-wait-completed', line: 2 })
+  ).toEqual(['first\n\nsecond'])
+  expect(trace().at(-1)).toMatchObject({ stage: 'render-wait-completed' })
 })

@@ -55,6 +55,8 @@ import {
   PLUGIN_DISPLAY_NAME,
   PLUGIN_MARKETPLACE_NAME,
   PLUGIN_NAME,
+  QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
+  QUALIFIED_SKILL_MENTION_PROMPT,
   STARTUP_NETWORK_PROBE_MARKETPLACE_NAME,
   STARTUP_NETWORK_PROBE_MARKETPLACE_URL,
   WORKBENCH_READY_TIMEOUT_MS,
@@ -135,6 +137,149 @@ async function createComposerNetworkIsolationPluginZip(root) {
       '---\nname: network-isolation\ndescription: Verify composer plugin network isolation.\n---\n',
   })
   return archivePath
+}
+
+async function createCoreDshPluginFixture(root) {
+  const pluginRoot = join(root, 'core-dsh-e2e-plugin')
+  await mkdir(pluginRoot, { recursive: true })
+  await writeFile(
+    join(pluginRoot, 'package.json'),
+    `${JSON.stringify(
+      {
+        name: 'dsh-core-e2e-plugin',
+        version: '1.0.0',
+        type: 'module',
+        main: 'index.js',
+        displayName: 'Wework E2E Plugin',
+        description: 'Wework plugin management fixture',
+        dsh: { bundle: { patch: './cordis.patch.yml' } },
+      },
+      null,
+      2
+    )}\n`
+  )
+  await writeFile(
+    join(pluginRoot, 'cordis.patch.yml'),
+    "- insert:\n    - id: core-dsh-e2e-plugin\n      name: 'dsh-core-e2e-plugin'\n"
+  )
+  await writeFile(
+    join(pluginRoot, 'index.js'),
+    "export const name = 'core-dsh-e2e-plugin'\nexport function apply() {}\n"
+  )
+  return pluginRoot
+}
+
+async function verifyCoreDshPluginManagement({
+  control,
+  pluginRoot,
+  restartDesktopApp,
+  userDataDirectory,
+}) {
+  const manifestPath = join(
+    userDataDirectory,
+    'dsh-core',
+    'profiles',
+    'wework-core',
+    'package.json'
+  )
+  const openManager = async () => {
+    await control.command('waitFor', '[data-testid="plugins-button"]', {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await control.command('click', '[data-testid="plugins-button"]')
+    await control.command('waitFor', '[data-testid="plugins-workspace"]', {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await control.command('click', '[data-testid="plugins-manage-button"]')
+    await control.command('waitFor', '[data-testid="plugin-management-page-content"]', {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+    await control.command(
+      'waitFor',
+      '[data-testid="plugin-management-installed-list"], [data-testid="plugin-management-empty-state"]',
+      { timeoutMs: 10_000 }
+    )
+    await control.command('click', '[data-testid="plugin-management-surface-core-dsh"]')
+    await control.command('waitFor', '[data-testid="core-dsh-plugin-management"]', {
+      timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+    })
+  }
+  const manifest = async () => JSON.parse(await readFile(manifestPath, 'utf8'))
+
+  await openManager()
+  await control.command('fill', '[data-testid="core-dsh-plugin-spec-input"]', {
+    value: pluginRoot,
+  })
+  await withNativePluginDecision(control, () =>
+    control.command('clickWhenEnabled', '[data-testid="core-dsh-plugin-install-button"]')
+  )
+  await control.command('waitFor', '[data-testid="core-dsh-plugin-row-dsh-core-e2e-plugin"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  assert.equal((await manifest()).dependencies['dsh-core-e2e-plugin'] !== undefined, true)
+  assert.equal((await manifest()).dsh.profile.bundles.includes('dsh-core-e2e-plugin'), true)
+
+  await control.command('click', '[data-testid="core-dsh-plugin-toggle-dsh-core-e2e-plugin"]')
+  await waitForSnapshot(
+    control,
+    snapshot => /Disabled|已停用/.test(snapshot.text),
+    'The Core DSH plugin did not finish disabling',
+    WORKBENCH_READY_TIMEOUT_MS,
+    '[data-testid="core-dsh-plugin-row-dsh-core-e2e-plugin"]'
+  )
+  assert.equal((await manifest()).dsh.profile.bundles.includes('dsh-core-e2e-plugin'), false)
+
+  await restartDesktopApp()
+  await openManager()
+  await control.command('waitFor', '[data-testid="core-dsh-plugin-row-dsh-core-e2e-plugin"]', {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await waitForSnapshot(
+    control,
+    snapshot => /Disabled|已停用/.test(snapshot.text),
+    'The disabled Core DSH plugin did not remain disabled after restart',
+    WORKBENCH_READY_TIMEOUT_MS,
+    '[data-testid="core-dsh-plugin-row-dsh-core-e2e-plugin"]'
+  )
+  assert.equal((await manifest()).dsh.profile.bundles.includes('dsh-core-e2e-plugin'), false)
+  await control.command('click', '[data-testid="core-dsh-plugin-toggle-dsh-core-e2e-plugin"]')
+  await waitForSnapshot(
+    control,
+    snapshot => /Enabled|已启用/.test(snapshot.text),
+    'The Core DSH plugin did not finish enabling',
+    WORKBENCH_READY_TIMEOUT_MS,
+    '[data-testid="core-dsh-plugin-row-dsh-core-e2e-plugin"]'
+  )
+  assert.equal((await manifest()).dsh.profile.bundles.includes('dsh-core-e2e-plugin'), true)
+
+  await control.command('click', '[data-testid="core-dsh-plugin-uninstall-dsh-core-e2e-plugin"]')
+  await control.command('click', '[data-testid="core-dsh-plugin-uninstall-confirm"]')
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('core-dsh-plugin-row-dsh-core-e2e-plugin'),
+    'The uninstalled Core DSH plugin remained in the management list',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  assert.equal((await manifest()).dependencies['dsh-core-e2e-plugin'], undefined)
+  assert.equal((await manifest()).dsh.profile.bundles.includes('dsh-core-e2e-plugin'), false)
+
+  await restartDesktopApp()
+  await openManager()
+  await waitForSnapshot(
+    control,
+    snapshot => !snapshot.testIds.includes('core-dsh-plugin-row-dsh-core-e2e-plugin'),
+    'The uninstalled Core DSH plugin returned after restart',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
+  await control.command('navigate', 'body', { value: '/' })
+  await waitForSnapshot(
+    control,
+    snapshot =>
+      snapshot.testIds.includes('projects-empty-create-button') ||
+      snapshot.testIds.includes('runtime-project-sortable-list'),
+    'The workbench did not recover after the Core DSH plugin management flow',
+    WORKBENCH_READY_TIMEOUT_MS
+  )
 }
 
 async function verifyCloudWorkPage(control) {
@@ -1665,6 +1810,116 @@ async function verifyCreatorAuthenticationToolkit(codexHome, workspacePath) {
   }
 }
 
+async function verifySkillMentionRendering({ control, fixture }) {
+  const officialPluginTaskId = await createOfficialPluginTask({
+    control,
+    installSelector: fixture.installSelector,
+    skillPath: fixture.skillPath,
+  })
+  const qualifiedSkillName = `${OFFICIAL_PLUGIN_NAME}:${OFFICIAL_PLUGIN_SKILL_NAME}`
+  const qualifiedSkillTestId = qualifiedSkillName.replace(/[^a-zA-Z0-9_-]/g, '-')
+  await control.command('click', '[data-testid="new-chat-button"]')
+  await waitForBlankConversation(control, ACTIVE_COMPOSER_SELECTOR)
+  control.setScenario('skill_mention_display')
+  for (const path of [
+    '~/.agents/skills/test-skill/SKILL.md',
+    'C:/Users/me/skills/instructions.md',
+    './skills/instructions.md',
+  ]) {
+    await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
+      value: `[$test-skill](${path})`,
+    })
+    await control.command('waitFor', '[data-testid="local-skill-chip-test-skill"]', {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+    await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
+      value: `[test-label](${path})`,
+    })
+    await control.command('waitFor', '[data-testid="composer-path-chip-test-label"]', {
+      text: 'test-label',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
+  }
+  await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
+    value: `[$${qualifiedSkillName}](${fixture.skillPath}) [test-label](${fixture.skillPath}) ${QUALIFIED_SKILL_MENTION_PROMPT}`,
+  })
+  await control.command('waitFor', `[data-testid="local-skill-chip-${qualifiedSkillTestId}"]`, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', ACTIVE_SEND_BUTTON_SELECTOR, {
+    stableMs: COMPOSER_READY_STABILITY_MS,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  const qualifiedSkillTaskSnapshot = await waitForWorkbenchDebugState(
+    control,
+    snapshot => Boolean(currentRuntimeTaskFromDebugSnapshot(snapshot)?.taskId),
+    'The qualified skill conversation did not expose its task ID'
+  )
+  const qualifiedSkillTaskId = currentRuntimeTaskFromDebugSnapshot(
+    qualifiedSkillTaskSnapshot
+  ).taskId
+  const officialPluginTaskRow = `[data-testid="runtime-local-task-row-${officialPluginTaskId}"]`
+  const qualifiedSkillTaskRow = `[data-testid="runtime-local-task-row-${qualifiedSkillTaskId}"]`
+  await control.command('waitFor', officialPluginTaskRow, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', qualifiedSkillTaskRow, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('clickWhenEnabled', officialPluginTaskRow, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: OFFICIAL_PLUGIN_SKILL_READY_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await assertMentionRenderedAsToken(control, {
+    tokenSelector: '[data-testid="sent-plugin-token-OpenAI-Developers"]',
+    tokenText: OFFICIAL_PLUGIN_DISPLAY_NAME,
+    plainTextMention: `@${OFFICIAL_PLUGIN_NAME}`,
+    errorLabel: 'The reopened plugin reference degraded to its plain-text mention',
+  })
+  await control.command('clickWhenEnabled', qualifiedSkillTaskRow, {
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await control.command(
+    'waitFor',
+    `[data-testid="sent-local-skill-token-${qualifiedSkillTestId}"][aria-disabled="false"]`,
+    {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await assertMentionRenderedAsToken(control, {
+    tokenSelector: `[data-testid="sent-local-skill-token-${qualifiedSkillTestId}"]`,
+    plainTextMention: `$${qualifiedSkillName}`,
+    errorLabel: 'The reloaded qualified skill reference degraded to its plain-text mention',
+  })
+  await control.command(
+    'waitFor',
+    '[data-testid="message-user"] [data-testid="assistant-markdown-link"]',
+    {
+      text: 'test-label',
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await control.command(
+    'waitFor',
+    '[data-testid="message-user"] [data-testid="assistant-markdown-link"] svg[data-testid="assistant-markdown-link-icon"]',
+    {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await captureVerificationScreenshot(control, 'skill-mention-01-reloaded.png')
+}
+
 async function uninstallOfficialPlugin(control, fixture) {
   await control.command('click', '[data-testid="plugins-button"]')
   const pluginsSnapshot = JSON.parse(await control.command('snapshot', 'body'))
@@ -1693,6 +1948,7 @@ async function uninstallOfficialPlugin(control, fixture) {
 }
 
 export {
+  createCoreDshPluginFixture,
   verifyCloudWorkPage,
   initializeBlankCodexHome,
   waitForBundledMarketplaceRegistration,
@@ -1707,5 +1963,7 @@ export {
   waitForMarketplaceInstallStateAfterUninstall,
   verifyMarketplacePluginLifecycle,
   verifyCreatorAuthenticationToolkit,
+  verifySkillMentionRendering,
   uninstallOfficialPlugin,
+  verifyCoreDshPluginManagement,
 }

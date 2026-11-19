@@ -108,9 +108,13 @@ impl RuntimeWorkRpcHandler {
         Ok(json!({"updated": changed}))
     }
 
-    pub(super) async fn list_codex_models(&self, payload: Value) -> Result<Value, AppIpcError> {
+    pub(super) async fn list_codex_models(
+        &self,
+        payload: Value,
+        caller: &'static str,
+    ) -> Result<Value, AppIpcError> {
         let _restart_guard = codex_app_server_restart_gate().lock().await;
-        self.read_codex_models(payload, None)
+        self.read_codex_models(payload, None, caller)
             .await
             .map(|(catalog, _)| catalog)
     }
@@ -119,6 +123,7 @@ impl RuntimeWorkRpcHandler {
         &self,
         payload: Value,
         account_type: Option<&str>,
+        caller: &'static str,
     ) -> Result<(Value, bool), AppIpcError> {
         let query_id = uuid::Uuid::new_v4().to_string();
         let include_hidden = bool_field(&payload, "includeHidden")
@@ -135,6 +140,7 @@ impl RuntimeWorkRpcHandler {
         let config = self
             .request_model_discovery(
                 &query_id,
+                caller,
                 "config/read",
                 json!({
                     "includeLayers": false,
@@ -145,7 +151,7 @@ impl RuntimeWorkRpcHandler {
             .map_err(|error| AppIpcError::new("codex_models_unavailable", error))?;
         let provider = current_codex_model_provider_from_config(&config);
         let (available, error, mut models, native_default) = match self
-            .request_model_discovery(&query_id, "model/list", model_list_params)
+            .request_model_discovery(&query_id, caller, "model/list", model_list_params)
             .await
         {
             Ok(response) => (
@@ -274,7 +280,11 @@ impl RuntimeWorkRpcHandler {
             return Ok(false);
         }
         let (catalog, replaced) = self
-            .read_codex_models(json!({"includeHidden": false}), Some("chatgpt"))
+            .read_codex_models(
+                json!({"includeHidden": false}),
+                Some("chatgpt"),
+                concat!(file!(), ":", line!()),
+            )
             .await?;
         if !replaced {
             return Ok(false);
@@ -313,6 +323,7 @@ impl RuntimeWorkRpcHandler {
     async fn request_model_discovery(
         &self,
         query_id: &str,
+        caller: &'static str,
         method: &str,
         params: Value,
     ) -> Result<Value, String> {
@@ -321,12 +332,14 @@ impl RuntimeWorkRpcHandler {
             "runtime model discovery started",
             &[
                 ("query_id", query_id.to_owned()),
+                ("caller", caller.to_owned()),
                 ("stage", method.to_owned()),
             ],
         );
         let result = self.codex_app_server.request(method, params).await;
         let mut fields = vec![
             ("query_id", query_id.to_owned()),
+            ("caller", caller.to_owned()),
             ("stage", method.to_owned()),
             ("elapsed_ms", started.elapsed().as_millis().to_string()),
             ("ok", result.is_ok().to_string()),
@@ -553,6 +566,13 @@ impl RuntimeWorkRpcHandler {
                 "codex_runtime_not_ready",
                 "Codex runtime configuration is not ready for account usage",
             ));
+        }
+        // Native subscription limits do not exist for API-key or signed-out
+        // accounts. Do not start the app-server just to reject those reads.
+        let should_query = codex_accounts::should_query_native_rate_limits()
+            .map_err(|error| AppIpcError::new("codex_auth_read_failed", error))?;
+        if !should_query {
+            return Ok(json!({"rateLimits": Value::Null, "rateLimitsByLimitId": {}}));
         }
         self.codex_app_server
             .request("account/rateLimits/read", Value::Null)

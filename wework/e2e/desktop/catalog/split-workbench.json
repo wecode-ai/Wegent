@@ -1,0 +1,12 @@
+{
+  "order": 158000,
+  "scenario": "./scenarios/split-workbench.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 108000,
+      "shard": 9,
+      "position": 1000
+    }
+  }
+}

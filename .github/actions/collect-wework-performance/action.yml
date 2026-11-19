@@ -1,0 +1,22 @@
+name: Collect Wework performance samples
+description: Upload numeric evidence from the existing desktop checkpoints
+inputs:
+  name:
+    description: Unique desktop job variant
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Summarize each desktop checkpoint
+      shell: bash
+      run: node wework/e2e/desktop/performance-report.mjs wework/test-results/desktop-e2e
+    - uses: actions/upload-artifact@v4
+      with:
+        name: wework-performance-samples-${{ inputs.name }}
+        path: |
+          wework/test-results/desktop-e2e/*/performance.json
+          wework/test-results/desktop-e2e/*/errors-summary.json
+          wework/test-results/desktop-e2e/performance-report.md
+        if-no-files-found: error
+        retention-days: 30
+        compression-level: 6

@@ -3,7 +3,7 @@ import i18n from '@/i18n'
 import { navigateTo } from '@/lib/navigation'
 import { weworkTaskScheme } from '@/features/notifications/scheme'
 import { openWeworkScheme } from '@/features/notifications/schemeEvents'
-import { getDesktopWindowLabel } from '@/lib/runtime-environment'
+import { getDesktopWindowLabel, isElectronRuntime } from '@/lib/runtime-environment'
 import { EMPTY_TRAY_MENU_TASK_GROUPS, type TrayMenuTaskGroups } from './trayMenuState'
 import { parseTrayTaskMenuId } from './trayTaskMenuId'
 
@@ -43,6 +43,7 @@ export function syncTrayMenuState(
   language = i18n.resolvedLanguage || i18n.language,
   usage?: { title: string | null; tooltip: string | null }
 ) {
+  if (!isElectronRuntime()) return
   latestTrayTaskGroups = taskGroups
   if (usage) {
     latestUsageTitle = usage.title
@@ -57,7 +58,7 @@ export function syncTrayMenuState(
 }
 
 export function installTraySettingsNavigation() {
-  if (getDesktopWindowLabel() !== 'main') return
+  if (!isElectronRuntime() || getDesktopWindowLabel() !== 'main') return
 
   if (!trayActionPollingInstalled) {
     trayActionPollingInstalled = true

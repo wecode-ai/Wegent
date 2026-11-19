@@ -8,6 +8,7 @@ import type { WorkbenchServices } from '@/features/workbench/workbenchServices'
 import type { RuntimeTaskAddress } from '@/types/api'
 import type {
   PendingTodoBinding,
+  PendingAutoJoinResolution,
   BoundProjectSpaceContextUpdate,
 } from './workbenchCloudProjectContextModel'
 import { runtimeTaskKey, runtimeContextAddress } from './workbenchCloudProjectContextModel'
@@ -26,6 +27,7 @@ const identity = (value: object | undefined) => {
 }
 function createPendingBindings() {
   const panes = new Map<string, PendingTodoBinding>()
+  const deferredAutoJoins = new Map<string, PendingAutoJoinResolution>()
   const tasks = new Map<string, PendingTodoBinding>()
   const listeners = new Set<(update: BoundProjectSpaceContextUpdate) => void>()
   const confirmed = new WeakSet<BoundProjectSpaceContextUpdate>()
@@ -40,6 +42,16 @@ function createPendingBindings() {
   }
   return {
     publishBound,
+    deferAutoJoin(task: RuntimeTaskAddress, value: PendingAutoJoinResolution) {
+      deferredAutoJoins.set(runtimeTaskKey(task), value)
+    },
+    takeAutoJoin(task: RuntimeTaskAddress | null) {
+      if (!task) return null
+      const key = runtimeTaskKey(task)
+      const value = deferredAutoJoins.get(key) ?? null
+      deferredAutoJoins.delete(key)
+      return value
+    },
     getPublication: () => publication,
     confirmBound(update: BoundProjectSpaceContextUpdate) {
       if (confirmed.has(update)) return

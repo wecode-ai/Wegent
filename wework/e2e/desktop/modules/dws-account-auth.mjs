@@ -54,6 +54,7 @@ async function usePreparedFixture(resultDir, timeoutMs) {
 }
 
 export async function verifyDwsCloudAccount({
+  control,
   cloud,
   resultDir,
   executorHome,
@@ -64,6 +65,7 @@ export async function verifyDwsCloudAccount({
   timeoutMs,
   invoke,
 }) {
+  control.performance.recordExternalServiceProtocols(['dingtalk'])
   const prepared = await usePreparedFixture(resultDir, timeoutMs)
   const archive = prepared?.archive ?? join(resultDir, 'dws-native.zip')
   if (!prepared) {

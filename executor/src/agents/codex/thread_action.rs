@@ -183,7 +183,7 @@ mod tests {
         let mut child = super::super::tests::spawn_idle_app_server_child();
         let pending = Arc::new(Mutex::new(HashMap::new()));
         client.state.lock().await.process = Some(CodexAppServerProcess {
-            stdin: Arc::new(Mutex::new(child.stdin.take().unwrap())),
+            stdin: Arc::new(Mutex::new(FrameWriter::new(child.stdin.take().unwrap()))),
             child,
             pending: Arc::clone(&pending),
             notifications: CodexNotificationHub::new(),

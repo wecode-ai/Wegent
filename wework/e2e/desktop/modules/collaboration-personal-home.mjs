@@ -15,24 +15,28 @@ const HOME_TASK_RESULT = 'Personal home task complete'
 const HOME_ISSUE_TITLE = '首页任务执行验证'
 
 /** Only the model boundary is simulated; Issue, binding and execution remain real. */
-export async function handlePersonalHomeModel(request, response, url) {
-  if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
+export async function handlePersonalHomeModel(request, response, url, modelRequest = null) {
+  if (
+    !modelRequest &&
+    (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
+  )
     return false
   const body = await readRequestBody(request)
-  const text = JSON.stringify(body.input ?? [])
+  const text = JSON.stringify(body.input ?? body.messages ?? [])
   if (!text.includes(HOME_TASK_PROMPT)) return false
   assert.ok(body.model, 'The Tasks composer must preserve the selected model')
   const generatingTitle = text.includes('适合作为任务标题')
   if (!generatingTitle)
     assert.match(text, /Issue/i, 'The task must reach the model with its real Issue context')
+  const completion = generatingTitle ? HOME_ISSUE_TITLE : HOME_TASK_RESULT
+  if (modelRequest) {
+    modelRequest.reply(completion)
+    return true
+  }
   const id = `personal-home-${Date.now()}`
   response.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
   response.end(
-    createSse([
-      responseCreated(id),
-      assistantMessage(generatingTitle ? HOME_ISSUE_TITLE : HOME_TASK_RESULT),
-      responseCompleted(id),
-    ])
+    createSse([responseCreated(id), assistantMessage(completion), responseCompleted(id)])
   )
   return true
 }

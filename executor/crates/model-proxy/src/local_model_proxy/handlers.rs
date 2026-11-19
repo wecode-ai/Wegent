@@ -54,6 +54,7 @@ pub(super) async fn handle_harness_messages(
     body: Bytes,
 ) -> Result<Response, HttpError> {
     let request_started_at = Instant::now();
+    let request_id = uuid::Uuid::new_v4().to_string();
     let upstream = {
         let mut registry = registry()
             .lock()
@@ -75,12 +76,16 @@ pub(super) async fn handle_harness_messages(
     log_executor_event(
         "harness model proxy request started",
         &[
+            ("request_id", request_id.clone()),
             ("api_format", upstream.api_format.clone()),
             ("upstream", safe_url(&request_url)),
             ("body_bytes", request_body.len().to_string()),
         ],
     );
+    let client_started_at = Instant::now();
     let client = proxy_client(upstream.proxy_url.as_deref())?;
+    let client_build_ms = client_started_at.elapsed().as_millis();
+    let upstream_started_at = Instant::now();
     let upstream_response = send_upstream_request_with_rate_limit_retry(
         &client,
         &upstream,
@@ -100,6 +105,12 @@ pub(super) async fn handle_harness_messages(
     log_executor_event(
         "harness model proxy upstream headers received",
         &[
+            ("request_id", request_id),
+            ("client_build_ms", client_build_ms.to_string()),
+            (
+                "upstream_wait_ms",
+                upstream_started_at.elapsed().as_millis().to_string(),
+            ),
             ("api_format", upstream.api_format.clone()),
             ("status", status.as_u16().to_string()),
             (
@@ -305,7 +316,11 @@ pub(super) fn authorize_request(token: &str, body: &[u8]) -> Result<AuthorizedRe
         status: StatusCode::NOT_FOUND,
         detail: "unknown or expired local model proxy token".to_owned(),
     })?;
-    authorize_task_thread(route, body)?;
+    if let Err(error) = authorize_task_thread(route, body) {
+        let bound_threads = route.thread_ids.len();
+        request_identity::log_task_thread_rejection(&registry, token, body, bound_threads);
+        return Err(error);
+    }
     route.last_used = Instant::now();
     Ok(AuthorizedRequest {
         upstream: route.upstream.clone(),
@@ -369,6 +384,7 @@ pub(super) async fn handle_for_token(
     body: Bytes,
 ) -> Result<Response, HttpError> {
     let request_started_at = Instant::now();
+    let request_id = uuid::Uuid::new_v4().to_string();
     let forked_from_thread_id = codex_forked_from_thread_id(&headers);
     let request = authorize_request(&token, &body)?;
     let request_policy::PreparedRequest {
@@ -392,6 +408,7 @@ pub(super) async fn handle_for_token(
     let normalized_inter_agent_content = 0;
     let tool_capabilities = upstream.responses_tool_capabilities();
     let mut request_log_fields = vec![
+        ("request_id", request_id.clone()),
         ("api_format", upstream.api_format.clone()),
         (
             "codex_request_mode",
@@ -449,7 +466,10 @@ pub(super) async fn handle_for_token(
     }
     log_executor_event("local model proxy request started", &request_log_fields);
 
+    let client_started_at = Instant::now();
     let client = proxy_client(upstream.proxy_url.as_deref())?;
+    let client_build_ms = client_started_at.elapsed().as_millis();
+    let upstream_started_at = Instant::now();
     let upstream_response = send_upstream_request_with_rate_limit_retry(
         &client,
         &upstream,
@@ -467,6 +487,12 @@ pub(super) async fn handle_for_token(
     log_executor_event(
         "local model proxy upstream headers received",
         &[
+            ("request_id", request_id),
+            ("client_build_ms", client_build_ms.to_string()),
+            (
+                "upstream_wait_ms",
+                upstream_started_at.elapsed().as_millis().to_string(),
+            ),
             ("api_format", upstream.api_format.clone()),
             ("status", status.as_u16().to_string()),
             (

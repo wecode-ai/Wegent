@@ -9,6 +9,7 @@ import { managedRoot } from '../modules/managed-plugin-root.mjs'
 import { until } from '../modules/plugin-regression-fixture.mjs'
 import { readCapabilityManifest } from '../modules/plugin-runtime-path-fixture.mjs'
 import { CLOUD_PUBLIC_MODEL_NAME, fetchJson } from '../modules/shared.mjs'
+import { connectorAppCatalog } from '../../../src/features/cloud-connection/connectorAppCatalog.ts'
 
 async function deleteFixture(cloud, path) {
   const response = await fetch(`${cloud.backendUrl}${path}`, {
@@ -38,17 +39,14 @@ function connectorRefresh(rpc, request, configure) {
     const issuedAt = Date.now()
     const token = await request('/api/connector-runtime/token', { method: 'POST' })
     await configure(token.access_token, issuedAt + token.expires_in * 1_000, syncRevision)
-    const installed = await request('/api/apps/installed')
+    const installed = await request('/api/apps/installed', {
+      headers: { 'X-Connector-Loading': 'compact' },
+    })
+    const catalog = await request('/api/connector-apps')
+    const { apps } = connectorAppCatalog(installed, catalog)
     return rpc('runtime.connectors.apps.sync', {
       syncRevision,
-      apps: installed.apps
-        .filter(app => app.enabled && app.callable)
-        .map(app => ({
-          slug: app.slug,
-          name: app.runtime_name ?? app.slug,
-          description: app.description ?? '',
-          tools: app.tool_summaries ?? [],
-        })),
+      apps,
     })
   }
 }
@@ -585,6 +583,7 @@ export function createDesktopScenario({ executorHome, resultDir, uiTimeoutMs, wo
     fetchJson(`${cloudEnvironment.backendUrl}${path}`, {
       ...options,
       headers: {
+        ...options.headers,
         Authorization: `Bearer ${cloudEnvironment.authToken}`,
         'Content-Type': 'application/json',
       },

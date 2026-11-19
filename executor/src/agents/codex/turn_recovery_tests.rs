@@ -2,8 +2,10 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+use super::super::CodexRpcOrigin;
 use super::*;
 use crate::runner::ExecutionOutcome;
+use wegent_subprocess::frame_writer::FrameWriter;
 
 pub(super) fn overload_error() -> Value {
     json!({
@@ -213,6 +215,7 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
         child.stdin.take().unwrap(),
         CodexStdout::new(child.stdout.take().unwrap(), None),
         2,
+        CodexRpcOrigin::Dedicated(None),
     );
     let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
     let (recovery_tx, mut recovery_rx) = tokio::sync::mpsc::unbounded_channel();
@@ -227,6 +230,7 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
         Duration::from_secs(20),
         rpc.read_turn(
             1,
+            "turn/start",
             &mut state,
             super::super::json_rpc::TurnReadOptions {
                 recover_usage_limits: false,
@@ -334,6 +338,7 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
         child.stdin.take().unwrap(),
         CodexStdout::new(child.stdout.take().unwrap(), None),
         2,
+        CodexRpcOrigin::Dedicated(None),
     );
     let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut state = state();
@@ -341,6 +346,7 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
         Duration::from_secs(20),
         rpc.read_turn(
             1,
+            "turn/start",
             &mut state,
             super::super::json_rpc::TurnReadOptions {
                 recover_usage_limits: false,
@@ -413,6 +419,7 @@ printf '%s\n' '{{"id":2,"result":{{"goal":{paused}}}}}'
         child.stdin.take().unwrap(),
         CodexStdout::new(child.stdout.take().unwrap(), None),
         2,
+        CodexRpcOrigin::Dedicated(None),
     );
     let (notify_tx, mut notify_rx) = tokio::sync::mpsc::unbounded_channel();
     let mut state = state();
@@ -420,6 +427,7 @@ printf '%s\n' '{{"id":2,"result":{{"goal":{paused}}}}}'
         Duration::from_secs(20),
         rpc.read_turn(
             1,
+            "turn/start",
             &mut state,
             super::super::json_rpc::TurnReadOptions {
                 recover_usage_limits: false,
@@ -496,7 +504,7 @@ async fn overload_recovery_serializes_user_mutations_between_goal_read_and_resum
                 client.process_environment(&shared.runtime_proxy_env, &BTreeMap::new());
             shared.process = Some(CodexAppServerProcess {
                 child: child.into(),
-                stdin: Arc::new(Mutex::new(stdin)),
+                stdin: Arc::new(Mutex::new(FrameWriter::new(stdin))),
                 pending: Arc::clone(&pending),
                 notifications: CodexNotificationHub::new(),
                 reader_task: tokio::spawn(async {}),
@@ -623,7 +631,7 @@ async fn overload_recovery_drains_user_resumed_turns_before_settling_changed_goa
                 client.process_environment(&shared.runtime_proxy_env, &BTreeMap::new());
             shared.process = Some(CodexAppServerProcess {
                 child: child.into(),
-                stdin: Arc::new(Mutex::new(stdin)),
+                stdin: Arc::new(Mutex::new(FrameWriter::new(stdin))),
                 pending: Arc::clone(&pending),
                 notifications: CodexNotificationHub::new(),
                 reader_task: tokio::spawn(async {}),

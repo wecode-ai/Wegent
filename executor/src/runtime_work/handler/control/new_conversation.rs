@@ -232,7 +232,7 @@ impl RuntimeWorkRpcHandler {
         context: &ControlContext,
         args: Value,
     ) -> Result<Value, AppIpcError> {
-        let models = self.runner_catalog().await?;
+        let models = self.runner_catalog(concat!(file!(), ":", line!())).await?;
         let index = CodexGlobalProjectIndex::load();
         let projects = index
             .projects()

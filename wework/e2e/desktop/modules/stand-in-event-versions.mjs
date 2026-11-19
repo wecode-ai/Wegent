@@ -1,3 +1,4 @@
+import { desktopOwnerId } from './desktop-owner-fixture.mjs'
 import assert from 'node:assert/strict'
 import { DatabaseSync } from 'node:sqlite'
 import { readFile, writeFile } from 'node:fs/promises'
@@ -5,7 +6,7 @@ import { join } from 'node:path'
 
 /** Exercise real plugin collection and durable intake without invoking a model. */
 export async function verifyStandInEventVersions(control, rpc, providerId, executorHome, records) {
-  const user = 9001
+  const user = desktopOwnerId
   const sourceId = 'versioned-record'
   const originalRecords = await readFile(records, 'utf8')
   const original = await rpc(control, 'runtime.stand_in.personal.get', { userId: user })

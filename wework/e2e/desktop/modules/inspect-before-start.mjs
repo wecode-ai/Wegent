@@ -77,23 +77,34 @@ export async function inspectBeforeStart(child, expression, log = console.log) {
 
 /** Reconnect only to the current host belonging to this isolated release store. */
 export async function inspectRunningApp(port, expectedPid, expression, log = console.log) {
+  return withRunningAppInspector(
+    port,
+    expectedPid,
+    (command, _socket, resolvedPort) =>
+      evaluate(
+        command,
+        typeof expression === 'function' ? expression(resolvedPort) : expression,
+        true,
+        log
+      ),
+    log
+  )
+}
+
+/** Reuse identity verification for read-only diagnostics on the driver's current child. */
+export async function withRunningAppInspector(port, expectedPid, operation, log = console.log) {
   log('[desktop-e2e-inspector] identify host', { expectedPid, ports: port })
   if (Array.isArray(port)) port = await currentInspectorPort(port, expectedPid, log)
   log('[desktop-e2e-inspector] selected host', { expectedPid, port })
   const socketUrl = await inspectorTarget(port)
   return withInspector(
     socketUrl,
-    async command => {
+    async (command, socket) => {
       const pid = await evaluate(command, 'process.pid')
       if (pid !== expectedPid)
         throw new Error('The inspector is connected to another release process')
       log('[desktop-e2e-inspector] execute assertion', { expectedPid, port })
-      return evaluate(
-        command,
-        typeof expression === 'function' ? expression(port) : expression,
-        true,
-        log
-      )
+      return operation(command, socket, port)
     },
     log
   )

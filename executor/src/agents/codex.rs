@@ -16,11 +16,12 @@ use futures_util::future::BoxFuture;
 use serde_json::Map;
 use serde_json::{json, Value};
 use tokio::{
-    io::AsyncWriteExt,
     process::{ChildStdin, Command},
     sync::{broadcast, mpsc, oneshot, Mutex},
     time::{timeout, timeout_at, Instant},
 };
+
+use wegent_subprocess::frame_writer::FrameWriter;
 
 use crate::{
     agents::{
@@ -133,6 +134,10 @@ use text_generation::configure_text_generation;
 mod auth_mode;
 #[path = "codex/diagnostics.rs"]
 mod diagnostics;
+mod stdout_reader;
+use stdout_reader::read_persistent_codex_app_server_stdout;
+mod rpc_response;
+use rpc_response::{response_result, CodexRpcOrigin};
 #[path = "codex/home.rs"]
 mod home;
 mod memory_review;
@@ -195,6 +200,7 @@ pub(crate) use skill_config::reload_skill_configuration;
 mod event_goal;
 pub(crate) mod event_receipt;
 pub use event_goal::EventGoalAdmission;
+mod isolated_rpc;
 mod local_notifications;
 mod native_activity;
 mod native_turn;
@@ -442,23 +448,11 @@ impl CodexAppServerClient {
     }
 
     pub async fn request(&self, method: &str, params: Value) -> Result<Value, String> {
-        let result = self.request_once(method, params.clone()).await;
-        if let Err(error) = &result {
-            if is_codex_cloud_config_error(error)
-                && self
-                    .degrade_auth_after_cloud_config_failure(
-                        method,
-                        error,
-                        params.get("threadId").and_then(Value::as_str),
-                        None,
-                        false,
-                    )
-                    .await?
-            {
-                return self.request_once(method, params).await;
-            }
+        if isolated_rpc::is_source_read(method) {
+            return self.request_source_read(method, params).await;
         }
-        result
+        self.request_with_cloud_config_recovery(method, params)
+            .await
     }
 
     async fn request_once(&self, method: &str, params: Value) -> Result<Value, String> {
@@ -514,6 +508,7 @@ impl CodexAppServerClient {
         thread_id: Option<&str>,
         launch_config: Option<&CodexLaunchConfig>,
         may_restart_active_thread: bool,
+        failed_process_generation: Option<u64>,
     ) -> Result<bool, String> {
         if self.home.is_some()
             || launch_config
@@ -524,6 +519,32 @@ impl CodexAppServerClient {
         let drain_deadline = Instant::now() + AUTH_DEGRADE_PENDING_DRAIN_TIMEOUT;
         loop {
             let mut state = self.state.lock().await;
+            let current_generation = state
+                .process
+                .as_ref()
+                .map(|process| process.notifications.process_generation);
+            if current_generation != failed_process_generation {
+                let recovered = failed_process_generation.is_some()
+                    && state.auth_mode == CodexAuthMode::WeworkRouter
+                    && state.cloud_config_degraded_generation == failed_process_generation;
+                if recovered {
+                    log_executor_event(
+                        "codex request joined cloud config recovery",
+                        &[
+                            ("method", method.to_owned()),
+                            (
+                                "failed_process_generation",
+                                format!("{failed_process_generation:?}"),
+                            ),
+                            (
+                                "current_process_generation",
+                                format!("{current_generation:?}"),
+                            ),
+                        ],
+                    );
+                }
+                return Ok(recovered);
+            }
             if state.auth_mode == CodexAuthMode::WeworkRouter {
                 return Ok(false);
             }
@@ -554,6 +575,10 @@ impl CodexAppServerClient {
                         ("pending_requests", pending_request_count.to_string()),
                     ],
                 );
+                state.cloud_config_degraded_generation = state
+                    .process
+                    .as_ref()
+                    .map(|process| process.notifications.process_generation);
                 state.auth_mode = CodexAuthMode::WeworkRouter;
                 stop_codex_app_server_process(
                     &mut state,
@@ -596,6 +621,7 @@ impl CodexAppServerClient {
         handle: CodexAppServerHandle,
         response_rx: oneshot::Receiver<Result<Value, String>>,
     ) -> Result<Value, String> {
+        let write_started_at = Instant::now();
         let message = json!({
             "method": method,
             "id": request_id,
@@ -605,6 +631,24 @@ impl CodexAppServerClient {
             handle.remove_pending(request_id).await;
             return Err(error);
         }
+
+        log_executor_event(
+            "codex native request sent",
+            &[
+                ("method", method.to_owned()),
+                ("request_id", request_id.to_string()),
+                ("process_scope", "shared".to_owned()),
+                (
+                    "process_generation",
+                    handle.notifications.process_generation.to_string(),
+                ),
+                ("executor_pid", std::process::id().to_string()),
+                (
+                    "write_elapsed_ms",
+                    write_started_at.elapsed().as_millis().to_string(),
+                ),
+            ],
+        );
 
         with_rpc_timeout(method, timeout_seconds, async {
             response_rx
@@ -1558,10 +1602,12 @@ fn is_codex_cloud_config_error(error: &str) -> bool {
 
 struct CodexAppServerSharedState {
     process: Option<CodexAppServerProcess>,
+    isolated_rpc: isolated_rpc::IsolatedRpcRegistry,
     runtime_notifications: RuntimeNotificationSubscribers,
     executor_shutdown_requested: bool,
     next_id: u64,
     auth_mode: CodexAuthMode,
+    cloud_config_degraded_generation: Option<u64>,
     active_threads: HashMap<String, usize>,
     preparing_turns: startup::SharedTurnPreparations,
     thread_activity_changed: Arc<tokio::sync::Notify>,
@@ -1620,10 +1666,12 @@ impl Default for CodexAppServerSharedState {
     fn default() -> Self {
         Self {
             process: None,
+            isolated_rpc: Default::default(),
             runtime_notifications: Arc::new(StdMutex::new(Vec::new())),
             executor_shutdown_requested: false,
             next_id: 1,
             auth_mode: CodexAuthMode::default(),
+            cloud_config_degraded_generation: None,
             active_threads: HashMap::new(),
             preparing_turns: startup::SharedTurnPreparations::default(),
             thread_activity_changed: Arc::new(tokio::sync::Notify::new()),
@@ -1814,7 +1862,7 @@ impl CodexNotificationHub {
 
 struct CodexAppServerProcess {
     child: CodexAppServerChild,
-    stdin: Arc<Mutex<ChildStdin>>,
+    stdin: Arc<Mutex<FrameWriter<ChildStdin>>>,
     pending: Arc<Mutex<HashMap<u64, PendingCodexResponse>>>,
     notifications: CodexNotificationHub,
     reader_task: tokio::task::JoinHandle<()>,
@@ -1842,7 +1890,7 @@ impl Drop for CodexAppServerProcess {
 
 #[derive(Clone)]
 struct CodexAppServerHandle {
-    stdin: Arc<Mutex<ChildStdin>>,
+    stdin: Arc<Mutex<FrameWriter<ChildStdin>>>,
     pending: Arc<Mutex<HashMap<u64, PendingCodexResponse>>>,
     notifications: CodexNotificationHub,
 }
@@ -1854,13 +1902,9 @@ impl CodexAppServerHandle {
         line.push(b'\n');
         let mut stdin = self.stdin.lock().await;
         stdin
-            .write_all(&line)
+            .write_frame(line)
             .await
-            .map_err(|error| format!("failed to write codex JSON-RPC message: {error}"))?;
-        stdin
-            .flush()
-            .await
-            .map_err(|error| format!("failed to flush codex JSON-RPC message: {error}"))
+            .map_err(|error| format!("failed to write codex JSON-RPC message: {error}"))
     }
 
     async fn remove_pending(&self, request_id: u64) {
@@ -1973,7 +2017,12 @@ async fn start_persistent_codex_app_server(
             .stdout
             .take()
             .ok_or_else(|| "codex app-server stdout was not captured".to_owned())?;
-        let mut rpc = JsonRpcConnection::new(stdin, CodexStdout::new(stdout, None), next_id);
+        let mut rpc = JsonRpcConnection::new(
+            stdin,
+            CodexStdout::new(stdout, None),
+            next_id,
+            CodexRpcOrigin::Shared(None),
+        );
         with_rpc_timeout(
             "initialize",
             timeout_seconds,
@@ -1999,7 +2048,7 @@ async fn start_persistent_codex_app_server(
             let pending = Arc::new(Mutex::new(HashMap::new()));
             let notifications =
                 CodexNotificationHub::for_runtime(runtime_notifications, thread_activity_changed);
-            let stdin = Arc::new(Mutex::new(stdin));
+            let stdin = Arc::new(Mutex::new(FrameWriter::new(stdin)));
             let reader_task = tokio::spawn(read_persistent_codex_app_server_stdout(
                 stdout,
                 CodexAppServerHandle {
@@ -2012,6 +2061,7 @@ async fn start_persistent_codex_app_server(
                 CodexAppServerProcess {
                     child,
                     stdin,
+
                     pending,
                     notifications,
                     reader_task,
@@ -2102,149 +2152,6 @@ fn codex_router_auth_command() -> (&'static str, Vec<String>) {
 #[cfg(any(windows, test))]
 fn windows_codex_router_auth_script() -> String {
     format!("<nul set /p ={} & exit /b 0", local_model_proxy::API_KEY)
-}
-
-async fn read_persistent_codex_app_server_stdout(
-    mut stdout: CodexStdout,
-    transport: CodexAppServerHandle,
-) {
-    let CodexAppServerHandle {
-        pending,
-        notifications,
-        ..
-    } = &transport;
-    loop {
-        let mut line = String::new();
-        let message = match stdout.read_line(&mut line).await {
-            Ok(0) => {
-                notify_shared_process_closed(
-                    notifications,
-                    "codex app-server exited while shared process was running",
-                )
-                .await;
-                fail_all_pending(
-                    pending,
-                    "codex app-server exited while shared process was running".to_owned(),
-                )
-                .await;
-                break;
-            }
-            Ok(_) => match serde_json::from_str::<Value>(&line) {
-                Ok(message) => message,
-                Err(error) => {
-                    notify_shared_process_closed(
-                        notifications,
-                        &format!("failed to parse codex JSON-RPC message: {error}"),
-                    )
-                    .await;
-                    fail_all_pending(
-                        pending,
-                        format!("failed to parse codex JSON-RPC message: {error}"),
-                    )
-                    .await;
-                    break;
-                }
-            },
-            Err(error) => {
-                notify_shared_process_closed(
-                    notifications,
-                    &format!("failed to read codex JSON-RPC message: {error}"),
-                )
-                .await;
-                fail_all_pending(
-                    pending,
-                    format!("failed to read codex JSON-RPC message: {error}"),
-                )
-                .await;
-                break;
-            }
-        };
-
-        if is_json_rpc_response(&message) {
-            if let Some(request_id) = response_id(&message) {
-                if let Some(request) = pending.lock().await.remove(&request_id) {
-                    let result = response_result(message);
-                    if let (Some(context), Ok(response)) = (&request.native_request, &result) {
-                        notifications.update_native_activity(|activity| {
-                            activity.observe_response(context, response)
-                        });
-                    }
-                    let _ = request.sender.send(result);
-                    notifications.thread_activity_changed.notify_waiters();
-                    continue;
-                }
-            }
-        }
-
-        log_codex_mcp_startup_status(&message, notifications.process_generation);
-
-        let message = external_work::project_review_notification(message);
-        transport.track_mcp_elicitation(&message);
-        notifications.send(message).await;
-    }
-    notifications.thread_activity_changed.notify_waiters();
-}
-
-fn log_codex_mcp_startup_status(message: &Value, process_generation: u64) {
-    if message.get("method").and_then(Value::as_str) != Some("mcpServer/startupStatus/updated") {
-        return;
-    }
-    let params = message.get("params").unwrap_or(message);
-    log_executor_event(
-        "codex MCP startup status",
-        &[
-            ("process_generation", process_generation.to_string()),
-            (
-                "thread_id",
-                params
-                    .get("threadId")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-            ),
-            (
-                "server_name",
-                params
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-            ),
-            (
-                "status",
-                params
-                    .get("status")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-            ),
-            (
-                "error_present",
-                params
-                    .get("error")
-                    .is_some_and(|value| !value.is_null())
-                    .to_string(),
-            ),
-            (
-                "failure_reason_present",
-                params
-                    .get("failureReason")
-                    .is_some_and(|value| !value.is_null())
-                    .to_string(),
-            ),
-            (
-                "failure_reason",
-                params["failureReason"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_owned(),
-            ),
-            (
-                "error",
-                diagnostics::redact_diagnostic_text(params["error"].as_str().unwrap_or_default()),
-            ),
-        ],
-    );
 }
 
 async fn notify_shared_process_closed(notifications: &CodexNotificationHub, message: &str) {
@@ -2437,11 +2344,14 @@ async fn run_codex_app_server_turn_on_shared_client(
             Arc::clone(&state.thread_activity_changed),
         );
         drop(state);
+        let owner_client = client.for_request(&request)?;
+        let owner_registry = owner_client.state.lock().await.isolated_rpc.clone();
         return run_codex_app_server_turn_with_runtime(
             &client.binary,
             request,
             options,
             Some(runtime_notifications),
+            Some(owner_registry),
         )
         .await;
     }
@@ -2933,7 +2843,7 @@ pub async fn run_codex_app_server_turn_with_cancel(
     request: ExecutionRequest,
     options: CodexAppServerTurnOptions,
 ) -> Result<CodexAppServerTurn, String> {
-    run_codex_app_server_turn_with_runtime(binary, request, options, None).await
+    run_codex_app_server_turn_with_runtime(binary, request, options, None, None).await
 }
 
 async fn run_codex_app_server_turn_with_runtime(
@@ -2941,6 +2851,7 @@ async fn run_codex_app_server_turn_with_runtime(
     request: ExecutionRequest,
     options: CodexAppServerTurnOptions,
     runtime_notifications: Option<CodexNotificationHub>,
+    owner_registry: Option<isolated_rpc::IsolatedRpcRegistry>,
 ) -> Result<CodexAppServerTurn, String> {
     let mut capability_lease =
         Some(crate::services::capability_activation::begin_execution().await);
@@ -2999,6 +2910,11 @@ async fn run_codex_app_server_turn_with_runtime(
         }
     };
 
+    let mut owner_endpoint = owner_registry.map(|registry| {
+        let (owner, requests) = registry.owner();
+        process.child.hold_rpc_owner(owner.clone());
+        (owner, requests)
+    });
     let result: Result<CodexAppServerTurn, String> = async {
         let timeout_seconds = codex_rpc_timeout_seconds();
         let stdin = process
@@ -3015,8 +2931,20 @@ async fn run_codex_app_server_turn_with_runtime(
             stdout,
             Some((&prepared.request.task_id, &prepared.request.subtask_id)),
         );
-        let mut rpc = JsonRpcConnection::new(stdin, stdout, 1)
-            .with_runtime_notifications(runtime_notifications.clone());
+        let mut rpc = JsonRpcConnection::new(
+            stdin,
+            stdout,
+            1,
+            CodexRpcOrigin::Dedicated(
+                runtime_notifications
+                    .as_ref()
+                    .map(|hub| hub.process_generation),
+            ),
+        )
+        .with_runtime_notifications(runtime_notifications.clone());
+        if let Some((owner, requests)) = owner_endpoint.take() {
+            rpc = rpc.with_isolated_owner(owner, requests);
+        }
         let mut state = CodexRunState::default();
 
         with_rpc_timeout(
@@ -3049,6 +2977,7 @@ async fn run_codex_app_server_turn_with_runtime(
             &launch_config,
         );
         if let Some(thread_id) = thread_id_to_activate_before_start(&thread_plan) {
+            rpc.bind_isolated_thread(thread_id)?;
             bind_local_proxy_thread(&launch_config, thread_id)?;
             state.set_root_thread_id(thread_id.to_owned());
         }
@@ -3087,6 +3016,8 @@ async fn run_codex_app_server_turn_with_runtime(
             let gate = admission_client.thread_lifecycle_gate(&thread_id).await;
             thread_admission = Some(gate.lock_owned().await);
         }
+        rpc.activate_isolated_thread(&thread_id)?;
+
         state.set_root_thread_id(thread_id.clone());
         bind_local_proxy_thread(&launch_config, &thread_id)?;
         let local_notifications = local_notifications::LocalNotificationSource::new(
@@ -3226,6 +3157,7 @@ async fn run_codex_app_server_turn_with_runtime(
             };
             rpc.read_turn(
                 turn_request_id,
+                turn_method,
                 &mut state,
                 json_rpc::TurnReadOptions {
                     recover_usage_limits: recover_usage_limits
@@ -7684,25 +7616,6 @@ fn normalize_skill_path(path: &str) -> String {
 
 fn response_id(message: &Value) -> Option<u64> {
     message.get("id").and_then(Value::as_u64)
-}
-
-fn response_result(message: Value) -> Result<Value, String> {
-    if let Some(error) = message.get("error") {
-        let message = error
-            .get("message")
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-            .unwrap_or_else(|| error.to_string());
-        // Startup failures can replace the bundle wording with an auth error.
-        // Keep the native failure reason visible to the existing recovery gate.
-        if error.pointer("/data/reason").and_then(Value::as_str) == Some("cloudConfigBundle")
-            && !is_codex_cloud_config_error(&message)
-        {
-            return Err(format!("cloud config bundle: {message}"));
-        }
-        return Err(message);
-    }
-    Ok(message.get("result").cloned().unwrap_or_else(|| json!({})))
 }
 
 fn request_user_input_result(response: Value) -> Value {

@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest'
 
 const invokeMock = vi.hoisted(() => vi.fn())
+const electronRuntimeMock = vi.hoisted(() => vi.fn(() => true))
+
+vi.mock('@/lib/runtime-environment', () => ({
+  isElectronRuntime: electronRuntimeMock,
+}))
 
 vi.mock('@/api/dsh/desktopHost', () => ({
   invokeDesktopHost: invokeMock,
@@ -118,6 +123,21 @@ describe('appPreferences', () => {
   beforeEach(() => {
     vi.resetModules()
     invokeMock.mockReset()
+    electronRuntimeMock.mockReturnValue(true)
+  })
+
+  test('reads defaults without a desktop host in browser mode', async () => {
+    electronRuntimeMock.mockReturnValue(false)
+    const { getAppPreferences } = await import('./appPreferences')
+    await expect(getAppPreferences()).resolves.toEqual(mergedDefaultPreferences)
+    expect(invokeMock).not.toHaveBeenCalled()
+  })
+
+  test('preserves desktop preference read failures', async () => {
+    const error = new Error('Preference store is unavailable')
+    invokeMock.mockRejectedValue(error)
+    const { getAppPreferences } = await import('./appPreferences')
+    await expect(getAppPreferences()).rejects.toBe(error)
   })
 
   test('merges missing fields from stored preferences', async () => {

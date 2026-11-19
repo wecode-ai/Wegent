@@ -8,6 +8,7 @@ import type {
   WindowStateOutput,
 } from '@trycua/cua-driver'
 import type { DriverRequest, DriverResponse } from './computer-use-driver-protocol.js'
+import { e2eErrorLog } from './e2e-error-log.js'
 
 const LIFECYCLE_TIMEOUT_MS = 10_000
 const CANCELLATION_TIMEOUT_MS = 5_000
@@ -30,12 +31,32 @@ export class ComputerUseDriverProcess {
     private readonly child: ChildProcess,
     private readonly onExit: (error: Error) => void
   ) {
+    e2eErrorLog.record('computer-driver', 'started', 'info', { childPid: child.pid })
+    for (const [type, stream] of [
+      ['stdout', child.stdout],
+      ['stderr', child.stderr],
+    ] as const) {
+      stream?.setEncoding('utf8')
+      stream?.on('data', message =>
+        e2eErrorLog.record('computer-driver', type, type === 'stderr' ? 'error' : 'info', {
+          childPid: child.pid,
+          message: String(message),
+        })
+      )
+    }
     child.on('message', (message: DriverResponse) => {
       const pending = this.pending.get(message.id)
       if (!pending) return
       this.pending.delete(message.id)
       if (message.ok) pending.resolve(message.result)
-      else pending.reject(new Error(message.error))
+      else {
+        e2eErrorLog.record('computer-driver', 'request-failed', 'error', {
+          childPid: child.pid,
+          requestId: message.id,
+          message: message.error,
+        })
+        pending.reject(new Error(message.error))
+      }
     })
     this.exited = new Promise(resolve => {
       child.once('close', () => resolve())
@@ -63,7 +84,12 @@ export class ComputerUseDriverProcess {
         execPath,
         execArgv: [],
         env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-        stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+        stdio: [
+          'ignore',
+          process.env.VITE_WEWORK_E2E === 'true' ? 'pipe' : 'ignore',
+          process.env.VITE_WEWORK_E2E === 'true' ? 'pipe' : 'ignore',
+          'ipc',
+        ],
         serialization: 'advanced',
       }
     )
@@ -201,6 +227,12 @@ export class ComputerUseDriverProcess {
   /** Reject outstanding work once, preserving unknown outcomes without replay. */
   private fail(error: Error): void {
     if (this.failure) return
+    if (!this.stopped)
+      e2eErrorLog.record('computer-driver', 'connection-failed', 'error', {
+        childPid: this.child.pid,
+        message: error.message,
+        stack: error.stack,
+      })
     this.failure = error
     for (const pending of this.pending.values()) pending.reject(error)
     this.pending.clear()

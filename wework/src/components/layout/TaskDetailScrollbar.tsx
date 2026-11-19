@@ -35,8 +35,10 @@ export function TaskDetailScrollbar({
       const viewportHeight = viewport.clientHeight
       const contentHeight = measuredContentHeight ?? viewport.scrollHeight
       const range = Math.max(0, contentHeight - viewportHeight)
-      const display = range > 0 && viewportHeight > 0 ? 'flex' : 'none'
-      if (track.style.display !== display) track.style.display = display
+      // Keep the observed track measurable when hidden; changing its display
+      // inside its ResizeObserver callback schedules another resize delivery.
+      const visibility = range > 0 && viewportHeight > 0 ? 'visible' : 'hidden'
+      if (track.style.visibility !== visibility) track.style.visibility = visibility
       const trackHeight = track.clientHeight
       const size = Math.min(
         trackHeight,

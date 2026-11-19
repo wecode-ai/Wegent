@@ -1,10 +1,12 @@
+import { LocalSandboxProcessController } from './sandbox-process-controller.mjs'
 import { writeCodexConfig, setMatrixUpstreamProtocol } from './desktop-build-flows.mjs'
 import { remoteDeviceE2EExtension } from '../remote-device-extension.mjs'
 import { createPreparationObserver } from './preparation-progress.mjs'
 import { waitForBoardValue } from './collaboration-board-flows.mjs'
 
 import { randomBytes } from 'node:crypto'
-import { LocalPluginObjectStorage } from './local-plugin-object-storage.mjs'
+import { startRealObjectStorage } from './real-object-storage.mjs'
+import { TransportFaultProxy } from './transport-fault-proxy.mjs'
 import { rm } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
@@ -15,6 +17,7 @@ import {
   CLOUD_MODEL_CASES,
   CLOUD_MULTIMODAL_VISION_CASE,
   CLOUD_PUBLIC_MODEL_NAME,
+  CLOUD_PUBLIC_MODEL_LABEL,
   CLOUD_PUBLIC_MODEL_OPTIONS,
   CLOUD_VISION_SIDECAR_CASE,
   DEFAULT_STEP_TIMEOUT_MS,
@@ -23,7 +26,7 @@ import {
   SELECTED_DESKTOP_SEGMENT,
   WORKBENCH_READY_TIMEOUT_MS,
   appendFile,
-  appendProcessOutput,
+  appendChildProcessOutput,
   assert,
   commandOutput,
   commandOutputAsync,
@@ -137,10 +140,7 @@ async function startMysqlServer(logPath) {
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: process.platform !== 'win32',
   })
-  await Promise.all([
-    appendProcessOutput(server.stdout, logPath, server),
-    appendProcessOutput(server.stderr, logPath, server),
-  ])
+  appendChildProcessOutput(server, logPath)
   const connectionOptions = {
     host: '127.0.0.1',
     port,
@@ -257,10 +257,7 @@ async function startRedisServer(
       ['--port', String(port), '--save', '', '--appendonly', 'no'],
       { stdio: ['ignore', 'pipe', 'pipe'] }
     )
-    await Promise.all([
-      appendProcessOutput(redis.stdout, logPath, redis),
-      appendProcessOutput(redis.stderr, logPath, redis),
-    ])
+    appendChildProcessOutput(redis, logPath)
     try {
       await waitForRedisReady(redis, logPath, fromOffset)
       return { port, redis }
@@ -274,89 +271,6 @@ async function startRedisServer(
     }
   }
   throw new Error(`Redis did not start after ${REDIS_START_ATTEMPTS} attempts`)
-}
-
-class LocalNevisSandboxService {
-  constructor(onRestart) {
-    this.onRestart = onRestart
-    this.restartRequests = []
-  }
-
-  async start() {
-    this.server = createServer((request, response) => {
-      void this.handle(request, response).catch(error => {
-        if (response.headersSent) {
-          response.destroy(error instanceof Error ? error : undefined)
-          return
-        }
-        response.writeHead(500)
-        response.end()
-      })
-    })
-    await new Promise((resolvePromise, reject) => {
-      this.server.once('error', reject)
-      this.server.listen(0, '127.0.0.1', resolvePromise)
-    })
-    this.port = this.server.address().port
-    this.endpoint = `http://127.0.0.1:${this.port}`
-  }
-
-  sendJson(response, body) {
-    response.writeHead(200, { 'Content-Type': 'application/json' })
-    response.end(JSON.stringify(body))
-  }
-
-  async handle(request, response) {
-    const url = new URL(request.url ?? '/', this.endpoint)
-    const nevisRestart = url.pathname.match(
-      /^\/apis\/sandboxes\/v1\/managers\/([^/]+)\/sandboxes\/([^/]+)\/restart$/
-    )
-    const publicRestart = url.pathname.match(/^\/e2e\/sandboxes\/([^/]+)\/restart$/)
-    const match = nevisRestart ?? publicRestart
-    if (request.method === 'POST' && match) {
-      request.resume()
-      const sandboxId = decodeURIComponent(nevisRestart ? nevisRestart[2] : match[1])
-      if (this.onRestart) {
-        this.onRestart(sandboxId)
-      } else if (publicRestart) {
-        response.writeHead(404)
-        response.end()
-        return
-      }
-      this.restartRequests.push({
-        managerId: nevisRestart ? decodeURIComponent(nevisRestart[1]) : null,
-        sandboxId,
-      })
-      this.sendJson(response, { id: sandboxId, status: 'restarting' })
-      return
-    }
-    if (request.method === 'POST' && url.pathname.endsWith('/metrics/raw_query')) {
-      request.resume()
-      this.sendJson(response, { data: { data: { result: [] } } })
-      return
-    }
-    response.writeHead(404)
-    response.end()
-  }
-
-  async waitForRestartRequest(afterCount) {
-    const startedAt = Date.now()
-    while (Date.now() - startedAt < DEFAULT_STEP_TIMEOUT_MS) {
-      if (this.restartRequests.length > afterCount) {
-        return this.restartRequests[afterCount]
-      }
-      await new Promise(resolvePromise => setTimeout(resolvePromise, 50))
-    }
-    throw new Error('The local Nevis service did not receive a restart request')
-  }
-
-  async stop() {
-    if (!this.server) return
-    await new Promise(resolvePromise => {
-      this.server.close(resolvePromise)
-      this.server.closeAllConnections?.()
-    })
-  }
 }
 
 class RealCloudEnvironment {
@@ -422,12 +336,20 @@ class RealCloudEnvironment {
     this.remoteDockerExecutorLogPath = join(resultDir, 'remote-docker-executor.log')
     this.remoteExecutorRuntimeLogPath = join(resultDir, 'cloud-executor-runtime.log')
     this.remoteDockerExecutorRuntimeLogPath = join(resultDir, 'remote-docker-executor-runtime.log')
-    this.pluginObjectStorage = new LocalPluginObjectStorage()
-    await this.pluginObjectStorage.start()
-    this.nevisSandboxService = new LocalNevisSandboxService(
-      this.cloudLifecycle ? sandboxId => this.acceptSandboxRestart(sandboxId) : null
-    )
-    await this.nevisSandboxService.start()
+    if (!this.scenarioBackendEnv.ATTACHMENT_S3_ENDPOINT) {
+      this.pluginObjectStorage = await startRealObjectStorage(resultDir, WORKBENCH_READY_TIMEOUT_MS)
+    }
+    if (remoteDeviceE2EExtension.supportsStatusRecovery) {
+      const endpoint =
+        this.scenarioBackendEnv.NEVIS_BASE_URL ?? remoteDeviceE2EExtension.backendEnv.NEVIS_BASE_URL
+      assert.ok(endpoint, 'Nevis recovery E2E requires an explicitly configured real test service')
+      this.nevisTransport = await new TransportFaultProxy(endpoint).start()
+    }
+    if (this.usePublicSandboxController) {
+      this.sandboxController = await new LocalSandboxProcessController(sandboxId =>
+        this.acceptSandboxRestart(sandboxId)
+      ).start()
+    }
 
     const redisServer = await this.observePreparation('redis-start', () =>
       startRedisServer(this.redisLogPath)
@@ -468,6 +390,9 @@ class RealCloudEnvironment {
       CHAT_SHELL_TOKEN: MODEL_API_KEY,
       WEGENT_SOCKET_URL: this.socketUrl,
       FLOW_SCHEDULER_INTERVAL_SECONDS: '5',
+      NEVIS_MANAGER_ID: '',
+      NEVIS_IMAGE_ID: '',
+      NEVIS_SIGNATURE: '',
       ...remoteDeviceE2EExtension.backendEnv,
       TERMINAL_PROTOCOL_V2_ENABLED: 'true',
       PYTHONIOENCODING: 'utf-8',
@@ -476,18 +401,12 @@ class RealCloudEnvironment {
       INIT_DATA_ENABLED: 'true',
       INIT_DATA_DIR: join(repoDir, 'backend-rs', 'init_data'),
       BUILTIN_PLUGINS_DIR: join(repoDir, 'backend-rs', 'init_data', 'plugins'),
-      ATTACHMENT_S3_ENDPOINT: this.pluginObjectStorage.endpoint,
-      ATTACHMENT_S3_ACCESS_KEY: 'desktop-e2e-access-key',
-      ATTACHMENT_S3_SECRET_KEY: 'desktop-e2e-secret-key',
-      ATTACHMENT_S3_USE_SSL: 'false',
+      ...this.pluginObjectStorage?.backendEnv,
       ...(this.usePublicSandboxController
-        ? { WEWORK_E2E_SANDBOX_CONTROL_URL: this.nevisSandboxService.endpoint }
+        ? { WEWORK_E2E_SANDBOX_CONTROL_URL: this.sandboxController.endpoint }
         : {}),
-      NEVIS_BASE_URL: this.nevisSandboxService.endpoint,
-      NEVIS_MANAGER_ID: 'wework-e2e-manager',
-      NEVIS_IMAGE_ID: 'wework-e2e-image',
-      NEVIS_SIGNATURE: 'wework-e2e-signature',
       ...this.scenarioBackendEnv,
+      NEVIS_BASE_URL: this.nevisTransport?.url ?? '',
     }
     this.backendEnv = backendEnv
     // Seed before device requests can start a remote refresh that races fixture updates.
@@ -582,10 +501,7 @@ class RealCloudEnvironment {
         detached: process.platform !== 'win32',
       }
     )
-    await Promise.all([
-      appendProcessOutput(this.pythonBackend.stdout, this.backendLogPath, this.pythonBackend),
-      appendProcessOutput(this.pythonBackend.stderr, this.backendLogPath, this.pythonBackend),
-    ])
+    appendChildProcessOutput(this.pythonBackend, this.backendLogPath)
     await this.observePreparation('python-backend-ready', () =>
       waitForProcessUrl(
         `http://127.0.0.1:${this.pythonBackendPort}/api/docs`,
@@ -611,10 +527,7 @@ class RealCloudEnvironment {
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: process.platform !== 'win32',
     })
-    await Promise.all([
-      appendProcessOutput(this.rustBackend.stdout, this.backendLogPath, this.rustBackend),
-      appendProcessOutput(this.rustBackend.stderr, this.backendLogPath, this.rustBackend),
-    ])
+    appendChildProcessOutput(this.rustBackend, this.backendLogPath)
     await this.observePreparation('rust-gateway-ready', () =>
       waitForProcessUrl(
         `${this.backendUrl}/api/startup`,
@@ -1231,10 +1144,7 @@ class RealCloudEnvironment {
     executor.once('exit', (code, signal) => {
       void appendFile(logPath, `Executor exited: code=${code}, signal=${signal}\n`)
     })
-    await Promise.all([
-      appendProcessOutput(executor.stdout, logPath, executor),
-      appendProcessOutput(executor.stderr, logPath, executor),
-    ])
+    appendChildProcessOutput(executor, logPath)
     return executor
   }
 
@@ -1346,10 +1256,7 @@ class RealCloudEnvironment {
       detached: process.platform !== 'win32',
     })
     this.generatedRemoteExecutors.push(executor)
-    await Promise.all([
-      appendProcessOutput(executor.stdout, logPath, executor),
-      appendProcessOutput(executor.stderr, logPath, executor),
-    ])
+    appendChildProcessOutput(executor, logPath)
     return { executor, logPath }
   }
 
@@ -1522,6 +1429,32 @@ class RealCloudEnvironment {
     }
   }
 
+  nevisRestartRequests() {
+    assert.ok(this.nevisTransport, 'Nevis recovery requires its real test service transport')
+    return this.nevisTransport.requests
+      .filter(
+        request => request.method === 'POST' && /\/sandboxes\/[^/]+\/restart$/.test(request.path)
+      )
+      .map(request => ({
+        managerId: decodeURIComponent(request.path.split('/')[5]),
+        sandboxId: decodeURIComponent(request.path.split('/')[7]),
+      }))
+  }
+
+  nevisRestartRequestCount() {
+    return this.nevisRestartRequests().length
+  }
+
+  async waitForNevisRestartRequest(afterCount) {
+    const deadline = Date.now() + DEFAULT_STEP_TIMEOUT_MS
+    while (Date.now() < deadline) {
+      const request = this.nevisRestartRequests()[afterCount]
+      if (request) return request
+      await new Promise(resolve => setTimeout(resolve, 50))
+    }
+    throw new Error('The real Nevis service did not receive the restart request')
+  }
+
   armSandboxRestart() {
     const start = Promise.withResolvers()
     const proceed = Promise.withResolvers()
@@ -1567,11 +1500,13 @@ class RealCloudEnvironment {
   }
 
   sandboxRestartRequestCount() {
-    return this.nevisSandboxService.restartRequests.length
+    return this.sandboxController?.requests.length ?? this.nevisRestartRequestCount()
   }
 
   async waitForSandboxRestartRequest() {
-    return this.nevisSandboxService.waitForRestartRequest(0)
+    return this.sandboxController
+      ? this.sandboxController.waitForRestartRequest(0)
+      : this.waitForNevisRestartRequest(0)
   }
 
   async startGeneratedRemoteDevice({
@@ -1607,10 +1542,7 @@ class RealCloudEnvironment {
       detached: process.platform !== 'win32',
     })
     this.generatedRemoteExecutors.push(executor)
-    await Promise.all([
-      appendProcessOutput(executor.stdout, logPath, executor),
-      appendProcessOutput(executor.stderr, logPath, executor),
-    ])
+    appendChildProcessOutput(executor, logPath)
     await this.waitForDevice(deviceId, logPath)
     return { home, logPath, executor }
   }
@@ -1705,19 +1637,6 @@ class RealCloudEnvironment {
             ? { api_format: 'chat/completions' }
             : {}),
       })),
-      {
-        name: CLOUD_PUBLIC_MODEL_NAME,
-        env: {
-          model: 'openai',
-          model_id: 'desktop-e2e-public-upstream-model',
-          base_url: `${this.modelServerUrl}/v1`,
-          api_key: MODEL_API_KEY,
-        },
-        is_active: true,
-        wework_available: true,
-        protocol: 'openai-responses',
-        api_format: 'responses',
-      },
     ]
     const seeded = await fetchJson(`${this.backendUrl}/api/models/batch`, {
       method: 'POST',
@@ -1726,6 +1645,41 @@ class RealCloudEnvironment {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(items),
+    })
+    await fetchJson(`${this.backendUrl}/api/admin/public-models`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.authToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        name: CLOUD_PUBLIC_MODEL_NAME,
+        namespace: 'default',
+        json: {
+          apiVersion: 'agent.wecode.io/v1',
+          kind: 'Model',
+          metadata: {
+            name: CLOUD_PUBLIC_MODEL_NAME,
+            namespace: 'default',
+            displayName: CLOUD_PUBLIC_MODEL_LABEL,
+          },
+          spec: {
+            modelConfig: {
+              env: {
+                model: 'openai',
+                model_id: 'desktop-e2e-public-upstream-model',
+                base_url: `${this.modelServerUrl}/v1`,
+                api_key: MODEL_API_KEY,
+              },
+              ui: { family: 'gpt', modelLabel: CLOUD_PUBLIC_MODEL_LABEL },
+            },
+            protocol: 'openai-responses',
+            apiFormat: 'responses',
+            modelType: 'llm',
+            isWeworkAvailable: true,
+          },
+        },
+      }),
     })
     const savedModels = [...seeded.created, ...seeded.updated]
     for (const model of CLOUD_MODEL_CASES.filter(candidate => candidate.requestMode)) {
@@ -1985,7 +1939,8 @@ class RealCloudEnvironment {
     await Promise.all(this.generatedRemoteExecutors.map(executor => stopProcessGroup(executor)))
     await this.stopBackend()
     await this.pluginObjectStorage?.stop()
-    await this.nevisSandboxService?.stop()
+    await this.nevisTransport?.stop()
+    await this.sandboxController?.stop()
     await stopProcess(this.redis)
     await stopProcessGroup(this.mysql)
   }
@@ -2023,7 +1978,6 @@ async function verifyLocalExecutorUsesCloudSocketUrl(control, cloudEnvironment) 
 }
 
 export {
-  LocalNevisSandboxService,
   RealCloudEnvironment,
   startRedisServer,
   startMysqlServer,

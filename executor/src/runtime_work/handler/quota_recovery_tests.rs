@@ -591,27 +591,30 @@ done
             })
             .await
             .unwrap();
-            if interrupt {
+            let cancellation = if interrupt {
                 // A malformed replacement isolates stop acknowledgement from starting another turn.
-                let error = tokio::time::timeout(
+                tokio::time::timeout(
                     Duration::from_secs(2),
                     handler.interrupt_and_send(json!({"taskId":"waiting"})),
                 )
                 .await
-                .expect("interrupt must acknowledge the stopped quota check before sending")
-                .unwrap_err();
-                assert_eq!(error.code, "bad_request");
             } else {
-                assert_eq!(
-                    tokio::time::timeout(
-                        Duration::from_secs(2),
-                        handler.cancel_task(json!({"taskId":"waiting"})),
-                    )
-                    .await
-                    .expect("cancellation must not wait for the blocked account read")
-                    .unwrap()["accepted"],
-                    true
-                );
+                tokio::time::timeout(
+                    Duration::from_secs(2),
+                    handler.cancel_task(json!({"taskId":"waiting"})),
+                )
+                .await
+            };
+            if cancellation.is_err() {
+                fs::remove_file(home.path().join("hold-account")).unwrap();
+                handler.codex_app_server.restart().await;
+            }
+            let cancellation =
+                cancellation.expect("Cancellation must not wait for the held quota request");
+            if interrupt {
+                assert_eq!(cancellation.unwrap_err().code, "bad_request");
+            } else {
+                assert_eq!(cancellation.unwrap()["accepted"], true);
             }
             tokio::time::timeout(Duration::from_secs(2), async {
                 while handler.is_busy_local_task("waiting")

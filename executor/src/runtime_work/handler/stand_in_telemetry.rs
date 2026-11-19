@@ -204,3 +204,42 @@ impl RuntimeWorkRpcHandler {
         Some((user, operation, properties))
     }
 }
+
+#[cfg(test)]
+mod scheduler_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn telemetry_writer_contention_yields_the_async_worker() {
+        let (handler, root) =
+            super::super::tests::isolated_runtime_work_handler("telemetry-writer-scheduling");
+        let store = LocalTaskStore::open(handler.task_store_path.as_ref()).unwrap();
+        store.configure_stand_in_telemetry(7, true, None).unwrap();
+        let writer = rusqlite::Connection::open(handler.task_store_path.as_ref()).unwrap();
+        writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let mut request = handler.dispatch_method(
+            "runtime.stand_in.telemetry.configure",
+            json!({"userId":7,"enabled":false}),
+        );
+        let pending = std::future::poll_fn(|context| {
+            std::task::Poll::Ready(
+                std::future::Future::poll(request.as_mut(), context).is_pending(),
+            )
+        })
+        .await;
+        assert!(
+            pending,
+            "A SQLite writer must not synchronously block RPC dispatch"
+        );
+        let snapshot = handler
+            .dispatch_method("runtime.stand_in.telemetry.list", json!({"userId":7}))
+            .await
+            .unwrap();
+        assert!(snapshot.is_object());
+        writer.execute_batch("ROLLBACK").unwrap();
+        assert_eq!(request.await.unwrap()["success"], true);
+        drop(writer);
+        drop(store);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}

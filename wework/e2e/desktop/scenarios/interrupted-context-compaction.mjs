@@ -15,19 +15,18 @@ export async function verifyRecoveredCompaction(control, timeoutMs) {
     text: COMPLETE,
     value: 'data-message-id',
   })
-  const turnId = messageId?.match(/^runtime-view:([^:]+):/)?.[1]
-  assert.ok(turnId, 'Recovered assistant message must expose its native turn identity')
-  // Canonical hydration can replace the optimistic reply segment after the turn is idle.
-  const message = `[data-testid="message-assistant"][data-message-id^=${JSON.stringify(`runtime-view:${turnId}:`)}]`
+  assert.ok(messageId, 'Recovered assistant message must have a stable ID')
+  const message = `[data-message-id=${JSON.stringify(messageId)}]`
   await control.command(
-    'clickWhenEnabled',
-    `${message} [data-testid="final-processing-toggle"][aria-expanded="false"]`,
-    { timeoutMs }
+    'click',
+    `${message} [data-testid="final-processing-toggle"][aria-expanded="false"]`
   )
   await control.command(
     'waitFor',
     `${message} [data-testid="final-processing-toggle"][aria-expanded="true"]`,
-    { timeoutMs }
+    {
+      timeoutMs,
+    }
   )
   await control.command('waitFor', `${message} ${INDICATOR}`, {
     text: '上下文已自动压缩',

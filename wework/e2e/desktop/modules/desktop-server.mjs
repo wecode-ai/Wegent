@@ -1,3 +1,7 @@
+import { modelRequestRoute } from './model-request-route.mjs'
+import { recordHttpRequest } from './http-request-diagnostics.mjs'
+import { modelTextStream } from './model-text-stream.mjs'
+import { handleModelSubscriptionUsage } from './model-subscription-usage.mjs'
 import {
   handleRiskyCommandApproval,
   RISKY_COMMAND_APPROVAL_SCENARIOS,
@@ -35,12 +39,6 @@ import {
   DIAGRAM_REGRESSION_RESPONSE,
 } from './conversation-diagram-fixture.mjs'
 import { nativeApprovalModelResponse } from './native-approval-model.mjs'
-import {
-  installedMiniProgramPlugin,
-  installedSitesPlugin,
-  miniProgramMarketplacePlugin,
-  sitesMarketplacePlugin,
-} from './preferences-automation-flows.mjs'
 import { accountCommandResult } from './account-auth-command.mjs'
 import { CONCURRENT_SCENARIO, respondToConcurrentMcpInput } from './mcp-concurrent-model.mjs'
 import { createMcpElicitationModel } from './mcp-elicitation-model.mjs'
@@ -69,12 +67,14 @@ import {
   matrixToolCompletion,
   matrixToolPreamble,
   matrixToolPrompt,
+  namespacedFunctionCall,
   parseTelemetryPayload,
   reasoningTextItem,
   readRawRequestBody,
   readRequestBody,
   requestAdvertisesProgrammaticExec,
   requestAdvertisesShellTool,
+  requestAdvertisesViewImageTool,
   requestContainsToolOutput,
   responseCompleted,
   responseCreated,
@@ -98,6 +98,7 @@ import {
   streamingTextEvents,
   telemetryEvents,
 } from './response-protocol.mjs'
+import { tmpdir } from 'node:os'
 import { posix } from 'node:path'
 
 import {
@@ -105,6 +106,8 @@ import {
   ANTHROPIC_EMPTY_PROMPT,
   ATTACHMENT_ONLY_COMPLETION_TEXT,
   ATTACHMENT_ONLY_FILENAME,
+  AUTOMATION_COMPLETION_TEXT,
+  AUTOMATION_PROMPT,
   BACKGROUND_COMPLETION_RESTORE_PROMPT,
   BACKGROUND_COMPLETION_RESTORE_TEXT,
   BACKGROUND_FOLLOW_UP_RESTORE_PROMPT,
@@ -120,6 +123,9 @@ import {
   CLOUD_COMPLETION_TEXT,
   CLOUD_FOLLOW_UP_COMPLETION_TEXT,
   CLOUD_FOLLOW_UP_PROMPT,
+  CLOUD_HTML_LINK_FILENAME,
+  CLOUD_HTML_LINK_MISSING_FILENAME,
+  CLOUD_HTML_LINK_PROMPT,
   CLOUD_MODEL_CASES,
   CLOUD_PUBLIC_MODEL_LABEL,
   CLOUD_PUBLIC_MODEL_NAME,
@@ -143,6 +149,7 @@ import {
   DROPPED_PATH_COMPLETION_TEXT,
   DROPPED_PATH_FILE_NAME,
   DROPPED_PATH_FOLDER_NAME,
+  EARLIER_TOOL_BLOCK_ID,
   EMBEDDED_BROWSER_BRIDGE_COLLISION_COMPLETION_TEXT,
   EMBEDDED_BROWSER_BRIDGE_COLLISION_PROMPT,
   EMBEDDED_BROWSER_SETUP_COMPLETION_TEXT,
@@ -155,8 +162,14 @@ import {
   FORK_ENCRYPTED_CONTENT,
   FORK_FOLLOW_UP_COMPLETION_TEXT,
   FORK_FOLLOW_UP_PROMPT,
+  FORK_PROVIDER_FOLLOW_UP_COMPLETION_TEXT,
+  FORK_PROVIDER_FOLLOW_UP_PROMPT,
+  FORK_PROVIDER_SOURCE_COMPLETION_TEXT,
+  FORK_PROVIDER_SOURCE_PROMPT,
   FRESH_CHAT_COMPLETION_TEXT,
   FRESH_CHAT_PROMPT,
+  GENERIC_MCP_TOOL_BLOCK_ID,
+  GENERIC_MCP_TOOL_SEARCH_ID,
   GOAL_BUSY_COMPLETION_TEXT,
   GOAL_BUSY_OBJECTIVE,
   GOAL_BUSY_PLAN_PROMPT,
@@ -181,6 +194,10 @@ import {
   GUIDANCE_SCROLL_PRE_TOOL_TEXT,
   GUIDANCE_SCROLL_PROMPT,
   GUIDANCE_SCROLL_RESPONSE,
+  LATER_TOOL_BLOCK_ID,
+  LOCAL_MARKDOWN_IMAGE_ALT,
+  LOCAL_MARKDOWN_IMAGE_FILENAME,
+  LOCAL_MARKDOWN_IMAGE_PROMPT,
   LOCAL_MODEL_CASES,
   LOCAL_MODEL_SWITCH_COMPLETE,
   LOCAL_MODEL_SWITCH_FOLLOW_UP_PROMPT,
@@ -202,6 +219,8 @@ import {
   MESSAGE_EDIT_UPDATED_COMPLETION_TEXT,
   MESSAGE_EDIT_UPDATED_PROMPT,
   MODEL_API_KEY,
+  NODE_REPL_TOOL_BLOCK_ID,
+  NODE_REPL_TOOL_SEARCH_ID,
   OFFICIAL_PLUGIN_COMPLETION_TEXT,
   OFFICIAL_PLUGIN_DISPLAY_NAME,
   OFFICIAL_PLUGIN_MCP_SEARCH_ID,
@@ -234,6 +253,8 @@ import {
   PROVIDER_SWITCH_RESUME_PROMPT,
   PROVIDER_SWITCH_SUBSCRIPTION_ACCOUNT_ID,
   PROVIDER_SWITCH_SUBSCRIPTION_ACCESS_TOKEN,
+  QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
+  QUALIFIED_SKILL_MENTION_PROMPT,
   QUEUE_CLEAR_INITIAL,
   QUEUE_CLEAR_MANUAL,
   QUEUE_DIRECT_FIRST,
@@ -289,8 +310,12 @@ import {
   TASK_PLAN_STEP,
   TASK_PROMPT,
   TELEMETRY_CAPTURE_PATH,
+  TOOL_BLOCK_ORDER_COMPLETION_TEXT,
+  TOOL_BLOCK_ORDER_PROMPT,
   TURN_NAVIGATION_REGRESSION_COMPLETION_PREFIX,
   TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX,
+  VIEW_IMAGE_COMPLETION_TEXT,
+  VIEW_IMAGE_PROMPT,
   VISION_SIDECAR_COMPLETION_TEXT,
   VISION_SIDECAR_DESCRIPTION,
   VISION_SIDECAR_MAIN_REQUEST_SCENARIO,
@@ -309,7 +334,6 @@ import {
 } from './shared.mjs'
 
 const DESKTOP_CONTROL_COMMAND_INTERVAL_MS = 250
-const CLOUD_STORED_USER_NAME = 'wework-desktop-e2e-cloud-user'
 const CLOUD_AUTHENTICATED_USER_NAME = 'admin'
 const CLOUD_RUNTIME_IDENTITY_TOOL_CALL_ID = 'wework-cloud-e2e-identity-tool-call'
 const PLUGIN_WORKSPACE_PUBLISH_CALL_ID = 'wework-plugin-workspace-publish'
@@ -322,6 +346,10 @@ const EMBEDDED_BROWSER_BRIDGE_COLLISION_SEARCH_ID =
 const EMBEDDED_BROWSER_BRIDGE_COLLISION_OPEN_ID = 'wework-embedded-browser-bridge-collision-open'
 const ELECTRON_OBSERVATION_ACTIONS = new Set([
   'activeElement',
+  'getRuntimeTaskCreationDiagnostics',
+  'getErrorCollectionCheckpoint',
+  'startUiRefreshCapture',
+  'stopUiRefreshCapture',
   'decodeImage',
   'getAttribute',
   'getBundledPluginUpdates',
@@ -490,15 +518,9 @@ const HELD_RESPONSE_SCENARIOS = new Set([
 ])
 
 class DesktopE2EServer {
-  constructor(
-    workspacePath,
-    cloudWorkspacePath = workspacePath,
-    desktopScenario = null,
-    { enableMarketplaceConnectorAppsStub = false } = {}
-  ) {
+  constructor(workspacePath, cloudWorkspacePath = workspacePath, desktopScenario = null) {
     this.workspacePath = workspacePath
     this.cloudWorkspacePath = cloudWorkspacePath
-    this.enableMarketplaceConnectorAppsStub = enableMarketplaceConnectorAppsStub
     this.server = createServer((request, response) => {
       void this.handle(request, response).catch(error => this.fail(error, response))
     })
@@ -529,36 +551,11 @@ class DesktopE2EServer {
     this.modelRequests = []
     this.catalogRequests = []
     this.httpRequests = []
-    this.userPreferences = {}
     this.telemetryRequests = []
-    this.blockedCloudRequests = []
-    this.blockedCloudResponses = new Set()
-    this.blockedCloudWaiters = []
-    this.failCloudModels = false
-    this.cloudModelsAvailable = false
-    this.failedCloudModelRequests = 0
-    this.failedCloudModelWaiter = null
-    this.sitesPluginInstalled = false
-    this.sitesPluginDeviceId = null
-    this.siteEnvironmentRevision = 0
-    this.siteEnvironmentVariables = []
-    this.siteCollaborators = []
-    this.siteAccessPolicy = {
-      id: 'pol_e2e_1',
-      project_id: 'prj_e2e_product',
-      target: 'inner',
-      audience: 'owner',
-      subjects: [],
-      revision_number: 2,
-      created_by: 'wework-desktop-e2e-cloud-user',
-      created_at: '2026-09-08T00:00:00Z',
-    }
-    this.miniProgramPluginInstalled = false
-    this.miniProgramPluginDeviceId = null
-    this.sitesConnectionBootstrapRequests = 0
     this.scenario = 'initial'
     this.modelStage = 'initial'
     this.mcpElicitationModel = createMcpElicitationModel()
+    this.viewImageStage = 'initial'
     this.memoryStage = 'initial'
     this.concurrentMemoryResponses = []
     this.concurrentMemoryTaskNumbers = new Set()
@@ -567,8 +564,10 @@ class DesktopE2EServer {
     this.matrixState = null
     this.toolLessPrewarmHandled = false
     this.embeddedBrowserSetupToolLessPrewarmHandled = false
+    this.viewImageToolLessPrewarmHandled = false
     this.memoryToolLessPrewarmHandled = false
     this.cloudToolLessPrewarmHandled = false
+    this.cloudHtmlLinkToolLessPrewarmHandled = false
     this.officialPluginToolLessPrewarmHandled = false
     this.toolOutput = null
     this.initialToolRelease = new Promise(resolvePromise => {
@@ -697,6 +696,18 @@ class DesktopE2EServer {
     this.supervisorCorrectionRelease = new Promise(resolvePromise => {
       this.releaseSupervisorCorrection = resolvePromise
     })
+    this.toolBlockNodeOutputObserved = new Promise(resolvePromise => {
+      this.resolveToolBlockNodeOutputObserved = resolvePromise
+    })
+    this.toolBlockNodeRelease = new Promise(resolvePromise => {
+      this.releaseToolBlockNode = resolvePromise
+    })
+    this.toolBlockGenericOutputObserved = new Promise(resolvePromise => {
+      this.resolveToolBlockGenericOutputObserved = resolvePromise
+    })
+    this.toolBlockGenericRelease = new Promise(resolvePromise => {
+      this.releaseToolBlockGeneric = resolvePromise
+    })
     this.cloudInitialRelease = new Promise(resolvePromise => {
       this.releaseCloudInitial = resolvePromise
     })
@@ -710,6 +721,7 @@ class DesktopE2EServer {
     this.goalRestartScenarioByThreadId = new Map()
     this.firstResumedGoalRestartScenario = null
     this.cloudGoalRestartStage = 'initial'
+    this.automationStage = 'manual_goal'
     this.scenarioRequests = new Map()
     this.scenarioWaiters = new Map()
     this.heldScenarioResponses = new Map()
@@ -752,8 +764,6 @@ class DesktopE2EServer {
   }
 
   async close() {
-    for (const response of this.blockedCloudResponses) response.destroy()
-    this.blockedCloudResponses.clear()
     for (const { response, timeout } of this.controlLongPolls.values()) {
       clearTimeout(timeout)
       response.destroy()
@@ -796,13 +806,8 @@ class DesktopE2EServer {
   }
 
   awaitBlockedCloudRequest(pathname) {
-    const request = this.blockedCloudRequests.find(item => item.pathname === pathname)
-    if (request) return this.guard(Promise.resolve(request))
-    return this.guard(
-      new Promise(resolvePromise => {
-        this.blockedCloudWaiters.push({ pathname, resolve: resolvePromise })
-      })
-    )
+    assert.ok(this.backendFaults, 'The real Backend fault gate is not initialized')
+    return this.guard(this.backendFaults.awaitBlocked(pathname))
   }
 
   async awaitTelemetryEvent(eventName, timeoutMs = DEFAULT_STEP_TIMEOUT_MS) {
@@ -849,53 +854,16 @@ class DesktopE2EServer {
     return Promise.race([promise, this.fatalErrorPromise])
   }
 
-  blockCloudRequest(request, response, url) {
-    const blockedRequest = {
-      method: request.method,
-      pathname: url.pathname,
-      search: url.search,
-    }
-    this.blockedCloudRequests.push(blockedRequest)
-    this.blockedCloudResponses.add(response)
-    response.once('close', () => this.blockedCloudResponses.delete(response))
-
-    const remainingWaiters = []
-    for (const waiter of this.blockedCloudWaiters) {
-      if (waiter.pathname === url.pathname) {
-        waiter.resolve(blockedRequest)
-      } else {
-        remainingWaiters.push(waiter)
-      }
-    }
-    this.blockedCloudWaiters = remainingWaiters
-  }
-
   failBlockedCloudModels() {
-    this.failCloudModels = true
-    const failedRequests = this.blockedCloudResponses.size
-    for (const response of this.blockedCloudResponses) {
-      json(response, 503, { error: 'Desktop E2E intentional cloud model failure' })
-    }
-    this.blockedCloudResponses.clear()
-    this.failedCloudModelRequests += failedRequests
-    if (failedRequests > 0) {
-      this.failedCloudModelWaiter?.()
-      this.failedCloudModelWaiter = null
-    }
+    this.backendFaults.fail()
   }
 
   restoreCloudModels() {
-    this.failCloudModels = false
-    this.cloudModelsAvailable = true
+    this.backendFaults.restore()
   }
 
   awaitFailedCloudModelRequest() {
-    if (this.failedCloudModelRequests > 0) return this.guard(Promise.resolve())
-    return this.guard(
-      new Promise(resolvePromise => {
-        this.failedCloudModelWaiter = resolvePromise
-      })
-    )
+    return this.guard(this.backendFaults.awaitFailure())
   }
 
   setScenario(scenario) {
@@ -907,6 +875,8 @@ class DesktopE2EServer {
         'follow_up',
         'running_fork_follow_up',
         'fork_follow_up',
+        'fork_provider_source',
+        'fork_provider_follow_up',
         'task_plan',
         'request_user_input',
         'request_user_input_async',
@@ -949,12 +919,17 @@ class DesktopE2EServer {
         'side_chat_guidance',
         'cloud_initial',
         'cloud_follow_up',
+        'cloud_html_link',
         'model_protocol_matrix',
         'provider_switch_retry',
         'vision_sidecar',
         'multimodal_vision',
+        'view_image',
+        'local_markdown_image',
+        'tool_block_order',
         'official_plugin',
         'plugin_development',
+        'automation',
         'skill_mention_display',
         'connector_auth_unmatched_resume',
         'supervisor',
@@ -1408,38 +1383,60 @@ class DesktopE2EServer {
     }
 
     const url = new URL(request.url ?? '/', this.url)
-    const requestDiagnostic = {
-      method: request.method ?? 'UNKNOWN',
-      pathname: url.pathname,
-      startedAtUnixMs: Date.now(),
-    }
-    this.httpRequests.push(requestDiagnostic)
-    response.once('finish', () => {
-      requestDiagnostic.finishedAtUnixMs = Date.now()
-      requestDiagnostic.durationMs =
-        requestDiagnostic.finishedAtUnixMs - requestDiagnostic.startedAtUnixMs
-    })
+    const httpRequestIndex = this.httpRequests.length
+    recordHttpRequest(request, response, url, this.httpRequests)
     if (await this.handleControlRoute(request, response, url)) return
-    let scenarioModelRequest
+    const officialCodexResponses = url.pathname === '/backend-api/codex/responses'
+    const modelRoute = modelRequestRoute(url.pathname)
+    const modelProtocol = modelRoute?.defaultHandler ? modelRoute.protocol : null
+    let routedModelRequest
     try {
-      if (
-        this.desktopScenario &&
-        request.method === 'POST' &&
-        ['/responses', '/v1/responses'].includes(url.pathname)
-      ) {
+      if (this.desktopScenario && request.method === 'POST' && modelRoute) {
         const body = await readRequestBody(request)
-        scenarioModelRequest = { body, scenario: this.scenario, failed: true }
-        if (await this.writeNativeApprovalReview(response, body, 'responses')) return
+        routedModelRequest = {
+          body,
+          scenario: this.scenario,
+          protocol: modelRoute.protocol,
+          httpRequestIndex,
+        }
+        this.modelRequests.push(routedModelRequest)
+        if (modelProtocol && (await this.writeNativeApprovalReview(response, body, modelProtocol)))
+          return
         // Prediction history carries the task's ordinary markers. Route its
         // model request before scenario counters and held task responses.
-        if (isReplyPredictionRequest(body) && !this.desktopScenario.handlesReplyPredictions) {
-          await this.handleModelResponse(request, response, 'responses')
+        if (
+          modelProtocol &&
+          isReplyPredictionRequest(body) &&
+          !this.desktopScenario.handlesReplyPredictions
+        ) {
+          await this.handleModelResponse(request, response, modelProtocol, {
+            acceptAnyBearer: officialCodexResponses,
+            httpRequestIndex,
+            modelRequest: routedModelRequest,
+          })
           return
         }
       }
-      if (await this.desktopScenario?.handleHttp?.(request, response, url)) return
+      if (
+        await this.desktopScenario?.handleHttp?.(
+          request,
+          response,
+          url,
+          request.method === 'POST' && modelProtocol
+            ? {
+                protocol: modelProtocol,
+                reply: text =>
+                  this.writeLocalAssistantMessage(response, { protocol: modelProtocol }, text),
+              }
+            : null
+        )
+      ) {
+        return
+      }
     } catch (error) {
-      if (scenarioModelRequest) this.modelRequests.push(scenarioModelRequest)
+      if (routedModelRequest) {
+        routedModelRequest.failed = true
+      }
       console.error(
         `[desktop-e2e] scenario HTTP handler failed for ${request.method} ${url.pathname}`,
         error
@@ -1458,6 +1455,8 @@ class DesktopE2EServer {
       return
     }
 
+    if (handleModelSubscriptionUsage(request, response)) return
+
     if (request.method === 'GET' && url.pathname === '/backend-api/wham/accounts/check') {
       assert.equal(
         request.headers.authorization,
@@ -1472,527 +1471,6 @@ class DesktopE2EServer {
             account_routing_override: 'NO_CONSTRAINT',
           },
         ],
-      })
-      return
-    }
-
-    if (request.method === 'GET' && url.pathname === '/api/users/me') {
-      json(response, 200, {
-        id: 9001,
-        user_name: CLOUD_STORED_USER_NAME,
-        email: 'desktop-e2e@wework.local',
-        preferences: this.userPreferences,
-      })
-      return
-    }
-
-    if (request.method === 'PUT' && url.pathname === '/api/users/me') {
-      const body = await readRequestBody(request)
-      this.userPreferences = {
-        ...this.userPreferences,
-        ...(body.preferences ?? {}),
-      }
-      json(response, 200, {
-        id: 9001,
-        user_name: CLOUD_STORED_USER_NAME,
-        email: 'desktop-e2e@wework.local',
-        preferences: this.userPreferences,
-      })
-      return
-    }
-
-    if (request.method === 'GET' && url.pathname === '/api/apps/installed') {
-      json(response, 200, { apps: [] })
-      return
-    }
-
-    // Official/local marketplace plugins may infer on_install connectors from
-    // .app.json entries (e.g. openai-platform). ensureMarketplaceConnectors
-    // lists Wegent connector-apps before plugin/install; stub them as already
-    // connected so desktop E2E can exercise the real install path.
-    if (
-      this.enableMarketplaceConnectorAppsStub &&
-      request.method === 'GET' &&
-      url.pathname === '/api/connector-apps'
-    ) {
-      const connected = status => ({
-        status,
-        external_account_name: status === 'connected' ? 'desktop-e2e' : null,
-        granted_scopes: status === 'connected' ? ['e2e'] : [],
-        expires_at: null,
-      })
-      json(response, 200, [
-        {
-          id: 1,
-          slug: 'openai-platform',
-          name: 'OpenAI Platform',
-          description: 'Desktop E2E stub for OpenAI Developers app connectors',
-          icon_url: null,
-          auth_type: 'oauth2',
-          connection: connected('connected'),
-        },
-        {
-          id: 2,
-          slug: 'openai-developers',
-          name: 'OpenAI Developers',
-          description: 'Desktop E2E stub matching inferred plugin-name connectors',
-          icon_url: null,
-          auth_type: 'oauth2',
-          connection: connected('connected'),
-        },
-        {
-          id: 3,
-          slug: 'github',
-          name: 'GitHub',
-          description: 'Desktop E2E stub for cloud connector authorization flows',
-          icon_url: null,
-          auth_type: 'oauth2',
-          connection: connected('connected'),
-        },
-      ])
-      return
-    }
-
-    if (request.method === 'POST' && url.pathname === '/api/users/me/wegent-runtime-token') {
-      assert.equal(
-        request.headers.authorization,
-        'Bearer wework-desktop-e2e-cloud-token',
-        'The runtime token request did not use the cloud authentication token'
-      )
-      json(response, 200, {
-        auth_token: 'wework-desktop-e2e-runtime-token',
-        token_type: 'bearer',
-        expires_in: 3600,
-      })
-      return
-    }
-
-    if (request.method === 'GET' && url.pathname === '/api/sites/app-types') {
-      json(response, 200, {
-        items: [
-          {
-            app_type: 'web',
-            enabled: true,
-            order: 10,
-            capabilities: [
-              'create',
-              'publish',
-              'edit',
-              'delete',
-              'configure_environment',
-              'manage_access',
-            ],
-            create: {
-              plugin_name: 'wegent-sites',
-              marketplace_name: 'wegent',
-            },
-          },
-          {
-            app_type: 'miniapp',
-            enabled: true,
-            order: 20,
-            capabilities: ['create', 'open_experience'],
-            create: {
-              plugin_name: 'weibo-miniapp-h5-develop-agent',
-              marketplace_name: 'wegent',
-            },
-          },
-        ],
-      })
-      return
-    }
-
-    if (request.method === 'GET' && url.pathname === '/api/sites') {
-      const appType = url.searchParams.get('app_type') || 'web'
-      const query = url.searchParams.get('q')?.trim().toLowerCase() || ''
-      const items =
-        appType === 'miniapp'
-          ? [
-              {
-                app_type: 'miniapp',
-                siteid: 'prj_e2e_mini',
-                taskid: 'prj_e2e_mini',
-                username: 'wework-desktop-e2e-cloud-user',
-                owner_username: 'wework-desktop-e2e-cloud-user',
-                access_role: 'owner',
-                name: 'E2E Mini Program',
-                slug: 'prj_e2e_mini',
-                app_id: 'wx-e2e-mini',
-                status: 'experience',
-                version: '1.0.0',
-                experience_url: 'https://example.test/mini-experience',
-                thumbnail_url: null,
-                created_at: '2026-07-22T00:10:00Z',
-                updated_at: '2026-07-22T00:12:00Z',
-              },
-            ]
-          : [
-              {
-                app_type: 'web',
-                siteid: 'prj_e2e_product',
-                taskid: 'prj_e2e_product',
-                username: 'wework-desktop-e2e-cloud-user',
-                owner_username: 'wework-desktop-e2e-cloud-user',
-                access_role: 'owner',
-                name: 'E2E Product Site',
-                slug: 'prj_e2e_product',
-                internal_url: 'https://sites.internal/e2e-product',
-                external_url: null,
-                publish_status: 'unpublished',
-                last_publish_error: null,
-                thumbnail_url: null,
-                created_at: '2026-07-22T00:00:00Z',
-                updated_at: '2026-07-22T00:00:00Z',
-                published_at: null,
-              },
-            ]
-      const filteredItems = query
-        ? items.filter(item => item.name.toLowerCase().includes(query))
-        : items
-      json(response, 200, {
-        items: filteredItems,
-        total: filteredItems.length,
-        offset: Number.parseInt(url.searchParams.get('offset') || '0', 10),
-        limit: Number.parseInt(url.searchParams.get('limit') || '20', 10),
-      })
-      return
-    }
-
-    if (
-      url.pathname === '/api/sites/prj_e2e_product/environment-variables' &&
-      request.method === 'GET'
-    ) {
-      json(response, 200, {
-        revision_id:
-          this.siteEnvironmentRevision > 0 ? `env_e2e_${this.siteEnvironmentRevision}` : null,
-        project_id: 'prj_e2e_product',
-        revision_number: this.siteEnvironmentRevision,
-        items: this.siteEnvironmentVariables,
-      })
-      return
-    }
-    if (
-      url.pathname === '/api/sites/prj_e2e_product/environment-variables' &&
-      request.method === 'PATCH'
-    ) {
-      assert.ok(
-        typeof request.headers['idempotency-key'] === 'string' &&
-          request.headers['idempotency-key'].length > 0,
-        'Updating Site environment variables did not include an Idempotency-Key'
-      )
-      const body = await readRequestBody(request)
-      assert.ok(Array.isArray(body.operations))
-      for (const operation of body.operations) {
-        if (operation.op === 'remove') {
-          this.siteEnvironmentVariables = this.siteEnvironmentVariables.filter(
-            item => item.key !== operation.key
-          )
-          continue
-        }
-        assert.equal(operation.op, 'upsert')
-        const item =
-          operation.type === 'secret'
-            ? {
-                key: operation.key,
-                type: 'secret',
-                configured: true,
-                updated_by: 'wework-desktop-e2e-cloud-user',
-                updated_at: '2026-09-03T00:00:00Z',
-              }
-            : {
-                key: operation.key,
-                type: 'plain',
-                value: operation.value,
-                updated_by: 'wework-desktop-e2e-cloud-user',
-                updated_at: '2026-09-03T00:00:00Z',
-              }
-        this.siteEnvironmentVariables = [
-          ...this.siteEnvironmentVariables.filter(existing => existing.key !== operation.key),
-          item,
-        ]
-      }
-      this.siteEnvironmentRevision += 1
-      json(response, 201, {
-        id: `env_e2e_${this.siteEnvironmentRevision}`,
-        project_id: 'prj_e2e_product',
-        revision_number: this.siteEnvironmentRevision,
-        variables: this.siteEnvironmentVariables,
-        created_by: 'wework-desktop-e2e-cloud-user',
-        created_at: '2026-09-03T00:00:00Z',
-      })
-      return
-    }
-
-    if (url.pathname === '/api/sites/prj_e2e_product/access' && request.method === 'GET') {
-      json(response, 200, this.siteAccessPolicy)
-      return
-    }
-    if (url.pathname === '/api/sites/prj_e2e_product/access' && request.method === 'PUT') {
-      assert.ok(
-        typeof request.headers['idempotency-key'] === 'string' &&
-          request.headers['idempotency-key'].length > 0,
-        'Updating Site access did not include an Idempotency-Key'
-      )
-      const body = await readRequestBody(request)
-      assert.ok(['all', 'login', 'owner', 'custom'].includes(body.audience))
-      assert.ok(Array.isArray(body.subjects))
-      this.siteAccessPolicy = {
-        ...this.siteAccessPolicy,
-        id: 'pol_e2e_2',
-        audience: body.audience,
-        subjects: body.subjects,
-        revision_number: this.siteAccessPolicy.revision_number + 1,
-        created_at: '2026-09-08T00:01:00Z',
-      }
-      json(response, 200, this.siteAccessPolicy)
-      return
-    }
-
-    const siteCollaboratorsMatch = url.pathname.match(
-      /^\/api\/sites\/prj_e2e_product\/collaborators(?:\/([^/]+))?$/
-    )
-    if (siteCollaboratorsMatch && request.method === 'GET' && !siteCollaboratorsMatch[1]) {
-      json(response, 200, { items: this.siteCollaborators })
-      return
-    }
-    if (siteCollaboratorsMatch && request.method === 'POST' && !siteCollaboratorsMatch[1]) {
-      assert.ok(
-        typeof request.headers['idempotency-key'] === 'string' &&
-          request.headers['idempotency-key'].length > 0,
-        'Adding a Site collaborator did not include an Idempotency-Key'
-      )
-      const body = await readRequestBody(request)
-      assert.equal(typeof body.subject, 'string')
-      const collaborator = {
-        subject: body.subject,
-        added_by: 'wework-desktop-e2e-cloud-user',
-        created_at: '2026-09-03T00:00:00Z',
-      }
-      this.siteCollaborators = [
-        ...this.siteCollaborators.filter(item => item.subject !== collaborator.subject),
-        collaborator,
-      ]
-      json(response, 201, collaborator)
-      return
-    }
-    if (siteCollaboratorsMatch && request.method === 'DELETE' && siteCollaboratorsMatch[1]) {
-      const subject = decodeURIComponent(siteCollaboratorsMatch[1])
-      this.siteCollaborators = this.siteCollaborators.filter(item => item.subject !== subject)
-      response.writeHead(204)
-      response.end()
-      return
-    }
-
-    if (request.method === 'GET' && url.pathname === '/api/plugins/installed') {
-      if (this.applicationPluginInspectionUnavailable) {
-        json(response, 500, { detail: 'Plugin inventory unavailable' })
-        return
-      }
-      json(response, 200, {
-        items: [
-          ...(this.sitesPluginInstalled
-            ? [installedSitesPlugin(this.sitesPluginDeviceId ?? 'local-device')]
-            : []),
-          ...(this.miniProgramPluginInstalled
-            ? [installedMiniProgramPlugin(this.miniProgramPluginDeviceId ?? 'local-device')]
-            : []),
-        ],
-      })
-      return
-    }
-
-    const builtinPluginMatch = url.pathname.match(
-      /^\/api\/plugins\/builtin\/(wegent-sites|weibo-miniapp-h5-develop-agent)\/ensure-installed$/
-    )
-    if (request.method === 'POST' && builtinPluginMatch) {
-      const body = await readRequestBody(request)
-      const pluginName = builtinPluginMatch[1]
-      const isSitesPlugin = pluginName === 'wegent-sites'
-      const targetDeviceId =
-        typeof body.device_id === 'string' && body.device_id.trim() ? body.device_id.trim() : null
-      const installedPlugin = isSitesPlugin
-        ? installedSitesPlugin(targetDeviceId ?? 'local-device')
-        : installedMiniProgramPlugin(targetDeviceId ?? 'local-device')
-      if (targetDeviceId && this.onApplicationPluginInstalled) {
-        await this.onApplicationPluginInstalled(installedPlugin)
-      }
-      const installedPluginId = isSitesPlugin ? 601 : 602
-      if (isSitesPlugin) {
-        this.sitesPluginInstalled = true
-        this.sitesPluginDeviceId = targetDeviceId
-      } else {
-        this.miniProgramPluginInstalled = true
-        this.miniProgramPluginDeviceId = targetDeviceId
-      }
-      if (!targetDeviceId) {
-        if (isSitesPlugin) {
-          this.sitesConnectionBootstrapRequests += 1
-        }
-        json(response, 200, {
-          plugin: installedPlugin,
-          sync: null,
-        })
-        return
-      }
-      json(response, 200, {
-        plugin: installedPlugin,
-        sync: {
-          success: true,
-          device_id: targetDeviceId,
-          mode: 'merge',
-          skills: [],
-          plugins: [{ id: installedPluginId, name: pluginName, status: 'synced' }],
-          mcps: [],
-          errors: [],
-          synced: 1,
-          failed: 0,
-          skipped: 0,
-          results: [
-            {
-              device_id: targetDeviceId,
-              success: true,
-              error: null,
-              skills: [],
-              plugins: [{ id: installedPluginId, name: pluginName, status: 'synced' }],
-              mcps: [],
-              errors: [],
-            },
-          ],
-        },
-      })
-      return
-    }
-
-    if (request.method === 'GET' && url.pathname === '/api/plugins/marketplace') {
-      json(response, 200, {
-        items: [
-          sitesMarketplacePlugin(this.sitesPluginInstalled),
-          miniProgramMarketplacePlugin(this.miniProgramPluginInstalled),
-        ],
-      })
-      return
-    }
-
-    if (request.method === 'GET' && url.pathname === BLOCKED_CLOUD_MODEL_PATH) {
-      if (this.cloudModelsAvailable) {
-        json(response, 200, {
-          data: [
-            {
-              name: `codex-${DEFAULT_MODEL_ID}`,
-              type: 'runtime',
-              displayName: `${DEFAULT_MODEL_LABEL} (Codex)`,
-              provider: 'openai',
-              modelId: DEFAULT_MODEL_ID,
-              namespace: 'default',
-              config: {
-                protocol: 'openai-responses',
-                apiFormat: 'responses',
-                weworkModelKind: 'codex-official',
-                ui: { family: 'codex-official', modelLabel: DEFAULT_MODEL_LABEL },
-              },
-              runtime: { family: 'openai.openai-responses' },
-              isActive: true,
-            },
-            {
-              name: PROVIDER_SWITCH_OFFICIAL_OPTION_ID,
-              type: 'runtime',
-              displayName: PROVIDER_SWITCH_OFFICIAL_LABEL,
-              provider: 'openai',
-              modelId: PROVIDER_SWITCH_OFFICIAL_MODEL_ID,
-              namespace: 'default',
-              config: {
-                protocol: 'openai-responses',
-                apiFormat: 'responses',
-                weworkModelKind: 'codex-official',
-                codexProviderId: 'openai',
-                ui: { family: 'codex-official', modelLabel: PROVIDER_SWITCH_OFFICIAL_MODEL_LABEL },
-              },
-              runtime: { family: 'openai.openai-responses' },
-              isActive: true,
-            },
-            {
-              name: CLOUD_PUBLIC_MODEL_NAME,
-              type: 'public',
-              displayName: CLOUD_PUBLIC_MODEL_LABEL,
-              provider: 'openai',
-              modelId: 'desktop-e2e-public-upstream-model',
-              namespace: 'default',
-              resourceUserId: 0,
-              config: {
-                protocol: 'openai-responses',
-                apiFormat: 'responses',
-                ui: { family: 'gpt', modelLabel: CLOUD_PUBLIC_MODEL_LABEL },
-              },
-              runtime: { family: 'openai.openai-responses' },
-              isActive: true,
-            },
-          ],
-        })
-        return
-      }
-      if (this.failCloudModels) {
-        this.failedCloudModelRequests += 1
-        this.failedCloudModelWaiter?.()
-        this.failedCloudModelWaiter = null
-        json(response, 503, { error: 'Desktop E2E intentional cloud model failure' })
-        return
-      }
-      this.blockCloudRequest(request, response, url)
-      return
-    }
-
-    if (
-      request.method === 'POST' &&
-      url.pathname === '/api/model-runtime/responses' &&
-      this.scenario === 'supervisor'
-    ) {
-      const body = await readRequestBody(request)
-      const requestText = JSON.stringify(body)
-      assert.equal(
-        request.headers.authorization,
-        'Bearer wework-desktop-e2e-cloud-token',
-        'The supervisor model API request did not use the cloud authentication token'
-      )
-      assert.deepEqual(
-        body.model_ref,
-        {
-          name: CLOUD_PUBLIC_MODEL_NAME,
-          type: 'public',
-          namespace: 'default',
-          resource_user_id: 0,
-        },
-        'The supervisor model API request did not preserve the selected cloud model identity'
-      )
-      assert.equal(
-        body.metadata?.source,
-        'wework-supervisor',
-        'The supervisor model API request did not identify its source'
-      )
-      assert.ok(
-        requestText.includes('correction'),
-        'The supervisor evaluator request did not include its structured output schema'
-      )
-      assert.ok(
-        requestText.includes(SUPERVISOR_COMPLETION_TEXT),
-        'The supervisor evaluator did not receive the latest assistant progress'
-      )
-      assert.equal(
-        requestText.includes(SUPERVISOR_PROMPT),
-        false,
-        'The supervisor evaluator received the original user transcript instead of recent AI content'
-      )
-      this.recordScenarioRequest('supervisor', {
-        body,
-        headers: request.headers,
-        pathname: url.pathname,
-      })
-      json(response, 200, {
-        output_text: JSON.stringify({
-          correction: SUPERVISOR_CORRECTION,
-          rationale: 'The completed reply should restate the original constraint.',
-        }),
-        model: CLOUD_PUBLIC_MODEL_NAME,
-        created_at: '2026-08-12T00:00:00Z',
       })
       return
     }
@@ -2034,19 +1512,6 @@ class DesktopE2EServer {
       return
     }
 
-    const cloudResponsesProxy = url.pathname === '/api/runtime-work/llm-responses-proxy/responses'
-    const officialCodexResponses = url.pathname === '/backend-api/codex/responses'
-    const modelProtocol =
-      url.pathname === '/v1/responses' ||
-      url.pathname === '/responses' ||
-      url.pathname === '/backend-api/codex/responses' ||
-      cloudResponsesProxy
-        ? 'responses'
-        : url.pathname === '/v1/chat/completions' || url.pathname === '/chat/completions'
-          ? 'chat'
-          : url.pathname === '/v1/messages' || url.pathname === '/messages'
-            ? 'anthropic'
-            : null
     if (request.method === 'POST' && modelProtocol) {
       if (officialCodexResponses) {
         assert.match(
@@ -2055,28 +1520,10 @@ class DesktopE2EServer {
           'The official Codex request did not forward its native bearer token'
         )
       }
-      if (cloudResponsesProxy) {
-        assert.equal(
-          request.headers['x-wegent-model-type'],
-          'public',
-          'The automation cloud model type was not forwarded to the Backend proxy'
-        )
-        assert.equal(
-          request.headers['x-wegent-model-namespace'],
-          'default',
-          'The automation cloud model namespace was not forwarded to the Backend proxy'
-        )
-        assert.equal(
-          request.headers['x-wegent-model-user-id'],
-          '0',
-          'The automation cloud model owner was not forwarded to the Backend proxy'
-        )
-      }
       await this.handleModelResponse(request, response, modelProtocol, {
-        acceptedAuthorization: cloudResponsesProxy
-          ? 'Bearer wework-desktop-e2e-cloud-token'
-          : undefined,
         acceptAnyBearer: officialCodexResponses,
+        httpRequestIndex,
+        modelRequest: routedModelRequest,
       })
       return
     }
@@ -2100,6 +1547,7 @@ class DesktopE2EServer {
       }
       this.controlClientsByWindow.set(ready.windowLabel, ready.clientId)
       this.controlWindowsByClient.set(ready.clientId, ready.windowLabel)
+      this.performance?.record(ready.clientId, ready.performance)
       if (previousClientId && previousClientId !== ready.clientId) {
         const previousLongPoll = this.controlLongPolls.get(previousClientId)
         if (previousLongPoll) {
@@ -2189,6 +1637,13 @@ class DesktopE2EServer {
         return true
       }
       if (!pending.started) {
+        this.performance?.record(
+          started.clientId,
+          started.performance,
+          pending.action,
+          'started',
+          started.id
+        )
         pending.started = true
         const diagnostic = this.commandHistory.find(command => command.id === started.id)
         if (diagnostic) diagnostic.startedAt = new Date().toISOString()
@@ -2243,6 +1698,13 @@ class DesktopE2EServer {
         return true
       }
       const diagnostic = this.commandHistory.find(command => command.id === result.id)
+      this.performance?.record(
+        result.clientId,
+        result.performance,
+        pending.action,
+        'result',
+        result.id
+      )
       if (diagnostic) {
         diagnostic.resultReceivedAt = new Date().toISOString()
         diagnostic.actionSucceeded = result.ok === true
@@ -2279,11 +1741,16 @@ class DesktopE2EServer {
   async handleModelResponse(request, response, protocol, options = {}) {
     const body = await readRequestBody(request)
     const authorization = request.headers.authorization ?? null
-    const modelRequest = { authorization, body, scenario: this.scenario }
-    this.modelRequests.push(modelRequest)
+    const modelRequest = options.modelRequest ?? {
+      body,
+      scenario: this.scenario,
+      protocol,
+      httpRequestIndex: options.httpRequestIndex,
+    }
+    modelRequest.authorization = authorization
+    if (!options.modelRequest) this.modelRequests.push(modelRequest)
     const authenticated =
       authorization === `Bearer ${MODEL_API_KEY}` ||
-      authorization === options.acceptedAuthorization ||
       request.headers['x-api-key'] === MODEL_API_KEY ||
       (options.acceptAnyBearer === true && authorization?.startsWith('Bearer '))
     if (!authenticated) {
@@ -2461,6 +1928,47 @@ class DesktopE2EServer {
       return
     }
 
+    if (this.scenario === 'fork_provider_source' || this.scenario === 'fork_provider_follow_up') {
+      const requestKind = codexRequestKind(body)
+      if (requestKind === 'prewarm' || requestKind === 'compaction') {
+        const responseId = `fork-provider-empty-${this.modelRequests.length}`
+        this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+        return
+      }
+      const expectedModel = LOCAL_MODEL_CASES.find(model => model.protocol === 'responses')
+      assert.ok(expectedModel, 'Missing the responses local model for fork provider verification')
+      assert.equal(
+        protocol,
+        expectedModel.protocol,
+        'The fork provider regression reached the wrong protocol endpoint'
+      )
+      assert.equal(
+        body.model,
+        expectedModel.modelId,
+        'The forked task did not preserve the source model route'
+      )
+      const isFollowUp = this.scenario === 'fork_provider_follow_up'
+      const expectedPrompt = isFollowUp
+        ? FORK_PROVIDER_FOLLOW_UP_PROMPT
+        : FORK_PROVIDER_SOURCE_PROMPT
+      assert.ok(
+        JSON.stringify(body).includes(expectedPrompt),
+        'The fork provider regression request did not contain its expected prompt'
+      )
+      this.recordScenarioRequest(this.scenario, modelRequest)
+      const responseId = `fork-provider-${this.modelRequests.length}`
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(
+          isFollowUp
+            ? FORK_PROVIDER_FOLLOW_UP_COMPLETION_TEXT
+            : FORK_PROVIDER_SOURCE_COMPLETION_TEXT
+        ),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
     const localModel = localProtocolCase(body.model)
     if (localModel) {
       assert.equal(
@@ -2528,11 +2036,7 @@ class DesktopE2EServer {
 
     const readyResult = readyPluginWorkspaceResult(body)
     if (readyResult) {
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(readyResult),
-        responseCompleted(responseId),
-      ])
+      this.writeLocalAssistantMessage(response, { protocol }, readyResult)
       return
     }
 
@@ -2543,11 +2047,11 @@ class DesktopE2EServer {
         requestText.includes(CONNECTOR_AUTH_UNMATCHED_RESUME_PROMPT),
         'The unmatched connector auth resume scenario did not receive its trigger prompt'
       )
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
+      this.writeLocalAssistantMessage(
+        response,
+        { protocol },
+        CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT
+      )
       return
     }
 
@@ -2558,20 +2062,12 @@ class DesktopE2EServer {
           'Wework Plugin Creator did not resolve its shipped skill'
         )
       }
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(PLUGIN_CREATOR_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
+      this.writeLocalAssistantMessage(response, { protocol }, PLUGIN_CREATOR_COMPLETION_TEXT)
       return
     }
 
     if (JSON.stringify(body).includes(PLUGIN_REFINEMENT_PROMPT)) {
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(PLUGIN_REFINEMENT_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
+      this.writeLocalAssistantMessage(response, { protocol }, PLUGIN_REFINEMENT_COMPLETION_TEXT)
       return
     }
 
@@ -2646,6 +2142,28 @@ class DesktopE2EServer {
     }
 
     if (
+      this.scenario === 'view_image' &&
+      this.viewImageStage === 'initial' &&
+      !this.viewImageToolLessPrewarmHandled &&
+      !requestAdvertisesViewImageTool(body)
+    ) {
+      this.viewImageToolLessPrewarmHandled = true
+      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+      return
+    }
+
+    if (
+      this.scenario === 'cloud_html_link' &&
+      !this.cloudHtmlLinkToolLessPrewarmHandled &&
+      !JSON.stringify(body).includes(CLOUD_HTML_LINK_PROMPT) &&
+      !requestAdvertisesShellTool(body)
+    ) {
+      this.cloudHtmlLinkToolLessPrewarmHandled = true
+      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+      return
+    }
+
+    if (
       this.scenario === 'cloud_initial' &&
       this.cloudModelStage === 'initial' &&
       !this.cloudToolLessPrewarmHandled &&
@@ -2674,6 +2192,146 @@ class DesktopE2EServer {
     ) {
       this.officialPluginToolLessPrewarmHandled = true
       this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+      return
+    }
+
+    if (this.scenario === 'tool_block_order' && !requestAdvertisesShellTool(body)) {
+      this.writeSse(response, [responseCreated(responseId), responseCompleted(responseId)])
+      return
+    }
+
+    if (this.scenario === 'local_markdown_image') {
+      this.recordScenarioRequest('local_markdown_image', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(LOCAL_MARKDOWN_IMAGE_PROMPT),
+        'The real Codex request did not contain the local Markdown image prompt'
+      )
+      const imageUrl = pathToFileURL(join(tmpdir(), LOCAL_MARKDOWN_IMAGE_FILENAME)).href
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(`![${LOCAL_MARKDOWN_IMAGE_ALT}](${imageUrl})`),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'tool_block_order') {
+      this.recordScenarioRequest('tool_block_order', modelRequest)
+      const requestNumber = this.scenarioRequests.get('tool_block_order').length
+      const requestText = JSON.stringify(body)
+
+      if (requestNumber === 1) {
+        assert.ok(
+          requestText.includes(TOOL_BLOCK_ORDER_PROMPT),
+          'The real Codex request did not contain the tool-block-order prompt'
+        )
+        const tool = selectShellToolCommand(body, 'printf earlier-created-tool', this.workspacePath)
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...selectedToolCall(EARLIER_TOOL_BLOCK_ID, tool),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      if (requestNumber === 2) {
+        assert.equal(
+          requestContainsToolOutput(body, EARLIER_TOOL_BLOCK_ID),
+          true,
+          'The earlier command output did not return through the real Codex tool loop'
+        )
+        const search = selectToolSearch(body, 'node_repl js')
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...toolSearchResponseEvents(NODE_REPL_TOOL_SEARCH_ID, search),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      if (requestNumber === 3) {
+        const tool = selectMcpTool(body, 'node_repl', 'js', {
+          code: "nodeRepl.write({ status: 'ready', value: 42 })",
+        })
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...selectedToolCall(NODE_REPL_TOOL_BLOCK_ID, tool),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      if (requestNumber === 4) {
+        assert.equal(
+          requestContainsToolOutput(body, NODE_REPL_TOOL_BLOCK_ID),
+          true,
+          'The Node REPL output did not return through the real Codex tool loop'
+        )
+        assert.ok(
+          requestText.includes("{ status: 'executed', result: 84 }"),
+          'The Node REPL MCP server result was not delivered to the model service'
+        )
+        this.resolveToolBlockNodeOutputObserved()
+        await this.toolBlockNodeRelease
+        const search = selectToolSearch(
+          body,
+          'github issue details',
+          'mcp__github__issues__get_issue_details'
+        )
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...toolSearchResponseEvents(GENERIC_MCP_TOOL_SEARCH_ID, search),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      if (requestNumber === 5) {
+        const tool = selectMcpTool(body, 'github__issues', 'get_issue_details', {
+          owner: 'wecode-ai',
+          repo: 'Wegent',
+          issue_number: 123,
+        })
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...selectedToolCall(GENERIC_MCP_TOOL_BLOCK_ID, tool),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      if (requestNumber === 6) {
+        assert.equal(
+          requestContainsToolOutput(body, GENERIC_MCP_TOOL_BLOCK_ID),
+          true,
+          'The generic MCP output did not return through the real Codex tool loop'
+        )
+        assert.ok(
+          requestText.includes('Tool detail verification'),
+          'The generic MCP server result was not delivered to the model service'
+        )
+        this.resolveToolBlockGenericOutputObserved()
+        await this.toolBlockGenericRelease
+        const tool = selectShellToolCommand(body, 'printf later-created-tool', this.workspacePath)
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...selectedToolCall(LATER_TOOL_BLOCK_ID, tool),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+
+      assert.equal(requestNumber, 7, `Unexpected tool-block-order request ${requestNumber}`)
+      assert.equal(
+        requestContainsToolOutput(body, LATER_TOOL_BLOCK_ID),
+        true,
+        'The later command output did not return through the real Codex tool loop'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(TOOL_BLOCK_ORDER_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
       return
     }
 
@@ -3063,6 +2721,44 @@ class DesktopE2EServer {
       assert.fail(`Unexpected guidance scroll model stage: ${this.guidanceScrollStage}`)
     }
 
+    if (this.scenario === 'view_image' && this.viewImageStage === 'initial') {
+      this.recordScenarioRequest('view_image', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(VIEW_IMAGE_PROMPT),
+        'The real Codex request did not contain the view_image prompt'
+      )
+      const image = selectViewImageTool(body, this.workspacePath)
+      this.viewImageStage = 'awaiting_tool_output'
+      this.writeSse(response, [
+        responseCreated(responseId),
+        ...selectedToolCall('wework-e2e-view-image', image),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'view_image') {
+      assert.equal(
+        this.viewImageStage,
+        'awaiting_tool_output',
+        `Unexpected desktop E2E view_image stage: ${this.viewImageStage}`
+      )
+      this.recordScenarioRequest('view_image', modelRequest)
+      assert.equal(
+        requestContainsToolOutput(body, 'wework-e2e-view-image'),
+        true,
+        'The real Codex request did not report the view_image tool output to the model service'
+      )
+      this.viewImageStage = 'complete'
+      await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(VIEW_IMAGE_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
     if (this.scenario === 'concurrent_memory') {
       const promptMatch = JSON.stringify(body).match(/WEWORK_DESKTOP_E2E_CONCURRENT_MEMORY_(\d+)/)
       assert.ok(promptMatch, 'Concurrent memory request did not contain a task UI prompt')
@@ -3125,6 +2821,30 @@ class DesktopE2EServer {
       this.memoryStage = 'streaming'
       await this.writeStreamingMarkdown(response, responseId, streamingMarkdownReport())
       this.memoryStage = 'complete'
+      return
+    }
+
+    if (this.scenario === 'cloud_html_link') {
+      this.recordScenarioRequest('cloud_html_link', modelRequest)
+      assert.ok(
+        JSON.stringify(body).includes(CLOUD_HTML_LINK_PROMPT),
+        'The real cloud Codex request did not contain the HTML link prompt'
+      )
+      const previewPath = join(this.cloudWorkspacePath, CLOUD_HTML_LINK_FILENAME).replaceAll(
+        '\\',
+        '/'
+      )
+      const missingPath = join(
+        this.cloudWorkspacePath,
+        CLOUD_HTML_LINK_MISSING_FILENAME
+      ).replaceAll('\\', '/')
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(
+          '[Cloud HTML preview](<' + previewPath + '>)\n[Missing Cloud HTML](<' + missingPath + '>)'
+        ),
+        responseCompleted(responseId),
+      ])
       return
     }
 
@@ -3693,7 +3413,8 @@ class DesktopE2EServer {
         JSON.stringify(body).includes('WEWORK_DESKTOP_E2E_WORKSPACE_SELECTION_STREAMING'),
         'The real Codex request did not contain the workspace-selection streaming prompt'
       )
-      const stream = streamingTextEvents(
+      const stream = modelTextStream(
+        protocol,
         responseId,
         Array.from(
           { length: 40 },
@@ -3706,25 +3427,12 @@ class DesktopE2EServer {
         Connection: 'keep-alive',
         'Content-Type': 'text/event-stream; charset=utf-8',
       })
-      response.write(createSse(stream.start))
-      let offset = 0
-      for (const delta of stream.chunks) {
-        response.write(
-          createSse([
-            {
-              type: 'response.output_text.delta',
-              item_id: stream.itemId,
-              output_index: 0,
-              content_index: 0,
-              delta,
-              offset,
-            },
-          ])
-        )
-        offset += [...delta].length
+      if (stream.start) response.write(stream.start)
+      for (const frame of stream.chunks) {
+        response.write(frame)
         await new Promise(resolvePromise => setTimeout(resolvePromise, 250))
       }
-      response.end(createSse(stream.finish))
+      response.end(stream.finish)
       return
     }
 
@@ -4099,6 +3807,23 @@ class DesktopE2EServer {
       return
     }
 
+    if (this.scenario === 'skill_mention_display') {
+      this.recordScenarioRequest('skill_mention_display', modelRequest)
+      const requestText = JSON.stringify(body)
+      assert.ok(
+        requestText.includes(QUALIFIED_SKILL_MENTION_PROMPT) &&
+          requestText.includes(`${OFFICIAL_PLUGIN_NAME}:${OFFICIAL_PLUGIN_SKILL_NAME}`) &&
+          requestText.includes(this.officialPluginSkillPath),
+        'The real Codex request did not preserve the qualified structured skill mention'
+      )
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(QUALIFIED_SKILL_MENTION_COMPLETION_TEXT),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
     if (this.scenario === 'checkpoint_task') {
       this.recordScenarioRequest('checkpoint_task', modelRequest)
       assert.ok(
@@ -4265,6 +3990,46 @@ class DesktopE2EServer {
             `${pathToFileURL(join(this.workspacePath, FILE_PANEL_LINK_NAME)).href}:1`
           )
         ),
+        responseCompleted(responseId),
+      ])
+      return
+    }
+
+    if (this.scenario === 'automation') {
+      this.recordScenarioRequest('automation', modelRequest)
+      if (this.automationStage === 'manual_goal' || this.automationStage === 'scheduled_goal') {
+        assert.ok(
+          JSON.stringify(body).includes(AUTOMATION_PROMPT),
+          'The automation prompt was lost before model execution'
+        )
+        const updateGoal = selectTool(body, 'update_goal', { status: 'complete' })
+        const callId =
+          this.automationStage === 'manual_goal'
+            ? 'wework-e2e-automation-manual-goal'
+            : 'wework-e2e-automation-scheduled-goal'
+        this.automationStage =
+          this.automationStage === 'manual_goal' ? 'manual_goal_output' : 'scheduled_goal_output'
+        this.writeSse(response, [
+          responseCreated(responseId),
+          ...selectedToolCall(callId, updateGoal),
+          responseCompleted(responseId),
+        ])
+        return
+      }
+      assert.equal(
+        requestContainsToolOutput(body),
+        true,
+        'The automation Goal did not return its update_goal output'
+      )
+      const manualRun = this.automationStage === 'manual_goal_output'
+      assert.ok(
+        manualRun || this.automationStage === 'scheduled_goal_output',
+        `Unexpected automation model stage: ${this.automationStage}`
+      )
+      this.automationStage = manualRun ? 'scheduled_goal' : 'complete'
+      this.writeSse(response, [
+        responseCreated(responseId),
+        assistantMessage(`${AUTOMATION_COMPLETION_TEXT}_${manualRun ? 1 : 2}`),
         responseCompleted(responseId),
       ])
       return
@@ -4478,11 +4243,7 @@ class DesktopE2EServer {
         false,
         'The dropped directory was incorrectly read as a file'
       )
-      this.writeSse(response, [
-        responseCreated(responseId),
-        assistantMessage(DROPPED_PATH_COMPLETION_TEXT),
-        responseCompleted(responseId),
-      ])
+      this.writeLocalAssistantMessage(response, { protocol }, DROPPED_PATH_COMPLETION_TEXT)
       return
     }
 
@@ -5980,12 +5741,8 @@ class DesktopE2EServer {
   }
 
   writeChatMessage(response, text) {
-    const chunk = {
-      id: 'chat-local-message',
-      object: 'chat.completion.chunk',
-      choices: [{ index: 0, delta: { role: 'assistant', content: text }, finish_reason: 'stop' }],
-    }
-    this.writeRawSse(response, `data: ${JSON.stringify(chunk)}\n\ndata: [DONE]\n\n`)
+    const stream = modelTextStream('chat', 'chat-local-message', text, [text])
+    this.writeRawSse(response, stream.start + stream.chunks.join('') + stream.finish)
   }
 
   writeAnthropicToolCall(
@@ -6084,49 +5841,8 @@ class DesktopE2EServer {
   }
 
   writeAnthropicMessage(response, text) {
-    this.writeAnthropicSse(response, [
-      [
-        'message_start',
-        {
-          type: 'message_start',
-          message: {
-            id: 'anthropic-local-message',
-            type: 'message',
-            role: 'assistant',
-            content: [],
-            model: 'desktop-e2e-anthropic-model',
-            stop_reason: null,
-            usage: { input_tokens: 1, output_tokens: 0 },
-          },
-        },
-      ],
-      [
-        'content_block_start',
-        {
-          type: 'content_block_start',
-          index: 0,
-          content_block: { type: 'text', text: '' },
-        },
-      ],
-      [
-        'content_block_delta',
-        {
-          type: 'content_block_delta',
-          index: 0,
-          delta: { type: 'text_delta', text },
-        },
-      ],
-      ['content_block_stop', { type: 'content_block_stop', index: 0 }],
-      [
-        'message_delta',
-        {
-          type: 'message_delta',
-          delta: { stop_reason: 'end_turn', stop_sequence: null },
-          usage: { output_tokens: text ? 1 : 0 },
-        },
-      ],
-      ['message_stop', { type: 'message_stop' }],
-    ])
+    const stream = modelTextStream('anthropic', 'anthropic-local-message', text, [text])
+    this.writeRawSse(response, stream.start + stream.chunks.join('') + stream.finish)
   }
 
   writeAnthropicSse(response, events) {

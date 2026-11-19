@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import { expandCompletedProcessing } from '../../e2e/desktop/modules/streaming-text-fixture.mjs'
 import type { DesktopControlCommand } from '@/extensions/desktop-control-contract'
 import * as desktopHost from '@/api/dsh/desktopHost'
 import * as nativeKey from './native-key-acknowledgement'
+import * as errorCapture from './error-capture'
 import { getDesktopControlDiagnostics } from './desktop-control-diagnostics'
 import {
   fillDesktopControlElement,
@@ -21,12 +22,20 @@ import { replaceProviderModelConfigs } from '@/features/model-settings/providerM
 import * as codexPlugins from '@/api/local/codexPlugins'
 import { toInstalledPlugin } from '@wegent/chat-core/codex-installed-plugins'
 
+let previousRuntimeConfig: Window['__WEWORK_RUNTIME_CONFIG__']
+
+beforeEach(() => {
+  previousRuntimeConfig = window.__WEWORK_RUNTIME_CONFIG__
+  window.__WEWORK_RUNTIME_CONFIG__ = { ...previousRuntimeConfig, desktopHost: 'electron' }
+})
+
 afterEach(() => {
   delete window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__
   clearLocalModelConfigs()
   replaceProviderModelConfigs([])
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
+  window.__WEWORK_RUNTIME_CONFIG__ = previousRuntimeConfig
 })
 
 function providerModel(id: string, enabled = true) {
@@ -105,6 +114,7 @@ describe('Electron desktop E2E automation', () => {
   test.each([undefined, false, true])(
     'preserves window maximization through the host command (%s)',
     async maximized => {
+      const diagnostic = vi.spyOn(errorCapture, 'reportE2EDiagnostic')
       const previous = { width: 1272, height: 716, maximized: true }
       const native = vi.spyOn(desktopHost, 'invokeDesktopHost').mockResolvedValue(previous as never)
       const results: Array<{ ok: boolean; value: string }> = []
@@ -133,6 +143,17 @@ describe('Electron desktop E2E automation', () => {
       expect(results).toContainEqual(
         expect.objectContaining({ ok: true, value: JSON.stringify(previous) })
       )
+      expect(diagnostic).toHaveBeenCalledWith('renderer-window-size', {
+        windowLabel: 'main',
+        topFrame: true,
+        visibilityState: document.visibilityState,
+        focused: document.hasFocus(),
+        outerSize: { width: window.outerWidth, height: window.outerHeight },
+        requested: { width: 1040, height: 760, ...(maximized === undefined ? {} : { maximized }) },
+        viewport: { width: window.innerWidth, height: window.innerHeight },
+        screen: { width: window.screen.width, height: window.screen.height },
+        devicePixelRatio: window.devicePixelRatio,
+      })
     }
   )
 
@@ -940,6 +961,45 @@ describe('Electron desktop E2E automation', () => {
     }
   })
 
+  test.each([true, false])(
+    'waits for a fill target without accepting a missing one: %s',
+    async mount => {
+      const input = document.createElement('input')
+      input.dataset.testid = 'delayed-fill-target'
+      const results: Array<{ ok: boolean; error?: string }> = []
+      let polls = 0
+      const timer = window.setTimeout(() => {
+        if (mount) document.body.append(input)
+      }, 30)
+      vi.stubGlobal('fetch', async (url: string, options?: RequestInit) => {
+        if (url.includes('/commands?')) {
+          if (++polls > 1) return new Response(null, { status: 410 })
+          return new Response(
+            JSON.stringify({
+              id: 'delayed-fill',
+              action: 'fill',
+              selector: '[data-testid="delayed-fill-target"]',
+              value: 'ready',
+              timeoutMs: 100,
+            })
+          )
+        }
+        if (url.endsWith('/results')) results.push(JSON.parse(String(options?.body)))
+        return new Response('{}')
+      })
+      try {
+        await runDesktopControlClient('http://127.0.0.1:43111', 'main')
+        expect(results).toHaveLength(1)
+        expect(results[0].ok).toBe(mount)
+        if (mount) expect(input.value).toBe('ready')
+        else expect(results[0].error).toContain('Timed out waiting for selector')
+      } finally {
+        window.clearTimeout(timer)
+        input.remove()
+      }
+    }
+  )
+
   test('is enabled by an injected runtime control URL', () => {
     window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__ = {
       controlUrl: 'http://127.0.0.1:43111',
@@ -1008,10 +1068,14 @@ describe('Electron desktop E2E automation', () => {
       ).toEqual([
         ['e2e.focusMainWindow', undefined],
         ['e2e.pressKey', selectAll],
-        ['e2e.insertText', 'first'],
-        ['e2e.pressKey', 'Enter'],
-        ['e2e.insertText', 'second'],
+        ['e2e.insertText', 'first\nsecond'],
       ])
+      expect(nativeKey.sendNativeKeyAndWait).toHaveBeenLastCalledWith(
+        editor,
+        'press',
+        expect.any(Function),
+        1
+      )
       native.mockClear()
       await fillDesktopControlElement(editor, '')
       expect(native.mock.calls.map(([method, params]) => [method, params?.key])).toEqual([

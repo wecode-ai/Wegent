@@ -1,16 +1,10 @@
 import { defineConfig, devices } from '@playwright/test'
 
 const port = Number(process.env.WEWORK_E2E_PORT ?? 4174)
-const baseURL = process.env.WEWORK_E2E_BASE_URL ?? `http://127.0.0.1:${port}`
+const baseURL = process.env.WEWORK_E2E_BASE_URL ?? `http://127.0.0.1:${port}/wework/app/`
 const responseApiMockPort = Number(process.env.WEWORK_RESPONSE_API_MOCK_PORT ?? 9998)
 const responseApiMockURL =
   process.env.WEWORK_RESPONSE_API_MOCK_URL ?? `http://127.0.0.1:${responseApiMockPort}`
-const sitesUpstreamMockPort = Number(process.env.WEWORK_SITES_UPSTREAM_MOCK_PORT ?? 9997)
-const sitesUpstreamMockURL =
-  process.env.WEWORK_SITES_UPSTREAM_MOCK_URL ?? `http://127.0.0.1:${sitesUpstreamMockPort}`
-const connectorUpstreamMockPort = Number(process.env.WEWORK_CONNECTOR_UPSTREAM_MOCK_PORT ?? 9996)
-const connectorUpstreamMockURL =
-  process.env.WEWORK_CONNECTOR_UPSTREAM_MOCK_URL ?? `http://127.0.0.1:${connectorUpstreamMockPort}`
 
 export default defineConfig({
   testDir: './e2e/tests',
@@ -35,7 +29,10 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      use: {
+        ...devices['Desktop Chrome'],
+        launchOptions: { executablePath: process.env.WEWORK_E2E_BROWSER_EXECUTABLE },
+      },
     },
   ],
   webServer: [
@@ -49,35 +46,17 @@ export default defineConfig({
       },
     },
     {
-      command: 'node e2e/utils/mock-sites-upstream-server.mjs',
-      url: `${sitesUpstreamMockURL}/health`,
-      reuseExistingServer: !process.env.CI,
-      timeout: 30000,
-      env: {
-        WEWORK_SITES_UPSTREAM_MOCK_PORT: String(sitesUpstreamMockPort),
-      },
-    },
-    {
-      command: 'node e2e/utils/mock-connector-upstream-server.mjs',
-      url: `${connectorUpstreamMockURL}/health`,
-      reuseExistingServer: !process.env.CI,
-      timeout: 30000,
-      env: {
-        WEWORK_CONNECTOR_UPSTREAM_MOCK_PORT: String(connectorUpstreamMockPort),
-      },
-    },
-    {
-      command: `pnpm exec vite --host 127.0.0.1 --port ${port} --mode e2e`,
+      command: 'node e2e/utils/real-backend-web-server.mjs',
       url: baseURL,
       reuseExistingServer: !process.env.CI,
-      timeout: 120000,
+      timeout: 180000,
+      gracefulShutdown: { signal: 'SIGTERM', timeout: 180000 },
       env: {
         VITE_WEWORK_E2E: 'true',
         VITE_WEWORK_RUNTIME_MODE: 'backend',
         VITE_LOGIN_MODE: 'password',
         WEWORK_RESPONSE_API_MOCK_URL: responseApiMockURL,
-        WEWORK_SITES_UPSTREAM_MOCK_URL: sitesUpstreamMockURL,
-        WEWORK_CONNECTOR_UPSTREAM_MOCK_URL: connectorUpstreamMockURL,
+        WEWORK_E2E_PORT: String(port),
       },
     },
   ],

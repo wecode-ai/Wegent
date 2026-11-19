@@ -89,6 +89,18 @@ pub(super) fn current_codex_account_type() -> Result<Option<String>, String> {
     Ok(parse_auth_account(&auth).map(|account| account.account_type))
 }
 
+pub(super) fn should_query_native_rate_limits() -> Result<bool, String> {
+    match current_codex_account_type()?.as_deref() {
+        Some("apikey" | "apiKey") => Ok(false),
+        Some(_) => Ok(true),
+        // A present but unrecognized file retains native validation. Only an
+        // absent account is known to have no subscription usage to query.
+        None => current_auth_path()
+            .try_exists()
+            .map_err(|error| format!("failed to inspect current Codex authentication: {error}")),
+    }
+}
+
 fn update_current_account() -> Result<CodexAccountStore, String> {
     let mut store = read_account_store()?;
     let auth = match fs::read(current_auth_path()) {
@@ -452,6 +464,7 @@ mod tests {
         let home = tempfile::tempdir().unwrap();
         env::set_var("WEGENT_CODEX_HOME", home.path());
         assert_eq!(current_codex_account_type().unwrap(), None);
+        assert!(!should_query_native_rate_limits().unwrap());
         for (auth, expected) in [
             (
                 br#"{"tokens":{"account_id":"workspace-1"}}"#.as_slice(),
@@ -465,6 +478,10 @@ mod tests {
         ] {
             fs::write(current_auth_path(), auth).unwrap();
             assert_eq!(current_codex_account_type().unwrap().as_deref(), expected);
+            assert_eq!(
+                should_query_native_rate_limits().unwrap(),
+                expected != Some("apikey")
+            );
             assert_eq!(fs::read(current_auth_path()).unwrap(), auth);
             assert!(!account_store_directory().exists());
         }

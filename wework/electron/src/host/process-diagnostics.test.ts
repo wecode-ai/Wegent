@@ -91,11 +91,15 @@ describe('physical memory snapshots', () => {
         { pid: 99, footprint: 1_024_000 },
       ],
     }
+    vi.spyOn(console, 'error').mockImplementation(() => {})
     run.mockReset()
     run.mockImplementation(async (command: string, args: string[]) => {
       if (command === '/usr/bin/footprint') {
         await writeFile(args[args.indexOf('--json') + 1], JSON.stringify(report))
         return { stdout: '', stderr: '' }
+      }
+      if (args.includes('pid=,ppid=,state=,comm=')) {
+        return { stdout: '11 10 S /Applications/WeWork Helper\n', stderr: '' }
       }
       if (args.includes('pid=,ppid=')) {
         return { stdout: '10 1\n11 10\n99 1\n', stderr: '' }
@@ -120,6 +124,7 @@ describe('physical memory snapshots', () => {
   it('keeps native physical footprint separate from RSS and limits probing to descendants', async () => {
     const snapshot = await getElectronProcessSnapshot(10)
 
+    expect(snapshot.main_process_memory_bytes).toBeNull()
     expect(
       snapshot.processes.map(({ pid, rss_kib, physical_footprint_kib }) => ({
         pid,
@@ -135,6 +140,30 @@ describe('physical memory snapshots', () => {
     expect(
       probe?.[1].filter((_: string, index: number, args: string[]) => args[index - 1] === '--pid')
     ).toEqual(['10', '11'])
+  })
+
+  it('retains native allocation totals without arbitrary region labels', async () => {
+    const metrics = { dirty: 1024, swapped: 0, clean: 2048, reclaimable: 0, wired: 0, regions: 1 }
+    const nativeCategories = {
+      MALLOC_SMALL: metrics,
+      '/private/profile/credential-value': metrics,
+      'unknown native kind': metrics,
+    }
+    report.processes = [
+      { pid: 10, footprint: 102_400, categories: nativeCategories },
+      { pid: 11, footprint: 256_000 },
+    ]
+    const snapshot = await getElectronProcessSnapshot(10)
+    const categories = snapshot.processes.find(entry => entry.pid === 10)!.native_memory_categories
+    expect(categories).toEqual({
+      MALLOC_SMALL: metrics,
+      other: { ...metrics, dirty: 2048, clean: 4096, regions: 2 },
+    })
+    expect(JSON.stringify(categories)).not.toContain('credential-value')
+    nativeCategories.MALLOC_SMALL.dirty = -1
+    await expect(getElectronProcessSnapshot(10)).rejects.toThrow(
+      'Invalid native memory category metric'
+    )
   })
 
   it.each([
@@ -160,7 +189,32 @@ describe('physical memory snapshots', () => {
   it('rejects a missing metric for a live descendant', async () => {
     report.processes = [{ pid: 10, footprint: 102_400 }]
     await expect(getElectronProcessSnapshot(10)).rejects.toThrow('11')
+    expect(console.error).toHaveBeenCalledWith(
+      '[process-diagnostics] native footprint unavailable',
+      expect.objectContaining({
+        pid: 11,
+        observed: { status: 'live', state: 'S', ppid: 10, executable: 'WeWork Helper' },
+      })
+    )
   })
+
+  it.each(['Z', 'Z+'])(
+    'records an unreaped %s descendant as exited without inventing a memory value',
+    async state => {
+      report.processes = [{ pid: 10, footprint: 102_400 }]
+      const execute = run.getMockImplementation()!
+      run.mockImplementation((command: string, args: string[]) =>
+        args.includes('pid=,ppid=,state=,comm=')
+          ? Promise.resolve({ stdout: `11 10 ${state} /Applications/WeWork Helper\n`, stderr: '' })
+          : execute(command, args)
+      )
+      const snapshot = await getElectronProcessSnapshot(10)
+      expect(snapshot.processes.map(process => process.pid)).toEqual([10])
+      expect(snapshot.exited_processes).toEqual([{ pid: 11, reason: 'zombie' }])
+      expect(snapshot.groups[0].physical_footprint_kib).toBe(100)
+      expect(console.error).not.toHaveBeenCalled()
+    }
+  )
 
   it('excludes a descendant that exits during sampling', async () => {
     report.processes = [{ pid: 10, footprint: 102_400 }]
@@ -170,6 +224,7 @@ describe('physical memory snapshots', () => {
     const snapshot = await getElectronProcessSnapshot(10)
     expect(snapshot.processes.map(process => process.pid)).toEqual([10])
     expect(snapshot.groups[0].physical_footprint_kib).toBe(100)
+    expect(snapshot.exited_processes).toEqual([{ pid: 11, reason: 'exited' }])
   })
 
   it('does not treat a denied liveness probe as an exited process', async () => {
@@ -178,5 +233,6 @@ describe('physical memory snapshots', () => {
       throw Object.assign(new Error('Permission denied'), { code: 'EPERM' })
     })
     await expect(getElectronProcessSnapshot(10)).rejects.toThrow('11')
+    expect(run.mock.calls.some(([, args]) => args.includes('pid=,ppid=,state=,comm='))).toBe(false)
   })
 })

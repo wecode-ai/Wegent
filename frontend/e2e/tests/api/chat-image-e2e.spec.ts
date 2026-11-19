@@ -1,358 +1,141 @@
-/**
- * Chat Image E2E Test with Mock Model Server
- *
- * This test verifies that when a user uploads an image and sends a message,
- * the backend correctly formats the request to the model with image_url.
- *
- * The test automatically creates:
- * 1. A Model pointing to the mock model server
- * 2. A Bot using Chat Shell and the mock model
- * 3. A Team using the bot
- *
- * Prerequisites:
- * - Start the mock model server: npx ts-node frontend/e2e/utils/mock-model-server.ts
- * - Backend services running
- */
+import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { createAuthenticatedSocketClient } from '../../../../packages/chat-core/src/socket/authenticatedSocketClient'
+import { expect } from '@playwright/test'
+import { test } from '../../fixtures/task-runtime'
+import { checked } from '../../fixtures/recent-team-history'
+import { createApiClient } from '../../utils/api-client'
+import { waitForTaskTerminal } from '../../utils/provider-native-test-support'
+import type { VisionMessage } from '../../utils/mock-model-vision'
+import { scopedMockUrl } from '../../utils/mock-scope'
 
-import { test, expect } from '@playwright/test'
-import { createApiClient, ApiClient } from '../../utils/api-client'
-import { ADMIN_USER } from '../../config/test-users'
-import * as fs from 'fs'
-import * as path from 'path'
-
-// Mock model server configuration
-const MOCK_MODEL_SERVER_URL = process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999'
 const API_BASE_URL = process.env.E2E_API_URL || 'http://localhost:8000'
 
-// Test resource names (unique per test run)
-const TEST_PREFIX = `e2e-image-test-${Date.now()}`
-const TEST_MODEL_NAME = `${TEST_PREFIX}-model`
-const TEST_BOT_NAME = `${TEST_PREFIX}-bot`
-const TEST_TEAM_NAME = `${TEST_PREFIX}-team`
-
-interface CapturedRequest {
-  timestamp: string
-  method: string
-  url: string
-  headers: Record<string, string>
-  body: {
-    model: string
-    messages: Array<{
-      role: string
-      content:
-        | string
-        | Array<{
-            type: string
-            text?: string
-            image_url?: {
-              url: string
-            }
-          }>
-    }>
-    stream?: boolean
-  }
-}
-
 test.describe('Chat Image E2E with Mock Model Server', () => {
-  let apiClient: ApiClient
-  let token: string
-  const testImagePath = path.join(__dirname, '../../fixtures/test-image.png')
-
-  // Created resource IDs for cleanup
-  let createdModelId: number | null = null
-  let createdBotId: number | null = null
-  let createdTeamId: number | null = null
-
-  test.beforeAll(async ({ request }) => {
-    // Login and get token
-    apiClient = createApiClient(request)
-    await apiClient.login(ADMIN_USER.username, ADMIN_USER.password)
-    token = (apiClient as unknown as { token: string }).token
-
-    // Check if mock model server is running
-    try {
-      const healthResponse = await request.get(`${MOCK_MODEL_SERVER_URL}/health`)
-      if (healthResponse.status() !== 200) {
-        console.warn('Mock model server is not running. Some tests will be skipped.')
-        return
-      }
-    } catch {
-      console.warn(
-        'Mock model server is not reachable. Start it with: npx ts-node frontend/e2e/utils/mock-model-server.ts'
-      )
-      return
-    }
-
-    // Create test resources
-    try {
-      // Step 1: Create Model pointing to mock server
-      console.log('Creating test model...')
-      const modelResponse = await request.post(`${API_BASE_URL}/api/models`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        data: {
-          apiVersion: 'agent.wecode.io/v1',
-          kind: 'Model',
-          metadata: {
-            name: TEST_MODEL_NAME,
-            namespace: 'default',
-          },
-          spec: {
-            modelConfig: {
-              model_id: 'mock-vision-model',
-              api_key: 'mock-api-key',
-              base_url: `${MOCK_MODEL_SERVER_URL}/v1`,
-              protocol: 'openai',
-            },
-            isCustomConfig: true,
-          },
-        },
-      })
-
-      if (modelResponse.status() === 200 || modelResponse.status() === 201) {
-        const modelData = await modelResponse.json()
-        createdModelId = modelData.id
-        console.log(`Created model: ${TEST_MODEL_NAME} (ID: ${createdModelId})`)
-      } else {
-        console.error('Failed to create model:', await modelResponse.text())
-      }
-
-      // Step 2: Create Bot with Chat Shell and the mock model
-      console.log('Creating test bot...')
-      const botResponse = await request.post(`${API_BASE_URL}/api/bots`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        data: {
-          apiVersion: 'agent.wecode.io/v1',
-          kind: 'Bot',
-          metadata: {
-            name: TEST_BOT_NAME,
-            namespace: 'default',
-          },
-          spec: {
-            ghostRef: {
-              name: 'default-ghost',
-              namespace: 'default',
-            },
-            shellRef: {
-              name: 'chat',
-              namespace: 'default',
-            },
-            modelRef: {
-              name: TEST_MODEL_NAME,
-              namespace: 'default',
-            },
-            agent_config: {
-              bind_model: TEST_MODEL_NAME,
-              bind_model_type: 'user',
-            },
-          },
-        },
-      })
-
-      if (botResponse.status() === 200 || botResponse.status() === 201) {
-        const botData = await botResponse.json()
-        createdBotId = botData.id
-        console.log(`Created bot: ${TEST_BOT_NAME} (ID: ${createdBotId})`)
-      } else {
-        console.error('Failed to create bot:', await botResponse.text())
-      }
-
-      // Step 3: Create Team using the bot
-      console.log('Creating test team...')
-      const teamResponse = await request.post(`${API_BASE_URL}/api/teams`, {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        data: {
-          apiVersion: 'agent.wecode.io/v1',
-          kind: 'Team',
-          metadata: {
-            name: TEST_TEAM_NAME,
-            namespace: 'default',
-          },
-          spec: {
-            members: [
-              {
-                botRef: {
-                  name: TEST_BOT_NAME,
-                  namespace: 'default',
-                },
-                prompt: 'You are a helpful assistant that can analyze images.',
-                role: 'worker',
-              },
-            ],
-            collaborationModel: 'single',
-          },
-        },
-      })
-
-      if (teamResponse.status() === 200 || teamResponse.status() === 201) {
-        const teamData = await teamResponse.json()
-        createdTeamId = teamData.id
-        console.log(`Created team: ${TEST_TEAM_NAME} (ID: ${createdTeamId})`)
-      } else {
-        console.error('Failed to create team:', await teamResponse.text())
-      }
-    } catch (error) {
-      console.error('Error creating test resources:', error)
-    }
-  })
-
-  test.afterAll(async ({ request }) => {
-    // Cleanup created resources
-    console.log('Cleaning up test resources...')
-
-    if (createdTeamId) {
-      try {
-        await request.delete(`${API_BASE_URL}/api/v1/namespaces/default/teams/${TEST_TEAM_NAME}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        })
-        console.log(`Deleted team: ${TEST_TEAM_NAME}`)
-      } catch (e) {
-        console.warn(`Failed to delete team: ${e}`)
-      }
-    }
-
-    if (createdBotId) {
-      try {
-        await request.delete(`${API_BASE_URL}/api/v1/namespaces/default/bots/${TEST_BOT_NAME}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        })
-        console.log(`Deleted bot: ${TEST_BOT_NAME}`)
-      } catch (e) {
-        console.warn(`Failed to delete bot: ${e}`)
-      }
-    }
-
-    if (createdModelId) {
-      try {
-        await request.delete(`${API_BASE_URL}/api/models/${TEST_MODEL_NAME}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        })
-        console.log(`Deleted model: ${TEST_MODEL_NAME}`)
-      } catch (e) {
-        console.warn(`Failed to delete model: ${e}`)
-      }
-    }
-  })
-
-  test.beforeEach(async ({ request }) => {
-    // Clear captured requests before each test
-    try {
-      await request.post(`${MOCK_MODEL_SERVER_URL}/clear-requests`)
-    } catch {
-      // Server might not be running
-    }
-  })
-
-  test('should send image_url to model when image is attached', async ({ request }) => {
-    // Skip if mock server is not running
-    const healthCheck = await request.get(`${MOCK_MODEL_SERVER_URL}/health`).catch(() => null)
-    if (!healthCheck || healthCheck.status() !== 200) {
-      console.warn('Mock model server not running, skipping test')
-      test.skip()
-      return
-    }
-
-    // Skip if team was not created
-    if (!createdTeamId) {
-      console.warn('Test team was not created, skipping test')
-      test.skip()
-      return
-    }
-
-    // Step 1: Upload image
-    const imageBuffer = fs.readFileSync(testImagePath)
-
-    const uploadResponse = await request.post(`${API_BASE_URL}/api/attachments/upload`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-      multipart: {
-        file: {
-          name: 'test-image.png',
-          mimeType: 'image/png',
-          buffer: imageBuffer,
-        },
-      },
-    })
-
-    expect(uploadResponse.status()).toBe(200)
-    const uploadData = await uploadResponse.json()
-    const attachmentId = uploadData.id
-
-    console.log(`Uploaded attachment with ID: ${attachmentId}`)
-
-    // Step 2: Send chat message with attachment using the created team
-    console.log(`Sending chat message with team ID: ${createdTeamId}`)
-
-    const chatResponse = await request.post(`${API_BASE_URL}/api/chat/stream`, {
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      data: {
-        message: 'What is in this image?',
-        team_id: createdTeamId,
-        attachment_id: attachmentId,
-      },
-    })
-
-    console.log(`Chat response status: ${chatResponse.status()}`)
-
-    // Wait for the request to be processed
-    await new Promise(resolve => setTimeout(resolve, 3000))
-
-    // Step 3: Check captured requests on mock server
-    const capturedResponse = await request.get(`${MOCK_MODEL_SERVER_URL}/captured-requests`)
-    expect(capturedResponse.status()).toBe(200)
-
-    const capturedRequests = (await capturedResponse.json()) as CapturedRequest[]
-    console.log(`Captured ${capturedRequests.length} requests`)
-
-    // Find the chat completion request
-    const chatRequest = capturedRequests.find(req => req.url?.includes('/chat/completions'))
-
-    if (!chatRequest) {
-      console.error('No chat completion request captured!')
-      console.log('Captured requests:', JSON.stringify(capturedRequests, null, 2))
-      expect(chatRequest).toBeDefined()
-      return
-    }
-
-    // Step 4: Verify the request contains image_url
-    expect(chatRequest.body).toBeDefined()
-    expect(chatRequest.body.messages).toBeDefined()
-
-    console.log('Captured messages:', JSON.stringify(chatRequest.body.messages, null, 2))
-
-    // Find user message with image
-    const userMessage = chatRequest.body.messages.find(
-      msg => msg.role === 'user' && Array.isArray(msg.content)
+  test('should send image_url to model when image is attached', async ({ runtimeAccount }) => {
+    const { token, request } = runtimeAccount
+    const api = createApiClient(request, API_BASE_URL, token)
+    const prefix = `e2e-image-${randomUUID()}`
+    const mockUrl = scopedMockUrl(
+      process.env.MOCK_MODEL_SERVER_URL || 'http://localhost:9999',
+      prefix
     )
-
-    expect(userMessage).toBeDefined()
-
-    if (userMessage && Array.isArray(userMessage.content)) {
-      // Verify text content exists
-      const textContent = userMessage.content.find(c => c.type === 'text')
-      expect(textContent).toBeDefined()
-      expect(textContent?.text).toContain('What is in this image?')
-
-      // Verify image_url content exists
-      const imageContent = userMessage.content.find(c => c.type === 'image_url')
-      expect(imageContent).toBeDefined()
-      expect(imageContent?.image_url).toBeDefined()
-      expect(imageContent?.image_url?.url).toMatch(/^data:image\/png;base64,/)
-
-      console.log('✅ Image URL format verified successfully!')
-      console.log(`   Prefix: ${imageContent?.image_url?.url.substring(0, 50)}...`)
+    const modelName = `${prefix}-model`
+    const teamName = `${prefix}-team`
+    const prompt = `What is in this image? ${prefix}`
+    const cleanupPaths: string[] = []
+    let originalFailure: unknown
+    const client = createAuthenticatedSocketClient({
+      socketBaseUrl: () => API_BASE_URL,
+      getToken: () => token,
+      namespace: '/chat',
+    })
+    try {
+      const health = await request.get(`${mockUrl}/health`)
+      expect(health.ok()).toBe(true)
+      checked(
+        await api.post('/api/v1/namespaces/default/models', {
+          kind: 'Model',
+          metadata: { name: modelName, namespace: 'default' },
+          spec: {
+            modelType: 'llm',
+            modelCapabilities: { supportsImage: true },
+            modelConfig: {
+              env: {
+                model: 'openai',
+                model_id: 'mock-vision-model',
+                api_key: 'mock-api-key',
+                base_url: `${mockUrl}/v1`,
+              },
+            },
+          },
+        }),
+        201
+      )
+      cleanupPaths.push(`/api/v1/namespaces/default/models/${modelName}`)
+      const bot = checked(
+        await api.post<{ id: number }>('/api/bots', {
+          name: `${prefix}-bot`,
+          shell_name: 'Chat',
+          namespace: 'default',
+          agent_config: { bind_model: modelName, bind_model_type: 'user' },
+          system_prompt: 'Describe the image directly without tools.',
+        }),
+        201
+      )
+      cleanupPaths.push(`/api/bots/${bot.id}`)
+      const team = checked(
+        await api.createTeam({
+          name: teamName,
+          namespace: 'default',
+          bots: [{ bot_id: bot.id, role: 'worker', bot_prompt: '' }],
+          bind_mode: ['chat'],
+          requires_workspace: false,
+        }),
+        201
+      ) as { id: number }
+      cleanupPaths.push(`/api/v1/namespaces/default/teams/${teamName}`)
+      const image = readFileSync(path.join(__dirname, '../../fixtures/test-image.png'))
+      const uploaded = await request.post(`${API_BASE_URL}/api/attachments/upload`, {
+        headers: { Authorization: `Bearer ${token}` },
+        multipart: { file: { name: 'test-image.png', mimeType: 'image/png', buffer: image } },
+      })
+      expect(uploaded.status()).toBe(200)
+      const attachment = (await uploaded.json()) as { id: number }
+      expect(attachment.id).toBeGreaterThan(0)
+      await client.ensureConnected()
+      const ack = (await client
+        .getRawSocket()!
+        .timeout(10_000)
+        .emitWithAck('chat:send', {
+          team_id: team.id,
+          task_type: 'chat',
+          message: prompt,
+          attachment_ids: [attachment.id],
+        })) as { task_id?: number; error?: string }
+      expect(ack.error).toBeUndefined()
+      expect(ack.task_id).toEqual(expect.any(Number))
+      cleanupPaths.push(`/api/tasks/${ack.task_id}`)
+      await waitForTaskTerminal(token, ack.task_id!)
+      const captured = await request.get(`${mockUrl}/captured-requests`)
+      expect(captured.status()).toBe(200)
+      const calls = (await captured.json()) as Array<{
+        url: string
+        body: { messages: VisionMessage[] }
+      }>
+      const message = calls
+        .filter(call => call.url.includes('/chat/completions'))
+        .flatMap(call => call.body.messages)
+        .find(
+          message =>
+            message.role === 'user' &&
+            Array.isArray(message.content) &&
+            message.content.some(part => part.type === 'text' && part.text?.includes(prompt))
+        )
+      expect(message).toBeDefined()
+      expect(Array.isArray(message?.content)).toBe(true)
+      if (!Array.isArray(message?.content)) throw new Error('Missing vision content')
+      expect(message.content.find(part => part.type === 'text')?.text).toContain(prompt)
+      const imagePart = message.content.find(part => part.type === 'image_url')
+      expect(imagePart?.image_url?.url).toMatch(/^data:image\/png;base64,/)
+    } catch (error) {
+      originalFailure = error
+      throw error
+    } finally {
+      client.dispose()
+      const errors: unknown[] = []
+      for (const resource of cleanupPaths.reverse()) {
+        try {
+          checked(await api.delete(resource))
+        } catch (error) {
+          errors.push(error)
+        }
+      }
+      if (errors.length) {
+        if (originalFailure !== undefined) errors.unshift(originalFailure)
+        throw new AggregateError(errors, 'Image fixture cleanup failed')
+      }
     }
   })
 })

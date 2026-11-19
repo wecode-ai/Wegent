@@ -244,6 +244,7 @@ export function createRuntimeNotificationReconnect({
       const executorPid = await currentExecutorPid(control)
       assert.ok(executorPid, 'The desktop Executor must already be running')
       userId = (await request('/api/users/me')).id
+      control.performance.recordExternalServiceProtocols(['dingtalk'])
       api = createServer(async (req, res) => {
         try {
           const body = await readRequestBody(req)

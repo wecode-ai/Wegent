@@ -27,6 +27,12 @@ const gates = new Map<
   { rule: RuntimeTransportGateRule; capture?: Capture; following: Array<() => void> }
 >()
 
+let replaying = false
+
+export function isRuntimeTransportReplay(): boolean {
+  return replaying
+}
+
 function requireE2E(): void {
   if (import.meta.env.MODE !== 'e2e' && import.meta.env.VITE_WEWORK_E2E !== 'true') {
     throw new Error('Runtime transport gates are only available in E2E mode')
@@ -86,9 +92,15 @@ export function deliverRuntimeTransport(
     capturedAt: performance.now(),
     deliveries: 0,
     deliver() {
+      const previous = replaying
+      replaying = capture.deliveries > 0
       capture.deliveredAt = performance.now()
       capture.deliveries += 1
-      deliver()
+      try {
+        deliver()
+      } finally {
+        replaying = previous
+      }
     },
   }
   gate.capture = capture

@@ -1,0 +1,6 @@
+{
+  "order": 13000,
+  "ciHost": "plugin-account-auth-dws",
+  "scenario": "./scenarios/responses-api-gateway.scenario.mjs",
+  "scenarioOnly": true
+}

@@ -1,3 +1,4 @@
+import { desktopOwnerId as USER } from '../modules/desktop-owner-fixture.mjs'
 import {
   openStandInSettings,
   openStandInActivity,
@@ -23,7 +24,6 @@ import {
   responseCreated,
 } from '../modules/response-protocol.mjs'
 
-const USER = 9001
 const ROLE = 'silent-review'
 const MARKER = 'SILENT_INTAKE_REAL_ASSIGNMENT'
 const FOLLOWUP = 'SILENT_PROGRESS_CHECK'

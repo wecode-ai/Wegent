@@ -1,3 +1,4 @@
+import { desktopOwnerId } from './desktop-owner-fixture.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 import { runtimeTransportGates } from './runtime-transport-gates.mjs'
@@ -80,7 +81,7 @@ export function createBoardRefreshVerification({ workspacePath, uiTimeoutMs, res
         executionRequest: {
           task_id: TASK_ID,
           subtask_id: `${TASK_ID}-initial`,
-          user_id: 9001,
+          user_id: desktopOwnerId,
           prompt: MARKER,
           new_session: true,
           bot: [{ shell_type: 'Codex', name: MARKER }],

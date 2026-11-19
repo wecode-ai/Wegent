@@ -3648,7 +3648,10 @@ async fn codex_model_discovery_waits_for_app_server_restart() {
     let (handler, root) = isolated_runtime_work_handler("catalog-restart-serialization");
     let restart_guard = codex_app_server_restart_gate().lock().await;
     {
-        let discovery = handler.list_codex_models(json!({"includeHidden": true}));
+        let discovery = handler.list_codex_models(
+            json!({"includeHidden": true}),
+            concat!(file!(), ":", line!()),
+        );
         tokio::pin!(discovery);
         let waiting = tokio::time::timeout(Duration::from_millis(100), &mut discovery).await;
         assert!(
@@ -4582,6 +4585,9 @@ async fn pending_inventory_does_not_spawn_codex_but_sidebar_bootstrap_still_does
     assert!(binary.with_extension("launched").exists());
     let _ = fs::remove_dir_all(root);
 }
+
+#[path = "query_reconciliation_tests.rs"]
+mod query_reconciliation_tests;
 
 #[tokio::test]
 async fn create_task_keeps_board_comment_session_persistent_across_store_reload() {

@@ -1,3 +1,4 @@
+import { reportE2EDiagnostic } from '@/e2e/error-capture'
 import { findRuntimeTask } from '@wegent/chat-core/runtime-task-lookup'
 import type { RuntimeTaskAddress, RuntimeWorkListResponse } from '@/types/api'
 import type { RuntimeTaskLifecycleStore } from '@/features/workbench/runtimeTaskLifecycle'
@@ -77,6 +78,28 @@ export function createDesktopPaneContextSource(store: RuntimeTaskLifecycleStore)
       hasResolvedExecutionAddress(attempted.resolved, resolved)
     )
       return
+    if (import.meta.env.VITE_WEWORK_E2E === 'true') {
+      const fields = [
+        'deviceId',
+        'taskId',
+        'runtime',
+        'threadId',
+        'workspacePath',
+        'workspaceKind',
+        'worktreeId',
+      ] as const
+      const changedFields: string[] = fields.filter(field => current[field] !== resolved[field])
+      if (
+        JSON.stringify(current.runtimeHandle?.modelSelection ?? null) !==
+        JSON.stringify(resolved.runtimeHandle?.modelSelection ?? null)
+      )
+        changedFields.push('modelSelection')
+      reportE2EDiagnostic('bound-task-execution-address-reconciliation', {
+        current: Object.fromEntries(fields.map(field => [field, current[field] ?? null])),
+        resolved: Object.fromEntries(fields.map(field => [field, resolved[field] ?? null])),
+        changedFields,
+      })
+    }
     attempted = { current, resolved }
     const ownerGeneration = generation
     // openTask commits its selected address synchronously. Its runtime service retains

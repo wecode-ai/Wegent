@@ -16,12 +16,15 @@ fi
 
 # A native crash must retain a stack trace instead of leaving only SIGSEGV in
 # the supervisor log. Do not print arguments or locals, which can contain keys.
+# The debugger owns the pipes; identify each native producer without reading its arguments.
 exec gdb --quiet --batch --return-child-result \
   -ex 'set pagination off' \
   -ex 'set print frame-arguments none' \
   -ex 'set startup-with-shell off' \
   -ex 'handle SIGPIPE nostop noprint pass' \
   -ex 'handle SIGTERM nostop noprint pass' \
+  -ex 'python import json, os; _wework_executor_pids = set()' \
+  -ex 'python gdb.events.new_thread.connect(lambda event: (_wework_executor_pids.add(event.inferior_thread.ptid[0]), gdb.write("[executor-gdb-inferior] " + json.dumps({"debuggerPid": os.getpid(), "executorPid": event.inferior_thread.ptid[0]}) + "\n")) if event.inferior_thread.ptid[0] > 0 and event.inferior_thread.ptid[0] not in _wework_executor_pids else None)' \
   -ex run \
   -ex 'thread apply all bt' \
   --args "$executor_binary" "$@"

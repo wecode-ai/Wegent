@@ -5,7 +5,11 @@ import { spawn } from 'node:child_process'
 import { once } from 'node:events'
 import { onTestFinished, test, vi } from 'vitest'
 import { DesktopE2EServer } from '../e2e/desktop/modules/desktop-server.mjs'
-import { DEFAULT_STEP_TIMEOUT_MS } from '../e2e/desktop/modules/shared.mjs'
+import {
+  DEFAULT_STEP_TIMEOUT_MS,
+  PROVIDER_SWITCH_SUBSCRIPTION_ACCESS_TOKEN,
+  PROVIDER_SWITCH_SUBSCRIPTION_ACCOUNT_ID,
+} from '../e2e/desktop/modules/shared.mjs'
 
 async function startControl(t) {
   const control = new DesktopE2EServer('/workspace')
@@ -27,6 +31,24 @@ async function post(control, route, body) {
 async function register(control, windowLabel, clientId) {
   await post(control, 'ready', { windowLabel, clientId, location: 'http://localhost/' })
 }
+
+test('the model fixture serves subscription discovery while Backend APIs remain real', async t => {
+  const control = await startControl(t)
+  const account = await fetch(`${control.url}/backend-api/wham/accounts/check`, {
+    headers: { Authorization: `Bearer ${PROVIDER_SWITCH_SUBSCRIPTION_ACCESS_TOKEN}` },
+  })
+  assert.equal(account.status, 200)
+  assert.equal((await account.json()).accounts[0].id, PROVIDER_SWITCH_SUBSCRIPTION_ACCOUNT_ID)
+  assert.equal((await fetch(`${control.url}/api/users/me`)).status, 404)
+  assert.equal(
+    (
+      await fetch(`${control.url}/api/runtime-work/llm-responses-proxy/responses`, {
+        method: 'POST',
+      })
+    ).status,
+    404
+  )
+})
 
 test('quit completes on the real process exit when the renderer cannot send its result', async t => {
   const control = await startControl(t)

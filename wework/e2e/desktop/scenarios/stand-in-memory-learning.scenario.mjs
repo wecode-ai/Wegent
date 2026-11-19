@@ -1,3 +1,4 @@
+import { desktopOwnerId as USER } from '../modules/desktop-owner-fixture.mjs'
 import { readSavedMemories } from '../modules/stand-in-memory-context.mjs'
 import { openStandInMemory } from '../modules/stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
@@ -30,7 +31,6 @@ import {
   responseCreated,
 } from '../modules/response-protocol.mjs'
 
-const USER = 9001
 const CHAT = '[data-testid="stand-in-conversation"]'
 const ORIGINAL = 'MEMORY_LEARNING：周报先写结论，再写风险。'
 const CORRECTED = 'MEMORY_LEARNING：周报先写风险，再写结论。'

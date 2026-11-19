@@ -1,5 +1,8 @@
 // @vitest-environment node
-import { describe, expect, test } from 'vitest'
+import { describe, expect, test, vi } from 'vitest'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 import {
   MATRIX_PROVIDER_INSTRUCTIONS,
   MATRIX_LEGACY_INSTRUCTIONS,
@@ -14,6 +17,9 @@ import {
   countModelRequest,
   MATRIX_MCP_DESCRIPTION,
   MATRIX_SKILL_CANARY,
+  MATRIX_SKILL_DESCRIPTION,
+  matrixSkillPath,
+  handleProgressiveMatrixTurn,
 } from '../e2e/desktop/modules/model-progressive-contract.mjs'
 import {
   assertCodeModeOutput,
@@ -29,6 +35,55 @@ const wrapper = {
   name: 'exec',
   parameters: { type: 'object', properties: { input: { type: 'string' } }, required: ['input'] },
 }
+
+test.each(['intact', 'missing'])(
+  'retains %s Skill file evidence while rejecting empty native command output',
+  async disposition => {
+    const root = await mkdtemp(join(tmpdir(), 'model-skill-evidence-'))
+    try {
+      const path = matrixSkillPath(root)
+      await mkdir(dirname(path), { recursive: true })
+      await writeFile(path, MATRIX_SKILL_CANARY)
+      const control = {
+        workspacePath: root,
+        matrixState: { progressive: 'mcp', deferAudit: {} },
+        writeSse: vi.fn(),
+      }
+      const model = { protocol: 'responses', execution: 'local', source: 'local' }
+      const body = request('responses', MATRIX_SKILL_DESCRIPTION)
+      body.input.push({
+        type: 'custom_tool_call_output',
+        call_id: 'matrix-mcp',
+        output: 'Tool detail verification issue_number:42',
+      })
+      handleProgressiveMatrixTurn(control, {}, model, body)
+      const before = control.matrixState.deferAudit.skillReadEvidence.before
+      expect(before.bytes).toBe(Buffer.byteLength(MATRIX_SKILL_CANARY))
+      expect(before.sha256).toMatch(/^[a-f0-9]{64}$/)
+      if (disposition === 'missing') await rm(path)
+      const nativeOutput = 'exit_code: 0, output: ""'
+      const completed = request('responses')
+      completed.input.push({
+        type: 'custom_tool_call_output',
+        call_id: 'matrix-skill',
+        output: nativeOutput,
+      })
+
+      expect(() => handleProgressiveMatrixTurn(control, {}, model, completed)).toThrow(
+        'Native skill read failed'
+      )
+      expect(control.matrixState.deferAudit.skillReadEvidence).toEqual({
+        before,
+        after: disposition === 'intact' ? before : { errorCode: 'ENOENT' },
+        returnedTextBytes: Buffer.byteLength(nativeOutput),
+        containsCanary: false,
+      })
+      expect(control.matrixState.deferAudit.skillRead).not.toBe('passed')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+)
 
 test('configured Codex matrix providers require portable Responses declarations', () => {
   const model = { protocol: 'responses', source: 'codex' }

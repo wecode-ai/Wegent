@@ -1,3 +1,5 @@
+import { buildOptimisticRuntimeWorkspace } from './runtimeOptimisticWorkspace'
+import { trackRuntimeTaskCreation } from './runtimeTaskCreation'
 import {
   loadRuntimeFileChangesDiff,
   revertRuntimeFileChanges,
@@ -1393,35 +1395,41 @@ export function useWorkbenchRuntimeMessaging({
       })
       // Start the primary request before optimistic navigation mounts task readers.
       // Presentation work must never leave a visible pending task without a runtime request.
-      const createResponsePromise = (async () => {
-        const prepared = await prepareRuntimeAttachmentsForDevice(
-          optimisticDeviceId,
-          state.devices,
-          intent.attachmentIds,
-          intent.attachments,
-          services.attachmentApi?.uploadLocalAttachmentToCloud
-        )
-        createRequest.attachmentIds = prepared.attachmentIds
-        createRequest.attachments = prepared.attachments
-        const worktreeCreationDelayMs = Number(
-          getDesktopE2ERuntimeConfig().worktreeCreationDelayMs ??
-            import.meta.env.VITE_WEWORK_E2E_WORKTREE_CREATION_DELAY_MS ??
-            0
-        )
-        if (
-          workspaceExecution?.workspace &&
-          Number.isFinite(worktreeCreationDelayMs) &&
-          worktreeCreationDelayMs > 0
-        ) {
-          await new Promise(resolve => window.setTimeout(resolve, worktreeCreationDelayMs))
-        }
-        logRuntimeTaskCreateStage('workbench-runtime-create-dispatched', {
-          taskId,
-          deviceId: optimisticAddress.deviceId,
-          runtime,
-        })
-        return executorClient.runtime.createRuntimeTask(createRequest)
-      })()
+      const createResponsePromise = trackRuntimeTaskCreation(
+        optimisticAddress,
+        (async () => {
+          const prepared = await prepareRuntimeAttachmentsForDevice(
+            optimisticDeviceId,
+            state.devices,
+            intent.attachmentIds,
+            intent.attachments,
+            services.attachmentApi?.uploadLocalAttachmentToCloud
+          )
+          createRequest.attachmentIds = prepared.attachmentIds
+          createRequest.attachments = prepared.attachments
+          const worktreeCreationDelayMs = Number(
+            getDesktopE2ERuntimeConfig().worktreeCreationDelayMs ??
+              import.meta.env.VITE_WEWORK_E2E_WORKTREE_CREATION_DELAY_MS ??
+              0
+          )
+          if (
+            workspaceExecution?.workspace &&
+            Number.isFinite(worktreeCreationDelayMs) &&
+            worktreeCreationDelayMs > 0
+          ) {
+            await new Promise(resolve => window.setTimeout(resolve, worktreeCreationDelayMs))
+          }
+          logRuntimeTaskCreateStage('workbench-runtime-create-dispatched', {
+            taskId,
+            deviceId: optimisticAddress.deviceId,
+            runtime,
+          })
+          const response = await executorClient.runtime.createRuntimeTask(createRequest)
+          if (!response.accepted) throw new Error(response.error || '发送失败')
+          return response
+        })()
+      )
+
       void createResponsePromise.catch(() => undefined)
       logRuntimeTaskLaunchTiming('optimistic-open-started', launchStartedAt, {
         taskId,
@@ -1471,9 +1479,6 @@ export function useWorkbenchRuntimeMessaging({
           deviceId: response.deviceId || optimisticAddress.deviceId,
           accepted: response.accepted,
         })
-        if (!response.accepted) {
-          throw new Error(response.error || '发送失败')
-        }
         const runtimeHandle = mergeRuntimeTaskHandles(
           response.runtimeHandle,
           optimisticAddress.runtimeHandle
@@ -2126,37 +2131,6 @@ export function useWorkbenchRuntimeMessaging({
     pauseCurrentResponse,
     loadTurnFileChangesDiff,
     revertTurnFileChanges,
-  }
-}
-
-function buildOptimisticRuntimeWorkspace({
-  baseWorkspace,
-  devices,
-  deviceId,
-  workspacePath,
-  projectId,
-  workspaceKind,
-}: {
-  baseWorkspace?: RuntimeDeviceWorkspace | null
-  devices: WorkbenchState['devices']
-  deviceId: string
-  workspacePath: string
-  projectId: number | null
-  workspaceKind?: RuntimeDeviceWorkspace['workspaceKind']
-}): RuntimeDeviceWorkspace {
-  const device = findWorkbenchDevice(devices, deviceId)
-  return {
-    ...baseWorkspace,
-    projectId: projectId ?? baseWorkspace?.projectId,
-    deviceId,
-    deviceName: device?.name ?? baseWorkspace?.deviceName ?? null,
-    deviceStatus: device?.status ?? baseWorkspace?.deviceStatus ?? null,
-    workspacePath,
-    workspaceKind:
-      workspaceKind ?? baseWorkspace?.workspaceKind ?? (projectId ? 'workspace' : 'chat'),
-    mapped: baseWorkspace?.mapped ?? Boolean(projectId),
-    available: baseWorkspace?.available ?? (device ? device.status !== 'offline' : true),
-    tasks: [],
   }
 }
 

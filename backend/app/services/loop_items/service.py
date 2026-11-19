@@ -374,7 +374,8 @@ class LoopItemService:
                 "[LoopItem] Response includes task AI state: "
                 "project_id=%s task_id=%s task_status=%s ai_status=%s "
                 "message_id=%s runtime_device_id=%s runtime_task_id=%s "
-                "lease_expires_at=%s",
+                "lease_expires_at=%s issue_version=%s "
+                "stored_assignee_agent_id=%s projected_assignee_agent_id=%s",
                 item.cloud_project_id,
                 item.id,
                 item.status,
@@ -383,6 +384,9 @@ class LoopItemService:
                 projected_ai_state.get("runtime_device_id"),
                 projected_ai_state.get("runtime_task_id"),
                 projected_ai_state.get("lease_expires_at"),
+                item.version,
+                item.assignee_agent_id,
+                values.get("assignee_agent_id"),
             )
         if not can_view_detail:
             values["description"] = ""

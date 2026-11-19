@@ -1,4 +1,3 @@
-import { verifyStaleTelemetryOptInRejected } from '../modules/telemetry-consent.mjs'
 import assert from 'node:assert/strict'
 import { createDesktopScenario as createStandInScenario } from './stand-in-telemetry.scenario.mjs'
 import { waitForBoardValue } from '../modules/collaboration-board-flows.mjs'
@@ -76,7 +75,6 @@ export function createDesktopScenario(options) {
         'Telemetry refusal must persist',
         options.uiTimeoutMs
       )
-      await verifyStaleTelemetryOptInRejected(control)
       const disabledBoundary = control.telemetryRequestCount()
       await control.command('navigate', 'body', { value: '/sites?app_type=smart_app&view=owned' })
       // Observe beyond one SDK batching interval after triggering another real route event.

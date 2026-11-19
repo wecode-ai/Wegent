@@ -165,8 +165,12 @@ impl RuntimeWorkRpcHandler {
                     .ok_or_else(|| app_error("Invalid MCP App session identity"))
             })
             .transpose()?;
+        let client = self
+            .codex_app_server
+            .for_request(&runtime_event_request_from_link(&link))
+            .map_err(|_| app_error("Cannot resolve the source runtime Home"))?;
         if payload["method"] == "release" {
-            self.codex_app_server
+            client
                 .set_mcp_app_session(
                     &thread_id,
                     &call_id,
@@ -176,211 +180,233 @@ impl RuntimeWorkRpcHandler {
                 .await;
             return Ok(json!({}));
         }
-        let started = std::time::Instant::now();
-        let (read, source) = self
-            .mcp_app_source(&thread_id, &call_id, payload["turnId"].as_str())
-            .await
-            .map_err(|_| app_error("Cannot read source invocation"))?;
-        if started.elapsed().as_millis() >= 250 {
-            crate::logging::log_executor_event(
-                "MCP App source lookup slow",
-                &[
-                    ("elapsed_ms", started.elapsed().as_millis().to_string()),
-                    ("targeted", payload["turnId"].is_string().to_string()),
-                ],
-            );
-        }
-        let source = match source.as_ref() {
-            Some(source) => source,
-            // Streamed model calls can precede the native MCP invocation record.
-            None if discovering => return Ok(Value::Null),
-            None => return Err(app_error("Source invocation does not belong to this task")),
-        };
-        // Historical UI declarations identify a card independently of service readiness.
-        // Initialization still revalidates the live server, plugin and tool authority.
-        if payload["method"] == "discover" {
-            if let Some(uri) = source_resource_uri(source) {
-                return Ok(app_descriptor(source, &link, &call_id, uri, None));
-            }
-        }
-        if read["thread"]["status"]["type"] == "notLoaded" {
-            self.resume_codex_thread_for_action(&link, &thread_id)
-                .await
-                .map_err(|_| app_error("Cannot restore the source MCP App session"))?;
-        }
-        let server = source["server"]
-            .as_str()
-            .ok_or_else(|| app_error("Source server is unavailable"))?;
-        let catalog_started = std::time::Instant::now();
-        let server_catalog = self.mcp_app_catalog(&thread_id, server).await;
-        if catalog_started.elapsed().as_millis() >= 250 {
-            crate::logging::log_executor_event(
-                "MCP App catalog lookup slow",
-                &[(
-                    "elapsed_ms",
-                    catalog_started.elapsed().as_millis().to_string(),
-                )],
-            );
-        }
-        let server_catalog = server_catalog?;
-        let server_catalog = server_catalog.as_ref().unwrap_or(&Value::Null);
-        let catalog: Vec<Value> = server_catalog["tools"]
-            .as_object()
-            .into_iter()
-            .flat_map(|tools| tools.values())
-            .filter(|tool| same_app(source, server_catalog, tool))
-            .cloned()
-            .collect();
-        let origin = catalog.iter().find(|tool| {
-            tool["name"] == source["tool"]
-                || (source["appContext"]["resourceUri"].is_string()
-                    && source["appContext"]["resourceUri"]
-                        == tool["_meta"]["_codex_apps"]["resource_uri"])
-        });
-        let uri = source_resource_uri(source)
-            .or_else(|| origin.and_then(|tool| resource_uri(&tool["_meta"])));
-        let Some(uri) = uri.filter(|uri| !uri.is_empty()) else {
-            // Discovery is optional for ordinary MCP calls, including historical calls
-            // whose server or tool is no longer in the current catalog.
-            return if discovering {
-                Ok(Value::Null)
-            } else {
-                Err(app_error("Source invocation has no MCP App resource"))
-            };
-        };
-        if server_catalog.is_null() {
-            return Err(app_error("Source MCP server is no longer available"));
-        }
-        if server_catalog["toolsError"].is_string() {
-            return Err(app_error("MCP App tool discovery failed"));
-        }
-        if origin.is_none() {
-            return Err(app_error("The source app is no longer available"));
-        }
-        let descriptor = || app_descriptor(source, &link, &call_id, uri, origin);
-        // Discovery confirms app identity without loading HTML or retaining a connection.
-        if payload["method"] == "discover" {
-            return Ok(descriptor());
-        }
-        if payload["method"] == "retain" {
-            self.codex_app_server
-                .set_mcp_app_session(
-                    &thread_id,
-                    &call_id,
-                    session_id.ok_or_else(|| app_error("Missing MCP App session identity"))?,
-                    true,
-                )
-                .await;
-            return Ok(json!({}));
-        }
-        let method = payload["method"].as_str().unwrap_or("initialize");
-        let params = &payload["params"];
-        match method {
-            "ui/update-model-context" => {
-                if !params.is_object()
-                    || serde_json::to_vec(params).map_or(true, |bytes| bytes.len() > 65536)
-                    || params.get("content").is_some_and(|content| {
-                        !content.as_array().is_some_and(|items| {
-                            items
-                                .iter()
-                                .all(|item| item["type"] == "text" && item["text"].is_string())
-                        })
-                    })
-                    || params
-                        .get("structuredContent")
-                        .is_some_and(|content| !content.is_object())
-                {
-                    return Err(app_error("Invalid or oversized MCP App model context"));
-                }
-                let context = json!({"server":server,"content":params["content"],"structuredContent":params["structuredContent"]});
-                let updated = self
-                    .store
-                    .try_update_task(&link.local_task_id, |task| {
-                        if !task.runtime_handle["mcpAppContexts"].is_object() {
-                            task.runtime_handle["mcpAppContexts"] = json!({});
-                        }
-                        task.runtime_handle["mcpAppContexts"][&call_id] = context;
-                    })
-                    .map_err(|_| {
-                        AppIpcError::new(
-                            "mcp_app_storage_failed",
-                            "Could not persist MCP App model context",
-                        )
-                    })?;
-                updated.ok_or_else(|| app_error("The source task is no longer available"))?;
-                Ok(json!({}))
-            }
-            "initialize" => {
-                let resource = self
-                    .call_codex_thread_method(
-                        "mcpServer/resource/read",
-                        json!({
-                            "threadId":thread_id,"server":server,"uri":uri,"originCallId":call_id
-                        }),
-                    )
+        // Retain process ownership across source validation, cold resume and dispatch.
+        client
+            .run_thread_action(&thread_id, async {
+                let started = std::time::Instant::now();
+                let (read, source) = self
+                    .mcp_app_source(&client, &thread_id, &call_id, payload["turnId"].as_str())
                     .await
-                    .map_err(|_| app_error("Cannot read MCP App resource"))?;
-                let mut descriptor = descriptor();
-                descriptor["resource"] = resource;
-                Ok(descriptor)
-            }
-            "tools/list" => Ok(
-                json!({"tools":catalog.into_iter().filter(|tool| source_visible(source, tool)).collect::<Vec<_>>()}),
-            ),
-            "resources/list" => {
-                Ok(json!({"resources":app_resources(source, server_catalog, "resources")}))
-            }
-            "resources/templates/list" => Ok(
-                json!({"resourceTemplates":app_resources(source, server_catalog, "resourceTemplates")}),
-            ),
-            "tools/call" => {
-                let tool = catalog
-                    .iter()
-                    .find(|tool| tool["name"] == params["name"] && source_visible(source, tool))
-                    .ok_or_else(|| app_error("Tool is not available to this app"))?;
-                let result = self.codex_app_server.call_mcp_app_tool(json!({
-                    "threadId":thread_id,"server":server,"tool":tool["name"],"arguments":params["arguments"]
-                })).await.or_else(app_tool_failure)?;
-                crate::logging::log_executor_event(
-                    "MCP App tool result",
-                    &[
-                        ("tool", tool["name"].as_str().unwrap_or_default().to_owned()),
-                        (
-                            "structured",
-                            result["structuredContent"].is_object().to_string(),
-                        ),
-                        ("is_error", (result["isError"] == true).to_string()),
-                    ],
-                );
-                Ok(result)
-            }
-            "resources/read" => {
-                let requested = params["uri"]
+                    .map_err(|_| app_error("Cannot read source invocation"))?;
+                if started.elapsed().as_millis() >= 250 {
+                    crate::logging::log_executor_event(
+                        "MCP App source lookup slow",
+                        &[
+                            ("elapsed_ms", started.elapsed().as_millis().to_string()),
+                            ("targeted", payload["turnId"].is_string().to_string()),
+                        ],
+                    );
+                }
+                let source = match source.as_ref() {
+                    Some(source) => source,
+                    // Streamed model calls can precede the native MCP invocation record.
+                    None if discovering => return Ok(Value::Null),
+                    None => return Err(app_error("Source invocation does not belong to this task")),
+                };
+                // Historical UI declarations identify a card independently of service readiness.
+                // Initialization still revalidates the live server, plugin and tool authority.
+                if payload["method"] == "discover" {
+                    if let Some(uri) = source_resource_uri(source) {
+                        return Ok(app_descriptor(source, &link, &call_id, uri, None));
+                    }
+                }
+                let source_status = read["thread"]["status"]["type"]
                     .as_str()
-                    .ok_or_else(|| app_error("Missing resource URI"))?;
-                self.call_codex_thread_method(
-                    "mcpServer/resource/read",
-                    json!({
-                        "threadId":thread_id,"server":server,"uri":requested,"originCallId":call_id
-                    }),
-                )
-                .await
-                .map_err(|_| app_error("MCP App resource read failed"))
-            }
-            _ => Err(app_error("Unsupported MCP App request")),
-        }
+                    .filter(|status| matches!(*status, "notLoaded" | "active" | "idle" | "systemError"))
+                    .unwrap_or("unknown");
+                if source_status == "notLoaded" {
+                    self.resume_codex_thread_for_action(&link, &thread_id)
+                        .await
+                        .map_err(|_| app_error("Cannot restore the source MCP App session"))?;
+                }
+                let server = source["server"]
+                    .as_str()
+                    .ok_or_else(|| app_error("Source server is unavailable"))?;
+                let catalog_started = std::time::Instant::now();
+                let server_catalog = self.mcp_app_catalog(&client, &thread_id, server).await;
+                if catalog_started.elapsed().as_millis() >= 250 {
+                    crate::logging::log_executor_event(
+                        "MCP App catalog lookup slow",
+                        &[(
+                            "elapsed_ms",
+                            catalog_started.elapsed().as_millis().to_string(),
+                        )],
+                    );
+                }
+                let server_catalog = server_catalog.inspect_err(|_| {
+                    crate::logging::log_executor_event(
+                        "MCP App catalog lookup failed",
+                        &[
+                            ("task_id", link.local_task_id.clone()),
+                            ("thread_id", thread_id.clone()),
+                            ("source_status", source_status.to_string()),
+                            ("task_running", link.running.to_string()),
+                            ("restored", (source_status == "notLoaded").to_string()),
+                            ("source_age_ms", started.elapsed().as_millis().to_string()),
+                        ],
+                    );
+                })?;
+                let server_catalog = server_catalog.as_ref().unwrap_or(&Value::Null);
+                let catalog: Vec<Value> = server_catalog["tools"]
+                    .as_object()
+                    .into_iter()
+                    .flat_map(|tools| tools.values())
+                    .filter(|tool| same_app(source, server_catalog, tool))
+                    .cloned()
+                    .collect();
+                let origin = catalog.iter().find(|tool| {
+                    tool["name"] == source["tool"]
+                        || (source["appContext"]["resourceUri"].is_string()
+                            && source["appContext"]["resourceUri"]
+                                == tool["_meta"]["_codex_apps"]["resource_uri"])
+                });
+                let uri = source_resource_uri(source)
+                    .or_else(|| origin.and_then(|tool| resource_uri(&tool["_meta"])));
+                let Some(uri) = uri.filter(|uri| !uri.is_empty()) else {
+                    // Discovery is optional for ordinary MCP calls, including historical calls
+                    // whose server or tool is no longer in the current catalog.
+                    return if discovering {
+                        Ok(Value::Null)
+                    } else {
+                        Err(app_error("Source invocation has no MCP App resource"))
+                    };
+                };
+                if server_catalog.is_null() {
+                    return Err(app_error("Source MCP server is no longer available"));
+                }
+                if server_catalog["toolsError"].is_string() {
+                    return Err(app_error("MCP App tool discovery failed"));
+                }
+                if origin.is_none() {
+                    return Err(app_error("The source app is no longer available"));
+                }
+                let descriptor = || app_descriptor(source, &link, &call_id, uri, origin);
+                // Discovery confirms app identity without loading HTML or retaining a connection.
+                if payload["method"] == "discover" {
+                    return Ok(descriptor());
+                }
+                if payload["method"] == "retain" {
+                    client
+                        .set_mcp_app_session(
+                            &thread_id,
+                            &call_id,
+                            session_id.ok_or_else(|| app_error("Missing MCP App session identity"))?,
+                            true,
+                        )
+                        .await;
+                    return Ok(json!({}));
+                }
+                let method = payload["method"].as_str().unwrap_or("initialize");
+                let params = &payload["params"];
+                match method {
+                    "ui/update-model-context" => {
+                        if !params.is_object()
+                            || serde_json::to_vec(params).map_or(true, |bytes| bytes.len() > 65536)
+                            || params.get("content").is_some_and(|content| {
+                                !content.as_array().is_some_and(|items| {
+                                    items
+                                        .iter()
+                                        .all(|item| item["type"] == "text" && item["text"].is_string())
+                                })
+                            })
+                            || params
+                                .get("structuredContent")
+                                .is_some_and(|content| !content.is_object())
+                        {
+                            return Err(app_error("Invalid or oversized MCP App model context"));
+                        }
+                        let context = json!({"server":server,"content":params["content"],"structuredContent":params["structuredContent"]});
+                        let updated = self
+                            .store
+                            .try_update_task(&link.local_task_id, |task| {
+                                if !task.runtime_handle["mcpAppContexts"].is_object() {
+                                    task.runtime_handle["mcpAppContexts"] = json!({});
+                                }
+                                task.runtime_handle["mcpAppContexts"][&call_id] = context;
+                            })
+                            .map_err(|_| {
+                                AppIpcError::new(
+                                    "mcp_app_storage_failed",
+                                    "Could not persist MCP App model context",
+                                )
+                            })?;
+                        updated.ok_or_else(|| app_error("The source task is no longer available"))?;
+                        Ok(json!({}))
+                    }
+                    "initialize" => {
+                        let resource = client
+                            .request(
+                                "mcpServer/resource/read",
+                                json!({
+                                    "threadId":thread_id,"server":server,"uri":uri,"originCallId":call_id
+                                }),
+                            )
+                            .await
+                            .map_err(|_| app_error("Cannot read MCP App resource"))?;
+                        let mut descriptor = descriptor();
+                        descriptor["resource"] = resource;
+                        Ok(descriptor)
+                    }
+                    "tools/list" => Ok(
+                        json!({"tools":catalog.into_iter().filter(|tool| source_visible(source, tool)).collect::<Vec<_>>()}),
+                    ),
+                    "resources/list" => {
+                        Ok(json!({"resources":app_resources(source, server_catalog, "resources")}))
+                    }
+                    "resources/templates/list" => Ok(
+                        json!({"resourceTemplates":app_resources(source, server_catalog, "resourceTemplates")}),
+                    ),
+                    "tools/call" => {
+                        let tool = catalog
+                            .iter()
+                            .find(|tool| tool["name"] == params["name"] && source_visible(source, tool))
+                            .ok_or_else(|| app_error("Tool is not available to this app"))?;
+                        let result = client.call_mcp_app_tool(json!({
+                            "threadId":thread_id,"server":server,"tool":tool["name"],"arguments":params["arguments"]
+                        })).await.or_else(app_tool_failure)?;
+                        crate::logging::log_executor_event(
+                            "MCP App tool result",
+                            &[
+                                ("tool", tool["name"].as_str().unwrap_or_default().to_owned()),
+                                (
+                                    "structured",
+                                    result["structuredContent"].is_object().to_string(),
+                                ),
+                                ("is_error", (result["isError"] == true).to_string()),
+                            ],
+                        );
+                        Ok(result)
+                    }
+                    "resources/read" => {
+                        let requested = params["uri"]
+                            .as_str()
+                            .ok_or_else(|| app_error("Missing resource URI"))?;
+                        client.request(
+                            "mcpServer/resource/read",
+                            json!({
+                                "threadId":thread_id,"server":server,"uri":requested,"originCallId":call_id
+                            }),
+                        )
+                        .await
+                        .map_err(|_| app_error("MCP App resource read failed"))
+                    }
+                    _ => Err(app_error("Unsupported MCP App request")),
+                }
+            })
+            .await
     }
 
     async fn mcp_app_catalog(
         &self,
+        client: &CodexAppServerClient,
         thread_id: &str,
         server: &str,
     ) -> Result<Option<Value>, AppIpcError> {
         let mut cursor = Value::Null;
         let mut cursors = HashSet::new();
         loop {
-            let page = self
-                .call_codex_thread_method(
+            let page = client
+                .request(
                     "mcpServerStatus/list",
                     json!({
                         "threadId":thread_id,"serverName":server,"limit":100,"cursor":cursor
@@ -593,6 +619,86 @@ mod session_tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
+    fn isolated_homes(root: &Path) -> Vec<ScalarEnv> {
+        [
+            "HOME",
+            "CODEX_HOME",
+            "WEGENT_CODEX_HOME",
+            "WEGENT_EXECUTOR_HOME",
+            "WEGENT_WORKBENCH_HOME",
+            "WEGENT_CAPABILITIES_HOME",
+        ]
+        .into_iter()
+        .map(|key| {
+            let directory = root.join(key);
+            fs::create_dir_all(&directory).unwrap();
+            ScalarEnv::set(key, directory.to_str().unwrap())
+        })
+        .collect()
+    }
+
+    #[test]
+    fn idle_restart_cannot_split_an_mcp_app_source_read_and_tool_dispatch() {
+        use futures_util::task::noop_waker;
+        use std::task::{Context, Poll};
+
+        let _lock = crate::test_env::lock();
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+            let root = tempfile::tempdir().unwrap();
+            let _env = isolated_homes(root.path());
+            let binary = root.path().join("codex-mcp-handoff.sh");
+            let log = root.path().join("requests.jsonl");
+            fs::write(&binary, crate::test_env::with_codex_bundled_catalog(&format!(r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' "$line" >> '{}'
+  id=$(printf '%s\n' "$line" | sed -n 's/.*"id":\([0-9][0-9]*\).*/\1/p')
+  [ -n "$id" ] || continue
+  case "$line" in
+    *'"method":"thread/read"'*) result='{{"thread":{{"id":"00000000-0000-0000-0000-000000000001","status":{{"type":"idle"}},"turns":[{{"items":[{{"id":"call","type":"mcpToolCall","server":"counter","tool":"show","mcpAppResourceUri":"ui://app"}}]}}]}}}}';;
+    *'"method":"mcpServerStatus/list"'*) result='{{"data":[{{"name":"counter","tools":{{"show":{{"name":"show"}},"write":{{"name":"write"}}}}}}]}}';;
+    *'"method":"mcpServer/tool/call"'*) result='{{"structuredContent":{{"created":1}}}}';;
+    *) result='{{}}';;
+  esac
+  printf '{{"id":%s,"result":%s}}\n' "$id" "$result"
+done
+"#, log.display()))).unwrap();
+            fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+            let handler = RuntimeWorkRpcHandler::new("device", binary.to_str().unwrap());
+            let mut task = RuntimeTaskLink::new_pending("task".into(), root.path().join("project").display().to_string(), "App".into());
+            task.runtime_handle = json!({"threadId":"00000000-0000-0000-0000-000000000001"});
+            let client = handler.codex_app_server.for_request(&runtime_event_request_from_link(&task)).unwrap();
+            handler.upsert_local_task(task);
+            client.ensure_started().await.unwrap();
+            let mut operation = Box::pin(handler.mcp_app_request(json!({
+                "taskId":"task", "callId":"call", "method":"tools/call",
+                "params":{"name":"write","arguments":{}}
+            })));
+            let waker = noop_waker();
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    assert!(matches!(operation.as_mut().poll(&mut Context::from_waker(&waker)), Poll::Pending));
+                    // A native FIFO barrier delivers the preceding response without polling
+                    // the owning operation into its next RPC. No request remains pending.
+                    client.request("test/barrier", json!({})).await.unwrap();
+                    if fs::read_to_string(&log).unwrap().contains("\"method\":\"thread/read\"") {
+                        client.request("test/barrier", json!({})).await.unwrap();
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            }).await.unwrap();
+            let restart = client.restart_if_idle().await;
+            let result = operation.await;
+            let idle_restart = client.restart_if_idle().await;
+            client.restart().await;
+            assert_eq!(restart, Err((1, 0)), "An admitted action must retain its source process between RPCs");
+            assert_eq!(result.unwrap()["structuredContent"]["created"], 1);
+            assert_eq!(idle_restart, Ok(()), "Completing the action must release restart protection");
+            let calls: Vec<Value> = fs::read_to_string(log).unwrap().lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+            assert_eq!(calls.iter().filter(|call| call["method"]=="mcpServer/tool/call").count(), 1, "A business operation must never be replayed");
+        });
+    }
+
     #[test]
     fn cold_interaction_resume_restores_managed_control_from_the_owning_task() {
         let _lock = crate::test_env::lock();
@@ -602,14 +708,7 @@ mod session_tests {
             .unwrap()
             .block_on(async {
                 let root = tempfile::tempdir().unwrap();
-                let _env: Vec<_> = [
-                    "HOME", "CODEX_HOME", "WEGENT_CODEX_HOME", "WEGENT_EXECUTOR_HOME",
-                    "WEGENT_WORKBENCH_HOME", "WEGENT_CAPABILITIES_HOME",
-                ].into_iter().map(|key| {
-                    let directory = root.path().join(key);
-                    fs::create_dir_all(&directory).unwrap();
-                    ScalarEnv::set(key, directory.to_str().unwrap())
-                }).collect();
+                let _env = isolated_homes(root.path());
                 let binary = root.path().join("codex-cold-interaction.sh");
                 let log = root.path().join("requests.jsonl");
                 fs::write(&binary, crate::test_env::with_codex_bundled_catalog(&format!(r#"#!/bin/sh
@@ -672,13 +771,7 @@ done
             .unwrap()
             .block_on(async {
                 let root = tempfile::tempdir().unwrap();
-                let _env: Vec<_> = ["HOME", "CODEX_HOME", "WEGENT_CODEX_HOME",
-                    "WEGENT_EXECUTOR_HOME", "WEGENT_WORKBENCH_HOME", "WEGENT_CAPABILITIES_HOME"]
-                    .into_iter().map(|key| {
-                        let directory = root.path().join(key);
-                        fs::create_dir_all(&directory).unwrap();
-                        ScalarEnv::set(key, directory.to_str().unwrap())
-                    }).collect();
+                let _env = isolated_homes(root.path());
                 let items = json!([
                     {"id":"missing-server","type":"mcpToolCall","server":"removed","tool":"plain"},
                     {"id":"missing-tool","type":"mcpToolCall","server":"counter","tool":"removed"},
@@ -767,13 +860,7 @@ done
         tokio::runtime::Builder::new_current_thread()
             .enable_all().build().unwrap().block_on(async {
                 let root = tempfile::tempdir().unwrap();
-                let _env: Vec<_> = ["HOME", "CODEX_HOME", "WEGENT_CODEX_HOME",
-                    "WEGENT_EXECUTOR_HOME", "WEGENT_WORKBENCH_HOME", "WEGENT_CAPABILITIES_HOME"]
-                    .into_iter().map(|key| {
-                        let directory = root.path().join(key);
-                        fs::create_dir_all(&directory).unwrap();
-                        ScalarEnv::set(key, directory.to_str().unwrap())
-                    }).collect();
+                let _env = isolated_homes(root.path());
                 let binary = root.path().join("codex-app.sh");
                 let log = root.path().join("requests.jsonl");
                 fs::write(&binary, crate::test_env::with_codex_bundled_catalog(&format!(r#"#!/bin/sh

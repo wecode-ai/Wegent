@@ -47,6 +47,19 @@ const checkpoints = matrix =>
 const measuredLoad = shard =>
   shard.segments.split(',').reduce((total, segment) => total + (checkpointSeconds(segment) ?? 0), 0)
 
+function processDeadlineSeconds() {
+  const wrapper = readFileSync(
+    new URL('./run-windows-standard-user-process.ps1', import.meta.url),
+    'utf8'
+  )
+  const deadline =
+    Number(
+      wrapper.match(/\$remainingSeconds = (\d+) \* 60 - \$deadlineClock.Elapsed.TotalSeconds/)?.[1]
+    ) * 60
+  assert.ok(Number.isFinite(deadline) && deadline > 0)
+  return deadline
+}
+
 test('an unmeasured checkpoint stays put without pinning unrelated measured work', () => {
   const matrix = {
     include: [
@@ -79,9 +92,44 @@ test('retains measured work when evacuation would increase the known peak', () =
     ],
   }
   assert.deepEqual(
-    balanceWindowsMatrix(matrix, { 'application-menu': 40, 'background-terminals': 83 }),
+    balanceWindowsMatrix(matrix, {
+      'application-menu': 40,
+      'background-terminals': 83,
+    }),
     matrix
   )
+})
+
+test('rebalances displaced work without adding foreign work to an unmeasured runner', () => {
+  const matrix = {
+    include: [
+      { id: 'core-1', segments: 'application-menu' },
+      { id: 'core-2', segments: 'background-terminals' },
+      {
+        id: 'core-3',
+        segments:
+          'coordination-history,send-key-preference,cloud-context-resilience,browser-toolbar-actions,project-ai-settings',
+      },
+    ],
+  }
+  const seconds = {
+    'application-menu': 10,
+    'background-terminals': 10,
+    'send-key-preference': 15,
+    'cloud-context-resilience': 5,
+    'browser-toolbar-actions': 5,
+    'project-ai-settings': 5,
+  }
+  const balanced = balanceWindowsMatrix(matrix, seconds)
+  const load = shard =>
+    shard.segments
+      .split(',')
+      .reduce((total, segment) => total + (checkpointSeconds(segment, seconds) ?? 0), 0)
+  assert.equal(Math.max(...balanced.include.map(load)), 20)
+  assert.deepEqual(segments(balanced).sort(), segments(matrix).sort())
+  const retained = balanced.include.find(shard => shard.id === 'core-3').segments.split(',')
+  assert.ok(retained.includes('coordination-history'))
+  assert.ok(retained.every(segment => matrix.include[2].segments.split(',').includes(segment)))
 })
 
 test('the measured fixture contains every real measured checkpoint exactly once', () => {
@@ -160,7 +208,7 @@ test('unmeasured checkpoints retain their original shard and partial selection n
   assert.deepEqual(segments(balanced).sort(), segments(completeMatrix).sort())
   assert.deepEqual(checkpoints(balanced).sort(), checkpoints(completeMatrix).sort())
   assert.equal(new Set(checkpoints(balanced)).size, checkpoints(completeMatrix).length)
-  assert.equal(balanced.include.length, completeMatrix.include.length)
+  assert.equal(balanced.include.length, completeMatrix.include.length + 1)
   const ordinary = matrix =>
     matrix.include.filter(shard => !['core-9', 'core-10'].includes(shard.id))
   assert.ok(
@@ -204,7 +252,7 @@ test('additional unmeasured checkpoints cannot raise known peaks or receive new 
   ).seconds
   for (const missing of [
     ['window-lifecycle'],
-    ['model-routing', 'computer-use'],
+    ['model-settings', 'browser-toolbar-actions'],
     ['stand-in', 'application-menu', 'streaming-content'],
   ]) {
     const seconds = { ...measured }
@@ -220,7 +268,7 @@ test('additional unmeasured checkpoints cannot raise known peaks or receive new 
       Math.max(...ordinary(balanced).map(load)) <= Math.max(...ordinary(completeMatrix).map(load))
     )
     assert.deepEqual(segments(balanced).sort(), segments(completeMatrix).sort())
-    assert.equal(balanced.include.length, completeMatrix.include.length)
+    assert.equal(balanced.include.length, completeMatrix.include.length + 1)
     for (const shard of completeMatrix.include) {
       const originalSegments = shard.segments.split(',')
       if (originalSegments.every(segment => checkpointSeconds(segment, seconds) !== null)) continue
@@ -235,6 +283,38 @@ test('additional unmeasured checkpoints cannot raise known peaks or receive new 
   }
 })
 
+test('extra capacity is limited to a complete workload that one runner can make fit', () => {
+  const cheap = Object.fromEntries(checkpoints(completeMatrix).map(checkpoint => [checkpoint, 1]))
+  assert.equal(
+    balanceWindowsMatrix(completeMatrix, cheap).include.length,
+    completeMatrix.include.length
+  )
+  const oversized = {
+    ...cheap,
+    'application-menu': processDeadlineSeconds() + 1,
+  }
+  assert.equal(
+    balanceWindowsMatrix(completeMatrix, oversized).include.length,
+    completeMatrix.include.length
+  )
+  const balanced = balanceWindowsMatrix(completeMatrix)
+  assert.equal(balanced.include.length, completeMatrix.include.length + 1)
+  assert.ok(balanced.include.some(shard => shard.id === 'core-11'))
+  for (const id of ['core-9', 'core-10']) {
+    assert.deepEqual(
+      balanced.include.find(shard => shard.id === id),
+      completeMatrix.include.find(shard => shard.id === id)
+    )
+  }
+})
+
+test('scheduler capacity uses the actual existing process deadline', () => {
+  const evidence = JSON.parse(
+    readFileSync(new URL('../ci/wework-windows-checkpoint-durations.json', import.meta.url))
+  )
+  assert.equal(evidence.processDeadlineSeconds, processDeadlineSeconds())
+})
+
 test('duplicate selection is rejected rather than silently losing coverage', () => {
   assert.throws(
     () =>
@@ -246,19 +326,22 @@ test('duplicate selection is rejected rather than silently losing coverage', () 
 })
 
 test('balancing never multiplies expensive conditional preparation from the original workflow', () => {
-  const steps = JSON.parse(
+  const jobs = JSON.parse(
     execFileSync(
       'ruby',
       [
         '-ryaml',
         '-rjson',
         '-e',
-        "puts JSON.generate(YAML.load_file(ARGV[0])['jobs']['wework-desktop-windows-core-e2e']['steps'])",
+        "puts JSON.generate(YAML.load_file(ARGV[0])['jobs'])",
         '.github/workflows/wework-e2e.yml',
       ],
       { cwd: root, encoding: 'utf8' }
     )
   )
+  const worker = jobs['wework-desktop-windows-core-e2e']
+  const steps = worker.steps
+  const producerSteps = jobs['build-wework-desktop-windows-core-e2e'].steps
   const balanced = balanceWindowsMatrix(original)
   const completeBalanced = balanceWindowsMatrix(completeMatrix)
   const evidence = JSON.parse(
@@ -266,18 +349,43 @@ test('balancing never multiplies expensive conditional preparation from the orig
   )
   const preparationWeights = {
     'Install local harness CLIs': evidence.preparationSeconds['local-harness'],
-    'Build real object storage': evidence.preparationSeconds['object-storage'],
     'Prepare DingTalk protocol fixture for the standard account':
       evidence.preparationSeconds['dingtalk-protocol-fixture'],
   }
-  const preparationLoads = matrix => matrix.include.map(shard => measuredLoad(shard))
+  const objectStorage = producerSteps.find(step => step.name === 'Build real object storage')
+  assert.equal(objectStorage?.if, "steps.issue-mcp-minio.outputs.cache-hit != 'true'")
+  const restoreObjectStorage = producerSteps.find(
+    step => step.name === 'Restore real object storage for desktop E2E'
+  )
+  assert.ok(restoreObjectStorage)
+  assert.equal(restoreObjectStorage.if, undefined)
+  assert.equal(
+    steps.some(step => step.name === 'Build real object storage'),
+    false
+  )
+  assert.equal(producerSteps.filter(step => step.name === 'Build real object storage').length, 1)
+  assert.ok(worker.needs.includes('build-wework-desktop-windows-core-e2e'))
+  const storageDownload = steps.find(step => step.name === 'Download Windows real object storage')
+  const storageUpload = producerSteps.find(
+    step => step.name === 'Upload Windows real object storage'
+  )
+  assert.ok(storageDownload)
+  assert.ok(storageUpload)
+  assert.equal(storageDownload.if, undefined)
+  assert.equal(storageUpload.if, undefined)
+  assert.equal(storageDownload.with.name, storageUpload.with.name)
+  assert.equal(storageDownload.with.path, '${{ runner.temp }}/wework-minio/bin')
+  assert.equal(storageUpload.with.path, '${{ runner.temp }}/wework-minio/bin/minio.exe')
+  assert.equal(storageUpload.with['if-no-files-found'], 'error')
+  const preparationLoads = matrix => matrix.include.map(measuredLoad)
+  const totalCost = loads =>
+    evidence.preparationSeconds['object-storage'] + loads.reduce((a, b) => a + b)
   const originalLoads = preparationLoads(original)
   const balancedLoads = preparationLoads(balanced)
   const completeOriginalLoads = preparationLoads(completeMatrix)
   const completeBalancedLoads = preparationLoads(completeBalanced)
   for (const name of [
     'Install local harness CLIs',
-    'Build real object storage',
     'Install Electron for native startup and schema verification',
     'Prepare DingTalk protocol fixture for the standard account',
   ]) {
@@ -302,26 +410,18 @@ test('balancing never multiplies expensive conditional preparation from the orig
     const count = matrix =>
       matrix.include.filter(shard => triggers.some(segment => shard.segments.includes(segment)))
         .length
-    assert.ok(count(balanced) <= count(original), `${name}: preparation count increased`)
-    assert.ok(count(completeBalanced) <= count(completeMatrix), `${name}: full preparation count increased`)
+    assert.equal(count(balanced), count(original), name)
+    assert.equal(count(completeBalanced), count(completeMatrix), name)
   }
-  assert.equal(
-    balancedLoads.reduce((a, b) => a + b),
-    originalLoads.reduce((a, b) => a + b)
-  )
+  assert.equal(totalCost(balancedLoads), totalCost(originalLoads))
   assert.ok(Math.max(...balancedLoads) < Math.max(...originalLoads))
-  assert.equal(
-    completeBalancedLoads.reduce((a, b) => a + b),
-    completeOriginalLoads.reduce((a, b) => a + b)
-  )
+  assert.equal(totalCost(completeBalancedLoads), totalCost(completeOriginalLoads))
   assert.ok(Math.max(...completeBalancedLoads) <= Math.max(...completeOriginalLoads))
   const testStep = steps.find(step => step.name === 'Run Windows Wework desktop Core shard E2E')
   assert.ok(testStep?.['timeout-minutes'] > 0)
-  assert.ok(Math.max(...completeBalancedLoads) < testStep['timeout-minutes'] * 60)
-  assert.ok(
-    Math.max(...completeBalancedLoads) + evidence.runnerOverheadSeconds <
-      testStep['timeout-minutes'] * 60
-  )
+  const budget = processDeadlineSeconds()
+  assert.ok(budget < testStep['timeout-minutes'] * 60)
+  assert.ok(Math.max(...completeBalancedLoads) + evidence.runnerOverheadSeconds < budget)
 })
 
 test('timing evidence contains positive successful samples with source run links', () => {
@@ -338,6 +438,15 @@ test('timing evidence contains positive successful samples with source run links
   assert.match(evidence.preparationSource, /\/actions\/runs\/\d+\/job\/\d+$/)
   assert.ok(Number.isFinite(evidence.runnerOverheadSeconds) && evidence.runnerOverheadSeconds > 0)
   assert.match(evidence.runnerOverheadSource, /\/actions\/runs\/\d+\/job\/\d+$/)
+  const current = evidence.currentPrMeasurements
+  assert.ok(evidence.runs.includes(current.run))
+  assert.match(current.head, /^[a-f0-9]{40}$/)
+  assert.ok(Object.keys(current.sources).length > 0)
+  for (const [checkpoint, source] of Object.entries(current.sources)) {
+    assert.ok(Object.hasOwn(evidence.seconds, checkpoint), checkpoint)
+    assert.ok(source.startsWith(`${current.run}/job/`), source)
+    assert.match(source, /\/job\/\d+$/)
+  }
 })
 
 function replayedShardSeconds(shard, seconds, overheadSeconds) {
@@ -356,13 +465,14 @@ test('deadline replay rejects unknown durations and preserves known sums', () =>
 
 function assertDeadlineReplay(replay) {
   const workflow = readFileSync(new URL('../workflows/wework-e2e.yml', import.meta.url), 'utf8')
-  const budget =
+  const stepBudget =
     Number(
       workflow.match(
         /name: Run Windows Wework desktop Core shard E2E[\s\S]*?timeout-minutes: (\d+)/
       )?.[1]
     ) * 60
-  assert.ok(budget > 0)
+  const budget = processDeadlineSeconds()
+  assert.ok(budget > 0 && budget < stepBudget)
   const observed = { ...replay.unobservedSeconds, ...replay.seconds }
   assert.deepEqual(
     replay.matrix.include.map(shard => shard.id),
@@ -371,23 +481,8 @@ function assertDeadlineReplay(replay) {
   assert.equal(Object.keys(observed).length, replay.checkpointCount)
   assert.ok(Object.keys(replay.unobservedSeconds).every(key => !Object.hasOwn(replay.seconds, key)))
   for (const seconds of Object.values(observed)) assert.ok(Number.isFinite(seconds) && seconds > 0)
-  // Replay the original workload even when today's group has fewer members.
-  const historicalGroups = {
-    'collaboration-issue-comment-notification': [
-      'collaboration-issue-comment-notification-navigation',
-      'issue-notification-read',
-    ],
-  }
-  const historicalMatrix = {
-    ...replay.matrix,
-    include: replay.matrix.include.map(shard => ({
-      ...shard,
-      segments: shard.segments.split(',')
-        .flatMap(segment => historicalGroups[segment] ?? [segment]).join(','),
-    })),
-  }
   const covered = []
-  for (const shard of balanceWindowsMatrix(historicalMatrix).include) {
+  for (const shard of balanceWindowsMatrix(replay.matrix).include) {
     if (['core-9', 'core-10'].includes(shard.id)) continue
     covered.push(...expandDesktopCheckpoints(shard.segments.split(',')))
     const seconds = replayedShardSeconds(shard, observed, replay.runnerOverheadSeconds)
@@ -412,6 +507,26 @@ test('new Windows checkpoint measurements leave room for startup and cleanup', (
     JSON.parse(
       readFileSync(
         new URL('./fixtures/wework-windows-cleanup-deadline-replay.json', import.meta.url)
+      )
+    )
+  )
+})
+
+test('complete real-Backend Windows workloads retain cleanup time within the deadline', () => {
+  assertDeadlineReplay(
+    JSON.parse(
+      readFileSync(
+        new URL('./fixtures/wework-windows-real-backend-deadline-replay.json', import.meta.url)
+      )
+    )
+  )
+})
+
+test('current Windows workloads fit the process deadline before the step deadline', () => {
+  assertDeadlineReplay(
+    JSON.parse(
+      readFileSync(
+        new URL('./fixtures/wework-windows-current-deadline-replay.json', import.meta.url)
       )
     )
   )

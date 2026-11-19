@@ -1,5 +1,6 @@
 import { showAllCollaborationIssues } from '../modules/collaboration-board-flows.mjs'
 import assert from 'node:assert/strict'
+import { getDesktopOwner } from '../modules/desktop-owner-fixture.mjs'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -274,11 +275,7 @@ export function createDesktopScenario({
     async verify(control) {
       active = true
       try {
-        const profileResponse = await fetch(
-          `http://127.0.0.1:${process.env.WEWORK_E2E_MODEL_SERVER_PORT}/api/users/me`
-        )
-        assert.ok(profileResponse.ok)
-        const profile = await profileResponse.json()
+        const profile = getDesktopOwner()
         const viewerId = Number(profile.id)
         const viewerName = profile.user_name
         assert.ok(Number.isInteger(viewerId) && viewerId > 0)

@@ -224,6 +224,21 @@ done
             handler.upsert_local_task(active);
             handler.read_thread_transcript(json!({"taskId":"active-task","refresh":true}), None)
                 .await.unwrap();
+            // A persisted running task can be owned outside this handler's active map.
+            let mut background = RuntimeTaskLink::new_pending(
+                "background-task".into(), root.path().join("project").display().to_string(),
+                "Background task".into(),
+            );
+            background.thread_id = Some("background-thread".into());
+            background.status = "running".into();
+            background.running = true;
+            handler.upsert_local_task(background);
+            assert!(!handler.is_active_local_task("background-task"));
+            let response = handler.read_thread_transcript(
+                json!({"taskId":"background-task","refresh":true}), None,
+            ).await.unwrap();
+            assert!(response["messages"].as_array().unwrap().iter()
+                .any(|message| message["content"] == "Saved native history"));
             handler.codex_app_server.request("test/stop", json!({})).await.unwrap();
             let calls: Vec<Value> = fs::read_to_string(log).unwrap().lines()
                 .map(|line| serde_json::from_str(line).unwrap()).collect();

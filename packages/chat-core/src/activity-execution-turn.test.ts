@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ProjectChatMessage } from "./project-chat";
+import type { RuntimeConversationTurn } from "./runtime-conversation";
 import { activityExecutionDisplayStatus } from "./activity-execution-turn";
 
 const message = {
@@ -16,6 +17,22 @@ describe("activityExecutionDisplayStatus", () => {
         [],
         undefined,
         true,
+      ),
+    ).toBe("completed");
+  });
+
+  it("keeps a durable completed activity above a stale streaming turn", () => {
+    const turn = {
+      id: "turn-1",
+      status: "streaming",
+      items: [],
+    } as RuntimeConversationTurn;
+    expect(
+      activityExecutionDisplayStatus(
+        { ...message, status: "completed" },
+        [turn],
+        turn,
+        false,
       ),
     ).toBe("completed");
   });

@@ -1,3 +1,4 @@
+import { recordUiRender } from '@/e2e/ui-refresh-capture'
 import { useElementGeometry } from '@wegent/collaboration/dom-events'
 import { createDesktopWorkbenchWorkspaceSource } from './desktopWorkbenchWorkspaceSource'
 import { useCallback, useMemo, useRef, useState, useSyncExternalStore } from 'react'
@@ -40,6 +41,7 @@ import {
 } from './desktopWorkbenchMainHelpers'
 import { DesktopWorkbenchPane } from './DesktopWorkbenchPane'
 export function DesktopWorkbenchMain(props: DesktopWorkbenchMainProps) {
+  recordUiRender('desktop-workbench-main')
   const { state } = useWorkbenchPaneContext()
   const resolveRuntimeTaskSummary = useRuntimeTaskSummaryResolver(state.runtimeWork)
   const { services, openRuntimeTask } = useWorkbench()

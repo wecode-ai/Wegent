@@ -7,6 +7,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "wait-windows-standard-user-process.ps1")
+$deadlineClock = [Diagnostics.Stopwatch]::StartNew()
 
 $userName = "wework-e2e-$PID"
 $passwordText = [Convert]::ToBase64String(
@@ -93,28 +95,12 @@ try {
     -PassThru
   # Credentialed processes do not reliably inherit the runner's console handles.
   # Keep independent logs and forward output while the process is still running.
-  $readers = @($stdoutPath, $stderrPath) | ForEach-Object {
-    [IO.StreamReader]::new([IO.File]::Open(
-      $_, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite
-    ))
-  }
-  try {
-    do {
-      $finished = $process.WaitForExit(1000)
-      foreach ($reader in $readers) {
-        $output = $reader.ReadToEnd()
-        if ($output) { Write-Host -NoNewline $output }
-      }
-    } while (-not $finished)
-    $process.WaitForExit()
-    foreach ($reader in $readers) {
-      $output = $reader.ReadToEnd()
-      if ($output) { Write-Host -NoNewline $output }
-    }
-  } finally {
-    foreach ($reader in $readers) { $reader.Dispose() }
-  }
-  exit $process.ExitCode
+  # Reserve one minute inside the existing 55-minute step for account cleanup.
+  $remainingSeconds = 54 * 60 - $deadlineClock.Elapsed.TotalSeconds
+  if ($remainingSeconds -le 0) { throw "Windows E2E setup exhausted the process deadline" }
+  $exitCode = Wait-LoggedProcess -Process $process `
+    -LogPaths @($stdoutPath, $stderrPath) -TimeoutSeconds $remainingSeconds
+  exit $exitCode
 } finally {
   & (Join-Path $workspace ".github/scripts/stop-windows-standard-user-processes.ps1")
 }

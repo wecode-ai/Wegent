@@ -1,0 +1,12 @@
+{
+  "order": 82000,
+  "scenario": "./scenarios/reply-predictions-background.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 121000,
+      "shard": 2,
+      "position": 9000
+    }
+  }
+}

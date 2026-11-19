@@ -4,6 +4,7 @@ import {
   assistantMessage,
   codexRequestKind,
   createSse,
+  handleEmptyReplyPrediction,
   readRequestBody,
   responseCompleted,
   responseCreated,
@@ -29,6 +30,7 @@ export function createLoadedCompactionProfileVerification({
     async handleHttp(request, response, url) {
       if (request.method !== 'POST' || url.pathname !== `${PATH}/responses`) return false
       const body = await readRequestBody(request)
+      if (handleEmptyReplyPrediction(body, response)) return true
       const kind = codexRequestKind(body)
       assert.ok(['prewarm', 'compaction'].includes(kind), `Unexpected native request: ${kind}`)
       if (kind === 'compaction') compactionRequest = body

@@ -1,0 +1,11 @@
+{
+  "order": 97000,
+  "pluginOrder": 2000,
+  "ci": {
+    "core": {
+      "order": 72000,
+      "shard": 4,
+      "position": 9000
+    }
+  }
+}

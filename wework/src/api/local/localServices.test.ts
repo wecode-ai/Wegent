@@ -21,7 +21,7 @@ import {
   qualifyLocalRuntimeWork,
 } from '@/lib/local-runtime-sidebar-identity'
 import type { TurnFileChangesSummary, User } from '@/types/api'
-import { beforeEach, describe, expect, test, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest'
 import * as codexPlugins from './codexPlugins'
 import {
   assignmentCloudExecutionFields,
@@ -65,11 +65,18 @@ const AUTHENTICATED_CLOUD_USER: User = {
 }
 
 describe('createLocalAppServices', () => {
+  let previousRuntimeConfig: Window['__WEWORK_RUNTIME_CONFIG__']
+
   beforeEach(() => {
+    previousRuntimeConfig = window.__WEWORK_RUNTIME_CONFIG__
     localStorage.clear()
     delete window.weworkElectronNetwork
     clearLocalModelConfigs()
     resetLocalRuntimeChatStreamsForTests()
+  })
+
+  afterEach(() => {
+    window.__WEWORK_RUNTIME_CONFIG__ = previousRuntimeConfig
   })
 
   test('requires a Wework cloud connection for default-market dependency installation', async () => {
@@ -2190,6 +2197,10 @@ describe('createLocalAppServices', () => {
   })
 
   test('omits codex models and skips the codex RPC when the subscription is off', async () => {
+    window.__WEWORK_RUNTIME_CONFIG__ = {
+      ...window.__WEWORK_RUNTIME_CONFIG__,
+      desktopHost: 'electron',
+    }
     await updateAppPreferences({ localCodexSubscriptionEnabled: false })
     const request = vi.fn().mockResolvedValue({})
     const services = createLocalAppServices({
@@ -5406,56 +5417,63 @@ describe('createLocalAppServices', () => {
     expect(request).not.toHaveBeenCalledWith('runtime.tasks.create', expect.anything())
   })
 
-  test('preserves request user input responses in local runtime send requests', async () => {
-    const request = vi.fn().mockResolvedValue({ accepted: true })
-    const services = createLocalAppServices({
-      ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
-      request,
-      subscribe: vi.fn(),
-    })
+  test.each(['requestUserInputResponse', 'request_user_input_response'] as const)(
+    'delivers %s while model catalog preparation is unavailable',
+    async field => {
+      const request = vi.fn(async (method: string) => {
+        if (method === 'runtime.models.sync_creation_profiles')
+          throw new Error('catalog unavailable')
+        return { accepted: true }
+      })
+      const services = createLocalAppServices({
+        ensure: vi.fn().mockResolvedValue({ running: true, ready: true, deviceId: 'device-uuid' }),
+        request,
+        subscribe: vi.fn(),
+      })
 
-    await services.runtimeWorkApi?.sendRuntimeMessage({
-      address: { deviceId: 'local-device', taskId: 'task-1' },
-      message: '工作目标',
-      requestUserInputResponse: {
-        requestId: 42,
-        itemId: 'item-1',
-        answers: {
-          goal: { answers: ['工作目标'] },
-        },
-      },
-    })
-
-    const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.send')?.[1]
-    expect(payload).toEqual(
-      expect.objectContaining({
-        taskId: 'task-1',
-        address: { deviceId: 'device-uuid', taskId: 'task-1' },
+      await services.runtimeWorkApi?.sendRuntimeMessage({
+        address: { deviceId: 'local-device', taskId: 'task-1' },
         message: '工作目标',
-        requestUserInputResponse: {
+        [field]: {
           requestId: 42,
           itemId: 'item-1',
           answers: {
             goal: { answers: ['工作目标'] },
           },
         },
-        executionRequest: expect.objectContaining({
-          task_id: 'task-1',
-          subtask_id: expect.any(String),
-          prompt: '工作目标',
-          new_session: false,
-          model_config: expect.objectContaining({
-            model: 'openai',
-            model_id: 'gpt-5.6-sol',
-            api_format: 'responses',
-            protocol: 'openai-responses',
-          }),
-        }),
       })
-    )
-    expect(payload).not.toHaveProperty('message_id')
-    expect(payload).not.toHaveProperty('modelId')
-  })
+
+      const payload = request.mock.calls.find(([method]) => method === 'runtime.tasks.send')?.[1]
+      expect(payload).toEqual(
+        expect.objectContaining({
+          taskId: 'task-1',
+          address: { deviceId: 'device-uuid', taskId: 'task-1' },
+          message: '工作目标',
+          [field]: {
+            requestId: 42,
+            itemId: 'item-1',
+            answers: {
+              goal: { answers: ['工作目标'] },
+            },
+          },
+          executionRequest: expect.objectContaining({
+            task_id: 'task-1',
+            subtask_id: expect.any(String),
+            prompt: '工作目标',
+            new_session: false,
+            model_config: expect.objectContaining({
+              model: 'openai',
+              model_id: 'gpt-5.6-sol',
+              api_format: 'responses',
+              protocol: 'openai-responses',
+            }),
+          }),
+        })
+      )
+      expect(payload).not.toHaveProperty('message_id')
+      expect(payload).not.toHaveProperty('modelId')
+    }
+  )
 
   test('normalizes local runtime goal requests before IPC', async () => {
     const request = vi.fn().mockResolvedValue({

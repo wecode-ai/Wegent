@@ -860,7 +860,7 @@ impl RuntimeWorkRpcHandler {
             *effort = json!(normalize_reasoning_effort_alias(effort.as_str().unwrap()));
         }
         if let Some(agent) = agent {
-            let catalog = self.runner_catalog().await?;
+            let catalog = self.runner_catalog(concat!(file!(), ":", line!())).await?;
             apply_stand_in_agent(
                 &mut payload,
                 &agent,

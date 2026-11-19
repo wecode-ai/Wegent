@@ -3,6 +3,7 @@ import {
   countTextOccurrences,
   getElementMetrics,
   getSingleElementMetrics,
+  verifyViewImageProcessingBlock,
   waitForComposerFocus,
   waitForElementInsideScroller,
   waitForOverflowMetrics,
@@ -60,6 +61,8 @@ import {
   TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX,
   TURN_NAVIGATION_REGRESSION_TURN_COUNT,
   TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN,
+  VIEW_IMAGE_COMPLETION_TEXT,
+  VIEW_IMAGE_PROMPT,
   VISION_SIDECAR_COMPLETION_TEXT,
   VISION_SIDECAR_MAIN_REQUEST_SCENARIO,
   VISION_SIDECAR_PROMPT,
@@ -1224,13 +1227,40 @@ async function reopenCurrentTurnNavigationTask(
     )
 
     await verifyEnvironmentPanelScrollStability(control)
-    await verifyTurnNavigationComposerClearance(control, expectedTurnCount)
   }
   await control.command('waitFor', '[data-testid="message-turn-navigation-preview"]', {
     text: `${TURN_NAVIGATION_REGRESSION_PROMPT_PREFIX}_${TURN_NAVIGATION_VIRTUALIZED_BOUNDARY_TURN}`,
     timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
   })
   return restartedApp
+}
+
+async function verifyStandaloneViewImageTask({ composerSelector, control, projectRowSelector }) {
+  control.setScenario('view_image')
+  await control.command(
+    'clickWhenEnabled',
+    `${projectRowSelector} [data-testid="project-new-conversation-button"]`,
+    { timeoutMs: DEFAULT_STEP_TIMEOUT_MS }
+  )
+  await control.command('waitFor', composerSelector, {
+    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
+  })
+  await selectE2EModel(control)
+  await sendPrompt(control, composerSelector, VIEW_IMAGE_PROMPT)
+  await withTimeout(
+    control.awaitScenarioRequest('view_image'),
+    DEFAULT_STEP_TIMEOUT_MS,
+    'The model service did not receive the standalone view_image request'
+  )
+  await control.command(
+    'waitFor',
+    `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
+    {
+      text: VIEW_IMAGE_COMPLETION_TEXT,
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    }
+  )
+  await verifyViewImageProcessingBlock(control)
 }
 
 async function verifyVisionSidecar({ composerSelector, control, modelCase, projectRowSelector }) {
@@ -1711,7 +1741,10 @@ export {
   verifyBackgroundGuidanceNavigation,
   verifyForegroundGuidanceScroll,
   verifyTurnNavigationTracksVisibleTurnMessages,
+  verifyEnvironmentPanelScrollStability,
+  verifyTurnNavigationComposerClearance,
   reopenCurrentTurnNavigationTask,
+  verifyStandaloneViewImageTask,
   verifyVisionSidecar,
   verifyMultimodalVision,
   startPausedQueueCase,

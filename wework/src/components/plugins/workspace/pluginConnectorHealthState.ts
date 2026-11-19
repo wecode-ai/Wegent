@@ -137,8 +137,8 @@ export function createPluginConnectorHealthState(key: string) {
         !input ||
         input.detail !== next.detail ||
         input.t !== next.t ||
-        input.revision !== next.revision ||
-        input.busy !== next.busy
+        (input.revision !== next.revision && input.busy === next.busy) ||
+        (input.busy && !next.busy && Object.keys(snapshot.states).length === 0)
       if (input && (input.revision !== next.revision || input.busy !== next.busy))
         invalidateOperation()
       input = next

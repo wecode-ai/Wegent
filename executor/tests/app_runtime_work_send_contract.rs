@@ -1764,6 +1764,9 @@ async fn runtime_proxy_applies_before_auxiliary_rpc_and_task_share_app_server() 
             .to_string(),
     );
     let log_path = temp_path("runtime-shared-proxy-log", "jsonl");
+    let auth_path = wegent_runtime_config::paths::wework_codex_home().join("auth.json");
+    fs::create_dir_all(auth_path.parent().unwrap()).unwrap();
+    fs::write(auth_path, br#"{"auth_mode":"chatgpt"}"#).unwrap();
     let fake_codex = write_fake_codex_auxiliary_rpc_then_turn(&log_path);
     let handler = RuntimeWorkRpcHandler::new("device-1", fake_codex.display().to_string());
 

@@ -116,6 +116,7 @@ test('keeps app identity unique across concurrent registration and reconnect wit
         success: true,
         device_id: routeId,
         device_route_id: `app-record-${recordId}`,
+        runtime_work_catalog_probe: true,
       })
     )
     expect(initial[0]).toMatchObject({
@@ -145,6 +146,7 @@ test('keeps app identity unique across concurrent registration and reconnect wit
         success: true,
         device_id: routeId,
         device_route_id: `app-record-${other.id}`,
+        runtime_work_catalog_probe: true,
       })
       expect(other).toMatchObject({
         device_id: routeId,
@@ -164,6 +166,7 @@ test('keeps app identity unique across concurrent registration and reconnect wit
         success: true,
         device_id: routeId,
         device_route_id: `app-record-${recordId}`,
+        runtime_work_catalog_probe: true,
       })
       const reconnected = await devices()
       expect(reconnected).toHaveLength(2)
@@ -194,6 +197,7 @@ test('keeps app identity unique across concurrent registration and reconnect wit
         success: true,
         device_id: secondId,
         device_route_id: `app-record-${second.id}`,
+        runtime_work_catalog_probe: true,
       })
       expect(current.map(device => device.device_id).sort()).toEqual(
         [routeId, routeId, secondId].sort()
@@ -300,6 +304,7 @@ test('keeps app identity unique across concurrent registration and reconnect wit
         success: true,
         device_id: routeId,
         device_route_id: `app-record-${recordId}`,
+        runtime_work_catalog_probe: true,
       })
       const list = await devices()
       expect(list.filter(device => device.device_id === routeId)).toHaveLength(4)
@@ -324,6 +329,7 @@ test('keeps app identity unique across concurrent registration and reconnect wit
         success: true,
         device_id: routeId,
         device_route_id: `app-record-${seeded.other_id}`,
+        runtime_work_catalog_probe: true,
       })
       const heartbeat = (client: AuthenticatedSocketClient, suffix: string) =>
         emitAck(client, 'device:heartbeat', {
@@ -359,6 +365,7 @@ test('keeps app identity unique across concurrent registration and reconnect wit
         success: true,
         device_id: routeId,
         device_route_id: `app-record-${seeded.other_id}`,
+        runtime_work_catalog_probe: true,
       })
       expect((await devices()).find(device => device.id === seeded.other_id)?.status).toBe('online')
     })

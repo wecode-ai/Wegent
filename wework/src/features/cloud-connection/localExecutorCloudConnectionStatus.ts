@@ -4,12 +4,14 @@ import { requestLocalExecutor } from '@/desktop/localExecutor'
 export interface LocalExecutorCloudConnectionStatus {
   apiBaseUrl: string
   connected: boolean
+  configured: boolean
   revision: number
 }
 
 const EMPTY_STATUS: LocalExecutorCloudConnectionStatus = {
   apiBaseUrl: '',
   connected: false,
+  configured: false,
   revision: 0,
 }
 
@@ -31,6 +33,12 @@ export function setLocalExecutorCloudConnectionStatus(
   next: Omit<LocalExecutorCloudConnectionStatus, 'revision'>
 ): void {
   refreshRevision += 1
+  if (
+    status.apiBaseUrl === next.apiBaseUrl &&
+    status.connected === next.connected &&
+    status.configured === next.configured
+  )
+    return
   status = { ...next, revision: status.revision + 1 }
   for (const listener of listeners) listener()
 }
@@ -79,7 +87,11 @@ async function readLocalExecutorCloudConnectionStatus(
     }>('executor.backend.status')
     const connected = response.configured === true && response.connected === true
     if (revision !== refreshRevision) return null
-    setLocalExecutorCloudConnectionStatus({ apiBaseUrl, connected })
+    setLocalExecutorCloudConnectionStatus({
+      apiBaseUrl,
+      connected,
+      configured: response.configured === true,
+    })
     return {
       configured: response.configured,
       connected,
@@ -87,7 +99,11 @@ async function readLocalExecutorCloudConnectionStatus(
     }
   } catch {
     if (revision === refreshRevision) {
-      setLocalExecutorCloudConnectionStatus({ apiBaseUrl, connected: false })
+      setLocalExecutorCloudConnectionStatus({
+        apiBaseUrl,
+        connected: false,
+        configured: status.apiBaseUrl === apiBaseUrl && status.configured,
+      })
     }
     return null
   }

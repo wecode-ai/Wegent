@@ -876,10 +876,10 @@ fn prediction_thread_keeps_inherited_route_and_parent_scope() {
         max_output_tokens: None,
         model_context_window: None,
     };
-    for restored in [false, true] {
-        let scope = format!("prediction-parent-{restored}");
-        let parent_thread = format!("prediction-source-{restored}");
-        let prediction_thread = format!("prediction-child-{restored}");
+    for (restored, prepare_route) in [(false, false), (false, true), (true, true)] {
+        let scope = format!("prediction-parent-{restored}-{prepare_route}");
+        let parent_thread = format!("prediction-source-{restored}-{prepare_route}");
+        let prediction_thread = format!("prediction-child-{restored}-{prepare_route}");
         let prepared = register(&format!("prediction-prepared-{restored}"), upstream.clone());
         let parent = (!restored).then(|| {
             let token = register(&scope, upstream.clone());
@@ -898,8 +898,13 @@ fn prediction_thread_keeps_inherited_route_and_parent_scope() {
                 StatusCode::CONFLICT
             );
         }
-        let retained =
-            bind_prediction_thread(&prepared, &parent_thread, &prediction_thread).unwrap();
+        let retained = bind_prediction_thread(
+            prepare_route.then_some(prepared.as_str()),
+            &parent_thread,
+            &prediction_thread,
+        )
+        .unwrap()
+        .expect("The inherited proxy route must be retained");
         assert_eq!(retained, inherited);
         let body =
             serde_json::to_vec(&json!({"client_metadata": {"thread_id": prediction_thread}}))
@@ -929,4 +934,9 @@ fn prediction_thread_keeps_inherited_route_and_parent_scope() {
         }
         unregister(&prepared);
     }
+    assert_eq!(
+        bind_prediction_thread(None, "prediction-direct-parent", "prediction-direct-child")
+            .unwrap(),
+        None
+    );
 }

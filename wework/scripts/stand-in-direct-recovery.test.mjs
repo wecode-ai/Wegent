@@ -3,10 +3,12 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, test, vi } from 'vitest'
 import { createDirectRecoveryVerification } from '../e2e/desktop/modules/stand-in-direct-recovery.mjs'
+import { bindDesktopOwner } from '../e2e/desktop/modules/desktop-owner-fixture.mjs'
 
 afterEach(() => vi.unstubAllEnvs())
 
 test('shared CLI recovery reuses its prepared fixture without a compiler in the user PATH', async () => {
+  bindDesktopOwner({ id: 9001, user_name: 'unit-test-owner' })
   const resultDir = await mkdtemp(join(tmpdir(), 'dingtalk-recovery-'))
   try {
     const prepared = join(resultDir, 'prepared.exe')

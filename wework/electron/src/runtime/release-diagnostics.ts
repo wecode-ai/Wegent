@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import { e2eErrorLog } from '../host/e2e-error-log.js'
 import { appendFileSync, writeSync } from 'node:fs'
 import { redactLog, RotatingLog } from './rotating-log.js'
 import { startStartupWatchdog } from './startup-watchdog.js'
@@ -23,6 +24,12 @@ export function recordReleaseDiagnostic(
   synchronous = false
 ): void {
   if (!process.env.WEWORK_E2E_CONTROL_URL) return
+  e2eErrorLog.record(
+    'main',
+    event,
+    event === 'uncaught-exception' || details.status === 'failed' ? 'error' : 'info',
+    details
+  )
   const root = process.env.WEWORK_RELEASE_ROOT
   if (!root && event !== 'shutdown-step' && event !== 'application-quit') return
   const message = JSON.stringify({

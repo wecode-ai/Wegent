@@ -1,9 +1,13 @@
-import { act, cleanup, renderHook } from '@testing-library/react'
+import type { ExecutorClient } from '@/api/executorAccess'
+import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import type { ProjectWithTasks, User } from '@/types/api'
 import type { WorkbenchState } from '@/types/workbench'
 import { navigateTo } from '@/lib/navigation'
+import { resolveRuntimeTaskProjects } from '@/lib/runtime-project'
+import { initialWorkbenchState, workbenchReducer, type WorkbenchAction } from './workbenchReducer'
 import {
+  useOpenStandaloneWorkspace,
   useSelectProject,
   useSelectProjectWorkspace,
   useSelectStandaloneDevice,
@@ -65,3 +69,62 @@ it.each([
     }
   }
 )
+
+it('confirms a registered local project while unrelated task-list refresh is pending', async () => {
+  let release!: () => void
+  const refresh = new Promise<void>(resolve => {
+    release = resolve
+  })
+  let localState = {
+    ...initialWorkbenchState,
+    devices: [{ device_id: 'device' }],
+  } as WorkbenchState
+  const dispatch = (action: WorkbenchAction) => {
+    localState = workbenchReducer(localState, action)
+  }
+  const client = {
+    runtime: {
+      upsertLocalRuntimeProject: async () => ({
+        accepted: true,
+        deviceId: 'device',
+        projectKey: 'registered',
+        name: 'Created',
+        roots: ['/workspace'],
+      }),
+    },
+  } as unknown as ExecutorClient
+  const { result } = renderHook(() =>
+    useOpenStandaloneWorkspace({
+      state: localState,
+      getSnapshot: () => ({ state: localState }),
+      projectSelectionStartedRef: { current: false },
+      executorClient: client,
+      dispatch,
+      clearRemoteProjectSyncRemoval: vi.fn(),
+      ownershipKey: 'create-nonblocking',
+      refreshWorkLists: () => refresh,
+    })
+  )
+  let confirmed = false
+  try {
+    act(() => {
+      void result.current('device', '/workspace', 'Created', ['/workspace']).then(() => {
+        confirmed = true
+      })
+    })
+    await waitFor(() => expect(confirmed).toBe(true))
+    expect(localState.currentProject?.name).toBe('Created')
+    expect(resolveRuntimeTaskProjects(localState.projects, localState.runtimeWork)).toEqual([
+      expect.objectContaining({ id: localState.currentProject?.id, name: 'Created' }),
+    ])
+    expect(localState.runtimeWork?.projects[0].project.roots).toEqual([
+      { kind: 'local', path: '/workspace' },
+    ])
+    expect(localState.runtimeWork?.projects[0].deviceWorkspaces[0].workspacePath).toBe('/workspace')
+    expect(navigateTo).toHaveBeenCalledWith('/')
+  } finally {
+    await act(async () => {
+      release()
+    })
+  }
+})

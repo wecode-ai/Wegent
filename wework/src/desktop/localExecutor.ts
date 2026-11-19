@@ -1,3 +1,4 @@
+import { isRuntimeReadCancellation } from '@/features/workbench/runtimeConversationReadCancellation'
 import type { DeviceInfo } from '@/types/api'
 import type { RuntimeEvent as LocalExecutorEvent } from '@wegent/chat-core'
 import { readRuntimeTranscript } from '@wegent/chat-core'
@@ -771,15 +772,8 @@ export function requestLocalExecutor<T = unknown>(
       : request
     return delivery.catch((cause: unknown) => {
       const signal = requestOptions?.signal
-      const cancelledTranscriptRead =
-        method === 'runtime.tasks.transcript' &&
-        signal?.aborted &&
-        (cause === signal.reason ||
-          (typeof cause === 'object' &&
-            cause !== null &&
-            'name' in cause &&
-            cause.name === 'AbortError'))
-      if (!cancelledTranscriptRead && isExecutorTransportFailure(cause)) {
+      if (isRuntimeReadCancellation(cause, signal)) throw cause
+      if (isExecutorTransportFailure(cause)) {
         bundledPluginUpdateEpoch += 1
         bundledPluginUpdateTasks.clear()
         bundledPluginUpdates.clear()

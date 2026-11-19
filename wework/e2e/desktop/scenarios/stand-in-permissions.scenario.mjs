@@ -182,14 +182,15 @@ export function createDesktopScenario({ uiTimeoutMs, workbenchReadyTimeoutMs }) 
         await control.command('waitFor', '[data-testid="stand-in-settings"]', { visible: false })
       }
 
+      // Establish the denied role before assignment can wake the real Stand-in.
+      await setRole('Viewer')
       const executionProbe = await request(
-        cloud.authToken,
+        ownerToken,
         `/v1/cloud-projects/${project.id}/loop-items`,
         'POST',
         { title: 'Personal task execute permission', assignee_user_id: user.id },
         201
       )
-      await setRole('Viewer')
       await assertRole('Viewer')
       const disabled = await rpc(control, 'runtime.stand_in.get', settingsParams())
       const saved = await rpc(control, 'runtime.stand_in.save', {

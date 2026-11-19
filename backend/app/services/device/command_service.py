@@ -110,6 +110,10 @@ def _git_command_failure(result: Mapping[str, Any]) -> str:
         return "none"
     output = str(result.get("stderr") or result.get("error") or "").lower()
     for failure, needles in (
+        ("command_line_too_long", ("winerror 206", "argument list too long")),
+        ("platform_lock_unavailable", ("no module named 'fcntl'",)),
+        ("command_script_invalid", ("syntaxerror:",)),
+        ("link_privilege_missing", ("winerror 1314",)),
         ("target_not_empty", ("already exists and is not an empty directory",)),
         (
             "authentication",

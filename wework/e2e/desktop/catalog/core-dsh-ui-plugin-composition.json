@@ -4,11 +4,5 @@
     "plugins": {
       "order": 1000
     }
-  },
-  "paths": [
-    "wework/src/components/plugins/CoreDshPluginManagementSection*",
-    "wework/src/features/dsh-plugins/*",
-    "wework/electron/src/runtime/core-dsh-plugin-manager*",
-    "wework/src/components/plugins/PluginManagementWorkspace*"
-  ]
+  }
 }

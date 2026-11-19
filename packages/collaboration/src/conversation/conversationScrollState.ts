@@ -243,6 +243,13 @@ export function createConversationScrollState(
     command = false
     readerState.lastScrollPosition = viewport.scrollTop
   }
+  const updateScrollButton = (viewport: HTMLElement, measuredDistanceFromBottomPx?: number) => {
+    // Follow steps already measured the range and read back their applied offset.
+    publish({
+      showScrollButton:
+        (measuredDistanceFromBottomPx ?? getDistanceFromBottom(viewport)) > BOTTOM_THRESHOLD,
+    })
+  }
   const save = (measuredDistanceFromBottomPx?: number) => {
     if (!owned()) return
     const viewport = scrollRef.current
@@ -264,11 +271,7 @@ export function createConversationScrollState(
     }
     lastSnapshot = { key: currentScrollKey, snapshot }
     if (currentScrollKey) setConversationScrollSnapshot(currentScrollKey, snapshot)
-    // Follow steps already measured the range and read back their applied offset.
-    publish({
-      showScrollButton:
-        (measuredDistanceFromBottomPx ?? getDistanceFromBottom(viewport)) > BOTTOM_THRESHOLD,
-    })
+    updateScrollButton(viewport, measuredDistanceFromBottomPx)
   }
   const follow = (smooth = false) => {
     if (!owned()) return
@@ -356,8 +359,10 @@ export function createConversationScrollState(
         restoreNeedsDistance = false
       }
       restoreConversationAnchor(viewport, snapshot)
-    } else if (state.mode === 'read') restoreReaderPositionFromLayout()
-    else follow()
+    } else if (state.mode === 'read') {
+      restoreReaderPositionFromLayout()
+      updateScrollButton(viewport)
+    } else follow()
     traceHistoryLayout('layout')
   }
   const handleVirtualLayoutChange = () => {

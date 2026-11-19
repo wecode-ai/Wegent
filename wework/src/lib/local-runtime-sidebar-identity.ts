@@ -1,5 +1,5 @@
 import type { LocalExecutorStatus } from '@/desktop/localExecutor'
-import type { RuntimeWorkListResponse } from '@/types/api'
+import type { RuntimeDeviceWorkspace, RuntimeWorkListResponse } from '@/types/api'
 import { DshExecutorTransportError } from '@/api/dsh/executorTransport'
 
 /** Renderer-only provenance; never part of an Executor RPC payload. */
@@ -30,16 +30,23 @@ export function qualifyLocalRuntimeSource<T extends object>(
   return { ...value, [localRuntimeSource]: identity }
 }
 
+export function qualifyLocalRuntimeWorkspace(
+  workspace: RuntimeDeviceWorkspace,
+  identity: LocalRuntimeSidebarIdentity
+): RuntimeDeviceWorkspace {
+  return workspace.deviceId === identity.deviceId &&
+    !workspace.remoteHostId &&
+    workspace.workspaceSource !== 'remote'
+    ? qualifyLocalRuntimeSource(workspace, identity)
+    : workspace
+}
+
 export function qualifyLocalRuntimeWork(
   work: RuntimeWorkListResponse,
   identity: LocalRuntimeSidebarIdentity
 ): RuntimeWorkListResponse {
-  const qualifyWorkspace = (workspace: RuntimeWorkListResponse['chats'][number]) =>
-    workspace.deviceId === identity.deviceId &&
-    !workspace.remoteHostId &&
-    workspace.workspaceSource !== 'remote'
-      ? qualifyLocalRuntimeSource(workspace, identity)
-      : workspace
+  const qualifyWorkspace = (workspace: RuntimeDeviceWorkspace) =>
+    qualifyLocalRuntimeWorkspace(workspace, identity)
   return {
     ...work,
     projects: work.projects.map(projectWork => ({

@@ -56,7 +56,7 @@ classify_workbench_path() {
       select_target "core:stand-in-telemetry"
       select_target "core:stand-in-workspace"
       select_target "core:stand-in-controls"
-      select_target "core:stand-in"
+      select_target "core:stand-in-project-enable"
       select_target "core:stand-in-cloud"
       select_target "core:stand-in-assignment-notifications"
       select_target "core:stand-in-personal-task"
@@ -86,6 +86,11 @@ classify_workbench_path() {
       ;;
     wework/e2e/desktop/scenarios/collaboration-remote-group-coordinate.scenario.mjs)
       select_target "core:collaboration-remote-group-coordinate"
+      select_target "core:collaboration-remote-group-planning-details"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-remote-group-planning-details.scenario.mjs)
+      select_target "core:collaboration-remote-group-planning-details"
       return
       ;;
     wework/e2e/desktop/scenarios/collaboration-human-round-resume.scenario.mjs)
@@ -103,7 +108,7 @@ classify_workbench_path() {
     # Issue comment/reply mention wiring lives in the shared composers and in
     # the Wework collaboration render path.
     wework/e2e/desktop/scenarios/collaboration-issue-comment-mention.scenario.mjs)
-      select_target "core:collaboration-issue-assignment-activity"
+      select_target "core:collaboration-issue-comment-mention"
       return
       ;;
     wework/src/features/todo/IssueAssignmentEvent* | \
@@ -116,6 +121,10 @@ classify_workbench_path() {
       ;;
     wework/e2e/desktop/scenarios/collaboration-issue-comment-attachments.scenario.mjs)
       select_target "core:collaboration-issue-comment-attachments"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-issue-attachment-preview.scenario.mjs)
+      select_target "core:collaboration-issue-attachment-preview"
       return
       ;;
     wework/src/lib/clipboard-images* | \
@@ -135,20 +144,22 @@ classify_workbench_path() {
       return
       ;;
     wework/src/features/todo/TaskBoardView* | \
-      wework/src/features/workbench/runtimeTaskArchive*)
-      select_target "core:core-task-flow"
+      wework/src/features/workbench/runtimeTaskArchive* | \
+      wework/e2e/desktop/scenarios/task-board-bulk-actions.scenario.mjs)
+      select_target "core:task-board-bulk-actions"
       return
       ;;
     wework/src/features/todo/ProjectAutomation* | \
       wework/src/features/todo/projectAutomationForm* | \
       wework/src/api/projectAutomations*)
+      select_target "core:automation-lifecycle"
       select_target "core:project-automation"
       return
       ;;
     wework/src/pages/AutomationsPage* | \
       wework/src/features/automations/* | \
       wework/src/types/automation.ts)
-      select_target "core:project-automation"
+      select_target "core:automation-lifecycle"
       return
       ;;
     wework/e2e/desktop/modules/mcp-tool-results.mjs)
@@ -180,7 +191,7 @@ classify_workbench_path() {
       wework/src/features/todo/CloudTodoWorkspace* | \
       wework/src/features/todo/TaskBoardAssociationDialog* | \
       wework/src/features/todo/WorkItemComposerGuide*)
-      select_target "core:core-task-flow"
+      select_target "core:task-status-sync"
       select_target "core:task-board-association"
       if [[ "$path" == wework/src/api/deliveries* ]]; then
         select_target "core:collaboration-issue-comment-notification"
@@ -189,30 +200,33 @@ classify_workbench_path() {
         select_target "core:collaboration-issue-assignment-activity"
         select_target "core:collaboration-human-round-resume"
         select_target "core:collaboration-local-group-coordinate"
-        select_target "core:core-task-flow"
+        select_target "core:task-board-bulk-actions"
       fi
       if [[ "$path" == wework/src/features/todo/CloudTodoWorkspace* || \
         "$path" == wework/src/features/todo/WorkItemComposerGuide* ]]; then
-        select_target "core:collaboration-personal-issues"
+        select_target "core:collaboration-first-use"
       fi
       if [[ "$path" == wework/src/features/todo/CloudTodoWorkspace* ]]; then
+        select_target "core:collaboration-parent-board"
+        select_target "core:collaboration-board-backlog"
         select_target "core:collaboration-board-move-recovery"
       fi
       if [[ "$path" == wework/src/components/layout/useWorkbenchCloudProjectContext* ]]; then
-        select_target "core:core-task-flow"
+        select_target "core:cloud-context-resilience"
       fi
       return
       ;;
     wework/src/features/workbench/projectTaskTracking* | \
       wework/src/features/workbench/workbenchContextTypes*)
-      select_target "core:core-task-flow"
+      select_target "core:task-status-sync"
       if [[ "$path" == wework/src/features/workbench/workbenchContextTypes* ]]; then
-        select_target "core:core-task-flow"
+        select_target "core:send-key-preference"
       fi
       return
       ;;
     # The main sidebar also owns project creation, chats, and attachments.
     wework/src/components/layout/DesktopSidebar.tsx)
+      select_target "core:priority-filter"
       select_target "core:core-task-flow"
       select_target "core:project-ai-settings"
       select_target "core:workspace-attachments"
@@ -245,17 +259,18 @@ classify_workbench_path() {
       fi
       if [[ "$path" == wework/src/api/local/localServices* || \
         "$path" == wework/src/api/hybrid/hybridServices* ]]; then
-        select_target "core:local-harness"
+        select_target "core:background-terminals"
       fi
       if [[ "$path" == wework/src/api/hybrid/hybridServices* ]]; then
         select_target "core:stand-in-assignment-notifications"
       fi
       if [[ "$path" == wework/src/features/workbench/WorkbenchProvider* ]]; then
-        select_target "core:core-task-flow"
+        select_target "core:send-key-preference"
       fi
       if [[ "$path" == wework/src/features/workbench/useWorkbenchRuntimeTasks* ]]; then
         select_target "core:runtime-task-queue"
-        select_target "core:core-task-flow"
+        select_target "core:task-status-sync"
+        select_target "core:task-board-bulk-actions"
       fi
       return
       ;;
@@ -270,7 +285,7 @@ classify_workbench_path() {
     wework/src/features/workbench/runtimeTaskLifecycle/*)
       select_target "core:supervisor-lifecycle"
       select_target "core:resilience"
-      select_target "core:runtime-task-queue"
+      select_target "core:running-sidebar-state"
       return
       ;;
 
@@ -279,7 +294,7 @@ classify_workbench_path() {
     wework/src/features/workbench/runtimeConversationCache*)
       select_target "core:core-task-flow"
       select_target "core:conversation-state"
-      select_target "core:transcript-sync"
+      select_target "core:board-transcript-followup"
       return
       ;;
     wework/src/features/workbench/runtimePaneMessages* | \
@@ -302,11 +317,11 @@ classify_workbench_path() {
     # environment panel, plus temporary-chat and project-context integration.
     wework/src/components/layout/DesktopWorkbenchMain.tsx | \
       wework/src/components/layout/DesktopWorkbenchLayout.test.tsx)
-      select_target "core:window-lifecycle"
+      select_target "core:environment-panel-scroll"
       if [[ "$path" == wework/src/components/layout/DesktopWorkbenchMain.tsx ]]; then
-        select_target "core:local-harness"
+        select_target "core:background-terminals"
         select_target "core:temporary-chat"
-        select_target "core:core-task-flow"
+        select_target "core:cloud-context-resilience"
         select_target "core:task-board-association"
       fi
       return
@@ -333,7 +348,7 @@ classify_workbench_path() {
     # Cloud project-space lookup must not block the local composer.
     wework/src/features/todo/projectSpaceSelection* | \
       wework/e2e/desktop/scenarios/cloud-context-resilience.scenario.mjs)
-      select_target "core:core-task-flow"
+      select_target "core:cloud-context-resilience"
       return
       ;;
 
@@ -370,8 +385,11 @@ classify_workbench_path() {
       wework/src/components/layout/workspace-panels/browser-annotation/* | \
       wework/src/pages/BrowserAnnotationOverlayPage* | \
       wework/src/components/layout/workspace-panels/browser-find/* | \
+      wework/e2e/desktop/scenarios/embedded-browser-annotation.scenario.mjs | \
       wework/e2e/desktop/scenarios/embedded-browser-toolbar-actions.scenario.mjs)
       select_target "core:embedded-browser"
+      select_target "core:browser-toolbar-actions"
+      select_target "core:browser-annotation-core"
       macos_inspector_e2e=true
       return
       ;;
@@ -420,7 +438,7 @@ classify_workbench_path() {
       wework/src/components/layout/workspace-panels/BackgroundTerminalPanel* | \
       wework/src/api/runtimeBackgroundTerminals.ts | \
       wework/e2e/desktop/scenarios/background-terminals.scenario.mjs)
-      select_target "core:local-harness"
+      select_target "core:background-terminals"
       return
       ;;
 
@@ -454,17 +472,17 @@ classify_workbench_path() {
       wework/src/components/layout/workspace-panels/workspaceFileTypes* | \
       wework/src/components/chat/useDesktopMarkdownServices* | \
       wework/src/components/chat/FileChangesReviewPanel*)
-      select_target "core:core-task-flow"
+      select_target "core:rendering-extensions"
       if [[ "$path" == wework/src/components/layout/workspace-panels/FileWorkspacePanel* || \
         "$path" == wework/src/components/layout/workspace-panels/WorkspaceFilePreview* || \
         "$path" == wework/src/components/layout/workspace-panels/workspaceFileTypes* || \
         "$path" == wework/src/components/chat/useDesktopMarkdownServices* ]]; then
-        select_target "cloud:core-task-flow"
+        select_target "cloud:rendering-extensions"
       fi
       return
       ;;
     wework/src/e2e/desktop-control-wheel*)
-      select_target "core:core-task-flow"
+      select_target "core:rendering-extensions"
       return
       ;;
 
@@ -494,6 +512,10 @@ classify_workbench_path() {
       select_target "core:model-overload-recovery"
       return
       ;;
+    wework/e2e/desktop/scenarios/send-key-preference.scenario.mjs)
+      select_target "core:send-key-preference"
+      return
+      ;;
     wework/dsh/transcript-sync/* | \
       wework/dsh/executor-runtime/session-projector* | \
       wework/electron/src/host/wework-sync-request* | \
@@ -502,17 +524,15 @@ classify_workbench_path() {
       return
       ;;
 
-    wework/src/api/commitMessage*)
-      select_target "core:core-task-flow"
+    wework/src/api/commitMessage* | \
+      wework/e2e/desktop/scenarios/git-commit-generation.scenario.mjs)
+      select_target "core:git-commit-generation"
       return
       ;;
 
-    wework/src/features/todo/IssueBadges*)
-      select_target "core:collaboration-personal-issues"
-      return
-      ;;
-    wework/src/features/change-requests/*)
-      select_target "core:core-task-flow"
+    wework/src/features/todo/IssueBadges* | \
+      wework/src/features/change-requests/*)
+      select_target "core:collaboration-first-use"
       return
       ;;
 
@@ -522,7 +542,7 @@ classify_workbench_path() {
       wework/src/components/settings/GitHostingSettingsPage* | \
       wework/src/types/gitCredentials.ts | \
       wework/e2e/desktop/scenarios/change-request-status.scenario.mjs)
-      select_target "core:core-task-flow"
+      select_target "core:change-request-status"
       return
       ;;
 
@@ -538,10 +558,16 @@ classify_workbench_path() {
       wework/src/components/settings/ProviderModelFields* | \
       wework/src/components/settings/ModelSettingsPage* | \
       wework/src/features/model-settings/provider*)
+      select_target "core:model-settings"
+      select_target "core:codex-account-login"
       select_target "core:model-routing"
       return
       ;;
 
+    wework/e2e/desktop/scenarios/latest-conversation-history.scenario.mjs)
+      select_target "core:latest-conversation-history"
+      return
+      ;;
 
     # Assistant/tool rendering and desktop extension surfaces.
     wework/src/components/chat/blocks/* | \

@@ -58,7 +58,6 @@ export async function verifyLocalCloudStandInReceipt(
     assert.equal(assignment.human_read_at, null, 'Background execution is not a human detail read')
     const pending = await until(
       () => request(`/v1/loop-items/${issue.id}/assignments`),
-      // Runtime completion can report this reason before the public reply is persisted.
       result =>
         result.items.find(
           row =>
@@ -76,13 +75,7 @@ export async function verifyLocalCloudStandInReceipt(
     const commentPath = `/v1/cloud-projects/${settingsParams().projectId}/loop-items/${issue.id}/activity-comments`
     const comments = await request(commentPath)
     const result = comments.find(comment => comment.id === pending.dispatch_receipt.publicMessageId)
-    assert.ok(
-      result?.body.trim(),
-      `The receipt must reference the real execution result: ${JSON.stringify({
-        publicMessageId: pending.dispatch_receipt.publicMessageId,
-        commentIds: comments.map(comment => comment.id),
-      })}`
-    )
+    assert.ok(result?.body.trim(), 'The receipt must reference the real execution result')
     assert.equal(result.generation_source, 'ai')
     assert.equal(result.confirmation_state, 'pending')
     const before = await request(`/v1/loop-items/${issue.id}`)

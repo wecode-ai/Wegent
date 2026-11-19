@@ -1,5 +1,5 @@
-import assert from 'node:assert/strict'
-import { execFileSync, spawnSync } from 'node:child_process'
+import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   chmodSync,
   mkdtempSync,
@@ -7,270 +7,283 @@ import {
   rmSync,
   statSync,
   writeFileSync,
-} from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import test from 'node:test'
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
 
-import { expandDesktopCheckpoints } from '../../wework/e2e/desktop/checkpoints.mjs'
+import { expandDesktopCheckpoints } from "../../wework/e2e/desktop/checkpoints.mjs";
 import {
   LINUX_CORE_HISTORY_CHECKPOINT,
   RESOURCE_EXCLUSIVE_CHECKPOINTS,
   isResourceExclusiveCheckpoint,
   runWithCheckpointResources,
-} from '../../wework/e2e/desktop/checkpoint-scheduler.mjs'
+} from "../../wework/e2e/desktop/checkpoint-scheduler.mjs";
 import {
   balanceLinuxCoreMatrix,
   orderLinuxCheckpoints,
-} from './order-wework-linux-e2e.mjs'
+} from "./order-wework-linux-e2e.mjs";
 
-const root = new URL('../../', import.meta.url)
+const root = new URL("../../", import.meta.url);
 const measurements = JSON.parse(
   readFileSync(
-    new URL('../ci/wework-linux-checkpoint-durations.json', import.meta.url),
-    'utf8',
+    new URL("../ci/wework-linux-checkpoint-durations.json", import.meta.url),
+    "utf8",
   ),
-)
+);
 function readYaml(path) {
   return JSON.parse(
     execFileSync(
-      'ruby',
+      "ruby",
       [
-        '-ryaml',
-        '-rjson',
-        '-e',
-        'puts JSON.generate(YAML.load_file(ARGV[0]))',
+        "-ryaml",
+        "-rjson",
+        "-e",
+        "puts JSON.generate(YAML.load_file(ARGV[0]))",
         path,
       ],
-      { cwd: root, encoding: 'utf8' },
+      { cwd: root, encoding: "utf8" },
     ),
-  )
+  );
 }
 
-const workflow = readYaml('.github/workflows/wework-e2e.yml')
+const workflow = readYaml(".github/workflows/wework-e2e.yml");
 
 function classifiedMatrices(
   paths,
-  script = '.github/scripts/classify-wework-desktop-e2e.sh',
+  script = ".github/scripts/classify-wework-desktop-e2e.sh",
 ) {
-  const directory = mkdtempSync(join(tmpdir(), 'wework-linux-order-'))
+  const directory = mkdtempSync(join(tmpdir(), "wework-linux-order-"));
   try {
-    const output = join(directory, 'github-output')
-    execFileSync('bash', [script, ...(paths ? [] : ['--all'])], {
+    const output = join(directory, "github-output");
+    execFileSync("bash", [script, ...(paths ? [] : ["--all"])], {
       cwd: root,
       env: { ...process.env, GITHUB_OUTPUT: output },
-      input: paths ? `${paths.join('\n')}\n` : undefined,
-    })
+      input: paths ? `${paths.join("\n")}\n` : undefined,
+    });
     return Object.fromEntries(
-      readFileSync(output, 'utf8')
+      readFileSync(output, "utf8")
         .trim()
-        .split('\n')
+        .split("\n")
         .map((line) => {
-          const index = line.indexOf('=')
-          return [line.slice(0, index), line.slice(index + 1)]
+          const index = line.indexOf("=");
+          return [line.slice(0, index), line.slice(index + 1)];
         }),
-    )
+    );
   } finally {
-    rmSync(directory, { recursive: true, force: true })
+    rmSync(directory, { recursive: true, force: true });
   }
 }
 
-const matrices = classifiedMatrices()
+const matrices = classifiedMatrices();
 
-test('the Cloud workflow command accepts populated and empty classifier matrices', () => {
+test("the Cloud workflow command accepts populated and empty classifier matrices", () => {
   for (const original of [
     JSON.parse(matrices.wework_desktop_cloud_e2e_matrix),
     { include: [] },
   ]) {
     const output = execFileSync(
       process.execPath,
-      ['.github/scripts/order-wework-linux-e2e.mjs', '--balance-cloud'],
+      [".github/scripts/order-wework-linux-e2e.mjs", "--balance-cloud"],
       {
         cwd: root,
-        encoding: 'utf8',
+        encoding: "utf8",
         env: {
           ...process.env,
           CORE_MATRIX: JSON.stringify(original),
-          CORE_RUNNER_SCALE: '1.5',
+          CORE_RUNNER_SCALE: "1.5",
         },
       },
-    ).trim()
-    assert.equal(output.startsWith('matrix='), true)
-    const balanced = JSON.parse(output.slice('matrix='.length))
+    ).trim();
+    assert.equal(output.startsWith("matrix="), true);
+    const balanced = JSON.parse(output.slice("matrix=".length));
     const selected = (matrix) =>
       matrix.include
-        .flatMap((entry) => expandDesktopCheckpoints(entry.segments.split(',')))
-        .sort()
-    assert.deepEqual(selected(balanced), selected(original))
-    assert(balanced.include.every((entry) => entry.segments.length > 0))
+        .flatMap((entry) => expandDesktopCheckpoints(entry.segments.split(",")))
+        .sort();
+    assert.deepEqual(selected(balanced), selected(original));
+    assert(balanced.include.every((entry) => entry.segments.length > 0));
   }
-})
+});
 
-test('Linux balancing reuses the history runner without changing coverage, runners or exclusive benchmarks', () => {
-  const original = JSON.parse(matrices.wework_desktop_core_e2e_matrix)
-  const snapshot = JSON.stringify(original)
-  const balanced = balanceLinuxCoreMatrix(original)
+test("Linux balancing reuses the history runner without changing coverage, runners or exclusive benchmarks", () => {
+  const original = JSON.parse(matrices.wework_desktop_core_e2e_matrix);
+  const snapshot = JSON.stringify(original);
+  const balanced = balanceLinuxCoreMatrix(original);
   const cli = execFileSync(
     process.execPath,
-    ['.github/scripts/order-wework-linux-e2e.mjs', '--balance-core'],
+    [".github/scripts/order-wework-linux-e2e.mjs", "--balance-core"],
     {
       cwd: root,
-      encoding: 'utf8',
+      encoding: "utf8",
       env: { ...process.env, CORE_MATRIX: JSON.stringify(original) },
     },
-  ).trim()
-  assert.equal(cli.startsWith('matrix='), true)
-  assert.deepEqual(JSON.parse(cli.slice('matrix='.length)), balanced)
-  assert.equal(JSON.stringify(original), snapshot)
+  ).trim();
+  assert.equal(cli.startsWith("matrix="), true);
+  assert.deepEqual(JSON.parse(cli.slice("matrix=".length)), balanced);
+  assert.equal(JSON.stringify(original), snapshot);
   assert.deepEqual(
     balanced.include.map((entry) => entry.id),
     original.include.map((entry) => entry.id),
-  )
-  assert.equal(balanced.include.length, 10)
+  );
+  assert.equal(balanced.include.length, 10);
   const expand = (matrix) =>
     matrix.include
-      .flatMap((entry) => expandDesktopCheckpoints(entry.segments.split(',')))
-      .sort()
-  assert.deepEqual(expand(balanced), expand(original))
-  assert.equal(new Set(expand(balanced)).size, expand(original).length)
+      .flatMap((entry) => expandDesktopCheckpoints(entry.segments.split(",")))
+      .sort();
+  assert.deepEqual(expand(balanced), expand(original));
+  assert.equal(new Set(expand(balanced)).size, expand(original).length);
   const historyShard = balanced.include
-    .find((entry) => entry.id === 'core-6')
-    .segments.split(',')
-  assert.equal(historyShard[0], LINUX_CORE_HISTORY_CHECKPOINT)
-  assert(historyShard.length > 1)
+    .find((entry) => entry.id === "core-6")
+    .segments.split(",");
+  assert.equal(historyShard[0], LINUX_CORE_HISTORY_CHECKPOINT);
+  assert(historyShard.length > 1);
   for (const checkpoint of historyShard.slice(1)) {
-    assert(!isResourceExclusiveCheckpoint(checkpoint, true))
-    assert(measurements.scopes.core[checkpoint] > 0)
+    assert(!isResourceExclusiveCheckpoint(checkpoint, true));
+    assert(measurements.scopes.core[checkpoint] > 0);
   }
-  for (const [id, checkpoint] of [
-    ['core-9', 'human-interactions-hidden'],
-    ['core-10', 'collaboration-shared-core'],
-  ]) {
-    assert.equal(balanced.include.find((entry) => entry.id === id).segments, checkpoint)
+  for (const id of ["core-9", "core-10"]) {
+    const checkpoint = original.include
+      .find((entry) => entry.id === id)
+      .segments.split(",")[0];
+    assert.equal(
+      balanced.include.find((entry) => entry.id === id).segments,
+      checkpoint,
+    );
   }
-  for (const checkpoint of ['python-runtime', 'plugin-development']) {
-    const shard = balanced.include.find((entry) => entry.segments.split(',').includes(checkpoint))
-    assert(!shard.segments.split(',').some((peer) =>
-      ['collaboration-shared-core', 'collaboration-templates', 'collaboration-template-app-device-routing'].includes(peer),
-    ))
+  for (const checkpoint of ["python-runtime", "plugin-development"]) {
+    const shard = balanced.include.find((entry) =>
+      entry.segments.split(",").includes(checkpoint),
+    );
+    assert(
+      !shard.segments
+        .split(",")
+        .some((peer) =>
+          [
+            "collaboration-shared-core",
+            "collaboration-templates",
+            "collaboration-template-app-device-routing",
+          ].includes(peer),
+        ),
+    );
   }
   const alone = {
-    include: original.include.filter((entry) => entry.id === 'core-6'),
-  }
-  assert.deepEqual(balanceLinuxCoreMatrix(alone), alone)
-  assert.deepEqual(balanceLinuxCoreMatrix({ include: [] }), { include: [] })
-  assert.deepEqual(balanceLinuxCoreMatrix(balanced), balanced)
+    include: original.include.filter((entry) => entry.id === "core-6"),
+  };
+  assert.deepEqual(balanceLinuxCoreMatrix(alone), alone);
+  assert.deepEqual(balanceLinuxCoreMatrix({ include: [] }), { include: [] });
+  assert.deepEqual(balanceLinuxCoreMatrix(balanced), balanced);
   const step = workflow.jobs.changes.steps.find(
-    (step) => step.id === 'linux-matrix',
-  )
-  assert.match(step.run, /order-wework-linux-e2e.mjs --balance-core/)
+    (step) => step.id === "linux-matrix",
+  );
+  assert.match(step.run, /order-wework-linux-e2e.mjs --balance-core/);
   assert.equal(
     workflow.jobs.changes.outputs.wework_desktop_core_e2e_matrix,
-    '${{ steps.linux-matrix.outputs.matrix }}',
-  )
+    "${{ steps.linux-matrix.outputs.matrix }}",
+  );
   const windows = workflow.jobs.changes.steps.find(
-    (step) => step.id === 'windows-matrix',
-  )
+    (step) => step.id === "windows-matrix",
+  );
   assert.equal(
     windows.env.CORE_MATRIX,
-    '${{ steps.classify.outputs.wework_desktop_core_e2e_matrix }}',
-  )
-})
+    "${{ steps.classify.outputs.wework_desktop_core_e2e_matrix }}",
+  );
+});
 
-test('changes to Linux scheduling or MinIO setup select the existing desktop suites', () => {
+test("changes to Linux scheduling or MinIO setup select the existing desktop suites", () => {
   for (const path of [
-    '.github/ci/wework-linux-checkpoint-durations.json',
-    '.github/scripts/order-wework-linux-e2e.mjs',
-    '.github/scripts/order-wework-linux-e2e.test.mjs',
-    '.github/actions/setup-minio-e2e/action.yml',
-    '.github/actions/build-minio-e2e/action.yml',
+    ".github/ci/wework-linux-checkpoint-durations.json",
+    ".github/scripts/order-wework-linux-e2e.mjs",
+    ".github/scripts/order-wework-linux-e2e.test.mjs",
+    ".github/actions/setup-minio-e2e/action.yml",
+    ".github/actions/build-minio-e2e/action.yml",
   ]) {
-    const outputs = classifiedMatrices([path])
-    assert.deepEqual(outputs, matrices, path)
+    const outputs = classifiedMatrices([path]);
+    assert.deepEqual(outputs, matrices, path);
     const result = classifiedMatrices(
       [path],
-      '.github/scripts/classify-ci-changes.sh',
-    )
-    assert.equal(result.wework_e2e, 'true', path)
+      ".github/scripts/classify-ci-changes.sh",
+    );
+    assert.equal(result.wework_e2e, "true", path);
   }
-})
+});
 
 function completionSeconds(checkpoints, seconds) {
-  const workers = Array(measurements.workers).fill(0)
-  let exclusiveSeconds = 0
+  const workers = Array(measurements.workers).fill(0);
+  let exclusiveSeconds = 0;
   for (const checkpoint of checkpoints) {
-    assert.ok(seconds[checkpoint] > 0, checkpoint)
+    assert.ok(seconds[checkpoint] > 0, checkpoint);
     if (isResourceExclusiveCheckpoint(checkpoint, true)) {
-      exclusiveSeconds += seconds[checkpoint]
-      continue
+      exclusiveSeconds += seconds[checkpoint];
+      continue;
     }
-    const index = workers.indexOf(Math.min(...workers))
-    workers[index] += seconds[checkpoint]
+    const index = workers.indexOf(Math.min(...workers));
+    workers[index] += seconds[checkpoint];
   }
-  return exclusiveSeconds + Math.max(...workers)
+  return exclusiveSeconds + Math.max(...workers);
 }
 
-test('reuses the existing history runner after its isolated checkpoint', async () => {
+test("reuses the existing history runner after its isolated checkpoint", async () => {
   const checkpoints = [
-    'codex-native-catalog',
-    'collaboration-personal-issues',
-    'embedded-browser',
-    'task-board-association',
-    'stand-in-cloud',
-    'temporary-chat',
-    'task-attachments',
-    'window-lifecycle',
-    'permission-modes',
-    'core-task-flow',
-    'workspace-attachments',
-    'conversation-state',
-    'codex-invalid-launch-cwd',
-    'plugin-development',
-    'harness-app-lifecycle',
-    'harness-app-models',
-    'tray-lifecycle',
-  ]
-  const history = LINUX_CORE_HISTORY_CHECKPOINT
+    "codex-native-catalog",
+    "collaboration-personal-issues",
+    "embedded-browser",
+    "task-board-association",
+    "stand-in-cloud",
+    "temporary-chat",
+    "task-attachments",
+    "window-lifecycle",
+    "permission-modes",
+    "core-task-flow",
+    "workspace-attachments",
+    "conversation-state",
+    "codex-invalid-launch-cwd",
+    "plugin-development",
+    "harness-app-lifecycle",
+    "harness-app-models",
+    "tray-lifecycle",
+  ];
+  const history = LINUX_CORE_HISTORY_CHECKPOINT;
   const matrix = {
     include: [
-      { id: 'core-1', segments: checkpoints.slice(0, -1).join(',') },
-      { id: 'core-2', segments: checkpoints.at(-1) },
-      { id: 'core-6', segments: history },
-      { id: 'core-9', segments: 'human-interactions-hidden' },
-      { id: 'core-10', segments: 'collaboration-shared-core' },
+      { id: "core-1", segments: checkpoints.slice(0, -1).join(",") },
+      { id: "core-2", segments: checkpoints.at(-1) },
+      { id: "core-6", segments: history },
+      { id: "core-9", segments: "human-interactions-hidden" },
+      { id: "core-10", segments: "collaboration-shared-core" },
     ],
-  }
+  };
   const seconds = Object.fromEntries(
     [...checkpoints, history].map((checkpoint) => [checkpoint, 100]),
-  )
-  const balanced = balanceLinuxCoreMatrix(matrix, seconds)
+  );
+  const balanced = balanceLinuxCoreMatrix(matrix, seconds);
   const tail = balanced.include
-    .find((entry) => entry.id === 'core-6')
-    .segments.split(',')
-  assert.equal(tail[0], history)
+    .find((entry) => entry.id === "core-6")
+    .segments.split(",");
+  assert.equal(tail[0], history);
   assert(
     tail.length > 1,
-    'the history runner should execute work after history',
-  )
+    "the history runner should execute work after history",
+  );
   const peak = (value) =>
     Math.max(
       ...value.include
         .slice(0, 3)
         .map((entry) =>
           completionSeconds(
-            orderLinuxCheckpoints(entry.segments.split(','), 'core', seconds),
+            orderLinuxCheckpoints(entry.segments.split(","), "core", seconds),
             seconds,
           ),
         ),
-    )
-  assert(peak(balanced) < peak(matrix))
-  for (const id of ['core-9', 'core-10'])
+    );
+  assert(peak(balanced) < peak(matrix));
+  for (const id of ["core-9", "core-10"])
     assert.deepEqual(
       balanced.include.find((entry) => entry.id === id),
       matrix.include.find((entry) => entry.id === id),
-    )
+    );
 
-  const events = []
+  const events = [];
   await runWithCheckpointResources({
     // Prove isolation even when the CLI order is not already history-first.
     checkpoints: [...tail.slice(1), history],
@@ -279,405 +292,402 @@ test('reuses the existing history runner after its isolated checkpoint', async (
     exclusiveFor: (checkpoint) =>
       isResourceExclusiveCheckpoint(checkpoint, true),
     run: async (checkpoint) => {
-      events.push(['start', checkpoint])
-      await new Promise((resolve) => setImmediate(resolve))
-      events.push(['end', checkpoint])
+      events.push(["start", checkpoint]);
+      await new Promise((resolve) => setImmediate(resolve));
+      events.push(["end", checkpoint]);
     },
-  })
+  });
   assert.deepEqual(events.slice(0, 2), [
-    ['start', history],
-    ['end', history],
-  ])
-  assert.equal(events.length, 2 * tail.length)
-  assert(!isResourceExclusiveCheckpoint(history))
+    ["start", history],
+    ["end", history],
+  ]);
+  assert.equal(events.length, 2 * tail.length);
+  assert(!isResourceExclusiveCheckpoint(history));
   for (const checkpoint of RESOURCE_EXCLUSIVE_CHECKPOINTS) {
-    assert(isResourceExclusiveCheckpoint(checkpoint))
-    assert(isResourceExclusiveCheckpoint(checkpoint, true))
+    assert(isResourceExclusiveCheckpoint(checkpoint));
+    assert(isResourceExclusiveCheckpoint(checkpoint, true));
   }
-})
+});
 
-test('balancing includes exclusive startup checkpoints before the four-worker queue', () => {
+test("balancing includes exclusive startup checkpoints before the four-worker queue", () => {
   const seconds = {
-    'plugin-uninstall-lost-response': 60,
-    'release-package-startup': 100,
-    'collaboration-issue-task-discovery': 80,
-    'codex-native-catalog': 80,
-    'collaboration-personal-issues': 20,
-    'embedded-browser': 60,
-    'task-board-association': 100,
-    'stand-in-cloud': 80,
-    'temporary-chat': 80,
-    'task-attachments': 100,
-    'window-lifecycle': 20,
-    'permission-modes': 20,
-    'running-conversation-history': 300,
-  }
+    "plugin-uninstall-lost-response": 60,
+    "release-package-startup": 100,
+    "collaboration-issue-task-discovery": 80,
+    "codex-native-catalog": 80,
+    "collaboration-personal-issues": 20,
+    "embedded-browser": 60,
+    "task-board-association": 100,
+    "stand-in-cloud": 80,
+    "temporary-chat": 80,
+    "task-attachments": 100,
+    "window-lifecycle": 20,
+    "permission-modes": 20,
+    "running-conversation-history": 300,
+  };
   const matrix = {
     include: [
-      { id: 'core-1', segments: Object.keys(seconds).slice(0, 11).join(',') },
-      { id: 'core-2', segments: 'permission-modes' },
-      { id: 'core-6', segments: 'running-conversation-history' },
+      { id: "core-1", segments: Object.keys(seconds).slice(0, 11).join(",") },
+      { id: "core-2", segments: "permission-modes" },
+      { id: "core-6", segments: "running-conversation-history" },
     ],
-  }
-  const balanced = balanceLinuxCoreMatrix(matrix, seconds)
+  };
+  const balanced = balanceLinuxCoreMatrix(matrix, seconds);
   const peak = Math.max(
     ...balanced.include
-      .filter((entry) => entry.id !== 'core-6')
+      .filter((entry) => entry.id !== "core-6")
       .map((entry) =>
         completionSeconds(
-          orderLinuxCheckpoints(entry.segments.split(','), 'core', seconds),
+          orderLinuxCheckpoints(entry.segments.split(","), "core", seconds),
           seconds,
         ),
       ),
-  )
-  assert.equal(peak, 220)
+  );
+  assert.equal(peak, 220);
   assert.deepEqual(
     balanced.include.map((entry) => entry.id),
     matrix.include.map((entry) => entry.id),
-  )
+  );
   assert.deepEqual(
-    balanced.include.flatMap((entry) => entry.segments.split(',')).sort(),
+    balanced.include.flatMap((entry) => entry.segments.split(",")).sort(),
     Object.keys(seconds).sort(),
-  )
-})
+  );
+});
 
-test('balancing distributes the four-worker tail across existing Core runners', () => {
+test("balancing distributes the four-worker tail across existing Core runners", () => {
   const matrix = {
     include: [
       {
-        id: 'core-1',
+        id: "core-1",
         segments:
-          'plugin-development,harness-app-lifecycle,harness-app-models,temporary-chat,core-task-flow',
+          "plugin-development,harness-app-lifecycle,harness-app-models,temporary-chat,core-task-flow",
       },
-      { id: 'core-2', segments: 'codex-native-catalog' },
-      { id: 'core-6', segments: 'running-conversation-history' },
+      { id: "core-2", segments: "codex-native-catalog" },
+      { id: "core-6", segments: "running-conversation-history" },
     ],
-  }
+  };
   const seconds = Object.fromEntries(
     expandDesktopCheckpoints(
-      matrix.include.flatMap((entry) => entry.segments.split(',')),
-    ).map((name) => [name, name === 'codex-native-catalog' ? 10 : 100]),
-  )
-  const balanced = balanceLinuxCoreMatrix(matrix, seconds)
+      matrix.include.flatMap((entry) => entry.segments.split(",")),
+    ).map((name) => [name, name === "codex-native-catalog" ? 10 : 100]),
+  );
+  const balanced = balanceLinuxCoreMatrix(matrix, seconds);
   const maximum = (selection) =>
     Math.max(
       ...selection.include
-        .filter((entry) => entry.id !== 'core-6')
+        .filter((entry) => entry.id !== "core-6")
         .map((entry) =>
           completionSeconds(
-            orderLinuxCheckpoints(entry.segments.split(','), 'core', seconds),
+            orderLinuxCheckpoints(entry.segments.split(","), "core", seconds),
             seconds,
           ),
         ),
-    )
-  assert.equal(maximum(matrix), 200)
-  assert.equal(maximum(balanced), 100)
+    );
+  assert.equal(maximum(matrix), 200);
+  assert.equal(maximum(balanced), 100);
   assert.deepEqual(
     balanced.include.map((entry) => entry.id),
     matrix.include.map((entry) => entry.id),
-  )
+  );
   assert.deepEqual(
     balanced.include
-      .flatMap((entry) => expandDesktopCheckpoints(entry.segments.split(',')))
+      .flatMap((entry) => expandDesktopCheckpoints(entry.segments.split(",")))
       .sort(),
     matrix.include
-      .flatMap((entry) => expandDesktopCheckpoints(entry.segments.split(',')))
+      .flatMap((entry) => expandDesktopCheckpoints(entry.segments.split(",")))
       .sort(),
-  )
-  assert.deepEqual(balanceLinuxCoreMatrix(balanced, seconds), balanced)
-})
+  );
+  assert.deepEqual(balanceLinuxCoreMatrix(balanced, seconds), balanced);
+});
 
-test('ordering preserves every selected checkpoint in its existing shard and runner budget', () => {
+test("ordering preserves every selected checkpoint in its existing shard and runner budget", () => {
   for (const [scope, count] of [
-    ['core', 10],
-    ['cloud', 8],
+    ["core", 10],
+    ["cloud", 8],
   ]) {
-    const matrix = JSON.parse(matrices[`wework_desktop_${scope}_e2e_matrix`])
-    assert.equal(matrix.include.length, count)
+    const matrix = JSON.parse(matrices[`wework_desktop_${scope}_e2e_matrix`]);
+    assert.equal(matrix.include.length, count);
     for (const shard of matrix.include) {
-      const segments = shard.segments.split(',')
-      const original = expandDesktopCheckpoints(segments)
-      const ordered = orderLinuxCheckpoints(segments, scope)
-      assert.deepEqual([...ordered].sort(), [...original].sort(), shard.id)
-      assert.equal(new Set(ordered).size, original.length, shard.id)
-      assert.deepEqual(orderLinuxCheckpoints(segments, scope), ordered)
+      const segments = shard.segments.split(",");
+      const original = expandDesktopCheckpoints(segments);
+      const ordered = orderLinuxCheckpoints(segments, scope);
+      assert.deepEqual([...ordered].sort(), [...original].sort(), shard.id);
+      assert.equal(new Set(ordered).size, original.length, shard.id);
+      assert.deepEqual(orderLinuxCheckpoints(segments, scope), ordered);
       assert.deepEqual(
         segments,
-        shard.segments.split(','),
-        'Do not mutate the classifier matrix',
-      )
+        shard.segments.split(","),
+        "Do not mutate the classifier matrix",
+      );
     }
-    const job = workflow.jobs[`wework-desktop-${scope}-e2e`]
+    const job = workflow.jobs[`wework-desktop-${scope}-e2e`];
     const run = job.steps.find(
       (step) =>
         step.name ===
-        (scope === 'core'
-          ? 'Run Wework desktop Core shard E2E'
-          : 'Run Wework desktop Cloud E2E checkpoints'),
-    )
-    assert.equal(run.env.WEWORK_E2E_PARALLEL_CHECKPOINTS, '4')
+        (scope === "core"
+          ? "Run Wework desktop Core shard E2E"
+          : "Run Wework desktop Cloud E2E checkpoints"),
+    );
+    assert.equal(run.env.WEWORK_E2E_PARALLEL_CHECKPOINTS, "4");
     assert.match(
       run.run,
       /WEWORK_E2E_SEGMENTS="\$\(node \.github\/scripts\/order-wework-linux-e2e\.mjs\)"/,
-    )
-    assert.match(run.run, /--parallel-segments "\$WEWORK_E2E_SEGMENTS"/)
+    );
+    assert.match(run.run, /--parallel-segments "\$WEWORK_E2E_SEGMENTS"/);
     assert.equal(
       job.strategy.matrix,
-      '${{ fromJSON(needs.changes.outputs.wework_desktop_' +
+      "${{ fromJSON(needs.changes.outputs.wework_desktop_" +
         scope +
-        '_e2e_matrix) }}',
-    )
-    assert.equal(job.strategy['max-parallel'], scope === 'core' ? 17 : 15)
+        "_e2e_matrix) }}",
+    );
+    assert.equal(job.strategy["max-parallel"], scope === "core" ? 17 : 15);
   }
-  const windows = workflow.jobs['wework-desktop-windows-core-e2e']
-  assert.ok(!JSON.stringify(windows).includes('order-wework-linux-e2e'))
-})
+  const windows = workflow.jobs["wework-desktop-windows-core-e2e"];
+  assert.ok(!JSON.stringify(windows).includes("order-wework-linux-e2e"));
+});
 
-test('successful Linux timing replay prioritizes measured tails after new coverage with four workers', () => {
+test("successful Linux timing replay prioritizes measured tails after new coverage with four workers", () => {
   for (const [scope, id, longest] of [
-    ['core', 'core-6', 'running-conversation-history'],
-    ['cloud', 'cloud-3', 'plugin-write-coordination'],
+    ["core", "core-6", "running-conversation-history"],
+    ["cloud", "cloud-3", "plugin-write-coordination"],
   ]) {
-    const matrix = JSON.parse(matrices[`wework_desktop_${scope}_e2e_matrix`])
-    const shard = matrix.include.find((entry) => entry.id === id)
-    assert.ok(shard, id)
-    const segments = shard.segments.split(',')
-    const ordered = orderLinuxCheckpoints(segments, scope)
-    const expanded = expandDesktopCheckpoints(segments)
-    const seconds = measurements.scopes[scope]
+    const matrix = JSON.parse(matrices[`wework_desktop_${scope}_e2e_matrix`]);
+    const shard = matrix.include.find((entry) => entry.id === id);
+    assert.ok(shard, id);
+    const segments = shard.segments.split(",");
+    const ordered = orderLinuxCheckpoints(segments, scope);
+    const expanded = expandDesktopCheckpoints(segments);
+    const seconds = measurements.scopes[scope];
     const unmeasured = expanded.filter(
       (checkpoint) => seconds[checkpoint] === undefined,
-    )
+    );
     const measured = expanded.filter(
       (checkpoint) => seconds[checkpoint] !== undefined,
-    )
-    assert.deepEqual(ordered.slice(0, unmeasured.length), unmeasured)
-    assert.deepEqual([...ordered].sort(), [...expanded].sort())
-    const measuredOrder = ordered.slice(unmeasured.length)
-    assert.equal(measuredOrder[0], longest)
+    );
+    assert.deepEqual(ordered.slice(0, unmeasured.length), unmeasured);
+    assert.deepEqual([...ordered].sort(), [...expanded].sort());
+    const measuredOrder = ordered.slice(unmeasured.length);
+    assert.equal(measuredOrder[0], longest);
     // Historical timing evidence cannot assign a cost to new, unmeasured coverage.
-    const originalSeconds = completionSeconds(measured, seconds)
-    const orderedSeconds = completionSeconds(measuredOrder, seconds)
+    const originalSeconds = completionSeconds(measured, seconds);
+    const orderedSeconds = completionSeconds(measuredOrder, seconds);
     if (originalSeconds === seconds[longest]) {
       // Pruned workloads can already reach the longest task's physical lower bound.
-      assert.equal(orderedSeconds, seconds[longest], id)
+      assert.equal(orderedSeconds, seconds[longest], id);
     } else {
       assert.ok(
         orderedSeconds < originalSeconds,
         `${id}: ${orderedSeconds} < ${originalSeconds}`,
-      )
+      );
     }
   }
-})
+});
 
-test('unmeasured and equal-duration checkpoints retain stable priority without dropping new coverage', () => {
+test("unmeasured and equal-duration checkpoints retain stable priority without dropping new coverage", () => {
   const selected = [
-    'runtime-task-queue',
-    'running-conversation-history',
-    'task-board-association',
-    'cloud-model-recovery',
-  ]
-  assert.deepEqual(orderLinuxCheckpoints(selected, 'core', {}), selected)
+    "runtime-task-queue",
+    "running-conversation-history",
+    "task-board-association",
+    "cloud-model-recovery",
+  ];
+  assert.deepEqual(orderLinuxCheckpoints(selected, "core", {}), selected);
   assert.deepEqual(
-    orderLinuxCheckpoints(selected, 'core', {
-      'runtime-task-queue': 20,
-      'running-conversation-history': 480,
-      'cloud-model-recovery': 20,
+    orderLinuxCheckpoints(selected, "core", {
+      "runtime-task-queue": 20,
+      "running-conversation-history": 480,
+      "cloud-model-recovery": 20,
     }),
     [
-      'task-board-association',
-      'running-conversation-history',
-      'runtime-task-queue',
-      'cloud-model-recovery',
+      "task-board-association",
+      "running-conversation-history",
+      "runtime-task-queue",
+      "cloud-model-recovery",
     ],
-  )
-  assert.deepEqual(orderLinuxCheckpoints([], 'core'), [])
+  );
+  assert.deepEqual(orderLinuxCheckpoints([], "core"), []);
   assert.throws(
-    () => orderLinuxCheckpoints(selected, 'windows'),
+    () => orderLinuxCheckpoints(selected, "windows"),
     /Unknown Linux E2E scope/,
-  )
+  );
   assert.throws(
-    () => orderLinuxCheckpoints(['missing-checkpoint'], 'core'),
+    () => orderLinuxCheckpoints(["missing-checkpoint"], "core"),
     /Unknown desktop E2E checkpoint/,
-  )
+  );
   assert.throws(
-    () => orderLinuxCheckpoints(selected, 'core', { 'cloud-model-recovery': 0 }),
+    () =>
+      orderLinuxCheckpoints(selected, "core", { "cloud-model-recovery": 0 }),
     /Invalid Linux E2E duration/,
-  )
-})
+  );
+});
 
-test('the CI command expands selected groups and fails on invalid input', () => {
-  const selected = ['stand-in-profile', 'running-conversation-history']
+test("the CI command expands selected groups and fails on invalid input", () => {
+  const selected = ["stand-in-profile", "running-conversation-history"];
   const env = {
     ...process.env,
-    WEWORK_E2E_PARALLEL_SCOPE: 'core',
-    WEWORK_E2E_SEGMENTS: selected.join(','),
-  }
+    WEWORK_E2E_PARALLEL_SCOPE: "core",
+    WEWORK_E2E_SEGMENTS: selected.join(","),
+  };
   const result = spawnSync(
     process.execPath,
-    ['.github/scripts/order-wework-linux-e2e.mjs'],
-    { cwd: root, env, encoding: 'utf8' },
-  )
-  assert.equal(result.status, 0, result.stderr)
+    [".github/scripts/order-wework-linux-e2e.mjs"],
+    { cwd: root, env, encoding: "utf8" },
+  );
+  assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(
-    result.stdout.trim().split(','),
-    orderLinuxCheckpoints(selected, 'core'),
-  )
+    result.stdout.trim().split(","),
+    orderLinuxCheckpoints(selected, "core"),
+  );
   const invalid = spawnSync(
     process.execPath,
-    ['.github/scripts/order-wework-linux-e2e.mjs'],
-    { cwd: root, env: { ...env, WEWORK_E2E_SEGMENTS: '' }, encoding: 'utf8' },
-  )
-  assert.notEqual(invalid.status, 0)
-})
+    [".github/scripts/order-wework-linux-e2e.mjs"],
+    { cwd: root, env: { ...env, WEWORK_E2E_SEGMENTS: "" }, encoding: "utf8" },
+  );
+  assert.notEqual(invalid.status, 0);
+});
 
-test('MinIO setup uses the shared artifact binary and fails closed when it is missing or unusable', () => {
-  const action = readYaml('.github/actions/setup-minio-e2e/action.yml')
-  const steps = action.runs.steps
+test("MinIO setup uses the shared artifact binary and fails closed when it is missing or unusable", () => {
+  const action = readYaml(".github/actions/setup-minio-e2e/action.yml");
+  const steps = action.runs.steps;
   assert.equal(
     steps.length,
     2,
-    'No runner-local Go compiler or dependency cache setup',
-  )
-  assert.match(steps[0].uses, /^actions\/download-artifact@/)
-  const directory = mkdtempSync(join(tmpdir(), 'wework-minio-artifact-'))
+    "No runner-local Go compiler or dependency cache setup",
+  );
+  assert.match(steps[0].uses, /^actions\/download-artifact@/);
+  const directory = mkdtempSync(join(tmpdir(), "wework-minio-artifact-"));
   try {
-    const binary = join(directory, 'minio')
-    const output = join(directory, 'github-env')
+    const binary = join(directory, "minio");
+    const output = join(directory, "github-env");
     const env = {
       ...process.env,
       WEWORK_E2E_MINIO_BIN: binary,
       GITHUB_ENV: output,
-    }
+    };
     const setup = (values) =>
-      spawnSync('bash', ['-e', '-o', 'pipefail', '-c', steps[1].run], {
+      spawnSync("bash", ["-e", "-o", "pipefail", "-c", steps[1].run], {
         env: values,
-        encoding: 'utf8',
-      })
-    assert.notEqual(setup({ ...env, WEWORK_E2E_MINIO_BIN: '' }).status, 0)
-    assert.notEqual(setup(env).status, 0)
-    writeFileSync(binary, '#!/bin/sh\nexit 1\n')
-    chmodSync(binary, 0o755)
-    assert.notEqual(setup(env).status, 0)
-    writeFileSync(binary, '#!/bin/sh\n[ "$1" = "--version" ]\n')
-    chmodSync(binary, 0o644)
-    const enabled = setup(env)
-    assert.equal(enabled.status, 0, enabled.stderr)
+        encoding: "utf8",
+      });
+    assert.notEqual(setup({ ...env, WEWORK_E2E_MINIO_BIN: "" }).status, 0);
+    assert.notEqual(setup(env).status, 0);
+    writeFileSync(binary, "#!/bin/sh\nexit 1\n");
+    chmodSync(binary, 0o755);
+    assert.notEqual(setup(env).status, 0);
+    writeFileSync(binary, '#!/bin/sh\n[ "$1" = "--version" ]\n');
+    chmodSync(binary, 0o644);
+    const enabled = setup(env);
+    assert.equal(enabled.status, 0, enabled.stderr);
     assert.equal(
       statSync(binary).mode & 0o777,
       0o755,
-      'Artifact downloads must restore execute permissions',
-    )
+      "Artifact downloads must restore execute permissions",
+    );
     assert.equal(
-      readFileSync(output, 'utf8'),
+      readFileSync(output, "utf8"),
       `WEWORK_E2E_MINIO_BIN=${binary}\n`,
-    )
+    );
   } finally {
-    rmSync(directory, { recursive: true, force: true })
+    rmSync(directory, { recursive: true, force: true });
   }
   const build = readFileSync(
-    new URL('../actions/build-minio-e2e/action.yml', import.meta.url),
-    'utf8',
-  )
-  assert.match(build, /go-version: "1\.25\.9"/)
+    new URL("../actions/build-minio-e2e/action.yml", import.meta.url),
+    "utf8",
+  );
+  assert.match(build, /go-version: "1\.25\.9"/);
   assert.match(
     build,
     /go install github\.com\/minio\/minio@9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a/,
-  )
-})
+  );
+});
 
-test('one existing producer builds MinIO for exactly the consumers that need it without GHCR writes', () => {
+test("all real Backend desktop runners consume platform-native MinIO without GHCR writes", () => {
   const producers = Object.entries(workflow.jobs).flatMap(([job, value]) =>
     value.steps
-      .filter((step) => step.uses === './.github/actions/build-minio-e2e')
+      .filter((step) => step.uses === "./.github/actions/build-minio-e2e")
       .map((step) => ({ job, step })),
-  )
-  assert.equal(producers.length, 1)
-  assert.equal(producers[0].job, 'build-wework-desktop-core-e2e')
-  const required = []
-  for (const scope of ['core', 'cloud']) {
-    const consumer = workflow.jobs[`wework-desktop-${scope}-e2e`]
-    const setup = consumer.steps.find(
-      (step) => step.uses === './.github/actions/setup-minio-e2e',
-    )
-    assert.ok(setup)
-    assert.ok(consumer.needs.includes(producers[0].job))
-    for (const match of setup.if.matchAll(
-      /contains\(matrix.segments, '([^']+)'\)/g,
-    )) {
-      required.push({ scope, segment: match[1] })
-    }
-  }
-  assert.equal(required.length, 7)
-  assert.ok(
-    required.some(
-      ({ scope, segment }) =>
-        scope === 'cloud' && segment === 'plugin-package-integrity-recovery',
-    ),
-  )
-  const evaluate = new Function(
-    'needs',
-    'contains',
-    `return ${producers[0].step.if}`,
-  )
-  for (const selection of [
-    ...required,
-    { scope: 'core', segment: 'task-attachments' },
-    null,
+  );
+  assert.equal(producers.length, 2);
+  const linux = producers.find(
+    ({ job }) => job === "build-wework-desktop-core-e2e",
+  );
+  const mac = producers.find(({ job }) => job === "wework-desktop-memory-e2e");
+  assert.ok(linux);
+  assert.ok(mac);
+  assert.equal(linux.step.if, undefined);
+  assert.equal(mac.step.with["upload-artifact"], "false");
+  for (const job of [
+    "wework-desktop-core-e2e",
+    "wework-desktop-cloud-e2e",
+    "wework-desktop-e2e",
   ]) {
-    const outputs = Object.fromEntries(
-      ['core', 'cloud'].map((scope) => [
-        `wework_desktop_${scope}_e2e_matrix`,
-        JSON.stringify({
-          include:
-            selection?.scope === scope ? [{ segments: selection.segment }] : [],
-        }),
-      ]),
-    )
-    assert.equal(
-      evaluate({ changes: { outputs } }, (source, value) =>
-        source.includes(value),
-      ),
-      required.includes(selection),
-    )
+    const consumer = workflow.jobs[job];
+    const setup = consumer.steps.find(
+      (step) => step.uses === "./.github/actions/setup-minio-e2e",
+    );
+    assert.ok(setup);
+    assert.equal(setup.if, undefined);
+    assert.ok(consumer.needs.includes(linux.job));
   }
-  const build = readYaml('.github/actions/build-minio-e2e/action.yml').runs
-    .steps
-  assert.ok(build.every((step) => !step.uses?.startsWith('docker/')))
+  const windows = workflow.jobs["wework-desktop-windows-core-e2e"].steps;
   assert.equal(
-    build.find((step) => step.name === 'Set up Go for real object storage')
-      .with['go-version'],
-    '1.25.9',
-  )
+    windows.find((step) => step.name === "Enable real object storage").if,
+    undefined,
+  );
+  assert.equal(
+    windows.find((step) => step.name === "Download Windows real object storage")
+      .if,
+    undefined,
+  );
+  const windowsProducer =
+    workflow.jobs["build-wework-desktop-windows-core-e2e"].steps;
+  assert.equal(
+    windowsProducer.find(
+      (step) => step.name === "Restore real object storage for desktop E2E",
+    ).if,
+    undefined,
+  );
+  const build = readYaml(".github/actions/build-minio-e2e/action.yml").runs
+    .steps;
+  assert.ok(build.every((step) => !step.uses?.startsWith("docker/")));
+  assert.equal(
+    build.find((step) => step.name === "Restore published real object storage")
+      .if,
+    "runner.os == 'Linux'",
+  );
+  assert.equal(
+    build.find((step) => step.name === "Set up Go for real object storage")
+      .with["go-version"],
+    "1.25.9",
+  );
   const upload = build.find((step) =>
-    step.uses?.startsWith('actions/upload-artifact@'),
-  )
-  const download = readYaml('.github/actions/setup-minio-e2e/action.yml').runs
-    .steps[0]
-  assert.equal(upload.with.name, download.with.name)
-  assert.equal(upload.with['if-no-files-found'], 'error')
-  assert.equal(upload.with.path, '${{ runner.temp }}/wework-minio/bin/minio')
-  assert.equal(download.with.path, '${{ runner.temp }}/wework-minio/bin')
-})
+    step.uses?.startsWith("actions/upload-artifact@"),
+  );
+  const download = readYaml(".github/actions/setup-minio-e2e/action.yml").runs
+    .steps[0];
+  assert.equal(upload.with.name, download.with.name);
+  assert.equal(upload.with["if-no-files-found"], "error");
+  assert.equal(upload.with.path, "${{ runner.temp }}/wework-minio/bin/minio");
+  assert.equal(download.with.path, "${{ runner.temp }}/wework-minio/bin");
+});
 
-test('timing evidence and scheduling regression tests are bound to CI', () => {
+test("timing evidence and scheduling regression tests are bound to CI", () => {
   assert.match(
     measurements.run,
     /^https:\/\/github.com\/wecode-ai\/Wegent\/actions\/runs\/\d+$/,
-  )
-  assert.match(measurements.headSha, /^[a-f0-9]{40}$/)
-  assert.equal(measurements.workers, 4)
+  );
+  assert.match(measurements.headSha, /^[a-f0-9]{40}$/);
+  assert.equal(measurements.workers, 4);
   for (const seconds of Object.values(measurements.scopes).flatMap((scope) =>
     Object.values(scope),
   )) {
-    assert.ok(Number.isFinite(seconds) && seconds > 0)
+    assert.ok(Number.isFinite(seconds) && seconds > 0);
   }
   const lint = readFileSync(
-    new URL('../workflows/lint.yml', import.meta.url),
-    'utf8',
-  )
+    new URL("../workflows/lint.yml", import.meta.url),
+    "utf8",
+  );
   assert.match(
     lint,
     /node --test .*\.github\/scripts\/order-wework-linux-e2e\.test\.mjs/,
-  )
-})
+  );
+});

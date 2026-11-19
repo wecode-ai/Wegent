@@ -178,12 +178,13 @@ for (const checkpoint of ['python-runtime', 'plugin-development']) {
     const peers = [
       'collaboration-shared-core',
       'collaboration-templates',
+      'collaboration-template-agents',
       'collaboration-template-app-device-routing',
       'claude-runtime',
       'conversation-state',
       'stand-in-sessions',
     ]
-    const independent = 'tray-lifecycle'
+    const independent = 'stand-in-memory-timer'
     const active = new Set()
     let independentRanWithPython = false
     let peersRanTogether = false

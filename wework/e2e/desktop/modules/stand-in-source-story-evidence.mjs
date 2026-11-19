@@ -1,8 +1,14 @@
+import {
+  desktopOwnerId as STORY_USER,
+  desktopOwnerPrimaryTaskId as STORY_PRIMARY,
+} from './desktop-owner-fixture.mjs'
 import assert from 'node:assert/strict'
 import { ensureExperimentalFeaturesEnabled } from './preferences-automation-flows.mjs'
 
-export const STORY_USER = 9001
-export const STORY_PRIMARY = `stand-in-chat-${STORY_USER}-primary`
+export {
+  desktopOwnerId as STORY_USER,
+  desktopOwnerPrimaryTaskId as STORY_PRIMARY,
+} from './desktop-owner-fixture.mjs'
 export const STORY_CHAT =
   '[data-workspace-tab-content][aria-hidden="false"] [data-testid="stand-in-conversation"]'
 

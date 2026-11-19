@@ -12,11 +12,12 @@ fn matching_item(entry: &Value, call_id: &str, turn_id: Option<&str>) -> Option<
 impl RuntimeWorkRpcHandler {
     async fn mcp_app_source_request(
         &self,
+        client: &CodexAppServerClient,
         method: &str,
         params: Value,
     ) -> Result<Value, AppIpcError> {
         let started = std::time::Instant::now();
-        let result = self.call_codex_thread_method(method, params).await;
+        let result = client.request(method, params).await;
         if started.elapsed().as_millis() >= 250 {
             crate::logging::log_executor_event(
                 "MCP App source read slow",
@@ -31,12 +32,14 @@ impl RuntimeWorkRpcHandler {
 
     pub(super) async fn mcp_app_source(
         &self,
+        client: &CodexAppServerClient,
         thread_id: &str,
         call_id: &str,
         turn_id: Option<&str>,
     ) -> Result<(Value, Option<Value>), AppIpcError> {
         let read = self
             .mcp_app_source_request(
+                client,
                 "thread/read",
                 json!({"threadId":thread_id,"includeTurns":false}),
             )
@@ -44,6 +47,7 @@ impl RuntimeWorkRpcHandler {
         if read["thread"]["historyMode"] != "paginated" {
             let read = self
                 .mcp_app_source_request(
+                    client,
                     "thread/read",
                     json!({"threadId":thread_id,"includeTurns":true}),
                 )
@@ -52,13 +56,14 @@ impl RuntimeWorkRpcHandler {
             return Ok((read, source));
         }
         let source = self
-            .mcp_app_paginated_source(thread_id, call_id, turn_id)
+            .mcp_app_paginated_source(client, thread_id, call_id, turn_id)
             .await?;
         Ok((read, source))
     }
 
     async fn mcp_app_paginated_source(
         &self,
+        client: &CodexAppServerClient,
         thread_id: &str,
         call_id: &str,
         turn_id: Option<&str>,
@@ -80,7 +85,7 @@ impl RuntimeWorkRpcHandler {
                     }),
                 ),
             };
-            let page = self.mcp_app_source_request(method, params).await?;
+            let page = self.mcp_app_source_request(client, method, params).await?;
             if let Some(source) = page["data"]
                 .as_array()
                 .into_iter()
@@ -126,13 +131,18 @@ mod tests {
         )
         .unwrap();
         let (read, found) = handler
-            .mcp_app_source("thread-1", "call", Some("turn"))
+            .mcp_app_source(&handler.codex_app_server, "thread-1", "call", Some("turn"))
             .await
             .unwrap();
         assert_eq!(read["thread"]["historyMode"], "paginated");
         assert_eq!(found, Some(source));
         assert!(handler
-            .mcp_app_source("thread-1", "call", Some("foreign-turn"))
+            .mcp_app_source(
+                &handler.codex_app_server,
+                "thread-1",
+                "call",
+                Some("foreign-turn")
+            )
             .await
             .unwrap()
             .1
@@ -147,7 +157,7 @@ mod tests {
         )
         .unwrap();
         assert!(handler
-            .mcp_app_source("thread-1", "older", None)
+            .mcp_app_source(&handler.codex_app_server, "thread-1", "older", None)
             .await
             .unwrap()
             .1
@@ -161,7 +171,7 @@ mod tests {
         )
         .unwrap();
         assert!(handler
-            .mcp_app_source("thread-1", "missing", None)
+            .mcp_app_source(&handler.codex_app_server, "thread-1", "missing", None)
             .await
             .is_err());
         handler

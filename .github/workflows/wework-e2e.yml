@@ -27,6 +27,7 @@ permissions:
   packages: read
 
 env:
+  WEWORK_E2E_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
   WEWORK_IDLE_TASKS_CONSIDER_SYSTEM_LOAD: ${{ vars.WEWORK_IDLE_TASKS_CONSIDER_SYSTEM_LOAD || 'false' }}
 
 defaults:
@@ -211,13 +212,21 @@ jobs:
     name: Wework E2E
     needs:
       - changes
+      - build-wework-desktop-core-e2e
     if: needs.changes.outputs.wework_e2e == 'true' && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
       HOME: /root
+      WEWORK_E2E_MYSQLD_BIN: ${{ github.workspace }}/.github/scripts/run-ci-mysqld.sh
+      WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/backend-rs/wegent-backend-rs
+      WEWORK_E2E_BROWSER_EXECUTABLE: /opt/google/chrome/chrome
+      WEWORK_E2E_PREBUILT_WEB_ARCHIVE: ${{ github.workspace }}/.ci-artifacts/wework-core-e2e-build/electron-app/resources/wework-core-plugins.tar.gz
     container:
-      image: ${{ needs.changes.outputs.browser_image }}
+      options: --security-opt apparmor=unconfined
+      volumes:
+        - /opt/google/chrome:/opt/google/chrome:ro
+      image: ${{ needs.changes.outputs.desktop_image }}
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -234,11 +243,42 @@ jobs:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
           setup-toolchain: "false"
 
+      - name: Download shared Wework desktop E2E build
+        uses: actions/download-artifact@v6
+        with:
+          name: wework-desktop-core-e2e-build
+          path: .ci-artifacts
+
+      - name: Restore shared Wework desktop E2E build
+        run: .github/scripts/restore-wework-core-e2e-build.sh
+
+      - name: Restore shared Python dependencies
+        uses: ./.github/actions/setup-python-uv-cache
+        with:
+          python-version: "3.12"
+          setup-python: "false"
+          setup-uv: "false"
+
+      - name: Set up real object storage
+        uses: ./.github/actions/setup-minio-e2e
+
       - name: Run Wework E2E tests
         env:
           CI: true
         # Initialize a real session bus before Chromium starts its worker threads.
         run: dbus-run-session -- pnpm --filter wework e2e
+
+      - name: Upload real browser Backend diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-browser-backend-diagnostics
+          path: |
+            wework/test-results/desktop-e2e/**/cloud-*.log
+            wework/test-results/desktop-e2e/**/backend-rs-logs/*.log
+            wework/test-results/desktop-e2e/**/minio.log
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload Wework Playwright report
         if: always()
@@ -262,7 +302,7 @@ jobs:
     name: Build Shared Wework Desktop E2E Artifact
     needs:
       - changes
-    if: (needs.changes.outputs.wework_desktop_core_e2e == 'true' || needs.changes.outputs.wework_desktop_cloud_e2e == 'true' || needs.changes.outputs.wework_desktop_other_e2e == 'true') && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
+    if: (needs.changes.outputs.wework_e2e == 'true' || needs.changes.outputs.wework_desktop_core_e2e == 'true' || needs.changes.outputs.wework_desktop_cloud_e2e == 'true' || needs.changes.outputs.wework_desktop_other_e2e == 'true') && (github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (github.event.action != 'labeled' || github.event.label.name == 'ci:all')))
     runs-on: ubuntu-latest
     timeout-minutes: 35
     outputs:
@@ -286,7 +326,6 @@ jobs:
         uses: ./.github/actions/setup-wework-native-test-dependencies
 
       - name: Build shared real object storage for desktop E2E
-        if: contains(needs.changes.outputs.wework_desktop_core_e2e_matrix, 'collaboration-issue-mcp-comments') || contains(needs.changes.outputs.wework_desktop_core_e2e_matrix, 'collaboration-delivery-editing') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-write-coordination') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-runtime-route-refresh') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-background-sync-isolation') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-periodic-reconcile') || contains(needs.changes.outputs.wework_desktop_cloud_e2e_matrix, 'plugin-package-integrity-recovery')
         uses: ./.github/actions/build-minio-e2e
         with:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
@@ -468,7 +507,7 @@ jobs:
           setup-toolchain: "false"
 
       - name: Configure the native log-folder opener
-        if: contains(matrix.segments, 'startup-fault-isolation')
+        if: contains(matrix.segments, 'native-window-startup')
         run: |
           command -v file
           command -v xdg-mime
@@ -478,19 +517,18 @@ jobs:
           test "$(xdg-mime query filetype /tmp)" = inode/directory
 
       - name: Restore verified Electron installer cache
-        if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'startup-fault-isolation')
+        if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')
         uses: ./.github/actions/prepare-electron-installer-cache
 
       - name: Install Electron for native startup and schema verification
-        if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'startup-fault-isolation')
+        if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')
         env:
           WEWORK_ELECTRON_DEPENDENCIES_READY: "true"
         run: |
           pnpm --dir wework prepare:electron
           pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
 
-      - name: Set up real object storage for collaboration E2E
-        if: contains(matrix.segments, 'collaboration-issue-mcp-comments') || contains(matrix.segments, 'collaboration-delivery-editing')
+      - name: Set up real object storage for desktop E2E
         uses: ./.github/actions/setup-minio-e2e
 
       - name: Verify Electron for native startup checkpoints
@@ -525,10 +563,23 @@ jobs:
           test -x "$WEWORK_E2E_CODEX_BIN"
           if [[ ",$WEWORK_E2E_SEGMENTS," == *",plugin-development,"* ]]; then
             gdb --version
-            WEWORK_E2E_EXECUTOR_REAL_BIN=/usr/bin/test \
+            gdb_probe_output="$(WEWORK_E2E_EXECUTOR_REAL_BIN=/usr/bin/test \
               WEGENT_APP_IPC_ENDPOINT=diagnostic-fd-check \
               .github/scripts/run-wework-executor-with-gdb.sh \
-              -r /proc/self/fd/3 3</dev/null
+              -r /proc/self/fd/3 3</dev/null)"
+            printf '%s\n' "$gdb_probe_output"
+            printf '%s' "$gdb_probe_output" | node --input-type=module -e '
+              import assert from "node:assert/strict";
+              import fs from "node:fs";
+              const prefix = "[executor-gdb-inferior] ";
+              const identities = fs.readFileSync(0, "utf8").split(/\r?\n/)
+                .filter(line => line.startsWith(prefix)).map(line => JSON.parse(line.slice(prefix.length)));
+              assert.equal(identities.length, 1, "The GDB probe must identify exactly one real Executor process");
+              const { debuggerPid, executorPid } = identities[0];
+              assert.ok(Number.isSafeInteger(debuggerPid) && debuggerPid > 0);
+              assert.ok(Number.isSafeInteger(executorPid) && executorPid > 0);
+              assert.notEqual(debuggerPid, executorPid);
+            '
             cp .github/scripts/run-wework-executor-with-gdb.sh "$WEWORK_E2E_EXECUTOR_BIN.gdb"
             export WEWORK_E2E_PLUGIN_DEVELOPMENT_EXECUTOR_BIN="$WEWORK_E2E_EXECUTOR_BIN.gdb"
           fi
@@ -539,6 +590,12 @@ jobs:
       - name: Prune transient Wework desktop E2E caches
         if: always()
         run: .github/scripts/prune-wework-desktop-e2e-diagnostics.sh
+
+      - name: Collect desktop performance samples
+        if: always()
+        uses: ./.github/actions/collect-wework-performance
+        with:
+          name: linux-core-${{ matrix.id }}
 
       - name: Upload Wework desktop E2E diagnostics
         if: always()
@@ -579,10 +636,39 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
+      - name: Set up Node for native Windows preflight
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: "24"
+
+      - name: Verify native plugin dialog client
+        timeout-minutes: 1
+        env:
+          WEWORK_E2E_NATIVE_OBSERVER_DIRECTORY: ${{ runner.temp }}/wework-native-observer
+        shell: pwsh
+        run: |
+          node wework/scripts/verify-native-plugin-window-diagnostics.mjs
+          if ($LASTEXITCODE -ne 0) { throw "Native dialog client verification failed" }
+
       - name: Restore or build Windows Wework desktop E2E package
         uses: ./.github/actions/build-wework-windows-e2e
         with:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Prepare native external Git CLI protocol fixture
+        shell: pwsh
+        run: |
+          $directory = Join-Path $env:GITHUB_WORKSPACE "wework/electron/release/WeWork-win32-x64/resources/e2e-client"
+          Copy-Item -Path "$env:RUNNER_TEMP/wework-native-observer/*.dll" -Destination $directory
+          $binary = Join-Path $directory "node-cli-protocol.exe"
+          rustc wework/e2e/desktop/fixtures/node-cli-protocol.rs --edition 2021 -o $binary
+          if ($LASTEXITCODE -ne 0) { throw "Git CLI protocol fixture compilation failed" }
+          if (-not (Test-Path $binary -PathType Leaf)) { throw "Missing Git CLI protocol fixture" }
+
+      - name: Verify Windows process deadline and log retention
+        timeout-minutes: 1
+        shell: pwsh
+        run: .github/scripts/test-windows-standard-user-process.ps1
 
       - name: Prepare Windows Redis E2E tools
         shell: pwsh
@@ -613,6 +699,69 @@ jobs:
               throw "Missing Windows Redis E2E binary: $binary"
             }
           }
+
+      - name: Restore real object storage for desktop E2E
+        id: issue-mcp-minio
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/wework-minio/bin
+          key: ${{ runner.os }}-minio-9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a-go-1.25.9-v1
+
+      - name: Set up Go for real object storage
+        if: steps.issue-mcp-minio.outputs.cache-hit != 'true'
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25.9"
+          cache: false
+
+      - name: Build real object storage
+        if: steps.issue-mcp-minio.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $env:GOBIN = Join-Path $env:RUNNER_TEMP "wework-minio\bin"
+          New-Item -ItemType Directory -Force -Path $env:GOBIN | Out-Null
+          function Write-BuildFilesystemDiagnostics([string]$stage) {
+            try {
+              $runnerWorkRoot = Split-Path $env:RUNNER_TEMP -Parent
+              $paths = @{
+                workspaceAction = Join-Path $env:GITHUB_WORKSPACE ".github/actions/build-wework-windows-e2e/action.yml"
+                uploadAction = Join-Path $runnerWorkRoot "_actions/actions/upload-artifact/v4/action.yml"
+                checkoutAction = Join-Path $runnerWorkRoot "_actions/actions/checkout/v4/action.yml"
+                objectStorage = Join-Path $env:GOBIN "minio.exe"
+              }
+              $files = @{}
+              foreach ($entry in $paths.GetEnumerator()) {
+                $files[$entry.Key] = @{ path = $entry.Value; exists = Test-Path -LiteralPath $entry.Value -PathType Leaf }
+              }
+              $drives = @(Get-PSDrive -PSProvider FileSystem | Select-Object Name, Free, Used)
+              Write-Host ("[windows-build-filesystem] " + (@{ stage = $stage; files = $files; drives = $drives } | ConvertTo-Json -Depth 5 -Compress))
+            } catch {
+              Write-Warning "Unable to inspect Windows build filesystem: $($_.Exception.Message)"
+            }
+          }
+          Write-BuildFilesystemDiagnostics "before-object-storage-build"
+          go install github.com/minio/minio@9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a
+          $minioBuildExitCode = $LASTEXITCODE
+          Write-BuildFilesystemDiagnostics "after-object-storage-build"
+          if ($minioBuildExitCode -ne 0) {
+            throw "Failed to build the MinIO binary for desktop E2E"
+          }
+
+      - name: Save real object storage for desktop E2E
+        if: github.ref == 'refs/heads/main' && steps.issue-mcp-minio.outcome == 'success' && steps.issue-mcp-minio.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ runner.temp }}/wework-minio/bin
+          key: ${{ steps.issue-mcp-minio.outputs.cache-primary-key }}
+
+      - name: Upload Windows real object storage
+        uses: actions/upload-artifact@v4
+        with:
+          name: wework-desktop-windows-minio-e2e
+          path: ${{ runner.temp }}/wework-minio/bin/minio.exe
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
 
       - name: Upload Windows Wework desktop Core E2E build
         uses: actions/upload-artifact@v4
@@ -673,13 +822,17 @@ jobs:
           node-version: "24"
 
       - name: Set up pnpm for native startup verification
-        if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'startup-fault-isolation')
+        if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')
         uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093
 
       - name: Set up Python and uv
         uses: ./.github/actions/setup-python-uv-cache
         with:
           python-version: "3.12"
+
+      - name: Verify native device credential transactions
+        if: contains(matrix.segments, 'change-request-status')
+        run: uv run --no-project python backend/tests/services/device/test_git_credentials_native.py
 
       - name: Restore local harness CLIs
         if: contains(matrix.segments, 'local-harness') || contains(matrix.segments, 'claude-runtime')
@@ -754,41 +907,13 @@ jobs:
           "WEWORK_E2E_MYSQLD_BIN=$mysqlServerPath" |
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Restore real object storage for Issue MCP E2E
-        if: (contains(matrix.segments, 'collaboration-issue-mcp-comments') || contains(matrix.segments, 'collaboration-delivery-editing'))
-        id: issue-mcp-minio
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      - name: Download Windows real object storage
+        uses: actions/download-artifact@v6
         with:
+          name: wework-desktop-windows-minio-e2e
           path: ${{ runner.temp }}/wework-minio/bin
-          key: ${{ runner.os }}-minio-9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a-go-1.25.9-v1
-
-      - name: Set up Go for real object storage
-        if: (contains(matrix.segments, 'collaboration-issue-mcp-comments') || contains(matrix.segments, 'collaboration-delivery-editing')) && steps.issue-mcp-minio.outputs.cache-hit != 'true'
-        uses: actions/setup-go@v6
-        with:
-          go-version: "1.25.9"
-          cache: false
-
-      - name: Build real object storage
-        if: (contains(matrix.segments, 'collaboration-issue-mcp-comments') || contains(matrix.segments, 'collaboration-delivery-editing')) && steps.issue-mcp-minio.outputs.cache-hit != 'true'
-        shell: pwsh
-        run: |
-          $env:GOBIN = Join-Path $env:RUNNER_TEMP "wework-minio\bin"
-          New-Item -ItemType Directory -Force -Path $env:GOBIN | Out-Null
-          go install github.com/minio/minio@9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a
-          if ($LASTEXITCODE -ne 0) {
-            throw "Failed to build the MinIO binary for desktop E2E"
-          }
-
-      - name: Save real object storage for Issue MCP E2E
-        if: github.ref == 'refs/heads/main' && steps.issue-mcp-minio.outcome == 'success' && steps.issue-mcp-minio.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ${{ runner.temp }}/wework-minio/bin
-          key: ${{ steps.issue-mcp-minio.outputs.cache-primary-key }}
 
       - name: Enable real object storage
-        if: (contains(matrix.segments, 'collaboration-issue-mcp-comments') || contains(matrix.segments, 'collaboration-delivery-editing'))
         shell: pwsh
         run: |
           $source = Join-Path $env:RUNNER_TEMP "wework-minio\bin\minio.exe"
@@ -809,7 +934,7 @@ jobs:
             Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Install Electron for native startup and schema verification
-        if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'startup-fault-isolation')
+        if: contains(matrix.segments, 'workbench-mode') || contains(matrix.segments, 'native-window-startup')
         run: |
           pnpm --dir wework prepare:electron
           pnpm --dir wework/electron exec node -e "require('node:fs').statSync(require('electron'))"
@@ -856,6 +981,8 @@ jobs:
           WEWORK_E2E_APP_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/WeWork.exe
           WEWORK_E2E_SOCKET_IO_CLIENT: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/e2e-client/socket.io-client.cjs
           WEWORK_E2E_YAML_PARSER: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/e2e-client/yaml.cjs
+          WEWORK_E2E_NATIVE_OBSERVER_DIRECTORY: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/e2e-client
+          WEWORK_E2E_NODE_CLI_PROTOCOL_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/e2e-client/node-cli-protocol.exe
           WEWORK_E2E_EXECUTOR_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/bin/wegent-executor.exe
           WEWORK_E2E_BACKEND_RS_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/bin/wegent-backend-rs.exe
           WEWORK_E2E_CODEX_BIN: ${{ github.workspace }}/wework/electron/release/WeWork-win32-x64/resources/codex/vendor/x86_64-pc-windows-msvc/bin/codex.exe
@@ -869,6 +996,7 @@ jobs:
             $env:WEWORK_E2E_EXECUTOR_BIN,
             $env:WEWORK_E2E_BACKEND_RS_BIN,
             $env:WEWORK_E2E_CODEX_BIN,
+            $env:WEWORK_E2E_NODE_CLI_PROTOCOL_BIN,
             (Join-Path (Split-Path $env:WEWORK_E2E_APP_BIN) "resources/wework-core-plugins.tar.gz"),
             (Join-Path (Split-Path $env:WEWORK_E2E_APP_BIN) "resources/wework-app-static.tar.gz"),
             (Join-Path (Split-Path $env:WEWORK_E2E_APP_BIN) "resources/bundled-plugins.tar.gz")
@@ -919,6 +1047,12 @@ jobs:
       - name: Prune transient Wework desktop E2E caches
         if: always()
         run: .github/scripts/prune-wework-desktop-e2e-diagnostics.sh
+
+      - name: Collect desktop performance samples
+        if: always()
+        uses: ./.github/actions/collect-wework-performance
+        with:
+          name: windows-core-${{ matrix.id }}
 
       - name: Upload Windows Wework desktop E2E diagnostics
         if: always()
@@ -1003,8 +1137,7 @@ jobs:
           setup-python: "false"
           setup-uv: "false"
 
-      - name: Set up real object storage for plugin sync recovery E2E
-        if: contains(matrix.segments, 'plugin-write-coordination') || contains(matrix.segments, 'plugin-runtime-route-refresh') || contains(matrix.segments, 'plugin-background-sync-isolation') || contains(matrix.segments, 'plugin-periodic-reconcile') || contains(matrix.segments, 'plugin-package-integrity-recovery')
+      - name: Set up real object storage for desktop E2E
         uses: ./.github/actions/setup-minio-e2e
 
       - name: Prepare real GitHub CLI for account authentication E2E
@@ -1101,6 +1234,12 @@ jobs:
         if: always()
         run: .github/scripts/prune-wework-desktop-e2e-diagnostics.sh
 
+      - name: Collect desktop performance samples
+        if: always()
+        uses: ./.github/actions/collect-wework-performance
+        with:
+          name: cloud-${{ matrix.id }}
+
       - name: Upload Wework desktop Cloud E2E diagnostics
         if: always()
         continue-on-error: true
@@ -1166,6 +1305,9 @@ jobs:
       - name: Restore shared Wework desktop E2E build
         run: .github/scripts/restore-wework-core-e2e-build.sh
 
+      - name: Set up real object storage for desktop E2E
+        uses: ./.github/actions/setup-minio-e2e
+
       - name: Run Wework desktop ${{ matrix.name }} E2E
         env:
           CI: true
@@ -1200,6 +1342,12 @@ jobs:
       - name: Prune transient Wework desktop E2E caches
         if: always()
         run: .github/scripts/prune-wework-desktop-e2e-diagnostics.sh
+
+      - name: Collect desktop performance samples
+        if: always()
+        uses: ./.github/actions/collect-wework-performance
+        with:
+          name: other-${{ matrix.id }}
 
       - name: Upload Wework desktop E2E diagnostics
         if: always()
@@ -1366,7 +1514,7 @@ jobs:
       packages: write
     env:
       CI: true
-      MACOS_COMPLETE_BUILD: ${{ github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci:all') }}
+      MACOS_COMPLETE_BUILD: ${{ github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all') }}
 
     steps:
       - name: Checkout code
@@ -1375,12 +1523,27 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
       - name: Prepare shared macOS desktop E2E build
-        id: macos-build
+        id: macos_e2e_build
         uses: ./.github/actions/build-wework-macos-e2e
         with:
           save-cache: ${{ github.ref == 'refs/heads/main' }}
           publish: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
           include-backend: ${{ env.MACOS_COMPLETE_BUILD }}
+
+      - name: Set up macOS Inspector backend runtime
+        uses: ./.github/actions/setup-python-uv-cache
+        with:
+          python-version: "3.12"
+
+      - name: Prepare real macOS Backend dependencies
+        run: .github/scripts/prepare-macos-inspector-e2e.sh
+
+      - name: Prepare real macOS object storage
+        id: macos_object_storage
+        uses: ./.github/actions/build-minio-e2e
+        with:
+          upload-artifact: "false"
+          save-cache: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Run Wework desktop memory E2E
         if: github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:all')
@@ -1393,7 +1556,7 @@ jobs:
           node wework/e2e/desktop/run-checkpoints.mjs --memory-only
 
       - name: Run Wework desktop macOS Inspector E2E
-        if: github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')
+        if: ${{ !cancelled() && steps.macos_e2e_build.outcome == 'success' && steps.macos_object_storage.outcome == 'success' && (github.event_name != 'pull_request' || needs.changes.outputs.wework_desktop_macos_inspector_e2e == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:all')) }}
         env:
           CI: true
           WEWORK_E2E_PARALLEL_CHECKPOINTS: "3"
@@ -1402,7 +1565,8 @@ jobs:
           test -x "$CODEX_BIN"
           test -x "$WEWORK_E2E_APP_BIN"
           test -x "$WEWORK_E2E_EXECUTOR_BIN"
-          segments=tray-lifecycle
+          test -x "$WEWORK_E2E_BACKEND_RS_BIN"
+          segments=browser-toolbar-actions,tray-lifecycle,clipboard-history-image
           if [[ "$COMPONENT_UPDATE_E2E" == "true" ]]; then
             segments+=,component-update
           fi
@@ -1410,7 +1574,7 @@ jobs:
             --parallel-segments "$segments"
 
       - name: Publish verified PR macOS Executor runtime
-        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && steps.macos-build.outputs.cache-hit != 'true'
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && steps.macos_e2e_build.outputs.cache-hit != 'true'
         env:
           CACHE_PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
@@ -1514,6 +1678,12 @@ jobs:
         if: always()
         timeout-minutes: 2
         run: .github/scripts/prune-wework-desktop-e2e-diagnostics.sh
+
+      - name: Collect desktop performance samples
+        if: always()
+        uses: ./.github/actions/collect-wework-performance
+        with:
+          name: macos
 
       - name: Upload Wework desktop macOS diagnostics
         if: always()

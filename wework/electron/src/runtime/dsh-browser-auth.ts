@@ -146,7 +146,7 @@ export function dshBrowserRequestHeaders(
   } catch {
     return headers
   }
-  if (!name || ![...activeAuthentications.values()].includes(name)) return headers
+  if (!name) return headers
   const next = { ...headers }
   for (const [key, value] of Object.entries(headers)) {
     if (key.toLowerCase() !== 'cookie') continue

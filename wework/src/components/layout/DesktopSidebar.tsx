@@ -1,3 +1,4 @@
+import { recordUiRender } from '@/e2e/ui-refresh-capture'
 import { DesktopSidebarProjectCreateMenu } from './DesktopSidebarProjectCreateMenu'
 import {
   DesktopSidebarProjectEditDialogs,
@@ -57,6 +58,7 @@ import { RuntimeTaskRow } from './DesktopSidebarTaskRow'
 import { ProjectItem } from './DesktopSidebarProjectItem'
 import { useDesktopSidebarModel } from './useDesktopSidebarModel'
 export function DesktopSidebar(props: DesktopSidebarProps) {
+  recordUiRender('desktop-sidebar')
   const model = useDesktopSidebarModel(props)
   const {
     nowMs,

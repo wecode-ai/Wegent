@@ -1,7 +1,7 @@
 // @vitest-environment node
 
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Readable } from 'node:stream'
@@ -9,6 +9,7 @@ import { EventEmitter } from 'node:events'
 import { onTestFinished, test } from 'vitest'
 import { DesktopE2EServer } from '../e2e/desktop/modules/desktop-server.mjs'
 import { createDesktopScenario as createTemporaryChatScenario } from '../e2e/desktop/scenarios/temporary-chat.scenario.mjs'
+import { createDesktopScenario as createResponsesCompatibilityScenario } from '../e2e/desktop/scenarios/responses-tool-compatibility.scenario.mjs'
 import {
   CLOUD_VISION_SIDECAR_CASE,
   LOCAL_CUSTOM_MODEL_PROTOCOL_MATRIX_CASES,
@@ -28,6 +29,169 @@ function predictionMetadata(requestKind = 'turn') {
     }),
   }
 }
+
+test.each([
+  ['/responses', 'responses'],
+  ['/v1/responses', 'responses'],
+  ['/backend-api/codex/responses', 'responses'],
+  ['/chat/completions', 'chat'],
+  ['/v1/chat/completions', 'chat'],
+  ['/messages', 'anthropic'],
+  ['/v1/messages', 'anthropic'],
+])('routes exact predictions before custom handlers for %s', async (path, protocol) => {
+  const server = new DesktopE2EServer('/tmp/prediction-protocol-routing', undefined, {
+    async handleHttp() {
+      assert.fail('A background prediction reached the foreground scenario')
+    },
+  })
+  server.url = 'http://fixture'
+  const messages = [{ role: 'user', content: REPLY_PREDICTION_PROMPT }]
+  const request = Readable.from([
+    JSON.stringify(protocol === 'responses' ? { input: messages } : { messages }),
+  ])
+  Object.assign(request, {
+    method: 'POST',
+    url: path,
+    headers: {
+      authorization:
+        path === '/backend-api/codex/responses'
+          ? 'Bearer synthetic-native-subscription'
+          : `Bearer ${MODEL_API_KEY}`,
+    },
+  })
+  const response = Object.assign(new EventEmitter(), memoryResponse(), { setHeader() {} })
+  await server.handle(request, response)
+  assert.equal(response.status, 200)
+  assert.equal(server.modelRequests.length, 1)
+  const events = response.output
+    .split('\n')
+    .filter(line => line.startsWith('data: ') && line !== 'data: [DONE]')
+    .map(line => JSON.parse(line.slice(6)))
+  const text = events
+    .map(event =>
+      protocol === 'responses'
+        ? event.type === 'response.output_item.done'
+          ? event.item.content[0].text
+          : ''
+        : protocol === 'chat'
+          ? (event.choices[0].delta.content ?? '')
+          : event.type === 'content_block_delta'
+            ? event.delta.text
+            : ''
+    )
+    .join('')
+  assert.deepEqual(JSON.parse(text), { suggestion: null })
+  assert.ok(
+    response.output.includes(
+      protocol === 'responses'
+        ? 'response.completed'
+        : protocol === 'chat'
+          ? 'data: [DONE]'
+          : 'message_stop'
+    )
+  )
+})
+
+test.each([
+  ['/v1/responses', 'responses'],
+  ['/catalog-auto/provider/v1/responses', 'responses'],
+  ['/catalog-auto/provider/v1/chat/completions', 'chat'],
+  ['/catalog-auto/provider/v1/messages', 'anthropic'],
+  ['/catalog-auto/provider/v1/responses/compact', 'responses-compact'],
+])(
+  'retains successfully handled %s once and links transport evidence without credentials',
+  async (path, protocol) => {
+    const body = { input: [{ role: 'user', content: 'Synthetic handled request' }] }
+    const server = new DesktopE2EServer('/tmp/scenario-model-evidence', undefined, {
+      async handleHttp() {
+        assert.equal(server.modelRequests.length, 1, 'Record arrival before awaiting the handler')
+        return true
+      },
+    })
+    server.url = 'http://fixture'
+    const request = Readable.from([JSON.stringify(body)])
+    Object.assign(request, {
+      method: 'POST',
+      url: path,
+      headers: { authorization: 'private-authorization' },
+    })
+    const response = Object.assign(new EventEmitter(), memoryResponse(), { setHeader() {} })
+    await server.handle(request, response)
+    assert.deepEqual(server.modelRequests, [
+      { body, scenario: 'initial', protocol, httpRequestIndex: 0 },
+    ])
+    assert.equal(server.httpRequests[0].pathname, path)
+  }
+)
+
+test.each([undefined, 'Bearer desktop-e2e'])(
+  'rejects unauthenticated predictions before foreground handlers: %s',
+  async authorization => {
+    const server = new DesktopE2EServer('/tmp/prediction-auth-routing', undefined, {
+      async handleHttp() {
+        assert.fail('An unauthenticated prediction reached the foreground scenario')
+      },
+    })
+    server.url = 'http://fixture'
+    const request = Readable.from([
+      JSON.stringify({ input: [{ role: 'user', content: REPLY_PREDICTION_PROMPT }] }),
+    ])
+    Object.assign(request, {
+      method: 'POST',
+      url: '/v1/responses',
+      headers: authorization ? { authorization } : {},
+    })
+    const response = Object.assign(new EventEmitter(), memoryResponse(), { setHeader() {} })
+    await server.handle(request, response)
+    assert.equal(response.status, 401)
+    assert.equal(
+      JSON.parse(response.output).error,
+      'The Desktop E2E model API key was not forwarded by Codex'
+    )
+  }
+)
+
+test('Responses compatibility predictions retain each configured model and its distinct credential', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'responses-prediction-auth-'))
+  onTestFinished(() => rmSync(directory, { recursive: true, force: true }))
+  const scenario = createResponsesCompatibilityScenario({
+    electronUserDataDirectory: directory,
+    workspacePath: directory,
+    resultDir: directory,
+  })
+  await scenario.prepareApp()
+  const provider = JSON.parse(readFileSync(join(directory, 'model-connections/model.yml'), 'utf8'))
+    .providers[0]
+  assert.notEqual(provider.api_key, MODEL_API_KEY)
+  const server = new DesktopE2EServer(directory, undefined, scenario)
+  server.url = 'http://fixture'
+  for (const model of provider.models) {
+    const body = {
+      model: model.model_id,
+      input: [{ role: 'user', content: REPLY_PREDICTION_PROMPT }],
+    }
+    const request = Readable.from([JSON.stringify(body)])
+    Object.assign(request, {
+      method: 'POST',
+      url: '/v1/responses',
+      headers: { authorization: `Bearer ${provider.api_key}` },
+    })
+    const response = Object.assign(new EventEmitter(), memoryResponse(), { setHeader() {} })
+    await server.handle(request, response)
+    assert.equal(response.status, 200)
+    const message = response.events().find(event => event.item?.type === 'message')
+    assert.deepEqual(JSON.parse(message.item.content[0].text), { suggestion: null })
+    const invalid = Readable.from([JSON.stringify(body)])
+    Object.assign(invalid, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${MODEL_API_KEY}` },
+    })
+    await assert.rejects(
+      scenario.handleHttp(invalid, memoryResponse(), new URL('/v1/responses', server.url)),
+      { code: 'ERR_ASSERTION' }
+    )
+  }
+})
 
 async function activeTemporaryChatScenario() {
   const scenario = createTemporaryChatScenario({ uiTimeoutMs: 100 })

@@ -257,6 +257,7 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
   await control.command('waitFor', `[data-testid="plugin-detail-uninstall-${installedId}"]`)
   await control.command('click', `[data-testid="plugin-detail-uninstall-${installedId}"]`)
   await control.command('click', '[data-testid="plugin-uninstall-confirm-button"]')
+  await new Promise(resolve => setTimeout(resolve, 3000))
   await control.command('waitFor', '[data-testid^="plugin-detail-toggle-"]', { text: '安装插件' })
   const uninstalled = await capture('05-after-uninstall')
   assert.ok(

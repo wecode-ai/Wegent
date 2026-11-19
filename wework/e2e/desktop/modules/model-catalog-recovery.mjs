@@ -8,16 +8,14 @@ import {
   restartCodexWhenIdle,
   waitForRestartedExecutor,
 } from './executor-restart-readiness.mjs'
-import { WORKBENCH_READY_TIMEOUT_MS, waitForLogPattern } from './shared.mjs'
+import { waitForLogPattern } from './shared.mjs'
 
 const loadedCatalogOverrides = new WeakMap()
 
 /** Interrupt a real catalog restart, then reconcile without the failure cooldown. */
 export async function verifyModelCatalogRecovery(control, { resultDir, uiTimeoutMs }) {
   if (process.platform === 'win32') return
-  await control.command('ensureLocalModelCatalogReady', 'body', {
-    timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
-  })
+  await control.command('ensureLocalModelCatalogReady', 'body')
   const original = await control.command('getNativeModelFixtureConfigs', 'body')
   const models = JSON.parse(original)
   const pending = models.filter(model => model.catalogEntry)

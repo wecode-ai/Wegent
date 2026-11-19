@@ -1,5 +1,12 @@
 {
   "order": 185000,
   "groupOrder": 7000,
-  "members": ["streaming-content", "streaming-conversation-switching"]
+  "members": [
+    "streaming-content",
+    "streaming-tools",
+    "streaming-scroll",
+    "streaming-message-order",
+    "streaming-conversation-switching",
+    "streaming-subagents"
+  ]
 }

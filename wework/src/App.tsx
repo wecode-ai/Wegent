@@ -1,3 +1,4 @@
+import { recordUiRender } from '@/e2e/ui-refresh-capture'
 import type { ReactNode } from 'react'
 import { AuthProvider } from '@/features/auth/AuthProvider'
 import { AppearanceProvider } from '@/features/appearance'
@@ -19,6 +20,7 @@ import { useCurrentPath } from './appLocation'
 export { WorkspaceTabSurface } from './AppWorkspaceRoutes'
 
 export default function App() {
+  recordUiRender('app')
   const path = useCurrentPath()
   const content =
     isDesktopRuntime() && path === '/system-drag' ? (

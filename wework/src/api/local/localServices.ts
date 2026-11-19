@@ -1,4 +1,6 @@
+import { isRuntimeReadCancellation } from '@/features/workbench/runtimeConversationReadCancellation'
 import { getDesktopE2ERuntimeConfig } from '@/e2e/runtime-config'
+
 import { runtimeProjectRefFromWorkspace } from '../../../../packages/chat-core/src/runtime-project-metadata'
 import type { RuntimeTaskArchiveRequest } from '../../../../packages/chat-core/src/runtime-management-types'
 import type { ConnectionDependencyPluginApi } from '@/api/standInConnectionDependencies'
@@ -2069,7 +2071,10 @@ export function createRuntimeWorkApiFromIpc(
       }
       return response
     } catch (error) {
-      if (method === 'runtime.tasks.transcript') {
+      if (
+        method === 'runtime.tasks.transcript' &&
+        !isRuntimeReadCancellation(error, requestOptions?.signal)
+      ) {
         console.error(`[Wework] ${transportLabel} runtime IPC transcript failed`, {
           address: runtimeAddressDebug(normalizedData),
           elapsedMs: Math.round(nowMs() - startedAt),
@@ -2504,7 +2509,12 @@ export function createRuntimeWorkApiFromIpc(
     },
     async sendRuntimeMessage(data: RuntimeSendRequest): Promise<RuntimeSendResponse> {
       const localDeviceId = await resolveDeviceId(data as unknown as Record<string, unknown>)
-      if (!(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))) {
+      const userInputResponse = data.requestUserInputResponse ?? data.request_user_input_response
+      // Replies settle an existing native request; catalog synchronization is unrelated.
+      if (
+        !userInputResponse &&
+        !(await prepareRuntimeModel({ deviceId: localDeviceId, modelId: data.modelId }))
+      ) {
         throw modelCatalogSyncCancelled()
       }
       const payload = await createLocalRuntimeSendPayload(
@@ -3598,8 +3608,7 @@ export function createLocalAppServices(deps: LocalAppServicesDeps = {}): Workben
     },
   }
   const runtimeWorkApi = createRuntimeWorkApiFromIpc(
-    async (method, params, _deviceId, requestOptions) => {
-      // IPC owns read readiness; model catalog preparation belongs to execution.
+    (method, params, _deviceId, requestOptions) => {
       return requestOptions
         ? request(method, params, undefined, requestOptions)
         : request(method, params)

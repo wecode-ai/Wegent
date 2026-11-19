@@ -1,3 +1,4 @@
+import { handleModelSubscriptionUsage } from './model-subscription-usage.mjs'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
@@ -52,6 +53,7 @@ export function createSubscriptionConfigRegression() {
       // Only the model service and its subscription-account endpoints are synthetic.
       // A distinct bootstrap origin keeps the explicit local model route independent.
       server = createServer((request, response) => {
+        if (handleModelSubscriptionUsage(request, response)) return
         if (request.url?.startsWith('/backend-api/wham/accounts/check')) {
           accountChecks += 1
           response.writeHead(200, { 'content-type': 'application/json' })

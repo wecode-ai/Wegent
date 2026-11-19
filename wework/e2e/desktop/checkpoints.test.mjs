@@ -14,7 +14,9 @@ import {
   upgradeVerificationCheckpoint,
 } from './upgrade-suite.mjs'
 
-test('remaining hosted checkpoints resolve to distinct registered CI owners', () => {
+test('Responses retains standalone selection and shares an existing CI Cloud lifecycle', () => {
+  assert.deepEqual(expandDesktopCheckpoints(['responses-api-gateway']), ['responses-api-gateway'])
+  assert.equal(DESKTOP_CHECKPOINT_CI_HOSTS.get('responses-api-gateway'), 'plugin-account-auth-dws')
   for (const [checkpoint, host] of DESKTOP_CHECKPOINT_CI_HOSTS) {
     assert.ok(DESKTOP_CHECKPOINTS.includes(checkpoint), checkpoint)
     assert.ok(DESKTOP_CHECKPOINTS.includes(host), host)
@@ -74,8 +76,9 @@ test('group expansion preserves ordering and runs each checkpoint once', () => {
   )
 })
 
-test('the CI notification checkpoint retains Issue read synchronization', () => {
+test('the CI notification checkpoint preserves navigation and covers Issue read synchronization', () => {
   assert.deepEqual(expandDesktopCheckpoints(['collaboration-issue-comment-notification']), [
+    'collaboration-issue-comment-notification-navigation',
     'issue-notification-read',
   ])
 })

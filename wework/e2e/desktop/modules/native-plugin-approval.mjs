@@ -2,6 +2,14 @@ import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+import {
+  WINDOWS_DECISION_STAGE_DIAGNOSTICS,
+  WINDOWS_NATIVE_DECISION_ASSEMBLY,
+  windowsNativeWindowDiagnosticScript,
+  WINDOWS_NATIVE_DIAGNOSTIC_FIELDS,
+  WINDOWS_UIA_STRUCTURE_DIAGNOSTICS,
+  WINDOWS_UIA_PROVIDER_DIAGNOSTICS,
+} from './native-plugin-window-diagnostics.mjs'
 
 const execute = promisify(execFile)
 const TITLES = [
@@ -39,147 +47,207 @@ export async function clickNativeDecision(pid, allow, signal, evidenceDirectory,
     return
   }
   if (process.platform === 'win32') {
+    const directory = process.env.WEWORK_E2E_NATIVE_OBSERVER_DIRECTORY
+    assert.ok(directory, 'The shared runner must prepare the native decision assembly')
+    const assembly = join(directory, WINDOWS_NATIVE_DECISION_ASSEMBLY).replaceAll("'", "''")
     const script = `
-$ErrorActionPreference = 'Stop'
-[Console]::Error.WriteLine('Native decision stage: assembly-client-start')
-Add-Type -AssemblyName UIAutomationClient
-[Console]::Error.WriteLine('Native decision stage: assembly-types-start')
-Add-Type -AssemblyName UIAutomationTypes
-[Console]::Error.WriteLine('Native decision stage: assemblies-ready')
-# TaskDialog CCPushButton panes do not expose UIA InvokePattern. Send real pointer input.
-Add-Type -TypeDefinition @'
-using System;
-using System.ComponentModel;
-using System.Runtime.InteropServices;
-public static class NativePluginPointer {
-  [StructLayout(LayoutKind.Sequential)] struct MouseInput {
-    public int X, Y;
-    public uint Data, Flags, Time;
-    public UIntPtr Extra;
-  }
-  [StructLayout(LayoutKind.Explicit)] struct InputData {
-    [FieldOffset(0)] public MouseInput Mouse;
-  }
-  [StructLayout(LayoutKind.Sequential)] struct Input {
-    public uint Type;
-    public InputData Data;
-  }
-  [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
-  [DllImport("user32.dll")] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
-  [DllImport("user32.dll", SetLastError = true)] static extern bool SetCursorPos(int x, int y);
-  [DllImport("user32.dll", SetLastError = true)] static extern uint SendInput(uint count, Input[] inputs, int size);
-  static Input MouseEvent(uint flags) {
-    return new Input { Type = 0, Data = new InputData { Mouse = new MouseInput {
-      X = 0, Y = 0, Data = 0, Flags = flags, Time = 0, Extra = UIntPtr.Zero
-    } } };
-  }
-  public static void Click(int window, int x, int y) {
-    if (GetForegroundWindow() != new IntPtr(window))
-      throw new InvalidOperationException("The isolated native decision is not the foreground window");
-    SetThreadDpiAwarenessContext(new IntPtr(-4));
-    if (!SetCursorPos(x, y)) throw new Win32Exception(Marshal.GetLastWin32Error());
-    var inputs = new[] { MouseEvent(0x0002), MouseEvent(0x0004) };
-    int size = Marshal.SizeOf(typeof(Input));
-    uint admitted = SendInput(2, inputs, size);
-    if (admitted != 2) {
-      int error = Marshal.GetLastWin32Error();
-      // Release an admitted press before reporting a partial native input failure.
-      if (admitted == 1) SendInput(1, new[] { inputs[1] }, size);
-      throw new Win32Exception(error, "The native decision pointer input was not fully admitted");
-    }
-  }
+${WINDOWS_DECISION_STAGE_DIAGNOSTICS}
+$targetPid = ${pid}
+Write-DecisionStage 'started'
+$decisionApartment = [System.Threading.Thread]::CurrentThread.GetApartmentState()
+Write-Output ("native-decision-apartment:{0}" -f $decisionApartment)
+if ($decisionApartment -ne [System.Threading.ApartmentState]::MTA) {
+  throw 'The native decision client requires an MTA thread'
 }
-'@
-
+Add-Type -AssemblyName UIAutomationClient
+Write-DecisionStage 'client-loaded'
+Add-Type -AssemblyName UIAutomationTypes
+Write-DecisionStage 'types-loaded'
+[void][System.Reflection.Assembly]::LoadFrom('${assembly}')
+Write-DecisionStage 'native-reader-loaded'
+Write-DecisionStage 'provider-register-started'
+try {
+  $proxyName = [WeworkUiaClient]::RegisterProviders()
+} catch {
+  Write-DecisionStage 'provider-register-failed'
+  Write-DecisionStage ($_.Exception.GetBaseException().TargetSite.Name)
+  throw
+}
+Write-DecisionStage 'provider-registered'
+${WINDOWS_UIA_PROVIDER_DIAGNOSTICS}
 $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, ${pid})
+$dialogCondition = [System.Windows.Automation.AndCondition]::new([System.Windows.Automation.Condition[]]@(
+  $condition,
+  [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ClassNameProperty, '#32770'),
+  [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Window)
+))
+$expectedTitles = @(${(decision.titles ?? TITLES).map(title => "'" + title.replaceAll("'", "''") + "'").join(', ')})
+$allowedButtonNames = @(${decision.labels ? decision.labels.map(label => "'" + label.replaceAll("'", "''") + "'").join(', ') : allow ? "'Allow installation', 'Allow update', '允许安装', '允许更新'" : "'Cancel', '取消'"})
 $deadline = [DateTime]::UtcNow.AddSeconds(10)
 $iteration = 0
 while ([DateTime]::UtcNow -lt $deadline) {
-  $iteration += 1
-  [Console]::Error.WriteLine('Native decision stage: root-lookup-start ' + $iteration)
-  $roots = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $condition)
-  # UIA exposes Electron's owned modal as a child of its main window.
-  # Preserve the isolated process boundary for both levels.
-  $windows = @(foreach ($root in $roots) {
-    $root
-    $root.FindAll([System.Windows.Automation.TreeScope]::Children, $condition)
-  })
-  [Console]::Error.WriteLine('Native decision stage: root-lookup-complete ' + $windows.Count)
-  foreach ($window in $windows) {
-    [Console]::Error.WriteLine('Native decision stage: window-name-start')
-    [Console]::Error.WriteLine('Native decision window: ' + $window.Current.Name)
-    if ($iteration -eq 1) {
-      [Console]::Error.WriteLine('Native decision stage: window-children-start')
-      $children = @($window.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition) | ForEach-Object {
-        @{ name = $_.Current.Name; className = $_.Current.ClassName; controlType = $_.Current.ControlType.ProgrammaticName; processId = $_.Current.ProcessId }
-      })
-      [Console]::Error.WriteLine('Native decision window children: ' + (ConvertTo-Json -InputObject $children -Compress))
-    }
-    if ($window.Current.Name -notin @(${(decision.titles ?? TITLES).map(title => `'${title}'`).join(', ')})) { continue }
-    [Console]::Error.WriteLine('Native decision stage: button-lookup-start')
-    $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
-    [Console]::Error.WriteLine('Native decision stage: button-lookup-complete ' + $buttons.Count)
-    foreach ($button in $buttons) {
-      [Console]::Error.WriteLine('Native decision stage: button-name-start')
-      [Console]::Error.WriteLine('Native decision element: type=' + $button.Current.ControlType.ProgrammaticName + ' class=' + $button.Current.ClassName)
-      if ($button.Current.Name -in @(${decision.labels ? decision.labels.map(label => "'" + label.replaceAll("'", "''") + "'").join(', ') : allow ? "'Allow installation', 'Allow update', '允许安装', '允许更新'" : "'Cancel', '取消'"})) {
-        [Console]::Error.WriteLine('Native decision matched label: ' + $button.Current.Name)
-        $rectangle = $button.Current.BoundingRectangle
-        if ($button.Current.IsOffscreen -or -not $button.Current.IsEnabled -or $rectangle.IsEmpty -or $rectangle.Width -le 0 -or $rectangle.Height -le 0) {
-          throw 'The owned native decision control is not clickable'
-        }
-        ${decision.focus ? '$button.SetFocus()' : ''}
-        [Console]::Error.WriteLine('Native decision stage: pointer-start')
-        [NativePluginPointer]::Click($window.Current.NativeWindowHandle, [int][Math]::Round($rectangle.X + $rectangle.Width / 2), [int][Math]::Round($rectangle.Y + $rectangle.Height / 2))
-        [Console]::Error.WriteLine('Native decision stage: pointer-complete')
-        exit 0
+  Write-DecisionStage 'search-started'
+  $windows = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $condition)
+  Write-DecisionStage 'search-completed'
+  $decisions = [System.Collections.Generic.List[System.Windows.Automation.AutomationElement]]::new()
+  foreach ($ownerWindow in $windows) {
+    Write-DecisionStage 'owned-window-present'
+    Write-DecisionStage 'owned-dialog-search-started'
+    $dialogs = $ownerWindow.FindAll([System.Windows.Automation.TreeScope]::Subtree, $dialogCondition)
+    Write-DecisionStage 'owned-dialog-search-completed'
+    foreach ($window in $dialogs) {
+      Write-DecisionStage 'owned-dialog-present'
+      $decisionTitle = $window.Current.Name
+      Write-DecisionStage 'title-read'
+      if ($decisionTitle -notin $expectedTitles) {
+        Write-DecisionStage 'title-unmatched'
+        continue
       }
+      $decisions.Add($window)
+    }
+  }
+  if ($decisions.Count -gt 1) {
+    Write-DecisionStage 'dialog-ambiguous'
+    throw 'The isolated app displayed ambiguous native Core plugin decisions'
+  }
+  if ($decisions.Count -eq 1) {
+    $window = $decisions[0]
+    Write-DecisionStage 'dialog-matched'
+    Write-DecisionStage 'button-search-started'
+    $dialogHandle = [IntPtr]$window.Current.NativeWindowHandle
+    $buttonHandles = [WeworkNativeDialogStructure]::DialogButtons($dialogHandle, $targetPid)
+    $buttons = [System.Collections.Generic.List[System.Windows.Automation.AutomationElement]]::new()
+    foreach ($buttonHandle in $buttonHandles) {
+      $nativeButton = [System.Windows.Automation.AutomationElement]::FromHandle($buttonHandle)
+      Write-DecisionStage 'button-handle-resolved'
+      if ($nativeButton.Current.ProcessId -ne $targetPid -or $nativeButton.Current.ControlType.Id -ne [System.Windows.Automation.ControlType]::Button.Id) {
+        try {
+          Write-Output ("native-decision-structure:uia-button-pid-matches:{0}" -f [int]($nativeButton.Current.ProcessId -eq $targetPid))
+          Write-Output ("native-decision-structure:uia-button-type-matches:{0}" -f [int]($nativeButton.Current.ControlType.Id -eq [System.Windows.Automation.ControlType]::Button.Id))
+          Write-Output ("native-decision-structure:uia-button-handle-matches:{0}" -f [int]([IntPtr]$nativeButton.Current.NativeWindowHandle -eq $buttonHandle))
+          Write-Output ("native-decision-structure:uia-button-control-type-id:{0}" -f $nativeButton.Current.ControlType.Id)
+        } catch {
+          Write-DecisionStage 'button-identity-diagnostics-failed'
+        }
+        Read-ButtonProvider $buttonHandle
+        throw 'The native Button handle did not expose its owned UIA Button'
+      }
+      $buttons.Add($nativeButton)
+    }
+    Write-DecisionStage 'button-search-completed'
+    Write-Output ("native-decision-button-count:{0}" -f $buttons.Count)
+${WINDOWS_UIA_STRUCTURE_DIAGNOSTICS}
+    $matchingButtons = [System.Collections.Generic.List[System.Windows.Automation.AutomationElement]]::new()
+    foreach ($button in $buttons) {
+      Write-DecisionStage 'button-present'
+      Write-DecisionStage 'button-name-read-started'
+      $buttonName = $button.Current.Name
+      Write-DecisionStage 'button-name-read'
+      if ($buttonName -in $allowedButtonNames) {
+        $matchingButtons.Add($button)
+        continue
+      }
+      Write-DecisionStage 'button-name-unmatched'
+    }
+    if ($matchingButtons.Count -gt 1) {
+      Write-DecisionStage 'button-ambiguous'
+      throw 'The isolated app displayed ambiguous native decision buttons'
+    }
+    if ($matchingButtons.Count -eq 1) {
+      $button = $matchingButtons[0]
+      $decisionTitle = $window.Current.Name
+      if ($decisionTitle -notin $expectedTitles) {
+        throw 'The native dialog title changed before invocation'
+      }
+      if (-not [WeworkNativeDialogStructure]::OwnedButton($dialogHandle, [IntPtr]$button.Current.NativeWindowHandle, $targetPid)) {
+        throw 'The native Button ownership changed before invocation'
+      }
+      if ($button.Current.Name -notin $allowedButtonNames -or $button.Current.ProcessId -ne $targetPid -or $button.Current.ControlType.Id -ne [System.Windows.Automation.ControlType]::Button.Id) {
+        throw 'The selected native Button changed before invocation'
+      }
+      Write-DecisionStage 'selection-revalidated'
+      Write-DecisionStage 'button-matched'
+      Write-DecisionStage 'invoke-pattern-read-started'
+      $pattern = $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern)
+      Write-DecisionStage 'invoke-pattern-read'
+      Write-DecisionStage 'invoke-started'
+      ${decision.focus ? '$button.SetFocus()' : ''}
+      $pattern.Invoke()
+      Write-DecisionStage 'invoke-completed'
+      exit 0
     }
   }
   Start-Sleep -Milliseconds 100
 }
-$top = @([System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $condition) | ForEach-Object {
-  @{ name = $_.Current.Name; className = $_.Current.ClassName; handle = $_.Current.NativeWindowHandle; processId = $_.Current.ProcessId }
-})
-[Console]::Error.WriteLine('Native decision top-level windows: ' + (ConvertTo-Json -InputObject $top -Compress))
-$diagnostics = @([System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition) | Where-Object {
-  $_.Current.ControlType -eq [System.Windows.Automation.ControlType]::Window
-} | Select-Object -First 20 | ForEach-Object {
-  @{ name = $_.Current.Name; className = $_.Current.ClassName; handle = $_.Current.NativeWindowHandle; processId = $_.Current.ProcessId }
-})
-[Console]::Error.WriteLine('Native decision owned windows: ' + (ConvertTo-Json -InputObject $diagnostics -Compress))
 throw 'The isolated app did not display its native Core plugin decision'
 `
-    const startedAt = Date.now()
-    try {
-      const result = await execute(
-        'powershell.exe',
-        [
-          '-NoProfile',
-          '-NonInteractive',
-          '-EncodedCommand',
-          Buffer.from(script, 'utf16le').toString('base64'),
-        ],
-        options
-      )
-      console.info('[native-plugin-decision] Windows helper completed', {
-        applicationProcessId: pid,
-        elapsedMs: Date.now() - startedAt,
-        stdout: result.stdout,
-        stderr: result.stderr,
-      })
-    } catch (error) {
-      console.error('[native-plugin-decision] Windows helper failed', {
-        applicationProcessId: pid,
-        elapsedMs: Date.now() - startedAt,
-        killed: error.killed,
-        signal: error.signal,
-        code: error.code,
-        stdout: error.stdout,
-        stderr: error.stderr,
-      })
+    await execute(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Mta',
+        '-EncodedCommand',
+        Buffer.from(script, 'utf16le').toString('base64'),
+      ],
+      options
+    ).catch(async error => {
+      const stages = new Set([
+        'started',
+        'client-loaded',
+        'types-loaded',
+        'provider-register-started',
+        'provider-registered',
+        'provider-register-failed',
+        'LoadDefaultProxies',
+        'native-reader-loaded',
+        'search-started',
+        'search-completed',
+        'owned-window-present',
+        'owned-dialog-search-started',
+        'owned-dialog-search-completed',
+        'title-read',
+        'owned-dialog-present',
+        'title-unmatched',
+        'dialog-matched',
+        'dialog-ambiguous',
+        'button-search-started',
+        'button-search-completed',
+        'uia-structure-started',
+        'uia-structure-completed',
+        'uia-structure-failed',
+        'button-present',
+        'button-handle-resolved',
+        'button-identity-diagnostics-failed',
+        'provider-create-started',
+        'provider-diagnostics-failed',
+        'button-ambiguous',
+        'selection-revalidated',
+        'button-name-read-started',
+        'button-name-read',
+        'button-name-unmatched',
+        'button-matched',
+        'invoke-pattern-read-started',
+        'invoke-pattern-read',
+        'invoke-started',
+        'invoke-completed',
+      ])
+      const evidence = windowsDecisionEvidence(error.stdout, stages)
+      if (!signal.aborted)
+        console.error(
+          '[native-plugin-decision-failed]',
+          JSON.stringify({
+            pid,
+            allow,
+            code: typeof error.code === 'number' ? error.code : null,
+            killed: error.killed === true,
+            signal: error.signal ?? null,
+            ...evidence,
+          })
+        )
+      if (!signal.aborted) await recordWindowsNativeWindowDiagnostics(pid, signal)
       throw error
-    }
+    })
     return
   }
   // X11 keyboard input targets only this process's named modal. Cancel is the default.
@@ -205,6 +273,90 @@ throw 'The isolated app did not display its native Core plugin decision'
     ['key', '--clearmodifiers', ...(allow ? ['Tab', 'Return'] : ['Escape'])],
     { encoding: 'utf8', timeout: inputTimeout }
   )
+}
+
+async function recordWindowsNativeWindowDiagnostics(pid, signal) {
+  const stages = new Set([
+    'observer-started',
+    'observer-types-loaded',
+    'observer-dialog-matched',
+    'observer-dialog-missing',
+    'observer-dialog-ambiguous',
+    'observer-completed',
+    'observer-failed',
+  ])
+  let output
+  let failure = null
+  try {
+    const result = await execute(
+      'powershell.exe',
+      [
+        '-NoProfile',
+        '-NonInteractive',
+        '-Mta',
+        '-EncodedCommand',
+        Buffer.from(windowsNativeWindowDiagnosticScript(pid, TITLES), 'utf16le').toString('base64'),
+      ],
+      { timeout: 4_000, signal, encoding: 'utf8' }
+    )
+    output = result.stdout
+  } catch (error) {
+    output = error.stdout
+    failure = {
+      code: typeof error.code === 'number' ? error.code : null,
+      killed: error.killed === true,
+      signal: error.signal ?? null,
+    }
+  }
+  if (!signal.aborted)
+    console.error(
+      '[native-plugin-window-diagnostics]',
+      JSON.stringify({
+        pid,
+        platform: 'win32',
+        phase: 'after-decision-failure',
+        failure,
+        ...windowsDecisionEvidence(output, stages),
+      })
+    )
+}
+
+function windowsDecisionEvidence(output, allowedStages) {
+  const lines = String(output ?? '').split(/\r?\n/)
+  const stageElapsedMs = {}
+  let buttonCount = null
+  let apartmentState = null
+  const emptyButtonDiagnostics = Object.fromEntries(
+    WINDOWS_NATIVE_DIAGNOSTIC_FIELDS.map(field => [field, null])
+  )
+  for (const line of lines) {
+    const timing = /^native-decision-timing:([a-zA-Z-]+):(\d+)$/.exec(line)
+    if (timing && allowedStages.has(timing[1]) && Number.isSafeInteger(Number(timing[2])))
+      stageElapsedMs[timing[1]] = Number(timing[2])
+    const count = /^native-decision-button-count:(\d+)$/.exec(line)
+    if (count && Number.isSafeInteger(Number(count[1]))) buttonCount = Number(count[1])
+    const apartment = /^native-decision-apartment:(MTA|STA|Unknown)$/.exec(line)
+    if (apartment) apartmentState = apartment[1]
+    const structure = /^native-decision-structure:([a-z0-9-]+):(\d+)$/.exec(line)
+    if (
+      structure &&
+      WINDOWS_NATIVE_DIAGNOSTIC_FIELDS.includes(structure[1]) &&
+      Number.isSafeInteger(Number(structure[2])) &&
+      (!(structure[1] === 'native-handle-present' || structure[1].endsWith('-matches')) ||
+        Number(structure[2]) <= 1)
+    )
+      emptyButtonDiagnostics[structure[1]] = Number(structure[2])
+  }
+  return {
+    stages: lines
+      .filter(line => line.startsWith('native-decision:'))
+      .map(line => line.slice('native-decision:'.length))
+      .filter(stage => allowedStages.has(stage)),
+    stageElapsedMs,
+    buttonCount,
+    apartmentState,
+    emptyButtonDiagnostics,
+  }
 }
 
 async function recordNativeDecisionDiagnostics(pid, window, allow, directory, options) {

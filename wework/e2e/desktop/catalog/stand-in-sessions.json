@@ -8,15 +8,5 @@
       "shard": 3,
       "position": 2500
     }
-  },
-  "paths": [
-    "wework/src/features/todo/StandInHomeWorkspace*",
-    "wework/src/features/todo/StandInConversation*",
-    "wework/src/api/personalStandIn.ts",
-    "executor/src/runtime_work/handler/stand_in_conversations.rs",
-    "executor/src/runtime_work/handler/stand_in_proposal_continuations.rs",
-    "executor/src/runtime_work/handler/stand_in_read_sources.rs",
-    "executor/src/runtime_work/handler/stand_in_task_results.rs",
-    "wework/src/lib/runtime-task-visibility*"
-  ]
+  }
 }

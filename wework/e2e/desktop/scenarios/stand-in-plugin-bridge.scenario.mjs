@@ -219,6 +219,7 @@ export function createDesktopScenario(options, { versionedEventTypes = [] } = {}
       )
       await host(control, 'runtime.setCoreDshPluginEnabled', { name: PACKAGE, enabled: false })
       const readyCount = control.readyCount
+      // Acknowledge the control command before replacing its renderer.
       await control.command('restartCoreDsh', 'body')
       await withTimeout(
         control.awaitReadyAfter(readyCount),

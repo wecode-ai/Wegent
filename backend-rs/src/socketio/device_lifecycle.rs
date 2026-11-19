@@ -46,6 +46,7 @@ struct RegisterAck<'a> {
     success: bool,
     device_id: &'a str,
     device_route_id: &'a str,
+    runtime_work_catalog_probe: bool,
 }
 
 /// The source's business rejection ACK (`{"error": str}`).
@@ -326,6 +327,7 @@ async fn register_session(
         // so the Runtime can address this exact installation even when
         // historical records share its name.
         device_route_id: &route_id,
+        runtime_work_catalog_probe: true,
     })
     .expect("a registration acknowledgement serializes");
     // Source `_schedule_background_task` runs the capability sync and then the

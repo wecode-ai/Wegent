@@ -1,0 +1,12 @@
+{
+  "order": 169000,
+  "scenario": "./scenarios/window-background-policy.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 115000,
+      "shard": 8,
+      "position": 16000
+    }
+  }
+}

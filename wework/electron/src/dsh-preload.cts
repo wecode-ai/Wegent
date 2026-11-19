@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 if (process.env.VITE_WEWORK_E2E === 'true' && process.env.WEWORK_E2E_CONTROL_URL) {
   contextBridge.exposeInMainWorld('weworkElectronVerification', {
+    errorCollectionCheckpoint: () => ipcRenderer.invoke('e2e:error-collection-checkpoint'),
     requestRuntime: (input: unknown) => ipcRenderer.invoke('e2e:runtime-request', input),
   })
 }

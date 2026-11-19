@@ -94,8 +94,8 @@ it dispatches (`src/desktop/applicationMenu.ts` and
 - The host owns item ids, labels, and menu structure. Actions and capabilities
   are declared in both `src/desktop/applicationMenuModel.ts` (renderer) and
   `electron/src/host/application-menu.ts` (host); a contract test fails when
-  those two declarations drift. Keep declaration and native dispatch coverage
-  in the existing menu contract tests.
+  those two declarations drift, and the `application-menu` E2E checkpoint fails
+  when an item id disappears.
 - Declaring a capability is a promise that some code reports it. Only declare a
   capability when the renderer actually reports it for the focused window, and
   cover the item becoming _visible_ in the E2E checkpoint. An item whose
@@ -105,10 +105,9 @@ it dispatches (`src/desktop/applicationMenu.ts` and
   `visible: false` item whose accelerator is pressed. Never rely on the hidden
   state to block an action — the renderer handler must guard itself against the
   state where the action is not available.
-- Extend the existing menu contracts when declarations or dispatch change. For
-  a new cross-boundary action, extend its feature's retained desktop checkpoint
-  and assert capability-driven visibility and the actual native effect. Follow
-  the repository policy for local E2E execution.
+- Cover a new item in the `application-menu` desktop E2E checkpoint: assert it
+  exists, that its visibility matches the capability matrix, and that activating
+  it performs its action.
 
 This is a recommendation, not a requirement: a feature that only makes sense
 inside its own surface can stay without a menu entry.
@@ -158,11 +157,15 @@ pnpm --filter wework exec eslint <changed-files>
 
 E2E tests use real backend requests. Do not skip, silently fail, or replace a failing integration with frontend mocks.
 
+- Preserve the [E2E error collection contract](../docs/en/wework/developer-guide/wework-ai-verification.md#desktop-e2e-error-collection-and-assertions). New failure boundaries must report caught failures before converting them to UI state or protocol responses, and add focused fault-injection coverage. Reuse the process, Worker, WebContents, Session and request-boundary collectors rather than adding independent ignore lists. New Session network listeners must preserve the shared collector. Use acknowledged collection assertions when certifying completeness; an empty journal, a registered source, or a checkpoint from a newer process cannot prove an earlier process was fully collected. Keep the repository's local E2E execution policy.
+- For UI update regressions, reuse [`control.refreshes`](../docs/en/wework/developer-guide/wework-ai-verification.md#measuring-ui-updates-around-operations). Keep component render attempts, React commits and regional DOM mutation batches distinct. Use the automatic shared-runner per-checkpoint diagnostics; bracket real operations and their business-state waits for narrower diagnostic windows, and never interpret missing instrumentation or a lost renderer as zero updates. Do not enable a different production React build just to obtain counters.
+
 - Design verification cases as a QA test plan before running them. For every changed behavior, cover the preconditions, environment and test data, exact steps, expected results, negative and recovery paths, and cleanup. Record the actual result and retain reproducible evidence for failures and critical-path success.
 - Changes to a core user flow must add or update automated E2E regression coverage in the same change. Treat task creation and launch, agent interaction, local-runtime lifecycle, permissions, and failure recovery as core flows when they are affected.
 - Add Wework E2E regression cases under `e2e/desktop/` and integrate them with the existing desktop runner so the GitHub desktop E2E jobs execute them. Do not place desktop regressions behind standalone local-only entry points.
 - Keep `no-undef` enabled for desktop E2E JavaScript. Declare supported Node/browser globals in the central ESLint configuration; do not suppress missing local references when refactoring checkpoint helpers.
 - Reuse the existing `e2e:desktop` command and its established CI variants. Do not add a package script or GitHub Actions command for each scenario; extend the desktop runner or its scenario discovery instead. Add a new command only when the test requires a genuinely different CI environment or job boundary.
+- Analyze current-run performance evidence before enabling baseline gates. Reuse existing CI runs and numeric artifacts; report unavailable coverage explicitly. A future baseline rollout must be explicit and must never silently bootstrap again after trusted baseline evidence is lost.
 - Register long main-runner sections in the ordered desktop checkpoint list. `--segment <checkpoint>` must run that checkpoint alone after common bootstrap; `--from-segment <checkpoint>` must run it and every later checkpoint. Each checkpoint must create its own minimal fixtures when an earlier checkpoint is skipped, and must never silently rely on task IDs, model state, or UI state produced only by a previous checkpoint.
 - Ordinary desktop E2E UI actions and waits use the shared 10-second step timeout. Pass an explicit `timeoutMs` only for a genuinely slow operation such as application startup, workbench reconnection, or a deliberately held model response; do not restore a broad 120-second default.
 - Synchronize with the product state that gates an action or assertion: wait for an enabled submit action before keyboard submission, and for the refreshed owner surface after saving. A mounted composer or visible sidebar does not prove that model selection or page data is ready. Tool fixtures must assert the real operation's success, rather than accepting a filename echoed by a failed command.

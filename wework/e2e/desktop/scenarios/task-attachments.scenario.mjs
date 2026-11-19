@@ -1,199 +1,80 @@
+import { requestJson } from '../modules/harness-app-fixture.mjs'
 import assert from 'node:assert/strict'
 
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
 import { inCollaborationSidebar, selectCollaborationDomain } from '../modules/workspace-flows.mjs'
 import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
-const WORKSPACE = {
-  id: 'workspace-task-attachments',
-  name: '附件验收空间',
-  description: '远程项目附件验收空间',
-  access_role: 'Owner',
-  member_count: 1,
-  agent_count: 0,
-  execution_environment_count: 0,
-  project_count: 1,
-  created_by_user_id: 9001,
-  version: 1,
-  created_at: '2026-08-17T00:00:00',
-  updated_at: '2026-08-17T00:00:00',
-}
+const WORKSPACE = { name: '附件验收空间' }
+const PROJECT = { name: '任务附件验收' }
+const TASK = { title: '整理附件' }
+const DELIVERY_FILE = {}
 
-const PROJECT = {
-  id: '896185331840201807',
-  public_id: 'e2e-task-attachments',
-  project_key: 'TA',
-  name: '任务附件验收',
-  description: '远程项目仅在显式交付后共享文件',
-  workspace_id: WORKSPACE.id,
-  access_role: 'Owner',
-  project_store: 'backend',
-  task_provider: 'local',
-  provider_config: {},
-  tags: [],
-  visibility: 'private',
-  created_by_user_id: 9001,
-  status: 'active',
-  version: 1,
-  created_at: '2026-08-17T00:00:00',
-  updated_at: '2026-08-17T00:00:00',
-}
-
-const TASK = {
-  id: 'TA-1',
-  cloud_project_id: PROJECT.id,
-  sequence_number: 1,
-  parent_id: null,
-  created_by_user_id: 9001,
-  assignee_user_id: null,
-  assignee_agent_id: null,
-  title: '整理附件',
-  description: '',
-  status: 'inbox',
-  priority: 'none',
-  due_at: null,
-  sort_order: 0,
-  current_delivery_id: null,
-  version: 1,
-  created_at: '2026-08-17T00:00:00',
-  updated_at: '2026-08-17T00:00:00',
-  completed_at: null,
-}
-
-const AGENT = {
-  id: 'agent-task-attachments',
-  projectId: PROJECT.id,
-  name: '附件整理机器人',
-  runtime: 'codex',
-  model: null,
-  systemPrompt: '',
-  status: 'active',
-  version: 1,
-  createdAt: '2026-08-17T00:00:00',
-  updatedAt: '2026-08-17T00:00:00',
-}
-
-const DELIVERY_FILE = {
-  asset_id: 'delivery-asset-1',
-  delivery_id: 'delivery-1',
-  loop_item_id: 'TA-1',
-  loop_item_title: '整理附件',
-  relative_path: 'reports/result.pdf',
-  display_name: 'result.pdf',
-  content_type: 'application/pdf',
-  size_bytes: 256,
-  delivered_at: '2026-08-17T10:00:00',
-  loop_item_path: [{ id: 'TA-1', title: '整理附件' }],
-}
-
-function json(response, status, body) {
-  response.writeHead(status, { 'content-type': 'application/json; charset=utf-8' })
-  response.end(JSON.stringify(body))
+function blankPdf() {
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 300] /Contents 4 0 R >>',
+    '<< /Length 0 >>\nstream\nendstream',
+  ]
+  let content = '%PDF-1.4\n'
+  const offsets = objects.map((body, index) => {
+    const offset = content.length
+    content += index + 1 + ' 0 obj\n' + body + '\nendobj\n'
+    return String(offset).padStart(10, '0') + ' 00000 n \n'
+  })
+  const xref = content.length
+  content += 'xref\n0 5\n0000000000 65535 f \n' + offsets.join('')
+  content += 'trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n' + xref + '\n%%EOF\n'
+  return content
 }
 
 export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
   return {
-    async handleHttp(request, response, url) {
-      if (request.method !== 'GET') return false
-
-      if (url.pathname === '/api/v1/workspaces') {
-        json(response, 200, { items: [WORKSPACE] })
-        return true
-      }
-
-      if (url.pathname === `/api/v1/workspaces/${WORKSPACE.id}`) {
-        json(response, 200, WORKSPACE)
-        return true
-      }
-
-      if (url.pathname === `/api/v1/workspaces/${WORKSPACE.id}/projects`) {
-        json(response, 200, { items: [PROJECT] })
-        return true
-      }
-
-      if (
-        [
-          `/api/v1/workspaces/${WORKSPACE.id}/members`,
-          `/api/v1/workspaces/${WORKSPACE.id}/agents`,
-          `/api/v1/workspaces/${WORKSPACE.id}/execution-environments`,
-        ].includes(url.pathname)
-      ) {
-        json(response, 200, { items: [] })
-        return true
-      }
-
-      if (url.pathname === '/api/v1/resources') {
-        json(response, 200, { agents: [], execution_environments: [] })
-        return true
-      }
-
-      if (url.pathname === '/api/v1/cloud-projects') {
-        json(response, 200, { items: [PROJECT] })
-        return true
-      }
-
-      if (url.pathname === `/api/v1/cloud-projects/${PROJECT.id}`) {
-        json(response, 200, PROJECT)
-        return true
-      }
-
-      if (url.pathname === `/api/v1/cloud-projects/${PROJECT.id}/board-snapshot`) {
-        json(response, 200, {
-          items: [TASK],
-          task_bindings: [],
-          members: [],
-          agents: [AGENT],
+    async prepareCloud({ backendUrl, authToken }) {
+      const request = (path, options) => requestJson(backendUrl, authToken, path, options)
+      Object.assign(
+        WORKSPACE,
+        await request('/api/v1/workspaces', {
+          method: 'POST',
+          body: JSON.stringify({ name: WORKSPACE.name }),
         })
-        return true
-      }
-
-      if (url.pathname === `/api/v1/cloud-projects/${PROJECT.id}/members`) {
-        json(response, 200, { items: [] })
-        return true
-      }
-
-      const loopItemsMatch = url.pathname.match(/^\/api\/v1\/cloud-projects\/([^/]+)\/loop-items$/)
-      if (loopItemsMatch) {
-        json(response, 200, {
-          items: loopItemsMatch[1] === PROJECT.id ? [TASK] : [],
+      )
+      Object.assign(
+        PROJECT,
+        await request('/api/v1/workspaces/' + WORKSPACE.id + '/projects', {
+          method: 'POST',
+          body: JSON.stringify({
+            name: PROJECT.name,
+            projectKey: 'TA',
+            taskProvider: 'local',
+            visibility: 'private',
+          }),
         })
-        return true
-      }
-
-      const chatAgentsMatch = url.pathname.match(
-        /^\/api\/v1\/cloud-projects\/([^/]+)\/chat-agents$/
       )
-      if (chatAgentsMatch) {
-        json(response, 200, chatAgentsMatch[1] === PROJECT.id ? [AGENT] : [])
-        return true
-      }
-
-      const filesMatch = url.pathname.match(/^\/api\/v1\/cloud-projects\/([^/]+)\/files$/)
-      if (filesMatch) {
-        json(response, 200, { items: [] })
-        return true
-      }
-
-      const deliveryFilesMatch = url.pathname.match(
-        /^\/api\/v1\/cloud-projects\/([^/]+)\/delivery-files$/
-      )
-      if (deliveryFilesMatch) {
-        json(response, 200, {
-          items: deliveryFilesMatch[1] === PROJECT.id ? [DELIVERY_FILE] : [],
+      Object.assign(
+        TASK,
+        await request('/api/v1/cloud-projects/' + PROJECT.id + '/loop-items', {
+          method: 'POST',
+          body: JSON.stringify({ title: TASK.title }),
         })
-        return true
-      }
-
-      const deliveryFileContentMatch = url.pathname.match(
-        /^\/api\/v1\/delivery-assets\/([^/]+)\/content$/
       )
-      if (deliveryFileContentMatch) {
-        response.writeHead(200, { 'content-type': 'application/pdf' })
-        response.end('result')
-        return true
-      }
-
-      return false
+      const delivery = await request('/api/v1/loop-items/' + TASK.id + '/deliveries', {
+        method: 'POST',
+        body: JSON.stringify({ title: '附件整理结果', markdown: '' }),
+      })
+      const form = new FormData()
+      form.set('relative_path', 'reports/result.pdf')
+      form.set('file', new Blob([blankPdf()], { type: 'application/pdf' }), 'result.pdf')
+      const asset = await request('/api/v1/deliveries/' + delivery.id + '/assets', {
+        method: 'POST',
+        body: form,
+      })
+      DELIVERY_FILE.asset_id = asset.id
+      await request('/api/v1/deliveries/' + delivery.id + '/finalize', {
+        method: 'POST',
+        body: JSON.stringify({ fulfillments: [] }),
+      })
     },
 
     async verify(control) {
@@ -256,8 +137,8 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) {
       await captureScreenshot(control, 'task-attachments-files-view.png')
       for (const entryTestId of [
         'cloud-file-browser-entry-root:issues',
-        'cloud-file-browser-entry-delivery-item:TA-1',
-        'cloud-file-browser-entry-delivery-path:TA-1:reports',
+        `cloud-file-browser-entry-delivery-item:${TASK.id}`,
+        `cloud-file-browser-entry-delivery-path:${TASK.id}:reports`,
       ]) {
         const entrySelector = `${filesView} [data-testid="${entryTestId}"]`
         await control.command('waitFor', entrySelector, { timeoutMs: uiTimeoutMs })

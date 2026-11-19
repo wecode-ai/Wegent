@@ -298,3 +298,42 @@ fn existing_tasks_with_only_a_stored_execution_origin_keep_their_owner() {
         assert_eq!(next.task_kind(), expected);
     }
 }
+
+#[test]
+fn blocked_automatic_input_does_not_block_the_human_reply_that_releases_it() {
+    for origin in [
+        json!(null),
+        json!({"type": "stand_in_identity"}),
+        json!({"type": "project_automation"}),
+    ] {
+        let mut scheduler = RuntimeTurnScheduler::new(RuntimeSettings::uniform(2), VecDeque::new());
+        let kind = turn("question", origin.clone()).task_kind();
+        assert!(scheduler.enqueue(turn("blocker", origin.clone())).is_some());
+        let mut event = turn("question", origin.clone());
+        event
+            .request
+            .extra
+            .insert("resource_event_keys".into(), json!(["pending-event"]));
+        scheduler.enqueue_queued(event);
+        scheduler
+            .waiting_automatic_task_ids
+            .insert("question".into());
+
+        let reply = scheduler.enqueue(turn("question", origin));
+        assert!(
+            reply.is_some(),
+            "Human input must use the free slot while automatic input waits"
+        );
+        assert_eq!(scheduler.active(kind), 2);
+        assert_eq!(scheduler.queued(kind), 1);
+        assert!(scheduler.finish("blocker").is_empty());
+        assert!(scheduler.finish("question").is_empty());
+        assert_eq!(scheduler.available(kind), 2);
+
+        scheduler.waiting_automatic_task_ids.remove("question");
+        let resumed = scheduler.take_available();
+        assert_eq!(resumed.len(), 1);
+        assert_eq!(resumed[0].local_task_id, "question");
+        assert!(resumed[0].is_automatic_input());
+    }
+}

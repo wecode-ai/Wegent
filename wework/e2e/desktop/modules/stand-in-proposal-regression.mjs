@@ -1,3 +1,4 @@
+import { desktopOwnerId as USER } from './desktop-owner-fixture.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 import { selectE2EModel } from './shared.mjs'
@@ -12,7 +13,6 @@ import {
   responseCreated,
 } from './response-protocol.mjs'
 
-const USER = 9001
 const ROLE = 'identity-reviewer'
 const CHAT = '[data-testid="stand-in-conversation"]'
 const INPUT = `${CHAT} [data-testid="chat-message-input"]`

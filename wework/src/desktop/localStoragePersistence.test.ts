@@ -158,6 +158,45 @@ describe('desktop localStorage persistence', () => {
       },
     })
   })
+
+  it('an explicit flush can commit a retained failed update without an unrelated storage change', async () => {
+    mocks.isElectronRuntime.mockReturnValue(true)
+    const failure = new Error('Atomic replacement was temporarily unavailable')
+    mocks.invokeDesktopHost
+      .mockResolvedValueOnce({})
+      .mockRejectedValueOnce(failure)
+      .mockResolvedValue(undefined)
+    const persistence = await loadPersistence()
+    await persistence.initializeDesktopLocalStoragePersistence()
+    localStorage.setItem('answer', 'accepted')
+    await expect(persistence.flushDesktopLocalStoragePersistence()).rejects.toBe(failure)
+    expect(mocks.invokeDesktopHost).toHaveBeenCalledTimes(2)
+
+    await expect(
+      Promise.all([
+        persistence.flushDesktopLocalStoragePersistence(),
+        persistence.flushDesktopLocalStoragePersistence(),
+      ])
+    ).resolves.toEqual([undefined, undefined])
+    expect(mocks.invokeDesktopHost).toHaveBeenCalledTimes(3)
+    expect(mocks.invokeDesktopHost).toHaveBeenLastCalledWith('rendererStorage.update', {
+      clear: false,
+      changes: { answer: 'accepted' },
+    })
+  })
+
+  it('a persistent write failure still rejects each explicit flush without a retry loop', async () => {
+    mocks.isElectronRuntime.mockReturnValue(true)
+    const failure = new Error('Disk remains unavailable')
+    mocks.invokeDesktopHost.mockResolvedValueOnce({}).mockRejectedValue(failure)
+    const persistence = await loadPersistence()
+    await persistence.initializeDesktopLocalStoragePersistence()
+    localStorage.setItem('answer', 'accepted')
+    await expect(persistence.flushDesktopLocalStoragePersistence()).rejects.toBe(failure)
+    await expect(persistence.flushDesktopLocalStoragePersistence()).rejects.toBe(failure)
+    expect(mocks.invokeDesktopHost).toHaveBeenCalledTimes(3)
+    expect(localStorage.getItem('answer')).toBe('accepted')
+  })
 })
 
 describe('committed localStorage commands', () => {

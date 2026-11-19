@@ -595,8 +595,9 @@ def test_failed_publication_restores_legacy_config_and_can_resume(
     before = (home / ".gitconfig").read_bytes()
     profile = (home / ".profile").read_bytes()
     script = commands.GIT_CREDENTIAL_SYNC_SCRIPT.replace(
-        "os.replace(next_link, current)", 'raise OSError("synthetic publish failure")'
+        "os.replace(temporary, current)", 'raise OSError("synthetic publish failure")'
     )
+    assert script != commands.GIT_CREDENTIAL_SYNC_SCRIPT
     with monkeypatch.context() as patch:
         patch.setattr(
             sys.modules[__name__],

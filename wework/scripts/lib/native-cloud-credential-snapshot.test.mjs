@@ -48,3 +48,15 @@ test('a duplicate capture cannot replace the saved credential', async t => {
   await snapshot.restore()
   assert.equal(await readFile(active, 'utf8'), 'original-fixture-credential')
 })
+
+test('a new simulated device can authorize before its profile directory exists', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'mcp-new-device-'))
+  t.after(() => rm(root, { force: true, recursive: true }))
+  const userData = join(root, 'device-b', 'electron-user-data')
+  const snapshot = nativeCloudCredentialSnapshot(userData, randomUUID())
+  await snapshot.capture()
+  const active = join(userData, 'cloud-credentials.json')
+  await writeFile(active, 'temporary-device-credential')
+  await snapshot.restore()
+  await assert.rejects(readFile(active), { code: 'ENOENT' })
+})

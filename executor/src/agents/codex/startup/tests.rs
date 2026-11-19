@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use tokio::io::AsyncWriteExt;
 
 fn shared_client() -> CodexAppServerClient {
     let mut state = CodexAppServerSharedState::default();
@@ -80,7 +81,7 @@ async fn process_fixture() -> (
     let notifications = CodexNotificationHub::new();
     client.state.lock().await.process = Some(CodexAppServerProcess {
         child,
-        stdin: Arc::new(Mutex::new(stdin)),
+        stdin: Arc::new(Mutex::new(FrameWriter::new(stdin))),
         pending,
         notifications: notifications.clone(),
         reader_task: tokio::spawn(async {}),

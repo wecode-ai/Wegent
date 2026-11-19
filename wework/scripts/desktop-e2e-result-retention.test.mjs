@@ -57,6 +57,25 @@ function gitBash() {
 }
 
 describe('desktop E2E result retention', () => {
+  test('CI cleanup preserves files and caches owned by a live checkpoint', async () => {
+    const resultRoot = await temporaryRoot()
+    const active = join(resultRoot, `2026-11-17T00-00-00-000Z-${process.pid}`)
+    const paths = ['executor-home', 'workspace', 'electron-user-data/managed-components']
+    for (const path of paths) await createDirectoryWithFile(join(active, path))
+    await markDesktopE2EResultActive(active, { ownerProcessId: process.pid })
+
+    await execFileAsync(gitBash(), [
+      resolve(
+        import.meta.dirname,
+        '../../.github/scripts/prune-wework-desktop-e2e-diagnostics.sh'
+      ).replaceAll('\\', '/'),
+      resultRoot.replaceAll('\\', '/'),
+    ])
+
+    for (const path of paths) await expectExists(join(active, path, 'payload'))
+    await expectExists(join(active, '.active'))
+  })
+
   test.each(['model-requests.jsonl', 'model-context-audit.json'])(
     'retains independent model evidence %s through runner and CI cleanup',
     async name => {
@@ -77,7 +96,7 @@ describe('desktop E2E result retention', () => {
     }
   )
 
-  test.each(['electron-logs', 'release-logs'])(
+  test.each(['electron-logs', 'release-logs', 'scenario-diagnostics'])(
     'preserves %s through runner and CI cleanup',
     async name => {
       const resultRoot = await temporaryRoot()
@@ -222,6 +241,8 @@ describe('desktop E2E result retention', () => {
   test('prunes managed components after an interrupted desktop run', async () => {
     const resultRoot = await temporaryRoot()
     const resultDirectory = join(resultRoot, '2026-09-02T00-00-00-000Z-321')
+    await mkdir(resultDirectory, { recursive: true })
+    await markDesktopE2EResultActive(resultDirectory, { ownerProcessId: 2_147_483_647 })
     const managedComponents = join(
       resultDirectory,
       'electron-user-data',

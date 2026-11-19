@@ -18,8 +18,11 @@ export async function waitForDeliveredCloudCatalog(control, catalogProxy, reques
         .filter(entry => entry.method === 'GET' && entry.path === '/api/models/unified')
       const request = requests.at(-1)
       if (!request?.responseCompleted || request.status !== 200) return null
-      return request.responseTimingId &&
-        timings.some(timing => timing.responseTimingId === request.responseTimingId)
+      const receivedAt = Date.parse(request.receivedAt)
+      return timings.some(
+        timing =>
+          Math.floor(timing.startedAt) <= receivedAt && Math.ceil(timing.completedAt) >= receivedAt
+      )
         ? request
         : null
     },

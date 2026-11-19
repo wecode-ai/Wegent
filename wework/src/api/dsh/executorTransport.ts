@@ -1,9 +1,13 @@
+import { isRuntimeReadCancellation } from '@/features/workbench/runtimeConversationReadCancellation'
 import type { DeviceInfo } from '@/types/api'
 import { createRequestId } from '@/lib/request-id'
+import { reportE2EDiagnostic, reportE2EError } from '@/e2e/error-capture'
+import { recordExecutorActivity, registerExecutorActivity } from '@/e2e/executor-activity'
 import { logModelLoading } from '@/lib/model-loading-diagnostics'
-import { deliverRuntimeTransport } from '@/e2e/runtime-transport-gates'
+import { deliverRuntimeTransport, isRuntimeTransportReplay } from '@/e2e/runtime-transport-gates'
 
 const EXECUTOR_BASE_PATH = '/wework/executor/v1'
+registerExecutorActivity()
 const executorEventReconnectors = new Set<() => void>()
 const executorEventSubscribers = new Map<symbol, (event: DshExecutorEventEnvelope) => void>()
 let disconnectExecutorEventStream: (() => void) | null = null
@@ -79,20 +83,62 @@ export class DshExecutorTransportError extends Error {
 }
 
 export async function describeDshExecutor(): Promise<DshExecutorDescription> {
-  const response = await fetch(EXECUTOR_BASE_PATH, {
-    // Read live identity without serializing on Chromium HTTP cache entries.
-    cache: 'no-store',
-    headers: { accept: 'application/json' },
+  return observeExecutorRequest('executor.describe', {}, {}, readDshExecutorDescription)
+}
+
+function recordResponseBodyFailure(error: unknown, method: string, status: number) {
+  // Fetch body consumption rejects with transport errors too; only malformed
+  // JSON produces SyntaxError. Keep both failures visible under their own kind.
+  const parseFailure = error instanceof SyntaxError
+  const stage = parseFailure ? 'body_parse_failed' : 'body_read_failed'
+  recordExecutorActivity({ kind: parseFailure ? 'parseFailures' : 'transportFailures' })
+  reportE2EDiagnostic('executor-response-body-failure', {
+    method,
+    stage,
+    status,
+    errorType: error instanceof Error ? error.name : typeof error,
   })
-  const body = (await response.json()) as DshExecutorDescribeResponse | DshExecutorErrorBody
-  if (!response.ok || !('executor' in body)) {
-    throw transportError(response.status, body as DshExecutorErrorBody)
+  return stage
+}
+
+async function readDshExecutorDescription(): Promise<DshExecutorDescription> {
+  let response: Response
+  try {
+    response = await fetch(EXECUTOR_BASE_PATH, {
+      cache: 'no-store',
+      headers: { accept: 'application/json' },
+    })
+  } catch (error) {
+    recordExecutorActivity({ kind: 'transportFailures' })
+    throw error
+  }
+  let body: DshExecutorDescribeResponse | DshExecutorErrorBody
+  try {
+    body = await response.json()
+  } catch (error) {
+    recordResponseBodyFailure(error, 'executor.describe', response.status)
+    throw error
+  }
+  if (!response.ok) throw transportError(response.status, body as DshExecutorErrorBody)
+  if (
+    !body ||
+    typeof body !== 'object' ||
+    !('executor' in body) ||
+    !body.executor ||
+    typeof body.executor !== 'object'
+  ) {
+    recordExecutorActivity({ kind: 'protocolFailures' })
+    throw new DshExecutorTransportError(
+      'protocol_mismatch',
+      'DSH executor returned an invalid protocol description'
+    )
   }
   if (
     body.protocolVersion !== 1 ||
     body.executor.protocol_version !== 1 ||
     typeof body.executor.device_id !== 'string'
   ) {
+    recordExecutorActivity({ kind: 'protocolFailures' })
     throw new DshExecutorTransportError(
       'protocol_mismatch',
       'DSH executor returned an invalid protocol description'
@@ -102,6 +148,7 @@ export async function describeDshExecutor(): Promise<DshExecutorDescription> {
     typeof body.executor.runtime_instance_id !== 'string' ||
     !body.executor.runtime_instance_id.trim()
   ) {
+    recordExecutorActivity({ kind: 'protocolFailures' })
     throw new DshExecutorTransportError(
       'protocol_mismatch',
       'DSH executor returned a missing or invalid Runtime identity'
@@ -114,6 +161,36 @@ export async function requestDshExecutor<T>(
   method: string,
   params: Record<string, unknown> = {},
   options: DshExecutorRequestOptions = {}
+): Promise<T> {
+  return observeExecutorRequest(method, params, options, () =>
+    performDshExecutorRequest<T>(method, params, options)
+  )
+}
+
+async function observeExecutorRequest<T>(
+  method: string,
+  params: Record<string, unknown>,
+  options: DshExecutorRequestOptions,
+  request: () => Promise<T>
+): Promise<T> {
+  recordExecutorActivity({ kind: 'request', method, pendingOnly: params.pendingOnly === true })
+  try {
+    return await request()
+  } catch (error) {
+    if (isRuntimeReadCancellation(error, options.signal)) {
+      recordExecutorActivity({ kind: 'cancellations' })
+      throw error
+    }
+    recordExecutorActivity({ kind: 'requestFailures' })
+    reportE2EError(`executor:${method}`, error)
+    throw error
+  }
+}
+
+async function performDshExecutorRequest<T>(
+  method: string,
+  params: Record<string, unknown>,
+  options: DshExecutorRequestOptions
 ): Promise<T> {
   const requestId = createRequestId('wework-local')
   const startedAt = Date.now()
@@ -164,10 +241,13 @@ export async function requestDshExecutor<T>(
         'x-request-id': requestId,
       },
       body: requestBody,
-      ...(isCancellableRuntimeRead(method) && options.signal ? { signal: options.signal } : {}),
+      ...(method === 'runtime.tasks.transcript' && options.signal
+        ? { signal: options.signal }
+        : {}),
     })
   } catch (error) {
-    if (isCancellableRuntimeRead(method) && options.signal?.aborted) throw error
+    if (isRuntimeReadCancellation(error, options.signal)) throw error
+    recordExecutorActivity({ kind: 'transportFailures' })
     diagnostic('fetch_failed')
     transportDiagnostic('fetch_failed', {
       errorType: error instanceof Error ? error.name : typeof error,
@@ -191,22 +271,29 @@ export async function requestDshExecutor<T>(
   try {
     parsedBody = await response.json()
   } catch (error) {
-    if (isCancellableRuntimeRead(method) && options.signal?.aborted) throw error
-    diagnostic('body_parse_failed')
-    transportDiagnostic('body_parse_failed', {
+    if (isRuntimeReadCancellation(error, options.signal)) throw error
+    const stage = recordResponseBodyFailure(error, method, response.status)
+    diagnostic(stage)
+    transportDiagnostic(stage, {
       status: response.status,
       errorType: error instanceof Error ? error.name : typeof error,
     })
-    console.warn('[Wework] Executor RPC response parsing failed', {
-      request_id: requestId,
-      method,
-      elapsed_ms: Date.now() - startedAt,
-      status: response.status,
-      error_type: error instanceof Error ? error.name : typeof error,
-    })
+    console.warn(
+      stage === 'body_parse_failed'
+        ? '[Wework] Executor RPC response parsing failed'
+        : '[Wework] Executor RPC response body read failed',
+      {
+        request_id: requestId,
+        method,
+        elapsed_ms: Date.now() - startedAt,
+        status: response.status,
+        error_type: error instanceof Error ? error.name : typeof error,
+      }
+    )
     throw connectionError(error)
   }
   if (parsedBody === null || typeof parsedBody !== 'object' || Array.isArray(parsedBody)) {
+    recordExecutorActivity({ kind: 'protocolFailures' })
     throw new DshExecutorTransportError(
       'protocol_mismatch',
       'DSH executor returned an invalid RPC response'
@@ -228,10 +315,6 @@ export async function requestDshExecutor<T>(
     throw error
   }
   return body.result
-}
-
-function isCancellableRuntimeRead(method: string): boolean {
-  return method === 'runtime.tasks.transcript'
 }
 
 function connectionError(error: unknown): unknown {
@@ -280,6 +363,7 @@ function connectDshExecutorEventStream(
   listener: (event: DshExecutorEventEnvelope) => void
 ): () => void {
   let cursor = 0
+  const stream = Symbol('executor-stream')
   let source: EventSource | null = null
   let closed = false
   let reconnectTimer: number | null = null
@@ -298,6 +382,7 @@ function connectDshExecutorEventStream(
 
   const connect = () => {
     if (closed) return
+    recordExecutorActivity({ kind: 'streamStarts' })
     const nextSource = new EventSource(
       `${EXECUTOR_BASE_PATH}/events?after=${encodeURIComponent(String(cursor))}&replay=${
         connected ? '1' : '0'
@@ -313,6 +398,7 @@ function connectDshExecutorEventStream(
       try {
         event = JSON.parse(message.data) as DshExecutorEventEnvelope
       } catch (error) {
+        recordExecutorActivity({ kind: 'parseFailures' })
         console.error('[Wework] Executor event frame is not valid JSON', {
           bytes: message.data.length,
           error,
@@ -323,25 +409,47 @@ function connectDshExecutorEventStream(
         return
       }
       if (
+        !event ||
         event.protocolVersion !== 1 ||
         !Number.isSafeInteger(event.sequence) ||
         typeof event.event !== 'string'
       ) {
+        recordExecutorActivity({ kind: 'protocolFailures' })
         console.error('[Wework] Executor event frame has an invalid envelope')
         nextSource.close()
         source = null
         scheduleReconnect()
         return
       }
-      if (event.sequence <= cursor) return
+      if (event.sequence <= cursor) {
+        recordExecutorActivity({
+          kind: 'event',
+          name: event.event,
+          sequence: event.sequence,
+          stream,
+          delivered: false,
+        })
+        return
+      }
       cursor = event.sequence
       reconnectDelayMs = INITIAL_RECONNECT_DELAY_MS
       if (event.event === 'executor.stream.cursor') return
+      const deliver = () => {
+        recordExecutorActivity({
+          kind: 'event',
+          name: event.event,
+          sequence: event.sequence,
+          stream,
+          delivered: true,
+          injected: isRuntimeTransportReplay(),
+        })
+        listener(event)
+      }
       try {
         if (import.meta.env.MODE === 'e2e' || import.meta.env.VITE_WEWORK_E2E === 'true') {
-          deliverRuntimeTransport('event', event.event, event, () => listener(event))
+          deliverRuntimeTransport('event', event.event, event, deliver)
         } else {
-          listener(event)
+          deliver()
         }
       } catch (error) {
         console.error('[Wework] Executor event listener failed', {
@@ -353,6 +461,9 @@ function connectDshExecutorEventStream(
     }
     nextSource.onerror = () => {
       if (source !== nextSource) return
+      recordExecutorActivity({ kind: 'transportFailures' })
+      recordExecutorActivity({ kind: 'reconnects' })
+      reportE2EError('executor:event-stream', new Error('Executor event stream disconnected'))
       nextSource.close()
       source = null
       scheduleReconnect()

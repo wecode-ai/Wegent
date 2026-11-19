@@ -1,3 +1,4 @@
+import { desktopOwnerId as USER } from '../modules/desktop-owner-fixture.mjs'
 import assert from 'node:assert/strict'
 import { openStandInActivity, openStandInDetails } from '../modules/stand-in-profile-navigation.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -14,7 +15,6 @@ import {
   responseCreated,
 } from '../modules/response-protocol.mjs'
 
-const USER = 9001
 const ROLE = 'router-owner'
 const MARKER = 'COORDINATION_RUNTIME_NATIVE_WORK'
 // The status panel polls every 15 seconds; allow one poll plus UI settlement.

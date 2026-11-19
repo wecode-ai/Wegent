@@ -1,6 +1,10 @@
 name: Build shared real object storage for E2E
 description: Build the pinned MinIO binary once and distribute it through the current workflow artifact.
 inputs:
+  upload-artifact:
+    description: Publish the binary for other jobs in this workflow.
+    required: false
+    default: "true"
   save-cache:
     description: Allow cache writes from the main branch.
     required: false
@@ -9,6 +13,7 @@ runs:
   using: composite
   steps:
     - name: Restore published real object storage
+      if: runner.os == 'Linux'
       id: published
       shell: bash
       run: |
@@ -53,8 +58,10 @@ runs:
       run: |
         test -x "$WEWORK_E2E_MINIO_BIN"
         "$WEWORK_E2E_MINIO_BIN" --version
+        echo "WEWORK_E2E_MINIO_BIN=$WEWORK_E2E_MINIO_BIN" >> "$GITHUB_ENV"
 
     - name: Upload shared real object storage
+      if: inputs.upload-artifact == 'true'
       uses: actions/upload-artifact@v4
       with:
         name: wework-desktop-minio-e2e

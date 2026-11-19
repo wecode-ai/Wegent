@@ -19,6 +19,7 @@ interface ProbeState {
   token: string | null
   userId?: number
   runtimeConnected: boolean
+  runtimeConfigured: boolean
   dispose(): void
 }
 interface LocalSyncScope {
@@ -103,13 +104,16 @@ function createWindowPluginAutoUpdateService() {
   }
   const reconcileProbe = () => {
     if (!profile) return
-    const runtimeConnected = getLocalExecutorCloudConnectionStatus().connected
+    const runtime = getLocalExecutorCloudConnectionStatus()
+    const runtimeConnected = runtime.connected
+    const runtimeConfigured = runtime.apiBaseUrl === profile.apiBaseUrl && runtime.configured
     if (
       probe &&
       probe.apiBaseUrl === profile.apiBaseUrl &&
       probe.token === profile.token &&
       probe.userId === profile.userId &&
-      probe.runtimeConnected === runtimeConnected
+      probe.runtimeConnected === runtimeConnected &&
+      probe.runtimeConfigured === runtimeConfigured
     )
       return
     probe?.dispose()
@@ -120,7 +124,7 @@ function createWindowPluginAutoUpdateService() {
     let disposed = false
     let probing = false
     let refresh: (() => void) | undefined
-    if (credentials) {
+    if (credentials && runtimeConfigured) {
       const api = createPluginAutoUpdateApi(credentials)
       refresh = () => {
         if (disposed || probing) return
@@ -157,6 +161,7 @@ function createWindowPluginAutoUpdateService() {
       token: profile.token,
       userId: profile.userId,
       runtimeConnected,
+      runtimeConfigured,
       dispose() {
         disposed = true
         window.clearInterval(timer)

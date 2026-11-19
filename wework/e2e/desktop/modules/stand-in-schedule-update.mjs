@@ -1,3 +1,4 @@
+import { desktopOwnerId } from './desktop-owner-fixture.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
 import { isNativeApprovalReviewRequest } from './native-approval-model.mjs'
@@ -97,7 +98,7 @@ export function withScheduleUpdate(scenario, options) {
               runtime: 'codex',
               title: '日报更新验证',
               message: '原日报内容',
-              standInOwner: { userId: 9001, roleId: '@primary' },
+              standInOwner: { userId: desktopOwnerId, roleId: '@primary' },
               standInCalendar: {},
             },
             taskPayload: { runtime: 'codex' },

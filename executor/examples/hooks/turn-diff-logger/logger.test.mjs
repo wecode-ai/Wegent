@@ -18,7 +18,7 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, win32 } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
 import { handleEvent } from './logger.mjs'
@@ -37,19 +37,24 @@ const git = (cwd, ...args) =>
     stdio: ['ignore', 'pipe', 'pipe'],
   }).trim()
 
-async function fixture(t, { commit = true } = {}) {
+async function fixture(
+  t,
+  { commit = true, workspaceDirectory = 'workspace with spaces' } = {}
+) {
   const root = await mkdtemp(join(tmpdir(), 'async-turn-hook-'))
   t.after(() => rm(root, { recursive: true, force: true }))
-  const workspace = join(root, 'workspace with spaces')
+  const workspace = join(root, workspaceDirectory)
   const logs = join(root, 'logs')
-  await mkdir(workspace)
-  git(workspace, 'init', '--quiet', '--template=')
-  git(workspace, 'config', 'user.name', 'Hook Tests')
-  git(workspace, 'config', 'user.email', 'hooks@example.invalid')
+  await mkdir(workspace, { recursive: true })
+  // Setup must create the long repository before its persisted setting is tested.
+  const prepareGit = (...args) => git(workspace, '-c', 'core.longpaths=true', ...args)
+  prepareGit('init', '--quiet', '--template=')
+  prepareGit('config', 'user.name', 'Hook Tests')
+  prepareGit('config', 'user.email', 'hooks@example.invalid')
   await writeFile(join(workspace, 'source.txt'), 'original\n')
   if (commit) {
-    git(workspace, 'add', '.')
-    git(workspace, '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'baseline')
+    prepareGit('add', '.')
+    prepareGit('-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'baseline')
   }
   const event = (sequence, hook_event_name = 'TurnCompleted', execution_id = 'one') => ({
     schema_version: 1,
@@ -98,6 +103,36 @@ async function records(logs) {
 
 const patchPath = (f, record) =>
   join(f.logs, 'records', digest(record.event.event_id), 'diff.patch')
+
+test('event pins stay within the reported Windows ref path and survive archive cleanup', async t => {
+  const f = await fixture(t)
+  const start = await f.invoke(f.event(0, 'TurnStarted'))
+  const jobs = []
+  for (const sequence of [1, 2]) {
+    await writeFile(join(f.workspace, 'source.txt'), 'revision ' + sequence + '\n')
+    const event = f.event(sequence)
+    await f.invoke(event)
+    jobs.push(await readJson(join(start.queue_path, 'pending', digest(event.event_id) + '.json')))
+  }
+  await f.invoke(f.event(3, 'ExecutionCompleted'))
+  const reportedGitRoot =
+    'C:/Users/wework-e2e-9756/AppData/Local/Temp/wework-async-hooks-IGsJvw/repository/.git'
+  const refs = jobs.flatMap(job => job.references)
+  assert.equal(new Set(refs).size, 4, 'Each queued snapshot must retain its own pins')
+  for (const job of jobs) {
+    for (const [index, ref] of job.references.entries()) {
+      const lockPath = win32.join(reportedGitRoot, ref + '.lock')
+      assert.ok(lockPath.length < 260,
+        'Reported Windows ref lock path is too long: ' + lockPath.length)
+      assert.equal(git(f.workspace, 'rev-parse', ref), index ? job.after : job.before)
+    }
+  }
+  git(f.workspace, 'gc', '--prune=now')
+  await processQueue(start.queue_path)
+  assert.equal((await records(f.logs)).length, 2)
+  assert.deepEqual(await readdir(join(start.queue_path, 'pending')), [])
+  assert.equal(git(f.workspace, 'for-each-ref', '--format=%(refname)', 'refs/wegent/turn-diff'), '')
+})
 
 test('verbose Git warnings are drained while metadata stdout remains bounded', async t => {
   const f = await fixture(t)
@@ -214,7 +249,7 @@ test('failed queue publication releases refs only before the job becomes visible
       assert.equal(refs(), baseline.reference)
     } else {
       assert.equal(pending.length, 1)
-      assert.match(refs(), /-event-/)
+      assert.match(refs(), /\/event-/)
       git(f.workspace, 'gc', '--prune=now')
       await processQueue(start.queue_path)
       const [record] = await records(f.logs)
@@ -501,8 +536,11 @@ test('archive cleanup preserves a baseline left behind by an interrupted produce
 })
 
 test('long snapshot refs use per-call long-path support without changing repository configuration', async t => {
-  const f = await fixture(t)
-  git(f.workspace, 'config', 'core.longpaths', 'false')
+  // Compact event refs must still exceed MAX_PATH in this explicit long workspace.
+  const f = await fixture(t, {
+    workspaceDirectory: join('long-snapshot-parent-'.repeat(7), 'workspace with spaces'),
+  })
+  git(f.workspace, '-c', 'core.longpaths=true', 'config', '--local', 'core.longpaths', 'false')
   assert.equal(await runGit(f.workspace, ['config', '--get', 'core.longpaths']), 'true')
   const start = await f.invoke(f.event(0, 'TurnStarted'))
   await writeFile(join(f.workspace, 'source.txt'), 'long-path change\n')
@@ -521,8 +559,21 @@ test('long snapshot refs use per-call long-path support without changing reposit
   const found = await records(f.logs)
   assert.equal(found.length, 1)
   assert.match(await readFile(patchPath(f, found[0]), 'utf8'), /\+long-path change/)
-  assert.equal(git(f.workspace, 'config', '--get', 'core.longpaths'), 'false')
-  assert.equal(git(f.workspace, 'for-each-ref', '--format=%(refname)', 'refs/wegent/turn-diff'), '')
+  assert.equal(
+    git(f.workspace, '-c', 'core.longpaths=true', 'config', '--local', '--get', 'core.longpaths'),
+    'false'
+  )
+  assert.equal(
+    git(
+      f.workspace,
+      '-c',
+      'core.longpaths=true',
+      'for-each-ref',
+      '--format=%(refname)',
+      'refs/wegent/turn-diff'
+    ),
+    ''
+  )
 })
 
 test('normal callbacks launch detached workers and release accepted snapshot refs', async t => {

@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, type ReactNode } from 'react'
+import { useId, useLayoutEffect, useMemo, useRef, type ReactNode } from 'react'
 import type { ToolBlock } from '@wegent/chat-core/runtime-conversation'
 import type { McpAppConversationServices } from '@/api/mcpApps'
 import { McpAppsProvider, McpAppSlot } from '@/features/mcp-apps/McpAppsProvider'
@@ -17,6 +17,7 @@ import {
 import { readWorkspaceFileBytes } from '@/lib/workspace-file-bytes'
 import { navigateTo } from '@/lib/navigation'
 import { track } from '@/telemetry/client'
+import { reportE2EDiagnostic } from '@/e2e/error-capture'
 import { DesktopConversationTranslation } from './DesktopConversationTranslation'
 import { useDesktopMarkdownServices } from './useDesktopMarkdownServices'
 import { useWorkspaceFileReader } from './WorkspaceFileReaderContext'
@@ -95,6 +96,15 @@ export function DesktopToolServices({
     }
   }, [deviceId, workspacePath, readWorkspaceFileChunk, mcpApp, inheritedServices])
   const sendMessage = mcpApp?.sendMessage
+  const diagnosticsId = useId()
+  const mcpScope = mcpApp ? `${mcpApp.address.deviceId}:${mcpApp.address.taskId}` : null
+  useLayoutEffect(() => {
+    if (import.meta.env.VITE_WEWORK_E2E !== 'true') return
+    reportE2EDiagnostic('conversation-tool-scope-attached', { diagnosticsId, mcpScope })
+    return () => {
+      reportE2EDiagnostic('conversation-tool-scope-detached', { diagnosticsId, mcpScope })
+    }
+  }, [diagnosticsId, mcpScope])
   const messageAdmission = useRef<McpAppConversationServices | undefined>(undefined)
   useLayoutEffect(() => {
     messageAdmission.current = mcpApp
@@ -104,7 +114,7 @@ export function DesktopToolServices({
   }, [mcpApp])
   const content = mcpApp ? (
     <McpAppsProvider
-      key={`${mcpApp.address.deviceId}:${mcpApp.address.taskId}:${Boolean(sendMessage)}`}
+      key={`${mcpApp.address.deviceId}:${mcpApp.address.taskId}`}
       address={mcpApp.address}
       api={mcpApp.api}
       onMessage={

@@ -602,6 +602,29 @@ describe('localExecutor', () => {
     expect(describeDshExecutorMock).toHaveBeenCalledTimes(2)
   })
 
+  test('explicit transcript cancellation preserves runtime health and does not log a failure', async () => {
+    await ensureLocalExecutorStarted()
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const controller = new AbortController()
+    controller.abort()
+    requestDshExecutorMock.mockRejectedValueOnce(controller.signal.reason)
+    try {
+      await expect(
+        requestLocalExecutor(
+          'runtime.tasks.transcript',
+          { transcriptProtocolVersion: 1 },
+          undefined,
+          { signal: controller.signal }
+        )
+      ).rejects.toBe(controller.signal.reason)
+      await ensureLocalExecutorStarted()
+      expect(describeDshExecutorMock).toHaveBeenCalledOnce()
+      expect(log).not.toHaveBeenCalled()
+    } finally {
+      log.mockRestore()
+    }
+  })
+
   test('keeps the initialized status after an executor business error', async () => {
     await ensureLocalExecutorStarted()
     await ensureBundledPluginInstalled('smart-app-builder')

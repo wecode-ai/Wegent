@@ -29,9 +29,14 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/board-transcript-followup.scenario.mjs | \
       wework/src/features/todo/useBoardRuntimeConversations*)
-      select_target "core:transcript-sync"
+      select_target "core:board-transcript-followup"
       return
-      ;;    wework/e2e/desktop/scenarios/device-artifact-declaration.scenario.mjs)
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-home-preload.scenario.mjs)
+      select_target "core:collaboration-home-preload"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/device-artifact-declaration.scenario.mjs)
       select_target "core:device-artifact-declaration"
       return
       ;;
@@ -47,7 +52,12 @@ classify_wework_path() {
       select_target "cloud:plugin-toggle-persistence"
       return
       ;;
+    wework/e2e/desktop/scenarios/split-workbench.scenario.mjs)
+      select_target "core:split-workbench"
+      return
+      ;;
     wework/e2e/desktop/modules/github-release-asset.mjs)
+      select_target "core:harness-app-development"
       select_target "core:harness-app-lifecycle"
       select_target "core:harness-app-models"
       select_target "cloud:plugin-legacy-upgrade"
@@ -57,6 +67,7 @@ classify_wework_path() {
       wework/e2e/desktop/modules/dsh-runtime-cache.mjs | \
       wework/electron/src/host/e2e-dsh-release-redirect.ts | \
       wework/e2e/desktop/modules/harness-app-*)
+      select_target "core:harness-app-development"
       select_target "core:harness-app-lifecycle"
       select_target "core:harness-app-models"
       return
@@ -66,7 +77,8 @@ classify_wework_path() {
       return
       ;;
     wework/e2e/desktop/scenarios/streaming-text.scenario.mjs | \
-      wework/e2e/desktop/modules/streaming-text-*)
+      wework/e2e/desktop/modules/streaming-text-* | \
+      wework/e2e/desktop/modules/streaming-conversation-switching.mjs)
       select_rendering_checkpoints
       return
       ;;
@@ -152,6 +164,10 @@ classify_wework_path() {
       select_target "cloud:core-task-flow"
       return
       ;;
+    wework/e2e/desktop/scenarios/codex-account-login.scenario.mjs)
+      select_target "core:codex-account-login"
+      return
+      ;;
 
     # Desktop sign-in travels through the operating system proxy, so the main
     # process and the renderer must share one network path.
@@ -171,13 +187,15 @@ classify_wework_path() {
     # The native startup checkpoint owns splash-window creation and teardown.
     wework/electron/src/host/startup-splash* | \
       wework/electron/src/shell/startup-splash/*)
-      select_target "core:startup-fault-isolation"
+      select_target "core:native-window-startup"
       return
       ;;
 
     # Keep startup interruption recovery covered when its host implementation changes.
-    wework/electron/src/host/renderer-startup-loader*)
-      select_target "core:startup-fault-isolation"
+    wework/electron/src/host/renderer-startup-loader* | \
+      wework/electron/src/host/e2e-startup-network-fault* | \
+      wework/e2e/desktop/scenarios/startup-network-change.scenario.mjs)
+      select_target "core:startup-network-change"
       return
       ;;
 
@@ -223,7 +241,7 @@ classify_wework_path() {
       wework/src/api/local/codexPluginInstallation.ts | \
       wework/src/components/settings/ExternalContentImportDialog.tsx | \
       wework/e2e/desktop/scenarios/external-content-import.scenario.mjs)
-      select_target "core:workbench-mode"
+      select_target "core:external-content-import"
       if [[ "$path" == wework/src/api/local/codexPlugin* ]]; then
         select_target "plugins:plugin-lifecycle"
         select_target "core:project-ai-settings"
@@ -251,14 +269,14 @@ classify_wework_path() {
       fi
       if [[ "$path" == wework/src/components/layout/workspace-panels/RightWorkspacePanel.tsx ]]; then
         select_target "core:temporary-chat"
-        select_target "core:local-harness"
+        select_target "core:background-terminals"
       fi
       return
       ;;
 
     wework/dsh/voice-input/* | \
       wework/e2e/desktop/scenarios/voice-input.scenario.mjs)
-      select_target "core:core-task-flow"
+      select_target "core:voice-input"
       return
       ;;
 
@@ -276,10 +294,12 @@ classify_wework_path() {
     wework/src/components/plugins/CoreDshPluginManagementSection* | \
       wework/src/features/dsh-plugins/* | \
       wework/electron/src/runtime/core-dsh-plugin-manager*)
+      select_target "core:core-dsh-plugin-management"
       select_target "core:plugin-development"
       return
       ;;
     wework/src/components/plugins/PluginManagementWorkspace*)
+      select_target "core:core-dsh-plugin-management"
       select_target "core:plugin-development"
       select_target "core:project-ai-settings"
       select_target "plugins:plugin-lifecycle"
@@ -317,13 +337,13 @@ classify_wework_path() {
       ;;
     wework/src/components/sites/* | \
       wework/src/pages/SitesPage.tsx)
-      select_target "plugins:core-dsh-ui-plugin-composition"
+      select_target "plugins:sites-plugin-auto-install"
       return
       ;;
     wework/src/features/workbench/useWorkbenchSkills.ts | \
       wework/src/components/chat/composer/ComposerMentionMenu.tsx | \
       wework/src/components/chat/composer/composerMentionCandidates*)
-      select_target "plugins:plugin-lifecycle"
+      select_target "plugins:skill-mention-rendering"
       select_target "core:core-task-flow"
       return
       ;;
@@ -335,10 +355,14 @@ classify_wework_path() {
       ;;
 
     wework/e2e/desktop/scenarios/task-model-deletion.scenario.mjs)
-      select_target "cloud:cloud-model-recovery"
+      select_target "cloud:task-model-deletion"
       return
       ;;
 
+    wework/e2e/desktop/scenarios/cloud-model-presets.scenario.mjs)
+      select_target "cloud:cloud-model-presets"
+      return
+      ;;
 
     wework/src/api/hybrid/cloudModelCatalog* | \
       wework/e2e/desktop/modules/cloud-model-recovery.mjs | \
@@ -386,7 +410,7 @@ classify_wework_path() {
     # visibility lifecycle, so background policy changes own this checkpoint.
     wework/electron/src/host/window-background-policy* | \
       wework/e2e/desktop/scenarios/window-background-policy.scenario.mjs)
-      select_target "core:window-lifecycle"
+      select_target "core:window-background-policy"
       return
       ;;
 
@@ -397,7 +421,7 @@ classify_wework_path() {
       wework/src/desktop/ApplicationMenuWorkspaceBridge* | \
       wework/src/components/topnav/ApplicationMenuButton* | \
       wework/e2e/desktop/scenarios/application-menu.scenario.mjs)
-      select_target "core:window-lifecycle"
+      select_target "core:application-menu"
       return
       ;;
 
@@ -414,8 +438,16 @@ classify_wework_path() {
       return
       ;;
 
+    wework/e2e/desktop/scenarios/follow-up-task-switch.scenario.mjs | \
+      wework/e2e/desktop/modules/follow-up-agent-history.mjs)
+      select_target "core:follow-up-task-switch"
+      return
+      ;;
 
-
+    wework/e2e/desktop/scenarios/notification-tab-navigation.scenario.mjs)
+      select_target "core:notification-tab-navigation"
+      return
+      ;;
 
     wework/e2e/desktop/scenarios/human-interactions.scenario.mjs | \
       wework/e2e/desktop/modules/human-interaction-*.mjs | \
@@ -425,8 +457,9 @@ classify_wework_path() {
       select_target "core:stand-in-notifications"
       select_target "core:stand-in-cloud"
       select_target "core:project-assignment-notification"
-      select_target "core:core-task-flow"
+      select_target "core:notification-tab-navigation"
       select_target "core:human-interactions"
+      select_target "core:human-interactions-browser"
       select_target "core:human-interactions-hidden"
       select_target "core:human-interactions-issue"
       if [[ "$path" == wework/src/features/notifications/RuntimeInteractions* || \
@@ -461,10 +494,11 @@ classify_wework_path() {
 
     # The extracted priority section has its own runtime-task fixture.
     wework/src/components/layout/DesktopSidebarPrioritySection.tsx)
-      select_target "core:core-task-flow"
+      select_target "core:priority-filter"
       return
       ;;
     wework/e2e/desktop/scenarios/project-automation.scenario.mjs)
+      select_target "core:automation-lifecycle"
       select_target "core:project-automation"
       select_target "cloud:all"
       return
@@ -475,6 +509,10 @@ classify_wework_path() {
       ;;
     wework/e2e/desktop/scenarios/project-member-overrides.scenario.mjs)
       select_target "core:project-member-overrides"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/cloud-space-mention.scenario.mjs)
+      select_target "core:cloud-space-mention"
       return
       ;;
     wework/e2e/desktop/scenarios/collaboration-shared-core.scenario.mjs | \
@@ -503,16 +541,39 @@ classify_wework_path() {
       select_target "core:collaboration-runtime-reconciliation"
       return
       ;;
+    wework/e2e/desktop/scenarios/collaboration-board-backlog.scenario.mjs)
+      select_target "core:collaboration-board-backlog"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-parent-board.scenario.mjs)
+      select_target "core:collaboration-parent-board"
+      return
+      ;;
     wework/e2e/desktop/scenarios/collaboration-board-move-recovery.scenario.mjs)
       select_target "core:collaboration-board-move-recovery"
       return
       ;;
     wework/e2e/desktop/modules/collaboration-board-flows.mjs)
+      select_target "core:collaboration-board-backlog"
       select_target "core:collaboration-board-move-recovery"
       return
-      ;;    wework/e2e/desktop/scenarios/collaboration-worktree-policy.scenario.mjs)
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-issue-archive.scenario.mjs)
+      select_target "core:collaboration-issue-archive"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-worktree-policy.scenario.mjs)
       select_target "core:collaboration-worktree-policy"
       return
-      ;;  esac
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-first-use.scenario.mjs)
+      select_target "core:collaboration-first-use"
+      return
+      ;;
+    wework/e2e/desktop/scenarios/collaboration-group-onboarding.scenario.mjs)
+      select_target "core:collaboration-group-onboarding"
+      return
+      ;;
+  esac
   classify_workbench_path "$path"
 }

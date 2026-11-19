@@ -1,5 +1,5 @@
 //! Atomic Codex configuration publication and structural diagnostics.
-use std::{fs, io::Write, path::Path};
+use std::{fs, path::Path};
 
 #[track_caller]
 pub fn replace_config(config_path: &Path, content: String) -> Result<(), String> {
@@ -17,42 +17,15 @@ pub fn replace_config(config_path: &Path, content: String) -> Result<(), String>
         .ok_or_else(|| format!("Codex config has no parent: {}", config_path.display()))?;
     fs::create_dir_all(parent)
         .map_err(|error| format!("failed to create Codex config directory: {error}"))?;
-    let mut temporary = tempfile::NamedTempFile::new_in(parent)
-        .map_err(|error| format!("failed to create Codex config temp file: {error}"))?;
-    temporary
-        .write_all(content.as_bytes())
-        .map_err(|error| format!("failed to write Codex config temp file: {error}"))?;
-    if let Ok(metadata) = fs::metadata(config_path) {
-        fs::set_permissions(temporary.path(), metadata.permissions()).map_err(|error| {
+    wegent_filesystem::atomic_file::write_atomic_file(config_path, content.as_bytes()).map_err(
+        |error| {
             format!(
-                "failed to preserve Codex config permissions {}: {error}",
-                temporary.path().display()
+                "failed to replace Codex config {}: {}",
+                config_path.display(),
+                error
             )
-        })?;
-    }
-    #[cfg(unix)]
-    if !config_path.exists() {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(temporary.path(), fs::Permissions::from_mode(0o600)).map_err(
-            |error| {
-                format!(
-                    "failed to secure Codex config permissions {}: {error}",
-                    temporary.path().display()
-                )
-            },
-        )?;
-    }
-    temporary
-        .as_file()
-        .sync_all()
-        .map_err(|error| format!("failed to sync Codex config temp file: {error}"))?;
-    temporary.persist(config_path).map_err(|error| {
-        format!(
-            "failed to replace Codex config {}: {}",
-            config_path.display(),
-            error.error
-        )
-    })?;
+        },
+    )?;
     sync_parent_directory(parent)
         .map_err(|error| format!("failed to sync Codex config directory: {error}"))?;
     Ok(())
@@ -91,4 +64,47 @@ fn sync_parent_directory(parent: &Path) -> std::io::Result<()> {
 #[cfg(not(unix))]
 fn sync_parent_directory(_parent: &Path) -> std::io::Result<()> {
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Read;
+
+    #[test]
+    fn publishes_config_while_existing_readers_retain_their_snapshot() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.toml");
+        replace_config(&path, "model = 'before'\n".into()).unwrap();
+        let mut reader = fs::File::open(&path).unwrap();
+
+        replace_config(&path, "model = 'after'\n".into()).unwrap();
+
+        let mut original = String::new();
+        reader.read_to_string(&mut original).unwrap();
+        assert_eq!(original, "model = 'before'\n");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "model = 'after'\n");
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn creates_private_config_and_preserves_existing_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.toml");
+        replace_config(&path, "model = 'first'\n".into()).unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+
+        replace_config(&path, "model = 'second'\n".into()).unwrap();
+
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o640
+        );
+    }
 }

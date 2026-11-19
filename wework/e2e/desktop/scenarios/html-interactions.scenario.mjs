@@ -1,3 +1,4 @@
+import { desktopOwnerId } from '../modules/desktop-owner-fixture.mjs'
 import assert from 'node:assert/strict'
 import {
   ACTIVE_SEND_BUTTON_SELECTOR,
@@ -347,7 +348,7 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
           executionRequest: {
             task_id: archiveTaskId,
             subtask_id: archiveTaskId + '-initial',
-            user_id: 9001,
+            user_id: desktopOwnerId,
             prompt: archivePrompt,
             new_session: true,
             bot: [{ shell_type: 'Codex', name: 'Generated HTML archive target' }],

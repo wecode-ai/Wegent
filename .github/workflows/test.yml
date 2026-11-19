@@ -652,9 +652,11 @@ jobs:
           cargo test -p wegent-plugin-packages --all-features --lib services::workbench::recovery::tests
           cargo test -p wegent-plugin-packages --all-features --lib local::capabilities::plugin_sync_protocol::tests::package_recovery_tests
           cargo test -p wegent-plugin-packages --all-features --lib local::capabilities::runtime_recovery::journal::tests
+          cargo test -p wegent-plugin-packages --all-features --lib codex_configuration::tests
           cargo test --all-features --lib claude_execution_home_publishes_runtime_selection_beyond_windows_max_path
           cargo test --manifest-path ../shared/rust/Cargo.toml -p wegent-filesystem --lib json_file::tests
           cargo test -p wegent-subprocess --lib line_reader::tests
+          cargo test -p wegent-executor --all-features --lib process_tree_supervisor
           cargo test --all-features --lib effective_instructions_tests
           cargo test -p wegent-executor --all-features --lib side_source
           cargo test --manifest-path ../shared/rust/Cargo.toml -p wegent-filesystem atomic_file::tests
@@ -884,9 +886,9 @@ jobs:
           fi
           node --test "${tests[@]}"
 
-      - name: Verify immutable upgrade artifact consumption
+      - name: Verify E2E infrastructure contracts
         if: matrix.shard == 1
-        run: node --test wework/scripts/published-desktop-release.test.mjs wework/scripts/portable-desktop-release.test.mjs wework/scripts/lib/packaged-component-assets.test.mjs wework/e2e/desktop/modules/inspect-before-start.test.mjs wework/e2e/desktop/modules/macos-status-item.test.mjs wework/e2e/desktop/modules/desktop-build-flows.test.mjs wework/e2e/desktop/modules/failure-followup.test.mjs wework/e2e/desktop/modules/voice-toolbar-flow.test.mjs wework/e2e/desktop/modules/electron-launch-arguments.test.mjs wework/scripts/subagent-request.test.mjs
+        run: node --test wework/scripts/desktop-error-collector.test.mjs wework/scripts/desktop-ui-refresh-collector.test.mjs wework/scripts/desktop-performance-journal.test.mjs wework/scripts/finish-desktop-teardown.test.mjs wework/scripts/published-desktop-release.test.mjs wework/scripts/portable-desktop-release.test.mjs wework/scripts/lib/packaged-component-assets.test.mjs wework/e2e/desktop/modules/inspect-before-start.test.mjs wework/e2e/desktop/modules/macos-status-item.test.mjs wework/e2e/desktop/modules/desktop-build-flows.test.mjs wework/e2e/desktop/modules/failure-followup.test.mjs wework/e2e/desktop/modules/voice-toolbar-flow.test.mjs wework/e2e/desktop/modules/electron-launch-arguments.test.mjs wework/scripts/subagent-request.test.mjs wework/scripts/lib/git-hosting-cli-fixture.test.mjs executor/examples/hooks/turn-diff-logger/logger.test.mjs
 
       - name: Verify startup theme evidence
         if: matrix.shard == 1
@@ -894,6 +896,8 @@ jobs:
 
       - name: Verify isolated Electron update transport
         if: matrix.shard == 1
+        env:
+          WEGENT_CI_APT_SOURCE_LIST: /etc/apt/sources.list.d/ubuntu.sources
         run: |
           source .github/scripts/lib/apt-packages.sh
           mapfile -t missing < <(find_missing_apt_packages gdb)
@@ -903,7 +907,7 @@ jobs:
           sudo -n gdb --version
           sudo install -m 644 .github/ci/wework-electron.apparmor /etc/apparmor.d/wework-electron-ci
           sudo apparmor_parser --replace /etc/apparmor.d/wework-electron-ci
-          dbus-run-session -- sh wework/e2e/desktop/run-with-xvfb.sh node --test wework/e2e/desktop/modules/upgrade-request-route.test.mjs wework/e2e/desktop/modules/startup-gdb-probe.test.mjs wework/e2e/desktop/modules/startup-gpu-probe.test.mjs wework/scripts/startup-gpu-evidence.test.mjs
+          dbus-run-session -- sh wework/e2e/desktop/run-with-xvfb.sh node --test wework/e2e/desktop/modules/upgrade-request-route.test.mjs wework/e2e/desktop/modules/startup-gdb-probe.test.mjs wework/e2e/desktop/modules/startup-gpu-probe.test.mjs wework/scripts/startup-gpu-evidence.test.mjs wework/scripts/conversation-resize-native.test.mjs wework/scripts/editor-native-input.test.mjs wework/scripts/image-resize-native.test.mjs
 
       - name: Verify measured Wework test sharding
         if: matrix.shard == 1
@@ -915,7 +919,7 @@ jobs:
 
       - name: Verify collaboration experiment desktop contracts
         if: matrix.shard == 1
-        run: node --test wework/scripts/collaboration-exp-registration.test.mjs wework/scripts/collaboration-exp-viewport-flows.test.mjs
+        run: node --test wework/scripts/collaboration-exp-registration.test.mjs wework/scripts/collaboration-exp-viewport-flows.test.mjs wework/scripts/lib/desktop-owner-fixture.test.mjs wework/scripts/stand-in-onboarding-arrangements.test.mjs
 
       - name: Run Wework tests
         env:

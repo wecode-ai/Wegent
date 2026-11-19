@@ -1,3 +1,4 @@
+import { desktopOwnerId } from './desktop-owner-fixture.mjs'
 import { openStandInSettings } from './stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from './executor-rpc.mjs'
@@ -58,7 +59,7 @@ export async function verifyStandInConnectionCatalog(control, uiTimeoutMs, captu
   const saved = await requestExecutor(
     control,
     'runtime.stand_in.personal.get',
-    { userId: 9001 },
+    { userId: desktopOwnerId },
     uiTimeoutMs
   )
   assert.equal(saved.primary.collaboration.enabled, !enabled)

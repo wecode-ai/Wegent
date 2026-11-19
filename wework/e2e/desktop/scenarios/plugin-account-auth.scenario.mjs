@@ -26,6 +26,7 @@ import {
   waitForPythonRuntimeEvent,
 } from '../modules/managed-python.mjs'
 import { verifyResponsesApiGateway } from './responses-api-gateway.scenario.mjs'
+import { DESKTOP_CHECKPOINT_CI_HOSTS } from '../checkpoints.mjs'
 import {
   createConversationAuthModelFixture,
   sendOrdinaryChat,
@@ -191,8 +192,9 @@ export async function createDesktopScenario({
   }
 
   return {
+    externalServiceProtocols: githubProtocol ? ['git-hosting'] : [],
     requiresCloudEnvironment: true,
-    requiresNativeCloudAuthorization: checkpoint === 'plugin-account-auth-password',
+    requiresNativeCloudAuthorization: true,
     requiresPackagedHarnessRuntime: checkpoint === 'plugin-account-auth-password',
     prepareApp: context => githubProtocol?.prepareApp(context),
     cleanup: () => githubProtocol?.cleanup(),
@@ -267,7 +269,7 @@ export async function createDesktopScenario({
         false,
         'Plugin account auth scenario must not start background reply predictions'
       )
-      if (checkpoint === 'plugin-account-auth-dws') {
+      if (checkpoint === DESKTOP_CHECKPOINT_CI_HOSTS.get('responses-api-gateway')) {
         await verifyResponsesApiGateway(control, cloud, {
           checkpoint,
           resultDir,
@@ -699,6 +701,7 @@ export async function createDesktopScenario({
           'plugin-account-auth-dws',
           async () => {
             await verifyDwsCloudAccount({
+              control,
               cloud,
               resultDir,
               executorHome,

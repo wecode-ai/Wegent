@@ -1,3 +1,4 @@
+import { desktopOwnerId as USER } from '../modules/desktop-owner-fixture.mjs'
 import { readSavedMemories } from '../modules/stand-in-memory-context.mjs'
 import {
   openStandInSettings,
@@ -25,7 +26,6 @@ import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automa
 import { waitForTestIdByText } from '../modules/workspace-flows.mjs'
 
 const PANEL = '[data-testid="stand-in-primary-profile"]'
-const USER = 9001
 const NAME = `Profile workspace ${process.pid}`
 const selector = id => `[data-testid=${JSON.stringify(id)}]`
 

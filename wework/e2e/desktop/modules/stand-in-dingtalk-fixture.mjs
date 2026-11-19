@@ -39,6 +39,7 @@ export function createStandInDingTalkFixture({ resultDir, uiTimeoutMs, workbench
       await mkdir(join(pluginRoot, 'scripts'), { recursive: true })
       await writeFile(authStatePath, 'ready')
       context.appEnvironment.DWS_BINARY_PATH = binary
+      context.control.performance.recordExternalServiceProtocols(['dingtalk'])
       context.appEnvironment.WEWORK_E2E_DINGTALK_AUTH_STATE = authStatePath
       await writeFile(
         join(pluginRoot, 'scripts/health.sh'),

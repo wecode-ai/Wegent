@@ -185,10 +185,6 @@ export function createDesktopScenario({
           value: JSON.stringify({ key, value: '1' }),
         })
       }
-      // Online registration precedes native model discovery during cold startup.
-      await control.command('ensureLocalModelCatalogReady', 'body', {
-        timeoutMs: workbenchReadyTimeoutMs,
-      })
       app = await environment.startDuplicateAppDeviceIdentity()
       const workspace = await request('/api/v1/workspaces', { name: TITLE })
       project = await request('/api/v1/cloud-projects', {

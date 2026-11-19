@@ -86,7 +86,16 @@ pub(crate) fn begin_native_request(link: &mut RuntimeTaskLink) {
     {
         return;
     }
-    let state = NativeExecutionState {
+    let state = new_native_request_state(previous);
+    // Admission and quota-wait removal must be visible in the same task snapshot.
+    if let Some(handle) = link.runtime_handle.as_object_mut() {
+        handle.remove("quotaWait");
+    }
+    project_native_execution(link, &state);
+}
+
+fn new_native_request_state(previous: Option<NativeExecutionState>) -> NativeExecutionState {
+    NativeExecutionState {
         revision: next_runtime_event_sequence().to_string(),
         epoch: native_execution_epoch().into(),
         updated_at: now_ms(),
@@ -103,8 +112,7 @@ pub(crate) fn begin_native_request(link: &mut RuntimeTaskLink) {
         completed_at: None,
         duration_ms: None,
         error: None,
-    };
-    project_native_execution(link, &state);
+    }
 }
 
 pub(crate) fn queue_native_execution(
@@ -130,12 +138,7 @@ pub(crate) fn queue_native_execution(
     {
         return;
     }
-    if native_execution_state(link).is_none() {
-        begin_native_request(link);
-    }
-    let Some(mut state) = native_execution_state(link) else {
-        return;
-    };
+    let mut state = native_execution_state(link).unwrap_or_else(|| new_native_request_state(None));
     state.revision = next_runtime_event_sequence().to_string();
     state.phase = phase;
     state.process_generation = None;

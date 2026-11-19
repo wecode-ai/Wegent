@@ -1,9 +1,15 @@
-import { expect, test } from '@playwright/test'
+import { expect, test } from '../fixtures/collected-test'
 import { WeworkApp } from '../fixtures/wework-app'
 
-test('exposes a CI automation bridge and renders the login route', async ({ page }) => {
+test('exposes a CI automation bridge and renders the login route', async ({ page, errors }) => {
   const app = new WeworkApp(page)
 
+  const sessionResponse = page.waitForResponse(
+    response => new URL(response.url()).pathname === '/api/users/me'
+  )
+  // The anonymous handshake belongs to the login route, independently of dev StrictMode.
+  await app.goto('/login')
+  errors.expectHttpError(await sessionResponse, 401)
   await app.goto('/')
 
   await expect(page.getByTestId('login-form')).toBeVisible()

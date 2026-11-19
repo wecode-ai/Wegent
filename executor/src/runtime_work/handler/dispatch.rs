@@ -434,9 +434,9 @@ impl RuntimeWorkRpcHandler {
                 boxed_rpc(move || async move { self.reveal_hook(payload).await })
             }
             "runtime.hooks.test" => boxed_rpc(move || async move { self.test_hook(payload).await }),
-            "runtime.runner.catalog" => {
-                boxed_rpc(move || async move { self.runner_catalog().await })
-            }
+            "runtime.runner.catalog" => boxed_rpc(move || async move {
+                self.runner_catalog(concat!(file!(), ":", line!())).await
+            }),
             "runtime.models.sync_creation_profiles" => {
                 boxed_rpc(move || async move { self.sync_creation_model_profiles(payload) })
             }
@@ -449,9 +449,10 @@ impl RuntimeWorkRpcHandler {
                     .map(|demanded| json!({"demanded": demanded}))
                     .map_err(|message| AppIpcError::new("python_demand_unavailable", message))
             }),
-            "runtime.codex.models.list" => {
-                boxed_rpc(move || async move { self.list_codex_models(payload).await })
-            }
+            "runtime.codex.models.list" => boxed_rpc(move || async move {
+                self.list_codex_models(payload, concat!(file!(), ":", line!()))
+                    .await
+            }),
             "runtime.codex.ensure_started" => {
                 boxed_rpc(move || async move { self.ensure_codex_started().await })
             }

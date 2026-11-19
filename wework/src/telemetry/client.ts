@@ -1,4 +1,5 @@
 import type { WeworkTelemetryContext } from './facts'
+import { reportE2EError } from '@/e2e/error-capture'
 import { telemetryContextProperties, telemetryDeliveryScope, telemetryDistinctId } from './identity'
 import { useSyncExternalStore } from 'react'
 import type { CaptureResult, PostHog } from 'posthog-js'
@@ -434,6 +435,7 @@ export function trackEvent(event: AnalyticsEvent & { context?: WeworkTelemetryCo
 }
 
 export function captureError(error: unknown): void {
+  reportE2EError('captured-exception', error)
   if (!enabled) return
   if (sentry) {
     sentry.captureException(error)

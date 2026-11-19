@@ -1,3 +1,4 @@
+import { desktopOwnerId } from '../modules/desktop-owner-fixture.mjs'
 import { selectedToolCall } from '../modules/model-tool-calls.mjs'
 import assert from 'node:assert/strict'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
@@ -20,6 +21,7 @@ import {
   toolOutputText,
 } from '../modules/response-protocol.mjs'
 import { reloadMainWindow, waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
+import { verifyHumanInteractionOverBrowser } from '../modules/human-interaction-browser.mjs'
 import { verifyHumanInteractionAcrossWindows } from '../modules/human-interaction-windows.mjs'
 import {
   handleArchiveInteractionModel,
@@ -107,6 +109,13 @@ export function createDesktopScenario({
       environment = value
     },
     async handleHttp(request, response, url) {
+      if (request.method === 'GET' && url.pathname === '/human-interactions-browser-fixture') {
+        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+        response.end(
+          '<!doctype html><html lang="zh-CN"><title>订单兼容性说明</title><body><h1>订单兼容性说明</h1><p>旧客户仍使用现有订单校验规则。新客户可采用新规则。</p></body></html>'
+        )
+        return true
+      }
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(request)
@@ -206,7 +215,7 @@ export function createDesktopScenario({
             executionRequest: {
               task_id: 'unlisted-review',
               subtask_id: 'unlisted-review-initial',
-              user_id: 9001,
+              user_id: desktopOwnerId,
               prompt: PROMPT,
               new_session: true,
               bot: [{ shell_type: 'Codex', name: 'Unlisted review' }],
@@ -279,6 +288,18 @@ export function createDesktopScenario({
           '[human-interaction-issue] Owning comment addresses',
           JSON.stringify(issueDiagnostics)
         )
+      }
+      if (checkpoint === 'human-interactions-browser') {
+        await verifyHumanInteractionOverBrowser({
+          control,
+          question: QUESTION,
+          answer: ANSWER,
+          captureScreenshot,
+          uiTimeoutMs,
+          modelResponseTimeoutMs,
+          releaseQuestion,
+        })
+        return
       }
       if (issueFixture) {
         // This scenario verifies in-app reminders; collaboration defaults to system delivery.

@@ -2,11 +2,14 @@ import { assertMatrixReports } from './model-matrix-audit.mjs'
 import { access, readFile } from 'node:fs/promises'
 import { verifyPluginUpgrade } from './plugin-upgrade-flow.mjs'
 import { verifyCreatorAuthenticationToolkit } from './plugin-flows.mjs'
-import { basename } from 'node:path'
+import { basename, dirname } from 'node:path'
 
 import { verifyShortConversationLayout } from './conversation-layout.mjs'
 
-import { verifyPausedQueueLifecycle } from './conversation-navigation.mjs'
+import {
+  verifyPausedQueueLifecycle,
+  verifyStandaloneViewImageTask,
+} from './conversation-navigation.mjs'
 
 import {
   setMatrixUpstreamProtocol,
@@ -27,6 +30,8 @@ import { verifyCloudFileAccessOutsideWorkspace } from './workspace-file-access-f
 import { verifyCloudFileChunkIntegrity } from './workspace-file-chunks-flow.mjs'
 import { verifyCloudGitReview } from './workspace-git-review-flow.mjs'
 import { verifyCloudConversationMenu } from './conversation-menu-flow.mjs'
+import { verifyCloudHtmlFileLinkPreview } from './markdown-file-preview.mjs'
+import { verifyMarkdownRelativeFileLinks } from './markdown-relative-file-links.mjs'
 import {
   createCloudAttachmentVerification,
   verifyCloudWorkspacePathMentions,
@@ -39,7 +44,16 @@ import {
   verifyTaskSupervisorLifecycle,
 } from './goal-flows.mjs'
 
+import { verifyToolBlockChronologicalOrder } from './memory-tool-flows.mjs'
+
 import { verifyPastedZipAttachment } from './path-attachment-flows.mjs'
+
+import {
+  ensureExperimentalFeaturesEnabled,
+  verifyCloudAutomationLifecycle,
+  verifyTelemetryPreference,
+  verifyTelemetryRemainsDisabled,
+} from './preferences-automation-flows.mjs'
 
 import {
   verifyAnthropicEmptyResponseRecovery,
@@ -57,6 +71,7 @@ import {
   DEFAULT_MODEL_ID,
   DEFAULT_MODEL_LABEL,
   DEFAULT_STEP_TIMEOUT_MS,
+  REMOTE_DOCKER_DEVICE_ID,
   SELECTED_DESKTOP_SEGMENT,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
@@ -70,18 +85,26 @@ import {
   writeFile,
 } from './shared.mjs'
 
-import { verifyBackgroundCompletionRestore } from './task-state-flows.mjs'
+import { verifyBackgroundCompletionRestore, verifyPriorityFilter } from './task-state-flows.mjs'
 
 import {
   verifyAttachmentOnlySidebarLifecycle,
   verifyBackgroundTaskWindowLifecycle,
 } from './window-attachment-flows.mjs'
 
-import { captureVerificationScreenshot, waitForControlValue } from './workspace-flows.mjs'
+import {
+  captureVerificationScreenshot,
+  verifyWorkspaceTabIsolation,
+  waitForControlValue,
+} from './workspace-flows.mjs'
 
 const CLOUD_CHECKPOINTS = [
+  'workspace-tabs',
   'cloud-project-creation',
   'cloud-device-lifecycle',
+  'priority-filter',
+  'telemetry-consent',
+  'automation-lifecycle',
   'plugin-auto-update',
   'plugin-workspace-publication',
   'model-routing',
@@ -94,6 +117,7 @@ const CLOUD_CHECKPOINTS = [
   'resilience',
   'conversation-state',
   'workspace-attachments',
+  'rendering-extensions',
   'browser-multi-tabs',
   'embedded-browser',
   'connector-oauth',
@@ -715,7 +739,25 @@ async function verifyCloudCheckpoint({
     return
   }
 
+  if (checkpoint === 'workspace-tabs') {
+    setPhase('cloud-workspace-tab-isolation')
+    await verifyWorkspaceTabIsolation(control, restartDesktopApp)
+    return
+  }
+
+  if (checkpoint === 'telemetry-consent') {
+    setPhase('cloud-telemetry-preference')
+    await verifyTelemetryPreference(control)
+    verifyTelemetryRemainsDisabled(control)
+    return
+  }
+
   if (checkpoint === 'plugin-auto-update') {
+    await control.errors.assertCollectedErrors(control, [], {
+      source: 'renderer',
+      type: 'executor:executor.plugins.local_sync',
+      sources: ['main', 'runtime'],
+    })
     await verifyPluginUpgrade({ cloudEnvironment, control, codexHome, setPhase })
     setPhase('cloud-plugin-auto-update-disable-codex-rpc')
     await cloudEnvironment.restartCloudExecutorWithoutCodexPluginRpc()
@@ -754,8 +796,8 @@ async function verifyCloudCheckpoint({
       await cloudEnvironment.assertPluginAutoUpdateComplete(cloudEnvironment.remoteCodexHome, 6)
     } catch (error) {
       console.error(
-        '[plugin-auto-update] object storage transport',
-        JSON.stringify(cloudEnvironment.pluginObjectStorage.transportEvents)
+        '[plugin-auto-update] real object storage server',
+        await readFile(join(resultDir, 'minio.log'), 'utf8')
       )
       throw error
     }
@@ -830,6 +872,21 @@ async function verifyCloudCheckpoint({
         projectRowSelector,
         setPhase,
         workspacePath,
+      })
+      return
+    case 'priority-filter':
+      setPhase('cloud-priority-filter')
+      await verifyPriorityFilter({ composerSelector, control, projectRowSelector })
+      return
+    case 'automation-lifecycle':
+      setPhase('cloud-automation-lifecycle')
+      await ensureExperimentalFeaturesEnabled(control)
+      await verifyCloudAutomationLifecycle(control, CLOUD_DEVICE_ID)
+      setPhase('remote-docker-automation-lifecycle')
+      await verifyCloudAutomationLifecycle(control, REMOTE_DOCKER_DEVICE_ID, {
+        automationSuffix: 'Remote Docker',
+        deviceName: 'Wework E2E Remote Docker Device',
+        expectedCompletionIndex: 2,
       })
       return
     case 'model-routing':
@@ -975,6 +1032,21 @@ async function verifyCloudCheckpoint({
       await verifyCloudConversationMenu({ cloudEnvironment, address: menuTask, workspacePath })
       return
     }
+    case 'rendering-extensions':
+      setPhase('cloud-html-file-link-preview')
+      await verifyCloudHtmlFileLinkPreview({
+        composerSelector,
+        control,
+        projectRowSelector,
+        workspacePath,
+      })
+      setPhase('cloud-markdown-relative-file-links')
+      await verifyMarkdownRelativeFileLinks({ control, workspacePath })
+      setPhase('cloud-tool-block-order')
+      await verifyToolBlockChronologicalOrder({ composerSelector, control })
+      setPhase('cloud-view-image')
+      await verifyStandaloneViewImageTask({ composerSelector, control, projectRowSelector })
+      return
     case 'browser-multi-tabs':
     case 'embedded-browser':
     case 'connector-oauth':

@@ -1,3 +1,4 @@
+import { desktopOwnerId as USER } from '../modules/desktop-owner-fixture.mjs'
 import assert from 'node:assert/strict'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import { ensureExperimentalFeaturesEnabled } from '../modules/preferences-automation-flows.mjs'
@@ -13,7 +14,6 @@ import {
   telemetryEvents,
 } from '../modules/response-protocol.mjs'
 
-const USER = 9001
 const OFFLINE_USER = 9101
 const MARKER = 'STAND_IN_TELEMETRY_PRIVATE_INPUT'
 const COMPLETE = 'STAND_IN_TELEMETRY_COMPLETE'

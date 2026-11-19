@@ -30,6 +30,11 @@ import { prepareDesktopE2EBuild } from '../../scripts/lib/desktop-e2e-build.mjs'
 import { runCommandToLog } from '../../scripts/lib/command-log.mjs'
 import { prepareBundledRuntimeCache } from './modules/bundled-runtime-cache.mjs'
 
+import {
+  prepareWindowsNativeObserver,
+  requireWindowsNativeObserver,
+} from '../../scripts/lib/native-window-observer.mjs'
+
 const HEARTBEAT_INTERVAL_MS = 30_000
 const DEFAULT_PARALLEL_CHECKPOINTS = 1
 const COMPOSITE_CHECKPOINTS = DESKTOP_CHECKPOINT_GROUPS
@@ -45,6 +50,7 @@ const keyringPath = join(scriptDir, 'run-with-keyring.sh')
 const cliArgs = process.argv.slice(2)
 const requestedArgs = cliArgs[0] === '--' ? cliArgs.slice(1) : cliArgs
 const allocateXvfbDisplay = createXvfbDisplayAllocator()
+let preparedNativeObserverDirectory
 
 function formatDuration(durationMs) {
   const totalSeconds = Math.max(0, Math.floor(durationMs / 1000))
@@ -206,6 +212,17 @@ async function sharedBuildEnvironment(environment = process.env, selectedCheckpo
     await prepareXvfbSocketDirectory()
   }
   let nextEnvironment = environment
+  if (process.platform === 'win32') {
+    let directory = environment.WEWORK_E2E_NATIVE_OBSERVER_DIRECTORY
+    if (directory) {
+      await requireWindowsNativeObserver(directory)
+    } else {
+      directory = await mkdtemp(join(tmpdir(), 'wework-native-observer-'))
+      preparedNativeObserverDirectory = directory
+      await prepareWindowsNativeObserver(directory)
+    }
+    nextEnvironment = { ...environment, WEWORK_E2E_NATIVE_OBSERVER_DIRECTORY: directory }
+  }
   const selected =
     selectedCheckpoints ??
     requestedParallelCheckpoints(requestedArgs) ??
@@ -217,7 +234,7 @@ async function sharedBuildEnvironment(environment = process.env, selectedCheckpo
     const pairPath = resolve(environment.WEWORK_E2E_UPGRADE_PAIR)
     const pair = JSON.parse(await readFile(pairPath, 'utf8'))
     nextEnvironment = {
-      ...environment,
+      ...nextEnvironment,
       ...(selected.every(value => UPGRADE_DIAGNOSTIC_CHECKPOINTS.includes(value))
         ? {
             WEWORK_E2E_APP_BIN: pair.from.executable,
@@ -426,7 +443,25 @@ async function runParallelCheckpoints(checkpoints) {
     }
     process.exitCode = 1
   } finally {
-    await rm(sharedRuntimeDirectory, { recursive: true, force: true })
+    const startedAt = Date.now()
+    const logCleanup = event =>
+      console.log(
+        '[desktop-e2e-cleanup] ' +
+          JSON.stringify({
+            timestamp: new Date().toISOString(),
+            event,
+            elapsedMs: Date.now() - startedAt,
+            activeResources: process.getActiveResourcesInfo(),
+          })
+      )
+    logCleanup('shared-runtime-removal-started')
+    try {
+      await rm(sharedRuntimeDirectory, { recursive: true, force: true })
+      logCleanup('shared-runtime-removal-completed')
+    } catch (error) {
+      logCleanup('shared-runtime-removal-failed')
+      throw error
+    }
   }
 }
 
@@ -484,8 +519,14 @@ if (previousResults.compacted > 0) {
   console.log(`[desktop-e2e] compacted ${previousResults.compacted} previous result directories`)
 }
 
-if (requestedArgs.length > 0) {
-  await runRequestedArgs()
-} else {
-  await runAllCheckpoints()
+try {
+  if (requestedArgs.length > 0) {
+    await runRequestedArgs()
+  } else {
+    await runAllCheckpoints()
+  }
+} finally {
+  if (preparedNativeObserverDirectory) {
+    await rm(preparedNativeObserverDirectory, { recursive: true, force: true })
+  }
 }

@@ -13,7 +13,7 @@ from typing import Callable
 from zipfile import ZipFile
 
 import pytest
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
@@ -80,6 +80,57 @@ def test_real_plugin_leases_use_180_seconds_and_allow_parallel_plugins(context):
         assert all(150_000 <= ttl <= 180_000 for ttl in leases), leases
         assert not client.exists(f"wegent:plugin-write:{context.user_id}")
     assert not client.exists(first_key) and not client.exists(second_key)
+
+
+def test_batch_row_contention_releases_unrelated_plugin_leases(context):
+    """A blocked parent must not serialize another installation's writes."""
+    second_name = f"batch-row-{uuid.uuid4().hex}"
+    with context.sessions.begin() as db:
+        other = Kind(
+            user_id=context.user_id,
+            kind="InstalledPlugin",
+            namespace="default",
+            name=second_name,
+            json={"spec": {}},
+            is_active=True,
+        )
+        db.add(other)
+        db.flush()
+        second_id = other.id
+    targets = [(context.user_id, context.plugin_id), (context.user_id, second_id)]
+    client = coordination._redis_client()
+    with context.sessions() as holder, context.sessions() as batch:
+        holder.execute(
+            text(
+                "UPDATE kinds FORCE INDEX (PRIMARY) SET json=json "
+                "WHERE id=:id AND user_id=:user_id "
+                "AND namespace='default' AND kind='InstalledPlugin'"
+            ),
+            {"id": context.plugin_id, "user_id": context.user_id},
+        )
+        with pytest.raises(PluginWriteError) as failure:
+            coordination.acquire_plugin_write_locks(batch, targets)
+        assert failure.value.code == "plugin_write_busy"
+        assert not client.exists(lock_key(context))
+        assert not client.exists(lock_key(context, second_name))
+        with context.sessions.begin() as independent:
+            acquire_plugin_write_lock(
+                independent, context.user_id, installed_id=second_id
+            )
+            row = independent.get(Kind, second_id)
+            row.json = {**row.json, "independentWrite": True}
+        assert (
+            holder.get(Kind, context.plugin_id).json["spec"].get("writeRevision", 0)
+            == 0
+        )
+        holder.rollback()
+        coordination.acquire_plugin_write_locks(batch, targets)
+        batch.commit()
+    with context.sessions() as db:
+        assert db.get(Kind, context.plugin_id).json["spec"]["writeRevision"] == 1
+        other = db.get(Kind, second_id)
+        assert other.json["independentWrite"] is True
+        assert other.json["spec"]["writeRevision"] == 2
 
 
 @pytest.mark.parametrize("same_slug", [False, True])

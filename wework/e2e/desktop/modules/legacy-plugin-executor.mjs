@@ -9,7 +9,7 @@ import { promisify } from 'node:util'
 import { extractRuntimeArchive } from '../../../scripts/lib/extract-runtime-archive.mjs'
 import { hashReleaseAsset } from '../../../scripts/lib/portable-desktop-release.mjs'
 import { fetchGithubReleaseAsset } from './github-release-asset.mjs'
-import { appendProcessOutput, stopProcessGroup } from './shared.mjs'
+import { appendChildProcessOutput, stopProcessGroup } from './shared.mjs'
 
 const execute = promisify(execFile)
 const repository = 'wecode-ai/Wegent'
@@ -225,10 +225,7 @@ export async function startHistoricalPluginExecutor({
     detached: process.platform !== 'win32',
   })
   cloud.generatedRemoteExecutors.push(child)
-  await Promise.all([
-    appendProcessOutput(child.stdout, logPath, child),
-    appendProcessOutput(child.stderr, logPath, child),
-  ])
+  appendChildProcessOutput(child, logPath)
   try {
     await cloud.waitForDevice(deviceId, logPath)
   } catch (error) {

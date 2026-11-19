@@ -8,7 +8,7 @@ export function createDesktopScenario({ uiTimeoutMs }) {
   return {
     async verify(control) {
       const projectName = `Issue reference-${process.pid}`
-      await control.command('clickWhenEnabled', '[data-testid="workspace-tab-select-fixed-board"]')
+      await control.command('click', '[data-testid="workspace-tab-select-fixed-board"]')
       await createLocalCollaborationProject(control, CONTENT, projectName)
       const projects = await requestExecutor(control, 'projects.list', {}, uiTimeoutMs)
       const project = projects.find(candidate => candidate.name === projectName)

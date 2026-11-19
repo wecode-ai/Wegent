@@ -8,6 +8,7 @@ import { promisify } from 'node:util'
 import { test, vi } from 'vitest'
 
 import {
+  sendPrompt,
   sendPromptWithButton,
   verifyBackgroundGuidanceNavigation,
 } from '../e2e/desktop/modules/conversation-navigation.mjs'
@@ -19,6 +20,7 @@ import {
   DEFAULT_STEP_TIMEOUT_MS,
   triggerModelReloadUntilCloudFailure,
 } from '../e2e/desktop/modules/shared.mjs'
+import { sendOrderFollowUp } from '../e2e/desktop/modules/streaming-text-fixture.mjs'
 
 test('retains a submission error without an unhandled model observer rejection', async () => {
   const sharedUrl = pathToFileURL(
@@ -59,16 +61,24 @@ test('explicitly refreshes cloud models after the previously held request was ca
   try {
     const commands = []
     const control = Object.assign(Object.create(DesktopE2EServer.prototype), {
-      failedCloudModelRequests: 0,
-      failedCloudModelWaiter: null,
+      backendFaults: {
+        failures: 0,
+        waiter: null,
+        awaitFailure() {
+          if (this.failures) return Promise.resolve()
+          return new Promise(resolve => {
+            this.waiter = resolve
+          })
+        },
+      },
       fatalErrorPromise: new Promise(() => {}),
       async command(action, selector, options = {}) {
         commands.push({ action, selector, options })
         if (action === 'clickWhenEnabled') {
           assert.equal(selector, '[data-testid="model-selector-button"]')
-          this.failedCloudModelRequests += 1
-          this.failedCloudModelWaiter?.()
-          this.failedCloudModelWaiter = null
+          this.backendFaults.failures += 1
+          this.backendFaults.waiter?.()
+          this.backendFaults.waiter = null
         }
         return ''
       },
@@ -148,57 +158,112 @@ test('waits for the checkpoint model request before starting its unchanged UI bu
   }
 })
 
-test('submits once after a restored conversation finishes loading its model catalog', async () => {
-  const prompt = 'Continue the persisted conversation after restart'
-  let catalogReady = false
-  let composerValue = ''
-  let submissions = 0
-  let keyPresses = 0
-  const catalogLoaded = new Promise(resolve => {
-    setTimeout(() => {
-      catalogReady = true
-      resolve()
-    }, 50)
-  })
-  const control = {
-    async command(action, selector, options = {}) {
-      switch (action) {
-        case 'getElementCount':
-          return '0'
-        case 'fill':
-          composerValue = options.value
-          return ''
-        case 'waitFor':
-          if (options.enabled) {
-            assert.ok(selector.includes('send-message-button'))
-            await catalogLoaded
-          } else {
-            assert.equal(composerValue, options.text)
-          }
-          return ''
-        case 'press':
-          keyPresses += 1
-          if (catalogReady) {
-            submissions += 1
-            composerValue = ''
-          }
-          return ''
-        case 'snapshot':
-          return JSON.stringify({ testIds: [], text: submissions ? prompt : '' })
-        case 'getValue':
-          return composerValue
-        default:
-          throw new Error(`Unexpected control action ${action}`)
-      }
-    },
+test('starts the message-order UI budget after its model response has finished', async () => {
+  vi.useFakeTimers()
+  try {
+    const responseDelay = DEFAULT_STEP_TIMEOUT_MS + 250
+    const requests = Array.from({ length: 21 }, (_, index) => ({ followUpNumber: index + 1 }))
+    const control = Object.assign(Object.create(DesktopE2EServer.prototype), {
+      scenarioRequests: new Map([['message_order_follow_up', requests]]),
+      scenarioWaiters: new Map(),
+      fatalErrorPromise: new Promise(() => {}),
+      async command(action, _selector, options = {}) {
+        if (action === 'fill') return options.value
+        if (action === 'clickWhenEnabled') {
+          setTimeout(() => {
+            this.recordScenarioRequest('message_order_follow_up', { followUpNumber: 22 })
+          }, responseDelay)
+        }
+        if (action === 'waitFor') {
+          assert.equal(requests.length, 22, 'UI waiting started before the model response')
+          assert.equal(options.text, 'WEWORK_DESKTOP_E2E_ORDER_COMPLETION_22')
+          assert.equal(options.timeoutMs, DEFAULT_STEP_TIMEOUT_MS)
+        }
+        return ''
+      },
+    })
+
+    const sent = sendOrderFollowUp(control, 22, DEFAULT_STEP_TIMEOUT_MS, 30_000).then(
+      () => null,
+      error => error
+    )
+    await vi.advanceTimersByTimeAsync(responseDelay)
+    assert.equal(await sent, null)
+    assert.equal(vi.getTimerCount(), 0)
+  } finally {
+    vi.clearAllTimers()
+    vi.useRealTimers()
   }
-
-  await sendPromptWithButton(control, '[data-testid="chat-input"]', prompt, 500)
-
-  assert.equal(submissions, 1)
-  assert.equal(keyPresses, 1)
-  assert.equal(composerValue, '')
 })
+
+test('rejects a model response recorded for a different message-order turn', async () => {
+  const control = {
+    command: vi.fn(async (action, _selector, options = {}) =>
+      action === 'fill' ? options.value : ''
+    ),
+    awaitScenarioRequestCount: vi.fn(async () => ({ followUpNumber: 21 })),
+  }
+  await assert.rejects(sendOrderFollowUp(control, 22, 10_000, 30_000), /different follow-up turn/)
+  assert.equal(control.command.mock.calls.length, 2)
+})
+
+test.each([
+  ['keyboard', sendPrompt],
+  ['button readiness', sendPromptWithButton],
+])(
+  '%s submits once after a restored conversation finishes loading its model catalog',
+  async (_name, submit) => {
+    const prompt = 'Continue the persisted conversation after restart'
+    let catalogReady = false
+    let composerValue = ''
+    let submissions = 0
+    let keyPresses = 0
+    const catalogLoaded = new Promise(resolve => {
+      setTimeout(() => {
+        catalogReady = true
+        resolve()
+      }, 50)
+    })
+    const control = {
+      async command(action, selector, options = {}) {
+        switch (action) {
+          case 'getElementCount':
+            return '0'
+          case 'fill':
+            composerValue = options.value
+            return ''
+          case 'waitFor':
+            if (options.enabled) {
+              assert.ok(selector.includes('send-message-button'))
+              await catalogLoaded
+            } else {
+              assert.equal(composerValue, options.text)
+            }
+            return ''
+          case 'press':
+            keyPresses += 1
+            if (catalogReady) {
+              submissions += 1
+              composerValue = ''
+            }
+            return ''
+          case 'snapshot':
+            return JSON.stringify({ testIds: [], text: submissions ? prompt : '' })
+          case 'getValue':
+            return composerValue
+          default:
+            throw new Error(`Unexpected control action ${action}`)
+        }
+      },
+    }
+
+    await submit(control, '[data-testid="chat-input"]', prompt, 500)
+
+    assert.equal(submissions, 1)
+    assert.equal(keyPresses, 1)
+    assert.equal(composerValue, '')
+  }
+)
 
 test('a missing model request stops polling when its budget expires', async () => {
   vi.useFakeTimers()

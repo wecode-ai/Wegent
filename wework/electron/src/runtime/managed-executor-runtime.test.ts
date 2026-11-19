@@ -1,3 +1,4 @@
+import { e2eErrorLog } from '../host/e2e-error-log.js'
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { homedir } from 'node:os'
@@ -426,8 +427,22 @@ describe('managed executor runtime', () => {
     let ownerConnectionsPath: string
     let identityPath: string
     let runtime: ManagedExecutorRuntime
+    let journalEvents: Array<{
+      source: string
+      type: string
+      level: string
+      details: Record<string, unknown>
+    }>
+    let restoreJournal = () => {}
 
     beforeEach(async () => {
+      journalEvents = []
+      const journal = vi
+        .spyOn(e2eErrorLog, 'record')
+        .mockImplementation((source, type, level, details) => {
+          journalEvents.push({ source, type, level, details })
+        })
+      restoreJournal = () => journal.mockRestore()
       directory = await temporaryDirectory('managed-executor-restart-')
       ownerConnectionsPath = join(directory.path, 'owner-connections')
       identityPath = join(directory.path, 'executor-identity.json')
@@ -467,6 +482,11 @@ describe('managed executor runtime', () => {
                 ok: accepted,
                 protocol_version: 1,
               }) + '\\n')
+              if (message.token === process.env.WEGENT_APP_IPC_OWNER_TOKEN) {
+                socket.write(JSON.stringify({ type: 'event', event: 'runtime.hooks.run_completed',
+                  payload: { run: { runId: 'hook-owner-test', pluginId: 'sample', handlerId: 'complete', status: 'failed', stderrPreview: 'Hook command rejected', stderrTruncated: false } }
+                }) + '\\n')
+              }
             })
           }).listen(endpoint)
         `,
@@ -495,7 +515,29 @@ describe('managed executor runtime', () => {
         await runtime?.stop()
       } finally {
         await directory?.remove()
+        restoreJournal()
       }
+    })
+
+    test('journals hook failures from the authenticated owner without a renderer callback', async () => {
+      await expect
+        .poll(() => journalEvents)
+        .toContainEqual({
+          source: 'runtime',
+          type: 'plugin-hook-completed',
+          level: 'error',
+          details: {
+            event: 'runtime.hooks.run_completed',
+            run: {
+              runId: 'hook-owner-test',
+              pluginId: 'sample',
+              handlerId: 'complete',
+              status: 'failed',
+              stderrPreview: 'Hook command rejected',
+              stderrTruncated: false,
+            },
+          },
+        })
     })
 
     test('reconnects the owner stream after the executor restarts', async () => {

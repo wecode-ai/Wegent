@@ -5,6 +5,7 @@ import {
 } from '@/api/cloud/connectorApps'
 import { requestLocalExecutor } from '@/desktop/localExecutor'
 import { nextConnectorSyncRevision } from './connectorSyncRevision'
+import { connectorAppCatalog } from './connectorAppCatalog'
 
 export interface ConnectorAppSyncResult {
   /** Whether the local executor's connector surface changed. */
@@ -88,42 +89,15 @@ export async function synchronizeConnectorApps({
   // stop the authorized apps from syncing.
   const catalog = await listWegentConnectorApps(apiBaseUrl, token).catch(() => [])
   checkCurrent()
-  const callable = installed.apps
-    .filter(app => app.enabled && app.callable)
-    .map(app => ({
-      slug: app.slug,
-      name: app.runtime_name ?? app.slug,
-      description: app.description ?? '',
-      toolLoadingMode: app.tool_loading_mode ?? 'static',
-      tools: app.tool_summaries ?? [],
-      authorizationRequired: false,
-    }))
-  // Unauthorized apps still get a Skill so the agent knows the capability
-  // exists and asks the user to authorize instead of denying it.
-  const callableSlugs = new Set(callable.map(app => app.slug))
-  const awaitingAuthorization = catalog
-    .filter(
-      app =>
-        app.auth_type === 'oauth2' &&
-        app.connection.status !== 'connected' &&
-        !callableSlugs.has(app.slug)
-    )
-    .map(app => ({
-      slug: app.slug,
-      name: app.name,
-      description: app.description ?? '',
-      toolLoadingMode: app.tool_loading_mode,
-      tools: [],
-      authorizationRequired: true,
-    }))
+  const { apps, callableSlugs } = connectorAppCatalog(installed, catalog)
   const result = await requestLocalExecutor<{ changed: boolean }>('runtime.connectors.apps.sync', {
     syncRevision,
-    apps: [...callable, ...awaitingAuthorization],
+    apps,
   })
   checkCurrent()
   return {
     changed: Boolean(result.changed),
-    callableSlugs: [...callableSlugs],
+    callableSlugs,
     expiresAtMs,
     expiresInSeconds: connectorToken.expires_in,
   }

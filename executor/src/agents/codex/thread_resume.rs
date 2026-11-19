@@ -2,6 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use super::*;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+pub(super) struct CodexRequestAttempt {
+    pub(super) result: Result<Value, String>,
+    pub(super) process_generation: Option<u64>,
+}
 
 impl CodexAppServerClient {
     // Nested transcript reads must not inline the complete admission state machine.
@@ -12,11 +18,26 @@ impl CodexAppServerClient {
         launch_config: Option<&'a CodexLaunchConfig>,
     ) -> BoxFuture<'a, Result<Value, String>> {
         Box::pin(async move {
+            self.request_with_thread_admission_tracked(method, params, launch_config)
+                .await
+                .result
+        })
+    }
+
+    pub(super) fn request_with_thread_admission_tracked<'a>(
+        &'a self,
+        method: &'a str,
+        params: Value,
+        launch_config: Option<&'a CodexLaunchConfig>,
+    ) -> BoxFuture<'a, CodexRequestAttempt> {
+        Box::pin(async move {
             let timeout_seconds = codex_rpc_timeout_seconds();
-            with_thread_resume_barrier(method, &params, timeout_seconds, || async {
+            let generation = AtomicU64::new(0);
+            let result = with_thread_resume_barrier(method, &params, timeout_seconds, || async {
                 let (request_id, handle, response_rx) = self
                     .prepare_request_with_process(true, launch_config, method, &params)
                     .await?;
+                generation.store(handle.notifications.process_generation, Ordering::Relaxed);
                 Self::send_request_and_wait(
                     method,
                     params.clone(),
@@ -27,7 +48,12 @@ impl CodexAppServerClient {
                 )
                 .await
             })
-            .await
+            .await;
+            let generation = generation.load(Ordering::Relaxed);
+            CodexRequestAttempt {
+                result,
+                process_generation: (generation != 0).then_some(generation),
+            }
         })
     }
 }

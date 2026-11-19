@@ -1,11 +1,9 @@
+import { sanitizeScriptDetail } from '@wegent/chat-core/browser-performance'
 import { getScrollViewportElement } from './scrollViewportElement'
-import {
-  createConversationSearchPerformanceCapture,
-  sanitizeSearchScriptDetail,
-} from './conversationSearchPerformance'
+import { createConversationSearchPerformanceCapture } from './conversationSearchPerformance'
 export { setConversationFrameProbeEnabled } from './conversationFrameProbe'
 
-// Capture only the layout window around reader input; idle rendering does no diagnostic DOM reads.
+// Reader input opens a short layout window; verification clients hold scoped capture leases.
 const CAPTURE_WINDOW_MS = 10_000
 const MAX_EVENTS = 400
 // These keys must carry only measurements or flags, never user text.
@@ -181,6 +179,7 @@ export interface ConversationDiagnosticEvent {
 }
 
 const events: ConversationDiagnosticEvent[] = []
+const captureLeases = new Set<symbol>()
 let captureUntil = 0
 let nextSequence = 1
 let nextEventIndex = 0
@@ -199,8 +198,17 @@ export function startConversationDiagnosticCapture(): void {
   captureUntil = performance.now() + CAPTURE_WINDOW_MS
 }
 
+/** Keep bounded diagnostics active for a verification client's lifetime. */
+export function acquireConversationDiagnosticCapture(): () => void {
+  const lease = Symbol('conversation-diagnostic-capture')
+  captureLeases.add(lease)
+  return () => {
+    captureLeases.delete(lease)
+  }
+}
+
 export function isConversationDiagnosticsEnabled(): boolean {
-  return performance.now() < captureUntil
+  return captureLeases.size > 0 || performance.now() < captureUntil
 }
 
 export const getConversationDiagnosticScroller = getScrollViewportElement
@@ -243,7 +251,7 @@ export function recordConversationDiagnostic(
   const sanitized: ConversationDiagnosticEvent['details'] = {}
   for (const [key, value] of Object.entries(details)) {
     if (name === 'search-slow-script' && typeof value === 'string') {
-      const safeValue = sanitizeSearchScriptDetail(key, value)
+      const safeValue = sanitizeScriptDetail(key, value)
       if (safeValue !== undefined) sanitized[key] = safeValue
       continue
     }
@@ -319,6 +327,7 @@ export function recordConversationScrollDiagnostic(
 }
 
 export function resetConversationDiagnosticsForTest(): void {
+  captureLeases.clear()
   searchPerformanceCapture.stop()
   events.splice(0)
   captureUntil = 0

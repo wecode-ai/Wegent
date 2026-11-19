@@ -1,3 +1,4 @@
+import { desktopOwnerId as USER_ID } from '../modules/desktop-owner-fixture.mjs'
 import {
   openProjectStandIn,
   discardStandInDraft,
@@ -15,7 +16,6 @@ import { selectCollaborationProjectView } from '../modules/collaboration-project
 
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const PROJECT = `助理独立控制-${process.pid}`
-const USER_ID = 9001
 const PROMPT = '[data-testid="stand-in-prompt"]'
 const SAVE = '[data-testid="stand-in-save"]'
 

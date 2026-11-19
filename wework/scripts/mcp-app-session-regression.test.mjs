@@ -1,7 +1,14 @@
 // @vitest-environment node
 
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
-import { waitForMcpAppText } from '../e2e/desktop/scenarios/mcp-app-session-regression.mjs'
+import {
+  verifyMcpPredictionSourceRetention,
+  waitForMcpAppText,
+} from '../e2e/desktop/scenarios/mcp-app-session-regression.mjs'
+import { requestExecutor } from '../e2e/desktop/modules/executor-rpc.mjs'
+import { REPLY_PREDICTION_PROMPT } from '../e2e/desktop/modules/response-protocol.mjs'
+
+vi.mock('../e2e/desktop/modules/executor-rpc.mjs', () => ({ requestExecutor: vi.fn() }))
 
 beforeEach(() => {
   vi.useFakeTimers()
@@ -9,6 +16,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers()
+  vi.mocked(requestExecutor).mockReset()
 })
 
 test('the first app operation can finish cold connection recovery after process health succeeds', async () => {
@@ -51,4 +59,45 @@ test('ordinary app interactions retain their existing UI deadline and exact coun
   const rejected = expect(pending).rejects.toThrow('Counter 1')
   await vi.advanceTimersByTimeAsync(10000)
   await rejected
+})
+
+test.each([false, true])(
+  'checks the native service identity even when the App operation succeeds; replaced=%s',
+  async replaced => {
+    const control = { modelRequests: [] }
+    const address = { taskId: 'source-task' }
+    vi.mocked(requestExecutor).mockImplementation(async () => {
+      control.modelRequests.push({
+        body: { input: [{ role: 'user', content: REPLY_PREDICTION_PROMPT }] },
+      })
+      return { suggestion: null }
+    })
+    let observations = 0
+    const frameAction = vi.fn(async action => {
+      if (action === 'attribute') return observations++ === 0 || !replaced ? 'source' : 'restored'
+      if (action === 'text') return 'Heartbeats 3'
+    })
+    const result = verifyMcpPredictionSourceRetention(control, address, frameAction, 10000)
+    if (replaced) await expect(result).rejects.toThrow('Prediction replaced the live MCP service')
+    else await expect(result).resolves.toBeUndefined()
+    expect(requestExecutor).toHaveBeenCalledWith(
+      control,
+      'runtime.text.predict_reply',
+      { address, requestId: expect.any(String) },
+      10000
+    )
+    expect(frameAction).toHaveBeenCalledWith('click', '#heartbeat')
+  }
+)
+
+test('a skipped prediction cannot certify source retention', async () => {
+  vi.mocked(requestExecutor).mockResolvedValue({ suggestion: null })
+  await expect(
+    verifyMcpPredictionSourceRetention(
+      { modelRequests: [] },
+      { taskId: 'source-task' },
+      async () => 'source',
+      10000
+    )
+  ).rejects.toThrow('The real prediction fork must reach the model once')
 })

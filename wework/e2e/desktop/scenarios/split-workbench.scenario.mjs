@@ -1,0 +1,1201 @@
+import { readRequestBody as readJson } from '../modules/response-protocol.mjs'
+import assert from 'node:assert/strict'
+
+import { waitForWorkbenchDebugState } from '../modules/workspace-flows.mjs'
+import { DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, selectE2EModel } from '../modules/shared.mjs'
+
+const ACTIVE_SURFACE = '[data-workspace-tab-content][aria-hidden="false"]'
+const COMPOSER = '[data-testid="desktop-empty-composer-frame"] [data-testid="chat-message-input"]'
+const FIRST_PROMPT = 'SPLIT LEFT TASK: investigate online Connector authentication'
+const SECOND_PROMPT = 'SPLIT RIGHT TASK'
+const THIRD_PROMPT = 'SPLIT OUTSIDE TASK'
+const MODEL_ISOLATION_FOLLOW_UP = `${FIRST_PROMPT} model isolation follow-up`
+const TABLE_MARKDOWN = '| A | B |\n| --- | --- |\n| 中文 | **bold** |\n| Empty |  |'
+const PANE_SELECTOR = '[data-testid^="workbench-pane-"][data-focused]'
+const SPLIT_ATTACHMENT_FILENAME = 'split-pane-only.png'
+const IMAGE_ARTIFACT_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAIAAAACUFjqAAAAEklEQVR4nGP4z8CAB+GTG8HSALfKY52fTcuYAAAAAElFTkSuQmCC'
+
+function sse(events) {
+  return events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join('')
+}
+
+function responseCreated(id) {
+  return { type: 'response.created', response: { id } }
+}
+
+function responseCompleted(id) {
+  return {
+    type: 'response.completed',
+    response: {
+      id,
+      usage: {
+        input_tokens: 0,
+        input_tokens_details: null,
+        output_tokens: 0,
+        output_tokens_details: null,
+        total_tokens: 0,
+      },
+    },
+  }
+}
+
+function assistantMessage(text) {
+  return {
+    type: 'response.output_item.done',
+    item: {
+      id: `wework-split-message-${Date.now()}`,
+      type: 'message',
+      role: 'assistant',
+      content: [{ type: 'output_text', text, annotations: [] }],
+    },
+  }
+}
+
+async function waitForProjectWorkButton(control, timeoutMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    if (
+      Number(await control.command('getElementCount', '[data-testid="project-work-button"]')) > 0
+    ) {
+      return
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error('The split-workbench project selector did not become available')
+}
+
+async function waitForFolderPath(control, workspacePath, timeoutMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    if (
+      (await control.command('getValue', '[data-testid="device-folder-path-input"]')) ===
+      workspacePath
+    ) {
+      return
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error('The split-workbench folder picker did not retain the workspace path')
+}
+
+async function createLocalProject(control, workspacePath, timeoutMs) {
+  await waitForProjectWorkButton(control, timeoutMs)
+  await control.command('click', '[data-testid="project-work-button"]')
+  await control.command('click', '[data-testid="add-local-project-option"]')
+  await control.command('waitFor', '[data-testid="device-folder-path-input"]', { timeoutMs })
+  await control.command('fill', '[data-testid="device-folder-path-input"]', {
+    value: workspacePath,
+  })
+  await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+  await waitForFolderPath(control, workspacePath, timeoutMs)
+  await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]', {
+    timeoutMs,
+  })
+  await control.command('waitFor', '[data-testid="local-project-create-dialog"]', { timeoutMs })
+  await control.command('fill', '[data-testid="local-project-create-name-input"]', {
+    value: 'split-workbench',
+  })
+  await control.command('clickWhenEnabled', '[data-testid="confirm-local-project-create-button"]', {
+    timeoutMs,
+  })
+  await control.command('waitFor', '[data-testid="project-work-button"]', {
+    text: 'split-workbench',
+    timeoutMs,
+  })
+}
+
+async function waitForNewTaskRow(control, knownRows, expectedText, timeoutMs) {
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < timeoutMs) {
+    const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+    const candidates = snapshot.testIds.filter(
+      testId => testId.startsWith('runtime-local-task-row-') && !knownRows.has(testId)
+    )
+    for (const testId of candidates) {
+      if ((await control.command('getText', `[data-testid="${testId}"]`)).includes(expectedText)) {
+        return testId
+      }
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`The split-workbench task row did not appear for ${expectedText}`)
+}
+
+async function waitForElementCount(control, selector, expectedCount, timeoutMs) {
+  const startedAt = Date.now()
+  let stableMatches = 0
+  while (Date.now() - startedAt < timeoutMs) {
+    const count = Number(await control.command('getElementCount', selector))
+    stableMatches = count === expectedCount ? stableMatches + 1 : 0
+    if (stableMatches >= 3) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`Expected ${expectedCount} elements for ${selector}`)
+}
+
+async function createTask(control, prompt, timeoutMs) {
+  const snapshot = JSON.parse(await control.command('snapshot', 'body'))
+  const knownRows = new Set(
+    snapshot.testIds.filter(testId => testId.startsWith('runtime-local-task-row-'))
+  )
+  await control.command('fill', COMPOSER, { value: prompt })
+  await control.command(
+    'clickWhenEnabled',
+    `${ACTIVE_SURFACE} [data-testid="send-message-button"]`,
+    {
+      timeoutMs,
+    }
+  )
+  await control.command('waitFor', `${ACTIVE_SURFACE} [data-testid="message-assistant"]`, {
+    text: `${prompt}_COMPLETE`,
+    timeoutMs,
+  })
+  assert.equal(
+    await control.command('getActiveElementTestId', 'body'),
+    'chat-message-input',
+    'The composer did not retain focus after sending a message'
+  )
+  if (prompt === FIRST_PROMPT) await verifyMessageTableActions(control)
+  return waitForNewTaskRow(control, knownRows, prompt, timeoutMs)
+}
+
+async function verifyMessageTableActions(control) {
+  const table = `${ACTIVE_SURFACE} [data-testid="markdown-table"]`
+  await control.command('hover', table)
+  await control.command('click', `${table} [data-testid="markdown-table-copy-button"]`)
+  assert.equal(await control.command('getClipboardText', ''), TABLE_MARKDOWN)
+  await control.command('click', `${table} [data-testid="markdown-table-expand-button"]`)
+  await control.command('waitFor', '[data-testid="markdown-table-dialog"]', { visible: true })
+  assert.equal(
+    await control.command('getText', '[data-testid="markdown-table-dialog"] strong'),
+    'bold'
+  )
+  assert.equal(
+    Number(await control.command('getElementCount', '[data-testid="markdown-table-dialog"] tr')),
+    3
+  )
+  await control.command('press', '[data-testid="markdown-table-close-button"]', { key: 'Escape' })
+  assert.equal(
+    Number(await control.command('getElementCount', '[data-testid="markdown-table-dialog"]')),
+    0
+  )
+  assert.equal(
+    await control.command('getActiveElementTestId', 'body'),
+    'markdown-table-expand-button'
+  )
+  await control.command('click', `${ACTIVE_SURFACE} [data-testid="chat-message-input"]`)
+}
+
+async function verifyMultilineComposerCaret(control, captureScreenshot) {
+  assert.match(
+    await control.command('getAttribute', COMPOSER, { value: 'class' }),
+    /\bcomposer-prosemirror-editor\b/,
+    'The split workbench did not render the ProseMirror composer'
+  )
+  const beforePaste = '0123456789'
+  const pastedText = 'PASTED'
+  const afterPaste = 'abcdefghij'
+  await control.command('fill', COMPOSER, { value: `${beforePaste}${afterPaste}` })
+  await control.command('setSelectionOffset', COMPOSER, { value: String(beforePaste.length) })
+  await control.command('pasteText', COMPOSER, { value: pastedText })
+  assert.equal(
+    await control.command('getValue', COMPOSER),
+    `${beforePaste}${pastedText}${afterPaste}`,
+    'Pasting text in the middle did not preserve the surrounding composer text'
+  )
+  assert.equal(
+    Number(await control.command('getSelectionOffset', COMPOSER)),
+    beforePaste.length + pastedText.length,
+    'Pasting text in the middle moved the composer caret away from the pasted text'
+  )
+
+  await control.command('fill', COMPOSER, { value: '' })
+  await control.command('click', COMPOSER)
+  assert.equal(
+    await control.command('getActiveElementTestId', 'body'),
+    'chat-message-input',
+    'The composer did not retain DOM focus while the desktop window stayed inactive'
+  )
+  const [singleLineCaretMetrics] = JSON.parse(
+    await control.command('getElementMetrics', `${COMPOSER} .composer-empty-caret`)
+  )
+  assert.ok(singleLineCaretMetrics, 'The empty composer did not render its caret')
+  if (process.platform === 'darwin') {
+    assert.equal(
+      JSON.parse(await control.command('getWindowFocusSnapshot', 'body')).mainFocused,
+      false,
+      'The desktop E2E window unexpectedly became active'
+    )
+    assert.equal(
+      await control.command('getComputedStyleValue', `${COMPOSER} .composer-empty-caret`, {
+        value: 'animation-name',
+      }),
+      'none',
+      'The inactive composer continued animating its empty caret despite retaining DOM focus'
+    )
+    assert.equal(
+      await control.command('getComputedStyleValue', `${COMPOSER} .composer-empty-caret`, {
+        value: 'opacity',
+      }),
+      '0',
+      'The inactive composer continued showing its empty caret'
+    )
+  }
+  for (let line = 1; line < 12; line += 1) {
+    await control.command('press', COMPOSER, { key: 'Shift+Enter' })
+  }
+
+  await captureScreenshot(control, '00-composer-multiline-caret-stable.png', 'body')
+  assert.equal(
+    Number(await control.command('getElementCount', `${COMPOSER} > p`)),
+    12,
+    'Repeated line breaks did not create one composer paragraph per line'
+  )
+  assert.equal(
+    Number(await control.command('getElementCount', `${COMPOSER} .composer-empty-caret`)),
+    1,
+    'The multiline composer did not render exactly one caret'
+  )
+
+  const [composerMetrics] = JSON.parse(
+    await control.command(
+      'getElementMetrics',
+      '[data-testid="desktop-empty-composer-frame"] [data-composer-scroll-container]'
+    )
+  )
+  const [caretMetrics] = JSON.parse(
+    await control.command('getElementMetrics', `${COMPOSER} .composer-empty-caret`)
+  )
+  assert.ok(
+    composerMetrics.scrollHeight > composerMetrics.clientHeight,
+    'The multiline composer did not reach its scrollable height'
+  )
+  assert.ok(
+    composerMetrics.scrollTop > 0,
+    'The multiline composer caret was not scrolled into view'
+  )
+  assert.equal(
+    caretMetrics.height,
+    singleLineCaretMetrics.height,
+    `The composer caret height changed from ${singleLineCaretMetrics.height}px to ${caretMetrics.height}px`
+  )
+  assert.equal(
+    caretMetrics.width,
+    singleLineCaretMetrics.width,
+    `The composer caret width changed from ${singleLineCaretMetrics.width}px to ${caretMetrics.width}px`
+  )
+  assert.ok(
+    caretMetrics.top >= composerMetrics.top && caretMetrics.bottom <= composerMetrics.bottom,
+    'The multiline composer caret was clipped outside the visible editor'
+  )
+
+  await control.command('press', COMPOSER, { key: 'Backspace' })
+  assert.equal(
+    Number(await control.command('getElementCount', `${COMPOSER} > p`)),
+    11,
+    'Backspace did not remove the trailing empty composer line'
+  )
+
+  await control.command('press', COMPOSER, { key: 'Meta+a' })
+  await control.command('press', COMPOSER, { key: 'Backspace' })
+  assert.equal(
+    await control.command('getValue', COMPOSER),
+    '',
+    'Backspace did not clear the fully selected multiline composer'
+  )
+  await control.command('fill', COMPOSER, { value: '' })
+  assert.equal(
+    Number(await control.command('getElementCount', `${COMPOSER} > p`)),
+    1,
+    'Clearing the multiline composer did not restore a single empty paragraph'
+  )
+  // Native input activates the window, so run it after the inactive-caret checks.
+  await verifyComposerLineNavigation(control)
+  await verifyComposerMarkdownEditing(control)
+  await control.command('fill', COMPOSER, { value: '' })
+}
+
+async function verifyComposerLineNavigation(control) {
+  const firstLine = `${COMPOSER} > p:first-child`
+  const emptyLine = `${COMPOSER} > p:last-child`
+  // Synthetic keyboard events do not trigger Chromium's native caret movement.
+  await control.command('fill', COMPOSER, { value: 'first' })
+  await control.command('nativePress', COMPOSER, { key: 'Shift+Enter' })
+  assert.equal(await control.command('getValue', COMPOSER), 'first\n')
+
+  await control.command('nativePress', COMPOSER, { key: 'ArrowLeft' })
+  assert.equal(
+    Number(await control.command('getSelectionOffset', firstLine)),
+    5,
+    'Left from a new empty line did not move to the previous line'
+  )
+  await control.command('nativePress', COMPOSER, { key: 'ArrowRight' })
+  assert.equal(
+    Number(await control.command('getSelectionOffset', emptyLine)),
+    0,
+    'Right from the previous line did not move back to the empty line'
+  )
+  await control.command('nativePress', COMPOSER, { key: 'ArrowUp' })
+  const previousLineOffset = Number(await control.command('getSelectionOffset', firstLine))
+  assert.ok(
+    previousLineOffset >= 0 && previousLineOffset <= 5,
+    'Up did not reach the previous line'
+  )
+  await control.command('nativePress', COMPOSER, { key: 'ArrowDown' })
+  assert.equal(
+    Number(await control.command('getSelectionOffset', emptyLine)),
+    0,
+    'Down did not return to the empty line'
+  )
+  assert.equal(await control.command('getValue', COMPOSER), 'first\n')
+}
+
+async function verifyComposerLinkColor(control, selector) {
+  const linkColor = await control.command('getComputedStyleValue', 'html', {
+    value: '--color-link',
+  })
+  assert.match(linkColor, /^\d+ \d+ \d+$/)
+  assert.equal(
+    await control.command('getComputedStyleValue', selector, { value: 'color' }),
+    `rgb(${linkColor.split(' ').join(', ')})`,
+    'Composer links must use the selected theme link color'
+  )
+  assert.equal(
+    await control.command('getComputedStyleValue', selector, { value: 'text-decoration-line' }),
+    'underline'
+  )
+  assert.equal(
+    await control.command('getComputedStyleValue', selector, {
+      value: 'text-decoration-thickness',
+    }),
+    '1px'
+  )
+}
+
+async function verifyComposerMarkdownEditing(control) {
+  const markdown = '| A | B |\n| --- | --- |\n| X | **bold** |\n| Empty |  |'
+  await control.command('fill', COMPOSER, { value: '' })
+  await control.command('pasteText', COMPOSER, { value: markdown })
+  await control.command('waitFor', `${COMPOSER} table`, { visible: true })
+  assert.equal(await control.command('getValue', COMPOSER), markdown)
+  assert.equal(await control.command('getText', `${COMPOSER} strong`), 'bold')
+  assert.equal(Number(await control.command('getElementCount', `${COMPOSER} tr`)), 3)
+  await control.command('setSelectionOffset', `${COMPOSER} tr:nth-child(2) td:first-child`, {
+    value: '1',
+  })
+  await control.command('pasteText', COMPOSER, { value: 'edited' })
+  assert.match(await control.command('getValue', COMPOSER), /\| Xedited \| \*\*bold\*\* \|/)
+  await control.command('press', COMPOSER, { key: 'Tab' })
+  await control.command('pasteText', COMPOSER, { value: 'replaced' })
+  assert.match(await control.command('getValue', COMPOSER), /replaced/)
+  assert.equal(Number(await control.command('getElementCount', `${COMPOSER} table`)), 1)
+  const url = 'http://example.com/file_name?q=hello_world'
+  for (const [value, selector, html] of [
+    ['~~example~~', 's', '<s>example</s>'],
+    ['`example`', 'code', '<code>example</code>'],
+    ['**example**', 'strong', '<strong>example</strong>'],
+    ['*example*', 'em', '<em>example</em>'],
+    ['***example***', 'strong em', '<strong><em>example</em></strong>'],
+  ]) {
+    for (const source of ['markdown', 'rich-text']) {
+      console.log(`[composer-formatting] ${source}: ${value}`)
+      await control.command('fill', COMPOSER, { value: '' })
+      await control.command('pasteText', COMPOSER, {
+        value: source === 'rich-text' ? html : value,
+        mimeType: source === 'rich-text' ? 'text/html' : 'text/plain',
+      })
+      assert.equal(await control.command('getValue', COMPOSER), value)
+      await control.command('nativePress', COMPOSER, { key: 'x' })
+      assert.equal(
+        await control.command('getValue', COMPOSER),
+        `${value}x`,
+        `${source}: typing after ${selector} must not inherit its formatting`
+      )
+      assert.equal(await control.command('getText', `${COMPOSER} ${selector}`), 'example')
+      await control.command('setSelectionOffset', `${COMPOSER} ${selector}`, { value: '3' })
+      await control.command('nativePress', COMPOSER, { key: 'x' })
+      assert.equal(await control.command('getText', `${COMPOSER} ${selector}`), 'exaxmple')
+      assert.equal(
+        await control.command('getValue', COMPOSER),
+        `${value.replace('example', 'exaxmple')}x`,
+        `${source}: editing inside ${selector} must preserve its formatting`
+      )
+    }
+  }
+  for (const [value, selector, expected, normalized = value] of [
+    ['*some **bold** text*', 'strong', '*some **bold**x text*'],
+    ['**some *italic* text**', 'em', '**some *italic*x text**'],
+    [
+      '[*some **bold** text*](https://example.com)',
+      'strong',
+      '*[some **bold**x text](https://example.com)*',
+      '*[some **bold** text](https://example.com)*',
+    ],
+  ]) {
+    await control.command('fill', COMPOSER, { value: '' })
+    await control.command('pasteText', COMPOSER, { value })
+    assert.equal(await control.command('getValue', COMPOSER), normalized)
+    const innerText = await control.command('getText', `${COMPOSER} ${selector}`)
+    await control.command('setSelectionOffset', `${COMPOSER} ${selector}`, {
+      value: String(innerText.length),
+    })
+    await control.command('nativePress', COMPOSER, { key: 'x' })
+    assert.equal(
+      await control.command('getValue', COMPOSER),
+      expected,
+      'Typing past an inner formatting boundary must preserve the outer formatting'
+    )
+    assert.equal(await control.command('getText', `${COMPOSER} ${selector}`), innerText)
+  }
+  await control.command('fill', COMPOSER, { value: url })
+  await verifyComposerLinkColor(control, `${COMPOSER} [data-testid="composer-text-link"]`)
+  await control.command('click', `${COMPOSER} [data-testid="composer-text-link"]`)
+  await control.command('waitFor', '[data-testid="link-edit-open-link"]', { visible: true })
+  assert.equal(await control.command('getValue', COMPOSER), url)
+  await control.command('click', '[data-testid="link-edit-edit-text"]')
+  await control.command('fill', '[data-testid="link-edit-text-input"]', {
+    value: String.raw`Example [draft]\done]`,
+  })
+  await control.command('press', '[data-testid="link-edit-text-input"]', { key: 'Enter' })
+  assert.equal(
+    await control.command('getValue', COMPOSER),
+    String.raw`[Example \[draft\]\\done\]](${url})`
+  )
+  await verifyComposerLinkColor(control, `${COMPOSER} [data-testid="composer-text-link"]`)
+  assert.equal(
+    await control.command('getComputedStyleValue', `${COMPOSER} a[href]`, {
+      value: 'text-decoration-line',
+    }),
+    'none',
+    'The link wrapper must not add a second underline'
+  )
+  await control.command('fill', COMPOSER, { value: '' })
+  await control.command('pasteText', COMPOSER, { value: url })
+  await control.command('setSelectionOffset', COMPOSER, { value: String(url.length) })
+  await control.command('pasteText', COMPOSER, { value: '哈哈哈哈' })
+  assert.equal(
+    await control.command('getText', `${COMPOSER} [data-testid="composer-text-link"]`),
+    url
+  )
+  await verifyComposerLinkColor(control, `${COMPOSER} [data-testid="composer-text-link"]`)
+  assert.notEqual(
+    await control.command('getComputedStyleValue', COMPOSER, { value: 'color' }),
+    'rgb(51, 156, 255)',
+    'The ordinary text following a link must retain the composer text color'
+  )
+  const bounded = await control.command('getValue', COMPOSER)
+  assert.match(bounded, /\)哈哈哈哈$/)
+  await control.command('click', `${COMPOSER} [data-testid="composer-text-link"]`)
+  await control.command('click', '[data-testid="link-edit-edit-url"]')
+  assert.equal(await control.command('getValue', '[data-testid="link-edit-url-input"]'), url)
+  await control.command('press', '[data-testid="link-edit-url-input"]', { key: 'Escape' })
+  await control.command('fill', COMPOSER, { value: '' })
+}
+
+async function expandProject(control, timeoutMs) {
+  const selector = `${ACTIVE_SURFACE} [data-testid="project-item-button"]`
+  if ((await control.command('getAttribute', selector, { value: 'aria-expanded' })) !== 'true') {
+    await control.command('click', selector)
+  }
+  await control.command('waitFor', `${selector}[aria-expanded="true"]`, {
+    stableMs: 300,
+    timeoutMs,
+  })
+}
+
+async function paneSelectorForTitle(control, title) {
+  const testId = await control.command('getAttribute', PANE_SELECTOR, {
+    text: title,
+    value: 'data-testid',
+  })
+  assert.ok(testId, `Unable to resolve the task pane for ${title}`)
+  return `[data-testid="${testId}"]`
+}
+
+const DEFAULT_MODEL_LABELS = [DEFAULT_MODEL_LABEL, 'GPT-5.6 Luna']
+
+async function assertPaneModelLabel(control, paneSelector, expectedLabels, timeoutMs) {
+  const labels = Array.isArray(expectedLabels) ? expectedLabels : [expectedLabels]
+  const selector = `${paneSelector} [data-testid="model-selector-button"]`
+  const startedAt = Date.now()
+  let lastLabel = ''
+  while (Date.now() - startedAt < timeoutMs) {
+    lastLabel = await control.command('getText', selector, { visible: true })
+    if (labels.some(label => lastLabel.includes(label))) return
+    await new Promise(resolve => setTimeout(resolve, 100))
+  }
+  throw new Error(`Pane model label did not match ${labels.join(' | ')}; last label: ${lastLabel}`)
+}
+
+async function assertPaneConversation(control, paneSelector, expectedText) {
+  await control.command('waitFor', `${paneSelector} [data-testid="message-assistant"]`, {
+    text: expectedText,
+    visible: true,
+    stableMs: 300,
+  })
+  const [metrics] = JSON.parse(await control.command('getElementMetrics', paneSelector))
+  assert.ok(metrics.width > 0 && metrics.height > 0, `${expectedText} pane has no visible area`)
+}
+
+async function assertCompletedPanesStayIdle(control, paneSelectors, durationMs) {
+  const thinkingSelector = paneSelectors
+    .map(paneSelector => `${paneSelector} [data-testid="thinking-indicator"]`)
+    .join(', ')
+  const sample = JSON.parse(
+    await control.command('sampleElementPresence', thinkingSelector, {
+      value: String(durationMs),
+      timeoutMs: durationMs + 5_000,
+    })
+  )
+  assert.equal(
+    sample.observed,
+    false,
+    `A completed split-pane task periodically returned to the thinking state: ${JSON.stringify(sample)}`
+  )
+}
+
+async function assertIndependentTitlebar(control, paneSelector, title) {
+  assert.equal(
+    Number(
+      await control.command(
+        'getElementCount',
+        `${paneSelector} [data-testid^="workbench-pane-header-actions-"]`
+      )
+    ),
+    1,
+    `${title} does not own a titlebar action area`
+  )
+  for (const testId of [
+    'open-code-server-titlebar-button',
+    'environment-info-button',
+    'toggle-bottom-workspace-panel-button',
+    'toggle-right-workspace-panel-button',
+  ]) {
+    assert.equal(
+      Number(await control.command('getElementCount', `${paneSelector} [data-testid="${testId}"]`)),
+      1,
+      `${title} does not own ${testId}`
+    )
+  }
+}
+
+export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workspacePath }) {
+  let active = false
+  const modelIsolationFollowUpModels = []
+  return {
+    async handleHttp(request, response, url) {
+      if (
+        active &&
+        request.method === 'POST' &&
+        ['/v1/responses', '/responses'].includes(url.pathname)
+      ) {
+        const body = await readJson(request)
+        const input = JSON.stringify(body.input ?? body.messages ?? [])
+        const isModelIsolationFollowUp = input.includes(MODEL_ISOLATION_FOLLOW_UP)
+        const prompt = input.includes(SECOND_PROMPT)
+          ? SECOND_PROMPT
+          : input.includes(FIRST_PROMPT)
+            ? FIRST_PROMPT
+            : input.includes(THIRD_PROMPT)
+              ? THIRD_PROMPT
+              : null
+        if (!prompt) return false
+        if (isModelIsolationFollowUp) modelIsolationFollowUpModels.push(body.model)
+        const responseId = `wework-split-${Date.now()}`
+        const completion = isModelIsolationFollowUp
+          ? `${FIRST_PROMPT}_MODEL_ISOLATION_COMPLETE`
+          : `${prompt}_COMPLETE${prompt === FIRST_PROMPT ? `\n\n${TABLE_MARKDOWN}` : ''}`
+        response.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8' })
+        response.end(
+          sse([
+            responseCreated(responseId),
+            assistantMessage(completion),
+            responseCompleted(responseId),
+          ])
+        )
+        return true
+      }
+      return false
+    },
+
+    async verify(control) {
+      active = true
+      const taskTimeoutMs = Math.max(uiTimeoutMs, 30_000)
+      await createLocalProject(control, workspacePath, uiTimeoutMs)
+      await control.command('waitFor', COMPOSER, { timeoutMs: uiTimeoutMs })
+      await verifyMultilineComposerCaret(control, captureScreenshot)
+      await selectE2EModel(
+        control,
+        'local-model:desktop-e2e-responses',
+        'Desktop E2E Responses',
+        ACTIVE_SURFACE
+      )
+      const firstTaskRow = await createTask(control, FIRST_PROMPT, taskTimeoutMs)
+      const firstTaskId = firstTaskRow.replace('runtime-local-task-row-', '')
+      const completedTaskSnapshot = await waitForWorkbenchDebugState(
+        control,
+        snapshot =>
+          snapshot.workbench?.currentRuntimeTask?.taskId === firstTaskId &&
+          snapshot.workbench?.isBootstrapping === false,
+        'The completed task did not expose its runtime address',
+        uiTimeoutMs
+      )
+      const firstTaskDeviceId = completedTaskSnapshot.workbench.currentRuntimeTask.deviceId
+
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', COMPOSER, { stableMs: 500, timeoutMs: uiTimeoutMs })
+      const restoredPaneId = 'pane-e2e-completed-task'
+      const restoredPaneKey = `runtime:${firstTaskDeviceId}:${firstTaskId}`
+      const restoredSplitState = JSON.stringify({
+        version: 3,
+        state: {
+          version: 3,
+          groups: [],
+          activeView: {
+            type: 'single',
+            layout: {
+              version: 2,
+              root: {
+                id: restoredPaneId,
+                type: 'pane',
+                paneKey: restoredPaneKey,
+              },
+              focusedPaneId: restoredPaneId,
+            },
+          },
+        },
+      })
+
+      const readyCountBeforeCompletedTaskReload = control.readyCount
+      await control.command('reloadMainWindow', 'body', {
+        value: JSON.stringify({
+          localStorage: {
+            key: 'wework:workbench-split-groups:v3:fixed-task',
+            value: restoredSplitState,
+          },
+        }),
+      })
+      await control.awaitReadyAfter(readyCountBeforeCompletedTaskReload)
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot =>
+          snapshot.workbench?.isBootstrapping === false &&
+          Number(snapshot.workbench?.runtimeWorkSummary?.totalTasks ?? 0) >= 1,
+        'Reloading did not finish hydrating the completed task',
+        uiTimeoutMs
+      )
+      await assertPaneConversation(control, PANE_SELECTOR, `${FIRST_PROMPT}_COMPLETE`)
+      assert.equal(
+        Number(await control.command('getElementCount', COMPOSER)),
+        0,
+        'The startup blank pane replaced the persisted completed task'
+      )
+      await captureScreenshot(control, '00a-completed-task-restored-from-blank-startup.png', 'body')
+
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', COMPOSER, { stableMs: 500 })
+      await selectE2EModel(
+        control,
+        'local-model:desktop-e2e-responses',
+        'Desktop E2E Responses',
+        ACTIVE_SURFACE
+      )
+      const secondTaskRow = await createTask(control, SECOND_PROMPT, taskTimeoutMs)
+      const secondTaskId = secondTaskRow.replace('runtime-local-task-row-', '')
+
+      await expandProject(control, uiTimeoutMs)
+      const sidebar = `${ACTIVE_SURFACE} [data-testid="desktop-sidebar"]`
+      const firstRow = `${sidebar} [data-testid="${firstTaskRow}"]`
+      const secondRow = `${sidebar} [data-testid="${secondTaskRow}"]`
+      await control.command('waitFor', firstRow, {
+        text: FIRST_PROMPT,
+        visible: true,
+        stableMs: 300,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', secondRow, {
+        text: SECOND_PROMPT,
+        visible: true,
+        stableMs: 300,
+        timeoutMs: uiTimeoutMs,
+      })
+
+      assert.equal(
+        Number(await control.command('getElementCount', PANE_SELECTOR)),
+        1,
+        'Single-task mode must render one pane'
+      )
+      assert.equal(
+        Number(await control.command('getElementCount', '[data-testid="workbench-main-header"]')),
+        1,
+        'Single-task mode must keep the shared main header'
+      )
+      assert.equal(
+        Number(await control.command('getElementCount', '[data-testid^="workbench-pane-title-"]')),
+        0,
+        'Single-task mode must not duplicate task title chrome'
+      )
+      await assertPaneConversation(control, PANE_SELECTOR, `${SECOND_PROMPT}_COMPLETE`)
+      await captureScreenshot(control, '01-split-single-task.png', 'body')
+
+      await control.command(
+        'dragStart',
+        `${sidebar} [data-testid="runtime-local-task-drag-activator-${firstTaskId}"]`,
+        { target: PANE_SELECTOR, timeoutMs: uiTimeoutMs }
+      )
+      await control.command('waitFor', '[data-testid^="workbench-pane-drop-targets-"]', {
+        visible: true,
+        stableMs: 300,
+        timeoutMs: uiTimeoutMs,
+      })
+      const centerTarget =
+        '[data-testid^="workbench-pane-drop-targets-"] [data-workbench-pane-drop-position="center"]'
+      const rightTarget =
+        '[data-testid^="workbench-pane-drop-targets-"] [data-workbench-pane-drop-position="right"]'
+      const [centerMetrics] = JSON.parse(await control.command('getElementMetrics', centerTarget))
+      const [rightMetrics] = JSON.parse(await control.command('getElementMetrics', rightTarget))
+      assert.ok(
+        centerMetrics.width > rightMetrics.width * 3 &&
+          centerMetrics.width * centerMetrics.height > rightMetrics.width * rightMetrics.height * 3,
+        `The current-window drop target is not dominant: ${JSON.stringify({
+          centerMetrics,
+          rightMetrics,
+        })}`
+      )
+      await captureScreenshot(control, '02-split-drag-targets.png', 'body')
+
+      const splitResult = JSON.parse(
+        await control.command('dragEnd', 'body', {
+          target: rightTarget,
+          waitForSelector: '[role="separator"][data-separator]',
+          timeoutMs: uiTimeoutMs,
+        })
+      )
+      console.log(`[split-workbench] sidebar drag timings: ${JSON.stringify(splitResult)}`)
+      const splitDurationMs = splitResult.durationMs
+      assert.equal(
+        typeof splitDurationMs,
+        'number',
+        `Sidebar drag did not report its renderer duration: ${JSON.stringify(splitResult)}`
+      )
+      assert.ok(
+        splitDurationMs < 3_000,
+        `Sidebar drag took too long to create a split: ${splitDurationMs}ms`
+      )
+      console.log(`[split-workbench] sidebar drag created the split in ${splitDurationMs}ms`)
+      assert.equal(
+        Number(await control.command('getElementCount', PANE_SELECTOR)),
+        2,
+        'Sidebar edge drop must create exactly two panes'
+      )
+      assert.equal(
+        Number(await control.command('getElementCount', '[data-testid="workbench-main-header"]')),
+        0,
+        'Split mode must remove the shared task toolbar'
+      )
+      const firstPane = await paneSelectorForTitle(control, FIRST_PROMPT)
+      const secondPane = await paneSelectorForTitle(control, SECOND_PROMPT)
+      await assertPaneConversation(control, firstPane, `${FIRST_PROMPT}_COMPLETE`)
+      await assertPaneConversation(control, secondPane, `${SECOND_PROMPT}_COMPLETE`)
+      await assertCompletedPanesStayIdle(control, [firstPane, secondPane], 4_000)
+      await assertIndependentTitlebar(control, firstPane, FIRST_PROMPT)
+      await assertIndependentTitlebar(control, secondPane, SECOND_PROMPT)
+      await captureScreenshot(control, '03-split-two-independent-panes.png', 'body')
+
+      const firstComposer = `${firstPane} [data-testid="chat-message-input"]`
+      const secondComposer = `${secondPane} [data-testid="chat-message-input"]`
+      await control.command('pasteFile', firstComposer, {
+        filename: SPLIT_ATTACHMENT_FILENAME,
+        mimeType: 'image/png',
+        value: IMAGE_ARTIFACT_BASE64,
+      })
+      await control.command('waitFor', `${firstPane} [data-testid="attachment-badge"]`, {
+        visible: true,
+        stableMs: 300,
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        Number(
+          await control.command('getElementCount', `${secondPane} [data-testid="attachment-badge"]`)
+        ),
+        0,
+        'Pasting an attachment into the first pane leaked it into the second pane composer'
+      )
+      assert.equal(
+        Number(await control.command('getElementCount', '[data-testid="attachment-badge"]')),
+        1,
+        'A single pasted attachment rendered in more than one split-pane composer'
+      )
+      await captureScreenshot(control, '04-split-attachment-isolated.png', 'body')
+
+      const firstFocus = `${firstPane} [data-testid^="workbench-focus-pane-"]`
+      await control.command('click', firstFocus)
+      await control.command(
+        'waitFor',
+        '[data-testid="workbench-split-layout"][data-focused-pane]',
+        { stableMs: 300, timeoutMs: uiTimeoutMs }
+      )
+      assert.equal(
+        Number(await control.command('getElementCount', PANE_SELECTOR)),
+        1,
+        'Focused task view must show one pane'
+      )
+      assert.equal(
+        Number(await control.command('getElementCount', '[role="separator"][data-separator]')),
+        0,
+        'Focused task view must hide split separators'
+      )
+      await assertPaneConversation(control, firstPane, `${FIRST_PROMPT}_COMPLETE`)
+      await captureScreenshot(control, '05-split-focused-task.png', 'body')
+
+      await control.command('click', firstFocus)
+      await control.command('waitFor', '[role="separator"][data-separator]', {
+        visible: true,
+        stableMs: 300,
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        Number(await control.command('getElementCount', PANE_SELECTOR)),
+        2,
+        'Returning from focus view must restore both panes'
+      )
+      await captureScreenshot(control, '06-split-restored.png', 'body')
+
+      await control.command('click', `${firstPane} [data-testid="environment-info-button"]`)
+      await control.command('waitFor', '[data-testid="environment-info-popover"]', {
+        visible: true,
+        stableMs: 300,
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            [
+              `${firstPane} [data-testid="environment-info-button"][aria-expanded="true"]`,
+              `${secondPane} [data-testid="environment-info-button"][aria-expanded="false"]`,
+            ].join(', ')
+          )
+        ),
+        2,
+        'Environment state leaked into the other pane'
+      )
+      await captureScreenshot(control, '07-split-local-environment.png', 'body')
+      await control.command('click', `${firstPane} [data-testid="environment-info-button"]`)
+      await waitForElementCount(control, '[data-testid="environment-info-popover"]', 0, uiTimeoutMs)
+
+      await control.command(
+        'click',
+        `${firstPane} [data-testid="toggle-bottom-workspace-panel-button"]`
+      )
+      await control.command(
+        'waitFor',
+        `${firstPane} [data-testid="bottom-workspace-panel"][aria-hidden="false"]`,
+        { visible: true, stableMs: 300, timeoutMs: uiTimeoutMs }
+      )
+      const [bottomPanelMetrics] = JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          `${firstPane} [data-testid="bottom-workspace-panel"][aria-hidden="false"]`
+        )
+      )
+      const [firstPaneMetrics] = JSON.parse(await control.command('getElementMetrics', firstPane))
+      assert.ok(
+        bottomPanelMetrics.height >= 220 &&
+          bottomPanelMetrics.top >= firstPaneMetrics.top &&
+          bottomPanelMetrics.bottom <= firstPaneMetrics.bottom,
+        `Bottom workspace panel is outside its pane: ${JSON.stringify({
+          bottomPanelMetrics,
+          paneMetrics: firstPaneMetrics,
+        })}`
+      )
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            `${secondPane} [data-testid="bottom-workspace-panel"][aria-hidden="false"]`
+          )
+        ),
+        0,
+        'Bottom panel state leaked into the other pane'
+      )
+      await captureScreenshot(control, '08-split-local-bottom-panel.png', 'body')
+      await control.command(
+        'click',
+        `${firstPane} [data-testid="toggle-bottom-workspace-panel-button"]`
+      )
+      await control.command(
+        'waitFor',
+        `${firstPane} [data-testid="bottom-workspace-panel"][aria-hidden="true"]`,
+        { stableMs: 300, timeoutMs: uiTimeoutMs }
+      )
+
+      await control.command(
+        'click',
+        `${secondPane} [data-testid="toggle-right-workspace-panel-button"]`
+      )
+      await control.command(
+        'waitFor',
+        `${secondPane} [data-testid="right-workspace-panel-shell"][aria-hidden="false"]`,
+        { visible: true, stableMs: 300, timeoutMs: uiTimeoutMs }
+      )
+      await control.command('waitFor', `${secondPane} [data-testid="right-workspace-launcher"]`, {
+        visible: true,
+        stableMs: 300,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command(
+        'waitFor',
+        `${secondPane} [data-testid="right-workspace-browser-option"]`,
+        { visible: true, stableMs: 300, timeoutMs: uiTimeoutMs }
+      )
+      const [rightPanelMetrics] = JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          `${secondPane} [data-testid="right-workspace-panel-shell"]`
+        )
+      )
+      const [rightLauncherMetrics] = JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          `${secondPane} [data-testid="right-workspace-launcher"]`
+        )
+      )
+      const [rightBrowserOptionMetrics] = JSON.parse(
+        await control.command(
+          'getElementMetrics',
+          `${secondPane} [data-testid="right-workspace-browser-option"]`
+        )
+      )
+      const [secondPaneMetrics] = JSON.parse(await control.command('getElementMetrics', secondPane))
+      assert.ok(
+        rightPanelMetrics.width >= 260 &&
+          rightLauncherMetrics.width >= 180 &&
+          rightBrowserOptionMetrics.width >= 180 &&
+          rightPanelMetrics.left >= secondPaneMetrics.left &&
+          rightPanelMetrics.right <= secondPaneMetrics.right,
+        `Right workspace panel is not visibly contained by its pane: ${JSON.stringify({
+          browserOptionMetrics: rightBrowserOptionMetrics,
+          launcherMetrics: rightLauncherMetrics,
+          paneMetrics: secondPaneMetrics,
+          panelMetrics: rightPanelMetrics,
+        })}`
+      )
+      assert.equal(
+        Number(
+          await control.command(
+            'getElementCount',
+            `${firstPane} [data-testid="right-workspace-panel-shell"][aria-hidden="false"]`
+          )
+        ),
+        0,
+        'Right panel state leaked into the other pane'
+      )
+      await captureScreenshot(control, '09-split-local-right-panel.png', 'body')
+      await control.command(
+        'click',
+        `${secondPane} [data-testid="toggle-right-workspace-panel-button"]`
+      )
+      await control.command(
+        'waitFor',
+        `${secondPane} [data-testid="right-workspace-panel-shell"][aria-hidden="true"]`,
+        { stableMs: 300, timeoutMs: uiTimeoutMs }
+      )
+
+      const [beforeResize] = JSON.parse(await control.command('getElementMetrics', secondPane))
+      await control.command('drag', '[role="separator"][data-separator]', {
+        target: firstPane,
+        timeoutMs: uiTimeoutMs,
+      })
+      const [afterResize] = JSON.parse(await control.command('getElementMetrics', secondPane))
+      assert.ok(
+        Math.abs(afterResize.width - beforeResize.width) > 40,
+        'Dragging the separator did not visibly resize the split'
+      )
+      await captureScreenshot(control, '10-split-resized.png', 'body')
+
+      const readyCountBeforeReload = control.readyCount
+      await control.command('reloadMainWindow', 'body')
+      await control.awaitReadyAfter(readyCountBeforeReload)
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot =>
+          snapshot.workbench?.isBootstrapping === false &&
+          Number(snapshot.workbench?.runtimeWorkSummary?.totalTasks ?? 0) >= 2,
+        'Reloading did not finish bootstrapping both split tasks',
+        uiTimeoutMs
+      )
+      await waitForElementCount(control, PANE_SELECTOR, 2, uiTimeoutMs)
+      assert.equal(
+        Number(await control.command('getElementCount', PANE_SELECTOR)),
+        2,
+        'Reloading did not restore both panes'
+      )
+      assert.equal(
+        Number(await control.command('getElementCount', '[data-testid^="workbench-pane-title-"]')),
+        2,
+        'Reloading restored hidden task tabs or lost a pane title'
+      )
+      const restoredFirstPane = await paneSelectorForTitle(control, FIRST_PROMPT)
+      const restoredSecondPane = await paneSelectorForTitle(control, SECOND_PROMPT)
+      await assertPaneConversation(control, restoredFirstPane, `${FIRST_PROMPT}_COMPLETE`)
+      await assertPaneConversation(control, restoredSecondPane, `${SECOND_PROMPT}_COMPLETE`)
+
+      // Each pane must switch only its own conversation model and persist it.
+      // Keep the second pane as the focused model scope; the driver clicks
+      // programmatically, so the send below does not move pane focus.
+      await control.command('click', `${restoredSecondPane} [data-testid^="workbench-pane-title-"]`)
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot => snapshot.workbench?.activeTask?.taskId === secondTaskId,
+        'The second pane did not own the focused model scope before the isolation send',
+        uiTimeoutMs
+      )
+      await selectE2EModel(control, DEFAULT_MODEL_ID, DEFAULT_MODEL_LABEL, restoredFirstPane)
+      await assertPaneModelLabel(control, restoredSecondPane, 'Desktop E2E Responses', uiTimeoutMs)
+      await control.command('fill', `${restoredFirstPane} [data-testid="chat-message-input"]`, {
+        value: MODEL_ISOLATION_FOLLOW_UP,
+      })
+      await control.command(
+        'clickWhenEnabled',
+        `${restoredFirstPane} [data-testid="send-message-button"]`,
+        { timeoutMs: taskTimeoutMs }
+      )
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot => snapshot.workbench?.activeTask?.taskId === secondTaskId,
+        'The send moved the focused model scope away from the second pane',
+        uiTimeoutMs
+      )
+      await assertPaneConversation(
+        control,
+        restoredFirstPane,
+        `${FIRST_PROMPT}_MODEL_ISOLATION_COMPLETE`
+      )
+      assert.ok(
+        modelIsolationFollowUpModels.length > 0,
+        'The addressed pane follow-up never reached the model endpoint'
+      )
+      assert.ok(
+        modelIsolationFollowUpModels.every(model => model === DEFAULT_MODEL_ID),
+        `The addressed pane send executed with ${modelIsolationFollowUpModels.join(', ')}`
+      )
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot =>
+          (snapshot.workbench?.activeWorkspace?.tasks ?? []).some(
+            task =>
+              task.taskId === firstTaskId && task.modelSelection?.modelName === DEFAULT_MODEL_ID
+          ),
+        'Switching one pane model did not persist that pane task selection',
+        taskTimeoutMs
+      )
+      await waitForWorkbenchDebugState(
+        control,
+        snapshot =>
+          (snapshot.workbench?.activeWorkspace?.tasks ?? []).some(
+            task =>
+              task.taskId === secondTaskId &&
+              task.modelSelection?.modelName === 'local-model:desktop-e2e-responses'
+          ),
+        'Switching one pane model changed the other pane task selection',
+        taskTimeoutMs
+      )
+      await assertPaneModelLabel(control, restoredFirstPane, DEFAULT_MODEL_LABELS, uiTimeoutMs)
+      await assertPaneModelLabel(control, restoredSecondPane, 'Desktop E2E Responses', uiTimeoutMs)
+      await captureScreenshot(control, '11a-split-pane-model-isolation.png', 'body')
+
+      const firstGroupBadge = `${firstRow} [data-testid="runtime-local-task-split-group-${firstTaskId}"]`
+      const secondGroupBadge = `${secondRow} [data-testid="runtime-local-task-split-group-${secondTaskId}"]`
+      await control.command('waitFor', firstGroupBadge, {
+        text: '1',
+        visible: true,
+        stableMs: 300,
+        timeoutMs: uiTimeoutMs,
+      })
+      await control.command('waitFor', secondGroupBadge, {
+        text: '1',
+        visible: true,
+        stableMs: 300,
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        await control.command('getAttribute', firstGroupBadge, {
+          value: 'data-split-group',
+        }),
+        await control.command('getAttribute', secondGroupBadge, {
+          value: 'data-split-group',
+        }),
+        'Split members do not share one group identifier'
+      )
+      await captureScreenshot(control, '11-split-restored-after-reload.png', 'body')
+
+      await control.command('click', '[data-testid="new-chat-button"]')
+      await control.command('waitFor', COMPOSER, { stableMs: 500, timeoutMs: uiTimeoutMs })
+      const thirdTaskRow = await createTask(control, THIRD_PROMPT, taskTimeoutMs)
+      await assertPaneConversation(control, PANE_SELECTOR, `${THIRD_PROMPT}_COMPLETE`)
+      assert.equal(
+        Number(await control.command('getElementCount', PANE_SELECTOR)),
+        1,
+        'Opening an unrelated conversation must leave the split group intact and show one pane'
+      )
+      assert.notEqual(
+        await control.command('getAttribute', firstGroupBadge, {
+          value: 'data-split-group-active',
+        }),
+        'true',
+        'Inactive split members must not remain selected'
+      )
+
+      await control.command('click', firstRow)
+      await control.command('waitFor', '[role="separator"][data-separator]', {
+        visible: true,
+        stableMs: 300,
+        timeoutMs: uiTimeoutMs,
+      })
+      const restoredGroupFirstPane = await paneSelectorForTitle(control, FIRST_PROMPT)
+      const restoredGroupSecondPane = await paneSelectorForTitle(control, SECOND_PROMPT)
+      await assertPaneConversation(control, restoredGroupFirstPane, `${FIRST_PROMPT}_COMPLETE`)
+      await assertPaneConversation(control, restoredGroupSecondPane, `${SECOND_PROMPT}_COMPLETE`)
+      assert.equal(
+        await control.command('getAttribute', firstGroupBadge, {
+          value: 'data-split-group-active',
+        }),
+        'true',
+        'Clicking a split member did not restore its complete group'
+      )
+      await captureScreenshot(control, '12-split-group-restored-from-sidebar.png', 'body')
+
+      await control.command(
+        'click',
+        `${restoredGroupFirstPane} [data-testid^="workbench-close-pane-"]`
+      )
+      await control.command('waitFor', PANE_SELECTOR, {
+        text: SECOND_PROMPT,
+        stableMs: 300,
+        timeoutMs: uiTimeoutMs,
+      })
+      assert.equal(
+        Number(await control.command('getElementCount', PANE_SELECTOR)),
+        1,
+        'Closing a pane did not collapse the split'
+      )
+      assert.equal(
+        Number(await control.command('getElementCount', '[data-testid="workbench-main-header"]')),
+        1,
+        'Returning to single-task mode did not restore the shared header'
+      )
+      assert.equal(
+        Number(await control.command('getElementCount', '[data-testid^="workbench-pane-title-"]')),
+        0,
+        'Returning to single-task mode retained split title chrome'
+      )
+      await waitForElementCount(control, firstGroupBadge, 0, uiTimeoutMs)
+      await waitForElementCount(control, secondGroupBadge, 0, uiTimeoutMs)
+      await captureScreenshot(control, '13-split-return-single.png', 'body')
+
+      assert.ok(firstTaskId && secondTaskId && thirdTaskRow)
+    },
+  }
+}

@@ -1,3 +1,6 @@
+import { RendererCrashProbe } from './e2e/RendererCrashProbe'
+import { getDesktopE2ERuntimeConfig } from './e2e/runtime-config'
+import './e2e/error-capture'
 import { initializeProviderModelConfiguration } from '@/features/model-settings/providerModelConfiguration'
 import './i18n'
 import { Profiler, StrictMode } from 'react'
@@ -21,6 +24,7 @@ import { installExternalDropGuard } from './lib/external-drop-guard'
 import { installExternalLinkHandler } from './lib/external-links'
 import { installPageZoomGuard } from './lib/pageZoomGuard'
 import { installPerformanceDiagnostics, recordReactCommit } from './lib/performanceDiagnostics'
+import { isUiRefreshCaptureEnabled } from './e2e/ui-refresh-capture'
 import { installWeworkAutomationBridge } from './e2e/automation'
 import { installDesktopExtensions } from '@extensions/desktop'
 import { isDesktopRuntime, isElectronRuntime } from '@/lib/runtime-environment'
@@ -89,8 +93,9 @@ async function mountApp(container: HTMLElement, context: Context | null): Promis
           available when the workbench itself fails to render. */}
       <FeedbackDialogHost />
       <WorkbenchErrorBoundary onError={reportRendererFailure}>
+        {getDesktopE2ERuntimeConfig().controlUrl && <RendererCrashProbe />}
         <DshClientContextProvider context={context}>
-          {performanceDiagnostics ? (
+          {performanceDiagnostics || isUiRefreshCaptureEnabled() ? (
             <Profiler id="wework-root" onRender={recordReactCommit}>
               <App />
             </Profiler>

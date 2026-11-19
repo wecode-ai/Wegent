@@ -66,35 +66,26 @@ test(
   }
 )
 
-test.for(['forwarded', 'held'])(
-  'correlates a %s response in browser timings without changing upstream bytes',
-  async (mode, t) => {
-    const { proxy, received } = await fixture(t, { 'Server-Timing': 'upstream;dur=3' })
-    proxy.rule = entry => {
-      if (mode === 'held') return 'hold-response'
-      entry.responseTimingId = 'held-inventory-response'
-      return null
-    }
-    const pending = fetch(`${proxy.url}/api/plugins/installed`, {
-      headers: { Origin: 'http://renderer.example' },
-    })
-    if (mode === 'held') {
-      await until(() => proxy.requests[0]?.committedResponseHeld, Boolean, 'Response was not held')
-      const entry = proxy.requests[0]
-      entry.responseTimingId = 'held-inventory-response'
-      assert.equal(await entry.release(), true)
-    }
-    const response = await pending
-    assert.equal(response.status, 200)
-    assert.equal(await response.text(), 'real-upstream-body')
-    assert.equal(
-      response.headers.get('server-timing'),
-      'upstream;dur=3, wework-e2e-response;desc="held-inventory-response"'
-    )
-    assert.equal(response.headers.get('timing-allow-origin'), 'http://renderer.example')
-    assert.equal(received.length, 1)
-  }
-)
+test('correlates a held response in browser timings without changing upstream bytes', async t => {
+  const { proxy, received } = await fixture(t, { 'Server-Timing': 'upstream;dur=3' })
+  proxy.rule = () => 'hold-response'
+  const pending = fetch(`${proxy.url}/api/plugins/installed`, {
+    headers: { Origin: 'http://renderer.example' },
+  })
+  await until(() => proxy.requests[0]?.committedResponseHeld, Boolean, 'Response was not held')
+  const entry = proxy.requests[0]
+  entry.responseTimingId = 'held-inventory-response'
+  assert.equal(await entry.release(), true)
+  const response = await pending
+  assert.equal(response.status, 200)
+  assert.equal(await response.text(), 'real-upstream-body')
+  assert.equal(
+    response.headers.get('server-timing'),
+    'upstream;dur=3, wework-e2e-response;desc="held-inventory-response"'
+  )
+  assert.equal(response.headers.get('timing-allow-origin'), 'http://renderer.example')
+  assert.equal(received.length, 1)
+})
 
 test(
   'held request is not forwarded, including after abort and fault release',

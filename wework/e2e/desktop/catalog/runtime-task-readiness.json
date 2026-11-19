@@ -1,0 +1,12 @@
+{
+  "order": 166110,
+  "scenario": "./scenarios/runtime-task-readiness.scenario.mjs",
+  "scenarioOnly": true,
+  "paths": [
+    "wework/src/features/workbench/runtimeTaskCreation*",
+    "wework/src/components/layout/useWorkbenchPaneSession*",
+    "wework/src/components/layout/useWorkbenchCloudProjectContext*",
+    "wework/src/features/workbench/useWorkbenchRuntimeMessaging*"
+  ],
+  "ci": { "core": { "order": 111110, "shard": 5, "position": 13110 } }
+}

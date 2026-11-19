@@ -7,6 +7,7 @@ import {
   injectRuntimeConfig,
   resolveBackendUrl,
   resolveSocketUrl,
+  serveWeworkApp,
 } from './index.js'
 
 test('normalizes backend URLs without copying an API suffix', () => {
@@ -129,4 +130,61 @@ test('passes the verification identity mode through the desktop runtime configur
   assert.ok(html.includes('"telemetryIdentity":"email_prefix"'))
   const defaultHtml = injectRuntimeConfig('<html><head></head><body></body></html>', {})
   assert.ok(!defaultHtml.includes('"telemetryIdentity"'))
+})
+
+async function memoryResponse(method = 'GET') {
+  const result = {}
+  await serveWeworkApp(
+    { method, url: APP_BASE_PATH + '/__e2e/process-memory', headers: {} },
+    {
+      writeHead(status, headers) {
+        Object.assign(result, { status, headers })
+      },
+      end(body) {
+        result.body = body
+      },
+    }
+  )
+  return result
+}
+
+test('keeps worker memory diagnostics unavailable outside explicit E2E mode', async () => {
+  const previous = process.env.VITE_WEWORK_E2E
+  try {
+    delete process.env.VITE_WEWORK_E2E
+    const result = await memoryResponse()
+    assert.equal(result.status, 404)
+    assert.equal(result.headers['cache-control'], 'no-store')
+    assert.equal(result.body, undefined)
+  } finally {
+    if (previous === undefined) delete process.env.VITE_WEWORK_E2E
+    else process.env.VITE_WEWORK_E2E = previous
+  }
+})
+
+test('worker memory exports only its own numeric counters and no environment data', async () => {
+  const previous = process.env.VITE_WEWORK_E2E
+  try {
+    process.env.VITE_WEWORK_E2E = 'true'
+    const result = await memoryResponse()
+    assert.equal(result.status, 200)
+    assert.equal(result.headers['cache-control'], 'no-store')
+    const data = JSON.parse(result.body)
+    assert.deepEqual(Object.keys(data).sort(), ['memoryBytes', 'pid'])
+    assert.equal(data.pid, process.pid)
+    assert.deepEqual(Object.keys(data.memoryBytes).sort(), [
+      'arrayBuffers',
+      'external',
+      'heapTotal',
+      'heapUsed',
+      'rss',
+    ])
+    assert.ok(
+      Object.values(data.memoryBytes).every(value => Number.isSafeInteger(value) && value >= 0)
+    )
+    assert.equal((await memoryResponse('HEAD')).body, undefined)
+  } finally {
+    if (previous === undefined) delete process.env.VITE_WEWORK_E2E
+    else process.env.VITE_WEWORK_E2E = previous
+  }
 })

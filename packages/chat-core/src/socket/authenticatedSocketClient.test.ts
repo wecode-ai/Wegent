@@ -58,6 +58,25 @@ describe('createAuthenticatedSocketClient', () => {
     mockIo.mockReset()
   })
 
+  test('keeps an unauthenticated client idle and connects after credentials arrive', async () => {
+    let token: string | null = null
+    const logger = { error: vi.fn(), info: vi.fn() }
+    const raw = createMockSocket()
+    mockIo.mockReturnValue(raw.socket)
+    const client = createAuthenticatedSocketClient({
+      socketBaseUrl: () => 'http://socket',
+      getToken: () => token,
+      logger,
+    })
+    await client.connect()
+    expect(mockIo).not.toHaveBeenCalled()
+    expect(logger.error).not.toHaveBeenCalled()
+    token = 'token'
+    await client.connect()
+    expect(mockIo).toHaveBeenCalledOnce()
+    client.dispose()
+  })
+
   test('creates a manual fresh namespace socket with auth instead of query auth', async () => {
     const rawSocket = createMockSocket()
     mockIo.mockReturnValue(rawSocket.socket)

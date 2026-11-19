@@ -172,7 +172,8 @@ try {
       await delay(50)
     }
   }
-  await handleEvent(event, config)
+  const result = await handleEvent(event, config)
+  process.stdout.write(JSON.stringify(result) + '\\n')
   if (event.hook_event_name === 'TurnStarted') await mark('baseline')
   if (event.hook_event_name === 'ExecutionCompleted') await mark('execution-ended')
 } finally { await mark('finished') }
@@ -355,9 +356,18 @@ console.log('HOOK_WRITES_COMPLETE')
           }
         }
         if (installed) await rpc('runtime.hooks.delete', { pluginId })
-        if (!verified) await cp(root, join(resultDir, 'async-hooks-failure'), { recursive: true })
-        await rm(root, { recursive: true, force: true })
+        if (!verified) {
+          const diagnostics = join(resultDir, 'scenario-diagnostics')
+          await mkdir(diagnostics, { recursive: true })
+          await mkdir(join(root, 'logs'), { recursive: true })
+          await cp(join(root, 'logs'), join(diagnostics, 'async-hooks'), { recursive: true })
+        }
       }
+    },
+    async cleanup() {
+      // Native shell sessions can retain their cwd after task cancellation.
+      // The shared runner stops the application and executor before this phase.
+      if (root) await rm(root, { recursive: true, force: true })
     },
   }
 }

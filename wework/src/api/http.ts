@@ -2,6 +2,7 @@ import { requestRunnerSelection, runnerSelectionRequest } from '@/lib/runner-sel
 import { removeToken } from './auth'
 import { redirectToLogin } from '@/features/auth/redirect'
 import { createRequestId } from '@/lib/request-id'
+import { reportE2EError } from '@/e2e/error-capture'
 
 const SLOW_HTTP_REQUEST_MS = 5000
 
@@ -209,6 +210,7 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
       })
     } catch (error) {
       window.clearTimeout(slowTimer)
+      reportE2EError('http:transport', error, { requestId, method })
       console.warn(
         `[Wework] HTTP ${method} ${endpoint} failed.`,
         requestLogFields(logContext, {
@@ -249,6 +251,11 @@ export function createHttpClient(options: HttpClientOptions): HttpClient {
     diagnostics: HttpResponseDiagnostics
   ): Promise<ApiError> {
     const error = await parseError(response)
+    reportE2EError('http:response', error, {
+      requestId: diagnostics.logContext.requestId,
+      method: diagnostics.logContext.method,
+      status: response.status,
+    })
     console.warn(
       `[Wework] HTTP ${diagnostics.logContext.method} ${diagnostics.logContext.endpoint} returned ${response.status}.`,
       requestLogFields(diagnostics.logContext, {

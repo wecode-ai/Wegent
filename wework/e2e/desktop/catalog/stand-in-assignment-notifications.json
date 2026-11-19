@@ -4,8 +4,7 @@
   "scenarioOnly": true,
   "paths": [
     "wework/e2e/desktop/scenarios/stand-in-issue-delegation.scenario.mjs",
-    "wework/e2e/desktop/modules/issue-delegation-model.mjs",
-    "wework/e2e/desktop/modules/stand-in-startup-recovery.mjs"
+    "wework/e2e/desktop/modules/issue-delegation-model.mjs"
   ],
   "ci": {
     "core": {

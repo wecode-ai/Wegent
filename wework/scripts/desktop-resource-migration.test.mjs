@@ -71,6 +71,7 @@ describe('desktop resource migration', () => {
       'node e2e/desktop/run-checkpoints.mjs --plugins-only',
       'node e2e/desktop/run-checkpoints.mjs --memory-only',
       'node e2e/desktop/run-checkpoints.mjs --segment embedded-browser',
+      'node e2e/desktop/run-checkpoints.mjs --segment browser-toolbar-actions',
       'node e2e/desktop/run-checkpoints.mjs --segment local-harness',
       'node e2e/desktop/run-checkpoints.mjs --segment streaming-text',
     ])

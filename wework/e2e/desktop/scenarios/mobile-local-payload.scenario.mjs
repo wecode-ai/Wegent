@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { createDesktopScenario as createNativeGuidance } from './native-guidance.scenario.mjs'
 import { loadMobileLocalPayloadBuilders } from '../modules/mobile-local-payload-builders.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
+import { MODEL_API_KEY } from '../modules/shared.mjs'
 import { waitForValue } from '../modules/workspace-agent-setup.mjs'
 import {
   assistantMessage,
@@ -36,6 +37,11 @@ export function createDesktopScenario(options) {
       if (!active) return existing.handleHttp(request, response, url)
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
+      assert.equal(
+        request.headers.authorization,
+        `Bearer ${MODEL_API_KEY}`,
+        'The mobile model request lost its configured credential'
+      )
       const body = await readRequestBody(request)
       if (handleEmptyReplyPrediction(body, response)) return true
       const text = JSON.stringify(body.input)
@@ -103,7 +109,7 @@ export function createDesktopScenario(options) {
         displayName: 'Mobile Responses',
         baseUrl: `http://127.0.0.1:${port}/v1`,
         apiFormat: 'openai-responses',
-        apiKey: 'isolated-model-fixture',
+        apiKey: MODEL_API_KEY,
       })
       await rpc('runtime.runner.local_models.replace', {
         models: [

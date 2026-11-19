@@ -1,3 +1,4 @@
+import { recordUiRender } from '@/e2e/ui-refresh-capture'
 import { useHarnessAppLaunchInput } from '@/features/harness-apps/useHarnessAppLaunchInput'
 import { workbenchWorkspaceFileApi } from './workbenchWorkspaceFileApi'
 import { NotificationTaskRegistryContext } from '@/features/notifications/NotificationTaskSourceContext'
@@ -153,7 +154,11 @@ export function OwnedWorkbenchProvider({
   workspaceTabRevealRevision = 0,
   workbenchIdentity,
   ownershipKey,
-}: WorkbenchProviderProps & { workbenchIdentity: User; ownershipKey: string }) {
+}: WorkbenchProviderProps & {
+  workbenchIdentity: User
+  ownershipKey: string
+}) {
+  recordUiRender('workbench-provider')
   const { t } = useTranslation('common')
   const cloudConnection = useOptionalCloudConnection()
   const isWorkspaceTabActive = useOptionalWorkspaceTabActivity()

@@ -1,3 +1,4 @@
+import { runInNewContext } from 'node:vm'
 import { describe, expect, test, vi } from 'vitest'
 import {
   createStartupReadyHandler,
@@ -129,6 +130,30 @@ function createFixture(theme: StartupSplashTheme = 'light', onCloseRequest?: () 
 }
 
 describe('StartupSplash', () => {
+  test('applies late saved appearance to the visible splash and its evidence', async () => {
+    const { show, target, splash } = createFixture()
+    await show()
+    const dataset = { theme: 'light' }
+    target.webContents.executeJavaScript = vi.fn(async code =>
+      runInNewContext(code, { document: { documentElement: { dataset } } })
+    )
+    await splash.setTheme('dark')
+    expect(dataset.theme).toBe('dark')
+    expect(splash.snapshot()).toMatchObject({ state: 'visible', theme: 'dark' })
+    await splash.close()
+    await splash.setTheme('light')
+    expect(dataset.theme).toBe('dark')
+    expect(splash.snapshot().theme).toBe('dark')
+  })
+
+  test('does not report a saved theme when the splash cannot apply it', async () => {
+    const { show, target, splash } = createFixture()
+    await show()
+    target.webContents.executeJavaScript.mockRejectedValueOnce(new Error('renderer lost'))
+    await expect(splash.setTheme('dark')).rejects.toThrow('renderer lost')
+    expect(splash.snapshot().theme).toBe('light')
+  })
+
   test('shows the startup window even when its animation never reports readiness', async () => {
     const { show, target } = createFixture()
     target.webContents.executeJavaScript = vi.fn(() => new Promise(() => {}))

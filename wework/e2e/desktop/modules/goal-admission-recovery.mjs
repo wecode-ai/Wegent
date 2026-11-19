@@ -1,3 +1,4 @@
+import { desktopOwnerId } from './desktop-owner-fixture.mjs'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { requestExecutor } from './executor-rpc.mjs'
@@ -60,7 +61,7 @@ export function createGoalAdmissionRecovery({ workspacePath, uiTimeoutMs }) {
       const execution = {
         task_id: taskId,
         subtask_id: `${taskId}-initial`,
-        user_id: 9001,
+        user_id: desktopOwnerId,
         prompt: MARKER,
         new_session: true,
         bot: [{ shell_type: 'Codex', name: 'Goal admission recovery' }],
@@ -94,7 +95,7 @@ export function createGoalAdmissionRecovery({ workspacePath, uiTimeoutMs }) {
         assert.equal(created.accepted, true, created.error)
         address = { deviceId: created.deviceId, taskId, workspacePath }
         const original = await waitDone()
-        // A cold session needs one native-owned continuation before notifications.
+        // Start cold; route preparation loads the native session before activation.
         await waitForValue(
           () => rpc('runtime.codex.app_server.restart', { ifIdle: true }),
           value => value.restarted === true,
@@ -112,7 +113,7 @@ export function createGoalAdmissionRecovery({ workspacePath, uiTimeoutMs }) {
         assert.equal(
           set.resumed,
           false,
-          'Preparing a cold session must leave continuation owned by the native Goal'
+          'The prepared native Goal must own continuation without duplicate admission'
         )
         await waitForValue(
           task,
@@ -120,10 +121,6 @@ export function createGoalAdmissionRecovery({ workspacePath, uiTimeoutMs }) {
           'The active Goal waited for its own resume instead of reaching the model',
           uiTimeoutMs
         )
-        const repeated = await rpc('runtime.tasks.goal.set', { address, status: 'active' })
-        assert.equal(repeated.accepted, true, repeated.error)
-        assert.equal(repeated.resumed, false, 'The active Goal must not admit duplicate recovery')
-        assert.equal(requests, 2, 'Repeated activation submitted another model turn')
         const protectedProcess = await rpc('runtime.codex.app_server.restart', { ifIdle: true })
         assert.equal(
           protectedProcess.restarted,

@@ -87,6 +87,7 @@ async fn cloud_config_fallback_does_not_disrupt_other_active_threads() {
             None,
             None,
             false,
+            None,
         )
         .await
         .expect("fallback decision should not fail");
@@ -181,7 +182,7 @@ async fn native_subscription_survives_process_stop_and_replacement() {
     let stdin = child.stdin.take().unwrap();
     state.process = Some(CodexAppServerProcess {
         child,
-        stdin: Arc::new(Mutex::new(stdin)),
+        stdin: Arc::new(Mutex::new(FrameWriter::new(stdin))),
         pending: Arc::new(Mutex::new(HashMap::new())),
         notifications: hub,
         reader_task: tokio::spawn(std::future::pending()),
@@ -221,6 +222,7 @@ async fn isolated_process_native_ingress_does_not_depend_on_a_request_observer()
         child.stdin.take().unwrap(),
         CodexStdout::new(child.stdout.take().unwrap(), None),
         1,
+        CodexRpcOrigin::Dedicated(Some(hub.process_generation)),
     )
     .with_runtime_notifications(Some(hub.clone()));
     let start = rpc.read_message().await.unwrap();
@@ -435,7 +437,7 @@ async fn restarting_app_server_keeps_admission_locked_until_cleanup_finishes() {
     let pending = Arc::new(Mutex::new(HashMap::new()));
     client.state.lock().await.process = Some(CodexAppServerProcess {
         child,
-        stdin: Arc::new(Mutex::new(stdin)),
+        stdin: Arc::new(Mutex::new(FrameWriter::new(stdin))),
         pending: Arc::clone(&pending),
         notifications: CodexNotificationHub::new(),
         reader_task: tokio::spawn(async {}),
@@ -478,7 +480,7 @@ async fn explicit_unsubscribe_keeps_thread_admission_locked_until_the_native_res
     let pending = Arc::new(Mutex::new(HashMap::new()));
     client.state.lock().await.process = Some(CodexAppServerProcess {
         child,
-        stdin: Arc::new(Mutex::new(stdin)),
+        stdin: Arc::new(Mutex::new(FrameWriter::new(stdin))),
         pending: Arc::clone(&pending),
         notifications: CodexNotificationHub::new(),
         reader_task: tokio::spawn(async {}),
@@ -514,7 +516,7 @@ async fn terminating_shared_app_servers_releases_every_registered_process() {
     let state = shared_codex_app_server_state("codex-app-server-termination-test");
     state.lock().await.process = Some(CodexAppServerProcess {
         child,
-        stdin: Arc::new(Mutex::new(stdin)),
+        stdin: Arc::new(Mutex::new(FrameWriter::new(stdin))),
         pending: Arc::new(Mutex::new(HashMap::new())),
         notifications: CodexNotificationHub::new(),
         reader_task: tokio::spawn(async {}),
@@ -605,7 +607,7 @@ async fn idle_restart_preserves_pending_reads_until_the_native_response() {
     let pending = Arc::new(Mutex::new(HashMap::new()));
     client.state.lock().await.process = Some(CodexAppServerProcess {
         child,
-        stdin: Arc::new(Mutex::new(stdin)),
+        stdin: Arc::new(Mutex::new(FrameWriter::new(stdin))),
         pending: Arc::clone(&pending),
         notifications: CodexNotificationHub::new(),
         reader_task: tokio::spawn(std::future::pending()),
@@ -4724,7 +4726,7 @@ async fn expired_native_approval_emits_expiry_without_waiting_for_an_answer() {
     let mut runtime = hub.subscribe_runtime();
     client.state.lock().await.process = Some(CodexAppServerProcess {
         child,
-        stdin: Arc::new(Mutex::new(stdin)),
+        stdin: Arc::new(Mutex::new(FrameWriter::new(stdin))),
         pending: Arc::new(Mutex::new(HashMap::new())),
         notifications: hub,
         reader_task: tokio::spawn(async {}),

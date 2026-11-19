@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
@@ -13,6 +13,7 @@ export interface ProcessDiagnosticsProcess {
   rss_kib: number
   physical_footprint_kib: number
   cpu_percent: number
+  native_memory_categories: Record<string, Record<string, number>> | null
   command: string
   executable: string | null
 }
@@ -29,6 +30,8 @@ export interface ProcessDiagnosticsGroup {
 export interface ProcessDiagnosticsSnapshot {
   timestamp_ms: number
   main_pid: number
+  main_process_memory_bytes: NodeJS.MemoryUsage | null
+  exited_processes: Array<{ pid: number; reason: 'exited' | 'zombie' }>
   groups: ProcessDiagnosticsGroup[]
   processes: ProcessDiagnosticsProcess[]
 }
@@ -99,20 +102,41 @@ export function classifyElectronProcess(processInfo: RawProcessInfo, mainPid: nu
   return 'child'
 }
 
-async function readPhysicalFootprints(pids: number[]): Promise<Map<number, number>> {
+interface NativeFootprint {
+  footprintKiB: number
+  categories: Record<string, Record<string, number>> | null
+}
+
+function memoryCategories(value: unknown): NativeFootprint['categories'] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const result: NonNullable<NativeFootprint['categories']> = {}
+  // Only native region kinds are labels. Never retain process names or mapped paths.
+  const named =
+    /^(?:MALLOC(?:_[A-Z]+| metadata)?|__[A-Z_]+|app-specific tag \d+|stack|page table|mapped file|libdispatch|Activity Tracing|CoreServices|os_alloc_once|untagged \(VM_ALLOCATE\))$/
+  for (const [label, raw] of Object.entries(value)) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new Error('Invalid native memory category')
+    }
+    const kind = named.test(label) ? label : 'other'
+    const metrics = (result[kind] ??= {})
+    for (const key of ['dirty', 'swapped', 'clean', 'reclaimable', 'wired', 'regions']) {
+      const amount = (raw as Record<string, unknown>)[key]
+      if (!Number.isSafeInteger(amount) || (amount as number) < 0) {
+        throw new Error('Invalid native memory category metric')
+      }
+      metrics[key] = (metrics[key] ?? 0) + (amount as number)
+    }
+  }
+  return result
+}
+
+async function readPhysicalFootprints(pids: number[]): Promise<Map<number, NativeFootprint>> {
   const directory = await mkdtemp(join(tmpdir(), 'wework-process-footprint-'))
   try {
     const reportPath = join(directory, 'footprint.json')
     await execFileAsync(
       '/usr/bin/footprint',
-      [
-        '--noCategories',
-        '--format',
-        'bytes',
-        '--json',
-        reportPath,
-        ...pids.flatMap(pid => ['--pid', String(pid)]),
-      ],
+      ['--format', 'bytes', '--json', reportPath, ...pids.flatMap(pid => ['--pid', String(pid)])],
       { timeout: 10_000 }
     )
     const report = JSON.parse(await readFile(reportPath, 'utf8'))
@@ -123,7 +147,7 @@ async function readPhysicalFootprints(pids: number[]): Promise<Map<number, numbe
     ) {
       throw new Error('Invalid native physical footprint report')
     }
-    const footprints = new Map<number, number>()
+    const footprints = new Map<number, NativeFootprint>()
     for (const entry of report.processes) {
       if (
         !Number.isSafeInteger(entry?.pid) ||
@@ -134,7 +158,10 @@ async function readPhysicalFootprints(pids: number[]): Promise<Map<number, numbe
       ) {
         throw new Error('Invalid native physical footprint process metric')
       }
-      footprints.set(entry.pid, entry.footprint / 1024)
+      footprints.set(entry.pid, {
+        footprintKiB: entry.footprint / 1024,
+        categories: memoryCategories(entry.categories),
+      })
     }
     return footprints
   } finally {
@@ -142,12 +169,39 @@ async function readPhysicalFootprints(pids: number[]): Promise<Map<number, numbe
   }
 }
 
-function hasExited(pid: number): boolean {
+interface MissingProcessState {
+  status: 'exited' | 'zombie' | 'live' | 'unavailable'
+  state?: string
+  ppid?: number
+  executable?: string
+  errorCode?: string | number
+}
+
+async function readMissingProcessState(pid: number): Promise<MissingProcessState> {
   try {
     process.kill(pid, 0)
-    return false
   } catch (error) {
-    return (error as NodeJS.ErrnoException).code === 'ESRCH'
+    const code = (error as NodeJS.ErrnoException).code
+    return code === 'ESRCH' ? { status: 'exited' } : { status: 'unavailable', errorCode: code }
+  }
+  try {
+    const { stdout } = await execFileAsync(
+      'ps',
+      ['-p', String(pid), '-o', 'pid=,ppid=,state=,comm='],
+      {
+        timeout: 1000,
+      }
+    )
+    const match = stdout.trim().match(/^(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/)
+    if (!match || Number(match[1]) !== pid) return { status: 'unavailable' }
+    return {
+      status: match[3].startsWith('Z') ? 'zombie' : 'live',
+      state: match[3],
+      ppid: Number(match[2]),
+      executable: basename(match[4]),
+    }
+  } catch (error) {
+    return { status: 'unavailable', errorCode: (error as NodeJS.ErrnoException).code }
   }
 }
 
@@ -174,12 +228,25 @@ export async function getElectronProcessSnapshot(
     .map(parseProcessSnapshotLine)
     .filter((value): value is RawProcessInfo => value !== null)
   const footprints = await readPhysicalFootprints([...relatedProcessIds])
+  const exitedProcesses: ProcessDiagnosticsSnapshot['exited_processes'] = []
   for (const pid of relatedProcessIds) {
     if (footprints.has(pid)) continue
-    if (pid !== mainPid && hasExited(pid)) {
+    const observed = await readMissingProcessState(pid)
+    if (pid !== mainPid && (observed.status === 'exited' || observed.status === 'zombie')) {
       relatedProcessIds.delete(pid)
+      exitedProcesses.push({ pid, reason: observed.status })
       continue
     }
+    const original = allProcesses.find(processInfo => processInfo.pid === pid)
+    console.error('[process-diagnostics] native footprint unavailable', {
+      pid,
+      group: original ? classifyElectronProcess(original, mainPid) : null,
+      originalParentPid: original?.ppid ?? null,
+      originalRssKiB: original?.rss_kib ?? null,
+      observed,
+      expectedProcessCount: relatedProcessIds.size,
+      measuredProcessCount: footprints.size,
+    })
     throw new Error(`Missing native physical footprint for process ${pid}`)
   }
   const { stdout: executableOutput } = await execFileAsync('ps', [
@@ -195,7 +262,8 @@ export async function getElectronProcessSnapshot(
       ...processInfo,
       executable: executables.get(processInfo.pid) ?? null,
       group: classifyElectronProcess(processInfo, mainPid),
-      physical_footprint_kib: footprints.get(processInfo.pid)!,
+      physical_footprint_kib: footprints.get(processInfo.pid)!.footprintKiB,
+      native_memory_categories: footprints.get(processInfo.pid)!.categories,
     }))
     .sort((left, right) => right.physical_footprint_kib - left.physical_footprint_kib)
 
@@ -220,6 +288,8 @@ export async function getElectronProcessSnapshot(
   return {
     timestamp_ms: Date.now(),
     main_pid: mainPid,
+    exited_processes: exitedProcesses,
+    main_process_memory_bytes: mainPid === process.pid ? process.memoryUsage() : null,
     groups: [...groupsByName.values()].sort(
       (left, right) => right.physical_footprint_kib - left.physical_footprint_kib
     ),

@@ -156,7 +156,7 @@ impl RuntimeWorkRpcHandler {
         {
             return Ok(config);
         }
-        let catalog = self.runner_catalog().await?;
+        let catalog = self.runner_catalog(concat!(file!(), ":", line!())).await?;
         let provider = selection
             .pointer("/options/runnerModelProvider")
             .or_else(|| selection.pointer("/options/codexProviderId"))

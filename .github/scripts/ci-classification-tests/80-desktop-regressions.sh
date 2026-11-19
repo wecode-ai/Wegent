@@ -34,11 +34,22 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/modules/model-catalog-recovery.mjs"
 
+for path in \
+  wework/e2e/desktop/scenarios/follow-up-task-switch.scenario.mjs \
+  wework/e2e/desktop/modules/follow-up-agent-history.mjs; do
+  assert_desktop_case "follow-up identity regression has CI coverage: $path" \
+    'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"follow-up-task-switch"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+    "$path"
+done
 
 assert_desktop_case "pane goal updates select conversation and goal synchronization coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"goal-state-sync,native-lifecycle"},{"id":"core-8","name":"Core / shard 8","segments":"conversation-state"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"goal-state-sync,native-lifecycle"},{"id":"core-5","name":"Core / shard 5","segments":"runtime-task-readiness"},{"id":"core-8","name":"Core / shard 8","segments":"conversation-state"}]}
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-4","name":"Cloud / shard 4","segments":"conversation-event-remote-docker"}]}
 wework_desktop_other_e2e=false
@@ -48,7 +59,7 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
 assert_desktop_case "goal reconciliation retains lifecycle coverage" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"goal-state-sync,native-lifecycle"},{"id":"core-2","name":"Core / shard 2","segments":"resilience"},{"id":"core-6","name":"Core / shard 6","segments":"runtime-task-queue"},{"id":"core-7","name":"Core / shard 7","segments":"supervisor-lifecycle"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"goal-state-sync,native-lifecycle"},{"id":"core-2","name":"Core / shard 2","segments":"resilience"},{"id":"core-6","name":"Core / shard 6","segments":"running-sidebar-state"},{"id":"core-7","name":"Core / shard 7","segments":"supervisor-lifecycle"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/src/features/workbench/runtimeTaskLifecycle/RuntimeTaskLifecycleStreamCoordinator.tsx"
@@ -70,6 +81,13 @@ wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' \
   "wework/e2e/desktop/scenarios/collaboration-shared-core.scenario.mjs"
 
+assert_desktop_case "delivery snapshots run their registered desktop checkpoint" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-6","name":"Core / shard 6","segments":"collaboration-deliveries,collaboration-delivery-editing"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/collaboration-deliveries.scenario.mjs"
 
 for delivery_render_path in \
   "packages/collaboration/src/issue-detail/IssueExecutionLists.tsx" \
@@ -77,7 +95,7 @@ for delivery_render_path in \
   "packages/collaboration/src/issue-detail/createSharedIssueDetailPort.ts" \
   "packages/collaboration/src/dto-mappers/workspaceDtoMappers.ts"; do
   delivery_render_output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$delivery_render_path")"
-  if [[ "$delivery_render_output" != *collaboration-delivery-editing* ]]; then
+  if [[ "$delivery_render_output" != *collaboration-deliveries* ]]; then
     printf 'Delivery rendering must select its regression checkpoint: %s\n%s\n' \
       "$delivery_render_path" "$delivery_render_output" >&2
     exit 1
@@ -130,6 +148,13 @@ wework_desktop_other_e2e_matrix={"include":[]}' \
     "$telemetry_scenario"
 done
 
+assert_desktop_case "Backlog scenario runs its independent Core checkpoint" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-8","name":"Core / shard 8","segments":"collaboration-board-backlog"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/collaboration-board-backlog.scenario.mjs"
 
 for suffix in '' '_tests'; do
   handler_path="executor/src/runtime_work/handler/stand_in_processing${suffix}.rs"
@@ -195,7 +220,7 @@ const values = Object.fromEntries(output.trim().split('\n').map(line => {
   return [line.slice(0, offset), line.slice(offset + 1)]
 }))
 const checkpoints = JSON.parse(values.wework_desktop_core_e2e_matrix).include.flatMap(entry => entry.segments.split(','))
-for (const checkpoint of ['stand-in-profile', 'stand-in-permissions', 'collaboration-local-agent-dispatch', 'collaboration-remote-agent-dispatch', 'release-package-startup']) {
+for (const checkpoint of ['stand-in-profile', 'stand-in-permissions', 'collaboration-local-agent-dispatch', 'collaboration-remote-agent-dispatch', 'release-package-startup', 'core-dsh-plugin-management']) {
   assert(checkpoints.includes(checkpoint), `${path} must select ${checkpoint}`)
 }
 assert.equal(values.wework_desktop_cloud_e2e, 'false')
@@ -206,13 +231,21 @@ done
 unknown_feature_expected="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "wework/src/features/todo/UnclassifiedFuturePanel.tsx")"
 assert_desktop_case "Unknown future coordinator features keep the conservative fallback" \
   "$unknown_feature_expected" "wework/src/features/todo/ProjectCoordinatorFutureAutomation.tsx"
+assert_desktop_case "Parent board scenario runs its independent Core checkpoint" \
+  'wework_desktop_e2e=true
+wework_desktop_core_e2e=true
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-10","name":"Core / shard 10","segments":"collaboration-parent-board"}]}
+wework_desktop_other_e2e=false
+wework_desktop_other_e2e_matrix={"include":[]}' \
+  "wework/e2e/desktop/scenarios/collaboration-parent-board.scenario.mjs"
+
 for parent_board_path in \
   "packages/collaboration/src/project-board/ProjectBoardParentRows.tsx" \
   "packages/collaboration/src/issue-detail/IssueHierarchySummary.tsx" \
   "wework/src/features/todo/CloudTodoWorkspace.tsx"; do
   parent_board_output="$(GITHUB_OUTPUT=/dev/stdout "$desktop_classifier" "$parent_board_path")"
-  if [[ "$parent_board_output" != *collaboration-board-move-recovery* ]]; then
-    printf 'Parent board path did not select the retained drag recovery checkpoint: %s\n' "$parent_board_path" >&2
+  if [[ "$parent_board_output" != *collaboration-parent-board* ]]; then
+    printf 'Parent board path did not select its checkpoint: %s\n' "$parent_board_path" >&2
     exit 1
   fi
 done
@@ -223,7 +256,7 @@ for path in .github/scripts/prime-ci-electron-installer-cache.mjs \
   assert_desktop_case "Electron installer cache selects its native Core consumers: $path" \
     'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"startup-fault-isolation"},{"id":"core-5","name":"Core / shard 5","segments":"workbench-mode"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-5","name":"Core / shard 5","segments":"workbench-mode,native-window-startup"}]}
 wework_desktop_other_e2e=false
 wework_desktop_other_e2e_matrix={"include":[]}' "$path"
 done
@@ -231,7 +264,7 @@ done
 assert_desktop_case "E2E dependency installer selects only its desktop consumers" \
   'wework_desktop_e2e=true
 wework_desktop_core_e2e=true
-wework_desktop_core_e2e_matrix={"include":[{"id":"core-1","name":"Core / shard 1","segments":"startup-fault-isolation"},{"id":"core-3","name":"Core / shard 3","segments":"stand-in-email"},{"id":"core-10","name":"Core / shard 10","segments":"plugin-development"}]}
+wework_desktop_core_e2e_matrix={"include":[{"id":"core-3","name":"Core / shard 3","segments":"stand-in-email"},{"id":"core-5","name":"Core / shard 5","segments":"native-window-startup"},{"id":"core-10","name":"Core / shard 10","segments":"plugin-development"}]}
 wework_desktop_cloud_e2e=true
 wework_desktop_cloud_e2e_matrix={"include":[{"id":"cloud-3","name":"Cloud / shard 3","segments":"plugin-account-auth-coordination"},{"id":"cloud-6","name":"Cloud / shard 6","segments":"plugin-account-auth-password,plugin-account-auth-transfer,plugin-account-auth-oauth"},{"id":"cloud-8","name":"Cloud / shard 8","segments":"plugin-account-auth-dws,plugin-account-auth-conversation,plugin-account-auth-github"}]}
 wework_desktop_other_e2e=false

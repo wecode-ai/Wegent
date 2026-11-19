@@ -94,6 +94,48 @@ fn validate_restored_permissions(params: &Value, response: &Value) -> Result<(),
 }
 
 impl CodexAppServerClient {
+    pub(super) async fn request_with_cloud_config_recovery(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<Value, String> {
+        let attempt = self
+            .request_with_thread_admission_tracked(method, params.clone(), None)
+            .await;
+        if self
+            .cloud_config_attempt_recovered(method, &params, None, false, &attempt)
+            .await?
+        {
+            return self.request_once(method, params).await;
+        }
+        attempt.result
+    }
+
+    async fn cloud_config_attempt_recovered(
+        &self,
+        method: &str,
+        params: &Value,
+        launch_config: Option<&CodexLaunchConfig>,
+        may_restart_active_thread: bool,
+        attempt: &thread_resume::CodexRequestAttempt,
+    ) -> Result<bool, String> {
+        let Err(error) = &attempt.result else {
+            return Ok(false);
+        };
+        if !is_codex_cloud_config_error(error) {
+            return Ok(false);
+        }
+        self.degrade_auth_after_cloud_config_failure(
+            method,
+            error,
+            params.get("threadId").and_then(Value::as_str),
+            launch_config,
+            may_restart_active_thread,
+            attempt.process_generation,
+        )
+        .await
+    }
+
     pub(super) async fn request_for_launch_config_with_recovery(
         &self,
         method: &str,
@@ -101,24 +143,32 @@ impl CodexAppServerClient {
         launch_config: &CodexLaunchConfig,
         recovery: Option<&mut CodexTurnRequestContext>,
     ) -> Result<Value, String> {
-        let result = self
-            .request_for_launch_config_once(method, params.clone(), launch_config)
+        let attempt = self
+            .request_with_thread_admission_tracked(method, params.clone(), Some(launch_config))
             .await;
-        let Err(error) = &result else {
-            return result;
-        };
-        if !is_codex_cloud_config_error(error)
-            || !self
-                .degrade_auth_after_cloud_config_failure(
-                    method,
-                    error,
-                    params.get("threadId").and_then(Value::as_str),
-                    Some(launch_config),
-                    recovery.is_some(),
-                )
-                .await?
+        self.finish_launch_config_attempt(method, params, launch_config, recovery, attempt)
+            .await
+    }
+
+    pub(super) async fn finish_launch_config_attempt(
+        &self,
+        method: &str,
+        params: Value,
+        launch_config: &CodexLaunchConfig,
+        recovery: Option<&mut CodexTurnRequestContext>,
+        attempt: thread_resume::CodexRequestAttempt,
+    ) -> Result<Value, String> {
+        if !self
+            .cloud_config_attempt_recovered(
+                method,
+                &params,
+                Some(launch_config),
+                recovery.is_some(),
+                &attempt,
+            )
+            .await?
         {
-            return result;
+            return attempt.result;
         }
         if let Some(recovery) = recovery {
             recovery.restore(self, method, launch_config).await?;
@@ -147,6 +197,7 @@ mod tests {
                 Some("source-thread"),
                 Some(&CodexLaunchConfig::default()),
                 false,
+                None,
             )
             .await;
         assert_eq!(degraded, Ok(false));

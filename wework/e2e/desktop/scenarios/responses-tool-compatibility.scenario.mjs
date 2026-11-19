@@ -57,6 +57,7 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
   const artifact = join(workspacePath, 'responses-tool-compatibility.txt')
   return {
     requiresCloudEnvironment: true,
+    handlesReplyPredictions: true,
     async prepareCloud(cloud) {
       cloudEnvironment = cloud
       await cloudRequest('/api/admin/setup-complete', { method: 'POST' })
@@ -130,9 +131,9 @@ export function createDesktopScenario({ electronUserDataDirectory, workspacePath
       if (!['/compat/responses', '/responses', '/v1/responses'].includes(url.pathname)) return false
       const body = await readRequestBody(request)
       if (![MODEL, `${MODEL}-native`].includes(body.model)) return false
+      assert.equal(request.headers.authorization, `Bearer ${API_KEY}`)
       if (handleEmptyReplyPrediction(body, response)) return true
       if (handleModelMaintenanceRequest(body, response)) return true
-      assert.equal(request.headers.authorization, `Bearer ${API_KEY}`)
       const native = body.model === `${MODEL}-native`
       if (body.tools?.some(tool => tool.name === 'wework_capability_probe')) {
         probeRequests += 1

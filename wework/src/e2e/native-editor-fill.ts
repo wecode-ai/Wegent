@@ -58,6 +58,7 @@ export async function fillNativeEditor(
           'press',
           () =>
             invokeDesktopHost('e2e.pressKey', { windowLabel, key, phase: 'press', focus: false }),
+          1,
           event => trace(`${stage}-${event}`, line)
         ),
       line
@@ -68,15 +69,11 @@ export async function fillNativeEditor(
     await pressKey('Backspace', 'clear')
     return
   }
-  const lines = value.replace(/\r\n?/g, '\n').split('\n')
-  for (const [index, line] of lines.entries()) {
-    if (index > 0) await pressKey('Enter', 'enter', index)
-    if (!line) continue
-    await measure(
-      'insert-text',
-      () => invokeDesktopHost('e2e.insertText', { windowLabel, text: line }),
-      index
-    )
-    await measure('render-wait', waitForRender, index)
-  }
+  const text = value.replace(/\r\n?/g, '\n')
+  const lineBreaks = text.split('\n').length - 1
+  const insert = () => invokeDesktopHost('e2e.insertText', { windowLabel, text })
+  await measure('insert-text', () =>
+    lineBreaks ? sendNativeKeyAndWait(element, 'press', insert, lineBreaks) : insert()
+  )
+  await measure('render-wait', waitForRender)
 }

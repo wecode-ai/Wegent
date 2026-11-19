@@ -206,7 +206,7 @@ mod tests {
     async fn router_client_with_child(mut child: CodexAppServerChild) -> CodexAppServerClient {
         let mut client = CodexAppServerClient::new("auth-mode-concurrency");
         client.state = Arc::new(Mutex::new(CodexAppServerSharedState::default()));
-        let stdin = Arc::new(Mutex::new(child.stdin.take().unwrap()));
+        let stdin = Arc::new(Mutex::new(FrameWriter::new(child.stdin.take().unwrap())));
         let stdout = child.stdout.take().unwrap();
         let mut state = client.state.lock().await;
         state.auth_mode = CodexAuthMode::WeworkRouter;
@@ -219,6 +219,7 @@ mod tests {
         state.process = Some(CodexAppServerProcess {
             child,
             stdin: Arc::clone(&stdin),
+
             pending: Arc::clone(&pending),
             notifications: notifications.clone(),
             reader_task: tokio::spawn(read_persistent_codex_app_server_stdout(
@@ -629,6 +630,7 @@ mod tests {
                 Some("official-thread"),
                 None,
                 false,
+                None,
             )
             .await;
         assert_eq!(result, Ok(false));

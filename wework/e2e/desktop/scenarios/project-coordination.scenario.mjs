@@ -1,3 +1,4 @@
+import { desktopOwnerId as USER } from '../modules/desktop-owner-fixture.mjs'
 import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -20,7 +21,6 @@ import {
 } from '../modules/response-protocol.mjs'
 import { selectCollaborationProjectView } from '../modules/collaboration-project-navigation.mjs'
 
-const USER = 9001
 const LOCAL_OWNER = 0
 const PROJECT = `项目自动统筹-${process.pid}`
 const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'

@@ -1,8 +1,11 @@
 import { once } from 'node:events'
 import { createWriteStream } from 'node:fs'
 import { finished } from 'node:stream/promises'
+import { basename } from 'node:path'
+import { PROCESS_STOP_TIMEOUT_MS } from './process-lifecycle.mjs'
 
 const outputs = new Map()
+const owners = new WeakMap()
 const intentionallyClosedSources = new WeakSet()
 
 function completionOf(stream, options = {}) {
@@ -19,31 +22,37 @@ function outputFor(destination) {
     output = {
       writer,
       written: completionOf(writer),
-      sources: new Map(),
+      sources: new Set(),
       sourceCompletions: [],
+      allSources: [],
     }
     const sources = output.sources
     output.writer.on('error', error => {
-      for (const source of sources.keys()) source.destroy(error)
+      for (const source of sources) source.destroy(error)
     })
     outputs.set(destination, output)
   }
   return output
 }
 
+export function appendChildProcessOutput(child, destination) {
+  for (const stream of [child.stdout, child.stderr]) appendProcessOutput(stream, destination, child)
+}
+
 export function appendProcessOutput(stream, destination, owner) {
   if (!stream) return
+  if (owner) owners.set(stream, owner)
   const output = outputFor(destination)
-  output.sources.set(stream, owner)
+  output.sources.add(stream)
+  output.allSources.push(stream)
   output.sourceCompletions.push(
     completionOf(stream, { readable: true, writable: false }).then(result => {
       if (
         intentionallyClosedSources.has(stream) &&
         result.status === 'rejected' &&
         result.reason.code === 'ERR_STREAM_PREMATURE_CLOSE'
-      ) {
+      )
         return { status: 'fulfilled' }
-      }
       return result
     })
   )
@@ -59,81 +68,103 @@ export function appendProcessOutput(stream, destination, owner) {
   })
 }
 
-// A Windows release handoff can keep inherited pipes open after their launcher exits.
+// Only release handoff pipes may be closed after their launcher has exited.
 export async function closeExitedProcessOutput(destination) {
   const output = outputs.get(destination)
   if (!output) return
   while (output.writer.writableNeedDrain) await once(output.writer, 'drain')
-  for (const [source, owner] of output.sources) {
+  for (const source of output.sources) {
+    const owner = owners.get(source)
     if (owner?.exitCode == null && owner?.signalCode == null) continue
+    if (source.readableLength > 0)
+      throw new Error('Exited launcher output still contains unread bytes')
     intentionallyClosedSources.add(source)
     source.destroy()
   }
 }
 
-function reportPendingOutput() {
-  console.error(
-    '[desktop-e2e-process-output]',
-    JSON.stringify({
-      pending: [...outputs].map(([destination, output]) => ({
-        destination,
-        writer: {
-          pendingBytes: output.writer.writableLength,
-          ended: output.writer.writableEnded,
-          finished: output.writer.writableFinished,
-          closed: output.writer.closed,
-          destroyed: output.writer.destroyed,
-        },
-        sources: [...output.sources].map(([source, owner]) => ({
-          pid: owner?.pid,
-          exitCode: owner?.exitCode,
-          signalCode: owner?.signalCode,
-          pendingBytes: source.readableLength,
-          ended: source.readableEnded,
-          closed: source.closed,
-          destroyed: source.destroyed,
-          paused: source.isPaused(),
-        })),
-      })),
-    })
-  )
+/** Lifecycle state only: never retain output contents, arguments, or environment. */
+export function processOutputDiagnostics() {
+  return [...outputs].map(([destination, output]) => ({
+    destination: basename(destination),
+    writer: {
+      pending: output.writer.pending,
+      closed: output.writer.closed,
+      destroyed: output.writer.destroyed,
+      finished: output.writer.writableFinished,
+      bufferedBytes: output.writer.writableLength,
+      needsDrain: output.writer.writableNeedDrain,
+    },
+    sources: output.allSources.map(stream => ({
+      owner: owners.has(stream)
+        ? {
+            pid: owners.get(stream).pid,
+            exitCode: owners.get(stream).exitCode,
+            signalCode: owners.get(stream).signalCode,
+          }
+        : null,
+      ended: stream.readableEnded,
+      closed: stream.closed,
+      destroyed: stream.destroyed,
+      paused: stream.isPaused(),
+      bufferedBytes: stream.readableLength,
+    })),
+  }))
 }
 
-export async function flushProcessOutput() {
-  const diagnostic = setInterval(reportPendingOutput, 10_000)
-  diagnostic.unref()
-  try {
-    const results = await Promise.allSettled(
-      [...outputs].map(async ([destination, output]) => {
-        try {
-          const [written, sources] = await Promise.all([
-            output.written,
-            Promise.all(output.sourceCompletions).then(results => {
-              output.writer.end()
-              return results
-            }),
-          ])
-          if (written.status === 'rejected') throw written.reason
-          const failures = sources.filter(result => result.status === 'rejected')
-          if (failures.length) {
-            throw new AggregateError(
-              failures.map(result => result.reason),
-              'Process output did not finish cleanly'
-            )
-          }
-        } finally {
-          outputs.delete(destination)
-        }
-      })
-    )
-    const failures = results.filter(result => result.status === 'rejected')
-    if (failures.length) {
-      throw new AggregateError(
-        failures.map(result => result.reason),
-        'Process log drainage failed'
+async function finishSources(output, destination, timeoutMs) {
+  let timeout
+  const completion = Promise.all(output.sourceCompletions)
+  const deadline = new Promise((_, reject) => {
+    timeout = setTimeout(() => {
+      const error = new Error(
+        `Process output sources did not close after shutdown: ${basename(destination)}`
       )
-    }
+      error.code = 'ERR_PROCESS_OUTPUT_UNCLOSED'
+      reject(error)
+      // An incomplete log remains a failure; closing our readers only releases the collector.
+      for (const source of output.sources) source.destroy(error)
+    }, timeoutMs)
+  })
+  try {
+    return await Promise.race([completion, deadline])
   } finally {
-    clearInterval(diagnostic)
+    clearTimeout(timeout)
+    await completion
+    output.writer.end()
+  }
+}
+
+export async function flushProcessOutput({ sourceTimeoutMs = PROCESS_STOP_TIMEOUT_MS } = {}) {
+  const results = await Promise.allSettled(
+    [...outputs].map(async ([destination, output]) => {
+      try {
+        const [writtenResult, sourcesResult] = await Promise.allSettled([
+          output.written,
+          finishSources(output, destination, sourceTimeoutMs),
+        ])
+        if (writtenResult.status === 'rejected') throw writtenResult.reason
+        const written = writtenResult.value
+        if (written.status === 'rejected') throw written.reason
+        if (sourcesResult.status === 'rejected') throw sourcesResult.reason
+        const sources = sourcesResult.value
+        const failures = sources.filter(result => result.status === 'rejected')
+        if (failures.length) {
+          throw new AggregateError(
+            failures.map(result => result.reason),
+            'Process output did not finish cleanly'
+          )
+        }
+      } finally {
+        outputs.delete(destination)
+      }
+    })
+  )
+  const failures = results.filter(result => result.status === 'rejected')
+  if (failures.length) {
+    throw new AggregateError(
+      failures.map(result => result.reason),
+      'Process log drainage failed'
+    )
   }
 }

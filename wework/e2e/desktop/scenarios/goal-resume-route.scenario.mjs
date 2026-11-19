@@ -26,7 +26,7 @@ const MARKER = 'WEWORK_GOAL_RESUME_ROUTE'
 const RECOVERED = `${MARKER}_RECOVERED`
 
 export function createDesktopScenario(options) {
-  const existing = createStoppedGoal(options)
+  const existing = options.checkpoint === 'goal-resume-route' ? null : createStoppedGoal(options)
   let active = false
   let requests = 0
   let restartDesktopApp
@@ -36,8 +36,8 @@ export function createDesktopScenario(options) {
       restartDesktopApp = restart
       existing?.setRestartDesktopApp?.(restart)
     },
-    async handleHttp(request, response, url) {
-      if (!active) return existing?.handleHttp(request, response, url) ?? false
+    async handleHttp(request, response, url, modelRequest) {
+      if (!active) return existing?.handleHttp(request, response, url, modelRequest) ?? false
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(request)

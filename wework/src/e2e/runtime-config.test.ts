@@ -11,7 +11,11 @@ import {
   DESKTOP_E2E_CLOUD_SESSION_CHANGED_EVENT,
 } from './runtime-config'
 
+let previousRuntimeConfig: Window['__WEWORK_RUNTIME_CONFIG__']
+
 beforeEach(async () => {
+  previousRuntimeConfig = window.__WEWORK_RUNTIME_CONFIG__
+  window.__WEWORK_RUNTIME_CONFIG__ = { ...previousRuntimeConfig, desktopHost: 'electron' }
   window.__WEWORK_DESKTOP_E2E_RUNTIME_CONFIG__ = {
     cloudBackendUrl: 'https://cloud.example',
     cloudToken: 'owner-token',
@@ -28,6 +32,7 @@ afterEach(async () => {
   await loadDesktopE2ERuntimeConfig()
   vi.unstubAllGlobals()
   vi.unstubAllEnvs()
+  window.__WEWORK_RUNTIME_CONFIG__ = previousRuntimeConfig
 })
 
 function CloudIdentity({ elementRef }: { elementRef?: Ref<HTMLSpanElement> } = {}) {

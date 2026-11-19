@@ -3,11 +3,13 @@
 use std::{
     io,
     os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
+    time::{Duration, Instant},
 };
 use windows_sys::Win32::System::JobObjects::{
-    AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-    SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-    JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    AssignProcessToJobObject, CreateJobObjectW, JobObjectBasicAccountingInformation,
+    JobObjectExtendedLimitInformation, QueryInformationJobObject, SetInformationJobObject,
+    TerminateJobObject, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
 };
 
 #[link(name = "ntdll")]
@@ -69,6 +71,41 @@ impl WindowsJob {
             )));
         }
         Ok(())
+    }
+
+    pub(super) fn active_processes(&self) -> io::Result<u32> {
+        // This Win32 POD record is filled synchronously while the job handle is owned.
+        let mut accounting: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = unsafe { std::mem::zeroed() };
+        if unsafe {
+            QueryInformationJobObject(
+                self.0.as_raw_handle(),
+                JobObjectBasicAccountingInformation,
+                std::ptr::addr_of_mut!(accounting).cast(),
+                std::mem::size_of_val(&accounting) as u32,
+                std::ptr::null_mut(),
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(accounting.ActiveProcesses)
+    }
+
+    pub(super) fn terminate_and_wait(&self, timeout: Duration) -> io::Result<()> {
+        self.terminate()?;
+        let deadline = Instant::now() + timeout;
+        loop {
+            if self.active_processes()? == 0 {
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "Owned process job remained active",
+                ));
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        }
     }
 
     pub(super) fn terminate(&self) -> io::Result<()> {

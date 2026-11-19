@@ -269,6 +269,29 @@ describe('ModelSelector desktop layout', () => {
     expect(screen.queryByTestId('model-family-codex-official')).not.toBeInTheDocument()
   })
 
+  test('exposes a ready native catalog while retaining a cloud model without a native provider ID', async () => {
+    createShellElement({ hidden: true })
+    const onSelectModel = vi.fn()
+    render(
+      <ModelSelector
+        models={[SAMPLE_MODEL, SECOND_FAMILY_MODEL]}
+        selectedModel={SECOND_FAMILY_MODEL}
+        selectedModelOptions={{}}
+        disabled={false}
+        onSelectModel={onSelectModel}
+        onSelectModelOption={vi.fn()}
+      />
+    )
+    const trigger = screen.getByTestId('model-selector-button')
+    expect(trigger).not.toHaveAttribute('data-model-provider-id')
+    fireEvent.click(trigger)
+    expect(await screen.findByTestId(`model-option-${SAMPLE_MODEL.name}`)).toHaveAttribute(
+      'data-model-provider-id',
+      'openai'
+    )
+    expect(onSelectModel).not.toHaveBeenCalled()
+  })
+
   test('opens model options directly when the selected model has no configurable slider', async () => {
     createShellElement({ hidden: true })
 

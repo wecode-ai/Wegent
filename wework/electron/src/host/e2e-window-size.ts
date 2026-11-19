@@ -10,7 +10,7 @@ type ResizableWindow = Pick<
   | 'removeListener'
   | 'setContentSize'
   | 'unmaximize'
->
+> & { webContents: Pick<BrowserWindow['webContents'], 'capturePage'> }
 
 function waitForNativeSizeState(
   target: ResizableWindow,
@@ -67,7 +67,7 @@ function waitForNativeSizeState(
   })
 }
 
-/** Acknowledge explicit E2E sizes only after the window manager applies them. */
+/** Acknowledge explicit E2E sizes after native geometry and a composited frame. */
 export async function setE2EWindowSize(
   target: ResizableWindow,
   width: number,
@@ -78,6 +78,11 @@ export async function setE2EWindowSize(
   if (target.isDestroyed()) throw new Error('The E2E window is unavailable for resizing')
   const [previousWidth, previousHeight] = target.getContentSize()
   const previous = { width: previousWidth, height: previousHeight, maximized: target.isMaximized() }
+  const finishResize = async () => {
+    // A hidden Chromium renderer can defer visual updates after native resize.
+    await target.webContents.capturePage()
+    return previous
+  }
   if (maximized) {
     await waitForNativeSizeState(
       target,
@@ -85,7 +90,7 @@ export async function setE2EWindowSize(
       () => target.isMaximized(),
       'restore the maximized state'
     )
-    return previous
+    return finishResize()
   }
   if (target.isMaximized() && platform !== 'darwin') {
     await waitForNativeSizeState(
@@ -109,5 +114,5 @@ export async function setE2EWindowSize(
     },
     `resize its content to ${width}x${height}`
   )
-  return previous
+  return finishResize()
 }

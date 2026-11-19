@@ -1,3 +1,4 @@
+import { desktopOwnerId as USER_ID } from '../modules/desktop-owner-fixture.mjs'
 import {
   openStandInSettings,
   openStandInActivity,
@@ -41,7 +42,6 @@ const CONTENT = '[data-workspace-tab-content][aria-hidden="false"]'
 const PROJECT = `助理工作区-${process.pid}`
 const SOURCE = `助理代码-${process.pid}`
 const MARKER = `STAND_IN_WORKSPACE_${process.pid}`
-const USER_ID = 9001
 const hasOsSandbox = process.platform !== 'win32'
 const outsideWriteMarker = hasOsSandbox
   ? 'SOURCE_OUTSIDE_WRITE_BLOCKED'

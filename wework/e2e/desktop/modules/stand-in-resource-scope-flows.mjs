@@ -1,3 +1,4 @@
+import { desktopOwnerId } from './desktop-owner-fixture.mjs'
 import { openStandInSettings } from './stand-in-profile-navigation.mjs'
 import assert from 'node:assert/strict'
 import { ensureExperimentalFeaturesEnabled } from './preferences-automation-flows.mjs'
@@ -6,7 +7,7 @@ import { reloadMainWindow } from './workspace-flows.mjs'
 
 /** Exercise scope selection through the real renderer, RPC, provider and local settings store. */
 export async function verifyStandInResourceScopes(control, rpc, providerId) {
-  const user = 9001
+  const user = desktopOwnerId
   const original = await rpc(control, 'runtime.stand_in.personal.get', { userId: user })
   const prefix = `stand-in-connection-${providerId}`
   const open = async () => {
@@ -73,7 +74,7 @@ export async function verifyStandInResourceScopes(control, rpc, providerId) {
 /** Calendar persistence uses the real scheduler store without dispatching an execution. */
 export async function verifyStandInCalendarPolicy(control, rpc) {
   const name = 'Connection calendar policy'
-  const original = await rpc(control, 'runtime.stand_in.personal.get', { userId: 9001 })
+  const original = await rpc(control, 'runtime.stand_in.personal.get', { userId: desktopOwnerId })
   let id
   let ordinaryId
   try {
@@ -92,7 +93,7 @@ export async function verifyStandInCalendarPolicy(control, rpc) {
     await control.command('click', '[data-testid="stand-in-calendar-policy"]')
     await control.command('clickWhenEnabled', '[data-testid="stand-in-primary-save"]')
     await control.command('waitFor', '[data-testid="stand-in-primary-profile"]', { visible: false })
-    const policy = await rpc(control, 'runtime.stand_in.personal.get', { userId: 9001 })
+    const policy = await rpc(control, 'runtime.stand_in.personal.get', { userId: desktopOwnerId })
     assert.equal(policy.primary.calendar.policy.immediate, true)
     await openStandInSettings(control)
     await control.command('click', '[data-testid="stand-in-primary-connections-open"]')
@@ -118,7 +119,7 @@ export async function verifyStandInCalendarPolicy(control, rpc) {
     )
     assert.ok(saved, 'Calendar event must persist through the real automation RPC')
     id = saved.id
-    assert.deepEqual(saved.taskRequest.standInOwner, { userId: 9001, roleId: '@primary' })
+    assert.deepEqual(saved.taskRequest.standInOwner, { userId: desktopOwnerId, roleId: '@primary' })
     assert.deepEqual(saved.taskRequest.standInCalendar, {})
     assert.equal(saved.prompt, 'Review the project’s outstanding items.')
     assert.equal(saved.conversationMode, 'independent')
@@ -165,9 +166,9 @@ export async function verifyStandInCalendarPolicy(control, rpc) {
   } finally {
     if (id) await rpc(control, 'runtime.automations.delete', { automationId: id })
     if (ordinaryId) await rpc(control, 'runtime.automations.delete', { automationId: ordinaryId })
-    const current = await rpc(control, 'runtime.stand_in.personal.get', { userId: 9001 })
+    const current = await rpc(control, 'runtime.stand_in.personal.get', { userId: desktopOwnerId })
     await rpc(control, 'runtime.stand_in.personal.save', {
-      userId: 9001,
+      userId: desktopOwnerId,
       settings: { ...original, version: current.version },
     })
   }

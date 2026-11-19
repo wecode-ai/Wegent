@@ -1,3 +1,4 @@
+import { desktopOwnerId } from '../modules/desktop-owner-fixture.mjs'
 import assert from 'node:assert/strict'
 import { createCloudConfigModelService } from '../modules/cloud-config-model-service.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -81,7 +82,7 @@ export function createDesktopScenario({ workspacePath }) {
         const executionRequest = {
           task_id: taskId,
           subtask_id: `${taskId}-initial`,
-          user_id: 9001,
+          user_id: desktopOwnerId,
           prompt: marker,
           new_session: true,
           project_workspace_path: workspacePath,

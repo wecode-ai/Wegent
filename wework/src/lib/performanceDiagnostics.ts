@@ -1,4 +1,5 @@
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { recordUiReactCommit } from '@/e2e/ui-refresh-capture'
 import { isElectronRuntime } from './runtime-environment'
 
 const PERFORMANCE_DIAGNOSTICS_STORAGE_KEY = 'wework:perf-debug'
@@ -198,6 +199,7 @@ export function recordReactCommit(
   startTime: number,
   commitTime: number
 ) {
+  if (id === 'wework-root') recordUiReactCommit(actualDuration)
   if (!controller || actualDuration < SLOW_REACT_COMMIT_MS) return
 
   controller.mark('slow-react-commit', {

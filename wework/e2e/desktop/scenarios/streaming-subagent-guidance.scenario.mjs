@@ -12,7 +12,7 @@ export function createDesktopScenario(options) {
   })
   const scenario = createStreamingScenario({
     ...options,
-    checkpoint: 'streaming-subagent-guidance',
+    checkpoint: 'streaming-subagents',
     subagentTextRelease,
     async beforeSubagentOutput(control) {
       await control.command('fill', COMPOSER_SELECTOR, { value: GUIDANCE })

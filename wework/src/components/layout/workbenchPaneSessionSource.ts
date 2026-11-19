@@ -433,7 +433,16 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
       return bind().commands.setInput(...args)
     },
   }
-  let snapshot = createPaneSessionView(frame(), commands, search, attachmentCommands)
+  const snapshotCommands = () => {
+    const captured = bind().commands
+    return {
+      ...commands,
+      replaceInput: captured.replaceInput,
+      send: captured.send,
+      loadMoreTranscriptBefore: captured.loadMoreTranscriptBefore,
+    }
+  }
+  let snapshot = createPaneSessionView(frame(), snapshotCommands(), search, attachmentCommands)
   const differs = (previous: readonly unknown[] | undefined, next: readonly unknown[]) =>
     !previous || next.some((value, index) => !Object.is(value, previous[index]))
   function publish() {
@@ -464,7 +473,7 @@ export function createWorkbenchPaneSessionSource(initial: PaneSessionExternal) {
             continue
           }
         }
-        snapshot = createPaneSessionView(current, commands, search, attachmentCommands)
+        snapshot = createPaneSessionView(current, snapshotCommands(), search, attachmentCommands)
         diagnostics.observe(current)
         for (const listener of listeners) listener()
       } while (publishAgain)

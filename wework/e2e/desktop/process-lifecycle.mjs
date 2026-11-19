@@ -2,7 +2,7 @@ import { execFile, execFileSync, spawn } from 'node:child_process'
 import { readdirSync, readFileSync } from 'node:fs'
 import { promisify } from 'node:util'
 
-const PROCESS_STOP_TIMEOUT_MS = 10_000
+export const PROCESS_STOP_TIMEOUT_MS = 10_000
 const PROCESS_GROUP_GRACE_PERIOD_MS = 1_000
 const PROCESS_GROUP_POLL_INTERVAL_MS = 25
 const DEAD_LINUX_PROCESS_STATES = new Set(['Z', 'X', 'x'])
@@ -75,17 +75,6 @@ async function waitForProcessExit(child, timeoutMs, { requireExitEvent = false }
 
 export function processExitDiagnostics(child) {
   const diagnostics = { pid: child.pid, exitCode: child.exitCode, signalCode: child.signalCode }
-  if (process.platform === 'darwin' && Number.isInteger(child.pid)) {
-    try {
-      diagnostics.macos = execFileSync(
-        'ps',
-        ['-p', String(child.pid), '-o', 'pid=,ppid=,pgid=,uid=,stat=,lstart=,comm='],
-        { encoding: 'utf8', timeout: 1_000 }
-      ).trim()
-    } catch (error) {
-      diagnostics.macos = { unavailable: error.code ?? error.status ?? error.name }
-    }
-  }
   if (process.platform !== 'linux' || !Number.isInteger(child.pid)) return diagnostics
   try {
     const stat = readFileSync(`/proc/${child.pid}/stat`, 'utf8')
@@ -467,9 +456,19 @@ export async function crashOwnedProcessTree(child, snapshot) {
   }
 }
 
-async function stopWindowsProcessTree(child) {
+export async function stopWindowsProcessTree(child, { launch = spawn } = {}) {
+  if (typeof child.stopOwnedProcessTree === 'function') {
+    const result = await child.stopOwnedProcessTree()
+    console.log('[desktop-e2e] Owned Windows process job terminated', {
+      processId: child.pid,
+      supervisorPid: child.supervisorPid,
+      collection: child.supervisorCollection,
+      ...result,
+    })
+    return
+  }
   if (child.exitCode !== null || child.signalCode !== null || !Number.isInteger(child.pid)) return
-  const killer = spawn('taskkill', windowsTaskkillArguments(child.pid), {
+  const killer = launch('taskkill', windowsTaskkillArguments(child.pid), {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   })
@@ -479,7 +478,7 @@ async function stopWindowsProcessTree(child) {
       output = `${output}${chunk}`.slice(-16 * 1024)
     })
   }
-  await new Promise((resolvePromise, reject) => {
+  const code = await new Promise((resolvePromise, reject) => {
     killer.once('error', reject)
     killer.once('close', code => {
       console.log('[desktop-e2e] Windows process tree termination', {
@@ -487,9 +486,18 @@ async function stopWindowsProcessTree(child) {
         code,
         output: output.trim(),
       })
-      resolvePromise()
+      resolvePromise(code)
     })
   })
+  if (code !== 0) {
+    const error = new Error(
+      `Windows process tree termination failed for PID ${child.pid}: exit=${code ?? 'unknown'}`
+    )
+    error.code = 'ERR_WINDOWS_PROCESS_TREE_TERMINATION'
+    error.exitCode = code
+    error.processId = child.pid
+    throw error
+  }
   await waitForProcessExit(child, PROCESS_STOP_TIMEOUT_MS)
 }
 

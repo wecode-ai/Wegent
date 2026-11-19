@@ -2,6 +2,7 @@
 // renderer. Run them alone so Chromium's network service stays stable on the
 // four-vCPU desktop E2E runners. CI shard estimates must account for this prefix.
 export const RESOURCE_EXCLUSIVE_CHECKPOINTS = new Set([
+  'background-terminals',
   'release-package-startup',
   // Native development approval starts a second complete Electron/Core runtime.
   'security-boundaries',
@@ -29,6 +30,7 @@ export function isResourceExclusiveCheckpoint(checkpoint, linuxCore = false) {
 const PYTHON_RUNTIME_STARTUP_PEERS = [
   'collaboration-shared-core',
   'collaboration-templates',
+  'collaboration-template-agents',
   'collaboration-template-app-device-routing',
   'claude-runtime',
   'conversation-state',

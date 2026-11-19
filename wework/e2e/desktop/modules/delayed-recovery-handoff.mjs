@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { appendProcessOutput } from '../process-output.mjs'
+import { appendChildProcessOutput } from '../process-output.mjs'
 import { stopProcessGroup } from '../process-lifecycle.mjs'
 import { quitInstalledHost } from './installed-startup-history.mjs'
 import { routeUpgradeRequests } from './upgrade-request-route.mjs'
@@ -34,8 +34,7 @@ export async function assertDelayedRecoveryHandoffs(options) {
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     const log = join(options.resultDir, `delayed-recovery-${nativeRecovery}.log`)
-    appendProcessOutput(child.stdout, log, child)
-    appendProcessOutput(child.stderr, log, child)
+    appendChildProcessOutput(child, log)
     let handedOff = false
     try {
       const port = await routeUpgradeRequests(child, options.origin, log, { followHandoffs: true })

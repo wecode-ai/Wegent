@@ -1,0 +1,12 @@
+{
+  "order": 76000,
+  "scenario": "./scenarios/collaboration-home-preload.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 21000,
+      "shard": 4,
+      "position": 7000
+    }
+  }
+}

@@ -142,7 +142,7 @@ impl RuntimeWorkRpcHandler {
         let (collected_links, catalog_complete) = if prefer_cached {
             (self.collect_cached_links(false), false)
         } else {
-            self.collect_query_links(false).await
+            self.collect_query_links(false, None).await
         };
         log_runtime_work_list_diagnostic(
             "links_collected",
@@ -196,7 +196,10 @@ impl RuntimeWorkRpcHandler {
         );
         // Pending decisions are framework-owned state, not a provider discovery request.
         if prefer_cached && !pending_only {
-            self.reconcile_codex_threads_after_cached_list();
+            drop(self.reconcile_codex_threads_after_cached_list(
+                project_index.clone(),
+                workspaces.clone(),
+            ));
         }
         let mut response = json!({
             "success": true,
@@ -223,21 +226,38 @@ impl RuntimeWorkRpcHandler {
         Ok(response)
     }
 
-    fn reconcile_codex_threads_after_cached_list(&self) {
+    pub(super) fn reconcile_codex_threads_after_cached_list(
+        &self,
+        project_index: CodexGlobalProjectIndex,
+        previous_workspaces: Vec<Value>,
+    ) -> tokio::task::JoinHandle<()> {
         let handler = self.clone();
         tokio::spawn(async move {
             let started_at = Instant::now();
-            handler.collect_links(false).await;
+            let (links, catalog_complete) = handler
+                .collect_query_links(false, Some(CODEX_THREAD_LIST_MAX_ITEMS))
+                .await;
+            let workspaces = workspace_response(
+                handler.visible_links_for_projects(links, &project_index),
+                codex_project_workspaces(&project_index),
+            );
+            let changed = workspaces != previous_workspaces;
             log_executor_event(
                 "runtime work cached list reconciliation finished",
-                &[("elapsed_ms", elapsed_ms(started_at))],
+                &[
+                    ("elapsed_ms", elapsed_ms(started_at)),
+                    ("changed", changed.to_string()),
+                    ("catalog_complete", catalog_complete.to_string()),
+                ],
             );
-            emit_runtime_work_changed(
-                &handler.event_tx,
-                &handler.device_id,
-                "runtime-work-bootstrap",
-            );
-        });
+            if changed || !catalog_complete {
+                emit_runtime_work_changed(
+                    &handler.event_tx,
+                    &handler.device_id,
+                    "runtime-work-bootstrap",
+                );
+            }
+        })
     }
 
     pub(super) async fn list_archived_conversations(
@@ -250,7 +270,7 @@ impl RuntimeWorkRpcHandler {
             return Ok(archived_conversations_response(Vec::new(), &self.device_id));
         }
 
-        let (mut links, catalog_complete) = self.collect_query_links(true).await;
+        let (mut links, catalog_complete) = self.collect_query_links(true, None).await;
         if let Some(workspace_path) = string_field(&payload, "workspacePath")
             .or_else(|| string_field(&payload, "workspace_path"))
         {
@@ -815,7 +835,8 @@ impl RuntimeWorkRpcHandler {
         {
             if let Some(link) = local_link
                 .as_ref()
-                .filter(|link| !link.ephemeral && link.status != "archived")
+                // Background executions can own the native writer outside this handler.
+                .filter(|link| !link.running && !link.ephemeral && link.status != "archived")
             {
                 thread_id = self
                     .resume_codex_thread_for_action(link, &thread_id)

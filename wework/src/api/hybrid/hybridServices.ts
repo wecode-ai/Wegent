@@ -4,6 +4,7 @@ import {
   createLocalDevicePluginApi,
   resolveLocalPluginDeviceRouteId,
 } from '@/features/plugins/pluginDeviceApi'
+import { isRuntimeReadCancellation } from '@/features/workbench/runtimeConversationReadCancellation'
 import { createReplyPredictionApi } from '@/api/runtime/replyPredictionApi'
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import {
@@ -1227,11 +1228,13 @@ export function createHybridWorkbenchServices(
         }
         return response
       } catch (error) {
-        console.error('[Wework] Hybrid runtime transcript failed', {
-          route,
-          address: runtimeAddressDebug(data),
-          error,
-        })
+        if (!isRuntimeReadCancellation(error, options?.signal)) {
+          console.error('[Wework] Hybrid runtime transcript failed', {
+            route,
+            address: runtimeAddressDebug(data),
+            error,
+          })
+        }
         throw error
       }
     },

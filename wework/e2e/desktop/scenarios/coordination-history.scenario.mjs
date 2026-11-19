@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
+import { desktopOwnerId as USER } from '../modules/desktop-owner-fixture.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
-import { standInSchedulerIntervalMs } from '../modules/stand-in-flows.mjs'
 import {
   assistantMessage,
   createSse,
@@ -12,7 +12,6 @@ import {
   responseCreated,
 } from '../modules/response-protocol.mjs'
 
-const USER = 9001
 const ROLE = 'history-owner'
 const MARKER = 'COORDINATION_HISTORY_NEW_WORK'
 const HISTORY_COUNT = 80_000
@@ -279,9 +278,9 @@ export function createDesktopScenario({
           HISTORY_COUNT,
           'Polling must not generate another failed intent'
         )
-        // Observe two configured polling intervals plus jitter, including idle passes
+        // Observe two normal five-second polling intervals, including idle passes
         // that legitimately skip commit and do not advance lastCheckAt.
-        const observationEnds = Date.now() + 2 * standInSchedulerIntervalMs() + 500
+        const observationEnds = Date.now() + 10_000
         do {
           assert.equal(
             database

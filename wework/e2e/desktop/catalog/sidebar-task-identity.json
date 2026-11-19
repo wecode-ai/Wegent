@@ -1,0 +1,12 @@
+{
+  "order": 148100,
+  "scenario": "./scenarios/sidebar-task-identity.scenario.mjs",
+  "scenarioOnly": true,
+  "ci": {
+    "core": {
+      "order": 97100,
+      "shard": 6,
+      "position": 3100
+    }
+  }
+}

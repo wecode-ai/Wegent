@@ -17,8 +17,8 @@ export function createDesktopScenario(options) {
   let active = false
   return {
     ...existing,
-    async handleHttp(request, response, url) {
-      if (!active) return existing.handleHttp(request, response, url)
+    async handleHttp(request, response, url, modelRequest) {
+      if (!active) return existing.handleHttp(request, response, url, modelRequest)
       if (request.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(request)

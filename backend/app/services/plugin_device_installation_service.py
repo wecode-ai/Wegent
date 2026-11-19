@@ -32,12 +32,11 @@ from app.services.plugin_write_coordination import (
     acquire_plugin_write_lock,
     acquire_plugin_write_locks,
 )
-from app.services.plugin_write_errors import PluginWriteError
+from app.services.plugin_write_errors import PluginWriteError, is_mysql_deadlock
 from app.services.plugin_write_operations import run_plugin_operation
 
 logger = logging.getLogger(__name__)
 
-MYSQL_DEADLOCK_ERROR = 1213
 DEVICE_SYNC_WRITE_ATTEMPTS = 3
 
 
@@ -263,7 +262,7 @@ class PluginDeviceInstallationService:
                 retryable = (
                     isinstance(exc, PluginWriteError)
                     and exc.code == "plugin_write_conflict"
-                ) or (isinstance(exc, OperationalError) and _is_mysql_deadlock(exc))
+                ) or is_mysql_deadlock(exc)
                 if not retryable or attempt == DEVICE_SYNC_WRITE_ATTEMPTS:
                     raise
                 logger.warning(
@@ -362,7 +361,7 @@ class PluginDeviceInstallationService:
                 )
             db.commit()
         except OperationalError as error:
-            if not _is_mysql_deadlock(error):
+            if not is_mysql_deadlock(error):
                 raise
             raise PluginWriteError("plugin_write_conflict") from error
 
@@ -845,8 +844,3 @@ class PluginDeviceInstallationService:
 
 
 plugin_device_installation_service = PluginDeviceInstallationService()
-
-
-def _is_mysql_deadlock(error: OperationalError) -> bool:
-    original = error.orig
-    return bool(original.args and original.args[0] == MYSQL_DEADLOCK_ERROR)

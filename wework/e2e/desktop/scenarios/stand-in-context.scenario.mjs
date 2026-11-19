@@ -1,3 +1,4 @@
+import { desktopOwnerId as USER } from '../modules/desktop-owner-fixture.mjs'
 import assert from 'node:assert/strict'
 import { createDesktopScenario as createIdentities } from './stand-in-identities.scenario.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
@@ -15,7 +16,6 @@ import {
   codexRequestKind,
 } from '../modules/response-protocol.mjs'
 
-const USER = 9001
 const QUERY = 'CONTEXT_RECALL_RELEASE'
 const FACT = '发布计划已经确认改到周二，证据编号RECALL7319。'
 

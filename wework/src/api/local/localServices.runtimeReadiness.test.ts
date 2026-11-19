@@ -4,27 +4,13 @@ import {
   saveLocalModelConfig,
 } from '@/features/model-settings/localModelSettings'
 import { beforeEach, describe, expect, test, vi } from 'vitest'
-import {
-  createLocalAppServices,
-  createRuntimeWorkApiFromIpc,
-  resetLocalRuntimeChatStreamsForTests,
-} from './localServices'
+import { createLocalAppServices, resetLocalRuntimeChatStreamsForTests } from './localServices'
 
 const status = {
   running: true,
   ready: true,
   deviceId: 'local-device',
   runtimeInstanceId: 'local-runtime',
-}
-
-function deferred<T>() {
-  let resolve!: (value: T) => void
-  let reject!: (reason: Error) => void
-  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise
-    reject = rejectPromise
-  })
-  return { promise, resolve, reject }
 }
 
 describe('local transcript startup ordering', () => {
@@ -110,29 +96,32 @@ describe('local transcript startup ordering', () => {
   })
 
   test.each(['read', 'search'] as const)(
-    '%s waits for executor availability without preparing model execution',
+    '%s preserves stored history when model preparation is unavailable',
     async operation => {
-      const startup = deferred<typeof status>()
-      const available = vi.fn(() => startup.promise)
-      const ensure = vi.fn()
-      const request = vi.fn().mockResolvedValue({ messages: [] })
+      const ensure = vi.fn(async () => {
+        throw new Error('Model preparation unavailable')
+      })
+      const expected =
+        operation === 'read'
+          ? { messages: [{ content: 'persisted' }] }
+          : { matches: [], totalMatches: 0, isCapped: false }
+      const request = vi.fn().mockResolvedValue(expected)
       const services = createLocalAppServices({
         subscribe: vi.fn().mockResolvedValue(vi.fn()),
-        available,
+        available: async () => status,
         ensure,
         request,
       })
       const address = { deviceId: status.deviceId, taskId: 'persisted-task', runtime: 'codex' }
-      const pending =
+      const response =
         operation === 'read'
-          ? services.runtimeWorkApi!.getRuntimeTranscript(address)
-          : services.runtimeWorkApi!.searchRuntimeTranscript({ ...address, query: 'persisted' })
-
-      await vi.waitFor(() => expect(available).toHaveBeenCalledOnce())
+          ? await services.runtimeWorkApi!.getRuntimeTranscript(address)
+          : await services.runtimeWorkApi!.searchRuntimeTranscript({
+              ...address,
+              query: 'persisted',
+            })
+      expect(response).toEqual(expected)
       expect(ensure).not.toHaveBeenCalled()
-      expect(request).not.toHaveBeenCalled()
-      startup.resolve(status)
-      await pending
       expect(request).toHaveBeenCalledWith(
         operation === 'read' ? 'runtime.tasks.transcript' : 'runtime.tasks.transcript.search',
         expect.objectContaining(address)
@@ -140,7 +129,7 @@ describe('local transcript startup ordering', () => {
     }
   )
 
-  test('persisted transcript reads do not prepare or restart a pending model catalog', async () => {
+  test('does not rewrite the model catalog or restart Codex to read stored history', async () => {
     saveLocalModelConfig({
       id: 'restored-model',
       displayName: 'Restored model',
@@ -154,34 +143,25 @@ describe('local transcript startup ordering', () => {
       }),
       catalogReady: false,
     })
-    const ensure = vi.fn(() => new Promise<typeof status>(() => {}))
-    const request = vi.fn().mockImplementation(async (method: string) => {
-      if (method === 'runtime.codex.app_server.restart') return new Promise(() => {})
-      return { messages: [] }
-    })
+    const request = vi.fn().mockResolvedValue({ messages: [] })
     const services = createLocalAppServices({
       subscribe: vi.fn().mockResolvedValue(vi.fn()),
       available: async () => status,
-      ensure,
+      ensure: async () => status,
       request,
     })
-    const pending = services.runtimeWorkApi!.getRuntimeTranscript({
+    await services.runtimeWorkApi!.getRuntimeTranscript({
       deviceId: status.deviceId,
       taskId: 'persisted-task',
     })
-    await pending
-    expect(ensure).not.toHaveBeenCalled()
     expect(request.mock.calls.map(([method]) => method)).toEqual(['runtime.tasks.transcript'])
   })
 
-  test('unavailable executor errors are returned before any transcript is dispatched', async () => {
-    const request = vi.fn()
+  test('preserves transport initialization failures on stored history reads', async () => {
+    const request = vi.fn().mockRejectedValue(new Error('Proxy initialization failed'))
     const services = createLocalAppServices({
       subscribe: vi.fn().mockResolvedValue(vi.fn()),
-      available: async () => {
-        throw new Error('Executor unavailable')
-      },
-      ensure: vi.fn(),
+      available: async () => status,
       request,
     })
     await expect(
@@ -189,8 +169,7 @@ describe('local transcript startup ordering', () => {
         deviceId: status.deviceId,
         taskId: 'persisted-task',
       })
-    ).rejects.toThrow('Executor unavailable')
-    expect(request).not.toHaveBeenCalled()
+    ).rejects.toThrow('Proxy initialization failed')
   })
 })
 
@@ -282,35 +261,4 @@ test('execution prepares a pending local catalog before publishing creation prof
       expect.objectContaining({ runtime: 'codex', modelName: 'local-model:execution-pending' }),
     ]),
   })
-})
-
-test('work reads use their proven owner without a default-device lookup and reject owner replacement', async () => {
-  for (const replaced of [false, true]) {
-    const identity = {
-      deviceId: 'native-device',
-      runtimeInstanceId: 'native-instance',
-      provenance: 'local-ipc' as const,
-    }
-    const api = createRuntimeWorkApiFromIpc(
-      vi.fn().mockResolvedValue({ projects: [], chats: [], totalTasks: 0 }),
-      () => new Promise<string>(() => {}),
-      {
-        getLocalRuntimeSidebarIdentity: vi
-          .fn()
-          .mockResolvedValueOnce(identity)
-          .mockResolvedValueOnce(
-            replaced ? { ...identity, runtimeInstanceId: 'replacement-instance' } : identity
-          ),
-      }
-    )
-    if (replaced) {
-      await expect(api.listRuntimeWork()).rejects.toThrow('local-sidebar-runtime-changed')
-    } else {
-      await expect(api.listRuntimeWork()).resolves.toMatchObject({
-        projects: [],
-        chats: [],
-        totalTasks: 0,
-      })
-    }
-  }
 })

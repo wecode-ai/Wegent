@@ -1,3 +1,4 @@
+import { desktopOwnerId as USER } from '../modules/desktop-owner-fixture.mjs'
 import assert from 'node:assert/strict'
 import { randomUUID } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
@@ -14,7 +15,6 @@ import {
   responseCreated,
 } from '../modules/response-protocol.mjs'
 
-const USER = 9001
 const MARKER = 'CALENDAR_SERIAL_QUEUE_WORK'
 const AUTOMATION = 'calendar-serialized-deadlines'
 

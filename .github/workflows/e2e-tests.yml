@@ -268,7 +268,16 @@ jobs:
             --file .github/runtime-images/backend-rs-e2e.Dockerfile \
             --tag "$IMAGE" \
             .ci-artifacts/backend-rs-image
-          docker push "$IMAGE"
+          publication_started=$SECONDS
+          if docker push "$IMAGE"; then
+            echo "Backend Rust E2E image publication completed in $((SECONDS - publication_started))s"
+          else
+            publication_status=$?
+            echo "Backend Rust E2E image publication failed after $((SECONDS - publication_started))s with status $publication_status"
+            docker image inspect --format '{{.Id}} {{json .RootFS.Layers}}' "$IMAGE" || true
+            timeout 20s docker manifest inspect "$IMAGE" || true
+            exit "$publication_status"
+          fi
 
       - name: Restore content-addressed Backend Rust E2E binary
         if: steps.image-check.outputs.exists == 'true'
@@ -332,6 +341,7 @@ jobs:
       # The real CentOS delivery image has its own budget and does not delay
       # the Noble runtime artifacts consumed by desktop and browser jobs.
       - name: Set up Backend delivery Buildx
+        id: delivery-builder
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
 
       - name: Log in for PR-scoped Backend delivery cache
@@ -343,6 +353,7 @@ jobs:
           password: ${{ github.token }}
 
       - name: Build Backend delivery image
+        id: delivery-build
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25
         with:
           context: .
@@ -356,6 +367,17 @@ jobs:
             type=registry,ref=ghcr.io/${{ github.repository_owner }}/wegent-backend:buildcache-amd64
             ${{ env.DELIVERY_PR_CACHE != '' && format('type=registry,ref={0}', env.DELIVERY_PR_CACHE) || '' }}
           cache-to: ${{ env.DELIVERY_PR_CACHE != '' && format('type=registry,ref={0},mode=max,ignore-error=true', env.DELIVERY_PR_CACHE) || '' }}
+
+      - name: Diagnose Backend delivery registry failure
+        if: failure() && steps.delivery-build.outcome == 'failure'
+        timeout-minutes: 1
+        env:
+          BUILDER_NAME: ${{ steps.delivery-builder.outputs.name }}
+          REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          node .github/scripts/buildkit-registry-diagnostics.mjs \
+            --builder "$BUILDER_NAME" --revision "$REVISION" \
+            --evidence .ci-artifacts/backend-delivery
 
       - name: Verify Backend delivery image
         env:

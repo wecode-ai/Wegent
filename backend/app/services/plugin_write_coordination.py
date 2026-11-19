@@ -2,7 +2,8 @@
 
 Redis serializes one account installation across all devices. The installation's
 write revision fences its dependent authentication and device records. No
-SELECT FOR UPDATE or account-wide plugin lease is used for ordinary writes.
+blocking parent-row read or account-wide plugin lease is used for ordinary writes.
+Multi-installation batches require NOWAIT parent admission before business writes.
 """
 
 import logging
@@ -14,9 +15,9 @@ from typing import Any
 
 from fastapi import Depends
 from redis.exceptions import RedisError
-from sqlalchemy import event, func
+from sqlalchemy import event, func, select, tuple_
 from sqlalchemy.engine import Engine
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import OperationalError, SQLAlchemyError
 from sqlalchemy.orm import Session, SessionTransaction
 from sqlalchemy.orm.attributes import set_committed_value
 
@@ -196,6 +197,8 @@ def acquire_plugin_write_locks(
                 name=name,
                 blocking_timeout=remaining if len(targets) == 1 else 0,
             )
+        if len(targets) > 1:
+            _admit_plugin_batch_rows(db, requested, targets)
         if time.monotonic() >= deadline:
             raise PluginWriteError("plugin_write_busy")
         for lease in db.info.get(_LEASES, {}).values():
@@ -208,6 +211,33 @@ def acquire_plugin_write_locks(
     except Exception:
         # Policy reads can reactivate rows. Roll back before releasing any lease.
         db.rollback()
+        raise
+
+
+def _admit_plugin_batch_rows(
+    db: Session,
+    requested: dict[tuple[int, int], str],
+    targets: list[tuple[int, str]],
+) -> None:
+    """Never retain unrelated leases while waiting for one parent's row lock."""
+    if db.get_bind().dialect.name != "mysql":
+        return
+    try:
+        with db.no_autoflush:
+            db.execute(
+                select(Kind.id)
+                .where(
+                    Kind.kind == "InstalledPlugin",
+                    Kind.namespace == "default",
+                    Kind.id.in_([installed_id for _, installed_id in requested]),
+                    tuple_(Kind.user_id, Kind.name).in_(targets),
+                )
+                .order_by(Kind.id)
+                .with_for_update(nowait=True)
+            ).all()
+    except OperationalError as error:
+        if getattr(error.orig, "args", (None,))[0] == 3572:
+            raise PluginWriteError("plugin_write_busy") from None
         raise
 
 

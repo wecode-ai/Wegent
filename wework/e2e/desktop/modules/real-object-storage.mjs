@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import {
-  appendProcessOutput,
+  appendChildProcessOutput,
   join,
   mkdir,
   reservePort,
@@ -32,10 +32,7 @@ export async function startRealObjectStorage(resultDir, timeoutMs) {
   server.once('error', error => {
     spawnError = error
   })
-  await Promise.all([
-    appendProcessOutput(server.stdout, join(resultDir, 'minio.log'), server),
-    appendProcessOutput(server.stderr, join(resultDir, 'minio.log'), server),
-  ])
+  appendChildProcessOutput(server, join(resultDir, 'minio.log'))
   try {
     const deadline = Date.now() + timeoutMs
     while (Date.now() < deadline) {
