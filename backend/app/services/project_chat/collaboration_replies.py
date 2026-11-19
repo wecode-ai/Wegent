@@ -201,6 +201,7 @@ def publish_collaboration_reply(
         trigger_message_id=reply.reply_to_message_id or "",
         metadata_json={
             "execution_dispatch": "comment_only",
+            "collaboration_public_reply": True,
             "dispatch_id": identity.dispatch_id,
             **(
                 {"collaboration_member_activity_id": member_activity.message_id}

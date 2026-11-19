@@ -24,6 +24,7 @@ from app.services.collaboration_round_assignment import assign_round_owner
 from app.services.loop_item_executions.service import loop_item_execution_service
 from app.services.project_chat.collaboration_replies import publish_collaboration_reply
 from app.services.project_chat.comment_execution import _execution, execute_comment
+from app.services.project_chat.issue_comments import list_issue_comments
 from app.services.project_chat.runtime_binding import collaboration_manager_task_id
 from app.services.project_chat.session_access import resolve_project_transcript
 from tests.services.test_project_comment_execution import comment, scenario
@@ -269,6 +270,17 @@ def test_member_public_reply_uses_recorded_author_and_is_idempotent(member_scena
         trigger_message_id=result.message_id,
     )
     assert _execution(s.db, reply, public).runtime_task_id == s.root.runtime_task_id
+    s.root.content = "Progress"
+    s.db.commit()
+    comments = list_issue_comments(
+        s.db,
+        user_id=s.owner.id,
+        project_id=str(s.project.id),
+        item_id=s.issue.id,
+    )
+    assert [row["id"] for row in comments if row["body"] == "Progress"] == [
+        result.message_id
+    ]
     with pytest.raises(HTTPException) as error:
         publish_collaboration_reply(s.db, **scope, body="Changed", identity=identity)
     assert error.value.status_code == 409

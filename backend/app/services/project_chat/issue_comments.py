@@ -100,7 +100,22 @@ def list_issue_comments(
             limit=limit,
         ),
     )
-    return [_comment_view(message) for message in messages]
+    published = {
+        (message.sender["id"], message.content)
+        for message in messages
+        if message.metadata.get("collaboration_public_reply") is True
+    }
+    comments = []
+    for message in messages:
+        comment = _comment_view(message)
+        if (
+            message.metadata.get("dispatch_role") in {"manager", "member"}
+            and message.metadata.get("execution_dispatch") != "comment_only"
+            and (message.sender["id"], message.content) in published
+        ):
+            comment["body"] = ""
+        comments.append(comment)
+    return comments
 
 
 def add_issue_comment(
