@@ -315,7 +315,7 @@ RUSTFLAGS='-C debuginfo=0 -C codegen-units=1' \
 RUSTUP_TOOLCHAIN=1.94.0 cargo test timing -- --nocapture
 ```
 
-- timing focused tests：10 passed
+- timing focused tests：15 passed
 - cargo fmt：通过
 
 ### Pre-push documentation review
@@ -330,12 +330,15 @@ RUSTUP_TOOLCHAIN=1.94.0 cargo test timing -- --nocapture
 
 - 分支：`feature/task-timing-overview`
 - 远端：`sleetdrop/Wegent`
-- Head：`ca624ee22`
-- 基线：`wecode-ai/Wegent` `main` 的 `b503a1f98`
+- Head：`7e65650b9`
+- 基线：`wecode-ai/Wegent` `main` 的 `dfc31ce19`
 
 Push 前完整 pre-push checks 已通过：Frontend ESLint / TypeScript / unit tests、Python
 Black / isort / syntax、settings 与 Alembic multi-head 检查。由于第一次网络传输中断，
 最终重试用 `--no-verify` 完成同一组已验证提交的传输；没有跳过任何本地检查。
+
+后续修正：子 Agent 中断/取消终态、伪 tool span、Top suspects 命令识别、权威 session
+边界（task created/completed）与 waiting_user span 已补齐。
 
 ## 切片 7：backend-rs 聚合
 
@@ -388,7 +391,7 @@ RUSTUP_TOOLCHAIN=1.94.0 cargo test task_timing -- --nocapture
 
 ## 切片 8：前端耗时分析面板
 
-状态：未实现。
+状态：第一版已实现。
 
 ### 行为
 
@@ -412,6 +415,24 @@ RUSTUP_TOOLCHAIN=1.94.0 cargo test task_timing -- --nocapture
 - coverage 与 exclusive breakdown 分开展示
 - gap 显示
 - critical path 展示
+
+### 实现说明
+
+第一版入口位于 Web 输入框 more-actions 菜单；桌面打开 task right panel，移动端由既有
+right panel 容器全屏展示。面板提供 loading / empty / error / retry、Triage、Top suspects
+与折叠时间线。时间线使用统一 wall-clock 比例尺表达重叠关系。running 定期刷新、
+exclusive breakdown、critical path 与更完整泳道属于后续增强。
+
+### 验证记录
+
+```bash
+pnpm --dir frontend exec tsc --noEmit --pretty false
+pnpm --dir frontend test --runTestsByPath \
+  src/__tests__/features/tasks/components/timing/TaskTimingPanel.test.tsx
+```
+
+- Focused Jest：5 passed
+- 标准文件查看器检查：14 passed
 
 ## 顺序与验收
 
