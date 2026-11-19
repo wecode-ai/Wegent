@@ -76,6 +76,8 @@ export function MilestonePicker({
         <SearchableSelect
           testId={testId}
           accessibleLabel={label}
+          appearance={appearance === 'property' && compact ? 'property' : 'outline'}
+          density={compact ? 'dense' : 'default'}
           value={value ?? ''}
           disabled={disabled || busy || query.loading || query.error}
           searchPlaceholder={searchLabel}

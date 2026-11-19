@@ -67,6 +67,8 @@ import { SearchableSelect } from "@wegent/collaboration/controls";
 
 Composer 上下文行使用 `ComposerContextButton`，选值时使用 `SelectField` 或 `SearchableSelect` 的 `appearance="composer"`。协作项目有现成的 `ComposerProjectSelector`，调用时传入项目选项和可访问名称。Storybook 的 `Business/ComposerProjectSelector → Composer Context Row` 可对照三个入口的空闲、悬停和展开状态。由于这些控件共用尺寸、色彩和焦点规则，业务调用只处理数据、内容和布局宽度。
 
+工具栏里的人员和插件选择也使用该样式。工作区选定后显示工作区名称。讨论工具栏在空间不足时换行，保留操作名称。事项详情的内联属性选择使用 `appearance="property"`，编辑表单的字段使用描边样式。
+
 对话框页脚通过 `Button` 的 `primary`、`ghost`、`outline` 和 `destructive` 变体表达操作语义。行内删除入口复用 `DeleteIconButton` 或 `destructive-ghost`。同一组按钮使用统一的 `size`，禁用状态交由组件处理。
 
 ## 弹窗和浮层

@@ -123,14 +123,14 @@ export function PluginPickerMenu({
         'workbench.composer_no_available_plugins',
         '当前账号没有已安装且启用的匹配插件。'
       )}
-      className={
-        iconOnly ? composerIconActionDensity + ' justify-center' : 'border-transparent bg-muted'
-      }
+      appearance="composer"
+      className={iconOnly ? composerIconActionDensity + ' justify-center' : undefined}
       triggerContent={
         iconOnly ? (
           <Puzzle className="h-4 w-4" aria-hidden="true" />
         ) : (
           <>
+            {enabledApps.length === 0 && <Puzzle className="h-4 w-4" aria-hidden="true" />}
             <span>{t('workbench.composer_plugins', '插件')}</span>
             <ComposerPluginPreviewIcons apps={enabledApps} resolveAppLogo={resolveAppLogo} />
             {enabledApps.length > 3 && (

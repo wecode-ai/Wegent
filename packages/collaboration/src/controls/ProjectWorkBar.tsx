@@ -272,9 +272,7 @@ export function ProjectWorkBar({
     currentProject &&
     pendingProjectWorkspaceProjectId === currentProject.id &&
     !selectedDeviceWorkspace
-  const selectedProjectLabel = currentProject
-    ? [selectorLabel, currentProject.name].filter(Boolean).join(': ')
-    : projectWorkTriggerLabel
+  const selectedProjectLabel = currentProject?.name ?? projectWorkTriggerLabel
   const projectWorkTriggerAriaLabel = selectedProjectLabel
 
   const projectOpenRequested =

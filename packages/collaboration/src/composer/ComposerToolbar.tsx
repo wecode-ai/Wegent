@@ -75,7 +75,6 @@ export interface ComposerToolbarProps {
 }
 
 const COMPACT_TOOLBAR_WIDTH = 475
-const NARROW_MODEL_SELECTOR_MAX_WIDTH = 160
 
 export function ComposerToolbar({
   translate: t,
@@ -258,7 +257,6 @@ export function ComposerToolbar({
               onSelectModelOption: onSelectModelOption,
               onBlockedModelSelect: onBlockedModelSelect,
               buttonClassName: composerActionDensity + ' md:min-w-7 opacity-90 hover:opacity-100',
-              maxClosedWidth: compact ? NARROW_MODEL_SELECTOR_MAX_WIDTH : undefined,
             }))
           : null}
         {workspaceMenu}

@@ -11,7 +11,6 @@ import { activityClassNames as cn } from '../issue-detail/activityClassNames'
 import { Button as ControlButton } from '../markdown/Button'
 import { Tooltip } from "./Tooltip"
 
-const CLOSED_MAX_WIDTH = 208
 const HORIZONTAL_CHROME = 36
 const LEADING_ICON_CHROME = 18
 
@@ -68,7 +67,7 @@ export function ModelSelectorTrigger({
   tooltipLabel,
   modelProviderId,
   buttonClassName,
-  maxClosedWidth = CLOSED_MAX_WIDTH,
+  maxClosedWidth = Infinity,
   onToggle,
 }: ModelSelectorTriggerProps) {
   const setButton = useCallback(
@@ -148,7 +147,7 @@ export function ModelSelectorTrigger({
           aria-expanded={open}
           aria-label={ariaLabel}
         >
-          <span className="flex min-w-0 flex-1 items-center justify-center gap-1">
+          <span className="flex min-w-0 flex-1 items-center gap-1">
             {leadingIcon}
             <span className="min-w-0 truncate">
               <TriggerLabel label={label} highlightedLabel={highlightedLabel} />

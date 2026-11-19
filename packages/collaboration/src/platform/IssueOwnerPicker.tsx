@@ -46,7 +46,7 @@ export function IssueOwnerPicker({
   return (
     <SearchableSelect
       density={density}
-      appearance={density === 'dense' ? 'plain' : 'outline'}
+      appearance="composer"
       value={value ?? ''}
       options={options}
       onChange={next => onChange(next || null)}

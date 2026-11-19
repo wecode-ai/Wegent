@@ -50,6 +50,8 @@ Forms compose the shared `Field`, `FieldLabel`, `FieldDescription` and `FieldErr
 
 Use `ComposerContextButton` for composer context actions and `appearance="composer"` on `SelectField` or `SearchableSelect` when choosing a value. Collaboration projects use `ComposerProjectSelector` with project options and an accessible name. Compare idle, hovered and expanded states in `Business/ComposerProjectSelector → Composer Context Row`. The shared controls provide typography, color, dimensions and focus states. Callers supply data, content and layout widths.
 
+Use the same appearance for assignee and plugin pickers in composer toolbars. A selected workspace shows its name. Discussion toolbar actions wrap when space is limited so that their labels stay readable. Use `appearance="property"` for inline Issue property pickers and the outlined appearance for edit form fields.
+
 Use the `Button` variants `primary`, `ghost`, `outline` and `destructive` for dialog footer actions. Inline deletion uses `DeleteIconButton` or `destructive-ghost`. Controls in the same group share a `size`, and Button supplies the disabled treatment.
 
 ## Popup ownership

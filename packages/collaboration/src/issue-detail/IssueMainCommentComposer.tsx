@@ -166,9 +166,8 @@ export function IssueMainCommentComposer({
         <SelectTrigger
           data-testid={`${testIds.form}-assignment-mode`}
           aria-label={translate('todo.comment_assignment_mode')}
-          density="dense"
-          appearance="plain"
-          className="max-w-36"
+          appearance="composer"
+          className="max-w-full"
         >
           {issueActions && <GitBranch className="h-4 w-4 shrink-0" aria-hidden="true" />}
           <span className="min-w-0 truncate">

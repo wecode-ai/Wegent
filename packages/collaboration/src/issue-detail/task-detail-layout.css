@@ -2718,7 +2718,7 @@
 
 .task-detail-new-comment[data-workflow='true'] .task-detail-new-comment-actions {
   justify-content: flex-start;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 6px;
   margin-top: 8px;
 }
@@ -2731,8 +2731,10 @@
 .task-detail-comment-pending-actions {
   display: flex;
   align-items: center;
-  flex: 1 1 0;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
   min-width: 0;
+  max-width: 100%;
   gap: 6px;
 }
 
@@ -2809,36 +2811,8 @@
   color: rgb(var(--color-text-primary));
 }
 
-.task-detail-comment-action-chip button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-width: 28px;
-  min-height: 28px;
-  padding: 0 6px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-  white-space: nowrap;
-}
-
-.task-detail-comment-action-chip .task-detail-comment-action-picker {
-  min-width: 0;
-  flex: 0 1 auto;
-}
-
-.task-detail-comment-action-chip > button:last-child:not(:first-child) {
-  flex-shrink: 0;
-}
-
-.task-detail-comment-action-picker > span:first-child {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.task-detail-comment-action-picker {
+  max-width: 100%;
 }
 
 .task-detail-comment-send-icon {
@@ -2851,19 +2825,13 @@
     padding: 0;
   }
 
-  .task-detail-comment-send-label,
-  .task-detail-comment-action-picker > span:first-child:not(:last-child) {
+  .task-detail-comment-send-label {
     display: none;
   }
 
   .task-detail-comment-send-icon {
     display: block;
   }
-}
-
-.task-detail-comment-action-chip button:hover,
-.task-detail-comment-mode:hover {
-  background: rgb(var(--color-bg-muted));
 }
 
 :where(html:not([data-input-modality='pointer']))
@@ -2875,11 +2843,6 @@
 :where(html:not([data-input-modality='pointer'])) .task-detail-comment-mode:focus-within {
   outline: 2px solid rgb(var(--color-focus) / 70%);
   outline-offset: 2px;
-}
-
-.task-detail-comment-action-chip button:disabled {
-  opacity: 0.4;
-  cursor: default;
 }
 
 @media (max-width: 767px) {

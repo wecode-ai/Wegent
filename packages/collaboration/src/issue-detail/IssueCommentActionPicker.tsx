@@ -1,6 +1,7 @@
 import { X } from 'lucide-react'
 import { SearchableSelect, type SearchableSelectOption } from '../controls/SearchableSelect'
-import { Button as ControlButton } from '../markdown/Button'
+import { ComposerContextButton } from '../composer/ComposerContextButton'
+import { composerIconActionDensity } from '../controls/recipes'
 
 /** Selected chips describe pending changes; selection never persists an Issue. */
 export function IssueCommentActionPicker({
@@ -37,12 +38,13 @@ export function IssueCommentActionPicker({
         disabled={disabled}
         searchPlaceholder={searchLabel}
         emptyLabel={emptyLabel}
+        appearance="composer"
         className="task-detail-comment-action-picker"
         triggerContent={
           value ? (
             <>
-              <span>{label}</span>
-              <span className="truncate">{selected?.label ?? value}</span>
+              <span className="shrink-0">{label}</span>
+              <span className="min-w-0 truncate">{selected?.label ?? value}</span>
             </>
           ) : (
             <span>{placeholder}</span>
@@ -51,9 +53,8 @@ export function IssueCommentActionPicker({
         options={options}
       />
       {value ? (
-        <ControlButton
-          variant="unstyled"
-          type="button"
+        <ComposerContextButton
+          className={`${composerIconActionDensity} justify-center`}
           data-testid={`${testId}-clear`}
           aria-label={clearLabel}
           title={clearLabel}
@@ -61,7 +62,7 @@ export function IssueCommentActionPicker({
           onClick={() => onChange('')}
         >
           <X className="h-3.5 w-3.5" />
-        </ControlButton>
+        </ComposerContextButton>
       ) : null}
     </span>
   )

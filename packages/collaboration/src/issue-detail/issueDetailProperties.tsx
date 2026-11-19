@@ -294,6 +294,8 @@ export function createIssueDetailProperties(model: IssueDetailModel) {
       <SearchableSelect<IssueAssigneeTarget>
         testId={isCreate ? 'cloud-todo-create-assignee' : 'cloud-todo-detail-assignee'}
         accessibleLabel={t('todo.assignee', '负责人')}
+        appearance={isCreate ? 'outline' : 'property'}
+        density={isCreate ? 'default' : 'dense'}
         value={assigneeTarget}
         onSearchChange={setAssigneeQuery}
         searchStatus={

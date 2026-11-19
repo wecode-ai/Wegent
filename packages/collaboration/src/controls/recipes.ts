@@ -48,13 +48,17 @@ export const composerIconActionDensity = controlIconActionDensity.dense
 
 export const composerContextAction = `${composerActionDensity} inline-flex min-w-0 items-center gap-1.5 rounded-full border-0 bg-transparent px-2.5 text-sm font-normal leading-[18px] text-text-primary outline-none transition-colors enabled:hover:bg-text-primary/[0.06] aria-expanded:bg-text-primary/[0.08] keyboard:focus-visible:ring-2 keyboard:focus-visible:ring-focus/40 [&_svg]:shrink-0 [&_svg]:text-text-secondary`
 
-export type SelectionTriggerAppearance = ControlAppearance | 'composer'
+export type SelectionTriggerAppearance = ControlAppearance | 'composer' | 'property'
 
 export function selectionTriggerClasses(
   appearance: SelectionTriggerAppearance,
   density: ControlDensity
 ) {
-  return appearance === 'composer'
-    ? composerContextAction + ' justify-start disabled:cursor-not-allowed disabled:opacity-40'
-    : [controlTrigger, controlFieldDensity[density], controlFieldAppearance[appearance]].join(' ')
+  if (appearance === 'composer') {
+    return composerContextAction + ' justify-start disabled:cursor-not-allowed disabled:opacity-40'
+  }
+  if (appearance === 'property') {
+    return [controlTrigger, controlFieldDensity[density], 'justify-start border-0 bg-transparent px-2 enabled:hover:bg-muted aria-expanded:bg-muted'].join(' ')
+  }
+  return [controlTrigger, controlFieldDensity[density], controlFieldAppearance[appearance]].join(' ')
 }

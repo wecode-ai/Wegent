@@ -30,7 +30,9 @@ export function IssueBadges({
   return (
     <section
       className={
-        compact ? 'mb-2 mt-1 flex flex-wrap items-center gap-1' : 'flex flex-col gap-2 px-4 py-3'
+        compact
+          ? 'mb-2 mt-1 flex flex-wrap items-center gap-1'
+          : 'flex flex-col items-start gap-2 px-4 py-3'
       }
       data-testid={testId}
       aria-label={t('todo.issue_badges_title')}
@@ -74,7 +76,7 @@ function IssueBadgeView({ badge }: { badge: CollaborationIssueBadge }) {
       <span>{badge.label}</span>
     </>
   )
-  const className = `inline-flex h-6 items-center gap-1.5 rounded-md bg-muted/40 px-1.5 text-xs ${badgeTones[badge.tone ?? 'neutral']}`
+  const className = `inline-flex h-6 items-center gap-1.5 rounded-md px-1.5 text-xs ${badgeTones[badge.tone ?? 'neutral']}`
   const view = badge.url ? (
     <ControlButton
       variant="unstyled"
