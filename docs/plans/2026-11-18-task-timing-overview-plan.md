@@ -163,7 +163,7 @@ RUSTUP_TOOLCHAIN=1.88.0 cargo test --test runner_contract --test callback_contra
 Rust handler。切片 7 必须在 Rust 中实现，不得恢复 Python fallback 行为。
 ## 切片 4：前端总览
 
-状态：已实现第一版，需要按会话级产品目标调整。
+状态：已按会话级产品目标调整为用户主动打开的右侧面板。
 
 ### 行为
 
@@ -214,9 +214,33 @@ pnpm --dir frontend exec prettier --check \
 该形态回答“单轮基础设施耗时”，不满足会话级 wall-time profile 目标。后续应改为用户主动
 打开的会话级面板；单条消息内可保留极简耗时或暂时移除。
 
+### 会话级面板实现说明
+
+- 桌面入口位于 `InputMoreActionsMenu`，移动端位于移动 more-actions sheet。
+- 打开既有 task right panel，不插入聊天消息，也不注册 `/` 命令。
+- 第一屏显示 Triage 与 Top suspects；时间线详情默认折叠。
+- 时间线使用统一 wall-clock 比例尺，保留重叠关系，不把并行区间相加。
+- loading / empty / error / retry 状态显式展示；缺失时间不伪造。
+- 使用语义主题 token，兼容 light/dark；移动端由既有 right panel 全屏容器承载。
+
+### 会话级面板验证记录
+
+```bash
+pnpm --dir frontend exec tsc --noEmit --pretty false
+pnpm --dir frontend test --runTestsByPath \
+  src/__tests__/features/tasks/components/timing/TaskTimingPanel.test.tsx \
+  src/__tests__/features/tasks/components/input/InputMoreActionsMenu.timing.test.tsx \
+  src/__tests__/features/tasks/components/message/MessageBubble.timing.test.tsx
+pnpm --dir frontend exec prettier --check <changed-files>
+```
+
+- TypeScript：通过
+- Jest：3 suites / 9 tests passed；标准 file-viewer checks 14 passed
+- Prettier：通过
+
 ## 切片 5：TimingSpan schema 与存储
 
-状态：未实现。
+状态：已实现。
 
 ### 行为
 
@@ -233,9 +257,25 @@ pnpm --dir frontend exec prettier --check \
 - open span 补 end
 - 老任务无 span 正常
 
+### 验证记录
+
+```bash
+cd backend-rs
+RUSTUP_TOOLCHAIN=1.94.0 cargo fmt --check
+RUSTUP_TOOLCHAIN=1.94.0 cargo test --lib migrations
+
+cd ../backend
+UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple/ uv run --no-sync \
+  pytest tests/models/test_task_timing_span_migration.py -q
+```
+
+- Rust migration graph tests：3 passed
+- Python migration test：1 passed
+- fmt：通过
+
 ## 切片 6：Executor span 数据源
 
-状态：未实现。
+状态：第一版已实现（Backend 从现有事件提取）。
 
 ### 行为
 
@@ -252,9 +292,35 @@ pnpm --dir frontend exec prettier --check \
 - 重复事件幂等
 - 老数据缺失字段降级
 
+### 实现说明
+
+第一版不在 executor 中引入并行事件协议。Executor 已经把工具与子 Agent block 投影为
+`response.block.created` / `response.block.updated`，并把子 Agent 状态变化投影为
+`response.subagent.activity`。Backend callback 在 Rust active path 中提取这些既有事件：
+
+- `response.block.created` 的 tool/subagent block 生成 open span
+- `response.block.updated` 的 `completedAt` / `durationMs` 幂等补齐工具 span
+- `response.subagent.activity` 用 `occurred_at_ms` 开启或关闭 subagent span
+- 终态 `data.timing` 继续生成 queue / provision / agent span
+
+`waiting_user` 第一版尚未接入。现有 `interaction_status` 切换在 executor 本地状态中，
+需要后续在状态事件或 callback 元数据中提供可靠区间，不能由 Backend 伪造。
+
+### 验证记录
+
+```bash
+cd backend-rs
+CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 \
+RUSTFLAGS='-C debuginfo=0 -C codegen-units=1' \
+RUSTUP_TOOLCHAIN=1.94.0 cargo test timing -- --nocapture
+```
+
+- timing focused tests：10 passed
+- cargo fmt：通过
+
 ## 切片 7：backend-rs 聚合
 
-状态：未实现。
+状态：第一版已实现。
 
 ### 行为
 
@@ -265,6 +331,31 @@ pnpm --dir frontend exec prettier --check \
   - swimlanes：User / Root / Child / Runtime / Gap
   - critical path
 - union 聚合在后端完成，前端只渲染结果。
+
+### 实现说明
+
+第一版实现 `GET /api/tasks/:task_id/timing`：
+
+- 使用 `task_store.get_active_task`，并保持 owner / approved member 访问语义
+- 读取 `task_timing_spans`
+- 返回 wall time、triage、coverage、top suspects 与详细 spans
+- 分类 union，不把并行子 Agent 时长相加
+- 未观测 gap 显式返回，不摊派到其它分类
+
+`summary` / `swimlanes` / critical path 属于后续下钻层，第一版由前端时间线用统一
+wall-clock 比例尺表达重叠关系。
+
+### 验证记录
+
+```bash
+cd backend-rs
+CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0 \
+RUSTFLAGS='-C debuginfo=0 -C codegen-units=1' \
+RUSTUP_TOOLCHAIN=1.94.0 cargo test task_timing -- --nocapture
+```
+
+- task_timing focused tests：2 passed
+- cargo fmt：通过
 
 ### 测试
 
