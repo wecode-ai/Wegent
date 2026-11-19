@@ -633,15 +633,194 @@ async fn cloud_match_locks_and_updates_on_the_same_transaction() {
     // read and the Runtime pin; a second handle would commit the lock
     // before the write it guards.
     let mut transaction = RecordingTransaction::default();
-    let outcome = match_cloud_registration(&mut transaction, 329, &payload(), None)
+    let outcome = match_cloud_registration(&mut transaction, 329, &payload(), None, true)
         .await
         .expect("transaction");
     assert!(matches!(outcome, CloudMatch::None));
     let statements = transaction.statements();
-    assert_eq!(statements.len(), 1, "{statements:?}");
+    assert_eq!(statements.len(), 3, "{statements:?}");
     assert!(
-        statements[0].contains("END = 'cloud' FOR UPDATE"),
+        statements[0].starts_with("SELECT users.id AS users_id")
+            && statements[0].ends_with("LIMIT 1 FOR UPDATE"),
         "{statements:?}"
+    );
+    assert!(
+        statements[1].starts_with("SELECT kinds.id, kinds.user_id FROM kinds")
+            && statements[1].contains("kinds.user_id <> ?")
+            && statements[1].contains("kinds.namespace = 'default'")
+            && statements[1].contains("cloudConfig.sandboxId")
+            && statements[1].contains("<> ''"),
+        "{statements:?}"
+    );
+    assert!(
+        statements[2].contains("END = 'cloud'")
+            && statements[2].contains("kinds.user_id = ?")
+            && statements[2].contains("kinds.namespace = 'default'")
+            && statements[2].contains("kinds.name = ? OR")
+            && statements[2].ends_with("ORDER BY kinds.id FOR UPDATE"),
+        "{statements:?}"
+    );
+}
+
+fn managed_cloud_row(runtime: Option<&str>) -> DeviceKindRow {
+    let mut row = device_row(42, device_json(Some("cloud"), runtime, None), 1);
+    row.name = payload().device_id;
+    row.json["spec"]["cloudConfig"] = serde_json::json!({
+        "deviceId": row.name,
+        "sandboxId": "sandbox-1",
+    });
+    row
+}
+
+#[test]
+fn managed_cloud_correction_keeps_the_original_record_and_runtime() {
+    let row = managed_cloud_row(Some("runtime-1"));
+    for device_type in [DeviceType::Local, DeviceType::Remote, DeviceType::App] {
+        let payload = RegisterPayload {
+            device_type,
+            runtime_instance_id: Some("runtime-1".into()),
+            ..payload()
+        };
+        let matched = select_managed_cloud(vec![row.clone()], &payload, true)
+            .unwrap()
+            .expect("the pinned Runtime may correct its report");
+        assert_eq!(matched.id, 42);
+        assert_eq!(matched.name, payload.device_id);
+        let updated: Value =
+            serde_json::from_str(&cloud_runtime_spec(&matched.json, &payload, None).unwrap())
+                .unwrap();
+        assert_eq!(updated["spec"]["deviceType"], "cloud");
+        assert_eq!(updated["spec"]["runtimeInstanceId"], "runtime-1");
+        assert_eq!(
+            updated["spec"]["cloudConfig"],
+            row.json["spec"]["cloudConfig"]
+        );
+    }
+}
+
+#[test]
+fn managed_cloud_correction_requires_an_existing_exact_runtime_pin() {
+    for (persisted, reported) in [
+        (None, Some("runtime-1")),
+        (Some(""), Some("runtime-1")),
+        (Some("runtime-1"), None),
+        (Some("runtime-1"), Some("")),
+        (Some("runtime-1"), Some("runtime-2")),
+    ] {
+        let payload = RegisterPayload {
+            runtime_instance_id: reported.map(str::to_owned),
+            ..payload()
+        };
+        assert!(managed_cloud_registration(&managed_cloud_row(persisted), &payload).is_err());
+    }
+}
+
+#[test]
+fn managed_cloud_rejects_incomplete_or_mismatched_server_pointers() {
+    let payload = RegisterPayload {
+        runtime_instance_id: Some("runtime-1".into()),
+        ..payload()
+    };
+    for cloud in [
+        serde_json::json!({"deviceId": payload.device_id}),
+        serde_json::json!({"deviceId": payload.device_id, "sandboxId": "  "}),
+        serde_json::json!({"deviceId": "other-device", "sandboxId": "sandbox-1"}),
+        serde_json::json!({"sandboxId": "sandbox-1"}),
+    ] {
+        let mut row = managed_cloud_row(Some("runtime-1"));
+        row.json["spec"]["cloudConfig"] = cloud;
+        assert!(managed_cloud_registration(&row, &payload).is_err());
+    }
+}
+
+#[test]
+fn formal_cloud_registration_preserves_bootstrap_and_exact_legacy_identity() {
+    let payload = RegisterPayload {
+        device_type: DeviceType::Cloud,
+        runtime_instance_id: Some("runtime-1".into()),
+        ..payload()
+    };
+    let mut row = managed_cloud_row(None);
+    assert!(managed_cloud_registration(&row, &payload).unwrap());
+    row.json["spec"]["cloudConfig"] = serde_json::json!({"sandboxId": "sandbox-1"});
+    assert!(managed_cloud_registration(&row, &payload).unwrap());
+    // An unrelated legacy row must not match merely because its name is its sandbox ID.
+    row.name = "sandbox-1".into();
+    assert!(!managed_cloud_registration(&row, &payload).unwrap());
+    row.json["spec"]["cloudConfig"]["deviceId"] = Value::String(payload.device_id.clone());
+    assert!(managed_cloud_registration(&row, &payload).unwrap());
+    row.json["spec"]["runtimeInstanceId"] = Value::String("runtime-2".into());
+    assert!(managed_cloud_registration(&row, &payload).is_err());
+}
+
+#[test]
+fn ordinary_device_types_and_residual_cloud_config_keep_generic_registration() {
+    let payload = RegisterPayload {
+        runtime_instance_id: Some("runtime-1".into()),
+        ..payload()
+    };
+    for device_type in ["cloud", "local", "remote", "app"] {
+        let mut row = managed_cloud_row(Some("runtime-1"));
+        row.json["spec"]["deviceType"] = Value::String(device_type.into());
+        if device_type == "cloud" {
+            row.json["spec"]["cloudConfig"] = serde_json::json!({});
+        }
+        assert!(!managed_cloud_registration(&row, &payload).unwrap());
+        let updated: Value = serde_json::from_str(
+            &updated_device_json(row.json.clone(), &payload, None, None).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(updated["spec"]["deviceType"], "local");
+    }
+}
+
+#[test]
+fn managed_cloud_rejects_app_targets_ambiguity_and_runner_credentials() {
+    let row = managed_cloud_row(Some("runtime-1"));
+    let mut payload = RegisterPayload {
+        runtime_instance_id: Some("runtime-1".into()),
+        ..payload()
+    };
+    assert!(select_managed_cloud(vec![row.clone()], &payload, false).is_err());
+    assert!(select_managed_cloud(vec![row.clone(), row.clone()], &payload, true).is_err());
+    for device_type in [DeviceType::Local, DeviceType::Cloud, DeviceType::App] {
+        payload.device_type = device_type;
+        payload.app_device_id = Some("another-app".into());
+        assert!(managed_cloud_registration(&row, &payload).is_err());
+    }
+}
+
+#[test]
+fn formal_cloud_registration_reuses_a_previously_misclassified_record() {
+    let mut row = managed_cloud_row(Some("runtime-1"));
+    row.json["spec"]["deviceType"] = Value::String("local".into());
+    let payload = RegisterPayload {
+        device_type: DeviceType::Cloud,
+        runtime_instance_id: Some("runtime-1".into()),
+        ..payload()
+    };
+    assert!(!managed_cloud_registration(&row, &payload).unwrap());
+    let rows = [row];
+    let selected = select_registration_device(
+        &rows,
+        &payload.device_id,
+        payload.runtime_instance_id.as_deref(),
+        None,
+        DeviceType::Cloud,
+        false,
+    )
+    .unwrap()
+    .expect("formal cloud registration reuses the original installation");
+    assert_eq!(selected.id, 42);
+    let updated: Value = serde_json::from_str(
+        &updated_device_json(selected.json.clone(), &payload, None, None).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(updated["spec"]["deviceType"], "cloud");
+    assert_eq!(updated["spec"]["runtimeInstanceId"], "runtime-1");
+    assert_eq!(
+        updated["spec"]["cloudConfig"],
+        selected.json["spec"]["cloudConfig"]
     );
 }
 

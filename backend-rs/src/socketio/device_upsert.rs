@@ -56,7 +56,20 @@ const CLOUD_DEVICES_QUERY: &str = "SELECT kinds.id AS kinds_id, kinds.user_id AS
      WHERE kinds.user_id = ? AND kinds.kind = 'Device' AND kinds.namespace = 'default' \
      AND kinds.is_active IS true AND CASE JSON_EXTRACT(JSON_EXTRACT(kinds.json, '$.\"spec\"'), \
      '$.\"deviceType\"') WHEN 'null' THEN NULL ELSE JSON_UNQUOTE(JSON_EXTRACT(JSON_EXTRACT(\
-     kinds.json, '$.\"spec\"'), '$.\"deviceType\"')) END = 'cloud' FOR UPDATE";
+     kinds.json, '$.\"spec\"'), '$.\"deviceType\"')) END = 'cloud' \
+     AND (kinds.name = ? OR JSON_UNQUOTE(JSON_EXTRACT(kinds.json, \
+     '$.spec.cloudConfig.deviceId')) = ?) ORDER BY kinds.id FOR UPDATE";
+
+/// Server-provisioned identities are global; ordinary device names are owner-scoped.
+const FOREIGN_MANAGED_CLOUD_QUERY: &str = "SELECT kinds.id, kinds.user_id FROM kinds \
+     WHERE kinds.user_id <> ? AND kinds.kind = 'Device' AND kinds.namespace = 'default' \
+     AND kinds.is_active IS true \
+     AND JSON_UNQUOTE(JSON_EXTRACT(kinds.json, '$.spec.deviceType')) = 'cloud' \
+     AND JSON_TYPE(JSON_EXTRACT(kinds.json, '$.spec.cloudConfig.deviceId')) = 'STRING' \
+     AND JSON_UNQUOTE(JSON_EXTRACT(kinds.json, '$.spec.cloudConfig.deviceId')) = ? \
+     AND JSON_TYPE(JSON_EXTRACT(kinds.json, '$.spec.cloudConfig.sandboxId')) = 'STRING' \
+     AND TRIM(JSON_UNQUOTE(JSON_EXTRACT(kinds.json, '$.spec.cloudConfig.sandboxId'))) <> '' \
+     LIMIT 1";
 
 /// `db.refresh(device_kind)` after the successful commit: `db.get(Kind, id)`
 /// with the full mapped-column projection.
@@ -64,16 +77,16 @@ const DEVICE_BY_ID_QUERY: &str = "SELECT kinds.id AS kinds_id, kinds.user_id AS 
      kinds.kind AS kinds_kind, kinds.name AS kinds_name, kinds.namespace AS kinds_namespace, \
      kinds.json AS kinds_json, kinds.is_active AS kinds_is_active, \
      kinds.created_at AS kinds_created_at, kinds.updated_at AS kinds_updated_at FROM kinds \
-     WHERE kinds.id = ?";
+     WHERE kinds.id = ? AND kinds.user_id = ? AND kinds.kind = 'Device' \
+     AND kinds.namespace = 'default'";
 
 const INSERT_DEVICE_QUERY: &str = "INSERT INTO kinds (user_id, kind, name, namespace, json, \
      is_active, created_at, updated_at) VALUES (?, 'Device', ?, 'default', ?, 1, now(), now())";
 
-/// Matches one cloud device by its server-generated id and pins its Runtime.
+/// Resolves an owned managed cloud identity before registration or cache reuse.
 ///
-/// Returns `Ok(Some(row))` with the row read back after the commit, matching
-/// the source's expired-instance reload, or `Ok(None)` when nothing matched or
-/// the reload failed (the source's generic handler treats both as "no match").
+/// The submitted type cannot overwrite provisioning metadata. A mismatched
+/// type is accepted only for the original, already-pinned Runtime.
 ///
 /// # Errors
 ///
@@ -84,31 +97,35 @@ pub async fn match_cloud_device(
     user_id: i64,
     payload: &RegisterPayload,
     runtime_transfer_host: Option<&str>,
+    allow_managed_cloud: bool,
 ) -> Result<Option<DeviceKindRow>, RuntimeInstanceMismatch> {
     let outcome = state
         .mysql
         .with_transaction(async |transaction| {
-            match_cloud_registration(&mut *transaction, user_id, payload, runtime_transfer_host)
-                .await
+            match_cloud_registration(
+                &mut *transaction,
+                user_id,
+                payload,
+                runtime_transfer_host,
+                allow_managed_cloud,
+            )
+            .await
         })
         .await;
     match outcome {
         Ok(CloudMatch::Matched(row)) => {
-            // `_match_cloud_device_sync` commits the Runtime pin and then reads
-            // the expired ORM instance again (`logger.info(... device.name ...)`
-            // and `return (device.name, False, None)`), which reloads the row
-            // by primary key. The source's `SessionLocal` keeps SQLAlchemy's
-            // default `expire_on_commit=True`, so the committed row is always
-            // read back before its name is used. A failed reload is the
-            // wrapper's `except Exception` branch: it logs and reports no
-            // match, so registration falls through to `upsert_device_crd`.
+            // A reload failure must not create a replacement for an identity
+            // whose managed Runtime pin has already been committed.
             let row_id = row.id;
             match state
                 .mysql
-                .fetch_optional(DEVICE_BY_ID_QUERY, (row_id,))
+                .fetch_optional(DEVICE_BY_ID_QUERY, (row_id, user_id))
                 .await
             {
-                Ok(refreshed) => Ok(refreshed),
+                Ok(Some(refreshed)) => Ok(Some(refreshed)),
+                Ok(None) => Err(RuntimeInstanceMismatch(
+                    "cloud device refresh failed".into(),
+                )),
                 Err(error) => {
                     tracing::error!(
                         %error,
@@ -116,7 +133,9 @@ pub async fn match_cloud_device(
                         row_id,
                         "cloud device post-commit reload failed"
                     );
-                    Ok(None)
+                    Err(RuntimeInstanceMismatch(
+                        "cloud device refresh failed".into(),
+                    ))
                 }
             }
         }
@@ -129,55 +148,125 @@ pub async fn match_cloud_device(
     }
 }
 
-/// One `_match_cloud_device_sync` call: lock the cloud rows, then pin the
-/// matched Runtime on the same transaction the source commits once.
+/// Owner and managed-row locks span validation and the Runtime pin.
 async fn match_cloud_registration<T>(
     transaction: &mut T,
     user_id: i64,
     payload: &RegisterPayload,
     runtime_transfer_host: Option<&str>,
+    allow_managed_cloud: bool,
 ) -> MysqlResult<CloudMatch>
 where
     T: MysqlTransaction + Send,
 {
-    let rows: Vec<DeviceKindRow> = transaction
-        .fetch_all(CLOUD_DEVICES_QUERY, (user_id,))
+    let _owner: Option<LockOwnerRow> = transaction
+        .fetch_optional(LOCK_DEVICE_OWNER_QUERY, (user_id,))
         .await?;
-    for row in rows {
-        let spec = row.json.get("spec").cloned().unwrap_or_default();
-        let cloud = spec.get("cloudConfig").cloned().unwrap_or_default();
-        let sandbox_id = cloud
-            .get("sandboxId")
-            .and_then(Value::as_str)
-            .unwrap_or(&row.name)
-            .to_owned();
-        let server_device_id = cloud.get("deviceId").and_then(Value::as_str);
-        let matched = match server_device_id.filter(|value| !value.is_empty()) {
-            Some(server) if server == payload.device_id => true,
-            Some(_) => false,
-            // Legacy devices without `cloudConfig.deviceId` match by name.
-            None => row.name == sandbox_id,
-        };
-        if !matched {
-            continue;
-        }
-        if let Err(rejected) = validate_runtime_instance(
-            &row.json,
-            payload.runtime_instance_id.as_deref(),
-            &sandbox_id,
-        ) {
-            return Ok(CloudMatch::Rejected(rejected));
-        }
-        let Some(json) = cloud_runtime_spec(&row.json, payload, runtime_transfer_host) else {
-            continue;
-        };
-        let row_id = row.id;
-        transaction
-            .execute(UPDATE_DEVICE_JSON_QUERY, (json, row_id))
-            .await?;
-        return Ok(CloudMatch::Matched(row));
+    let foreign: Option<(i64, i64)> = transaction
+        .fetch_optional(
+            FOREIGN_MANAGED_CLOUD_QUERY,
+            (user_id, payload.device_id.as_str()),
+        )
+        .await?;
+    if foreign.is_some() {
+        return Ok(CloudMatch::Rejected(managed_cloud_conflict()));
     }
-    Ok(CloudMatch::None)
+    let rows: Vec<DeviceKindRow> = transaction
+        .fetch_all(
+            CLOUD_DEVICES_QUERY,
+            (
+                user_id,
+                payload.device_id.as_str(),
+                payload.device_id.as_str(),
+            ),
+        )
+        .await?;
+    let row = match select_managed_cloud(rows, payload, allow_managed_cloud) {
+        Ok(Some(row)) => row,
+        Ok(None) => return Ok(CloudMatch::None),
+        Err(rejected) => return Ok(CloudMatch::Rejected(rejected)),
+    };
+    let Some(json) = cloud_runtime_spec(&row.json, payload, runtime_transfer_host) else {
+        return Ok(CloudMatch::Rejected(managed_cloud_conflict()));
+    };
+    transaction
+        .execute(UPDATE_DEVICE_JSON_QUERY, (json, row.id))
+        .await?;
+    Ok(CloudMatch::Matched(row))
+}
+
+fn select_managed_cloud(
+    rows: Vec<DeviceKindRow>,
+    payload: &RegisterPayload,
+    allow_managed_cloud: bool,
+) -> Result<Option<DeviceKindRow>, RuntimeInstanceMismatch> {
+    let mut matched = None;
+    for row in rows {
+        match managed_cloud_registration(&row, payload) {
+            Ok(false) => continue,
+            Err(rejected) => return Err(rejected),
+            Ok(true) if !allow_managed_cloud || matched.is_some() => {
+                return Err(managed_cloud_conflict());
+            }
+            Ok(true) => matched = Some(row),
+        }
+    }
+    Ok(matched)
+}
+
+fn managed_cloud_conflict() -> RuntimeInstanceMismatch {
+    RuntimeInstanceMismatch("Managed cloud device identity conflict".into())
+}
+
+/// Only server provisioning pointers confer authority over a submitted type.
+fn managed_cloud_registration(
+    row: &DeviceKindRow,
+    payload: &RegisterPayload,
+) -> Result<bool, RuntimeInstanceMismatch> {
+    if spec_string(&row.json, "deviceType") != Some("cloud") {
+        return Ok(false);
+    }
+    let cloud = row
+        .json
+        .get("spec")
+        .and_then(|spec| spec.get("cloudConfig"));
+    let pointer = |key| {
+        cloud
+            .and_then(|cloud| cloud.get(key))
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+    };
+    let server_id = pointer("deviceId");
+    let sandbox_id = pointer("sandboxId");
+    if server_id.is_none() && sandbox_id.is_none() {
+        return Ok(false);
+    }
+    if row.name != payload.device_id && server_id != Some(payload.device_id.as_str()) {
+        return Ok(false);
+    }
+    if sandbox_id.is_none()
+        || server_id.is_some_and(|id| id != payload.device_id)
+        || payload
+            .app_device_id
+            .as_deref()
+            .is_some_and(|id| !id.is_empty())
+        || (payload.device_type != DeviceType::Cloud
+            && (server_id.is_none()
+                || spec_string(&row.json, "runtimeInstanceId")
+                    .is_none_or(|id| id.trim().is_empty())
+                || payload
+                    .runtime_instance_id
+                    .as_deref()
+                    .is_none_or(|id| id.trim().is_empty())))
+    {
+        return Err(managed_cloud_conflict());
+    }
+    validate_runtime_instance(
+        &row.json,
+        payload.runtime_instance_id.as_deref(),
+        &payload.device_id,
+    )?;
+    Ok(true)
 }
 
 /// One `_match_cloud_device_sync` outcome inside its single transaction.
@@ -252,7 +341,7 @@ pub async fn upsert_device(
     // is one request-owned read after the commit, never inside it.
     let refreshed: Option<DeviceKindRow> = state
         .mysql
-        .fetch_optional(DEVICE_BY_ID_QUERY, (row_id,))
+        .fetch_optional(DEVICE_BY_ID_QUERY, (row_id, user_id))
         .await
         .map_err(|error| error.to_string())?;
     refreshed.ok_or_else(|| "device refresh returned no row".to_owned())
@@ -284,6 +373,15 @@ where
     let devices: Vec<DeviceKindRow> = transaction
         .fetch_all(DEVICE_BY_NAME_QUERY, (user_id, payload.device_id.as_str()))
         .await?;
+    // Guard before App selection can allocate an alternative record. The
+    // lifecycle resolves legitimate managed registrations through the pin path.
+    for row in &devices {
+        match managed_cloud_registration(row, payload) {
+            Ok(false) => {}
+            Ok(true) => return Err(rejection(managed_cloud_conflict().0)),
+            Err(conflict) => return Err(rejection(conflict.0)),
+        }
+    }
     let selected = match select_registration_device(
         &devices,
         &payload.device_id,

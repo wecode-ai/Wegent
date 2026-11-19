@@ -96,6 +96,7 @@ async fn device_heartbeat_refreshes_presence_for_string_task_ids() {
         async move {
             timeout(Duration::from_secs(20), async {
                 let client = assert_heartbeats(&address, &token, &redis, &device_id, &key).await;
+                assert_managed_cloud_identity(&address, &token, &mysql, &redis, &device_id).await;
                 assert_terminal_delivery(&client, &redis, &mysql, &device_id).await;
                 assert_offline_timeout(&state, &redis, &mysql).await;
             })
@@ -293,6 +294,161 @@ async fn assert_terminal_delivery(
         .unwrap();
     assert_eq!(next_callback(&mut subscription).await, barrier);
     subscription.close().await.unwrap();
+}
+
+async fn assert_managed_cloud_identity(
+    address: &str,
+    token: &str,
+    mysql: &MysqlService,
+    redis: &RedisService,
+    prefix: &str,
+) {
+    let name = format!("{prefix}-cloud");
+    let key = format!("device:online:{USER_ID}:{name}");
+    let client = PollClient::connect(address, NAMESPACE, &json!({"token": token}).to_string())
+        .await
+        .unwrap();
+    let registration = json!({
+        "device_id": name, "name": "Managed Cloud", "device_type": "local",
+        "runtime_instance_id": "runtime-cloud",
+    });
+    // Warm the local registration cache before the server repairs provisioning.
+    assert_eq!(
+        event_ack(&client, 9, "device:register", registration.clone()).await,
+        json!({"success": true, "device_id": name, "device_route_id": name}),
+    );
+    let (record_id, mut document): (i64, Value) = mysql
+        .fetch_one(
+            "SELECT id, json FROM kinds WHERE user_id = ? AND kind = 'Device'
+             AND namespace = 'default' AND name = ?",
+            (USER_ID, name.as_str()),
+        )
+        .await
+        .unwrap();
+    let original_presence = online(redis, &key).await;
+    document["spec"]["deviceType"] = json!("cloud");
+    document["spec"]["cloudConfig"] = json!({
+        "deviceId": name, "sandboxId": "sandbox-cloud",
+    });
+    mysql
+        .execute(
+            "UPDATE kinds SET json = ? WHERE id = ? AND user_id = ?",
+            (document.to_string(), record_id, USER_ID),
+        )
+        .await
+        .unwrap();
+    for (id, field, value) in [
+        (10, "runtime_instance_id", Value::Null),
+        (11, "runtime_instance_id", json!("another-runtime")),
+        (12, "app_device_id", json!("another-app")),
+    ] {
+        let mut invalid = registration.clone();
+        invalid[field] = value;
+        let ack = event_ack(&client, id, "device:register", invalid).await;
+        assert!(
+            ack["error"]
+                .as_str()
+                .unwrap()
+                .starts_with("Registration failed:")
+        );
+        let (stored,): (Value,) = mysql
+            .fetch_one(
+                "SELECT json FROM kinds WHERE id = ? AND user_id = ?",
+                (record_id, USER_ID),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            stored, document,
+            "a rejected registration cannot mutate the managed record"
+        );
+        assert_eq!(online(redis, &key).await, original_presence);
+    }
+    assert_eq!(
+        event_ack(&client, 13, "device:register", registration).await,
+        json!({"success": true, "device_id": name, "device_route_id": name}),
+    );
+    let records: Vec<AppDeviceRecord> = mysql
+        .fetch_all(
+            "SELECT id, is_active, json FROM kinds WHERE user_id = ? AND kind = 'Device'
+         AND namespace = 'default' AND name = ?",
+            (USER_ID, name.as_str()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].id, record_id);
+    assert_eq!(records[0].json["spec"]["deviceId"], name);
+    assert_eq!(records[0].json["spec"]["deviceType"], "cloud");
+    assert_eq!(
+        records[0].json["spec"]["runtimeInstanceId"],
+        "runtime-cloud"
+    );
+    assert_eq!(
+        records[0].json["spec"]["cloudConfig"],
+        document["spec"]["cloudConfig"]
+    );
+    let presence = online(redis, &key).await;
+    assert_eq!(presence["socket_id"], client.socket_id());
+    assert_eq!(presence["runtime_instance_id"], "runtime-cloud");
+    redis.del(key).await.unwrap();
+
+    let foreign = format!("{prefix}-foreign-cloud");
+    mysql.execute(
+        "INSERT INTO users (id, user_name, password_hash, is_active, role, auth_source, preferences)
+         VALUES (9, 'foreign-cloud-e2e', '', true, 'user', 'password', '{}')",
+        (),
+    ).await.unwrap();
+    let foreign_document = json!({"spec": {
+        "deviceType": "cloud", "deviceId": foreign, "runtimeInstanceId": "runtime-cloud",
+        "cloudConfig": {"deviceId": foreign, "sandboxId": "sandbox-foreign"},
+    }});
+    mysql.execute(
+        "INSERT INTO kinds (user_id, kind, name, namespace, json, is_active, created_at, updated_at)
+         VALUES (9, 'Device', ?, 'default', ?, true, now(), now())",
+        (foreign.as_str(), foreign_document.to_string()),
+    ).await.unwrap();
+    assert_eq!(
+        event_ack(
+            &client,
+            14,
+            "device:register",
+            json!({
+                "device_id": foreign, "name": "Managed Cloud", "device_type": "local",
+                "runtime_instance_id": "runtime-cloud",
+            })
+        )
+        .await,
+        json!({"error": "Registration failed: Managed cloud device identity conflict"}),
+    );
+    let (count,): (i64,) = mysql
+        .fetch_one(
+            "SELECT COUNT(*) FROM kinds WHERE user_id = ? AND kind = 'Device'
+         AND namespace = 'default' AND name = ?",
+            (USER_ID, foreign.as_str()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        count, 0,
+        "a foreign managed identity cannot allocate an owned replacement"
+    );
+    let (stored,): (Value,) = mysql
+        .fetch_one(
+            "SELECT json FROM kinds WHERE user_id = 9 AND kind = 'Device'
+         AND namespace = 'default' AND name = ?",
+            (foreign.as_str(),),
+        )
+        .await
+        .unwrap();
+    assert_eq!(stored, foreign_document);
+    assert!(
+        redis
+            .get::<_, String>(format!("device:online:{USER_ID}:{foreign}"))
+            .await
+            .unwrap()
+            .is_none()
+    );
 }
 
 async fn assert_offline_timeout(
