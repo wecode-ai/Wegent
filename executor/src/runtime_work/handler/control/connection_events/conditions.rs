@@ -24,15 +24,11 @@ pub(super) fn resolve(args: &Value) -> Result<Value, AppIpcError> {
         .ok_or_else(|| invalid("git_wait requires the exact 40-character head_sha"))?
         .to_ascii_lowercase();
     let mut filter = json!({"/topicId":topic});
-    filter["/external/eventType"] = json!(if preset == "run" {
-        if github {
-            "tracked.workflow_run"
-        } else {
-            "tracked.pipeline"
-        }
-    } else {
-        "tracked.status"
-    });
+    if preset != "run" {
+        filter["/external/eventType"] = json!("tracked.status");
+    } else if !github {
+        filter["/external/eventType"] = json!("tracked.pipeline");
+    }
     filter[if preset == "run" && github {
         "/external/payload/head_sha"
     } else if github {
@@ -43,7 +39,10 @@ pub(super) fn resolve(args: &Value) -> Result<Value, AppIpcError> {
     if preset == "run" {
         filter["/external/payload/id"] = json!(number);
         if github {
-            filter["/external/payload/status"] = json!("completed");
+            filter["$any"] = json!([
+                {"/external/eventType":"tracked.workflow_run","/external/payload/status":"completed"},
+                {"/external/eventType":"tracked.workflow_run_pr_conflict"}
+            ]);
         } else {
             filter["$any"] = outcomes(
                 "/external/payload/status",
@@ -212,6 +211,7 @@ mod tests {
         let mut args = input("run");
         args["source"]["monitoredObjects"][0]["entityKind"] = json!("workflow_run");
         let filter = resolve(&args).unwrap();
+        validate_filter(&filter).unwrap();
         for conclusion in ["success", "failure", "cancelled", "timed_out"] {
             let mut e = json!({"topicId":"https://github.com/wecode-ai/Wegent/actions/runs/4749",
                 "external":{"eventType":"tracked.workflow_run","payload":{"id":4749,
@@ -220,6 +220,25 @@ mod tests {
             e["external"]["payload"]["id"] = json!(4750);
             assert!(!matches_event(&filter, &e));
         }
+    }
+    #[test]
+    fn github_run_wait_matches_conflict_for_the_exact_run_and_head() {
+        let mut args = input("run");
+        args["source"]["monitoredObjects"][0]["entityKind"] = json!("workflow_run");
+        let filter = resolve(&args).unwrap();
+        let mut event = json!({
+            "topicId": "https://github.com/wecode-ai/Wegent/actions/runs/4749",
+            "external": {
+                "eventType": "tracked.workflow_run_pr_conflict",
+                "payload": {"id":4749,"head_sha":args["head_sha"]}
+            }
+        });
+        assert!(matches_event(&filter, &event));
+        event["external"]["payload"]["head_sha"] = json!("stale");
+        assert!(!matches_event(&filter, &event));
+        event["external"]["payload"]["head_sha"] = args["head_sha"].clone();
+        event["external"]["payload"]["id"] = json!(4750);
+        assert!(!matches_event(&filter, &event));
     }
     #[test]
     fn rejects_ambiguous_or_mismatched_conditions() {
