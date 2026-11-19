@@ -75,6 +75,7 @@ struct Operation {
     project_id: String,
     actor_user_id: i32,
     kind: String,
+    #[mysql(rename = "metadata")]
     data: Json<OperationData>,
 }
 
