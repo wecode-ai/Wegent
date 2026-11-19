@@ -82,8 +82,7 @@ export function PluginPickerMenu({
   const enabledApps = sortApps ? sortApps(availableApps) : availableApps
   return (
     <SearchableSelect
-      density="dense"
-      appearance="plain"
+      appearance="composer"
       value=""
       options={enabledApps.map(app => ({
         value: app.id,
@@ -123,7 +122,6 @@ export function PluginPickerMenu({
         'workbench.composer_no_available_plugins',
         '当前账号没有已安装且启用的匹配插件。'
       )}
-      appearance="composer"
       className={iconOnly ? composerIconActionDensity + ' justify-center' : undefined}
       triggerContent={
         iconOnly ? (
