@@ -147,14 +147,18 @@ public static class WeworkE2EOwnedProcess
         {
             owner = OpenProcess(0x00100000, false, ownerProcessId); // SYNCHRONIZE
             Require(owner != IntPtr.Zero);
+            Console.Error.WriteLine("[desktop-e2e-windows-launch] stage=owner-opened");
             job = CreateOwnedJob();
+            Console.Error.WriteLine("[desktop-e2e-windows-launch] stage=job-created");
             process = StartSuspended(executable, commandLine, directory);
             Require(AssignProcessToJobObject(job, process.Process));
             assigned = true;
+            Console.Error.WriteLine("[desktop-e2e-windows-launch] stage=application-owned");
             File.WriteAllText(pidPath + ".writing", process.ProcessId.ToString(), new UTF8Encoding(false));
             File.Move(pidPath + ".writing", pidPath);
             WaitForResume(owner, resumePath);
             Require(ResumeThread(process.Thread) != uint.MaxValue);
+            Console.Error.WriteLine("[desktop-e2e-windows-launch] stage=application-resumed");
             var completed = WaitForMultipleObjects(2, new[] { process.Process, owner }, false, uint.MaxValue);
             Require(completed != uint.MaxValue);
             if (completed == 1) return 1;

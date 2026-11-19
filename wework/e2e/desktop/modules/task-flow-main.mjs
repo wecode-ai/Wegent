@@ -1560,7 +1560,11 @@ async function main() {
       await mkdir(launchWorkingDirectory, { recursive: true })
     }
     let activeAppEnvironment = appEnvironment
-    const startDesktopAppProcess = async () => {
+    let ownedApplicationStartupDeadline = null
+    const startDesktopAppProcess = async (timeoutMs = DESKTOP_READY_TIMEOUT_MS) => {
+      const ownsApplication =
+        process.platform === 'win32' && !desktopScenario?.usesReleasePackageRuntimeAssets
+      ownedApplicationStartupDeadline = ownsApplication ? Date.now() + timeoutMs : null
       const launchOptions = {
         cwd: launchWorkingDirectory,
         env: activeAppEnvironment,
@@ -1568,16 +1572,15 @@ async function main() {
         detached: process.platform !== 'win32',
       }
       // Delivered launchers own their upgrade handoffs; source apps own one test lifetime.
-      const owned =
-        process.platform === 'win32' && !desktopScenario?.usesReleasePackageRuntimeAssets
-          ? await launchWindowsOwnedApplication(
-              appBinary,
-              electronLaunchArguments,
-              launchOptions,
-              resultDir,
-              DEFAULT_STEP_TIMEOUT_MS
-            )
-          : null
+      const owned = ownsApplication
+        ? await launchWindowsOwnedApplication(
+            appBinary,
+            electronLaunchArguments,
+            launchOptions,
+            resultDir,
+            Math.max(0, ownedApplicationStartupDeadline - Date.now())
+          )
+        : null
       const child = owned?.launcher ?? spawn(appBinary, electronLaunchArguments, launchOptions)
       const nativeInspector = usesNativeCloudInspector ? readInspectorEndpoint(child) : null
       nativeInspector?.catch(() => undefined)
@@ -1678,10 +1681,12 @@ async function main() {
           profile,
         })
       }
-      app = await startDesktopAppProcess()
+      app = await startDesktopAppProcess(WORKBENCH_READY_TIMEOUT_MS)
       await withTimeout(
         control.awaitReadyAfter(readyCountBeforeRestart),
-        WORKBENCH_READY_TIMEOUT_MS,
+        ownedApplicationStartupDeadline === null
+          ? WORKBENCH_READY_TIMEOUT_MS
+          : Math.max(0, ownedApplicationStartupDeadline - Date.now()),
         'The restarted Wework application did not reconnect to the desktop controller'
       )
       const nextUserDataDirectory =
@@ -1724,7 +1729,9 @@ async function main() {
           })
         : await withTimeout(
             readiness,
-            DESKTOP_READY_TIMEOUT_MS,
+            ownedApplicationStartupDeadline === null
+              ? DESKTOP_READY_TIMEOUT_MS
+              : Math.max(0, ownedApplicationStartupDeadline - Date.now()),
             'Timed out waiting for the real Electron application to connect to the Desktop E2E controller'
           )
     assert.match(
