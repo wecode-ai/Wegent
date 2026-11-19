@@ -16,6 +16,7 @@ import {
   DEFAULT_STEP_TIMEOUT_MS,
   MCP_ELICITATION_COMPLETION_TEXT,
   MCP_ELICITATION_PROMPT,
+  UNANSWERED_MCP_APPROVAL_SERVER,
   WORKBENCH_READY_TIMEOUT_MS,
   assert,
   join,
@@ -152,6 +153,54 @@ async function verifyMcpElicitationInFullAccess(control) {
   await verifyFollowUpElicitationRecovery(control, taskId, evidencePath)
   await verifyElicitationTimeout(control, taskId, evidencePath, 'url_timeout', 3)
   await verifyElicitationTimeout(control, taskId, evidencePath, 'form_timeout', 4)
+  await verifyUnansweredToolApproval(control, taskId, evidencePath)
+}
+
+async function verifyUnansweredToolApproval(control, taskId, evidencePath) {
+  await sendPromptUntilScenarioRequest(
+    control,
+    ACTIVE_COMPOSER_SELECTOR,
+    `${MCP_ELICITATION_PROMPT} unanswered_approval`,
+    'mcp_elicitation'
+  )
+  await control.command('waitFor', '[data-testid="message-assistant"]', {
+    text: `${MCP_ELICITATION_COMPLETION_TEXT}:5`,
+    visible: true,
+    timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+  })
+  await waitForWorkbenchDebugState(
+    control,
+    state =>
+      state.workbench?.currentRuntimeTask?.taskId === taskId &&
+      state.pane?.status?.isBusy === false,
+    'Unanswered MCP tool approval kept the real Codex turn running'
+  )
+  assert.equal(
+    await pathExists(`${evidencePath}.approval`),
+    false,
+    'The MCP server received a tool call without approval'
+  )
+  const executorLog = await readFile(join(resultDir, 'executor.log'), 'utf8')
+  const request = executorLog
+    .split('\n')
+    .find(
+      line =>
+        line.includes('desktop e2e skipped MCP approval observer') &&
+        line.includes(`server_name=${UNANSWERED_MCP_APPROVAL_SERVER} `)
+    )
+  assert.ok(request, 'The real native approval must reach the injected missing observer')
+  const requestId = request.match(/ request_id=(\S+)/)?.[1]
+  assert.ok(requestId, 'The unanswered native approval must have a request ID')
+  assert.ok(
+    executorLog
+      .split('\n')
+      .some(
+        line =>
+          line.includes(`codex native MCP elicitation expired request_id=${requestId} `) &&
+          line.includes(`server_name=${UNANSWERED_MCP_APPROVAL_SERVER} `)
+      ),
+    'The connection must expire the same native approval'
+  )
 }
 
 async function expandLauncherWithPendingForm(control, formSelector) {
