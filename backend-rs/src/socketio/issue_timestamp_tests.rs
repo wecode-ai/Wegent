@@ -79,7 +79,55 @@ pub(crate) async fn verify(mysql: &impl Mysql) -> anyhow::Result<()> {
             Ok(())
         })
         .await?;
+    verify_live_activity_matches_history(mysql, since).await?;
     runtime_projection::verify_restored_activity_timestamp(mysql, since).await?;
     super::project_chat_snapshot::verify_snapshot_timestamp(mysql, since).await?;
+    Ok(())
+}
+
+async fn verify_live_activity_matches_history(
+    mysql: &impl Mysql,
+    since: DateTime<Utc>,
+) -> anyhow::Result<()> {
+    mysql
+        .with_transaction(async |tx| {
+            for (event_name, data) in [
+                ("response.created", json!({})),
+                ("response.output_text.delta", json!({"delta": "Progress"})),
+            ] {
+                let payload = json!({"data": data});
+                let identity = runtime_projection::RuntimeIdentity {
+                    event_name,
+                    runtime_task_id: "timestamp-task".into(),
+                    payload: &payload,
+                };
+                let live = runtime_projection::project_runtime_event(
+                    tx,
+                    7,
+                    "timestamp-device",
+                    &identity,
+                    false,
+                    &mut Vec::new(),
+                )
+                .await?
+                .expect("the bound activity is projected");
+                let stored: Message = tx
+                    .fetch_one(
+                        "SELECT * FROM project_chat_messages WHERE message_id='timestamp-message'",
+                        (),
+                    )
+                    .await?;
+                let history = stored.view();
+                assert_current(&live.message["updatedAt"], since);
+                assert_eq!(
+                    live.message["updatedAt"], history["updatedAt"],
+                    "{event_name}"
+                );
+                assert_eq!(live.message["traceRef"], history["traceRef"]);
+                assert_eq!(live.message["status"], history["status"]);
+            }
+            Ok(())
+        })
+        .await?;
     Ok(())
 }

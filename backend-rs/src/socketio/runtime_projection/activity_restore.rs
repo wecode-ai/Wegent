@@ -122,7 +122,8 @@ pub(super) async fn restore_discovered_activity<T: MysqlTransaction>(
     changed |= record_runtime_sequence(&mut activity, sequence);
     if changed || accepted_terminal {
         let now = Utc::now().naive_utc();
-        activity.updated_at = crate::socketio::project_chat_messages::database_timestamp(now);
+        activity.updated_at =
+            crate::socketio::project_chat_messages::activity_database_timestamp(now);
         if accepted_terminal {
             activity.metadata.0["activity_at"] = json!(now.and_utc().to_rfc3339());
         }

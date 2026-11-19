@@ -581,7 +581,7 @@ pub(super) struct Projected {
 }
 
 /// `project_runtime_event`: the streaming chat projection.
-async fn project_runtime_event<T: MysqlTransaction>(
+pub(super) async fn project_runtime_event<T: MysqlTransaction>(
     transaction: &mut T,
     user_id: i64,
     device_id: &str,
@@ -719,7 +719,7 @@ async fn project_runtime_event<T: MysqlTransaction>(
             metadata.insert("run_status".into(), json!("running"));
             message.content = content.clone();
             message.metadata = brz_mysql::Json(Value::Object(metadata));
-            message.updated_at = super::project_chat_messages::database_timestamp(now);
+            message.updated_at = super::project_chat_messages::activity_database_timestamp(now);
             transaction
                 .execute(
                     "UPDATE project_chat_messages SET content=?, metadata=?, updated_at=? WHERE id=?",
@@ -813,7 +813,7 @@ async fn project_runtime_event<T: MysqlTransaction>(
     message.status = status;
     message.message_type = message_type;
     message.metadata = brz_mysql::Json(Value::Object(metadata));
-    message.updated_at = super::project_chat_messages::database_timestamp(now);
+    message.updated_at = super::project_chat_messages::activity_database_timestamp(now);
     transaction
         .execute(
             "UPDATE project_chat_messages SET content=?, status=?, message_type=?, metadata=?, updated_at=? WHERE id=?",
