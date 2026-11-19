@@ -85,19 +85,29 @@ export function createSourceOwnerTaskStory(options) {
       context.appEnvironment.DWS_BINARY_PATH = binary
     },
     async handleHttp(req, response, url) {
-      if (
-        !state.active ||
-        req.method !== 'POST' ||
-        !['/responses', '/v1/responses'].includes(url.pathname)
-      )
+      if (req.method !== 'POST' || !['/responses', '/v1/responses'].includes(url.pathname))
         return false
       const body = await readRequestBody(req)
-      if (handleModelMaintenanceRequest(body, response)) return true
-      if (isReplyPredictionRequest(body)) return false
-      const input = JSON.stringify(body.input ?? [])
       const latest = JSON.stringify(
         (body.input ?? []).filter(item => item.role === 'user').at(-1)?.content ?? ''
       )
+      const ownerResult = latest.includes('owner self-channel request with immutable recordId=')
+      const prediction = isReplyPredictionRequest(body)
+      if (ownerResult) {
+        console.log(
+          '[source-owner-task-story] Model result routing',
+          JSON.stringify({
+            active: state.active,
+            hasWorker: Boolean(state.child),
+            hasSourceRecord: Boolean(state.record),
+            prediction,
+          })
+        )
+      }
+      if (!state.active) return false
+      if (handleModelMaintenanceRequest(body, response)) return true
+      if (prediction) return false
+      const input = JSON.stringify(body.input ?? [])
       let events
       if (state.thirdParty && latest.includes(`${MARKER}-third-party`)) {
         const read = 'participant-read',
@@ -120,7 +130,7 @@ export function createSourceOwnerTaskStory(options) {
           state.rejected = true
           events = [assistantMessage('第三方消息不能当成本人交办创建个人任务。')]
         }
-      } else if (latest.includes('owner self-channel request with immutable recordId=')) {
+      } else if (ownerResult) {
         const read = 'owner-result-read',
           reply = 'owner-result-reply'
         if (!has(body, read)) events = call(body, read, 'read_task', { taskId: state.child })
