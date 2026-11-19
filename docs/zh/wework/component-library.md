@@ -65,6 +65,10 @@ import { SearchableSelect } from "@wegent/collaboration/controls";
 
 表单使用共享 `Field`、`FieldLabel`、`FieldDescription`、`FieldError` 组合，显式显示字段名；输入与选择均使用 `default/outline` 并占满字段宽度（桌面 36px，移动 44px）。`MenuSelect field` 必须提供 `label`，自动复用同一组合；SettingsRow 和工具栏继续使用 `dense/plain`，并通过 `accessibleLabel` 提供稳定名称。
 
+Composer 上下文行使用 `ComposerContextButton`，选值时使用 `SelectField` 或 `SearchableSelect` 的 `appearance="composer"`。协作项目有现成的 `ComposerProjectSelector`，调用时传入项目选项和可访问名称。Storybook 的 `Business/ComposerProjectSelector → Composer Context Row` 可对照三个入口的空闲、悬停和展开状态。由于这些控件共用尺寸、色彩和焦点规则，业务调用只处理数据、内容和布局宽度。
+
+对话框页脚通过 `Button` 的 `primary`、`ghost`、`outline` 和 `destructive` 变体表达操作语义。行内删除入口复用 `DeleteIconButton` 或 `destructive-ghost`。同一组按钮使用统一的 `size`，禁用状态交由组件处理。
+
 ## 弹窗和浮层
 
 `DialogSurface` 组合 SDK Dialog 或 AlertDialog，业务方控制关闭和提交中的取消限制。自定义页面遮罩可使用默认的原位布局；需要浏览器顶层的内容使用 `inline={false}`。嵌入步骤使用 `InlinePanel` 管理 Escape 层级和焦点恢复，父弹层持有模态隔离。
@@ -170,4 +174,4 @@ Business/BranchPicker 包含加载、空分支、目录失败后重试和分支�
 
 `InlinePanel` 用于既有父弹窗内的步骤，只管理 Escape 层级和卸载后的焦点恢复，不新增 modal role。嵌入模板步骤复用真实 `TemplatePanel`，父弹窗继续拥有背景隔离与整体取消。
 
-当前目录共 52 个 Story 文件；112 个公开值导出中，100 个直接示例、5 个生产组合示例、7 个非视觉 API。`SortableDragArea` 示例保留独立键盘手柄，并从指针激活区域排除文本输入。此清单来自公开入口和 Story 源码；源码审查、运行 Story 检查和原生真实页面验收是独立证据，不可互相替代。
+初始目录的 52 个 Story 文件涵盖 112 个公开值导出，其中有 100 个直接示例、5 个生产组合示例、7 个非视觉 API。`SortableDragArea` 示例保留独立键盘手柄，并从指针激活区域排除文本输入。此清单来自公开入口和 Story 源码；源码审查、运行 Story 检查和原生真实页面验收是独立证据，不可互相替代。

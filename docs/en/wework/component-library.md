@@ -48,6 +48,10 @@ Settings pages reuse `SettingsGroup` and `SettingsRow`. Controls serving the sam
 
 Forms compose the shared `Field`, `FieldLabel`, `FieldDescription` and `FieldError` parts with visible labels. Inputs and selects use full-width `default/outline` controls: 36px on desktop and 44px on mobile. `MenuSelect field` requires a `label` and uses the same composition; settings rows and toolbars keep `dense/plain` with a stable `accessibleLabel`.
 
+Use `ComposerContextButton` for composer context actions and `appearance="composer"` on `SelectField` or `SearchableSelect` when choosing a value. Collaboration projects use `ComposerProjectSelector` with project options and an accessible name. Compare idle, hovered and expanded states in `Business/ComposerProjectSelector → Composer Context Row`. The shared controls provide typography, color, dimensions and focus states. Callers supply data, content and layout widths.
+
+Use the `Button` variants `primary`, `ghost`, `outline` and `destructive` for dialog footer actions. Inline deletion uses `DeleteIconButton` or `destructive-ghost`. Controls in the same group share a `size`, and Button supplies the disabled treatment.
+
 ## Popup ownership
 
 `DialogSurface` composes SDK Dialog or AlertDialog. Callers control dismissal and pending-operation cancellation gates. Existing application backdrops can use its default inline layout; browser top-layer content uses `inline={false}`. Embedded steps use `InlinePanel` for Escape layering and focus recovery; the parent retains modal isolation.
@@ -154,4 +158,4 @@ Index, format and type checks do not replace browser interaction verification of
 
 Use `InlinePanel` for a step inside an existing dialog. It owns Escape layering and focus recovery without adding a modal role. The example composes the real `TemplatePanel`; the parent dialog retains background isolation and overall cancellation.
 
-The catalog currently contains 52 Story files. Of 112 public value exports, 100 have direct examples, 5 have production composition examples, and 7 are nonvisual APIs. `SortableDragArea` is demonstrated with an independent keyboard handle and text fields excluded from pointer activation. This inventory comes from public exports and Story source. Source review, running Story checks, and native production-page acceptance are separate evidence.
+The initial inventory covered 52 Story files and 112 public value exports. Of those exports, 100 had direct examples, 5 have production composition examples, and 7 are nonvisual APIs. `SortableDragArea` is demonstrated with an independent keyboard handle and text fields excluded from pointer activation. This inventory comes from public exports and Story source. Source review, running Story checks, and native production-page acceptance are separate evidence.
