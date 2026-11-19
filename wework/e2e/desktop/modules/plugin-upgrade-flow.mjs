@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import { fetchJson, resultDir } from './shared.mjs'
 import { captureVerificationScreenshot } from './workspace-flows.mjs'
 import { cleanupPluginUpgradeFixtures } from './plugin-upgrade-fixture-cleanup.mjs'
+import { until } from './plugin-regression-fixture.mjs'
 
 const pluginKey = 'desktop-e2e-upgrade'
 const oldVersion = '0.1.1'
@@ -268,7 +269,13 @@ export async function verifyPluginUpgrade({ cloudEnvironment: env, control, code
     false,
     'Uninstall left the cloud install active'
   )
-  assert.equal((await readCapabilities()).plugins[managedKey], undefined)
+  // The account uninstall commits before device reconciliation finishes.
+  await until(
+    readCapabilities,
+    capabilities => capabilities.plugins[managedKey] === undefined,
+    'The current device did not remove the uninstalled plugin from its manifest',
+    PLUGIN_SYNC_TIMEOUT_MS
+  )
   // Immutable packages remain available to running agents; Codex owns its cache.
   await access(removedEntry.store_path)
   setPhase('plugin-refresh-cleans-cloud-uninstall-residue')
