@@ -343,7 +343,7 @@ export interface ElectronE2EHost {
   showPopout: () => Promise<void>
   showSystemDragPanel: () => number | void | Promise<number | void>
   systemDragPanelVisible: () => boolean
-  takePendingSystemDrops: () => Array<{
+  takePendingSystemDrops: (windowLabel: string) => Array<{
     action: 'new-chat' | 'follow-up' | 'stash'
     text: string | null
     paths: string[]
@@ -1496,7 +1496,9 @@ export function createElectronCapabilityRouter(
     })
   )
   router.register('systemDrag.showPanel', () => e2eHost.showSystemDragPanel())
-  router.register('systemDrag.takePending', () => e2eHost.takePendingSystemDrops())
+  router.register('systemDrag.takePending', params =>
+    e2eHost.takePendingSystemDrops(stringParam(params, 'windowLabel'))
+  )
   router.register('systemSleep.setTaskActivity', async params => {
     const preferencesSnapshot = await preferences.read()
     e2eHost.setSystemSleepEnabled(preferencesSnapshot.preventSleepWhileTasksRunning !== false)

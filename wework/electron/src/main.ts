@@ -2896,10 +2896,15 @@ async function configureDesktopRuntime(): Promise<void> {
             Boolean(
               systemDragWindow && !systemDragWindow.isDestroyed() && systemDragWindow.isVisible()
             ),
-          takePendingSystemDrops: () => {
+          takePendingSystemDrops: windowLabel => {
             const drops = pendingSystemDrops
-            pendingSystemDrops = []
-            return drops
+            if (windowLabel === 'popout-window') {
+              pendingSystemDrops = []
+              return drops
+            }
+            // The Popout Window is opened by the host to receive new-chat drops.
+            pendingSystemDrops = drops.filter(drop => drop.action === 'new-chat')
+            return drops.filter(drop => drop.action !== 'new-chat')
           },
           workspaceWindowSnapshots: () =>
             [...workspaceWindows.entries()].flatMap(([label, target]) =>
