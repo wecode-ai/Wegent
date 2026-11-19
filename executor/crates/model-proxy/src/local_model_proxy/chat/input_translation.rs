@@ -134,6 +134,25 @@ pub(super) fn append_input(
     Ok(())
 }
 
+// Native Codex can inject external context as a function output with no call ID.
+// On message-based APIs it is user content and cannot satisfy a tool call.
+pub(in crate::local_model_proxy) fn detached_context_message(item: &Value) -> Option<Value> {
+    if item["type"] != "function_call_output"
+        || item["call_id"]
+            .as_str()
+            .is_some_and(|id| !id.trim().is_empty())
+    {
+        return None;
+    }
+    let mut output = split_tool_output(&item["output"]);
+    if !output.text.is_empty() {
+        output
+            .images
+            .insert(0, json!({"type":"input_text","text":output.text}));
+    }
+    Some(json!({"type":"message","role":"user","content":output.images}))
+}
+
 pub(super) fn append_chat_tool_output(
     item: &Value,
     call_names: &BTreeMap<String, String>,

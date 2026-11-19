@@ -143,6 +143,21 @@ pub(super) fn prepare_request_with_model_hint(
         status: StatusCode::BAD_REQUEST,
         detail: format!("Invalid Codex Responses request: {error}"),
     })?;
+    if let Some(input) = responses_body
+        .get_mut("input")
+        .filter(|_| matches!(api_format, "anthropic-messages" | "openai-chat-completions"))
+    {
+        let items = match input {
+            Value::Array(items) => items.as_mut_slice(),
+            Value::Object(_) => std::slice::from_mut(input),
+            _ => &mut [],
+        };
+        for item in items {
+            if let Some(message) = chat::detached_context_message(item) {
+                *item = message;
+            }
+        }
+    }
     normalize_responses_request_ids(&mut responses_body);
     image_budget::limit_request_images(&mut responses_body);
 
