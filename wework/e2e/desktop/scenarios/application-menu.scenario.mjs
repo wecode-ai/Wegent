@@ -509,6 +509,17 @@ export async function createDesktopScenario({ captureScreenshot, uiTimeoutMs }) 
         1,
         uiTimeoutMs
       )
+      // Display names and launch arguments can match both a helper and the host.
+      // Use a distinct negative query to verify that filtering removes both rows.
+      await explorerCommand('fill', '[data-testid="process-explorer-filter"]', {
+        value: '__wework_e2e_no_matching_process__',
+      })
+      await waitForWindowElementCount(
+        explorerCommand,
+        `[data-testid="process-explorer-row-${helperPid}"]`,
+        0,
+        uiTimeoutMs
+      )
       await waitForWindowElementCount(
         explorerCommand,
         `[data-testid="process-explorer-row-${processExplorer.applicationPid}"]`,
