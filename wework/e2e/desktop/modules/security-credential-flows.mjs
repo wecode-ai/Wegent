@@ -81,7 +81,6 @@ export async function verifyNativePluginAdmission({
   control,
   electronUserDataDirectory,
   resultDir,
-  workbenchReadyTimeoutMs,
 }) {
   // Exercise the public HTTP caller as well as the management UI; it cannot bypass native consent.
   const pluginRoot = join(resultDir, 'native-approval-plugin')
@@ -148,7 +147,6 @@ export async function verifyNativePluginAdmission({
   try {
     const session = await withNativePluginDecision(control, develop)
     assert.ok(session.electronPid > 0)
-    // The isolated child prepares its own runtime and packages before Core can start.
     await until(
       () => invokeLocalHost(control, 'pluginDevelopment.list'),
       sessions =>
@@ -156,7 +154,7 @@ export async function verifyNativePluginAdmission({
           item => item.id === session.id && item.status === 'ready' && item.coreDshPid > 0
         ),
       'Native-approved development source did not start its real Core runtime',
-      workbenchReadyTimeoutMs
+      60_000
     )
   } finally {
     await invokeLocalHost(control, 'pluginDevelopment.stop', undefined, packageTransaction)

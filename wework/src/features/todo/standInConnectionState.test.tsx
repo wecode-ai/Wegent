@@ -13,22 +13,14 @@ import { useStandInInbox } from './useStandInInbox'
 import { useStandInInstance } from './useStandInInstance'
 
 const devices: DeviceInfo[] = []
-const account = { userId: 1, username: 'alice', backendUrl: 'https://current.example/api' }
+const account = { userId: 1, backendUrl: 'https://current.example/api' }
 
-it('matches ordinary accounts across addresses and keeps admin and legacy bindings at their original address', () => {
-  const target = { ...account, deviceId: 'device' }
-  const alias = { ...account, backendUrl: 'https://alias.example/api' }
-  expect(isStandInBindingOwner(target, alias)).toBe(true)
-  expect(isStandInBindingOwner(target, { ...account, username: 'other' })).toBe(false)
-  expect(isStandInBindingOwner(target, { ...account, userId: 2 })).toBe(false)
-  expect(
-    isStandInBindingOwner({ ...target, username: 'admin' }, { ...account, username: 'admin' })
-  ).toBe(true)
-  expect(
-    isStandInBindingOwner({ ...target, username: 'admin' }, { ...alias, username: 'admin' })
-  ).toBe(false)
-  expect(isStandInBindingOwner({ ...target, username: undefined }, account)).toBe(true)
-  expect(isStandInBindingOwner({ ...target, username: undefined }, alias)).toBe(false)
+it('matches account IDs and preserves the installation-local owner', () => {
+  expect(isStandInBindingOwner(1, 1)).toBe(true)
+  expect(isStandInBindingOwner(1, 2)).toBe(false)
+  expect(isStandInBindingOwner(1, 0)).toBe(false)
+  expect(isStandInBindingOwner(0, 0)).toBe(true)
+  expect(isStandInBindingOwner(0, 2)).toBe(true)
 })
 
 it('keeps old inbox items hidden while the same owner and device load on a new connection', async () => {
@@ -71,7 +63,7 @@ it('keeps old inbox items hidden while the same owner and device load on a new c
   expect(result.current.items).toEqual([])
 })
 
-it('only offers the stopped profile belonging to the current binding', async () => {
+it('reads legacy bindings without migration and only offers the stopped profile of the same user ID', async () => {
   const first: PersonalStandInSettings = {
     version: 1,
     executionDeviceId: 'first',
@@ -84,10 +76,16 @@ it('only offers the stopped profile belonging to the current binding', async () 
     .fn<StandInExecutorApi['personalGet']>()
     .mockResolvedValueOnce(first)
     .mockResolvedValueOnce(first)
+  const legacyTarget = {
+    ...account,
+    deviceId: 'first',
+    username: 'previous-name',
+    backendUrl: 'https://previous.example/api',
+  }
   const original: StandInInstanceBinding = {
     status: 'stopped',
     version: 3,
-    target: { ...account, deviceId: 'first', backendUrl: 'https://previous.example/api' },
+    target: legacyTarget,
   }
   binding.mockResolvedValue(original)
   const services = {
@@ -96,9 +94,18 @@ it('only offers the stopped profile belonging to the current binding', async () 
       ({ deviceId: 'local', runtimeInstanceId: 'instance', provenance: 'local-ipc' }) as const,
   } satisfies Partial<WorkbenchServices>
   const { result } = renderHook(() =>
-    useStandInInstance(services as WorkbenchServices, account, devices, true, true)
+    useStandInInstance(
+      services as WorkbenchServices,
+      account.userId,
+      devices,
+      true,
+      true,
+      account.backendUrl
+    )
   )
   await waitFor(() => expect(result.current.stoppedProfile).toBe(first))
+  expect(result.current.binding).toEqual(original)
+  expect(binding.mock.calls).toEqual([['local']])
 
   act(() => result.current.reload())
   expect(result.current.stoppedProfile).toBe(first)
@@ -118,7 +125,7 @@ it('only offers the stopped profile belonging to the current binding', async () 
   binding.mockResolvedValueOnce({
     status: 'stopped',
     version: 7,
-    target: { ...account, username: 'different-account', deviceId: 'first' },
+    target: { ...account, userId: 2, deviceId: 'first' },
   })
   act(() => result.current.reload())
   await waitFor(() => expect(result.current.binding?.version).toBe(7))

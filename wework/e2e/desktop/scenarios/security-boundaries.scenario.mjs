@@ -31,7 +31,6 @@ export function createDesktopScenario({
   electronUserDataDirectory,
   restartDesktopApp,
   uiTimeoutMs,
-  workbenchReadyTimeoutMs,
   resultDir,
 }) {
   let nativeProbes = 0
@@ -110,7 +109,6 @@ export function createDesktopScenario({
         control,
         electronUserDataDirectory,
         resultDir,
-        workbenchReadyTimeoutMs,
       })
 
       const payload = `document.body.setAttribute('${MARKER}','yes')`

@@ -6544,7 +6544,7 @@
       "stopping": "Stopping the entire stand-in and cancelling tasks. Rebinding is unavailable until this completes.",
       "bind_help": "Choose the stand-in for this Wework instance. Each instance can bind only one stand-in.",
       "stop_before_rebind": "This instance already has a bound stand-in. Stop it before binding another.",
-      "owner_unavailable": "This connection cannot open the bound stand-in. Use the original account and address to stop it before rebinding."
+      "owner_unavailable": "The current account has a different user ID from the bound stand-in. Sign in to the original account to continue using or stop it."
     },
     "migration": {
       "offer": "The old stand-in has stopped. Migrate the selected profile's responsibilities and memories to another device and bind the new stand-in.",

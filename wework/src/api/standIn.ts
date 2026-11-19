@@ -25,14 +25,7 @@ export interface StandInOnboardingResult {
 export interface StandInBindingTarget {
   userId: number
   deviceId: string
-  username?: string
   backendUrl?: string
-}
-
-export interface StandInAccountIdentity {
-  userId: number
-  username: string
-  backendUrl: string
 }
 
 export interface StandInInstanceBinding {
@@ -41,50 +34,8 @@ export interface StandInInstanceBinding {
   target: StandInBindingTarget | null
 }
 
-export function isStandInBindingOwner(
-  target: StandInBindingTarget,
-  { userId, username, backendUrl }: StandInAccountIdentity
-): boolean {
-  if (target.userId === LOCAL_USER.id) return true
-  if (target.userId !== userId || !username) return false
-  if (target.username && target.username !== username) return false
-  if (!target.username || username.toLowerCase() === 'admin') {
-    return Boolean(target.backendUrl && target.backendUrl === backendUrl)
-  }
-  return true
-}
-
-export async function readStandInBindingForAccount(
-  api: StandInExecutorApi,
-  deviceId: string,
-  account: StandInAccountIdentity
-): Promise<StandInInstanceBinding> {
-  const binding = await api.binding(deviceId)
-  const { target } = binding
-  if (
-    !target ||
-    target.userId === LOCAL_USER.id ||
-    target.username ||
-    !isStandInBindingOwner(target, account)
-  ) {
-    return binding
-  }
-  try {
-    return await api.binding(deviceId, 'recordUsername', binding.version, {
-      ...target,
-      username: account.username,
-    })
-  } catch (cause) {
-    if (
-      typeof cause === 'object' &&
-      cause &&
-      'code' in cause &&
-      cause.code === 'version_conflict'
-    ) {
-      return api.binding(deviceId)
-    }
-    throw cause
-  }
+export function isStandInBindingOwner(targetUserId: number, userId: number): boolean {
+  return targetUserId === LOCAL_USER.id || targetUserId === userId
 }
 
 export interface ConnectionProviderDescriptor {
@@ -287,7 +238,7 @@ export interface StandInExecutorApi {
   processingStatus(userId: number, deviceId: string): Promise<StandInProcessingStatus>
   binding(
     deviceId: string,
-    operation?: 'get' | 'bind' | 'beginStop' | 'completeStop' | 'recordUsername',
+    operation?: 'get' | 'bind' | 'beginStop' | 'completeStop',
     version?: number,
     target?: StandInBindingTarget
   ): Promise<StandInInstanceBinding>

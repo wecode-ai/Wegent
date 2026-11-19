@@ -85,17 +85,15 @@ function AccountStandInWorkspace({
   }, [active, contentRoute, embedded])
   const query = new URLSearchParams(contentRoute.split('?')[1] ?? '')
   const [initialBindingDevice] = useState(() => query.get('deviceId') ?? undefined)
-  const account = {
-    userId: Number(user.id),
-    username: user.user_name,
-    backendUrl: cloud?.apiBaseUrl ?? '',
-  }
+  const userId = Number(user.id)
+  const backendUrl = cloud?.apiBaseUrl ?? ''
   const instance = useStandInInstance(
     services,
-    account,
+    userId,
     devices,
     !!cloud?.isConnected,
     active,
+    backendUrl,
     initialBindingDevice,
     refreshKey
   )
@@ -125,7 +123,7 @@ function AccountStandInWorkspace({
     roleLocation?.roleId && roleLocation.roleId !== '@primary' ? roleLocation.deviceId : deviceId
   const ownerAvailable =
     notificationOwnerMatches &&
-    (binding?.status === 'stopped' || !target || isStandInBindingOwner(target, account))
+    (binding?.status === 'stopped' || !target || isStandInBindingOwner(target.userId, userId))
   const routeMatches = !query.get('deviceId') || query.get('deviceId') === deviceId
   const directory = useStandInRoleDirectory(
     services.standInApi,
@@ -294,9 +292,8 @@ function AccountStandInWorkspace({
                 className="min-h-11 rounded-md border border-border px-3 text-sm hover:bg-muted disabled:opacity-50 md:min-h-8"
                 onClick={() =>
                   void instance.bind({
-                    ...(value.userId === LOCAL_USER.id
-                      ? { userId: LOCAL_USER.id, backendUrl: '' }
-                      : account),
+                    userId: value.userId,
+                    backendUrl: value.userId === LOCAL_USER.id ? '' : backendUrl,
                     deviceId: value.deviceId,
                   })
                 }
@@ -313,7 +310,7 @@ function AccountStandInWorkspace({
               busy={busy}
               onMigrate={async (deviceId, roleId) => {
                 const role = await instance.migrate(
-                  { ...account, deviceId },
+                  { userId, backendUrl, deviceId },
                   roleId,
                   t('standIn.title')
                 )

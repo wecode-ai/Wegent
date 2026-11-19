@@ -173,50 +173,28 @@ export function createDesktopScenario({
     )
     await control.command('navigate', 'body', { value: '/stand-in' })
   }
-  async function verifyAdminRebinding(control, localDevice, backendUrl) {
-    const oldAdmin = await saveBinding(control, {
+  async function verifySavedLocalBinding(control, localDevice) {
+    const original = await saveBinding(control, {
       userId: USER,
-      username: 'admin',
       deviceId: localDevice,
       backendUrl: PREVIOUS_ADDRESS,
     })
-    await reloadMainWindow(control)
-    await control.command('waitFor', testId('stand-in-instance-owner-unavailable'))
-    assert.deepEqual(await binding(control), oldAdmin)
-
-    // Establish the stopped state the original connection would have left.
-    const stopping = await rpc(control, 'runtime.stand_in.binding', {
-      operation: 'beginStop',
-      version: oldAdmin.version,
-    })
-    const stopped = await rpc(control, 'runtime.stand_in.personal.lifecycle', {
+    await rpc(control, 'runtime.stand_in.personal.lifecycle', {
       userId: USER,
-      operation: 'stop',
-    })
-    assert.equal(stopped.lifecycle.status, 'stopped')
-    await rpc(control, 'runtime.stand_in.binding', {
-      operation: 'completeStop',
-      version: stopping.version,
+      operation: 'start',
     })
     await reloadMainWindow(control)
-    await control.command('waitFor', testId('stand-in-instance-stopped'))
-    assert.equal(await control.command('getElementCount', testId('stand-in-migrate-open')), '0')
-    await bind(control, USER, localDevice)
-    assert.deepEqual((await binding(control)).target, {
-      userId: USER,
-      username: 'admin',
-      deviceId: localDevice,
-      backendUrl,
-    })
+    await control.command('waitFor', testId('stand-in-overview'))
+    assert.deepEqual(await binding(control), original)
     await stop(control)
   }
 
   async function verifyRegularBinding(control, localDevice, backendUrl) {
     const username = `stand-in-binding-${process.pid}`
     const credentials = { user_name: username, password: randomUUID() }
-    const authRequest = (path, body) =>
+    const authRequest = (path, body, method = 'POST') =>
       fetchJson(`${cloud.backendUrl}/api${path}`, {
-        method: 'POST',
+        method,
         headers: {
           Authorization: `Bearer ${cloud.authToken}`,
           'Content-Type': 'application/json',
@@ -229,46 +207,68 @@ export function createDesktopScenario({
       role: 'user',
       auth_source: 'password',
     })
-    const session = await authRequest('/auth/login', credentials)
-    await control.command('setCloudSessionToken', 'body', { value: session.access_token })
-    await rpc(control, 'runtime.stand_in.onboarding.complete', {
-      userId: member.id,
-      weeklyReview: false,
-      language: 'zh-CN',
-    })
-    const registered = { userId: member.id, deviceId: localDevice, backendUrl }
-    await saveBinding(control, registered)
-    await rpc(control, 'runtime.stand_in.personal.lifecycle', {
-      userId: member.id,
-      operation: 'start',
-    })
-    await reloadMainWindow(control)
-    await control.command('waitFor', testId('stand-in-overview'))
-    assert.deepEqual((await binding(control)).target, { ...registered, username })
+    try {
+      const session = await authRequest('/auth/login', credentials)
+      await control.command('setCloudSessionToken', 'body', { value: session.access_token })
+      await rpc(control, 'runtime.stand_in.onboarding.complete', {
+        userId: member.id,
+        weeklyReview: false,
+        language: 'zh-CN',
+      })
+      const registered = { userId: member.id, deviceId: localDevice, backendUrl }
+      await saveBinding(control, registered)
+      await rpc(control, 'runtime.stand_in.personal.lifecycle', {
+        userId: member.id,
+        operation: 'start',
+      })
+      await reloadMainWindow(control)
+      await control.command('waitFor', testId('stand-in-overview'))
+      assert.deepEqual((await binding(control)).target, registered)
 
-    await createRole(control, 'Ordinary account stand-in')
-    const profile = await rpc(control, 'runtime.stand_in.personal.get', { userId: member.id })
-    const role = profile.roles.find(row => row.name === 'Ordinary account stand-in')
-    assert.ok(role)
-    await stop(control)
-    const aliased = await saveBinding(control, {
-      ...registered,
-      username,
-      backendUrl: PREVIOUS_ADDRESS,
-    })
-    await rpc(control, 'runtime.stand_in.personal.lifecycle', {
-      userId: member.id,
-      operation: 'start',
-    })
-    await reloadMainWindow(control)
-    await control.command('waitFor', testId(`stand-in-overview-role-${role.id}`))
-    assert.deepEqual(await binding(control), aliased)
-    await stop(control)
+      await createRole(control, 'Ordinary account stand-in')
+      const profile = await rpc(control, 'runtime.stand_in.personal.get', { userId: member.id })
+      const role = profile.roles.find(row => row.name === 'Ordinary account stand-in')
+      assert.ok(role)
+      await stop(control)
+      const aliased = await saveBinding(control, {
+        ...registered,
+        backendUrl: PREVIOUS_ADDRESS,
+      })
+      await rpc(control, 'runtime.stand_in.personal.lifecycle', {
+        userId: member.id,
+        operation: 'start',
+      })
+      const renamedUsername = `${username}-renamed`
+      const renamed = await authRequest(
+        `/admin/users/${member.id}`,
+        { user_name: renamedUsername },
+        'PUT'
+      )
+      assert.equal(renamed.id, member.id)
+      assert.equal(renamed.user_name, renamedUsername)
+      const renamedSession = await authRequest('/auth/login', {
+        ...credentials,
+        user_name: renamedUsername,
+      })
+      await control.command('setCloudSessionToken', 'body', { value: renamedSession.access_token })
+      await reloadMainWindow(control)
+      await control.command('waitFor', testId(`stand-in-overview-role-${role.id}`))
+      assert.deepEqual(await binding(control), aliased)
+      await stop(control)
 
-    const otherOwner = await saveBinding(control, { ...registered, username: `${username}-other` })
-    await reloadMainWindow(control)
-    await control.command('waitFor', testId('stand-in-instance-owner-unavailable'))
-    assert.deepEqual(await binding(control), otherOwner)
+      const otherOwner = await saveBinding(control, { ...registered, userId: USER })
+      await reloadMainWindow(control)
+      await control.command('waitFor', testId('stand-in-instance-owner-unavailable'))
+      assert.deepEqual(await binding(control), otherOwner)
+    } finally {
+      await control.command('setCloudSessionToken', 'body', { value: cloud.authToken })
+      const removed = await fetch(`${cloud.backendUrl}/api/admin/users/${member.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${cloud.authToken}` },
+        signal: AbortSignal.timeout(uiTimeoutMs),
+      })
+      assert.equal(removed.status, 204, 'The renamed fixture account must be removed')
+    }
   }
   return {
     requiresCloudEnvironment: true,
@@ -331,7 +331,8 @@ export function createDesktopScenario({
       await control.command('navigate', 'body', { value: '/stand-in' })
       await control.command('waitFor', testId('stand-in-onboarding-setup'))
       const firstUse = await binding(control)
-      assert.equal(firstUse.target.username, 'admin')
+      assert.equal(firstUse.target.userId, USER)
+      assert.equal('username' in firstUse.target, false)
       assert.ok(firstUse.target.backendUrl)
       assert.ok(
         [CLOUD_DEVICE_ID, REMOTE_DOCKER_DEVICE_ID].includes(firstUse.target.deviceId),
@@ -493,12 +494,11 @@ export function createDesktopScenario({
         'Ordinary identity conversation and cancellation must not create a business Issue'
       )
 
-      // Reopen the saved admin binding through its original connection.
+      // Reopen the saved binding after the backend address changes.
       const original = await saveBinding(control, {
         userId: USER,
-        username: 'admin',
         deviceId: CLOUD_DEVICE_ID,
-        backendUrl: firstUse.target.backendUrl,
+        backendUrl: PREVIOUS_ADDRESS,
       })
       await remoteRpc('runtime.stand_in.personal.lifecycle', { userId: USER, operation: 'start' })
       await reloadMainWindow(control)
@@ -525,7 +525,7 @@ export function createDesktopScenario({
       )
       await stop(control)
       const stoppedBinding = await binding(control)
-      assert.equal(stoppedBinding.target.backendUrl, firstUse.target.backendUrl)
+      assert.equal(stoppedBinding.target.backendUrl, PREVIOUS_ADDRESS)
       await reloadMainWindow(control)
       await control.command('waitFor', testId('stand-in-instance-stopped'))
       const migrationRole = testId('stand-in-migration-role')
@@ -579,7 +579,7 @@ export function createDesktopScenario({
       await cloud.restartCloudExecutor()
       await observeDevice(control, CLOUD_DEVICE_ID, '在线')
       await stop(control)
-      await verifyAdminRebinding(control, localDevice, firstUse.target.backendUrl)
+      await verifySavedLocalBinding(control, localDevice)
       await verifyRegularBinding(control, localDevice, firstUse.target.backendUrl)
       await writeFile(
         join(resultDir, 'stand-in-cloud-device-evidence.json'),
@@ -593,6 +593,9 @@ export function createDesktopScenario({
           offlineBindingRetained: true,
           localHistoryRetained: true,
           localMemoryRetained: true,
+          userIdOnlyBinding: true,
+          renamedOwnerRetained: true,
+          differentUserIdRejected: true,
         })
       )
     },
