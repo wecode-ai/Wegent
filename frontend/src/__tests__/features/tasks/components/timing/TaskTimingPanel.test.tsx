@@ -29,13 +29,13 @@ const timingResponse: TaskTimingResponse = {
   owner_user_id: 7,
   wall_time_ms: 17_000,
   triage: [
-    { kind: 'agent', label: 'Agent/模型', duration_ms: 12_000 },
-    { kind: 'tool', label: '命令/工具', duration_ms: 4_000 },
-    { kind: 'gap', label: '未观测', duration_ms: 1_000 },
+    { kind: 'agent', duration_ms: 8_000 },
+    { kind: 'tool', duration_ms: 4_000 },
+    { kind: 'gap', duration_ms: 1_000 },
   ],
   coverage: [
-    { kind: 'agent', label: 'Agent active', duration_ms: 12_000 },
-    { kind: 'tool', label: 'Tool busy', duration_ms: 4_000 },
+    { kind: 'agent', duration_ms: 12_000 },
+    { kind: 'tool', duration_ms: 4_000 },
   ],
   top_suspects: [
     {
@@ -44,7 +44,7 @@ const timingResponse: TaskTimingResponse = {
       category: 'agent',
       duration_ms: 12_000,
       status: 'completed',
-      suggestion: '查看模型/编排耗时',
+      suggestion: 'inspect_model',
     },
     {
       span_id: 'tool-1',
@@ -52,7 +52,7 @@ const timingResponse: TaskTimingResponse = {
       category: 'tool',
       duration_ms: 4_000,
       status: 'completed',
-      suggestion: '检查 registry/mirror 或网络',
+      suggestion: 'inspect_registry',
     },
   ],
   spans: [
@@ -103,6 +103,7 @@ const emptyResponse: TaskTimingResponse = {
   coverage: [],
   top_suspects: [],
   spans: [],
+  has_spans: false,
 }
 
 function renderPanel() {
@@ -123,11 +124,13 @@ describe('TaskTimingPanel', () => {
     expect(mockGetTaskTiming).toHaveBeenCalledWith(42)
     expect(await screen.findByTestId('task-timing-triage')).toBeInTheDocument()
     expect(screen.getAllByTestId('task-timing-triage-item')).toHaveLength(3)
-    expect(screen.getByText('Agent/模型')).toBeInTheDocument()
-    expect(screen.getAllByText('12s')).toHaveLength(2)
+    expect(screen.getByText('timing.summary.agent')).toBeInTheDocument()
+    expect(screen.getAllByText('12s')).toHaveLength(1)
     expect(screen.getAllByTestId('task-timing-suspect')).toHaveLength(2)
     expect(screen.getByText('pnpm test')).toBeInTheDocument()
-    expect(screen.getByText('检查 registry/mirror 或网络')).toBeInTheDocument()
+    expect(
+      screen.getByText('timing.suggestions.inspect_registry:inspect_registry')
+    ).toBeInTheDocument()
     expect(screen.getByText('timing.summary.wall_time:17s')).toBeInTheDocument()
     const bars = screen.getAllByTestId('task-timing-triage-item')
     expect(bars[0]).toBeInTheDocument()

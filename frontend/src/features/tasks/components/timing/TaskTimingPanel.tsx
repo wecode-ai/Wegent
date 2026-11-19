@@ -58,7 +58,7 @@ export function TaskTimingPanel({ panelProps, onClose }: TaskTimingPanelProps) {
       try {
         const data = await taskApis.getTaskTiming(taskId)
         setState(
-          data.spans.length === 0 && data.triage.length === 0 && data.top_suspects.length === 0
+          data.spans.length === 0 || data.has_spans === false
             ? { status: 'empty' }
             : { status: 'success', data }
         )
@@ -179,10 +179,10 @@ function TimingContent({ data }: { data: TaskTimingResponse }) {
 
         <ul className="mt-3 space-y-2" data-testid="task-timing-triage">
           {data.triage.map(category => (
-            <li key={`${category.kind}-${category.label}`} data-testid="task-timing-triage-item">
+            <li key={category.kind} data-testid="task-timing-triage-item">
               <div className="flex min-w-0 items-center justify-between gap-3">
                 <span className="min-w-0 flex-1 truncate text-xs text-text-secondary">
-                  {category.label}
+                  {t(`timing.summary.${category.kind}`)}
                 </span>
                 <span className="shrink-0 text-xs font-medium tabular-nums text-text-primary">
                   {formatDuration(category.duration_ms)}
@@ -229,7 +229,11 @@ function TimingContent({ data }: { data: TaskTimingResponse }) {
                     {formatDuration(suspect.duration_ms)}
                   </span>
                 </div>
-                <p className="mt-2 break-words text-xs text-text-secondary">{suspect.suggestion}</p>
+                <p className="mt-2 break-words text-xs text-text-secondary">
+                  {t(`timing.suggestions.${suspect.suggestion}`, {
+                    defaultValue: suspect.suggestion,
+                  })}
+                </p>
               </article>
             ))
           )}

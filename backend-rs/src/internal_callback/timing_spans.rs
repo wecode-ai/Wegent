@@ -21,7 +21,7 @@ const INSERT_SPAN_SQL: &str = "INSERT INTO task_timing_spans \
     actor_id = IF(actor_id = '', VALUES(actor_id), actor_id), \
     actor_type = IF(actor_type = '', VALUES(actor_type), actor_type), \
     actor_label = IF(actor_label = '', VALUES(actor_label), actor_label), \
-    status = IF(status = 'running', VALUES(status), status), \
+    status = IF(status IN ('running', 'waiting'), VALUES(status), status), \
     start_at_ms = IF(start_at_ms IS NULL, VALUES(start_at_ms), start_at_ms), \
     end_at_ms = IF(end_at_ms IS NULL, VALUES(end_at_ms), end_at_ms), \
     duration_ms = IF(duration_ms IS NULL, VALUES(duration_ms), duration_ms), \
@@ -73,9 +73,11 @@ pub(crate) async fn persist_callback_timing<M: Mysql>(
         .and_then(Value::as_str)
         .unwrap_or("executor")
         .to_string();
+    let default_clock = clock.as_str();
     for mut span in spans {
+        let span_clock = span_clock(span.kind, default_clock);
         if let Some(metadata) = span.metadata.as_object_mut() {
-            metadata.insert("clock".into(), Value::String(clock.clone()));
+            metadata.insert("clock".into(), Value::String(span_clock.to_string()));
             metadata.insert("source".into(), Value::String(source.clone()));
         }
         let duration_ms = span.duration_ms();
@@ -96,7 +98,7 @@ pub(crate) async fn persist_callback_timing<M: Mysql>(
                     span.start_at_ms,
                     span.end_at_ms,
                     duration_ms,
-                    clock.as_str(),
+                span_clock.as_str(),
                     source.as_str(),
                     Json(span.metadata),
                 ),
@@ -115,14 +117,18 @@ fn executor_source(executor_name: Option<&str>, executor_namespace: Option<&str>
     }
 }
 
+fn span_clock(kind: &str, default_clock: &str) -> String {
+    match kind {
+        "queue" | "provision" => "executor-manager".to_string(),
+        "tool" | "subagent" | "agent" | "waiting_user" => "executor".to_string(),
+        _ => default_clock.to_string(),
+    }
+}
+
 fn event_timing_spans(event: &ExecutionEvent) -> Vec<NewTimingSpan> {
     match event.event_type.as_str() {
         "block_created" => block_event_spans(event),
-        "block_updated" => {
-            let mut spans = updated_block_spans(event);
-            spans.extend(subagent_activity_spans(event));
-            spans
-        }
+        "block_updated" => subagent_activity_spans(event),
         _ => Vec::new(),
     }
 }
@@ -155,10 +161,7 @@ fn subagent_activity_spans(event: &ExecutionEvent) -> Vec<NewTimingSpan> {
         None
     };
     vec![NewTimingSpan {
-        span_id: format!(
-            "task-{}-subtask-{}-subagent-{agent_id}",
-            event.task_id, event.subtask_id
-        ),
+        span_id: subagent_span_id(event, agent_id),
         kind: "subagent",
         parent_span_id: Some(format!(
             "task-{}-subtask-{}-agent",
@@ -180,6 +183,13 @@ fn subagent_activity_spans(event: &ExecutionEvent) -> Vec<NewTimingSpan> {
     }]
 }
 
+fn subagent_span_id(event: &ExecutionEvent, agent_id: &str) -> String {
+    format!(
+        "task-{}-subtask-{}-subagent-{agent_id}",
+        event.task_id, event.subtask_id
+    )
+}
+
 fn waiting_user_span(event: &ExecutionEvent) -> Option<NewTimingSpan> {
     if event.event_type != "done" {
         return None;
@@ -189,14 +199,7 @@ fn waiting_user_span(event: &ExecutionEvent) -> Option<NewTimingSpan> {
         return None;
     }
     let timing = event.data.get("timing")?;
-    let start_at_ms = timing
-        .get("agentStartedAt")
-        .or_else(|| timing.get("agentFinishedAt"))
-        .and_then(Value::as_i64)?;
-    let end_at_ms = timing
-        .get("agentFinishedAt")
-        .or_else(|| timing.get("agentStartedAt"))
-        .and_then(Value::as_i64)?;
+    let start_at_ms = timing.get("agentFinishedAt").and_then(Value::as_i64)?;
     Some(NewTimingSpan {
         span_id: format!(
             "task-{}-subtask-{}-waiting-user",
@@ -212,7 +215,7 @@ fn waiting_user_span(event: &ExecutionEvent) -> Option<NewTimingSpan> {
         actor_label: "Waiting for user".to_string(),
         status: "waiting",
         start_at_ms: Some(start_at_ms),
-        end_at_ms: Some(end_at_ms),
+        end_at_ms: None,
         metadata: json!({"result": result.clone()}),
     })
 }
@@ -258,11 +261,21 @@ fn block_event_spans(event: &ExecutionEvent) -> Vec<NewTimingSpan> {
         } else {
             "running"
         });
+    let span_id = if kind == "subagent" {
+        block
+            .get("agent_thread_id")
+            .or_else(|| block.get("agent_id"))
+            .and_then(Value::as_str)
+            .map(|agent_id| subagent_span_id(event, agent_id))
+    } else {
+        Some(span_id(event, kind, id))
+    };
+    let Some(span_id) = span_id else {
+        return Vec::new();
+    };
+
     vec![NewTimingSpan {
-        span_id: format!(
-            "task-{}-subtask-{}-{kind}-{id}",
-            event.task_id, event.subtask_id
-        ),
+        span_id,
         kind,
         parent_span_id: parent_span_id(event, kind),
         actor_id: actor_id(block, kind),
@@ -275,51 +288,11 @@ fn block_event_spans(event: &ExecutionEvent) -> Vec<NewTimingSpan> {
     }]
 }
 
-fn updated_block_spans(event: &ExecutionEvent) -> Vec<NewTimingSpan> {
-    let Some(updates) = event
-        .data
-        .get("updates")
-        .filter(|updates| updates.is_object())
-    else {
-        return Vec::new();
-    };
-    let completed_at =
-        integer_field(updates, "completedAt").or_else(|| integer_field(updates, "completed_at"));
-    let duration_ms =
-        integer_field(updates, "durationMs").or_else(|| integer_field(updates, "duration_ms"));
-    if completed_at.is_none() && duration_ms.is_none() {
-        return Vec::new();
-    }
-    let block_id = event
-        .data
-        .get("block_id")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    if block_id.starts_with("subagent-") {
-        return Vec::new();
-    }
-    if block_id.is_empty() {
-        return Vec::new();
-    }
-    vec![NewTimingSpan {
-        span_id: format!(
-            "task-{}-subtask-{}-tool-{block_id}",
-            event.task_id, event.subtask_id
-        ),
-        kind: "tool",
-        parent_span_id: None,
-        actor_id: block_id.to_string(),
-        actor_type: "tool",
-        actor_label: block_id.to_string(),
-        status: if completed_at.is_some() {
-            "completed"
-        } else {
-            "running"
-        },
-        start_at_ms: None,
-        end_at_ms: completed_at,
-        metadata: json!({"updates": updates.clone()}),
-    }]
+fn span_id(event: &ExecutionEvent, kind: &str, id: &str) -> String {
+    format!(
+        "task-{}-subtask-{}-{kind}-{id}",
+        event.task_id, event.subtask_id
+    )
 }
 
 fn block_kind(block: &Value) -> Option<&'static str> {
@@ -396,7 +369,7 @@ fn boundary_spans(event: &ExecutionEvent, timing: &Value) -> Vec<NewTimingSpan> 
         "provision",
         "Runtime provision",
         "instanceCreateStartedAt",
-        "instanceCreateFinishedAt",
+        "taskDispatchedAt",
         "provisionDurationMs",
     );
     push_boundary_span(
@@ -424,8 +397,10 @@ fn push_boundary_span(
     duration_key: &str,
 ) {
     let integer = |key: &str| timing.get(key).and_then(Value::as_i64);
-    let start_at_ms = integer(start_key);
-    let mut end_at_ms = integer(end_key);
+    let end_value = integer(end_key);
+    let start_at_ms = integer(start_key)
+        .or_else(|| integer(duration_key).and_then(|duration| end_value?.checked_sub(duration)));
+    let mut end_at_ms = end_value;
     if end_at_ms.is_none() && start_at_ms.is_some() {
         end_at_ms = integer(duration_key).and_then(|duration| start_at_ms?.checked_add(duration));
     }
@@ -467,6 +442,7 @@ mod tests {
                 "dequeuedAt": 2,
                 "instanceCreateStartedAt": 3,
                 "instanceCreateFinishedAt": 5,
+                "taskDispatchedAt": 10,
                 "agentStartedAt": 6,
                 "agentFinishedAt": 9,
             }),
@@ -494,9 +470,23 @@ mod tests {
         assert_eq!(spans[0].kind, "queue");
         assert_eq!(spans[0].duration_ms(), Some(1));
         assert_eq!(spans[1].kind, "provision");
-        assert_eq!(spans[1].duration_ms(), Some(2));
+        assert_eq!(spans[1].duration_ms(), Some(7));
         assert_eq!(spans[2].kind, "agent");
         assert_eq!(spans[2].duration_ms(), Some(3));
+    }
+
+    #[test]
+    fn reused_containers_record_dispatch_to_provision_boundary() {
+        let timing = json!({
+            "instanceReadyAt": 10,
+            "taskDispatchedAt": 20,
+            "provisionDurationMs": 10
+        });
+        let spans = boundary_spans(&event(), &timing);
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].kind, "provision");
+        assert_eq!(spans[0].start_at_ms, Some(10));
+        assert_eq!(spans[0].end_at_ms, Some(20));
     }
 
     #[test]
@@ -522,8 +512,8 @@ mod tests {
         assert_eq!(spans.len(), 2);
         let waiting = spans.last().unwrap();
         assert_eq!(waiting.kind, "waiting_user");
-        assert_eq!(waiting.start_at_ms, Some(10));
-        assert_eq!(waiting.end_at_ms, Some(20));
+        assert_eq!(waiting.start_at_ms, Some(20));
+        assert_eq!(waiting.end_at_ms, None);
         assert_eq!(waiting.status, "waiting");
     }
 
@@ -575,10 +565,11 @@ mod tests {
             Some("task-7-subtask-11-agent")
         );
         assert_eq!(spans[0].status, "running");
+        assert_eq!(spans[0].span_id, "task-7-subtask-11-subagent-worker-1");
     }
 
     #[test]
-    fn block_updates_only_complete_tool_spans() {
+    fn block_updates_do_not_infer_tool_spans() {
         let event = block_event(
             super::super::event::EventType::BlockUpdated,
             json!({
@@ -587,10 +578,7 @@ mod tests {
             }),
         );
         let spans = event_timing_spans(&event);
-        assert_eq!(spans.len(), 1);
-        assert_eq!(spans[0].span_id, "task-7-subtask-11-tool-tool-1");
-        assert_eq!(spans[0].end_at_ms, Some(250));
-        assert_eq!(spans[0].start_at_ms, None);
+        assert!(spans.is_empty());
     }
 
     #[test]

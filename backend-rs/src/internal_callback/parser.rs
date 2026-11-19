@@ -119,7 +119,9 @@ impl ResponsesApiEventParser {
             "response.completed" => {
                 let response = data.get("response").cloned().unwrap_or(Value::Null);
                 let mut result = extract_completed_result(&response);
+                let mut extra = Map::new();
                 if let Some(timing) = data.get("timing").filter(|value| value.is_object()) {
+                    extra.insert("timing".to_string(), timing.clone());
                     result.insert("timing".into(), timing.clone());
                 }
                 {
@@ -140,6 +142,7 @@ impl ResponsesApiEventParser {
                 }
                 let mut event = ExecutionEvent::new(EventType::Done, task_id, subtask_id);
                 event.result = Some(Value::Object(result));
+                event.data = extra;
                 event.message_id = message_id;
                 Ok(Some(event))
             }
@@ -236,6 +239,9 @@ impl ResponsesApiEventParser {
                     Self::clear_task_contexts(&mut state, task_id, subtask_id);
                 }
                 let mut event = ExecutionEvent::new(EventType::Error, task_id, subtask_id);
+                if let Some(timing) = data.get("timing").filter(|value| value.is_object()) {
+                    event.data.insert("timing".to_string(), timing.clone());
+                }
                 event.error =
                     Some(string_field(data, "message").unwrap_or_else(|| "Unknown error".into()));
                 event.error_code = string_field(data, "code");
@@ -248,6 +254,9 @@ impl ResponsesApiEventParser {
                     Self::clear_task_contexts(&mut state, task_id, subtask_id);
                 }
                 let mut event = ExecutionEvent::new(EventType::Cancelled, task_id, subtask_id);
+                if let Some(timing) = data.get("timing").filter(|value| value.is_object()) {
+                    event.data.insert("timing".to_string(), timing.clone());
+                }
                 event.message_id = message_id;
                 Ok(Some(event))
             }

@@ -248,12 +248,27 @@
     },
     "summary": {
       "title": "Triage",
-      "wall_time": "Session {{duration}}"
+      "wall_time": "Session {{duration}}",
+      "tool": "Command / tool",
+      "subagent": "Subagent",
+      "agent": "Agent / model",
+      "waiting_user": "Waiting for user",
+      "runtime": "Infra",
+      "gap": "Unobserved"
     },
     "suspects": {
       "title": "Top suspects",
       "empty": "No dominant timing suspects were found.",
       "meta": "{{category}} · {{status}}"
+    },
+    "suggestions": {
+      "inspect_registry": "Check registry/mirror or network",
+      "inspect_git": "Check repository network or proxy",
+      "inspect_tool": "Inspect the specific command execution logs",
+      "inspect_subagent": "Inspect the subagent critical path",
+      "inspect_model": "Inspect model and orchestration time",
+      "confirm_waiting": "Confirm whether it is still waiting for the user",
+      "inspect_infra": "Contact Infra about queueing or environment preparation"
     },
     "timeline": {
       "title": "Timeline details",

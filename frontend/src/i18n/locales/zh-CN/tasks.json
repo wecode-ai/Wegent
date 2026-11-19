@@ -244,12 +244,27 @@
     },
     "summary": {
       "title": "耗时归因",
-      "wall_time": "会话 {{duration}}"
+      "wall_time": "会话 {{duration}}",
+      "tool": "命令/工具",
+      "subagent": "子 Agent",
+      "agent": "Agent/模型",
+      "waiting_user": "等待用户",
+      "runtime": "Infra",
+      "gap": "未观测"
     },
     "suspects": {
       "title": "主要耗时点",
       "empty": "未发现明显耗时瓶颈。",
       "meta": "{{category}} · {{status}}"
+    },
+    "suggestions": {
+      "inspect_registry": "检查 registry/mirror 或网络",
+      "inspect_git": "检查仓库网络或代理",
+      "inspect_tool": "查看具体命令执行日志",
+      "inspect_subagent": "查看子 Agent 关键路径",
+      "inspect_model": "查看模型/编排耗时",
+      "confirm_waiting": "确认是否仍在等待用户",
+      "inspect_infra": "联系 Infra 检查排队或环境准备"
     },
     "timeline": {
       "title": "时间线详情",

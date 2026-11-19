@@ -96,6 +96,31 @@ fn response_events_preserve_timing_metadata() {
         completed.result.expect("result").get("timing"),
         Some(&timing)
     );
+    assert_eq!(completed.data.get("timing"), Some(&timing));
+
+    let failed = parser::shared()
+        .parse(
+            1,
+            2,
+            None,
+            "error",
+            &json!({"message": "failed", "timing": timing}),
+        )
+        .expect("parse")
+        .expect("event");
+    assert_eq!(failed.data.get("timing"), Some(&timing));
+
+    let cancelled = parser::shared()
+        .parse(
+            1,
+            2,
+            None,
+            "response.incomplete",
+            &json!({"response": {}, "timing": timing}),
+        )
+        .expect("parse")
+        .expect("event");
+    assert_eq!(cancelled.data.get("timing"), Some(&timing));
 }
 
 #[test]

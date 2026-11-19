@@ -53,12 +53,12 @@ struct TaskTimingResponse {
     coverage: Vec<TimingCategory>,
     top_suspects: Vec<TopSuspect>,
     spans: Vec<SpanView>,
+    has_spans: bool,
 }
 
 #[derive(Debug, Serialize)]
 struct TimingCategory {
     kind: &'static str,
-    label: &'static str,
     duration_ms: i64,
 }
 
@@ -214,6 +214,7 @@ fn aggregate(
         .collect();
 
     let wall_time_ms = wall_time(&session, &rows);
+    let has_spans = !spans.is_empty();
     let triage = triage_categories(&spans, wall_time_ms);
     let coverage = coverage_categories(&spans);
     let top_suspects = top_suspects(&spans);
@@ -226,6 +227,7 @@ fn aggregate(
         coverage,
         top_suspects,
         spans,
+        has_spans,
     }
 }
 
@@ -247,59 +249,36 @@ fn wall_time(session: &SessionBoundaries, rows: &[TimingSpanRow]) -> Option<i64>
 
 fn triage_categories(spans: &[SpanView], wall_time_ms: Option<i64>) -> Vec<TimingCategory> {
     let mut categories = vec![
-        category("tool", "命令/工具", union_by_kinds(spans, &["tool"])),
-        category("subagent", "子 Agent", union_by_kinds(spans, &["subagent"])),
-        category("agent", "Agent/模型", union_by_kinds(spans, &["agent"])),
+        category("tool", union_by_kinds(spans, &["tool"])),
+        category("subagent", union_by_kinds(spans, &["subagent"])),
         category(
-            "waiting_user",
-            "等待用户",
-            union_by_kinds(spans, &["waiting_user"]),
+            "agent",
+            (union_by_kinds(spans, &["agent", "subagent", "tool"])
+                - union_by_kinds(spans, &["subagent", "tool"]))
+            .max(0),
         ),
-        category(
-            "runtime",
-            "Infra",
-            union_by_kinds(spans, &["queue", "provision"]),
-        ),
+        category("waiting_user", union_by_kinds(spans, &["waiting_user"])),
+        category("runtime", union_by_kinds(spans, &["queue", "provision"])),
     ];
     let observed = union_ms(&observable_intervals(spans));
     if let Some(wall_time_ms) = wall_time_ms {
-        categories.push(category("gap", "未观测", (wall_time_ms - observed).max(0)));
+        categories.push(category("gap", (wall_time_ms - observed).max(0)));
     }
     categories
 }
 
 fn coverage_categories(spans: &[SpanView]) -> Vec<TimingCategory> {
     vec![
-        category(
-            "agent",
-            "Agent active",
-            union_by_kinds(spans, &["agent", "subagent"]),
-        ),
-        category("tool", "Tool busy", union_by_kinds(spans, &["tool"])),
-        category(
-            "subagent",
-            "Subagent busy",
-            union_by_kinds(spans, &["subagent"]),
-        ),
-        category(
-            "waiting_user",
-            "等待用户",
-            union_by_kinds(spans, &["waiting_user"]),
-        ),
-        category(
-            "runtime",
-            "Infra",
-            union_by_kinds(spans, &["queue", "provision"]),
-        ),
+        category("agent", union_by_kinds(spans, &["agent", "subagent"])),
+        category("tool", union_by_kinds(spans, &["tool"])),
+        category("subagent", union_by_kinds(spans, &["subagent"])),
+        category("waiting_user", union_by_kinds(spans, &["waiting_user"])),
+        category("runtime", union_by_kinds(spans, &["queue", "provision"])),
     ]
 }
 
-fn category(kind: &'static str, label: &'static str, duration_ms: i64) -> TimingCategory {
-    TimingCategory {
-        kind,
-        label,
-        duration_ms,
-    }
+fn category(kind: &'static str, duration_ms: i64) -> TimingCategory {
+    TimingCategory { kind, duration_ms }
 }
 
 fn union_by_kinds(spans: &[SpanView], kinds: &[&str]) -> i64 {
@@ -310,6 +289,7 @@ fn union_by_kinds(spans: &[SpanView], kinds: &[&str]) -> i64 {
         .collect();
     union_ms(&observable_intervals(&selected))
 }
+
 
 fn observable_intervals(spans: &[SpanView]) -> Vec<(i64, i64)> {
     spans
@@ -405,18 +385,18 @@ fn suggestion(span: &SpanView) -> String {
                 || command.starts_with("uv ")
                 || command.starts_with("cargo ")
             {
-                "检查 registry/mirror 或网络".to_string()
+                "inspect_registry".to_string()
             } else if command.starts_with("git ") {
-                "检查仓库网络或代理".to_string()
+                "inspect_git".to_string()
             } else {
-                "查看具体命令执行日志".to_string()
+                "inspect_tool".to_string()
             }
         }
-        "subagent" => "查看子 Agent 关键路径".to_string(),
-        "agent" => "查看模型/编排耗时".to_string(),
-        "waiting_user" => "确认是否仍在等待用户".to_string(),
-        "queue" | "provision" => "联系 Infra 检查排队或环境准备".to_string(),
-        _ => "查看详细时间线".to_string(),
+        "subagent" => "inspect_subagent".to_string(),
+        "agent" => "inspect_model".to_string(),
+        "waiting_user" => "confirm_waiting".to_string(),
+        "queue" | "provision" => "inspect_infra".to_string(),
+        _ => "inspect_timeline".to_string(),
     }
 }
 
@@ -481,7 +461,7 @@ mod tests {
 
         let suspect = &aggregate(1, 7, session(None, None), vec![row]).top_suspects[0];
         assert_eq!(suspect.label, "pnpm test");
-        assert_eq!(suspect.suggestion, "检查 registry/mirror 或网络");
+        assert_eq!(suspect.suggestion, "inspect_registry");
     }
 
     #[test]
@@ -501,12 +481,17 @@ mod tests {
         let rows = vec![span("agent", 0, 20), span("tool", 5, 15)];
         let response = aggregate(1, 7, session(None, None), rows);
         assert_eq!(response.wall_time_ms, Some(20));
-        assert!(
+        let get = |kind: &str| {
             response
                 .triage
                 .iter()
-                .any(|item| item.kind == "tool" && item.duration_ms == 10)
-        );
+                .find(|item| item.kind == kind)
+                .unwrap()
+                .duration_ms
+        };
+        assert_eq!(get("tool"), 10);
+        assert_eq!(get("agent"), 10);
+        assert_eq!(get("gap"), 0);
     }
 
     #[test]

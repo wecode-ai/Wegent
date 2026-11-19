@@ -225,7 +225,6 @@ export interface TaskSkillsResponse {
 
 export interface TaskTimingCategory {
   kind: string
-  label: string
   duration_ms: number
 }
 
@@ -265,6 +264,7 @@ export interface TaskTimingResponse {
   coverage: TaskTimingCategory[]
   top_suspects: TaskTimingTopSuspect[]
   spans: TaskTimingSpan[]
+  has_spans?: boolean
 }
 
 export interface GeneratePromptDraftRequest {
