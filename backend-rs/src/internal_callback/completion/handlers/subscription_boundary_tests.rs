@@ -34,10 +34,23 @@ use crate::background_jobs::subscription::state::write_statistics;
 use crate::internal_callback::completion::{Completion, Tables, TaskCompletedEvent};
 use crate::sql_test_support::mysql_rows::{MysqlRows, Row, Value as SqlValue};
 
-/// The completion issues no Redis command before a status change is applied.
-struct NoRedis;
+/// No external Redis I/O; optional publication can fail independently.
+#[derive(Default)]
+pub(crate) struct NoRedis {
+    pub(crate) fail_publication: bool,
+}
 
 impl Redis for NoRedis {
+    async fn publish<C, M>(&self, _: C, _: M) -> RedisResult<i64>
+    where
+        C: EncodeRedisArg + Send,
+        M: EncodeRedisArg + Send,
+    {
+        if self.fail_publication {
+            return Err(std::io::Error::other("fixture Redis publication failed").into());
+        }
+        Ok(0)
+    }
     async fn get<K, R>(&self, _key: K) -> RedisResult<Option<R>>
     where
         K: EncodeRedisArg + Send,
@@ -321,7 +334,7 @@ fn context<'a>(
 #[tokio::test]
 async fn the_execution_lookup_runs_inside_the_handler_transaction() {
     let mysql = BoundaryLog::default();
-    let redis = NoRedis;
+    let redis = NoRedis::default();
     let manager = crate::executor_manager::ExecutorManager::new("http://127.0.0.1:1")
         .expect("executor-manager client");
     let ctx = context(&mysql, &redis, &manager);
@@ -595,7 +608,7 @@ impl RecordingMysql {
 #[tokio::test]
 async fn the_post_commit_block_reloads_the_execution_first() {
     let mysql = RecordingMysql::default();
-    let redis = NoRedis;
+    let redis = NoRedis::default();
     let manager = crate::executor_manager::ExecutorManager::new("http://127.0.0.1:1")
         .expect("executor-manager client");
     let ctx = Completion {
@@ -621,7 +634,7 @@ async fn the_post_commit_block_reloads_the_execution_first() {
     );
 }
 
-fn execution_row(status: &str) -> Row {
+pub(crate) fn execution_row(status: &str) -> Row {
     vec![
         ("id", SqlValue::I64(2_539_501)),
         ("user_id", SqlValue::I64(3650)),
@@ -641,7 +654,7 @@ fn execution_row(status: &str) -> Row {
     ]
 }
 
-fn subscription_row() -> Row {
+pub(crate) fn subscription_row() -> Row {
     vec![
         ("id", SqlValue::I64(264_564)),
         ("user_id", SqlValue::I64(3650)),
@@ -672,7 +685,14 @@ async fn an_already_cancelled_execution_still_runs_the_executor_cleanup_transact
     let server = MysqlRows::start_results(|sql| {
         if sql.contains("FROM background_executions") {
             let row = execution_row("CANCELLED");
-            return (row.clone(), vec![row]);
+            return (
+                row.clone(),
+                if sql.contains("status IN") {
+                    Vec::new()
+                } else {
+                    vec![row]
+                },
+            );
         }
         if sql.contains("FROM kinds") && sql.contains("Kind.kind = 'Subscription'")
             || (sql.contains("FROM kinds") && sql.contains("'Subscription'"))
@@ -683,7 +703,7 @@ async fn an_already_cancelled_execution_still_runs_the_executor_cleanup_transact
         (vec![("id", SqlValue::I64(0))], Vec::new())
     })
     .await;
-    let redis = NoRedis;
+    let redis = NoRedis::default();
     let manager = crate::executor_manager::ExecutorManager::new("http://127.0.0.1:1")
         .expect("executor-manager client");
     let ctx = Completion {
@@ -702,6 +722,7 @@ async fn an_already_cancelled_execution_still_runs_the_executor_cleanup_transact
     handle_task_completed(&ctx, &event).await;
 
     let queries = server.queries();
+    assert_latest_before_cleanup(&queries);
     assert!(
         !queries
             .iter()
@@ -728,7 +749,7 @@ async fn an_already_cancelled_execution_still_runs_the_executor_cleanup_transact
 /// runtime cleanup rather than leaking the container.
 #[tokio::test]
 async fn fail_unsaved_result_cleans_up_when_a_concurrent_writer_already_finished_the_run() {
-    let redis = NoRedis;
+    let redis = NoRedis::default();
     let manager = crate::executor_manager::ExecutorManager::new("http://127.0.0.1:1")
         .expect("executor-manager client");
     let mut execution = running_execution();
@@ -740,7 +761,14 @@ async fn fail_unsaved_result_cleans_up_when_a_concurrent_writer_already_finished
     let server_cancel = MysqlRows::start_results(|sql| {
         if sql.contains("FROM background_executions") {
             let row = execution_row("CANCELLED");
-            return (row.clone(), vec![row]);
+            return (
+                row.clone(),
+                if sql.contains("status IN") {
+                    Vec::new()
+                } else {
+                    vec![row]
+                },
+            );
         }
         if sql.contains("FROM kinds") && sql.contains("Subscription") {
             let row = subscription_row();
@@ -766,11 +794,31 @@ async fn fail_unsaved_result_cleans_up_when_a_concurrent_writer_already_finished
     .await;
     assert!(fallback.is_none());
     let queries = server_cancel.queries();
+    assert_latest_before_cleanup(&queries);
     assert!(
         queries
             .iter()
             .any(|q| q.contains("FROM `tasks_0030`") && q.contains("kind = 'Task'")),
         "concurrent terminal state during fallback must still release the executor: {queries:?}"
+    );
+}
+
+fn assert_latest_before_cleanup(queries: &[String]) {
+    let latest = queries
+        .iter()
+        .position(|query| normalize(query) == normalize(&model::execution_latest_by_task()));
+    assert!(
+        !queries
+            .iter()
+            .any(|query| normalize(query) == normalize(&model::execution_by_id())),
+        "an already-terminal snapshot does not need another writer read: {queries:?}"
+    );
+    let cleanup = queries
+        .iter()
+        .position(|query| query.contains("FROM `tasks_0030`"));
+    assert!(
+        matches!((latest, cleanup), (Some(latest), Some(cleanup)) if latest < cleanup),
+        "cancelled execution needs the status-free latest lookup before cleanup: {queries:?}"
     );
 }
 
@@ -780,7 +828,7 @@ async fn fail_unsaved_result_cleans_up_when_a_concurrent_writer_already_finished
 #[tokio::test]
 async fn terminal_completion_refreshes_a_lost_transition_before_cleanup() {
     for fallback in [false, true] {
-        let redis = NoRedis;
+        let redis = NoRedis::default();
         let manager = crate::executor_manager::ExecutorManager::new("http://127.0.0.1:1")
             .expect("executor-manager client");
         let execution = running_execution();
@@ -832,6 +880,21 @@ async fn terminal_completion_refreshes_a_lost_transition_before_cleanup() {
             handle_task_completed(&ctx, &event).await;
         }
         let queries = server.queries();
+        let refreshes: Vec<_> = server
+            .requests()
+            .into_iter()
+            .filter(|request| normalize(&request.sql) == normalize(&model::execution_by_id()))
+            .collect();
+        assert!(
+            !refreshes.is_empty(),
+            "the lost update must refresh its execution"
+        );
+        assert!(
+            refreshes
+                .iter()
+                .all(|request| request.first_integer == Some(execution.id)),
+            "refresh must bind the resolved execution ID: {refreshes:?}"
+        );
         // MysqlRows' empty result set reports zero affected rows for the guarded
         // UPDATE, so the real transition_in helper cannot overwrite CANCELLED.
         let updates: Vec<_> = queries

@@ -169,6 +169,8 @@ pub(crate) enum DispatchJob<M: Mysql, R: Redis> {
     /// `chat_session.py:137-170`'s fire-and-forget memory save: the prepared
     /// context goes to the mem0 client off the request path.
     MemorySave(crate::responses::create::memory_context::SaveRequest),
+    /// Post-commit runtime deletion with owned, task-routed services.
+    SubscriptionCleanup(Box<crate::internal_callback::completion::SubscriptionCleanupJob>),
     /// An automatic handoff is acknowledged only after its destination accepts.
     Pipeline(Box<DispatchJob<M, R>>, oneshot::Sender<Result<(), String>>),
 }
@@ -204,6 +206,12 @@ impl<M: Mysql, R: Redis> DispatchJob<M, R> {
                 subtask_id: job.subtask_id,
                 request_id: job.request_id.clone(),
                 target: job.target_url.clone(),
+            },
+            Self::SubscriptionCleanup(job) => JobContext {
+                task_id: job.task_id,
+                subtask_id: job.subtask_id,
+                request_id: String::new(),
+                target: "subscription runtime cleanup".into(),
             },
             Self::MemorySave(_) => JobContext {
                 task_id: 0,
@@ -518,6 +526,7 @@ where
         DispatchJob::ChatShell(job) => {
             let _ = run_chat_shell(*job, accepted).await;
         }
+        DispatchJob::SubscriptionCleanup(job) => job.run().await,
         DispatchJob::Pipeline(..) => unreachable!("nested pipeline dispatch"),
         DispatchJob::MemorySave(save) => {
             crate::responses::create::memory_context::post_save(http, save).await;

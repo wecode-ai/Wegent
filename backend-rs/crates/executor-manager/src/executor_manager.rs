@@ -166,6 +166,12 @@ impl ExecutorManager {
         Self::with_cancel_url(base, cancel_url)
     }
 
+    /// Use an owned transport with caller-selected runtime HTTP timeout policy.
+    pub fn with_http_client(mut self, client: Client) -> Self {
+        self.client = client;
+        self
+    }
+
     fn with_cancel_url(base: impl Into<String>, cancel_url: String) -> Result<Self> {
         let client = Client::builder()
             .connect_timeout(Duration::from_secs(5))

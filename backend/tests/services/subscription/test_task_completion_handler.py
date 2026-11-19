@@ -942,10 +942,17 @@ async def test_unsaveable_result_fails_execution_and_still_notifies():
 
 
 @pytest.mark.asyncio
-async def test_unsaveable_result_cleans_executor_when_fallback_finds_terminal_execution():
-    """If a concurrent cancel already finished the run, still release the executor."""
+@pytest.mark.parametrize("fallback", [False, True])
+@pytest.mark.parametrize("stored_status", ["CANCELLED", "RUNNING"])
+async def test_status_noop_releases_only_a_persisted_terminal_execution(
+    fallback: bool, stored_status: str
+) -> None:
+    """A lost write may observe a cancelled run or a still-active competing writer."""
     handler, event, db, dispatch, patches = _result_save_fixture(
-        [_data_too_long(), False]
+        [_data_too_long(), False] if fallback else [False]
+    )
+    db.refresh.side_effect = lambda execution: setattr(
+        execution, "status", stored_status
     )
 
     with (
@@ -958,6 +965,11 @@ async def test_unsaveable_result_cleans_executor_when_fallback_finds_terminal_ex
     ):
         await handler.on_task_completed(event)
 
-    assert update.call_count == 2
-    cleanup.assert_awaited_once()
+    assert update.call_count == (2 if fallback else 1)
+    assert db.rollback.call_count == (2 if fallback else 1)
+    db.refresh.assert_called_once()
+    if stored_status == "CANCELLED":
+        cleanup.assert_awaited_once()
+    else:
+        cleanup.assert_not_awaited()
     dispatch.assert_not_awaited()

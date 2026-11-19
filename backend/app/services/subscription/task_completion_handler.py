@@ -136,7 +136,7 @@ class SubscriptionTaskCompletionHandler:
                 )
 
                 try:
-                    self.execution_manager.update_execution_status(
+                    updated = self.execution_manager.update_execution_status(
                         db,
                         execution_id=execution.id,
                         status=status,
@@ -167,15 +167,17 @@ class SubscriptionTaskCompletionHandler:
                         error_message=error,
                         skip_notifications=True,
                     ):
-                        if event.status in {"COMPLETED", "FAILED", "CANCELLED"}:
-                            await self._cleanup_finished_subscription_executor(
-                                db, execution, event.task_id
-                            )
+                        await self._cleanup_after_status_noop(db, execution, event)
                         return
+                    updated = True
                     execution.status = BackgroundExecutionStatus.FAILED.value
                     status = BackgroundExecutionStatus.FAILED
                     is_silent_exit = False
                     event = dataclasses.replace(event, status="FAILED", error=error)
+
+                if not updated:
+                    await self._cleanup_after_status_noop(db, execution, event)
+                    return
 
                 if status in (
                     BackgroundExecutionStatus.COMPLETED,
@@ -385,6 +387,27 @@ class SubscriptionTaskCompletionHandler:
             event.task_id,
             "auto-delete task",
         )
+
+    async def _cleanup_after_status_noop(
+        self,
+        db: Session,
+        execution: BackgroundExecution,
+        event: TaskCompletedEvent,
+    ) -> None:
+        """Leave a competing active run unchanged and clean only a committed terminal run."""
+        # End the failed write's REPEATABLE READ snapshot before refreshing.
+        db.rollback()
+        db.refresh(execution)
+        if is_terminal_state(
+            BackgroundExecutionStatus(execution.status)
+        ) and event.status in {
+            "COMPLETED",
+            "FAILED",
+            "CANCELLED",
+        }:
+            await self._cleanup_finished_subscription_executor(
+                db, execution, event.task_id
+            )
 
     async def _cleanup_finished_subscription_executor(
         self,
