@@ -54,7 +54,9 @@ fn public_subscription(record: &Value) -> Value {
 fn event_can_continue_goal(record: &Value, goal: &Value) -> bool {
     record["waiting_goal"] == goal_identity(goal)
         && (goal["status"] == "blocked"
-            || (record["status"] == "pending" && goal["status"] == "active"))
+            || (goal["status"] == "active"
+                && (record["status"] == "pending"
+                    || conditions::is_independent_github_merge_wait(record))))
 }
 
 fn handled_event_summaries(record: &Value) -> Value {
@@ -63,6 +65,8 @@ fn handled_event_summaries(record: &Value) -> Value {
             "headSha":event["external"]["headSha"],"objectKind":event["external"]["objectKind"],
             "eventType":event["external"]["eventType"],"conclusion":event["external"]["payload"]["conclusion"],
             "status":event["external"]["payload"]["status"],
+            "mergeable":event["external"]["payload"]["mergeable"],
+            "mergeStateStatus":event["external"]["payload"]["mergeStateStatus"],
         },
     })).collect::<Vec<_>>())
 }
@@ -320,7 +324,39 @@ impl RuntimeWorkRpcHandler {
                 .await;
             return Ok(json!({"subscription":public_subscription(&record)}));
         }
-        let filter = conditions::resolve(&args)?;
+        let mut filter = conditions::resolve(&args)?;
+        // Existing subscriptions keep their stored predicate on an idempotent retry.
+        let conflict = if records
+            .get(&id)
+            .is_some_and(|record| record["match"] == filter)
+        {
+            None
+        } else {
+            conditions::split_github_merge(&args, &mut filter)
+        };
+        let subscription = self
+            .arm_event_subscription(&link, &records, &args, key, filter)
+            .await?;
+        let mut result = json!({"subscription":subscription});
+        if let Some(filter) = conflict {
+            let conflict_key = format!("pr-conflict:{}", self.subscription_id(task, key));
+            result["conflict_subscription"] = self
+                .arm_event_subscription(&link, &records, &args, &conflict_key, filter)
+                .await?;
+        }
+        Ok(result)
+    }
+
+    async fn arm_event_subscription(
+        &self,
+        link: &RuntimeTaskLink,
+        records: &serde_json::Map<String, Value>,
+        args: &Value,
+        key: &str,
+        filter: Value,
+    ) -> Result<Value, AppIpcError> {
+        let task = &link.local_task_id;
+        let id = self.subscription_id(task, key);
         validate_filter(&filter)?;
         let mut intent = json!({"source":args["source"],"match":filter,
             "continuation":args["continuation"],"wait_for_event":args["wait_for_event"].as_bool().unwrap_or(false)});
@@ -336,13 +372,13 @@ impl RuntimeWorkRpcHandler {
                     "subscription_key already belongs to different subscription arguments",
                 ));
             }
-            session::validate(record, &link)?;
-            return Ok(json!({"subscription":public_subscription(record)}));
+            session::validate(record, link)?;
+            return Ok(public_subscription(record));
         }
         if args["continuation"].as_str().unwrap().len() > 16_384 {
             return Err(invalid("Continuation exceeds 16384 bytes"));
         }
-        let session = session::binding(&link)?;
+        let session = session::binding(link)?;
         let mut source = intent["source"].clone();
         for field in ["providerId", "profile", "kind", "id", "name"] {
             if source[field].as_str().map_or(true, |v| v.trim().is_empty()) {
@@ -371,14 +407,24 @@ impl RuntimeWorkRpcHandler {
         };
         let identity = goal_identity(&goal);
         let already_waiting = goal["status"] == "blocked"
-            && records.values().any(|record| {
-                record["task_id"] == *task
-                    && record["waiting_goal"] == identity
-                    && matches!(
-                        record["status"].as_str(),
-                        Some("preparing" | "armed" | "pending")
-                    )
-            });
+            && event_store::read(
+                &self.event_subscription_path(),
+                event_store::Scope::Waiting(task),
+                |state| {
+                    Ok(state["operations"]
+                        .as_object()
+                        .unwrap()
+                        .values()
+                        .any(|record| {
+                            record["task_id"] == *task
+                                && record["waiting_goal"] == identity
+                                && matches!(
+                                    record["status"].as_str(),
+                                    Some("preparing" | "armed" | "pending")
+                                )
+                        }))
+                },
+            )?;
         let waiting_goal = (goal["status"] == "active" || already_waiting).then_some(identity);
         let mut record = json!({"subscription_key":key,"task_id":task,"device_id":self.device_id,"session":session,
             "intent":intent,"source":source,"match":intent["match"],"continuation":intent["continuation"],
@@ -430,7 +476,7 @@ impl RuntimeWorkRpcHandler {
                 self.connection_observation_wakeup.notify_one();
             }
         }
-        Ok(json!({"subscription":public_subscription(&record)}))
+        Ok(public_subscription(&record))
     }
 
     async fn prepare_event_subscription(
@@ -849,7 +895,10 @@ impl RuntimeWorkRpcHandler {
                 if !matches!(phase, "preparing" | "armed" | "pending" | "resuming_goal") {
                     continue;
                 }
-                if status == Some("active") && matches!(phase, "preparing" | "resuming_goal") {
+                if status == Some("active")
+                    && (matches!(phase, "preparing" | "resuming_goal")
+                        || conditions::is_independent_github_merge_wait(&record))
+                {
                     continue;
                 }
                 record["status"] = json!("cancelled");

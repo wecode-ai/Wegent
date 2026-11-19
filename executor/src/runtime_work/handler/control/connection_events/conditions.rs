@@ -83,6 +83,70 @@ pub(super) fn resolve(args: &Value) -> Result<Value, AppIpcError> {
     Ok(filter)
 }
 
+const GITHUB_CONFLICT_FIELDS: [&str; 2] = [
+    "/external/payload/mergeable",
+    "/external/payload/mergeStateStatus",
+];
+
+fn conflict_alternative(alternative: &Value) -> bool {
+    GITHUB_CONFLICT_FIELDS
+        .iter()
+        .any(|field| alternative.get(field).is_some())
+}
+
+/// Two consumers of the same PR observation have independent delivery receipts.
+pub(super) fn split_github_merge(args: &Value, filter: &mut Value) -> Option<Value> {
+    if args["git_wait"] != "merge"
+        || args["source"]["providerId"] != "@wegent/dsh-connection-git/github"
+    {
+        return None;
+    }
+    let mut conflict = filter.clone();
+    conflict["$any"]
+        .as_array_mut()
+        .unwrap()
+        .retain(conflict_alternative);
+    let sha = filter["/external/payload/headRefOid"].clone();
+    let mut checks: Vec<_> = filter["$any"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|alternative| !conflict_alternative(alternative))
+        .cloned()
+        .collect();
+    for alternative in &mut checks {
+        alternative["/external/eventType"] = json!("tracked.status");
+        alternative["/external/payload/headRefOid"] = sha.clone();
+    }
+    // A check run can finish before GitHub updates the aggregate PR checks.
+    checks.extend(
+        ["failure", "timed_out", "action_required", "startup_failure"].map(|conclusion| {
+            json!({"/external/eventType":"tracked.checks",
+            "/external/payload/head_sha":sha,"/external/payload/status":"completed",
+            "/external/payload/conclusion":conclusion})
+        }),
+    );
+    *filter = json!({"/topicId":filter["/topicId"],"$any":checks});
+    Some(conflict)
+}
+
+/// Identify the split predicates after cloud recovery without session-local state.
+pub(super) fn is_independent_github_merge_wait(record: &Value) -> bool {
+    if record["source"]["observeCurrentStatus"] != true
+        || record["source"]["providerId"] != "@wegent/dsh-connection-git/github"
+    {
+        return false;
+    }
+    record["match"]["$any"]
+        .as_array()
+        .is_some_and(|alternatives| {
+            alternatives.iter().all(conflict_alternative)
+                || alternatives
+                    .iter()
+                    .any(|value| value["/external/eventType"] == "tracked.checks")
+        })
+}
+
 fn outcomes(pointer: &str, values: &[&str]) -> Value {
     Value::Array(values.iter().map(|value| json!({pointer:*value})).collect())
 }
