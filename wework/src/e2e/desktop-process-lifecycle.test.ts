@@ -17,6 +17,10 @@ interface ProcessLifecycle {
     processGroupId: number
   ) => boolean | null
   stopProcessGroup: (child: ChildProcess) => Promise<void>
+  stopWindowsProcessTree: (
+    child: ChildProcess,
+    options: { launch: () => EventEmitter }
+  ) => Promise<void>
   crashOwnedProcessTree: (child: ChildProcess, snapshot: unknown) => Promise<void>
   windowsTaskkillArguments: (processId: number) => string[]
   waitForOwnedProcessExit: (
@@ -175,6 +179,21 @@ describe('desktop process lifecycle', () => {
     const { windowsTaskkillArguments } = await loadProcessLifecycle()
 
     expect(windowsTaskkillArguments(321)).toEqual(['/PID', '321', '/T', '/F'])
+  })
+
+  test('rejects partial Windows tree termination even when the parent exits', async () => {
+    const { stopWindowsProcessTree } = await loadProcessLifecycle()
+    const child = { pid: 8468, exitCode: null, signalCode: null } as ChildProcess
+    const killer = new EventEmitter()
+    Object.assign(killer, { stdout: new EventEmitter(), stderr: new EventEmitter() })
+    const stopped = stopWindowsProcessTree(child, { launch: () => killer })
+    child.exitCode = 1
+    killer.emit('close', 128)
+    await expect(stopped).rejects.toMatchObject({
+      code: 'ERR_WINDOWS_PROCESS_TREE_TERMINATION',
+      exitCode: 128,
+      processId: 8468,
+    })
   })
 
   test.each(['degraded', 'unowned', 'missing identity', 'future identity', 'stale'])(

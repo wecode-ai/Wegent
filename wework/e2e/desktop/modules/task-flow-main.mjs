@@ -5119,7 +5119,20 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
         await recordTeardown({ phase: 'output-ownership', snapshot: outputOwnership })
       })
     }
-    await runTeardownStep('desktop application', async () => stopDesktopAppProcess(app))
+    await runTeardownStep('desktop application', async () => {
+      try {
+        await stopDesktopAppProcess(app)
+      } catch (error) {
+        if (outputOwnership && error.code === 'ERR_WINDOWS_PROCESS_TREE_TERMINATION') {
+          await recordTeardown({
+            phase: 'output-owner-identities-after-termination-failure',
+            exitCode: error.exitCode,
+            processes: await inspectOutputOwners(outputOwnership),
+          })
+        }
+        throw error
+      }
+    })
     await runTeardownStep('error evidence summary', async () => {
       await writeFile(
         join(resultDir, 'errors-summary.json'),

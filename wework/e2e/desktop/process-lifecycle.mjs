@@ -456,9 +456,9 @@ export async function crashOwnedProcessTree(child, snapshot) {
   }
 }
 
-async function stopWindowsProcessTree(child) {
+export async function stopWindowsProcessTree(child, { launch = spawn } = {}) {
   if (child.exitCode !== null || child.signalCode !== null || !Number.isInteger(child.pid)) return
-  const killer = spawn('taskkill', windowsTaskkillArguments(child.pid), {
+  const killer = launch('taskkill', windowsTaskkillArguments(child.pid), {
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   })
@@ -468,7 +468,7 @@ async function stopWindowsProcessTree(child) {
       output = `${output}${chunk}`.slice(-16 * 1024)
     })
   }
-  await new Promise((resolvePromise, reject) => {
+  const code = await new Promise((resolvePromise, reject) => {
     killer.once('error', reject)
     killer.once('close', code => {
       console.log('[desktop-e2e] Windows process tree termination', {
@@ -476,9 +476,18 @@ async function stopWindowsProcessTree(child) {
         code,
         output: output.trim(),
       })
-      resolvePromise()
+      resolvePromise(code)
     })
   })
+  if (code !== 0) {
+    const error = new Error(
+      `Windows process tree termination failed for PID ${child.pid}: exit=${code ?? 'unknown'}`
+    )
+    error.code = 'ERR_WINDOWS_PROCESS_TREE_TERMINATION'
+    error.exitCode = code
+    error.processId = child.pid
+    throw error
+  }
   await waitForProcessExit(child, PROCESS_STOP_TIMEOUT_MS)
 }
 
