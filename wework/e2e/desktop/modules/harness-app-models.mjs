@@ -42,7 +42,17 @@ export async function verifyHarnessAppModels(
   const readyCountBeforeSeed = control.readyCount
   await control.command('reloadMainWindow', 'body', { timeoutMs: 90_000 })
   await control.awaitReadyAfter(readyCountBeforeSeed)
+  await waitForLocalModelConfigs(control, [MODEL_LABEL, EXTRA_MODEL.labels[1]], uiTimeoutMs)
   await injectInvalidLegacyModelForRejectionTest(control)
+  const configs = await waitForLocalModelConfigs(
+    control,
+    [MODEL_LABEL, EXTRA_MODEL.labels[1]],
+    uiTimeoutMs
+  )
+  assert.ok(
+    configs.some(config => config.id === UNAVAILABLE_MODEL_ID),
+    'The malformed legacy model was not retained for the rejection check'
+  )
   await openSmartAppsTab(control, uiTimeoutMs)
   await openOwnedApps(control, uiTimeoutMs)
 
@@ -597,6 +607,24 @@ async function readLocalModelConfigs(control) {
   const parsed = JSON.parse(raw)
   assert.ok(Array.isArray(parsed), 'Local model settings are not an array')
   return parsed
+}
+
+async function waitForLocalModelConfigs(control, labels, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  let configs = []
+  while (Date.now() < deadline) {
+    configs = await readLocalModelConfigs(control)
+    const configuredLabels = new Set(
+      configs.filter(config => config.enabled).map(config => config.displayName)
+    )
+    if (labels.every(label => configuredLabels.has(label))) return configs
+    await delay(100)
+  }
+  assert.fail(
+    `Native model configuration did not expose ${labels.join(', ')}: ${configs
+      .map(config => config.displayName)
+      .join(', ')}`
+  )
 }
 
 /** Keep one malformed historical record to verify rejection, never to configure normal models. */
