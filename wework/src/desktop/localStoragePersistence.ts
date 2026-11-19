@@ -1,6 +1,8 @@
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
 import { isElectronRuntime } from '@/lib/runtime-environment'
 
+const RETIRED_OPENAI_CATALOG_KEY = 'wework.plugins.openAiCatalog.v1'
+
 interface PendingStorageUpdate {
   clear: boolean
   changes: Map<string, string | null>
@@ -35,7 +37,10 @@ export async function initializeDesktopLocalStoragePersistence(): Promise<void> 
       entries: storageEntries(localStorage),
     }
   )
-  replaceStorage(localStorage, durableEntries)
+  const { [RETIRED_OPENAI_CATALOG_KEY]: retiredCatalog, ...browserEntries } = durableEntries
+  replaceStorage(localStorage, browserEntries)
+  // Discard the rebuildable catalog from builds that stored it in the shared file.
+  if (retiredCatalog !== undefined) queueChange(RETIRED_OPENAI_CATALOG_KEY, null)
   installPersistence(localStorage)
   installed = true
 }
@@ -57,7 +62,7 @@ export async function readCommittedLocalStorageValue(key: string): Promise<strin
   return Object.hasOwn(entries, key) ? entries[key] : null
 }
 
-/** Publish to browser windows only after the owning host has committed the value. */
+/** Publish the value only after the owning host has committed it. */
 export async function commitLocalStorageValue(key: string, value: string): Promise<void> {
   if (!isElectronRuntime()) {
     localStorage.setItem(key, value)
@@ -76,8 +81,8 @@ export async function commitLocalStorageValue(key: string, value: string): Promi
     try {
       const storage = window.localStorage
       const prototype = storagePrototype(storage)
-      const setItem = prototype[STORAGE_METHODS]?.setItem ?? prototype.setItem
-      setItem.call(storage, key, value)
+      const methods = prototype[STORAGE_METHODS] ?? prototype
+      methods.setItem.call(storage, key, value)
     } catch (error) {
       console.error('[Wework] Could not publish committed localStorage value:', error)
     }

@@ -130,7 +130,63 @@ export function createDesktopScenario(options) {
         route,
         timeoutMs: options.workbenchReadyTimeoutMs,
       })
+      const localWork = JSON.parse(await control.command('getLocalRuntimeWork', 'body'))
+      const localTask = (localWork.workspaces ?? [])
+        .flatMap(workspace => workspace.tasks ?? [])
+        .find(
+          task =>
+            task.status !== 'archived' &&
+            task.workspacePath &&
+            (task.taskId ?? task.localTaskId ?? task.id)
+        )
+      assert.ok(localTask, 'A local task workspace is required for scoped file reads')
+      const taskTree = await rpc('runtime.workspace.read', {
+        root: localTask.workspacePath,
+        path: localTask.workspacePath,
+        taskId: localTask.taskId ?? localTask.localTaskId ?? localTask.id,
+        commandKey: 'workspace_tree',
+      })
+      assert.equal(taskTree.ok, true, JSON.stringify(taskTree.error))
+      assert.equal(taskTree.result.success, true)
+      const fileRead = (commandKey, path = sourcePath, args = []) => ({
+        root: sourcePath,
+        path,
+        commandKey,
+        args,
+      })
+      const tree = await rpc('runtime.workspace.read', fileRead('workspace_tree'))
+      assert.equal(tree.ok, true, JSON.stringify(tree.error))
+      assert.equal(tree.result.success, true)
+      assert.ok(tree.result.stdout.entries.some(entry => entry.name === 'README.md'))
+      const text = await rpc(
+        'runtime.workspace.read',
+        fileRead('workspace_read_text_file', sourcePath, ['README.md'])
+      )
+      assert.equal(text.ok, true, JSON.stringify(text.error))
+      assert.equal(text.result.stdout.content, 'worktree read fixture\n')
+      const branch = await rpc('runtime.workspace.read', fileRead('git_branch'))
+      assert.equal(branch.ok, true, JSON.stringify(branch.error))
+      assert.equal(branch.result.stdout.trim(), 'main')
+      const outside = await rpc(
+        'runtime.workspace.read',
+        fileRead('workspace_tree', options.workspacePath)
+      )
+      assert.equal(outside.ok, false)
+      assert.equal(outside.error.code, 'workspace_access_denied')
+      const write = await rpc(
+        'runtime.workspace.read',
+        fileRead('workspace_write_text_file', sourcePath, ['README.md', 'revision'])
+      )
+      assert.equal(write.ok, false)
+      assert.equal(write.error.code, 'bad_request')
       await denied(peer.execution_target_id)
+      const peerFile = await rpc(
+        'runtime.workspace.read',
+        fileRead('workspace_tree'),
+        peer.execution_target_id
+      )
+      assert.equal(peerFile.ok, false)
+      assert.equal(peerFile.error.code, 'remote_control_disabled')
       for (const method of [
         'device.execute_command',
         'runtime.worktrees.settings.update',
@@ -157,6 +213,9 @@ export function createDesktopScenario(options) {
         options.workbenchReadyTimeoutMs
       )
       await denied(route)
+      const revokedFile = await rpc('runtime.workspace.read', fileRead('workspace_tree'))
+      assert.equal(revokedFile.ok, false)
+      assert.equal(revokedFile.error.code, 'remote_control_disabled')
     },
     async cleanup() {
       socket?.disconnect()

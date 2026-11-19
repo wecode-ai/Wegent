@@ -398,6 +398,9 @@ CI 稳定性依赖以下约束：
   build cache tag，不占用 GitHub Actions dependency cache 配额。
   同仓 PR 的生产 Backend 镜像验证在独立的 `wegent-backend-delivery-ci` 包内按 PR
   编号复用 BuildKit 缓存，发布和快照继续读取原有共享缓存。
+- 同仓 PR 的平台 Executor E2E 按 PR 编号和已发布镜像摘要在 GHCR 复用提取出的
+  Executor 二进制文件。每轮仍签发同一提交的运行时清单，Executor E2E 会将二进制
+  文件与实际下载的测试镜像比对。
 - 非 Wework E2E 的 Executor 和 Electron 系统依赖安装前先检查 runner 已安装的软件包；
   APT 下载缓存只有 `main` 写入，PR 只恢复。
 - Linux 上的真实 Electron 更新传输探针同时隔离 Xvfb 和 D-Bus 会话，避免继承无效的

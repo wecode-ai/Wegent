@@ -48,6 +48,8 @@ Executor merges three Codex project representations:
 
 Thread grouping applies this precedence: exclusion through `projectless-thread-ids`, explicit `thread-project-assignments`, `thread-workspace-root-hints`, then longest-root path matching. Explicit metadata always wins over path inference.
 
+Executor resolves exact project keys first. Path matching prefers the longest local root and considers remote roots only when no local root matches. A local conversation stays with its local project when another device has the same absolute path.
+
 ## Adding devices for remote projects
 
 Cloud connection settings and remote project creation share device onboarding. Wegent provisions and manages cloud devices; users run and manage remote Docker containers using generated commands. Commands are requested only after selecting Generate command. Neither entry offers a host installer script. The project device picker also allows adding another device when usable devices already exist.

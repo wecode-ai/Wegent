@@ -446,6 +446,10 @@ runs may restore the default-branch cache, but they do not save another copy:
   Production Backend image verification on same-repository PRs reuses BuildKit
   layers by PR number in the separate `wegent-backend-delivery-ci` package.
   Release and Snapshot continue to use the existing shared cache.
+- Platform Executor E2E on same-repository PRs caches the extracted Executor
+  binary in GHCR by PR number and published image digest. Each run generates a
+  same-head runtime manifest, and Executor E2E verifies the binary against the
+  pulled test image.
 - Outside Wework E2E, Executor and Electron system dependency installers first
   check packages already present on the runner. Only `main` writes the APT
   download cache; PRs restore it read-only.

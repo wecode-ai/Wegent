@@ -201,6 +201,22 @@ test("fork and trusted PRs reuse image hits while missing images build exactly o
       .if,
     undefined,
   );
+  const restore = producer.steps.find(
+    (step) => step.id === "executor-pr-cache",
+  );
+  const publish = producer.steps.find(
+    (step) => step.name === "Publish same-PR Executor binary",
+  );
+  const check = producer.steps.find((step) => step.id === "image-check");
+  assert.ok(
+    check.env.CACHE_PR_NUMBER.includes(
+      "pull_request.head.repo.full_name == github.repository",
+    ),
+  );
+  assert.ok(check.run.includes("binary-amd64-v1-$digest-pr-$CACHE_PR_NUMBER"));
+  assert.ok(check.run.includes('sha256sum < "$manifest"'));
+  assert.equal(restore.if, "steps.image-check.outputs.cache-ref != ''");
+  assert.equal(restore.env.CACHE_REF, publish.env.CACHE_REF);
   for (const artifact of ["true", "false"]) {
     for (const exists of ["true", "false"]) {
       for (const pinned of [true, false]) {
@@ -227,13 +243,19 @@ test("fork and trusted PRs reuse image hits while missing images build exactly o
           access: { outputs: { artifact } },
           "image-check": { outputs: { exists } },
           transport: { outputs: { artifact: String(archive) } },
+          "executor-pr-cache": { outputs: { "cache-hit": "" } },
         };
         const enabled = (name) => {
           const step = producer.steps.find((item) => item.name === name);
           assert.ok(step, name);
           return step.if
             ? runInNewContext(
-                step.if.replaceAll("steps.image-check", 'steps["image-check"]'),
+                step.if
+                  .replaceAll("steps.image-check", 'steps["image-check"]')
+                  .replaceAll(
+                    "steps.executor-pr-cache.outputs.cache-hit",
+                    'steps["executor-pr-cache"].outputs["cache-hit"]',
+                  ),
                 { steps },
               )
             : true;
@@ -258,6 +280,11 @@ test("fork and trusted PRs reuse image hits while missing images build exactly o
         assert.equal(enabled("Archive fork Executor E2E runtime"), archive);
         assert.equal(enabled("Upload fork Executor E2E runtime"), archive);
         assert.equal(enabled("Log in to GHCR"), artifact !== "true");
+        if (exists === "true" && artifact === "false") {
+          steps["executor-pr-cache"].outputs["cache-hit"] = "true";
+          assert.equal(enabled("Restore published Executor runtime"), false);
+          assert.equal(enabled("Extract Executor binary"), false);
+        }
       }
     }
   }
