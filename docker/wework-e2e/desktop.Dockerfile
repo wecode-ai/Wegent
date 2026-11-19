@@ -94,5 +94,6 @@ RUN node --version \
 RUN sed -i 's#http://mirrors.edge.kernel.org/ubuntu#https://mirrors.edge.kernel.org/ubuntu#g' \
       /etc/apt/sources.list.d/ubuntu.sources \
   && apt-get -o APT::Update::Error-Mode=any update \
-  && apt-get install -y --no-install-recommends gnome-keyring libsecret-tools xdotool \
-  && rm -rf /var/lib/apt/lists/*
+  && apt-get install -y --no-install-recommends docker.io gnome-keyring libsecret-tools xdotool \
+  && rm -rf /var/lib/apt/lists/* \
+  && docker --version
