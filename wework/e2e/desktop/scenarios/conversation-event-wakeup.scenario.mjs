@@ -33,6 +33,16 @@ import {
 const MARKER = 'WEWORK_CONVERSATION_EVENT'
 const PROVIDER = '@test/connection-source/records'
 
+function latestWaitingSubscriptions(body) {
+  const snapshots = [
+    ...modelRequestTexts(body, 'user').matchAll(
+      /<external_wework\.connection-events\.waiting>([\s\S]*?)<\/external_wework\.connection-events\.waiting>/g
+    ),
+  ]
+  assert.ok(snapshots.length, 'The model must receive a waiting subscription snapshot')
+  return JSON.parse(snapshots.at(-1)[1])
+}
+
 export function createDesktopScenario(options) {
   const base = createBridgeScenario(options)
   const {
@@ -138,12 +148,25 @@ export function createDesktopScenario(options) {
         !busyStarted &&
         modelRequestTexts(body).includes(`${MARKER}_workflow_BUSY_HOLD`)
       ) {
+        assert.deepEqual(latestWaitingSubscriptions(body), [
+          {
+            subscription_key: MARKER + '_workflow',
+            source: { providerId: PROVIDER, kind: 'record', id: 'archive-record' },
+            status: 'armed',
+          },
+        ])
         busyStarted = true
         const id = `conversation-busy-${++sequence}`
         response.writeHead(200, { 'content-type': 'text/event-stream' })
         response.write(createSse([responseCreated(id)]))
         busyResponse = { response, id }
         return true
+      }
+      if (
+        phase === 'workflow' &&
+        modelRequestTexts(body).includes(MARKER + '_workflow_EVENT_RECEIVED')
+      ) {
+        assert.deepEqual(latestWaitingSubscriptions(body), [], 'Delivery must clear the last wait')
       }
       const held = phase === 'human' ? human.intercept(modelRequestTexts(body), response) : null
       if (held) return held

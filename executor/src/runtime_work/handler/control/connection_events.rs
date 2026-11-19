@@ -48,6 +48,61 @@ fn public_subscription(record: &Value) -> Value {
 }
 
 impl RuntimeWorkRpcHandler {
+    pub(in crate::runtime_work::handler) async fn append_waiting_event_context(
+        &self,
+        task: &str,
+        thread: &str,
+        request: &mut ExecutionRequest,
+    ) {
+        let path = self.event_subscription_path();
+        let task = task.to_owned();
+        let thread = thread.to_owned();
+        let snapshot = tokio::task::spawn_blocking(move || {
+            event_store::read(&path, event_store::Scope::AwaitingEvent(&task), |state| {
+                let subscriptions = state["operations"]
+                    .as_object()
+                    .into_iter()
+                    .flat_map(|records| records.values())
+                    .filter(|record| {
+                        record["session"]["engine"] == "Codex" && record["session"]["id"] == thread
+                    })
+                    .map(|record| {
+                        let source = &record["source"];
+                        json!({
+                            "subscription_key": record["subscription_key"],
+                            "source": {"providerId": source["providerId"], "kind": source["kind"], "id": source["id"]},
+                            "status": record["status"],
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                Ok(json!(subscriptions).to_string())
+            })
+        })
+        .await;
+        let value = match snapshot {
+            Ok(Ok(value)) => value.replace('<', "\\u003c").replace('>', "\\u003e"),
+            _ => "Waiting subscription state is unavailable. Query list_connection_event_subscriptions if needed.".to_owned(),
+        };
+        let key = if request.extra.contains_key("additionalContext")
+            || !request.extra.contains_key("additional_context")
+        {
+            "additionalContext"
+        } else {
+            "additional_context"
+        };
+        if let Some(context) = request
+            .extra
+            .entry(key)
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+        {
+            context.insert(
+                "wework.connection-events.waiting".into(),
+                json!({"kind": "untrusted", "value": value}),
+            );
+        }
+    }
+
     pub(in crate::runtime_work::handler) fn validate_resource_event_keys(
         &self,
         task: &str,

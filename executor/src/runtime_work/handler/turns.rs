@@ -1867,6 +1867,11 @@ impl RuntimeWorkRpcHandler {
                 let event_goal = handler
                     .event_goal_admission(&turn_local_task_id, &request)
                     .await?;
+                if let Some(thread) = direct_thread_id.as_deref().or(resume_thread_id.as_deref()) {
+                    handler
+                        .append_waiting_event_context(&turn_local_task_id, thread, &mut request)
+                        .await;
+                }
                 handler
                     .codex_app_server
                     .run_turn_with_cancel(
