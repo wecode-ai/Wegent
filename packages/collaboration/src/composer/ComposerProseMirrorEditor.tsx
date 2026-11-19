@@ -80,15 +80,14 @@ export const ComposerProseMirrorEditor = forwardRef<
   )
   useImperativeHandle(forwardedRef, () => widget.handle, [widget])
   return (
-    <div className="relative min-w-0 flex-1 w-full">
-      <div
-        ref={attach}
-        className={props.scrollContainerClassName}
-        data-composer-scroll-container={props.scrollContainerClassName ? '' : undefined}
-      />
+    <div
+      className={`grid w-full min-w-0 flex-1 grid-cols-1 ${props.scrollContainerClassName ?? ''}`}
+      data-composer-scroll-container={props.scrollContainerClassName ? '' : undefined}
+    >
+      <div ref={attach} className="col-start-1 row-start-1 grid min-w-0 grid-cols-1" />
       {presentation.value === '' && !presentation.composing && (
         <div
-          className={`${props.className} composer-prosemirror-placeholder pointer-events-none absolute inset-0 !text-text-muted/55`}
+          className={`${props.className} composer-prosemirror-placeholder pointer-events-none col-start-1 row-start-1 whitespace-pre-wrap break-words !text-text-muted/55`}
           data-testid={
             props.prediction && !props.disabled ? `${props.testId}-prediction` : undefined
           }

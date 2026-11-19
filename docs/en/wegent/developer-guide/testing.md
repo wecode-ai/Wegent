@@ -327,6 +327,22 @@ events; without `ci:all`, test selection still follows the changed paths.
 The Wework macOS memory gate runs only for non-draft PRs carrying `ci:all`;
 Regular PRs, scheduled runs, and manual runs do not trigger memory E2E.
 
+Linux desktop E2E shards get their native test tools from the shared image.
+Platform E2E prepares its dependencies and services while the Rust backend builds,
+then waits for the backend artifact from the same CI run before using it. PRs
+from the same repository can reuse Linux desktop packages with identical build
+inputs from earlier runs of that PR. The
+macOS desktop checks on ordinary PRs build the local app and Executor. Use a
+`ci:all` run when you need the complete macOS build or native backend artifact
+from a PR.
+
+Rust backend E2E first looks up the exact runtime. On a miss, the build can
+reuse a prebuilt dependency image and GHCR BuildKit layers written by main.
+Without a prebuilt dependency image, it compiles the real targets directly.
+Only dependency prewarming compiles placeholder targets. The two Linux Core
+latency benchmarks keep their dedicated shards, while the scheduler distributes
+the remaining checkpoints across the existing shards.
+
 Windows desktop builds share the `build-wework-windows-e2e` action between PRs
 and main-branch cache warmup. Only `main` writes shared caches. Complete packages
 require an exact match of source inputs, Node, Rust, and runner image versions;
@@ -427,6 +443,13 @@ runs may restore the default-branch cache, but they do not save another copy:
 - Platform E2E, Release, and Snapshot Docker BuildKit caches live in
   corresponding GHCR build-cache tags instead of consuming GitHub Actions
   dependency cache storage.
+  Production Backend image verification on same-repository PRs reuses BuildKit
+  layers by PR number in the separate `wegent-backend-delivery-ci` package.
+  Release and Snapshot continue to use the existing shared cache.
+- Platform Executor E2E on same-repository PRs caches the extracted Executor
+  binary in GHCR by PR number and published image digest. Each run generates a
+  same-head runtime manifest, and Executor E2E verifies the binary against the
+  pulled test image.
 - Outside Wework E2E, Executor and Electron system dependency installers first
   check packages already present on the runner. Only `main` writes the APT
   download cache; PRs restore it read-only.

@@ -1,6 +1,0 @@
-Types: deb
-URIs: https://azure.archive.ubuntu.com/ubuntu/
-Suites: noble noble-updates noble-backports noble-security
-Components: main universe restricted multiverse
-By-Hash: force
-Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
