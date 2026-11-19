@@ -339,6 +339,23 @@ impl AuthorizedRequest {
         forked: bool,
     ) -> Result<request_policy::PreparedRequest, HttpError> {
         log_stale_requested_model(&self.upstream, body);
+        if self.upstream.uses_native_chatgpt_auth()
+            && self.upstream.codex_request_mode == CodexRequestMode::Passthrough
+            && self.upstream.model_id.is_none()
+            && !self.text_only
+            && !self.model_routing.model_switched
+            && self.foreign_history_keys.is_empty()
+            && !request_identity::request_contains_model_switch_marker(body)
+        {
+            return Ok(request_policy::PreparedRequest {
+                body: body.to_vec(),
+                conversion: None,
+                expanded_browser_tools: HashSet::new(),
+                stripped_encrypted_content: 0,
+                normalized_reasoning_items: 0,
+                foreign_history_keys: HashSet::new(),
+            });
+        }
         let body = if self.text_only {
             text_only_request(body)?
         } else {
@@ -638,6 +655,11 @@ pub(super) async fn handle_for_token(
                 responses_stream,
                 history,
             )))
+        }
+        None if upstream.uses_native_chatgpt_auth()
+            && upstream.codex_request_mode == CodexRequestMode::Passthrough =>
+        {
+            Response::new(Body::from_stream(response_stream))
         }
         None if upstream.codex_request_mode == CodexRequestMode::Passthrough => {
             Response::new(Body::from_stream(history::record_responses_stream(

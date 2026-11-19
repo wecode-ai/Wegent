@@ -268,7 +268,16 @@ jobs:
             --file .github/runtime-images/backend-rs-e2e.Dockerfile \
             --tag "$IMAGE" \
             .ci-artifacts/backend-rs-image
-          docker push "$IMAGE"
+          publication_started=$SECONDS
+          if docker push "$IMAGE"; then
+            echo "Backend Rust E2E image publication completed in $((SECONDS - publication_started))s"
+          else
+            publication_status=$?
+            echo "Backend Rust E2E image publication failed after $((SECONDS - publication_started))s with status $publication_status"
+            docker image inspect --format '{{.Id}} {{json .RootFS.Layers}}' "$IMAGE" || true
+            timeout 20s docker manifest inspect "$IMAGE" || true
+            exit "$publication_status"
+          fi
 
       - name: Restore content-addressed Backend Rust E2E binary
         if: steps.image-check.outputs.exists == 'true'
