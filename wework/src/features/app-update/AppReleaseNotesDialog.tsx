@@ -1,6 +1,7 @@
 import { X } from 'lucide-react'
-import { useEffect, useRef, type KeyboardEvent } from 'react'
+import { useRef, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
+import { useFocusRequest } from '@wegent/collaboration/dom-events'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
@@ -29,18 +30,11 @@ export function AppReleaseNotesDialog({ open, releaseNotes, onClose }: AppReleas
   const closeButtonRef = useRef<HTMLButtonElement>(null)
   useEscapeKey(onClose, open)
 
-  useEffect(() => {
-    if (!open) return
-
-    const previouslyFocused =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null
-    const frameId = window.requestAnimationFrame(() => closeButtonRef.current?.focus())
-
-    return () => {
-      window.cancelAnimationFrame(frameId)
-      if (previouslyFocused?.isConnected) previouslyFocused.focus()
-    }
-  }, [open])
+  useFocusRequest(closeButtonRef, undefined, {
+    enabled: open,
+    animationFrame: true,
+    restoreFocus: true,
+  })
 
   if (!open) return null
 

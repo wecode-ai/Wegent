@@ -1,15 +1,17 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
+import {
+  useCallback,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ComponentProps,
+} from 'react'
 import { Layers3, RefreshCw } from 'lucide-react'
 import type { CollaborationLocale } from '../i18n'
-import {
-  templateIdentity,
-  type TemplateListing,
-  type TemplateRecord,
-  type TemplateSummary,
-} from './types'
+import { templateIdentity, type TemplateRecord } from './types'
 import type { CollaborationTemplateStore } from './store'
 import { useTemplateRecords } from './context'
 import { localizeBuiltinTemplateRecord } from './builtins'
@@ -17,23 +19,25 @@ import { templateMessages } from './messages'
 import { TemplatePanel } from './TemplatePanel'
 import { TemplateImportDialog } from './TemplateImportDialog'
 import { TemplatePreview } from './TemplatePreview'
-
-type Card = {
-  key: string
-  name: string
-  description: string
-  version: string
-  record?: TemplateRecord
-  id: number | null
-  ownerId: number
-  namespace: string
-  installed?: boolean
-}
+import { createTemplateCatalogResource } from './templateCatalogResource'
+import { useFocusRequest } from '../dom-events'
+import {
+  createTemplatePageNavigation,
+  type TemplatePageNavigation,
+  type TemplatePageCard,
+} from './templatePageNavigation'
 
 export function CollaborationTemplatePage(
   props: ComponentProps<typeof ScopedCollaborationTemplatePage>
 ) {
-  return <ScopedCollaborationTemplatePage key={props.store.library.scope} {...props} />
+  const [scope, setScope] = useState({ store: props.store, version: 0 })
+  if (scope.store !== props.store) setScope({ store: props.store, version: scope.version + 1 })
+  return (
+    <ScopedCollaborationTemplatePage
+      key={`${props.store.library.scope}:${scope.version}`}
+      {...props}
+    />
+  )
 }
 
 function ScopedCollaborationTemplatePage({
@@ -42,7 +46,7 @@ function ScopedCollaborationTemplatePage({
   mode = 'desktop',
   onUse,
   embedded = false,
-  onDetailChange,
+  navigation: hostNavigation,
   footerTarget,
 }: {
   store: CollaborationTemplateStore
@@ -50,19 +54,37 @@ function ScopedCollaborationTemplatePage({
   mode?: 'desktop' | 'marketplace'
   onUse?(record: TemplateRecord): void
   embedded?: boolean
-  onDetailChange?(detail: { title: string; onBack(): void } | null): void
+  navigation?: TemplatePageNavigation
   footerTarget?: HTMLElement | null
 }) {
   const m = templateMessages[locale]
   const local = useTemplateRecords(store)
   const [tab, setTab] = useState<'discover' | 'available' | 'mine'>('discover')
   const [search, setSearch] = useState('')
-  const [listings, setListings] = useState<TemplateListing[]>([])
-  const [mine, setMine] = useState<TemplateSummary[]>([])
-  const [nextCursor, setNextCursor] = useState<string | null>(null)
-  const [remoteError, setRemoteError] = useState<string | null>(null)
-  const [remoteLoading, setRemoteLoading] = useState(false)
-  const [rawSelected, setSelected] = useState<TemplateRecord | null>(null)
+  const catalog = useMemo(
+    () => createTemplateCatalogResource(store.library.remote, search),
+    [store, search]
+  )
+  const remote = useSyncExternalStore(catalog.subscribe, catalog.getSnapshot, catalog.getSnapshot)
+  const { listings, mine, nextCursor, error: remoteError, loading: remoteLoading } = remote
+  const refresh = catalog.refresh
+  const navigation = useMemo(
+    () => hostNavigation ?? createTemplatePageNavigation(store),
+    [hostNavigation, store]
+  )
+  const [pageOwner] = useState(() => ({}))
+  const subscribePage = useCallback(
+    (listener: () => void) => navigation.subscribePage(pageOwner, listener),
+    [navigation, pageOwner]
+  )
+  const detailState = useSyncExternalStore(
+    subscribePage,
+    navigation.getSnapshot,
+    navigation.getSnapshot
+  )
+  const { selected: rawSelected, deleting, importOpen, busy, importBusy } = detailState
+  const { setSelected, setDeleting, setImportOpen, setBusy, setImportBusy } = navigation
+  const current = () => navigation.owner === store && navigation.hasPage(pageOwner)
   const selected = useMemo(
     () => rawSelected && localizeBuiltinTemplateRecord(rawSelected, locale),
     [rawSelected, locale]
@@ -73,92 +95,32 @@ function ScopedCollaborationTemplatePage({
   )
   const [selectedInstalled, setSelectedInstalled] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [importOpen, setImportOpen] = useState(false)
-  const [importBusy, setImportBusy] = useState(false)
   const pageRef = useRef<HTMLElement>(null)
   const returnTrigger = useRef<HTMLElement | null>(null)
-  const [deleting, setDeleting] = useState<Card | null>(null)
-  const detailChanged = useRef(onDetailChange)
-  useEffect(() => {
-    detailChanged.current = onDetailChange
-  }, [onDetailChange])
-  useEffect(() => {
-    if (!embedded) return
-    const panel = importOpen
-      ? {
-          title: m.importTitle,
-          onBack: () => {
-            if (!importBusy) setImportOpen(false)
-          },
-        }
-      : deleting
-        ? {
-            title: m.delete,
-            onBack: () => {
-              if (!busy) setDeleting(null)
-            },
-          }
-        : selected
-          ? {
-              title: selected.document.spec.displayName,
-              onBack: () => {
-                if (!busy) setSelected(null)
-              },
-            }
-          : null
-    detailChanged.current?.(panel)
-    if (!panel && !busy && !importBusy && returnTrigger.current) {
-      const trigger = returnTrigger.current.isConnected
-        ? returnTrigger.current
-        : pageRef.current?.querySelector<HTMLInputElement>('[data-testid="template-search"]')
-      trigger?.focus()
-      returnTrigger.current = null
-    }
-  }, [embedded, selected, deleting, importOpen, busy, importBusy, m.importTitle, m.delete])
-  const generation = useRef(0)
-  const refresh = useCallback(async () => {
-    const remote = store.library.remote
-    if (!remote) return
-    const version = ++generation.current
-    setRemoteLoading(true)
-    setRemoteError(null)
-    try {
-      // These requests belong to this page, and each failure stays scoped.
-      await Promise.allSettled([
-        remote
-          .discover({ keyword: search })
-          .then(result => {
-            if (version !== generation.current) return
-            setListings(result.items)
-            setNextCursor(result.hasMore ? result.nextCursor : null)
-          })
-          .catch(() => {
-            if (version === generation.current) setRemoteError(m.failed)
-          }),
-        remote
-          .list()
-          .then(result => {
-            if (version === generation.current) setMine(result)
-          })
-          .catch(() => {
-            if (version === generation.current) setRemoteError(m.failed)
-          }),
-      ])
-    } finally {
-      if (version === generation.current) setRemoteLoading(false)
-    }
-  }, [store, m.failed, search])
-  useEffect(() => {
-    const timer = window.setTimeout(() => void refresh(), 200)
-    return () => {
-      window.clearTimeout(timer)
-      generation.current++
-    }
-  }, [refresh])
-
-  const cards = new Map<string, Card>()
+  const focusTarget = useMemo(
+    () => ({
+      get current() {
+        const trigger = returnTrigger.current
+        return trigger?.isConnected
+          ? trigger
+          : (pageRef.current?.querySelector<HTMLInputElement>('[data-testid="template-search"]') ??
+              null)
+      },
+    }),
+    []
+  )
+  useFocusRequest(focusTarget, detailState.focusRequest, {
+    enabled:
+      embedded &&
+      !selected &&
+      !deleting &&
+      !importOpen &&
+      !busy &&
+      !importBusy &&
+      detailState.focusRequest > 0,
+  })
+  const cards = new Map<string, TemplatePageCard>()
   for (const [index, record] of localizedRecords.entries()) {
     if (tab === 'mine' && record.source !== 'personal') continue
     cards.set(templateIdentity(record), {
@@ -226,7 +188,7 @@ function ScopedCollaborationTemplatePage({
   const visible = [...cards.values()].filter(card =>
     `${card.name} ${card.description}`.toLocaleLowerCase().includes(search.toLocaleLowerCase())
   )
-  const choose = async (card: Card) => {
+  const choose = async (card: TemplatePageCard) => {
     setError(null)
     setStatus(null)
     setSelectedInstalled(
@@ -239,11 +201,12 @@ function ScopedCollaborationTemplatePage({
     if (!card.id || !store.library.remote) return
     setBusy(true)
     try {
-      setSelected(await store.library.remote.get(card.id))
+      const record = await navigation.getRecord(card.id)
+      if (current()) setSelected(record)
     } catch {
       setError(m.failed)
     } finally {
-      setBusy(false)
+      if (current()) setBusy(false)
     }
   }
 
@@ -422,26 +385,7 @@ function ScopedCollaborationTemplatePage({
             type="button"
             data-testid="template-load-more"
             disabled={remoteLoading}
-            onClick={async () => {
-              const remote = store.library.remote
-              if (!remote) return
-              const version = generation.current
-              setRemoteLoading(true)
-              try {
-                const result = await remote.discover({
-                  keyword: search,
-                  cursor: nextCursor,
-                })
-                if (version === generation.current) {
-                  setListings(previous => [...previous, ...result.items])
-                  setNextCursor(result.hasMore ? result.nextCursor : null)
-                }
-              } catch {
-                if (version === generation.current) setRemoteError(m.failed)
-              } finally {
-                if (version === generation.current) setRemoteLoading(false)
-              }
-            }}
+            onClick={() => void catalog.loadMore()}
           >
             {m.more}
           </button>
@@ -457,7 +401,7 @@ function ScopedCollaborationTemplatePage({
           busy={busy}
           footer={
             <>
-              {(!embedded || !onDetailChange) && (
+              {(!embedded || !hostNavigation) && (
                 <button
                   type="button"
                   data-testid="template-detail-cancel"
@@ -489,7 +433,7 @@ function ScopedCollaborationTemplatePage({
                     } catch {
                       setError(m.failed)
                     } finally {
-                      setBusy(false)
+                      if (current()) setBusy(false)
                     }
                   }}
                 >
@@ -511,6 +455,7 @@ function ScopedCollaborationTemplatePage({
                           record.document.spec.version === selected.document.spec.version
                       )
                       const record = cached ?? (await store.download(selected.id!))
+                      if (!current() || !catalog.hasSubscribers()) return
                       if (onUse) {
                         setSelected(null)
                         onUse(localizeBuiltinTemplateRecord(record, locale))
@@ -520,7 +465,7 @@ function ScopedCollaborationTemplatePage({
                     } catch {
                       setError(m.failed)
                     } finally {
-                      setBusy(false)
+                      if (current()) setBusy(false)
                     }
                   }}
                 >
@@ -576,20 +521,13 @@ function ScopedCollaborationTemplatePage({
                     const record =
                       deleting.record ?? (await store.library.remote!.get(deleting.id!))
                     await store.delete(record)
-                    // Invalidate older list responses before removing their cached metadata.
-                    generation.current++
-                    setMine(previous =>
-                      previous.filter(
-                        item => `${item.ownerId}:${item.namespace}:${item.name}` !== deleting.key
-                      )
-                    )
-                    setListings(previous => previous.filter(item => item.id !== record.id))
-                    setDeleting(null)
+                    catalog.remove(record.id, deleting.key)
+                    if (current()) setDeleting(null)
                     void refresh()
                   } catch {
                     setError(m.failed)
                   } finally {
-                    setBusy(false)
+                    if (current()) setBusy(false)
                   }
                 }}
               >
@@ -607,11 +545,14 @@ function ScopedCollaborationTemplatePage({
         <TemplateImportDialog
           embedded={embedded}
           footerTarget={footerTarget}
-          onBusyChange={setImportBusy}
+          onBusyChange={value => {
+            if (current()) setImportBusy(value)
+          }}
           store={store}
           locale={locale}
           onClose={() => setImportOpen(false)}
           onSaved={() => {
+            if (!current()) return
             setImportOpen(false)
             setTab('mine')
             void refresh()

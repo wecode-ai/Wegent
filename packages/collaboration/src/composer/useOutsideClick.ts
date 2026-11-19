@@ -1,4 +1,5 @@
-import { useEffect, type RefObject } from 'react'
+import type { RefObject } from 'react'
+import { useDocumentEvent } from '../dom-events'
 
 const NO_ADDITIONAL_REFS: Array<RefObject<HTMLElement | null>> = []
 
@@ -8,27 +9,18 @@ export function useOutsideClick(
   onOutsideClick: () => void,
   additionalRefs: Array<RefObject<HTMLElement | null>> = NO_ADDITIONAL_REFS
 ) {
-  useEffect(() => {
-    if (!active) return
-
-    const handlePointerDown = (event: PointerEvent) => {
+  useDocumentEvent(
+    'pointerdown',
+    event => {
       const target = event.target
-
       if (
         !(target instanceof Node) ||
         ref.current?.contains(target) ||
         additionalRefs.some(additionalRef => additionalRef.current?.contains(target))
-      ) {
+      )
         return
-      }
-
       onOutsideClick()
-    }
-
-    document.addEventListener('pointerdown', handlePointerDown)
-
-    return () => {
-      document.removeEventListener('pointerdown', handlePointerDown)
-    }
-  }, [active, additionalRefs, onOutsideClick, ref])
+    },
+    { enabled: active }
+  )
 }

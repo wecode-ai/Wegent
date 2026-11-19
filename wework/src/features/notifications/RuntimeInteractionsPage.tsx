@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react'
+import { useCallback, useId, useRef, useState, useSyncExternalStore } from 'react'
+import { useFocusRequest } from '@wegent/collaboration/dom-events'
+import { createRuntimeInteractionsPageState } from './runtimeInteractionsPageState'
 import { ArrowLeft, ArrowUpRight, RefreshCw, X } from 'lucide-react'
 import { useTranslation } from '@/hooks/useTranslation'
 import { useIsDesktop } from '@/hooks/useIsDesktop'
@@ -55,79 +57,15 @@ export function RuntimeInteractionsPage({
 }) {
   const interactions = useRuntimeInteractions()
   const projectIssues = usePendingProjectIssues(active)
-  const refreshInteractions = interactions?.refresh
-  useEffect(() => {
-    if (active) void refreshInteractions?.()
-  }, [active, refreshInteractions])
-  const refreshProjectIssues = projectIssues.refresh
-  const handoffRevision =
-    interactions?.pending
-      .filter(item => item.sharedRequest)
-      .map(item => `${item.id}:${item.sharedRequest?.version}`)
-      .sort()
-      .join('|') ?? ''
-  const previousHandoffRevision = useRef(handoffRevision)
-  useEffect(() => {
-    if (!active || previousHandoffRevision.current === handoffRevision) return
-    previousHandoffRevision.current = handoffRevision
-    void refreshProjectIssues()
-  }, [active, handoffRevision, refreshProjectIssues])
   const discussion = useQuestionDiscussion()
   const { t } = useTranslation('common')
-  const [history, setHistory] = useState(false)
-  const [dismissing, setDismissing] = useState(false)
-  const dismissingRef = useRef(false)
-  const [dismissFailed, setDismissFailed] = useState(false)
-  const [originalNavigation, setOriginalNavigation] = useState<{ id: string; url: string } | null>(
-    null
-  )
-  const onOriginalUrlChange = useCallback((id: string, url: string) => {
-    setOriginalNavigation(current =>
-      current?.id === id && current.url === url ? current : { id, url }
-    )
-  }, [])
-  const [selected, setSelected] = useState<string | null>(selectedId ?? null)
-  const [showList, setShowList] = useState(!selectedId)
   const twoPanes = useIsDesktop()
-  const [lastTwoPanes, setLastTwoPanes] = useState(twoPanes)
-  const list = useRef<HTMLElement>(null)
-  const listHeading = useRef<HTMLHeadingElement>(null)
-  const heading = useRef<HTMLHeadingElement>(null)
-  const restoreListFocus = useRef(false)
-  const [lastRouteId, setLastRouteId] = useState(selectedId)
   const owner = useId()
-  const registerView = interactions?.registerView
-  const viewed =
-    !history && (twoPanes || !showList)
-      ? selected
-        ? interactions?.pending.find(item => item.id === selected)?.id
-        : interactions?.pending[0]?.id
-      : undefined
-  useEffect(() => {
-    registerView?.(owner, active ? (viewed ?? null) : null)
-    return () => registerView?.(owner, null)
-  }, [active, owner, registerView, viewed])
-  useEffect(() => {
-    if (twoPanes) return
-    if (!showList) heading.current?.focus()
-    else if (restoreListFocus.current) {
-      const selectedRow = list.current?.querySelector<HTMLButtonElement>('[aria-pressed="true"]')
-      const focusTarget = selectedRow ?? listHeading.current
-      focusTarget?.focus()
-      restoreListFocus.current = false
-    }
-  }, [twoPanes, showList, selected, viewed])
-  if (lastTwoPanes !== twoPanes) {
-    setLastTwoPanes(twoPanes)
-    // The desktop detail is already open; preserve it when the window becomes narrow.
-    if (!twoPanes) setShowList(false)
-  }
-  if (lastRouteId !== selectedId) {
-    setLastRouteId(selectedId)
-    setSelected(selectedId ?? null)
-    setHistory(false)
-    setShowList(!selectedId)
-  }
+  const list = useRef<HTMLElement>(null)
+  const heading = useRef<HTMLHeadingElement>(null)
+  const [page] = useState(() =>
+    createRuntimeInteractionsPageState(selectedId, twoPanes, interactions)
+  )
   const projectItemId = ({ item, store }: (typeof projectIssues.items)[number]) =>
     `project-issue:${store}:${item.cloud_project_id}:${item.id}`
   const projectRequests = (row: (typeof projectIssues.items)[number]) =>
@@ -191,14 +129,42 @@ export function RuntimeInteractionsPage({
         request.project.issueId === row.item.id
     )
   })
-  const reportProjectPendingCount = interactions?.reportProjectPendingCount
   const projectCountKnown =
     active && !projectIssues.loading && !Object.values(projectIssues.errors).some(Boolean)
   const projectCount = projectCountKnown ? projectRows.length : null
-  useEffect(() => {
-    reportProjectPendingCount?.(projectCount)
-  }, [projectCount, reportProjectPendingCount])
-  useEffect(() => () => reportProjectPendingCount?.(null), [reportProjectPendingCount])
+  const refreshProjects = projectIssues.refresh
+  const view = page.observe({
+    owner,
+    active,
+    selectedId,
+    twoPanes,
+    interactions,
+    projectCount,
+    refreshProjects,
+  })
+  const {
+    history,
+    selected,
+    showList,
+    viewed,
+    dismissing,
+    dismissFailed,
+    originalNavigation,
+    focusListRequested,
+    focusListVersion,
+  } = useSyncExternalStore(view.subscribe, view.getSnapshot, view.getSnapshot)
+  const { setSelected, setHistory, setShowList } = page
+  const onOriginalUrlChange = useCallback(
+    (id: string, url: string) => page.setOriginalNavigation(id, url),
+    [page]
+  )
+  useFocusRequest(heading, JSON.stringify([twoPanes, showList, selected, viewed]), {
+    enabled: !twoPanes && !showList,
+  })
+  useFocusRequest(list, focusListVersion, {
+    enabled: !twoPanes && showList && focusListRequested,
+    selector: 'button[aria-pressed="true"], :scope:not(:has(button[aria-pressed="true"])) h1',
+  })
   if (!interactions) return null
   const { pending, errors } = interactions
   const loading = interactions.loading || projectIssues.loading
@@ -241,12 +207,11 @@ export function RuntimeInteractionsPage({
         }),
       ]
   const dismissRows = async (entries: PendingWorkRow[]) => {
-    if (dismissingRef.current) return
-    dismissingRef.current = true
-    setDismissing(true)
-    setDismissFailed(false)
+    if (!page.beginDismiss()) return
+    const isCurrent = page.capture()
     try {
       for (const entry of entries) {
+        if (!isCurrent()) return
         if (interactions.busy.has(entry.id)) continue
         const request = pending.find(item => item.id === entry.id)
         const projectRow = projectRows.find(item => projectItemId(item) === entry.id)
@@ -269,18 +234,18 @@ export function RuntimeInteractionsPage({
               ]
         let failed = false
         for (const target of targets) {
+          if (!isCurrent()) return
           try {
             await interactions.dismiss(target)
           } catch {
             failed = true
-            setDismissFailed(true)
+            if (isCurrent()) page.failDismiss()
           }
         }
-        if (!failed) setSelected(current => (current === entry.id ? null : current))
+        if (isCurrent() && !failed) setSelected(current => (current === entry.id ? null : current))
       }
     } finally {
-      dismissingRef.current = false
-      setDismissing(false)
+      page.finishDismiss()
     }
   }
   const row = selected ? rows.find(item => item.id === selected) : rows[0]
@@ -298,11 +263,7 @@ export function RuntimeInteractionsPage({
         )}
       >
         <header className="flex min-h-14 flex-wrap items-center gap-1 px-4 py-2">
-          <h1
-            ref={listHeading}
-            tabIndex={-1}
-            className="min-w-0 flex-1 text-base font-medium outline-none"
-          >
+          <h1 tabIndex={-1} className="min-w-0 flex-1 text-base font-medium outline-none">
             {t(history ? 'interactions.history' : 'interactions.title')}{' '}
             <span
               data-testid={history ? 'interactions-history-count' : 'interactions-pending-count'}
@@ -474,8 +435,7 @@ export function RuntimeInteractionsPage({
             data-testid="interactions-back-to-list"
             className="mx-3 mt-2 flex min-h-11 items-center gap-2 self-start rounded-md px-2 text-sm text-text-secondary hover:bg-muted hover:text-text-primary"
             onClick={() => {
-              restoreListFocus.current = true
-              setShowList(true)
+              page.returnToList()
             }}
           >
             <ArrowLeft className="h-4 w-4" aria-hidden="true" />

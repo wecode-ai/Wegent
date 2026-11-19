@@ -1,4 +1,5 @@
 import { invokeDesktopHost } from '@/api/dsh/desktopHost'
+import { flushDesktopLocalStoragePersistence } from '@/desktop/localStoragePersistence'
 import { toBrowserPath } from '@/lib/navigation'
 import { getDesktopWindowLabel } from '@/lib/runtime-environment'
 import {
@@ -75,6 +76,7 @@ export async function openWorkspaceTabWindow(
   persistWorkspaceTabs(label, [tab], tab.id)
   if (options.transferState !== false) stageWorkspaceTabTransfer(tab.id)
   try {
+    await flushDesktopLocalStoragePersistence()
     await invokeDesktopHost('window.openWorkspace', { label, route, title: tab.title })
     return true
   } catch (error) {

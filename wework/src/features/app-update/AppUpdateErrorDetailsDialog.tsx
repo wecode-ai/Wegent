@@ -1,6 +1,7 @@
 import { Check, Copy, Loader2, TriangleAlert, X } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import { useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
+import { useFocusRequest } from '@wegent/collaboration/dom-events'
 import { useEscapeKey } from '@/hooks/useEscapeKey'
 import { useTranslation } from '@/hooks/useTranslation'
 import { copyTextToClipboard } from '@/lib/clipboard'
@@ -67,18 +68,11 @@ export function AppUpdateErrorDetailsDialog({
 
   useEscapeKey(onClose, open && !retrying)
 
-  useEffect(() => {
-    if (!open) return
-
-    const previouslyFocused =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null
-    const frame = window.requestAnimationFrame(() => closeButtonRef.current?.focus())
-
-    return () => {
-      window.cancelAnimationFrame(frame)
-      if (previouslyFocused?.isConnected) previouslyFocused.focus()
-    }
-  }, [error, open])
+  useFocusRequest(closeButtonRef, error, {
+    enabled: open,
+    animationFrame: true,
+    restoreFocus: true,
+  })
 
   if (!open) return null
 

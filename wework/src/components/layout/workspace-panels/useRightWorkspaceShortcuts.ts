@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useWindowEvent } from '@wegent/collaboration/dom-events'
 import { keybindingFromKeyboardEvent, shouldIgnoreWorkbenchShortcut } from '@/lib/keybindings'
 import { getPlatform } from '@/lib/platform'
 
@@ -27,48 +27,31 @@ export function useRightWorkspaceShortcuts({
 }: RightWorkspaceShortcutOptions) {
   const primary = getPlatform() === 'mac' ? 'Command' : 'Control'
 
-  useEffect(() => {
-    if (!active) return
-
-    const altPrimary = primary === 'Control' ? 'Control+Alt' : 'Alt+Command'
-    const actions: Record<string, (() => void) | false> = {
-      [`${primary}+T`]: onSelectBrowser,
-      [`${altPrimary}+R`]: canOpenReview && onSelectReview,
-      [`${altPrimary}+S`]: allowTemporaryChat && onSelectChat,
-      [`${altPrimary}+F`]: canBrowseFiles && onSelectFiles,
+  const altPrimary = primary === 'Control' ? 'Control+Alt' : 'Alt+Command'
+  const actions: Record<string, (() => void) | false> = {
+    [`${primary}+T`]: onSelectBrowser,
+    [`${altPrimary}+R`]: canOpenReview && onSelectReview,
+    [`${altPrimary}+S`]: allowTemporaryChat && onSelectChat,
+    [`${altPrimary}+F`]: canBrowseFiles && onSelectFiles,
+  }
+  const handleKeyDown = (event: KeyboardEvent) => {
+    if (event.defaultPrevented || event.isComposing) return
+    const action = actions[keybindingFromKeyboardEvent(event)]
+    if (!action) return
+    const target = event.target
+    const workbench =
+      target instanceof HTMLElement ? target.closest('[data-active-workbench-pane]') : null
+    if (
+      (target instanceof HTMLElement && target.closest('[role="dialog"], [role="alertdialog"]')) ||
+      (workbench && workbench.getAttribute('data-active-workbench-pane') !== 'true')
+    ) {
+      return
     }
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.isComposing) return
-      const action = actions[keybindingFromKeyboardEvent(event)]
-      if (!action) return
-      const target = event.target
-      const workbench =
-        target instanceof HTMLElement ? target.closest('[data-active-workbench-pane]') : null
-      if (
-        (target instanceof HTMLElement &&
-          target.closest('[role="dialog"], [role="alertdialog"]')) ||
-        (workbench && workbench.getAttribute('data-active-workbench-pane') !== 'true')
-      ) {
-        return
-      }
-      if (shouldIgnoreWorkbenchShortcut(event) && !workbench) return
-      event.preventDefault()
-      event.stopPropagation()
-      onNavigate(action)
-    }
+    if (shouldIgnoreWorkbenchShortcut(event) && !workbench) return
+    event.preventDefault()
+    event.stopPropagation()
+    onNavigate(action)
+  }
 
-    window.addEventListener('keydown', handleKeyDown, true)
-    return () => window.removeEventListener('keydown', handleKeyDown, true)
-  }, [
-    active,
-    allowTemporaryChat,
-    canBrowseFiles,
-    canOpenReview,
-    onNavigate,
-    onSelectBrowser,
-    onSelectChat,
-    onSelectFiles,
-    onSelectReview,
-    primary,
-  ])
+  useWindowEvent('keydown', handleKeyDown, { enabled: active, capture: true })
 }

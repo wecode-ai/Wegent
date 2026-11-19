@@ -2,7 +2,7 @@ window.__ModuleLoader__.load({
   id: '@wegent/dsh-endpoint-watch-demo',
   factory: require => {
     const React = require('react')
-    const { createElement, useEffect, useState } = React
+    const { createElement, useState, useSyncExternalStore } = React
     const CONFIGURATION_ID = 'endpoint-watch.settings'
     const PAGE_ID = 'plugin:endpoint-watch'
 
@@ -113,9 +113,7 @@ window.__ModuleLoader__.load({
     }
 
     function useWatch(store) {
-      const [snapshot, setSnapshot] = useState(store.getSnapshot())
-      useEffect(() => store.subscribe(setSnapshot), [store])
-      return snapshot
+      return useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot)
     }
 
     function StatusBadge({ result }) {

@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Weibo, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Activity, act, useEffect, useState } from 'react'
+import { Activity, act, useCallback, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { ProjectSettingsShell } from './ProjectSettingsShell'
@@ -35,12 +35,17 @@ it('retains drafts while pausing hidden-page effects and never mounts unvisited 
   const stopped = vi.fn()
   function Page({ id }: { id: string }) {
     const [draft, setDraft] = useState('')
-    useEffect(() => {
-      started(id)
-      return () => stopped(id)
-    }, [id])
+    const observeInput = useCallback(
+      (element: HTMLInputElement | null) => {
+        if (!element) return
+        started(id)
+        return () => stopped(id)
+      },
+      [id]
+    )
     return (
       <input
+        ref={observeInput}
         data-testid={`draft-${id}`}
         value={draft}
         onChange={event => setDraft(event.target.value)}
