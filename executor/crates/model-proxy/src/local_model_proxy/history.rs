@@ -41,7 +41,7 @@ pub(super) struct CodexToolHistory {
 }
 
 impl CodexToolHistory {
-    async fn record_response(&self, response: &Value) -> usize {
+    pub(super) async fn record_response(&self, response: &Value) -> usize {
         let Some(response_id) = response
             .get("id")
             .and_then(Value::as_str)

@@ -303,7 +303,7 @@ mod tests {
             codex_runtime_permission_profile(&request(false)),
             CODEX_DANGER_FULL_ACCESS_PERMISSION_PROFILE
         );
-        assert!(!codex_auto_approve_mcp_tool_calls(&request(false)));
+        assert!(!codex_has_full_access(&request(false)));
         assert_eq!(reviewer(&request(true)), "user");
     }
 

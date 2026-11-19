@@ -14,7 +14,9 @@ import { ComposerModePill, GoalDraftPill } from './GoalDraftPill'
 import type { ModelSelectorCloseReason } from '../controls/model-selector-types'
 
 import {
+  RUNTIME_COMMAND_APPROVAL_OPTION,
   RUNTIME_PERMISSION_MODE_OPTION,
+  runtimeCommandApprovalMode,
   runtimePermissionMode,
 } from '@wegent/chat-core/runtime-permission'
 import { PermissionModeSelector } from '../controls/PermissionModeSelector'
@@ -45,6 +47,7 @@ export interface ComposerToolbarProps {
   onSelectModel: (model: UnifiedModel | null) => boolean | void
   onSelectModelAndOptions?: (model: UnifiedModel, options: ModelOptions) => void
   onSelectModelOption: (optionId: string, value: string) => void
+  onSelectPermissionOptions?: (options: ModelOptions) => void
   onBlockedModelSelect?: (model: UnifiedModel, message?: string) => void
   modelSelectorOverride?: ReactNode
   onFileSelect: (files: File | File[]) => void
@@ -96,6 +99,7 @@ export function ComposerToolbar({
   onSelectModel,
   onSelectModelAndOptions,
   onSelectModelOption,
+  onSelectPermissionOptions,
   onBlockedModelSelect,
   modelSelectorOverride,
   onFileSelect,
@@ -158,10 +162,22 @@ export function ComposerToolbar({
     <PermissionModeSelector
       translate={t}
       value={runtimePermissionMode(selectedModelOptions)}
+      commandApproval={runtimeCommandApprovalMode(selectedModelOptions)}
+      onCommandApprovalChange={mode => onSelectModelOption(RUNTIME_COMMAND_APPROVAL_OPTION, mode)}
       disabled={disabled}
       iconOnly
       density="dense"
-      onChange={mode => onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)}
+      onChange={(mode, approval) => {
+        if (onSelectPermissionOptions) {
+          onSelectPermissionOptions({
+            [RUNTIME_PERMISSION_MODE_OPTION]: mode,
+            ...(approval ? { [RUNTIME_COMMAND_APPROVAL_OPTION]: approval } : {}),
+          })
+          return
+        }
+        if (approval) onSelectModelOption(RUNTIME_COMMAND_APPROVAL_OPTION, approval)
+        onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)
+      }}
     />
   ) : null
 

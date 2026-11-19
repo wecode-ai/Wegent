@@ -2,7 +2,9 @@ import type { CloudProject } from '@/api/deliveries'
 import { ActionMenu } from '@/components/common/ActionMenu'
 import type { QuickPhrase } from '@/desktop/appPreferences'
 import {
+  RUNTIME_COMMAND_APPROVAL_OPTION,
   RUNTIME_PERMISSION_MODE_OPTION,
+  runtimeCommandApprovalMode,
   runtimePermissionMode,
 } from '@/features/workbench/runtimePermissionMode'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -688,8 +690,15 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                   </span>
                   <PermissionModeSelector
                     value={runtimePermissionMode(selectedModelOptions)}
+                    commandApproval={runtimeCommandApprovalMode(selectedModelOptions)}
+                    onCommandApprovalChange={mode =>
+                      onSelectModelOption(RUNTIME_COMMAND_APPROVAL_OPTION, mode)
+                    }
                     disabled={disabled}
-                    onChange={mode => onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)}
+                    onChange={(mode, approval) => {
+                      if (approval) onSelectModelOption(RUNTIME_COMMAND_APPROVAL_OPTION, approval)
+                      onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)
+                    }}
                   />
                 </div>
               ) : null}
