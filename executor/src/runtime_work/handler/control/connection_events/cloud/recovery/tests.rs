@@ -85,6 +85,7 @@ async fn runtime(
     *handler.backend_connection.lock().unwrap() = Some(ConnectionConfig {
         backend_url: format!("http://{address}"),
         auth_token: "synthetic-session".into(),
+        authenticated_user_id: Some(7),
         ..Default::default()
     });
     seed(&handler, "task");

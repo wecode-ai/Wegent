@@ -182,6 +182,8 @@ impl RuntimeWorkRpcHandler {
         settings["projectStore"] = json!(project_store);
         settings["projectId"] = json!(project);
         settings["userId"] = json!(user_id);
+        let git_settings = self.task_send_gate(&format!("stand-in-git-settings:{user_id}"));
+        let _git_settings = git_settings.lock().await;
         let gate = self.task_send_gate(&format!("stand-in-processing:{user_id}"));
         let _guard = gate.lock().await;
         let previous = store

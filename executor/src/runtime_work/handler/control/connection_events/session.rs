@@ -170,7 +170,7 @@ mod tests {
             handler.save_event_subscription("wait",&record).unwrap();
             assert!(crate::runtime_work::conversation_sessions::bind_thread(&mut link,"replacement-thread",now_ms()));
             handler.store.upsert_task(link);
-            handler.collect_conversation_subscription("wait",record,"cycle").await.unwrap();
+            handler.collect_conversation_subscription("wait",record).await.unwrap();
             let saved=event_store::transact(&handler.event_subscription_path(),|state|Ok(state["operations"]["wait"].clone())).unwrap();
             assert_eq!(saved["status"],"cancelled");
             assert_eq!(saved["error_code"],"native_session_changed");

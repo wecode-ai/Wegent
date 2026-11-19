@@ -30,6 +30,7 @@
     "connection-dependencies.js",
     "connection-tools.js",
     "connection-runtime.js",
+    "event-bus.js",
     "connection-observations.js",
     "cloud-observations.js",
     "connection-schema.js"

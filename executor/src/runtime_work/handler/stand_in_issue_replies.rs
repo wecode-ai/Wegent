@@ -69,12 +69,17 @@ impl RuntimeWorkRpcHandler {
                 .unwrap()
         } else {
             self.verify_runtime_user(&json!({"userId":user})).await?;
-            self.runtime_http(
-                reqwest::Method::GET,
-                &format!("/v1/loop-items/{issue_id}"),
-                None,
-            )
-            .await?
+            let path = format!("/v1/loop-items/{issue_id}");
+            let response = self
+                .runtime_request(reqwest::Method::GET, &path, None)
+                .await?;
+            if response.status() == reqwest::StatusCode::NOT_FOUND {
+                return Err(AppIpcError::new(
+                    "not_found",
+                    "Issue is no longer available",
+                ));
+            }
+            Self::read_runtime_response(reqwest::Method::GET, &path, response).await?
         };
         if issue["cloud_project_id"] != project {
             return Err(AppIpcError::new(
@@ -576,6 +581,7 @@ mod tests {
         handler.backend_connection = Arc::new(Mutex::new(Some(ConnectionConfig {
             backend_url: format!("http://{}", listener.local_addr().unwrap()),
             auth_token: "test".into(),
+            authenticated_user_id: Some(7),
             ..Default::default()
         })));
         let server = tokio::spawn(async { axum::serve(listener, router).await.unwrap() });

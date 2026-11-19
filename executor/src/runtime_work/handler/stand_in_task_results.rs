@@ -260,7 +260,9 @@ impl RuntimeWorkRpcHandler {
                 ["sourceMessageId"]
                 .is_string()
             {
-                Box::pin(self.send_message(payload.clone())).await.map(Some)
+                Box::pin(self.send_message_from_event(payload.clone()))
+                    .await
+                    .map(Some)
             } else {
                 self.deliver_identity_activity_to(
                     IdentityConversationTarget {

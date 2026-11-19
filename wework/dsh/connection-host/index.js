@@ -2,10 +2,7 @@ import { randomBytes } from 'node:crypto'
 import { handleConnectionRpc } from './rpc.js'
 import { installedProviders } from './installed-providers.js'
 import { createConnectionRuntime } from '@wegent/dsh-plugin-runtime/connection-runtime'
-import {
-  collectObservation,
-  initializeObservation,
-} from '@wegent/dsh-plugin-runtime/connection-observations'
+import { initializeObservation } from '@wegent/dsh-plugin-runtime/connection-observations'
 import {
   cloudObservationClient,
   runCloudObservation,
@@ -42,27 +39,21 @@ export async function apply(ctx) {
     beforeRequest: () => publishHost(),
   })
   const { registry } = runtime
-  let stopped = false
-  let timer
-  const publishHost = async () => {
+  const publishHost = async (poll = false, signal) => {
     const port = ctx.webServer.port
     if (port)
-      await client.request('runtime.connections.host', {
-        url: `http://127.0.0.1:${port}${BASE_PATH}`,
-        token,
-        ...runtime.registration(),
-      })
-  }
-  const heartbeat = async () => {
-    try {
-      await publishHost()
-    } catch (error) {
-      console.error('[wework-connections] host registration failed', {
-        code: error.code ?? 'host_unavailable',
-      })
-    } finally {
-      if (!stopped) timer = setTimeout(heartbeat, 5000)
-    }
+      await client.request(
+        'runtime.connections.host',
+        {
+          url: `http://127.0.0.1:${port}${BASE_PATH}`,
+          token,
+          ...runtime.registration(),
+          ...(poll ? { poll: true } : {}),
+        },
+        undefined,
+        undefined,
+        { signal }
+      )
   }
   ctx.effect(() => {
     const unprovide = ctx.reflect.provide(
@@ -73,7 +64,7 @@ export async function apply(ctx) {
       kind: 'exact',
       path: BASE_PATH,
       handler: (req, res) =>
-        handleConnectionRpc(req, res, token, async body => {
+        handleConnectionRpc(req, res, token, async (body, signal) => {
           if (body.method === 'catalog') {
             await publishHost()
             return {
@@ -114,21 +105,35 @@ export async function apply(ctx) {
                 'Connection service belongs to another account'
               )
             return runCloudObservation(
-              registry,
               cloudObservationClient(body.input.backendUrl, body.input.collectorToken),
+              runtime.collect,
               { expectedOwnerId: body.input.expectedOwnerId }
             )
           }
-          return body.method === 'collectObservation'
-            ? collectObservation(registry, body.providerId, body.input ?? {})
-            : registry.call(body.providerId, body.method, body.input ?? {})
+          if (body.method === 'collectObservation')
+            return runtime.collect(body.providerId, body.input ?? {}, signal)
+          if (body.method === 'collect')
+            throw new ConnectionError('invalid_method', 'Use the shared observation collector')
+          return registry.call(body.providerId, body.method, body.input ?? {}, { signal })
         }),
     })
-    void heartbeat()
+    const hostProvider = 'executor-host'
+    runtime.events.registerProvider(hostProvider, {
+      plan: entries => [{ key: 'heartbeat', query: null, entries }],
+      poll: (_, signal) => publishHost(true, signal),
+      select: () => undefined,
+    })
+    runtime.events.subscribe(hostProvider, null, {
+      intervalMs: 5000,
+      onResult: () => {},
+      onError(error) {
+        console.error('[wework-connections] host registration failed', {
+          code: error.code ?? 'host_unavailable',
+        })
+      },
+    })
     return () => {
-      stopped = true
-      clearTimeout(timer)
-      registry.dispose()
+      runtime.dispose()
       unregister()
       unprovide()
       void client.stop()

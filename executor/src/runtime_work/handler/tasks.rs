@@ -484,7 +484,7 @@ impl RuntimeWorkRpcHandler {
                 format!("runtime task create schemaVersion {schema_version} is unsupported"),
             ));
         }
-        if let Some(receipt) = self.existing_payload_command(&payload).await? {
+        if let Some(receipt) = self.existing_payload_command(&payload, false).await? {
             return Ok(receipt);
         }
         if schema_version == 2 {
@@ -1058,16 +1058,33 @@ impl RuntimeWorkRpcHandler {
         self.send_message_from_owner(payload, false).await
     }
 
+    pub(super) async fn send_message_from_event(
+        &self,
+        payload: Value,
+    ) -> Result<Value, AppIpcError> {
+        self.send_message_with_task_gate(payload, false, true).await
+    }
+
     pub(super) async fn send_message_from_owner(
         &self,
         payload: Value,
         owner_input: bool,
     ) -> Result<Value, AppIpcError> {
+        self.send_message_with_task_gate(payload, owner_input, false)
+            .await
+    }
+
+    async fn send_message_with_task_gate(
+        &self,
+        payload: Value,
+        owner_input: bool,
+        from_event: bool,
+    ) -> Result<Value, AppIpcError> {
         let local_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let gate = self.task_send_gate(&local_task_id);
         let _guard = gate.lock().await;
-        self.send_message_with_activity_checks(payload, false, owner_input)
+        self.send_message_with_activity_checks(payload, false, owner_input, from_event)
             .await
     }
 
@@ -1136,7 +1153,7 @@ impl RuntimeWorkRpcHandler {
     }
 
     async fn send_message_after_local_checks(&self, payload: Value) -> Result<Value, AppIpcError> {
-        self.send_message_with_activity_checks(payload, false, false)
+        self.send_message_with_activity_checks(payload, false, false, false)
             .await
     }
 
@@ -1148,7 +1165,7 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
         let gate = self.task_send_gate(&task);
         let _guard = gate.lock().await;
-        self.send_message_with_activity_checks(payload, true, false)
+        self.send_message_with_activity_checks(payload, true, false, false)
             .await
     }
 
@@ -1157,6 +1174,7 @@ impl RuntimeWorkRpcHandler {
         mut payload: Value,
         activity: bool,
         owner_input: bool,
+        from_event: bool,
     ) -> Result<Value, AppIpcError> {
         let requested_task_id = runtime_task_id(&payload)
             .ok_or_else(|| AppIpcError::new("bad_request", "taskId is required"))?;
@@ -1207,13 +1225,13 @@ impl RuntimeWorkRpcHandler {
                 .unwrap_or_else(|| json!(uuid::Uuid::new_v4().to_string()));
         }
         let existing_link = self.local_task_link(&local_task_id);
-        let mut payload = if let Some(link) = &existing_link {
+        let mut payload = if let Some(link) = existing_link.as_ref().filter(|_| !from_event) {
             self.refresh_project_coordinator_payload(payload, link)
                 .await?
         } else {
             payload
         };
-        if let Some(receipt) = self.existing_payload_command(&payload).await? {
+        if let Some(receipt) = self.existing_payload_command(&payload, from_event).await? {
             return Ok(receipt);
         }
         if payload.get("resourceEventKeys").is_some()

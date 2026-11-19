@@ -30,7 +30,7 @@ export function connectionObserverReply(
         monitoredObjects: [{ entityKind: 'change_request', number: 1 }],
       }
   const platform = input.discovery?.providerId?.endsWith('/gitlab') ? 'gitlab' : 'github'
-  const number = query.monitoredObjects[0].number
+  const number = query.monitoredObjects?.[0].number ?? 1
   const url = `${query.instance}/${query.repository}/${platform === 'github' ? 'pull' : '-/merge_requests'}/${number}`
   const source = {
     providerId: `@wegent/dsh-connection-git/${platform}`,
@@ -38,7 +38,7 @@ export function connectionObserverReply(
     profile: JSON.stringify([query.instance, 'account']),
     id: 'repository',
     name: query.repository,
-    monitoredObjects: query.monitoredObjects,
+    ...(query.branch ? { branch: query.branch } : { monitoredObjects: query.monitoredObjects }),
   }
   return {
     success: true,
@@ -62,7 +62,13 @@ export function connectionObserverReply(
             provider: platform,
             topicId: url,
             observedAt: new Date(lastCollectedAt).toISOString(),
-            data: { number, url, state: 'OPEN', title: 'Observed PR' },
+            data: {
+              number,
+              url,
+              state: 'OPEN',
+              title: 'Observed PR',
+              headRefName: query.branch,
+            },
           },
         ],
         errorCode: null,
