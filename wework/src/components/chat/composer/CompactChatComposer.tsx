@@ -64,7 +64,9 @@ import { applyWorkspacePathTransfer } from './composerPathTransfer'
 import { PermissionModeSelector } from './PermissionModeSelector'
 import { useComposerDrawing } from './useComposerDrawing'
 import {
+  RUNTIME_COMMAND_APPROVAL_OPTION,
   RUNTIME_PERMISSION_MODE_OPTION,
+  runtimeCommandApprovalMode,
   runtimePermissionMode,
 } from '@/features/workbench/runtimePermissionMode'
 
@@ -671,8 +673,15 @@ export const CompactChatComposer = forwardRef<ComposerTextareaHandle, CompactCha
                   </span>
                   <PermissionModeSelector
                     value={runtimePermissionMode(selectedModelOptions)}
+                    commandApproval={runtimeCommandApprovalMode(selectedModelOptions)}
+                    onCommandApprovalChange={mode =>
+                      onSelectModelOption(RUNTIME_COMMAND_APPROVAL_OPTION, mode)
+                    }
                     disabled={disabled}
-                    onChange={mode => onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)}
+                    onChange={(mode, approval) => {
+                      if (approval) onSelectModelOption(RUNTIME_COMMAND_APPROVAL_OPTION, approval)
+                      onSelectModelOption(RUNTIME_PERMISSION_MODE_OPTION, mode)
+                    }}
                   />
                 </div>
               ) : null}

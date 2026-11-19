@@ -13,7 +13,7 @@ const SKIPPED_UPSTREAM_RESPONSE_HEADERS: [&str; 10] = [
     "upgrade",
 ];
 
-fn forward_official_response_headers(
+pub(super) fn forward_official_response_headers(
     upstream: &LocalModelProxyUpstream,
     upstream_headers: &reqwest::header::HeaderMap,
     response_headers: &mut HeaderMap,
@@ -24,6 +24,7 @@ fn forward_official_response_headers(
     for (name, value) in upstream_headers {
         if SKIPPED_UPSTREAM_RESPONSE_HEADERS.contains(&name.as_str())
             || name.as_str().starts_with("proxy-")
+            || name.as_str().starts_with("sec-websocket-")
             || name == header::SET_COOKIE
         {
             continue;
@@ -297,6 +298,69 @@ pub(super) fn token_route_token(token: String, body: &[u8]) -> Result<String, Ht
     Ok(recovered)
 }
 
+pub(super) struct AuthorizedRequest {
+    pub upstream: LocalModelProxyUpstream,
+    pub history: std::sync::Arc<history::CodexToolHistory>,
+    pub model_routing: ModelRequestRouting,
+    vision_sidecar: Option<VisionSidecarUpstream>,
+    foreign_history_keys: HashSet<String>,
+    text_only: bool,
+}
+
+pub(super) fn authorize_request(token: &str, body: &[u8]) -> Result<AuthorizedRequest, HttpError> {
+    let mut registry = registry()
+        .lock()
+        .expect("local model proxy registry should not be poisoned");
+    prune_registry(&mut registry);
+    let route = registry.routes.get_mut(token).ok_or_else(|| HttpError {
+        status: StatusCode::NOT_FOUND,
+        detail: "unknown or expired local model proxy token".to_owned(),
+    })?;
+    if let Err(error) = authorize_task_thread(route, body) {
+        let bound_threads = route.thread_ids.len();
+        request_identity::log_task_thread_rejection(&registry, token, body, bound_threads);
+        return Err(error);
+    }
+    route.last_used = Instant::now();
+    Ok(AuthorizedRequest {
+        upstream: route.upstream.clone(),
+        vision_sidecar: route.vision_sidecar.clone(),
+        history: route.history.clone(),
+        foreign_history_keys: route.foreign_history_keys.clone(),
+        model_routing: begin_model_request(route, body),
+        text_only: route.text_only,
+    })
+}
+
+impl AuthorizedRequest {
+    pub(super) async fn prepare(
+        &self,
+        body: &[u8],
+        forked: bool,
+    ) -> Result<request_policy::PreparedRequest, HttpError> {
+        log_stale_requested_model(&self.upstream, body);
+        let body = if self.text_only {
+            text_only_request(body)?
+        } else {
+            body.to_vec()
+        };
+        let body = progressive_tools::prepare(&body).map_err(|error| HttpError {
+            status: StatusCode::BAD_REQUEST,
+            detail: format!("Invalid native Code Mode request: {error}"),
+        })?;
+        request_policy::prepare(
+            &self.upstream,
+            &body,
+            self.vision_sidecar.as_ref(),
+            self.history.as_ref(),
+            self.model_routing.model_switched,
+            forked,
+            &self.foreign_history_keys,
+        )
+        .await
+    }
+}
+
 pub(super) async fn handle_for_token(
     token: String,
     headers: HeaderMap,
@@ -305,42 +369,7 @@ pub(super) async fn handle_for_token(
     let request_started_at = Instant::now();
     let request_id = uuid::Uuid::new_v4().to_string();
     let forked_from_thread_id = codex_forked_from_thread_id(&headers);
-    let (upstream, vision_sidecar, history, known_foreign_history_keys, model_routing, text_only) = {
-        let mut registry = registry()
-            .lock()
-            .expect("local model proxy registry should not be poisoned");
-        prune_registry(&mut registry);
-        let registered = registry.routes.get_mut(&token).ok_or_else(|| HttpError {
-            status: StatusCode::NOT_FOUND,
-            detail: "unknown or expired local model proxy token".to_owned(),
-        })?;
-        if let Err(error) = authorize_task_thread(registered, &body) {
-            let bound_threads = registered.thread_ids.len();
-            request_identity::log_task_thread_rejection(&registry, &token, &body, bound_threads);
-            return Err(error);
-        }
-        registered.last_used = Instant::now();
-        (
-            registered.upstream.clone(),
-            registered.vision_sidecar.clone(),
-            registered.history.clone(),
-            registered.foreign_history_keys.clone(),
-            begin_model_request(registered, &body),
-            registered.text_only,
-        )
-    };
-    log_stale_requested_model(&upstream, &body);
-    let request_url = upstream.resolved_request_url();
-    let normalized_inter_agent_content = 0;
-    let request_body = if text_only {
-        text_only_request(&body)?
-    } else {
-        body.to_vec()
-    };
-    let request_body = progressive_tools::prepare(&request_body).map_err(|error| HttpError {
-        status: StatusCode::BAD_REQUEST,
-        detail: format!("Invalid native Code Mode request: {error}"),
-    })?;
+    let request = authorize_request(&token, &body)?;
     let request_policy::PreparedRequest {
         body: request_body,
         conversion,
@@ -348,16 +377,18 @@ pub(super) async fn handle_for_token(
         stripped_encrypted_content,
         normalized_reasoning_items,
         foreign_history_keys,
-    } = request_policy::prepare(
-        &upstream,
-        &request_body,
-        vision_sidecar.as_ref(),
-        history.as_ref(),
-        model_routing.model_switched,
-        forked_from_thread_id.is_some(),
-        &known_foreign_history_keys,
-    )
-    .await?;
+    } = request
+        .prepare(&body, forked_from_thread_id.is_some())
+        .await?;
+    let AuthorizedRequest {
+        upstream,
+        history,
+        model_routing,
+        foreign_history_keys: known_foreign_history_keys,
+        ..
+    } = request;
+    let request_url = upstream.resolved_request_url();
+    let normalized_inter_agent_content = 0;
     let tool_capabilities = upstream.responses_tool_capabilities();
     let mut request_log_fields = vec![
         ("request_id", request_id.clone()),

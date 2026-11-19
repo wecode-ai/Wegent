@@ -546,6 +546,7 @@ fn store_runtime_execution_request(runtime_handle: &mut Value, request: &Executi
                 | "projectId"
                 | "project_plugin_ids"
                 | "projectPluginIds"
+                | "runtime_command_approval"
                 | "runtime_permission_profile"
                 | "runtimePermissionProfile"
                 | "runtime_command_id"

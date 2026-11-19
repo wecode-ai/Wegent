@@ -136,8 +136,7 @@ pub(super) fn api_overrides(base_url: String, command: &str, args: Vec<String>) 
 
 /// Routes official ChatGPT inference through the local compatibility proxy.
 /// The provider keeps Codex's native OAuth account manager; only the base URL
-/// changes. WebSocket and standalone endpoint support stay disabled because the
-/// compatibility layer owns the Responses request path.
+/// changes. Both HTTP and WebSocket take the same task-scoped Responses route.
 pub(super) fn official_proxy_overrides(base_url: String) -> Vec<String> {
     serialize(proxy_profile(base_url))
 }
@@ -145,7 +144,7 @@ pub(super) fn official_proxy_overrides(base_url: String) -> Vec<String> {
 fn proxy_profile(base_url: String) -> Map<String, Value> {
     let mut selected = defaults("openai");
     selected.insert("base_url".into(), json!(base_url));
-    selected.insert("supports_websockets".into(), json!(false));
+    selected.insert("supports_websockets".into(), json!(true));
     selected.insert("supports_standalone_web_search".into(), json!(false));
     selected
 }
@@ -250,13 +249,13 @@ mod tests {
     }
 
     #[test]
-    fn official_proxy_keeps_native_auth_but_disables_websocket_and_hosted_search() {
+    fn official_proxy_keeps_native_auth_and_advertises_websocket() {
         let config = profile_for_test(&official_proxy_overrides(
             "http://127.0.0.1:1234/v1/codex-router/task-token".to_owned(),
         ));
         assert_eq!(config["name"], "OpenAI");
         assert_eq!(config["requires_openai_auth"], true);
-        assert_eq!(config["supports_websockets"], false);
+        assert_eq!(config["supports_websockets"], true);
         assert_eq!(config["supports_standalone_web_search"], false);
         assert!(config.get("auth").is_none());
         assert!(config.get("experimental_bearer_token").is_none());

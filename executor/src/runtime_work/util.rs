@@ -34,6 +34,14 @@ pub(crate) fn apply_runtime_payload_metadata(request: &mut ExecutionRequest, pay
             .extra
             .insert("resource_event_keys".into(), keys.clone());
     }
+    if let Some(mode) = payload
+        .pointer("/modelOptions/commandApproval")
+        .or_else(|| payload.pointer("/modelSelection/options/commandApproval"))
+    {
+        request
+            .extra
+            .insert("runtime_command_approval".into(), mode.clone());
+    }
     // Conversation privacy belongs to this send, never to the task's immutable origin.
     request.extra.remove("conversationContext");
     if payload["conversationContext"] == "private_discussion" {

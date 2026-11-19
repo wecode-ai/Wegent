@@ -31,6 +31,7 @@ fn options(cancellation: Option<oneshot::Receiver<()>>) -> SharedTurnNotificatio
         active_turn_finished: None,
         wait_for_goal_continuation: false,
         auto_approve_mcp_tool_calls: false,
+        auto_approve_commands: false,
         stand_in_single_approval: false,
     }
 }

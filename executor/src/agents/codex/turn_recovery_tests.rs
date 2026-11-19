@@ -111,6 +111,7 @@ pub(super) fn shared_options(
         active_turn_finished: None,
         wait_for_goal_continuation: false,
         auto_approve_mcp_tool_calls: false,
+        auto_approve_commands: false,
         stand_in_single_approval: false,
     }
 }
@@ -244,6 +245,7 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
                 notifications: Some(notify_tx),
                 request_user_input_answers: None,
                 auto_approve_mcp_tool_calls: false,
+                auto_approve_commands: false,
                 stand_in_single_approval: false,
                 defer_interactive_forms: false,
             },
@@ -355,6 +357,7 @@ printf '%s\n' '{{"method":"turn/completed","params":{{"threadId":"root-thread","
                 notifications: Some(notify_tx),
                 request_user_input_answers: None,
                 auto_approve_mcp_tool_calls: false,
+                auto_approve_commands: false,
                 stand_in_single_approval: false,
                 defer_interactive_forms: false,
             },
@@ -435,6 +438,7 @@ printf '%s\n' '{{"id":2,"result":{{"goal":{paused}}}}}'
                 notifications: Some(notify_tx),
                 request_user_input_answers: None,
                 auto_approve_mcp_tool_calls: false,
+                auto_approve_commands: false,
                 stand_in_single_approval: false,
                 defer_interactive_forms: false,
             },

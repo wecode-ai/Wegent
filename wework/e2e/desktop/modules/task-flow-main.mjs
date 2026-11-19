@@ -28,6 +28,7 @@ import { readInspectorEndpoint } from './inspect-before-start.mjs'
 import { verifyCloudCheckpoint } from './cloud-checkpoint-flows.mjs'
 import { createCloudHistorySearchVerification } from './cloud-history-search.mjs'
 import { verifyLocalBoardUnread } from './local-board-unread.mjs'
+import { verifyRiskyCommandApproval } from './risky-command-approval-flow.mjs'
 import { verifyMcpElicitationInFullAccess } from './mcp-elicitation-flow.mjs'
 import { MCP_URL_TIMEOUT_MS, MCP_FORM_TIMEOUT_MS } from './mcp-elicitation-evidence.mjs'
 import { verifyPendingTaskAcrossTabs } from './pending-task-tab-flow.mjs'
@@ -2521,6 +2522,7 @@ source = ${JSON.stringify(staleBundledMarketplacePath)}`
     if (DESKTOP_SEGMENT === 'permission-modes') {
       phase = 'permission-modes'
       await verifyPermissionModes(control)
+      await verifyRiskyCommandApproval(control, workspacePath)
       console.log(`Wework desktop permission-modes checkpoint passed. Evidence: ${resultDir}`)
       return
     }
