@@ -14,7 +14,8 @@ use crate::task_runtime::{
 mod manager;
 #[cfg(test)]
 use manager::{
-    fresh_cloud_manager_payload, fresh_cloud_manager_task_id, fresh_cloud_manager_task_started,
+    apply_fresh_cloud_manager_profiles, fresh_cloud_manager_payload, fresh_cloud_manager_task_id,
+    fresh_cloud_manager_task_started,
 };
 
 const CLOUD_COLLABORATION_ROUND_KEY: &str = "cloudCollaborationRound";
@@ -498,13 +499,14 @@ impl RuntimeWorkRpcHandler {
             }),
         )
         .await
+        .map(|_| ())
     }
 
     async fn report_cloud_collaboration_activity(
         &self,
         command: &CloudCollaborationRoundCommand,
         payload: &Value,
-    ) -> Result<(), CollaborationReportError> {
+    ) -> Result<reqwest::Response, CollaborationReportError> {
         let connection = self
             .backend_connection_snapshot()
             .map_err(|value| value.message)?
@@ -525,7 +527,7 @@ impl RuntimeWorkRpcHandler {
             .map_err(|value| value.to_string())?;
         let response_status = response.status();
         if response_status.is_success() {
-            return Ok(());
+            return Ok(response);
         }
         let body = response.text().await.unwrap_or_default();
         Err(CollaborationReportError {
