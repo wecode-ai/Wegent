@@ -1976,7 +1976,7 @@ async fn call_backend_tool(
     arguments: &Value,
 ) -> Result<Value, String> {
     let client = reqwest::Client::new();
-    let base = format!("{}/api/v1", context.backend_url.trim_end_matches('/'));
+    let base = crate::agents::runtime_capabilities::api_url(context.backend_url, "/api/v1")?;
     let project_id = context.project_id;
     let grant = context.grant;
     let auth_token = context.auth_token;
@@ -4273,7 +4273,7 @@ mod tests {
             }),
         );
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let backend_url = format!("http://{address}");
+        let backend_url = format!("http://{address}/api/");
         let context = BackendToolContext {
             backend_url: &backend_url,
             auth_token: "unit-token",
