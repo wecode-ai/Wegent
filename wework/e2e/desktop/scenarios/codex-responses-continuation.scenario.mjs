@@ -1,6 +1,4 @@
 import assert from 'node:assert/strict'
-import { appendFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import { restartCodexWhenIdle } from '../modules/executor-restart-readiness.mjs'
 import { requestExecutor } from '../modules/executor-rpc.mjs'
 import {
@@ -41,7 +39,6 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
   const subscription = createSubscriptionConfigRegression()
   let closeSockets
   let verified = false
-  let configPath
   let defaultUsedWebSocket = false
   let originalMessage
   let forwardedContinuation
@@ -50,10 +47,7 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
   return {
     modelProviderId: 'openai',
     modelId: MODEL,
-    async prepareApp(options) {
-      await subscription.prepareApp(options)
-      configPath = join(options.codexHome, 'config.toml')
-    },
+    prepareApp: options => subscription.prepareApp(options),
     attachServer(server) {
       closeSockets = attachCodexModelWebSocket(server, {
         modelServerUrl: 'http://localhost',
@@ -155,14 +149,30 @@ export function createDesktopScenario({ workspacePath, uiTimeoutMs, modelRespons
       assert.deepEqual(forwardedContinuation.history, originalMessage)
       assert.match(forwardedContinuation.inputId, /^msg_/)
       assert.equal(forwardedContinuation.threadId, first.threadId)
-      await appendFile(
-        configPath,
-        '\n[model_providers."~"]\nname = "Wework"\nsupports_websockets = true\n'
-      )
-      await restart()
+      const httpOption = '[data-testid="local-codex-transport-http"]'
+      const webSocketOption = '[data-testid="local-codex-transport-websocket"]'
+      const openModels = () =>
+        control.command('navigate', 'body', { value: '/settings/personal/models' })
+      const waitForTransport = selector =>
+        control.command('waitFor', `${selector}[aria-pressed="true"]:not(:disabled)`, {
+          timeoutMs: uiTimeoutMs,
+        })
+      await openModels()
+      await waitForTransport(httpOption)
+      await control.command('clickWhenEnabled', webSocketOption)
+      await waitForTransport(webSocketOption)
+      await control.command('navigate', 'body', { value: '/settings/personal/general' })
+      await control.command('waitFor', '[data-testid="general-settings-page"]')
+      await openModels()
+      await waitForTransport(webSocketOption)
       const optedIn = await run(`${TASK}-websocket`, WEBSOCKET)
       assert.equal(optedIn.status, 'done', optedIn.executionState?.error)
       assert.match(optedInMessage?.id, /^msg_/)
+      await control.command('clickWhenEnabled', httpOption)
+      await waitForTransport(httpOption)
+      const optedOut = await run(`${TASK}-http`, FIRST)
+      assert.equal(optedOut.status, 'done', optedOut.executionState?.error)
+      assert.equal(defaultUsedWebSocket, false, 'Switching back to HTTP must disable WebSocket')
       verified = true
     },
     async cleanup() {

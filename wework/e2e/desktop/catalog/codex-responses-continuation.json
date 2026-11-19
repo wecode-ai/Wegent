@@ -5,7 +5,10 @@
   "paths": [
     "executor/crates/model-proxy/src/local_model_proxy",
     "executor/src/agents/codex/native_provider.rs",
-    "wework/e2e/desktop/scenarios/codex-responses-continuation.scenario.mjs"
+    "wework/e2e/desktop/scenarios/codex-responses-continuation.scenario.mjs",
+    "wework/src/components/settings/LocalCodexTransportSettings.tsx",
+    "wework/src/components/settings/ModelSettingsPage.tsx",
+    "wework/src/features/model-settings/localCodexSettings.ts"
   ],
   "ci": {
     "core": { "order": 98100, "shard": 7, "position": 13100 }
