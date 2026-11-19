@@ -63,6 +63,9 @@ export async function assertDesktopPanes(
   )
   await control.command('dragStart', separator, { target: timeline })
   try {
+    await control.command('waitFor', `${separator}[data-dragging]`, {
+      timeoutMs: DEFAULT_STEP_TIMEOUT_MS,
+    })
     await waitForValue(
       sizes,
       dragging => Math.abs(dragging[0] - original[0]) > 1,

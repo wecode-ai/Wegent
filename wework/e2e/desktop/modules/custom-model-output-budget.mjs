@@ -103,11 +103,16 @@ async function verifyOutputBudgetAndConnection(control, baseUrl) {
   const id = row.slice('provider-row-'.length)
   const edit = `[data-testid="provider-edit-${id}"]`
   const expandModel = '[data-testid="provider-editor"] [data-testid^="provider-model-expand-"]'
+  const reopenModel = async () => {
+    await control.command('clickWhenEnabled', edit)
+    await control.command('setExpanded', expandModel, { value: 'true' })
+    await control.command('waitFor', output)
+    await control.command('scrollIntoView', output, { visible: true })
+    await control.command('waitFor', output, { visible: true })
+  }
   await control.command('navigate', 'body', { value: '/settings/general' })
   await control.command('navigate', 'body', { value: '/settings/personal/models' })
-  await control.command('clickWhenEnabled', edit)
-  await control.command('setExpanded', expandModel, { value: 'true' })
-  await control.command('waitFor', output, { visible: true })
+  await reopenModel()
   assert.equal(await control.command('getValue', output), '16000')
   assert.equal(await control.command('getValue', context), '128000')
   await control.command('clickWhenEnabled', '[data-testid="provider-editor-test"]')
@@ -115,9 +120,7 @@ async function verifyOutputBudgetAndConnection(control, baseUrl) {
   await control.command('fill', output, { value: '' })
   await control.command('clickWhenEnabled', save)
   await waitForSnapshot(control, snapshot => !snapshot.testIds.includes('provider-editor'))
-  await control.command('clickWhenEnabled', edit)
-  await control.command('setExpanded', expandModel, { value: 'true' })
-  await control.command('waitFor', output, { visible: true })
+  await reopenModel()
   assert.equal(await control.command('getValue', output), '')
   await control.command('click', '[data-testid="provider-editor-cancel"]')
   await control.command('click', `[data-testid="provider-delete-${id}"]`)

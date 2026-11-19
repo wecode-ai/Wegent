@@ -182,6 +182,8 @@ export function AgentFormDialog({
           <ControlButton
             variant="unstyled"
             aria-label={labels.close}
+            title={labels.close}
+            showTooltip={false}
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-muted disabled:opacity-40 md:h-8 md:w-8"
             data-testid={testIds.close}
             disabled={busy}

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { showAllCollaborationIssues } from './collaboration-board-flows.mjs'
+import { dragBoardCard, showAllCollaborationIssues } from './collaboration-board-flows.mjs'
 
 import {
   openAllIssuesProjectBoard,
@@ -69,9 +69,12 @@ export async function verifyBoardFieldDrag(control, { scoped, request, project, 
   await selectProjectBoardSort(control, scoped, 'pending')
   await assertLaneOrder(control, scoped, 'pending', manualOrder)
   const beforeStatusOrder = await request(`/api/v1/loop-items/${moving.id}`)
-  await control.command('drag', scoped(card('pending', moving.id)), {
-    target: scoped(card('pending', anchor.id)),
-  })
+  await dragBoardCard(
+    control,
+    scoped(card('pending', moving.id)),
+    scoped(card('pending', anchor.id)),
+    uiTimeoutMs
+  )
   await waitForIssue(
     request,
     moving.id,

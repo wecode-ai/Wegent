@@ -398,10 +398,12 @@ async function verifyIssueTags(control, request, issue, uiTimeoutMs) {
 }
 
 async function changeIssueStatus(control, request, issueId, status, uiTimeoutMs) {
-  const statusSelect = scoped('select[data-testid="cloud-todo-detail-status"]:not(:disabled)')
+  const statusSelect = scoped('[data-testid="cloud-todo-detail-status"]')
   await control.command('waitFor', statusSelect, { timeoutMs: uiTimeoutMs })
-  await control.command('select', statusSelect, {
+  await control.command('scrollIntoView', statusSelect)
+  await control.command('chooseWhenEnabled', statusSelect, {
     value: status,
+    timeoutMs: uiTimeoutMs,
   })
   return waitForValue(
     () => request(`/api/v1/loop-items/${issueId}`),
