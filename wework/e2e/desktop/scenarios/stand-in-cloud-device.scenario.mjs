@@ -17,7 +17,12 @@ import {
 import { findRuntimeWorkTask } from '../modules/runtime-task-evidence.mjs'
 import { until } from '../modules/plugin-regression-fixture.mjs'
 import { reloadMainWindow } from '../modules/workspace-flows.mjs'
-import { CLOUD_DEVICE_ID, REMOTE_DOCKER_DEVICE_ID, selectE2EModel } from '../modules/shared.mjs'
+import {
+  CLOUD_DEVICE_ID,
+  REMOTE_DOCKER_DEVICE_ID,
+  fetchJson,
+  selectE2EModel,
+} from '../modules/shared.mjs'
 import {
   assistantMessage,
   createSse,
@@ -30,6 +35,9 @@ const USER = 1
 const CLOUD_NAME = 'Cloud stand-in bound device'
 const PROMPT = 'CLOUD_STAND_IN_DEVICE_EXECUTION'
 const COMPLETE = 'CLOUD_STAND_IN_DEVICE_EXECUTION_COMPLETE'
+const REOPEN_PROMPT = 'CLOUD_STAND_IN_VERIFY_REOPENED_RELAY'
+const REOPEN_COMPLETE = 'CLOUD_STAND_IN_REOPENED_RELAY_CONFIRMED'
+const PREVIOUS_ADDRESS = 'https://previous-stand-in.example.invalid/api'
 const HOLD = 'CLOUD_STAND_IN_STOP_RUNNING_CONVERSATION'
 const LOCAL_NAME = 'Signed-out local stand-in'
 const LOCAL_PROMPT = 'LOCAL_STAND_IN_DEVICE_HISTORY'
@@ -87,6 +95,12 @@ export function createDesktopScenario({
   const binding = control => readStandInBinding(control, uiTimeoutMs)
   const stop = control => stopBoundStandIn(control, uiTimeoutMs)
   const bind = (control, user, device) => bindStoppedStandIn(control, user, device, uiTimeoutMs)
+  const saveBinding = async (control, target) =>
+    rpc(control, 'runtime.stand_in.binding', {
+      operation: 'bind',
+      version: (await binding(control)).version,
+      target,
+    })
   async function remoteRpc(method, params) {
     if (!remoteSocket) {
       const { io } = createRequire(
@@ -137,14 +151,18 @@ export function createDesktopScenario({
     await control.command('clickWhenEnabled', testId(`stand-in-overview-role-${role}`))
     await control.command('waitFor', testId('stand-in-conversation'))
     const selector = testId('stand-in-conversation')
+    await sendChat(control, selector, message)
+    return selector
+  }
+  async function sendChat(control, selector, message) {
     await selectE2EModel(control, undefined, undefined, selector)
     await control.command('fill', `${selector} [data-testid="chat-message-input"]`, {
       value: message,
     })
+    await control.command('waitFor', `${selector} [data-testid="send-message-button"]:enabled`)
     await control.command('press', `${selector} [data-testid="chat-message-input"]`, {
       key: 'Enter',
     })
-    return selector
   }
   async function observeDevice(control, device, status) {
     await control.command('navigate', 'body', { value: '/cloud-work' })
@@ -154,6 +172,103 @@ export function createDesktopScenario({
       { text: status, timeoutMs: workbenchReadyTimeoutMs }
     )
     await control.command('navigate', 'body', { value: '/stand-in' })
+  }
+  async function verifySavedLocalBinding(control, localDevice) {
+    const original = await saveBinding(control, {
+      userId: USER,
+      deviceId: localDevice,
+      backendUrl: PREVIOUS_ADDRESS,
+    })
+    await rpc(control, 'runtime.stand_in.personal.lifecycle', {
+      userId: USER,
+      operation: 'start',
+    })
+    await reloadMainWindow(control)
+    await control.command('waitFor', testId('stand-in-overview'))
+    assert.deepEqual(await binding(control), original)
+    await stop(control)
+  }
+
+  async function verifyRegularBinding(control, localDevice, backendUrl) {
+    const username = `stand-in-binding-${process.pid}`
+    const credentials = { user_name: username, password: randomUUID() }
+    const authRequest = (path, body, method = 'POST') =>
+      fetchJson(`${cloud.backendUrl}/api${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${cloud.authToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(uiTimeoutMs),
+      })
+    const member = await authRequest('/admin/users', {
+      ...credentials,
+      role: 'user',
+      auth_source: 'password',
+    })
+    try {
+      const session = await authRequest('/auth/login', credentials)
+      await control.command('setCloudSessionToken', 'body', { value: session.access_token })
+      await rpc(control, 'runtime.stand_in.onboarding.complete', {
+        userId: member.id,
+        weeklyReview: false,
+        language: 'zh-CN',
+      })
+      const registered = { userId: member.id, deviceId: localDevice, backendUrl }
+      await saveBinding(control, registered)
+      await rpc(control, 'runtime.stand_in.personal.lifecycle', {
+        userId: member.id,
+        operation: 'start',
+      })
+      await reloadMainWindow(control)
+      await control.command('waitFor', testId('stand-in-overview'))
+      assert.deepEqual((await binding(control)).target, registered)
+
+      await createRole(control, 'Ordinary account stand-in')
+      const profile = await rpc(control, 'runtime.stand_in.personal.get', { userId: member.id })
+      const role = profile.roles.find(row => row.name === 'Ordinary account stand-in')
+      assert.ok(role)
+      await stop(control)
+      const aliased = await saveBinding(control, {
+        ...registered,
+        backendUrl: PREVIOUS_ADDRESS,
+      })
+      await rpc(control, 'runtime.stand_in.personal.lifecycle', {
+        userId: member.id,
+        operation: 'start',
+      })
+      const renamedUsername = `${username}-renamed`
+      const renamed = await authRequest(
+        `/admin/users/${member.id}`,
+        { user_name: renamedUsername },
+        'PUT'
+      )
+      assert.equal(renamed.id, member.id)
+      assert.equal(renamed.user_name, renamedUsername)
+      const renamedSession = await authRequest('/auth/login', {
+        ...credentials,
+        user_name: renamedUsername,
+      })
+      await control.command('setCloudSessionToken', 'body', { value: renamedSession.access_token })
+      await reloadMainWindow(control)
+      await control.command('waitFor', testId(`stand-in-overview-role-${role.id}`))
+      assert.deepEqual(await binding(control), aliased)
+      await stop(control)
+
+      const otherOwner = await saveBinding(control, { ...registered, userId: USER })
+      await reloadMainWindow(control)
+      await control.command('waitFor', testId('stand-in-instance-owner-unavailable'))
+      assert.deepEqual(await binding(control), otherOwner)
+    } finally {
+      await control.command('setCloudSessionToken', 'body', { value: cloud.authToken })
+      const removed = await fetch(`${cloud.backendUrl}/api/admin/users/${member.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${cloud.authToken}` },
+        signal: AbortSignal.timeout(uiTimeoutMs),
+      })
+      assert.equal(removed.status, 204, 'The renamed fixture account must be removed')
+    }
   }
   return {
     requiresCloudEnvironment: true,
@@ -169,12 +284,18 @@ export function createDesktopScenario({
         return false
       const body = await readRequestBody(req)
       const input = JSON.stringify(body.input ?? [])
-      if (!input.includes(PROMPT) && !input.includes(LOCAL_PROMPT) && !input.includes(HOLD))
+      const reopened = input.includes(REOPEN_PROMPT)
+      if (
+        !reopened &&
+        !input.includes(PROMPT) &&
+        !input.includes(LOCAL_PROMPT) &&
+        !input.includes(HOLD)
+      )
         return false
       modelRequests++
       const id = `cloud-stand-in-${modelRequests}`
       res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8' })
-      if (input.includes(HOLD)) {
+      if (!reopened && input.includes(HOLD)) {
         heldResponse = res
         heldRequestSeen = true
         res.on('close', () => {
@@ -185,7 +306,9 @@ export function createDesktopScenario({
         res.end(
           createSse([
             responseCreated(id),
-            assistantMessage(input.includes(LOCAL_PROMPT) ? LOCAL_COMPLETE : COMPLETE),
+            assistantMessage(
+              reopened ? REOPEN_COMPLETE : input.includes(LOCAL_PROMPT) ? LOCAL_COMPLETE : COMPLETE
+            ),
             responseCompleted(id),
           ])
         )
@@ -208,6 +331,9 @@ export function createDesktopScenario({
       await control.command('navigate', 'body', { value: '/stand-in' })
       await control.command('waitFor', testId('stand-in-onboarding-setup'))
       const firstUse = await binding(control)
+      assert.equal(firstUse.target.userId, USER)
+      assert.equal('username' in firstUse.target, false)
+      assert.ok(firstUse.target.backendUrl)
       assert.ok(
         [CLOUD_DEVICE_ID, REMOTE_DOCKER_DEVICE_ID].includes(firstUse.target.deviceId),
         'First use may bind an available cloud device'
@@ -367,6 +493,47 @@ export function createDesktopScenario({
         issuesBefore,
         'Ordinary identity conversation and cancellation must not create a business Issue'
       )
+
+      // Reopen the saved binding after the backend address changes.
+      const original = await saveBinding(control, {
+        userId: USER,
+        deviceId: CLOUD_DEVICE_ID,
+        backendUrl: PREVIOUS_ADDRESS,
+      })
+      await remoteRpc('runtime.stand_in.personal.lifecycle', { userId: USER, operation: 'start' })
+      await reloadMainWindow(control)
+      await control.command('waitFor', testId('stand-in-overview'))
+      await control.command('clickWhenEnabled', testId(`stand-in-overview-role-${role.id}`))
+      await control.command('waitFor', remoteChat, { text: COMPLETE })
+      await sendChat(control, remoteChat, REOPEN_PROMPT)
+      await control.command('waitFor', remoteChat, {
+        text: REOPEN_COMPLETE,
+        timeoutMs: modelResponseTimeoutMs,
+      })
+      const reopened = await until(
+        () => remoteRpc('runtime.tasks.get', { taskId }),
+        result => result.task?.status === 'done' && result.task.running !== true,
+        'The bound cloud Executor must finish the turn after reopening',
+        modelResponseTimeoutMs
+      )
+      assert.equal(reopened.success, true, reopened.error)
+      assert.equal(reopened.task.threadId, threadId)
+      assert.deepEqual(
+        await binding(control),
+        original,
+        'Reopening must preserve the saved binding'
+      )
+      await stop(control)
+      const stoppedBinding = await binding(control)
+      assert.equal(stoppedBinding.target.backendUrl, PREVIOUS_ADDRESS)
+      await reloadMainWindow(control)
+      await control.command('waitFor', testId('stand-in-instance-stopped'))
+      const migrationRole = testId('stand-in-migration-role')
+      await control.command('waitFor', migrationRole)
+      await control.command('select', migrationRole, { value: role.id })
+      assert.equal(await control.command('getValue', migrationRole), role.id)
+      assert.deepEqual(await binding(control), stoppedBinding)
+
       await bind(control, 0, localDevice)
       await control.command('clickWhenEnabled', testId(`stand-in-overview-role-${localRole.id}`))
       await control.command('waitFor', testId('stand-in-conversation'))
@@ -412,7 +579,8 @@ export function createDesktopScenario({
       await cloud.restartCloudExecutor()
       await observeDevice(control, CLOUD_DEVICE_ID, '在线')
       await stop(control)
-      await bind(control, 0, localDevice)
+      await verifySavedLocalBinding(control, localDevice)
+      await verifyRegularBinding(control, localDevice, firstUse.target.backendUrl)
       await writeFile(
         join(resultDir, 'stand-in-cloud-device-evidence.json'),
         JSON.stringify({
@@ -425,6 +593,9 @@ export function createDesktopScenario({
           offlineBindingRetained: true,
           localHistoryRetained: true,
           localMemoryRetained: true,
+          userIdOnlyBinding: true,
+          renamedOwnerRetained: true,
+          differentUserIdRejected: true,
         })
       )
     },
