@@ -394,6 +394,7 @@ export function ProjectGanttView(props: ProjectScheduleViewProps) {
                               variant="unstyled"
                               type="button"
                               aria-label={issue.title}
+                              data-testid={`collaboration-gantt-title-${issue.id}`}
                               onClick={() => onOpen(issue)}
                               className="flex h-full min-w-0 flex-1 items-center bg-background text-left hover:bg-muted"
                             >

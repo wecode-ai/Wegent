@@ -49,10 +49,7 @@ export async function verifyGanttHierarchyAndDetailArchive(control, project, tim
   )
   const titleMetrics = async id =>
     JSON.parse(
-      await control.command(
-        'getElementMetrics',
-        `${test(`collaboration-gantt-row-${id}`)} [data-tooltip-trigger]`
-      )
+      await control.command('getElementMetrics', test(`collaboration-gantt-title-${id}`))
     )[0]
   const parentTitle = await titleMetrics(parent.id)
   const childTitle = await titleMetrics(child.id)

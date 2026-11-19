@@ -2073,6 +2073,23 @@ async function verifyWorkspaceTabIsolation(control, restartDesktopApp) {
     visible: true,
     timeoutMs: WORKBENCH_READY_TIMEOUT_MS,
   })
+  const [viewport] = JSON.parse(
+    await control.command(
+      'getElementMetrics',
+      `${firstTaskContent} [data-testid="desktop-workbench-content"]`
+    )
+  )
+  const [dock] = JSON.parse(
+    await control.command(
+      'getElementMetrics',
+      `${firstTaskContent} [data-testid="desktop-empty-composer-dock"]`
+    )
+  )
+  const bottomGap = viewport.bottom - dock.bottom
+  assert.ok(
+    bottomGap >= 0 && bottomGap <= 16,
+    `The new-task composer must stay at the bottom of its workbench. Bottom gap: ${bottomGap}px`
+  )
   await control.command('fill', firstTaskComposer, { value: '第一个任务标签草稿' })
 
   await control.command('click', '[data-testid="workspace-tab-add"]')

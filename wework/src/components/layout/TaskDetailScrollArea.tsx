@@ -45,10 +45,16 @@ export function TaskDetailScrollArea({
         style={{ overflowX: 'hidden', overflowY: hasConversation ? 'auto' : 'hidden' }}
         className={cn(
           'relative h-full min-w-0 flex-1 scrollbar-none [overflow-anchor:none]',
+          !hasConversation && 'flex',
           showPageTopBar && 'pt-11'
         )}
       >
-        <ScrollAreaContent className="relative flex min-h-full min-w-0 flex-col">
+        <ScrollAreaContent
+          className={cn(
+            'relative flex min-h-full min-w-0 p-0',
+            hasConversation ? 'flex-col' : 'h-full'
+          )}
+        >
           {children}
         </ScrollAreaContent>
       </ScrollAreaViewport>
