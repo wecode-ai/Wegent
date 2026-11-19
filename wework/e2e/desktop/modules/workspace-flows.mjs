@@ -245,9 +245,10 @@ export async function selectProjectRunnerModel(control, timeoutMs) {
   await control.command('clickWhenEnabled', firstDevice, { timeoutMs })
   const modelMenu = `[data-testid="${prefix}-model-menu"]`
   const nativeOption = `${modelMenu} [role="option"][data-value='${identity}']`
-  await control.command('clickWhenEnabled', model, { timeoutMs })
+  await control.command('setExpanded', model, { value: 'true', timeoutMs, visible: true })
   await control.command('waitFor', nativeOption, { timeoutMs, visible: true })
-  await control.command('clickWhenEnabled', nativeOption, { timeoutMs })
+  await control.command('select', model, { value: identity, timeoutMs })
+  await control.command('waitFor', `${model}[data-value='${identity}']`, { timeoutMs })
   await selectAgentEnvironment(
     control,
     `${prefix}-environment`,
@@ -255,7 +256,7 @@ export async function selectProjectRunnerModel(control, timeoutMs) {
     timeoutMs,
     true
   )
-  await control.command('clickWhenEnabled', model, { timeoutMs })
+  await control.command('setExpanded', model, { value: 'true', timeoutMs, visible: true })
   await control.command('waitFor', modelMenu, { timeoutMs, visible: true })
   assert.equal(
     Number(await control.command('getElementCount', `${nativeOption}:not([aria-disabled="true"])`)),
@@ -263,8 +264,9 @@ export async function selectProjectRunnerModel(control, timeoutMs) {
     'Automatic environment routing must not expose native models'
   )
   await control.command('press', model, { key: 'Escape' })
+  await control.command('waitFor', `${model}[aria-expanded="false"]`, { timeoutMs })
   await selectAgentEnvironment(control, `${prefix}-environment`, environmentId, timeoutMs)
-  await control.command('clickWhenEnabled', model, { timeoutMs })
+  await control.command('setExpanded', model, { value: 'true', timeoutMs, visible: true })
   await control.command('waitFor', nativeOption, { timeoutMs, visible: true })
   await control.command('select', model, { value: 'user_select' })
   await control.command('waitFor', `${model}[data-value="user_select"]`, { timeoutMs })
