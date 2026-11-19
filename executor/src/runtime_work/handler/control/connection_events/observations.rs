@@ -2,7 +2,7 @@
 use super::*;
 use wegent_protocol::connection_events::{canonical_json, event_identity, observation_identity};
 
-fn capture_consumers(state: &mut Value, id: &str, observation: &Value) -> bool {
+pub(super) fn capture_consumers(state: &mut Value, id: &str, observation: &Value) -> bool {
     let mut wakeup = false;
     let retained = observation["events"].as_array().unwrap();
     for record in state["operations"]
@@ -49,6 +49,20 @@ fn capture_consumers(state: &mut Value, id: &str, observation: &Value) -> bool {
 }
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn reclaim_event_observations(&self) -> Result<(), AppIpcError> {
+        let Ok(_activation) = self.connection_observation_activations.try_write() else {
+            return Ok(());
+        };
+        for id in event_store::unreferenced(&self.event_subscription_path())? {
+            let source_gate = self.task_send_gate(&format!("connection-observation:{id}"));
+            let Ok(_source) = source_gate.try_lock() else {
+                continue;
+            };
+            event_store::remove_unreferenced(&self.event_subscription_path(), &id)?;
+        }
+        Ok(())
+    }
+
     pub(super) async fn attach_event_observation(
         &self,
         source: &mut Value,
@@ -74,25 +88,44 @@ impl RuntimeWorkRpcHandler {
         );
         let gate = self.task_send_gate(&format!("connection-observation:{id}"));
         let _guard = gate.lock().await;
-        let existing =
-            workbench_control::journal::transact(&self.event_subscription_path(), |state| {
-                Ok(state["observations"][&id].clone())
-            })?;
+        let existing = event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::Row("observations", &id),
+            |state| Ok(state["observations"][&id].clone()),
+        )?;
         if existing.is_object() {
+            if !existing["events"].is_array() || existing["sequence"].as_u64().is_none() {
+                return Err(AppIpcError::new(
+                    "control_storage_failed",
+                    "Invalid observation source journal",
+                ));
+            }
             return Ok((
                 id,
-                existing["sequence"].as_u64().unwrap_or_default(),
+                wegent_protocol::connection_events::activation_sequence(
+                    source,
+                    &existing,
+                    |value| {
+                        chrono::DateTime::parse_from_rfc3339(value.as_str()?)
+                            .ok()
+                            .map(|time| time.timestamp_millis())
+                    },
+                ),
                 checkpoint.clone(),
             ));
         }
-        workbench_control::journal::transact(&self.event_subscription_path(), |state| {
-            if !state["observations"].is_object() {
-                state["observations"] = json!({});
-            }
-            state["observations"][&id] =
-                json!({"source":source,"checkpoint":checkpoint,"sequence":0,"events":[]});
-            Ok(())
-        })?;
+        event_store::update(
+            &self.event_subscription_path(),
+            event_store::Scope::Row("observations", &id),
+            |state| {
+                if !state["observations"].is_object() {
+                    state["observations"] = json!({});
+                }
+                state["observations"][&id] =
+                    json!({"source":source,"checkpoint":checkpoint,"sequence":0,"events":[]});
+                Ok(())
+            },
+        )?;
         Ok((id, 0, checkpoint.clone()))
     }
 
@@ -107,10 +140,11 @@ impl RuntimeWorkRpcHandler {
             .ok_or_else(|| invalid("Missing observation identity"))?;
         let gate = self.task_send_gate(&format!("connection-observation:{id}"));
         let _guard = gate.lock().await;
-        let mut observation =
-            workbench_control::journal::transact(&self.event_subscription_path(), |state| {
-                Ok(state["observations"][id].clone())
-            })?;
+        let mut observation = event_store::read(
+            &self.event_subscription_path(),
+            event_store::Scope::Row("observations", id),
+            |state| Ok(state["observations"][id].clone()),
+        )?;
         if !observation.is_object()
             || !observation["source"].is_object()
             || !observation["checkpoint"].is_object()
@@ -176,8 +210,10 @@ impl RuntimeWorkRpcHandler {
                 }
                 Err(error) => observation["error_code"] = json!(error.code),
             }
-            let wakeup =
-                workbench_control::journal::transact(&self.event_subscription_path(), |state| {
+            let wakeup = event_store::update(
+                &self.event_subscription_path(),
+                event_store::Scope::Source(id),
+                |state| {
                     let mut wakeup = false;
                     if collected {
                         // Capture every consumer before compacting shared history in this commit.
@@ -189,7 +225,8 @@ impl RuntimeWorkRpcHandler {
                     }
                     state["observations"][id] = observation.clone();
                     Ok(wakeup)
-                })?;
+                },
+            )?;
             if wakeup {
                 self.connection_observation_wakeup.notify_one();
             }
@@ -203,6 +240,29 @@ mod tests {
     use super::*;
 
     mod merge_readiness;
+
+    #[test]
+    fn retained_completion_inside_activation_window_is_captured_once() {
+        let source = json!({"providerId":"github","enabledAfter":"2026-11-15T00:00:00Z"});
+        let observation = json!({"sequence":2,"events":[{"sequence":1,"key":"old","event":{"id":"old","at":"2026-11-14T00:00:00Z","state":"completed"}},{"sequence":2,"key":"completion","event":{"id":"completion","at":"2026-11-15T00:00:01Z","state":"completed"}}]});
+        let baseline =
+            wegent_protocol::connection_events::activation_sequence(&source, &observation, |v| {
+                chrono::DateTime::parse_from_rfc3339(v.as_str()?)
+                    .ok()
+                    .map(|v| v.timestamp_millis())
+            });
+        let record = json!({"observation_id":"shared","source":source,"status":"armed","initial_sequence":baseline,"after_sequence":baseline,"match":{"/state":"completed"}});
+        let mut state = json!({"operations":{"waiting":record}});
+        assert!(capture_consumers(&mut state, "shared", &observation));
+        assert_eq!(
+            state["operations"]["waiting"]["resource_event_keys"],
+            json!(["completion"])
+        );
+        assert_eq!(state["operations"]["waiting"]["status"], "pending");
+        let captured = state.clone();
+        assert!(!capture_consumers(&mut state, "shared", &observation));
+        assert_eq!(state, captured);
+    }
 
     #[test]
     fn every_consumer_captures_before_shared_history_is_compacted() {
@@ -261,7 +321,7 @@ mod tests {
             .unwrap();
         handler.save_event_subscription("consumer", &armed).unwrap();
         let read = || {
-            workbench_control::journal::transact(&handler.event_subscription_path(), |state| {
+            event_store::transact(&handler.event_subscription_path(), |state| {
                 Ok(state["operations"]["consumer"].clone())
             })
             .unwrap()

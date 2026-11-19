@@ -393,7 +393,8 @@ export function emitResponseApiEvent(
       ...base,
       task: data.task as RuntimeTurnUpdatedPayload["task"],
       error: errorMessage(payload, data),
-      type: stringField(payload, "type") ?? eventName,
+      type:
+        stringField(data, "type") ?? stringField(payload, "type") ?? eventName,
       shellType:
         stringField(payload, "runtime") ?? stringField(data, "runtime"),
       startedAt:

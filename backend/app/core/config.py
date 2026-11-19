@@ -169,6 +169,9 @@ class Settings(BaseSettings):
     # Task limits
     MAX_RUNNING_TASKS_PER_USER: int = 10
     WORKTREE_CLEANUP_RETENTION_DAYS: int = Field(default=7, ge=0)
+    # Operationally reversible canonicalization for GitHub pull-request URLs
+    # indexed in collaboration Issue content.
+    COLLAB_CHANGE_REQUEST_BADGE_CANONICALIZATION_V1: bool = True
 
     # Names assigned only when a default source group is first created.
     TASK_SOURCE_GROUP_NAMES: dict[str, str] = Field(

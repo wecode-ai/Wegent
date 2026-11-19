@@ -108,13 +108,6 @@ const RUNNING_FORK_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_RUNNING_FORK_COMPLETE'
 const FORK_FOLLOW_UP_PROMPT = 'WEWORK_DESKTOP_E2E_FORK_FOLLOW_UP: continue only in the forked task.'
 const FORK_FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FORK_FOLLOW_UP_COMPLETE'
 const FORK_ENCRYPTED_CONTENT = 'gAAAA-wework-desktop-e2e-fork-context'
-const FORK_PROVIDER_SOURCE_PROMPT =
-  'WEWORK_DESKTOP_E2E_FORK_PROVIDER_SOURCE: create a task through the local model router.'
-const FORK_PROVIDER_SOURCE_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_FORK_PROVIDER_SOURCE_COMPLETE'
-const FORK_PROVIDER_FOLLOW_UP_PROMPT =
-  'WEWORK_DESKTOP_E2E_FORK_PROVIDER_FOLLOW_UP: continue through the inherited local model router.'
-const FORK_PROVIDER_FOLLOW_UP_COMPLETION_TEXT =
-  'WEWORK_DESKTOP_E2E_FORK_PROVIDER_FOLLOW_UP_COMPLETE'
 const REQUEST_USER_INPUT_PROMPT =
   'WEWORK_DESKTOP_E2E_REQUEST_INPUT: ask which implementation direction to use.'
 const REQUEST_USER_INPUT_QUESTION = 'Which implementation direction should be used?'
@@ -145,6 +138,8 @@ const MCP_ELICITATION_PROMPT =
 const MCP_ELICITATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_MCP_ELICITATION_COMPLETE'
 const MCP_ELICITATION_ACCEPTED_MARKER = 'E2E_MCP_ELICITATION_ACCEPTED:owner'
 const MCP_ELICITATION_NAMESPACE = 'wegent_sites_interactions'
+const UNANSWERED_MCP_APPROVAL_SERVER = 'wework_e2e_unanswered_approval'
+const UNANSWERED_MCP_APPROVAL_TOOL = 'check_unanswered_approval'
 const MCP_ELICITATION_TOOL_NAME = 'confirm_inner_site_access'
 const MCP_ELICITATION_SEARCH_ID = 'wework-e2e-mcp-elicitation-search'
 const MCP_ELICITATION_CALL_ID = 'wework-e2e-mcp-elicitation-call'
@@ -347,12 +342,6 @@ const MEMORY_SAMPLE_WINDOW_SIZE = 3
 const ARTIFACT_NAME = 'wework-e2e-result.txt'
 const ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_TOOL'
 const IMAGE_ARTIFACT_NAME = 'wework-e2e-image.png'
-const VIEW_IMAGE_PROMPT = 'WEWORK_DESKTOP_E2E_VIEW_IMAGE: inspect the verification image.'
-const VIEW_IMAGE_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_VIEW_IMAGE_COMPLETE'
-const LOCAL_MARKDOWN_IMAGE_PROMPT =
-  'WEWORK_DESKTOP_E2E_LOCAL_MARKDOWN_IMAGE: render the temporary image.'
-const LOCAL_MARKDOWN_IMAGE_FILENAME = `wework-e2e-assistant-markdown-image-${randomUUID()}.png`
-const LOCAL_MARKDOWN_IMAGE_ALT = 'WEWORK_DESKTOP_E2E_LOCAL_MARKDOWN_IMAGE_ALT'
 const VISION_SIDECAR_PROMPT =
   'WEWORK_DESKTOP_E2E_VISION_SIDECAR: describe the attached verification image.'
 const VISION_SIDECAR_DESCRIPTION = 'The verification image is a solid red square.'
@@ -585,15 +574,6 @@ const PASTED_PATH_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_PASTED_PATHS_COMPLETE'
 const DROPPED_PATH_FOLDER_NAME = 'dropped-context-folder'
 const DROPPED_PATH_FILE_NAME = 'dropped-context.md'
 const DROPPED_PATH_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_DROPPED_PATHS_COMPLETE'
-const TOOL_BLOCK_ORDER_PROMPT =
-  'WEWORK_DESKTOP_E2E_TOOL_BLOCK_ORDER: run the four requested tools in order.'
-const TOOL_BLOCK_ORDER_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_TOOL_BLOCK_ORDER_COMPLETE'
-const EARLIER_TOOL_BLOCK_ID = 'wework-e2e-tool-earlier'
-const NODE_REPL_TOOL_SEARCH_ID = 'wework-e2e-search-node-repl'
-const NODE_REPL_TOOL_BLOCK_ID = 'wework-e2e-tool-node-repl'
-const GENERIC_MCP_TOOL_SEARCH_ID = 'wework-e2e-search-generic-mcp'
-const GENERIC_MCP_TOOL_BLOCK_ID = 'wework-e2e-tool-generic-mcp'
-const LATER_TOOL_BLOCK_ID = 'wework-e2e-tool-later'
 const SIDE_CHAT_PROMPT = 'WEWORK_DESKTOP_E2E_SIDE_CHAT: verify isolated attachments.'
 const SIDE_CHAT_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_SIDE_CHAT_COMPLETE'
 const SIDE_CHAT_FILENAME = 'side-chat-only.png'
@@ -607,10 +587,6 @@ const CLOUD_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CLOUD_COMPLETE'
 const CLOUD_FOLLOW_UP_PROMPT =
   'WEWORK_DESKTOP_E2E_CLOUD_FOLLOW_UP: confirm the cloud task remains available.'
 const CLOUD_FOLLOW_UP_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_CLOUD_FOLLOW_UP_COMPLETE'
-const CLOUD_HTML_LINK_PROMPT =
-  'WEWORK_DESKTOP_E2E_CLOUD_HTML_LINK: open the Cloud HTML preview and missing-file links.'
-const CLOUD_HTML_LINK_FILENAME = 'cloud-html-link-preview.html'
-const CLOUD_HTML_LINK_MISSING_FILENAME = 'cloud-html-link-missing.html'
 const CLOUD_ARTIFACT_NAME = 'wework-cloud-e2e-result.txt'
 const CLOUD_ARTIFACT_CONTENT = 'CODEX_EXECUTED_REAL_CLOUD_TOOL'
 const ACTIVE_WORKBENCH_SELECTOR = '[data-testid="desktop-workbench-main"]'
@@ -640,10 +616,8 @@ const CLOUD_ONLY = process.argv.includes('--cloud-only')
 const CLOUD_FEATURES_ONLY = process.argv.includes('--cloud-features-only')
 const CLOUD_VISION_ONLY = process.argv.includes('--cloud-vision-only')
 const PLUGINS_ONLY = process.argv.includes('--plugins-only')
-const AUTOMATION_ONLY = process.argv.includes('--automation-only')
 const MEMORY_ONLY = process.argv.includes('--memory-only')
 const WORKTREE_STATUS_ONLY = process.argv.includes('--worktree-status-only')
-const TOOL_BLOCK_ORDER_ONLY = process.argv.includes('--tool-block-order-only')
 const QUEUE_NAVIGATION_ONLY = process.argv.includes('--queue-navigation-only')
 const GUIDANCE_BACKGROUND_ONLY = process.argv.includes('--guidance-background-only')
 const GUIDANCE_SCROLL_ONLY = process.argv.includes('--guidance-scroll-only')
@@ -701,13 +675,6 @@ const CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT =
 const STARTUP_NETWORK_PROBE_MARKETPLACE_NAME = 'desktop-e2e-startup-network-probe'
 const STARTUP_NETWORK_PROBE_MARKETPLACE_URL =
   'https://desktop-e2e-startup-probe.invalid/marketplace.git'
-const AUTOMATION_NAME = 'Desktop E2E automation'
-const AUTOMATION_PROMPT = 'WEWORK_DESKTOP_E2E_AUTOMATION: report the current workspace status.'
-const AUTOMATION_COMPLETION_TEXT = 'WEWORK_DESKTOP_E2E_AUTOMATION_COMPLETE'
-const AUTOMATION_SCHEDULE_TIMEOUT_MS = 70_000
-const QUALIFIED_SKILL_MENTION_PROMPT = 'Verify the sent qualified skill mention.'
-const QUALIFIED_SKILL_MENTION_COMPLETION_TEXT =
-  'WEWORK_DESKTOP_E2E_QUALIFIED_SKILL_MENTION_COMPLETE'
 
 function readCommandLineOption(name) {
   const index = process.argv.indexOf(name)
@@ -742,10 +709,8 @@ function getActiveOnlyModes() {
     ['--cloud-features-only', CLOUD_FEATURES_ONLY],
     ['--cloud-vision-only', CLOUD_VISION_ONLY],
     ['--plugins-only', PLUGINS_ONLY],
-    ['--automation-only', AUTOMATION_ONLY],
     ['--memory-only', MEMORY_ONLY],
     ['--worktree-status-only', WORKTREE_STATUS_ONLY],
-    ['--tool-block-order-only', TOOL_BLOCK_ORDER_ONLY],
     ['--queue-navigation-only', QUEUE_NAVIGATION_ONLY],
     ['--guidance-background-only', GUIDANCE_BACKGROUND_ONLY],
     ['--guidance-scroll-only', GUIDANCE_SCROLL_ONLY],
@@ -795,10 +760,8 @@ function shouldStopAfterDesktopCheckpoint(checkpoint) {
 }
 
 function shouldConfigureToolDetailsMcp() {
-  if (TOOL_BLOCK_ORDER_ONLY || MODEL_SWITCH_ONLY) return true
-  const selectedCheckpointNeedsTools =
-    shouldRunDesktopCheckpoint('rendering-extensions') ||
-    shouldRunDesktopCheckpoint('model-routing')
+  if (MODEL_SWITCH_ONLY) return true
+  const selectedCheckpointNeedsTools = shouldRunDesktopCheckpoint('model-routing')
   // Cloud model matrices use these tools; unrelated only modes never do.
   if (CLOUD_ONLY) return selectedCheckpointNeedsTools
   return getActiveOnlyModes().length === 0 && selectedCheckpointNeedsTools
@@ -1563,7 +1526,7 @@ async function createSingleRootLocalProject(
   await control.command('fill', '[data-testid="device-folder-path-input"]', {
     value: workspacePath,
   })
-  await control.command('press', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
+  await control.command('nativePress', '[data-testid="device-folder-path-input"]', { key: 'Enter' })
   await waitForFolderPathReady(control, workspacePath)
   await control.command('clickWhenEnabled', '[data-testid="confirm-device-folder-picker-button"]', {
     stableMs: COMPOSER_READY_STABILITY_MS,
@@ -1773,10 +1736,6 @@ export {
   FORK_FOLLOW_UP_PROMPT,
   FORK_FOLLOW_UP_COMPLETION_TEXT,
   FORK_ENCRYPTED_CONTENT,
-  FORK_PROVIDER_SOURCE_PROMPT,
-  FORK_PROVIDER_SOURCE_COMPLETION_TEXT,
-  FORK_PROVIDER_FOLLOW_UP_PROMPT,
-  FORK_PROVIDER_FOLLOW_UP_COMPLETION_TEXT,
   REQUEST_USER_INPUT_PROMPT,
   REQUEST_USER_INPUT_QUESTION,
   REQUEST_USER_INPUT_COMPLETION_TEXT,
@@ -1799,6 +1758,8 @@ export {
   MCP_ELICITATION_COMPLETION_TEXT,
   MCP_ELICITATION_ACCEPTED_MARKER,
   MCP_ELICITATION_NAMESPACE,
+  UNANSWERED_MCP_APPROVAL_SERVER,
+  UNANSWERED_MCP_APPROVAL_TOOL,
   MCP_ELICITATION_TOOL_NAME,
   MCP_ELICITATION_SEARCH_ID,
   MCP_ELICITATION_CALL_ID,
@@ -1927,11 +1888,6 @@ export {
   ARTIFACT_NAME,
   ARTIFACT_CONTENT,
   IMAGE_ARTIFACT_NAME,
-  VIEW_IMAGE_PROMPT,
-  VIEW_IMAGE_COMPLETION_TEXT,
-  LOCAL_MARKDOWN_IMAGE_PROMPT,
-  LOCAL_MARKDOWN_IMAGE_FILENAME,
-  LOCAL_MARKDOWN_IMAGE_ALT,
   VISION_SIDECAR_PROMPT,
   VISION_SIDECAR_DESCRIPTION,
   VISION_SIDECAR_COMPLETION_TEXT,
@@ -2013,14 +1969,6 @@ export {
   DROPPED_PATH_FOLDER_NAME,
   DROPPED_PATH_FILE_NAME,
   DROPPED_PATH_COMPLETION_TEXT,
-  TOOL_BLOCK_ORDER_PROMPT,
-  TOOL_BLOCK_ORDER_COMPLETION_TEXT,
-  EARLIER_TOOL_BLOCK_ID,
-  NODE_REPL_TOOL_SEARCH_ID,
-  NODE_REPL_TOOL_BLOCK_ID,
-  GENERIC_MCP_TOOL_SEARCH_ID,
-  GENERIC_MCP_TOOL_BLOCK_ID,
-  LATER_TOOL_BLOCK_ID,
   SIDE_CHAT_PROMPT,
   SIDE_CHAT_COMPLETION_TEXT,
   SIDE_CHAT_FILENAME,
@@ -2032,9 +1980,6 @@ export {
   CLOUD_COMPLETION_TEXT,
   CLOUD_FOLLOW_UP_PROMPT,
   CLOUD_FOLLOW_UP_COMPLETION_TEXT,
-  CLOUD_HTML_LINK_PROMPT,
-  CLOUD_HTML_LINK_FILENAME,
-  CLOUD_HTML_LINK_MISSING_FILENAME,
   CLOUD_ARTIFACT_NAME,
   CLOUD_ARTIFACT_CONTENT,
   ACTIVE_WORKBENCH_SELECTOR,
@@ -2063,10 +2008,8 @@ export {
   CLOUD_FEATURES_ONLY,
   CLOUD_VISION_ONLY,
   PLUGINS_ONLY,
-  AUTOMATION_ONLY,
   MEMORY_ONLY,
   WORKTREE_STATUS_ONLY,
-  TOOL_BLOCK_ORDER_ONLY,
   QUEUE_NAVIGATION_ONLY,
   GUIDANCE_BACKGROUND_ONLY,
   GUIDANCE_SCROLL_ONLY,
@@ -2114,12 +2057,6 @@ export {
   CONNECTOR_AUTH_UNMATCHED_RESUME_COMPLETION_TEXT,
   STARTUP_NETWORK_PROBE_MARKETPLACE_NAME,
   STARTUP_NETWORK_PROBE_MARKETPLACE_URL,
-  AUTOMATION_NAME,
-  AUTOMATION_PROMPT,
-  AUTOMATION_COMPLETION_TEXT,
-  AUTOMATION_SCHEDULE_TIMEOUT_MS,
-  QUALIFIED_SKILL_MENTION_PROMPT,
-  QUALIFIED_SKILL_MENTION_COMPLETION_TEXT,
   readCommandLineOption,
   getActiveOnlyModes,
   validateDesktopSegmentOptions,

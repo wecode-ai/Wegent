@@ -8,8 +8,8 @@ import { setTimeout as delay } from 'node:timers/promises'
 import { BUFFER_BYTES, git, pin, unpin, withLock } from './git.mjs'
 import { digest, optionalJson, readJson, writeJson, syncDirectory } from './storage.mjs'
 
-export async function startWorker(root) {
-  const output = openSync(join(root, 'worker.log'), 'a', 0o600)
+export async function startWorker(root, { logFile = join(root, 'worker.log') } = {}) {
+  const output = logFile === null ? null : openSync(logFile, 'a', 0o600)
   try {
     const child = spawn(
       process.execPath,
@@ -17,7 +17,7 @@ export async function startWorker(root) {
       {
         detached: true,
         windowsHide: true,
-        stdio: ['ignore', output, output],
+        stdio: output === null ? 'ignore' : ['ignore', output, output],
       }
     )
     await new Promise((resolve, reject) => {
@@ -25,8 +25,9 @@ export async function startWorker(root) {
       child.once('error', reject)
     })
     child.unref()
+    return child.pid
   } finally {
-    closeSync(output)
+    if (output !== null) closeSync(output)
   }
 }
 
@@ -183,7 +184,16 @@ async function hasPending(root) {
   return false
 }
 
-export async function processQueue(root) {
+export async function processQueue(root, options = {}) {
+  while (true) {
+    if (!(await drainQueue(root, options))) return
+  }
+}
+
+async function drainQueue(
+  root,
+  { onArchive = async () => {}, processJob, onError = console.error }
+) {
   const { workspace, records } = await readJson(join(root, 'workspace.json'))
   const hooks = join(root, 'empty-hooks')
   const acquired = await withLock(
@@ -199,22 +209,31 @@ export async function processQueue(root) {
           try {
             const path = join(root, 'pending', entry.name)
             const job = await readJson(path)
-            await archive(root, records, job)
+            if (processJob) await processJob(job)
+            else {
+              await archive(root, records, job)
+              await onArchive(join(records, digest(job.input.event_id)))
+            }
             const execution = digest(job.input.execution_id)
             const reference = 'refs/wegent/turn-diff/' + digest(root) + '/' + execution
             await withLock(workspace, reference + '-capture-lock', hooks, async () => {
-              const state = await readJson(join(root, 'executions', execution, 'state.json'))
+              const state = await optionalJson(join(root, 'executions', execution, 'state.json'))
+              if (!state && (await optionalJson(path)))
+                throw new Error('Execution state is missing')
+              // Acknowledge the consumed job before releasing the trees it
+              // needs. A crash after this point can leak refs, but a retried
+              // job never reads a tree that Git may already have collected.
+              await rm(path, { force: true })
+              await syncDirectory(join(root, 'pending'))
               // A producer may die after queue publication but before baseline
               // publication. Keep the persisted state's tree reachable.
-              if (state.closed) await unpin(workspace, state.reference, hooks)
-              else await pin(workspace, state.reference, state.tree, hooks)
+              if (state?.closed) await unpin(workspace, state.reference, hooks)
+              else if (state) await pin(workspace, state.reference, state.tree, hooks)
               for (const reference of job.references) await unpin(workspace, reference, hooks)
-              await rm(path)
-              await syncDirectory(join(root, 'pending'))
             })
           } catch (error) {
             failed = true
-            console.error(new Date().toISOString(), entry.name, error.message)
+            await onError(new Date().toISOString(), entry.name, error.message)
           }
         }
         if (!(await hasPending(root))) break
@@ -226,6 +245,6 @@ export async function processQueue(root) {
     },
     { wait: false }
   )
-  // Cover an enqueue racing the worker's last empty scan and lock release.
-  if (acquired && (await hasPending(root))) await startWorker(root)
+  // Recheck late enqueues in the same worker so its exit covers all accepted work.
+  return acquired && (await hasPending(root))
 }

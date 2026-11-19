@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict'
 import { Readable } from 'node:stream'
+import { ServerResponse } from 'node:http'
 import test from 'node:test'
 import { gzipSync, zstdCompressSync } from 'node:zlib'
 import { runInNewContext } from 'node:vm'
+import { DesktopE2EServer } from '../e2e/desktop/modules/desktop-server.mjs'
 import { createMcpElicitationModel } from '../e2e/desktop/modules/mcp-elicitation-model.mjs'
 import { readRequestBody } from '../e2e/desktop/modules/response-protocol.mjs'
 import {
@@ -158,7 +160,12 @@ for (const [surface, createScenario] of [
         assert.equal(call.name, 'exec_command')
         command = JSON.parse(call.arguments)
       }
-      assert.equal(command.cmd, `touch '${workspacePath}/stand-in-approved.txt'`)
+      const createFile = `touch '${workspacePath}/stand-in-approved.txt'`
+      const expectedCommand =
+        surface === 'action'
+          ? `${createFile} && rm '${workspacePath}/stand-in-firm.tmp'`
+          : createFile
+      assert.equal(command.cmd, expectedCommand)
       assert.equal(command.workdir, workspacePath)
       assert.equal(command.sandbox_permissions, 'require_escalated')
       assert.equal(command.justification, '确认后创建隔离测试工作区中的验证文件。')
@@ -207,4 +214,25 @@ test('keeps unsupported confirmation tools fatal and captures their complete sch
     { type: 'additional_tools', role: null, tools: additionalTools },
   ])
   assert.ok(!JSON.stringify(diagnostic).includes('test-only-header'))
+})
+
+test('retains failed scenario model requests without recording authorization headers', async () => {
+  const failure = new Error('Scenario assertion failed')
+  const body = { input: [{ role: 'user', content: 'historical-plugin-fixture' }] }
+  const server = new DesktopE2EServer('/workspace', '/workspace', {
+    async handleHttp() {
+      throw failure
+    },
+  })
+  server.url = 'http://localhost'
+  const request = Readable.from([JSON.stringify(body)])
+  request.method = 'POST'
+  request.url = '/v1/responses'
+  request.headers = { authorization: 'Bearer synthetic-sensitive-header' }
+  await assert.rejects(
+    server.handle(request, new ServerResponse(request)),
+    error => error === failure
+  )
+  assert.deepEqual(server.modelRequests, [{ body, scenario: server.scenario, failed: true }])
+  assert.equal(JSON.stringify(server.modelRequests).includes('synthetic-sensitive-header'), false)
 })

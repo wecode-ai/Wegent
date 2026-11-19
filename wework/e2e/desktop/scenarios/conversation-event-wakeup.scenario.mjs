@@ -6,6 +6,7 @@ import { requestExecutor } from '../modules/executor-rpc.mjs'
 import {
   createConversationEventModel,
   findEventFact as find,
+  WORKFLOW_CONFLICT_TOPIC,
 } from '../modules/conversation-event-model.mjs'
 import { modelRequestTexts } from '../modules/model-tool-output.mjs'
 import { waitForBundledMarketplaceRegistration } from '../modules/plugin-flows.mjs'
@@ -22,6 +23,7 @@ import {
   selectE2EModel,
 } from '../modules/shared.mjs'
 import {
+  assistantMessage,
   createSse,
   handleEmptyReplyPrediction,
   readRequestBody,
@@ -33,7 +35,7 @@ const MARKER = 'WEWORK_CONVERSATION_EVENT'
 const PROVIDER = '@test/connection-source/records'
 
 export function createDesktopScenario(options) {
-  const base = createBridgeScenario(options)
+  const base = createBridgeScenario(options, { versionedEventTypes: ['git.event'] })
   const {
     resultDir,
     electronUserDataDirectory,
@@ -51,6 +53,16 @@ export function createDesktopScenario(options) {
   let cancellationEvidence = null
   let questionOutput
   let sequence = 0
+  let busyResponse
+  let busyStarted = false
+  const releaseBusy = () => {
+    if (!busyResponse) return
+    const { response, id } = busyResponse
+    busyResponse = undefined
+    response.end(
+      createSse([assistantMessage(`${MARKER}_workflow_BUSY_FINISHED`), responseCompleted(id)])
+    )
+  }
   const rpc = (control, method, params) => requestExecutor(control, method, params, uiTimeoutMs)
   const codex = (control, method, params) =>
     rpc(control, 'runtime.codex.app_server.request', { method, params })
@@ -72,12 +84,39 @@ export function createDesktopScenario(options) {
         ['archive-record', 'long-archive-record'].map(id => ({ id, value: JSON.stringify(events) }))
       )
     )
-  const event = (id, text, topicId = 'release-document') => ({
+  const event = (
     id,
-    eventType: 'message.received',
+    text,
+    topicId = phase === 'workflow_conflict' ? WORKFLOW_CONFLICT_TOPIC : 'release-document'
+  ) => ({
+    id,
+    eventType: phase === 'workflow_conflict' ? 'git.event' : 'message.received',
     topicId,
     text,
     at: new Date().toISOString(),
+    ...(phase === 'workflow'
+      ? {
+          external: {
+            eventType: 'tracked.workflow_run',
+            payload: {
+              id: 44231414768,
+              head_sha: 'a'.repeat(40),
+              status: 'completed',
+              conclusion: 'failure',
+            },
+          },
+        }
+      : phase === 'workflow_conflict'
+        ? {
+            objectId: WORKFLOW_CONFLICT_TOPIC,
+            version: id,
+            external: {
+              eventType: 'tracked.workflow_run_pr_conflict',
+              url: 'https://github.com/org/repo/pull/17',
+              payload: { id: 44231414768, head_sha: 'a'.repeat(40), run_attempt: 1 },
+            },
+          }
+        : {}),
   })
 
   return {
@@ -109,6 +148,18 @@ export function createDesktopScenario(options) {
       if (handleEmptyReplyPrediction(body, response)) return true
       if (!modelRequestTexts(body).includes(MARKER)) return false
       modelRequests++
+      if (
+        phase === 'workflow' &&
+        !busyStarted &&
+        modelRequestTexts(body).includes(`${MARKER}_workflow_BUSY_HOLD`)
+      ) {
+        busyStarted = true
+        const id = `conversation-busy-${++sequence}`
+        response.writeHead(200, { 'content-type': 'text/event-stream' })
+        response.write(createSse([responseCreated(id)]))
+        busyResponse = { response, id }
+        return true
+      }
       const held = phase === 'human' ? human.intercept(modelRequestTexts(body), response) : null
       if (held) return held
       const id = `conversation-event-${++sequence}`
@@ -141,10 +192,18 @@ export function createDesktopScenario(options) {
       active = true
       let originalAddress
       try {
-        for (const story of ['ordinary', 'goal', 'human', 'cancel', 'pause']) {
+        for (const story of [
+          'ordinary',
+          'workflow',
+          'workflow_conflict',
+          'goal',
+          'human',
+          'cancel',
+          'pause',
+        ]) {
           phase = story
           await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
-            value: `${MARKER}_${phase} ${phase === 'ordinary' ? '' : '请创建持续目标，'}请订阅文档变化并在变化后继续。`,
+            value: `${MARKER}_${phase} ${['ordinary', 'workflow', 'workflow_conflict'].includes(phase) ? '' : '请创建持续目标，'}请订阅文档变化并在变化后继续。`,
           })
           await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, { enabled: true })
           await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
@@ -170,12 +229,29 @@ export function createDesktopScenario(options) {
           await control.command('waitFor', '[data-testid="connection-event-status"]', {
             text: '发布文档',
           })
+          if (phase === 'workflow') {
+            await control.command('waitFor', '[data-testid="connection-event-condition"]', {
+              text: '或',
+            })
+          }
+          if (phase === 'workflow_conflict') {
+            await control.command('waitFor', '[data-testid="connection-event-condition"]', {
+              text: '合并冲突',
+            })
+          }
           const debug = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
           const address = debug.workbench.currentRuntimeTask
           assert.ok(address?.taskId)
           if (!originalAddress) originalAddress = address
           assert.equal(address.taskId, originalAddress.taskId)
           assert.equal(address.workspacePath, originalAddress.workspacePath)
+          if (phase === 'workflow') {
+            await control.command(
+              'waitFor',
+              `[data-testid="runtime-local-task-event-${address.taskId}"]`,
+              { visible: true }
+            )
+          }
           const getTask = () => rpc(control, 'runtime.tasks.get', { address })
           await waitForValue(
             getTask,
@@ -338,7 +414,42 @@ export function createDesktopScenario(options) {
           // A negative observation window verifies that unrelated events and a
           // user pause never start model turns. This is not a UI readiness delay.
           events.push(event(`${phase}-ignored`, 'Unrelated document signal', 'unrelated-document'))
+          if (phase === 'workflow_conflict') {
+            const stale = event('workflow-conflict-stale', 'Conflict on a stale head')
+            stale.external.payload.head_sha = 'b'.repeat(40)
+            events.push(stale)
+          }
+          if (phase === 'workflow') {
+            for (const patch of [
+              { id: 9 },
+              { head_sha: 'b'.repeat(40) },
+              { status: 'in_progress' },
+              { conclusion: 'cancelled' },
+            ]) {
+              const ignored = event(
+                `workflow-ignored-${JSON.stringify(patch)}`,
+                'Nonmatching workflow state'
+              )
+              Object.assign(ignored.external.payload, patch)
+              events.push(ignored)
+            }
+          }
           await saveEvents()
+          if (phase === 'workflow' || phase === 'workflow_conflict') {
+            const savedAt = Date.now()
+            await waitForValue(
+              getTask,
+              result =>
+                result.task.runtimeHandle?.connectionEventSubscriptions?.some(
+                  item =>
+                    item.subscription_key === `${MARKER}_${phase}` &&
+                    !item.error_code &&
+                    item.last_collected_at >= savedAt
+                ),
+              'The host must collect this saved workflow batch before the negative observation',
+              30000
+            )
+          }
           if (phase !== 'pause') {
             await waitForValue(
               getTask,
@@ -356,9 +467,43 @@ export function createDesktopScenario(options) {
             assert.equal(modelRequests, requestsBefore, 'Waiting must not poll through model turns')
             await new Promise(resolve => setTimeout(resolve, 100))
           }
+          if (phase === 'workflow') {
+            await control.command('fill', ACTIVE_COMPOSER_SELECTOR, {
+              value: `${MARKER}_workflow_BUSY_HOLD`,
+            })
+            await control.command('waitFor', ACTIVE_SEND_BUTTON_SELECTOR, { enabled: true })
+            await control.command('press', ACTIVE_COMPOSER_SELECTOR, { key: 'Enter' })
+            await waitForValue(
+              getTask,
+              result => busyStarted && result.task.running,
+              'A real model turn must remain active while the event is delivered',
+              modelResponseTimeoutMs
+            )
+          }
           const match = event(`${phase}-event`, `${MARKER}_${phase}_EVENT_RECEIVED`)
           events.push(match, match)
           await saveEvents()
+          if (phase === 'workflow') {
+            await waitForValue(
+              getTask,
+              result =>
+                result.task.runtimeHandle?.connectionEventSubscriptions?.some(
+                  item =>
+                    item.subscription_key === `${MARKER}_workflow` &&
+                    item.status === 'delivered' &&
+                    item.operation_id
+                ),
+              'A received event must enter the existing message queue before the busy turn finishes',
+              30000
+            )
+            assert.equal((await getTask()).task.running, true)
+            assert.equal(
+              completed.has('workflow'),
+              false,
+              'The queued event must not interrupt the active turn'
+            )
+            releaseBusy()
+          }
           if (phase === 'human')
             await human.verifyPending(
               control,
@@ -422,10 +567,12 @@ export function createDesktopScenario(options) {
           )
         )
       } finally {
+        releaseBusy()
         await human.cleanup(control)
       }
     },
     cleanup() {
+      releaseBusy()
       human.release()
     },
     diagnostics() {

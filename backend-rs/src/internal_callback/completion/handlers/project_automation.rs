@@ -18,6 +18,16 @@ pub(crate) async fn handle_project_automation_task_completed<M: Mysql, R: Redis>
     ctx: &Completion<'_, M, R>,
     event: &TaskCompletedEvent<'_>,
 ) {
+    if let Some(app) = ctx.app {
+        match Box::pin(crate::background_jobs::robot::managed::complete(app, event)).await {
+            Ok(true) => return,
+            Ok(false) => {}
+            Err(error) => {
+                tracing::error!(task_id=event.task_id,%error,"managed execution completion failed; queue reconciliation will repair it");
+                return;
+            }
+        }
+    }
     if let Err(error) = crate::background_jobs::project::completion::complete(
         ctx.mysql,
         ctx.redis,

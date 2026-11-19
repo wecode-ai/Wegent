@@ -34,6 +34,32 @@ function setup(user = 8, rows = [receipt], assignee: number | null = 7) {
 afterEach(() => vi.useRealTimers())
 
 describe('Issue reception receipts', () => {
+  it('shows queued delivery separately from received and limits repair to the owner', async () => {
+    const dispatch = {
+      projectId: 'project',
+      issueId: 'issue',
+      humanAssignmentId: 'human',
+      ownerUserId: 7,
+      state: 'queued' as const,
+      reasonCode: 'awaiting_device_ack',
+      runtimeTaskId: null,
+      deliveryId: null,
+      updatedAt: '2026-11-17T02:00:00Z',
+    }
+    const view = setup(8, [{ ...receipt, dispatch_receipt: dispatch }])
+    expect(await screen.findByTestId('issue-assignment-dispatch')).toHaveTextContent(/排队|queued/)
+    expect(screen.queryByText(/助理已接收|Received by stand-in/)).not.toBeInTheDocument()
+    view.unmount()
+    setup(7, [
+      {
+        ...receipt,
+        human_read_at: '2026-11-17T02:00:00Z',
+        dispatch_receipt: { ...dispatch, state: 'blocked_policy', reasonCode: 'tag_mismatch' },
+      },
+    ])
+    expect(await screen.findByTestId('issue-assignment-dispatch')).toHaveTextContent(/标签|tags/)
+    expect(screen.getByTestId('issue-assignment-dispatch-repair')).toBeVisible()
+  })
   it('preserves a hovered receipt while an unrelated issue revision is refreshed', async () => {
     vi.useFakeTimers()
     const rows = [{ ...receipt, stand_in_received_at: '2026-11-07T16:54:00Z' }]

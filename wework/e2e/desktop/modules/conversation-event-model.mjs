@@ -9,6 +9,8 @@ import {
   selectTool,
 } from './response-protocol.mjs'
 
+export const WORKFLOW_CONFLICT_TOPIC = 'https://github.com/org/repo/actions/runs/44231414768'
+
 export function findEventFact(value, predicate) {
   if (typeof value === 'string') {
     try {
@@ -37,12 +39,18 @@ export function createConversationEventModel({
   const completed = new Set()
   function events(body, phase) {
     const marker = `${MARKER}_${phase}`
+    const workflowConflict = phase === 'workflow_conflict'
+    const usesGoal = !['ordinary', 'workflow', 'workflow_conflict'].includes(phase)
     if (modelRequestTexts(body).includes(`${marker}_EVENT_RECEIVED`)) {
       if (phase === 'human') onEvent()
       const input = body.input.findLast(
         item =>
           item.role === 'user' && JSON.stringify(item.content).includes(`${marker}_EVENT_RECEIVED`)
       )
+      assert.ok(input, 'The event must be delivered as a user message')
+      if (input.id !== undefined) {
+        assert.match(input.id, /^msg/, 'Responses rejects message IDs without the msg prefix')
+      }
       const text =
         typeof input.content === 'string'
           ? input.content
@@ -55,9 +63,22 @@ export function createConversationEventModel({
       )
       assert.equal(
         data.events[0].topicId,
-        'release-document',
+        workflowConflict ? WORKFLOW_CONFLICT_TOPIC : 'release-document',
         'Only the selected topic may wake the model'
       )
+      if (phase === 'workflow') {
+        assert.equal(data.events[0].external.payload.id, 44231414768)
+        assert.equal(data.events[0].external.payload.head_sha, 'a'.repeat(40))
+        assert.equal(data.events[0].external.payload.status, 'completed')
+        assert.equal(data.events[0].external.payload.conclusion, 'failure')
+      }
+      if (workflowConflict) {
+        const { external } = data.events[0]
+        assert.equal(external.eventType, 'tracked.workflow_run_pr_conflict')
+        assert.equal(external.payload.id, 44231414768)
+        assert.equal(external.payload.head_sha, 'a'.repeat(40))
+        assert.equal(external.url, 'https://github.com/org/repo/pull/17')
+      }
       if (
         ['goal', 'human'].includes(phase) &&
         !requestContainsToolOutput(body, `${marker}_complete`)
@@ -70,7 +91,7 @@ export function createConversationEventModel({
       completed.add(phase)
       return [assistantMessage(`${marker}_DONE：已收到文档变化，在原会话继续处理。`)]
     }
-    if (phase !== 'ordinary' && !requestContainsToolOutput(body, `${marker}_create_goal`)) {
+    if (usesGoal && !requestContainsToolOutput(body, `${marker}_create_goal`)) {
       return selectedToolCall(
         `${marker}_create_goal`,
         selectTool(body, 'create_goal', {
@@ -92,9 +113,36 @@ export function createConversationEventModel({
         {
           subscription_key: marker,
           source: sources[phase],
-          match: { '/eventType': 'message.received', '/topicId': 'release-document' },
+          match: {
+            '/eventType': workflowConflict ? 'git.event' : 'message.received',
+            '/topicId': workflowConflict ? WORKFLOW_CONFLICT_TOPIC : 'release-document',
+            ...(phase === 'workflow'
+              ? {
+                  '/external/eventType': 'tracked.workflow_run',
+                  '/external/payload/id': 44231414768,
+                  '/external/payload/head_sha': 'a'.repeat(40),
+                  '/external/payload/status': 'completed',
+                  $any: [
+                    { '/external/payload/conclusion': 'success' },
+                    { '/external/payload/conclusion': 'failure' },
+                  ],
+                }
+              : workflowConflict
+                ? {
+                    '/external/payload/id': 44231414768,
+                    '/external/payload/head_sha': 'a'.repeat(40),
+                    $any: [
+                      {
+                        '/external/eventType': 'tracked.workflow_run',
+                        '/external/payload/status': 'completed',
+                      },
+                      { '/external/eventType': 'tracked.workflow_run_pr_conflict' },
+                    ],
+                  }
+                : {}),
+          },
           continuation: `${marker} 文档有变化，请继续原任务。`,
-          wait_for_event: phase !== 'ordinary',
+          wait_for_event: usesGoal,
         },
       ],
     ]

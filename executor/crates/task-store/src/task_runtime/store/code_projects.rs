@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use sha2::{Digest, Sha256};
+#[cfg(test)]
+use std::process::Command;
 use std::{
     path::Path,
-    process::{Command, Stdio},
+    time::{Duration, Instant},
 };
 
 use super::*;
@@ -71,9 +73,11 @@ impl LocalTaskStore {
                 .map_or(true, |value| value.get("execution_environment").is_none())
         };
         // Existing configured projects need no Git discovery. Keep external I/O outside the transaction.
-        let execution_environment = needs_environment
-            .then(|| code_project_execution_environment(roots))
-            .flatten();
+        let execution_environment = if needs_environment {
+            code_project_execution_environment(roots)?
+        } else {
+            None
+        };
         let mut connection = self.connection()?;
         let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
         // Archived projects remain tombstones; refreshing must not resurrect them.
@@ -203,24 +207,35 @@ impl LocalTaskStore {
     }
 }
 
-fn code_project_execution_environment(roots: &[String]) -> Option<Value> {
-    let root = roots.first()?;
-    let repository_root = trace("projects_list.git.toplevel", || {
-        git_output(root, &["rev-parse", "--show-toplevel"])
-    })?;
-    let remote_url = trace("projects_list.git.origin", || {
-        git_output(&repository_root, &["remote", "get-url", "origin"])
-    })?;
+fn code_project_execution_environment(roots: &[String]) -> Result<Option<Value>, TaskRuntimeError> {
+    let Some(root) = roots.first() else {
+        return Ok(None);
+    };
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let Some(repository_root) = trace("projects_list.git.toplevel", || {
+        git_output(root, &["rev-parse", "--show-toplevel"], deadline)
+    })?
+    else {
+        return Ok(None);
+    };
+    let Some(remote_url) = trace("projects_list.git.origin", || {
+        git_output(&repository_root, &["remote", "get-url", "origin"], deadline)
+    })?
+    else {
+        return Ok(None);
+    };
     let branch = trace("projects_list.git.branch", || {
-        git_output(&repository_root, &["branch", "--show-current"])
-    })
+        git_output(&repository_root, &["branch", "--show-current"], deadline)
+    })?
     .unwrap_or_default();
-    let repository_name = Path::new(&repository_root)
+    let Some(repository_name) = Path::new(&repository_root)
         .file_name()
         .and_then(|value| value.to_str())
-        .filter(|value| !value.is_empty())?
-        .to_owned();
-    Some(json!({
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok(None);
+    };
+    Ok(Some(json!({
         "repositories": [{
             "name": repository_name,
             "url": remote_url,
@@ -229,24 +244,40 @@ fn code_project_execution_environment(roots: &[String]) -> Option<Value> {
             "primary": true,
         }],
         "setup_steps": [],
-    }))
+    })))
 }
 
-fn git_output(cwd: &str, args: &[&str]) -> Option<String> {
-    let mut command = Command::new("git");
-    wegent_workspace::native_git::clear_local_git_env(&mut command);
-    let output = command
-        .args(args)
-        .current_dir(cwd)
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
+fn git_output(
+    cwd: &str,
+    args: &[&str],
+    deadline: Instant,
+) -> Result<Option<String>, TaskRuntimeError> {
+    let output = wegent_workspace::native_git::run_git_capture_blocking(
+        &wegent_workspace::native_git::owned_args(args),
+        Some(Path::new(cwd)),
+        &std::env::vars().collect(),
+        deadline.saturating_duration_since(Instant::now()),
+        64 * 1024,
+    );
+    let output = match output {
+        Ok(output) => output,
+        Err(error) if error.timed_out => return Err(TaskRuntimeError::ProjectDiscovery(
+            "Project Git discovery timed out; the project remains available for discovery on the next listing".to_owned(),
+        )),
+        Err(_) => return Ok(None),
+    };
+    if output.truncated {
+        return Err(TaskRuntimeError::ProjectDiscovery(
+            "Project Git metadata exceeds the capture limit".to_owned(),
+        ));
     }
-    let value = String::from_utf8(output.stdout).ok()?.trim().to_owned();
-    (!value.is_empty()).then_some(value)
+    if !output.success {
+        return Ok(None);
+    }
+    Ok(String::from_utf8(output.stdout)
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty()))
 }
 
 #[cfg(test)]

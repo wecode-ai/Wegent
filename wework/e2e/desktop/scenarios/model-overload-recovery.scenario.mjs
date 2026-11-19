@@ -1,3 +1,7 @@
+import {
+  OVERLOAD_FIRST_RETRY_DELAY_MS,
+  assertOverloadRetryTiming,
+} from '../modules/overload-retry-timing.mjs'
 import { readRequestBody } from '../modules/response-protocol.mjs'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
@@ -262,6 +266,11 @@ export function createDesktopScenario({
       )
       await nativeGate.release()
       await gates.wait('live-recovery')
+      const recovery = await gates.read('live-recovery')
+      const retryInput = recovery.value.payload.data.block.tool_input
+      assert.equal(retryInput.retry_reason, 'overload')
+      assert.equal(retryInput.retry_attempt, 1)
+      assert.equal(retryInput.retry_max_attempts, 4)
       await gates.release('old-failed-history')
       const ordering = await gates.save(resultDir, 'overload-history-race.json', [
         'old-failed-history',
@@ -272,11 +281,12 @@ export function createDesktopScenario({
       await control.command('waitFor', `${WORKBENCH} [data-testid="pause-response-button"]`)
       await waitUntil(
         () => requests.length === 3,
-        // Native recovery now deliberately waits 10 seconds before its first retry.
-        10_000 + uiTimeoutMs,
+        // Keep the positive wait aligned with the configured native retry deadline.
+        OVERLOAD_FIRST_RETRY_DELAY_MS + uiTimeoutMs,
         'The direct-provider overload did not automatically continue the saved conversation'
       )
       const log = await readFile(join(resultDir, 'executor.log'), 'utf8')
+      assertOverloadRetryTiming(log)
       const snapshot = JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body'))
       const taskId = snapshot.workbench?.currentRuntimeTask?.taskId
       assert.ok(taskId, 'The overload task has no identity')
@@ -358,15 +368,30 @@ export function createDesktopScenario({
         enabled: true,
       })
       await control.command('press', COMPOSER, { key: 'Enter' })
-      await control.command('waitFor', `${WORKBENCH} [data-testid="assistant-error-card"]`, {
-        text: TERMINAL_ERROR,
-      })
+      // This idle send starts a new turn. Wait for its canonical history view,
+      // not the transient guidance view replaced by the terminal transcript read.
+      const terminalMessage = `${WORKBENCH} [data-message-id^="runtime-view:"][data-message-id$=":assistant"]`
+      await control.command('waitFor', `${terminalMessage} [data-testid="assistant-error-card"]`)
       await waitUntil(
         async () =>
           JSON.parse(await control.command('getWorkbenchDebugSnapshot', 'body')).pane?.status
             ?.isBusy === false,
         uiTimeoutMs,
         'A real terminal error remained in recovery'
+      )
+      const detailsToggle = `${terminalMessage} [data-testid="assistant-error-details-toggle"]`
+      assert.equal(
+        await control.command('getAttribute', detailsToggle, { value: 'aria-expanded' }),
+        'false',
+        'Terminal error details must start collapsed'
+      )
+      await control.command('click', detailsToggle)
+      await control.command(
+        'waitFor',
+        `${terminalMessage} [data-testid="assistant-error-details"]`,
+        {
+          text: TERMINAL_ERROR,
+        }
       )
       assert.equal(terminalRequests, 1, 'A real terminal error was retried as recoverable overload')
       assert.equal(
@@ -406,8 +431,8 @@ export function createDesktopScenario({
         uiTimeoutMs,
         'Cancellation did not stop overload backoff'
       )
-      // Observe beyond the real ten-second retry deadline, including scheduling margin.
-      await new Promise(resolve => setTimeout(resolve, 10_500))
+      // Observe beyond the configured retry deadline, including scheduling margin.
+      await new Promise(resolve => setTimeout(resolve, OVERLOAD_FIRST_RETRY_DELAY_MS + 500))
       assert.equal(cancelRequests.length, 1, 'A cancelled overload task sent another model request')
       assert.equal(requests.length, 3, 'The completed tool work was replayed')
       active = false

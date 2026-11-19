@@ -6,6 +6,10 @@ use super::*;
 
 const ACTIVE_TURN_STOP_POLL_INTERVAL: Duration = Duration::from_millis(10);
 
+#[cfg(test)]
+#[path = "preparation_cancellation_tests.rs"]
+mod preparation_cancellation_tests;
+
 enum ActiveTurnStopState {
     Missing,
     Pending,
@@ -98,6 +102,34 @@ fn complete_local_execution_link(
 }
 
 impl RuntimeWorkRpcHandler {
+    pub(super) fn stop_preparing_turn_before_send_gate(
+        &self,
+        task_id: &str,
+    ) -> Result<bool, AppIpcError> {
+        let mut preparing = self
+            .preparing_turns
+            .lock()
+            .expect("preparation map poisoned");
+        let Some(preparation) = preparing.get_mut(task_id) else {
+            return Ok(false);
+        };
+        let owner = preparation.owner_request.clone();
+        let mut active = self
+            .active_local_executions
+            .lock()
+            .expect("active local execution map poisoned");
+        preparation.cancellation_requested = true;
+        if let Some(control) = active.get_mut(task_id) {
+            request_execution_stop(control);
+        }
+        drop(active);
+        drop(preparing);
+        if let Some(owner) = owner {
+            self.cancel_stand_in_owner_request(task_id, &owner)?;
+        }
+        Ok(true)
+    }
+
     pub(super) fn start_local_task_execution(
         &self,
         local_task_id: String,
@@ -352,28 +384,31 @@ impl RuntimeWorkRpcHandler {
         local_task_id: &str,
         execution_id: u64,
     ) -> bool {
-        {
-            let mut active = self
-                .active_local_executions
-                .lock()
-                .expect("active local execution map lock should not be poisoned");
-            let Some(control) = active.get_mut(local_task_id) else {
-                return false;
-            };
-            if control.execution_id != execution_id || !control.stop_requested {
-                return false;
-            }
-            control.stop_acknowledged = true;
-            active.remove(local_task_id);
+        let mut active = self
+            .active_local_executions
+            .lock()
+            .expect("active local execution map lock should not be poisoned");
+        let Some(control) = active.get_mut(local_task_id) else {
+            return false;
+        };
+        if control.execution_id != execution_id || !control.stop_requested {
+            return false;
         }
-        self.store.update_task(local_task_id, |link| {
+        let updated = self.store.update_task(local_task_id, |link| {
             link.updated_at = now_ms();
             link.completed_at = Some(link.updated_at);
             link.status = "cancelled".to_owned();
             link.interaction_status = None;
             crate::runtime_work::lifecycle::settle_native_execution(link, "cancelled");
             apply_local_execution_state(link, false, None);
+            // A missing claim acknowledges the stop to replacement admission.
+            // Publish the terminal state before releasing it, as normal completion does.
+            active.remove(local_task_id);
+            drop(active);
         });
+        if updated.is_none() {
+            self.finish_local_task_execution(local_task_id, execution_id);
+        }
         if let Some(link) = self.local_task_link(local_task_id) {
             self.project_runtime_link_status_now(&link);
         }

@@ -608,6 +608,21 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
         text: '协作交付目标',
       })
       await assertToolbarTypography(control)
+      await selectCollaborationProjectView(control, CONTENT, 'milestones')
+      await control.command('waitFor', scoped('milestones-back'))
+      await selectCollaborationProjectView(control, CONTENT, 'table')
+      assert.equal(
+        await control.command('getAttribute', scoped('milestone-filter'), { value: 'data-value' }),
+        localId,
+        'Milestones and table must use the same selected milestone'
+      )
+      await selectCollaborationProjectView(control, CONTENT, 'board')
+      assert.equal(
+        await control.command('getAttribute', scoped('milestone-filter'), { value: 'data-value' }),
+        localId,
+        'Returning to board must retain the shared milestone'
+      )
+      await showAllCollaborationIssues(control, CONTENT)
       await selectMilestone(control, 'all', 'milestone-filter')
       await control.command('click', scoped('cloud-board-parent-layout'))
       await control.command('waitFor', scoped('cloud-board-parent-rows'))
@@ -674,6 +689,7 @@ export function createDesktopScenario({ captureScreenshot, uiTimeoutMs, workbenc
       )
       await selectMilestone(control, localId, 'milestone-filter')
       await openMilestones(control)
+      await control.command('clickWhenEnabled', scoped('milestones-back'))
       await deleteMilestone(control, localId)
       await captureScreenshot(control, 'milestones-09-local-deleted.png', 'body')
       await selectCollaborationProjectView(control, CONTENT, 'board')

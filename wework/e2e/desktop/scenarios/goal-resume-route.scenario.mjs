@@ -7,6 +7,7 @@ import { ensureTaskRowVisible } from '../modules/memory-tool-flows.mjs'
 import {
   ACTIVE_COMPOSER_SELECTOR,
   ACTIVE_WORKBENCH_SELECTOR,
+  MODEL_REQUEST_TIMEOUT_MS,
   createSingleRootLocalProject,
 } from '../modules/shared.mjs'
 import {
@@ -25,7 +26,7 @@ const MARKER = 'WEWORK_GOAL_RESUME_ROUTE'
 const RECOVERED = `${MARKER}_RECOVERED`
 
 export function createDesktopScenario(options) {
-  const existing = options.checkpoint === 'goal-resume-route' ? null : createStoppedGoal(options)
+  const existing = createStoppedGoal(options)
   let active = false
   let requests = 0
   let restartDesktopApp
@@ -117,10 +118,11 @@ export function createDesktopScenario(options) {
           'clickWhenEnabled',
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="resume-goal-button"]`
         )
+        // Resuming after a restart starts Codex and reopens the thread before rendering the reply.
         await control.command(
           'waitFor',
           `${ACTIVE_WORKBENCH_SELECTOR} [data-testid="message-assistant"]`,
-          { text: RECOVERED }
+          { text: RECOVERED, timeoutMs: MODEL_REQUEST_TIMEOUT_MS }
         )
         const settled = await waitForWorkbenchDebugState(
           control,

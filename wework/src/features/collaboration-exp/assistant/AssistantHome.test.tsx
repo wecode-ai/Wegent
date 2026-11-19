@@ -112,6 +112,17 @@ function setupWorkbench() {
   }
   const state = {
     user: { id: 7 },
+    devices: [
+      {
+        id: 1,
+        device_id: 'device-1',
+        name: 'Local device',
+        status: 'online',
+        is_default: true,
+        device_type: 'local',
+        bind_shell: 'claudecode',
+      },
+    ],
     runtimeWork: { projects: [], chats: [], totalTasks: 0 } as RuntimeWorkListResponse | null,
     runtimeWorkLoad: { phase: 'ready', error: null } as RuntimeWorkLoadState,
   }
@@ -937,6 +948,43 @@ describe('AssistantHome', () => {
     await waitFor(() => expect(onDelete).toHaveBeenCalledWith(role))
   })
 
+  it('registers the primary assistant with the selected project policy', async () => {
+    const policy = { automatic: false, askBeforeAct: true }
+    const onRegister = vi.fn().mockResolvedValue(true)
+    render(
+      <AssistantTeam
+        settings={{
+          ...settings,
+          primary: {
+            ...settings.primary!,
+            collaboration: {
+              enabled: true,
+              allProjects: true,
+              projects: [],
+              excludedProjects: [],
+              tags: [],
+              policy: { automatic: true, askBeforeAct: false },
+              projectPolicies: [{ id: 'project-1', store: 'cloud', policy }],
+            },
+          },
+        }}
+        projects={[{ project: experienceProjectFixture(), issues: [] }]}
+        onConfigure={vi.fn()}
+        onDelete={vi.fn()}
+        onRegister={onRegister}
+      />
+    )
+    fireEvent.click(screen.getByTestId('collaboration-exp-assistant-register-@primary-project-1'))
+    await waitFor(() =>
+      expect(onRegister).toHaveBeenCalledWith(
+        undefined,
+        expect.any(String),
+        { id: 'project-1', store: 'cloud' },
+        policy
+      )
+    )
+  })
+
   it('removes only the confirmed specialist settings and preserves the primary assistant', async () => {
     const { api } = setupWorkbench()
     const role = { ...newStandInRole('device-1', 'reviewer'), name: 'Reviewer' }
@@ -954,6 +1002,234 @@ describe('AssistantHome', () => {
     )
     expect(api.conversation).not.toHaveBeenCalled()
     expect(mocks.source.refresh).toHaveBeenCalled()
+  })
+
+  it('keeps a specialist when project roster cleanup fails so deletion stays retryable', async () => {
+    const { api } = setupWorkbench()
+    const role = { ...newStandInRole('device-1', 'reviewer'), name: 'Reviewer' }
+    mocks.source.settings = { ...settings, roles: [role] }
+    const rosterSave = vi.fn().mockRejectedValue(new Error('roster offline'))
+    ;(
+      mocks.workbench.services as {
+        sharedWorkspaceApi: { projects: Record<string, unknown> }
+      }
+    ).sharedWorkspaceApi.projects = {
+      listAssistantRoster: vi.fn().mockResolvedValue([
+        {
+          id: 'roster-reviewer',
+          projectId: 'first-shared-project',
+          userId: 7,
+          userName: 'Owner',
+          roleId: 'reviewer',
+          endpointRef: 'local_wework:7:reviewer',
+          endpointKind: 'local_wework',
+          displayName: 'Reviewer',
+          enabled: true,
+          capabilityTags: ['review'],
+          autonomyPolicy: { automatic: true, askBeforeAct: false },
+          availability: 'online',
+          version: 1,
+        },
+      ]),
+      saveAssistantRosterEntry: rosterSave,
+    }
+    render(
+      <AssistantHome
+        active
+        projects={[
+          {
+            project: experienceProjectFixture({
+              id: 'first-shared-project',
+              project_store: 'backend',
+            }),
+            issues: [],
+          },
+        ]}
+      />
+    )
+    fireEvent.click(screen.getByTestId('collaboration-exp-assistant-team-toggle'))
+    fireEvent.click(screen.getByTestId('collaboration-exp-assistant-delete-reviewer'))
+    fireEvent.click(screen.getByTestId('collaboration-exp-assistant-delete-confirm'))
+    await waitFor(() => expect(rosterSave).toHaveBeenCalledOnce())
+    expect(api.personalSave).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog')).toHaveTextContent('assistant.deleteRoleDescription')
+  })
+
+  it('registers the role filter tags that dispatch uses for scoped Issue intake', async () => {
+    setupWorkbench()
+    const role = {
+      ...newStandInRole('device-1', 'reviewer'),
+      name: 'Reviewer',
+      collaboration: {
+        enabled: true,
+        allProjects: false,
+        projects: [{ id: 'first-shared-project', store: 'cloud' as const }],
+        excludedProjects: [],
+        tags: ['review'],
+      },
+    }
+    mocks.source.settings = { ...settings, roles: [role] }
+    const rosterSave = vi.fn().mockResolvedValue({})
+    ;(
+      mocks.workbench.services as {
+        sharedWorkspaceApi: { projects: Record<string, unknown> }
+      }
+    ).sharedWorkspaceApi.projects = {
+      listAssistantRoster: vi.fn().mockResolvedValue([]),
+      saveAssistantRosterEntry: rosterSave,
+    }
+    render(
+      <AssistantHome
+        active
+        projects={[
+          {
+            project: experienceProjectFixture({
+              id: 'first-shared-project',
+              project_store: 'backend',
+            }),
+            issues: [],
+          },
+        ]}
+      />
+    )
+    fireEvent.click(screen.getByTestId('collaboration-exp-assistant-team-toggle'))
+    expect(
+      screen.getByTestId('collaboration-exp-assistant-register-reviewer-first-shared-project')
+    ).toHaveTextContent('create.registerInProject')
+    fireEvent.click(
+      screen.getByTestId('collaboration-exp-assistant-register-reviewer-first-shared-project')
+    )
+    await waitFor(() =>
+      expect(rosterSave).toHaveBeenCalledWith(
+        'first-shared-project',
+        expect.objectContaining({ capabilityTags: ['review'] })
+      )
+    )
+  })
+
+  it('registers a cloud-device role with the matching endpoint identity', async () => {
+    setupWorkbench()
+    ;(mocks.workbench.state as Record<string, unknown>).devices = [
+      {
+        id: 1,
+        device_id: 'cloud-1',
+        name: 'Cloud assistant',
+        status: 'online',
+        is_default: false,
+        device_type: 'cloud',
+        bind_shell: 'claudecode',
+      },
+    ]
+    const role = {
+      ...newStandInRole('cloud-1', 'reviewer'),
+      name: 'Reviewer',
+      collaboration: {
+        enabled: true,
+        allProjects: false,
+        projects: [{ id: 'first-shared-project', store: 'cloud' as const }],
+        excludedProjects: [],
+        tags: ['review'],
+      },
+    }
+    mocks.source.settings = { ...settings, roles: [role] }
+    const rosterSave = vi.fn().mockResolvedValue({})
+    const stale = {
+      id: 'stale-reviewer',
+      projectId: 'first-shared-project',
+      userId: 7,
+      userName: 'Owner',
+      roleId: 'reviewer',
+      endpointRef: 'local_wework:7:reviewer',
+      endpointKind: 'local_wework' as const,
+      displayName: 'Reviewer',
+      enabled: true,
+      capabilityTags: ['review'],
+      autonomyPolicy: { automatic: true, askBeforeAct: false },
+      availability: 'online' as const,
+      version: 3,
+    }
+    ;(
+      mocks.workbench.services as {
+        sharedWorkspaceApi: { projects: Record<string, unknown> }
+      }
+    ).sharedWorkspaceApi.projects = {
+      listAssistantRoster: vi.fn().mockResolvedValue([stale]),
+      saveAssistantRosterEntry: rosterSave,
+    }
+    render(
+      <AssistantHome
+        active
+        projects={[
+          {
+            project: experienceProjectFixture({
+              id: 'first-shared-project',
+              project_store: 'backend',
+            }),
+            issues: [],
+          },
+        ]}
+      />
+    )
+    fireEvent.click(screen.getByTestId('collaboration-exp-assistant-team-toggle'))
+    fireEvent.click(
+      screen.getByTestId('collaboration-exp-assistant-register-reviewer-first-shared-project')
+    )
+    await waitFor(() => expect(rosterSave).toHaveBeenCalledTimes(2))
+    expect(rosterSave.mock.calls[0][1]).toMatchObject({
+      endpointRef: stale.endpointRef,
+      enabled: false,
+      version: stale.version,
+    })
+    expect(rosterSave.mock.calls[1][1]).toMatchObject({
+      endpointRef: 'cloud_device:7:reviewer',
+      availability: 'online',
+    })
+  })
+
+  it('does not guess a project endpoint when the assistant device is unavailable', async () => {
+    setupWorkbench()
+    ;(mocks.workbench.state as Record<string, unknown>).devices = []
+    const role = {
+      ...newStandInRole('missing-device', 'reviewer'),
+      name: 'Reviewer',
+      collaboration: {
+        enabled: true,
+        allProjects: false,
+        projects: [{ id: 'first-shared-project', store: 'cloud' as const }],
+        excludedProjects: [],
+        tags: ['review'],
+      },
+    }
+    mocks.source.settings = { ...settings, roles: [role] }
+    const rosterSave = vi.fn().mockResolvedValue({})
+    ;(
+      mocks.workbench.services as {
+        sharedWorkspaceApi: { projects: Record<string, unknown> }
+      }
+    ).sharedWorkspaceApi.projects = {
+      listAssistantRoster: vi.fn().mockResolvedValue([]),
+      saveAssistantRosterEntry: rosterSave,
+    }
+    render(
+      <AssistantHome
+        active
+        projects={[
+          {
+            project: experienceProjectFixture({
+              id: 'first-shared-project',
+              project_store: 'backend',
+            }),
+            issues: [],
+          },
+        ]}
+      />
+    )
+    fireEvent.click(screen.getByTestId('collaboration-exp-assistant-team-toggle'))
+    fireEvent.click(
+      screen.getByTestId('collaboration-exp-assistant-register-reviewer-first-shared-project')
+    )
+    expect(screen.getByRole('alert')).toHaveTextContent('assistant.deviceUnavailable')
+    expect(rosterSave).not.toHaveBeenCalled()
   })
 
   it('restores the ordinary-question draft after remounting without creating a conversation', () => {

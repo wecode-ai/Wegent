@@ -217,6 +217,69 @@ describe("IssueActivityPanel", () => {
     expect(container.textContent).toContain("New current message");
   });
 
+  it("preserves activity cards and execution actions for manager dispatches", async () => {
+    const message: ProjectChatMessage = {
+      messageId: "manager-dispatch",
+      projectId: issue.cloud_project_id,
+      taskId: issue.id,
+      sequenceNumber: 1,
+      sender: { type: "agent", id: "manager", name: "Coordinator" },
+      type: "text",
+      content: "",
+      status: "completed",
+      metadata: {
+        dispatch_role: "manager",
+        activity_type: "manager_assignment",
+        dispatch_assignments: [
+          { task_title: "Collect CPU evidence", agent_name: "Collector" },
+        ],
+      },
+      createdAt: issue.created_at,
+      updatedAt: issue.updated_at,
+      runtimeAddress: { deviceId: "device", taskId: "manager-task" },
+    };
+    const onOpenExecution = vi.fn();
+    const api = {
+      activity: {
+        subscribe: vi.fn().mockResolvedValue({
+          snapshot: { messages: [message] },
+          unsubscribe: vi.fn(),
+        }),
+      },
+    } as unknown as Parameters<typeof IssueActivityPanel>[0]["api"];
+    await act(async () =>
+      root.render(
+        <IssueActivityPanel
+          api={api}
+          issue={issue}
+          members={[]}
+          agents={[]}
+          assignments={[]}
+          comments={[]}
+          executions={[]}
+          canComment={false}
+          translate={createCollaborationTranslator("en")}
+          onCommentsChange={vi.fn()}
+          onTaskRead={vi.fn()}
+          onError={vi.fn()}
+          onOpenExecution={onOpenExecution}
+        />,
+      ),
+    );
+    const card = container.querySelector(
+      '[data-testid="cloud-task-activity-card-manager-dispatch"]',
+    );
+    expect(card?.textContent).toContain("Collect CPU evidence");
+    const open = card?.querySelector<HTMLButtonElement>(
+      '[data-testid="cloud-task-manager-execution-manager-dispatch"]',
+    );
+    expect(open).not.toBeNull();
+    await act(async () => open!.click());
+    expect(onOpenExecution).toHaveBeenCalledWith(
+      expect.objectContaining({ address: message.runtimeAddress }),
+    );
+  });
+
   it("updates the actual activity badge and viewer from one execution subscription", async () => {
     const message: ProjectChatMessage = {
       messageId: "running-message",
