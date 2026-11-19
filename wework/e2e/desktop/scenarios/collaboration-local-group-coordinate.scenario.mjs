@@ -299,6 +299,7 @@ async function createIssueAndAssignGroup(control, timeoutMs, title = ISSUE) {
 }
 
 async function waitForActivityText(control, text, timeoutMs) {
+  await control.command('scrollIntoView', scoped('[data-testid="cloud-task-activity-list"]'))
   await control.command('waitFor', scoped('[data-testid="cloud-task-activity-list"]'), {
     text,
     timeoutMs,

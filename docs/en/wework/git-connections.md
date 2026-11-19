@@ -111,6 +111,8 @@ A subscription can combine common `match` conditions with `$any` alternatives. P
 
 When a subscription is armed, retained shared-collector events after its activation boundary remain eligible, so a run completing during setup is not skipped by the sequence baseline. Local and cloud paths share that boundary calculation. Earlier history is not replayed; later events retain the existing sequence, deduplication and durable-delivery flow.
 
+When asked to merge a PR, publish a release, or verify a workflow, the agent subscribes to pending checks or runs required for that outcome, even when waiting is implicit.
+
 For routine waits, prefer `git_wait` with exact `head_sha` and a discovered source selecting one object, omitting `match`. `merge` generates alternatives for terminal checks, merge conflicts even with PENDING checks, and closed or merged PRs. `checks` waits only for check results; `run` waits for completion including cancellation. Expansion happens once at registration; local and cloud delivery store the same actual predicate and the UI describes it without new collectors. Handle existing blockers immediately. A wake still requires checking reviews and protection rules; it is not merge authorization.
 
 Subscriptions wait for new changes after their activation boundary; they do not replay earlier history. A run completing between the initial state read and activation can otherwise be missed by an existing shared collector. Immediately read current state once more after arming; if satisfied, cancel the wait and handle the result. This confirmation is not a polling loop.

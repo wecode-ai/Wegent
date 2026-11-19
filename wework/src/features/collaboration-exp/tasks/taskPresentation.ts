@@ -6,6 +6,6 @@ export function useTaskDescription(row?: ExperienceTaskRow) {
   if (!row) return ''
   if (row.waitingFor.length)
     return t('tasks.waitingFor', { names: row.waitingFor.map(person => person.name).join('、') })
-  if (row.assignee) return row.assignee.name ?? t('tasks.unnamedUser', { id: row.assignee.id })
+  if (row.assignee) return row.assignee.name ?? t('timeline.unknownMember')
   return row.statusName
 }

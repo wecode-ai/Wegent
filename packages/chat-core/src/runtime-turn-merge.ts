@@ -605,6 +605,7 @@ export function mergeRuntimeConversationItem(
         ...local.message,
         ...snapshot.message,
         attachments: snapshot.message.attachments ?? local.message.attachments,
+        source: snapshot.message.source ?? local.message.source,
       },
     };
   }

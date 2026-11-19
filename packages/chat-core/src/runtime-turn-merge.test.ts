@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { RuntimeConversationTurn } from './runtime-conversation'
-import type { RequestUserInputResponse } from './runtime'
+import type { MessageSource, RuntimeConversationTurn } from './runtime-conversation'
+import type { Attachment, RequestUserInputResponse } from './runtime'
 import {
   mergeRuntimeConversationTurns,
   projectRuntimeConversationTurns,
@@ -218,34 +218,43 @@ describe('MCP output history reconciliation', () => {
   })
 })
 
-it('keeps omitted attachment metadata while allowing authoritative empty attachment arrays', () => {
-  const user = (attachments?: unknown[]) => ({
+it('preserves omitted user message metadata and applies explicit snapshot values', () => {
+  const user = (attachments?: Attachment[], source?: MessageSource): RuntimeConversationTurn => ({
     id: 'turn',
-    status: 'done' as const,
+    status: 'done',
     items: [
       {
         id: 'input',
-        type: 'user_message' as const,
+        type: 'user_message',
         message: {
           id: 'user',
-          role: 'user' as const,
+          role: 'user',
           content: 'Inspect',
+          status: 'done',
+          createdAt: '2026-01-01T00:00:00Z',
           attachments,
+          source,
         },
       },
     ],
   })
-  const attached = user([
-    { id: 1, filename: 'report.png', image_width: 320 },
-  ]) as RuntimeConversationTurn
-  const omitted = user() as RuntimeConversationTurn
-  const cleared = user([]) as RuntimeConversationTurn
-  expect(mergeRuntimeConversationTurns([attached], [omitted])[0].items[0]).toMatchObject({
-    message: {
-      attachments: [{ id: 1, filename: 'report.png', image_width: 320 }],
-    },
+  const attachments: Attachment[] = [{
+    id: 1,
+    filename: 'report.png',
+    file_size: 1024,
+    mime_type: 'image/png',
+    status: 'ready',
+    file_extension: 'png',
+    created_at: '2026-01-01T00:00:00Z',
+    image_width: 320,
+  }]
+  const source = { source: 'manual' }
+  const snapshotSource = { source: 'im' }
+  const local = user(attachments, source)
+  expect(mergeRuntimeConversationTurns([local], [user()])[0].items[0]).toMatchObject({
+    message: { attachments, source },
   })
-  expect(mergeRuntimeConversationTurns([attached], [cleared])[0].items[0]).toMatchObject({
-    message: { attachments: [] },
+  expect(mergeRuntimeConversationTurns([local], [user([], snapshotSource)])[0].items[0]).toMatchObject({
+    message: { attachments: [], source: snapshotSource },
   })
 })

@@ -4,6 +4,127 @@
 use super::*;
 
 impl GlobalCapabilityStore {
+    pub(in crate::local::capabilities) fn validate_marketplace_occupancy(
+        &self,
+        spec: &PluginSyncSpec,
+        entry: &Value,
+        manifest: &Value,
+    ) -> Result<(), CapabilitySyncError> {
+        self.validate_marketplace_preparation(spec, entry)?;
+        for (market, claude) in [
+            (self.codex_marketplace_dir(&spec.marketplace), false),
+            (self.claude_marketplace_dir(&spec.marketplace), true),
+        ] {
+            if claude && self.codex_only_plugins {
+                continue;
+            }
+            let target = market
+                .join("plugins")
+                .join(self.marketplace_plugin_name(spec, claude));
+            if !exists(&target) {
+                continue;
+            }
+            let (runtime, field) =
+                if claude && spec.marketplace != PERSONAL_SHARED_PLUGIN_MARKETPLACE {
+                    (self.plugin_runtime_link(spec), "claude_link")
+                } else {
+                    (self.plugin_codex_link(spec), "codex_link")
+                };
+            if target.is_symlink()
+                && fs::read_link(&target).ok().is_some_and(|link| {
+                    let linked = if link.is_absolute() {
+                        link
+                    } else {
+                        target.parent().unwrap().join(link)
+                    };
+                    // Uninstall retains versioned caches. A new install may replace
+                    // the source only when this exact cache still belongs to its key.
+                    let retained = self.shared_packages
+                        && linked.parent() == runtime.parent()
+                        && manifest
+                            .get("plugin_runtime_owners")
+                            .and_then(|owners| owners.get(linked.to_string_lossy().as_ref()))
+                            .and_then(Value::as_str)
+                            == Some(spec.key.as_str())
+                        && self.ensure_runtime_path(&linked, false).is_ok();
+                    shared_packages::same_entry(&linked, &runtime)
+                        || (spec.marketplace == PERSONAL_SHARED_PLUGIN_MARKETPLACE
+                            && !self.codex_only_plugins
+                            && shared_packages::same_entry(
+                                &linked,
+                                &self.plugin_runtime_link(spec),
+                            )
+                            && entry_owns_path(entry, &linked, "claude_link"))
+                        || retained
+                        || manifest
+                            .get("plugin_runtime_owner_origins")
+                            .and_then(|origins| origins.get(runtime.to_string_lossy().as_ref()))
+                            .is_some_and(|origin| {
+                                origin.get("key").and_then(Value::as_str) == Some(spec.key.as_str())
+                                    && origin
+                                        .get("path")
+                                        .and_then(Value::as_str)
+                                        .map(Path::new)
+                                        .is_some_and(|path| {
+                                            shared_packages::same_entry(path, &linked)
+                                        })
+                            })
+                        || entry
+                            .get("runtime")
+                            .and_then(|value| value.get(field))
+                            .and_then(Value::as_str)
+                            .is_some_and(|old| shared_packages::same_entry(Path::new(old), &linked))
+                })
+            {
+                continue;
+            }
+            if self.owns_legacy_marketplace_source(spec, &target, entry, manifest)? {
+                continue;
+            }
+            if self.owns_managed_marketplace_copy(spec, &target, field, manifest)? {
+                continue;
+            }
+            // Existing personal sources and directories are not implicitly managed.
+            let same_install = entry.get("managed").and_then(Value::as_bool) == Some(true)
+                && entry.get("installed_plugin_id").and_then(Value::as_i64)
+                    == spec.installed_plugin_id;
+            if !same_install || !self.matches_old_managed_copy(&target, entry, &spec.key)? {
+                return Err(CapabilitySyncError::invalid_payload(
+                    "Plugin marketplace entry is occupied by an unrelated source",
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn recorded_runtime_at_current_home(
+        &self,
+        spec: &PluginSyncSpec,
+        entry: &Value,
+        field: &str,
+    ) -> Option<PathBuf> {
+        let old = Path::new(entry.get("runtime")?.get(field)?.as_str()?);
+        if !historical_cache_path(old, spec, field) {
+            return None;
+        }
+        if field == "codex_link" && cache_selection::is_retained(old) {
+            return Some(
+                self.codex_plugins_dir
+                    .join(cache_selection::RETAINED_CACHE)
+                    .join(&spec.marketplace)
+                    .join(&spec.name)
+                    .join(old.file_name()?),
+            );
+        }
+        self.plugin_runtime_targets(spec)
+            .into_iter()
+            .find(|(_, candidate)| *candidate == field)
+            .and_then(|(path, _)| {
+                path.parent()
+                    .map(|parent| parent.join(old.file_name().unwrap()))
+            })
+    }
+
     pub(in crate::local::capabilities) fn validate_marketplace_preparation(
         &self,
         spec: &PluginSyncSpec,
@@ -381,13 +502,18 @@ pub(super) fn historical_cache_path(path: &Path, spec: &PluginSyncSpec, field: &
     let Some(version) = path.file_name().and_then(|value| value.to_str()) else {
         return false;
     };
-    let acceptable_version = version == spec.version
-        || (field == "claude_link"
-            && spec
-                .checksum
-                .as_deref()
-                .and_then(|hash| hash.strip_prefix("sha256:"))
-                .is_some_and(|hash| version == format!("{}-{hash}", spec.version)));
+    let retained = field == "codex_link" && cache_selection::is_retained(path);
+    let acceptable_version = if retained {
+        cache_selection::archived_version(path) == Some(spec.version.as_str())
+    } else {
+        version == spec.version
+            || (field == "claude_link"
+                && spec
+                    .checksum
+                    .as_deref()
+                    .and_then(|hash| hash.strip_prefix("sha256:"))
+                    .is_some_and(|hash| version == format!("{}-{hash}", spec.version)))
+    };
     acceptable_version
         && path
             .parent()
@@ -403,7 +529,9 @@ pub(super) fn historical_cache_path(path: &Path, spec: &PluginSyncSpec, field: &
             .and_then(Path::parent)
             .and_then(Path::parent)
             .and_then(Path::file_name)
-            .is_some_and(|value| value == "cache")
+            .is_some_and(|value| {
+                value == "cache" || (retained && value == cache_selection::RETAINED_CACHE)
+            })
 }
 
 pub(super) fn entry_owns_path(entry: &Value, path: &Path, field: &str) -> bool {
