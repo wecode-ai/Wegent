@@ -59,12 +59,11 @@ where
 
 fn retryable(error: Option<&MysqlError>, retry_busy: bool) -> bool {
     error.is_some_and(|error| {
-        matches!(
-            super::super::write_coordination::plugin_write_error_code(error),
-            Some("plugin_write_conflict")
-        ) || retry_busy
-            && super::super::write_coordination::plugin_write_error_code(error)
-                == Some("plugin_write_busy")
+        let code = super::super::write_coordination::plugin_write_error_code(error);
+        // InnoDB rolls back the entire deadlock victim transaction.
+        error.database_code() == Some(1213)
+            || code == Some("plugin_write_conflict")
+            || retry_busy && code == Some("plugin_write_busy")
     })
 }
 
@@ -88,6 +87,27 @@ pub(super) async fn wait_on_metadata_conflict(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn restarts_local_sync_after_mysql_rolls_back_a_deadlock_victim() {
+        let mut attempts = 0;
+        let result = retry_sync_write(|| {
+            attempts += 1;
+            std::future::ready(if attempts == 1 {
+                Err(MysqlError::Database {
+                    code: Some(1213),
+                    sql_state: Some("40001".to_owned()),
+                    message: "deadlock".to_owned(),
+                })
+            } else {
+                Ok(42)
+            })
+        })
+        .await
+        .unwrap();
+        assert_eq!(result, 42);
+        assert_eq!(attempts, 2);
+    }
 
     #[tokio::test(start_paused = true)]
     async fn receipt_retries_acquisition_busy_and_metadata_conflicts() {

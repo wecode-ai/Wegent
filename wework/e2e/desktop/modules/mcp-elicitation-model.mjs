@@ -18,9 +18,11 @@ import {
   MCP_ELICITATION_PROMPT,
   MCP_ELICITATION_SEARCH_ID,
   MCP_ELICITATION_TOOL_NAME,
+  UNANSWERED_MCP_APPROVAL_SERVER,
+  UNANSWERED_MCP_APPROVAL_TOOL,
 } from './shared.mjs'
 
-const timeoutScenarios = [null, null, 'url_timeout', 'form_timeout']
+const timeoutScenarios = [null, null, 'url_timeout', 'form_timeout', 'unanswered_approval']
 
 export function createMcpElicitationModel() {
   let round = 1
@@ -31,6 +33,11 @@ export function createMcpElicitationModel() {
   return (body, responseId) => {
     assert.ok(round <= timeoutScenarios.length, 'Unexpected MCP elicitation turn')
     const timeoutScenario = timeoutScenarios[round - 1]
+    const unansweredApproval = timeoutScenario === 'unanswered_approval'
+    const namespace = unansweredApproval
+      ? UNANSWERED_MCP_APPROVAL_SERVER
+      : MCP_ELICITATION_NAMESPACE
+    const toolName = unansweredApproval ? UNANSWERED_MCP_APPROVAL_TOOL : MCP_ELICITATION_TOOL_NAME
     const searchId = `${MCP_ELICITATION_SEARCH_ID}-${round}`
     const callId = `${MCP_ELICITATION_CALL_ID}-${round}`
     const events = items => [responseCreated(responseId), ...items, responseCompleted(responseId)]
@@ -40,7 +47,7 @@ export function createMcpElicitationModel() {
         JSON.stringify(body).includes(MCP_ELICITATION_PROMPT),
         'The real Codex request did not contain the MCP elicitation prompt'
       )
-      const search = selectToolSearch(body, MCP_ELICITATION_TOOL_NAME)
+      const search = selectToolSearch(body, toolName)
       stage = 'call'
       return events(toolSearchResponseEvents(searchId, search))
     }
@@ -48,9 +55,9 @@ export function createMcpElicitationModel() {
     if (stage === 'call') {
       const tool = selectMcpTool(
         body,
-        MCP_ELICITATION_NAMESPACE,
-        MCP_ELICITATION_TOOL_NAME,
-        timeoutScenario ? { scenario: timeoutScenario } : {},
+        namespace,
+        toolName,
+        timeoutScenario && !unansweredApproval ? { scenario: timeoutScenario } : {},
         searchId
       )
       stage = 'result'
@@ -68,9 +75,11 @@ export function createMcpElicitationModel() {
       return events(selectedToolCall(outputCallId, wait))
     }
 
-    const expected = timeoutScenario
-      ? `E2E_MCP_ELICITATION_TIMEOUT:${timeoutScenario}:cancel`
-      : MCP_ELICITATION_ACCEPTED_MARKER
+    const expected = unansweredApproval
+      ? 'user cancelled MCP tool call'
+      : timeoutScenario
+        ? `E2E_MCP_ELICITATION_TIMEOUT:${timeoutScenario}:cancel`
+        : MCP_ELICITATION_ACCEPTED_MARKER
     assert.ok(
       output.includes(expected),
       `MCP elicitation ${outputCallId} did not return ${expected}`
