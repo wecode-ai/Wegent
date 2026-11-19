@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import { expect, test, vi } from 'vitest'
 import type { WorkspaceFileApi, WorkspaceFileEntry, WorkspaceTarget } from '@/types/workspace-files'
 import { WorkspaceDirectoryPicker } from './WorkspaceDirectoryPicker'
@@ -24,15 +24,7 @@ function props(api: WorkspaceFileApi) {
     onPathContextMenu: vi.fn(),
   }
 }
-async function treeContains(name: string) {
-  await waitFor(() =>
-    expect(
-      screen
-        .getByTestId('workspace-file-picker-tree')
-        .shadowRoot?.querySelector('[data-item-path="' + name + '"]')
-    ).toBeInstanceOf(HTMLElement)
-  )
-}
+const fileTree = () => within(screen.getByRole('tree', { name: '/repo' }))
 
 test('isolates a late root read when a different API serves the same workspace path', async () => {
   let finish!: (value: { entries: WorkspaceFileEntry[]; path: string }) => void
@@ -50,13 +42,10 @@ test('isolates a late root read when a different API serves the same workspace p
   const { rerender, unmount } = render(<WorkspaceDirectoryPicker {...props(oldApi)} />)
   expect(oldApi.listWorkspaceEntries).toHaveBeenCalledExactlyOnceWith('device-1', '/repo', '/repo')
   rerender(<WorkspaceDirectoryPicker {...props(newApi)} />)
-  await treeContains('new.ts')
+  expect(await screen.findByRole('treeitem', { name: 'new.ts' })).toBeVisible()
   await act(async () => finish({ path: '/repo', entries: [file('old.ts')] }))
-  expect(
-    screen
-      .getByTestId('workspace-file-picker-tree')
-      .shadowRoot?.querySelector('[data-item-path="old.ts"]')
-  ).toBeNull()
+  expect(fileTree().queryByRole('treeitem', { name: 'old.ts' })).not.toBeInTheDocument()
+  expect(fileTree().getByRole('treeitem', { name: 'new.ts' })).toBeVisible()
   expect(screen.queryByRole('status')).toBeNull()
   unmount()
 })
@@ -76,9 +65,10 @@ test('requests the same root again for a different device and ignores a late fai
   const initial = props(api)
   const { rerender, unmount } = render(<WorkspaceDirectoryPicker {...initial} />)
   rerender(<WorkspaceDirectoryPicker {...initial} target={{ ...target, deviceId: 'device-2' }} />)
-  await treeContains('device-two.ts')
+  expect(await screen.findByRole('treeitem', { name: 'device-two.ts' })).toBeVisible()
   await act(async () => fail(new Error('Old device disconnected')))
   expect(screen.queryByRole('alert')).toBeNull()
+  expect(fileTree().getByRole('treeitem', { name: 'device-two.ts' })).toBeVisible()
   expect(list).toHaveBeenNthCalledWith(2, 'device-2', '/repo', '/repo')
   unmount()
 })

@@ -1,9 +1,6 @@
-import {
-  TooltipContent,
-  TooltipTrigger,
-  Tooltip as UiTooltip,
-} from '@ui-sdk/react/tooltip'
-import { isValidElement, type ReactNode } from 'react'
+import { TooltipContent, TooltipTrigger, Tooltip as UiTooltip } from '@ui-sdk/react/tooltip'
+import { isValidElement, useState, type ReactNode } from 'react'
+import { useWindowEvent } from '../dom-events'
 import { KeyboardShortcut } from './KeyboardShortcut'
 import { useCollaborationPortalTheme } from '../theme'
 import { activityClassNames as cn } from '../issue-detail/activityClassNames'
@@ -32,9 +29,13 @@ export function Tooltip({
   children,
 }: TooltipProps) {
   const theme = useCollaborationPortalTheme()
+  const [open, setOpen] = useState(false)
+  const dismiss = () => setOpen(false)
+  useWindowEvent('resize', dismiss, { enabled: open })
+  useWindowEvent('scroll', dismiss, { enabled: open, capture: true })
   return (
     <TooltipContext.Provider value={true}>
-      <UiTooltip delay={700} disabled={disabled}>
+      <UiTooltip delay={700} disabled={disabled} open={open} onOpenChange={setOpen}>
         <TooltipTrigger
           data-tooltip-trigger
           render={isValidElement(children) ? children : <span>{children}</span>}
@@ -49,13 +50,11 @@ export function Tooltip({
           className={cn(
             theme.className,
             'z-tooltip inline-flex max-w-xs items-center gap-2 rounded-lg border border-border bg-popover px-2 py-1 text-sm text-text-primary shadow-lg',
-            className,
+            className
           )}
         >
           <span>{label}</span>
-          {shortcut && (
-            <KeyboardShortcut value={shortcut} className="bg-muted" />
-          )}
+          {shortcut && <KeyboardShortcut value={shortcut} className="bg-muted" />}
         </TooltipContent>
       </UiTooltip>
     </TooltipContext.Provider>

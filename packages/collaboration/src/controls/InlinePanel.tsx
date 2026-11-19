@@ -1,4 +1,5 @@
 import { bindLayer, createFocusRecovery } from '@ui-sdk/core'
+import { focusableSelector, isFocusable } from '../dom-events'
 import {
   useId,
   useImperativeHandle,
@@ -12,6 +13,7 @@ interface InlinePanelProps extends ComponentProps<'section'> {
   onEscape(): void
   active?: boolean
   restoreFocus?: string
+  initialFocus?: string | null
 }
 
 export function InlinePanel({
@@ -19,6 +21,7 @@ export function InlinePanel({
   onEscape,
   active = true,
   restoreFocus,
+  initialFocus,
   ref,
   ...props
 }: InlinePanelProps) {
@@ -66,12 +69,22 @@ export function InlinePanel({
         dismiss.current()
       },
     })
-    panel.focus({ preventScroll: true })
+    if (!panel.contains(panel.ownerDocument.activeElement)) {
+      const selector = initialFocus
+      const first =
+        selector === null
+          ? undefined
+          : Array.from(panel.querySelectorAll<HTMLElement>(selector ?? focusableSelector)).find(
+              isFocusable
+            )
+      const target = first ?? panel
+      target.focus({ preventScroll: true })
+    }
     return () => {
       unbind()
       restore()
     }
-  }, [active, key, opener, recovery, restoreFocus])
+  }, [active, initialFocus, key, opener, recovery, restoreFocus])
   return (
     <section {...props} ref={element} tabIndex={-1} hidden={!active || props.hidden}>
       {children}

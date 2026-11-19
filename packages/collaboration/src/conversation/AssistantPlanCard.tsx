@@ -129,7 +129,10 @@ function PlanCardActions({
   const copied = copiedUntil !== undefined && !expired
 
   const handleCopy = () => {
-    void copyText(content).then(() => setCopiedUntil(Date.now() + 1500))
+    void copyText(content).then(() => {
+      const now = Date.now()
+      setCopiedUntil(previous => (previous !== undefined && previous > now ? previous : now + 1400))
+    })
   }
 
   const actions = [

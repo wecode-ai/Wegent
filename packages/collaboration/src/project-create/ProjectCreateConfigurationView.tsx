@@ -33,6 +33,7 @@ export function ProjectCreateConfigurationView({
       ref={ref}
       onEscape={onBack}
       active={active}
+      initialFocus={focusTarget === undefined ? undefined : null}
       restoreFocus={restoreFocus}
       aria-label={focusLabel}
       className="collaboration-project-create-configuration"

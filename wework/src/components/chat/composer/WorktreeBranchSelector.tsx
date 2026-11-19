@@ -24,6 +24,7 @@ export function WorktreeBranchSelector({
       <BranchPicker
         mobileSheet
         composer
+        activateSelected
         value={selected}
         label={
           loading

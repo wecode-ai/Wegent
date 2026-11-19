@@ -27,6 +27,7 @@ export function BranchPicker({
   closeSignal = 0,
   mobileSheet = false,
   composer = false,
+  activateSelected = false,
 }: {
   value: string
   label: string
@@ -43,6 +44,7 @@ export function BranchPicker({
   closeSignal?: number
   mobileSheet?: boolean
   composer?: boolean
+  activateSelected?: boolean
 }) {
   const { t } = useTranslation('common')
   const isMobile = useIsMobile()
@@ -101,6 +103,7 @@ export function BranchPicker({
   }
   return (
     <SearchableSelect
+      activateSelected={activateSelected}
       modal={mobileSheet && isMobile}
       value={value}
       options={(loading || error ? [] : branches)

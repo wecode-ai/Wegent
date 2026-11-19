@@ -1,8 +1,9 @@
 import { useTranslation } from '@/hooks/useTranslation'
+import { useFocusRequest } from '@wegent/collaboration/dom-events'
 import { DialogSurface } from '@wegent/collaboration/controls/DialogSurface'
 import { Button } from '@wegent/collaboration/markdown/Button'
 import { Loader2 } from 'lucide-react'
-import { useSyncExternalStore } from 'react'
+import { useRef, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import { cloudModelCatalogSyncQueue } from './cloudModelCatalogSyncRequest'
 
@@ -12,6 +13,8 @@ export function CloudModelCatalogSyncDialogHost() {
     cloudModelCatalogSyncQueue.subscribe,
     cloudModelCatalogSyncQueue.getSnapshot
   )
+  const cancelButton = useRef<HTMLButtonElement>(null)
+  useFocusRequest(cancelButton, current?.id, { enabled: Boolean(current), preventScroll: true })
   const cancel = () => {
     if (current) cloudModelCatalogSyncQueue.cancel(current.id)
   }
@@ -58,6 +61,7 @@ export function CloudModelCatalogSyncDialogHost() {
         )}
         <div className="mt-5 flex justify-end gap-2">
           <Button
+            ref={cancelButton}
             type="button"
             data-testid="cloud-model-catalog-sync-cancel-button"
             onClick={cancel}

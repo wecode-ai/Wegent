@@ -52,9 +52,9 @@ test('waits for the read and displays the persisted value', async () => {
 test('keeps inside clicks open and closes only on an outside mouse press', async () => {
   render(<CodexPersonalitySettings />)
   const select = await openMenu()
-  fireEvent.mouseDown(screen.getByRole('listbox'))
+  fireEvent.pointerDown(screen.getByRole('listbox'), { pointerType: 'mouse' })
   expect(select).toHaveAttribute('aria-expanded', 'true')
-  fireEvent.mouseDown(document.body)
+  fireEvent.pointerDown(document.body, { pointerType: 'mouse' })
   expect(select).toHaveAttribute('aria-expanded', 'false')
 })
 

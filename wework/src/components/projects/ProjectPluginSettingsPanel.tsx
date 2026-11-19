@@ -17,6 +17,8 @@ interface ProjectPluginSettingsPanelProps {
   pluginsPending: boolean
   pluginsDisabled: boolean
   searchDisabled: boolean
+  catalogFailed: boolean
+  onRetryCatalog: () => void
   cloudDevice: boolean
   pluginSupport: ProjectPluginSupport
   aiSettingsSupported: boolean
@@ -36,6 +38,8 @@ export function ProjectPluginSettingsPanel({
   pluginsPending,
   pluginsDisabled,
   searchDisabled,
+  catalogFailed,
+  onRetryCatalog,
   cloudDevice,
   pluginSupport,
   aiSettingsSupported,
@@ -120,6 +124,20 @@ export function ProjectPluginSettingsPanel({
           >
             <Loader2 className="h-4 w-4 animate-spin" />
             {t('workbench.loading', '加载中...')}
+          </div>
+        ) : catalogFailed ? (
+          <div className="flex min-h-20 items-center justify-center gap-2 px-3 py-2 text-sm text-text-secondary">
+            <span role="alert">{t('workbench.project_plugins_unavailable')}</span>
+            <ControlButton
+              variant="outline"
+              size="sm"
+              type="button"
+              data-testid="local-project-plugin-catalog-retry"
+              disabled={searchDisabled}
+              onClick={onRetryCatalog}
+            >
+              {t('workbench.retry')}
+            </ControlButton>
           </div>
         ) : filteredPluginItems.length > 0 ? (
           filteredPluginItems.map(item => {

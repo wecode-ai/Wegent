@@ -275,10 +275,10 @@ export function useScrollRequest(
 }
 
 /** Own native modal focus, keyboard trapping and background isolation together. */
-const focusableSelector =
+export const focusableSelector =
   'button:not([disabled]), [href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), [contenteditable="true"]:not([tabindex="-1"]), [tabindex]:not([tabindex="-1"])'
 
-function isFocusable(element: HTMLElement) {
+export function isFocusable(element: HTMLElement) {
   if (
     element.matches(':disabled') ||
     (element.tabIndex < 0 &&
@@ -487,7 +487,12 @@ export function useOwnedFocusTarget(
     }
     section.addEventListener('focusin', remember, true)
     const observer = selector === undefined ? null : new MutationObserver(restore)
-    observer?.observe(section, { childList: true, subtree: true })
+    // SDK-rendered targets can become focusable after their DOM node is attached.
+    observer?.observe(section, {
+      childList: true,
+      subtree: true,
+      attributeFilter: ['tabindex', 'disabled', 'hidden', 'inert'],
+    })
     restore()
     return () => {
       observer?.disconnect()

@@ -352,12 +352,20 @@ function DeviceGitSyncContent({
                 }}
                 disabled={syncing || eligibleDevices.length === 0}
               >
-                <SelectTrigger data-testid="git-device-sync-select" className="mt-2 w-full" />
+                <SelectTrigger
+                  data-testid="git-device-sync-select"
+                  data-value={activeSelectedDeviceId}
+                  className="mt-2 w-full"
+                />
                 <SelectContent>
                   <SelectItem value="">
                     {eligibleDevices.length
                       ? t('workbench.git_device_sync_select_placeholder', '请选择设备')
-                      : t('workbench.git_device_sync_no_devices', '没有可同步的在线设备')}
+                      : inventoryPending
+                        ? t('workbench.git_device_sync_loading', '正在读取 Git 账户和设备…')
+                        : inventoryUnavailable
+                          ? t('workbench.git_device_sync_load_failed', '读取设备 Git 配置失败')
+                          : t('workbench.git_device_sync_no_devices', '没有可同步的在线设备')}
                   </SelectItem>
                   {eligibleDevices.map(device => (
                     <SelectItem key={device.device_id} value={String(device.device_id)}>

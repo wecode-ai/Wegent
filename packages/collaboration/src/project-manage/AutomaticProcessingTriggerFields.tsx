@@ -450,6 +450,7 @@ export function AutomaticProcessingTriggerFields({
                 <SelectRoot
                   disabled={hooksLoading || hooks.length === 0}
                   value={normalizeSelectValue(draft.hookId)}
+                  items={hooks.map(hook => ({ value: String(hook.id), label: hook.name }))}
                   onValueChange={selectedValue => {
                     if (selectedValue === null) return
                     const hook = hooks.find(candidate => candidate.id === selectedValue)
@@ -463,6 +464,7 @@ export function AutomaticProcessingTriggerFields({
                     density="compact"
                     className="min-w-0 flex-1"
                     data-testid="automatic-processing-hook"
+                    data-value={draft.hookId}
                     id="automatic-processing-hook"
                   />
                   <SelectContent>

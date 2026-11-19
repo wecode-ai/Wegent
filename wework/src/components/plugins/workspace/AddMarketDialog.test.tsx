@@ -86,7 +86,7 @@ test('an IME Escape does not close the dialog and a normal Escape does', async (
   expect(screen.getByRole('dialog')).toBeInTheDocument()
   fireEvent.keyDown(source(), { key: 'Escape' })
   expect(close).toHaveBeenCalledOnce()
-  expect(screen.getByTestId('plugins-create-button')).toHaveFocus()
+  await waitFor(() => expect(screen.getByTestId('plugins-create-button')).toHaveFocus())
 })
 
 test('respects Escape already consumed by an input', async () => {

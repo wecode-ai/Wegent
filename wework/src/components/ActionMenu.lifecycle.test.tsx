@@ -1,4 +1,5 @@
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { afterEach, expect, it, vi } from 'vitest'
 import { ActionMenu } from '../../../packages/collaboration/src/controls/ActionMenu'
 
@@ -13,7 +14,7 @@ const items = [
     label: 'Parent',
     testId: 'parent',
     children: [
-      { label: 'Unavailable', testId: 'unavailable', disabled: true },
+      { label: 'Unavailable', testId: 'unavailable', disabled: true, onSelect: vi.fn() },
       { label: 'Child', testId: 'child' },
     ],
   },
@@ -21,41 +22,65 @@ const items = [
 ]
 
 it('focuses keyboard entry and enabled submenu items, then returns to the parent', async () => {
+  const user = userEvent.setup()
   render(<ActionMenu ariaLabel="Actions" testId="trigger" items={items} />)
-  fireEvent.keyDown(screen.getByTestId('trigger'), { key: 'ArrowUp' })
-  await act(async () => new Promise(resolve => requestAnimationFrame(resolve)))
-  expect(screen.getByTestId('last')).toHaveFocus()
-  fireEvent.keyDown(screen.getByTestId('parent'), { key: 'ArrowRight' })
+  await user.tab()
+  await user.keyboard('{ArrowUp}')
+  await waitFor(() => expect(screen.getByTestId('last')).toHaveFocus())
+  await user.keyboard('{ArrowUp}')
+  expect(screen.getByTestId('parent')).toHaveFocus()
+  await user.keyboard('{ArrowRight}')
+  await waitFor(() => expect(screen.getByTestId('unavailable')).toHaveFocus())
+  await user.keyboard('{Enter}')
+  expect(items[1].children?.[0].onSelect).not.toHaveBeenCalled()
+  await user.keyboard('{ArrowDown}')
   expect(screen.getByTestId('child')).toHaveFocus()
-  fireEvent.keyDown(document, { key: 'Escape' })
-  expect(screen.queryByTestId('child')).not.toBeInTheDocument()
+  await user.keyboard('{Escape}')
+  await waitFor(() => expect(screen.queryByTestId('child')).not.toBeInTheDocument())
   expect(screen.getByTestId('parent')).toHaveFocus()
 })
 
-it('keeps clicks inside the submenu open and dismisses outside clicks', () => {
+it('keeps clicks inside the submenu open and dismisses outside clicks', async () => {
+  const user = userEvent.setup()
   const onOpenChange = vi.fn()
   render(
     <ActionMenu ariaLabel="Actions" testId="trigger" items={items} onOpenChange={onOpenChange} />
   )
-  fireEvent.click(screen.getByTestId('trigger'))
-  fireEvent.keyDown(screen.getByTestId('parent'), { key: 'ArrowRight' })
-  fireEvent.pointerDown(screen.getByTestId('parent-submenu'))
+  await user.tab()
+  await user.keyboard('{ArrowDown}')
+  await waitFor(() => expect(screen.getByTestId('disabled')).toHaveFocus())
+  await user.keyboard('{ArrowDown}')
+  expect(screen.getByTestId('parent')).toHaveFocus()
+  await user.keyboard('{ArrowRight}')
+  fireEvent.pointerDown(await screen.findByTestId('parent-submenu'))
   expect(screen.getByTestId('child')).toBeInTheDocument()
-  fireEvent.pointerDown(document.body)
-  expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  await user.click(document.body)
+  await waitFor(() => expect(screen.queryByRole('menu')).not.toBeInTheDocument())
   expect(onOpenChange).toHaveBeenLastCalledWith(false)
 })
 
-it('cancels pending focus and submenu close work when its menu unmounts', () => {
-  const cancel = vi.spyOn(window, 'cancelAnimationFrame')
-  const clear = vi.spyOn(window, 'clearTimeout')
-  const { unmount } = render(<ActionMenu ariaLabel="Actions" testId="trigger" items={items} />)
-  fireEvent.click(screen.getByTestId('trigger'))
-  fireEvent.keyDown(screen.getByTestId('parent'), { key: 'ArrowRight' })
-  fireEvent.pointerLeave(screen.getByTestId('parent-submenu'))
-  unmount()
-  expect(cancel).toHaveBeenCalled()
-  expect(clear).toHaveBeenCalled()
+it('releases an open submenu and its pending pointer work on unmount', async () => {
+  const user = userEvent.setup()
+  const onOpenChange = vi.fn()
+  const { unmount } = render(
+    <ActionMenu ariaLabel="Actions" testId="trigger" items={items} onOpenChange={onOpenChange} />
+  )
+  await user.tab()
+  await user.keyboard('{ArrowDown}')
+  await waitFor(() => expect(screen.getByTestId('disabled')).toHaveFocus())
+  await user.keyboard('{ArrowDown}{ArrowRight}')
+  const submenu = await screen.findByTestId('parent-submenu')
+  vi.useFakeTimers()
+  try {
+    fireEvent.pointerLeave(submenu, { pointerType: 'mouse' })
+    unmount()
+    onOpenChange.mockClear()
+    await act(async () => vi.runAllTimersAsync())
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+    expect(onOpenChange).not.toHaveBeenCalled()
+  } finally {
+    vi.useRealTimers()
+  }
 })
 
 it('restores the previous editor focus when a context menu closes', async () => {
@@ -74,8 +99,10 @@ it('restores the previous editor focus when a context menu closes', async () => 
   )
   try {
     await act(async () => new Promise(resolve => requestAnimationFrame(resolve)))
-    expect(screen.getByRole('menu')).toHaveFocus()
-    fireEvent.pointerDown(document.body)
+    await waitFor(() =>
+      expect(screen.getByRole('menu')).toContainElement(document.activeElement as HTMLElement)
+    )
+    await userEvent.click(document.body)
     expect(onContextMenuClose).toHaveBeenCalledOnce()
     rerender(<ActionMenu ariaLabel="Actions" testId="trigger" items={items} />)
     await act(async () => new Promise(resolve => requestAnimationFrame(resolve)))

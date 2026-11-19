@@ -7,7 +7,7 @@ import {
 } from '@wegent/chat-core/async-resource'
 import { Popover, PopoverTrigger, PopoverContent } from '../controls/Popover'
 import { Bot, Plus, Search, UserRound, UsersRound } from 'lucide-react'
-import { useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
+import { useCallback, useMemo, useState, useSyncExternalStore, type ReactNode } from 'react'
 import {
   CollaborationParticipantsTabs,
   type ParticipantTab,
@@ -111,11 +111,22 @@ export function ProjectCollaboratorPicker({
     </div>
   )
   const [trigger, setTrigger] = useState<HTMLButtonElement | null>(null)
+  const focusSearch = useCallback((input: HTMLInputElement | null) => {
+    input?.focus({ preventScroll: true })
+  }, [])
   const modalContainer = trigger?.closest<HTMLElement>(
     '[role="dialog"][aria-modal="true"], dialog[open]'
   )
+  // Resolve the owning portal before a pre-opened picker can bind its search field.
   return (
-    <Popover open={open} onOpenChange={onOpenChange}>
+    <Popover
+      open={open && trigger !== null}
+      onOpenChange={(next, detail) => {
+        onOpenChange(next)
+        if (!next && detail.reason === 'escape-key' && !trigger?.closest('[hidden], [inert]'))
+          trigger?.focus({ preventScroll: true })
+      }}
+    >
       <PopoverTrigger
         render={
           <button
@@ -140,12 +151,13 @@ export function ProjectCollaboratorPicker({
         className={`${theme.className ?? ''} collaboration-project-create-collaborator-menu`}
         data-testid="collaboration-project-create-collaborator-menu"
         aria-label={labels.addCollaborator}
-        finalFocus={() => (trigger?.closest('[hidden], [inert]') ? null : trigger)}
+        finalFocus="none"
       >
         <div className="collaboration-project-collaborator-picker">
           <label className="collaboration-project-collaborator-search">
             <Search aria-hidden="true" />
             <ControlInput
+              ref={focusSearch}
               data-testid="collaboration-project-create-people-search"
               value={query}
               aria-label={labels.searchCollaborators}

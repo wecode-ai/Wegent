@@ -253,12 +253,7 @@ function LocalProjectEditDialogContent({
     pluginReadEnabled &&
     Boolean(inventory) &&
     (pluginSnapshot.status === 'idle' || pluginSnapshot.status === 'loading')
-  const readError =
-    spaceSnapshot.status === 'error'
-      ? spaceSnapshot.error
-      : pluginSnapshot.status === 'error'
-        ? pluginSnapshot.error
-        : null
+  const readError = spaceSnapshot.status === 'error' ? spaceSnapshot.error : null
   const error =
     actionError ??
     (readError == null ? null : readError instanceof Error ? readError.message : String(readError))
@@ -876,7 +871,9 @@ function LocalProjectEditDialogContent({
             pluginSearch={pluginSearch}
             pluginsPending={pluginsPending}
             pluginsDisabled={pluginsDisabled}
-            searchDisabled={submitting || pluginsPending}
+            searchDisabled={submitting}
+            catalogFailed={pluginSnapshot.status === 'error'}
+            onRetryCatalog={() => void inventory?.reload()}
             pluginSupport={pluginSupport}
             cloudDevice={cloudDevice}
             aiSettingsSupported={capabilities.aiSettings}

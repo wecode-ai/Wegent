@@ -18,9 +18,10 @@ import {
   MenuTrigger,
 } from './MenuParts'
 import { Check, ChevronRight, MoreHorizontal } from 'lucide-react'
-import { useState, type ComponentType, type ReactNode } from 'react'
+import { useRef, useState, type ComponentType, type ReactNode } from 'react'
 import { Tooltip } from './Tooltip'
 import { KeyboardShortcut } from './KeyboardShortcut'
+import { useFocusRequest } from '../dom-events'
 import { useCollaborationPortalTheme } from '../theme'
 
 interface ActionMenuEntry {
@@ -206,6 +207,12 @@ export function ActionMenu({
 }: ActionMenuProps) {
   const theme = useCollaborationPortalTheme()
   const [open, setOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+  useFocusRequest(menuRef, undefined, {
+    enabled: Boolean(contextMenuPosition),
+    preventScroll: true,
+    restoreFocus: true,
+  })
   const trigger = (
     <MenuTrigger
       data-testid={testId}
@@ -256,6 +263,7 @@ export function ActionMenu({
         ))}
       <MenuContent
         {...theme}
+        ref={menuRef}
         data-testid={menuTestId ?? (testId ? testId + '-menu' : undefined)}
         data-embedded-browser-occlusion
         side={placement === 'side' ? 'right' : placement.startsWith('top') ? 'top' : 'bottom'}

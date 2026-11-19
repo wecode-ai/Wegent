@@ -221,7 +221,7 @@ it.each(['Escape', 'unmount'])(
       const menu = get('collaboration-project-create-collaborator-menu')
       expect(menu.closest('[role="dialog"][aria-modal="true"]')).toBe(dialog)
       expect(menu.closest('.collaboration-project-create-body')).toBeNull()
-      expect(menu.getAttribute('data-slot')).toBe('combobox-content')
+      expect(menu.getAttribute('data-slot')).toBe('popover-content')
       expect(menu.getAttribute('popover')).toBe('manual')
       expect(menu.dataset.theme).toBe('dark')
       expect(dialog.contains(document.activeElement)).toBe(true)

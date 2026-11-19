@@ -66,11 +66,15 @@ export function WorkspaceAddMenu({
         icon: item.icon,
         shortcut: item.shortcut,
         disabled: item.disabled,
-        onSelect: async () => {
-          await item.onSelect()
-          track('workspace_panel_added', {
-            panel: item.telemetryPanel ?? workspacePanelType(item.id),
-          })
+        onSelect: () => {
+          void Promise.resolve()
+            .then(item.onSelect)
+            .then(() =>
+              track('workspace_panel_added', {
+                panel: item.telemetryPanel ?? workspacePanelType(item.id),
+              })
+            )
+            .catch(error => console.error('Failed to add workspace panel', error))
         },
       }))}
     />
