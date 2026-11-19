@@ -153,14 +153,6 @@ export async function createDesktopScenario({
       configPath,
       `${await readFile(configPath, 'utf8')}\n[skills]\nconfig = [{ path = ${JSON.stringify(userSkill)}, enabled = false }]\n[mcp_servers.legacy-user-disabled]\ncommand = "node"\nargs = ["--version"]\nenabled = false\n`
     )
-    const installer = await startHistoricalPluginExecutor({
-      release,
-      cloud,
-      root,
-      userHome: userHomeFor(release),
-      directory: join(resultDir, 'historical-executors', release.version),
-      token: releaseAssetToken,
-    })
     const delivered = await historicalPluginPackages(
       HISTORICAL_PLUGIN_SOURCE,
       join(resultDir, 'historical-plugins', HISTORICAL_PLUGIN_SOURCE.version),
@@ -171,10 +163,30 @@ export async function createDesktopScenario({
       executorVersion: release.version,
       ...delivered.evidence,
     })
+    const historical = {}
+    for (const [role, original] of Object.entries(delivered.packages)) {
+      const fixture = await publish(original)
+      historical[role] = fixture
+      const installed = await accountPlugin(cloud, fixture.slug)
+      if (installed) {
+        await update({ ...fixture, installedId: Number(installed.metadata.labels.id) }, null, {
+          releaseId: fixture.releaseId,
+        })
+      }
+    }
+    // Restore the historical desired release before the old Runtime registers,
+    // so its initial account sync cannot cache the previous baseline's update.
+    const installer = await startHistoricalPluginExecutor({
+      release,
+      cloud,
+      root,
+      userHome: userHomeFor(release),
+      directory: join(resultDir, 'historical-executors', release.version),
+      token: releaseAssetToken,
+    })
     const fixtures = {}
     try {
-      for (const [role, original] of Object.entries(delivered.packages)) {
-        const fixture = await publish(original)
+      for (const [role, fixture] of Object.entries(historical)) {
         await pluginApi(
           cloud,
           `/plugins/marketplace/${fixture.pluginId}/install?device_id=${installer.deviceId}`,
