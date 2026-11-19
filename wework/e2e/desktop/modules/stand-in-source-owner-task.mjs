@@ -281,13 +281,21 @@ export function createSourceOwnerTaskStory(options) {
             },
           })
         )
+        const readReplies = () => readFile(join(root, 'replies.txt'), 'utf8')
+        // Collection and worker completion are separate native stages.
         await storyUntil(
-          async () => readFile(join(root, 'replies.txt'), 'utf8'),
+          readReplies,
+          value => value.includes('已开启独立修复任务'),
+          options.modelResponseTimeoutMs,
+          'The owner source request must be collected and acknowledged'
+        )
+        await storyUntil(
+          readReplies,
           value => value.includes('修复任务已完成'),
           options.modelResponseTimeoutMs,
           'The actual worker result must be sent to the original owner channel'
         )
-        const replies = (await readFile(join(root, 'replies.txt'), 'utf8')).trim().split('\n')
+        const replies = (await readReplies()).trim().split('\n')
         assert.equal(replies.length, 2, 'One startup and one completion reply; no duplicates')
         assert.ok(replies.every(line => line.includes(`${MARKER}-request`)))
         for (const reply of replies) {
