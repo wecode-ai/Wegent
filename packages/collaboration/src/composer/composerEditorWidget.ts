@@ -634,8 +634,9 @@ export function createComposerEditorWidget(initial: ComposerProseMirrorEditorPro
     releaseFade?.()
     releaseFade = undefined
     const view = currentView
-    if (mount && view && currentProps.scrollContainerClassName)
-      releaseFade = observeComposerScrollFade(mount, view.dom, () => {
+    const viewport = mount?.parentElement
+    if (viewport && view && currentProps.scrollContainerClassName)
+      releaseFade = observeComposerScrollFade(viewport, view.dom, () => {
         if (isActive(view) && view.hasFocus()) view.dispatch(view.state.tr.scrollIntoView())
       })
   }
