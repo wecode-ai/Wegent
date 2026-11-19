@@ -177,6 +177,27 @@ describe('desktop process lifecycle', () => {
     expect(windowsTaskkillArguments(321)).toEqual(['/PID', '321', '/T', '/F'])
   })
 
+  test('preserves Windows application arguments containing spaces, quotes and trailing slashes', async () => {
+    const moduleUrl = pathToFileURL(
+      resolve(import.meta.dirname, '../../e2e/desktop/windows-owned-process.mjs')
+    ).href
+    const { windowsApplicationCommandLine } = await import(/* @vite-ignore */ moduleUrl)
+    const executable = String.raw`C:\Program Files\Wework\wework.exe`
+    expect(
+      windowsApplicationCommandLine(executable, [
+        '',
+        'space value',
+        '中文',
+        'C:\\work\\',
+        'say"hello',
+        String.raw`before\"after`,
+      ])
+    ).toBe(
+      String.raw`"C:\Program Files\Wework\wework.exe" "" "space value" "中文" "C:\work\\" "say\"hello" "before\\\"after"`
+    )
+    expect(() => windowsApplicationCommandLine(executable, ['bad\0argument'])).toThrow('NUL')
+  })
+
   test.each(['degraded', 'unowned', 'missing identity', 'future identity', 'stale'])(
     'rejects a %s crash snapshot before signaling any process',
     async invalid => {

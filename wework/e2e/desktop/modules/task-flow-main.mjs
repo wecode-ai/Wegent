@@ -6,6 +6,7 @@ import {
 import { tmpdir } from 'node:os'
 import { startAsyncResourceDiagnostics } from '../../../../.github/scripts/node-async-resource-diagnostics.mjs'
 import { flushProcessOutput } from '../process-output.mjs'
+import { launchWindowsOwnedApplication } from '../windows-owned-process.mjs'
 import { simulatedDeviceApplicationId } from './simulated-device-identity.mjs'
 import { UPGRADE_DIAGNOSTIC_CHECKPOINTS } from '../upgrade-suite.mjs'
 import { waitForColdPackageStartup } from './cold-package-startup.mjs'
@@ -1560,17 +1561,26 @@ async function main() {
     }
     let activeAppEnvironment = appEnvironment
     const startDesktopAppProcess = async () => {
-      const child = spawn(appBinary, electronLaunchArguments, {
+      const launchOptions = {
         cwd: launchWorkingDirectory,
         env: activeAppEnvironment,
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: process.platform !== 'win32',
-      })
+      }
+      // Delivered launchers own their upgrade handoffs; source apps own one test lifetime.
+      const owned =
+        process.platform === 'win32' && !desktopScenario?.usesReleasePackageRuntimeAssets
+          ? await launchWindowsOwnedApplication(
+              appBinary,
+              electronLaunchArguments,
+              launchOptions,
+              resultDir,
+              DEFAULT_STEP_TIMEOUT_MS
+            )
+          : null
+      const child = owned?.launcher ?? spawn(appBinary, electronLaunchArguments, launchOptions)
       const nativeInspector = usesNativeCloudInspector ? readInspectorEndpoint(child) : null
       nativeInspector?.catch(() => undefined)
-      const scenarioStartup = desktopScenario?.appProcessStarted?.(child)
-      // Observe early failure now; the await below still propagates it after log setup.
-      scenarioStartup?.catch(() => undefined)
       const processState = { pid: child.pid, launchedAt: new Date().toISOString() }
       applicationProcessHistory.push(processState)
       child.once('error', error => {
@@ -1580,44 +1590,50 @@ async function main() {
       child.once('exit', (code, signal) => {
         Object.assign(processState, { code, signal, exitedAt: new Date().toISOString() })
       })
-      await markDesktopE2EResultActive(resultDir, {
-        applicationProcessId: child.pid,
-        ownerProcessId: process.pid,
-      })
       await Promise.all([
         appendProcessOutput(child.stdout, appLogPath, child),
         appendProcessOutput(child.stderr, appLogPath, child),
       ])
-      if (process.platform === 'win32') {
-        const stopObserving = observeWindowsSocketExhaustion([child.stdout, child.stderr], () => {
-          void Promise.resolve()
-            .then(() => {
-              const snapshot = collectWindowsNetworkDiagnostics()
-              return writeFile(
-                join(resultDir, 'windows-network-exhaustion-at-error.json'),
-                JSON.stringify(snapshot, null, 2),
-                { flag: 'wx' }
-              )
-            })
-            .catch(error => {
-              if (error.code !== 'EEXIST') {
-                console.error('[desktop-e2e] Immediate network diagnostics failed:', error.code)
-              }
-            })
-        })
-        child.once('exit', stopObserving)
-      }
+      const application = owned ? await owned.application : child
+      processState.pid = application.pid
       try {
+        const scenarioStartup = desktopScenario?.appProcessStarted?.(application)
+        // Install inspector listeners while the owned Windows process is suspended.
+        scenarioStartup?.catch(() => undefined)
+        await markDesktopE2EResultActive(resultDir, {
+          applicationProcessId: application.pid,
+          ownerProcessId: process.pid,
+        })
+        if (process.platform === 'win32') {
+          const stopObserving = observeWindowsSocketExhaustion([child.stdout, child.stderr], () => {
+            void Promise.resolve()
+              .then(() => {
+                const snapshot = collectWindowsNetworkDiagnostics()
+                return writeFile(
+                  join(resultDir, 'windows-network-exhaustion-at-error.json'),
+                  JSON.stringify(snapshot, null, 2),
+                  { flag: 'wx' }
+                )
+              })
+              .catch(error => {
+                if (error.code !== 'EEXIST') {
+                  console.error('[desktop-e2e] Immediate network diagnostics failed:', error.code)
+                }
+              })
+          })
+          child.once('exit', stopObserving)
+        }
+        await owned?.resume()
         await scenarioStartup
         if (nativeInspector) {
           control.nativeInspectorPort = Number(new URL(await nativeInspector).port)
         }
       } catch (error) {
-        await stopDesktopAppProcess(child)
+        await stopDesktopAppProcess(application)
         throw error
       }
-      control.applicationProcessId = child.pid
-      return child
+      control.applicationProcessId = application.pid
+      return application
     }
     app = await startDesktopAppProcess()
     const restartDesktopApp = async (options = null) => {
