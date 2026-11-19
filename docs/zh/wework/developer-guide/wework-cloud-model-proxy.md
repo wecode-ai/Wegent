@@ -162,6 +162,10 @@ executor 持久化已进入恢复的失败轮次 ID。读取原生或缓存历�
 毫秒数。桌面检查点 `model-overload-recovery` 使用真实 Electron、Codex 和
 executor 验证工具结果保留、无重复用户消息、自动恢复与取消。
 
+### Codex 外部上下文转换
+
+Codex 在延续会话时可能把外部上下文写成没有有效 `call_id` 的 `function_call_output`。发往 Chat Completions 或 Anthropic Messages 前，executor 在工具 ID 正规化之前将这些记录转为用户内容。带有效 ID 的工具结果仍分别通过 `tool_call_id` 或 `tool_use_id` 与原调用配对。
+
 ### Anthropic 空输出恢复
 
 对所有 Anthropic Messages 上游，executor 先把 Codex 子代理的 `agent_message` 规范为带 `developer` 角色的消息，再由 Anthropic 适配器将内容写入上游请求的 `system` 字段。`model-sse-parsing` 检查点使用真实 Codex 父子代理和模拟上游，验证子代理任务及完成结果都通过该字段送达。
